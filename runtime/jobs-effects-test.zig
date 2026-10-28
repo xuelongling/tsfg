@@ -211,8 +211,8 @@ fn rejectReport(document: *const T.Document, report: E.Report) !void {
     payload.effectsHash = &effects_hash;
     const body = try std.json.Stringify.valueAlloc(A, payload, .{});
     defer A.free(body);
-    const identity = digest("tsfg.query-tmeta.v1\x00", body);
-    const envelope = try std.json.Stringify.valueAlloc(A, .{ .family = "tsfg.query-tmeta", .payload = body, .payloadHash = @as([]const u8, &identity), .schemaHash = T.schema_hash, .version = @as(u32, 1) }, .{});
+    const identity = digest("tsfg.query-tmeta.v2\x00", body);
+    const envelope = try std.json.Stringify.valueAlloc(A, .{ .family = "tsfg.query-tmeta", .payload = body, .payloadHash = @as([]const u8, &identity), .schemaHash = T.schema_hash, .version = @as(u32, 2) }, .{});
     defer A.free(envelope);
     const bytes = try std.mem.concat(A, u8, &.{ envelope, "\n" });
     defer A.free(bytes);

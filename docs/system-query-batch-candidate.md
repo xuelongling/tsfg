@@ -9,7 +9,7 @@ original loop's work on one matching chunk. It is not a scheduler, fallback
 executor, function-pointer API or permission to invoke native code.
 
 Each entry takes a row count, canonical unique component-column byte buffers
-and their strides, followed by the original ordinary f32 parameters. Columns
+and their strides, followed by the original ordinary f32/f64 parameters. Columns
 are sorted by component identity. Repeated tuple occurrences retain their
 original bindings and Read/Write modes but use the same buffer and row offset;
 Write dominates Read only when normalizing a column's required lease.
@@ -24,13 +24,13 @@ to 65536 rows and layouts to 65536 bytes per component. An entity lookup is not
 invented for Source that does not access entity identities.
 
 An explicit `scf.for` row loop computes `row * columnStride`. A field address
-adds its independently derived byte offset. `memref.view` selects one f32 at
+adds its independently derived byte offset. `memref.view` selects one original f32 or f64 at
 that byte address; loads and stores operate on that view. Other fixed fields
 and padding remain in the original component buffer. No component copy or
 allocation is introduced. Helper view parameters become the same byte buffer
 and row offset; permission narrowing does not freeze another alias. Scalar
 arguments evaluate left to right, compound targets load before their RHS, and
-calls and field operations retain Source order. f32 arithmetic has no fast-math,
+calls and field operations retain Source order. f32/f64 arithmetic has no fast-math,
 reassociation or contraction flags.
 
 The version1 batch module records its ABI, exact original effects and the full

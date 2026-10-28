@@ -26,7 +26,7 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
     if(!ast.nodes.some(node=>node.sourcePath===grammar.source.path&&node.kind===originalKind&&canonical(node.range)===canonical(value.range)))fail('original Query expression AST differs','source');
     if(value.kind==='bindingReference'){
       const binding=scope.get(value.binding);
-      if(!binding||binding.sourceType!==value.type||!binding.mode&&value.type!=='f32')fail('original Query expression binding differs','source');
+      if(!binding||binding.sourceType!==value.type||!binding.mode&&!['f32','f64'].includes(value.type))fail('original Query expression binding differs','source');
       grammar.name(value.range,binding.declaration.name);return {...base,kind:'bindingReference',binding:value.binding,access:'read'};
     }
     if(value.kind==='call')return call(value,scope,value=>expression(value,'read',depth+1));
@@ -44,22 +44,22 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
         if(selected){if(selected.id!==value.property)fail('original first selected field declaration differs','source');break;}
         owner=type.base;
       }
-      if(!binding?.mode||!field||!owner||value.type!=='f32'||field.sourceType!==value.type||field.access!=='public')fail('original component field ownership/type/access differs','type');
+      if(!binding?.mode||!field||!owner||!['f32','f64'].includes(value.type)||field.sourceType!==value.type||field.access!=='public')fail('original component field ownership/type/access differs','type');
       if(target&&(access==='read'||binding.mode!=='write'||field.readonly))fail('Read borrow or declared readonly field cannot be written','permission');
       grammar.name(value.nameRange,field.name);grammar.sequence(value.range,[value.receiver.range,'.',value.nameRange]);
       return {...base,kind:target?'fieldTarget':'fieldAccess',receiver,property:field.fieldId,sourceField:field.sourceField,nameRange:{...value.nameRange},access:target?access:'read'};
     }
     if(value.kind==='binary'){
-      if(!['+','-','*','/'].includes(value.operator)||value.type!=='f32')fail('owned f32 binary operator required','capability');
+      if(!['+','-','*','/'].includes(value.operator)||!['f32','f64'].includes(value.type))fail('owned floating-point binary operator required','capability');
       const left=expression(value.left,'read',depth+1),right=expression(value.right,'read',depth+1);
-      if(left.sourceType!=='f32'||right.sourceType!=='f32')fail('original f32 operand types differ','type');
+      if(left.sourceType!==value.type||right.sourceType!==value.type)fail('original floating-point operand widths differ','type');
       grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.left.range,value.operatorRange,value.right.range]);
       return {...base,kind:'binary',operator:value.operator,operatorRange:{...value.operatorRange},left,right};
     }
     if(value.kind==='fieldAssignment'){
-      if(!['=','+=','-=','*=','/='].includes(value.operator)||value.type!=='f32'||value.target.kind!=='fieldTarget')fail('owned f32 field assignment required','capability');
+      if(!['=','+=','-=','*=','/='].includes(value.operator)||!['f32','f64'].includes(value.type)||value.target.kind!=='fieldTarget')fail('owned floating-point field assignment required','capability');
       const target=expression(value.target,value.operator==='='?'write':'readwrite',depth+1),assigned=expression(value.value,'read',depth+1);
-      if(target.sourceType!=='f32'||assigned.sourceType!=='f32')fail('original f32 assignment types differ','type');
+      if(target.sourceType!==value.type||assigned.sourceType!==value.type)fail('original floating-point assignment widths differ','type');
       grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.target.range,value.operatorRange,value.value.range]);
       return {...base,kind:'fieldAssignment',operator:value.operator,operatorRange:{...value.operatorRange},target,value:assigned};
     }

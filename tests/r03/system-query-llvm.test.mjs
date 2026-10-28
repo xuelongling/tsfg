@@ -35,7 +35,7 @@ const quoted=(text,marker)=>{
 test('LLVM public pipeline retains original context and factory manifest gates',{skip:!enabled},async()=>{
   const input=cases.find(row=>row.name==='view-parenthesized');
   await assert.rejects(compileSystemQuery(input.bytes,{...input.context,expectedPackageId:'sha256:'+'0'.repeat(64)},{core:tool,cpuLLVM:'ir'}),/identity|differs/);
-  await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:tool,cpuLLVM:'dialect'}),/artifact-manifest|ENOENT/);
+  await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:'missing',cpuLLVM:'dialect'}),/artifact-manifest|ENOENT/);
 });
 
 for(const [name,operands]of [['null-version','null, !"x"'],['null-source','!"1", null']])

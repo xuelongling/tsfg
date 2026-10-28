@@ -12,7 +12,7 @@ using exception::field;using exception::items;using exception::string;
 namespace {
 using namespace commonProgram;
 constexpr size_t byteLimit=8388608;
-constexpr llvm::StringLiteral schema="sha256:36069e89fac29edd840851e1de07ffccfbd12fdd0083551dba365e2dd0f8acad";
+constexpr llvm::StringLiteral schema="sha256:d598644bbd5360feb48a17cb2511dc93b4dbb2785d2a3f111759dfb6c1b2c69b";
 constexpr llvm::StringLiteral layoutSchema="sha256:26a6e0fe97b3f269eba8aec94061c980c5985eb5f3595c9feb4bc7c13036db8f";
 constexpr arrays::ownerproof::JsonPolicy jsonPolicy{byteLimit,byteLimit,1000000,1000000,128};
 std::string text(mlir::Operation *op,llvm::StringRef key){return op->getAttrOfType<mlir::StringAttr>(key).getValue().str();}
@@ -26,9 +26,9 @@ struct TmetaCodec {
     if(!arrays::ownerproof::encodeCanonical(value,encoded,jsonPolicy)||encoded.empty()||encoded.size()>byteLimit){valid=false;return {};}
     encoded.pop_back();return encoded;
   }
-  Json envelope(llvm::StringRef family,llvm::StringRef schemaHash,llvm::StringRef domain,const Json &payload){
+  Json envelope(llvm::StringRef family,int64_t version,llvm::StringRef schemaHash,llvm::StringRef domain,const Json &payload){
     const auto body=canonical(payload);
-    return Object{{"family",family},{"version",1},{"schemaHash",schemaHash},{"payload",body},{"payloadHash",digest(domain.str()+std::string(1,'\0')+body)}};
+    return Object{{"family",family},{"version",version},{"schemaHash",schemaHash},{"payload",body},{"payloadHash",digest(domain.str()+std::string(1,'\0')+body)}};
   }
 };
 
@@ -45,7 +45,7 @@ bool metadata(mlir::ModuleOp batch,const Json &effects,Json &out){
   const Json layoutCatalog=Object{{"components",field(catalog,"components")},{"types",field(catalog,"types")},{"target",target}};
   const Json layouts=Object{{"components",field(catalog,"components")},{"types",field(catalog,"types")},{"target",target},
     {"inputIdentity",field(effects,"inputIdentity")},{"hirDigest",digest(codec.canonical(layoutCatalog)+"\n")}};
-  const auto layoutText=codec.canonical(codec.envelope("tsfg.component-layout-candidate",layoutSchema,"tsfg.component-layout.v1",layouts))+"\n";
+  const auto layoutText=codec.canonical(codec.envelope("tsfg.component-layout-candidate",1,layoutSchema,"tsfg.component-layout.v1",layouts))+"\n";
   const auto batchText=printed(batch),effectText=codec.canonical(effects)+"\n";
   std::map<std::string,mlir::func::FuncOp> functions;
   for(auto fn:batch.getOps<mlir::func::FuncOp>())functions.emplace(fn.getSymName().str(),fn);
@@ -73,7 +73,7 @@ bool metadata(mlir::ModuleOp batch,const Json &effects,Json &out){
       for(const auto &scalar:items(field(row,"scalars"))){
         const auto &parameter=items(field(original,"parameters"))[static_cast<size_t>(*field(scalar,"sourceParameter").getAsInteger())];
         scalars.push_back(Object{{"argument",field(scalar,"argument")},{"sourceParameter",field(scalar,"sourceParameter")},
-          {"sourceBinding",field(field(parameter,"binding"),"id")},{"type","f32"}});
+          {"sourceBinding",field(field(parameter,"binding"),"id")},{"type",field(parameter,"logicalType")}});
       }
       std::string abiType;llvm::raw_string_ostream typeOut(abiType);functions.at(string(field(row,"symbol"))).getFunctionType().print(typeOut);
       entries.push_back(Object{{"entrySymbol",field(row,"symbol")},{"logicalFunctionId",field(system,"functionId")},
@@ -85,7 +85,7 @@ bool metadata(mlir::ModuleOp batch,const Json &effects,Json &out){
     {"effects",effectText},{"effectsHash",digest(effectText)},{"entries",std::move(entries)},
     {"functionIdentityDomain","tsfg.module-callable-function.candidate.v1"},{"inputIdentity",field(effects,"inputIdentity")},
     {"packageId",field(effects,"packageId")},{"sourcePacket",codec.canonical(packet)+"\n"},{"sourceRequest",codec.canonical(request)+"\n"},{"target",target}};
-  auto candidate=codec.envelope("tsfg.query-tmeta",schema,"tsfg.query-tmeta.v1",payload);
+  auto candidate=codec.envelope("tsfg.query-tmeta",2,schema,"tsfg.query-tmeta.v2",payload);
   codec.canonical(candidate);if(!codec.valid)return false;
   out=std::move(candidate);return true;
 }
@@ -128,9 +128,9 @@ int canonicalizeTmeta(llvm::StringRef bytes,mlir::MLIRContext &context){
   Json root=nullptr;
   if(!arrays::ownerproof::parseCanonical(bytes,root,jsonPolicy)||
     !exact(root,{"family","payload","payloadHash","schemaHash","version"})||string(field(root,"family"))!="tsfg.query-tmeta"||
-    field(root,"version").getAsInteger()!=1||string(field(root,"schemaHash"))!=schema)return reject();
+    field(root,"version").getAsInteger()!=2||string(field(root,"schemaHash"))!=schema)return reject();
   const auto body=field(root,"payload").getAsString();if(!body||body->size()>byteLimit||
-    string(field(root,"payloadHash"))!=digest(std::string("tsfg.query-tmeta.v1")+std::string(1,'\0')+body->str()))return reject();
+    string(field(root,"payloadHash"))!=digest(std::string("tsfg.query-tmeta.v2")+std::string(1,'\0')+body->str()))return reject();
   Json payload=nullptr;if(!arrays::ownerproof::parseCanonical(body->str()+"\n",payload,jsonPolicy))return reject();
   const auto batchText=field(payload,"batch").getAsString();if(!batchText||batchText->empty()||batchText->size()>8388608)return reject();
   auto batch=mlir::parseSourceString<mlir::ModuleOp>(*batchText,&context);if(!batch)return reject();

@@ -14,7 +14,7 @@ const cases=[...['architecture','aliases','duplicate','complete','wrapper-alias'
   ['system-query-effects','multi'],...['direct','imported','local-export'].map(name=>['system-query-scalars',name]),
   ...['view-direct','view-imported','view-aliases','view-same-owner','view-parenthesized'].map(name=>['system-query-views',name])].map(([directory,name])=>{
     const bytes=readFileSync(new URL('./testdata/'+directory+'/'+name+'-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-    return {name,bytes,context:{family:'tsfg.system-query-context-candidate',version:4,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+    return {name,bytes,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
   });
 const tool=process.env.TSFG_QUERY_TMETA_EXE,output=process.env.TSFG_QUERY_TMETA_OUTPUT,retained=process.env.TSFG_QUERY_TMETA_RETAINED??output,enabled=Boolean(tool&&output),children=[];
 const run=(name,input,command='--tmeta',status=0)=>{
@@ -30,7 +30,7 @@ const run=(name,input,command='--tmeta',status=0)=>{
 test('Query tmeta original-context/current-manifest gates',async()=>{
   const input=cases.at(-1);
   await assert.rejects(compileSystemQuery(input.bytes,{...input.context,expectedPackageId:'sha256:'+'0'.repeat(64)},{core:tool??'missing',tmeta:true}),/identity|differs/);
-  await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:tool??'missing',tmeta:true}),/artifact-manifest|ENOENT/);
+  await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:'missing',tmeta:true}),/artifact-manifest|ENOENT/);
   assert.match(queryTmetaSchema,/^sha256:[0-9a-f]{64}$/);
 });
 
@@ -60,22 +60,23 @@ test('Query tmeta cold Source/identity/column/permission/signature/symbol reject
     value=>{const packet=JSON.parse(value.sourcePacket);packet.payload.program.files[0].content+=' ';value.sourcePacket=canonical(packet)+'\n';},
     value=>{const layout=JSON.parse(value.componentLayouts),data=JSON.parse(layout.payload);data.types.find(type=>type.kind==='component').fields[0].offset+=4;layout.payload=canonical(data);layout.payloadHash=sha256('tsfg.component-layout.v1\0'+layout.payload);value.componentLayouts=canonical(layout)+'\n';value.layoutHash=sha256(value.componentLayouts);},
     value=>{const effects=JSON.parse(value.effects);effects.systems[0].loops[0].operations=[];value.effects=canonical(effects)+'\n';value.effectsHash=sha256(value.effects);},
+    value=>{value.entries[0].scalars[0].type='f64';},
   ];
   mutations.forEach((mutate,index)=>{
-    const changed=structuredClone(payload);mutate(changed);const envelope=JSON.parse(original);envelope.payload=canonical(changed);envelope.payloadHash=sha256('tsfg.query-tmeta.v1\0'+envelope.payload);const bytes=canonical(envelope)+'\n';
+    const changed=structuredClone(payload);mutate(changed);const envelope=JSON.parse(original);envelope.payload=canonical(changed);envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);const bytes=canonical(envelope)+'\n';
     run('bad-'+index,bytes,'--canonicalize-tmeta',3);
     // The complete layout-offset mutant is checked by LLVM DataLayout in C++;
     // Node deliberately does not duplicate that official ABI implementation.
     if(index!==11)assert.throws(()=>readSystemQueryTmeta(Buffer.from(bytes),facts,input.context,payload.batch),/tmeta|effects/);
   });
-  const wrongVersion=JSON.parse(original);wrongVersion.version=2;run('bad-version',canonical(wrongVersion)+'\n','--canonicalize-tmeta',3);
+  const wrongVersion=JSON.parse(original);wrongVersion.version=1;run('bad-version',canonical(wrongVersion)+'\n','--canonicalize-tmeta',3);
   assert.throws(()=>readSystemQueryTmeta(Buffer.from(canonical(wrongVersion)+'\n'),facts,input.context,payload.batch),/tmeta/);
   run('bad-json','{','--canonicalize-tmeta',3);
 });
 
 test('Query tmeta body above 1 MiB retains strict UTF8 and 8 MiB limit',{skip:!enabled},()=>{
   const bytes=readFileSync(new URL('./testdata/system-query-tmeta/large-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-  const context={family:'tsfg.system-query-context-candidate',version:4,requestBytes:readFileSync(new URL('./testdata/system-query-tmeta/large-request.json',import.meta.url)),expectedPackageId:packet.packageId};
+  const context={family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/system-query-tmeta/large-request.json',import.meta.url)),expectedPackageId:packet.packageId};
   const facts=readSystemQueryFacts(bytes,context),core=emitSystemQueryCore(facts,context),metadata=run('large',core),envelope=JSON.parse(metadata),payload=JSON.parse(envelope.payload);
   assert.ok(Buffer.byteLength(envelope.payload)>1048576);assert.ok(Buffer.byteLength(metadata)<8388608);
   const batch=run('large-batch',core,'--cpu-batch');readSystemQueryTmeta(Buffer.from(metadata),facts,context,batch);

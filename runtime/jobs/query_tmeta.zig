@@ -4,12 +4,13 @@ const std = @import("std");
 const layout = @import("layout.zig");
 const storage = @import("store.zig");
 const effects_module = @import("query_effects.zig");
-pub const schema_hash = "sha256:36069e89fac29edd840851e1de07ffccfbd12fdd0083551dba365e2dd0f8acad";
+pub const schema_hash = "sha256:d598644bbd5360feb48a17cb2511dc93b4dbb2785d2a3f111759dfb6c1b2c69b";
 pub const Error = error{ InvalidMetadata, MetadataLimit, IdentityMismatch, WrongStore, BindingMismatch, ReadOnly };
 pub const Source = effects_module.Source;
 pub const Column = struct { access: storage.Access, alignment: u32, bufferArgument: u32, componentType: []const u8, index: u32, sourceComponentType: []const u8, stride: u32, strideArgument: u32 };
 pub const Tuple = struct { bufferArgument: u32, columnIndex: u32, componentType: []const u8, mode: storage.Access, sourceBinding: []const u8, tupleIndex: u32 };
 pub const Scalar = struct { argument: u32, sourceBinding: []const u8, sourceParameter: u32, type: []const u8 };
+pub const ScalarValue = union(enum) { float32: f32, float64: f64 };
 pub const Entry = struct { abiType: []const u8, columns: []const Column, entrySymbol: []const u8, logicalFunctionId: []const u8, loop: u32, queryBinding: []const u8, rowCountArgument: u32, scalars: []const Scalar, signatureHash: []const u8, source: Source, sourceFunctionId: []const u8, tupleOccurrences: []const Tuple };
 pub const Payload = struct { batch: []const u8, batchHash: []const u8, componentLayouts: []const u8, effects: []const u8, effectsHash: []const u8, entries: []const Entry, functionIdentityDomain: []const u8, inputIdentity: []const u8, layoutHash: []const u8, packageId: []const u8, sourcePacket: []const u8, sourceRequest: []const u8, target: layout.Target };
 const Envelope = struct { family: []const u8, payload: []const u8, payloadHash: []const u8, schemaHash: []const u8, version: u32 };
@@ -32,10 +33,10 @@ pub const Document = struct {
         const own = arena.allocator();
         const decoded = std.json.parseFromSlice(Envelope, own, bytes, .{ .allocate = .alloc_always, .max_value_len = 8388608 }) catch |err| return if (err == error.OutOfMemory) err else error.InvalidMetadata;
         const env = decoded.value;
-        if (env.version != 1 or !std.mem.eql(u8, env.family, "tsfg.query-tmeta") or !std.mem.eql(u8, env.schemaHash, schema_hash)) return error.InvalidMetadata;
+        if (env.version != 2 or !std.mem.eql(u8, env.family, "tsfg.query-tmeta") or !std.mem.eql(u8, env.schemaHash, schema_hash)) return error.InvalidMetadata;
         if (env.payload.len > 8388608) return error.MetadataLimit;
         if (!digestId(expected.payloadHash) or !digestId(expected.inputIdentity) or !digestId(expected.packageId) or !std.mem.eql(u8, env.payloadHash, expected.payloadHash)) return error.IdentityMismatch;
-        if (!std.mem.eql(u8, &digest("tsfg.query-tmeta.v1\x00", env.payload), env.payloadHash)) return error.InvalidMetadata;
+        if (!std.mem.eql(u8, &digest("tsfg.query-tmeta.v2\x00", env.payload), env.payloadHash)) return error.InvalidMetadata;
         try jsonBudget(env.payload);
         const decoded_payload = std.json.parseFromSlice(Payload, own, env.payload, .{ .allocate = .alloc_always, .max_value_len = 8388608 }) catch |err| return if (err == error.OutOfMemory) err else error.InvalidMetadata;
         const payload = decoded_payload.value;
@@ -93,8 +94,8 @@ pub const Document = struct {
                 }
             }
             for (entry.scalars, 0..) |scalar, index| {
-                if (scalar.argument != 1 + 2 * entry.columns.len + index or !digestId(scalar.sourceBinding) or !std.mem.eql(u8, scalar.type, "f32") or (index > 0 and entry.scalars[index - 1].sourceParameter >= scalar.sourceParameter)) return error.InvalidMetadata;
-                try arguments.append(own, "f32");
+                if (scalar.argument != 1 + 2 * entry.columns.len + index or !digestId(scalar.sourceBinding) or (!std.mem.eql(u8, scalar.type, "f32") and !std.mem.eql(u8, scalar.type, "f64")) or (index > 0 and entry.scalars[index - 1].sourceParameter >= scalar.sourceParameter)) return error.InvalidMetadata;
+                try arguments.append(own, scalar.type);
             }
             const joined = try std.mem.join(own, ", ", arguments.items);
             if (!std.mem.eql(u8, entry.abiType, try std.fmt.allocPrint(own, "({s}) -> ()", .{joined}))) return error.InvalidMetadata;
@@ -119,12 +120,19 @@ pub const Document = struct {
         self.arena.deinit();
         self.* = undefined;
     }
-    pub fn bind(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, entry_index: usize, scalars: []const f32) !Plan {
+    pub fn bind(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, entry_index: usize, scalars: []const ScalarValue) !Plan {
         if (batch.store != store) return error.WrongStore;
         if (!std.mem.eql(u8, &store.layout_identity, &self.component_layout.payload_hash)) return error.IdentityMismatch;
         if (entry_index >= self.payload.entries.len) return error.BindingMismatch;
         const entry = self.payload.entries[entry_index];
         if (scalars.len != entry.scalars.len or try batch.columnCount() != entry.columns.len) return error.BindingMismatch;
+        for (entry.scalars, scalars) |formal, actual| {
+            const width = switch (actual) {
+                .float32 => "f32",
+                .float64 => "f64",
+            };
+            if (!std.mem.eql(u8, formal.type, width)) return error.BindingMismatch;
+        }
         const rows = try batch.rowCount();
         if (rows > 65536) return error.BindingMismatch;
         for (entry.columns, 0..) |column, index| {
@@ -141,7 +149,7 @@ pub const Document = struct {
         const columns = try own.alloc(Plan.ColumnBinding, entry.columns.len);
         for (entry.columns, columns) |column, *binding| binding.* = .{ .component = try own.dupe(u8, column.componentType), .stride = column.stride, .access = column.access };
         // Transfer the final allocator state after all owned allocations, including new arena blocks.
-        var result: Plan = .{ .arena = undefined, .batch = batch, .rows = rows, .columns = columns, .tuples = tuples, .scalars = try own.dupe(f32, scalars), .entry_symbol = try own.dupe(u8, entry.entrySymbol), .logical_function_id = try own.dupe(u8, entry.logicalFunctionId), .source_function_id = try own.dupe(u8, entry.sourceFunctionId), .signature_hash = try own.dupe(u8, entry.signatureHash), .entry_index = entry_index, .loop = entry.loop, .source = .{ .path = try own.dupe(u8, entry.source.path), .start = entry.source.start, .end = entry.source.end }, .query_binding = try own.dupe(u8, entry.queryBinding), .metadata_hash = try own.dupe(u8, self.payload_hash), .input_identity = try own.dupe(u8, self.payload.inputIdentity), .package_id = try own.dupe(u8, self.payload.packageId), .effects = try own.dupe(u8, self.payload.effects), .effects_hash = try own.dupe(u8, self.payload.effectsHash) };
+        var result: Plan = .{ .arena = undefined, .batch = batch, .rows = rows, .columns = columns, .tuples = tuples, .scalars = try own.dupe(ScalarValue, scalars), .entry_symbol = try own.dupe(u8, entry.entrySymbol), .logical_function_id = try own.dupe(u8, entry.logicalFunctionId), .source_function_id = try own.dupe(u8, entry.sourceFunctionId), .signature_hash = try own.dupe(u8, entry.signatureHash), .entry_index = entry_index, .loop = entry.loop, .source = .{ .path = try own.dupe(u8, entry.source.path), .start = entry.source.start, .end = entry.source.end }, .query_binding = try own.dupe(u8, entry.queryBinding), .metadata_hash = try own.dupe(u8, self.payload_hash), .input_identity = try own.dupe(u8, self.payload.inputIdentity), .package_id = try own.dupe(u8, self.payload.packageId), .effects = try own.dupe(u8, self.payload.effects), .effects_hash = try own.dupe(u8, self.payload.effectsHash) };
         result.arena = arena;
         return result;
     }
@@ -152,13 +160,13 @@ pub const Document = struct {
 pub const Plan = struct {
     const TupleBinding = struct { column: usize, access: storage.Access };
     const ColumnBinding = struct { component: []const u8, stride: usize, access: storage.Access };
-    pub const Argument = union(enum) { row_count: usize, column: ColumnBinding, stride: usize, scalar: f32 };
+    pub const Argument = union(enum) { row_count: usize, column: ColumnBinding, stride: usize, scalar: ScalarValue };
     arena: std.heap.ArenaAllocator,
     batch: storage.Store.Batch,
     rows: usize,
     columns: []const ColumnBinding,
     tuples: []const TupleBinding,
-    scalars: []const f32,
+    scalars: []const ScalarValue,
     entry_symbol: []const u8,
     logical_function_id: []const u8,
     source_function_id: []const u8,

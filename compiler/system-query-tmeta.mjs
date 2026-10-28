@@ -13,10 +13,10 @@ export const queryTmetaSchema=sha256(canonical(descriptor));
 const policy={...descriptor.limits,allowNul:true,rejectPrototypeKeys:true,safeNonnegativeIntegers:true};
 /** @typedef {Readonly<{index:number,componentType:string,sourceComponentType:string,access:'read'|'write',alignment:number,stride:number,bufferArgument:number,strideArgument:number}>} QueryTmetaColumn */
 /** @typedef {Readonly<{tupleIndex:number,sourceBinding:string,componentType:string,mode:'read'|'write',columnIndex:number,bufferArgument:number}>} QueryTmetaTuple */
-/** @typedef {Readonly<{argument:number,sourceBinding:string,sourceParameter:number,type:'f32'}>} QueryTmetaScalar */
+/** @typedef {Readonly<{argument:number,sourceBinding:string,sourceParameter:number,type:'f32'|'f64'}>} QueryTmetaScalar */
 /** @typedef {Readonly<{abiType:string,columns:readonly QueryTmetaColumn[],entrySymbol:string,logicalFunctionId:string,loop:number,queryBinding:string,rowCountArgument:0,scalars:readonly QueryTmetaScalar[],signatureHash:string,source:import('./system-query-effects.mjs').QueryEffectSource,sourceFunctionId:string,tupleOccurrences:readonly QueryTmetaTuple[]}>} QueryTmetaEntry */
 /** @typedef {Readonly<{batch:string,batchHash:string,componentLayouts:string,effects:string,effectsHash:string,entries:readonly QueryTmetaEntry[],functionIdentityDomain:string,inputIdentity:string,layoutHash:string,packageId:string,sourcePacket:string,sourceRequest:string,target:import('./system-query-facts.mjs').SystemQueryFacts['program']['target']}>} QueryTmetaPayload */
-/** @typedef {Readonly<{family:'tsfg.query-tmeta',version:1,schemaHash:string,payload:string,payloadHash:string}>} QueryTmetaEnvelope */
+/** @typedef {Readonly<{family:'tsfg.query-tmeta',version:2,schemaHash:string,payload:string,payloadHash:string}>} QueryTmetaEnvelope */
 /** @typedef {Readonly<{envelope:QueryTmetaEnvelope,payload:QueryTmetaPayload,effects:import('./system-query-effects.mjs').SystemQueryEffects}>} SystemQueryTmeta */
 /** @typedef {{id:string,kind:string,name:string,base?:string,sourcePath?:string,declarationRange?:{start:number,end:number},nominalKey?:{category:string},fields?:{name:string,type:string,readonly:boolean,origin:{source:string,start:number,end:number}}[]}} LayoutSourceType */
 /** @returns {never} */
@@ -47,8 +47,8 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
   const transport=readGenericJson(copyGenericJsonBytes(bytes,policy),policy);
   if(transport.text!==canonical(transport.value)+'\n')fail('canonical metadata required');
   const envelope=record(transport.value,descriptor.envelope);
-  equal([envelope.family,envelope.version,envelope.schemaHash],['tsfg.query-tmeta',1,queryTmetaSchema]);
-  const body=text(envelope.payload);equal(envelope.payloadHash,sha256('tsfg.query-tmeta.v1\0'+body));
+  equal([envelope.family,envelope.version,envelope.schemaHash],['tsfg.query-tmeta',2,queryTmetaSchema]);
+  const body=text(envelope.payload);equal(envelope.payloadHash,sha256('tsfg.query-tmeta.v2\0'+body));
   const payload=record(json(body+'\n'),descriptor.payload),packet=text(payload.sourcePacket),request=text(payload.sourceRequest),batch=text(payload.batch);
   const sourceContext=/** @type {{requestBytes:Uint8Array}} */(context);
   equal([packet,request,batch],[canonical(JSON.parse(original))+'\n',Buffer.from(sourceContext.requestBytes).toString('utf8'),checkedBatch]);
@@ -97,15 +97,18 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
           alignment:layout.alignment,stride:layout.stride,bufferArgument:1+index*2,strideArgument:2+index*2};
       });
       const tuples=loop.columns.map(tuple=>{const column=columns.find(column=>column.componentType===tuple.componentType);return {tupleIndex:tuple.tupleIndex,sourceBinding:tuple.sourceBinding,componentType:tuple.componentType,mode:tuple.mode,columnIndex:column.index,bufferArgument:column.bufferArgument};});
-      const scalars=system.parameters.filter(parameter=>!parameter.query).map((parameter,index)=>({argument:1+columns.length*2+index,sourceBinding:parameter.binding.id,sourceParameter:parameter.index,type:/** @type {'f32'} */('f32')}));
-      const entry={abiType:'('+['index',...columns.flatMap(()=>['memref<?xi8>','index']),...scalars.map(()=>'f32')].join(', ')+') -> ()',columns,
+      const scalars=system.parameters.filter(parameter=>!parameter.query).map((parameter,index)=>{
+        if(parameter.logicalType!=='f32'&&parameter.logicalType!=='f64')fail('ordinary batch scalar must retain its Source floating-point width');
+        return {argument:1+columns.length*2+index,sourceBinding:parameter.binding.id,sourceParameter:parameter.index,type:/** @type {'f32'|'f64'} */(parameter.logicalType)};
+      });
+      const entry={abiType:'('+['index',...columns.flatMap(()=>['memref<?xi8>','index']),...scalars.map(scalar=>scalar.type)].join(', ')+') -> ()',columns,
         entrySymbol:'batch_'+effect.functionId.slice(7)+'_'+loop.index,logicalFunctionId:effect.functionId,loop:loop.index,queryBinding:loop.queryBinding,
         rowCountArgument:/** @type {0} */(0),scalars,signatureHash:effect.signatureHash,source:loop.source,sourceFunctionId:system.declaration.id,tupleOccurrences:tuples};
       equal(row,entry);entries.push(entry);
     }
   }
   if(cursor!==actual.length||cursor>descriptor.limits.entries)fail('complete entry inventory differs');
-  const result={envelope:{family:/** @type {'tsfg.query-tmeta'} */('tsfg.query-tmeta'),version:/** @type {1} */(1),schemaHash:queryTmetaSchema,payload:body,payloadHash:text(envelope.payloadHash)},
+  const result={envelope:{family:/** @type {'tsfg.query-tmeta'} */('tsfg.query-tmeta'),version:/** @type {2} */(2),schemaHash:queryTmetaSchema,payload:body,payloadHash:text(envelope.payloadHash)},
     payload:{batch,batchHash:sha256(batch),componentLayouts,effects:effectText,effectsHash:sha256(effectText),entries,functionIdentityDomain:descriptor.functionIdentityDomain,
       inputIdentity:facts.inputIdentity,layoutHash:sha256(componentLayouts),packageId:facts.packageId,sourcePacket:packet,sourceRequest:request,target:facts.program.target},effects};
   return own(result);

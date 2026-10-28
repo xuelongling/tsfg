@@ -16,7 +16,8 @@ bool Model::scalars(){
     const auto &decl=field(raw,"declaration");auto *node=original(decl);const auto path=string(field(decl,"sourcePath")),id=string(field(raw,"id"));
     if(!node||!need(string(field(decl,"kind"))=="KindFunctionDeclaration"&&!llvm::StringRef(path).ends_with(".d.ts")&&nodes.count(string(field(*node,"parent")))&&
       string(field(*nodes.at(string(field(*node,"parent"))),"kind"))=="KindSourceFile"&&id==sourceId("function",decl)&&previous<id,"original scalar helper identity/scope/order differs"))return false;previous=id;
-    if(!need(field(raw,"parameters").getAsArray()&&items(field(raw,"parameters")).size()<=32&&string(field(raw,"returnType"))=="f32","scalar helper requires native f32 signature"))return false;
+    const auto returned=string(field(raw,"returnType"));
+    if(!need(field(raw,"parameters").getAsArray()&&items(field(raw,"parameters")).size()<=32&&(returned=="f32"||returned=="f64"),"scalar helper requires floating-point signature"))return false;
     ScalarHelper helper;helper.raw=&raw;std::vector<const Json *> parameters;const Json *body=nullptr;
     for(auto *child:children[string(field(*node,"id"))]){const auto kind=string(field(*child,"kind"));if(kind=="KindParameter")parameters.push_back(child);else if(kind=="KindBlock")body=child;}
     if(!need(body&&parameters.size()==items(field(raw,"parameters")).size()&&same(field(*body,"range"),field(raw,"bodyRange")),"scalar helper original body/parameters differ"))return false;
@@ -28,7 +29,7 @@ bool Model::scalars(){
         !grammar(path).sequence(field(binding,"range"),{field(binding,"nameRange"),Json(":"),field(p,"annotationRange")}))return false;
       const auto logical=string(field(p,"logicalType"));std::string semantic;
       if(field(p,"view").getAsNull()){
-        if(!need(logical=="f32","ordinary helper parameter must be f32")||!annotation(path,field(p,"annotationRange"),logical))return false;
+        if(!need(logical=="f32"||logical=="f64","ordinary helper parameter must be floating-point")||!annotation(path,field(p,"annotationRange"),logical))return false;
         semantic=source->typeIds.at(logical);
       }else{
         if(!view(field(p,"view"),path,field(p,"annotationRange"),logical))return false;
@@ -36,8 +37,8 @@ bool Model::scalars(){
       }
       helper.parameters.push_back(Parameter{&p,source->typeIds.at(logical),""});argumentTypes.push_back(logical);semanticTypes.push_back(semantic);
     }
-    const Json signature=Object{{"id",sourceId("signature",decl)},{"sourcePath",path},{"declarationRange",field(decl,"range")},{"parameters",std::move(argumentTypes)},{"returnType","f32"}};
-    if(!need(same(field(raw,"signature"),signature),"scalar helper original signature differs")||!annotation(path,field(raw,"returnAnnotationRange"),"f32"))return false;
+    const Json signature=Object{{"id",sourceId("signature",decl)},{"sourcePath",path},{"declarationRange",field(decl,"range")},{"parameters",std::move(argumentTypes)},{"returnType",returned}};
+    if(!need(same(field(raw,"signature"),signature)&&string(field(field(raw,"value"),"type"))==returned,"scalar helper original signature/return width differs")||!annotation(path,field(raw,"returnAnnotationRange"),returned))return false;
     const auto &statements=children[string(field(*body,"id"))];
     if(!need(statements.size()==1&&string(field(*statements[0],"kind"))=="KindReturnStatement"&&same(field(*statements[0],"range"),field(raw,"returnRange")),"scalar helper requires exactly one original return"))return false;
     const auto &values=children[string(field(*statements[0],"id"))];
@@ -49,7 +50,7 @@ bool Model::scalars(){
     pieces.push_back(")");pieces.push_back(":");pieces.push_back(field(raw,"returnAnnotationRange"));pieces.push_back(field(raw,"bodyRange"));
     if(!g.sequence(field(decl,"range"),pieces)||!g.sequence(field(raw,"bodyRange"),{Json("{"),field(raw,"returnRange"),Json("}")})||
       !g.sequence(field(raw,"returnRange"),{Json("return"),field(field(raw,"value"),"range")},true))return false;
-    const Json semanticSignature=Object{{"parameters",std::move(semanticTypes)},{"returns",source->typeIds.at("f32")}};
+    const Json semanticSignature=Object{{"parameters",std::move(semanticTypes)},{"returns",source->typeIds.at(returned)}};
     helper.signature=digest(std::string("tsfg.module-callable-signature.candidate.v1")+std::string(1,'\0')+canonical(semanticSignature));
     helper.id=digest(std::string("tsfg.module-callable-function.candidate.v1")+std::string(1,'\0')+canonical(Object{{"path",path},{"name",canonical(Object{{"path",Array{}},{"kind","function"},{"name",field(decl,"name")}})},{"signatureHash",helper.signature}}));
     helperIndex.emplace(id,scalarHelpers.size());scalarHelpers.push_back(std::move(helper));

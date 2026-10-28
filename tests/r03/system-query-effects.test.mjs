@@ -14,7 +14,7 @@ const reports=process.env.TSFG_QUERY_EFFECTS_REPORTS;
 const names=['architecture','aliases','duplicate','complete','wrapper-alias','loop-architecture','loop-aliases','loop-multiple','loop-shared-component','loop-inheritance'];
 const programs=names.map(name=>({name,...systemQueryFixture(name)}));
 const bytes=readFileSync(new URL('./testdata/system-query-effects/multi-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-const multi={name:'multi',bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:4,requestBytes:readFileSync(new URL('./testdata/system-query-effects/multi-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+const multi={name:'multi',bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/system-query-effects/multi-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
 const oracle=JSON.parse(readFileSync(new URL('./testdata/system-query-effects/expected.json',import.meta.url),'utf8'));
 const retained=reports?JSON.parse(readFileSync(reports+'/children.json','utf8')):[];
 const report=name=>{

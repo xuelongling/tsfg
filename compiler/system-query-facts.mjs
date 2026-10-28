@@ -285,7 +285,7 @@ export function readSystemQueryFacts(bytes,context){
   const expectedPackageId=hash(expected.expectedPackageId),transport=readGenericJson(copyGenericJsonBytes(bytes,policy),policy),packet=record(transport.value,descriptor.objects.package);
   if(transport.text!==canonical(packet)+'\n'||packet.family!==systemQueryFactsFormat.family||packet.version!==systemQueryFactsFormat.version||packet.schemaHash!==systemQueryFactsFormat.schemaHash)fail('candidate identity/canonical bytes differ','identity');
   const payload=record(packet.payload,descriptor.objects.payload);
-  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v4\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
+  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v5\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
   const {sources,program}=decodeProgram(payload.program);
   if(descriptor.sourceTypeSchemaHash!==sha256(canonical(commonSourceDescriptor)+'\n'))fail('shared Source type schema differs','identity');
   if(canonical(program.target)!==canonical(descriptor.target)||payload.profilePath!==descriptor.profile.path||payload.profileSHA256!==descriptor.profile.sha256
@@ -293,7 +293,7 @@ export function readSystemQueryFacts(bytes,context){
     ||canonical(program.declarations.paths)!==canonical([descriptor.profile.standardPath,descriptor.profile.path]))fail('owned declaration/target context differs','identity');
   const request={family:descriptor.requestFamily,version:descriptor.version,schemaHash:systemQueryFactsFormat.schemaHash,input:{sourceRoot:program.sourceRoot,rootFile:program.rootFile,files:program.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:program.declarations,config:program.config,target:program.target}};
   const requestTransport=readGenericJson(copyGenericJsonBytes(expected.requestBytes,policy),policy),requestText=canonical(request)+'\n';
-  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v4\0'+requestText))fail('complete original request differs','identity');
+  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v5\0'+requestText))fail('complete original request differs','identity');
   let work=0;const spend=(amount=1)=>{work+=amount;if(work>descriptor.limits.work)fail('source work exceeded','limit');};
   const ast=decodeNodes(payload.nodes,sources,spend),builtins=new Map();
   const builtinRows=array(payload.builtins).map((value,index)=>{const row=ast.original(value);

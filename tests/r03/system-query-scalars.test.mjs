@@ -11,15 +11,16 @@ import {readSystemQueryEffects} from '../../compiler/system-query-effects.mjs';
 
 const inputs=['direct','imported','local-export'].map(name=>{
   const bytes=readFileSync(new URL('./testdata/system-query-scalars/'+name+'-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-  return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:4,requestBytes:readFileSync(new URL('./testdata/system-query-scalars/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+  return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/system-query-scalars/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
 });
 const tool=process.env.TSFG_QUERY_SCALAR_CORE_EXE,output=process.env.TSFG_QUERY_SCALAR_CORE_OUTPUT,enabled=Boolean(tool&&output),children=[];
 // Fully rederived malformed input from the imported public pair: the target
 // is module-private and export {} keeps its original module role. The old
-// owning reader/emitter and C++ both accepted this exact retained Core.
+// owning reader/emitter and C++ accepted the original v4 counterexample. This
+// malformed v5 input rederives transport identities without claiming checker acceptance.
 test('private named import cannot resolve a module-local scalar declaration',()=>{
   const bytes=readFileSync(new URL('./testdata/system-query-scalars/private-import-malformed-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-  const context={family:'tsfg.system-query-context-candidate',version:4,requestBytes:readFileSync(new URL('./testdata/system-query-scalars/private-import-malformed-request.json',import.meta.url)),expectedPackageId:packet.packageId};
+  const context={family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/system-query-scalars/private-import-malformed-request.json',import.meta.url)),expectedPackageId:packet.packageId};
   assert.throws(()=>readSystemQueryFacts(bytes,context),/original named import has no unique module export/);
 });
 const run=(name,input,command='--canonicalize',expected=0)=>{
@@ -36,7 +37,7 @@ test('private named import is independently rejected from retained actual Core',
 for(const input of inputs)test('owned scalar helper identity and complete Source: '+input.name,()=>{
   const facts=readSystemQueryFacts(input.bytes,input.context),ir=emitSystemQueryCore(facts,input.context);
   assert.deepEqual(printSystemQueryFacts(facts,input.context),input.bytes);
-  assert.equal(facts.format.version,4);assert.equal(facts.scalarHelpers.length,input.name==='direct'?1:2);
+  assert.equal(facts.format.version,5);assert.equal(facts.scalarHelpers.length,input.name==='direct'?1:2);
   assert.ok(input.packet.payload.program.files.some(file=>file.content.includes('function unused(v:i32)')));
   assert.ok(input.packet.payload.nodes.some(node=>node.kind==='KindClassDeclaration'&&node.name==='Box'));
   assert.ok(!facts.scalarHelpers.some(helper=>helper.declaration.name==='unused'));
@@ -60,7 +61,7 @@ for(const input of inputs)test('actual typed scalar helpers canonicalize, roundt
   assert.deepEqual(scaled.directCallees,scaled.transitiveCallees);
 });
 
-test('owning v4 scalar directory rejects changed actual target, arguments, body and inventory',()=>{
+test('owning v5 scalar directory rejects changed actual target, arguments, body and inventory',()=>{
   const input=inputs[1];
   const mutations=[packet=>packet.payload.scalarHelpers.pop(),packet=>{packet.payload.scalarHelpers[0].signature.returnType='i32';},
     packet=>{const helper=packet.payload.scalarHelpers.find(row=>row.value.kind==='binary');helper.value.operator='+';},
@@ -68,7 +69,7 @@ test('owning v4 scalar directory rejects changed actual target, arguments, body 
     packet=>{packet.payload.systems[0].loops[0].statements[0].value.value.arguments.reverse();},
     packet=>{const call=packet.payload.systems[0].loops[0].statements[0].value.value,other=packet.payload.scalarHelpers.find(row=>row.id!==call.callee);call.callee=other.id;call.signature=other.signature;},
     packet=>{packet.payload.scalarHelpers[0].returnRange.start++;}];
-  for(const mutate of mutations){const packet=structuredClone(input.packet);mutate(packet);packet.packageId=sha256('tsfg.system-query.package.v4\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  for(const mutate of mutations){const packet=structuredClone(input.packet);mutate(packet);packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
     assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...input.context,expectedPackageId:packet.packageId}));}
 });
 
@@ -84,7 +85,7 @@ test('independent C++ rejects scalar call SSA, original identity and helper-body
     ['callee-anchor',ir.replace(/callee_start = (\d+) : i64/,(_,start)=>'callee_start = '+(Number(start)+1)+' : i64')],
     ['return-operand',ir.replace(/"func.return"\(%qv\d+\)/,'"func.return"(%harg0)')]];
   const packet=structuredClone(input.packet),body=packet.payload.scalarHelpers.find(row=>row.value.kind==='binary');body.value.operator='+';
-  packet.packageId=sha256('tsfg.system-query.package.v4\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   variants.push(['rehashed-wrong-original-body',ir.replace('tsfg.query_facts = '+coreQuote(canonical(input.packet)),'tsfg.query_facts = '+coreQuote(canonical(packet)))]);
   for(const [name,bad] of variants){assert.notEqual(bad,ir,name);assert.equal(run(name,bad,'--canonicalize',3).length,0);}
 });

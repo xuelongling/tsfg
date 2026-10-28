@@ -2,7 +2,7 @@
 
 # Query metadata and batch binding
 
-The development `.tmeta` Query data section is a canonical JSON envelope,
+The development `.tmeta` Query v2 data section is a canonical JSON envelope,
 defined by `contracts/query-tmeta-development.json`. It carries the complete
 original owned Source packet and request, checked standard CPU batch, existing
 component-layout envelope, and complete actual effects report. It does not
@@ -29,7 +29,7 @@ IDs belong to `tsfg.module-callable-function.candidate.v1`; they are not the
 published R04 `tsfg.function` identity. No metadata field creates or updates a
 FunctionCell. The ABI type describes the actual standard `func` signature:
 index row count, one byte-memref/byte-stride pair per unique component, then
-original f32 scalar parameters. Tuple occurrences retain their original access
+original f32/f64 scalar parameters with their exact Source widths. Tuple occurrences retain their original access
 mode and select the same column for repeated component identities.
 
 The component section reuses component-layout v1. Its `hirDigest` binds the
@@ -46,7 +46,9 @@ than serializing an empty value. The Node input boundary owns raw bytes before
 strict UTF8 decoding; invalid bytes are never repaired into U+FFFD.
 
 The Runtime reader binds these data to an actual Store batch and its existing
-query lease. The caller supplies the independently checked metadata identity;
+query lease. Scalars use a tagged f32/f64 value, and binding rejects a tag that
+differs from the declared Source width without converting the value. The caller
+supplies the independently checked metadata identity;
 the reader checks the real Store layout, columns, strides and access. The plan
 does not copy component storage or provide a function pointer. Releasing the
 query invalidates access through the bound plan. Runtime details live with the

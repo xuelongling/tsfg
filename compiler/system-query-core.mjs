@@ -10,7 +10,7 @@ export const systemQueryTypeId=query=>sha256('tsfg.query.type.v1\0'+canonical(qu
 /** @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} context */
 export function emitSystemQueryCore(facts,context){
   const original=printSystemQueryFacts(facts,context),packet=JSON.parse(original.toString('utf8'));
-  const request={family:'tsfg.system-query-facts-request-candidate',version:4,schemaHash:facts.format.schemaHash,
+  const request={family:'tsfg.system-query-facts-request-candidate',version:5,schemaHash:facts.format.schemaHash,
     input:{sourceRoot:facts.program.sourceRoot,rootFile:facts.program.rootFile,files:facts.program.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:facts.program.declarations,config:facts.program.config,target:facts.program.target}};
   let remaining=1000000,serial=0;
   const spend=(n=1)=>{remaining-=n;if(remaining<0)throw new TypeError('r10-query-core-budget: lowering work exceeded');};
@@ -31,7 +31,7 @@ export function emitSystemQueryCore(facts,context){
     const emit=(op,args,type,properties,range)=>{
       const name=type?'%qv'+serial++:null;
       line(indent,name?name+' = ':'',quote(op),'(',args.map(row=>row.name).join(', '),') {',properties?properties+', ':'',anchor(range),'} : (',args.map(row=>row.type).join(', '),') -> ',type??'()');
-      return name?{name,type,semantic:scalarTypeIds.f32,binding:''}:null;
+      return name?{name,type,semantic:value.type,binding:''}:null;
     };
     if(value.kind==='bindingReference')return bindings.get(value.binding);
     if(value.kind==='parentheses')return expression(value.expression,bindings,owner,indent);
@@ -45,22 +45,22 @@ export function emitSystemQueryCore(facts,context){
         }
         return actual;
       });
-      return emit('func.call',args,'f32','callee = @'+quote('query_helper_'+value.callee.slice(7))+', tsfg_core.function_id = '+quote(value.callee)+', tsfg_core.signature_hash = '+quote(value.signatureHash)+
+      return emit('func.call',args,value.sourceType,'callee = @'+quote('query_helper_'+value.callee.slice(7))+', tsfg_core.function_id = '+quote(value.callee)+', tsfg_core.signature_hash = '+quote(value.signatureHash)+
         ', tsfg.query_source_callee = '+quote(value.sourceCallee)+', callee_start = '+value.calleeRange.start+' : i64, callee_end = '+value.calleeRange.end+' : i64',value.range);
     }
     const field=value=>{
       const receiver=bindings.get(value.receiver.binding);if(!receiver)fail(owner,value.range,'field receiver is not the actual tuple binding');
       return {receiver,properties:'component_type = '+quote(receiver.semantic)+', field = '+quote(value.property)+', source_field = '+quote(value.sourceField)};
     };
-    if(value.kind==='fieldAccess'){const selected=field(value);return emit('tsfg.field_load',[selected.receiver],'f32',selected.properties,value.range);}
+    if(value.kind==='fieldAccess'){const selected=field(value);return emit('tsfg.field_load',[selected.receiver],value.sourceType,selected.properties,value.range);}
     if(value.kind==='binary'){
       const left=expression(value.left,bindings,owner,indent),right=expression(value.right,bindings,owner,indent),op={'+':'add','-':'sub','*':'mul','/':'div'}[value.operator];
-      if(!op)fail(owner,value.operatorRange,'unsupported f32 operator');return emit('tsfg_core.'+op,[left,right],'f32','operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range);
+      if(!op)fail(owner,value.operatorRange,'unsupported floating-point operator');return emit('tsfg_core.'+op,[left,right],value.sourceType,'operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range);
     }
     if(value.kind==='fieldAssignment'){
       const selected=field(value.target),op={'+=':'add','-=':'sub','*=':'mul','/=':'div'}[value.operator];
-      const previous=op?emit('tsfg.field_load',[selected.receiver],'f32',selected.properties,value.target.range):null;
-      const rhs=expression(value.value,bindings,owner,indent),result=previous?emit('tsfg_core.'+op,[previous,rhs],'f32','operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range):rhs;
+      const previous=op?emit('tsfg.field_load',[selected.receiver],value.sourceType,selected.properties,value.target.range):null;
+      const rhs=expression(value.value,bindings,owner,indent),result=previous?emit('tsfg_core.'+op,[previous,rhs],value.sourceType,'operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range):rhs;
       emit('tsfg.field_store',[selected.receiver,result],null,selected.properties,value.range);return result;
     }
     fail(owner,value.range,'unsupported owned Query expression');
@@ -85,10 +85,10 @@ export function emitSystemQueryCore(facts,context){
     line('    func.return');line('  }');
   }
   for(const helper of facts.scalarHelpers){
-    const parameters=helper.parameters.map(parameter=>({name:'%harg'+parameter.index,type:parameter.view?view(parameter.type,parameter.view.access.mode):'f32',semantic:parameter.type,binding:parameter.binding.id,mode:parameter.view?.access.mode??null}));
-    line('  func.func @',quote('query_helper_'+helper.id.slice(7)),'(',parameters.map(row=>row.name+': '+row.type).join(', '),') -> f32 attributes {tsfg_core.function_id = ',quote(helper.id),', tsfg_core.signature_hash = ',quote(helper.signatureHash),', tsfg.query_source_function = ',quote(helper.declaration.id),', tsfg.query_source_helper = ',quote(helper.sourceId),', tsfg_source.path = ',quote(helper.declaration.sourcePath),', ',anchor(helper.declaration.range),'} {');
+    const parameters=helper.parameters.map(parameter=>({name:'%harg'+parameter.index,type:parameter.view?view(parameter.type,parameter.view.access.mode):parameter.logicalType,semantic:parameter.type,binding:parameter.binding.id,mode:parameter.view?.access.mode??null}));
+    line('  func.func @',quote('query_helper_'+helper.id.slice(7)),'(',parameters.map(row=>row.name+': '+row.type).join(', '),') -> ',helper.sourceReturnType,' attributes {tsfg_core.function_id = ',quote(helper.id),', tsfg_core.signature_hash = ',quote(helper.signatureHash),', tsfg.query_source_function = ',quote(helper.declaration.id),', tsfg.query_source_helper = ',quote(helper.sourceId),', tsfg_source.path = ',quote(helper.declaration.sourcePath),', ',anchor(helper.declaration.range),'} {');
     const result=expression(helper.value,new Map(parameters.map(row=>[row.binding,row])),helper,'    ');
-    line('    "func.return"(',result.name,') {',anchor(helper.returnRange),'} : (f32) -> ()');line('  }');
+    line('    "func.return"(',result.name,') {',anchor(helper.returnRange),'} : (',helper.sourceReturnType,') -> ()');line('  }');
   }
   line('}');return text.finish();
 }

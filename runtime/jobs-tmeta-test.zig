@@ -33,9 +33,9 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     defer if (!released) query.release() catch unreachable;
     try std.testing.expectEqual(@as(usize, 2), try query.batchCount());
     const batch = try query.batch(0);
-    const scalars = try A.alloc(f32, entry.scalars.len);
+    const scalars = try A.alloc(T.ScalarValue, entry.scalars.len);
     defer A.free(scalars);
-    for (scalars, 0..) |*scalar, index| scalar.* = @as(f32, @floatFromInt(index)) + 0.5;
+    for (scalars, entry.scalars, 0..) |*scalar, formal, index| scalar.* = if (std.mem.eql(u8, formal.type, "f64")) .{ .float64 = @as(f64, @floatFromInt(index)) + 16777217.25 } else .{ .float32 = @as(f32, @floatFromInt(index)) + 0.5 };
     var plan = try document.bind(A, &store, batch, 0, scalars);
     defer plan.deinit();
     try std.testing.expectEqual(@as(usize, 2), (try plan.argument(0)).row_count);
@@ -51,9 +51,15 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         try std.testing.expectEqual(@intFromPtr((try batch.read(index)).ptr), @intFromPtr((try plan.readTuple(findTuple(entry, index))).ptr));
     }
     for (entry.scalars, 0..) |scalar, index| {
-        try std.testing.expectEqual(scalars[index], (try plan.argument(scalar.argument)).scalar);
-        scalars[index] = -100;
-        try std.testing.expectEqual(@as(f32, @floatFromInt(index)) + 0.5, (try plan.argument(scalar.argument)).scalar);
+        const original = scalars[index];
+        try std.testing.expect(std.meta.eql(original, (try plan.argument(scalar.argument)).scalar));
+        scalars[index] = if (std.mem.eql(u8, scalar.type, "f64")) .{ .float64 = -100 } else .{ .float32 = -100 };
+        try std.testing.expect(std.meta.eql(original, (try plan.argument(scalar.argument)).scalar));
+        const wrong: T.ScalarValue = if (std.mem.eql(u8, scalar.type, "f64")) .{ .float32 = 1 } else .{ .float64 = 1 };
+        const saved = scalars[index];
+        scalars[index] = wrong;
+        try std.testing.expectError(error.BindingMismatch, document.bind(A, &store, batch, 0, scalars));
+        scalars[index] = saved;
     }
     var shared = false;
     for (entry.tupleOccurrences, 0..) |tuple, index| {
@@ -70,7 +76,7 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         }
     }
     if (shared_required) try std.testing.expect(shared);
-    const too_many = try A.alloc(f32, scalars.len + 1);
+    const too_many = try A.alloc(T.ScalarValue, scalars.len + 1);
     defer A.free(too_many);
     try std.testing.expectError(error.BindingMismatch, document.bind(A, &store, batch, 0, too_many));
     try std.testing.expectError(error.BindingMismatch, document.bind(A, &store, batch, document.payload.entries.len, scalars));
@@ -167,7 +173,7 @@ fn encodePayload(payload: T.Payload) !struct { bytes: []u8, hash: [71]u8 } {
     const body = try std.json.Stringify.valueAlloc(A, payload, .{});
     defer A.free(body);
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update("tsfg.query-tmeta.v1\x00");
+    hash.update("tsfg.query-tmeta.v2\x00");
     hash.update(body);
     var value: [32]u8 = undefined;
     hash.final(&value);
@@ -175,7 +181,7 @@ fn encodePayload(payload: T.Payload) !struct { bytes: []u8, hash: [71]u8 } {
     @memcpy(rendered[0..7], "sha256:");
     const hex = std.fmt.bytesToHex(value, .lower);
     @memcpy(rendered[7..], &hex);
-    const envelope = try std.json.Stringify.valueAlloc(A, .{ .family = "tsfg.query-tmeta", .payload = body, .payloadHash = @as([]const u8, &rendered), .schemaHash = T.schema_hash, .version = @as(u32, 1) }, .{});
+    const envelope = try std.json.Stringify.valueAlloc(A, .{ .family = "tsfg.query-tmeta", .payload = body, .payloadHash = @as([]const u8, &rendered), .schemaHash = T.schema_hash, .version = @as(u32, 2) }, .{});
     defer A.free(envelope);
     return .{ .bytes = try std.mem.concat(A, u8, &.{ envelope, "\n" }), .hash = rendered };
 }
@@ -183,7 +189,7 @@ fn encodePayload(payload: T.Payload) !struct { bytes: []u8, hash: [71]u8 } {
 test "Query metadata rejects malformed and wrong-version unknown bytes before binding" {
     try std.testing.expectError(error.InvalidMetadata, T.Document.load(A, "", unused_expected));
     try std.testing.expectError(error.InvalidMetadata, T.Document.load(A, "{}\n", unused_expected));
-    const wrong_version = "{\"family\":\"tsfg.query-tmeta\",\"payload\":\"{}\",\"payloadHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"schemaHash\":\"" ++ T.schema_hash ++ "\",\"version\":2}\n";
+    const wrong_version = "{\"family\":\"tsfg.query-tmeta\",\"payload\":\"{}\",\"payloadHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"schemaHash\":\"" ++ T.schema_hash ++ "\",\"version\":1}\n";
     try std.testing.expectError(error.InvalidMetadata, T.Document.load(A, wrong_version, unused_expected));
     const deep = "[" ** 129 ++ "]" ** 129 ++ "\n";
     try std.testing.expectError(error.MetadataLimit, T.Document.load(A, deep, unused_expected));
@@ -197,6 +203,12 @@ test "actual repeated read and write occurrences share one borrowed component co
 }
 test "actual above1MiB producer payload passes the same owning reader and batch binding" {
     try exerciseFixture("large", false);
+}
+test "actual f64 and f32 producer scalars bind independently without narrowing" {
+    try exerciseFixture("f64-mixed", false);
+}
+test "actual f64 view helper metadata retains its original borrowed batch" {
+    try exerciseFixture("f64-helper", false);
 }
 test "actual producer Layout releases arena growth without resize" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-parenthesized-receipt.json"), .{});
@@ -223,7 +235,7 @@ test "Query metadata explicitly admits strings above1MiB up to its own boundary 
     const payload = try A.alloc(u8, 1048577);
     defer A.free(payload);
     @memset(payload, 'x');
-    const envelope = try std.json.Stringify.valueAlloc(A, .{ .family = "tsfg.query-tmeta", .payload = @as([]const u8, payload), .payloadHash = "sha256:" ++ "1" ** 64, .schemaHash = T.schema_hash, .version = @as(u32, 1) }, .{});
+    const envelope = try std.json.Stringify.valueAlloc(A, .{ .family = "tsfg.query-tmeta", .payload = @as([]const u8, payload), .payloadHash = "sha256:" ++ "1" ** 64, .schemaHash = T.schema_hash, .version = @as(u32, 2) }, .{});
     defer A.free(envelope);
     const bytes = try std.mem.concat(A, u8, &.{ envelope, "\n" });
     defer A.free(bytes);

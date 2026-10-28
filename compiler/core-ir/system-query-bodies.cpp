@@ -14,12 +14,13 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
     const auto id=string(field(value,"binding"));if(!need(scope.count(id),"original lexical binding missing"))return false;
     const auto &binding=*scope.at(id),&decl=field(binding,field(binding,"componentType").getAsString()?"declaration":"binding");
     const auto selected=string(field(binding,field(binding,"componentType").getAsString()?"componentType":"logicalType"));
-    return need(type==selected&&(field(binding,"componentType").getAsString()||!field(binding,"view").getAsNull()||type=="f32"),"original expression binding type differs")&&g.name(r,string(field(decl,"name")));
+    return need(type==selected&&(field(binding,"componentType").getAsString()||!field(binding,"view").getAsNull()||type=="f32"||type=="f64"),"original expression binding type differs")&&g.name(r,string(field(decl,"name")));
   }
   if(kind=="parentheses")return need(string(field(field(value,"expression"),"type"))==type,"grouping logical type differs")&&expression(field(value,"expression"),body,scope,path,depth+1)&&g.sequence(r,{Json("("),field(field(value,"expression"),"range"),Json(")")});
   if(kind=="call"){
-    const auto id=string(field(value,"callee"));if(!need(type=="f32"&&helperIndex.count(id)&&field(value,"arguments").getAsArray()&&field(value,"receiver").getAsNull(),"direct native f32 helper target required"))return false;
+    const auto id=string(field(value,"callee"));if(!need(helperIndex.count(id)&&field(value,"arguments").getAsArray()&&field(value,"receiver").getAsNull(),"direct floating-point helper target required"))return false;
     const auto &helper=scalarHelpers[helperIndex.at(id)];const auto &raw=*helper.raw;
+    if(!need(type==string(field(raw,"returnType")),"original helper call return width differs"))return false;
     size_t a,b;if(!g.span(field(value,"calleeRange"),a,b)||!need(a+1==b,"direct scalar callee identifier required"))return false;
     for(const auto &[id,binding]:scope){const auto &decl=field(*binding,field(*binding,"componentType").getAsString()?"declaration":"binding");if(!need(string(field(decl,"name"))!=g.tokens[a].text,"scalar call is shadowed by original local binding"))return false;}
     if(!scalarTarget(path,field(value,"calleeRange"),field(raw,"declaration"))||!need(same(field(value,"signature"),field(raw,"signature"))&&items(field(value,"arguments")).size()==helper.parameters.size(),"scalar helper call signature/arity differs"))return false;
@@ -46,18 +47,18 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
       const auto &t=*source->types.at(owner);for(const auto &candidate:items(field(t,"fields")))if(string(field(candidate,"name"))==name){selected=&candidate;break;}
       if(selected)break;owner=string(field(t,"base"));
     }
-    if(!need(selected&&same(field(*selected,"id"),field(value,"property"))&&type=="f32"&&string(field(f,"type"))==type&&string(field(f,"access"))=="public","first visible original field/type/access differs"))return false;
+    if(!need(selected&&same(field(*selected,"id"),field(value,"property"))&&(type=="f32"||type=="f64")&&string(field(f,"type"))==type&&string(field(f,"access"))=="public","first visible original field/type/access differs"))return false;
     if(kind=="fieldTarget"&&!need(string(field(slot,"mode"))=="write"&&field(f,"readonly").getAsBoolean()==false,"Read borrow or declared readonly field cannot be written"))return false;
     return g.name(field(value,"nameRange"),name)&&g.sequence(r,{field(receiver,"range"),Json("."),field(value,"nameRange")});
   }
   if(kind=="binary"){
     const auto op=string(field(value,"operator"));const auto &left=field(value,"left"),&right=field(value,"right");
-    return need(type=="f32"&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"+","-","*","/"},op)&&string(field(left,"type"))=="f32"&&string(field(right,"type"))=="f32","owned f32 arithmetic required")&&
+    return need((type=="f32"||type=="f64")&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"+","-","*","/"},op)&&string(field(left,"type"))==type&&string(field(right,"type"))==type,"owned same-width floating-point arithmetic required")&&
       expression(left,body,scope,path,depth+1)&&expression(right,body,scope,path,depth+1)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(left,"range"),field(value,"operatorRange"),field(right,"range")});
   }
   if(kind=="fieldAssignment"){
     const auto op=string(field(value,"operator"));const auto &target=field(value,"target"),&rhs=field(value,"value");
-    return need(type=="f32"&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))=="fieldTarget"&&string(field(rhs,"type"))=="f32","owned f32 field assignment required")&&
+    return need((type=="f32"||type=="f64")&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))=="fieldTarget"&&string(field(target,"type"))==type&&string(field(rhs,"type"))==type,"owned same-width floating-point field assignment required")&&
       expression(target,body,scope,path,depth+1)&&expression(rhs,body,scope,path,depth+1)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(target,"range"),field(value,"operatorRange"),field(rhs,"range")});
   }
   return need(false,"Query expression has no selected typed representation");

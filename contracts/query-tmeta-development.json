@@ -1,6 +1,6 @@
 {
   "family": "tsfg.query-tmeta",
-  "version": 1,
+  "version": 2,
   "format": "JCS envelope plus LF; payload is exact JCS UTF8 in a JSON string",
   "envelope": ["family", "payload", "payloadHash", "schemaHash", "version"],
   "payload": ["batch", "batchHash", "componentLayouts", "effects", "effectsHash", "entries", "functionIdentityDomain", "inputIdentity", "layoutHash", "packageId", "sourcePacket", "sourceRequest", "target"],
@@ -11,7 +11,7 @@
   "source": ["end", "path", "start"],
   "identity": {
     "schemaHash": "sha256(JCS(this descriptor), without LF)",
-    "payloadHash": "sha256(UTF8 tsfg.query-tmeta.v1 + NUL + exact payload UTF8 bytes)",
+    "payloadHash": "sha256(UTF8 tsfg.query-tmeta.v2 + NUL + exact payload UTF8 bytes)",
     "batchHash": "sha256(exact canonical checked standard batch UTF8 including LF)",
     "layoutHash": "sha256(exact componentLayouts envelope UTF8 including LF)",
     "effectsHash": "sha256(exact complete effects report UTF8 including LF)",
@@ -23,7 +23,7 @@
     "componentLayouts": "existing component-layout v1 envelope; hirDigest binds the canonical complete verified catalog {components,target,types} plus LF; inputIdentity binds the original Query request"
   },
   "functionIdentityDomain": "tsfg.module-callable-function.candidate.v1",
-  "abi": "Standard func ABI type, index rowCount then one memref<?xi8>/index byte-stride pair per unique component in UTF8 component-ID order, then original f32 scalars. Repeated tuple occurrences select the same column. No native calling convention or entry address is granted.",
+  "abi": "Standard func ABI type, index rowCount then one memref<?xi8>/index byte-stride pair per unique component in UTF8 component-ID order, then original f32 or f64 scalars with their exact Source widths. Repeated tuple occurrences select the same column. No native calling convention or entry address is granted.",
   "order": "entries in original system order then original loop order; columns strict component-ID order; tuples and scalars in original Source parameter order",
   "limits": {"bytes": 8388608, "stringBytes": 8388608, "depth": 128, "jsonTokens": 1000000, "entries": 4096, "columns": 4096, "rows": 65536, "work": 1000000},
   "qualification": "Versioned development .tmeta Query data section. Independently checked Source, standard batch, layout and effects are retained. Integrity hashes grant neither authenticity nor capability. No code address, published FunctionCell, loader, object, scheduling or execution permission."

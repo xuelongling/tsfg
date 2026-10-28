@@ -18,6 +18,7 @@ struct Check {
   bool text(mlir::Operation *op,llvm::StringRef key,llvm::StringRef value){auto a=op->getAttrOfType<mlir::StringAttr>(key);return need(a&&a.getValue()==value,"operation Source/semantic identity differs");}
   bool integer(mlir::Operation *op,llvm::StringRef key,int64_t value,unsigned width=64){auto a=op->getAttrOfType<mlir::IntegerAttr>(key);return need(a&&a.getType().isSignlessInteger(width)&&a.getInt()==value,"operation numeric anchor/layout differs");}
   bool anchor(mlir::Operation *op,const Json &r){return integer(op,"tsfg_source.start",number(field(r,"start")))&&integer(op,"tsfg_source.end",number(field(r,"end")));}
+  bool scalar(mlir::Type type,const Json &value){return need((type.isF32()||type.isF64())&&tsfg::scalarName(tsfg::typeCode(type))==string(field(value,"type")),"original floating-point SSA width differs");}
   mlir::Operation *take(mlir::Block::iterator &it,mlir::Block &block,llvm::StringRef name,llvm::ArrayRef<mlir::Value> operands,unsigned results,unsigned regions=0){
     if(!m.spend()||!need(it!=block.end(),"missing typed Query operation"))return nullptr;auto *op=&*it++;
     if(!need(op->getName().getStringRef()==name&&op->getNumOperands()==operands.size()&&op->getNumResults()==results&&op->getNumRegions()==regions&&op->getNumSuccessors()==0,"typed Query operation shape/order differs"))return nullptr;
@@ -40,7 +41,7 @@ struct Check {
   }
   mlir::Value arithmetic(mlir::Block::iterator &it,mlir::Block &block,llvm::StringRef name,mlir::Value left,mlir::Value right,const Json &value){
     auto *op=take(it,block,name,{left,right},1);if(!op)return {};
-    const auto &r=field(value,"operatorRange");if(!need(left.getType().isF32()&&right.getType().isF32()&&op->getResult(0).getType().isF32(),"f32 arithmetic operand/result type differs")||
+    const auto &r=field(value,"operatorRange");if(!scalar(op->getResult(0).getType(),value)||!need(left.getType()==op->getResult(0).getType()&&right.getType()==left.getType(),"floating-point arithmetic operand/result widths differ")||
       !attrs(op,{"operator_start","operator_end","tsfg_source.start","tsfg_source.end"})||!anchor(op,field(value,"range"))||!integer(op,"operator_start",number(field(r,"start")))||!integer(op,"operator_end",number(field(r,"end"))))return {};return op->getResult(0);
   }
   mlir::Value expression(mlir::Block::iterator &it,mlir::Block &block,const Json &value,std::map<std::string,Binding> &bindings,unsigned depth=0){
@@ -60,20 +61,20 @@ struct Check {
             auto *borrow=take(it,block,"tsfg.view_borrow",{result},1);
             if(!borrow||!attrs(borrow,{"component_type","mode","tsfg_source.start","tsfg_source.end"})||!text(borrow,"component_type",formal.type)||!text(borrow,"mode",mode)||!anchor(borrow,field(arg,"range"))||!need(borrow->getResult(0).getType()==expected,"borrowed view type differs"))return {};result=borrow->getResult(0);
           }
-        }else if(!need(result.getType().isF32(),"ordinary helper argument must be f32"))return {};
+        }else if(!need(tsfg::scalarName(tsfg::typeCode(result.getType()))==string(field(*formal.raw,"logicalType")),"ordinary helper argument width differs"))return {};
         args.push_back(result);
       }
       auto *op=take(it,block,"func.call",args,1);if(!op)return {};
       auto symbol=op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee");const auto &range=field(value,"calleeRange");
       if(!attrs(op,{"callee","tsfg_core.function_id","tsfg_core.signature_hash","tsfg.query_source_callee","callee_start","callee_end","tsfg_source.start","tsfg_source.end"})||
-        !need(symbol&&symbol.getValue()=="query_helper_"+helper.id.substr(7)&&op->getResult(0).getType().isF32(),"scalar call symbol/result differs")||
+        !need(symbol&&symbol.getValue()=="query_helper_"+helper.id.substr(7),"scalar call symbol differs")||!scalar(op->getResult(0).getType(),value)||
         !text(op,"tsfg_core.function_id",helper.id)||!text(op,"tsfg_core.signature_hash",helper.signature)||!text(op,"tsfg.query_source_callee",string(field(value,"callee")))||
         !integer(op,"callee_start",number(field(range,"start")))||!integer(op,"callee_end",number(field(range,"end")))||!anchor(op,field(value,"range")))return {};
       return op->getResult(0);
     }
     if(kind=="fieldAccess"){
       const auto &receiver=bindings.at(string(field(field(value,"receiver"),"binding")));auto *op=take(it,block,"tsfg.field_load",{receiver.value},1);
-      if(!op||!need(op->getResult(0).getType().isF32(),"field load is not typed f32")||!fieldOp(op,value,receiver,field(value,"range")))return {};return op->getResult(0);
+      if(!op||!scalar(op->getResult(0).getType(),value)||!fieldOp(op,value,receiver,field(value,"range")))return {};return op->getResult(0);
     }
     if(kind=="binary"){
       auto left=expression(it,block,field(value,"left"),bindings,depth+1);if(!left)return {};auto right=expression(it,block,field(value,"right"),bindings,depth+1);if(!right)return {};
@@ -81,7 +82,7 @@ struct Check {
     }
     const auto &target=field(value,"target");const auto &receiver=bindings.at(string(field(field(target,"receiver"),"binding")));const auto op=string(field(value,"operator"));mlir::Value previous;
     if(op!="="){
-      auto *load=take(it,block,"tsfg.field_load",{receiver.value},1);if(!load||!need(load->getResult(0).getType().isF32(),"compound target load is not f32")||!fieldOp(load,target,receiver,field(target,"range")))return {};previous=load->getResult(0);
+      auto *load=take(it,block,"tsfg.field_load",{receiver.value},1);if(!load||!scalar(load->getResult(0).getType(),target)||!fieldOp(load,target,receiver,field(target,"range")))return {};previous=load->getResult(0);
     }
     auto rhs=expression(it,block,field(value,"value"),bindings,depth+1);if(!rhs)return {};
     const auto name=op=="+="?"add":op=="-="?"sub":op=="*="?"mul":"div";
@@ -129,9 +130,9 @@ struct Check {
     if(!attrs(fn,{"function_type","sym_name","tsfg_core.function_id","tsfg_core.signature_hash","tsfg.query_source_function","tsfg.query_source_helper","tsfg_source.path","tsfg_source.start","tsfg_source.end"})||
       !text(fn,"tsfg_core.function_id",helper.id)||!text(fn,"tsfg_core.signature_hash",helper.signature)||!text(fn,"tsfg.query_source_function",string(field(decl,"id")))||!text(fn,"tsfg.query_source_helper",string(field(raw,"id")))||
       !text(fn,"tsfg_source.path",string(field(decl,"sourcePath")))||!anchor(fn,field(decl,"range"))||
-      !need(fn.getSymName()=="query_helper_"+helper.id.substr(7)&&!fn.isExternal()&&fn.getBody().hasOneBlock()&&fn.getNumArguments()==helper.parameters.size()&&fn.getFunctionType().getNumResults()==1&&fn.getFunctionType().getResult(0).isF32(),"scalar helper function shape differs"))return false;
+      !need(fn.getSymName()=="query_helper_"+helper.id.substr(7)&&!fn.isExternal()&&fn.getBody().hasOneBlock()&&fn.getNumArguments()==helper.parameters.size()&&fn.getFunctionType().getNumResults()==1&&tsfg::scalarName(tsfg::typeCode(fn.getFunctionType().getResult(0)))==string(field(raw,"returnType")),"scalar helper function shape/result differs"))return false;
     std::map<std::string,Binding> bindings;for(size_t i=0;i<helper.parameters.size();++i){const auto &p=helper.parameters[i];
-      const auto &view=field(*p.raw,"view");const auto expected=view.getAsNull()?mlir::Type(mlir::Float32Type::get(context)):mlir::Type(ViewType::get(context,p.type+"#"+string(field(field(view,"access"),"mode"))));
+      const auto &view=field(*p.raw,"view");const auto expected=view.getAsNull()?(string(field(*p.raw,"logicalType"))=="f64"?mlir::Type(mlir::Float64Type::get(context)):mlir::Type(mlir::Float32Type::get(context))):mlir::Type(ViewType::get(context,p.type+"#"+string(field(field(view,"access"),"mode"))));
       if(!need(fn.getArgument(i).getType()==expected,"helper argument component/permission type differs"))return false;bindings.emplace(string(field(field(*p.raw,"binding"),"id")),Binding{fn.getArgument(i),p.raw});}
     auto &body=fn.getBody().front();auto it=body.begin();auto value=expression(it,body,field(raw,"value"),bindings);if(!value)return false;
     auto *returned=take(it,body,"func.return",{value},0);

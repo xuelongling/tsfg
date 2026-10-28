@@ -2,7 +2,7 @@
 
 # Owned Query Core consumer
 
-The private owned v4 Source package enters typed Core through
+The private owned v5 Source package enters typed Core through
 `readSystemQueryFacts` and `emitSystemQueryCore`. The complete original package
 and request remain in the module. Original Source FunctionIds and BindingIds
 are kept separately from lowered function, selection, component and FieldIds.
@@ -18,12 +18,12 @@ architecture's column computation; this consumer does not schedule or execute
 it.
 
 Field expressions become typed `tsfg.field_load` and `tsfg.field_store` operations.
-The existing native f32 Core arithmetic operations implement `+`, `-`, `*` and
+The existing native f32/f64 Core arithmetic operations implement `+`, `-`, `*` and
 `/`. A compound assignment loads its actual target before evaluating the RHS,
-then adds and stores. Source statement and operand order remain explicit SSA
+then applies its original operation and stores. Source statement and operand order remain explicit SSA
 dependencies. No component objects or boxed field values are constructed.
 
-Reachable f32-result helpers become real func.func definitions with native-f32 or component-view parameters and typed func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 3; the Core/common wire contract remains unchanged.
+Reachable f32/f64-result helpers become real func.func definitions with native f32/f64 or component-view parameters and typed func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 3; the Core/common wire contract remains unchanged.
 
 The independent C++ consumer reconstructs identities from the retained Source
 data, checks the complete original request and pinned declaration contexts,
@@ -45,7 +45,7 @@ checks. The component-layout26a envelope and its field order stay unchanged.
 
 This bounded slice supports the complete current owned fixtures: declaration
 only systems, cross-file and generic aliases, multiple component occurrences,
-Read/Write views of a shared component, inherited shadowed fields, direct f32
+Read/Write views of a shared component, inherited shadowed fields, direct same-width f32/f64
 field arithmetic, assignment and compound assignment. Ordinary system
 parameters require a selected native scalar Core type and systems return void.
 Component metadata uses fixed fields with scalar literal initializers and
@@ -81,4 +81,4 @@ component and SSA backing. The original operand remains writable; the borrow
 cannot upgrade a Read value or change its component. C++ independently checks
 that operation against the original formal annotation and actual caller view,
 then checks callee field loads/stores and their physical layouts. Helpers still
-have one f32 return expression; returning a view is outside this boundary.
+have one f32/f64 return expression; returning a view is outside this boundary.

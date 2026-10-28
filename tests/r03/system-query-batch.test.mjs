@@ -14,7 +14,7 @@ const cases=[...['architecture','aliases','duplicate','complete','wrapper-alias'
   ['system-query-effects','multi'],...['direct','imported','local-export'].map(name=>['system-query-scalars',name]),
   ...['view-direct','view-imported','view-aliases','view-same-owner','view-parenthesized'].map(name=>['system-query-views',name])].map(([directory,name])=>{
     const bytes=readFileSync(new URL('./testdata/'+directory+'/'+name+'-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-    return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:4,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+    return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
   });
 const tool=process.env.TSFG_QUERY_BATCH_EXE,output=process.env.TSFG_QUERY_BATCH_OUTPUT,enabled=Boolean(tool&&output),children=[];
 const run=(name,input,command='--cpu-batch',status=0)=>{
@@ -41,8 +41,7 @@ const attribute=(text,name)=>{
 test('CPU batch public pipeline retains current-manifest and original-context gates',{skip:!enabled},async()=>{
   const input=cases.find(row=>row.name==='view-parenthesized');
   await assert.rejects(compileSystemQuery(input.bytes,{...input.context,expectedPackageId:'sha256:'+'0'.repeat(64)},{core:tool,cpuBatch:true}),/identity|differs/);
-  // The scoped static test binary intentionally has no factory manifest.
-  await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:tool,cpuBatch:true}),/artifact-manifest|ENOENT/);
+  await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:'missing',cpuBatch:true}),/artifact-manifest|ENOENT/);
 });
 
 for(const input of cases)test('actual Query to standard CPU batch: '+input.name,{skip:!enabled},()=>{

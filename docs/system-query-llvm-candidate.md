@@ -35,6 +35,10 @@ Source attributes are removed only from the conversion work copy; the exact
 original remains in this proof envelope. LLVM IR carries that same batch and
 version in `!tsfg.query.cpu` named metadata.
 
+The retained Source packet uses private Query facts v5. Query `.tmeta` uses
+development format v2, while component-layout remains v1. These data versions
+do not change the LLVM dialect candidate version or grant execution authority.
+
 Neither representation trusts the snapshot as a claim of correctness. Cold
 consumption independently verifies the complete Source/batch, reruns the
 official conversions/export, verifies the actual low-level module, and compares
@@ -47,7 +51,7 @@ same-buffer aliases and helper view arguments use official memref/function ABI
 conversion. These are descriptors with allocated/aligned pointers, offsets,
 sizes and strides; the output is not a newly authorized bare-pointer entry.
 The compiler adds no fast-math, contraction, reassociation or no-alias grants.
-The original ordered f32 operations and helper calls remain part of the cold
+The original ordered f32/f64 operations and helper calls remain part of the cold
 Source binding. Text input/output retains the existing 8 MiB bound.
 
 Object emission and machine/numeric execution are separate dependencies.

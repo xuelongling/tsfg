@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Every positive pair is complete original public Go v4 output, byte for byte.
+// Every positive pair is complete original public Go v5 output, byte for byte.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
@@ -17,7 +17,7 @@ const cases=[['mul','*=','mul'],['sub','-=','sub'],['div','/=','div'],
 const actual=name=>fixture('../system-query-compound/'+name);
 const anchor=range=>'tsfg_source.start = '+range.start+' : i64, tsfg_source.end = '+range.end+' : i64';
 
-for(const [name,operator,operation]of cases)test('actual v4 '+name+' compound captures its old target before its RHS',()=>{
+for(const [name,operator,operation]of cases)test('actual v5 '+name+' compound captures its old target before its RHS',()=>{
   const input=actual(name),facts=readSystemQueryFacts(input.bytes,input.context);
   assert.deepEqual(printSystemQueryFacts(facts,input.context),input.bytes);
   assert.deepEqual(facts.program,input.packet.payload.program);assert.deepEqual(facts.nodes,input.packet.payload.nodes);
@@ -61,7 +61,7 @@ const mutations=[
 ];
 const rehash=(input,mutate)=>{
   const packet=structuredClone(input.packet);mutate(packet.payload);
-  packet.packageId=sha256('tsfg.system-query.package.v4\0'+packet.schemaHash+'\0'+canonical(packet.payload));return packet;
+  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));return packet;
 };
 for(const {name,mutate}of mutations)test('owned compound packet rejects rehashed '+name,()=>{
   const input=actual('mul'),packet=rehash(input,mutate);

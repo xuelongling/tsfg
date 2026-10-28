@@ -6,5 +6,5 @@ export function systemQueryFixture(name){
   const bytes=readFileSync(new URL('./testdata/system-query/'+name+'-facts.json',import.meta.url));
   const requestBytes=readFileSync(new URL('./testdata/system-query/'+name+'-request.json',import.meta.url));
   const packet=JSON.parse(bytes.toString());
-  return {bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:4,requestBytes,expectedPackageId:packet.packageId}};
+  return {bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes,expectedPackageId:packet.packageId}};
 }

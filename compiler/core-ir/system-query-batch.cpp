@@ -45,13 +45,14 @@ struct Batch {
       if(name=="func.call"){
         std::vector<mlir::Value> args;
         for(auto arg:op.getOperands())if(auto it=views.find(arg);it!=views.end()){args.push_back(it->second.buffer);args.push_back(it->second.base);}else args.push_back(values.find(arg)->second);
-        auto call=b.create<mlir::func::CallOp>(loc,helperName(text(&op,"tsfg_core.function_id")),mlir::TypeRange{b.getF32Type()},args);
+        auto call=b.create<mlir::func::CallOp>(loc,helperName(text(&op,"tsfg_core.function_id")),op.getResultTypes(),args);
         call->setAttr("tsfg.batch.callee",op.getAttr("tsfg_core.function_id"));call->setAttr("tsfg.batch.source_callee",op.getAttr("tsfg.query_source_callee"));
         call->setAttr("tsfg.batch.logical_signature",op.getAttr("tsfg_core.signature_hash"));values[op.getResult(0)]=call.getResult(0);lowered=call;
       }else if(name=="tsfg.field_load"||name=="tsfg.field_store"){
         const auto row=views.find(op.getOperand(0))->second;
         auto offset=b.create<mlir::arith::AddIOp>(loc,row.base,index(integer(&op,"offset")));
-        auto view=b.create<mlir::memref::ViewOp>(loc,mlir::MemRefType::get({1},b.getF32Type()),row.buffer,offset,mlir::ValueRange{});
+        const auto fieldType=name=="tsfg.field_load"?op.getResult(0).getType():op.getOperand(1).getType();
+        auto view=b.create<mlir::memref::ViewOp>(loc,mlir::MemRefType::get({1},fieldType),row.buffer,offset,mlir::ValueRange{});
         source(offset,&op,path);source(view,&op,path);
         if(name=="tsfg.field_load"){auto load=b.create<mlir::memref::LoadOp>(loc,view,mlir::ValueRange{index(0)});values[op.getResult(0)]=load;lowered=load;}
         else lowered=b.create<mlir::memref::StoreOp>(loc,values.find(op.getOperand(1))->second,view,mlir::ValueRange{index(0)});
@@ -73,8 +74,8 @@ struct Batch {
     return true;
   }
   bool helper(mlir::func::FuncOp original,const ScalarHelper &helper){
-    std::vector<mlir::Type> parameters;for(auto arg:original.getArguments())if(llvm::isa<ViewType>(arg.getType())){parameters.push_back(bytes());parameters.push_back(b.getIndexType());}else parameters.push_back(b.getF32Type());
-    b.setInsertionPointToEnd(output->getBody());auto fn=b.create<mlir::func::FuncOp>(loc,helperName(helper.id),b.getFunctionType(parameters,{b.getF32Type()}));
+    std::vector<mlir::Type> parameters;for(auto arg:original.getArguments())if(llvm::isa<ViewType>(arg.getType())){parameters.push_back(bytes());parameters.push_back(b.getIndexType());}else parameters.push_back(arg.getType());
+    b.setInsertionPointToEnd(output->getBody());auto fn=b.create<mlir::func::FuncOp>(loc,helperName(helper.id),b.getFunctionType(parameters,original.getFunctionType().getResults()));
     fn.setPrivate();fn->setAttr("tsfg.batch.helper",b.getStringAttr(helper.id));fn->setAttr("tsfg.batch.source_helper",original->getAttr("tsfg.query_source_helper"));
     fn->setAttr("tsfg.batch.source_function",original->getAttr("tsfg.query_source_function"));fn->setAttr("tsfg.batch.logical_signature",original->getAttr("tsfg_core.signature_hash"));
     const auto path=text(original,"tsfg_source.path");source(fn,original,path);auto *entry=fn.addEntryBlock();b.setInsertionPointToStart(entry);values.clear();views.clear();size_t index=0;
@@ -95,8 +96,8 @@ struct Batch {
         {"stride",field(*column.layout,"stride")},{"alignment",field(*column.layout,"alignment")}});
     }
     for(size_t i=0;i<original.getNumArguments();++i)if(!llvm::isa<QueryType>(original.getArgument(i).getType())){
-      if(!need(original.getArgument(i).getType().isF32(),"batch ordinary parameters require f32"))return false;
-      scalars.push_back(Object{{"sourceParameter",int64_t(i)},{"argument",int64_t(parameters.size())}});parameters.push_back(b.getF32Type());
+      const auto type=original.getArgument(i).getType();if(!need(type.isF32()||type.isF64(),"batch ordinary parameters require floating-point type"))return false;
+      scalars.push_back(Object{{"sourceParameter",int64_t(i)},{"argument",int64_t(parameters.size())}});parameters.push_back(type);
     }
     const auto name="batch_"+id.substr(7)+"_"+std::to_string(ordinal);b.setInsertionPointToEnd(output->getBody());auto fn=b.create<mlir::func::FuncOp>(loc,name,b.getFunctionType(parameters,{}));
     fn->setAttr("tsfg.batch.system",original->getAttr("tsfg_core.function_id"));fn->setAttr("tsfg.batch.source_function",original->getAttr("tsfg.query_source_function"));
