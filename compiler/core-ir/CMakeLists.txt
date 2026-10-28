@@ -53,15 +53,20 @@ set(CMAKE_CXX_STANDARD 17)
 include_directories(${LLVM_INCLUDE_DIRS}
   ${LLVM_MAIN_SRC_DIR}/../mlir/include
   ${LLVM_BINARY_DIR}/tools/mlir/include)
-# One owned source directory feeds both this target and production staging/hash.
+# One source catalog feeds target selection, staging and consumer freshness.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/sources.json" _tsfg_core_manifest)
-string(JSON _tsfg_core_count LENGTH "${_tsfg_core_manifest}" sources)
-math(EXPR _tsfg_core_last "${_tsfg_core_count} - 1")
-set(_tsfg_core_sources)
-foreach(_tsfg_index RANGE ${_tsfg_core_last})
-  string(JSON _tsfg_source GET "${_tsfg_core_manifest}" sources ${_tsfg_index})
-  list(APPEND _tsfg_core_sources "${_tsfg_source}")
-endforeach()
+function(read_tsfg_core_sources role output)
+  string(JSON _tsfg_count LENGTH "${_tsfg_core_manifest}" ${role} sources)
+  math(EXPR _tsfg_last "${_tsfg_count} - 1")
+  set(_tsfg_sources)
+  foreach(_tsfg_index RANGE ${_tsfg_last})
+    string(JSON _tsfg_source GET "${_tsfg_core_manifest}" ${role} sources ${_tsfg_index})
+    list(APPEND _tsfg_sources "${_tsfg_source}")
+  endforeach()
+  set(${output} "${_tsfg_sources}" PARENT_SCOPE)
+endfunction()
+read_tsfg_core_sources(common _tsfg_core_common)
+read_tsfg_core_sources(${TSFG_CORE_BUILD_ROLE} _tsfg_core_entry)
 set(_tsfg_core_libraries
   MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
   MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect
@@ -69,17 +74,19 @@ set(_tsfg_core_libraries
   MLIRControlFlowToLLVM MLIRReconcileUnrealizedCasts MLIRLLVMDialect
   MLIRTargetLLVMIRExport MLIRBuiltinToLLVMIRTranslation
   MLIRLLVMToLLVMIRTranslation LLVMAsmParser LLVMCore)
+add_library(tsfg-core-common OBJECT ${_tsfg_core_common})
+target_link_libraries(tsfg-core-common PUBLIC ${_tsfg_core_libraries})
 if(TSFG_CORE_BUILD_ROLE STREQUAL "static")
-  # This dev directory contains the complete manifest-owned generic implementation;
-  # no native adapter or target backend is selected by the static role.
+  # The static role has no native adapter in its source or link graph.
   function(add_tsfg_static_core_tool)
     set(USE_SHARED "")
     set(LLVM_LINK_COMPONENTS Support)
-    add_llvm_executable(tsfg-core-static DISABLE_LLVM_LINK_LLVM_DYLIB ${_tsfg_core_sources})
-    target_link_libraries(tsfg-core-static PRIVATE ${_tsfg_core_libraries})
+    add_llvm_executable(tsfg-core-static PARTIAL_SOURCES_INTENDED
+      DISABLE_LLVM_LINK_LLVM_DYLIB ${_tsfg_core_entry})
+    target_link_libraries(tsfg-core-static PRIVATE tsfg-core-common)
   endfunction()
   add_tsfg_static_core_tool()
 else()
-  add_llvm_executable(tsfg-core-ir ${_tsfg_core_sources})
-  target_link_libraries(tsfg-core-ir PRIVATE ${_tsfg_core_libraries})
+  add_llvm_executable(tsfg-core-ir PARTIAL_SOURCES_INTENDED ${_tsfg_core_entry})
+  target_link_libraries(tsfg-core-ir PRIVATE tsfg-core-common)
 endif()

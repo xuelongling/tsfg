@@ -231,6 +231,15 @@ test('static role distinguishes generic LLVM IR export objects from LLVM backend
     assert.doesNotThrow(() => assertMlirRoleDependency(staticRole, path.join(roots.build, 'lib', name), roots));
 });
 
+test('static product role uses declared staged membership for non-aot names before body access',()=>{
+  const roots={source:'E:/role-source',product:'E:/role-product',build:'E:/role-build',
+    productInputs:new Set(['compiler/core-ir/shared.cpp','compiler/core-ir/shared.h','compiler/core-ir/static-main.cpp'])};
+  for(const name of ['compiler/core-ir/shared.cpp','compiler/core-ir/shared.h','compiler/core-ir/static-main.cpp'])
+    assert.doesNotThrow(()=>assertMlirRoleDependency(staticRole,path.join(roots.product,name),roots));
+  for(const name of ['compiler/core-ir/native-adapter.cpp','runtime/private-core.h'])
+    assert.throws(()=>assertMlirRoleDependency(staticRole,path.join(roots.product,name),roots),{issueCode:'mlir-source-integrity'});
+});
+
 test('unknown ordinary source and EVAL dependencies report the exact gap before body access', async () => {
   const root = await createMlirFixture('static-missing-dependency-');
   const source = path.join(root, 'source'), build = path.join(root, 'build');
@@ -288,7 +297,8 @@ test('unknown static product EVAL origin refuses before reading its body', async
   const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
   const error = await readMlirBuildTrace({ cmakeTrace: traceStream(cmakeTrace), build: path.join(root, 'build'),
-    inputRoots: [source, product], command: staticRole }).then(() => null, failure => failure);
+    // The role selects this staged path; the separate registered identity is missing.
+    inputRoots: [source, product], command: staticRole, productInputs: new Set(['unknown.cmake']) }).then(() => null, failure => failure);
   assert.deepEqual(reads, [], 'a product directory does not admit an unknown EVAL body');
   assert.equal(error?.issueCode, 'mlir-source-integrity');
   assert.deepEqual(error?.missingPaths, ['unknown.cmake']);
@@ -306,7 +316,8 @@ test('static EVAL accepts exact ordinary source and product members and rejects 
       { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
     const entry = { projectId: directory === source ? 'llvm-project.git' : 'tsfg', repositoryRelativePath: relative, sha256: hash(bytes) };
     const input = () => ({ cmakeTrace: traceStream(cmakeTrace), build: path.join(root, 'build'), inputRoots: [source, product], command: staticRole,
-      sourceEntries: directory === source ? [entry] : [], productEntries: directory === product ? [entry] : [] });
+      sourceEntries: directory === source ? [entry] : [], productEntries: directory === product ? [entry] : [],
+      productInputs: new Set(directory === product ? [relative] : []) });
     assert.deepEqual((await readMlirBuildTrace(input())).files, [physical]);
     await writeFile(physical, 'cmake_language(EVAL CODE "set(x changed)")\n');
     await assert.rejects(readMlirBuildTrace(input()), { issueCode: 'mlir-source-integrity' });
@@ -335,6 +346,7 @@ test('registered static product EVAL refuses an intermediate junction before bod
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
   await assert.rejects(readMlirBuildTrace({ cmakeTrace: traceStream(cmakeTrace), build: path.join(root, 'build'),
     inputRoots: [path.join(root, 'source'), product], command: staticRole,
+    productInputs: new Set(['compiler/entry.cmake']),
     productEntries: [{ projectId: 'tsfg', repositoryRelativePath: 'compiler/entry.cmake', sha256: hash(bytes) }] }),
   { issueCode: 'mlir-source-integrity' });
   assert.deepEqual(reads, []);
@@ -456,7 +468,7 @@ test('static planning completion preserves the native build continuation and rej
   assert.deepEqual(await readdir(input.stage), []);
 });
 
-// The current dev main is the already verified generic49 command implementation.
+// The current dev main is the shared ordinary command implementation.
 test('native materialization retains its complete raw fixture without a static transformation policy',async()=>{
   const {root,git,identity,entries}=await fixture();
   const result=await materializeSource(identity,git,path.join(root,'native-staged'));
@@ -464,7 +476,8 @@ test('native materialization retains its complete raw fixture without a static t
 });
 test('dev generic main is an exact ordinary product dependency, not a native backend label',async()=>{
   const root=await createMlirFixture('static-generic-main-');
-  const roots={source:path.join(root,'source'),product:path.join(root,'product'),build:path.join(root,'build')};
+  const roots={source:path.join(root,'source'),product:path.join(root,'product'),build:path.join(root,'build'),
+    productInputs:new Set(['compiler/core-ir/main.cpp'])};
   assert.doesNotThrow(()=>assertMlirRoleDependency(staticRole,path.join(roots.product,'compiler/core-ir/main.cpp'),roots));
 });
 

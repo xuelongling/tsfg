@@ -99,12 +99,13 @@ export function assertMlirRoleCache(command, cache, sourceEntries = []) {
 }
 
 /** Runs before a dependency body (including a CMake EVAL origin) is read. */
-export function assertMlirRoleDependency(command, absolute, { source, product, build }) {
+export function assertMlirRoleDependency(command, absolute, { source, product, build, productInputs = new Set() }) {
   if (command?.role !== 'static') return;
   const name = absolute.replaceAll('\\', '/');
   if (within(source, absolute) && !isStaticCoreSourcePath(path.relative(source, absolute).replaceAll('\\', '/')))
     reject('Static dependency selected an unqualified LLVM backend: ' + name);
-  if (within(product, absolute) && nativeProduct.test(path.relative(product, absolute).replaceAll('\\', '/')))
+  if (within(product, absolute) && (nativeProduct.test(path.relative(product, absolute).replaceAll('\\', '/')) ||
+      !productInputs.has(path.relative(product, absolute).replaceAll('\\', '/'))))
     reject('Static dependency selected a native product implementation: ' + name);
   const buildName = within(build, absolute) ? path.relative(build, absolute).replaceAll('\\', '/') : '';
   const sharedTypes = sharedTypeLibrary.test(buildName);
