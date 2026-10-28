@@ -3,9 +3,10 @@
 const std = @import("std");
 const layout = @import("layout.zig");
 const storage = @import("store.zig");
+const effects_module = @import("query_effects.zig");
 pub const schema_hash = "sha256:36069e89fac29edd840851e1de07ffccfbd12fdd0083551dba365e2dd0f8acad";
 pub const Error = error{ InvalidMetadata, MetadataLimit, IdentityMismatch, WrongStore, BindingMismatch, ReadOnly };
-pub const Source = struct { end: u32, path: []const u8, start: u32 };
+pub const Source = effects_module.Source;
 pub const Column = struct { access: storage.Access, alignment: u32, bufferArgument: u32, componentType: []const u8, index: u32, sourceComponentType: []const u8, stride: u32, strideArgument: u32 };
 pub const Tuple = struct { bufferArgument: u32, columnIndex: u32, componentType: []const u8, mode: storage.Access, sourceBinding: []const u8, tupleIndex: u32 };
 pub const Scalar = struct { argument: u32, sourceBinding: []const u8, sourceParameter: u32, type: []const u8 };
@@ -21,6 +22,7 @@ pub const Document = struct {
     payload: Payload,
     payload_hash: []const u8,
     component_layout: layout.Layout,
+    effects: effects_module.Analysis,
 
     pub fn load(allocator: std.mem.Allocator, bytes: []const u8, expected: Expected) !Document {
         if (bytes.len == 0 or bytes.len > 8388608 or bytes[bytes.len - 1] != '\n') return error.InvalidMetadata;
@@ -97,7 +99,20 @@ pub const Document = struct {
             const joined = try std.mem.join(own, ", ", arguments.items);
             if (!std.mem.eql(u8, entry.abiType, try std.fmt.allocPrint(own, "({s}) -> ()", .{joined}))) return error.InvalidMetadata;
         }
-        return .{ .arena = arena, .payload = payload, .payload_hash = env.payloadHash, .component_layout = component_layout };
+        const effects = try effects_module.decode(own, payload.effects, payload.sourcePacket, payload.inputIdentity, payload.packageId, payload.target, &component_layout);
+        var expected_entries: usize = 0;
+        for (effects.report.systems) |system| expected_entries += system.loops.len;
+        if (expected_entries != payload.entries.len) return error.InvalidEffects;
+        for (payload.entries) |entry| {
+            const system = effects.system(entry.logicalFunctionId) orelse return error.InvalidEffects;
+            if (!std.mem.eql(u8, system.sourceFunctionId, entry.sourceFunctionId) or !std.mem.eql(u8, system.signatureHash, entry.signatureHash) or entry.loop >= system.loops.len) return error.InvalidEffects;
+            const loop = system.loops[entry.loop];
+            if (!effects_module.sameSource(loop.source, entry.source) or !std.mem.eql(u8, loop.queryBinding, entry.queryBinding) or loop.capabilities.len != entry.columns.len or loop.columns.len != entry.tupleOccurrences.len) return error.InvalidEffects;
+            for (loop.capabilities, entry.columns) |capability, column| if (!std.mem.eql(u8, capability.componentType, column.componentType) or !std.mem.eql(u8, capability.sourceComponentType, column.sourceComponentType) or capability.mode != column.access) return error.InvalidEffects;
+            for (loop.columns, entry.tupleOccurrences) |column, tuple| if (column.tupleIndex != tuple.tupleIndex or !std.mem.eql(u8, column.sourceBinding, tuple.sourceBinding) or !std.mem.eql(u8, column.componentType, tuple.componentType) or column.mode != tuple.mode) return error.InvalidEffects;
+        }
+        // Both metadata and typed effects allocations finish before this final arena transfer.
+        return .{ .arena = arena, .payload = payload, .payload_hash = env.payloadHash, .component_layout = component_layout, .effects = effects };
     }
     pub fn deinit(self: *Document) void {
         self.component_layout.deinit();
