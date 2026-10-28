@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Positive packets are complete original public Source v5 output.
+// Positive packets are complete original public Source v6 output.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
@@ -45,7 +45,7 @@ const mutations=[
 ];
 for(const [name,mutate]of mutations)test('f64 owner rejects rehashed '+name,()=>{
   const input=actual('add'),packet=structuredClone(input.packet);mutate(packet.payload);
-  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...input.context,expectedPackageId:packet.packageId}));
 });
 
@@ -57,7 +57,7 @@ test('actual f64 scalar helper retains original signature, call arguments and fu
   assert.ok(core.includes('(%harg0: f64, %harg1: f64) -> f64'));assert.match(core,/"func.call"\(%qv\d+, %arg1\).*-> f64/);
   const returned=core.split('\n').find(line=>line.includes('"func.return"'));assert.ok(returned.includes(': (f64) -> ()'));
   const packet=structuredClone(input.packet);packet.payload.scalarHelpers[0].signature.returnType='f32';
-  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...input.context,expectedPackageId:packet.packageId}));
 });
 for(const name of ['view-helpers','view-imported'])test('actual f64 '+name+' retains view permissions, nested calls and import identity',()=>{
@@ -66,7 +66,7 @@ for(const name of ['view-helpers','view-imported'])test('actual f64 '+name+' ret
   assert.equal(facts.scalarHelpers.length,3);assert.ok(facts.scalarHelpers.every(helper=>helper.sourceReturnType==='f64'&&helper.sourceSignature.returnType==='f64'));
   const update=facts.scalarHelpers.find(helper=>helper.declaration.name==='update'),scaled=facts.scalarHelpers.find(helper=>helper.declaration.name==='scaledX');
   assert.deepEqual(update.parameters.map(parameter=>parameter.view?.access.mode??parameter.logicalType),['write','read','f64']);
-  assert.equal(update.value.value.operator,'/');assert.equal(scaled.value.operator,'-');assert.equal(scaled.value.left.kind,'call');
+  assert.equal(update.statements.at(-1).value.value.operator,'/');assert.equal(scaled.statements.at(-1).value.operator,'-');assert.equal(scaled.statements.at(-1).value.left.kind,'call');
   assert.equal(core.split('"func.call"').length-1,3);assert.ok(core.includes('"tsfg.view_borrow"'));
   assert.ok(core.split('\n').filter(line=>line.includes('"func.call"')).every(line=>line.endsWith('-> f64')));
   assert.equal(facts.program.files.length,name==='view-imported'?4:3);
@@ -74,7 +74,7 @@ for(const name of ['view-helpers','view-imported'])test('actual f64 '+name+' ret
   for(const change of ['return','scalar','mode']){
     const packet=structuredClone(input.packet),helper=packet.payload.scalarHelpers.find(helper=>helper.declaration.name==='update');
     if(change==='return')helper.returnType='f32';else if(change==='scalar')helper.parameters[2].logicalType='f32';else helper.parameters[0].view.access.mode='read';
-    packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+    packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
     assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...input.context,expectedPackageId:packet.packageId}));
   }
 });
@@ -118,7 +118,7 @@ for(const [name,,operation]of cases)test('static f64 '+name+' preserves standard
 test('independent f64 Core rejects whole-rehashed widths, source anchors and reversed noncommutative SSA',{skip:!enabled},()=>{
   const input=actual('subtract'),facts=readSystemQueryFacts(input.bytes,input.context),core=emitSystemQueryCore(facts,input.context);
   for(const [name,mutate]of mutations){
-    const packet=structuredClone(input.packet);mutate(packet.payload);packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+    const packet=structuredClone(input.packet);mutate(packet.payload);packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
     const bad=core.replace('tsfg.query_facts = '+coreQuote(canonical(input.packet)),'tsfg.query_facts = '+coreQuote(canonical(packet)));assert.notEqual(bad,core);run('rehashed-'+name,'--canonicalize',bad,3);
   }
   const value=facts.systems[0].loops[0].statements[0].value,lines=core.split('\n'),operation=lines.find(line=>line.includes('"tsfg_core.sub"')&&line.includes(anchor(value.range))),load=lines.find(line=>line.includes('"tsfg.field_load"')&&line.includes(anchor(value.target.range)));

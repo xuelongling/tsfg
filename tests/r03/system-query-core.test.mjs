@@ -121,7 +121,7 @@ test('independent C++ replays original syntax after a forged Source packet is re
   const program=programs.find(row=>row.name==='loop-architecture');assert.ok(program);
   const packet=structuredClone(program.packet),statements=packet.payload.systems[0].loops[0].statements;
   statements[0].value.value.operatorRange={...statements[1].value.value.operatorRange};
-  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   const original=emitSystemQueryCore(program.facts,program.context),from='tsfg.query_facts = '+coreQuote(canonical(program.packet)),
     changed=original.replace(from,'tsfg.query_facts = '+coreQuote(canonical(packet)));
   assert.notEqual(changed,original);assert.equal(invoke('rehashed-wrong-source-operator',changed,'canonicalize',3).stdout.length,0);
@@ -135,7 +135,7 @@ test('independent C++ derives implicit constructor facts from the original class
     assert.ok(position?.construction);
     if(kind==='access')position.construction.access='private';
     else position.construction.signature.id='sha256:'+'0'.repeat(64);
-    packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+    packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
     const changed=original.replace('tsfg.query_facts = '+coreQuote(canonical(program.packet)),
       'tsfg.query_facts = '+coreQuote(canonical(packet)));
     assert.notEqual(changed,original);assert.equal(invoke('wrong-construction-'+kind,changed,'canonicalize',3).stdout.length,0);
@@ -155,7 +155,7 @@ test('independent C++ binds a component decorator to its actual lexical declarat
   const files=packet.payload.program.files.map(({path,sha256})=>({path,sha256}));
   for(const type of packet.payload.types)if(type.nominalKey)
     type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({files,nominalKey:type.nominalKey}));
-  packet.requestId=sha256('tsfg.system-query.request.v5\0'+canonical(request)+'\n');
+  packet.requestId=sha256('tsfg.system-query.request.v6\0'+canonical(request)+'\n');
   // This is malformed Source/Core input, never another passing Go example.
   // The local ordinary function now hoist-shadows the owned global decorator.
   const original=emitSystemQueryCore(program.facts,program.context);
@@ -192,7 +192,7 @@ test('independent C++ binds a component decorator to its actual lexical declarat
         }
       }
     }
-    negative.packageId=sha256('tsfg.system-query.package.v5\0'+negative.schemaHash+'\0'+canonical(negative.payload));
+    negative.packageId=sha256('tsfg.system-query.package.v6\0'+negative.schemaHash+'\0'+canonical(negative.payload));
     const changed=original
       .replace('tsfg.query_facts = '+coreQuote(canonical(program.packet)),'tsfg.query_facts = '+coreQuote(canonical(negative)))
       .replace('tsfg.query_request = '+coreQuote(canonical(JSON.parse(program.context.requestBytes.toString('utf8')))),
@@ -208,7 +208,7 @@ test('independent C++ cannot omit a real system from both the asserted facts and
   const program=programs.find(row=>row.name==='loop-architecture');assert.ok(program);
   assert.equal(program.facts.systems.length,1);
   const packet=structuredClone(program.packet);packet.payload.systems=[];
-  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   const original=emitSystemQueryCore(program.facts,program.context),start=original.indexOf('\n  func.func @');
   assert.ok(start>0);
   const emptyModule=original.slice(0,start)+'\n}\n',changed=emptyModule.replace(

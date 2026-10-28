@@ -9,6 +9,8 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
 
 namespace tsfg::systemQuery {
 namespace {
@@ -42,7 +44,12 @@ struct Batch {
       if(name=="tsfg.column"||name=="tsfg.yield")continue;
       if(name=="tsfg.view_borrow"){views[op.getResult(0)]=views.find(op.getOperand(0))->second;continue;}
       mlir::Operation *lowered=nullptr;
-      if(name=="func.call"){
+      if(name=="tsfg_core.constant"){
+        auto type=llvm::cast<mlir::FloatType>(op.getResult(0).getType());
+        const llvm::APInt bits(type.getWidth(),text(&op,"value"),16);
+        const llvm::APFloat value(type.getWidth()==32?llvm::APFloat::IEEEsingle():llvm::APFloat::IEEEdouble(),bits);
+        auto constant=b.create<mlir::arith::ConstantOp>(loc,type,b.getFloatAttr(type,value));values[op.getResult(0)]=constant;lowered=constant;
+      }else if(name=="func.call"){
         std::vector<mlir::Value> args;
         for(auto arg:op.getOperands())if(auto it=views.find(arg);it!=views.end()){args.push_back(it->second.buffer);args.push_back(it->second.base);}else args.push_back(values.find(arg)->second);
         auto call=b.create<mlir::func::CallOp>(loc,helperName(text(&op,"tsfg_core.function_id")),op.getResultTypes(),args);

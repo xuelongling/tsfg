@@ -5,7 +5,7 @@
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::systemQuery {
 namespace {
-constexpr llvm::StringLiteral schema="sha256:a35185acc806a6095b3e80f6753bbf0cc314f4bde823b75ef5813843159ccce1";
+constexpr llvm::StringLiteral schema="sha256:32326256ba49bb78f12118d211b520c0f84aa8001422004e8d17dce86d8b814e";
 constexpr llvm::StringLiteral profile="/src/system-query-context.d.ts";
 constexpr llvm::StringLiteral profileHash="7fefda1fbc86170ff7c6479a4f3646ff8194b8dc5f7476107763c3c11fab604b";
 constexpr llvm::StringLiteral standard="/src/minimal-arrays-v8.d.ts";
@@ -34,12 +34,12 @@ bool Model::metadata(mlir::ModuleOp module){
   Json packet=nullptr;
   if(!readJson(text("tsfg.query_facts"),packet,p,error)||!readJson(text("tsfg.query_request"),request,p,error)||
     !need(exact(packet,{"family","version","schemaHash","requestId","packageId","payload"})&&
-      string(field(packet,"family"))=="tsfg.system-query-facts-package-candidate"&&number(field(packet,"version"))==5&&
+      string(field(packet,"family"))=="tsfg.system-query-facts-package-candidate"&&number(field(packet,"version"))==6&&
       string(field(packet,"schemaHash"))==schema,"owned Source package boundary differs"))return false;
   const auto &payload=field(packet,"payload");
   if(!need(exact(payload,{"program","profilePath","profileSHA256","nodes","builtins","types","functions","markerAliases","systems","scalarHelpers"})&&
-    string(field(packet,"packageId"))==hashed("tsfg.system-query.package.v5",schema.str()+std::string(1,'\0')+canonical(payload))&&
-    string(field(packet,"requestId"))==hashed("tsfg.system-query.request.v5",canonical(request)+"\n"),"original Source package/request identity differs"))return false;
+    string(field(packet,"packageId"))==hashed("tsfg.system-query.package.v6",schema.str()+std::string(1,'\0')+canonical(payload))&&
+    string(field(packet,"requestId"))==hashed("tsfg.system-query.request.v6",canonical(request)+"\n"),"original Source package/request identity differs"))return false;
   p.hir=Object{{"snapshot",std::move(packet)}};p.sourcePath=header.sourcePath.str();p.sourceLength=header.sourceLength;
   p.inputIdentity="sha256:"+bytecode::hex(header.input);p.sourceHash="sha256:"+bytecode::hex(header.source);
   source=std::make_unique<SourceModel>(p,error);
@@ -68,7 +68,7 @@ bool Model::files(){
     source->sources.emplace(name,&file);syntax.emplace(name,std::move(grammar));
     requested.push_back(Object{{"path",name},{"content",content},{"sha256",field(file,"sha256")}});
   }
-  const Json expected=Object{{"family","tsfg.system-query-facts-request-candidate"},{"version",5},{"schemaHash",schema},
+  const Json expected=Object{{"family","tsfg.system-query-facts-request-candidate"},{"version",6},{"schemaHash",schema},
     {"input",Object{{"sourceRoot",root},{"rootFile",primary},{"files",std::move(requested)},
       {"declarations",field(program,"declarations")},{"config",field(program,"config")},{"target",field(program,"target")}}}};
   return need(source->sources.count(primary)&&source->sources.count(profile.str())&&source->sources.count(standard.str())&&

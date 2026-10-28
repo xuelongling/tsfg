@@ -95,8 +95,8 @@ export function readSystemQueryEffects(bytes,facts,context){
   /** @param {unknown} value @param {QueryEffectSource} owner @returns {QueryScalarCall[]} */
   const readCalls=(value,owner)=>array(value).map(value=>{spend();const row=record(value,['functionId','sourceHelperId','signatureHash','source','calleeSource']);return {functionId:hash(row.functionId),sourceHelperId:hash(row.sourceHelperId),signatureHash:hash(row.signatureHash),source:source(row.source,owner),calleeSource:source(row.calleeSource,owner)};});
   const helperById=new Map(facts.scalarHelpers.map(helper=>[helper.id,helper]));
-  /** @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} expression @param {string} path @param {readonly import('./system-query-facts.mjs').SystemQueryLoopBinding[]} bindings */
-  const descriptors=(expression,path,bindings)=>{
+  /** @param {readonly import('./system-query-facts.mjs').SystemQueryLoopExpression[]} expressions @param {string} path @param {readonly import('./system-query-facts.mjs').SystemQueryLoopBinding[]} bindings */
+  const descriptors=(expressions,path,bindings)=>{
     /** @type {QueryFieldOperation[]} */
     const operations=[];
     /** @type {QueryScalarCall[]} */
@@ -110,6 +110,7 @@ export function readSystemQueryEffects(bytes,facts,context){
       };
       if(value.kind==='fieldAccess')memory('read',value,value.range);
       else if(value.kind==='binary'){visit(value.left,path,environment,callPath);visit(value.right,path,environment,callPath);}
+      else if(value.kind==='bindingAssignment')visit(value.value,path,environment,callPath);
       else if(value.kind==='fieldAssignment'){if(value.operator!=='=')memory('read',value.target,value.target.range);visit(value.value,path,environment,callPath);memory('write',value.target,value.range);}
       else if(value.kind==='parentheses')visit(value.expression,path,environment,callPath);
       else if(value.kind==='call'){
@@ -118,10 +119,10 @@ export function readSystemQueryEffects(bytes,facts,context){
         if(!callPath.length)calls.push(edge);
         const helper=helperById.get(value.callee),next=new Map();
         helper.parameters.forEach((parameter,index)=>{if(parameter.view)next.set(parameter.binding.id,environment.get(queryViewBinding(value.arguments[index])));});
-        visit(helper.value,helper.declaration.sourcePath,next,[...callPath,edge]);
+        for(const statement of helper.statements)visit(statement.initializer??statement.value,helper.declaration.sourcePath,next,[...callPath,edge]);
       }
     };
-    visit(expression,path,new Map(bindings.map(binding=>[binding.declaration.id,binding])),[]);return {operations,calls};
+    for(const expression of expressions)visit(expression,path,new Map(bindings.map(binding=>[binding.declaration.id,binding])),[]);return {operations,calls};
   };  let previousSystem='';
   const systems=array(root.systems).map(value=>{
     spend();const row=record(value,['functionId','sourceFunctionId','signatureHash','source','capabilities','fieldEffects','loops','calls']),id=hash(row.functionId),original=originalSystems.get(id);
@@ -141,7 +142,7 @@ export function readSystemQueryEffects(bytes,facts,context){
         const expected={tupleIndex:binding.index,sourceBinding:binding.declaration.id,componentType:binding.componentType,sourceComponentType:binding.sourceComponentType,mode:binding.mode,source:{path:system.declaration.sourcePath,...binding.declaration.range}};equal(result,expected);return expected;
       });
       if(columns.length!==originalLoop.bindings.length)fail('missing columns');const capabilities=caps(loop.capabilities);equal(capabilities,normalize(columns.map(({componentType,sourceComponentType,mode})=>({componentType,sourceComponentType,mode}))));
-      const expected=originalLoop.statements.map(statement=>descriptors(statement.value,system.declaration.sourcePath,originalLoop.bindings));
+      const expected=originalLoop.statements.map(statement=>descriptors([statement.initializer??statement.value],system.declaration.sourcePath,originalLoop.bindings));
       /** @type {QueryFieldOperation[]} */
       const operations=array(loop.operations).map(value=>{
         spend();const op=record(value,['kind','componentType','field','sourceField','tupleIndex','sourceBinding','source','callPath']),index=integer(op.tupleIndex),column=columns[index];
@@ -167,7 +168,7 @@ export function readSystemQueryEffects(bytes,facts,context){
     if(components.length)conflicts.push({left:left.functionId,right:right.functionId,components});
   }
   equal(root.conflicts,conflicts);
-  const scalarOriginal=new Map(facts.scalarHelpers.map(helper=>[helper.id,helper])),helperDescriptors=new Map(facts.scalarHelpers.map(helper=>[helper.id,descriptors(helper.value,helper.declaration.sourcePath,helper.parameters.filter(parameter=>parameter.view).map(parameter=>({index:parameter.index,declaration:parameter.binding,componentType:parameter.type,sourceComponentType:parameter.logicalType,mode:parameter.view.access.mode})))]));let previousHelper='';
+  const scalarOriginal=new Map(facts.scalarHelpers.map(helper=>[helper.id,helper])),helperDescriptors=new Map(facts.scalarHelpers.map(helper=>[helper.id,descriptors(helper.statements.map(statement=>statement.initializer??statement.value),helper.declaration.sourcePath,helper.parameters.filter(parameter=>parameter.view).map(parameter=>({index:parameter.index,declaration:parameter.binding,componentType:parameter.type,sourceComponentType:parameter.logicalType,mode:parameter.view.access.mode})))]));let previousHelper='';
   const scalarHelpers=array(root.scalarHelpers).map(value=>{
     spend();const row=record(value,['functionId','sourceFunctionId','sourceHelperId','signatureHash','source','fieldEffects','calls','directCallees','transitiveCallees']),id=hash(row.functionId),helper=scalarOriginal.get(id);
     if(!helper||id<=previousHelper)fail('scalar effects inventory differs');previousHelper=id;const owner=source(row.source);

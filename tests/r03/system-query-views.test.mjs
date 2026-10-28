@@ -11,11 +11,11 @@ import {readSystemQueryEffects} from '../../compiler/system-query-effects.mjs';
 
 const inputs=['view-direct','view-imported','view-aliases','view-same-owner'].map(name=>{
   const bytes=readFileSync(new URL('./testdata/system-query-views/'+name+'-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-  return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/system-query-views/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+  return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:6,requestBytes:readFileSync(new URL('./testdata/system-query-views/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
 });
 const tool=process.env.TSFG_QUERY_VIEW_CORE_EXE,output=process.env.TSFG_QUERY_VIEW_CORE_OUTPUT,enabled=Boolean(tool&&output),children=[];
 const groupBytes=readFileSync(new URL('./testdata/system-query-views/view-parenthesized-facts.json',import.meta.url)),groupPacket=JSON.parse(groupBytes.toString('utf8'));
-const grouped={bytes:groupBytes,packet:groupPacket,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/system-query-views/view-parenthesized-request.json',import.meta.url)),expectedPackageId:groupPacket.packageId}};
+const grouped={bytes:groupBytes,packet:groupPacket,context:{family:'tsfg.system-query-context-candidate',version:6,requestBytes:readFileSync(new URL('./testdata/system-query-views/view-parenthesized-request.json',import.meta.url)),expectedPackageId:groupPacket.packageId}};
 const run=(name,input,command='--canonicalize',expected=0)=>{
   mkdirSync(output,{recursive:true});const prefix=output+'/'+String(children.length).padStart(3,'0')+'-'+name;
   const child=spawnSync(tool,['--system-query',command],{input,windowsHide:true,maxBuffer:8388608,timeout:60000});
@@ -27,14 +27,14 @@ const run=(name,input,command='--canonicalize',expected=0)=>{
 test('parenthesized view arguments retain original bindings, types and borrow anchors',()=>{
   const facts=readSystemQueryFacts(grouped.bytes,grouped.context),ir=emitSystemQueryCore(facts,grouped.context),loop=facts.systems[0].loops[0];
   assert.deepEqual(printSystemQueryFacts(facts,grouped.context),grouped.bytes);
-  const write=loop.statements[0].value.value.arguments[0],read=loop.statements[1].value.value.arguments[0],nested=facts.scalarHelpers.find(h=>h.declaration.name==='scaledX').value.left.arguments[0];
+  const write=loop.statements[0].value.value.arguments[0],read=loop.statements[1].value.value.arguments[0],nested=facts.scalarHelpers.find(h=>h.declaration.name==='scaledX').statements.at(-1).value.left.arguments[0];
   for(const value of [write,read,nested]){assert.equal(value.kind,'parentheses');assert.equal(value.expression.kind,'bindingReference');assert.equal(value.type,value.expression.type);}
   assert.equal(write.expression.binding,loop.bindings[0].declaration.id);assert.equal(read.expression.binding,write.expression.binding);
   assert.equal(nested.expression.binding,facts.scalarHelpers.find(h=>h.declaration.name==='scaledX').parameters[0].binding.id);
   const borrow=ir.split('\n').find(line=>line.includes('"tsfg.view_borrow"'));assert.ok(borrow);
   assert.ok(borrow.includes('tsfg_source.start = '+read.range.start+' : i64'));assert.ok(borrow.includes('tsfg_source.end = '+read.range.end+' : i64'));
   const packet=structuredClone(grouped.packet),arg=packet.payload.systems[0].loops[0].statements[0].value.value.arguments[0],other=packet.payload.systems[0].loops[0].bindings[1].componentType;
-  arg.type=other;arg.flowType=other;packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  arg.type=other;arg.flowType=other;packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...grouped.context,expectedPackageId:packet.packageId}),/grouping logical type differs/);
 });
 
@@ -50,7 +50,7 @@ test('independent parenthesized view calls preserve caller columns and transitiv
 
 for(const input of inputs)test('real view helper Source owns formal permissions and typed calls: '+input.name,()=>{
   const facts=readSystemQueryFacts(input.bytes,input.context),ir=emitSystemQueryCore(facts,input.context);
-  assert.deepEqual(printSystemQueryFacts(facts,input.context),input.bytes);assert.equal(facts.format.version,5);
+  assert.deepEqual(printSystemQueryFacts(facts,input.context),input.bytes);assert.equal(facts.format.version,6);
   assert.equal(facts.scalarHelpers.length,3);assert.ok(ir.includes('tsfg.query_version = 3 : i32'));
   assert.ok(input.packet.payload.program.files.some(file=>file.content.includes('function unused(v:i32)')));
   assert.ok(input.packet.payload.nodes.some(node=>node.kind==='KindClassDeclaration'&&node.name==='Box'));
@@ -58,7 +58,7 @@ for(const input of inputs)test('real view helper Source owns formal permissions 
   assert.deepEqual(byName.get('update').parameters.map(p=>p.view?.access.mode??'f32'),['write','read','f32']);
   assert.equal(byName.get('scaledX').parameters[0].view.access.mode,'read');assert.equal(byName.get('readX').parameters[0].view.access.mode,'read');
   assert.equal(ir.split('"func.call"').length-1,3);assert.equal(ir.split('"tsfg.view_borrow"').length-1,input.name==='view-same-owner'?2:1);
-  for(const helper of facts.scalarHelpers){assert.notEqual(helper.id,helper.sourceId);assert.notEqual(helper.id,helper.declaration.id);assert.equal(helper.value.sourceType,'f32');}
+  for(const helper of facts.scalarHelpers){assert.notEqual(helper.id,helper.sourceId);assert.notEqual(helper.id,helper.declaration.id);assert.equal(helper.statements.at(-1).value.sourceType,'f32');}
 });
 
 for(const input of inputs)test('independent view helper SSA, roundtrip and caller column effects: '+input.name,{skip:!enabled},()=>{
@@ -92,7 +92,7 @@ test('owning view facts reject formal mode/component/signature and original actu
     packet=>{const call=packet.payload.systems[0].loops[0].statements[0].value.value;call.arguments.reverse();},
     packet=>{const p=packet.payload.scalarHelpers.find(h=>h.declaration.name==='update').parameters[0];p.view.access.wrapper=packet.payload.builtins.find(row=>row.name==='Query');},
   ];
-  for(const mutate of mutations){const packet=structuredClone(input.packet);mutate(packet);packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  for(const mutate of mutations){const packet=structuredClone(input.packet);mutate(packet);packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
     assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...input.context,expectedPackageId:packet.packageId}));}
 });
 
@@ -114,7 +114,7 @@ test('independent original helper annotation rejects a rehashed formal permissio
   const input=inputs[0],facts=readSystemQueryFacts(input.bytes,input.context),ir=emitSystemQueryCore(facts,input.context),packet=structuredClone(input.packet);
   const formal=packet.payload.scalarHelpers.find(h=>h.declaration.name==='update').parameters[0];
   formal.view.access.mode='read';formal.view.access.wrapper=packet.payload.builtins.find(row=>row.name==='Read');
-  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   const bad=ir.replace('tsfg.query_facts = '+coreQuote(canonical(input.packet)),'tsfg.query_facts = '+coreQuote(canonical(packet)));
   assert.notEqual(bad,ir);assert.equal(run('rehashed-formal-permission',bad,'--canonicalize',3).length,0);
 });

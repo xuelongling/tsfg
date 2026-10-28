@@ -8,7 +8,7 @@ import {validateTypedArrayTypes} from './typed-array-types.mjs';
 import {commonSourceDescriptor} from './common-program-common.mjs';
 import {querySourceProof} from './system-query-source-bindings.mjs';
 import {decodeScalarHelpers} from './system-query-scalars.mjs';
-import {queryExpressionDecoder} from './system-query-expressions.mjs';
+import {decodeQueryStatements} from './system-query-statements.mjs';
 import {commonSemanticIdentities,commonFieldId} from './common-program-identities.mjs';
 import {commonSourceGrammar,commonTypeSyntax,commonSourceAccess} from './common-program-source.mjs';
 
@@ -26,11 +26,12 @@ const receipts=new WeakMap();
 /** @typedef {Readonly<{declaration:SystemQueryOrigin,tupleSourcePath:string,tupleRange:SystemQueryRange,aliases:readonly SystemQueryAlias[],items:readonly SystemQueryAccess[]}>} SystemQuerySelection */
 /** @typedef {Readonly<{index:number,binding:SystemQueryOrigin,annotationRange:SystemQueryRange,logicalType:string,type:string|null,query:SystemQuerySelection|null,view:Readonly<{aliases:readonly SystemQueryAlias[],access:SystemQueryAccess}>|null}>} SystemQueryParameter */
 /** A checked view of the existing shared arrayGenericExpression/Target DTO.
- * @typedef {{kind:string,type:string,flowType?:string,range:SystemQueryRange,binding?:string,property?:string,nameRange?:SystemQueryRange,receiver?:CheckedArrayExpression,left?:CheckedArrayExpression,right?:CheckedArrayExpression,target?:CheckedArrayExpression,value?:CheckedArrayExpression,expression?:CheckedArrayExpression,operator?:string,operatorRange?:SystemQueryRange,callee?:string,calleeRange?:SystemQueryRange,signature?:import('./system-query-scalars.mjs').SystemQueryScalarHelper['sourceSignature'],arguments?:CheckedArrayExpression[]}} CheckedArrayExpression
+ * @typedef {{kind:string,type:string,flowType?:string,token?:string,bits?:string,range:SystemQueryRange,binding?:string,property?:string,nameRange?:SystemQueryRange,receiver?:CheckedArrayExpression,left?:CheckedArrayExpression,right?:CheckedArrayExpression,target?:CheckedArrayExpression,value?:CheckedArrayExpression,expression?:CheckedArrayExpression,operator?:string,operatorRange?:SystemQueryRange,callee?:string,calleeRange?:SystemQueryRange,signature?:import('./system-query-scalars.mjs').SystemQueryScalarHelper['sourceSignature'],arguments?:CheckedArrayExpression[]}} CheckedArrayExpression
  */
-/** @typedef {Readonly<{kind:'bindingReference'|'fieldAccess'|'fieldTarget'|'binary'|'fieldAssignment'|'call'|'parentheses',type:string,sourceType:string,range:SystemQueryRange,binding?:string,property?:string,sourceField?:string,nameRange?:SystemQueryRange,receiver?:SystemQueryLoopExpression,left?:SystemQueryLoopExpression,right?:SystemQueryLoopExpression,target?:SystemQueryLoopExpression,value?:SystemQueryLoopExpression,expression?:SystemQueryLoopExpression,operator?:string,operatorRange?:SystemQueryRange,access?:'read'|'write'|'readwrite',callee?:string,sourceCallee?:string,calleeRange?:SystemQueryRange,signatureHash?:string,arguments?:readonly SystemQueryLoopExpression[]}>} SystemQueryLoopExpression */
+/** @typedef {Readonly<{kind:'bindingReference'|'fieldAccess'|'fieldTarget'|'binary'|'fieldAssignment'|'bindingAssignment'|'bindingTarget'|'numericLiteral'|'call'|'parentheses',type:string,sourceType:string,range:SystemQueryRange,token?:string,bits?:string,binding?:string,property?:string,sourceField?:string,nameRange?:SystemQueryRange,receiver?:SystemQueryLoopExpression,left?:SystemQueryLoopExpression,right?:SystemQueryLoopExpression,target?:SystemQueryLoopExpression,value?:SystemQueryLoopExpression,expression?:SystemQueryLoopExpression,operator?:string,operatorRange?:SystemQueryRange,access?:'read'|'write'|'readwrite',callee?:string,sourceCallee?:string,calleeRange?:SystemQueryRange,signatureHash?:string,arguments?:readonly SystemQueryLoopExpression[]}>} SystemQueryLoopExpression */
 /** @typedef {Readonly<{index:number,declaration:SystemQueryOrigin,sourceComponentType:string,componentType:string,mode:'read'|'write'}>} SystemQueryLoopBinding */
-/** @typedef {Readonly<{range:SystemQueryRange,queryBinding:string,queryRange:SystemQueryRange,bindingRange:SystemQueryRange,bodyRange:SystemQueryRange,bindings:readonly SystemQueryLoopBinding[],statements:readonly Readonly<{kind:'expression',range:SystemQueryRange,value:SystemQueryLoopExpression}>[]}>} SystemQueryLoop */
+/** @typedef {Readonly<{kind:string,range:SystemQueryRange,binding?:string,initializer?:SystemQueryLoopExpression,value?:SystemQueryLoopExpression}>} SystemQueryStatement */
+/** @typedef {Readonly<{range:SystemQueryRange,queryBinding:string,queryRange:SystemQueryRange,bindingRange:SystemQueryRange,bodyRange:SystemQueryRange,bindings:readonly SystemQueryLoopBinding[],localBindings:readonly Record<string,unknown>[],statements:readonly SystemQueryStatement[]}>} SystemQueryLoop */
 /** @typedef {Readonly<{declaration:SystemQueryOrigin,declKey:Readonly<{sourcePath:string,path:readonly string[],kind:'function',name:string}>,markerRange:SystemQueryRange,marker:SystemQueryOrigin,signature:SystemQueryOrigin,parameters:readonly SystemQueryParameter[],sourceReturnType:string,returnType:string,bodyRange:SystemQueryRange,loops:readonly SystemQueryLoop[]}>} SystemQuerySystem */
 /** @typedef {Readonly<{format:Readonly<{family:string,version:number,schemaHash:string}>,inputIdentity:string,packageId:string,program:ReturnType<typeof decodeProgram>['program'],nodes:ReturnType<typeof decodeNodes>['nodes'],builtins:readonly SystemQueryOrigin[],components:readonly Readonly<{typeId:string,sourceType:string,declaration:SystemQueryOrigin}>[],markerAliases:readonly SystemQueryAlias[],systems:readonly SystemQuerySystem[],scalarHelpers:readonly import('./system-query-scalars.mjs').SystemQueryScalarHelper[]}>} SystemQueryFacts */
 
@@ -168,7 +169,7 @@ function verifyComponentSource(types,functions,grammars,semantic,spend){
 }
 
 /** @returns {SystemQueryLoop[]} */
-function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fields,scalars,spend){
+function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fields,scalars,spend,proof){
   const originalLoops=ast.children.get(body.id)??[];
   const loops=array(value).map((value,index)=>{
     spend();const row=record(value,descriptor.objects.loop),loopRange=range(row.range),queryRange=range(row.queryRange),bindingRange=range(row.bindingRange),bodyRange=range(row.bodyRange),queryBinding=hash(row.queryBinding);
@@ -193,18 +194,8 @@ function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fiel
     if(bindings.length!==query.query.items.length||bindings.length!==originalBindings.length)fail('complete loop tuple binding inventory differs','source');
     grammar.sequence(bindingRange,['[',...bindings.flatMap((row,index)=>index?[',',row.declaration.range]:[row.declaration.range]),']']);
     grammar.sequence(initializer.range,['const',bindingRange]);grammar.sequence(loopRange,['for','(',initializer.range,'of',queryRange,')',bodyRange]);
-    const expression=queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fields,call:(value,scope,expression)=>scalars.call(value,sourcePath,scope,expression),spend,fail});
-    const originalStatements=ast.children.get(originalBody.id)??[];
-    const statements=array(row.statements).map((value,index)=>{
-      checkTypedArrayShape(value,'arrayGenericStatement',false,commonSourceDescriptor);
-      const statement=/** @type {{kind:string,range:SystemQueryRange,value:CheckedArrayExpression}} */(value);
-      if(statement.kind!=='expression'||statement.value.kind!=='fieldAssignment'||originalStatements[index]?.kind!=='KindExpressionStatement'||canonical(statement.range)!==canonical(originalStatements[index].range))fail('original Query statement differs','source');
-      const result=expression(statement.value);grammar.sequence(statement.range,[statement.value.range],true);
-      return {kind:/** @type {'expression'} */('expression'),range:{...statement.range},value:result};
-    });
-    if(statements.length!==originalStatements.length)fail('complete original loop statements differ','source');
-    grammar.body(bodyRange,statements);
-    return {range:loopRange,queryBinding,queryRange,bindingRange,bodyRange,bindings,statements};
+    const {statements,localBindings}=decodeQueryStatements(row.statements,row.localBindings,{ast,grammar,body:originalBody,owner:ast.original({id:originId(sourcePath,ast.directory.get(body.parent).nameRange),sourcePath,kind:'KindFunctionDeclaration',name:ast.directory.get(body.parent).name,range:ast.directory.get(body.parent).range,nameRange:ast.directory.get(body.parent).nameRange}),scope,component,fields,call:(value,scope,expression)=>scalars.call(value,sourcePath,scope,expression),proof,spend,fail});
+    return {range:loopRange,queryBinding,queryRange,bindingRange,bodyRange,bindings,localBindings,statements};
   });
   if(loops.length!==originalLoops.length)fail('complete original system body differs','source');grammar.body(body.range,loops);
   return loops;
@@ -269,7 +260,7 @@ function decodeSystems(value,program,sources,ast,builtins,component,fields,gramm
     sourceTypes.verifyLogical(declaration.sourcePath,returnSyntax.range,returnType,component.types);
     const bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange),prefix=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
     grammar.sequence(declaration.range,[...prefix,declaration.nameRange,'(',...parameters.flatMap((row,index)=>index?[',',row.binding.range]:[row.binding.range]),')',':',returnSyntax.range,body.range]);
-    const loops=decodeLoops(row.loops,body,declaration.sourcePath,parameters,ast,grammar,component,fields,scalars,spend);
+    const loops=decodeLoops(row.loops,body,declaration.sourcePath,parameters,ast,grammar,component,fields,scalars,spend,sourceTypes);
     return {declaration,declKey:{sourcePath:declaration.sourcePath,path:[],kind:/** @type {'function'} */('function'),name:declaration.name},markerRange,marker,signature,parameters,sourceReturnType:returnType,returnType:text(component.semantic.typeIds.get(returnType)),bodyRange,loops};
   });
 }
@@ -285,7 +276,7 @@ export function readSystemQueryFacts(bytes,context){
   const expectedPackageId=hash(expected.expectedPackageId),transport=readGenericJson(copyGenericJsonBytes(bytes,policy),policy),packet=record(transport.value,descriptor.objects.package);
   if(transport.text!==canonical(packet)+'\n'||packet.family!==systemQueryFactsFormat.family||packet.version!==systemQueryFactsFormat.version||packet.schemaHash!==systemQueryFactsFormat.schemaHash)fail('candidate identity/canonical bytes differ','identity');
   const payload=record(packet.payload,descriptor.objects.payload);
-  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v5\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
+  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v6\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
   const {sources,program}=decodeProgram(payload.program);
   if(descriptor.sourceTypeSchemaHash!==sha256(canonical(commonSourceDescriptor)+'\n'))fail('shared Source type schema differs','identity');
   if(canonical(program.target)!==canonical(descriptor.target)||payload.profilePath!==descriptor.profile.path||payload.profileSHA256!==descriptor.profile.sha256
@@ -293,7 +284,7 @@ export function readSystemQueryFacts(bytes,context){
     ||canonical(program.declarations.paths)!==canonical([descriptor.profile.standardPath,descriptor.profile.path]))fail('owned declaration/target context differs','identity');
   const request={family:descriptor.requestFamily,version:descriptor.version,schemaHash:systemQueryFactsFormat.schemaHash,input:{sourceRoot:program.sourceRoot,rootFile:program.rootFile,files:program.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:program.declarations,config:program.config,target:program.target}};
   const requestTransport=readGenericJson(copyGenericJsonBytes(expected.requestBytes,policy),policy),requestText=canonical(request)+'\n';
-  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v5\0'+requestText))fail('complete original request differs','identity');
+  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v6\0'+requestText))fail('complete original request differs','identity');
   let work=0;const spend=(amount=1)=>{work+=amount;if(work>descriptor.limits.work)fail('source work exceeded','limit');};
   const ast=decodeNodes(payload.nodes,sources,spend),builtins=new Map();
   const builtinRows=array(payload.builtins).map((value,index)=>{const row=ast.original(value);

@@ -3,11 +3,11 @@ import descriptor from '../contracts/system-query-facts.schema.json' with {type:
 import {canonical,sha256,scalarTypeIds} from './identity.mjs';
 import {functionId,signatureId} from './module-callable-common.mjs';
 import {querySourceProof} from './system-query-source-bindings.mjs';
-import {queryExpressionDecoder,queryViewBinding} from './system-query-expressions.mjs';
-import {checkTypedArrayShape} from './typed-array-schema.mjs';
+import {queryViewBinding} from './system-query-expressions.mjs';
+import {decodeQueryStatements} from './system-query-statements.mjs';
 import {commonSourceDescriptor} from './common-program-common.mjs';
 
-/** @typedef {Readonly<{id:string,sourceId:string,declaration:import('./system-query-facts.mjs').SystemQueryOrigin,signatureHash:string,sourceSignature:Readonly<{id:string,sourcePath:string,declarationRange:import('./system-query-facts.mjs').SystemQueryRange,parameters:readonly string[],returnType:string}>,parameters:readonly import('./system-query-facts.mjs').SystemQueryParameter[],returnType:string,sourceReturnType:'f32'|'f64',returnAnnotationRange:import('./system-query-facts.mjs').SystemQueryRange,bodyRange:import('./system-query-facts.mjs').SystemQueryRange,returnRange:import('./system-query-facts.mjs').SystemQueryRange,value:import('./system-query-facts.mjs').SystemQueryLoopExpression}>} SystemQueryScalarHelper */
+/** @typedef {Readonly<{id:string,sourceId:string,declaration:import('./system-query-facts.mjs').SystemQueryOrigin,signatureHash:string,sourceSignature:Readonly<{id:string,sourcePath:string,declarationRange:import('./system-query-facts.mjs').SystemQueryRange,parameters:readonly string[],returnType:string}>,parameters:readonly import('./system-query-facts.mjs').SystemQueryParameter[],returnType:string,sourceReturnType:'f32'|'f64',returnAnnotationRange:import('./system-query-facts.mjs').SystemQueryRange,bodyRange:import('./system-query-facts.mjs').SystemQueryRange,bindings:readonly Record<string,unknown>[],statements:readonly import('./system-query-facts.mjs').SystemQueryStatement[]}>} SystemQueryScalarHelper */
 
 // Own the floating-point helper directory and reuse original type/value binding
 // proof. No scalar value is interpreted and no claimed purity bit is accepted.
@@ -58,16 +58,14 @@ export function decodeScalarHelpers(input,{ast,grammars,sources,component,fields
     if(parameters.length!==originalParameters.length||parameters.length>descriptor.limits.scalarArguments||!['f32','f64'].includes(row.returnType)||!body)fail('scalar helper signature/body is outside selected floating-point syntax','capability');
     const signature=record(row.signature,descriptor.objects.scalarSignature);
     same(signature,{id:sha256('tsfg.array-facts.signature.v8\0'+canonical(sourceKey)),...sourceKey,parameters:parameters.map(p=>p.logicalType),returnType:row.returnType});
-    const returnAnnotationRange=span(row.returnAnnotationRange),bodyRange=span(row.bodyRange),returnRange=span(row.returnRange),statements=ast.children.get(body.id)??[];
+    const returnAnnotationRange=span(row.returnAnnotationRange),bodyRange=span(row.bodyRange);
     same(bodyRange,body.range);
-    if(statements.length!==1||statements[0].kind!=='KindReturnStatement'||canonical(statements[0].range)!==canonical(returnRange))fail('scalar helper requires one original return statement','capability');
     proof.verifyLogical(declaration.sourcePath,returnAnnotationRange,row.returnType,component.types);
     const bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange),prefix=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
     if(!['function','export function'].includes(prefix.join(' ')))fail('scalar helper declaration modifiers are outside selected syntax','capability');
     grammar.sequence(declaration.range,[...prefix,declaration.nameRange,'(',...parameters.flatMap((p,index)=>index?[',',p.binding.range]:[p.binding.range]),')',':',returnAnnotationRange,bodyRange]);
-    grammar.sequence(bodyRange,['{',returnRange,'}']);
     const signatureType={parameters:parameters.map(p=>p.view?sha256('tsfg.query.view.v1\0'+canonical({componentType:p.type,mode:p.view.access.mode})):p.type),returns:scalarTypeIds[row.returnType]},id=functionId(declaration.sourcePath,canonical({path:[],kind:'function',name:declaration.name}),signatureType);
-    directory.set(sourceId,{raw:row,grammar,returned:statements[0],helper:{id,sourceId,declaration,signatureHash:signatureId(signatureType),sourceSignature:signature,parameters,returnType:signatureType.returns,sourceReturnType:/** @type {'f32'|'f64'} */(row.returnType),returnAnnotationRange,bodyRange,returnRange,value:null}});
+    directory.set(sourceId,{raw:row,grammar,body,helper:{id,sourceId,declaration,signatureHash:signatureId(signatureType),sourceSignature:signature,parameters,returnType:signatureType.returns,sourceReturnType:/** @type {'f32'|'f64'} */(row.returnType),returnAnnotationRange,bodyRange,bindings:[],statements:[]}});
   }
   /** @param {import('./system-query-facts.mjs').CheckedArrayExpression} value */
   function call(value,path,scope,expression){
@@ -80,7 +78,7 @@ export function decodeScalarHelpers(input,{ast,grammars,sources,component,fields
     for(const binding of scope.values())if(binding.declaration.name===name)fail('scalar call is shadowed by an original local binding','source');
     same(proof.valueBinding(identifier),callee.helper.declaration);same(value.signature,callee.helper.sourceSignature);
     const args=array(value.arguments);if(args.length!==callee.helper.parameters.length||args.length>descriptor.limits.scalarArguments)fail('scalar helper call argument count differs','type');
-    const arguments_=args.map(value=>expression(value));
+    const arguments_=args.map((value,index)=>expression(value,callee.helper.parameters[index].logicalType));
     arguments_.forEach((value,index)=>{
       const formal=callee.helper.parameters[index];if(value.sourceType!==formal.logicalType)fail('helper call argument component/type differs','type');
       if(formal.view){const actual=scope.get(queryViewBinding(value));if(!actual?.mode||formal.view.access.mode==='write'&&actual.mode!=='write')fail('helper view actual cannot widen Read to Write','permission');}
@@ -89,28 +87,25 @@ export function decodeScalarHelpers(input,{ast,grammars,sources,component,fields
     grammar.sequence(value.range,[value.calleeRange,'(',...args.flatMap((value,index)=>index?[',',value.range]:[value.range]),')']);
     return {kind:/** @type {'call'} */('call'),type:callee.helper.returnType,sourceType:callee.helper.sourceReturnType,range:{...value.range},callee:callee.helper.id,sourceCallee:callee.helper.sourceId,signatureHash:callee.helper.signatureHash,calleeRange:{...value.calleeRange},arguments:arguments_};
   }
-  for(const {raw,helper,grammar,returned}of directory.values()){
-    checkTypedArrayShape(raw.value,'arrayGenericExpression',false,commonSourceDescriptor);
+  for(const {raw,helper,grammar,body}of directory.values()){
     const scope=new Map(helper.parameters.map(parameter=>[parameter.binding.id,{declaration:parameter.binding,sourceType:parameter.logicalType,mode:parameter.view?.access.mode??null}]));
-    const expression=queryExpressionDecoder({ast,grammar,bodyRange:helper.bodyRange,scope,component,fields,call:(value,scope,expression)=>call(value,helper.declaration.sourcePath,scope,expression),spend,fail});
-    helper.value=expression(raw.value);if(helper.value.sourceType!==helper.sourceReturnType)fail('helper return width differs or view escapes','capability');const originalValue=ast.children.get(returned.id)??[];if(originalValue.length!==1||canonical(originalValue[0].range)!==canonical(raw.value.range))fail('scalar helper return value original AST differs','source');
-    grammar.sequence(helper.returnRange,['return',raw.value.range],true);
-  }
-  const helpers=/** @type {SystemQueryScalarHelper[]} */([...directory.values()].map(row=>row.helper));
+    const decoded=decodeQueryStatements(raw.statements,raw.bindings,{ast,grammar,body,owner:helper.declaration,scope,component,fields,call:(value,scope,expression)=>call(value,helper.declaration.sourcePath,scope,expression),proof,spend,fail,returns:helper.sourceReturnType});
+    helper.statements=decoded.statements;helper.bindings=decoded.localBindings;
+  }  const helpers=/** @type {SystemQueryScalarHelper[]} */([...directory.values()].map(row=>row.helper));
   function complete(systems){
     const active=new Set(),reached=new Set(),heights=new Map(),edges=new Map();
     function collect(value,targets){
       spend();if(value.kind==='call'){targets.add(value.sourceCallee);for(const argument of value.arguments)collect(argument,targets);}
       else for(const child of [value.left,value.right,value.target,value.value,value.expression])if(child)collect(child,targets);
     }
-    for(const helper of helpers){const targets=new Set();collect(helper.value,targets);edges.set(helper.sourceId,targets);}
+    for(const helper of helpers){const targets=new Set();for(const statement of helper.statements)collect(statement.initializer??statement.value,targets);edges.set(helper.sourceId,targets);}
     function visit(id){
       spend();if(heights.has(id))return heights.get(id);
       if(active.has(id))fail('recursive scalar helper graph is outside selected syntax','capability');
       active.add(id);const height=1+Math.max(0,...[...edges.get(id)].map(visit));active.delete(id);
       if(height>descriptor.limits.scalarCallDepth)fail('scalar helper call graph exceeds32','capability');heights.set(id,height);reached.add(id);return height;
     }
-    const roots=new Set();for(const system of systems)for(const loop of system.loops)for(const statement of loop.statements)collect(statement.value,roots);
+    const roots=new Set();for(const system of systems)for(const loop of system.loops)for(const statement of loop.statements)collect(statement.initializer??statement.value,roots);
     for(const root of roots)visit(root);
     if(reached.size!==helpers.length)fail('scalar helper directory must contain exactly the reachable functions','source');
   }

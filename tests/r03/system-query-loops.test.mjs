@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete, unchanged v5 public Go producer packages.
+// Complete, unchanged v6 public Go producer packages.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {canonical,sha256,scalarTypeIds} from '../../compiler/identity.mjs';
@@ -9,7 +9,7 @@ const actual=fixture('loop-architecture');
 const inputLoop=packet=>packet.payload.systems[0].loops[0];
 const edit=(mutate,input=actual)=>{
   const packet=structuredClone(input.packet);mutate(packet,inputLoop(packet));
-  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   return {bytes:Buffer.from(canonical(packet)+'\n'),context:{...input.context,expectedPackageId:packet.packageId}};
 };
 test('actual architecture complete Query loop owns tuple bindings and f32 field body',()=>{

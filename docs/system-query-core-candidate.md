@@ -2,7 +2,7 @@
 
 # Owned Query Core consumer
 
-The private owned v5 Source package enters typed Core through
+The private owned v6 Source package enters typed Core through
 `readSystemQueryFacts` and `emitSystemQueryCore`. The complete original package
 and request remain in the module. Original Source FunctionIds and BindingIds
 are kept separately from lowered function, selection, component and FieldIds.
@@ -24,6 +24,16 @@ then applies its original operation and stores. Source statement and operand ord
 dependencies. No component objects or boxed field values are constructed.
 
 Reachable f32/f64-result helpers become real func.func definitions with native f32/f64 or component-view parameters and typed func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 3; the Core/common wire contract remains unchanged.
+
+Each initialized local maps its original BindingId to the initializer's SSA
+result. A let assignment updates that mapping in Source order; compound local
+assignment captures the previous SSA value before evaluating its RHS. A snapshot
+of a column keeps the earlier loaded value after a subsequent column write.
+Reading a local emits neither a new load nor a repeated helper call. Owned
+numeric literals use the existing `tsfg_core.constant` exact-bits representation
+and lower to standard `arith.constant` in the batch route. This adds no public
+runtime parameter or metadata format; Query Core/effects remain version 3 and
+Query tmeta remains version 2.
 
 The independent C++ consumer reconstructs identities from the retained Source
 data, checks the complete original request and pinned declaration contexts,
@@ -80,5 +90,4 @@ A `tsfg.view_borrow` result may narrow a Write view to Read for that same
 component and SSA backing. The original operand remains writable; the borrow
 cannot upgrade a Read value or change its component. C++ independently checks
 that operation against the original formal annotation and actual caller view,
-then checks callee field loads/stores and their physical layouts. Helpers still
-have one f32/f64 return expression; returning a view is outside this boundary.
+then checks callee field loads/stores and their physical layouts. Helpers retain ordered floating-point local statements and one final f32/f64 return; returning a view is outside this boundary.

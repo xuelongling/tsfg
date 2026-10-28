@@ -12,7 +12,7 @@ bool Model::scalars(){
   if(!need(rows.getAsArray()&&items(rows).size()<=64,"bounded scalar helper directory required"))return false;
   std::string previous;
   for(const auto &raw:items(rows)){
-    if(!spend()||!need(exact(raw,{"id","declaration","signature","parameters","returnType","returnAnnotationRange","bodyRange","returnRange","value"}),"scalar helper boundary differs"))return false;
+    if(!spend()||!need(exact(raw,{"id","declaration","signature","parameters","returnType","returnAnnotationRange","bodyRange","bindings","statements"}),"scalar helper boundary differs"))return false;
     const auto &decl=field(raw,"declaration");auto *node=original(decl);const auto path=string(field(decl,"sourcePath")),id=string(field(raw,"id"));
     if(!node||!need(string(field(decl,"kind"))=="KindFunctionDeclaration"&&!llvm::StringRef(path).ends_with(".d.ts")&&nodes.count(string(field(*node,"parent")))&&
       string(field(*nodes.at(string(field(*node,"parent"))),"kind"))=="KindSourceFile"&&id==sourceId("function",decl)&&previous<id,"original scalar helper identity/scope/order differs"))return false;previous=id;
@@ -38,18 +38,13 @@ bool Model::scalars(){
       helper.parameters.push_back(Parameter{&p,source->typeIds.at(logical),""});argumentTypes.push_back(logical);semanticTypes.push_back(semantic);
     }
     const Json signature=Object{{"id",sourceId("signature",decl)},{"sourcePath",path},{"declarationRange",field(decl,"range")},{"parameters",std::move(argumentTypes)},{"returnType",returned}};
-    if(!need(same(field(raw,"signature"),signature)&&string(field(field(raw,"value"),"type"))==returned,"scalar helper original signature/return width differs")||!annotation(path,field(raw,"returnAnnotationRange"),returned))return false;
-    const auto &statements=children[string(field(*body,"id"))];
-    if(!need(statements.size()==1&&string(field(*statements[0],"kind"))=="KindReturnStatement"&&same(field(*statements[0],"range"),field(raw,"returnRange")),"scalar helper requires exactly one original return"))return false;
-    const auto &values=children[string(field(*statements[0],"id"))];
-    if(!need(values.size()==1&&same(field(*values[0],"range"),field(field(raw,"value"),"range")),"scalar helper original return value differs"))return false;
+    if(!need(same(field(raw,"signature"),signature),"scalar helper original signature/return width differs")||!annotation(path,field(raw,"returnAnnotationRange"),returned))return false;
     auto &g=grammar(path);size_t a,b,n,z;if(!g.span(field(decl,"range"),a,b)||!g.span(field(decl,"nameRange"),n,z))return false;
     std::vector<Json> pieces;std::string prefix;for(auto i=a;i<n;++i){if(i>a)prefix+=' ';prefix+=g.tokens[i].text;pieces.push_back(g.tokens[i].text);}
     if(!need(prefix=="function"||prefix=="export function","scalar helper modifiers are outside selected syntax"))return false;
     pieces.push_back(field(decl,"nameRange"));pieces.push_back("(");for(size_t i=0;i<parameters.size();++i){if(i)pieces.push_back(",");pieces.push_back(field(*parameters[i],"range"));}
     pieces.push_back(")");pieces.push_back(":");pieces.push_back(field(raw,"returnAnnotationRange"));pieces.push_back(field(raw,"bodyRange"));
-    if(!g.sequence(field(decl,"range"),pieces)||!g.sequence(field(raw,"bodyRange"),{Json("{"),field(raw,"returnRange"),Json("}")})||
-      !g.sequence(field(raw,"returnRange"),{Json("return"),field(field(raw,"value"),"range")},true))return false;
+    if(!g.sequence(field(decl,"range"),pieces))return false;
     const Json semanticSignature=Object{{"parameters",std::move(semanticTypes)},{"returns",source->typeIds.at(returned)}};
     helper.signature=digest(std::string("tsfg.module-callable-signature.candidate.v1")+std::string(1,'\0')+canonical(semanticSignature));
     helper.id=digest(std::string("tsfg.module-callable-function.candidate.v1")+std::string(1,'\0')+canonical(Object{{"path",path},{"name",canonical(Object{{"path",Array{}},{"kind","function"},{"name",field(decl,"name")}})},{"signatureHash",helper.signature}}));
@@ -57,8 +52,8 @@ bool Model::scalars(){
   }
   for(const auto &helper:scalarHelpers){
     std::map<std::string,const Json *> scope;for(const auto &p:helper.parameters)scope.emplace(string(field(field(*p.raw,"binding"),"id")),p.raw);
-    if(!verifySourceShapeValue(*source,field(*helper.raw,"value"),"arrayGenericExpression")||!expression(field(*helper.raw,"value"),field(*helper.raw,"bodyRange"),scope,string(field(field(*helper.raw,"declaration"),"sourcePath")),0))return false;
-  }
+    const auto path=string(field(field(*helper.raw,"declaration"),"sourcePath"));auto *body=at(path,field(*helper.raw,"bodyRange"),"KindBlock");
+    if(!body||!statements(field(*helper.raw,"statements"),field(*helper.raw,"bindings"),*body,field(*helper.raw,"declaration"),std::move(scope),path,string(field(*helper.raw,"returnType"))))return false;  }
   return true;
 }
 bool Model::scalarClosure(){
@@ -66,10 +61,10 @@ bool Model::scalarClosure(){
   std::function<bool(const Json &,std::set<std::string> &)> calls=[&](const Json &v,std::set<std::string> &to){
     if(!spend())return false;if(string(field(v,"kind"))=="call")to.insert(string(field(v,"callee")));
     for(const auto &arg:items(field(v,"arguments")))if(!calls(arg,to))return false;
-    for(auto key:{"left","right","target","value","expression"})if(!field(v,key).getAsNull()&&!calls(field(v,key),to))return false;return true;
+    for(auto key:{"left","right","target","value","initializer","expression"})if(!field(v,key).getAsNull()&&!calls(field(v,key),to))return false;return true;
   };
-  for(const auto &h:scalarHelpers)if(!calls(field(*h.raw,"value"),edges[string(field(*h.raw,"id"))]))return false;
-  for(const auto &s:systems)for(const auto &l:items(field(*s.raw,"loops")))for(const auto &stmt:items(field(l,"statements")))if(!calls(field(stmt,"value"),roots))return false;
+  for(const auto &h:scalarHelpers)for(const auto &statement:items(field(*h.raw,"statements")))if(!calls(statement,edges[string(field(*h.raw,"id"))]))return false;
+  for(const auto &s:systems)for(const auto &l:items(field(*s.raw,"loops")))for(const auto &stmt:items(field(l,"statements")))if(!calls(stmt,roots))return false;
   std::function<unsigned(const std::string &)> height=[&](const std::string &id){
     if(!spend()||!need(helperIndex.count(id),"scalar call graph has an unowned target"))return 0u;
     reached.insert(id);if(heights.count(id))return heights.at(id);

@@ -14,7 +14,7 @@ const cases=[...['architecture','aliases','duplicate','complete','wrapper-alias'
   ['system-query-effects','multi'],...['direct','imported','local-export'].map(name=>['system-query-scalars',name]),
   ...['view-direct','view-imported','view-aliases','view-same-owner','view-parenthesized'].map(name=>['system-query-views',name])].map(([directory,name])=>{
     const bytes=readFileSync(new URL('./testdata/'+directory+'/'+name+'-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-    return {name,bytes,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+    return {name,bytes,context:{family:'tsfg.system-query-context-candidate',version:6,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
   });
 const tool=process.env.TSFG_QUERY_TMETA_EXE,output=process.env.TSFG_QUERY_TMETA_OUTPUT,retained=process.env.TSFG_QUERY_TMETA_RETAINED??output,enabled=Boolean(tool&&output),children=[];
 const run=(name,input,command='--tmeta',status=0)=>{
@@ -76,7 +76,7 @@ test('Query tmeta cold Source/identity/column/permission/signature/symbol reject
 
 test('Query tmeta body above 1 MiB retains strict UTF8 and 8 MiB limit',{skip:!enabled},()=>{
   const bytes=readFileSync(new URL('./testdata/system-query-tmeta/large-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-  const context={family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/system-query-tmeta/large-request.json',import.meta.url)),expectedPackageId:packet.packageId};
+  const context={family:'tsfg.system-query-context-candidate',version:6,requestBytes:readFileSync(new URL('./testdata/system-query-tmeta/large-request.json',import.meta.url)),expectedPackageId:packet.packageId};
   const facts=readSystemQueryFacts(bytes,context),core=emitSystemQueryCore(facts,context),metadata=run('large',core),envelope=JSON.parse(metadata),payload=JSON.parse(envelope.payload);
   assert.ok(Buffer.byteLength(envelope.payload)>1048576);assert.ok(Buffer.byteLength(metadata)<8388608);
   const batch=run('large-batch',core,'--cpu-batch');readSystemQueryTmeta(Buffer.from(metadata),facts,context,batch);

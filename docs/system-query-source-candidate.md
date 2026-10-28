@@ -5,7 +5,7 @@
 The subsequent static consumer is documented in
 [Owned Query Core consumer](system-query-core-candidate.md).
 
-This private v5 candidate describes the complete source system:
+This private v6 candidate describes the complete source system:
 
 ```ts
 @system
@@ -48,7 +48,7 @@ can be printed back as the original canonical packet. Candidate data grants no
 Host, kernel or Guest execution permission. It does not implement foreach
 lowering, numerical execution or component ABI layout.
 
-The Go entry point is `--system-query-facts-io-v5`. Both request and package use
+The Go entry point is `--system-query-facts-io-v6`. Both request and package use
 the exact descriptor in `contracts/system-query-facts.schema.json`; the shared
 component type DTO table has its own pinned schema digest. A package is not a
 relabelled common-v2 package. The Node entry points are:
@@ -56,7 +56,7 @@ relabelled common-v2 package. The Node entry points are:
 ```js
 import {readSystemQueryFacts, printSystemQueryFacts} from '../compiler/system-query-facts.mjs';
 const context = {
-  family: 'tsfg.system-query-context-candidate', version: 5,
+  family: 'tsfg.system-query-context-candidate', version: 6,
   requestBytes: actualOriginalRequestBytes,
   expectedPackageId: selectedActualSourcePackageId
 };
@@ -102,7 +102,25 @@ FieldIds together
 with `sourceType`, `sourceComponentType` and `sourceField` identities. Printing
 returns the owned original packet bytes rather than serializing that projection.
 
-The checked fixtures are complete public Go v5 outputs: five
+The v6 loop `localBindings` and helper `bindings` directories retain each original
+`arrayFactsBinding`: its Symbol-derived BindingId, enclosing function identity,
+declaration/name/annotation UTF16 anchors, logical type and writability. Ordered
+`constDeclaration` and `letDeclaration` statements reference those identities;
+the initializer is evaluated before the binding becomes visible. Multiple
+bindings in a declaration retain their original order. Reads and assignments
+join the exact original lexical declaration, and assignment to const, use before
+initialization, foreign bindings and out-of-scope bindings are rejected.
+
+Local initializers and helper bodies support the existing floating-point
+expressions and owned numeric literals. Explicit f32/f64 annotations and concrete
+aliases supply literal context; unannotated literals keep the established scalar
+default (a fractional/exponent literal is f64). Existing f64 values are never
+reinterpreted as f32. The existing exact finite IEEE rounding and bits protocol
+covers negative zero, fractional/exponent values and representable boundaries.
+A helper initializer remains one ordered call even when its local result is read
+several times. Local reads carry no additional column access or call effects.
+
+The checked fixtures are complete public Go v6 outputs: five
 declaration/alias regressions regenerated with the new profile, plus complete
 architecture, alias, multiple-component, shared-component and inherited-component
 loops, the multi-system effect case, and same-file/imported scalar helpers. Negative Node mutations are malformed input tests, not additional Source
@@ -111,7 +129,7 @@ The Go producer separately checks real readonly writes, foreign iterators and
 wrappers, invalid bindings, noncomponent/GC content and changed contexts before
 writing a package. Earlier private exchange entry points are removed.
 
-The scalar helper directory retains the existing Source function.v8 and signature.v8 identities, original parameter bindings, f32/f64 annotations, one return statement and its actual expression. Only reachable module-level helpers are selected; complete unrelated Source remains in the packet. Direct identifier calls retain the actual callee range, resolved original declaration and ordered arguments. Named-import aliases resolve through the complete original module sources. The owning consumers check those original bindings independently. The bounded subset has one f32/f64 return expression, f32/f64 or Read<T>/Write<T> fixed component parameters, field reads/assignments, arithmetic and nested direct calls, with at most 64 helpers, 32 arguments and call depth 32. Each parameter retains a nullable view record with its original wrapper, component and alias/substitution trace. The Source profile makes Read<T> a readonly mapped view and Write<T> the component itself; erased structural types never grant permissions. The owning consumers derive those permissions from the original annotation and caller binding. Read cannot become Write; Write may lend a Read view without freezing another alias. Views cannot escape a helper return. Capture, allocation, other reference parameters, indirect calls, arbitrary helper statements and recursive graphs remain capability errors.
+The scalar helper directory retains the existing Source function.v8 and signature.v8 identities, original parameter bindings, f32/f64 annotations, complete local binding directory and ordered statements ending in one value return. Only reachable module-level helpers are selected; complete unrelated Source remains in the packet. Direct identifier calls retain the actual callee range, resolved original declaration and ordered arguments. Named-import aliases resolve through the complete original module sources. The owning consumers check those original bindings independently. The bounded subset has a final f32/f64 return, f32/f64 or Read<T>/Write<T> fixed component parameters, field reads/assignments, arithmetic and nested direct calls, with at most 64 helpers, 32 arguments and call depth 32. Each parameter retains a nullable view record with its original wrapper, component and alias/substitution trace. The Source profile makes Read<T> a readonly mapped view and Write<T> the component itself; erased structural types never grant permissions. The owning consumers derive those permissions from the original annotation and caller binding. Read cannot become Write; Write may lend a Read view without freezing another alias. Views cannot escape a helper return. Capture, allocation, other reference parameters, indirect calls, control-flow, exceptions and arbitrary reference locals and recursive graphs remain capability errors.
 
 Run the cold regressions with `node --test tests/r03/system-query-facts.test.mjs tests/r03/system-query-loops.test.mjs`.
 

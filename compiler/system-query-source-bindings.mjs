@@ -58,6 +58,7 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     while(parent){
       spend();const nested=children(parent),declarations=[...nested];
       if(values)for(const statement of nested)if(statement.kind==='KindVariableStatement')for(const list of children(statement))if(list.kind==='KindVariableDeclarationList')declarations.push(...children(list));
+      if(values&&parent.kind==='KindForOfStatement')for(const list of nested.filter(node=>node.kind==='KindVariableDeclarationList'))for(const declaration of children(list))for(const pattern of children(declaration).filter(node=>node.kind==='KindArrayBindingPattern'))declarations.push(...children(pattern));
       const local=declarations.filter(child=>kinds.includes(child.kind)&&child.name===name);
       if(local.length){if(local.length!==1)fail('ambiguous original type binding','source');return local[0];}
       parent=ast.directory.get(parent.parent);

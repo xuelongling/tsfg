@@ -48,6 +48,10 @@ struct Check {
     if(!m.spend()||!need(depth<32,"typed expression path exceeds32"))return {};
     const auto kind=string(field(value,"kind"));
     if(kind=="bindingReference")return bindings.at(string(field(value,"binding"))).value;
+    if(kind=="numericLiteral"){
+      auto *op=take(it,block,"tsfg_core.constant",{},1);if(!op||!scalar(op->getResult(0).getType(),value)||!attrs(op,{"value","tsfg_source.start","tsfg_source.end"})||!anchor(op,field(value,"range"))||!text(op,"value",string(field(value,"bits"))))return {};
+      return op->getResult(0);
+    }
     if(kind=="parentheses")return expression(it,block,field(value,"expression"),bindings,depth+1);
     if(kind=="call"){
       const auto &helper=m.scalarHelpers[m.helperIndex.at(string(field(value,"callee")))];std::vector<mlir::Value> args;
@@ -80,6 +84,13 @@ struct Check {
       auto left=expression(it,block,field(value,"left"),bindings,depth+1);if(!left)return {};auto right=expression(it,block,field(value,"right"),bindings,depth+1);if(!right)return {};
       const auto op=string(field(value,"operator"));const auto name=op=="+"?"add":op=="-"?"sub":op=="*"?"mul":"div";return arithmetic(it,block,std::string("tsfg_core.")+name,left,right,value);
     }
+    if(kind=="bindingAssignment"){
+      const auto id=string(field(field(value,"target"),"binding")),op=string(field(value,"operator"));auto previous=op=="="?mlir::Value():bindings.at(id).value;
+      auto rhs=expression(it,block,field(value,"value"),bindings,depth+1);if(!rhs)return {};
+      const auto name=op=="+="?"add":op=="-="?"sub":op=="*="?"mul":"div";
+      auto result=previous?arithmetic(it,block,std::string("tsfg_core.")+name,previous,rhs,value):rhs;if(!result)return {};
+      bindings.at(id).value=result;return result;
+    }
     const auto &target=field(value,"target");const auto &receiver=bindings.at(string(field(field(target,"receiver"),"binding")));const auto op=string(field(value,"operator"));mlir::Value previous;
     if(op!="="){
       auto *load=take(it,block,"tsfg.field_load",{receiver.value},1);if(!load||!scalar(load->getResult(0).getType(),target)||!fieldOp(load,target,receiver,field(target,"range")))return {};previous=load->getResult(0);
@@ -111,7 +122,11 @@ struct Check {
         !integer(column,"tuple_index",number(field(b,"index")))||!anchor(column,field(field(b,"declaration"),"range"))||!layout(column,*row,nullptr,allowed)||!attrs(column,std::move(allowed)))return false;
       bindings.emplace(string(field(field(b,"declaration"),"id")),Binding{column->getResult(0),&b});
     }
-    for(const auto &statement:items(field(raw,"statements")))if(!expression(ri,rows,field(statement,"value"),bindings))return false;
+    for(const auto &statement:items(field(raw,"statements"))){
+      const auto kind=string(field(statement,"kind"));const bool local=kind=="constDeclaration"||kind=="letDeclaration";
+      auto value=expression(ri,rows,field(statement,local?"initializer":"value"),bindings);if(!value)return false;
+      if(local)bindings.emplace(string(field(statement,"binding")),Binding{value,nullptr});
+    }
     return terminator(ri,rows,"tsfg.yield")&&terminator(ci,chunks,"tsfg.yield");
   }
   bool function(mlir::func::FuncOp fn,const System &system){
@@ -134,9 +149,17 @@ struct Check {
     std::map<std::string,Binding> bindings;for(size_t i=0;i<helper.parameters.size();++i){const auto &p=helper.parameters[i];
       const auto &view=field(*p.raw,"view");const auto expected=view.getAsNull()?(string(field(*p.raw,"logicalType"))=="f64"?mlir::Type(mlir::Float64Type::get(context)):mlir::Type(mlir::Float32Type::get(context))):mlir::Type(ViewType::get(context,p.type+"#"+string(field(field(view,"access"),"mode"))));
       if(!need(fn.getArgument(i).getType()==expected,"helper argument component/permission type differs"))return false;bindings.emplace(string(field(field(*p.raw,"binding"),"id")),Binding{fn.getArgument(i),p.raw});}
-    auto &body=fn.getBody().front();auto it=body.begin();auto value=expression(it,body,field(raw,"value"),bindings);if(!value)return false;
-    auto *returned=take(it,body,"func.return",{value},0);
-    return returned&&attrs(returned,{"tsfg_source.start","tsfg_source.end"})&&anchor(returned,field(raw,"returnRange"))&&need(it==body.end(),"extra scalar helper body operation");
+    auto &body=fn.getBody().front();auto it=body.begin();
+    for(const auto &statement:items(field(raw,"statements"))){
+      const auto kind=string(field(statement,"kind"));const bool local=kind=="constDeclaration"||kind=="letDeclaration";
+      auto value=expression(it,body,field(statement,local?"initializer":"value"),bindings);if(!value)return false;
+      if(local)bindings.emplace(string(field(statement,"binding")),Binding{value,nullptr});
+      if(kind=="return"){
+        auto *returned=take(it,body,"func.return",{value},0);
+        return returned&&attrs(returned,{"tsfg_source.start","tsfg_source.end"})&&anchor(returned,field(statement,"range"))&&need(it==body.end(),"extra scalar helper body operation");
+      }
+    }
+    return need(false,"missing original scalar helper return");
   }
 };
 }

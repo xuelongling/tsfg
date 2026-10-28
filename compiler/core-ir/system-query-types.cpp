@@ -13,7 +13,7 @@ struct Proof {
       {"name",field(n,"name")},{"range",field(n,"range")},{"nameRange",r}};}
   bool declaration(const Json &n,bool values=false){
     const auto kind=string(field(n,"kind"));
-    return values?llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"KindFunctionDeclaration","KindVariableDeclaration","KindBindingElement","KindClassDeclaration","KindEnumDeclaration","KindModuleDeclaration","KindImportEqualsDeclaration"},kind):
+    return values?llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"KindFunctionDeclaration","KindVariableDeclaration","KindBindingElement","KindParameter","KindClassDeclaration","KindEnumDeclaration","KindModuleDeclaration","KindImportEqualsDeclaration"},kind):
       llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"KindTypeParameter","KindTypeAliasDeclaration","KindClassDeclaration","KindInterfaceDeclaration","KindImportEqualsDeclaration"},kind);
   }
   std::vector<const Json *> declarations(const Json &scope,bool values){
@@ -30,6 +30,10 @@ struct Proof {
               if(!m.sourceName(*binding,name))return {};rows.push_back(binding);}
             for(auto *nested:child(*binding)){const auto kind=string(field(*nested,"kind"));if(kind=="KindArrayBindingPattern"||kind=="KindObjectBindingPattern"||kind=="KindBindingElement")pending.push_back(nested);}
           }
+        }
+      if(values&&string(field(scope,"kind"))=="KindForOfStatement"&&string(field(*n,"kind"))=="KindVariableDeclarationList")
+        for(auto *decl:child(*n))for(auto *pattern:child(*decl))if(string(field(*pattern,"kind"))=="KindArrayBindingPattern")for(auto *element:child(*pattern)){
+          if(!m.sourceName(*element,name))return {};rows.push_back(element);
         }
     }
     return rows;
@@ -192,7 +196,8 @@ bool Model::sourceName(const Json &node,std::string &out){
     auto &text=grammar(string(field(node,"sourcePath")));std::string ownerName;
     if(kind=="KindVariableDeclaration"){
       const auto owner=nodes.find(string(field(*parent->second,"parent")));
-      if(!need(parentKind=="KindVariableDeclarationList"&&owner!=nodes.end()&&string(field(*owner->second,"kind"))=="KindVariableStatement","Source variable requires an owning variable statement")||!sourceName(*owner->second,ownerName))return false;
+      if(!need(parentKind=="KindVariableDeclarationList"&&owner!=nodes.end()&&(string(field(*owner->second,"kind"))=="KindVariableStatement"||string(field(*owner->second,"kind"))=="KindForOfStatement"),"Source variable requires original owning statement"))return false;
+      if(string(field(*owner->second,"kind"))=="KindVariableStatement"&&!sourceName(*owner->second,ownerName))return false;
     }else if(kind=="KindBindingElement"){
       const auto owner=nodes.find(string(field(*parent->second,"parent")));
       if(!need((parentKind=="KindArrayBindingPattern"||parentKind=="KindObjectBindingPattern")&&owner!=nodes.end()&&
@@ -287,7 +292,7 @@ bool Model::sourceName(const Json &node,std::string &out){
   }else if(kind=="KindBindingElement"){
     if(cursor+2<b&&g.tokens[cursor].text=="."&&g.tokens[cursor+1].text=="."&&g.tokens[cursor+2].text==".")cursor+=3;
     if(cursor+1<b&&g.tokens[cursor+1].text==":")cursor+=2;
-  }else if(kind!="KindVariableDeclaration")return reject(error,"core-ir-query-capability","Source scope declaration syntax has no selected name validation");
+  }else if(kind!="KindVariableDeclaration"&&kind!="KindParameter")return reject(error,"core-ir-query-capability","Source scope declaration syntax has no selected name validation");
   if(!need(cursor<b,"Source declaration name missing"))return false;
   if((kind=="KindVariableDeclaration"||kind=="KindBindingElement")&&(g.tokens[cursor].text=="["||g.tokens[cursor].text=="{"))return empty();
   const auto &token=g.tokens[cursor];const Json range=Object{{"start",int64_t(token.start)},{"end",int64_t(token.end)}};

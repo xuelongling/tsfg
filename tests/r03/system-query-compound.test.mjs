@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Every positive pair is complete original public Go v5 output, byte for byte.
+// Every positive pair is complete original public Go v6 output, byte for byte.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
@@ -17,12 +17,12 @@ const cases=[['mul','*=','mul'],['sub','-=','sub'],['div','/=','div'],
 const actual=name=>fixture('../system-query-compound/'+name);
 const anchor=range=>'tsfg_source.start = '+range.start+' : i64, tsfg_source.end = '+range.end+' : i64';
 
-for(const [name,operator,operation]of cases)test('actual v5 '+name+' compound captures its old target before its RHS',()=>{
+for(const [name,operator,operation]of cases)test('actual v6 '+name+' compound captures its old target before its RHS',()=>{
   const input=actual(name),facts=readSystemQueryFacts(input.bytes,input.context);
   assert.deepEqual(printSystemQueryFacts(facts,input.context),input.bytes);
   assert.deepEqual(facts.program,input.packet.payload.program);assert.deepEqual(facts.nodes,input.packet.payload.nodes);
   const system=facts.systems.find(row=>row.declaration.name==='integrate'),helper=facts.scalarHelpers.find(row=>row.declaration.name==='update');
-  const owner=name.startsWith('helper-')?helper:system,value=name.startsWith('helper-')?helper.value:system.loops[0].statements[0].value;
+  const owner=name.startsWith('helper-')?helper:system,value=name.startsWith('helper-')?helper.statements.at(-1).value:system.loops[0].statements[0].value;
   assert.equal(value.operator,operator);assert.equal(value.target.access,'readwrite');
   const source=facts.program.files.find(row=>row.path===owner.declaration.sourcePath).content;
   assert.equal(source.slice(value.operatorRange.start,value.operatorRange.end),operator);
@@ -61,7 +61,7 @@ const mutations=[
 ];
 const rehash=(input,mutate)=>{
   const packet=structuredClone(input.packet);mutate(packet.payload);
-  packet.packageId=sha256('tsfg.system-query.package.v5\0'+packet.schemaHash+'\0'+canonical(packet.payload));return packet;
+  packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));return packet;
 };
 for(const {name,mutate}of mutations)test('owned compound packet rejects rehashed '+name,()=>{
   const input=actual('mul'),packet=rehash(input,mutate);
@@ -87,7 +87,7 @@ for(const [name,,operation]of cases)test('official static compound '+name+' pres
   const kinds=name==='nested'?['read','write','write','read','read','write']:helper?['read','read','write','write','read','read','write']:['read','read','read','write','write','read','read','write'];
   const depths=name==='nested'?[0,0,0,0,2,0]:helper?[1,1,1,0,0,2,0]:[0,1,1,1,0,0,2,0];
   assert.deepEqual(loop.operations.map(row=>row.kind),kinds);assert.deepEqual(loop.operations.map(row=>row.callPath.length),depths);
-  const system=facts.systems[0],selected=helper?facts.scalarHelpers.find(row=>row.declaration.name==='update').value:system.loops[0].statements[0].value;
+  const system=facts.systems[0],selected=helper?facts.scalarHelpers.find(row=>row.declaration.name==='update').statements.at(-1).value:system.loops[0].statements[0].value;
   assert.deepEqual(loop.operations[0].source,{path:system.declaration.sourcePath,...selected.target.range});
   assert.equal(loop.operations[0].tupleIndex,0);assert.equal(loop.operations[0].sourceBinding,system.loops[0].bindings[0].declaration.id);
   assert.deepEqual(loop.capabilities.map(row=>row.mode).sort(),['read','write']);assert.deepEqual(result.effects.conflicts,[]);

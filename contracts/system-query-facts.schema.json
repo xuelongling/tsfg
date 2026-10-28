@@ -1,7 +1,7 @@
 {
   "family": "tsfg.system-query-facts-package-candidate",
-  "version": 5,
-  "status": "private original Source declarations, typed Query loops and reachable direct f32/f64-result scalar/view helpers; no execution admission",
+  "version": 6,
+  "status": "private original Source declarations, ordered f32/f64 Query locals and scalar/view helper statements; no execution admission",
   "requestFamily": "tsfg.system-query-facts-request-candidate",
   "sourceTypeSchemaHash": "sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78",
   "profile": {
@@ -118,7 +118,8 @@
       "bindingRange",
       "bodyRange",
       "bindings",
-      "statements"
+      "statements",
+      "localBindings"
     ],
     "loopBinding": [
       "index",
@@ -169,8 +170,8 @@
       "returnType",
       "returnAnnotationRange",
       "bodyRange",
-      "returnRange",
-      "value"
+      "bindings",
+      "statements"
     ],
     "scalarSignature": [
       "id",
@@ -179,5 +180,6 @@
       "parameters",
       "returnType"
     ]
-  }
+  },
+  "localBindingContract": "loop.localBindings and scalarHelper.bindings retain complete original arrayFactsBinding, lexicalOwner is original enclosing function id. Statement bindings are unique, declaration-ordered and initialized before read; const is not writable; only straight-line f32/f64 locals, source-owned exact numeric literals and a final helper return are admitted. Local reads reuse the current SSA value and never replay initializers or column effects."
 }

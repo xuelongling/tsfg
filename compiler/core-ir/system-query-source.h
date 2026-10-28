@@ -33,7 +33,8 @@ struct Model {
   bool scalarTarget(const std::string &,const Json &,const Json &);
   bool scalars();bool scalarClosure();
   bool sourceName(const Json &,std::string &);
-  bool expression(const Json &,const Json &,const std::map<std::string,const Json *> &,const std::string &,unsigned=0);
+  bool expression(const Json &,const Json &,const std::map<std::string,const Json *> &,const std::string &,unsigned=0,const std::string &expected={});
+  bool statements(const Json &,const Json &,const Json &,const Json &,std::map<std::string,const Json *>,const std::string &,const std::string &);
   bool loop(const Json &,const Json &,const Json &,const std::vector<Parameter> &);
   std::string selectionId(const Json &)const;
 };

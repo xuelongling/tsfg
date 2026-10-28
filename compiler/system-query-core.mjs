@@ -10,7 +10,7 @@ export const systemQueryTypeId=query=>sha256('tsfg.query.type.v1\0'+canonical(qu
 /** @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} context */
 export function emitSystemQueryCore(facts,context){
   const original=printSystemQueryFacts(facts,context),packet=JSON.parse(original.toString('utf8'));
-  const request={family:'tsfg.system-query-facts-request-candidate',version:5,schemaHash:facts.format.schemaHash,
+  const request={family:'tsfg.system-query-facts-request-candidate',version:6,schemaHash:facts.format.schemaHash,
     input:{sourceRoot:facts.program.sourceRoot,rootFile:facts.program.rootFile,files:facts.program.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:facts.program.declarations,config:facts.program.config,target:facts.program.target}};
   let remaining=1000000,serial=0;
   const spend=(n=1)=>{remaining-=n;if(remaining<0)throw new TypeError('r10-query-core-budget: lowering work exceeded');};
@@ -34,6 +34,7 @@ export function emitSystemQueryCore(facts,context){
       return name?{name,type,semantic:value.type,binding:''}:null;
     };
     if(value.kind==='bindingReference')return bindings.get(value.binding);
+    if(value.kind==='numericLiteral')return emit('tsfg_core.constant',[],value.sourceType,'value = '+quote(value.bits),value.range);
     if(value.kind==='parentheses')return expression(value.expression,bindings,owner,indent);
     if(value.kind==='call'){
       const helper=facts.scalarHelpers.find(helper=>helper.id===value.callee);
@@ -57,6 +58,11 @@ export function emitSystemQueryCore(facts,context){
       const left=expression(value.left,bindings,owner,indent),right=expression(value.right,bindings,owner,indent),op={'+':'add','-':'sub','*':'mul','/':'div'}[value.operator];
       if(!op)fail(owner,value.operatorRange,'unsupported floating-point operator');return emit('tsfg_core.'+op,[left,right],value.sourceType,'operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range);
     }
+    if(value.kind==='bindingAssignment'){
+      const op={'+=':'add','-=':'sub','*=':'mul','/=':'div'}[value.operator],previous=op?bindings.get(value.target.binding):null;
+      const rhs=expression(value.value,bindings,owner,indent),result=previous?emit('tsfg_core.'+op,[previous,rhs],value.sourceType,'operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range):rhs;
+      bindings.set(value.target.binding,result);return result;
+    }
     if(value.kind==='fieldAssignment'){
       const selected=field(value.target),op={'+=':'add','-=':'sub','*=':'mul','/=':'div'}[value.operator];
       const previous=op?emit('tsfg.field_load',[selected.receiver],value.sourceType,selected.properties,value.target.range):null;
@@ -64,6 +70,12 @@ export function emitSystemQueryCore(facts,context){
       emit('tsfg.field_store',[selected.receiver,result],null,selected.properties,value.range);return result;
     }
     fail(owner,value.range,'unsupported owned Query expression');
+  }
+  function statement(value,bindings,owner,indent){
+    if(value.kind==='constDeclaration'||value.kind==='letDeclaration'){
+      const result=expression(value.initializer,bindings,owner,indent);bindings.set(value.binding,result);return result;
+    }
+    return expression(value.value,bindings,owner,indent);
   }
   for(const system of facts.systems){
     spend();if(system.sourceReturnType!=='void')fail(system,system.bodyRange,'system return must be void');
@@ -79,7 +91,7 @@ export function emitSystemQueryCore(facts,context){
       const bindings=new Map(parameters.map(row=>[row.binding,row]));
       for(const binding of loop.bindings){const name='%column'+serial++,type=view(binding.componentType,binding.mode);bindings.set(binding.declaration.id,{name,type,semantic:binding.componentType,binding:binding.declaration.id,mode:binding.mode});
         line('        ',name,' = "tsfg.column"(',chunkName,', ',rowName,') {component_type = ',quote(binding.componentType),', mode = ',quote(binding.mode),', source_binding = ',quote(binding.declaration.id),', tuple_index = ',String(binding.index),' : i64, ',anchor(binding.declaration.range),'} : (',chunk(selectionId),', index) -> ',type);}
-      for(const statement of loop.statements)expression(statement.value,bindings,system,'        ');
+      for(const value of loop.statements)statement(value,bindings,system,'        ');
       line('        "tsfg.yield"() : () -> ()');line('      }) {',anchor(loop.range),'} : (',chunk(selectionId),', index) -> ()');line('      "tsfg.yield"() : () -> ()');line('    }) {',anchor(loop.range),'} : (',query(selectionId),') -> ()');
     }
     line('    func.return');line('  }');
@@ -87,8 +99,10 @@ export function emitSystemQueryCore(facts,context){
   for(const helper of facts.scalarHelpers){
     const parameters=helper.parameters.map(parameter=>({name:'%harg'+parameter.index,type:parameter.view?view(parameter.type,parameter.view.access.mode):parameter.logicalType,semantic:parameter.type,binding:parameter.binding.id,mode:parameter.view?.access.mode??null}));
     line('  func.func @',quote('query_helper_'+helper.id.slice(7)),'(',parameters.map(row=>row.name+': '+row.type).join(', '),') -> ',helper.sourceReturnType,' attributes {tsfg_core.function_id = ',quote(helper.id),', tsfg_core.signature_hash = ',quote(helper.signatureHash),', tsfg.query_source_function = ',quote(helper.declaration.id),', tsfg.query_source_helper = ',quote(helper.sourceId),', tsfg_source.path = ',quote(helper.declaration.sourcePath),', ',anchor(helper.declaration.range),'} {');
-    const result=expression(helper.value,new Map(parameters.map(row=>[row.binding,row])),helper,'    ');
-    line('    "func.return"(',result.name,') {',anchor(helper.returnRange),'} : (',helper.sourceReturnType,') -> ()');line('  }');
+    const bindings=new Map(parameters.map(row=>[row.binding,row]));
+    for(const value of helper.statements){const result=statement(value,bindings,helper,'    ');
+      if(value.kind==='return')line('    "func.return"(',result.name,') {',anchor(value.range),'} : (',helper.sourceReturnType,') -> ()');}
+    line('  }');
   }
   line('}');return text.finish();
 }

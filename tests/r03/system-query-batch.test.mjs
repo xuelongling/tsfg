@@ -14,7 +14,7 @@ const cases=[...['architecture','aliases','duplicate','complete','wrapper-alias'
   ['system-query-effects','multi'],...['direct','imported','local-export'].map(name=>['system-query-scalars',name]),
   ...['view-direct','view-imported','view-aliases','view-same-owner','view-parenthesized'].map(name=>['system-query-views',name])].map(([directory,name])=>{
     const bytes=readFileSync(new URL('./testdata/'+directory+'/'+name+'-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-    return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:5,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+    return {name,bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:6,requestBytes:readFileSync(new URL('./testdata/'+directory+'/'+name+'-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
   });
 const tool=process.env.TSFG_QUERY_BATCH_EXE,output=process.env.TSFG_QUERY_BATCH_OUTPUT,enabled=Boolean(tool&&output),children=[];
 const run=(name,input,command='--cpu-batch',status=0)=>{
