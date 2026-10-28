@@ -113,6 +113,8 @@ function matchesSnapshotContract(snapshot) {
     const claim = snapshot?.identityInput;
     const files = new Map(claim.files.map(file => [file.path, file.content]));
     matchesInput = admittedInputScope(claim, snapshot.inputIdentity)
+      // Formal 0.10 has a function-only Source profile, without module tables.
+      && claim.compilationClosure === undefined
       && files.size === claim.files.length
       && claim.rootFile === snapshot.source?.path
       && files.get(claim.rootFile) === snapshot.source.content

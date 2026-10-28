@@ -424,6 +424,8 @@ export function verifyHir(hir) {
   if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions", "inputScope"])
       || hir.contractVersion !== contract()?.semver || hir.schemaHash !== contract()?.schemaHash
       || !admittedInputScope(hir.inputScope, hir.inputIdentity)
+      // The formal 0.10 function-only contract cannot consume module roots.
+      || hir.inputScope.compilationClosure !== undefined
       || hir.inputScope?.rootFile !== hir.source?.path || hir.inputScope?.files?.find(file=>file.path===hir.source.path)?.content !== hir.source.content
       || !hash(hir.inputIdentity) || canonical(hir.target) !== canonical(bytecodeSchema.target)
       || !exactKeys(hir.source, ["path", "content", "hash"])
