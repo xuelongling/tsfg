@@ -216,10 +216,12 @@ ActualValue ActualCheck::entryValue(const Function &fn,size_t index,ActualHeap &
     }
   }
   const auto origin="entry/"+fn.id+"/"+std::to_string(reg);
-  if(types.count(type)&&string(field(*types.at(type),"kind"))=="function"&&sourceFunctions.count(fn.id)){
+  if(commonCallableType(types,type,[&]{return step();})&&sourceFunctions.count(fn.id)){
     const auto &source=*sourceFunctions.at(fn.id);const size_t hidden=!field(source,"lexicalEnvironment").getAsNull(),receiver=!field(source,"ownerType").getAsNull();
     if(!need(index>=hidden+receiver&&p.callableParameters.count(fn.id)&&index-hidden-receiver<p.callableParameters.at(fn.id).size(),"callable root parameter lacks independent fixed authority"))return {};
-    const auto &bound=p.callableParameters.at(fn.id)[index-hidden-receiver];ActualValue out;out.tags.insert(type);out.callableTop=bound.top;
+    const auto &bound=p.callableParameters.at(fn.id)[index-hidden-receiver];ActualValue out;out.callableTop=bound.top;out.unknown=bound.top;
+    if(string(field(*types.at(type),"kind"))=="function")out.tags.insert(type);
+    else for(const auto &member:items(field(*types.at(type),"members"))){if(!step())return {};out.tags.insert(string(member));}
     for(const auto &code:bound.functions){
       if(!step()||!need(sourceFunctions.count(code),"fixed callable entry target missing"))return {};const auto layout=string(field(*sourceFunctions.at(code),"lexicalEnvironment"));
       if(layout.empty())out.callables.emplace(code,"");
@@ -230,7 +232,11 @@ ActualValue ActualCheck::entryValue(const Function &fn,size_t index,ActualHeap &
 }
 std::string ActualCheck::carrier(const CapacityValue &v){
   size_t cost=v.tags.size()+1;for(const auto &id:v.tags)cost+=id.size()/64;
-  if(!step(cost)||!need(v.tags.size()<=256,"conditional capacity tag limit exceeded"))return {};if(v.unknown)return "payload:"+schema.str();
+  if(!step(cost)||!need(v.tags.size()<=256,"conditional capacity tag limit exceeded"))return {};
+  // One original callable signature has a fixed carrier even when code targets
+  // are TOP. Presence alternatives retain a generic unknown payload capacity.
+  if(v.tags.size()==1){const auto found=types.find(*v.tags.begin());if(found!=types.end()&&string(field(*found->second,"kind"))=="function")return found->first;}
+  if(v.unknown)return "payload:"+schema.str();
   if(v.tags.size()==1){const auto id=*v.tags.begin();if(llvm::StringRef(id).starts_with("env:")){if(!need(environments.count(id.substr(4)),"unowned environment actual tag"))return {};return id;}if(!need(types.count(id),"unowned actual payload tag"))return {};
     const auto kind=string(field(*types.at(id),"kind"));if(kind!="undefined"&&kind!="null"&&kind!="void")return id;}
   Array tags;for(const auto &id:v.tags)tags.push_back(id);

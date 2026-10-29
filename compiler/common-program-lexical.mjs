@@ -4,6 +4,13 @@
 import {originId} from './typed-array-schema.mjs';
 import {commonTypeSyntax,commonCallableNameRange} from './common-program-source.mjs';
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
+export function commonCaptureType(id,types,spend) {
+  spend();const type=types.get(id);
+  if(type?.kind!=='union')return ['scalar','string','readSpan','array','function','reference','value'].includes(type?.kind);
+  spend(type.members.length);const payload=type.members.filter(id=>!['null','undefined'].includes(types.get(id)?.kind));
+  return type.members.length>=2&&type.members.length<=3&&payload.length===1
+    &&['scalar','string','array','function','reference','value'].includes(types.get(payload[0])?.kind);
+}
 export function validateCommonLexical(payload,grammars,types,coverage,spend,visible) {
   spend(payload.functions.length+payload.types.length);const functions=new Map(payload.functions.map(fn=>[fn.id,fn]));
   for(const type of types.values())if(type.constructor)functions.set(type.constructor.id,type.constructor);

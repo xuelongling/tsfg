@@ -6,12 +6,20 @@ import {commonMethods} from './common-program-methods.mjs';
 import {signatureId} from './module-callable-common.mjs';
 import {commonCheck as check,commonFailure,commonSame as same,commonRecord as record} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+export function commonCallableType(id,types,spend) {
+  const type=types.get(id);if(type?.kind==='function')return type;
+  if(type?.kind!=='union'||type.members.length<2||type.members.length>3)return null;
+  let payload=null;
+  for(const id of type.members){spend();const member=types.get(id);if(['null','undefined'].includes(member?.kind))continue;
+    if(member?.kind!=='function'||payload)return null;payload=member;}
+  return payload;
+}
 export function commonTargets(hir,spend,records=null) {
   const collections=commonCollections(spend);spend(hir.functions.length+hir.types.length);
   const functions=new Map(hir.functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(t=>[t.id,t]));
   const methods=commonMethods(hir,spend);
   const domain=callableTargetDomain(functions,spend,message=>commonFailure('callable',message),(a,b)=>a<b?-1:a>b?1:0);
-  const callable=id=>types.get(id)?.kind==='function',summaries=new Map(),sites=new Map(),observations=new Map();let changed=false;
+  const callable=id=>commonCallableType(id,types,spend)!==null,summaries=new Map(),sites=new Map(),observations=new Map();let changed=false;
   const mayCallable=(id,seen=new Set())=>{spend();if(seen.has(id))return false;seen.add(id);const type=types.get(id);
     return type?.kind==='function'||type?.kind==='union'&&type.members.some(member=>mayCallable(member,seen));};
   const merge=(map,key,value)=>{const before=map.get(key)??domain.bottom(),next=domain.join(before,value);if(!map.has(key)||!domain.equal(before,next)){map.set(key,next);changed=true;}};
@@ -109,6 +117,7 @@ export function commonTargets(hir,spend,records=null) {
   const siteKey=(fn,range)=>fn+'/'+range.start+':'+range.end;
   function expression(summary,state,value) {
     spend();if(value.kind==='functionReference')return domain.single(value.functionId);
+    if(['nullLiteral','undefinedLiteral'].includes(value.kind))return domain.bottom();
     if(value.kind==='bindingReference'){
       if(!callable(value.type))return null;const captured=capturedParameters.get(value.binding);
       return domain.copy(captured?summaries.get(captured.owner).parameters.get(captured.index):capturedLocals.get(value.binding)??state.get(value.binding)??domain.bottom());
@@ -230,9 +239,9 @@ export function validateCommonCallableBounds(hir,fn,value,spend){
   record(value,['parameters','returns','slotWrites']);spend(hir.functions.length+hir.types.length);const functions=new Map(hir.functions.map(f=>[f.id,f])),types=new Map(hir.types.map(t=>[t.id,t]));
   const bound=(targets,type)=>{record(targets,['top','functions']);check(typeof targets.top==='boolean'&&Array.isArray(targets.functions)&&targets.functions.length<=256,'callable-contract');spend(targets.functions.length);let previous;
     for(const id of targets.functions){const target=functions.get(id);check(target&&!target.ownerType&&(!previous||previous<id)&&same(target.parameters.map(p=>p.type),type.parameters)&&target.returnType===type.returnType,'callable-contract');previous=id;}};
-  const expected=[];for(const [index,p]of fn.parameters.entries()){spend();if(types.get(p.type)?.kind==='function')expected.push(index);}
-  check(Array.isArray(value.parameters)&&value.parameters.length===expected.length,'callable-contract');for(const [i,row]of value.parameters.entries()){spend();record(row,['index','allowed']);check(row.index===expected[i],'callable-contract');bound(row.allowed,types.get(fn.parameters[row.index].type));}
-  if(types.get(fn.returnType)?.kind==='function')bound(value.returns,types.get(fn.returnType));else check(value.returns===null,'callable-contract');
+  const expected=[];for(const [index,p]of fn.parameters.entries()){spend();if(commonCallableType(p.type,types,spend))expected.push(index);}
+  check(Array.isArray(value.parameters)&&value.parameters.length===expected.length,'callable-contract');for(const [i,row]of value.parameters.entries()){spend();record(row,['index','allowed']);check(row.index===expected[i],'callable-contract');bound(row.allowed,commonCallableType(fn.parameters[row.index].type,types,spend));}
+  const returned=commonCallableType(fn.returnType,types,spend);if(returned)bound(value.returns,returned);else check(value.returns===null,'callable-contract');
   // Slot writes are not grants. Callable Array element membership is derived
   // from verified storage writers, independently of this fixed table.
   check(Array.isArray(value.slotWrites)&&value.slotWrites.length===0,'callable-contract');

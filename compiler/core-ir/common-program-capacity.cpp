@@ -40,6 +40,7 @@ bool ActualCheck::representation(){
         forced[fn->blocks[op.successors[1]].parameters[0]]="payload:"+schema.str();
       }else if(name=="numeric_use")forced[fn->blocks[op.successors[0]].parameters[0]]=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32");
       else if(name=="func.return"&&!op.operands.empty())adapters[op.operands[0]]=fn->resultCarrier;
+      else if(name=="cf.cond_br")adapters[op.operands[0]]=digest(std::string("tsfg.type")+std::string(1,'\0')+"bool");
       else if(name=="cf.br"||name=="route"){
         const auto &target=fn->blocks[op.successors[0]].parameters;for(size_t i=0;i<target.size();++i)adapters[op.operands[i]]=fn->carriers[target[i]];
       }

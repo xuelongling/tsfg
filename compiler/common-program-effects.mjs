@@ -43,7 +43,8 @@ export function commonEffects(hir,spend,physical=null) {
       before[flag] ||= flags[flag]===true;if(location&&flags[flag])witness({kind:'capture',slot,access:flag},location.kind,location.operation,location.range);
     }captures.set(slot,before);};
     for(const row of fn.captures??[]){spend();const slot=slots.get(row.binding);capture(slot.key,{read:row.read,write:row.write,structural:false},{kind:'function',operation:'capture',range:fn.range});
-      if(reference(slot.type)||types.get(slot.type)?.kind==='value')origins.set(row.binding,new Set(['c:'+slot.key]));}
+      const type=types.get(slot.type),value=type?.kind==='value'||type?.kind==='union'&&type.members.some(id=>{spend();return types.get(id)?.kind==='value';});
+      if(reference(slot.type)||value)origins.set(row.binding,new Set(['c:'+slot.key]));}
     if(fn.activationEnvironment){facet('allocation','function','activationEnvironment',fn.range);facet('managedReference','function','activationEnvironment',fn.range);}
     if(fn.lexicalEnvironment)facet('managedReference','function','lexicalEnvironment',fn.range);
     if(!diagnostics){result.facets.managedReference ||= physical?.references.get(fn.id)??false;result.facets.escape=physical?.escaping.get(fn.id)??false;}

@@ -74,7 +74,8 @@ export function printCommonFunction(plan,model,carriers,publication=null,project
       spend(op.operands.length+1);const args=op.operands.map(resolve),p=op.properties,type=op.result?selected.get(op.result):null,name=op.name;let result;
       const view=op.view?.startsWith('cell:')?model.bindings.get(p.binding).type:op.view===model.payload?p.type:op.view??'void';
       if(name==='cf.br'){branch(op,args);continue;}
-      if(name==='cf.cond_br'){check(args[0].type===boolTypeId,'capability','condition is not a native boolean carrier');
+      if(name==='cf.cond_br'){check(graph.registers.get(op.operands[0]).view===boolTypeId,'capability','condition is not a native boolean view');
+        args[0]=adapt(args[0],boolTypeId,op.range,boolTypeId);
         record(name,op.range);
         line('    cf.cond_br '+args[0].name+', ^'+op.successors[0]+', ^'+op.successors[1]+' {'+anchor(op.range)+'}');continue;}
       if(name==='tsfg_program.route'){branch(op,args,true);continue;}

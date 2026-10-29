@@ -32,14 +32,14 @@ bool callableBounds(Program &p,const Json &fn,const Json &value,Error &e){
   for(size_t index=0;index<parameters.size();++index){
     if(!work(p,e))return false;const auto found=types.find(string(field(parameters[index],"type")));
     if(!need(found!=types.end(),e,"fixed callable parameter type is unowned"))return false;
-    if(string(field(*found->second,"kind"))!="function")continue;
+    const auto *callable=commonCallableType(types,found->first,[&]{return work(p,e);});if(!callable)continue;
     if(!need(record<records.size()&&exact(records[record],{"index","allowed"})&&
       field(records[record],"index").getAsInteger()==int64_t(index),e,"fixed callable parameter index or shape differs"))return false;
-    if(!bound(field(records[record++],"allowed"),*found->second))return false;
+    if(!bound(field(records[record++],"allowed"),*callable))return false;
   }
   if(!need(record==records.size(),e,"extra fixed callable parameter transfer"))return false;
-  const auto returned=types.find(string(field(fn,"returnType")));
-  if(returned!=types.end()&&string(field(*returned->second,"kind"))=="function")return bound(field(value,"returns"),*returned->second);
+  const auto *returned=commonCallableType(types,string(field(fn,"returnType")),[&]{return work(p,e);});
+  if(returned)return bound(field(value,"returns"),*returned);
   return need(bool(field(value,"returns").getAsNull()),e,"noncallable result has a callable return transfer");
 }
 bool covers(Program &p,const Effects &upper,const Effects &body,Error &e){

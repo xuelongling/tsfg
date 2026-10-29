@@ -444,7 +444,7 @@ bool capacityConsumer(const std::string &mode){
   const auto carrier=c.carrier(c.resultCapacity["capacity"]);const bool accepted=c.effects();
   if(mode=="narrow")return report("passive managed evidence cannot narrow fixed upper",!accepted&&e.code=="core-ir-common-publication");
   const bool managed=mode=="unknown"||mode=="top"||mode=="environment"||mode=="nested"||mode=="union";
-  const bool shape=mode=="unknown"?carrier=="payload:"+schema.str():mode=="nested"?carrier=="V":mode=="empty"||mode=="default"?carrier=="sha256:514c8a9572be114c0294d83468b031dcd64d7bee847ac78459f01ac4b6c2591b":mode=="union"?carrier=="sha256:50026875a90809d918b1a2c8ef3dde23d0fc5b88022484be58f3da99d94779bb"&&c.joinCarriers({"F","V"})==carrier:carrier=="F";
+  const bool shape=mode=="nested"?carrier=="V":mode=="empty"||mode=="default"?carrier=="sha256:514c8a9572be114c0294d83468b031dcd64d7bee847ac78459f01ac4b6c2591b":mode=="union"?carrier=="sha256:50026875a90809d918b1a2c8ef3dde23d0fc5b88022484be58f3da99d94779bb"&&c.joinCarriers({"F","V"})==carrier:carrier=="F";
   return report("passive carrier/managed "+mode,accepted&&shape&&p.effects[fn.id].managedReference==managed&&p.effects[fn.id].escape==managed,e);
 }
 bool projectedFlows(const std::string &mode){

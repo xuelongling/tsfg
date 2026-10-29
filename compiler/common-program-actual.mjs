@@ -8,6 +8,7 @@ import {commonAbstract,commonActualArrayReceiver} from './common-program-abstrac
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
 import {commonMethods} from './common-program-methods.mjs';
+import {commonCallableType} from './common-program-targets.mjs';
 import {commonBorrowObservations,commonClosureHolding} from './common-program-borrow-observations.mjs';
 import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
@@ -62,7 +63,7 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
         seed(seeds,id,value);invalidateCapacity ||= before!==a.key(seeds.get(id));
       }}:undefined;
       if(parameter.hidden)return environmentEntry(parameter.type.slice(4),heap,'entry/'+plan.owner.id);
-      if(types.get(parameter.type)?.kind==='function'){const result=a.literal(parameter.type),index=plan.owner.parameters.findIndex(p=>p.id===parameter.id),upper=model.callables.summaries.get(plan.owner.id).parameters.get(index);result.unknown=upper.top;
+      if(commonCallableType(parameter.type,types,spend)){const result=types.get(parameter.type)?.kind==='function'?a.literal(parameter.type):a.declared(parameter.type,heap,'entry/'+plan.owner.id+'/'+parameter.id,fieldSeeds,objects),index=plan.owner.parameters.findIndex(p=>p.id===parameter.id),upper=model.callables.summaries.get(plan.owner.id).parameters.get(index);result.unknown=upper.top;
         for(const id of upper.ids){spend();const fn=model.functions.get(id),env=fn.lexicalEnvironment?environmentEntry(fn.lexicalEnvironment,heap,'callable-entry/'+plan.owner.id+'/'+parameter.id+'/'+id):null;
           const ref=env?[...env.refs][0]:null;result.pairs.set(id+'\0'+(ref??''),{functionId:id,environment:ref});if(ref)result.refs.add(ref);}return result;}
       return a.declared(parameter.type,heap,'entry/'+plan.owner.id+'/'+parameter.id,fieldSeeds,objects,new Set(),entry);

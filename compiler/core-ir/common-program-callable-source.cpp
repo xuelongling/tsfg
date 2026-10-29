@@ -56,8 +56,18 @@ bool SourceBodies::lexicalScope(const Json &fn){
     const auto role=string(field(b,"kind"));
     if(!model.need(ancestor&&model.types.count(type),"captured binding owner or type is absent"))return false;
     const auto kind=string(field(*model.types.at(type),"kind"));
-    if(!model.need((role=="local"&&(kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value"))||(role=="parameter"&&(kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value")),
-      "unsupported capture outside initialized function-body scalar/String/ReadSpan/Array/function/reference/value local or scalar/String/ReadSpan/Array/function/reference/value parameter"))return false;
+    bool supported=kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value";
+    if(kind=="union"){
+      const auto &members=items(field(*model.types.at(type),"members"));size_t payloads=0;bool payload=false;
+      for(const auto &member:members){
+        if(!model.spend())return false;const auto memberKind=string(field(*model.types.at(string(member)),"kind"));
+        if(memberKind=="null"||memberKind=="undefined")continue;++payloads;
+        payload=memberKind=="scalar"||memberKind=="string"||memberKind=="array"||memberKind=="function"||memberKind=="reference"||memberKind=="value";
+      }
+      supported=members.size()>=2&&members.size()<=3&&payloads==1&&payload;
+    }
+    if(!model.need((role=="local"||role=="parameter")&&supported,
+      "unsupported capture outside initialized body local or original parameter with an admitted payload/nullable type"))return false;
     bool declaration=false;
     if(role=="parameter")for(const auto &parameter:items(field(*model.functions.at(owner),"parameters"))){
       if(!model.spend())return false;declaration|=string(field(parameter,"id"))==id;

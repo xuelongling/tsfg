@@ -26,7 +26,7 @@ struct TargetFlow {
   ArrayTargets arrays{p,e,types,dirty,[this](const Targets &a,const Targets &b){return join(a,b);},[this](const Targets &value){exposeClosures(value);}};
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent callable target work exceeded");}
   bool need(bool c,llvm::StringRef detail){return c||reject(e,"core-ir-common-callable",detail);}
-  bool callable(const std::string &id)const{auto t=types.find(id);return t!=types.end()&&string(field(*t->second,"kind"))=="function";}
+  bool callable(const std::string &id){return commonCallableType(types,id,[&]{return step();})!=nullptr;}
   bool equal(const Targets &a,const Targets &b){return step(a.functions.size()+b.functions.size()+1)&&a.top==b.top&&a.functions==b.functions;}
   Targets copy(const Targets &v){if(!step(v.functions.size()+1))return {};return v;}
   Targets join(const Targets &a,const Targets &b){
@@ -177,6 +177,7 @@ struct TargetFlow {
   }
   std::optional<Targets> expression(Summary &s,State &state,const Json &value){
     if(!step()||!e.message.empty())return {};const auto kind=string(field(value,"kind")),type=string(field(value,"type"));
+    if(kind=="nullLiteral"||kind=="undefinedLiteral")return Targets{};
     if(kind=="functionReference"){
       const auto id=string(field(value,"functionId"));if(!need(functions.count(id),"function value target is not owned"))return {};
       Targets result;result.functions.insert(id);return result;

@@ -6,6 +6,17 @@ namespace tsfg::commonProgram {
 using exception::field;using exception::items;using exception::string;
 inline constexpr llvm::StringLiteral sourceSchema="sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78";
 inline constexpr llvm::StringLiteral hirSchema="sha256:c669863a42e3a1e77962dfc58f46d7fca68c5fce09ef85c0678a51191d0d378c";
+// Nullable storage retains one original callable signature; absence contributes
+// no code target. Other unions do not acquire a callable transfer contract.
+template<class Spend> const Json *commonCallableType(const std::map<std::string,const Json *> &types,const std::string &id,Spend spend){
+  const auto found=types.find(id);if(found==types.end())return nullptr;const auto *type=found->second;
+  const auto kind=string(field(*type,"kind"));if(kind=="function")return type;if(kind!="union")return nullptr;
+  const auto &members=items(field(*type,"members"));if(members.size()<2||members.size()>3)return nullptr;
+  const Json *payload=nullptr;
+  for(const auto &id:members){if(!spend())return nullptr;const auto *member=types.at(string(id));const auto kind=string(field(*member,"kind"));
+    if(kind=="null"||kind=="undefined")continue;if(kind!="function"||payload)return nullptr;payload=member;}
+  return payload;
+}
 // Private conversion state. Protocol IDs and semantic IDs never share a map.
 struct SourceModel {
   Program &p;Error &error;const Json &facts,&payload;

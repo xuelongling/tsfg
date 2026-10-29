@@ -12,6 +12,7 @@ import {commonTypeSyntax,commonSourceAccess,commonCallableNameRange} from './com
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
 import {validateCommonEntryRoots} from './common-program-entry.mjs';
+import {commonCaptureType} from './common-program-lexical.mjs';
 
 export function validateCommonBodies(payload,sources,types,grammars,visibility,spend) {
   const collections=commonCollections(spend);
@@ -101,10 +102,10 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         const entry=inventory.get(value.binding)??globals.get(value.binding)?.binding??bindings.get(value.binding)?.row;
         const spelling=staticBindingName(text(value.range));check(entry&&local.get(spelling)===value.binding&&entry.declaredType===value.type,'binding');
         if(!globals.has(value.binding)&&!inventory.has(value.binding)){
-          const owner=functions.get(entry.lexicalOwner),kind=type(entry.declaredType).kind;
+          const owner=functions.get(entry.lexicalOwner),supported=commonCaptureType(entry.declaredType,types,spend);
           check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');
-          const initialized=entry.kind==='local'&&['scalar','string','readSpan','array','function','reference','value'].includes(kind)&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;});
-          const parameter=entry.kind==='parameter'&&['scalar','string','readSpan','array','function','reference','value'].includes(kind)&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
+          const initialized=entry.kind==='local'&&supported&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;});
+          const parameter=entry.kind==='parameter'&&supported&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
           check(initialized||parameter,'capture');
           if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});
         }else if(!globals.has(value.binding))check(declared.has(value.binding),'binding');if(target)check(entry.writable,'permission');return;
