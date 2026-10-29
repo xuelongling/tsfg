@@ -137,7 +137,9 @@ bool ActualCheck::environmentGraph(const Function &fn){
         const bool load=op.name=="env_load";
         if(!need(op.operands.size()==(load?1:2)&&result==load&&fn.carriers[op.operands[0]]=="env:"+layout&&physicalBindings.count(binding),"environment cell operation shape/authority differs"))return false;
         const auto capacity=string(field(*physicalBindings.at(binding),"carrier"));
-        if(!need(load?fn.carriers[op.result]==capacity&&op.view==string(field(*environmentSlots.at(binding),"type")):
+        // source() matches each logical read view against the original HIR;
+        // the environment owns the declared slot's physical storage capacity.
+        if(!need(load?fn.carriers[op.result]==capacity:
           fn.carriers[op.operands[1]]==capacity&&op.view=="void"&&(op.name=="env_init"||field(*environmentSlots.at(binding),"writable").getAsBoolean()==true),"environment cell carrier/view/mutability differs"))return false;
         if(op.name=="env_init")target.events.push_back({environmentContracts::EventKind::Initialize,binding});
         else if(!observe(b,binding))return false;

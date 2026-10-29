@@ -15,7 +15,7 @@ SourcePlan::Reg SourcePlan::expression(const Json &e){
   if(kind=="thisReference")return currentReceiver==noRegister?receiver(r):view(currentReceiver,type,r);
   if(kind=="bindingReference"){
     const auto id=string(field(e,"binding"));if(!check.need(check.bindings.count(id),"Source binding reference missing"))return noRegister;
-    const auto value=load(bindingLocation(id,string(field(*check.bindings.at(id),"type")),r),r);return view(value,type,r);
+    const auto value=load(bindingLocation(id,type,r),r);return view(value,type,r);
   }
   if(kind=="functionReference"){
     const auto id=string(field(e,"functionId"));if(!check.need(check.sourceFunctions.count(id),"Source function reference missing"))return noRegister;

@@ -3,6 +3,7 @@
 #include "common-program-retention.h"
 #include "common-program-plan.h"
 #include "common-program-borrows.h"
+#include "common-program-syntax.h"
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -18,6 +19,39 @@ namespace {
 bool report(llvm::StringRef name,bool passed,const Error &e={}){
   llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";
   if(!passed)llvm::errs()<<e.code<<": "<<e.message<<"\n";return passed;
+}
+bool integerLiterals(){
+  // Exercise the owning original-token boundary, not a second integer parser.
+  const auto literal=[](const std::string &token,const std::string &type,const std::string &decimal,bool expected,int start=0){
+    Program p;Error e;SourceModel model{p,e};Json scalar=Object{{"id",type},{"kind","scalar"}};model.types.emplace(type,&scalar);
+    SourceSyntax source{model,"/integer-literal.ts"};if(!source.read(token))return report(token,false,e);
+    Json value=Object{{"kind","numericLiteral"},{"type",type},{"token",token},{"decimal",decimal},
+      {"range",Object{{"start",start},{"end",int64_t(token.size())}}}};
+    const bool accepted=verifySourceLiteral(source,value);
+    return report("original integer "+type+" "+token+" decimal="+decimal+" start="+std::to_string(start),
+      accepted==expected&&(accepted||e.code=="core-ir-common-source"),e);
+  };
+  struct Boundary {const char *type,*minimum,*maximum,*below,*above;};
+  const Boundary boundaries[]={
+    {"i8","-128","127","-129","128"},{"i16","-32768","32767","-32769","32768"},
+    {"i32","-2147483648","2147483647","-2147483649","2147483648"},
+    {"i64","-9223372036854775808","9223372036854775807","-9223372036854775809","9223372036854775808"},
+    {"isize","-9223372036854775808","9223372036854775807","-9223372036854775809","9223372036854775808"},
+    {"u8","0","255","-1","256"},{"u16","0","65535","-1","65536"},{"u32","0","4294967295","-1","4294967296"},
+    {"u64","0","18446744073709551615","-1","18446744073709551616"},
+    {"usize","0","18446744073709551615","-1","18446744073709551616"}};
+  bool ok=true;for(const auto &row:boundaries){
+    ok&=literal(row.minimum,row.type,row.minimum,true);ok&=literal(row.maximum,row.type,row.maximum,true);
+    ok&=literal(row.below,row.type,row.below,false);ok&=literal(row.above,row.type,row.above,false);
+  }
+  ok&=literal("-1","i32","-1",true);ok&=literal("+1","i32","1",false);
+  ok&=literal("-0","i32","0",true);ok&=literal("-0","u64","0",true);ok&=literal("-0","i32","-0",false);
+  ok&=literal("-0x80","i8","-128",true);ok&=literal("-0b10000000","i8","-128",true);ok&=literal("-0o200","i8","-128",true);
+  ok&=literal("-2_147_483_648","i32","-2147483648",true);
+  ok&=literal("0xffff_ffff_ffff_ffff","u64","18446744073709551615",true);
+  ok&=literal("-0x81","i8","-129",false);ok&=literal("-1","i32","1",false);ok&=literal("1","i32","-1",false);
+  ok&=literal("1","i32","01",false);ok&=literal("1","bool","1",false);ok&=literal("-1","i32","-1",false,1);
+  return ok;
 }
 bool callableShape(const std::string &mode){
   Json function=Object{{"id","F"},{"kind","function"},{"parameters",Array{}},{"returnType","I"}},
@@ -93,7 +127,8 @@ bool ownedBorrow(const char *path){
   for(const auto &file:items(field(field(field(p.hir,"snapshot"),"payload"),"files")))if(string(field(file,"path"))==p.sourcePath){
     p.sourceHash="sha256:"+string(field(file,"sha256"));p.sourceLength=uint32_t(field(file,"utf16Length").getAsInteger().value_or(0));
   }
-  if(!verifySource(p,e)||!verifyPublication(p,e)||!verifyCallableTargets(p,e))return report(path,false,e);
+  std::map<std::string,size_t> initialized;
+  if(!verifySource(p,e)||!verifyCallableTargets(p,e,initialized)||!verifyPublication(p,e))return report(path,false,e);
   // This is the existing private consumer lowering over genuinely owned HIR.
   // No rejected Program is emitted, parsed, or labelled as a formal Core.
   std::vector<Json> owners;for(const auto &fn:items(field(p.hir,"functions")))owners.push_back(fn);
@@ -103,7 +138,7 @@ bool ownedBorrow(const char *path){
       {"returnType","void"},{"parameters",Array{}},{"body",field(module,"initialization")},{"range",Object{{"start",0},{"end",length}}}});
   }
   p.functions.resize(owners.size());for(size_t i=0;i<owners.size();++i)p.functions[i].id=string(field(owners[i],"id"));
-  ActualCheck check{p,e};if(!check.catalogs())return report(path,false,e);
+  ActualCheck check{p,e};check.initializedArrays=std::move(initialized);if(!check.catalogs())return report(path,false,e);
   for(size_t i=0;i<owners.size();++i){SourcePlan plan(check,owners[i]);if(!plan.run())return report(path,false,e);p.functions[i]=std::move(plan.function);
     p.functions[i].signature=string(field(owners[i],"signatureHash"));p.functions[i].role=string(field(owners[i],"kind"));
     for(const auto &block:p.functions[i].blocks){for(const auto reg:block.parameters)check.views[p.functions[i].id+"/"+std::to_string(reg)]=p.functions[i].carriers[reg];
@@ -117,11 +152,21 @@ bool core(const char *path,mlir::MLIRContext &context){
   auto module=mlir::parseSourceString<mlir::ModuleOp>((*bytes)->getBuffer(),&context);if(!module)return report(path,false);
   Program p;Error e;if(!readCore(*module,p,e)||!verifyProgram(p,e))return report(path,false,e);
   std::set<std::string> unions;for(const auto &type:items(field(p.hir,"types")))if(string(field(type,"kind"))=="union")unions.insert(string(field(type,"id")));
-  std::string binding,environment;
-  for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots")))if(binding.empty()&&unions.count(string(field(slot,"type")))){
-    binding=string(field(slot,"binding"));environment=string(field(env,"id"));
+  std::string binding,environment;std::map<std::string,std::string> slotTypes;
+  for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){
+    const auto type=string(field(slot,"type"));slotTypes.emplace(string(field(slot,"binding")),type);
+    if(binding.empty()&&unions.count(type)){binding=string(field(slot,"binding"));environment=string(field(env,"id"));}
   }
   if(!report("original complete nullable slot reconstructed",!binding.empty()))return false;
+  {
+    Program changed=p;changed.remaining=1000000;bool selected=false;
+    for(auto &fn:changed.functions)for(auto &block:fn.blocks)for(auto &op:block.operations)if(!selected&&op.name=="env_load"){
+      const auto &declared=slotTypes.at(string(field(op.properties,"binding")));
+      if(unions.count(declared)&&op.view!=declared){op.view=declared;selected=true;}
+    }
+    if(selected){Error denied;if(!report("narrowed environment load rejects forged declared-union view",!verifyProgram(changed,denied)&&
+      denied.code=="core-ir-common-actual"&&llvm::StringRef(denied.message).contains("actual instruction differs from complete Source lowering"),denied))return false;}
+  }
   for(const std::string mode:{"signature","upper"}){
     bool selected=false;for(const auto &fn:items(field(p.hir,"functions")))if(string(field(fn,"name"))=="fromNullable"){
       Json contract=nullptr;for(const auto &record:items(field(p.publication,"contracts")))if(same(field(record,"functionId"),field(fn,"id")))contract=field(record,"callables");
@@ -179,7 +224,7 @@ int main(int argc,char **argv){
   _set_error_mode(_OUT_TO_STDERR);_set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
   _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);_CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
 #endif
-  bool ok=true;for(const std::string mode:{"direct","null","undefined","both","multiple","scalar","span","absence"})ok&=callableShape(mode);
+  bool ok=integerLiterals();for(const std::string mode:{"direct","null","undefined","both","multiple","scalar","span","absence"})ok&=callableShape(mode);
   for(const std::string presence:{"direct","null","undefined","both"})for(const std::string mode:{"top","closed","absence"})ok&=callableEntry(presence,mode);
   ok&=genericCallableUnknown();
   for(const std::string kind:{"null","undefined"})ok&=absenceCapacity(kind);

@@ -35,10 +35,13 @@ bool literal(SourceSyntax &source,const Json &v){
       llvm::SmallString<32> out;number.bitcastToAPInt().toString(out,16,false,false);std::string hex=out.str().lower();
       hex.insert(0,(type=="f32"?8:16)-hex.size(),'0');return m.need(hex==string(field(v,"bits")),"exact original floating bits differ");
     }
-    llvm::APInt number;if(!m.need(scalar(m,type)&&type!="bool"&&!llvm::StringRef(digits).getAsInteger(0,number),"original integer literal differs"))return false;
+    auto magnitude=llvm::StringRef(digits);const bool negative=magnitude.consume_front("-");
+    llvm::APInt number;if(!m.need(scalar(m,type)&&type!="bool"&&!magnitude.getAsInteger(0,number),"original integer literal differs"))return false;
     const unsigned width=(type=="isize"||type=="usize"||type=="i64"||type=="u64")?64:type=="i32"||type=="u32"?32:type=="i16"||type=="u16"?16:8;
-    llvm::SmallString<80> out;number.toString(out,10,false,false);
-    return m.need(out==string(field(v,"decimal"))&&number.getActiveBits()<=(type.front()=='i'?width-1:width),"original integer decimal/range differs");
+    llvm::SmallString<80> out;number.toString(out,10,false,false);const bool belowZero=negative&&!number.isZero(),signedType=type.front()=='i';
+    const bool inRange=belowZero?signedType&&(number.getActiveBits()<width||number.getActiveBits()==width&&number.isPowerOf2()):
+      number.getActiveBits()<=(signedType?width-1:width);
+    return m.need((belowZero?"-"+out.str().str():out.str().str())==string(field(v,"decimal"))&&inRange,"original integer decimal/range differs");
   }
   if(kind=="booleanLiteral")return m.need(type=="bool"&&(string(field(v,"token"))=="true"||string(field(v,"token"))=="false"),"original boolean type differs")&&source.sequence(field(v,"range"),{field(v,"token")});
   if(kind=="undefinedLiteral"||kind=="nullLiteral")return m.need(type==(kind=="undefinedLiteral"?"undefined":"null"),"absence literal type differs")&&source.sequence(field(v,"range"),{Json(type)});
