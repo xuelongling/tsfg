@@ -54,7 +54,7 @@ bool scalarResultAbi(){
 // Independent normalized owning-data controls, not official Source packets.
 bool scalarUnionActual(){
   const auto typeId=[](llvm::StringRef name){return digest(std::string("tsfg.type")+std::string(1,'\0')+name.str());};
-  const auto boolean=typeId("bool"),i32=typeId("i32"),u32=typeId("u32"),undefined=typeId("undefined");
+  const auto boolean=typeId("bool"),i32=typeId("i32"),u32=typeId("u32"),undefined=typeId("undefined"),nullType=typeId("null");
   Json booleanType=Object{{"kind","scalar"},{"name","bool"}};
   bool passed=true;
   for(const auto left:{uint8_t(1),uint8_t(2)})for(const auto right:{uint8_t(1),uint8_t(2)})for(const std::string op:{"===","!=="}){
@@ -73,9 +73,9 @@ bool scalarUnionActual(){
     bool changed=false,continues=true;const bool accepted=c.instruction(context,equality,0,state,false,changed,[](uint16_t,ActualState,const std::vector<ActualValue>&){return true;},continues);
     passed=report("scalar union uncertain "+mode,accepted&&state.values[2].truth==3,e)&&passed;
   }
-  for(const std::string mode:{"bool","unknown","scalar","undefined","safe"}){
+  for(const std::string mode:{"bool","unknown","scalar","null","undefined","safe"}){
     Program p;Error e;ActualCheck c{p,e};Function f;f.id="numeric-stage";ActualContext context;context.function=&f;ActualState state;
-    if(mode=="unknown")state.values[0].unknown=true;else state.values[0].tags={mode=="scalar"?u32:mode=="undefined"?undefined:boolean};
+    if(mode=="unknown")state.values[0].unknown=true;else state.values[0].tags={mode=="scalar"?u32:mode=="undefined"?undefined:mode=="null"?nullType:boolean};
     if(mode=="safe")state.values[0].tags.insert(i32);
     Operation numeric{"numeric_use",i32,Object{},{0,1},noRegister,{0},{1}};bool changed=false,continues=true,normal=false;
     auto actualState=c.copyState(state);if(mode=="safe")actualState.values[0].tags={i32};

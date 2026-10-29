@@ -12,9 +12,9 @@ import {createCommonGraph} from '../../compiler/common-program-plan.mjs';
 import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
 
 function booleanEquality(left=true,right=true,operator='===',mode='literal') {
-  const bool=scalarTypeIds.bool,i32=scalarTypeIds.i32,undefinedId=sha256('tsfg.type\0undefined'),numeric=mode.startsWith('numeric-'),
+  const bool=scalarTypeIds.bool,i32=scalarTypeIds.i32,undefinedId=sha256('tsfg.type\0undefined'),nullId=sha256('tsfg.type\0null'),numeric=mode.startsWith('numeric-'),
     rows=[{id:bool,kind:'scalar',name:'bool'},{id:i32,kind:'scalar',name:'i32'},
-      {id:scalarTypeIds.u32,kind:'scalar',name:'u32'},{id:undefinedId,kind:'undefined'},
+      {id:scalarTypeIds.u32,kind:'scalar',name:'u32'},{id:undefinedId,kind:'undefined'},{id:nullId,kind:'null'},
       {id:'unknown',kind:'unknown'},{id:'union',kind:'union',members:[bool,i32]}],
     parameters=mode==='numeric-unknown'?[{id:'input',type:'unknown'}]:mode==='boolean'?[{id:'input',type:bool}]:mode==='unknown'?[{id:'condition',type:bool},{id:'input',type:'unknown'}]
       :mode==='multiple'?[{id:'condition',type:bool}]:[],
@@ -41,6 +41,7 @@ function booleanEquality(left=true,right=true,operator='===',mode='literal') {
     if(mode==='numeric-unknown')first={...entry.parameters[0]};
     if(mode==='numeric-scalar')first=emit(block,'constant',[],scalarTypeIds.u32,{decimal:'0',token:'0'});
     if(mode==='numeric-undefined')first=emit(block,'undefined',[],undefinedId,{});
+    if(mode==='numeric-null')first=emit(block,'null',[],nullId,{});
     first=emit(block,'view',[first],i32,{});
   }
   const result=numeric?emit(block,'binary',[first,emit(block,'constant',[],i32,{decimal:'1',token:'1'})],i32,{operator:'+'})
@@ -61,7 +62,7 @@ for(const mode of ['boolean','unknown','multiple'])test('actual equality retains
 test('an unreachable equality does not publish a bottom operand or result',()=>{
   const {flow,result}=booleanEquality(true,true,'===','bottom');assert.equal(flow.actual.observed.has(result),false);
 });
-for(const mode of ['bool','unknown','scalar'])test('actual numeric consumption still rejects '+mode,()=>{
+for(const mode of ['bool','unknown','scalar','null'])test('actual numeric consumption still rejects '+mode,()=>{
   let published;assert.throws(()=>{published=booleanEquality(true,true,'===','numeric-'+mode);},e=>
     e instanceof Error&&'code' in e&&e.code==='r03-common-program-capability'&&e.message.includes('unsupported actual numeric consumption'));
   assert.equal(published,undefined);
@@ -176,12 +177,13 @@ test('the complete existing scalar vocabulary remains a finite original union',(
 });
 
 for(const kind of ['null','undefined','string','array','function','reference','value','readSpan','unknown','void'])
-test('multiple scalar members do not admit extra '+kind+' capture payloads',()=>{
+test('multiple scalar members '+(['null','undefined'].includes(kind)?'retain ':'do not admit extra ')+kind+' capture payloads',()=>{
   const binding={id:'held',name:'held',kind:'parameter',type:'U',writable:true},
     owner={id:'owner',lexicalParent:null,parameters:[binding],bindings:[],body:[],captures:[]},
     child={id:'child',lexicalParent:'owner',parameters:[],bindings:[],body:[],captures:[{binding:'held',read:true,write:false}]},
     types=new Map([['U',{kind:'union',members:['i32','bool','other']}],['i32',{kind:'scalar'}],['bool',{kind:'scalar'}],['other',{kind}]]);
-  assert.throws(()=>commonEnvironments([owner,child],types,commonMeter()),e=>e instanceof Error&&'code'in e&&e.code==='r03-common-program-capability');
+  if(['null','undefined'].includes(kind))assert.equal(commonEnvironments([owner,child],types,commonMeter()).slots.get('held').type,'U');
+  else assert.throws(()=>commonEnvironments([owner,child],types,commonMeter()),e=>e instanceof Error&&'code'in e&&e.code==='r03-common-program-capability');
 });
 
 for(const observed of [['i32'],['bool'],['i32','bool']])
