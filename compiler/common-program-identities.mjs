@@ -4,6 +4,7 @@
 import {canonical,sha256,scalarTypeIds} from './identity.mjs';
 import {functionId,signatureId} from './module-callable-common.mjs';
 import {moduleIdentity,globalIdentity} from './modules.mjs';
+import {commonLexicalScopes} from './common-program-lexical.mjs';
 
 export const commonIdentity=(kind,value)=>sha256('tsfg.common-program.'+kind+'.v1\0'+canonical(value));
 export const commonDeclKey=(sourcePath,path,kind,name)=>({sourcePath,path:[...path],kind,name});
@@ -62,6 +63,7 @@ export function commonSemanticIdentities(payload,spend) {
   for(const id of types.keys())semanticType(id);
   const callableTypes=new Map(),functionIds=new Map(),signatures=new Map(),declKeys=new Map();
   const activeFunctions=new Set();
+  const scopes=new Map([...functions].map(([id,fn])=>[id,commonLexicalScopes(fn,spend)]));
   function identifyFunction(fn) {
     spend();if(functionIds.has(fn.id))return;
     if(activeFunctions.has(fn.id))throw new TypeError('cyclic lexical function');activeFunctions.add(fn.id);
@@ -69,7 +71,7 @@ export function commonSemanticIdentities(payload,spend) {
     if(fn.lexicalParent&&!parent)throw new TypeError('unknown lexical parent');if(parent)identifyFunction(parent);
     const owner=fn.ownerType?types.get(fn.ownerType):null;
     const parentKey=parent?declKeys.get(parent.id):null;
-    const path=parentKey?[...parentKey.path,parentKey.kind,parentKey.name]:owner?['type',...owner.nominalKey.declarationPath]:[];
+    const path=parentKey?[...parentKey.path,parentKey.kind,parentKey.name,...scopes.get(parent.id).get(fn.id).scope.path]:owner?['type',...owner.nominalKey.declarationPath]:[];
     const kind=owner?(owner.constructor?.id===fn.id?'constructor':'method'):'function';
     const key=commonDeclKey(fn.sourcePath,path,kind,fn.name),qualified=canonical({path,kind,name:fn.name});
     const type={parameters:[...(owner?[semanticType(owner.id)]:[]),...fn.parameters.map(p=>semanticType(p.declaredType))],returns:semanticType(fn.returnType)};

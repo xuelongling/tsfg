@@ -13,7 +13,10 @@ Json SourceModel::environments(Array &projected){
     const auto binding=string(field(capture,"binding"));if(!spend()||!need(bindings.count(binding),"capture binding is absent"))return nullptr;
     if(!selected.insert(binding).second)continue;const auto &b=*bindings.at(binding);const auto rawOwner=string(field(b,"lexicalOwner"));
     if(!need(functionIds.count(rawOwner)&&typeIds.count(string(field(b,"declaredType"))),"capture owner or slot type is absent"))return nullptr;
-    const auto owner=functionIds.at(rawOwner),key=identity("capture-slot",Object{{"owner",owner},{"name",field(b,"name")},{"kind",field(b,"kind")}});
+    const auto owner=functionIds.at(rawOwner);Object slotIdentity{{"owner",owner},{"name",field(b,"name")},{"kind",field(b,"kind")}};
+    const auto &declarations=scopeDeclarations.at(rawOwner);const auto found=declarations.find(binding);
+    if(found!=declarations.end()&&!found->second.path.empty())slotIdentity["scope"]=Array(found->second.path);
+    const auto key=identity("capture-slot",std::move(slotIdentity));
     owned[rawOwner].emplace(key,Object{{"binding",binding},{"key",key},{"type",type(field(b,"declaredType"))},{"writable",field(b,"writable")},{"kind",field(b,"kind")}});
   }
   std::map<std::string,Json> layouts;std::set<std::string> active;

@@ -12,7 +12,7 @@ import {commonTypeSyntax,commonSourceAccess,commonCallableNameRange} from './com
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
 import {validateCommonEntryRoots} from './common-program-entry.mjs';
-import {commonCaptureType} from './common-program-lexical.mjs';
+import {commonCaptureType,commonLexicalScopes} from './common-program-lexical.mjs';
 
 export function validateCommonBodies(payload,sources,types,grammars,visibility,spend) {
   const collections=commonCollections(spend);
@@ -57,6 +57,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     typeAnnotation(owner.sourcePath,{start:g.tokens[colon+1].start,end:g.tokens[end-1].end},field.type);
   }}
   const relations=typedArrayRelations(types,functions,payload.compatibilityWitnesses);
+  const scopes=new Map([...functions].map(([id,fn])=>[id,commonLexicalScopes(fn,spend)]));
   validateTypedArrayConstruction(payload,types,sources);
   const descendants=(actual,expected)=>{const seen=new Set();while(actual){spend();check(!seen.has(actual),'type');seen.add(actual);
     if(actual===expected)return true;actual=types.get(actual)?.base;}return false;};
@@ -75,9 +76,12 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     spend(fn.parameters.length);for(const row of fn.parameters)declared.add(row.id);const seenDeclarations=collections.set(declared);
     const scope=collections.map(initialScope??visibility.get(fn.sourcePath)),captureObserved=new Map();
     let ancestor=functions.get(fn.lexicalParent);const ancestors=[];while(ancestor){spend();ancestors.push(ancestor);ancestor=functions.get(ancestor.lexicalParent);}
-    for(let i=ancestors.length-1;i>=0;i--){const owner=ancestors[i];for(const b of owner.parameters){spend();scope.set(b.name,b.id);}
-      for(const row of owner.body){spend();if(['constDeclaration','letDeclaration'].includes(row.kind)){const b=bindings.get(row.binding)?.row;check(b,'binding');scope.set(b.name,b.id);}else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child,'lexical');scope.set(child.name,child.id);}}}
-    for(const candidate of functions.values()){spend();if(candidate.lexicalParent===fn.id)scope.set(candidate.name,candidate.id);}
+    for(let i=ancestors.length-1;i>=0;i--){const owner=ancestors[i],child=i===0?fn:ancestors[i-1],declaration=scopes.get(owner.id).get(child.id);
+      check(declaration,'lexical');for(const b of owner.parameters){spend();scope.set(b.name,b.id);}
+      for(const layer of declaration.scope.chain)for(const row of layer.rows){spend();
+        if(['constDeclaration','letDeclaration'].includes(row.kind)){const b=bindings.get(row.binding)?.row;check(b,'binding');scope.set(b.name,b.id);}
+        else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child,'lexical');scope.set(child.name,child.id);}}
+    }
     for(const p of fn.parameters){check(p.kind==='parameter'&&!scope.has(p.name)||p.kind==='parameter','binding');scope.set(p.name,p.id);}
     const text=range=>g.slice(range),type=id=>{check(types.has(id),'type');return types.get(id);};
     const annotation=(row,init=null)=>{
@@ -104,7 +108,8 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         if(!globals.has(value.binding)&&!inventory.has(value.binding)){
           const owner=functions.get(entry.lexicalOwner),supported=commonCaptureType(entry.declaredType,types,spend);
           check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');
-          const initialized=entry.kind==='local'&&supported&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;});
+          const declaration=scopes.get(owner.id).get(entry.id),initialized=entry.kind==='local'&&supported&&declaration?.row.initializer
+            &&(!declaration.scope.path.length||declaration.scope.eligible&&!declaration.scope.repeated&&types.get(entry.declaredType).kind==='scalar');
           const parameter=entry.kind==='parameter'&&supported&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
           check(initialized||parameter,'capture');
           if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});
@@ -195,6 +200,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     }
     function rows(items,start,end,parent,local=scope) {
       const outer=collections.set(declared),inner=collections.map(local);let cursor=start;
+      for(const row of items)if(row.kind==='functionDeclaration'){spend();const child=functions.get(row.functionId);check(child,'lexical');inner.set(child.name,child.id);}
       for(const row of items) {
         spend();const at=g.indices(row.range);sourceRange(row.range,g.text,parent);
         const declaration=['constDeclaration','letDeclaration'].includes(row.kind);
@@ -206,7 +212,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
           const b=inventory.get(row.binding);check(b&&b.kind==='local'&&!seenDeclarations.has(b.id)&&b.writable===(row.kind==='letDeclaration'),'binding');
           expression(row.initializer,b.declaredType);annotation(b,row.initializer);check(same(row.range,b.declarationRange),'source');
           inner.set(b.name,b.id);declared.add(b.id);seenDeclarations.add(b.id);
-        }else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child&&child.lexicalParent===fn.id&&same(child.declarationRange,row.range)&&same(parent,bodyRange),'lexical');
+        }else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child&&child.lexicalParent===fn.id&&same(child.declarationRange,row.range)&&same(parent,child.declarationScope),'lexical');
         }else if(row.kind==='initialize') {
           const global=globals.get(row.binding);check(global&&global.sourcePath===fn.sourcePath&&initialScope!==undefined,'global');
           expression(row.initializer,global.binding.declaredType);annotation(global.binding,row.initializer);
@@ -244,7 +250,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     }
     function branch(items,start,end,parent,local) {
       if(g.tokens[start]?.text==='{') {let depth=1,finish=start+1;while(finish<end&&depth){spend();if(g.tokens[finish].text==='{')depth++;if(g.tokens[finish].text==='}')depth--;finish++;}
-        check(depth===0,'source');rows(items,start+1,finish-1,parent,local);return finish;}
+        check(depth===0,'source');rows(items,start+1,finish-1,{start:g.tokens[start].start,end:g.tokens[finish-1].end},local);return finish;}
       check(items.length===1,'source');const child=g.indices(items[0].range);rows(items,start,child.end,parent,local);return child.end;
     }
     for(const {value,type:expected} of initial)expr(value,fn.declarationRange,false,expected,scope);

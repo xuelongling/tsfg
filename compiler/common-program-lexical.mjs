@@ -13,9 +13,34 @@ export function commonCaptureType(id,types,spend) {
   return type.members.length>=2&&((payload.length>0&&scalars)||(type.members.length<=3&&payload.length===1
     &&['scalar','string','array','function','reference','value'].includes(types.get(payload[0])?.kind)));
 }
+// Private structural paths distinguish scopes without hashing source offsets.
+// Each entry retains its original declaration and the visible ancestor layers.
+export function commonLexicalScopes(fn,spend) {
+  const declarations=new Map();
+  function walk(rows,path=[],chain=[],repeated=false,eligible=true){
+    spend(path.length+chain.length+1);const scope={rows,path,repeated,eligible};scope.chain=[...chain,scope];
+    for(const [index,row]of rows.entries()){
+      spend();if(['letDeclaration','constDeclaration','functionDeclaration'].includes(row.kind)){
+        const id=row.kind==='functionDeclaration'?row.functionId:row.binding;
+        check(!declarations.has(id),'lexical');declarations.set(id,{row,scope});
+      }
+      const descend=(children,label,again=repeated,allowed=eligible)=>walk(children,[...path,label+':'+index],scope.chain,again,allowed);
+      if(row.kind==='block')descend(row.body,'block');
+      if(row.kind==='if'){descend(row.then,'if:then');descend(row.else,'if:else');}
+      if(row.kind==='while')descend(row.body,'while',true,false);
+      if(row.kind==='try'){
+        descend(row.tryBlock.body,'try',repeated,false);
+        if(row.catchClause)descend(row.catchClause.block.body,'catch',repeated,false);
+        if(row.finallyBlock)descend(row.finallyBlock.body,'finally',repeated,false);
+      }
+    }
+  }
+  walk(fn.body);return declarations;
+}
 export function validateCommonLexical(payload,grammars,types,coverage,spend,visible) {
   spend(payload.functions.length+payload.types.length);const functions=new Map(payload.functions.map(fn=>[fn.id,fn]));
   for(const type of types.values())if(type.constructor)functions.set(type.constructor.id,type.constructor);
+  const scopes=new Map([...functions].map(([id,fn])=>[id,commonLexicalScopes(fn,spend)]));
   for(const alias of payload.typeAliases){spend();const g=grammars.get(alias.sourcePath);check(g&&['function','reference','value'].includes(types.get(alias.type)?.kind),'type-alias');
     check(alias.id===originId(alias.sourcePath,alias.nameRange),'type-alias');g.name(alias.nameRange,alias.name);
     commonTypeSyntax(g,alias.annotationRange,alias.type,types,spend,payload.typeAliases,visible.get(alias.sourcePath));
@@ -25,8 +50,10 @@ export function validateCommonLexical(payload,grammars,types,coverage,spend,visi
     while(cursor<at.end&&g.tokens[cursor].text!=='{'){spend();cursor++;}check(cursor<at.end,'lexical');return {start:g.tokens[cursor].start,end:g.tokens[at.end-1].end};};
   for(const fn of functions.values()){
     spend();const g=grammars.get(fn.sourcePath),parent=fn.lexicalParent===null?null:functions.get(fn.lexicalParent);check(g&&(!fn.lexicalParent||parent),'lexical');
-    if(parent){check(!fn.ownerType&&parent.sourcePath===fn.sourcePath&&same(fn.declarationScope,bodyRange(parent)),'lexical');
-      check(parent.body.some(row=>{spend();return row.kind==='functionDeclaration'&&row.functionId===fn.id&&same(row.range,fn.declarationRange);}),'lexical','nested function must be a direct body declaration');}
+    if(parent){const declaration=scopes.get(parent.id).get(fn.id),body=bodyRange(parent);
+      check(!fn.ownerType&&parent.sourcePath===fn.sourcePath&&fn.declarationScope.start>=body.start&&fn.declarationScope.end<=body.end,'lexical');
+      check(declaration&&declaration.row.kind==='functionDeclaration'&&same(declaration.row.range,fn.declarationRange),'lexical');
+      check(declaration.scope.eligible&&!declaration.scope.repeated,'capability','nested declaration requires a single-entry block/if scope');}
     else check(same(fn.declarationScope,fn.ownerType?types.get(fn.ownerType).declarationRange:{start:0,end:g.text.length}),'lexical');
     const seen=new Set([fn.id]);let ancestor=parent;while(ancestor){spend();check(!seen.has(ancestor.id),'lexical');seen.add(ancestor.id);ancestor=ancestor.lexicalParent===null?null:functions.get(ancestor.lexicalParent);check(ancestor!==undefined,'lexical');}
     spend(fn.parameters.length+fn.bindings.length);for(const group of [fn.parameters,fn.bindings])for(const binding of group)check(binding.lexicalOwner===fn.id,'lexical');

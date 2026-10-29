@@ -232,7 +232,10 @@ bool SourceBodies::function(const Json &fn){
     const auto *parent=model.functions.at(string(field(fn,"lexicalParent")));size_t pa,pb;
     if(!source->span(field(*parent,"declarationRange"),pa,pb))return false;
     while(pa<pb&&source->tokens[pa].text!="{")++pa;
-    if(!model.need(pa<pb&&same(field(fn,"declarationScope"),range(source->tokens[pa],source->tokens[pb-1])),"nested function declaration scope differs from parent body"))return false;
+    const auto &declarations=model.scopeDeclarations.at(string(field(*parent,"id")));const auto id=string(field(fn,"id"));
+    size_t sa,sb;if(!source->span(field(fn,"declarationScope"),sa,sb))return false;
+    if(!model.need(pa<pb&&declarations.count(id)&&declarations.at(id).eligible&&!declarations.at(id).repeated&&
+      pa<=sa&&sb<=pb&&source->tokens[sa].text=="{"&&source->tokens[sb-1].text=="}","nested function declaration requires its original single-entry block scope"))return false;
   }
   header.push_back(originalBody);
   if(!source->sequence(field(fn,"declarationRange"),header)||!statements(field(fn,"body"),body+1,b-1))return false;

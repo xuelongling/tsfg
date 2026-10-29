@@ -18,6 +18,9 @@ template<class Spend> const Json *commonCallableType(const std::map<std::string,
   return payload;
 }
 // Private conversion state. Protocol IDs and semantic IDs never share a map.
+struct ScopeDeclaration {
+  const Json *row;Array path;std::vector<const Array *> layers;bool repeated,eligible;
+};
 struct SourceModel {
   Program &p;Error &error;const Json &facts,&payload;
   std::map<std::string,const Json *> types,functions,globals,sources,modules,aliases,hosts;
@@ -25,10 +28,11 @@ struct SourceModel {
   std::map<std::string,Json> shapes,declKeys,ownedHosts;
   std::map<std::string,std::string> hostIds,hostSignatures;
   std::set<std::string> active;
+  std::map<std::string,std::map<std::string,ScopeDeclaration>> scopeDeclarations;
   explicit SourceModel(Program &p,Error &e):p(p),error(e),facts(field(p.hir,"snapshot")),payload(field(facts,"payload")){}
   bool need(bool condition,llvm::StringRef message){return condition||reject(error,"core-ir-common-source",message);}
   bool spend(size_t n=1){return p.charge(n)||reject(error,"core-ir-common-budget","complete Source reconstruction work exceeded");}
-  bool directory();bool identities();bool sourceText();bool projection();
+  bool directory();bool scopeDirectory();bool identities();bool sourceText();bool projection();
   std::string label(const std::string &);
   Json shape(const Json &);
   std::string semanticType(const std::string &);

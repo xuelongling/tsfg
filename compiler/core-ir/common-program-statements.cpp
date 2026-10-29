@@ -6,6 +6,11 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
   for(const auto &[name,id]:scope)if(!model.spend((name.size()+id.size())/8+1))return false;
   for(const auto &id:initialized)if(!model.spend(id.size()/8+1))return false;
   auto outerScope=scope;auto outerInitialized=initialized;size_t at=first;
+  for(const auto &row:items(rows))if(string(field(row,"kind"))=="functionDeclaration"){
+    if(!model.spend())return false;const auto id=string(field(row,"functionId"));
+    if(!model.need(model.functions.count(id),"original scoped function declaration is absent"))return false;
+    scope[string(field(*model.functions.at(id),"name"))]=id;
+  }
   std::function<bool(const Json &,size_t &,size_t)> branch;
   branch=[&](const Json &body,size_t &cursor,size_t limit){
     if(!model.need(cursor<limit,"original branch body missing"))return false;
@@ -24,10 +29,11 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
     if(!model.spend())return false;size_t a,b;if(!source->span(field(row,"range"),a,b))return false;
     const auto kind=string(field(row,"kind"));const auto bindingId=string(field(row,"binding"));
     if(kind=="functionDeclaration"){
-      const auto id=string(field(row,"functionId"));bool direct=false;
-      for(const auto &original:items(field(*current,"body"))){if(!model.spend())return false;direct|=same(original,row);}
-      if(!model.need(direct&&model.functions.count(id)&&same(field(*model.functions.at(id),"lexicalParent"),field(*current,"id"))&&
-        same(field(*model.functions.at(id),"declarationRange"),field(row,"range"))&&nestedDeclarations.insert(id).second,"nested declaration parent, identity or original range differs"))return false;
+      const auto id=string(field(row,"functionId"));
+      if(!model.need(first>0&&end<source->tokens.size()&&source->tokens[first-1].text=="{"&&source->tokens[end].text=="}"&&
+        model.functions.count(id)&&same(field(*model.functions.at(id),"lexicalParent"),field(*current,"id"))&&
+        same(field(*model.functions.at(id),"declarationScope"),Object{{"start",int64_t(source->tokens[first-1].start)},{"end",int64_t(source->tokens[end].end)}})&&
+        same(field(*model.functions.at(id),"declarationRange"),field(row,"range"))&&nestedDeclarations.insert(id).second,"nested declaration parent, block scope, identity or original range differs"))return false;
     }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
       const auto keyword=kind=="constDeclaration"?"const":kind=="letDeclaration"?"let":
         model.globals.count(bindingId)?string(field(*model.globals.at(bindingId),"bindingKind")):std::string();

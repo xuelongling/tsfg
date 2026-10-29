@@ -3,6 +3,39 @@
 #include <algorithm>
 #include <optional>
 namespace tsfg::commonProgram {
+bool SourceModel::scopeDirectory(){
+  for(const auto &[id,fn]:functions){
+    auto &declarations=scopeDeclarations[id];
+    std::function<bool(const Array &,Array,std::vector<const Array *>,bool,bool)> walk;
+    walk=[&](const Array &rows,Array path,std::vector<const Array *> layers,bool repeated,bool eligible){
+      if(!spend(path.size()+layers.size()+1))return false;layers.push_back(&rows);size_t index=0;
+      for(const auto &row:rows){
+        if(!spend())return false;const auto kind=string(field(row,"kind"));
+        if(kind=="letDeclaration"||kind=="constDeclaration"||kind=="functionDeclaration"){
+          if(!spend(path.size()+layers.size()))return false;
+          const auto key=string(field(row,kind=="functionDeclaration"?"functionId":"binding"));
+          if(!need(declarations.emplace(key,ScopeDeclaration{&row,Array(path),layers,repeated,eligible}).second,"duplicate original scoped declaration"))return false;
+        }
+        const auto descend=[&](const Json &children,llvm::StringRef label,bool again,bool allowed){
+          Array childPath(path);childPath.push_back(label.str()+":"+std::to_string(index));
+          return walk(items(children),std::move(childPath),layers,again,allowed);
+        };
+        if(kind=="block"&&!descend(field(row,"body"),"block",repeated,eligible))return false;
+        if(kind=="if"&&(!descend(field(row,"then"),"if:then",repeated,eligible)||!descend(field(row,"else"),"if:else",repeated,eligible)))return false;
+        if(kind=="while"&&!descend(field(row,"body"),"while",true,false))return false;
+        if(kind=="try"){
+          if(!descend(field(field(row,"tryBlock"),"body"),"try",repeated,false))return false;
+          if(row.getAsObject()->get("catchClause")&&!descend(field(field(field(row,"catchClause"),"block"),"body"),"catch",repeated,false))return false;
+          if(row.getAsObject()->get("finallyBlock")&&!descend(field(field(row,"finallyBlock"),"body"),"finally",repeated,false))return false;
+        }
+        ++index;
+      }
+      return true;
+    };
+    if(!walk(items(field(*fn,"body")),{},{},false,true))return false;
+  }
+  return true;
+}
 bool SourceBodies::aliases(std::map<std::string,std::vector<Json>> &coverage){
   std::optional<std::pair<std::string,int64_t>> previous;
   for(const auto &a:items(field(model.payload,"typeAliases"))){
@@ -26,15 +59,10 @@ bool SourceBodies::lexicalScope(const Json &fn){
     if(!model.need(same(field(fn,"sourcePath"),field(*ancestor,"sourcePath")),"lexical parent Source path differs"))return false;
     chain.push_back(ancestor);parent=string(field(*ancestor,"lexicalParent"));
   }
-  const auto layer=[&](const Json &owner,bool parameters){
-    if(parameters)for(const auto &b:items(field(owner,"parameters"))){
-      if(!model.spend())return false;scope[string(field(b,"name"))]=string(field(b,"id"));
-    }
-    // Only declarations in the original function body belong to this lexical
-    // layer. Block/catch locals are never hoisted into a nested function.
-    for(const auto &row:items(field(owner,"body"))){
+  const auto layer=[&](const Json &owner,const Array &rows){
+    for(const auto &row:rows){
       if(!model.spend())return false;const auto kind=string(field(row,"kind"));
-      if(parameters&&(kind=="letDeclaration"||kind=="constDeclaration")){
+      if(kind=="letDeclaration"||kind=="constDeclaration"){
         const auto id=string(field(row,"binding"));
         if(!model.need(bindings.count(id)&&same(field(*bindings.at(id),"lexicalOwner"),field(owner,"id")),"function-body declaration has a foreign binding"))return false;
         scope[string(field(*bindings.at(id),"name"))]=id;
@@ -46,8 +74,12 @@ bool SourceBodies::lexicalScope(const Json &fn){
     }
     return true;
   };
-  for(auto ancestor=chain.rbegin();ancestor!=chain.rend();++ancestor)if(!layer(**ancestor,true))return false;
-  if(!layer(fn,false))return false;
+  for(size_t i=chain.size();i>0;){--i;const auto &owner=*chain[i];
+    for(const auto &b:items(field(owner,"parameters"))){if(!model.spend())return false;scope[string(field(b,"name"))]=string(field(b,"id"));}
+    const auto &child=i==0?fn:*chain[i-1];const auto &declarations=model.scopeDeclarations.at(string(field(owner,"id")));
+    const auto id=string(field(child,"id"));if(!model.need(declarations.count(id),"nested function original declaration scope is absent"))return false;
+    for(const auto *rows:declarations.at(id).layers)if(!layer(owner,*rows))return false;
+  }
   for(const auto &c:items(field(fn,"captures"))){
     const auto id=string(field(c,"binding"));if(!model.spend()||!model.need(bindings.count(id),"captured Source binding is absent"))return false;
     const auto &b=*bindings.at(id);const auto owner=string(field(b,"lexicalOwner"));bool ancestor=false;
@@ -72,8 +104,11 @@ bool SourceBodies::lexicalScope(const Json &fn){
     bool declaration=false;
     if(role=="parameter")for(const auto &parameter:items(field(*model.functions.at(owner),"parameters"))){
       if(!model.spend())return false;declaration|=string(field(parameter,"id"))==id;
-    }else for(const auto &row:items(field(*model.functions.at(owner),"body"))){if(!model.spend())return false;
-      const auto declarationKind=string(field(row,"kind"));declaration|=(declarationKind=="letDeclaration"||declarationKind=="constDeclaration")&&string(field(row,"binding"))==id&&row.getAsObject()->get("initializer");}
+    }else{
+      const auto &declarations=model.scopeDeclarations.at(owner);const auto found=declarations.find(id);
+      if(found!=declarations.end()){const auto &original=found->second;
+        declaration=original.row->getAsObject()->get("initializer")&&(original.path.empty()||(original.eligible&&!original.repeated&&kind=="scalar"));}
+    }
     if(!model.need(declaration,"capture lacks an original initialized body declaration or parameter"))return false;
     // This is a lexical incoming precondition, not an initialization proof.
     // The independent normalized environment CFG must establish it at use.

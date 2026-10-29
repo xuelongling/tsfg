@@ -117,6 +117,7 @@ std::string SourceModel::semanticType(const std::string &id){
   if(!error.message.empty())return {};return typeIds[id]=identity("type",Object{{"root",labels.at(id)},{"graph",std::move(order)}});
 }
 bool SourceModel::identities(){
+  if(!scopeDirectory())return false;
   for(const auto &[id,row]:types)if(label(id).empty())return false;
   for(const auto &[id,row]:types){auto s=shape(*row);if(!error.message.empty())return false;shapes.emplace(id,std::move(s));}
   for(const auto &[id,row]:types)if(semanticType(id).empty())return false;
@@ -134,6 +135,9 @@ bool SourceModel::identities(){
       if(!need(functions.count(parent)&&same(field(*functions.at(parent),"sourcePath"),field(fn,"sourcePath")),"lexical parent source differs")||!identify(parent))return false;
       const auto &key=declKeys.at(parent);if(!spend(items(field(key,"path")).size()+2))return false;
       for(const auto &part:items(field(key,"path")))path.push_back(part);path.push_back(field(key,"kind"));path.push_back(field(key,"name"));
+      const auto &declarations=scopeDeclarations.at(parent);
+      if(!need(declarations.count(id),"nested function original scoped declaration is absent"))return false;
+      for(const auto &part:declarations.at(id).path){if(!spend())return false;path.push_back(part);}
     }
     for(const auto &a:items(field(fn,"parameters"))){if(!spend()||!need(typeIds.count(string(field(a,"declaredType"))),"parameter type differs"))return false;parameters.push_back(typeIds.at(string(field(a,"declaredType"))));}
     const auto result=string(field(fn,"returnType"));if(!need(typeIds.count(result),"function result type missing"))return false;
