@@ -78,12 +78,13 @@ bool scalarUnionActual(){
     if(mode=="unknown")state.values[0].unknown=true;else state.values[0].tags={mode=="scalar"?u32:mode=="undefined"?undefined:boolean};
     if(mode=="safe")state.values[0].tags.insert(i32);
     Operation numeric{"numeric_use",i32,Object{},{0,1},noRegister,{0},{1}};bool changed=false,continues=true,normal=false;
+    auto actualState=c.copyState(state);if(mode=="safe")actualState.values[0].tags={i32};
     const auto edge=[&](uint16_t target,ActualState,const std::vector<ActualValue>& args){normal=target==1&&args.size()==1&&args[0].tags==std::set<std::string>{i32};return true;};
-    const bool capacity=c.instruction(context,numeric,0,state,true,changed,edge,continues)&&normal;
-    if(mode=="safe")state.values[0].tags={i32};normal=false;continues=true;
-    const bool actual=c.instruction(context,numeric,0,state,false,changed,edge,continues),valid=mode=="undefined"||mode=="safe";
-    passed=report("scalar union numeric "+mode,capacity&&actual==valid&&(valid?(mode=="safe"?normal:context.requestTrap&&!normal):
-      e.code=="core-ir-common-actual"&&llvm::StringRef(e.message).contains("actual numeric consumption")),e)&&passed;
+    const bool capacity=c.instruction(context,numeric,0,state,true,changed,edge,continues)&&normal&&!continues;
+    normal=false;continues=true;
+    const bool actual=c.instruction(context,numeric,0,actualState,false,changed,edge,continues),valid=mode=="undefined"||mode=="safe";
+    passed=report("scalar union numeric "+mode,capacity&&actual==valid&&(valid?(!continues&&(mode=="safe"?normal:context.requestTrap&&!normal)):
+      !normal&&e.code=="core-ir-common-actual"&&llvm::StringRef(e.message).contains("actual numeric consumption")),e)&&passed;
   }
   for(const std::string mode:{"direct","bridge","store","store-bridge","call","ambiguous","double","different-ssa","different-key","unknown","bottom","cycle"}){
     Program p;Error e;ActualCheck c{p,e};Function f;f.id="guarded-read";f.blocks.resize(4);
