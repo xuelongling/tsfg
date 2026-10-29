@@ -22,7 +22,7 @@ test('replacing the owning reference Cell cannot retain its old descriptor owner
 function policyFixture(){
   const types=new Map([['n',{kind:'scalar'}],['a',{kind:'array'}],['f',{kind:'function'}]]),
     outer={id:'outer',parent:null,slots:[{key:'counter',type:'n',writable:true}]},inner={id:'inner',parent:'outer',slots:[]},
-    upper={facets:{unknownHost:false,escape:false,await:false,lock:false},globals:{reads:[],writes:[]},parameters:[],captures:[{slot:'counter',write:true,structural:false}]},
+    upper={facets:{unknownHost:false,escape:false,await:false,lock:false},globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:[],captures:[{slot:'counter',write:true,structural:false}]},
     model={spend:commonMeter(),types,environments:new Map([['outer',outer],['inner',inner]]),functions:new Map([['reader',{lexicalEnvironment:'inner'}]])},
     records=new Map([['reader',{upper}]]),objects=new Map();
   let closed=true;const policy=()=>commonClosureHolding({model,records,objects,closedTarget:()=>closed});
