@@ -160,7 +160,39 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
               if(args.length){put(ref+'/parent',args[0]);putRegion(value.region,'parent',args[0]);}}
             else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}value.region=regions.load(args[0].region,'parent',state.regions);}
             else if(name==='env_load'){const selected=a.environmentSlot(args[0],p.layout,p.layout,p.key,state.heap,objects);
-              check(selected.valid,'environment');check(selected.complete,'environment-initialization');value=selected.value;value.region=regions.load(args[0].region,'slot/'+p.key,state.regions);}
+              check(selected.valid,'environment');check(selected.complete,'environment-initialization');value=selected.value;
+              // Forward the same SSA address across an acyclic boolean guard
+              // and empty bridges. Never narrow the shared weak heap.
+              if(!bounded){
+                spend();let pure=regions.layouts.get(fn)?.acyclic===true;
+                for(let before=0;pure&&before<instruction;before++){spend();if(block.instructions[before].name!=='tsfg_program.fuel'){pure=false;break;}}
+                let target=block.name;
+                for(let hops=0;pure&&hops<blocks.size;hops++){
+                  spend();const incoming=regions.layouts.get(fn)?.predecessors.get(target);if(incoming?.size!==1)break;
+                  const previous=blocks.get(incoming.values().next().value),last=previous.instructions.at(-1);
+                  if(!previous.parameters.length&&last?.name==='cf.br'&&!last.operands.length&&last.successors.length===1
+                    &&last.successors[0]===target&&previous.instructions.every((before,i)=>{spend();return i===previous.instructions.length-1||before.name==='tsfg_program.fuel';})){
+                    target=previous.name;continue;
+                  }
+                  const tail=previous.instructions.slice(-4);spend(tail.length);
+                  if(tail.length===4){const [loaded,boolean,equal,branch]=tail,operator=equal.properties.operator,
+                    saved=state.values.get(loaded.result),literal=state.values.get(boolean.result);
+                    if(loaded.name==='tsfg_program.env_load'&&boolean.name==='tsfg_program.boolean'&&equal.name==='tsfg_program.strict_equal'
+                      &&branch.name==='cf.cond_br'&&branch.operands[0]===equal.result&&branch.successors[0]!==branch.successors[1]
+                      &&loaded.operands[0]===op.operands[0]&&loaded.properties.layout===p.layout&&loaded.properties.key===p.key
+                      &&((equal.operands[0]===loaded.result&&equal.operands[1]===boolean.result)||(equal.operands[1]===loaded.result&&equal.operands[0]===boolean.result))
+                      &&['===','!=='].includes(operator)&&literal?.tags.size===1&&literal.tags.has(boolTypeId)&&[1,2].includes(literal.truth)
+                      &&saved&&!saved.unknown&&!saved.refs.size&&!saved.cells.size&&!saved.pairs.size
+                      &&[...saved.tags].every(tag=>{spend();return types.get(tag)?.kind==='scalar';})){
+                      value=a.copy(saved);const same=(operator==='===')===(branch.successors[0]===target),truth=(value.truth||3)&(same?literal.truth:3^literal.truth);
+                      for(const tag of value.tags){spend();if(same&&tag!==boolTypeId||tag===boolTypeId&&!truth)value.tags.delete(tag);}
+                      value.truth=value.tags.has(boolTypeId)?truth:0;if(same)value.number=null;if(!value.tags.size)continues=false;
+                    }
+                  }
+                  break;
+                }
+              }
+              value.region=regions.load(args[0].region,'slot/'+p.key,state.regions);}
             else if(name==='env_init'||name==='env_store'){for(const ref of args[0].refs){spend();const key=ref+'/slot/'+p.key;check(objects.get(ref)?.type==='env:'+p.layout,'environment');
               put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}putRegion(args[0].region,'slot/'+p.key,args[1]);}
             else if(name==='make_closure'){value=literal(op.view);const environments=p.environment_layout?args[0].refs:new Set([null]);if(p.environment_layout)value.region=regions.copy(args[0].region);
@@ -249,17 +281,20 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
               value=literal(boolTypeId,3);if(!args.some(v=>v.unknown)) {
                 const sameAbsence=args.every(v=>v.tags.size===1)&&[...args[0].tags].every(tag=>args[1].tags.has(tag)&&['undefined','null'].includes(types.get(tag)?.kind));
                 const disjoint=![...args[0].tags].some(tag=>args[1].tags.has(tag));if(sameAbsence||disjoint)value.truth=(sameAbsence===(p.operator==='==='))?2:1;
+                else if(args.every(v=>v.tags.size===1&&v.tags.has(boolTypeId)&&[1,2].includes(v.truth)))value.truth=((args[0].truth===args[1].truth)===(p.operator==='==='))?2:1;
               }
             }else if(name==='binary'||name==='unary') {
               const views=op.operands.map(name=>plan.graph.registers.get(name).view),shape=name==='unary'?{kind:name,operator:p.operator,operand:{type:views[0]}}
                 :{kind:name,operator:p.operator,left:{type:views[0]},right:{type:views[1]}};
               const approved=Boolean(finiteNumericUse(shape)),normal=args.every(v=>v.tags.size||v.unknown);let reaches=normal,trap=false;
               if(approved)for(const [index,v]of args.entries()){
-                check(!v.unknown&&[...v.tags].every(tag=>tag===i32TypeId||tag===undefinedId),'capability','unsupported actual numeric consumption',
+                const admitted=!v.unknown&&[...v.tags].every(tag=>tag===i32TypeId||tag===undefinedId);
+                check(bounded||admitted,'capability','unsupported actual numeric consumption',
                   {functionId:fn,primary:{sourceId:plan.owner.sourcePath,...op.range},operand:index,actualTypes:[...v.tags].sort()});
                 reaches &&= v.tags.has(i32TypeId);trap ||= v.tags.has(undefinedId);
               }
-              else check(args.every((v,i)=>!v.unknown&&[...v.tags].every(tag=>tag===views[i])),'capability','actual scalar tag differs from its consuming view');
+              else {const admitted=args.every((v,i)=>!v.unknown&&[...v.tags].every(tag=>tag===views[i]));
+                check(bounded||admitted,'capability','actual scalar tag differs from its consuming view');}
               if(bounded||reaches)value=literal(op.view,op.view===boolTypeId?3:0);
               const key=fn+'/'+op.result;if(!operations.has(key))operations.set(key,{normal:false,requestTrap:false,approved});const record=operations.get(key);record.normal ||= reaches;record.requestTrap ||= trap;
               if(!bounded&&!reaches)continues=false;

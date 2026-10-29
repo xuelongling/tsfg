@@ -51,6 +51,84 @@ bool scalarResultAbi(){
   }
   return passed;
 }
+// Independent normalized owning-data controls, not official Source packets.
+bool scalarUnionActual(){
+  const auto typeId=[](llvm::StringRef name){return digest(std::string("tsfg.type")+std::string(1,'\0')+name.str());};
+  const auto boolean=typeId("bool"),i32=typeId("i32"),u32=typeId("u32"),undefined=typeId("undefined");
+  Json booleanType=Object{{"kind","scalar"},{"name","bool"}};
+  bool passed=true;
+  for(const auto left:{uint8_t(1),uint8_t(2)})for(const auto right:{uint8_t(1),uint8_t(2)})for(const std::string op:{"===","!=="}){
+    Program p;Error e;ActualCheck c{p,e};c.types.emplace(boolean,&booleanType);Function f;f.id="bool-literals";ActualContext context;context.function=&f;ActualState state;
+    state.values[0].tags={boolean};state.values[0].truth=left;state.values[1].tags={boolean};state.values[1].truth=right;
+    Operation equality{"strict_equal",boolean,Object{{"operator",op}},{0,1},2,{0,1},{}};bool changed=false,continues=true;
+    const bool accepted=c.instruction(context,equality,0,state,false,changed,[](uint16_t,ActualState,const std::vector<ActualValue>&){return true;},continues);
+    passed=report("scalar union bool "+std::to_string(left)+op+std::to_string(right),accepted&&state.values[2].tags==std::set<std::string>{boolean}&&
+      state.values[2].truth==(((left==right)==(op=="==="))?2:1),e)&&passed;
+  }
+  for(const std::string mode:{"truth0","truth3","unknown","multiple"}){
+    Program p;Error e;ActualCheck c{p,e};c.types.emplace(boolean,&booleanType);Function f;f.id="bool-uncertain";ActualContext context;context.function=&f;ActualState state;
+    state.values[0].tags={boolean};state.values[0].truth=mode=="truth0"?0:mode=="truth3"?3:2;
+    state.values[0].unknown=mode=="unknown";if(mode=="multiple")state.values[0].tags.insert(i32);
+    state.values[1].tags={boolean};state.values[1].truth=2;Operation equality{"strict_equal",boolean,Object{{"operator","==="}},{0,1},2,{0,1},{}};
+    bool changed=false,continues=true;const bool accepted=c.instruction(context,equality,0,state,false,changed,[](uint16_t,ActualState,const std::vector<ActualValue>&){return true;},continues);
+    passed=report("scalar union uncertain "+mode,accepted&&state.values[2].truth==3,e)&&passed;
+  }
+  for(const std::string mode:{"bool","unknown","scalar","undefined","safe"}){
+    Program p;Error e;ActualCheck c{p,e};Function f;f.id="numeric-stage";ActualContext context;context.function=&f;ActualState state;
+    if(mode=="unknown")state.values[0].unknown=true;else state.values[0].tags={mode=="scalar"?u32:mode=="undefined"?undefined:boolean};
+    if(mode=="safe")state.values[0].tags.insert(i32);
+    Operation numeric{"numeric_use",i32,Object{},{0,1},noRegister,{0},{1}};bool changed=false,continues=true,normal=false;
+    const auto edge=[&](uint16_t target,ActualState,const std::vector<ActualValue>& args){normal=target==1&&args.size()==1&&args[0].tags==std::set<std::string>{i32};return true;};
+    const bool capacity=c.instruction(context,numeric,0,state,true,changed,edge,continues)&&normal;
+    if(mode=="safe")state.values[0].tags={i32};normal=false;continues=true;
+    const bool actual=c.instruction(context,numeric,0,state,false,changed,edge,continues),valid=mode=="undefined"||mode=="safe";
+    passed=report("scalar union numeric "+mode,capacity&&actual==valid&&(valid?(mode=="safe"?normal:context.requestTrap&&!normal):
+      e.code=="core-ir-common-actual"&&llvm::StringRef(e.message).contains("actual numeric consumption")),e)&&passed;
+  }
+  for(const std::string mode:{"direct","bridge","store","store-bridge","call","ambiguous","double","different-ssa","different-key","unknown","bottom","cycle"}){
+    Program p;Error e;ActualCheck c{p,e};Function f;f.id="guarded-read";f.blocks.resize(4);
+    Json boolType=Object{{"kind","scalar"},{"name","bool"}},integerType=Object{{"kind","scalar"},{"name","i32"}},
+      layout=Object{{"id","env"},{"parent",nullptr},{"slots",Array{Object{{"key","held"}},Object{{"key","other"}}}}};
+    c.types.emplace(boolean,&boolType);c.types.emplace(i32,&integerType);c.environments.emplace("env",&layout);c.objects.emplace("object",ActualObject{"env:env",true});
+    const Json slot=Object{{"layout","env"},{"key","held"},{"binding","held"}};
+    f.blocks[0].parameters={0};f.blocks[0].operations={
+      {"env_load","U",Json(slot),{0,1},1,{0},{}},{"boolean",boolean,Object{{"value",true}},{1,2},2,{},{}},
+      {"strict_equal",boolean,Object{{"operator","==="}},{2,3},3,{1,2},{}},{"cf.cond_br","",Object{},{3,4},noRegister,{3},{1,3}}};
+    f.blocks[1].operations={{"unreachable","",Object{},{0,1},noRegister,{},{}}};f.blocks[2]=f.blocks[1];
+    f.blocks[3].operations={{"env_load",i32,Json(slot),{4,5},4,{0},{}},{"unreachable","",Object{},{5,6},noRegister,{},{}}};
+    if(mode=="bridge"||mode=="store-bridge"||mode=="call"){
+      f.blocks[0].operations.back().successors={1,2};f.blocks[2].operations={{"cf.br","",Object{},{0,1},noRegister,{}, {3}}};
+    }
+    if(mode=="store"||mode=="store-bridge"){
+      auto &ops=f.blocks[mode=="store"?3:2].operations;ops.insert(ops.begin(),Operation{"env_store","",Json(slot),{0,1},noRegister,{0,2},{}});
+    }
+    Function callee;
+    if(mode=="call"){
+      callee.id="opaque";callee.resultCarrier=i32;callee.carriers={i32};callee.blocks={{{},{{"constant",i32,Object{{"decimal","1"},{"token","1"}},{0,1},0,{},{}},{"func.return","",Object{},{0,1},noRegister,{0},{}}}}};
+      c.functions.emplace(callee.id,&callee);f.blocks[3].parameters={6};f.blocks[2].operations={{"invoke","",Object{{"function_id",callee.id}},{0,1},noRegister,{}, {3,1}}};
+    }
+    if(mode=="ambiguous")f.blocks[2].operations={{"cf.br","",Object{},{0,1},noRegister,{}, {3}}};
+    if(mode=="double")f.blocks[0].operations.back().successors={3,3};
+    if(mode=="different-ssa"){
+      f.blocks[0].operations.insert(f.blocks[0].operations.begin(),Operation{"view","env:env",Object{},{0,1},5,{0},{}});f.blocks[3].operations[0].operands={5};
+    }
+    if(mode=="different-key")(*f.blocks[3].operations[0].properties.getAsObject())["key"]="other";
+    if(mode=="cycle")f.blocks.push_back({{},{{"cf.br","",Object{},{0,1},noRegister,{}, {4}}}});
+    c.functions.emplace(f.id,&f);ActualContext context;context.function=&f;ActualState state;
+    state.values[0].tags={"env:env"};state.values[0].objects={"object"};state.values[5]=state.values[0];
+    state.values[1].tags={boolean,i32};state.values[1].truth=2;state.values[1].unknown=mode=="unknown";if(mode=="bottom")state.values[1]=ActualValue{};
+    state.values[2].tags={boolean};state.values[2].truth=2;state.heap["object/slot/held"]=state.values[1];state.heap["object/slot/other"]=state.values[1];
+    bool changed=false,continues=true,accepted=prepareRegions(c);const auto edge=[](uint16_t,ActualState,const std::vector<ActualValue>&){return true;};
+    if(accepted&&(mode=="store"||mode=="store-bridge"))accepted=c.instruction(context,f.blocks[mode=="store"?3:2].operations[0],mode=="store"?3:2,state,false,changed,edge,continues);
+    const auto before=c.key(state.heap.at("object/slot/held"));const size_t index=mode=="store"?1:0;
+    if(accepted)accepted=c.instruction(context,f.blocks[3].operations[index],3,state,false,changed,edge,continues);
+    const auto &value=state.values[4];const bool precise=mode=="direct"||mode=="bridge",bottom=mode=="bottom";
+    passed=report("scalar union guarded read "+mode,accepted&&before==c.key(state.heap.at("object/slot/held"))&&
+      (bottom?value.tags.empty()&&!continues:precise?value.tags==std::set<std::string>{i32}:value.tags.count(boolean))&&
+      (mode!="unknown"||value.unknown),e)&&passed;
+  }
+  return passed;
+}
 bool integerLiterals(){
   // Exercise the owning original-token boundary, not a second integer parser.
   const auto literal=[](const std::string &token,const std::string &type,const std::string &decimal,bool expected,int start=0){
@@ -273,7 +351,7 @@ int main(int argc,char **argv){
   _set_error_mode(_OUT_TO_STDERR);_set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
   _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);_CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
 #endif
-  bool ok=scalarResultAbi();ok&=integerLiterals();for(const std::string mode:{"direct","null","undefined","both","multiple","scalar","span","absence"})ok&=callableShape(mode);
+  bool ok=scalarResultAbi();ok&=scalarUnionActual();ok&=integerLiterals();for(const std::string mode:{"direct","null","undefined","both","multiple","scalar","span","absence"})ok&=callableShape(mode);
   for(const std::string presence:{"direct","null","undefined","both"})for(const std::string mode:{"top","closed","absence"})ok&=callableEntry(presence,mode);
   ok&=genericCallableUnknown();
   for(const std::string kind:{"null","undefined"})ok&=absenceCapacity(kind);

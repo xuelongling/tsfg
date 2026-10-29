@@ -63,6 +63,49 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(name=="env_load"){
       bool complete=false;value=environmentSlot(args[0],layout,layout,key,state.heap,complete);
       if(!e.message.empty()||!need(complete,"actual environment cell address is uninitialized or differs from its layout"))return false;
+      // The same SSA address can reuse its guarded snapshot across one direct
+      // edge. Shared weak objects and other aliases keep their original heap.
+      if(!conditional){
+        if(!step())return false;bool pure=regions.acyclic.count(fn.id);
+        for(const auto &before:fn.blocks[block].operations){if(!pure||&before==&op)break;
+          if(!step())return false;if(before.name!="fuel"){pure=false;break;}}
+        uint16_t target=block;
+        for(size_t hops=0;pure&&hops<fn.blocks.size();++hops){
+        if(!step())return false;const Block *previous=nullptr;bool ambiguous=false;
+        for(const auto &candidate:fn.blocks){
+          if(!step())return false;if(candidate.operations.empty())continue;
+          for(const auto successor:candidate.operations.back().successors){if(!step())return false;if(successor!=target)continue;
+            if(previous){ambiguous=true;break;}previous=&candidate;}
+          if(ambiguous)break;
+        }
+        if(!previous||ambiguous)break;
+        const auto &last=previous->operations.back();bool transparent=previous->parameters.empty()&&last.name=="cf.br"&&last.operands.empty()&&last.successors.size()==1&&last.successors[0]==target;
+        if(transparent)for(const auto &before:previous->operations){if(!step())return false;if(&before!=&last&&before.name!="fuel"){transparent=false;break;}}
+        if(transparent){target=previous-fn.blocks.data();continue;}
+        if(previous&&!ambiguous&&previous->operations.size()>=4){
+          const auto &ops=previous->operations;const auto &loaded=ops[ops.size()-4],&boolean=ops[ops.size()-3],&equal=ops[ops.size()-2],&branch=ops.back();
+          if(!step(4))return false;const auto old=state.values.find(loaded.result),literalValue=state.values.find(boolean.result);
+          const auto operation=string(field(equal.properties,"operator"));
+          if(loaded.name=="env_load"&&boolean.name=="boolean"&&equal.name=="strict_equal"&&branch.name=="cf.cond_br"&&
+            branch.operands.size()==1&&branch.operands[0]==equal.result&&branch.successors.size()==2&&branch.successors[0]!=branch.successors[1]&&
+            loaded.operands.size()==1&&loaded.operands[0]==op.operands[0]&&string(field(loaded.properties,"layout"))==layout&&string(field(loaded.properties,"key"))==key&&
+            equal.operands.size()==2&&((equal.operands[0]==loaded.result&&equal.operands[1]==boolean.result)||(equal.operands[1]==loaded.result&&equal.operands[0]==boolean.result))&&
+            (operation=="==="||operation=="!==")&&old!=state.values.end()&&literalValue!=state.values.end()){
+            const auto &saved=old->second,&literal=literalValue->second;const auto boolId=typeId("bool");
+            bool scalar=!saved.unknown&&saved.objects.empty()&&saved.cells.empty()&&saved.callables.empty();
+            for(const auto &tag:saved.tags){if(!step())return false;scalar&=types.count(tag)&&string(field(*types.at(tag),"kind"))=="scalar";}
+            if(scalar&&literal.tags.size()==1&&literal.tags.count(boolId)&&(literal.truth==1||literal.truth==2)){
+              value=copy(saved);const bool same=(operation=="===")== (branch.successors[0]==target);
+              const auto truth=(value.truth?value.truth:3)&(same?literal.truth:3^literal.truth);
+              for(auto tag=value.tags.begin();tag!=value.tags.end();){if(!step())return false;
+                if((same&&*tag!=boolId)||(*tag==boolId&&!truth))tag=value.tags.erase(tag);else ++tag;}
+              value.truth=value.tags.count(boolId)?truth:0;if(same)value.number.reset();if(value.tags.empty())continues=false;
+            }
+          }
+        }
+        break;
+        }
+      }
       if(!conditional)value.region=regionLoad(*this,regionValue(*this,args[0]),"/slot/"+key,state.regions);
     }else for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref)&&objects.at(ref).type=="env:"+layout,"actual environment cell owner differs"))return false;
@@ -181,11 +224,14 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       bool sameAbsence=args[0].tags.size()==1&&args[1].tags==args[0].tags;
       if(sameAbsence){const auto kind=string(field(*types.at(*args[0].tags.begin()),"kind"));sameAbsence=kind=="undefined"||kind=="null";}
       if(disjoint||sameAbsence)value.truth=(sameAbsence==(string(field(props,"operator"))=="==="))?2:1;
+      else if(args[0].tags.size()==1&&args[1].tags==args[0].tags&&args[0].tags.count(typeId("bool"))&&
+        (args[0].truth==1||args[0].truth==2)&&(args[1].truth==1||args[1].truth==2))
+        value.truth=((args[0].truth==args[1].truth)==(string(field(props,"operator"))=="==="))?2:1;
     }
   }else if(name=="numeric_use"){
     const auto i32=typeId("i32"),undefined=typeId("undefined");
-    if(!need(!args[0].unknown,"unknown actual numeric consumption is unsupported"))return false;
-    for(const auto &tag:args[0].tags)if(!step()||!need(tag==i32||tag==undefined,"unsupported actual numeric consumption"))return false;
+    if(!need(conditional||!args[0].unknown,"unknown actual numeric consumption is unsupported"))return false;
+    for(const auto &tag:args[0].tags)if(!step()||!need(conditional||tag==i32||tag==undefined,"unsupported actual numeric consumption"))return false;
     if(!conditional&&args[0].tags.count(undefined)&&!context.requestTrap){context.requestTrap=true;changed=true;}
     if(conditional||args[0].tags.count(i32)){
       auto selected=literal(i32);if(args[0].tags.size()==1)selected.number=args[0].number;if(!edge(op.successors[0],std::move(state),{selected}))return false;
@@ -193,8 +239,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="binary"||name=="unary"){
     bool reaches=true;for(size_t i=0;i<args.size();++i){
       const auto view=views.at(fn.id+"/"+std::to_string(op.operands[i]));
-      if(!need(!args[i].unknown,"unknown actual scalar consumption is unsupported"))return false;
-      for(const auto &tag:args[i].tags)if(!step()||!need(tag==view,"actual scalar tag differs from its original consuming view"))return false;
+      if(!need(conditional||!args[i].unknown,"unknown actual scalar consumption is unsupported"))return false;
+      for(const auto &tag:args[i].tags)if(!step()||!need(conditional||tag==view,"actual scalar tag differs from its original consuming view"))return false;
       reaches&=!args[i].tags.empty();
     }
     if(conditional||reaches)value=literal(op.view,op.view==typeId("bool")?3:0);if(!conditional&&!reaches)continues=false;

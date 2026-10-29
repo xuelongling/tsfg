@@ -58,13 +58,14 @@ bool SourceBodies::lexicalScope(const Json &fn){
     const auto kind=string(field(*model.types.at(type),"kind"));
     bool supported=kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value";
     if(kind=="union"){
-      const auto &members=items(field(*model.types.at(type),"members"));size_t payloads=0;bool payload=false;
+      const auto &members=items(field(*model.types.at(type),"members"));size_t payloads=0;bool payload=false,scalars=true;
       for(const auto &member:members){
         if(!model.spend())return false;const auto memberKind=string(field(*model.types.at(string(member)),"kind"));
+        scalars&=memberKind=="scalar";
         if(memberKind=="null"||memberKind=="undefined")continue;++payloads;
         payload=memberKind=="scalar"||memberKind=="string"||memberKind=="array"||memberKind=="function"||memberKind=="reference"||memberKind=="value";
       }
-      supported=members.size()>=2&&members.size()<=3&&payloads==1&&payload;
+      supported=members.size()>=2&&(scalars||(members.size()<=3&&payloads==1&&payload));
     }
     if(!model.need((role=="local"||role=="parameter")&&supported,
       "unsupported capture outside initialized body local or original parameter with an admitted payload/nullable type"))return false;

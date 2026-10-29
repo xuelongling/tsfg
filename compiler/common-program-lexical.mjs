@@ -7,9 +7,11 @@ import {commonCheck as check,commonSame as same} from './common-program-common.m
 export function commonCaptureType(id,types,spend) {
   spend();const type=types.get(id);
   if(type?.kind!=='union')return ['scalar','string','readSpan','array','function','reference','value'].includes(type?.kind);
-  spend(type.members.length);const payload=type.members.filter(id=>!['null','undefined'].includes(types.get(id)?.kind));
-  return type.members.length>=2&&type.members.length<=3&&payload.length===1
-    &&['scalar','string','array','function','reference','value'].includes(types.get(payload[0])?.kind);
+  spend(type.members.length);let scalars=true;const payload=type.members.filter(id=>{
+    const kind=types.get(id)?.kind;scalars&&=kind==='scalar';return kind!=='null'&&kind!=='undefined';
+  });
+  return type.members.length>=2&&(scalars||type.members.length<=3&&payload.length===1
+    &&['scalar','string','array','function','reference','value'].includes(types.get(payload[0])?.kind));
 }
 export function validateCommonLexical(payload,grammars,types,coverage,spend,visible) {
   spend(payload.functions.length+payload.types.length);const functions=new Map(payload.functions.map(fn=>[fn.id,fn]));

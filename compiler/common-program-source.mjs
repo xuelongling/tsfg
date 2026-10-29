@@ -92,8 +92,11 @@ export function commonTypeSyntax(grammar,range,typeId,types,spend,aliases=[],vis
       const matched=node.kind==='function'&&node.parameters.length===type.parameters.length&&node.parameters.every((p,i)=>matches(p,type.parameters[i]))&&matches(node.returnType,type.returnType);
       if(matched){spend();origins.push({range:node.range,type:id});}return matched;
     }
-    if(type.kind==='union')return node.kind==='union'&&node.members.length===type.members.length
-      &&type.members.every(member=>node.members.some(child=>matches(child,member)));
+    if(type.kind==='union'){
+      if(node.kind!=='union')return false;const members=new Set();
+      return node.members.every(child=>{spend();const member=type.members.find(id=>matches(child,id));
+        if(member!==undefined)members.add(member);return member!==undefined;})&&members.size===type.members.length;
+    }
     if(['array','readSpan'].includes(type.kind))return node.kind===type.kind&&matches(node.element,type.elementType);
     const name=type.name??(['reference','value'].includes(type.kind)?type.nominalKey.declarationPath.at(-1):type.kind);
     return node.name===name;
