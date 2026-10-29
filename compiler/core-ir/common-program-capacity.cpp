@@ -58,7 +58,9 @@ bool ActualCheck::representation(){
       }
       if(op.result==noRegister)continue;
       if(name=="cell"||name=="catch_bind")forced[op.result]="cell:"+string(field(op.properties,"binding"));
-      else if(name=="constant"||name=="floating"||name=="boolean"||name=="construct_value"||name=="allocate_reference"||name=="array_create"||name=="readspan")forced[op.result]=op.view;
+      // Typed scalar instructions keep their result ABI even when no actual
+      // value reaches the instruction. Their actual capacity remains bottom.
+      else if(name=="constant"||name=="floating"||name=="boolean"||name=="binary"||name=="unary"||name=="construct_value"||name=="allocate_reference"||name=="array_create"||name=="readspan")forced[op.result]=op.view;
       else if(name=="env_alloc"||name=="env_parent"||name=="make_closure")forced[op.result]=op.view;
       else if(name=="pack")forced[op.result]="payload:"+schema.str();
       else if(name=="load"||name=="env_load"||name=="global_load"||name=="field_load"){

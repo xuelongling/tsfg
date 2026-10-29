@@ -17,8 +17,39 @@
 using namespace tsfg::commonProgram;
 namespace {
 bool report(llvm::StringRef name,bool passed,const Error &e={}){
-  llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";
+  llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";llvm::outs().flush();
   if(!passed)llvm::errs()<<e.code<<": "<<e.message<<"\n";return passed;
+}
+bool scalarResultAbi(){
+  const auto i32=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32"),boolean=digest(std::string("tsfg.type")+std::string(1,'\0')+"bool");
+  struct Case {const char *name,*op,*token;bool comparison,wrong,accepted;};
+  const Case cases[]={
+    {"binary result","binary","+",false,false,true},{"unary result","unary","-",false,false,true},
+    {"comparison result","binary","<",true,false,true},{"wrong scalar result","binary","+",false,true,false},
+    {"copy stays actual","value_copy","",false,false,false},{"equality stays actual","strict_equal","===",true,false,false}
+  };
+  bool passed=true;
+  for(const auto &row:cases){
+    Program p;Error e;Function f;f.id="unobserved";f.resultCarrier="void";
+    const auto result=row.comparison?boolean:i32;f.carriers={i32,i32,row.wrong?boolean:result};
+    Object properties=llvm::StringRef(row.op)=="value_copy"?Object{{"type",result}}:Object{{"operator",row.token}};
+    const std::vector<uint16_t> operands=llvm::StringRef(row.op)=="unary"||llvm::StringRef(row.op)=="value_copy"?std::vector<uint16_t>{0}:std::vector<uint16_t>{0,1};
+    f.blocks.push_back({{}, {
+      {"constant",i32,Object{{"decimal","0"},{"token","0"}},{0,1},0,{},{}},
+      {"constant",i32,Object{{"decimal","1"},{"token","1"}},{1,2},1,{},{}},
+      {row.op,result,std::move(properties),{2,3},2,operands,{}},
+      {"func.return","",Object{},{3,4},noRegister,{},{}}
+    }});
+    Json abi=Object{{"parameters",Array{}},{"result","void"}};ActualCheck c{p,e};
+    c.functions.emplace(f.id,&f);c.physicalFunctions.emplace(f.id,&abi);
+    for(size_t reg=0;reg<f.carriers.size();++reg)c.views[f.id+"/"+std::to_string(reg)]=reg==2?result:i32;
+    const bool accepted=c.representation();
+    const bool rejection=e.code=="core-ir-common-actual"&&(row.wrong?e.message=="physical register forced ABI/storage carrier differs":
+      llvm::StringRef(e.message).starts_with("register capacity differs at unobserved/2: expected "));
+    passed=report(std::string("unobserved scalar ABI ")+row.name,accepted==row.accepted&&c.registerCapacity.empty()&&c.storageCapacity.empty()&&
+      (accepted||rejection),e)&&passed;
+  }
+  return passed;
 }
 bool integerLiterals(){
   // Exercise the owning original-token boundary, not a second integer parser.
@@ -139,7 +170,21 @@ bool ownedBorrow(const char *path){
   }
   p.functions.resize(owners.size());for(size_t i=0;i<owners.size();++i)p.functions[i].id=string(field(owners[i],"id"));
   ActualCheck check{p,e};check.initializedArrays=std::move(initialized);if(!check.catalogs())return report(path,false,e);
-  for(size_t i=0;i<owners.size();++i){SourcePlan plan(check,owners[i]);if(!plan.run())return report(path,false,e);p.functions[i]=std::move(plan.function);
+  for(size_t i=0;i<owners.size();++i){SourcePlan plan(check,owners[i]);if(!plan.run())return report(path,false,e);
+    // The Source matcher omits zero-incoming scaffolding. Use that same block
+    // numbering before invoking analyses that require normalized graphs.
+    std::map<uint16_t,uint16_t> blocks;std::vector<Block> normalized;
+    for(size_t b=0;b<plan.function.blocks.size();++b){
+      if(!check.step())return report(path,false,e);auto &block=plan.function.blocks[b];
+      if(block.operations.empty()){
+        if(!check.need(plan.incoming[b]==0,"empty Source block has an incoming edge"))return report(path,false,e);
+      }else{blocks.emplace(uint16_t(b),uint16_t(normalized.size()));normalized.push_back(std::move(block));}
+    }
+    for(auto &block:normalized)for(auto &op:block.operations)for(auto &target:op.successors){
+      if(!check.step()||!check.need(blocks.count(target),"Source successor has no normalized block"))return report(path,false,e);
+      target=blocks.at(target);
+    }
+    plan.function.blocks=std::move(normalized);p.functions[i]=std::move(plan.function);
     p.functions[i].signature=string(field(owners[i],"signatureHash"));p.functions[i].role=string(field(owners[i],"kind"));
     for(const auto &block:p.functions[i].blocks){for(const auto reg:block.parameters)check.views[p.functions[i].id+"/"+std::to_string(reg)]=p.functions[i].carriers[reg];
       for(const auto &op:block.operations)if(op.result!=noRegister)check.views[p.functions[i].id+"/"+std::to_string(op.result)]=op.view;}
@@ -209,12 +254,16 @@ bool core(const char *path,mlir::MLIRContext &context){
   }
   const auto boolId=digest(std::string("tsfg.type")+std::string(1,'\0')+"bool"),i32=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32");
   for(const std::string mode:{"view","carrier"}){
-    Program changed=p;changed.remaining=1000000;bool selected=false;
+    Program changed=p;changed.remaining=1000000;bool selected=false;std::string location;
     for(auto &fn:changed.functions)for(auto &block:fn.blocks)for(auto &op:block.operations)if(!selected&&op.name=="carrier_cast"&&op.view==boolId){
-      if(mode=="view")op.view=i32;else{(*op.properties.getAsObject())["carrier"]=i32;fn.carriers[op.result]=i32;}selected=true;
+      if(mode=="view")op.view=i32;else{(*op.properties.getAsObject())["carrier"]=i32;fn.carriers[op.result]=i32;}
+      location=fn.id+"/"+std::to_string(op.result);selected=true;
     }
     if(selected){Error denied;const bool accepted=verifyProgram(changed,denied);
-      if(!report("original condition adapter rejects "+mode,!accepted&&(llvm::StringRef(denied.message).contains("view or anchor")||llvm::StringRef(denied.message).contains("boolean conditional")),denied))return false;}
+      const auto message=llvm::StringRef(denied.message);const bool capacity=mode=="carrier"&&
+        message.starts_with("register capacity differs at "+location+": expected ")&&message.ends_with(", got "+i32);
+      if(!report("original condition adapter rejects "+mode,!accepted&&denied.code=="core-ir-common-actual"&&
+        (capacity||message.contains("view or anchor")||message.contains("boolean conditional")),denied))return false;}
   }
   return report(path,true);
 }
@@ -224,7 +273,7 @@ int main(int argc,char **argv){
   _set_error_mode(_OUT_TO_STDERR);_set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
   _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);_CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
 #endif
-  bool ok=integerLiterals();for(const std::string mode:{"direct","null","undefined","both","multiple","scalar","span","absence"})ok&=callableShape(mode);
+  bool ok=scalarResultAbi();ok&=integerLiterals();for(const std::string mode:{"direct","null","undefined","both","multiple","scalar","span","absence"})ok&=callableShape(mode);
   for(const std::string presence:{"direct","null","undefined","both"})for(const std::string mode:{"top","closed","absence"})ok&=callableEntry(presence,mode);
   ok&=genericCallableUnknown();
   for(const std::string kind:{"null","undefined"})ok&=absenceCapacity(kind);
