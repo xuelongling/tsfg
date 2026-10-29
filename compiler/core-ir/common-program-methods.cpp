@@ -51,7 +51,7 @@ bool methodTargets(Program &p,const Json &rows,std::vector<std::string> &out,Err
   if(!spend(p,e,targets.size()))return false;out.assign(targets.begin(),targets.end());return true;
 }
 std::string ActualCheck::joinCarriers(const std::vector<std::string> &rows){
-  ActualValue bound;for(const auto &id:rows){if(!step())return {};
+  CapacityValue bound;for(const auto &id:rows){if(!step())return {};
     if(id=="payload:"+schema.str())bound.unknown=true;
     else if(types.count(id))bound.tags.insert(id);
     else if(domains.count(id)){for(const auto &tag:items(field(*domains.at(id),"actualTypes"))){if(!step())return {};bound.tags.insert(string(tag));}}

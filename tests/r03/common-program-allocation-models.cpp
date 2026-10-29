@@ -143,7 +143,8 @@ bool weakInitialization(const std::string &kind){
 bool physicalContract(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};Function f;f.id="F";f.path="/actual-physical-contract.ts";f.range={10,20};f.carriers={"R"};
   Json type=Object{{"id","R"},{"kind","reference"}},source=Object{{"id","F"}};c.types.emplace("R",&type);c.sourceFunctions.emplace("F",&source);c.functions.emplace("F",&f);
-  p.layouts["R"].referenceCount=1;ActualValue actual;actual.tags={"R"};c.registerCapacity["F/0"]=actual;c.resultCapacity["F"]=actual;
+  p.layouts["R"].referenceCount=1;ActualValue actual;actual.tags={"R"};
+  if(!c.recordCapacity(c.registerCapacity["F/0"],actual)||!c.recordCapacity(c.resultCapacity["F"],actual))return false;
   p.effects["F"].reads.insert("preserved-Source-observation");
   if(mode!="physical-missing"){auto &upper=p.fixedEffects["F"];upper.managedReference=mode!="physical-managed-narrow";upper.escape=mode!="physical-escape-narrow";}
   const bool accepted=c.effects();

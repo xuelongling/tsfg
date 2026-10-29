@@ -135,8 +135,9 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
         const auto type=string(field(slot,"type"));auto edge=stored->second.find(key);
         // Immutable String has a managed GC root but no Array/Span holding child.
         const bool childless=check.types.count(type)&&(string(field(*check.types.at(type),"kind"))=="scalar"||string(field(*check.types.at(type),"kind"))=="string");
+        const bool inlineValue=check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="value"&&edge!=stored->second.end()&&edge->second.known&&!edge->second.empty&&!edge->second.opaque&&!edge->second.roots.empty();
         if(field(slot,"writable").getAsBoolean()!=false&&
-          !(field(slot,"writable").getAsBoolean()==true&&childless&&edge!=stored->second.end()&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
+          !inlineValue&&!(field(slot,"writable").getAsBoolean()==true&&childless&&edge!=stored->second.end()&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
         if(!check.types.count(type))stableComplete=false;
         else if(!childless&&(edge==stored->second.end()||edge->second.empty||edge->second.roots.empty()))stableComplete=false;
       }
@@ -154,7 +155,10 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
             auto edge=stored->second.find("/field/"+string(field(member,"id")));
             if(edge==stored->second.end()){complete=false;continue;}
             const auto memberKind=check.types.count(memberType)?string(field(*check.types.at(memberType),"kind")):std::string();
-            if(field(member,"readonly").getAsBoolean()!=true&&
+            // Only fixed nonwriting readers reach stableReturn. Value fields
+            // are current inline copies; reference aliases still need readonly
+            // managed edges. This grants no code write permission to values.
+            if(kind!="value"&&field(member,"readonly").getAsBoolean()!=true&&
               !((memberKind=="scalar"||memberKind=="string")&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
           }
           current=string(field(owner,"base"));
@@ -188,10 +192,12 @@ bool RegionHolding::prove(){
   }result=!owners.empty()&&check.e.message.empty();return *result;
 }
 std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std::string &)> &closedEnvironment,const std::string &descriptor){
-  std::map<std::string,std::set<std::string>> owned;std::set<std::string> permitted;
+  std::map<std::string,std::set<std::string>> owned;std::set<std::string> permitted;size_t arrayCount=0;
   for(const auto &[ref,node]:nodes){
     if(!check.step())return {};owned.emplace(ref,std::set<std::string>{});
-    if(!node.weak&&(node.kind=="array"||node.kind=="reference"||node.kind=="value"||node.kind=="environment"&&closedEnvironment(ref)))permitted.insert(ref);
+    if(!node.weak&&(node.kind=="array"||node.kind=="reference"||node.kind=="value"||node.kind=="environment"&&closedEnvironment(ref))){
+      permitted.insert(ref);if(node.kind=="array"){if(!check.step())return {};++arrayCount;}
+    }
   }
   const auto meet=[&](std::set<std::string> &result,bool &first,const std::set<std::string> &next){
     if(first){if(!check.step(next.size()))return false;result=next;first=false;}
@@ -216,7 +222,11 @@ std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std:
     }
   }while(changed&&check.e.message.empty());
   if(!check.e.message.empty())return {};
-  if(descriptor.empty())return must(root);
+  auto common=must(root);if(!check.e.message.empty())return {};
+  // Both unconditional and selected-path ownership contain only permitted
+  // Array nodes. Once the root holds that entire universe, descriptor rounds
+  // cannot add an owner, including when the universe is empty.
+  if(descriptor.empty()||common.size()==arrayCount)return common;
   // Separate may-reachability from must-holding. A pure alternative that
   // cannot contain this descriptor creates no escape obligation; an opaque
   // alternative may contain it and therefore contributes no holding proof.
@@ -256,7 +266,7 @@ std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std:
       auto &prior=conditional.at(ref);if(!check.step(prior.size()+next.size()))return {};if(prior!=next){prior=std::move(next);changed=true;}
     }
   }while(changed&&check.e.message.empty());
-  if(!check.e.message.empty())return {};auto result=selected(root);const auto common=must(root);
+  if(!check.e.message.empty())return {};auto result=selected(root);
   if(!check.e.message.empty()||!check.step(common.size()))return {};result.insert(common.begin(),common.end());return result;
 }
 } // namespace tsfg::commonProgram

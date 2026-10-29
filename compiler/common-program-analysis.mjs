@@ -81,8 +81,9 @@ function prepare(input,publication) {
     check(Array.isArray(row.upper.captures),'publication');let previous;
     for(const c of row.upper.captures){spend();record(c,['slot',...flags]);const slot=slotByKey.get(c.slot);
       // Binding assignments are checked at Source/HIR. This upper also covers
-      // writes through an Array or reference held by an immutable binding.
-      const mutableValue=slot&&['array','reference'].includes(types.get(slot.type)?.kind);
+      // writes through an Array, reference or inline value field held by an
+      // immutable binding. This does not grant childless holding permission.
+      const mutableValue=slot&&['array','reference','value'].includes(types.get(slot.type)?.kind);
       check(slot&&(!previous||previous<c.slot)&&flags.every(flag=>typeof c[flag]==='boolean')&&(!c.write||slot.writable||mutableValue),'publication');previous=c.slot;}
     const {digest,...body}=row;check(digest===contractDigest(body),'publication-identity');records.set(row.functionId,row);
   }

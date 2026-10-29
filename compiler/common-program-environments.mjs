@@ -11,9 +11,9 @@ export function commonEnvironments(functions,types,spend) {
     spend();const binding=bindings.get(capture.binding);check(binding&&binding.owner!==fn.id,'capture');
     let parent=fn.lexicalParent;const seen=new Set();while(parent&&parent!==binding.owner){spend();check(!seen.has(parent)&&byId.has(parent),'capture');seen.add(parent);parent=byId.get(parent).lexicalParent;}
     check(parent===binding.owner,'capture');const owner=byId.get(binding.owner),kind=types.get(binding.type)?.kind;
-    const local=binding.kind==='local'&&['scalar','string','readSpan','array','function','reference'].includes(kind)&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===binding.id&&row.initializer;});
-    const parameter=binding.kind==='parameter'&&['scalar','string','readSpan','array','function','reference'].includes(kind)&&owner.parameters.some(row=>{spend();return row.id===binding.id;});
-    check(local||parameter,'capability','capture requires an initialized scalar/String/ReadSpan/Array/function/reference body local or original scalar/String/ReadSpan/Array/function/reference parameter');
+    const local=binding.kind==='local'&&['scalar','string','readSpan','array','function','reference','value'].includes(kind)&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===binding.id&&row.initializer;});
+    const parameter=binding.kind==='parameter'&&['scalar','string','readSpan','array','function','reference','value'].includes(kind)&&owner.parameters.some(row=>{spend();return row.id===binding.id;});
+    check(local||parameter,'capability','capture requires an initialized scalar/String/ReadSpan/Array/function/reference/value body local or original scalar/String/ReadSpan/Array/function/reference/value parameter');
     if(slots.has(binding.id))continue;const key=commonIdentity('capture-slot',{owner:binding.owner,name:binding.name,kind:binding.kind});
     const slot={binding:binding.id,key,type:binding.type,writable:binding.writable,kind:binding.kind};slots.set(binding.id,slot);
     if(!ownedSlots.has(binding.owner))ownedSlots.set(binding.owner,[]);ownedSlots.get(binding.owner).push(slot);

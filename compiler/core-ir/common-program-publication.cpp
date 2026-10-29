@@ -150,7 +150,7 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
   // Build only for a nonempty capture obligation; unrelated layouts cannot
   // turn every empty function contract into a full slot-directory scan.
   std::map<std::string,bool> slots;std::set<std::string> mutableValues;
-  if(!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference")mutableValues.insert(string(field(type,"id")));}
+  if(!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference"||string(field(type,"kind"))=="value")mutableValues.insert(string(field(type,"id")));}
   if(!items(captures).empty())for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){
     if(!work(p,e))return false;slots.emplace(string(field(slot,"key")),field(slot,"writable").getAsBoolean()==true||mutableValues.count(string(field(slot,"type"))));
   }

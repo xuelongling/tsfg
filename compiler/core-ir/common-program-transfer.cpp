@@ -19,15 +19,26 @@ bool summarizedSlot(ActualCheck &check,const std::string &slot){
 }
 }
 bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t block,ActualState &state,bool conditional,bool &changed,
-    const std::function<bool(uint16_t,const ActualState &,const std::vector<ActualValue> &)> &edge,bool &continues){
+    const std::function<bool(uint16_t,ActualState,const std::vector<ActualValue> &)> &edge,bool &continues){
   if(!step(op.operands.size()+1))return false;const auto &fn=*context.function;const auto &name=op.name;const auto &props=op.properties;
-  std::vector<ActualValue> args;for(auto reg:op.operands){auto found=state.values.find(reg);args.push_back(found==state.values.end()?ActualValue{}:copy(found->second));}
+  // Calls carry owned arguments beyond completion, and br/route can overwrite
+  // source registers while assigning target parameters in parallel.
+  const bool snapshot=name=="invoke"||name=="invoke_method"||name=="invoke_indirect"||name=="cf.br"||name=="route";
+  if(snapshot&&!step(op.operands.size()))return false;
+  std::vector<ActualValue> owned;owned.reserve(snapshot?op.operands.size():0);
+  std::vector<const ActualValue *> operands;operands.reserve(op.operands.size());const ActualValue missing;
+  for(auto reg:op.operands){auto found=state.values.find(reg);
+    if(snapshot){owned.push_back(found==state.values.end()?ActualValue{}:copy(found->second));operands.push_back(&owned.back());}
+    else operands.push_back(found==state.values.end()?&missing:&found->second);
+  }
+  const ActualOperands args{operands};
+  if(borrowTrace&&!borrowTrace->before(context,op,block,state,args))return false;
   ActualValue value;const auto typeId=[&](llvm::StringRef name){return digest(std::string("tsfg.type")+std::string(1,'\0')+name.str());};
   const auto literal=[&](const std::string &id,uint8_t truth=0){ActualValue v;v.tags.insert(id);v.truth=truth;return v;};
   const auto put=[&](const std::string &slot,const ActualValue &v,bool strong=true){
     auto old=state.heap.find(slot);if(strong||old==state.heap.end())state.heap.insert_or_assign(slot,copy(v));else merge(old->second,v);return e.message.empty();
   };
-  const auto observe=[&](const std::string &id,const ActualValue &v){if(conditional)merge(storageCapacity[id],v);};
+  const auto observe=[&](const std::string &id,const ActualValue &v){if(conditional)recordCapacity(storageCapacity[id],v);};
   const auto seed=[&](std::map<std::string,ActualValue> &seeds,const std::string &id,const ActualValue &v){
     if(!conditional)return;ActualValue tags;tags.tags=v.tags;tags.unknown=v.unknown;tags.truth=v.truth;
     const bool grew=merge(seeds[id],tags);seedChanged|=grew;changed|=grew;
@@ -177,7 +188,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     for(const auto &tag:args[0].tags)if(!step()||!need(tag==i32||tag==undefined,"unsupported actual numeric consumption"))return false;
     if(!conditional&&args[0].tags.count(undefined)&&!context.requestTrap){context.requestTrap=true;changed=true;}
     if(conditional||args[0].tags.count(i32)){
-      auto selected=literal(i32);if(args[0].tags.size()==1)selected.number=args[0].number;if(!edge(op.successors[0],state,{selected}))return false;
+      auto selected=literal(i32);if(args[0].tags.size()==1)selected.number=args[0].number;if(!edge(op.successors[0],std::move(state),{selected}))return false;
     }continues=false;
   }else if(name=="binary"||name=="unary"){
     bool reaches=true;for(size_t i=0;i<args.size();++i){
@@ -188,8 +199,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     }
     if(conditional||reaches)value=literal(op.view,op.view==typeId("bool")?3:0);if(!conditional&&!reaches)continues=false;
   }else if(name=="invoke"||name=="invoke_method"||name=="invoke_indirect"){
-    const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap,const RegionHeap &versions){
-      auto after=copyState(state);if(!e.message.empty()||!step(heap.size()))return false;
+    const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap,const RegionHeap &versions,ActualState after){
+      if(!e.message.empty()||!step(heap.size()))return false;
       for(const auto &[slot,value]:heap){
         const bool summarized=summarizedSlot(*this,slot);if(!e.message.empty())return false;
         auto old=after.heap.find(slot);
@@ -199,7 +210,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         if(!e.message.empty())return false;
       }
       auto current=regionCopy(*this,versions);for(auto &[id,slots]:current){if(!step())return false;after.regions.insert_or_assign(id,std::move(slots));}
-      return edge(target,after,fn.blocks[target].parameters.empty()?std::vector<ActualValue>{}:std::vector<ActualValue>{copy(v)});
+      // Each completion owns its merged state; the edge consumes it without
+      // cloning it again. Callers whose input remains live pass an explicit paid copy.
+      return edge(target,std::move(after),fn.blocks[target].parameters.empty()?std::vector<ActualValue>{}:std::vector<ActualValue>{copy(v)});
     };
 
     const auto invoke=[&](const std::string &target,std::vector<ActualValue> actual){
@@ -210,10 +223,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       auto *call=this->context(target,actual,state.heap,false,changed,activation,repeated,conditional||active.empty()?nullptr:&state.regions,active);if(!call)return false;
       if(scheduling){if(!step(context.id.size()/64+1))return false;call->callers.insert(context.id);}
       if(borrowTrace&&!borrowTrace->call(context,op,block,*call))return false;
-      if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap,call->normalRegions))return false;
-      if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap,call->languageRegions))return false;return true;
+      if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap,call->normalRegions,
+        name=="invoke"&&!call->language?std::move(state):copyState(state)))return false;
+      if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap,call->languageRegions,
+        name=="invoke"?std::move(state):copyState(state)))return false;return true;
     };
-    if(name=="invoke"){if(!invoke(string(field(props,"function_id")),std::move(args)))return false;}
+    if(name=="invoke"){if(!invoke(string(field(props,"function_id")),std::move(owned)))return false;}
     else if(name=="invoke_indirect"){
       const auto site=fn.id+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);
       if(!need(!args.empty()&&p.callableSites.count(site),"indirect actual site has no fixed authority"))return false;
@@ -222,7 +237,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       for(const auto &tag:args[0].tags)if(!step()||!need(types.count(tag)&&string(field(*types.at(tag),"kind"))=="function","actual indirect operand is not callable"))return false;
       if(upper.top){
         ActualValue unknown;unknown.unknown=true;for(const auto &arg:args)regionEscape(*this,regionValue(*this,arg),state.regions);
-        if(!complete(op.successors[0],unknown,{},{})||!complete(op.successors[1],unknown,{},{}))return false;
+        if(!complete(op.successors[0],unknown,{},{},copyState(state))||!complete(op.successors[1],unknown,{},{},copyState(state)))return false;
       }
       for(const auto &[code,environment]:args[0].callables){
         if(!step()||!need(sourceFunctions.count(code)&&(upper.top||upper.functions.count(code)),"indirect pair target exceeds fixed authority"))return false;
@@ -251,24 +266,29 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       }
     }continues=false;
   }else if(name=="cf.br"||name=="route"){
-    if(!edge(op.successors[0],state,args))return false;continues=false;
+    // BorrowTrace::after reads no state for these terminal control operations.
+    if(!edge(op.successors[0],std::move(state),owned))return false;continues=false;
   }else if(name=="cf.cond_br"){
     if(!need(!args[0].unknown,"condition requires a proved boolean actual value"))return false;
     for(const auto &tag:args[0].tags)if(!step()||!need(tag==typeId("bool"),"condition actual tag is not boolean"))return false;
     const auto truth=args[0].truth?args[0].truth:3;
-    if((truth&2)&&!edge(op.successors[0],state,{}))return false;if((truth&1)&&!edge(op.successors[1],state,{}))return false;continues=false;
+    if((truth&2)&&!edge(op.successors[0],(truth&1)?copyState(state):std::move(state),{}))return false;
+    if((truth&1)&&!edge(op.successors[1],std::move(state),{}))return false;continues=false;
   }else if(name=="func.return"||name=="return_throw"){
     const bool normal=name=="func.return";auto &completed=normal?context.normal:context.language;auto &returned=normal?context.returned:context.thrown;auto &heap=normal?context.normalHeap:context.languageHeap;
     const bool initial=!completed;
     if(!completed){completed=true;changed=true;}if(!args.empty())changed=merge(returned,args[0])||changed;
     std::vector<ActualValue> roots;for(const auto &arg:context.arguments)roots.push_back(copy(arg));if(!args.empty())roots.push_back(copy(args[0]));
-    const auto live=reachable(roots,state.heap);changed=mergeHeap(heap,live)||changed;continues=false;
+    auto live=reachable(roots,state.heap);changed=mergeHeap(heap,std::move(live))||changed;continues=false;
     if(!conditional){if(!args.empty()&&!regionObserveReturn(*this,context,args[0],state.regions))return false;
       auto projected=regionReachable(*this,roots,state.regions);auto &summary=normal?context.normalRegions:context.languageRegions;
       if(initial){summary=std::move(projected);if(!summary.empty())changed=true;}else changed=regionJoin(*this,summary,projected)||changed;}
   }else if(name=="unreachable")continues=false;
   else if(!need(name=="fuel"||name=="enter_handler"||name=="finally_enter","unmodelled normalized actual operation"))return false;
-  if(op.result!=noRegister){state.values.insert_or_assign(op.result,copy(value));if(conditional)merge(registerCapacity[fn.id+"/"+std::to_string(op.result)],value);}
+  if(op.result!=noRegister){
+    auto &stored=state.values.insert_or_assign(op.result,std::move(value)).first->second;
+    if(conditional&&!recordCapacity(registerCapacity[fn.id+"/"+std::to_string(op.result)],stored))return false;
+  }
   return e.message.empty();
 }
 } // namespace tsfg::commonProgram

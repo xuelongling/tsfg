@@ -114,7 +114,7 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
       spend(Math.ceil((c.id.length+loop.header.length+1)/64));return regions.scope(c.id+'/'+loop.header,activation);
     }
     function execute(c,observer=null) {
-        spend();const plan=c.plan,fn=plan.owner.id,entry=a.state();entry.heap=a.snapshot(c.entryHeap);entry.regions=regions.heapCopy(c.entryRegions);
+        spend();const plan=c.plan,fn=plan.owner.id,entry=a.state();if(!c.root)entry.heap=a.snapshot(c.entryHeap);entry.regions=regions.heapCopy(c.entryRegions);
         spend(Math.ceil((c.activation.length+fn.length+1)/64));const scope=c.activation+'/'+fn;
         const site=(kind,...parts)=>{spend(parts.length+1);let bytes=scope.length+kind.length+2;
           for(const part of parts)bytes+=part.length+1;spend(Math.ceil(bytes/64));return scope+'/'+kind+'/'+parts.join('/');};
@@ -123,9 +123,9 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
         for(const [index,p]of plan.entry.parameters.entries())entry.values.set(p.name,a.copy(c.args[index]));
         observer?.begin(c,entry.heap);let point=null,currentBlock=plan.entry.name;
         const blocks=new Map(plan.graph.blocks.map(block=>[block.name,block])),states=new Map([[plan.entry.name,entry]]),queue=[plan.entry.name],queued=new Set(queue);
-        const edge=(name,from,args=[],callReturn=false)=>{
+        const edge=(name,from,args=[],callReturn=false,owned=callReturn)=>{
           if(observer&&!callReturn)observer.edge(point,observer.block(c,name));
-          spend(args.length+1);const block=blocks.get(name);check(block&&block.parameters.length===args.length,'ssa');const next=a.clone(from);
+          spend(args.length+1);const block=blocks.get(name);check(block&&block.parameters.length===args.length,'ssa');const next=owned?from:a.clone(from);
           for(const [i,p]of block.parameters.entries())next.values.set(p.name,a.copy(args[i]));
           if(!bounded)regions.feedback(c,currentBlock,name,next,Boolean(observer));
           if(!states.has(name)){states.set(name,next);if(!queued.has(name)){queue.push(name);queued.add(name);}}
@@ -189,7 +189,8 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
             }else if(['view','assert','pack','carrier_cast'].includes(name))value=a.copy(args[0]);
             else if(name==='value_copy') {
               const copyValue=(source,path,active=new Map())=>{
-                spend();const result=a.copy(source);result.refs.clear();result.region=emptyRegionValue();
+                spend(source.tags.size+source.cells.size+source.pairs.size+2);
+                const result={...source,tags:new Set(source.tags),refs:new Set(),cells:new Set(source.cells),pairs:new Map(source.pairs),region:emptyRegionValue()};
                 result.region.opaque=source.region.opaque||source.unknown;result.region.empty=source.region.empty;result.region.number=source.region.number;
                 for(const ref of source.refs){spend();const object=objects.get(ref);check(object,'ssa');
                   const selected=regions.select(source.region,ref);
@@ -200,7 +201,7 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
                   // relations. The raw allocation identity/weakness is unchanged.
                   const current=version(copied,object.type,ref);regions.merge(result.region,current);
                   spend(active.size);const nested=new Map(active);nested.set(ref,{reference:copied,region:current});const weak=allocation(copied,object.type,object.weak||source.refs.size>1);
-                  for(const field of a.fields(object.type)){spend();const stored=state.heap.get(ref+'/field/'+field.id);if(stored){const input=a.copy(stored);input.region=regions.load(selected,'field/'+field.id,state.regions);
+                  for(const field of a.fields(object.type)){spend();const stored=state.heap.get(ref+'/field/'+field.id);if(stored){const input={...stored,region:regions.load(selected,'field/'+field.id,state.regions)};
                     const fieldValue=copyValue(input,path+'/'+field.id,nested);put(copied+'/field/'+field.id,fieldValue,!weak);putRegion(current,'field/'+field.id,fieldValue);}}
                 }return result;
               };value=copyValue(args[0],'root');
@@ -303,10 +304,12 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
                 observer?.call(point,call,c,op.successors);
                 if(call.normal)complete(op.successors[0],call.returned,call.normalHeap,call.normalRegions);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap,call.languageRegions);
               }continues=false;
-            }else if(name==='cf.br'||name==='route'){edge(op.successors[0],state,args);continues=false;}
+            }else if(name==='cf.br'||name==='route'){edge(op.successors[0],state,args,false,true);continues=false;}
             else if(name==='cf.cond_br') {
               check(!args[0].unknown&&[...args[0].tags].every(tag=>tag===boolTypeId),'capability','condition has no proved boolean actual value');
-              const truth=args[0].truth||3;op.successors.forEach((target,index)=>{if(truth&(index===0?2:1))edge(target,state);});continues=false;
+              // The final selected edge owns this terminal state. Only a
+              // coexisting branch needs a separate mutable snapshot.
+              const truth=args[0].truth||3;if(truth&2)edge(op.successors[0],state,[],false,!(truth&1));if(truth&1)edge(op.successors[1],state,[],false,true);continues=false;
             }else if(name==='func.return'||name==='return_throw') {
               const normal=name==='func.return',field=normal?'returned':'thrown',heap=normal?'normalHeap':'languageHeap';
               if(!c[normal?'normal':'language']){c[normal?'normal':'language']=true;changed=true;}if(args.length)changed=a.merge(c[field],args[0])||changed;

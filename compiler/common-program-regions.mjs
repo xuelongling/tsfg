@@ -178,7 +178,8 @@ export function commonRegions(spend){
       if(node.type.startsWith('env:')){
         const layout=environments.get(node.type.slice(4));if(!layout)return false;
         for(const slot of layout.slots){spend();const current=slots.get('slot/'+slot.key);if(!current)return false;
-          if(slot.writable!==false&&(slot.writable!==true||!['scalar','string'].includes(types.get(slot.type)?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
+          const value=types.get(slot.type)?.kind==='value'&&!current.opaque&&!current.empty&&current.roots.size>0;
+          if(slot.writable!==false&&!value&&(slot.writable!==true||!['scalar','string'].includes(types.get(slot.type)?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
         if(layout.parent&&!slots.has('parent'))return false;
       }else if(types.get(node.type)?.kind==='array'){
         if(types.get(types.get(node.type).elementType)?.kind!=='scalar')return false;
@@ -187,9 +188,10 @@ export function commonRegions(spend){
         let type=types.get(node.type);const seen=new Set();
         while(type){spend();if(seen.has(type.id))return false;seen.add(type.id);
           for(const field of type.fields){spend();const current=slots.get('field/'+field.id);if(!current)return false;
-            // A readonly edge can hold a mutable Array. A writable scalar field
-            // cannot remove an owning child; a writable managed edge can.
-            if(field.readonly!==true&&(!['scalar','string'].includes(types.get(field.type)?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
+            // The fixed reader cannot write any value capture. Inline copies
+            // therefore retain their exact current fields; reference aliases
+            // still need readonly managed edges to retain an owning child.
+            if(type.kind!=='value'&&field.readonly!==true&&(!['scalar','string'].includes(types.get(field.type)?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
           type=type.base?types.get(type.base):null;
         }
       }else if(types.get(node.type)?.kind!=='readSpan')return false;

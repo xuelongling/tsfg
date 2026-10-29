@@ -2,7 +2,7 @@
 import {commonProgramPhysical} from './common-program-physical.mjs';
 import {printCommonFunction} from './common-program-print.mjs';
 import {verifyCommonKernelGroup} from './common-program-analysis.mjs';
-import {commonCheck as check,commonBudget,canonical,sha256,own} from './common-program-common.mjs';
+import {commonCheck as check,commonBudget,commonMeter,canonical,sha256,own} from './common-program-common.mjs';
 import {commonTextBudget} from './common-program-budget.mjs';
 // This existing private v3 profile keeps its exact Root base header. It does not
 // adopt that header as the dev formal bytecode contract.
@@ -13,7 +13,9 @@ const coreExchangeFormat=Object.freeze({version:"0.12.0",
 export function commonProgramCore(input,publication,request,options={borrowProof:false}) {
   const proof=verifyCommonKernelGroup(input,publication,request),program=commonProgramPhysical(input,new Map(publication.contracts.map(row=>[row.functionId,row])),options),{model,plans,carriers}=program;
   const representationRecord=carriers.record();commonBudget(representationRecord);
-  const hir=canonical(model.hir),representation=canonical(representationRecord),text=commonTextBudget(model.spend,model.limits.bytes);
+  // One writer budget covers the complete module. Analysis keeps its original
+  // meter; neither phase refills the other or resets at a function boundary.
+  const hir=canonical(model.hir),representation=canonical(representationRecord),text=commonTextBudget(commonMeter(model.limits.work),model.limits.bytes);
   const source=model.hir.sources.find(row=>row.path===model.hir.rootFile);check(source,'source');
   const ordinary={'tsfg_core.version':coreExchangeFormat.version,'tsfg_core.input_identity':model.hir.inputIdentity,
     'tsfg_core.source_hash':source.hash,'tsfg_core.source_path':source.path,'tsfg_core.source_length':source.content.length,

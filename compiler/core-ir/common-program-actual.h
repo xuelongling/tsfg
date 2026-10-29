@@ -2,6 +2,8 @@
 #pragma once
 #include "common-program-source.h"
 #include "common-program-regions.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/iterator.h"
 #include <deque>
 #include <optional>
 namespace tsfg::commonProgram {
@@ -19,7 +21,26 @@ struct ActualValue {
   uint8_t truth=0;bool unknown=false,callableTop=false;std::optional<int64_t> number;
   RegionValue region;
 };
+// Read-only operands live only for the current instruction. Call/branch
+// boundaries point into an independent paid snapshot; other instructions
+// point into stable SSA map nodes. Consumers must not retain this view.
+struct ActualOperands {
+  llvm::ArrayRef<const ActualValue *> values;
+  size_t size()const{return values.size();}
+  bool empty()const{return values.empty();}
+  const ActualValue &operator[](size_t i)const{return *values[i];}
+  const ActualValue &back()const{return *values.back();}
+  auto begin()const{return llvm::make_pointee_range(values).begin();}
+  auto end()const{return llvm::make_pointee_range(values).end();}
+};
 using ActualHeap=std::map<std::string,ActualValue>;
+// Passive ABI/layout observations, not actual values or target/owner facts.
+// Do not collect unused identities across contexts. Active SSA values, heaps,
+// contexts and seeds keep their complete facets and original bounds.
+struct CapacityValue {
+  std::set<std::string> tags;
+  bool unknown=false,callableTop=false,hasEnvironment=false;
+};
 struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;};
 struct ActualObject {std::string type;bool weak=false;};
 struct ActualContext {
@@ -46,7 +67,8 @@ struct ActualCheck {
   std::map<std::string,std::set<std::string>> environmentNeeds;
   bool environmentNeedsReady=false;
   std::map<std::string,ActualObject> objects;
-  std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds,storageCapacity,registerCapacity,resultCapacity;
+  std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds;
+  std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity;
   std::map<std::string,size_t> initializedArrays;
   std::map<std::string,std::string> views;
   std::map<std::string,ActualContext> contexts;
@@ -63,18 +85,19 @@ struct ActualCheck {
   bool catalogs();bool graph();bool source();bool callGraph();bool solve(bool conditional);bool representation();bool effects();
   bool run();
   bool merge(ActualValue &,const ActualValue &);
-  bool mergeHeap(ActualHeap &,const ActualHeap &);
+  bool recordCapacity(CapacityValue &,const ActualValue &);
+  bool mergeHeap(ActualHeap &,ActualHeap &&);
   ActualValue copy(const ActualValue &);
   bool arrayReceiver(const ActualValue &);
   ActualHeap copyHeap(const ActualHeap &);
   ActualState copyState(const ActualState &);
-  bool join(ActualState &,const ActualState &);
+  bool join(ActualState &,ActualState &&);
   ActualValue declared(const std::string &,ActualHeap &,const std::string &,std::set<std::string> = {});
   ActualValue entryDeclared(const std::string &,const std::string &,ActualHeap &,const std::string &,std::set<std::string>,const Program::EntryRole &,bool,bool &);
   ActualValue entryValue(const Function &,size_t,ActualHeap &,bool,bool &);
   std::vector<const Json *> allFields(const std::string &);
   std::string key(const ActualValue &)const;
-  std::string carrier(const ActualValue &);
+  std::string carrier(const CapacityValue &);
   bool environmentRequirements();
   bool environmentGraph(const Function &);
   ActualValue environmentSlot(const ActualValue &,const std::string &,const std::string &,const std::string &,const ActualHeap &,bool &);
@@ -92,6 +115,6 @@ struct ActualCheck {
   bool execute(ActualContext &,bool,bool &);
   bool schedule(const std::string &);
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
-    const std::function<bool(uint16_t,const ActualState &,const std::vector<ActualValue> &)> &,bool &);
+    const std::function<bool(uint16_t,ActualState,const std::vector<ActualValue> &)> &,bool &);
 };
 } // namespace tsfg::commonProgram

@@ -24,29 +24,55 @@ bool ActualCheck::arrayReceiver(const ActualValue &value){
   return step(actual.size()+value.tags.size())&&actual==value.tags&&e.message.empty();
 }
 bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
-  if(!step(weight(to)+weight(from)))return false;const auto before=key(to);
+  // Visit incoming identities once; only the relation plane still projects
+  // the old target. Internal change detection must retain exact int64 facts,
+  // independently of the bounded JSON key's binary64 representation.
+  if(!step(weight(from)+1+regionWeight(to.region)))return false;
   // An absent relation is lazily unproved, not a runtime allocation fact.
   // Capacity/tag-only values need no relation plane or spurious state change.
   const bool tracked=to.region.known||from.region.known;RegionValue provenance;
   if(tracked){provenance=regionValue(*this,to);regionMerge(*this,provenance,regionValue(*this,from));}
   const bool bottom=to.tags.empty()&&to.objects.empty()&&to.cells.empty()&&to.callables.empty()&&!to.unknown&&!to.callableTop;
-  to.tags.insert(from.tags.begin(),from.tags.end());to.objects.insert(from.objects.begin(),from.objects.end());to.cells.insert(from.cells.begin(),from.cells.end());
-  to.callables.insert(from.callables.begin(),from.callables.end());
+  bool changed=false;
+  for(const auto &id:from.tags)if(to.tags.insert(id).second)changed=true;
+  for(const auto &id:from.objects)if(to.objects.insert(id).second)changed=true;
+  for(const auto &id:from.cells)if(to.cells.insert(id).second)changed=true;
+  for(const auto &pair:from.callables)if(to.callables.insert(pair).second)changed=true;
+  const auto top=to.callableTop,unknown=to.unknown;const auto truth=to.truth;const auto number=to.number;
   to.callableTop|=from.callableTop;to.truth|=from.truth;to.unknown|=from.unknown;to.number=bottom?from.number:to.number==from.number?to.number:std::nullopt;
-  if(tracked)to.region=std::move(provenance);
+  changed|=top!=to.callableTop||truth!=to.truth||unknown!=to.unknown||number!=to.number;
+  if(tracked){
+    changed|=to.region.known!=provenance.known||to.region.opaque!=provenance.opaque||to.region.empty!=provenance.empty||to.region.number!=provenance.number||to.region.roots!=provenance.roots;
+    to.region=std::move(provenance);
+  }
   if(!need(to.tags.size()<=256&&to.objects.size()<=256&&to.cells.size()<=256&&to.callables.size()<=256,"actual alternative/object/Cell set limit exceeded"))return false;
-  return key(to)!=before;
+  return e.message.empty()&&changed;
+}
+bool ActualCheck::recordCapacity(CapacityValue &to,const ActualValue &from){
+  // The producer may be a freshly constructed value rather than merge's
+  // output. Keep every active-value bound before discarding unused facets.
+  if(!step()||!need(from.tags.size()<=256&&from.objects.size()<=256&&from.cells.size()<=256&&from.callables.size()<=256,
+      "actual alternative/object/Cell set limit exceeded")||
+      !need(from.region.roots.size()<=256,"current allocation relation alternatives exceeded"))return false;
+  size_t cost=to.tags.size()+from.tags.size()+from.callables.size()+2;
+  for(const auto &id:to.tags)cost+=id.size()/64;for(const auto &id:from.tags)cost+=id.size()/64;
+  if(!step(cost))return false;
+  // Retain the original tag visit/copy/query units and scalar merge units.
+  // Pair visits inspect only empty(), never copy/hash code or environment IDs.
+  to.tags.insert(from.tags.begin(),from.tags.end());to.unknown|=from.unknown;to.callableTop|=from.callableTop;
+  for(const auto &[code,environment]:from.callables)to.hasEnvironment|=!environment.empty();
+  return need(to.tags.size()<=256,"conditional capacity tag limit exceeded");
 }
 ActualHeap ActualCheck::copyHeap(const ActualHeap &from){
   ActualHeap out;if(!step(from.size()))return out;
   for(const auto &[id,v]:from){if(!step(id.size()/64+1))return {};out.emplace(id,copy(v));if(!e.message.empty())return {};}
   return out;
 }
-bool ActualCheck::mergeHeap(ActualHeap &into,const ActualHeap &from){
+bool ActualCheck::mergeHeap(ActualHeap &into,ActualHeap &&from){
   bool changed=false;if(!step(from.size()))return false;
-  for(const auto &[id,v]:from){
+  for(auto &[id,v]:from){
     if(!step(id.size()/64+1))return false;auto found=into.find(id);
-    if(found==into.end()){into.emplace(id,copy(v));changed=true;}else changed=merge(found->second,v)||changed;
+    if(found==into.end()){if(!step())return false;into.emplace(id,std::move(v));changed=true;}else changed=merge(found->second,v)||changed;
     if(!e.message.empty())return false;
   }return changed;
 }
@@ -56,10 +82,12 @@ ActualState ActualCheck::copyState(const ActualState &s){
   for(const auto &[id,v]:s.values){out.values.emplace(id,copy(v));if(!e.message.empty())return {};}
   return out;
 }
-bool ActualCheck::join(ActualState &to,const ActualState &from){
-  bool changed=mergeHeap(to.heap,from.heap);changed=regionJoin(*this,to.regions,from.regions)||changed;if(!step(from.values.size()))return false;
-  for(const auto &[id,v]:from.values){auto found=to.values.find(id);
-    if(found==to.values.end()){to.values.emplace(id,copy(v));changed=true;}else changed=merge(found->second,v)||changed;
+bool ActualCheck::join(ActualState &to,ActualState &&from){
+  // The caller transfers a private edge state. Moving its heap/value payloads
+  // leaves the independent relation plane available for the original join.
+  bool changed=mergeHeap(to.heap,std::move(from.heap));changed=regionJoin(*this,to.regions,from.regions)||changed;if(!step(from.values.size()))return false;
+  for(auto &[id,v]:from.values){auto found=to.values.find(id);
+    if(found==to.values.end()){if(!step())return false;to.values.emplace(id,std::move(v));changed=true;}else changed=merge(found->second,v)||changed;
     if(!e.message.empty())return false;
   }return changed;
 }
@@ -200,8 +228,9 @@ ActualValue ActualCheck::entryValue(const Function &fn,size_t index,ActualHeap &
   }
   return role?entryDeclared(type,type,heap,origin,{},*role,upper,changed):declared(type,heap,origin);
 }
-std::string ActualCheck::carrier(const ActualValue &v){
-  if(!step(weight(v)))return {};if(v.unknown)return "payload:"+schema.str();
+std::string ActualCheck::carrier(const CapacityValue &v){
+  size_t cost=v.tags.size()+1;for(const auto &id:v.tags)cost+=id.size()/64;
+  if(!step(cost)||!need(v.tags.size()<=256,"conditional capacity tag limit exceeded"))return {};if(v.unknown)return "payload:"+schema.str();
   if(v.tags.size()==1){const auto id=*v.tags.begin();if(llvm::StringRef(id).starts_with("env:")){if(!need(environments.count(id.substr(4)),"unowned environment actual tag"))return {};return id;}if(!need(types.count(id),"unowned actual payload tag"))return {};
     const auto kind=string(field(*types.at(id),"kind"));if(kind!="undefined"&&kind!="null"&&kind!="void")return id;}
   Array tags;for(const auto &id:v.tags)tags.push_back(id);

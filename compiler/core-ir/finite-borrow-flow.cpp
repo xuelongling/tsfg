@@ -64,6 +64,9 @@ bool BorrowFlow::sharing(const std::string &a,const std::string &b,Sharing relat
 bool BorrowFlow::solve() {
   if(!charge())return false;if(sealed)return reject("borrow proof is sealed");sealed=true;
   if(definitions.size()!=values.size())return reject("borrow SSA value lacks a definition or parameter");
+  // Liveness is consumed only by structural effects. Builder identity checks
+  // and complete SSA definitions still apply when no such comparison exists.
+  if(effects.empty()){published=Result{};solved=true;return true;}
   std::vector<Id> work;std::vector<bool> queued;
   for(Id i=0;i<points.size();++i){if(!charge())return false;work.push_back(i);queued.push_back(true);
     for(const auto value:points[i].uses){if(!charge())return false;points[i].live.insert(value);}}

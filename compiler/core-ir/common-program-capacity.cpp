@@ -3,7 +3,7 @@
 namespace tsfg::commonProgram {
 bool ActualCheck::representation(){
   std::set<std::string> used;
-  const auto selected=[&](const std::string &actual,const ActualValue &value){
+  const auto selected=[&](const std::string &actual,const CapacityValue &value){
     const auto expected=carrier(value);if(domains.count(actual))used.insert(actual);
     return need(actual==expected,"conditional storage/ABI capacity differs from independent actual SSA");
   };
@@ -71,7 +71,7 @@ bool ActualCheck::representation(){
       // Language completion blocks keep the universal payload ABI even when
       // this particular throw has a single known actual tag.
       if(views.at(id+"/"+std::to_string(reg))=="payload:"+schema.str())forced[uint16_t(reg)]="payload:"+schema.str();
-      const auto value=registerCapacity.find(id+"/"+std::to_string(reg));const ActualValue empty;const auto &capacity=value==registerCapacity.end()?empty:value->second;
+      const auto value=registerCapacity.find(id+"/"+std::to_string(reg));const CapacityValue empty;const auto &capacity=value==registerCapacity.end()?empty:value->second;
       if(forced.count(uint16_t(reg))){if(!need(actual==forced.at(uint16_t(reg)),"physical register forced ABI/storage carrier differs"))return false;}
       else if(!need(actual==carrier(capacity)||adapters.count(uint16_t(reg))&&actual==adapters.at(uint16_t(reg)),
         "register capacity differs at "+id+"/"+std::to_string(reg)+": expected "+carrier(capacity)+", got "+actual)){e.path=fn->path;e.range=fn->range;return false;}
@@ -80,9 +80,9 @@ bool ActualCheck::representation(){
   return need(used.size()==domains.size(),"unreferenced producer actual-domain row remains");
 }
 bool ActualCheck::effects(){
-  const auto managed=[&](const ActualValue &value){
+  const auto managed=[&](const CapacityValue &value){
     if(value.unknown||value.callableTop)return true;
-    for(const auto &[code,environment]:value.callables){if(!step())return false;if(!environment.empty())return true;}
+    if(value.hasEnvironment)return true;
     for(const auto &tag:value.tags){if(!step())return false;
       // Callable ABI always reserves an environment root. Only an actual
       // environment pair (or unknown/TOP), not that capacity, requires GC.

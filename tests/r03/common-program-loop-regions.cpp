@@ -331,7 +331,9 @@ bool rawHardProjection(const std::string &mode){
     state.values[2].region.known=true;state.values[2].region.roots.insert("box-current");m.c.regions.nodes.emplace("box-current",RegionNode{"unrelated","CurrentBox",box});
   }
   for(const auto &[id,scope]:m.c.regions.scopes)if(scope.hard)return false;
-  BorrowTrace trace(m.c);if(!trace.before(context,context.function->blocks[0].operations[1],0,state))return false;
+  const auto &observed=context.function->blocks[0].operations[1];std::vector<ActualValue> args;args.reserve(observed.operands.size());std::vector<const ActualValue *> operands;
+  if(!m.c.step(2*observed.operands.size()))return false;for(auto reg:observed.operands){auto value=state.values.find(reg);args.push_back(value==state.values.end()?ActualValue{}:m.c.copy(value->second));operands.push_back(&args.back());}
+  BorrowTrace trace(m.c);if(!trace.before(context,observed,0,state,ActualOperands{operands}))return false;
   return m.e.message.empty()&&m.c.regions.scopes.at("old").hard&&m.c.regions.scopes.at("other-context").hard&&!m.c.regions.scopes.at("unrelated").hard&&state.values.at(1).region.roots.empty();
 }
 bool nestedArrayExposure(const std::string &mode){

@@ -86,7 +86,7 @@ export function commonTypeSyntax(grammar,range,typeId,types,spend,aliases=[],vis
   }
   function matchesShape(node,id) {
     spend();const type=types.get(id);check(type,'type');
-    if(node.name){if(visible?.get(node.name)===id&&type.kind==='reference')return true;
+    if(node.name){if(visible?.get(node.name)===id&&['reference','value'].includes(type.kind))return true;
       for(const alias of aliases){spend();if(alias.sourcePath===grammar.source.path&&alias.name===node.name&&alias.type===id)return true;}}
     if(type.kind==='function'){
       const matched=node.kind==='function'&&node.parameters.length===type.parameters.length&&node.parameters.every((p,i)=>matches(p,type.parameters[i]))&&matches(node.returnType,type.returnType);

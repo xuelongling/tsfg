@@ -190,7 +190,12 @@ void regionHardEscape(ActualCheck &c,const ActualValue &value,const ActualHeap &
     std::set<std::string> refs=v.objects;refs.insert(v.cells.begin(),v.cells.end());for(const auto &[code,env]:v.callables)if(!env.empty())refs.insert(env);
     for(const auto &ref:refs){if(!c.step(2*(ref.size()/64+1)))return;if(!seen.insert(ref).second)continue;const auto prefix=ref+"/";
       for(const auto &[id,node]:c.regions.nodes){if(!c.step((node.reference.size()+ref.size())/64+1))return;if(node.reference==ref){auto scope=c.regions.scopes.find(node.region);if(scope!=c.regions.scopes.end()){scope->second.blocked=true;scope->second.hard=true;}}}
-      for(const auto &[slot,child]:heap){if(!c.step((slot.size()+prefix.size())/64+1))return;if(slot==ref||llvm::StringRef(slot).starts_with(prefix))pending.push_back(&child);}
+      if(!c.step(ref.size()/64+1))return;auto exact=heap.find(ref);
+      if(exact!=heap.end()){if(!c.step((exact->first.size()+prefix.size())/64+1))return;pending.push_back(&exact->second);}
+      if(!c.step(prefix.size()/64+1))return;
+      for(auto it=heap.lower_bound(prefix);it!=heap.end();++it){const auto &[slot,child]=*it;
+        if(!c.step((slot.size()+prefix.size())/64+1))return;if(!llvm::StringRef(slot).starts_with(prefix))break;pending.push_back(&child);
+      }
     }
   }
 }

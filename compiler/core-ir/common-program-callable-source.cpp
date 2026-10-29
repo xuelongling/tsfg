@@ -56,8 +56,8 @@ bool SourceBodies::lexicalScope(const Json &fn){
     const auto role=string(field(b,"kind"));
     if(!model.need(ancestor&&model.types.count(type),"captured binding owner or type is absent"))return false;
     const auto kind=string(field(*model.types.at(type),"kind"));
-    if(!model.need((role=="local"&&(kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"))||(role=="parameter"&&(kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference")),
-      "unsupported capture outside initialized function-body scalar/String/ReadSpan/Array/function/reference local or scalar/String/ReadSpan/Array/function/reference parameter"))return false;
+    if(!model.need((role=="local"&&(kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value"))||(role=="parameter"&&(kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value")),
+      "unsupported capture outside initialized function-body scalar/String/ReadSpan/Array/function/reference/value local or scalar/String/ReadSpan/Array/function/reference/value parameter"))return false;
     bool declaration=false;
     if(role=="parameter")for(const auto &parameter:items(field(*model.functions.at(owner),"parameters"))){
       if(!model.spend())return false;declaration|=string(field(parameter,"id"))==id;

@@ -204,7 +204,7 @@ struct Derive {
       for(const auto &capture:items(field(fn,"captures"))){if(!step())return false;const auto binding=string(field(capture,"binding"));
         if(!ok(slots.count(binding),"captured binding has no owned environment slot"))return false;
         const auto &[key,type]=slots.at(binding);auto &access=out.captures[key];
-        if(types.count(type)&&string(field(*types.at(type),"kind"))=="array")environment[binding]={"c:"+key};access.read|=field(capture,"read").getAsBoolean()==true;
+        if(reference(type)||types.count(type)&&string(field(*types.at(type),"kind"))=="value")environment[binding]={"c:"+key};access.read|=field(capture,"read").getAsBoolean()==true;
         access.write|=field(capture,"write").getAsBoolean()==true;
         if(access.read)witness(Object{{"kind","capture"},{"slot",key},{"access","read"}},nullptr,"capture");
         if(access.write)witness(Object{{"kind","capture"},{"slot",key},{"access","write"}},nullptr,"capture");

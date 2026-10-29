@@ -195,17 +195,33 @@ struct BorrowTrace::Impl {
     // Retain order between borrow/call/completion observations. Numeric guards,
     // carrier adapters and unrelated scalar instructions are transparent here;
     // their independently verified physical operation positions stay intact.
-    std::map<Id,std::set<Id>> outgoing;
-    for(const auto &[from,to]:edges){if(!step())return false;outgoing[from].insert(to);}
+    const auto appendSuccessors=[&](Id from,auto edge,std::vector<Id> &pending){
+      for(;edge!=edges.end()&&edge->first==from;++edge){
+        if(!step())return false;pending.push_back(edge->second);
+      }return true;
+    };
     for(auto from:interesting){
-      std::vector<Id> pending(outgoing[from].begin(),outgoing[from].end());std::set<Id> seen;
+      // A pending visit pays its successor lookup below. The initial source
+      // has no visit, so it pays the same query separately before appending.
+      std::vector<Id> pending;if(!step()||!appendSuccessors(from,edges.lower_bound({from,0}),pending))return false;std::set<Id> seen;
       for(size_t i=0;i<pending.size();++i){
-        if(!step())return false;const auto to=pending[i];if(!seen.insert(to).second)continue;
-        if(interesting.count(to)){
-          for(const auto &start:projectedPoints(from))for(const auto &end:projectedPoints(to)){
-            if(!step())return false;flowsOut.push_back(Object{{"from",start},{"to",end}});
+        auto to=pending[i];
+        while(true){
+          if(!step())return false;if(!seen.insert(to).second)break;
+          if(interesting.count(to)){
+            for(const auto &start:projectedPoints(from))for(const auto &end:projectedPoints(to)){
+              if(!step())return false;flowsOut.push_back(Object{{"from",start},{"to",end}});
+            }break;
           }
-        }else{if(!step(outgoing[to].size()))return false;pending.insert(pending.end(),outgoing[to].begin(),outgoing[to].end());}
+          auto edge=edges.lower_bound({to,0});if(edge==edges.end()||edge->first!=to)break;
+          if(i+1==pending.size()){
+            auto following=edge;++following;
+            // With an empty logical FIFO, this is exactly its next pop.
+            // Keep the visit fee; no vector append occurs or is charged.
+            if(following==edges.end()||following->first!=to){to=edge->second;continue;}
+          }
+          if(!appendSuccessors(to,edge,pending))return false;break;
+        }
       }
     }
     Array used,effected;for(auto &[key,row]:usesOut)used.push_back(std::move(row));for(auto &[key,row]:effectsOut)effected.push_back(std::move(row));
@@ -254,12 +270,19 @@ struct BorrowTrace::Impl {
       // Environment initialization is transport. Consumption ignores hidden
       // cells; escape checks follow only this actual pair's slots and parents.
       captured|=environment;
-      for(const auto &[slot,child]:heap){
-        if(!step())return {};if(slot!=ref&&!llvm::StringRef(slot).starts_with(ref+"/"))continue;
-        if(environment&&!llvm::StringRef(slot).starts_with(ref+"/slot/")&&slot!=ref+"/parent")continue;
-        if(!step(child.objects.size()+child.cells.size()+child.callables.size()))return {};
+      if(!step((ref.size()+1)/64+1))return {};const auto prefix=ref+"/";
+      const auto append=[&](const std::string &slot,const ActualValue &child){
+        if(environment&&!llvm::StringRef(slot).starts_with(ref+"/slot/")&&slot!=ref+"/parent")return true;
+        if(!step(child.objects.size()+child.cells.size()+child.callables.size()))return false;
         for(const auto &next:child.objects)pending.emplace_back(next,captured);for(const auto &cell:child.cells)pending.emplace_back(cell,captured);
         if(mode!=Scan::Use)for(const auto &[code,env]:child.callables)if(!env.empty())pending.emplace_back(env,true);
+        return true;
+      };
+      if(!step(ref.size()/64+1))return {};auto exact=heap.find(ref);
+      if(exact!=heap.end()&&(!step()||!append(exact->first,exact->second)))return {};
+      if(!step(prefix.size()/64+1))return {};
+      for(auto it=heap.lower_bound(prefix);it!=heap.end();++it){if(!step())return {};const auto &[slot,child]=*it;
+        if(!llvm::StringRef(slot).starts_with(prefix))break;if(!append(slot,child))return {};
       }
     }return out;
   }
@@ -321,10 +344,11 @@ struct BorrowTrace::Impl {
     return !value.objects.empty();
   }
   void store(const ActualContext &context,Id at,const ActualValue &destination,const ActualValue &value,const ActualHeap &heap,bool global=false){
-    const auto spans=contained(value,heap,true,Scan::Escape);if(spans.empty())return;
+    if(value.objects.empty()&&value.cells.empty()&&value.callables.empty())return;
     bool external=global||destination.unknown;
     for(const auto &ref:destination.objects){if(!step())return;external|=this->external.count(ref);}
     if(!external||constructorReceiver(context,destination))return;
+    const auto spans=contained(value,heap,true,Scan::Escape);if(spans.empty())return;
     const auto prior=contained(destination,heap,true,Scan::Escape);
     for(const auto &[span,owner]:spans)if(!step()||!prior.count(span)){lifetime=locations.at(at);return;}
   }
@@ -419,7 +443,7 @@ struct BorrowTrace::Impl {
     for(const auto &ref:result.storage)if(!step()||!uniqueOrigin(ref,result.context,objectOrigins))return false;
     return true;
   }
-  void fixedEffects(const ActualContext &context,const Operation &op,Boundary &boundary,const std::vector<ActualValue> &args,const ActualHeap &heap){
+  void fixedEffects(const ActualContext &context,const Operation &op,Boundary &boundary,ActualOperands args,const ActualHeap &heap){
     std::vector<std::string> targets;size_t offset=0;
     if(op.name=="invoke")targets.push_back(string(field(op.properties,"function_id")));
     else if(op.name=="invoke_method"){
@@ -456,7 +480,7 @@ struct BorrowTrace::Impl {
       if(upper.unknownHost){boundary.conservative=true;boundary.owner.pending=true;}
     }
   }
-  void boundary(const ActualContext &context,const Operation &op,Id at,const std::vector<ActualValue> &args,const ActualState &state){
+  void boundary(const ActualContext &context,const Operation &op,Id at,ActualOperands args,const ActualState &state){
     if(!step())return;auto &bound=boundaries[at];fixedEffects(context,op,bound,args,state.heap);
     if(!context.region.empty()){if(!step(context.region.size()/64+1))return;bound.regions.insert(context.region);}
     for(const auto &target:bound.targets){if(!step())return;bound.unconfined|=!c.regions.acyclic.count(target)||c.cyclicFunctions.count(target);}
@@ -514,9 +538,8 @@ bool BorrowTrace::begin(const ActualContext &context,const ActualState &state){
   }
   return b.addEdge(at,b.point(context,0,0))&&b.c.e.message.empty();
 }
-bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t block,const ActualState &state){
-  auto &b=*impl;const auto at=b.point(context,op,block);if(at==Flow::none)return false;std::vector<ActualValue> args;
-  if(!b.step(op.operands.size()))return false;for(auto reg:op.operands){auto value=state.values.find(reg);args.push_back(value==state.values.end()?ActualValue{}:b.c.copy(value->second));}
+bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t block,const ActualState &state,ActualOperands args){
+  auto &b=*impl;const auto at=b.point(context,op,block);if(at==Flow::none||!b.step(args.size()))return false;
   if(op.name=="array_read"||op.name=="array_length"||op.name=="readspan_length"){if(!args.empty())b.observe(at,args[0],state.heap,false);}
   if(!args.empty()&&(op.name=="readspan_length"||op.name=="array_read")){
     const auto view=b.c.views.find(context.function->id+"/"+std::to_string(op.operands[0]));

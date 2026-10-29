@@ -112,7 +112,7 @@ bool callableManaged(const std::string &mode){
   actual.types.emplace("callable",&type);actual.functions.emplace("model",&p.functions[0]);
   ActualValue value;value.tags.insert("callable");value.callableTop=mode=="top";
   if(mode=="environment"||mode=="leaf")value.callables.emplace("code",mode=="leaf"?"":"activation");
-  actual.registerCapacity.emplace("model/0",std::move(value));
+  if(!actual.recordCapacity(actual.registerCapacity["model/0"],value))return false;
   const bool expected=mode=="top"||mode=="environment";
   return report("synthetic callable managed "+mode,actual.effects()&&p.effects.at("model").managedReference==expected&&!p.effects.at("model").escape,e);
 }

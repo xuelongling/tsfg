@@ -3,25 +3,34 @@
 #include "common-program-borrows.h"
 namespace tsfg::commonProgram {
 ActualHeap ActualCheck::reachable(const std::vector<ActualValue> &values,const ActualHeap &heap){
-  ActualHeap out;std::vector<ActualValue> pending;std::set<std::string> visited;
-  if(!step(values.size()+heap.size()))return out;for(const auto &v:values)pending.push_back(copy(v));
-  for(const auto &[id,v]:heap)if(llvm::StringRef(id).starts_with("global:")){out.emplace(id,copy(v));pending.push_back(copy(v));}
+  ActualHeap out;std::vector<const ActualValue *> pending;std::set<std::string> visited;
+  if(!step(values.size()+heap.size()))return out;for(const auto &v:values)pending.push_back(&v);
+  for(const auto &[id,v]:heap)if(llvm::StringRef(id).starts_with("global:")){out.emplace(id,copy(v));pending.push_back(&v);}
   for(size_t index=0;index<pending.size();++index){
-    // Discovering a child may grow the work vector. Keep the current roots in
-    // an owned local value so vector reallocation cannot invalidate this walk.
-    const auto current=copy(pending[index]);
+    // Pointees belong to the immutable inputs, so growing the work vector
+    // cannot invalidate the current value or any queued child.
+    const auto &current=*pending[index];
     std::set<std::string> roots;if(!step(current.objects.size()+current.callables.size()))return {};
     roots.insert(current.objects.begin(),current.objects.end());for(const auto &[code,environment]:current.callables)if(!environment.empty())roots.insert(environment);
     for(const auto &ref:roots){
     if(!step()||!e.message.empty())return {};if(!visited.insert(ref).second)continue;
-    for(const auto &[id,v]:heap){if(!step())return {};if(llvm::StringRef(id).starts_with(ref+"/")){
-      auto inserted=out.emplace(id,copy(v));if(inserted.second)pending.push_back(copy(v));
-    }}
+    if(!step((ref.size()+1)/64+1))return {};const auto prefix=ref+"/";
+    if(!step(prefix.size()/64+1))return {};
+    for(auto it=heap.lower_bound(prefix);it!=heap.end();++it){if(!step())return {};const auto &[id,v]=*it;
+      if(!llvm::StringRef(id).starts_with(prefix))break;
+      auto inserted=out.emplace(id,copy(v));if(inserted.second)pending.push_back(&v);
+    }
     }
   }return out;
 }
 ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,const std::string &origin,bool weak,std::map<std::string,std::string> active){
-  auto value=copy(source);if(!e.message.empty())return {};value.objects.clear();
+  // Object identities are rebuilt below. Copy only the facets retained by
+  // this result, paying the original copy weights for those actual copies.
+  size_t cost=source.tags.size()+source.cells.size()+source.callables.size()+regionWeight(source.region)+1;
+  for(const auto *set:{&source.tags,&source.cells})for(const auto &id:*set)cost+=id.size()/64;
+  for(const auto &[code,environment]:source.callables)cost+=(code.size()+environment.size())/64+1;
+  if(!step(cost))return {};ActualValue value;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;
+  value.truth=source.truth;value.unknown=source.unknown;value.callableTop=source.callableTop;value.number=source.number;value.region=source.region;
   // Distinct source instances of the same nominal value share this copy-site
   // identity. Decide multiplicity before the first field write, not after one
   // alternative has already overwritten another.
@@ -42,10 +51,13 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
     if(!step(active.size()+1))return {};auto nested=active;nested.emplace(ref,target);objects[target]={object.type,summarized};
     for(const auto *f:allFields(object.type)){
       if(!step())return {};const auto id=string(field(*f,"id"));auto stored=state.heap.find(ref+"/field/"+id);
-      if(stored==state.heap.end())continue;const auto child=copy(stored->second);
+      if(stored==state.heap.end())continue;const auto slot=target+"/field/"+id;std::optional<ActualValue> snapshot;
+      // A summarized or same-copy-site field can alias a later write. Other
+      // source fields remain stable while the recursive result is built.
+      if(summarized||stored->first==slot)snapshot.emplace(copy(stored->second));
+      const auto &child=snapshot?*snapshot:stored->second;
       if(!step(nested.size())||!e.message.empty())return {};
       auto copied=valueCopy(child,state,origin+"/"+id,summarized,nested);if(!e.message.empty())return {};
-      const auto slot=target+"/field/"+id;
       if(summarized&&state.heap.count(slot))merge(state.heap.at(slot),copied);else state.heap.insert_or_assign(slot,std::move(copied));
       if(!e.message.empty())return {};
     }
@@ -108,8 +120,24 @@ bool ActualCheck::schedule(const std::string &id){
   queuedContexts.insert(id);pendingContexts.push_back(id);return true;
 }
 bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed){
-  const auto &fn=*context.function;ActualState entry;
-  entry.heap=copyHeap(context.entry);
+  const auto &fn=*context.function;
+  if(!step(2*fn.blocks.size()))return false;
+  std::vector<size_t> incoming(fn.blocks.size());std::vector<bool> single(fn.blocks.size());
+  for(const auto &block:fn.blocks){const auto &successors=block.operations.back().successors;
+    if(!step(successors.size()+1))return false;for(auto to:successors)++incoming[to];
+  }
+  std::vector<uint16_t> once;
+  if(!incoming[0]){if(!step(2))return false;single[0]=true;once.push_back(0);}
+  for(size_t index=0;index<once.size();++index){const auto &successors=fn.blocks[once[index]].operations.back().successors;
+    if(!step(successors.size()+1))return false;for(auto to:successors)if(incoming[to]==1){
+      if(!step(2))return false;single[to]=true;once.push_back(to);
+    }
+  }
+  // A single-execution predecessor delivers all callee completions before
+  // returning. Its unique static successor edge can never arrive again in
+  // this execute's queue. Keep join snapshots for every other block.
+  ActualState entry;
+  if(!context.root)entry.heap=copyHeap(context.entry);
   entry.regions=regionCopy(*this,context.entryRegions);
   if(context.root){
     entry.heap.clear();context.arguments.clear();
@@ -126,21 +154,20 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   if(borrowTrace&&!borrowTrace->begin(context,entry))return false;
   std::map<uint16_t,ActualState> states;states.emplace(0,std::move(entry));std::vector<uint16_t> queue{0};std::set<uint16_t> queued{0};
   const Operation *observed=nullptr;size_t observedBlock=0;
-  const auto edge=[&](uint16_t to,const ActualState &state,const std::vector<ActualValue> &args){
+  const auto edge=[&](uint16_t to,ActualState next,const std::vector<ActualValue> &args){
     if(!step(args.size()+1)||!need(to<fn.blocks.size()&&args.size()==fn.blocks[to].parameters.size(),"actual edge arity differs"))return false;
     if(borrowTrace&&(!observed||!borrowTrace->edge(context,*observed,observedBlock,to)))return false;
-    auto next=copyState(state);for(size_t i=0;i<args.size();++i)next.values.insert_or_assign(fn.blocks[to].parameters[i],copy(args[i]));
+    for(size_t i=0;i<args.size();++i)next.values.insert_or_assign(fn.blocks[to].parameters[i],copy(args[i]));
     if(!regionEdge(*this,context,uint16_t(observedBlock),to,next))return false;
     auto old=states.find(to);bool update=false;
-    if(old==states.end()){states.emplace(to,std::move(next));update=true;}else update=join(old->second,next);
+    if(old==states.end()){states.emplace(to,std::move(next));update=true;}else update=join(old->second,std::move(next));
     if(update&&queued.insert(to).second)queue.push_back(to);return e.message.empty();
   };
   for(size_t index=0;index<queue.size();++index){
-    if(!step())return false;const auto block=queue[index];queued.erase(block);auto state=copyState(states.at(block));
-    if(conditional)for(auto reg:fn.blocks[block].parameters)merge(registerCapacity[fn.id+"/"+std::to_string(reg)],state.values[reg]);
+    if(!step())return false;const auto block=queue[index];queued.erase(block);auto state=single[block]?std::move(states.at(block)):copyState(states.at(block));
+    if(conditional)for(auto reg:fn.blocks[block].parameters)if(!recordCapacity(registerCapacity[fn.id+"/"+std::to_string(reg)],state.values[reg]))return false;
     for(const auto &op:fn.blocks[block].operations){
       observed=&op;observedBlock=block;
-      if(borrowTrace&&!borrowTrace->before(context,op,block,state))return false;
       bool continues=true;if(!instruction(context,op,block,state,conditional,changed,edge,continues))return false;
       if(borrowTrace&&!borrowTrace->after(context,op,block,state,continues))return false;
       if(!continues)break;
@@ -198,8 +225,8 @@ bool ActualCheck::solve(bool conditional){
     }
   }
   if(conditional){
-    for(const auto &[id,c]:contexts)merge(resultCapacity[c.function->id],c.returned);
-    for(const auto *seeds:{&fieldSeeds,&globalSeeds,&elementSeeds})for(const auto &[id,v]:*seeds)merge(storageCapacity[id],v);
+    for(const auto &[id,c]:contexts)if(!recordCapacity(resultCapacity[c.function->id],c.returned))return false;
+    for(const auto *seeds:{&fieldSeeds,&globalSeeds,&elementSeeds})for(const auto &[id,v]:*seeds)if(!recordCapacity(storageCapacity[id],v))return false;
   }weakChanged=false;seedChanged=false;return e.message.empty();
 }
 } // namespace tsfg::commonProgram

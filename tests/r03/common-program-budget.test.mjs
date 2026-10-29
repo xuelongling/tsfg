@@ -3,13 +3,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {commonAbstract} from '../../compiler/common-program-abstract.mjs';
 import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
 import {selectCommonCarriers} from '../../compiler/common-program-carriers.mjs';
 import {printCommonFunction} from '../../compiler/common-program-print.mjs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
-import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
+import {buildCommonProgramHir,projectCommonProgram} from '../../compiler/common-program-hir.mjs';
+import {commonProgramPlan} from '../../compiler/common-program-plan.mjs';
+import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
 import {createCommonProgramPublication,commonProgramPublicationScope} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {coreExchangeFormat} from '../../compiler/core-ssa-emitter.mjs';
@@ -93,4 +96,28 @@ test('cached escaped text still checks remaining bytes and terminal state',()=>{
   const writer=commonTextBudget(commonMeter(1000),12),q=writer.quote('😀\r\0');assert.equal(writer.quote('😀\r\0'),q);writer.append(q);
   assert.throws(()=>writer.quote('😀\r\0'),limit);assert.throws(()=>writer.finish(),limit);
   const done=commonTextBudget(commonMeter(1000));done.append(done.quote('x'));assert.equal(done.finish(),'"x"');assert.throws(()=>done.quote('x'),limit);
+});
+test('writer work accepts its exact boundary and never publishes a partial result',()=>{
+  // quote input+lookup 2, escaped output 3, line part 1, final chunks 2.
+  const exact=commonTextBudget(commonMeter(8));exact.line(exact.quote('x'));assert.equal(exact.finish(),'"x"\n');
+  const short=commonTextBudget(commonMeter(7));short.line(short.quote('x'));let output=null;
+  assert.throws(()=>{output=short.finish();},limit);assert.equal(output,null);assert.throws(()=>short.finish(),limit);
+});
+test('one module writer exhausts cumulatively across complete function boundaries',()=>{
+  const hir=projectCommonProgram(readCommonProgramFacts(readFileSync(new URL('./testdata/common-value-capture/local-const.json',import.meta.url)))),publication=createCommonProgramPublication(hir),
+    physical=commonProgramPhysical(hir,new Map(publication.contracts.map(c=>[c.functionId,c]))),writer=commonTextBudget(commonMeter(6000));let completed=0,output=null;
+  assert.throws(()=>{for(const plan of physical.plans){printCommonFunction(plan,physical.model,physical.carriers,writer);completed++;}output=writer.finish();},limit);
+  assert.ok(completed>0&&completed<physical.plans.length);assert.equal(output,null);assert.throws(()=>writer.finish(),limit);
+});
+test('physical work remains independently bounded when a writer has unused capacity',()=>{
+  const hir=projectCommonProgram(readCommonProgramFacts(readFileSync(new URL('./testdata/common-value-capture/local-const.json',import.meta.url)))),publication=createCommonProgramPublication(hir),
+    physical=commonProgramPlan(hir,new Map(publication.contracts.map(c=>[c.functionId,c]))),writer=commonTextBudget(commonMeter(8));
+  physical.model.spend=commonMeter(1);assert.throws(()=>analyzeCommonGraphs(physical,new Map(publication.contracts.map(c=>[c.functionId,c]))),limit);
+  writer.line(writer.quote('x'));assert.equal(writer.finish(),'"x"\n');assert.throws(()=>physical.model.spend(2),limit);
+});
+test('current official value functions retain the original aggregate byte cap',()=>{
+  const hir=projectCommonProgram(readCommonProgramFacts(readFileSync(new URL('./testdata/common-value-capture/local-const.json',import.meta.url)))),physical=commonProgramPhysical(hir),
+    writer=commonTextBudget(commonMeter(1000000),64);let output=null;
+  assert.throws(()=>{printCommonFunction(physical.plans[0],physical.model,physical.carriers,writer);output=writer.finish();},limit);
+  assert.equal(output,null);assert.throws(()=>writer.finish(),limit);
 });
