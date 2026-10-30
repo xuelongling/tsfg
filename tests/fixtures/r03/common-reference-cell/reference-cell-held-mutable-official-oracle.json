@@ -1,0 +1,331 @@
+{
+  "SourceSHA": "8e73710c102f5affd2c0de52ba163bc1cc1597fce376008d8238e71913020c01",
+  "OwnerID": "sha256:d28ad45be50a3e45e4332c43841f7a127d9258a3fc18fb551996c670c60c416a",
+  "ReaderID": "sha256:d641fb3518f610a52896bf5af02259086400c695b72b9eb7cf69cd7eb9acafe8",
+  "HeldForm": "original-a-alias",
+  "Diagnostics": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "Functions": {
+    "apply": {
+      "ID": "sha256:aff8540efd54862ced4b7c815e1c7995591524b008bca00cbdd763b186981e9f",
+      "DeclarationRange": {
+        "start": 527,
+        "end": 593
+      },
+      "NameRange": {
+        "start": 536,
+        "end": 541
+      }
+    },
+    "arrayOrdinary": {
+      "ID": "sha256:85e0654d2d930bf1d3caeee2c934af22db5d8ab269ddac91ee3c1ac8a57411f6",
+      "DeclarationRange": {
+        "start": 1124,
+        "end": 1254
+      },
+      "NameRange": {
+        "start": 1140,
+        "end": 1153
+      }
+    },
+    "captureSpanOrdinary": {
+      "ID": "sha256:5a84feedff5e9f3108704adc4731e1675c344558a5d4f5e78a263a3ae4851834",
+      "DeclarationRange": {
+        "start": 1863,
+        "end": 1988
+      },
+      "NameRange": {
+        "start": 1879,
+        "end": 1898
+      }
+    },
+    "closureEntry": {
+      "ID": "sha256:79828810e5198dc4e2c9326e7cea4b8778103f29209c57d70512c252dd83b4bf",
+      "DeclarationRange": {
+        "start": 730,
+        "end": 959
+      },
+      "NameRange": {
+        "start": 746,
+        "end": 758
+      }
+    },
+    "factory": {
+      "ID": "sha256:2857c00fa73cca1c65b53ce2992243fd3e09ff26da53a63d85a5d44a61c04838",
+      "DeclarationRange": {
+        "start": 594,
+        "end": 729
+      },
+      "NameRange": {
+        "start": 603,
+        "end": 610
+      }
+    },
+    "factory.bump": {
+      "ID": "sha256:cc9bf11b73422ab6ee6a7e59ae2c5423221941ab0fea8d2f92d2426deaa8d8e2",
+      "DeclarationRange": {
+        "start": 664,
+        "end": 712
+      },
+      "NameRange": {
+        "start": 673,
+        "end": 677
+      }
+    },
+    "leafLeft": {
+      "ID": "sha256:2cbeb62ea0b15d786874d232ebb68180517fd22ddedd0c892950a86f9b5397b2",
+      "DeclarationRange": {
+        "start": 206,
+        "end": 274
+      },
+      "NameRange": {
+        "start": 215,
+        "end": 223
+      }
+    },
+    "leafRight": {
+      "ID": "sha256:a23c64676c63a5ee7b3a68c7e216c8ec9fc08160a01063626283b9e09e60046a",
+      "DeclarationRange": {
+        "start": 275,
+        "end": 346
+      },
+      "NameRange": {
+        "start": 284,
+        "end": 293
+      }
+    },
+    "left": {
+      "ID": "sha256:f15ff16cab504b1d2e5ea55c15cb819237d8c06078793f3a15221c6a41c72410",
+      "DeclarationRange": {
+        "start": 347,
+        "end": 434
+      },
+      "NameRange": {
+        "start": 363,
+        "end": 367
+      }
+    },
+    "loopRead": {
+      "ID": "sha256:10960a9115f00b977a3a1bb5189ce40e917eb959b22791b533d9c7e06bb3becd",
+      "DeclarationRange": {
+        "start": 1990,
+        "end": 2202
+      },
+      "NameRange": {
+        "start": 2006,
+        "end": 2014
+      }
+    },
+    "makeOwnedReader": {
+      "ID": "sha256:d28ad45be50a3e45e4332c43841f7a127d9258a3fc18fb551996c670c60c416a",
+      "DeclarationRange": {
+        "start": 1378,
+        "end": 1613
+      },
+      "NameRange": {
+        "start": 1387,
+        "end": 1402
+      }
+    },
+    "makeOwnedReader.readOwned": {
+      "ID": "sha256:d641fb3518f610a52896bf5af02259086400c695b72b9eb7cf69cd7eb9acafe8",
+      "DeclarationRange": {
+        "start": 1523,
+        "end": 1591
+      },
+      "NameRange": {
+        "start": 1532,
+        "end": 1541
+      }
+    },
+    "makeReaderBox": {
+      "ID": "sha256:17d52bdf9f71e293254a92c7a9e9746660181eaaee5726c2262b5b4314ad182a",
+      "DeclarationRange": {
+        "start": 1614,
+        "end": 1862
+      },
+      "NameRange": {
+        "start": 1623,
+        "end": 1636
+      }
+    },
+    "ordinary": {
+      "ID": "sha256:b53049797df06831b33a89d8b1064b8c55219f3770543901948bce850d90a915",
+      "DeclarationRange": {
+        "start": 960,
+        "end": 1123
+      },
+      "NameRange": {
+        "start": 976,
+        "end": 984
+      }
+    },
+    "right": {
+      "ID": "sha256:7fb20270a53eb339a65f8342ebd09a6221226aa3fd51108eae7963d17a009fcb",
+      "DeclarationRange": {
+        "start": 435,
+        "end": 526
+      },
+      "NameRange": {
+        "start": 451,
+        "end": 456
+      }
+    },
+    "valueOrdinary": {
+      "ID": "sha256:ce254a4d6069b39ae1a9622d69eaa34a4fc7427aa3fc9c6c0b8fdd46bb17bd9a",
+      "DeclarationRange": {
+        "start": 1255,
+        "end": 1315
+      },
+      "NameRange": {
+        "start": 1271,
+        "end": 1284
+      }
+    }
+  },
+  "Bindings": {
+    "a": {
+      "ID": "sha256:94cd87e91ccb40d40e40ac05660437ccabbb52a2cfe434180eabf6fbf9c02e3d",
+      "Name": "a",
+      "Kind": "array",
+      "OfficialType": "number[]",
+      "DeclarationRange": {
+        "start": 1433,
+        "end": 1450
+      },
+      "NameRange": {
+        "start": 1433,
+        "end": 1434
+      },
+      "Writable": true
+    },
+    "held": {
+      "ID": "sha256:9d2acd092dcc4d3c6b96e89160f7426f4c3d6b5665e2b330e7ae143c1408ad5a",
+      "Name": "held",
+      "Kind": "array",
+      "OfficialType": "number[]",
+      "DeclarationRange": {
+        "start": 1458,
+        "end": 1473
+      },
+      "NameRange": {
+        "start": 1458,
+        "end": 1462
+      },
+      "Writable": true
+    },
+    "r": {
+      "ID": "sha256:3d96e5131d13335f3b34ed7a35425a4b6690955ca01e39df55e8353baa1f0f6d",
+      "Name": "r",
+      "Kind": "readSpan",
+      "OfficialType": "ReadSpan\u003cnumber\u003e",
+      "DeclarationRange": {
+        "start": 1483,
+        "end": 1519
+      },
+      "NameRange": {
+        "start": 1483,
+        "end": 1484
+      },
+      "Writable": false
+    },
+    "seed": {
+      "ID": "sha256:e91dd1e450f50563a4a8c5f70287f02bd4c8d7634d7610c66d9c22c56924aa2b",
+      "Name": "seed",
+      "Kind": "scalar",
+      "OfficialType": "number",
+      "DeclarationRange": {
+        "start": 1403,
+        "end": 1412
+      },
+      "NameRange": {
+        "start": 1403,
+        "end": 1407
+      },
+      "Writable": true
+    }
+  },
+  "Captures": [
+    {
+      "binding": "sha256:94cd87e91ccb40d40e40ac05660437ccabbb52a2cfe434180eabf6fbf9c02e3d",
+      "read": false,
+      "write": true,
+      "occurrences": [
+        {
+          "range": {
+            "start": 1551,
+            "end": 1552
+          },
+          "read": false,
+          "write": true
+        }
+      ]
+    },
+    {
+      "binding": "sha256:e91dd1e450f50563a4a8c5f70287f02bd4c8d7634d7610c66d9c22c56924aa2b",
+      "read": true,
+      "write": false,
+      "occurrences": [
+        {
+          "range": {
+            "start": 1556,
+            "end": 1560
+          },
+          "read": true,
+          "write": false
+        }
+      ]
+    },
+    {
+      "binding": "sha256:3d96e5131d13335f3b34ed7a35425a4b6690955ca01e39df55e8353baa1f0f6d",
+      "read": true,
+      "write": false,
+      "occurrences": [
+        {
+          "range": {
+            "start": 1574,
+            "end": 1575
+          },
+          "read": true,
+          "write": false
+        }
+      ]
+    },
+    {
+      "binding": "sha256:9d2acd092dcc4d3c6b96e89160f7426f4c3d6b5665e2b330e7ae143c1408ad5a",
+      "read": true,
+      "write": false,
+      "occurrences": [
+        {
+          "range": {
+            "start": 1581,
+            "end": 1585
+          },
+          "read": true,
+          "write": false
+        }
+      ]
+    }
+  ],
+  "OwnerScope": {
+    "start": 1425,
+    "end": 1613
+  },
+  "ReaderScope": {
+    "start": 1549,
+    "end": 1591
+  },
+  "WriteRange": {
+    "start": 1551,
+    "end": 1565
+  },
+  "ReturnRange": {
+    "start": 1567,
+    "end": 1589
+  },
+  "StructuralRange": null
+}
