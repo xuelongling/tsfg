@@ -25,6 +25,7 @@ pub const ConstructionRef = enum(u32) { _ };
 pub const CompatibilityRef = enum(u32) { _ };
 pub const DispatchRef = enum(u32) { _ };
 pub const StorageRef = enum(u32) { _ };
+pub const ResourceRef = enum(u32) { _ };
 
 pub const Anchor = struct { start: u32, end: u32 };
 pub const Origin = struct { source: SourceRef, start: u32, end: u32 };

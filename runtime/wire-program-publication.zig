@@ -114,7 +114,7 @@ pub const CommonAuthority = struct {
 pub const LegacyAuthority = struct {
     exports: []const struct { function: t.FunctionRef, name: []const u8 },
     entries: []const struct { function: t.FunctionRef, parameter: u16, origin: t.Origin, view: t.TypeRef, roots: []const struct { source: t.TypeRef, target: t.TypeRef } },
-    resources: []const struct { id: []const u8, semantic_type: t.TypeRef, owners: []const t.DomainRef, elements: []const t.TypeRef, aliases: []const t.DomainRef },
+    resources: []const struct { id: []const u8, semantic_type: t.TypeRef, owners: []const t.ResourceRef, elements: []const t.TypeRef, aliases: []const t.ResourceRef },
     published: []const struct { id: t.Hash, function: t.FunctionRef, abi: t.AbiRef, source_signature: t.Hash, closure_identity: t.Hash, parameter_bounds: []const t.DomainRef, result_bound: ?t.DomainRef },
     // Required JSON null becomes a concrete unit value after boundary admission.
     // It cannot carry a Common record, and is never an omitted optional field.
