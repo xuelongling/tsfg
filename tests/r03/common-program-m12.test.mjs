@@ -10,8 +10,9 @@ import {createCommonProgramPublication} from '../../compiler/common-program-anal
 import {canonical,sha256,i32TypeId} from '../../compiler/identity.mjs';
 import {commonEntryReferences} from '../../compiler/common-program-entry.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
+import {commonEffects} from '../../compiler/common-program-effects.mjs';
 const bytes=await fs.readFile(new URL('./common-program-m12-witness-forward.json',import.meta.url));
-assert.equal(sha256(bytes),'sha256:d1d7849aa254d478a0b820e12780d91ead62cf79a3dc07d2d368e9f7955a2d27');
+assert.equal(sha256(bytes),'sha256:afd0be537e1412223cd9954f9144358001d80e4e8f5bd3af9b1c3cbfaba94b48');
 const facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
 const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built));const hir=built.hir;
 const fn=name=>hir.functions.find(f=>f.name===name),type=name=>hir.types.find(t=>t.name===name);
@@ -74,6 +75,18 @@ test('implicit derived construction preserves base default, explicit seed call a
   const own=instructions.findIndex(op=>op.name==='tsfg_program.field_store'&&op.properties.field===extra.id);
   assert.ok(initial>=0&&initial<invoke&&invoke<own);
   assert.ok(rootsFor('derivedEntry').every(c=>c.normal));
+  const baseFunctionId='sha256:58f368f17b096694a38ccb815a498185ad881414f2baa8ab94ab097d47b12cc8';
+  assert.equal(ctor.id,baseFunctionId,'original Base constructor semantic identity');
+  const original=fn('derivedEntry').body[0].initializer;assert.deepEqual(original.range,{start:1029,end:1046});
+  const argument=original.arguments[0],loads=instructions.filter(op=>op.name==='tsfg_program.load'
+    &&op.properties.binding===argument.binding&&op.range.start===argument.range.start&&op.range.end===argument.range.end);
+  assert.equal(loads.length,1,'original seed argument is evaluated exactly once');
+  assert.equal(instructions[invoke].operands.length,2);
+  const copied=instructions.find(op=>op.result===instructions[invoke].operands[1]);
+  assert.equal(copied.name,'tsfg_program.value_copy');assert.deepEqual(copied.operands,[loads[0].result]);
+  const effects=commonEffects(hir,commonMeter(),p),calls=effects.derive(plan.owner,effects.derived()).calls;
+  assert.deepEqual(calls,[{functionId:plan.owner.id,target:baseFunctionId,range:{start:1029,end:1046},kind:'new',sourcePath:'/src/main.ts'}],
+    'implicit-derived fixed effects retain the actual explicit Base invocation');
 });
 test('common entry authority rejects private targets, wrong binding, omitted empty row and duplicate order',()=>{
   const mutations=[p=>{parameterRow(p,'compatibilityEntry').functionId=p.functions.find(f=>f.name==='convert').id;},

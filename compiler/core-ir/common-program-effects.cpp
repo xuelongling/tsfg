@@ -105,13 +105,32 @@ struct Derive {
       const auto tid=kind=="new"?type:string(field(v,"callee"));if(!ok(types.count(tid),"construction type missing"))return result;
       const auto &t=*types.at(tid);if(string(field(t,"kind"))=="reference"){out.allocation=true;out.managedReference=true;facet("allocation",&v);facet("managedReference",&v);}
       result.owners.insert("local:"+string(v.getAsObject()->get("allocationSite")?field(v,"allocationSite"):field(v,"construction")));
-      for(const auto &f:items(field(t,"fields")))if(f.getAsObject()->get("initializer")){
-        const auto previousSource=operationSource;if(diagnostics)operationSource=string(field(field(t,"origin"),"sourcePath"));
-        visit(field(f,"initializer"));operationSource=previousSource;
-      }
-      const auto fid=string(field(field(t,"construction"),"functionId"));if(!fid.empty()){
-        args.insert(args.begin(),ownerCopy(result.owners));if(auto *u=consume(fid,args,v))result.throwing|=u->mayThrow;
-      }
+      if(!step(args.size()+1))return result;args.insert(args.begin(),ownerCopy(result.owners));
+      const auto initialize=[&](const Json &current){
+        std::map<std::string,const Json *> fields;
+        for(const auto &f:items(field(current,"fields"))){if(!step())return false;fields.emplace(string(field(f,"id")),&f);}
+        for(const auto &id:items(field(field(current,"construction"),"initializationFields"))){
+          if(!step())return false;const auto &f=*fields.at(string(id));
+          if(f.getAsObject()->get("initializer")){
+            const auto previousSource=operationSource;operationSource=string(field(field(f,"origin"),"source"));
+            visit(field(f,"initializer"));operationSource=previousSource;if(!e.message.empty())return false;
+          }
+        }return true;
+      };
+      // Explicit derived bodies own super; implicit hops forward these saved
+      // arguments and initialize their own fields only after successful base.
+      const auto construct=[&](auto &&self,const Json &current)->void{
+        if(!step())return;const auto fid=string(field(field(current,"construction"),"functionId")),base=string(field(current,"base"));
+        if(!fid.empty()){
+          if(base.empty()&&!initialize(current))return;
+          if(auto *u=consume(fid,args,v))result.throwing|=u->mayThrow;
+        }else{
+          if(!base.empty())self(self,*types.at(base));
+          if(e.message.empty())initialize(current);
+        }
+      };
+      construct(construct,t);
+      if(e.message.empty()&&kind=="superConstruct")initialize(*types.at(string(field(fn,"ownerType"))));
     }else if(kind=="indirectCall"){
       // Resolve the saved callee before its arguments. Permission comes from
       // the independently rebuilt complete fixed code-target upper, not SSA
@@ -130,7 +149,7 @@ struct Derive {
       for(const auto &arg:items(field(v,"arguments")))visit(arg);if(!ok(p.hosts.count(string(field(v,"callee")))&&!p.hostContractHash.empty(),"verified Host context missing"))return result;
       for(const auto &resource:p.hostResources){if(!step())return result;out.hostReads.insert(resource);out.hostWrites.insert(resource);
         for(auto access:{"read","write"})witness(Object{{"kind","host-resource"},{"resource",resource},{"access",access}},&v);}
-      const auto &range=field(v,"range");p.hostOrigins.try_emplace(string(field(fn,"id")),HostOrigin{string(field(fn,"sourcePath")),{uint32_t(field(range,"start").getAsInteger().value()),uint32_t(field(range,"end").getAsInteger().value())}});
+      const auto &range=field(v,"range");p.hostOrigins.try_emplace(string(field(fn,"id")),HostOrigin{operationSource,{uint32_t(field(range,"start").getAsInteger().value()),uint32_t(field(range,"end").getAsInteger().value())}});
     }else if(kind=="call"){
       std::vector<Origins> args;if(v.getAsObject()->get("receiver"))args.push_back(visit(field(v,"receiver")));
       for(const auto &a:items(field(v,"arguments")))args.push_back(visit(a));const auto fid=string(field(v,"callee"));
@@ -190,7 +209,7 @@ struct Derive {
     return completions;
   }
   bool run(){
-    if(diagnostics)operationSource=string(field(fn,"sourcePath"));
+    operationSource=string(field(fn,"sourcePath"));
     if(!step(items(field(p.hir,"types")).size()+items(field(p.hir,"functions")).size()))return false;
     for(const auto &t:items(field(p.hir,"types")))types.emplace(string(field(t,"id")),&t);
     for(const auto &f:items(field(p.hir,"functions")))functions.emplace(string(field(f,"id")),&f);

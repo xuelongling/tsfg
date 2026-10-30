@@ -78,8 +78,21 @@ export function commonEffects(hir,spend,physical=null) {
         const arguments_=value.arguments.map(visit),type=types.get(value.kind==='new'?value.type:value.callee);check(type,'type');
         if(type.kind==='reference'){facet('allocation','operation',value.kind,value.range);facet('managedReference','operation',value.kind,value.range);}
         owner=new Set(['local:'+(value.allocationSite??value.construction)]);
-        for(const field of type.fields??[])if(field.initializer){const previous=operationSource;operationSource=type.origin.sourcePath;visit(field.initializer);operationSource=previous;}
-        if(type.construction.functionId){const called=consume(type.construction.functionId,[owner,...arguments_],value);throwing ||= called.facets.mayThrow;}
+        spend(arguments_.length+1);const supplied=[owner,...arguments_];
+        const initialize=current=>{
+          spend(current.fields?.length??0);const fields=new Map((current.fields??[]).map(field=>[field.id,field]));
+          for(const id of current.construction.initializationFields){spend();const field=fields.get(id);
+            if(field.initializer){const previous=operationSource;operationSource=field.origin.source;visit(field.initializer);operationSource=previous;}}
+        };
+        // Mirror the actual construct chain: an explicit derived body owns its
+        // super call; an implicit hop forwards the already-evaluated arguments.
+        const construct=current=>{
+          spend();if(current.construction.functionId){
+            if(!current.base)initialize(current);
+            const called=consume(current.construction.functionId,supplied,value);throwing ||= called.facets.mayThrow;
+          }else{if(current.base)construct(types.get(current.base));initialize(current);}
+        };
+        construct(type);if(value.kind==='superConstruct')initialize(types.get(fn.ownerType));
       }else if(value.kind==='indirectCall'){
         visit(value.expression);const arguments_=value.arguments.map(visit),targets=callables.site(fn.id,value.range);
         if(targets.top||!targets.functions.length){facet('unknownHost','operation',value.kind,value.range);throwing=true;}
@@ -88,7 +101,7 @@ export function commonEffects(hir,spend,physical=null) {
       }else if(value.kind==='hostCall'){
         value.arguments.forEach(visit);check(hosts.has(value.callee)&&hir.hostContext,'host-context');
         for(const resource of hostResources){spend();hostRead.add(resource);hostWrite.add(resource);for(const access of ['read','write'])witness({kind:'host-resource',resource,access},'operation',value.kind,value.range);}
-        hostCalls.push({functionId:fn.id,hostId:value.callee,sourcePath:fn.sourcePath,range:value.range});
+        hostCalls.push({functionId:fn.id,hostId:value.callee,sourcePath:operationSource,range:value.range});
       }else if(value.kind==='call') {
         const arguments_=[...(value.receiver?[visit(value.receiver)]:[]),...value.arguments.map(visit)];
         if(value.callee==='intrinsic:readSpan')owner=arguments_[0];
