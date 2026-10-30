@@ -14,6 +14,8 @@ import {emitSystemQueryCore} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
+import {isCommonProgramContext} from './common-program-hir.mjs';
+import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
 import {verifyCoreIrInputs} from "../eng/core-ir-inputs.mjs";
@@ -152,11 +154,12 @@ async function compileSnapshot(snapshot, options) {
   return produceBytecode(highLevel.hir, options);
 }
 
-async function produceBytecode(hir, options, lower = value => lowerFormalHir(value, options.factsContext)) {
+async function produceBytecode(hir, options, lower = value => lowerFormalHir(value, options.factsContext, options.callPublicationContext)) {
   try {
     const core = await verifiedConsumer(options.core, "core");
-    const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lower(hir)).toString("utf8");
-    const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
+    const lowered = lower(hir), prefix = isCommonProgramContext(options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate' ? ['--common-program'] : [];
+    const canonicalCore = consume(core, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered).toString("utf8");
+    const bytecode = consume(core, [...prefix, "--emit-bytecode"], canonicalCore);
     verifyProducedPacket(bytecode);
     return { status: "ok", hir, core: canonicalCore, bytecode };
   } catch (error) {
@@ -165,7 +168,7 @@ async function produceBytecode(hir, options, lower = value => lowerFormalHir(val
 }
 
 /** Compile a complete persisted owned HIR through the same formal producer.
- * The String facts context is verified by lowering; this does not admit Source.
+ * Facts and fixed publication context are verified by lowering; Source admission is independent.
  */
 export async function compileOwnedHir(hir, options) {
   return produceBytecode(hir, options);

@@ -284,6 +284,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
  * explicit candidate route; String HIR is revalidated and compiled directly.
  * @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerFormalHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if(isCommonProgramContext(factsContext)||familyOf(hir)==='tsfg.program-hir-candidate')return lowerHir(hir,factsContext,callPublicationContext);
   if(hir?.format?.family==='tsfg.closure-hir-candidate')return emitFormalClosureCore(hir);
   if(hir?.format?.family==='tsfg.exception-hir-candidate')return emitFormalExceptionCore(hir);
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
