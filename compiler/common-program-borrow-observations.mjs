@@ -3,36 +3,44 @@
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonBorrowEvents} from './common-program-borrow-events.mjs';
-// Code permission and current graph holding are separate. Scalar and immutable
-// String writes cannot replace an Array/Span owning child edge. String itself
-// remains a managed GC root in carrier selection.
+// Code permission and current graph holding are separate. Scalar/String writes
+// are nonowning. Canonical Array<scalar> Cell writes need independent immutable
+// holding; neither their old payload nor Span.owner contributes that proof.
 export function commonClosureHolding({model,objects,records,closedTarget}){
   const {spend,types}=model,parents=new Map(),bounds=new Map();let slots=null;
-  function childlessWrite(id,key){
+  function captureWrite(id,key){
     if(slots===null){slots=new Map();for(const layout of model.environments.values()){
       spend(layout.slots.length+1);for(const slot of layout.slots)slots.set(slot.key,slots.has(slot.key)?null:{layout:layout.id,slot});}}
-    spend();const row=slots.get(key);if(!row||row.slot.writable!==true||!['scalar','string'].includes(types.get(row.slot.type)?.kind))return false;
+    spend();const row=slots.get(key);if(!row||row.slot.writable!==true)return null;
+    const type=types.get(row.slot.type),kind=type?.kind;
+    if(!['scalar','string'].includes(kind)&&!(kind==='array'&&types.get(type.elementType)?.kind==='scalar'))return null;
     if(!parents.has(id)){
       const fn=model.functions.get(id),reachable=new Set();let layout=fn?.activationEnvironment??fn?.lexicalEnvironment,valid=true;
       while(layout){spend();if(reachable.has(layout)||!model.environments.has(layout)){valid=false;break;}
         reachable.add(layout);layout=model.environments.get(layout).parent;}
       parents.set(id,valid?reachable:null);
     }
-    return parents.get(id)?.has(row.layout)??false;
+    return parents.get(id)?.has(row.layout)?kind:null;
   }
   function staticBound(id){
-    spend();const upper=records?.get(id)?.upper;
-    if(!upper||upper.facets.unknownHost!==false||upper.facets.escape!==false||upper.facets.await!==false||upper.facets.lock!==false)return false;
-    if(upper.globals.reads.length||upper.globals.writes.length||upper.hostResources.reads.length||upper.hostResources.writes.length)return false;
-    for(const row of upper.parameters){spend();if(row.write!==false||row.structural!==false)return false;}
-    for(const row of upper.captures){spend();if(row.structural!==false||row.write!==false&&!childlessWrite(id,row.slot))return false;}
-    return true;
+    spend();const upper=records?.get(id)?.upper;let referenceWrites=false;
+    if(!upper||upper.facets.unknownHost!==false||upper.facets.escape!==false||upper.facets.await!==false||upper.facets.lock!==false)return null;
+    if(upper.globals.reads.length||upper.globals.writes.length||upper.hostResources.reads.length||upper.hostResources.writes.length)return null;
+    for(const row of upper.parameters){spend();if(row.write!==false||row.structural!==false)return null;}
+    for(const row of upper.captures){spend();if(row.structural!==false)return null;
+      if(row.write!==false){const kind=captureWrite(id,row.slot);if(!kind)return null;referenceWrites ||= kind==='array';}}
+    return {referenceWrites};
   }
   function permitsCode(id){
     // Fixed Published permissions and layouts cannot change during this solve.
     // Current target closure remains a separate gate on every lookup.
     spend();if(!closedTarget?.(id))return false;
-    if(!bounds.has(id))bounds.set(id,staticBound(id));return bounds.get(id);
+    if(!bounds.has(id))bounds.set(id,staticBound(id));return bounds.get(id)!==null;
+  }
+  function hasReferenceWrites(value){
+    spend(value.pairs.size);for(const pair of value.pairs.values())
+      if(permitsCode(pair.functionId)&&bounds.get(pair.functionId).referenceWrites)return true;
+    return false;
   }
   function wholeValue(value,allowed=null){
     spend();if(value.unknown||value.cells.size||!value.pairs.size||allowed&&(allowed.top||!allowed.functions.length))return false;
@@ -48,7 +56,7 @@ export function commonClosureHolding({model,objects,records,closedTarget}){
     for(const ref of value.refs){spend();if(!environments.has(ref))return false;}
     return environments.size===value.refs.size;
   }
-  return {permitsCode,wholeValue};
+  return {permitsCode,wholeValue,hasReferenceWrites};
 }
 export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,holdingPolicy=null,borrowProof=false,cyclicFunctions=new Set()}) {
   const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
@@ -115,6 +123,15 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     // Keep compact selected storage edges, not a return-point heap. Allocation
     // uniqueness is checked after every actual context has supplied its origin.
     spend(value.refs.size);const pending=[...value.refs],nodes=new Map(),cached=new Map();
+    let referenceWrites=false;const values=[value],seen=new Set();
+    // Domain discovery walks current GC reachability, including weak/wildcard
+    // storage. It grants no ownership; the separate compact proof keeps its cuts.
+    for(let i=0;i<values.length&&!referenceWrites;i++){
+      spend();const current=values[i];referenceWrites=Boolean(holdingPolicy?.hasReferenceWrites(current));
+      for(const ref of current.refs){spend();if(seen.has(ref))continue;seen.add(ref);
+        for(const [slot,stored]of heap){spend();if(slot.startsWith(ref+'/field/')||slot.startsWith(ref+'/element/')||environmentSlot(ref,slot)||slot===ref+'/owner'){
+          check(values.length<65536,'limit');values.push(stored);}}}
+    }
     function group(stored){
       spend();if(!stored||stored.unknown)return null;
       for(const tag of stored.tags){spend();if(!['reference','value','array','readSpan','function'].includes(types.get(tag)?.kind)
@@ -128,29 +145,37 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     }
     for(let i=0;i<pending.length;i++){
       spend();const ref=pending[i];if(nodes.has(ref))continue;
-      const type=kind(ref),layout=environment(ref),weak=objects.get(ref)?.weak,node={type,layout:layout?.id,weak,groups:[]};nodes.set(ref,node);
+      const type=kind(ref),layout=environment(ref),weak=objects.get(ref)?.weak,node={type,layout:layout?.id,weak,groups:[],nonOwning:new Set(),complete:true};nodes.set(ref,node);
       if(weak)continue;
       if(layout){
-        for(const slot of layout.slots){spend();node.groups.push(group(heap.get(ref+'/slot/'+slot.key)));}
-        if(layout.parent){spend();node.groups.push(group(heap.get(ref+'/parent')));}
+        for(const slot of layout.slots){spend();const stored=heap.get(ref+'/slot/'+slot.key),refs=group(stored),type=types.get(slot.type),
+            mutableArray=slot.writable===true&&type?.kind==='array'&&types.get(type.elementType)?.kind==='scalar';
+          node.complete &&= Boolean(stored&&!stored.unknown&&(stored.tags.size||stored.refs.size||stored.pairs.size));
+          if(mutableArray){node.nonOwning.add(node.groups.length);node.complete &&= Boolean(refs?.length&&!stored.cells.size&&!stored.pairs.size);}
+          node.groups.push(refs);}
+        if(layout.parent){spend();const refs=group(heap.get(ref+'/parent'));node.complete &&= Boolean(refs?.length);node.groups.push(refs);}
       }else if(['reference','value','array'].includes(type)){
         const length=heap.get(ref+'/length')?.number,elements=Number.isSafeInteger(length)&&length>=0&&!heap.has(ref+'/element/*');
         for(const [slot,stored]of heap){spend();let selected=slot.startsWith(ref+'/field/');
           if(type==='array'){const index=slot.startsWith(ref+'/element/')?slot.slice((ref+'/element/').length):'';
             selected=elements&&/^(0|[1-9]\d*)$/.test(index)&&Number(index)<length;}
-          if(selected)node.groups.push(group(stored));}
+          if(selected){const refs=group(stored);
+            // Mutable managed fields and Array elements can be replaced
+            // after return. Keep their GC/descriptor edges, not lasting ownership.
+            if(referenceWrites&&(type==='array'||['reference','value'].includes(type)&&model.fields.get(slot.slice((ref+'/field/').length))?.readonly!==true))node.nonOwning.add(node.groups.length);
+            node.groups.push(refs);}}
       }
       // ReadSpan.owner is deliberately absent from this owning graph.
     }
-    return (storage,context)=>{
+    return {referenceWrites,owners:(storage,context)=>{
       if(!cached.has(context)){
         const owned=new Map(),permitted=new Set();for(const [ref,node]of nodes){spend();owned.set(ref,new Set());
-          if(!node.weak&&(!node.layout||unique(allocations,ref,context)?.kind==='environment'))permitted.add(ref);}
+          if(!node.weak&&(!referenceWrites||node.complete)&&(!node.layout||unique(allocations,ref,context)?.kind==='environment'))permitted.add(ref);}
         let changed;do{changed=false;for(const [ref,node]of nodes){
-          spend();const next=new Set(),allowed=!node.layout||unique(allocations,ref,context)?.kind==='environment';
+          spend();const next=new Set(),allowed=(!referenceWrites||node.complete)&&(!node.layout||unique(allocations,ref,context)?.kind==='environment');
           if(node.type==='array'){spend();next.add(ref);}
-          if(allowed)for(const refs of node.groups){
-            spend();if(!refs?.length)continue;let common=null;
+          if(allowed)for(const [index,refs]of node.groups.entries()){
+            spend();if(referenceWrites&&node.nonOwning.has(index)||!refs?.length)continue;let common=null;
             for(const child of refs){spend();const childOwned=owned.get(child)??new Set();
               if(common===null){spend(childOwned.size);common=new Set(childOwned);}
               else for(const id of common){spend();if(!childOwned.has(id))common.delete(id);}}
@@ -166,7 +191,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
       for(const ref of storage){spend();if(!permitted.has(ref))break;
         const held=owned.get(ref);spend(held.size);for(const id of held)result.add(id);}
       return result;
-    };
+    }};
   }
   // Capture only paths from this returned value to its selected Span slots.
   // Each alternative keeps its own owning arrays; another return alternative
@@ -177,7 +202,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
       work.push({ref:root,storage:[],active:new Set(),known:!value.unknown,owningKnown:!value.unknown});}
     for(let i=0;i<work.length;i++){
       spend();const item=work[i],ref=item.ref;if(item.active.has(ref))continue;
-      if(kind(ref)==='readSpan'){check(paths.length<4096,'limit');paths.push({...item,span:ref,owning:context=>ownership(item.storage,context)});continue;}
+      if(kind(ref)==='readSpan'){check(paths.length<4096,'limit');paths.push({...item,span:ref,referenceWrites:ownership.referenceWrites,owning:context=>ownership.owners(item.storage,context)});continue;}
       check(item.storage.length<128,'limit');spend(item.active.size+item.storage.length+1);
       const active=new Set(item.active),storage=[...item.storage,ref];active.add(ref);
       const known=item.known&&['reference','value','array'].includes(kind(ref));
@@ -298,8 +323,8 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
           const allowed=()=>{
             let valid=true;for(const path of paths){spend();const owner=held.get(path.span),owning=path.owningKnown?path.owning(c.id):new Set();valid &&= !owner.pending&&owner.ids.size>0;
               for(const id of owner.ids){spend();valid &&= surviving.has(id)||owning.has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id)||
-                Boolean(regions?.holds(regionValue,regionHeap,path.span,id,c.regionScope,types))||
-                closedReader&&Boolean(regions?.ownedReturnHolds(regionValue,regionHeap,path.span,id,c.regionScope,types,model.environments));}}
+                Boolean(regions?.holds(regionValue,regionHeap,path.span,id,c.regionScope,types,false,path.referenceWrites?model.environments:null))||
+                closedReader&&Boolean(regions?.ownedReturnHolds(regionValue,regionHeap,path.span,id,c.regionScope,types,model.environments,path.referenceWrites));}}
             return valid&&paths.length>0;
           };
           graph.escape(at,ids,allowed,where);

@@ -359,10 +359,11 @@ struct BorrowTrace::Impl {
     // Incoming owner authority establishes lifetime, not structural stability.
     for(const auto &[span,owner]:captured){if(!step())return;uses[at].insert(span);}
     if(normal&&context.function->role=="construction-body")return;
+    const bool referenceWrites=holdingReferenceWrites(c,value,heap);if(!c.e.message.empty())return;
     const auto captureReturns=[&](const ActualValue &selected){
       const auto containedSpans=contained(selected,heap,true,Scan::Closure);
       if(containedSpans.empty()||!step())return;
-      auto ownership=std::make_shared<ReturnOwnership>(c,selected,heap);
+      auto ownership=std::make_shared<ReturnOwnership>(c,selected,heap,referenceWrites);
       for(const auto &[span,owner]:containedSpans){
         if(!step(owner.alternatives.size()+1))return;
         returns.push_back({at,context.id,span,owner,false,ownership,{}});
@@ -382,7 +383,7 @@ struct BorrowTrace::Impl {
     // alternative cannot establish the lifetime of a direct Span in another.
     for(const auto &root:value.objects){
       if(!step())return;ActualValue selected;selected.unknown=value.unknown;selected.objects.insert(root);
-      captureReturns(selected);auto ownership=std::make_shared<ReturnOwnership>(c,selected,heap);
+      captureReturns(selected);auto ownership=std::make_shared<ReturnOwnership>(c,selected,heap,referenceWrites);
       std::vector<std::pair<std::string,uint8_t>> pending{{root,value.unknown?2:0}};std::set<std::pair<std::string,uint8_t>> seen;
       std::map<std::string,std::set<std::string>> parents;const auto first=returns.size();
       while(!pending.empty()){
@@ -410,7 +411,7 @@ struct BorrowTrace::Impl {
       }
     }
     if(!context.region.empty()){
-      auto holding=std::make_shared<RegionHolding>(c,context.region,regionValue(c,value),state.regions);
+      auto holding=std::make_shared<RegionHolding>(c,context.region,regionValue(c,value),state.regions,referenceWrites);
       const bool closed=normal&&!context.root&&holdingReturnTargets(c,context,value);
       for(size_t i=firstReturn;i<returns.size();++i){if(!step())return;returns[i].region=holding;returns[i].closed=closed;}
     }

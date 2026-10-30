@@ -127,19 +127,35 @@ export function commonRegions(spend){
       if(!found)result.opaque=true;
     }return result;
   }
-  function holds(value,heap,span,owner,selected,types,coveredTransport=false){
+  function holds(value,heap,span,owner,selected,types,coveredTransport=false,environments=null){
     const scope=scopes.get(selected),allowed=scope&&(scope.blocked===false||coveredTransport&&scope.hardBlocked===false&&scope.transportBlocked===true);
     if(!selected||!allowed||value.opaque)return false;
-    const graph=reachable([value],heap),owned=new Map(),groups=new Map();
+    const graph=reachable([value],heap),owned=new Map(),groups=new Map(),paths=environments?new Map():groups;
     for(const [id,slots]of graph){
-      spend();const node=nodes.get(id),kind=types.get(node?.type)?.kind,isEnv=node?.type.startsWith('env:'),fields=[];
-      owned.set(id,new Set());groups.set(id,fields);if(node?.scope!==selected)continue;
+      spend();const node=nodes.get(id),kind=types.get(node?.type)?.kind,isEnv=node?.type.startsWith('env:'),fields=[],descriptors=environments?[]:fields,nonOwning=new Set();
+      if(environments){
+        if(node?.scope!==selected)return false;
+        if(isEnv){const layout=environments.get(node.type.slice(4));if(!layout)return false;
+          for(const slot of layout.slots){spend();const current=slots.get('slot/'+slot.key),type=types.get(slot.type);
+            if(!current||current.opaque||!current.empty&&!current.roots.size)return false;
+            if(slot.writable===true&&type?.kind==='array'&&types.get(type.elementType)?.kind==='scalar'){
+              if(current.empty||!current.roots.size)return false;nonOwning.add('slot/'+slot.key);}}
+          if(layout.parent&&!slots.has('parent'))return false;
+        }
+        if(['reference','value'].includes(kind)){let record=types.get(node.type);while(record){spend();
+          for(const field of record.fields){spend();if(field.readonly!==true)nonOwning.add('field/'+field.id);}
+          record=record.base?types.get(record.base):null;}}
+        for(const current of slots.values()){spend();if(current.opaque)return false;}
+      }
+      owned.set(id,new Set());groups.set(id,fields);paths.set(id,descriptors);if(node?.scope!==selected)continue;
       if(kind==='array')owned.get(id).add(id);
       if(kind==='readSpan')continue;
       if(!isEnv&&!['array','reference','value'].includes(kind))continue;
       const length=slots.get('length')?.number,indexed=!slots.get('length')?.opaque&&Number.isSafeInteger(length)&&length>=0&&!slots.has('element/*');
       for(const [slot,stored]of slots){spend();const index=slot.startsWith('element/')?slot.slice(8):'';
-        if(slot.startsWith('slot/')||slot==='parent'||slot.startsWith('field/')||kind==='array'&&indexed&&/^(0|[1-9]\d*)$/.test(index)&&Number(index)<length)fields.push(stored);
+        const storage=slot.startsWith('slot/')||slot==='parent'||slot.startsWith('field/');
+        if(environments&&(storage||kind==='array'&&slot.startsWith('element/')))descriptors.push(stored);
+        if(!nonOwning.has(slot)&&(storage||kind==='array'&&!environments&&indexed&&/^(0|[1-9]\d*)$/.test(index)&&Number(index)<length))fields.push(stored);
       }
     }
     let changed;do{changed=false;for(const [id,fields]of groups){
@@ -163,12 +179,12 @@ export function commonRegions(spend){
         continue;
       }
       spend(path.active.size+path.storage.length+1);const active=new Set(path.active);active.add(path.id);const storage=[...path.storage,path.id];
-      for(const field of groups.get(path.id)??[]){spend(weight(field));if(field.opaque)return false;
+      for(const field of paths.get(path.id)??[]){spend(weight(field));if(field.opaque)return false;
         for(const child of field.roots){spend(active.size+storage.length+1);check(pending.length<65536&&storage.length<128,'limit');pending.push({id:child,storage,active});}}
     }
     return found;
   }
-  function ownedReturnHolds(value,heap,span,owner,selected,types,environments){
+  function ownedReturnHolds(value,heap,span,owner,selected,types,environments,referenceWrites=false){
     // This is a return-point owning fact, not an older payload heap. It cannot
     // repair any opaque/missing field or identify two instances of a family.
     if(value.opaque||value.empty||!value.roots.size)return false;
@@ -178,8 +194,10 @@ export function commonRegions(spend){
       if(node.type.startsWith('env:')){
         const layout=environments.get(node.type.slice(4));if(!layout)return false;
         for(const slot of layout.slots){spend();const current=slots.get('slot/'+slot.key);if(!current)return false;
-          const value=types.get(slot.type)?.kind==='value'&&!current.opaque&&!current.empty&&current.roots.size>0;
-          if(slot.writable!==false&&!value&&(slot.writable!==true||!['scalar','string'].includes(types.get(slot.type)?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
+          const type=types.get(slot.type),value=type?.kind==='value'&&!current.opaque&&!current.empty&&current.roots.size>0,
+            mutableArray=referenceWrites&&slot.writable===true&&type?.kind==='array'&&types.get(type.elementType)?.kind==='scalar';
+          if(mutableArray){if(current.opaque||current.empty||!current.roots.size)return false;}
+          else if(slot.writable!==false&&!value&&(slot.writable!==true||!['scalar','string'].includes(type?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
         if(layout.parent&&!slots.has('parent'))return false;
       }else if(types.get(node.type)?.kind==='array'){
         if(types.get(types.get(node.type).elementType)?.kind!=='scalar')return false;
@@ -197,7 +215,7 @@ export function commonRegions(spend){
       }else if(types.get(node.type)?.kind!=='readSpan')return false;
       for(const stored of slots.values()){spend();if(stored.opaque)return false;}
     }
-    return holds(value,heap,span,owner,selected,types,true);
+    return holds(value,heap,span,owner,selected,types,true,referenceWrites?environments:null);
   }
   function prepare(plans){
     for(const plan of plans){
