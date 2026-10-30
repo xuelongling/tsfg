@@ -6,12 +6,13 @@ import {commonTypeSyntax,commonCallableNameRange} from './common-program-source.
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 export function commonCaptureType(id,types,spend) {
   spend();const type=types.get(id);
-  if(type?.kind!=='union')return ['scalar','string','readSpan','array','function','reference','value'].includes(type?.kind);
+  if(type?.kind!=='union')return {supported:['scalar','string','readSpan','array','function','reference','value'].includes(type?.kind),pureScalar:type?.kind==='scalar'};
   spend(type.members.length);let scalars=true;const payload=type.members.filter(id=>{
     const kind=types.get(id)?.kind;if(kind==='null'||kind==='undefined')return false;scalars&&=kind==='scalar';return true;
   });
-  return type.members.length>=2&&((payload.length>0&&scalars)||(type.members.length<=3&&payload.length===1
-    &&['scalar','string','array','function','reference','value'].includes(types.get(payload[0])?.kind)));
+  const pureScalar=type.members.length>=2&&payload.length>0&&scalars;
+  return {supported:pureScalar||type.members.length>=2&&type.members.length<=3&&payload.length===1
+    &&['scalar','string','array','function','reference','value'].includes(types.get(payload[0])?.kind),pureScalar};
 }
 // Private structural paths distinguish scopes without hashing source offsets.
 // Each entry retains its original declaration and the visible ancestor layers.
