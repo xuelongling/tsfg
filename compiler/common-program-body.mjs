@@ -106,10 +106,10 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         const entry=inventory.get(value.binding)??globals.get(value.binding)?.binding??bindings.get(value.binding)?.row;
         const spelling=staticBindingName(text(value.range));check(entry&&local.get(spelling)===value.binding&&entry.declaredType===value.type,'binding');
         if(!globals.has(value.binding)&&!inventory.has(value.binding)){
-          const owner=functions.get(entry.lexicalOwner),{supported,pureScalar}=commonCaptureType(entry.declaredType,types,spend);
+          const owner=functions.get(entry.lexicalOwner),supported=commonCaptureType(entry.declaredType,types,spend);
           check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');
           const declaration=scopes.get(owner.id).get(entry.id),initialized=entry.kind==='local'&&supported&&declaration?.row.initializer
-            &&(!declaration.scope.path.length||declaration.scope.eligible&&!declaration.scope.repeated&&pureScalar);
+            &&(!declaration.scope.path.length||declaration.scope.eligible&&!declaration.scope.repeated&&types.get(entry.declaredType).kind!=='readSpan');
           const parameter=entry.kind==='parameter'&&supported&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
           check(initialized||parameter,'capture');
           if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});

@@ -88,7 +88,7 @@ bool SourceBodies::lexicalScope(const Json &fn){
     const auto role=string(field(b,"kind"));
     if(!model.need(ancestor&&model.types.count(type),"captured binding owner or type is absent"))return false;
     const auto kind=string(field(*model.types.at(type),"kind"));
-    bool pureScalar=kind=="scalar",supported=pureScalar||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value";
+    bool supported=kind=="scalar"||kind=="string"||kind=="readSpan"||kind=="array"||kind=="function"||kind=="reference"||kind=="value";
     if(kind=="union"){
       const auto &members=items(field(*model.types.at(type),"members"));size_t payloads=0;bool payload=false,scalars=true;
       for(const auto &member:members){
@@ -97,8 +97,7 @@ bool SourceBodies::lexicalScope(const Json &fn){
         scalars&=memberKind=="scalar";
         payload=memberKind=="scalar"||memberKind=="string"||memberKind=="array"||memberKind=="function"||memberKind=="reference"||memberKind=="value";
       }
-      pureScalar=members.size()>=2&&payloads>0&&scalars;
-      supported=pureScalar||(members.size()>=2&&members.size()<=3&&payloads==1&&payload);
+      supported=members.size()>=2&&((payloads>0&&scalars)||(members.size()<=3&&payloads==1&&payload));
     }
     if(!model.need((role=="local"||role=="parameter")&&supported,
       "unsupported capture outside initialized body local or original parameter with an admitted payload/nullable type"))return false;
@@ -108,9 +107,9 @@ bool SourceBodies::lexicalScope(const Json &fn){
     }else{
       const auto &declarations=model.scopeDeclarations.at(owner);const auto found=declarations.find(id);
       if(found!=declarations.end()){const auto &original=found->second;
-        declaration=original.row->getAsObject()->get("initializer")&&(original.path.empty()||(original.eligible&&!original.repeated&&pureScalar));}
+        declaration=original.row->getAsObject()->get("initializer")&&(original.path.empty()||(original.eligible&&!original.repeated&&kind!="readSpan"));}
     }
-    if(!model.need(declaration,"capture lacks an original initialized body declaration or parameter"))return false;
+    if(!model.need(declaration,"capture lacks an initialized single-entry declaration or original parameter; block ReadSpan requires lifetime qualification"))return false;
     // This is a lexical incoming precondition, not an initialization proof.
     // The independent normalized environment CFG must establish it at use.
     initialized.insert(id);

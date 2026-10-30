@@ -10,6 +10,7 @@ import {emitCommonProgramCore} from '../../compiler/common-program-core.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {commonBorrowGraph} from '../../compiler/common-program-borrows.mjs';
 import {commonBorrowObservations} from '../../compiler/common-program-borrow-observations.mjs';
+import {commonCoreSchema} from '../../compiler/common-program-plan.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {readspanClosureModel,readspanClosureMayEnvironmentModel,readspanClosureParentModel,readspanCrossCallModel,readspanRecursiveCallModel,readspanReturnedCaptureModel,readspanConstructionThrowModel,readspanIncomingEnvironmentReturnModel} from './common-program-readspan-closure-models.mjs';
 import {commonBorrowConstructorModel} from './common-program-borrow-models.mjs';
@@ -21,11 +22,21 @@ const originalCoreDigests=new Map([
   ['never-called','sha256:6c8c2229806e37abe8054e276cfbb65f2278968d82ae06a6a15d56cc1dcccf84'],
   ['mutable-safe','sha256:18005eda2c9ca9b715683dfe46d36de632dcaffab61a3fc8b88ff15bcd69f633'],
   ['parameter-safe','sha256:de7a7a53b2fb0e0678b5ee43ba324c9c56ea8fa697e1b267e054c5307f321d7c']]);
+// Independently retained old Core bodies differ only in the descriptor-owned
+// payload schema atom. Whole hashes above remain historical input identities.
+const originalFunctionDigests=new Map([
+  ['safe-lastuse','sha256:1efd93893ce26d9b0b3ec782075d6b92e7602a9a9a8a9dc6fa485f68353dc7e0'],
+  ['never-called','sha256:36182197ec26fc1e88f5ca6ea194ff6dfd9a0db836d68e617be463d35694dfaa'],
+  ['mutable-safe','sha256:ef3079d15f9522fca97b1b3bec015300d7cab343f36fb2c0730bf335c6229979'],
+  ['parameter-safe','sha256:ccdc8d3c9c760079f8e6d1ecc1448bd75e4997c55d599043d8ea4b7c9dfb91fe']]);
 for(const [name,conflict]of cases)test('official whole Program ReadSpan capture '+name,()=>{
   const hir=projectCommonProgram(readCommonProgramFacts(readFileSync(new URL('./testdata/common-readspan-closures/'+name+'.json',import.meta.url)))),
     publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
   if(conflict===null){const core=emitCommonProgramCore(hir,publication,request);assert.match(core,/tsfg_program.env_load/);
-    if(originalCoreDigests.has(name))assert.equal(sha256(core),originalCoreDigests.get(name));}
+    if(originalCoreDigests.has(name)){
+      assert.notEqual(sha256(core),originalCoreDigests.get(name));
+      const functions=core.slice(core.indexOf('\n')+1).replaceAll('!tsfg_program.carrier<"payload:'+commonCoreSchema+'">','!tsfg_program.carrier<"payload:<core-schema>">');
+      assert.equal(sha256(functions),originalFunctionDigests.get(name));}}
   else assert.throws(()=>emitCommonProgramCore(hir,publication,request),/** @param {any} e */e=>(e.code==='r03-common-program-borrow-conflict'||String(name).startsWith('parameter-')&&e.code==='r03-common-program-borrow-pending')&&e.primary.sourceId===hir.rootFile&&e.primary.start===conflict);
 });
 test('normalized captured ReadSpan last use permits a later resize',()=>{

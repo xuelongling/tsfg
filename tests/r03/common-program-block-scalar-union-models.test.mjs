@@ -31,7 +31,8 @@ test('scalar union block keeps const ownership',()=>{
   const value=blockModel(['null','undefined'],{writable:false}),layout=commonEnvironments(value.functions,value.types,commonMeter());
   assert.equal(layout.slots.get('cell').writable,false);assert.equal(layout.slots.size,1);
 });
-for(const other of ['mixed','string','array','function','reference','value','readSpan'])test('single block still rejects '+other+' payload',()=>{
+// Five existing payload classes now have complete official block package positives.
+for(const other of ['mixed','readSpan'])test('single block still rejects '+other+' payload',()=>{
   const value=blockModel(['null'],{other});
   assert.throws(()=>commonEnvironments(value.functions,value.types,commonMeter()),error=>error instanceof Error&&'code'in error&&error.code==='r03-common-program-capability');
 });
