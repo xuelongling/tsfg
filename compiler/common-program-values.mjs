@@ -45,7 +45,7 @@ export function commonProgramValues(model,graph,state,invoke,indirect) {
     else op('array_resize',[target.receiver,selected],null,{},range);
     return value;
   }
-  const store=(target,value,range,initialize=false,shouldCopy=true)=>write(location(target),value,range,initialize,shouldCopy);
+  const store=(target,value,range,initialize=false,shouldCopy=true)=>write(location({...target,range}),value,range,initialize,shouldCopy);
   function shortCircuit(left,operator,right,type,range) {
     const rhs=graph.newBlock(),short=graph.newBlock(),joined=graph.newBlock([type]),saved=collections.map(state.cells);
     if(operator==='??') {
