@@ -16,6 +16,7 @@ struct BorrowTrace::Impl {
   struct Boundary {Evidence owner;std::set<std::string> targets,existing,arguments,regions;bool conservative=false,escaping=false,unconfined=false,hard=false;};
   struct Barrier {Id point;Evidence owner;std::set<std::string> eligible;};
   struct Return {Id point;std::string context,span;Evidence owner;bool managed;std::shared_ptr<ReturnOwnership> ownership;std::set<std::string> storage;std::shared_ptr<RegionHolding> region;bool closed=false;};
+  struct StableStore {Id point;std::string context;std::map<std::string,Evidence> spans;std::set<std::string> components,targets,localOwners;std::shared_ptr<RegionHolding> region;};
   using Origin=std::pair<std::string,std::string>;
   std::map<std::tuple<std::string,size_t,size_t>,Id> points;
   std::map<std::string,Id> entries;
@@ -29,6 +30,9 @@ struct BorrowTrace::Impl {
   std::set<std::string> fresh,external;
   std::map<std::string,std::set<Origin>> arrayOrigins,spanOrigins,objectOrigins,environmentOrigins;
   std::vector<Return> returns;
+  std::vector<StableStore> stableStores;
+  std::map<Id,std::set<std::string>> futureStores;
+  std::map<std::pair<std::string,std::string>,Evidence> createdOwners;
   std::vector<Call> calls;
   std::map<Id,Boundary> boundaries;std::map<Id,std::set<std::string>> connectedTargets;
   std::map<std::string,std::string> captureLayouts;
@@ -343,6 +347,40 @@ struct BorrowTrace::Impl {
     for(const auto &ref:value.objects)if(!step()||!context.arguments[0].objects.count(ref))return false;
     return !value.objects.empty();
   }
+  bool coveredArrayStore(const ActualContext &context,Id at,const ActualValue &destination,const ActualValue &value,const ActualState &state){
+    const auto spans=contained(value,state.heap,true,Scan::Escape);
+    if(spans.empty()||!c.arrayReceiver(destination))return false;
+    StableStore stored;stored.point=at;stored.context=context.id;stored.spans=spans;
+    std::set<std::string> entryArrays;
+    for(const auto &input:context.arguments){
+      if(!step())return false;if(!c.arrayReceiver(input))continue;
+      if(!step(input.objects.size()))return false;entryArrays.insert(input.objects.begin(),input.objects.end());
+    }
+    for(const auto &ref:destination.objects){
+      if(!step()||!entryArrays.count(ref)||fresh.count(ref))return false;stored.targets.insert(ref);
+    }
+    if(!holdingStoredAggregate(c,value,state.heap,stored.components))return false;
+    // Stable projection is explicit here: an ordinary H has no function pair
+    // and does not acquire this policy through the closure-write detector.
+    ReturnOwnership owning(c,value,state.heap,true);
+    const auto region=regionValue(c,value);
+    if(!context.region.empty()||!region.roots.empty()||region.opaque){
+      stored.region=std::make_shared<RegionHolding>(c,context.region,region,state.regions,true);
+      if(!stored.region->stableReturn())return false;
+    }
+    for(const auto &[span,owner]:spans){
+      if(!step()||owner.pending||owner.alternatives.size()!=1)return false;
+      const auto held=owning.solve([](const std::string &){return false;},span);
+      const auto &array=*owner.alternatives.begin();auto allocation=arrayOrigins.find(array);
+      if(!held.count(array)||allocation==arrayOrigins.end()||!c.objects.count(array)||
+          !allocation->second.count({context.id,c.objects.at(array).type}))return false;
+      stored.localOwners.insert(array);
+    }
+    if(!step())return false;
+    stableStores.push_back(std::move(stored));
+    for(const auto &[span,owner]:spans){if(!step())return false;uses[at].insert(span);futureStores[at].insert(span);}
+    return c.e.message.empty();
+  }
   void store(const ActualContext &context,Id at,const ActualValue &destination,const ActualValue &value,const ActualHeap &heap,bool global=false){
     if(value.objects.empty()&&value.cells.empty()&&value.callables.empty())return;
     bool external=global||destination.unknown;
@@ -434,6 +472,23 @@ struct BorrowTrace::Impl {
     auto found=origins.find(ref);if(found==origins.end())return nullptr;const Origin *selected=nullptr;
     for(const auto &candidate:found->second){if(!step())return nullptr;if(!connected(candidate.first,context))continue;if(selected)return nullptr;selected=&candidate;}
     return selected;
+  }
+  bool validStore(const StableStore &stored){
+    for(const auto &ref:stored.components){
+      if(!step()||!c.objects.count(ref)||c.objects.at(ref).weak)return false;
+      const auto k=kind(ref);const auto &origins=k=="readSpan"?spanOrigins:k=="array"?arrayOrigins:objectOrigins;
+      if(!uniqueOrigin(ref,stored.context,origins))return false;
+    }
+    for(const auto &[span,owner]:stored.spans){
+      if(!step()||owner.pending||owner.alternatives.size()!=1)return false;
+      const auto *created=uniqueOrigin(span,stored.context,spanOrigins);if(!created)return false;
+      auto original=createdOwners.find({span,created->first});
+      if(original==createdOwners.end()||original->second.pending||original->second.alternatives!=owner.alternatives)return false;
+      const auto &array=*owner.alternatives.begin();const auto *allocation=uniqueOrigin(array,stored.context,arrayOrigins);
+      if(!allocation||allocation->first!=stored.context||!c.types.count(created->second)||!c.types.count(allocation->second)||
+          !same(field(*c.types.at(created->second),"elementType"),field(*c.types.at(allocation->second),"elementType")))return false;
+    }
+    return (!stored.region||stored.region->stableReturn())&&c.e.message.empty();
   }
   bool retained(const Return &result,const std::string &owner){
     if(!result.managed)return false;const auto *span=uniqueOrigin(result.span,result.context,spanOrigins),*array=uniqueOrigin(owner,result.context,arrayOrigins);
@@ -539,8 +594,8 @@ bool BorrowTrace::begin(const ActualContext &context,const ActualState &state){
   }
   return b.addEdge(at,b.point(context,0,0))&&b.c.e.message.empty();
 }
-bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t block,const ActualState &state,ActualOperands args){
-  auto &b=*impl;const auto at=b.point(context,op,block);if(at==Flow::none||!b.step(args.size()))return false;
+bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t block,const ActualState &state,ActualOperands args,bool &storeCovered){
+  storeCovered=false;auto &b=*impl;const auto at=b.point(context,op,block);if(at==Flow::none||!b.step(args.size()))return false;
   if(op.name=="array_read"||op.name=="array_length"||op.name=="readspan_length"){if(!args.empty())b.observe(at,args[0],state.heap,false);}
   if(!args.empty()&&(op.name=="readspan_length"||op.name=="array_read")){
     const auto view=b.c.views.find(context.function->id+"/"+std::to_string(op.operands[0]));
@@ -556,11 +611,14 @@ bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t
   if(op.name=="global_store"&&!args.empty())b.store(context,at,{},args[0],state.heap,true);
   if(op.name=="global_store"&&!args.empty())regionHardEscape(b.c,args[0],state.heap);
   if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init")&&args.size()>1)b.store(context,at,args[0],args[1],state.heap);
-  if(op.name=="array_store"&&args.size()>2)b.store(context,at,args[0],args[2],state.heap);
+  if(op.name=="array_store"&&args.size()>2){
+    storeCovered=b.coveredArrayStore(context,at,args[0],args[2],state);
+    if(!storeCovered)b.store(context,at,args[0],args[2],state.heap);
+  }
   if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init"||op.name=="array_store")&&args.size()>1){
     const auto receiver=regionValue(b.c,args[0]),value=regionValue(b.c,args.back());
     const bool transport=(op.name=="field_store"&&holdingFieldTransport(b.c,args[0],args.back()))||
-      (op.name=="array_store"&&holdingArrayTransport(b.c,args[0],args.back()));
+      (op.name=="array_store"&&(storeCovered||holdingArrayTransport(b.c,args[0],args.back())));
     if(!transport&&(receiver.opaque||receiver.empty||receiver.roots.empty()||value.opaque))regionHardEscape(b.c,args.back(),state.heap);
   }
   if((op.name=="array_resize"||op.name=="array_store")&&args.size()>1){
@@ -599,7 +657,7 @@ bool BorrowTrace::after(const ActualContext &context,const Operation &op,size_t 
   if(op.name=="env_alloc"&&op.result!=noRegister){auto value=state.values.find(op.result);if(value!=state.values.end())for(const auto &ref:value->second.objects){if(!b.step())return false;b.origin(context,ref,b.environmentOrigins);}}
   if(op.name=="array_create"&&op.result!=noRegister){auto value=state.values.find(op.result);if(value!=state.values.end())for(const auto &ref:value->second.objects){if(!b.step())return false;b.fresh.insert(ref);b.origin(context,ref,b.arrayOrigins);}}
   if(op.name=="readspan"&&op.result!=noRegister){auto value=state.values.find(op.result);if(value!=state.values.end())for(const auto &[span,owner]:b.contained(value->second,state.heap,false)){
-    b.origin(context,span,b.spanOrigins);const auto object=b.c.objects.find(span);b.define(object!=b.c.objects.end()&&object->second.weak?b.entry(context):at,span,owner);
+    b.origin(context,span,b.spanOrigins);b.merge(b.createdOwners[{span,context.id}],owner);const auto object=b.c.objects.find(span);b.define(object!=b.c.objects.end()&&object->second.weak?b.entry(context):at,span,owner);
   }}
   if(op.name=="func.return")b.normal[context.id].insert(at);else if(op.name=="return_throw")b.language[context.id].insert(at);
   if(continues&&index+1<context.function->blocks[block].operations.size()&&!b.addEdge(at,b.point(context,block,index+1)))return false;
@@ -620,6 +678,9 @@ bool BorrowTrace::solve(Json *events){
   auto &b=*impl;if(!b.c.e.message.empty())return false;
   if(!b.orderCalls())return false;
   if(b.lifetime)return b.fail("ReadSpan owner or escaping storage lifetime is unproved",*b.lifetime);
+  for(const auto &stored:b.stableStores){
+    if(!b.step()||!b.validStore(stored))return b.c.e.message.empty()?b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(stored.point)):false;
+  }
   for(const auto &result:b.returns){
     if(!b.step())return false;const auto &incoming=b.incomingOwners.at(result.context);
     if(result.owner.pending)return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
@@ -645,16 +706,57 @@ bool BorrowTrace::solve(Json *events){
         if(!b.addEdge(exit,barrier)||!b.addEdge(barrier,b.point(context,target,0)))return false;
       }
   }
-  std::map<std::string,std::vector<Id>> spans;std::set<std::string> viewOwners,effectOwners;
+  // Keep future liveness separate from real Source uses in the proof projection.
+  std::map<Id,std::set<std::string>> retained;
+  if(!b.futureStores.empty()){
+    std::map<Id,std::vector<Id>> successors;
+    for(const auto &[from,to]:b.edges){if(!b.step())return false;successors[from].push_back(to);}
+    for(const auto &[at,ids]:b.futureStores){
+      std::vector<Id> pending{at};std::set<Id> seen{at};
+      for(size_t i=0;i<pending.size();++i){
+        if(!b.step(ids.size()+1))return false;const auto current=pending[i];retained[current].insert(ids.begin(),ids.end());
+        auto next=successors.find(current);if(next==successors.end())continue;
+        for(auto target:next->second){
+          if(!b.step())return false;if(!seen.insert(target).second)continue;
+          if(!b.c.need(seen.size()<=65536,"future external store traversal exceeds bound"))return false;pending.push_back(target);
+        }
+      }
+    }
+  }
+  std::map<std::string,std::vector<Id>> spans;std::map<Id,Evidence> viewEvidence;std::set<std::string> viewOwners,effectOwners;
   for(const auto &[key,definition]:b.definitions){
     if(!b.step())return false;const auto value=b.flow.value(definition.owner);if(value==Flow::none||!b.outcome(b.flow.define(definition.point,value)))return false;
-    spans[definition.span].push_back(value);if(!b.step(definition.owner.alternatives.size()))return false;viewOwners.insert(definition.owner.alternatives.begin(),definition.owner.alternatives.end());
+    spans[definition.span].push_back(value);viewEvidence.emplace(value,definition.owner);if(!b.step(definition.owner.alternatives.size()))return false;viewOwners.insert(definition.owner.alternatives.begin(),definition.owner.alternatives.end());
   }
   for(const auto &[at,used]:b.uses)for(const auto &span:used){
     if(!b.step())return false;auto found=spans.find(span);if(found==spans.end())return b.fail("ReadSpan use has no independently observed entry or allocation definition",b.locations.at(at));
     for(auto value:found->second)if(!b.step()||!b.outcome(b.flow.use(at,value)))return false;
   }
-  for(const auto &[at,effect]:b.effects){if(!b.outcome(b.flow.effect(at,effect))||!b.step(effect.alternatives.size()))return false;effectOwners.insert(effect.alternatives.begin(),effect.alternatives.end());}
+  for(const auto &[at,used]:retained)for(const auto &span:used){
+    if(!b.step())return false;auto found=spans.find(span);
+    if(found==spans.end())return b.fail("ReadSpan use has no independently observed entry or allocation definition",b.locations.at(at));
+    for(auto value:found->second)if(!b.step()||!b.outcome(b.flow.use(at,value)))return false;
+  }
+  for(const auto &[at,effect]:b.effects){
+    std::vector<const Impl::StableStore *> stores;
+    for(const auto &stored:b.stableStores){if(!b.step())return false;if(stored.point==at)stores.push_back(&stored);}
+    bool ok;
+    if(stores.empty())ok=b.flow.effect(at,effect);
+    else{
+      std::set<Id> eligible;
+      for(const auto &[value,owner]:viewEvidence){
+        if(!b.step())return false;bool separate=!effect.pending&&!owner.pending&&!owner.alternatives.empty();
+        for(const auto &array:owner.alternatives)for(const auto &modified:effect.alternatives)for(const auto *stored:stores){
+          if(!b.step())return false;const auto *allocation=b.uniqueOrigin(array,stored->context,b.arrayOrigins);
+          separate&=array!=modified&&stored->targets.count(modified)&&stored->localOwners.count(array)&&allocation&&allocation->first==stored->context;
+        }
+        // This exception belongs only to this exact receiver effect. Other
+        // active descriptors keep the original alias and structural obligations.
+        if(!separate)eligible.insert(value);
+      }ok=b.flow.effect(at,effect,eligible);
+    }
+    if(!b.outcome(ok)||!b.step(effect.alternatives.size()))return false;effectOwners.insert(effect.alternatives.begin(),effect.alternatives.end());
+  }
   for(const auto &barrier:b.barriers){
     std::set<Id> eligible;for(const auto &span:barrier.eligible){
       if(!b.step())return false;auto found=spans.find(span);if(found==spans.end())continue;

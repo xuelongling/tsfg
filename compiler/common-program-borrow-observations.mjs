@@ -3,6 +3,7 @@
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonBorrowEvents} from './common-program-borrow-events.mjs';
+import {commonActualArrayReceiver} from './common-program-abstract.mjs';
 // Code permission and current graph holding are separate. Scalar/String writes
 // are nonowning. Canonical Array<scalar> Cell writes need independent immutable
 // holding; neither their old payload nor Span.owner contributes that proof.
@@ -60,6 +61,7 @@ export function commonClosureHolding({model,objects,records,closedTarget}){
 }
 export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,holdingPolicy=null,borrowProof=false,cyclicFunctions=new Set()}) {
   const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
+  const futureStores=new Map();
   const proof=borrowProof?commonBorrowEvents({model,objects,cyclicFunctions}):null;
   if(proof)for(const key of ['define','use','effect','edge']){const verify=graph[key];graph[key]=(...args)=>{verify(...args);proof[key](...args);};}
   const slotLayouts=new Map();spend(model.environments?.size??0);
@@ -119,11 +121,11 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     for(const [id,row]of map.get(ref)??[]){spend();if(components.get(id)!==components.get(context))continue;if(selected||row.weak)return null;selected=row;}
     return selected;
   }
-  function owningStorage(value,heap){
+  function owningStorage(value,heap,stable=false){
     // Keep compact selected storage edges, not a return-point heap. Allocation
     // uniqueness is checked after every actual context has supplied its origin.
     spend(value.refs.size);const pending=[...value.refs],nodes=new Map(),cached=new Map();
-    let referenceWrites=false;const values=[value],seen=new Set();
+    let referenceWrites=stable;const values=[value],seen=new Set();
     // Domain discovery walks current GC reachability, including weak/wildcard
     // storage. It grants no ownership; the separate compact proof keeps its cuts.
     for(let i=0;i<values.length&&!referenceWrites;i++){
@@ -196,8 +198,8 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
   // Capture only paths from this returned value to its selected Span slots.
   // Each alternative keeps its own owning arrays; another return alternative
   // cannot make a direct Span root retain its backing allocation.
-  function returnPaths(value,heap){
-    const paths=[],work=[],ownership=owningStorage(value,heap);
+  function returnPaths(value,heap,stable=false){
+    const paths=[],work=[],ownership=owningStorage(value,heap,stable);
     for(const root of value.refs){spend(2);
       work.push({ref:root,storage:[],active:new Set(),known:!value.unknown,owningKnown:!value.unknown});}
     for(let i=0;i<work.length;i++){
@@ -210,6 +212,51 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
       for(const [slot,stored]of heap){spend();if(!slot.startsWith(ref+'/field/')&&!slot.startsWith(ref+'/element/')&&!environmentSlot(ref,slot))continue;
         for(const child of stored.refs){spend();check(work.length<65536,'limit');work.push({ref:child,storage,active,known:known&&!stored.unknown,owningKnown:owningKnown&&!stored.unknown});}}
     }return paths;
+  }
+  // This is a value proof, never authority from the destination's unknown elements.
+  // Provisional coverage precedes the store cut; complete origin checks run at finish.
+  function arrayStoreProof(c,target,value,state){
+    spend();if(!commonActualArrayReceiver(target,types,objects,spend)||value.unknown||value.cells.size||value.pairs.size||!value.tags.size||!value.refs.size)return null;
+    for(const tag of value.tags){spend();if(!['reference','value'].includes(types.get(tag)?.kind))return null;}
+    const entries=new Set();for(const input of c.args){spend();if(commonActualArrayReceiver(input,types,objects,spend))for(const ref of input.refs){spend();entries.add(ref);}}
+    const targets=new Set(target.refs);for(const ref of targets){spend();if(!entries.has(ref)||graph.fresh.has(ref))return null;}
+    const selected=collect(value,state.heap,'hard');if(selected.pending)return null;
+    for(const ref of selected.ids){
+      spend();const object=objects.get(ref),type=types.get(object?.type);
+      if(object?.weak||!['reference','value','array','readSpan'].includes(type?.kind))return null;
+      if(['array','readSpan'].includes(type.kind)&&types.get(type.elementType)?.kind!=='scalar')return null;
+      const required=[];if(['reference','value'].includes(type.kind))for(let layer=type;layer;layer=types.get(layer.base)){
+        spend();for(const field of layer.fields??[]){spend();
+          // A descriptor replaced after external transfer could introduce a new
+          // borrow. This slice freezes managed fields rather than tracking anchors.
+          if(field.readonly!==true)return null;
+          required.push(ref+'/field/'+field.id);}}
+      else required.push(...(type.kind==='array'?['length']:['owner','start','length']).map(slot=>ref+'/'+slot));
+      for(const slot of required){spend();const stored=state.heap.get(slot);if(!stored||stored.unknown||stored.cells.size||stored.pairs.size||!(stored.tags.size||stored.refs.size))return null;}
+      for(const [slot,stored]of state.heap){spend();if((slot.startsWith(ref+'/field/')||slot.startsWith(ref+'/element/'))&&(stored.unknown||stored.cells.size||stored.pairs.size))return null;}
+    }
+    const paths=returnPaths(value,state.heap,true),held=new Map(),localOwners=new Set(),regionValue=regions?.copy(value.region),regionHeap=regions?.reachable([value.region],state.regions);
+    if(!paths.length)return null;
+    for(const path of paths){
+      spend();const owner=owners(path.span,state.heap),owning=path.owning(c.id);held.set(path.span,owner);
+      if(!path.owningKnown||owner.pending||owner.ids.size!==1)return null;
+      for(const id of owner.ids){spend();const allocation=allocations.get(id)?.get(c.id);
+        if(!owning.has(id)||allocation?.kind!=='array'||allocation.weak)return null;localOwners.add(id);
+        if((c.regionScope||regionValue?.roots.size||regionValue?.opaque)&&!regions?.ownedReturnHolds(regionValue,regionHeap,path.span,id,c.regionScope,types,model.environments,true))return null;}
+    }
+    const allowed=()=>{
+      for(const ref of selected.ids){spend();if(objects.get(ref)?.weak||!unique(kind(ref)==='readSpan'?creations:allocations,ref,c.id))return false;}
+      for(const path of paths){spend();const owner=held.get(path.span),created=unique(creations,path.span,c.id);
+        for(const id of owner.ids){spend();const allocation=allocations.get(id)?.get(c.id);
+          if(unique(allocations,id,c.id)!==allocation||allocation?.weak||created?.element!==types.get(objects.get(id)?.type)?.elementType||created.owner.pending||created.owner.ids.size!==1||!created.owner.ids.has(id))return false;
+          if((c.regionScope||regionValue?.roots.size||regionValue?.opaque)&&!regions?.ownedReturnHolds(regionValue,regionHeap,path.span,id,c.regionScope,types,model.environments,true))return false;}}
+      return true;
+    };
+    const separates=(owner,modified)=>{
+      spend();const allocation=allocations.get(owner)?.get(c.id);
+      return owner!==modified&&targets.has(modified)&&entries.has(modified)&&localOwners.has(owner)&&allocation?.kind==='array'&&!allocation.weak&&unique(allocations,owner,c.id)===allocation;
+    };
+    return {allowed,separates};
   }
   function owningReturn(value,c){
     spend();const allowed=records?.get(c.plan.owner.id)?.callables?.returns;
@@ -281,6 +328,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
   function before(c,op,state,args,at) {
     proof?.before(c,op,at);
     const name=op.name.replace('tsfg_program.',''),where=origin(c,op);graph.point(at).origin=where;
+    const stored=name==='array_store'&&escapingSpans(args[2],state.heap).size?arrayStoreProof(c,args[0],args[2],state):null;
     if(name==='array_read'||name==='readspan_length')use(at,args[0],state.heap,c.plan.graph.registers.get(op.operands[0]).view,where);
     if(name==='array_resize'){
       let unchanged=!args[0].unknown&&args[0].refs.size>0&&Number.isSafeInteger(args[1].number);
@@ -293,7 +341,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
       let overwrite=!args[0].unknown&&args[0].refs.size>0;const index=args[1].number;
       for(const ref of args[0].refs){spend();const length=state.heap.get(ref+'/length')?.number;
         overwrite &&= kind(ref)==='array'&&Number.isSafeInteger(index)&&index>=0&&Number.isSafeInteger(length)&&index<length;}
-      if(!overwrite)effect(at,args[0],state.heap,where);
+      if(!overwrite){if(stored)graph.effect(at,{ids:new Set(args[0].refs),pending:args[0].unknown},where,null,stored.separates);else effect(at,args[0],state.heap,where);}
     }
     if(['global_store','env_init','env_store','field_store','array_store'].includes(name)){
       const value=args[name==='global_store'?0:name==='array_store'?2:1],ids=escapingSpans(value,state.heap);
@@ -304,6 +352,9 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
           spend(target.refs.size);const targets=new Set(target.refs),known=!target.unknown&&targets.size>0;
           allowed=()=>{let result=known;for(const ref of targets){spend();result &&= graph.fresh.has(ref)||local.has(ref);}return result;};
         }else allowed=false;
+        if(stored){allowed=stored.allowed;
+          graph.use(at,ids);let retained=futureStores.get(at);if(!retained){check(futureStores.size<65536,'limit');retained=new Set();futureStores.set(at,retained);}
+          for(const id of ids){spend();retained.add(id);check(retained.size<=4096,'limit');}}
         graph.escape(at,ids,allowed,where);
       }
     }
@@ -331,6 +382,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
         }
       }
     }
+    return Boolean(stored);
   }
   function after(c,op,state,value,at){
     proof?.after(c,op,value,at);
@@ -348,6 +400,9 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     connectContexts();
     for(const row of calls){spend();const exits=returns.get(row.callee);if(exits)for(const completion of ['normal','language'])for(const at of exits[completion]){
       graph.edge(at,row[completion]);if(row[completion+'Successor'])graph.edge(row[completion],row[completion+'Successor']);}}
+    // External storage keeps these descriptors live on every actual continuation,
+    // including cycles with no exit. These are analysis uses, not fabricated reads.
+    for(const [at,ids]of futureStores){spend();graph.retain(at,ids);}
     const verified=graph.verify();return proof?{...verified,projection:proof}:verified;
   }
   return {begin,block,entry,before,after,prepareCall,call,edge:graph.edge,finish,hardEscape};

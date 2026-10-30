@@ -137,11 +137,11 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
           let previous=observer?.block(c,block.name);
           for(const p of block.parameters)observe(fn+'/'+p.name,read(state,p.name));
           for(const [instruction,op]of block.instructions.entries()) {
-            spend(op.operands.length+1);const args=op.operands.map(name=>read(state,name)),p=op.properties,name=op.name.replace('tsfg_program.','');let value=a.empty(),continues=true;
+            spend(op.operands.length+1);const args=op.operands.map(name=>read(state,name)),p=op.properties,name=op.name.replace('tsfg_program.','');let value=a.empty(),continues=true,storedArray=false;
             const hardEscape=input=>{regions.escape(input.region,state.regions);observer?.hardEscape(input,state.heap);};
             if(observer){if(name!=='cf.br'&&name!=='route')for(const arg of args){if(arg.unknown)hardEscape(arg);else regions.observe(arg.region,state.regions);}
               if((name==='func.return'&&!c.regionScope||name==='return_throw')&&args.length)hardEscape(args[0]);}
-            if(observer){point=c.id+'/'+block.name+'/'+instruction;observer.edge(previous,point);observer.before(c,op,state,args,point);previous=point;}
+            if(observer){point=c.id+'/'+block.name+'/'+instruction;observer.edge(previous,point);storedArray=observer.before(c,op,state,args,point);previous=point;}
             const weakSlot=key=>{
               for(const marker of ['/field/','/element/','/length','/owner','/start','/slot/','/parent']){spend();const at=key.lastIndexOf(marker);if(at>=0&&objects.has(key.slice(0,at)))return objects.get(key.slice(0,at)).weak;}
               return false;
@@ -263,7 +263,7 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
                 if(types.get(object.type)?.kind==='readSpan'){spanOwner=true;a.merge(owners,state.heap.get(ref+'/owner')??a.empty());}else owners.refs.add(ref);}
               const ownerRegion=spanOwner?regions.load(args[0].region,'owner',state.regions):args[0].region;
               const needsArray=name==='array_read'&&types.get(op.view)?.kind==='function'||name==='array_store'&&Boolean(observer)&&args[2].pairs.size>0,
-                actualArray=needsArray&&commonActualArrayReceiver(args[0],types,objects,spend),covered=name==='array_store'&&Boolean(observer)&&actualArray&&holdingPolicy.wholeValue(args[2]);
+                actualArray=needsArray&&commonActualArrayReceiver(args[0],types,objects,spend),covered=name==='array_store'&&Boolean(observer)&&(storedArray||actualArray&&holdingPolicy.wholeValue(args[2]));
               if(observer&&name==='array_store'&&(args[0].unknown||!args[0].refs.size))hardEscape(args[2]);
               for(const ref of owners.refs){spend();const object=objects.get(ref),index=args[1]?.number,selected=regions.select(ownerRegion,ref);
                 selected.opaque ||= args[0].unknown||owners.unknown;const definite=owners.refs.size===1&&!selected.opaque;

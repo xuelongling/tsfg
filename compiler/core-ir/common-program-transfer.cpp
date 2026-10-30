@@ -32,7 +32,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     else operands.push_back(found==state.values.end()?&missing:&found->second);
   }
   const ActualOperands args{operands};
-  if(borrowTrace&&!borrowTrace->before(context,op,block,state,args))return false;
+  bool storeCovered=false;
+  if(borrowTrace&&!borrowTrace->before(context,op,block,state,args,storeCovered))return false;
   ActualValue value;const auto typeId=[&](llvm::StringRef name){return digest(std::string("tsfg.type")+std::string(1,'\0')+name.str());};
   const auto literal=[&](const std::string &id,uint8_t truth=0){ActualValue v;v.tags.insert(id);v.truth=truth;return v;};
   const auto put=[&](const std::string &slot,const ActualValue &v,bool strong=true){
@@ -191,7 +192,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="array_length"||name=="readspan_length")value=literal(op.view);
   else if(name=="array_read"||name=="array_store"||name=="array_resize"){
     const bool actualArray=name=="array_read"&&types.count(op.view)&&string(field(*types.at(op.view),"kind"))=="function"&&arrayReceiver(args[0]);
-    const bool transport=!conditional&&name=="array_store"&&holdingArrayTransport(*this,args[0],args[2]);
+    const bool transport=!conditional&&name=="array_store"&&(storeCovered||holdingArrayTransport(*this,args[0],args[2]));
     if(!e.message.empty())return false;
     RegionValue projected;
     if(!conditional){auto receiver=regionValue(*this,args[0]);

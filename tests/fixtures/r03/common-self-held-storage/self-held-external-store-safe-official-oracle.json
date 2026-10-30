@@ -1,0 +1,147 @@
+{
+  "Case": "self-held-external-store-safe",
+  "SourceSHA": "dc135f773266d35f2df916e412e816a6983c2057410d0b25d75b9139990a6bd3",
+  "RunID": "sha256:0f160e10fe9ab6390f7b7b11cd695df1232c0d37fa3502c76e77c733c4b97112",
+  "OwnerForm": "same-original-a-Symbol",
+  "InitialAllocationID": "sha256:086513700df56cbc1a4031ccdc637975c6b9e0b20f1a23c7c30f7d866982a6b7",
+  "OwnerAllocationID": "sha256:086513700df56cbc1a4031ccdc637975c6b9e0b20f1a23c7c30f7d866982a6b7",
+  "Diagnostics": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "ClassRange": {
+    "start": 0,
+    "end": 95
+  },
+  "ClassNameRange": {
+    "start": 6,
+    "end": 7
+  },
+  "ConstructorRange": {
+    "start": 12,
+    "end": 93
+  },
+  "RunRange": {
+    "start": 96,
+    "end": 247
+  },
+  "RunNameRange": {
+    "start": 112,
+    "end": 115
+  },
+  "Fields": [
+    {
+      "ID": "sha256:fdd2a38910508aa0c823962a7823d7073cfad2e9991ef1bfe1cee705024432c0",
+      "Name": "owner",
+      "ParameterBinding": "sha256:a27f60632b5fee68976857e0f3dde8d1a5606b4a3e6d184d9454f56ae20e646f",
+      "OfficialType": "number[]",
+      "DeclarationRange": {
+        "start": 24,
+        "end": 52
+      },
+      "NameRange": {
+        "start": 40,
+        "end": 45
+      },
+      "Readonly": true,
+      "Public": true
+    },
+    {
+      "ID": "sha256:abdc6acb2adf2a9d7434e54f9323566ceece7521f54c6dea451be919bc5066a1",
+      "Name": "span",
+      "ParameterBinding": "sha256:aee10b9d01c347ea1c196b6f06437022d018edae62b79735ee8ff9267e5ce3c3",
+      "OfficialType": "ReadSpan\u003cnumber\u003e",
+      "DeclarationRange": {
+        "start": 54,
+        "end": 89
+      },
+      "NameRange": {
+        "start": 70,
+        "end": 74
+      },
+      "Readonly": true,
+      "Public": true
+    }
+  ],
+  "Bindings": {
+    "a": {
+      "ID": "sha256:b53ffb1582bb7ccb92a3d6629e2d2c596317637da44ca6fe480f185270fdaf90",
+      "Name": "a",
+      "OfficialType": "number[]",
+      "DeclarationRange": {
+        "start": 142,
+        "end": 156
+      },
+      "NameRange": {
+        "start": 142,
+        "end": 143
+      }
+    },
+    "h": {
+      "ID": "sha256:2aa7fc0915d8386b07d21b2359aed62bdeab68ced5e353edff9dc4eac8196088",
+      "Name": "h",
+      "OfficialType": "H",
+      "DeclarationRange": {
+        "start": 212,
+        "end": 230
+      },
+      "NameRange": {
+        "start": 212,
+        "end": 213
+      }
+    },
+    "out": {
+      "ID": "sha256:e35b37b1b1692abeb59f1182dcafb1eefe92f851f857014a63439c69e2caa2ac",
+      "Name": "out",
+      "OfficialType": "H[]",
+      "DeclarationRange": {
+        "start": 116,
+        "end": 124
+      },
+      "NameRange": {
+        "start": 116,
+        "end": 119
+      }
+    },
+    "r": {
+      "ID": "sha256:4bc156573c620cbdba1387f0cd6290f105afb11c4be3f99969bb4a8017757d57",
+      "Name": "r",
+      "OfficialType": "ReadSpan\u003cnumber\u003e",
+      "DeclarationRange": {
+        "start": 166,
+        "end": 202
+      },
+      "NameRange": {
+        "start": 166,
+        "end": 167
+      }
+    }
+  },
+  "InitialArrayRange": {
+    "start": 153,
+    "end": 156
+  },
+  "SpanCallRange": {
+    "start": 185,
+    "end": 202
+  },
+  "OwnerArgumentRange": {
+    "start": 225,
+    "end": 226
+  },
+  "ConstructorCallRange": {
+    "start": 219,
+    "end": 230
+  },
+  "StoreRange": {
+    "start": 234,
+    "end": 244
+  },
+  "SpanSignaturePath": "/src/minimal-arrays-v8.d.ts",
+  "SpanSignatureRange": {
+    "start": 617,
+    "end": 696
+  }
+}

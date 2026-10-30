@@ -1,0 +1,9 @@
+class H {
+  constructor(public readonly owner: i32[], public readonly span: ReadSpan<i32>) {}
+}
+export function run(out: H[]): void {
+  const a: i32[] = [1];
+  const r: ReadSpan<i32> = readSpan(a, 0, 1);
+  const h: H = new H([2], r);
+  out[0] = h;
+}

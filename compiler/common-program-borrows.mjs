@@ -16,9 +16,16 @@ export function commonBorrowGraph(spend) {
     if(!weak)add(point(at).defines,id);
   };
   const use=(at,ids)=>{for(const id of ids)add(point(at).uses,id);};
-  const effect=(at,owners,origin,eligible=null)=>{spend(owners.ids.size+1+(eligible?.size??0));check(eligible===null||eligible.size<=4096,'limit');
-    point(at).effects.push({owners:new Set(owners.ids),pending:owners.pending,origin,eligible:eligible===null?null:new Set(eligible)});};
+  const effect=(at,owners,origin,eligible=null,separates=null)=>{spend(owners.ids.size+1+(eligible?.size??0));check(eligible===null||eligible.size<=4096,'limit');
+    point(at).effects.push({owners:new Set(owners.ids),pending:owners.pending,origin,eligible:eligible===null?null:new Set(eligible),separates});};
   const escape=(at,ids,allowed,origin)=>{spend(ids.size+1);if(ids.size)escapes.push({at,ids:new Set(ids),allowed,origin});};
+  // An external transfer remains live on all actual continuations. These uses
+  // belong to analysis; they do not fabricate later source read events.
+  function retain(at,ids){
+    const pending=[at],seen=new Set(pending);
+    for(let i=0;i<pending.length;i++){spend();const p=points.get(pending[i]);check(p,'ssa');use(p.id,ids);
+      for(const next of p.edges){spend();if(seen.has(next))continue;check(seen.size<65536,'limit');seen.add(next);pending.push(next);}}
+  }
   function verify() {
     for(const row of escapes){spend();check(typeof row.allowed==='function'?row.allowed():row.allowed,'borrow-pending','borrow escapes unproved storage lifetime',row.origin);}
     for(const p of points.values()){spend();for(const id of p.uses){spend();const row=borrows.get(id);
@@ -57,12 +64,12 @@ export function commonBorrowGraph(spend) {
       for(const id of active){spend();if(effect.eligible!==null&&!effect.eligible.has(id))continue;const borrow=borrows.get(id);check(borrow,'borrow-pending','borrow has no proved definition',effect.origin);
         let overlap=false,pending=borrow.pending||effect.pending;
         for(const owner of borrow.owners)for(const modified of effect.owners){spend();if(owner===modified)overlap=true;
-          else if(!fresh.has(owner)||!fresh.has(modified))pending=true;}
+          else if((!fresh.has(owner)||!fresh.has(modified))&&!effect.separates?.(owner,modified))pending=true;}
         check(!overlap,'borrow-conflict','structural modification overlaps a live ReadSpan',effect.origin);
         check(!pending,'borrow-pending','live ReadSpan owner separation is unproved',effect.origin);
       }
     }}
     return {points:points.size,borrows:borrows.size};
   }
-  return {point,edge,define,use,effect,escape,fresh,verify};
+  return {point,edge,define,use,effect,escape,retain,fresh,verify};
 }

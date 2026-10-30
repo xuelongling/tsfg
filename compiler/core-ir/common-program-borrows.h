@@ -10,7 +10,7 @@ public:
   explicit BorrowTrace(ActualCheck &,bool project=false);
   ~BorrowTrace();
   bool begin(const ActualContext &,const ActualState &);
-  bool before(const ActualContext &,const Operation &,size_t,const ActualState &,ActualOperands);
+  bool before(const ActualContext &,const Operation &,size_t,const ActualState &,ActualOperands,bool &storeCovered);
   bool after(const ActualContext &,const Operation &,size_t,const ActualState &,bool);
   bool edge(const ActualContext &,const Operation &,size_t,uint16_t);
   bool call(const ActualContext &,const Operation &,size_t,const ActualContext &);

@@ -106,6 +106,48 @@ bool holdingFieldTransport(ActualCheck &c,const ActualValue &receiver,const Actu
 bool holdingArrayTransport(ActualCheck &c,const ActualValue &receiver,const ActualValue &value){
   return c.arrayReceiver(receiver)&&holdingStoredClosure(c,value);
 }
+bool holdingStoredAggregate(ActualCheck &c,const ActualValue &value,const ActualHeap &heap,std::set<std::string> &selected){
+  if(value.unknown||value.callableTop||!value.cells.empty()||!value.callables.empty()||value.objects.empty())return false;
+  for(const auto &tag:value.tags){if(!c.step()||!c.types.count(tag))return false;
+    const auto kind=string(field(*c.types.at(tag),"kind"));if(kind!="reference"&&kind!="value")return false;}
+  std::vector<const ActualValue *> pending{&value};
+  for(size_t i=0;i<pending.size();++i){
+    if(!c.step())return false;const auto &current=*pending[i];
+    if(current.unknown||current.callableTop||!current.cells.empty()||!current.callables.empty())return false;
+    for(const auto &ref:current.objects){
+      if(!c.step())return false;if(!selected.insert(ref).second)continue;
+      if(!c.need(selected.size()<=4096,"stable stored graph exceeds bound"))return false;auto found=c.objects.find(ref);
+      if(found==c.objects.end()||found->second.weak||!c.types.count(found->second.type))return false;
+      const auto &type=*c.types.at(found->second.type);const auto kind=string(field(type,"kind"));std::vector<std::string> required;
+      if(kind=="reference"||kind=="value"){
+        auto id=found->second.type;std::set<std::string> seen;
+        while(!id.empty()){
+          if(!c.step()||!seen.insert(id).second||!c.types.count(id))return false;const auto &layer=*c.types.at(id);
+          for(const auto &member:items(field(layer,"fields"))){
+            // A later field_store must not replace a descriptor after transfer.
+            if(!c.step()||field(member,"readonly").getAsBoolean()!=true)return false;
+            required.push_back(ref+"/field/"+string(field(member,"id")));
+          }id=string(field(layer,"base"));
+        }
+      }else if(kind=="array"||kind=="readSpan"){
+        const auto element=string(field(type,"elementType"));
+        if(!c.step()||!c.types.count(element)||string(field(*c.types.at(element),"kind"))!="scalar")return false;
+        if(kind=="readSpan")required={ref+"/owner",ref+"/start",ref+"/length"};else required={ref+"/length"};
+      }else return false;
+      for(const auto &slot:required){
+        if(!c.step())return false;auto stored=heap.find(slot);
+        if(stored==heap.end()||stored->second.unknown||stored->second.callableTop||!stored->second.cells.empty()||!stored->second.callables.empty()||
+            (stored->second.tags.empty()&&stored->second.objects.empty()))return false;
+      }
+      // Keep the whole selected current graph, including descriptor owner links.
+      // ReturnOwnership independently removes nonowning edges from its proof.
+      const auto prefix=ref+"/";
+      for(auto edge=heap.lower_bound(prefix);edge!=heap.end()&&llvm::StringRef(edge->first).starts_with(prefix);++edge){
+        if(!c.step())return false;pending.push_back(&edge->second);
+      }
+    }
+  }return c.e.message.empty();
+}
 ReturnOwnership::Value ReturnOwnership::value(const ActualValue &v){
   Value out;out.opaque=v.unknown||v.callableTop;out.complete=!out.opaque;
   if(!check.step(v.tags.size()+v.objects.size()+v.callables.size()))return {};
@@ -119,7 +161,7 @@ ReturnOwnership::Value ReturnOwnership::value(const ActualValue &v){
   for(const auto &[code,environment]:v.callables){if(environment.empty())out.empty=true;else out.alternatives.insert(environment);}
   out.empty|=out.alternatives.empty();return out;
 }
-ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const ActualHeap &heap,bool writes):check(c),root(value(v)),referenceWrites(writes){
+ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const ActualHeap &heap,bool stable):check(c),root(value(v)),stableProjection(stable){
   std::vector<std::string> pending;if(!check.step(root.alternatives.size()))return;
   pending.assign(root.alternatives.begin(),root.alternatives.end());
   for(size_t index=0;index<pending.size();++index){
@@ -128,7 +170,7 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const Actua
     const auto &object=check.objects.at(ref);const auto environment=llvm::StringRef(object.type).starts_with("env:");
     const auto kind=environment?"environment":check.types.count(object.type)?string(field(*check.types.at(object.type),"kind")):std::string();
     auto &node=nodes[ref];node.kind=kind;node.weak=object.weak;std::set<std::string> nonOwning;
-    if(referenceWrites&&environment){
+    if(stableProjection&&environment){
       auto layout=check.environments.find(object.type.substr(4));
       if(layout==check.environments.end())node.complete=false;
       else{
@@ -149,7 +191,7 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const Actua
         }
       }
     }
-    if(referenceWrites&&(kind=="reference"||kind=="value")){
+    if(stableProjection&&(kind=="reference"||kind=="value")){
       std::set<std::string> fields;if(!writableHoldingFields(check,object.type,fields))node.complete=false;
       for(const auto &id:fields){if(!check.step(id.size()/64+1))return;nonOwning.insert(ref+"/field/"+id);}
     }
@@ -163,12 +205,12 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const Actua
         selected=length!=heap.end()&&!length->second.unknown&&length->second.number&&*length->second.number>=0&&
           !suffix.getAsInteger(10,element)&&element<uint64_t(*length->second.number);
       }
-      if(!selected)continue;auto edge=value(child);edge.nonOwning=referenceWrites&&(nonOwning.count(slot)!=0||(kind=="array"&&llvm::StringRef(slot).starts_with(ref+"/element/")));
+      if(!selected)continue;auto edge=value(child);edge.nonOwning=stableProjection&&(nonOwning.count(slot)!=0||(kind=="array"&&llvm::StringRef(slot).starts_with(ref+"/element/")));
       if(!check.step(edge.alternatives.size()+1))return;pending.insert(pending.end(),edge.alternatives.begin(),edge.alternatives.end());node.fields.push_back(std::move(edge));
     }
   }
 }
-ReturnOwnership::ReturnOwnership(ActualCheck &c,const RegionValue &v,const RegionHeap &heap,bool writes):check(c),referenceWrites(writes){
+ReturnOwnership::ReturnOwnership(ActualCheck &c,const RegionValue &v,const RegionHeap &heap,bool stable):check(c),stableProjection(stable){
   const auto project=[](const RegionValue &v){Value out;out.alternatives=v.roots;out.opaque=v.opaque;out.complete=!v.opaque;out.empty=v.empty||v.roots.empty();return out;};
   std::vector<std::string> pending;if(!check.step(regionWeight(v)))return;root=project(v);pending.assign(v.roots.begin(),v.roots.end());
   for(size_t i=0;i<pending.size();++i){if(!check.step())return;const auto ref=pending[i];if(nodes.count(ref))continue;
@@ -176,14 +218,14 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const RegionValue &v,const Regio
     const auto kind=env?"environment":check.types.count(origin.type)?string(field(*check.types.at(origin.type),"kind")):std::string();
     // These nodes are allocation versions, not reclassified raw weak objects.
     auto &node=nodes[ref];node.kind=kind;auto stored=heap.find(ref);if(stored==heap.end())continue;std::set<std::string> nonOwning;
-    if(referenceWrites&&env){
+    if(stableProjection&&env){
       auto layout=check.environments.find(origin.type.substr(4));if(layout==check.environments.end())node.complete=false;
       else for(const auto &slot:items(field(*layout->second,"slots"))){
         if(!check.step())return;const auto key="/slot/"+string(field(slot,"key"));
         if(field(slot,"writable").getAsBoolean()==true&&scalarArray(check,string(field(slot,"type"))))nonOwning.insert(key);
       }
     }
-    if(referenceWrites&&(kind=="reference"||kind=="value")){
+    if(stableProjection&&(kind=="reference"||kind=="value")){
       std::set<std::string> fields;if(!writableHoldingFields(check,origin.type,fields))node.complete=false;
       for(const auto &id:fields){if(!check.step(id.size()/64+1))return;nonOwning.insert("/field/"+id);}
     }
@@ -193,13 +235,13 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const RegionValue &v,const Regio
         auto length=stored->second.find("/length");uint64_t index=0;const auto suffix=llvm::StringRef(slot).drop_front(9);
         selected=!stored->second.count("/element/*")&&length!=stored->second.end()&&!length->second.opaque&&length->second.number&&*length->second.number>=0&&!suffix.getAsInteger(10,index)&&index<uint64_t(*length->second.number);
         // Descriptor paths retain every current element, including wildcard storage.
-        if(referenceWrites)selected=true;
+        if(stableProjection)selected=true;
       }
-      if(selected){pending.insert(pending.end(),edge.roots.begin(),edge.roots.end());auto child=project(edge);child.nonOwning=referenceWrites&&(nonOwning.count(slot)!=0||(kind=="array"&&llvm::StringRef(slot).starts_with("/element/")));node.fields.push_back(std::move(child));}
+      if(selected){pending.insert(pending.end(),edge.roots.begin(),edge.roots.end());auto child=project(edge);child.nonOwning=stableProjection&&(nonOwning.count(slot)!=0||(kind=="array"&&llvm::StringRef(slot).starts_with("/element/")));node.fields.push_back(std::move(child));}
     }
   }
 }
-RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionValue &v,const RegionHeap &heap,bool referenceWrites):check(c){
+RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionValue &v,const RegionHeap &heap,bool stableProjection):check(c){
   if(!check.step(id.size()/64+1))return;region=id;
   stableComplete=!v.empty;
   if(region.empty()||v.opaque||v.roots.empty()){complete=false;return;}std::vector<std::string> pending;if(!check.step(regionWeight(v)))return;
@@ -212,11 +254,11 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
       for(const auto &slot:items(field(*layout->second,"slots"))){if(!check.step())return;const auto key="/slot/"+string(field(slot,"key"));
         if(!stored->second.count(key))complete=false;
         const auto type=string(field(slot,"type"));auto edge=stored->second.find(key);
-        if(referenceWrites&&(edge==stored->second.end()||edge->second.opaque||(!edge->second.empty&&edge->second.roots.empty())))complete=false;
+        if(stableProjection&&(edge==stored->second.end()||edge->second.opaque||(!edge->second.empty&&edge->second.roots.empty())))complete=false;
         // Immutable String has a managed GC root but no Array/Span holding child.
         const bool childless=check.types.count(type)&&(string(field(*check.types.at(type),"kind"))=="scalar"||string(field(*check.types.at(type),"kind"))=="string");
         const bool inlineValue=check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="value"&&edge!=stored->second.end()&&edge->second.known&&!edge->second.empty&&!edge->second.opaque&&!edge->second.roots.empty();
-        const bool mutableArray=referenceWrites&&field(slot,"writable").getAsBoolean()==true&&scalarArray(check,type)&&edge!=stored->second.end()&&!edge->second.opaque&&!edge->second.empty&&!edge->second.roots.empty();
+        const bool mutableArray=stableProjection&&field(slot,"writable").getAsBoolean()==true&&scalarArray(check,type)&&edge!=stored->second.end()&&!edge->second.opaque&&!edge->second.empty&&!edge->second.roots.empty();
         if(field(slot,"writable").getAsBoolean()!=false&&
           !mutableArray&&!inlineValue&&!(field(slot,"writable").getAsBoolean()==true&&childless&&edge!=stored->second.end()&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
         if(!check.types.count(type))stableComplete=false;
@@ -254,7 +296,7 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
       if(!env&&kind!="reference"&&kind!="value"&&(kind!="readSpan"||slot!="/owner")&&!edge.roots.empty())stableComplete=false;
       pending.insert(pending.end(),edge.roots.begin(),edge.roots.end());}
   }
-  if(!check.e.message.empty())return;ownership=std::make_shared<ReturnOwnership>(check,v,heap,referenceWrites);
+  if(!check.e.message.empty())return;ownership=std::make_shared<ReturnOwnership>(check,v,heap,stableProjection);
 }
 bool RegionHolding::holds(){
   if(!complete||!ownership||!check.regions.scopes.count(region)||check.regions.scopes.at(region).blocked)return false;return prove();
@@ -298,7 +340,7 @@ std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std:
     for(const auto &[ref,node]:nodes){
       if(!check.step())return {};if(!permitted.count(ref))continue;std::set<std::string> next;
       if(node.kind=="array"){if(!check.step())return {};next.insert(ref);}
-      for(const auto &edge:node.fields){if(!check.step())return {};if(referenceWrites&&edge.nonOwning)continue;const auto child=must(edge);if(!check.step(child.size()))return {};next.insert(child.begin(),child.end());}
+      for(const auto &edge:node.fields){if(!check.step())return {};if(stableProjection&&edge.nonOwning)continue;const auto child=must(edge);if(!check.step(child.size()))return {};next.insert(child.begin(),child.end());}
       auto &prior=owned.at(ref);if(!check.step(prior.size()+next.size()))return {};if(prior!=next){prior=std::move(next);changed=true;}
     }
   }while(changed&&check.e.message.empty());
