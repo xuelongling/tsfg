@@ -364,7 +364,8 @@ struct BorrowTrace::Impl {
     // and does not acquire this policy through the closure-write detector.
     ReturnOwnership owning(c,value,state.heap,true);
     const auto region=regionValue(c,value);
-    if(!context.region.empty()||!region.roots.empty()||region.opaque){
+    // Unscoped opaque is a raw-only sentinel, not a scoped relation obligation.
+    if(!context.region.empty()||!region.roots.empty()){
       stored.region=std::make_shared<RegionHolding>(c,context.region,region,state.regions,true);
       if(!stored.region->stableReturn())return false;
     }
