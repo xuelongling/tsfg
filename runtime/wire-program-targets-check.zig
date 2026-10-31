@@ -132,6 +132,7 @@ const Engine = struct {
     scope_keys: std.ArrayListUnmanaged(ScopeKey)=.empty,
     region_graphs: std.AutoHashMapUnmanaged(t.FunctionRef,RegionGraph)=.empty,
     recursive: std.AutoHashMapUnmanaged(t.FunctionRef,bool)=.empty,
+    transport_readers: std.AutoHashMapUnmanaged(t.FunctionRef,bool)=.{},
 
     fn deinit(self: *Engine) void {
         self.initial_globals.deinit(self.c.allocator); self.activations.deinit(self.c.allocator);
@@ -141,6 +142,7 @@ const Engine = struct {
         self.region_keys.deinit(self.c.allocator); self.scope_keys.deinit(self.c.allocator);
         var graphs=self.region_graphs.valueIterator(); while(graphs.next()) |graph|graph.deinit(self.c.allocator);
         self.region_graphs.deinit(self.c.allocator); self.recursive.deinit(self.c.allocator);
+        self.transport_readers.deinit(self.c.allocator);
     }
     fn domain(self: *Engine) relation.Domain {
         return .{.c=self.c,.nodes=self.result.region_nodes.items,.scopes=self.result.region_scopes.items};
@@ -903,12 +905,213 @@ const Engine = struct {
     fn currentLoad(self: *Engine, receiver: facts.Value, slot: relation.Slot, state: *const State) Error!region_data.OwnedValue {
         var d=self.domain(); return d.load(try facts.relation(self.c,receiver),slot,&state.relations);
     }
-    fn currentStore(self: *Engine, receiver: facts.Value, slot: relation.Slot, incoming: facts.Value, state: *State) Error!void {
-        var d=self.domain(); try d.store(try facts.relation(self.c,receiver),slot,try facts.relation(self.c,incoming),&state.relations,true);
+    fn scalarResult(self: *Engine, carrier: t.Carrier) Error!bool {
+        const common=self.c.program.tables.mode.common;
+        switch(carrier) {
+            .@"type" => |id|return self.nonowningType(id),
+            .domain => |id| {
+                const alternatives=common.domains[@intFromEnum(id)].actual_types;
+                if(alternatives.len==0)return false;
+                for(alternatives) |alternative| { try self.c.step(); if(!try self.nonowningType(alternative))return false; }
+                return true;
+            },
+            else => return false,
+        }
+    }
+    fn nonowningType(self: *Engine, id: t.TypeRef) Error!bool {
+        try self.c.step(); return switch(self.c.program.tables.mode.common.types[@intFromEnum(id)].kind) {
+            .scalar,.@"undefined",.@"null" => true,
+            else => false,
+        };
+    }
+    fn freshRegister(self: *Engine, function: t.FunctionRef, reg: t.RegisterRef, kind: enum { environment, cell, object }) Error!bool {
+        for(self.c.program.functions[@intFromEnum(function)].blocks) |block|for(block.instructions) |op| {
+            try self.c.step(); if(op.result!=reg)continue;
+            return switch(kind) { .environment => op.data==.environment_alloc, .cell => op.data==.eh_cell, .object => op.data==.eh_construct };
+        };
+        return false;
+    }
+    fn captureWrite(self: *Engine, function: t.FunctionRef, receiver: t.RegisterRef, slot_ref: t.EnvironmentSlotRef) Error!bool {
+        const common=self.c.program.tables.mode.common; const record=self.c.program.functions[@intFromEnum(function)];
+        const carrier=record.registers[@intFromEnum(receiver)].carrier;
+        if(carrier!=.environment)return false;
+        const layout=carrier.environment; const slot=common.closures.environments[@intFromEnum(layout)].slots[@intFromEnum(slot_ref)];
+        if(!slot.writable)return false;
+        var occurrences: usize=0;
+        for(common.closures.environments) |environment|for(environment.slots) |candidate| {
+            try self.c.step(); if(std.meta.eql(slot.key,candidate.key))occurrences+=1;
+        };
+        if(occurrences!=1)return false;
+        const typed=common.types[@intFromEnum(slot.@"type")];
+        const scalar_array=typed.kind==.array and typed.element!=null and common.types[@intFromEnum(typed.element.?)].kind==.scalar;
+        if(typed.kind!=.scalar and typed.kind!=.string and !scalar_array)return false;
+        var declared_write=false;
+        for(common.authority.fixed_publication.publication.contracts) |contract| {
+            try self.c.step(); if(!std.meta.eql(contract.function_id,record.id))continue;
+            for(contract.upper.captures) |access| { try self.c.step(); if(std.meta.eql(access.slot,slot.key) and access.write and !access.structural)declared_write=true; }
+        }
+        if(!declared_write)return false;
+        var parent=common.abis[self.abi(function)].lexical_environment;
+        for(common.closures.functions) |row| { try self.c.step(); if(row.function==function) { parent=row.activation_environment orelse row.lexical_environment; break; } }
+        while(parent) |current| {
+            try self.c.step(); if(current==layout)return true; parent=common.closures.environments[@intFromEnum(current)].parent;
+        }
+        return false;
+    }
+    fn readerCode(self: *Engine, reader: t.FunctionRef) Error!bool {
+        try self.c.step(); if(self.transport_readers.get(reader)) |cached|return cached;
+        var pending: std.ArrayListUnmanaged(t.FunctionRef)=.empty; defer pending.deinit(self.c.allocator);
+        var visited: std.AutoHashMapUnmanaged(t.FunctionRef,void)=.empty; defer visited.deinit(self.c.allocator);
+        try pending.append(self.c.allocator,reader); var cursor: usize=0; var allowed=true;
+        const common=self.c.program.tables.mode.common;
+        walk: while(cursor<pending.items.len) : (cursor+=1) {
+            try self.c.step(); const target=pending.items[cursor]; const found=try visited.getOrPut(self.c.allocator,target); if(found.found_existing)continue;
+            if(!(try self.prepareRegionGraph(target)).acyclic or try self.recursiveFunction(target)) { allowed=false; break; }
+            const function=self.c.program.functions[@intFromEnum(target)];
+            // Carrier maxima only exclude managed returns; they never create
+            // an actual value or code/environment pair. This first slice is
+            // deliberately narrower than the C++ may-throw reader rule.
+            if(common.abis[self.abi(target)].result_carrier) |result_carrier| {
+                if(!try self.scalarResult(result_carrier)) { allowed=false; break; }
+            }
+            var contract_found=false;
+            for(common.authority.fixed_publication.publication.contracts) |contract| {
+                try self.c.step(); if(!std.meta.eql(contract.function_id,function.id))continue; contract_found=true;
+                const upper_bound=contract.upper;
+                if(upper_bound.facets.unknown_host or upper_bound.facets.@"await" or upper_bound.facets.lock or upper_bound.facets.escape or upper_bound.facets.may_throw or
+                    upper_bound.globals.reads.len!=0 or upper_bound.globals.writes.len!=0 or upper_bound.host_resources.reads.len!=0 or upper_bound.host_resources.writes.len!=0) { allowed=false; break :walk; }
+                for(upper_bound.parameters) |access| { try self.c.step(); if(access.write or access.structural) { allowed=false; break :walk; } }
+                for(upper_bound.captures) |access| {
+                    try self.c.step(); if(access.structural) { allowed=false; break :walk; }
+                    if(!access.write)continue;
+                    var matched=false;
+                    for(common.closures.environments,0..) |environment,e|for(environment.slots,0..) |slot,s| {
+                        try self.c.step(); if(!std.meta.eql(slot.key,access.slot))continue;
+                        // A real code register must name this layout. This is
+                        // the canonical capture slot, not a same-name binding.
+                        for(function.registers,0..) |reg,r| { try self.c.step(); if(reg.carrier==.environment and @intFromEnum(reg.carrier.environment)==e) {
+                            if(try self.captureWrite(target,@enumFromInt(r),@enumFromInt(s)))matched=true;
+                        } }
+                    };
+                    if(!matched) { allowed=false; break :walk; }
+                }
+                break;
+            }
+            if(!contract_found) { allowed=false; break; }
+            // Inspect EVERY typed block, including branches not selected by
+            // any current actual context. Upper claims alone cannot erase a
+            // global/Host/store or turn a missing call into an empty effect.
+            for(function.blocks,0..) |block,b|for(block.instructions,0..) |op,index| {
+                try self.c.step(); switch(op.data) {
+                    .global_load,.global_store,.authorized_host,.domain_array_store,.domain_array_resize,.domain_field_store,.eh_raise,.eh_publish,
+                    .@"call",.function_call,.domain_method_call,.domain_construct,.domain_super,.domain_initialize_fields,.domain_field_define,.domain_field_initialize => { allowed=false; break :walk; },
+                    .eh_store => { if(!try self.freshRegister(target,op.operands[0],.cell)) { allowed=false; break :walk; } },
+                    inline .environment_init,.environment_store => |write| {
+                        if(!try self.freshRegister(target,op.operands[0],.environment) and !try self.captureWrite(target,op.operands[0],write.slot)) { allowed=false; break :walk; }
+                    },
+                    .eh_field_initialize => { if(!try self.freshRegister(target,op.operands[0],.object)) { allowed=false; break :walk; } },
+                    .eh_invoke => |call|try pending.append(self.c.allocator,call.callee),
+                    .eh_invoke_indirect => {
+                        var matched=false;
+                        for(common.closures.calls) |row| {
+                            try self.c.step(); if(row.function!=target or @intFromEnum(row.block)!=b or row.instruction!=index)continue;
+                            matched=true; if(row.targets.len==0) { allowed=false; break :walk; }
+                            try self.c.charge(row.targets.len); try pending.appendSlice(self.c.allocator,row.targets);
+                        }
+                        if(!matched) { allowed=false; break :walk; }
+                    },
+                    .common_method_invoke => |call| {
+                        const arms=common.views.dispatch[@intFromEnum(call.dispatch)].method.arms;
+                        if(arms.len==0) { allowed=false; break :walk; }
+                        for(arms) |arm| { try self.c.step(); const callee=arm.target orelse { allowed=false; break :walk; }; try pending.append(self.c.allocator,callee); }
+                    },
+                    else => {},
+                }
+            };
+        }
+        try self.transport_readers.put(self.c.allocator,reader,allowed); return allowed;
+    }
+    fn wholeCallable(self: *Engine, value: facts.Value, state: *const State) Error!bool {
+        if(value.unknown or value.callable_unknown or value.objects.len!=0 or value.cells.len!=0 or value.tags.len==0 or value.callables.len==0)return false;
+        const common=self.c.program.tables.mode.common;
+        const current=try facts.relation(self.c,value);
+        if(!current.known or current.unresolved or current.empty or current.roots.len==0)return false;
+        for(value.tags) |tag| { try self.c.step(); if(common.types[@intFromEnum(tag)].kind!=.function)return false; }
+        for(value.callables) |pair| {
+            try self.c.step(); var private_parent=false;
+            for(common.closures.functions) |row| { try self.c.step(); if(row.function==pair.code) { private_parent=row.parent!=null; break; } }
+            if(!private_parent or !try self.readerCode(pair.code))return false;
+            const layout=common.abis[self.abi(pair.code)].lexical_environment orelse return false;
+            const object_id=pair.environment orelse return false; const actual=self.result.objects.items[@intFromEnum(object_id)];
+            if(actual.kind!=.environment or actual.environment!=layout)return false;
+            var represented=false;
+            for(current.roots) |root| { try self.c.step(); represented=represented or self.result.region_nodes.items[@intFromEnum(root)].reference==object_id; }
+            if(!represented)return false;
+        }
+        for(current.roots) |root| {
+            try self.c.step(); const object_id=self.result.region_nodes.items[@intFromEnum(root)].reference; var paired=false;
+            for(value.callables) |pair| { try self.c.step(); paired=paired or pair.environment==object_id; } if(!paired)return false;
+        }
+        // Reuse the current-version owning graph, not the environment's raw
+        // shape alone. Unknown/missing/mutable descriptor paths cannot soften
+        // an escape. This is a point-local classifier, not the deferred final
+        // Borrow proof; later hard events remain irreversible.
+        const scope=self.result.region_nodes.items[@intFromEnum(current.roots[0])].scope;
+        if(self.result.region_scopes.items[@intFromEnum(scope)].hard)return false;
+        var d=self.domain(); var holding=try relation.Holding.capture(&d,self.result.view(),scope,current,&state.relations,true); defer holding.deinit();
+        if(!holding.complete or !holding.stable_complete)return false;
+        var descriptors=false; for(holding.nodes.items) |node| { try self.c.step(); descriptors=descriptors or node.kind==.read_span; }
+        if(descriptors and try holding.evaluate(&d,true)!=.proved)return false;
+        return true;
+    }
+    fn transportReceiver(self: *Engine, receiver: facts.Value, array: bool, state: *const State) Error!bool {
+        if(receiver.unknown or receiver.callable_unknown or receiver.objects.len==0 or receiver.tags.len==0 or receiver.cells.len!=0 or receiver.callables.len!=0)return false;
+        const current=try facts.relation(self.c,receiver);
+        // A known raw shape is not evidence of a local sink. Require genuine
+        // current birth relations and keep absent/aged/external origins hard.
+        if(!current.known or current.unresolved or current.empty or current.roots.len==0)return false;
+        for(current.roots) |root| {
+            try self.c.step(); const node=self.result.region_nodes.items[@intFromEnum(root)];
+            if(self.result.region_scopes.items[@intFromEnum(node.scope)].hard)return false;
+            var selected=false; for(receiver.objects) |object_id| { try self.c.step(); selected=selected or object_id==node.reference; }
+            if(!selected)return false;
+        }
+        // Reuse actual raw reachability, rather than declaring global aliases
+        // disjoint by type/name. Unknown global reachability remains a cap.
+        var global_heap=try self.reachable(&.{},state.heap.view()); defer global_heap.deinit(self.c.allocator);
+        var global_values=global_heap.view().iterator();
+        while(global_values.next()) |entry| {
+            try self.c.step(); if(entry.value.unknown or entry.value.callable_unknown)return false;
+            for(receiver.objects) |object_id| {
+                for(entry.value.objects) |external| { try self.c.step(); if(object_id==external)return false; }
+                for(entry.value.callables) |pair| { try self.c.step(); if(pair.environment==object_id)return false; }
+            }
+        }
+        const common=self.c.program.tables.mode.common;
+        for(receiver.tags) |tag| {
+            try self.c.step(); const kind=common.types[@intFromEnum(tag)].kind;
+            if(if(array)kind!=.array else kind!=.reference and kind!=.value)return false;
+            var represented=false;
+            for(receiver.objects) |object_id| { try self.c.step(); represented=represented or self.result.objects.items[@intFromEnum(object_id)].@"type"==tag; }
+            if(!represented)return false;
+        }
+        for(receiver.objects) |object_id| {
+            try self.c.step(); const actual=self.result.objects.items[@intFromEnum(object_id)]; var tagged=false;
+            if(actual.origin==.entry)return false;
+            var versioned=false;
+            for(current.roots) |root| { try self.c.step(); versioned=versioned or self.result.region_nodes.items[@intFromEnum(root)].reference==object_id; }
+            if(!versioned)return false;
+            for(receiver.tags) |tag| { try self.c.step(); tagged=tagged or actual.@"type"==tag; }
+            if(!tagged or (if(array)actual.kind!=.array else actual.kind!=.reference and actual.kind!=.value))return false;
+        }
+        return true;
+    }
+    fn currentStore(self: *Engine, receiver: facts.Value, slot: relation.Slot, incoming: facts.Value, state: *State, transport: bool) Error!void {
+        var d=self.domain(); try d.store(try facts.relation(self.c,receiver),slot,try facts.relation(self.c,incoming),&state.relations,!transport);
         // Aged aliases carry no selected roots, but can still revoke the birth
         // family. They never recover those roots or make a weak ID strong.
         const selected=try facts.relation(self.c,receiver);
-        if(selected.unresolved or selected.empty or selected.roots.len==0)try self.hardEscape(incoming,state.heap.view());
+        if(!transport and (selected.unresolved or selected.empty or selected.roots.len==0))try self.hardEscape(incoming,state.heap.view());
     }
     fn currentOwners(self: *Engine, receiver: facts.Value, state: *const State) Error!region_data.OwnedValue {
         const selected=try facts.relation(self.c,receiver);
@@ -960,23 +1163,23 @@ const Engine = struct {
                 var current=try self.birth(at,value.objects.items[0],&state.relations,null,null); defer current.deinit(self.c.allocator);
                 try self.setRegion(value,current.view());
                 switch(op.data) {
-                    .environment_alloc => { if(arguments.len!=0)try self.currentStore(value.view(),.parent,arguments[0].view(),state); },
+                    .environment_alloc => { if(arguments.len!=0)try self.currentStore(value.view(),.parent,arguments[0].view(),state,false); },
                     .common_typed_array_create => {
-                        for(arguments,0..) |argument,index| { try self.c.step(); try self.currentStore(value.view(),.{.element=@intCast(index)},argument.view(),state); }
+                        for(arguments,0..) |argument,index| { try self.c.step(); const transport=try self.transportReceiver(value.view(),true,state) and try self.wholeCallable(argument.view(),state); try self.currentStore(value.view(),.{.element=@intCast(index)},argument.view(),state,transport); }
                         const length=facts.Value{.number=@intCast(arguments.len),.region=.{.known=true,.empty=true,.number=@intCast(arguments.len)}};
-                        try self.currentStore(value.view(),.length,length,state);
+                        try self.currentStore(value.view(),.length,length,state,false);
                     },
                     .domain_read_span => {
-                        try self.currentStore(value.view(),.span_owner,arguments[0].view(),state);
-                        try self.currentStore(value.view(),.span_start,arguments[1].view(),state);
-                        try self.currentStore(value.view(),.span_length,arguments[2].view(),state);
+                        try self.currentStore(value.view(),.span_owner,arguments[0].view(),state,false);
+                        try self.currentStore(value.view(),.span_start,arguments[1].view(),state,false);
+                        try self.currentStore(value.view(),.span_length,arguments[2].view(),state,false);
                     },
                     else => {},
                 }
             },
             .environment_parent => { var loaded=try self.currentLoad(arguments[0].view(),.parent,state); defer loaded.deinit(self.c.allocator); try self.setRegion(value,loaded.view()); },
             .environment_load => |slot| { var loaded=try self.currentLoad(arguments[0].view(),.{.environment_slot=slot.slot},state); defer loaded.deinit(self.c.allocator); try self.setRegion(value,loaded.view()); },
-            inline .environment_init,.environment_store => |slot|try self.currentStore(arguments[0].view(),.{.environment_slot=slot.slot},arguments[1].view(),state),
+            inline .environment_init,.environment_store => |slot|try self.currentStore(arguments[0].view(),.{.environment_slot=slot.slot},arguments[1].view(),state,false),
             .function_make => { try self.setRegion(value,if(arguments.len==0).{.known=true,.empty=true} else try facts.relation(self.c,arguments[0].view())); },
             .global_store => try self.escape(arguments[0].view(),state,true),
             .domain_field_read => |read| {
@@ -989,14 +1192,15 @@ const Engine = struct {
                 if(arguments[0].objects.items.len==0)selected.unresolved=true; try self.setRegion(value,selected.view());
             },
             .domain_field_store => |write| {
-                for(arguments[0].objects.items) |object_id| { try self.c.step(); const member=try self.fieldFor(self.result.objects.items[@intFromEnum(object_id)].@"type".?,write.member); try self.currentStore(arguments[0].view(),.{.field=member},arguments[1].view(),state); }
+                const transport=try self.transportReceiver(arguments[0].view(),false,state) and try self.wholeCallable(arguments[1].view(),state);
+                for(arguments[0].objects.items) |object_id| { try self.c.step(); const member=try self.fieldFor(self.result.objects.items[@intFromEnum(object_id)].@"type".?,write.member); try self.currentStore(arguments[0].view(),.{.field=member},arguments[1].view(),state,transport); }
             },
-            .eh_field_initialize => |write|try self.currentStore(arguments[0].view(),.{.field=write.field},arguments[1].view(),state),
+            .eh_field_initialize => |write|try self.currentStore(arguments[0].view(),.{.field=write.field},arguments[1].view(),state,try self.transportReceiver(arguments[0].view(),false,state) and try self.wholeCallable(arguments[1].view(),state)),
             .domain_array_read,.domain_array_store,.domain_array_resize => {
                 var owners_current=try self.currentOwners(arguments[0].view(),state); defer owners_current.deinit(self.c.allocator);
                 var receiver: V=.{}; defer receiver.deinit(self.c.allocator); try self.setRegion(&receiver,owners_current.view());
-                if(op.data==.domain_array_store)try self.currentStore(receiver.view(),.{.element=arguments[1].number},arguments[2].view(),state)
-                else if(op.data==.domain_array_resize)try self.currentStore(receiver.view(),.length,arguments[1].view(),state)
+                if(op.data==.domain_array_store)try self.currentStore(receiver.view(),.{.element=arguments[1].number},arguments[2].view(),state,try self.transportReceiver(arguments[0].view(),true,state) and try self.wholeCallable(arguments[2].view(),state))
+                else if(op.data==.domain_array_resize)try self.currentStore(receiver.view(),.length,arguments[1].view(),state,false)
                 else {
                     var index=arguments[1].number;
                     const source=try facts.relation(self.c,arguments[0].view());
