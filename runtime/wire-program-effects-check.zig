@@ -59,7 +59,7 @@ const Owners = struct {
 // A result not yet derived is bottom only during private fixed-point work,
 // never an empty owner proof. After that closure, missing result values acquire
 // unresolved and propagate again before any effect permission is validated.
-const PrivateAggregate = struct { actual_type: t.TypeRef, concrete: usize };
+const PrivateAggregate = struct { actual_type: t.TypeRef, concrete: usize, block: usize, instruction: usize };
 const AliasSummary = struct {
     normal: Owners = .{},
     language: Owners = .{},
@@ -71,14 +71,15 @@ const AliasSummary = struct {
     transparent: bool = true,
     lexical_cells: bool = false,
     aggregates: std.AutoHashMapUnmanaged(t.RegisterRef, PrivateAggregate) = .empty,
-    fn deinit(self: *AliasSummary, allocator: std.mem.Allocator) void { self.normal.deinit(allocator); self.language.deinit(allocator); self.aggregates.deinit(allocator); }
+    aggregate_handles: std.AutoHashMapUnmanaged(t.RegisterRef, t.RegisterRef) = .empty,
+    fn deinit(self: *AliasSummary, allocator: std.mem.Allocator) void { self.normal.deinit(allocator); self.language.deinit(allocator); self.aggregates.deinit(allocator); self.aggregate_handles.deinit(allocator); }
 };
 const AliasLink = struct { from: usize, to: usize };
 const AliasVisit = struct { function: usize, next: usize = 0 };
 const UpperCompletions = struct { language: bool = false };
-// A logical Cell has no receiver; a private field has the single SSA receiver
-// handle whose actual uses were checked below. Neither key is an ObjectID or a
-// dynamic allocation/version. Both use the existing lexical OWNER fixed point.
+// A logical Cell has no receiver; a private field uses its original SSA
+// allocation handle. A closed same-block Cell protocol can share that key.
+// Neither key is an ObjectID or dynamic version: storage is still lexical.
 const OwnerSlot = struct { binding: t.BindingRef, receiver: ?t.RegisterRef = null };
 const UpperState = struct {
     values: []Owners,
@@ -180,9 +181,11 @@ const UpperGraph = struct {
     fn provePrivateAggregates(self: *UpperGraph) Error!void {
         const collector = self.collector; const c = collector.c; const v = collector.common();
         const function = c.program.functions[@intFromEnum(self.function)];
-        const aggregates = &collector.aliases[@intFromEnum(self.function)].aggregates;
+        const summary = &collector.aliases[@intFromEnum(self.function)];
+        const aggregates = &summary.aggregates; const handles = &summary.aggregate_handles;
         aggregates.clearRetainingCapacity();
-        for (function.blocks) |block| for (block.instructions) |op| {
+        handles.clearRetainingCapacity();
+        for (function.blocks, 0..) |block, block_index| for (block.instructions, 0..) |op, op_index| {
             try c.step(); if (op.data != .eh_construct) continue;
             const allocation = op.data.eh_construct; const row = v.types[@intFromEnum(allocation.owner)];
             const construction = v.members.constructions[@intFromEnum(allocation.constructor)];
@@ -192,27 +195,121 @@ const UpperGraph = struct {
             if (row.kind != .reference or row.base != null or construction.kind != .@"implicit-base" or
                 construction.function != null or construction.parameters.len != 0) continue;
             const concrete = collector.concrete[@intFromEnum(allocation.owner)] orelse return error.InvalidShape;
-            try aggregates.put(c.allocator, op.result.?, .{ .actual_type = allocation.owner, .concrete = concrete });
+            try aggregates.put(c.allocator, op.result.?, .{ .actual_type = allocation.owner, .concrete = concrete, .block = block_index, .instruction = op_index });
         };
-        // An alias can only be made through a real operand use. In particular
-        // named local/Cell or SourceBinding capture transport requires a store
-        // of this value and is excluded, even if that Cell was separately
-        // proved private. No relation is inferred from Source ranges or IDs.
+        // Source const lowering creates Cell72, reference-copy45 and store74
+        // after the initializer. Admit only one readonly local binding, with
+        // every birth, store, load and receiver use in this same basic block.
+        // Thus each block execution rebinds the Cell before any load; a loop
+        // cannot turn a previous object's fields into this birth's contents.
+        // This is a closed operand protocol, not an allocation-site identity
+        // or a second CFG/actual solve. Inter-block and further transport stay
+        // outside it, even when a Cell is otherwise independently private.
+        if (summary.lexical_cells) {
+            var entries = aggregates.iterator();
+            transport: while (entries.next()) |entry| {
+                try c.step(); const original = entry.key_ptr.*; const aggregate = entry.value_ptr.*;
+                const instructions = function.blocks[aggregate.block].instructions;
+                var copy_at: ?usize = null;
+                for (instructions[aggregate.instruction + 1 ..], aggregate.instruction + 1 ..) |op, index| {
+                    try c.step(); if (op.data != .domain_copy or op.operands[0] != original) continue;
+                    if (copy_at != null or op.data.domain_copy.static_view != aggregate.actual_type) continue :transport;
+                    copy_at = index;
+                }
+                const copied_at = copy_at orelse continue;
+                const copied = instructions[copied_at].result.?;
+                var store_at: ?usize = null;
+                for (instructions[copied_at + 1 ..], copied_at + 1 ..) |op, index| {
+                    try c.step(); if (op.data != .eh_store or op.operands[1] != copied) continue;
+                    if (store_at != null or !op.data.eh_store.initialize) continue :transport;
+                    store_at = index;
+                }
+                const stored_at = store_at orelse continue;
+                const store_op = instructions[stored_at]; const cell_id = store_op.data.eh_store.binding;
+                const cell_handle = store_op.operands[0];
+                const binding_id = v.exceptions.bindings[@intFromEnum(cell_id)].binding;
+                const binding_row = v.storage.bindings[@intFromEnum(binding_id)];
+                if (binding_row.owner != .local or binding_row.owner.local != self.function or binding_row.writable or
+                    binding_row.@"type" != aggregate.actual_type or binding_row.declaration_kind == null or
+                    binding_row.declaration_kind.? != .local) continue;
+                // proveLexicalCells already excludes every declared capture
+                // and all handle aliases, with one birth for this binding.
+                var cell_at: ?usize = null;
+                for (instructions[aggregate.instruction + 1 .. copied_at], aggregate.instruction + 1 ..) |op, index| {
+                    try c.step(); if (op.data == .eh_cell and op.data.eh_cell.binding == cell_id and op.result.? == cell_handle) cell_at = index;
+                }
+                const born_at = cell_at orelse continue;
+                var local_handles: std.AutoHashMapUnmanaged(t.RegisterRef, void) = .empty; defer local_handles.deinit(c.allocator);
+                try c.charge(2); try local_handles.put(c.allocator, original, {}); try local_handles.put(c.allocator, copied, {});
+                // Every Cell use must be this sole initialization or a later
+                // load. No missing initialization, alternative write, handle
+                // phi, capture or escape is inferred from the declaration.
+                for (function.blocks, 0..) |block, block_index| for (block.instructions, 0..) |op, index| {
+                    try c.step();
+                    if (op.data == .eh_store and v.exceptions.bindings[@intFromEnum(op.data.eh_store.binding)].binding == binding_id and
+                        (block_index != aggregate.block or index != stored_at)) continue :transport;
+                    for (op.operands, 0..) |reg, operand| {
+                        try c.step(); if (reg != cell_handle) continue;
+                        if (block_index != aggregate.block or operand != 0) continue :transport;
+                        switch (op.data) {
+                            .eh_store => {}, // Sole binding initialization checked above.
+                            .eh_load => {
+                                if (index <= stored_at) continue :transport;
+                                try c.step(); try local_handles.put(c.allocator, op.result.?, {});
+                            },
+                            else => continue :transport,
+                        }
+                    }
+                };
+                // Ref-copy preserves this reference (never a value body).
+                // Only its one Cell store consumes the copy; loaded handles
+                // may only access own fields, with no further transport or 81.
+                for (function.blocks, 0..) |block, block_index| for (block.instructions, 0..) |op, index| {
+                    try c.step(); for (op.operands, 0..) |reg, operand| {
+                        try c.step(); if (!local_handles.contains(reg)) continue;
+                        if (block_index != aggregate.block) continue :transport;
+                        if (reg == copied) {
+                            if (index != stored_at or operand != 1) continue :transport;
+                            continue;
+                        }
+                        if (reg == original and index == copied_at and operand == 0) continue;
+                        const allowed = operand == 0 and switch (op.data) {
+                            .eh_field_initialize => |write| reg == original and index < born_at and v.members.fields[@intFromEnum(write.field)].owner == aggregate.actual_type,
+                            else => self.ownFieldAccess(op, aggregate.actual_type),
+                        };
+                        if (!allowed) continue :transport;
+                    }
+                };
+                var aliases = local_handles.keyIterator(); while (aliases.next()) |reg| {
+                    try c.step(); try handles.put(c.allocator, reg.*, original);
+                }
+            }
+        }
+        // Other aggregates retain the direct-receiver-only rule. The handles
+        // above already have their entire operand inventory checked once.
         for (function.blocks) |block| for (block.instructions) |op| for (op.operands, 0..) |reg, index| {
-            try c.step(); const aggregate = aggregates.get(reg) orelse continue;
+            try c.step(); if (handles.contains(reg)) continue;
+            const aggregate = aggregates.get(reg) orelse continue;
             const allowed = index == 0 and switch (op.data) {
-                .domain_field_read => |read| read.receiver_view == aggregate.actual_type and v.members.fields[@intFromEnum(read.member)].owner == aggregate.actual_type,
-                .domain_field_store => |write| write.receiver_view == aggregate.actual_type and v.members.fields[@intFromEnum(write.member)].owner == aggregate.actual_type and !v.members.fields[@intFromEnum(write.member)].readonly,
                 .eh_field_initialize => |write| v.members.fields[@intFromEnum(write.field)].owner == aggregate.actual_type,
-                else => false,
+                else => self.ownFieldAccess(op, aggregate.actual_type),
             };
             if (!allowed) _ = aggregates.remove(reg);
         };
     }
+    fn ownFieldAccess(self: *const UpperGraph, op: model.instruction.Instruction, actual_type: t.TypeRef) bool {
+        const fields = self.collector.common().members.fields;
+        return switch (op.data) {
+            .domain_field_read => |read| read.receiver_view == actual_type and fields[@intFromEnum(read.member)].owner == actual_type,
+            .domain_field_store => |write| write.receiver_view == actual_type and fields[@intFromEnum(write.member)].owner == actual_type and !fields[@intFromEnum(write.member)].readonly,
+            else => false,
+        };
+    }
     fn privateField(self: *UpperGraph, receiver: t.RegisterRef, field: t.FieldRef) ?OwnerSlot {
         const summary = &self.collector.aliases[@intFromEnum(self.function)];
-        if (!summary.aggregates.contains(receiver)) return null;
-        return .{ .binding = self.collector.common().members.fields[@intFromEnum(field)].binding, .receiver = receiver };
+        const original = summary.aggregate_handles.get(receiver) orelse receiver;
+        if (!summary.aggregates.contains(original)) return null;
+        return .{ .binding = self.collector.common().members.fields[@intFromEnum(field)].binding, .receiver = original };
     }
     fn mark(self: *UpperGraph, owners: *const Owners, mode: Access) Error!void {
         if (self.summarizing) return;
@@ -335,7 +432,9 @@ const UpperGraph = struct {
                 .environment_alloc, .environment_load, .environment_store,
                 .environment_init, .environment_parent, .domain_array_read, .domain_array_store, .domain_array_resize,
                 .common_typed_array_create, .domain_read_span => summary.transparent = false,
-                .domain_field_read, .domain_field_store, .eh_field_initialize => if (!summary.aggregates.contains(op.operands[0])) { summary.transparent = false; },
+                .domain_field_read => |read| if (self.privateField(op.operands[0], read.member) == null) { summary.transparent = false; },
+                .domain_field_store => |write| if (self.privateField(op.operands[0], write.member) == null) { summary.transparent = false; },
+                .eh_field_initialize => |write| if (self.privateField(op.operands[0], write.field) == null) { summary.transparent = false; },
                 .eh_construct => if (!summary.aggregates.contains(op.result.?)) { summary.transparent = false; },
                 .function_make => if (op.operands.len != 0) { summary.transparent = false; },
                 .domain_literal => |data| if (v.types[@intFromEnum(data.actual_type)].kind == .reference) { summary.transparent = false; },
