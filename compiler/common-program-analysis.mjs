@@ -67,7 +67,9 @@ function admit(input,publication) {
     check(commonFacets.every(flag=>typeof row.upper.facets[flag]==='boolean'),'publication');
     for(const key of ['reads','writes']){const set=row.upper.globals[key];check(Array.isArray(set)&&set.length<=4096,'publication');spend(set.length);
       check(sorted(set),'publication');
-      check(set.every(id=>globals.has(id)&&(key!=='writes'||globals.get(id).writable)),'publication-identity');}
+      // This is conditional permission for payload reachable through the
+      // Global. Source/global_store separately own binding replacement.
+      check(set.every(id=>globals.has(id)),'publication-identity');}
     const parameters=[...(fn.ownerType?[{type:fn.ownerType}]:[]),...fn.parameters];check(Array.isArray(row.upper.parameters)&&row.upper.parameters.length===parameters.length,'publication');
     for(const [index,p]of row.upper.parameters.entries()){spend();record(p,['index',...flags]);check(p.index===index&&flags.every(flag=>typeof p[flag]==='boolean'),'publication');
       const type=types.get(parameters[index].type);if(type.kind==='readSpan')check(!p.write&&!p.structural,'publication');}

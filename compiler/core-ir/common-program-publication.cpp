@@ -148,11 +148,11 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
   const std::pair<llvm::StringRef,bool *> flags[]={{"allocation",&out.allocation},{"managedReference",&out.managedReference},{"ehControl",&out.ehControl},{"mayThrow",&out.mayThrow},
     {"await",&out.await},{"lock",&out.lock},{"escape",&out.escape},{"unknownHost",&out.unknownHost}};
   for(auto [key,to]:flags){auto value=field(facets,key).getAsBoolean();if(!need(bool(value),e,"fixed facet must be boolean"))return false;*to=*value;}
-  std::map<std::string,bool> globals;for(const auto &g:items(field(p.hir,"globals")))globals.emplace(string(field(g,"id")),field(g,"writable").getAsBoolean()==true);
+  std::set<std::string> globals;for(const auto &g:items(field(p.hir,"globals")))globals.insert(string(field(g,"id")));
   for(auto key:{"reads","writes"}){const auto &rawSet=field(field(raw,"globals"),key);auto &to=llvm::StringRef(key)=="reads"?out.reads:out.writes;
     if(!need(rawSet.getAsArray()&&items(rawSet).size()<=4096,e,"fixed global set bound differs"))return false;std::string previous;
     for(const auto &value:items(rawSet)){if(!work(p,e))return false;const auto id=string(value);
-      if(!need(globals.count(id)&&(llvm::StringRef(key)!="writes"||globals.at(id))&&(previous.empty()||previous<id),e,"fixed GlobalId set differs"))return false;
+      if(!need(globals.count(id)&&(previous.empty()||previous<id),e,"fixed GlobalId set differs"))return false;
       previous=id;to.insert(id);}
   }
   const auto count=items(field(fn,"parameters")).size()+(!field(fn,"ownerType").getAsNull());

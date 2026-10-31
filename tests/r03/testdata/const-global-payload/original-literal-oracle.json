@@ -1,0 +1,113 @@
+{
+  "origin": "Frozen before producer: independent ASCII/UTF16 literal ranges and documented Source nominal/function/binding/field hash domains; not independent official AST/Symbol execution",
+  "sourceSha256": "40162f00023d5066a1af2408d343b95f341c29ac6e923cf69f42e9a9f091cb01",
+  "sourcePath": "/src/main.ts",
+  "cell": {
+    "id": "nominal:bb42e265a7c6de60af36dc355a264f93568bd434782616e153964148573ce31f",
+    "declarationRange": {
+      "start": 0,
+      "end": 30
+    },
+    "nameRange": {
+      "start": 6,
+      "end": 10
+    },
+    "field": {
+      "id": "sha256:1bd88dbd5dd81850079d56444799d3b4f2a126c76b3b619340fba5a52ad9080c",
+      "nameRange": {
+        "start": 13,
+        "end": 18
+      },
+      "declarationRange": {
+        "start": 13,
+        "end": 28
+      }
+    },
+    "constructionKind": "implicit-base",
+    "explicitConstructor": null
+  },
+  "global": {
+    "id": "sha256:a301135e46863b6d98d4b4b38cdae5887b62855ea3bda7bbd39c5477993679dd",
+    "declarationKind": "const",
+    "bindingKind": "global",
+    "writable": false,
+    "type": "nominal:bb42e265a7c6de60af36dc355a264f93568bd434782616e153964148573ce31f",
+    "declarationRange": {
+      "start": 37,
+      "end": 62
+    },
+    "nameRange": {
+      "start": 37,
+      "end": 43
+    },
+    "annotationRange": {
+      "start": 45,
+      "end": 49
+    },
+    "initializer": {
+      "kind": "new",
+      "type": "nominal:bb42e265a7c6de60af36dc355a264f93568bd434782616e153964148573ce31f",
+      "range": {
+        "start": 52,
+        "end": 62
+      },
+      "calleeRange": {
+        "start": 56,
+        "end": 60
+      }
+    }
+  },
+  "function": {
+    "id": "sha256:c19098563840b20df325f6da0992e602f3a96ed15b853f489b23e259ed232856",
+    "name": "writeCell",
+    "declarationRange": {
+      "start": 64,
+      "end": 153
+    },
+    "parameter": {
+      "id": "sha256:2d132dbb9381095e8d9f1a1de9ee54ee5e6871b800b707d28ca83c71f0f6bf3c",
+      "declarationRange": {
+        "start": 90,
+        "end": 100
+      },
+      "nameRange": {
+        "start": 90,
+        "end": 95
+      }
+    }
+  },
+  "fieldWrite": {
+    "property": "sha256:1bd88dbd5dd81850079d56444799d3b4f2a126c76b3b619340fba5a52ad9080c",
+    "receiverBinding": "sha256:a301135e46863b6d98d4b4b38cdae5887b62855ea3bda7bbd39c5477993679dd",
+    "range": {
+      "start": 109,
+      "end": 129
+    },
+    "targetRange": {
+      "start": 109,
+      "end": 121
+    },
+    "nameRange": {
+      "start": 116,
+      "end": 121
+    },
+    "valueBinding": "sha256:2d132dbb9381095e8d9f1a1de9ee54ee5e6871b800b707d28ca83c71f0f6bf3c",
+    "valueRange": {
+      "start": 124,
+      "end": 129
+    }
+  },
+  "fieldRead": {
+    "property": "sha256:1bd88dbd5dd81850079d56444799d3b4f2a126c76b3b619340fba5a52ad9080c",
+    "receiverBinding": "sha256:a301135e46863b6d98d4b4b38cdae5887b62855ea3bda7bbd39c5477993679dd",
+    "range": {
+      "start": 138,
+      "end": 150
+    },
+    "nameRange": {
+      "start": 145,
+      "end": 150
+    }
+  },
+  "semanticExpectation": "const forbids shared binding replacement; owner payload field write is legal subject to fixed Global write permission. writeCell reads back the assigned i32. No Graph/Runtime execution or admission claimed."
+}
