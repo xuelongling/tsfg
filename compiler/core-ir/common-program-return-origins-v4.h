@@ -483,10 +483,15 @@ public:
   Inclusion(const Graph &body,const Graph &upper,const FixedContracts &fixed,Meter &meter):body_(body),upper_(upper),fixed_(fixed),m_(meter){}
   bool run(){
     if(!m_.spend(fixed_.size()+3)||!addGraph(body_)||!addGraph(upper_))return false;
-    for(const auto &row:fixed_){if(!m_.spend())return false;if(!row.second)return open("missing-fixed-call");if(!addGraph(*row.second))return false;}
-    for(const auto *graph:graphs_)if(graph->version!=4)return open("draft4-only");
-    for(const auto *graph:graphs_)for(const auto &node:graph->nodes){if(!m_.spend())return false;if(node.kind==ValueKind::Unknown)return open("unknown-data-origin");}
-    for(const auto *graph:graphs_)for(const auto &call:graph->calls)if(!fixed(call.functionId))return false;
+    // Complete nonnull group admission precedes this typed certificate. Data
+    // capability depends only on the body, selected bound and their COMPLETE
+    // syntactic call closure, never actual/live arms or unrelated members.
+    for(Ref index=0;index<graphs_.size();++index){
+      if(!m_.spend())return false;const auto *graph=graphs_[index];
+      if(graph->version!=4)return open("draft4-only");
+      for(const auto &node:graph->nodes){if(!m_.spend())return false;if(node.kind==ValueKind::Unknown)return open("unknown-data-origin");}
+      for(const auto &call:graph->calls){if(!m_.spend())return false;const auto *callee=fixed(call.functionId);if(!callee||!addGraph(*callee))return false;}
+    }
     if(!controlClosure())return false;Certificate first;if(!initial(first))return false;if(!push(search_,std::move(first),m_))return false;
     while(!search_.empty()){
       if(!m_.spend())return false;Certificate state=std::move(search_.back());search_.pop_back();bool failed=false;
