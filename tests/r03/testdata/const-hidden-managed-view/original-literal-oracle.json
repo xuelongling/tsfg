@@ -1,0 +1,153 @@
+{
+  "origin": "Frozen before producer: independent ASCII/UTF16 literal ranges and documented Source nominal/function/binding/field hash domains; not independent official AST/Symbol execution",
+  "sourceSha256": "f167c0167e5bd15cefce61a1816652657c887a56d04ebf3c9bfebcf2a79756c3",
+  "sourcePath": "/src/main.ts",
+  "cell": {
+    "id": "nominal:bb42e265a7c6de60af36dc355a264f93568bd434782616e153964148573ce31f",
+    "declarationRange": {
+      "start": 0,
+      "end": 30
+    },
+    "nameRange": {
+      "start": 6,
+      "end": 10
+    },
+    "field": {
+      "id": "sha256:1bd88dbd5dd81850079d56444799d3b4f2a126c76b3b619340fba5a52ad9080c",
+      "nameRange": {
+        "start": 13,
+        "end": 18
+      },
+      "declarationRange": {
+        "start": 13,
+        "end": 28
+      }
+    },
+    "constructionKind": "implicit-base",
+    "explicitConstructor": null
+  },
+  "global": {
+    "id": "sha256:a301135e46863b6d98d4b4b38cdae5887b62855ea3bda7bbd39c5477993679dd",
+    "declarationKind": "const",
+    "bindingKind": "global",
+    "writable": false,
+    "declaredType": "i32",
+    "declarationRange": {
+      "start": 37,
+      "end": 79
+    },
+    "nameRange": {
+      "start": 37,
+      "end": 43
+    },
+    "annotationRange": {
+      "start": 45,
+      "end": 48
+    },
+    "initializer": {
+      "outerViewType": "i32",
+      "outerRange": {
+        "start": 51,
+        "end": 79
+      },
+      "innerViewType": "unknown",
+      "innerRange": {
+        "start": 51,
+        "end": 72
+      },
+      "originalNewType": "nominal:bb42e265a7c6de60af36dc355a264f93568bd434782616e153964148573ce31f",
+      "newRange": {
+        "start": 51,
+        "end": 61
+      },
+      "newCalleeRange": {
+        "start": 55,
+        "end": 59
+      }
+    }
+  },
+  "function": {
+    "id": "sha256:1230ebf44811db83074a7145f3ad28c620f97b652ad81821cde86352e4e4f86c",
+    "name": "writeHidden",
+    "declarationRange": {
+      "start": 81,
+      "end": 214
+    },
+    "parameter": {
+      "id": "sha256:676896f8a99436ef83a489a2f6428b72eff4161f8467aeaa8291c7a5f8f1cad2",
+      "declarationRange": {
+        "start": 109,
+        "end": 119
+      },
+      "nameRange": {
+        "start": 109,
+        "end": 114
+      }
+    }
+  },
+  "local": {
+    "id": "sha256:d011fdd5aa47ce1f5bc8cd0761651b2209f1bc4072cf8ef17b06cc6649ee9e7c",
+    "writable": false,
+    "declaredType": "nominal:bb42e265a7c6de60af36dc355a264f93568bd434782616e153964148573ce31f",
+    "declarationRange": {
+      "start": 134,
+      "end": 172
+    },
+    "nameRange": {
+      "start": 134,
+      "end": 138
+    },
+    "initializer": {
+      "outerViewType": "nominal:bb42e265a7c6de60af36dc355a264f93568bd434782616e153964148573ce31f",
+      "outerRange": {
+        "start": 147,
+        "end": 172
+      },
+      "innerViewType": "unknown",
+      "innerRange": {
+        "start": 147,
+        "end": 164
+      },
+      "originalBinding": "sha256:a301135e46863b6d98d4b4b38cdae5887b62855ea3bda7bbd39c5477993679dd",
+      "originalDeclaredType": "i32",
+      "bindingRange": {
+        "start": 147,
+        "end": 153
+      }
+    }
+  },
+  "fieldWrite": {
+    "property": "sha256:1bd88dbd5dd81850079d56444799d3b4f2a126c76b3b619340fba5a52ad9080c",
+    "receiverBinding": "sha256:d011fdd5aa47ce1f5bc8cd0761651b2209f1bc4072cf8ef17b06cc6649ee9e7c",
+    "range": {
+      "start": 174,
+      "end": 192
+    },
+    "targetRange": {
+      "start": 174,
+      "end": 184
+    },
+    "nameRange": {
+      "start": 179,
+      "end": 184
+    },
+    "valueBinding": "sha256:676896f8a99436ef83a489a2f6428b72eff4161f8467aeaa8291c7a5f8f1cad2",
+    "valueRange": {
+      "start": 187,
+      "end": 192
+    }
+  },
+  "fieldRead": {
+    "property": "sha256:1bd88dbd5dd81850079d56444799d3b4f2a126c76b3b619340fba5a52ad9080c",
+    "receiverBinding": "sha256:d011fdd5aa47ce1f5bc8cd0761651b2209f1bc4072cf8ef17b06cc6649ee9e7c",
+    "range": {
+      "start": 201,
+      "end": 211
+    },
+    "nameRange": {
+      "start": 206,
+      "end": 211
+    }
+  },
+  "semanticExpectation": "Global hidden remains const with native declared i32; two original double-as chains expose the actual managed Cell content to a local Cell view. Payload write is subject to conditionalOwner global grant, not writable binding replacement. Actual managed tags and Common qualification must be established downstream; no fake tags or Graph6/global history result here."
+}
