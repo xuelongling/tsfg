@@ -3,12 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {commonBorrowObservations} from '../../compiler/common-program-borrow-observations.mjs';
-function model(mode='complete'){
+function model(mode='complete',allocationEvent='allocate_reference'){
   const value=(tag,refs=[],number=null,unknown=false)=>({tags:new Set([tag]),refs:new Set(refs),cells:new Set(),pairs:new Map(),number,unknown,truth:0,region:{roots:new Set(),opaque:false,empty:true}});
   const fields=[{id:'owner',type:'array',readonly:true},{id:'span',type:'span',readonly:mode!=='mutable-descriptor'}],
     types=new Map([['i32',{id:'i32',kind:'scalar'}],['array',{id:'array',kind:'array',elementType:'i32'}],['span',{id:'span',kind:'readSpan',elementType:'i32'}],
       ['holder',{id:'holder',kind:'reference',fields}],['out-array',{id:'out-array',kind:'array',elementType:'holder'}]]),
-    objects=new Map([['out',{type:'out-array',weak:true}],['a',{type:'array',weak:mode==='weak-owner'}],['b',{type:'array',weak:false}],['s',{type:'span',weak:false}],['h',{type:'holder',weak:false}]]),
+    objects=new Map([['out',{type:'out-array',weak:true}],['a',{type:'array',weak:mode==='weak-owner'}],['b',{type:'array',weak:false}],['s',{type:'span',weak:false}],['h',{type:'holder',weak:mode==='weak-holder'}]]),
     out=value('out-array',['out']),a=value('array',['a']),b=value('array',['b']),span=value('span',['s']),h=value('holder',['h']),
     heap=new Map([['out/element/*',value('holder',[],null,true)],['a/length',value('i32',[],1)],['a/element/0',value('i32',[],1)],
       ['b/length',value('i32',[],1)],['b/element/0',value('i32',[],2)],['s/owner',value('array',mode==='may-owner'?['a','b']:['a'])],
@@ -22,7 +22,7 @@ function model(mode='complete'){
     observer.edge(previous,at);const op={name:'tsfg_program.'+name,operands:name==='array_read'?['other']:[],properties:{},range:{start:at==='store'?100:200,end:at==='store'?110:210},view};
     const covered=observer.before(c,op,state,args,at);if(result)observer.after(c,op,state,result,at);previous=at;return covered;
   };
-  step('a','array_create',[],a);step('b','array_create',[],b);step('s','readspan',[],span,'span');step('h','allocate_reference',[],h);
+  step('a','array_create',[],a);step('b','array_create',[],b);step('s','readspan',[],span,'span');step('h',allocationEvent,[],h);
   if(mode==='other-live'){
     objects.set('other-array',{type:'array',weak:true});objects.set('other-span',{type:'span',weak:false});
     heap.set('other-span/owner',value('array',['other-array']));heap.set('other-span/start',value('i32',[],0));heap.set('other-span/length',value('i32',[],1));
@@ -49,3 +49,21 @@ test('stable external storage separation does not bless other active owners',()=
     'code'in error&&'primary'in error&&typeof error.primary==='object'&&error.primary!==null&&'start'in error.primary&&'end'in error.primary&&
     error.code==='r03-common-program-borrow-pending'&&error.primary.start===100&&error.primary.end===110);
 });
+
+// Actual-flow adapter controls, not Source facts or construction authority.
+test('receiver allocation records the same actual ownership provenance as other allocation events',()=>{
+  const run=model('complete','receiver_allocate');assert.equal(run.covered,true);assert.ok(run.finish().borrows>0);
+});
+test('receiver allocation preserves a real structural conflict after external transfer',()=>{
+  const run=model('post-resize','receiver_allocate');assert.equal(run.covered,true);
+  assert.throws(run.finish,error=>error instanceof Error&&'code' in error&&error.code==='r03-common-program-borrow-conflict');
+});
+test('a weak actual receiver allocation still lacks unique lifetime provenance',()=>{
+  const run=model('weak-holder','receiver_allocate');assert.equal(run.covered,false);
+  assert.throws(run.finish,error=>error instanceof Error&&'code' in error&&error.code==='r03-common-program-borrow-pending');
+});
+for(const event of ['receiver_create','receiver_child','receiver_bind','receiver_result'])
+  test(event+' cannot independently give an existing or replacement object fresh provenance',()=>{
+    const run=model('complete',event);assert.equal(run.covered,true);
+    assert.throws(run.finish,error=>error instanceof Error&&'code' in error&&error.code==='r03-common-program-borrow-pending');
+  });

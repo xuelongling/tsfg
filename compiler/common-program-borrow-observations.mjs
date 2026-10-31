@@ -409,7 +409,7 @@ export function commonBorrowObservations({model,records,objects,internalFunction
     proof?.after(c,op,value,at);
     const name=op.name.replace('tsfg_program.','');
     if(name==='env_alloc')for(const ref of value.refs){spend();graph.fresh.add(ref);remember(allocations,ref,c,{kind:'environment',weak:objects.get(ref).weak});}
-    if(['array_create','allocate_reference','construct_value','value_copy'].includes(name))for(const ref of value.refs){spend();if(name==='value_copy'&&kind(ref)!=='value')continue;
+    if(['array_create','allocate_reference','receiver_allocate','construct_value','value_copy'].includes(name))for(const ref of value.refs){spend();if(name==='value_copy'&&kind(ref)!=='value')continue;
       graph.fresh.add(ref);remember(allocations,ref,c,{kind:kind(ref),element:types.get(objects.get(ref).type)?.elementType,weak:objects.get(ref).weak});}
     if(name==='readspan')for(const ref of value.refs){spend();define(at,ref,state.heap,objects.get(ref)?.weak);
       remember(creations,ref,c,{element:types.get(op.view).elementType,weak:objects.get(ref).weak,owner:owners(ref,state.heap)});}

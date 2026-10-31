@@ -41,6 +41,9 @@ bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
   const bool tracked=to.region.known||from.region.known;RegionValue provenance;
   if(tracked){provenance=regionValue(*this,to);regionMerge(*this,provenance,regionValue(*this,from));}
   const bool bottom=to.tags.empty()&&to.objects.empty()&&to.cells.empty()&&to.callables.empty()&&to.frames.empty()&&to.cursors.empty()&&!to.unknown&&!to.callableTop;
+  // Only a completely empty incoming value is the numeric join identity.
+  // Code/Env, scalar uncertainty and every relation fact still widen it.
+  const bool incomingBottom=from.tags.empty()&&from.objects.empty()&&from.cells.empty()&&from.callables.empty()&&from.frames.empty()&&from.cursors.empty()&&!from.unknown&&!from.callableTop&&from.truth==0&&!from.number&&!from.region.known&&!from.region.opaque&&!from.region.empty&&!from.region.number&&from.region.roots.empty();
   bool changed=false;
   for(const auto &id:from.tags)if(to.tags.insert(id).second)changed=true;
   for(const auto &id:from.objects)if(to.objects.insert(id).second)changed=true;
@@ -49,7 +52,7 @@ bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
   for(const auto &id:from.frames)if(to.frames.insert(id).second)changed=true;
   for(const auto &id:from.cursors)if(to.cursors.insert(id).second)changed=true;
   const auto top=to.callableTop,unknown=to.unknown;const auto truth=to.truth;const auto number=to.number;
-  to.callableTop|=from.callableTop;to.truth|=from.truth;to.unknown|=from.unknown;to.number=bottom?from.number:to.number==from.number?to.number:std::nullopt;
+  to.callableTop|=from.callableTop;to.truth|=from.truth;to.unknown|=from.unknown;to.number=incomingBottom?to.number:bottom?from.number:to.number==from.number?to.number:std::nullopt;
   changed|=top!=to.callableTop||truth!=to.truth||unknown!=to.unknown||number!=to.number;
   if(tracked){
     changed|=to.region.known!=provenance.known||to.region.opaque!=provenance.opaque||to.region.empty!=provenance.empty||to.region.number!=provenance.number||to.region.roots!=provenance.roots;

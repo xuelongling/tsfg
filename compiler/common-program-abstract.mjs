@@ -67,7 +67,11 @@ export function commonAbstract(model) {
     for(const [key,pair]of from.pairs){const prior=to.pairs.get(key);if(!prior||prior.functionId!==pair.functionId||prior.environment!==pair.environment){to.pairs.set(key,pair);changed=true;}}
     for(const name of ['tags','refs','cells','frames','cursors'])for(const id of from[name])if(!to[name].has(id)){to[name].add(id);changed=true;}
     check(to.tags.size<=256&&to.refs.size<=256&&to.cells.size<=256&&to.pairs.size<=256,'limit');
-    const truth=to.truth|from.truth,unknown=to.unknown||from.unknown,number=blank?from.number:to.number===from.number?to.number:null;
+    // Bottom has no actual payload or relation contribution. Joining an absent
+    // birth/store must not erase a constant from a reachable completion.
+    const bottom=!from.unknown&&!from.tags.size&&!from.refs.size&&!from.cells.size&&!from.pairs.size&&!from.frames.size&&!from.cursors.size
+      &&from.truth===0&&from.number===null&&!from.region.roots.size&&!from.region.opaque&&!from.region.empty&&from.region.number===null;
+    const truth=to.truth|from.truth,unknown=to.unknown||from.unknown,number=bottom?to.number:blank?from.number:to.number===from.number?to.number:null;
     changed ||= truth!==to.truth||unknown!==to.unknown||number!==to.number;to.truth=truth;to.unknown=unknown;to.number=number;
     let relationChanged=false;
     if(!to.region.roots.size&&!to.region.opaque&&!from.region.roots.size&&!from.region.opaque){
