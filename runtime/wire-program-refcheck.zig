@@ -16,6 +16,7 @@ const ssa_check = @import("wire-program-ssa-check.zig");
 const identity_check = @import("wire-program-identity-check.zig");
 const reference_contracts_check = @import("wire-program-reference-contracts-check.zig");
 const construction_contracts_check = @import("wire-program-construction-contracts-check.zig");
+const construction_body_check = @import("wire-program-construction-body-check.zig");
 const fixed_publication_check = @import("wire-program-fixed-publication-check.zig");
 const fixed_targets_check = @import("wire-program-fixed-targets-check.zig");
 const kernel_request_check = @import("wire-program-kernel-request-check.zig");
@@ -88,6 +89,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     actual = try targets_check.analyze(&c, material, &observers);
     try borrowing.finish();
     try effects.finish();
+    try construction_body_check.checkBodies(&c);
     return model.format.max_work - c.remaining;
 }
 
