@@ -15,6 +15,7 @@ const layout_check = @import("wire-program-layout-check.zig");
 const ssa_check = @import("wire-program-ssa-check.zig");
 const identity_check = @import("wire-program-identity-check.zig");
 const fixed_publication_check = @import("wire-program-fixed-publication-check.zig");
+const kernel_request_check = @import("wire-program-kernel-request-check.zig");
 const targets_check = @import("wire-program-targets-check.zig");
 const borrow_check = @import("wire-program-borrow-check.zig");
 const effects_check = @import("wire-program-effects-check.zig");
@@ -64,6 +65,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     try identity_check.check(&c);
     // Fixed interface semantics also owns the Common-only boundary.
     try fixed_publication_check.checkInterfaces(&c);
+    try kernel_request_check.checkDeclarations(&c);
     try host_artifact.check(&c, material);
     var actual: targets_check.Analysis = .{};
     defer actual.deinit(allocator);
