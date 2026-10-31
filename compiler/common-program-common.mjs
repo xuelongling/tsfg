@@ -19,9 +19,13 @@ export function commonFailure(kind,message='complete common Program differs',det
 export const commonCheck=(condition,kind='input',message=undefined,details=undefined)=>{
   if(!condition)commonFailure(kind,message,details);
 };
-export function commonBudget(value) {
-  try{checkGenericJsonValueBudget(value,{...commonJsonPolicy,bytes:commonJsonPolicy.bytes-1});}
-  catch(error){commonFailure(error.code?.endsWith('-limit')?'limit':'input');}
+/** @param {((units:number)=>void)} [spend] */
+export function commonBudget(value,spend=undefined) {
+  let charging=false;
+  /** @type {((units:number)=>void)|undefined} */
+  const charge=spend===undefined?undefined:units=>{charging=true;spend(units);charging=false;};
+  try{checkGenericJsonValueBudget(value,{...commonJsonPolicy,bytes:commonJsonPolicy.bytes-1},charge);}
+  catch(error){if(charging)throw error;commonFailure(error.code?.endsWith('-limit')?'limit':'input');}
 }
 export function commonJson(bytes) {
   try{const input=readGenericJson(copyGenericJsonBytes(bytes,commonJsonPolicy),commonJsonPolicy);

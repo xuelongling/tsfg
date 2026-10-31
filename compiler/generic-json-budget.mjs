@@ -29,8 +29,12 @@ export function genericJsonFailure(policy, category) {
 // Bound the complete canonical representation before allocating DTO copies,
 // canonical text or hash preimages. Inspect descriptors without invoking getters.
 // Count repeated references each time they would be serialized; reject cycles.
-/** @param {Readonly<GenericJsonPolicy>} [policy] */
-export function checkGenericJsonValueBudget(input, policy = genericPackageJsonPolicy) {
+// Optional shared work charging does not replace the structural JSON policy.
+// One native ownKeys discovery has unknown cardinality before it returns: pay
+// entry first, then the discovered length before descriptors/child traversal.
+// This is not a promise to interrupt that single native primitive.
+/** @param {Readonly<GenericJsonPolicy>} [policy] @param {((units:number)=>void)} [spend] */
+export function checkGenericJsonValueBudget(input, policy = genericPackageJsonPolicy, spend = undefined) {
   const limit = policy, active = new Set();
   const check = (value, category = 'schema') => { if (!value) genericJsonFailure(policy, category); };
   const integer = value => check(Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0));
@@ -38,6 +42,7 @@ export function checkGenericJsonValueBudget(input, policy = genericPackageJsonPo
   const add = count => { size += count; check(size <= limit.bytes, "limit"); };
   const event = (count = 1) => { tokens += count; check(tokens <= limit.jsonTokens, "limit"); };
   function string(value) {
+    spend?.(Math.ceil(value.length / 8) + 1);
     let decoded = 0;
     add(2);
     for (let index = 0; index < value.length; index++) {
@@ -54,6 +59,7 @@ export function checkGenericJsonValueBudget(input, policy = genericPackageJsonPo
     }
   }
   function visit(value, depth) {
+    spend?.(2);
     if (typeof value === "string") { event(); string(value); return; }
     if (typeof value === "number") { event(); integer(value); add(String(value).length); return; }
     if (typeof value === "boolean" || value === null) { event(); add(value === null ? 4 : value ? 4 : 5); return; }
@@ -64,12 +70,18 @@ export function checkGenericJsonValueBudget(input, policy = genericPackageJsonPo
     const isArray = Array.isArray(value);
     check(isArray ? Object.getPrototypeOf(value) === Array.prototype
       : [Object.prototype, null].includes(Object.getPrototypeOf(value)));
-    if (isArray) check(value.length <= Math.min(limit.jsonTokens, limit.arrayItems ?? limit.jsonTokens), "limit");
+    if (isArray) {
+      check(value.length <= Math.min(limit.jsonTokens, limit.arrayItems ?? limit.jsonTokens), "limit");
+      spend?.(value.length + 1);
+    }
+    spend?.(1);
     const keys = Reflect.ownKeys(value);
+    spend?.(keys.length + 1);
     check(keys.length <= limit.jsonTokens + (isArray ? 1 : 0), "limit");
     active.add(value); event(2); add(2);
     let count = 0;
     for (const key of keys) {
+      spend?.(2);
       if (isArray && key === "length") continue;
       check(typeof key === "string");
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
