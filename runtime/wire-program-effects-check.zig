@@ -59,6 +59,7 @@ const Owners = struct {
 // A result not yet derived is bottom only during private fixed-point work,
 // never an empty owner proof. After that closure, missing result values acquire
 // unresolved and propagate again before any effect permission is validated.
+const PrivateAggregate = struct { actual_type: t.TypeRef, concrete: usize };
 const AliasSummary = struct {
     normal: Owners = .{},
     language: Owners = .{},
@@ -69,14 +70,19 @@ const AliasSummary = struct {
     available: bool = false,
     transparent: bool = true,
     lexical_cells: bool = false,
-    fn deinit(self: *AliasSummary, allocator: std.mem.Allocator) void { self.normal.deinit(allocator); self.language.deinit(allocator); }
+    aggregates: std.AutoHashMapUnmanaged(t.RegisterRef, PrivateAggregate) = .empty,
+    fn deinit(self: *AliasSummary, allocator: std.mem.Allocator) void { self.normal.deinit(allocator); self.language.deinit(allocator); self.aggregates.deinit(allocator); }
 };
 const AliasLink = struct { from: usize, to: usize };
 const AliasVisit = struct { function: usize, next: usize = 0 };
 const UpperCompletions = struct { language: bool = false };
+// A logical Cell has no receiver; a private field has the single SSA receiver
+// handle whose actual uses were checked below. Neither key is an ObjectID or a
+// dynamic allocation/version. Both use the existing lexical OWNER fixed point.
+const OwnerSlot = struct { binding: t.BindingRef, receiver: ?t.RegisterRef = null };
 const UpperState = struct {
     values: []Owners,
-    bindings: std.AutoHashMapUnmanaged(t.BindingRef, Owners) = .empty,
+    slots: std.AutoHashMapUnmanaged(OwnerSlot, Owners) = .empty,
     fn init(c: *Context, registers: usize) Error!UpperState {
         try c.charge(registers + 1);
         const values = try c.allocator.alloc(Owners, registers); errdefer c.allocator.free(values); @memset(values, .{});
@@ -84,33 +90,38 @@ const UpperState = struct {
     }
     fn deinit(self: *UpperState, c: *Context) void {
         for (self.values) |*value| value.deinit(c.allocator); c.allocator.free(self.values);
-        var cells = self.bindings.valueIterator(); while (cells.next()) |value| value.deinit(c.allocator); self.bindings.deinit(c.allocator);
+        var entries = self.slots.valueIterator(); while (entries.next()) |value| value.deinit(c.allocator); self.slots.deinit(c.allocator);
     }
     fn clone(c: *Context, source: *const UpperState) Error!UpperState {
         var result = try UpperState.init(c, source.values.len); errdefer result.deinit(c);
         for (source.values, result.values) |*value, *copy| copy.* = try Owners.clone(c, value);
-        var cells = source.bindings.iterator(); while (cells.next()) |cell| {
-            try c.step(); var copy = try Owners.clone(c, cell.value_ptr); errdefer copy.deinit(c.allocator);
-            try result.bindings.put(c.allocator, cell.key_ptr.*, copy);
+        var entries = source.slots.iterator(); while (entries.next()) |slot| {
+            try c.step(); var copy = try Owners.clone(c, slot.value_ptr); errdefer copy.deinit(c.allocator);
+            try result.slots.put(c.allocator, slot.key_ptr.*, copy);
         }
         return result;
     }
     fn join(self: *UpperState, c: *Context, source: *const UpperState) Error!bool {
         var changed = false;
         for (self.values, source.values) |*value, *incoming| changed = (try value.join(c, incoming)) or changed;
-        // A Cell/binding absent on either path is uninitialized/unproved, not
+        // A Cell or private field absent on either path is uninitialized, not
         // a known local empty value. Preserve that alternative at the join.
-        var previous = self.bindings.iterator(); while (previous.next()) |cell| {
-            try c.step(); if (!source.bindings.contains(cell.key_ptr.*)) changed = (try cell.value_ptr.add(c, .unresolved)) or changed;
+        var previous = self.slots.iterator(); while (previous.next()) |slot| {
+            try c.step(); if (!source.slots.contains(slot.key_ptr.*)) changed = (try slot.value_ptr.add(c, .unresolved)) or changed;
         }
-        var cells = source.bindings.iterator(); while (cells.next()) |cell| {
-            try c.step(); const destination = try self.bindings.getOrPut(c.allocator, cell.key_ptr.*);
+        var entries = source.slots.iterator(); while (entries.next()) |slot| {
+            try c.step(); const destination = try self.slots.getOrPut(c.allocator, slot.key_ptr.*);
             if (!destination.found_existing) {
                 destination.value_ptr.* = .{}; _ = try destination.value_ptr.add(c, .unresolved); changed = true;
             }
-            changed = (try destination.value_ptr.join(c, cell.value_ptr)) or changed;
+            changed = (try destination.value_ptr.join(c, slot.value_ptr)) or changed;
         }
         return changed;
+    }
+    fn store(self: *UpperState, c: *Context, slot: OwnerSlot, value: *const Owners) Error!void {
+        try c.step(); const destination = try self.slots.getOrPut(c.allocator, slot);
+        if (!destination.found_existing) destination.value_ptr.* = .{};
+        try destination.value_ptr.replace(c, value);
     }
 };
 
@@ -166,6 +177,43 @@ const UpperGraph = struct {
         };
         return true;
     }
+    fn provePrivateAggregates(self: *UpperGraph) Error!void {
+        const collector = self.collector; const c = collector.c; const v = collector.common();
+        const function = c.program.functions[@intFromEnum(self.function)];
+        const aggregates = &collector.aliases[@intFromEnum(self.function)].aggregates;
+        aggregates.clearRetainingCapacity();
+        for (function.blocks) |block| for (block.instructions) |op| {
+            try c.step(); if (op.data != .eh_construct) continue;
+            const allocation = op.data.eh_construct; const row = v.types[@intFromEnum(allocation.owner)];
+            const construction = v.members.constructions[@intFromEnum(allocation.constructor)];
+            // Common80 itself allocates. This first slice excludes all body
+            // invocation/super/value paths: a root's inline 81 initializers are
+            // still checked separately by the existing construction boundary.
+            if (row.kind != .reference or row.base != null or construction.kind != .@"implicit-base" or
+                construction.function != null or construction.parameters.len != 0) continue;
+            const concrete = collector.concrete[@intFromEnum(allocation.owner)] orelse return error.InvalidShape;
+            try aggregates.put(c.allocator, op.result.?, .{ .actual_type = allocation.owner, .concrete = concrete });
+        };
+        // An alias can only be made through a real operand use. In particular
+        // named local/Cell or SourceBinding capture transport requires a store
+        // of this value and is excluded, even if that Cell was separately
+        // proved private. No relation is inferred from Source ranges or IDs.
+        for (function.blocks) |block| for (block.instructions) |op| for (op.operands, 0..) |reg, index| {
+            try c.step(); const aggregate = aggregates.get(reg) orelse continue;
+            const allowed = index == 0 and switch (op.data) {
+                .domain_field_read => |read| read.receiver_view == aggregate.actual_type and v.members.fields[@intFromEnum(read.member)].owner == aggregate.actual_type,
+                .domain_field_store => |write| write.receiver_view == aggregate.actual_type and v.members.fields[@intFromEnum(write.member)].owner == aggregate.actual_type and !v.members.fields[@intFromEnum(write.member)].readonly,
+                .eh_field_initialize => |write| v.members.fields[@intFromEnum(write.field)].owner == aggregate.actual_type,
+                else => false,
+            };
+            if (!allowed) _ = aggregates.remove(reg);
+        };
+    }
+    fn privateField(self: *UpperGraph, receiver: t.RegisterRef, field: t.FieldRef) ?OwnerSlot {
+        const summary = &self.collector.aliases[@intFromEnum(self.function)];
+        if (!summary.aggregates.contains(receiver)) return null;
+        return .{ .binding = self.collector.common().members.fields[@intFromEnum(field)].binding, .receiver = receiver };
+    }
     fn mark(self: *UpperGraph, owners: *const Owners, mode: Access) Error!void {
         if (self.summarizing) return;
         const collector = self.collector; const c = collector.c;
@@ -202,11 +250,11 @@ const UpperGraph = struct {
             if (!self.summarizing) try collector.capture(self.function, captured.environment, captured.slot, if (incoming != null) .write else .read);
             if (incoming == null and try collector.managedType(v.storage.bindings[b].@"type")) _ = try loaded.add(c, .{ .capture = captured });
         } else if (incoming) |value| {
-            const destination = try state.bindings.getOrPut(c.allocator, id);
+            const destination = try state.slots.getOrPut(c.allocator, .{ .binding = id });
             if (!destination.found_existing) destination.value_ptr.* = .{};
             if (!initialize) try self.mark(destination.value_ptr, .write);
             try destination.value_ptr.replace(c, value);
-        } else if (state.bindings.getPtr(id)) |value| try loaded.replace(c, value) else _ = try loaded.add(c, .unresolved);
+        } else if (state.slots.getPtr(.{ .binding = id })) |value| try loaded.replace(c, value) else _ = try loaded.add(c, .unresolved);
     }
     fn edge(self: *UpperGraph, entries: []?UpperState, queued: []bool, pending: *std.ArrayListUnmanaged(t.BlockRef), target: t.BlockRef, state: *const UpperState, arguments: []const Owners) Error!void {
         const c = self.collector.c; const function = c.program.functions[@intFromEnum(self.function)]; const b = @intFromEnum(target);
@@ -275,17 +323,20 @@ const UpperGraph = struct {
         const function = c.program.functions[@intFromEnum(self.function)]; const abi = v.abis[@intFromEnum(function.abi)];
         const summary = &collector.aliases[@intFromEnum(self.function)];
         summary.lexical_cells = try self.proveLexicalCells();
+        try self.provePrivateAggregates();
         summary.transparent = abi.lexical_environment == null;
         // This is a deliberately finite transparent seam: direct parameter /
         // global roots, scalar work, copies, phi/route, and recursive calls. The old
-        // unresolved treatment of selected-content / env-instance data remains.
+        // Selected content remains unresolved except the nonescaping implicit
+        // root reference profile proved above. Env-instance data stays opaque.
         for (function.blocks) |block| for (block.instructions) |op| {
             try c.step(); switch (op.data) {
                 .eh_cell, .eh_load, .eh_store => if (!summary.lexical_cells) { summary.transparent = false; },
                 .environment_alloc, .environment_load, .environment_store,
-                .environment_init, .environment_parent, .domain_field_read, .domain_field_store,
-                .eh_field_initialize, .domain_array_read, .domain_array_store, .domain_array_resize,
-                .common_typed_array_create, .domain_read_span, .eh_construct => summary.transparent = false,
+                .environment_init, .environment_parent, .domain_array_read, .domain_array_store, .domain_array_resize,
+                .common_typed_array_create, .domain_read_span => summary.transparent = false,
+                .domain_field_read, .domain_field_store, .eh_field_initialize => if (!summary.aggregates.contains(op.operands[0])) { summary.transparent = false; },
+                .eh_construct => if (!summary.aggregates.contains(op.result.?)) { summary.transparent = false; },
                 .function_make => if (op.operands.len != 0) { summary.transparent = false; },
                 .domain_literal => |data| if (v.types[@intFromEnum(data.actual_type)].kind == .reference) { summary.transparent = false; },
                 else => {},
@@ -312,7 +363,7 @@ const UpperGraph = struct {
             // or packed as a language payload. Access permissions remain
             // managed-only in mark(), just like the actual observer.
             const owner = Owner{ .parameter = i };
-            const binding_value = try initial.bindings.getOrPut(c.allocator, id);
+            const binding_value = try initial.slots.getOrPut(c.allocator, .{ .binding = id });
             if (!binding_value.found_existing) binding_value.value_ptr.* = .{};
             _ = try binding_value.value_ptr.add(c, owner);
             _ = try initial.values[@intFromEnum(function.blocks[0].parameters[hidden + i])].add(c, owner);
@@ -338,7 +389,7 @@ const UpperGraph = struct {
                     .global_store => |data| if (!self.summarizing) { try collector.global(self.function, data.global, .write); },
                     .eh_cell => |data| {
                         const id = v.exceptions.bindings[@intFromEnum(data.binding)].binding;
-                        if (state.bindings.fetchRemove(id)) |removed| { var old = removed.value; old.deinit(c.allocator); }
+                        if (state.slots.fetchRemove(.{ .binding = id })) |removed| { var old = removed.value; old.deinit(c.allocator); }
                     },
                     .eh_load => |data| {
                         try self.binding(&state, v.exceptions.bindings[@intFromEnum(data.binding)].binding, &result, null, false);
@@ -354,7 +405,16 @@ const UpperGraph = struct {
                         if (op.data == .environment_load) _ = try result.add(c, .unresolved);
                     },
                     .environment_parent => _ = try result.add(c, .unresolved),
-                    .domain_field_read, .domain_array_read => {
+                    .domain_field_read => |read| {
+                        const receiver = op.operands[0]; try self.mark(&state.values[@intFromEnum(receiver)], .read);
+                        if (self.privateField(receiver, read.member)) |slot| {
+                            if (state.slots.getPtr(slot)) |stored| try result.replace(c, stored) else _ = try result.add(c, .unresolved);
+                        } else {
+                            try result.replace(c, &state.values[@intFromEnum(receiver)]);
+                            _ = try result.add(c, .unresolved);
+                        }
+                    },
+                    .domain_array_read => {
                         try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); try self.mark(&result, .read);
                         // A fresh container has no external receiver root, but
                         // a loaded element/field can still alias p, G or a
@@ -365,7 +425,16 @@ const UpperGraph = struct {
                         _ = try result.add(c, .unresolved);
                     },
                     .domain_array_length => { try self.mark(&state.values[@intFromEnum(op.operands[0])], .read); result.nonowning = true; },
-                    .domain_field_store => try self.mark(&state.values[@intFromEnum(op.operands[0])], .write),
+                    .domain_field_store => |write| {
+                        try self.mark(&state.values[@intFromEnum(op.operands[0])], .write);
+                        if (self.privateField(op.operands[0], write.member)) |slot| try state.store(c, slot, &state.values[@intFromEnum(op.operands[1])]);
+                    },
+                    .eh_field_initialize => |write| {
+                        // Legality/phase/anchors remain the existing upstream
+                        // construction duty. Track only the actual operand's
+                        // lexical roots; private storage grants no 81 privilege.
+                        if (self.privateField(op.operands[0], write.field)) |slot| try state.store(c, slot, &state.values[@intFromEnum(op.operands[1])]);
+                    },
                     .domain_array_store, .domain_array_resize => { const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .write); try self.mark(receiver, .structural); },
                     .domain_view, .domain_refine, .domain_copy, .domain_read_span, .eh_assertion, .eh_presence_widen => try result.replace(c, &state.values[@intFromEnum(op.operands[0])]),
                     .eh_pack => { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (!self.summarizing) try collector.facet(self.function, .eh_control); },
@@ -382,6 +451,15 @@ const UpperGraph = struct {
                     },
                     .eh_construct => |data| {
                         _ = try result.add(c, .local);
+                        if (summary.aggregates.get(op.result.?)) |aggregate| {
+                            // A repeated static birth kills every old lexical
+                            // field fact before 81/56 stores. Missing fields are
+                            // never defaulted to empty or a declared Type value.
+                            for (v.storage.concrete[aggregate.concrete].body.?.fields) |field| {
+                                try c.step();
+                                if (state.slots.fetchRemove(.{ .binding = field.binding, .receiver = op.result.? })) |removed| { var old = removed.value; old.deinit(c.allocator); }
+                            }
+                        }
                         if (!self.summarizing and v.types[@intFromEnum(data.owner)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
                     },
                     .domain_literal => |data| {
