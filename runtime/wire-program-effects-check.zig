@@ -15,6 +15,7 @@ const tables = @import("wire-program-tables.zig");
 const publication = @import("wire-program-publication.zig");
 const facts = @import("wire-program-actual-facts.zig");
 const host_binding = @import("wire-program-host-binding-check.zig");
+const effect_env = @import("wire-program-effect-environments.zig");
 const t = model.types;
 const Context = facts.Context;
 pub const Error = facts.Error;
@@ -36,18 +37,27 @@ const Owners = struct {
     // identity. This is GraphEffects' lexical local: root category only.
     nonowning: bool = false,
     items: std.ArrayListUnmanaged(Owner) = .empty,
+    environments: effect_env.Value = .{},
     fn known(self: *const Owners) bool { return self.nonowning or self.items.items.len != 0; }
-    fn deinit(self: *Owners, allocator: std.mem.Allocator) void { self.items.deinit(allocator); self.* = .{}; }
+    fn deinit(self: *Owners, allocator: std.mem.Allocator) void { self.items.deinit(allocator); self.environments.deinit(allocator); self.* = .{}; }
     fn add(self: *Owners, c: *Context, owner: Owner) Error!bool {
+        // A lexical permission root says nothing about its value's code/env.
         for (self.items.items) |old| { try c.step(); if (std.meta.eql(old, owner)) return false; }
         try c.step(); try self.items.append(c.allocator, owner); return true;
     }
+    fn makeOpaque(self: *Owners, c: *Context) Error!bool {
+        const changed = !self.environments.callable_unknown or !self.environments.direct.unknown;
+        self.environments.callable_unknown = true; self.environments.direct.unknown = true;
+        return (try self.add(c, .unresolved)) or changed;
+    }
     fn clone(c: *Context, source: *const Owners) Error!Owners {
         try c.charge(source.items.items.len + 1); var result = Owners{ .nonowning = source.nonowning };
-        errdefer result.deinit(c.allocator); try result.items.appendSlice(c.allocator, source.items.items); return result;
+        errdefer result.deinit(c.allocator); result.environments = try effect_env.Value.clone(c, &source.environments);
+        try result.items.appendSlice(c.allocator, source.items.items); return result;
     }
     fn join(self: *Owners, c: *Context, incoming: *const Owners) Error!bool {
-        try c.step(); var changed = incoming.nonowning and !self.nonowning; self.nonowning = self.nonowning or incoming.nonowning;
+        try c.step(); var changed = try self.environments.join(c, &incoming.environments);
+        changed = (incoming.nonowning and !self.nonowning) or changed; self.nonowning = self.nonowning or incoming.nonowning;
         for (incoming.items.items) |owner| changed = (try self.add(c, owner)) or changed;
         return changed;
     }
@@ -80,10 +90,11 @@ const UpperCompletions = struct { language: bool = false };
 // A logical Cell has no receiver; a private field uses its original SSA
 // allocation handle. A closed same-block Cell protocol can share that key.
 // Neither key is an ObjectID or dynamic version: storage is still lexical.
-const OwnerSlot = struct { binding: t.BindingRef, receiver: ?t.RegisterRef = null };
+const OwnerSlot = struct { binding: t.BindingRef, receiver: ?t.RegisterRef = null, environment: ?effect_env.Origin = null };
 const UpperState = struct {
     values: []Owners,
     slots: std.AutoHashMapUnmanaged(OwnerSlot, Owners) = .empty,
+    parents: std.AutoHashMapUnmanaged(t.RegisterRef, effect_env.Set) = .empty,
     fn init(c: *Context, registers: usize) Error!UpperState {
         try c.charge(registers + 1);
         const values = try c.allocator.alloc(Owners, registers); errdefer c.allocator.free(values); @memset(values, .{});
@@ -92,6 +103,7 @@ const UpperState = struct {
     fn deinit(self: *UpperState, c: *Context) void {
         for (self.values) |*value| value.deinit(c.allocator); c.allocator.free(self.values);
         var entries = self.slots.valueIterator(); while (entries.next()) |value| value.deinit(c.allocator); self.slots.deinit(c.allocator);
+        var parents = self.parents.valueIterator(); while (parents.next()) |value| value.deinit(c.allocator); self.parents.deinit(c.allocator);
     }
     fn clone(c: *Context, source: *const UpperState) Error!UpperState {
         var result = try UpperState.init(c, source.values.len); errdefer result.deinit(c);
@@ -99,6 +111,10 @@ const UpperState = struct {
         var entries = source.slots.iterator(); while (entries.next()) |slot| {
             try c.step(); var copy = try Owners.clone(c, slot.value_ptr); errdefer copy.deinit(c.allocator);
             try result.slots.put(c.allocator, slot.key_ptr.*, copy);
+        }
+        var parents = source.parents.iterator(); while (parents.next()) |entry| {
+            try c.step(); var copy = try effect_env.Set.clone(c, entry.value_ptr); errdefer copy.deinit(c.allocator);
+            try result.parents.put(c.allocator, entry.key_ptr.*, copy);
         }
         return result;
     }
@@ -108,14 +124,22 @@ const UpperState = struct {
         // A Cell or private field absent on either path is uninitialized, not
         // a known local empty value. Preserve that alternative at the join.
         var previous = self.slots.iterator(); while (previous.next()) |slot| {
-            try c.step(); if (!source.slots.contains(slot.key_ptr.*)) changed = (try slot.value_ptr.add(c, .unresolved)) or changed;
+            try c.step(); if (!source.slots.contains(slot.key_ptr.*)) changed = (try slot.value_ptr.makeOpaque(c)) or changed;
         }
         var entries = source.slots.iterator(); while (entries.next()) |slot| {
             try c.step(); const destination = try self.slots.getOrPut(c.allocator, slot.key_ptr.*);
             if (!destination.found_existing) {
-                destination.value_ptr.* = .{}; _ = try destination.value_ptr.add(c, .unresolved); changed = true;
+                destination.value_ptr.* = .{}; _ = try destination.value_ptr.makeOpaque(c); changed = true;
             }
             changed = (try destination.value_ptr.join(c, slot.value_ptr)) or changed;
+        }
+        var old_parents = self.parents.iterator(); while (old_parents.next()) |entry| {
+            try c.step(); if (!source.parents.contains(entry.key_ptr.*) and !entry.value_ptr.unknown) { entry.value_ptr.unknown = true; changed = true; }
+        }
+        var parents = source.parents.iterator(); while (parents.next()) |entry| {
+            try c.step(); const destination = try self.parents.getOrPut(c.allocator, entry.key_ptr.*);
+            if (!destination.found_existing) { destination.value_ptr.* = .{ .unknown = true }; changed = true; }
+            changed = (try destination.value_ptr.join(c, entry.value_ptr)) or changed;
         }
         return changed;
     }
@@ -123,6 +147,39 @@ const UpperState = struct {
         try c.step(); const destination = try self.slots.getOrPut(c.allocator, slot);
         if (!destination.found_existing) destination.value_ptr.* = .{};
         try destination.value_ptr.replace(c, value);
+    }
+    fn birth(self: *UpperState, c: *Context, handle: t.RegisterRef, parent: *const effect_env.Set) Error!void {
+        // A static SSA definition is not an instance ID. Age every old value,
+        // callable association and selected relation before reusing its key.
+        for (self.values) |*value| { try c.step(); try value.environments.age(c, handle); }
+        var remove: std.ArrayListUnmanaged(OwnerSlot) = .empty; defer remove.deinit(c.allocator);
+        var entries = self.slots.iterator(); while (entries.next()) |entry| {
+            try c.step(); try entry.value_ptr.environments.age(c, handle);
+            if (entry.key_ptr.environment) |origin| if (origin.source == .birth and origin.source.birth == handle) try remove.append(c.allocator, entry.key_ptr.*);
+        }
+        for (remove.items) |key| { try c.step(); const old = self.slots.fetchRemove(key).?; var value = old.value; value.deinit(c.allocator); }
+        var parents = self.parents.valueIterator(); while (parents.next()) |value| { try c.step(); try value.age(c, handle); }
+        if (self.parents.fetchRemove(handle)) |old| { var value = old.value; value.deinit(c.allocator); }
+        var copy = try effect_env.Set.clone(c, parent); errdefer copy.deinit(c.allocator);
+        try copy.age(c, handle); try self.parents.put(c.allocator, handle, copy);
+    }
+    fn dirtyCapture(self: *UpperState, c: *Context, binding_id: t.BindingRef) Error!void {
+        try c.step();
+        // Binding equality is used only to revoke all possibly affected
+        // selected values. It never identifies a positive Env instance.
+        var entries = self.slots.iterator(); while (entries.next()) |entry| {
+            try c.step(); if (entry.key_ptr.environment == null or entry.key_ptr.binding != binding_id) continue;
+            var missing: Owners = .{}; defer missing.deinit(c.allocator); _ = try missing.makeOpaque(c);
+            try entry.value_ptr.replace(c, &missing);
+        }
+    }
+    fn dirtyEnvironments(self: *UpperState, c: *Context) Error!void {
+        var entries = self.slots.iterator(); while (entries.next()) |entry| {
+            try c.step(); if (entry.key_ptr.environment == null) continue;
+            var missing: Owners = .{}; defer missing.deinit(c.allocator); _ = try missing.makeOpaque(c);
+            try entry.value_ptr.replace(c, &missing);
+        }
+        var parents = self.parents.valueIterator(); while (parents.next()) |value| { try c.step(); value.unknown = true; }
     }
 };
 
@@ -341,17 +398,126 @@ const UpperGraph = struct {
         if (owner != self.function) {
             const captured = collector.captures[b] orelse {
                 if (!self.summarizing) collector.fixed_upper_origin_pending = true;
-                if (incoming == null) _ = try loaded.add(c, .unresolved);
+                if (incoming == null) _ = try loaded.makeOpaque(c);
                 return;
             };
             if (!self.summarizing) try collector.capture(self.function, captured.environment, captured.slot, if (incoming != null) .write else .read);
-            if (incoming == null and try collector.managedType(v.storage.bindings[b].@"type")) _ = try loaded.add(c, .{ .capture = captured });
+            if (incoming == null) {
+                if (try collector.managedType(v.storage.bindings[b].@"type")) _ = try loaded.add(c, .{ .capture = captured });
+                // This binding path has no selected payload, unlike env_load.
+                loaded.environments.callable_unknown = true; loaded.environments.direct.unknown = true;
+            }
         } else if (incoming) |value| {
             const destination = try state.slots.getOrPut(c.allocator, .{ .binding = id });
             if (!destination.found_existing) destination.value_ptr.* = .{};
             if (!initialize) try self.mark(destination.value_ptr, .write);
             try destination.value_ptr.replace(c, value);
-        } else if (state.slots.getPtr(.{ .binding = id })) |value| try loaded.replace(c, value) else _ = try loaded.add(c, .unresolved);
+        } else if (state.slots.getPtr(.{ .binding = id })) |value| try loaded.replace(c, value) else _ = try loaded.makeOpaque(c);
+    }
+    fn parentEnvironments(self: *UpperGraph, state: *const UpperState, source: *const effect_env.Set, into: *effect_env.Set) Error!void {
+        const c = self.collector.c; const rows = self.collector.common().closures.environments;
+        try c.step(); into.unknown = into.unknown or source.unknown or source.items.items.len == 0;
+        for (source.items.items) |origin| {
+            try c.step(); const parent = rows[@intFromEnum(origin.layout)].parent orelse { into.unknown = true; continue; };
+            switch (origin.source) {
+                .input => _ = try into.add(c, .{ .layout = parent, .source = .input }),
+                .birth => |handle| if (state.parents.getPtr(handle)) |saved| {
+                    if (saved.items.items.len == 0) into.unknown = true;
+                    _ = try into.join(c, saved);
+                } else { into.unknown = true; },
+            }
+        }
+    }
+    fn atEnvironment(self: *UpperGraph, state: *const UpperState, source: *const effect_env.Set, layout: t.EnvironmentRef, into: *effect_env.Set) Error!void {
+        const c = self.collector.c;
+        var pending = try effect_env.Set.clone(c, source); defer pending.deinit(c.allocator);
+        var seen: effect_env.Set = .{}; defer seen.deinit(c.allocator);
+        into.unknown = into.unknown or source.unknown or source.items.items.len == 0;
+        var cursor: usize = 0;
+        while (cursor < pending.items.items.len) : (cursor += 1) {
+            try c.step(); const origin = pending.items.items[cursor]; if (!try seen.add(c, origin)) continue;
+            if (origin.layout == layout) { _ = try into.add(c, origin); continue; }
+            var selected: effect_env.Set = .{}; defer selected.deinit(c.allocator); _ = try selected.add(c, origin);
+            var parents: effect_env.Set = .{}; defer parents.deinit(c.allocator);
+            try self.parentEnvironments(state, &selected, &parents);
+            into.unknown = into.unknown or parents.unknown; _ = try pending.join(c, &parents);
+        }
+    }
+    fn callEnvironments(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, into: *effect_env.Set) Error!void {
+        const c = self.collector.c; const v = self.collector.common();
+        try c.step(); const abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)];
+        const layout = abi.lexical_environment orelse return;
+        var saved: effect_env.Set = .{}; defer saved.deinit(c.allocator);
+        switch (op.data) {
+            .eh_invoke => _ = try saved.join(c, &state.values[@intFromEnum(op.operands[0])].environments.direct),
+            .eh_invoke_indirect => {
+                const value = &state.values[@intFromEnum(op.operands[0])].environments;
+                saved.unknown = value.callable_unknown;
+                if (value.callables.getPtr(target)) |pair| _ = try saved.join(c, pair) else saved.unknown = true;
+            },
+            else => saved.unknown = true,
+        }
+        // The target is a case of the complete permitted call, not evidence
+        // of a missing environment pair. Missing cases remain unknown.
+        try self.atEnvironment(state, &saved, layout, into);
+    }
+    fn environment(self: *UpperGraph, state: *UpperState, roots: *const effect_env.Set, selected: Capture, loaded: *Owners, incoming: ?*const Owners, initialize: bool) Error!void {
+        const collector = self.collector; const c = collector.c; const v = collector.common();
+        const slot = v.closures.environments[@intFromEnum(selected.environment)].slots[@intFromEnum(selected.slot)];
+        const binding_row = v.storage.bindings[@intFromEnum(slot.binding)];
+        const owner = switch (binding_row.owner) { .param, .local, .receiver => |function| function, else => return error.InvalidShape };
+        const foreign = owner != self.function;
+        if (foreign and !self.summarizing) try collector.capture(self.function, selected.environment, selected.slot, if (incoming != null) .write else .read);
+        var origins: effect_env.Set = .{}; defer origins.deinit(c.allocator);
+        try self.atEnvironment(state, roots, selected.environment, &origins);
+        const uncertain = origins.unknown or origins.items.items.len == 0;
+        if (uncertain) {
+            if (incoming != null) try state.dirtyCapture(c, slot.binding);
+            if (!self.summarizing) collector.fixed_upper_origin_pending = true;
+            if (incoming == null) _ = try loaded.makeOpaque(c);
+        }
+        if (incoming == null and foreign) {
+            // EffectUpper names the lexical capture, not its payload's p/G
+            // aliases. The selected payload contributes only code/env data.
+            _ = try loaded.add(c, .{ .capture = selected });
+        }
+        for (origins.items.items) |origin| {
+            try c.step(); const key = OwnerSlot{ .binding = slot.binding, .environment = origin };
+            if (incoming) |value| {
+                if (!initialize and !foreign and !self.summarizing) {
+                    if (state.slots.getPtr(key)) |old| try self.mark(old, .write) else collector.fixed_upper_origin_pending = true;
+                }
+                if (!uncertain and origins.items.items.len == 1) {
+                    try state.store(c, key, value);
+                } else {
+                    const destination = try state.slots.getOrPut(c.allocator, key);
+                    if (!destination.found_existing) { destination.value_ptr.* = .{}; _ = try destination.value_ptr.makeOpaque(c); }
+                    _ = try destination.value_ptr.join(c, value);
+                }
+            } else if (state.slots.getPtr(key)) |value| {
+                if (foreign) _ = try loaded.environments.join(c, &value.environments) else _ = try loaded.join(c, value);
+            } else if (origin.source == .input and foreign) {
+                // An input is a formal Env, never a concrete slot payload.
+                // Callable/returned-closure contents require their own graph.
+                loaded.environments.callable_unknown = true;
+                loaded.environments.direct.unknown = true;
+            } else _ = try loaded.makeOpaque(c);
+        }
+    }
+    fn projectEnvironments(self: *UpperGraph, source: *const effect_env.Set, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, into: *effect_env.Set) Error!void {
+        const c = self.collector.c; try c.step(); into.unknown = into.unknown or source.unknown;
+        for (source.items.items) |origin| {
+            try c.step(); switch (origin.source) {
+                .input => {
+                    var supplied: effect_env.Set = .{}; defer supplied.deinit(c.allocator);
+                    try self.callEnvironments(target, op, state, &supplied);
+                    try self.atEnvironment(state, &supplied, origin.layout, into);
+                },
+                // A callee-local activation cannot be rebound by reusing its
+                // SSA number in the caller. Escaped Env graphs stay unknown.
+                .birth => into.unknown = true,
+            }
+        }
     }
     fn edge(self: *UpperGraph, entries: []?UpperState, queued: []bool, pending: *std.ArrayListUnmanaged(t.BlockRef), target: t.BlockRef, state: *const UpperState, arguments: []const Owners) Error!void {
         const c = self.collector.c; const function = c.program.functions[@intFromEnum(self.function)]; const b = @intFromEnum(target);
@@ -361,7 +527,7 @@ const UpperGraph = struct {
         const changed = if (entries[b]) |*old| try old.join(c, &incoming) else blk: { entries[b] = incoming; owns = false; break :blk true; };
         if (changed and !queued[b]) { queued[b] = true; try pending.append(c.allocator, target); }
     }
-    fn projectSummary(self: *UpperGraph, source: *const Owners, op: model.instruction.Instruction, state: *const UpperState, offset: usize, into: *Owners) Error!void {
+    fn projectSummary(self: *UpperGraph, source: *const Owners, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, into: *Owners) Error!void {
         const c = self.collector.c;
         // A known-empty summary must survive projection, while bottom may not
         // become known merely because this call has a normal continuation.
@@ -375,22 +541,28 @@ const UpperGraph = struct {
                 .global, .local => _ = try into.add(c, owner),
                 // A lexical capture key alone is not a cross-instance env
                 // content projection. This slice does not synthesize one.
-                .capture, .unresolved => _ = try into.add(c, .unresolved),
+                .capture, .unresolved => _ = try into.makeOpaque(c),
             }
         }
+        try self.projectEnvironments(&source.environments.direct, target, op, state, &into.environments.direct);
+        into.environments.callable_unknown = into.environments.callable_unknown or source.environments.callable_unknown;
+        var pairs = source.environments.callables.iterator(); while (pairs.next()) |pair| {
+            try c.step(); var selected: effect_env.Set = .{}; defer selected.deinit(c.allocator);
+            try self.projectEnvironments(pair.value_ptr, target, op, state, &selected);
+            try into.environments.pair(c, pair.key_ptr.*, &selected);
+        }
     }
-    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
+    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
         const collector = self.collector; const c = collector.c;
         const full = if (self.summarizing) original: {
             try c.step(); break :original collector.upper(target) orelse return error.InvalidShape;
         } else try collector.consumeUpper(self.function, target);
-        if (!self.summarizing and op.data == .eh_invoke and offset != 0) for (full.captures) |captured| {
-            try c.step();
-            // A typed hidden env/layout identifies a lexical slot, not the
-            // external aliases in this instance of that slot. No selected
-            // env-content proof is supplied to this owner-only walk.
-            if (captured.read or captured.write or captured.structural) collector.fixed_upper_origin_pending = true;
-        };
+        const target_abi = collector.common().abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)];
+        if (target_abi.lexical_environment != null) {
+            var supplied: effect_env.Set = .{}; defer supplied.deinit(c.allocator);
+            try self.callEnvironments(target, op, state, &supplied);
+            if (!self.summarizing and (supplied.unknown or supplied.items.items.len == 0)) collector.fixed_upper_origin_pending = true;
+        }
         try c.require(offset <= op.operands.len);
         try c.require(if (prefix) full.parameters.len <= op.operands.len - offset else full.parameters.len == op.operands.len - offset);
         if (!self.summarizing) for (full.parameters, 0..) |access_mode, i| {
@@ -402,41 +574,53 @@ const UpperGraph = struct {
         const summary = &collector.aliases[@intFromEnum(target)];
         const project = summary.transparent and (self.summarizing or summary.available);
         if (project and (summary.normal_seen or summary.normal_missing)) {
-            try self.projectSummary(&summary.normal, op, state, offset, returned);
+            try self.projectSummary(&summary.normal, target, op, state, offset, returned);
         } else if (!self.summarizing or !summary.transparent) {
-            _ = try returned.add(c, .unresolved);
+            _ = try returned.makeOpaque(c);
         }
         if (full.facets.may_throw) {
             if (project and (summary.language_seen or summary.language_missing)) {
-                try self.projectSummary(&summary.language, op, state, offset, thrown);
+                try self.projectSummary(&summary.language, target, op, state, offset, thrown);
             } else if (!self.summarizing or !summary.transparent) {
-                _ = try thrown.add(c, .unresolved);
+                _ = try thrown.makeOpaque(c);
             }
             completions.language = true;
         }
+        // Full declared effects, never a narrower observed body/target, kill
+        // selected mutable contents on BOTH normal and language continuations.
+        // write may also mean an interior write; losing precision is safer
+        // than assuming binding immutability authorizes a cross-call payload.
+        for (full.captures) |captured| {
+            try c.step(); if (!captured.write) continue;
+            for (collector.captures, 0..) |slot, id| {
+                try c.step(); const found = slot orelse continue;
+                const key = collector.common().closures.environments[@intFromEnum(found.environment)].slots[@intFromEnum(found.slot)].key;
+                if (std.mem.eql(u8, &key, &captured.slot)) try state.dirtyCapture(c, @enumFromInt(id));
+            }
+        }
+        if (full.facets.unknown_host or full.facets.@"await") try state.dirtyEnvironments(c);
     }
     fn prepare(self: *UpperGraph) Error!void {
         const collector = self.collector; const c = collector.c; const v = collector.common();
-        const function = c.program.functions[@intFromEnum(self.function)]; const abi = v.abis[@intFromEnum(function.abi)];
+        const function = c.program.functions[@intFromEnum(self.function)];
         const summary = &collector.aliases[@intFromEnum(self.function)];
         summary.lexical_cells = try self.proveLexicalCells();
         try self.provePrivateAggregates();
-        summary.transparent = abi.lexical_environment == null;
+        summary.transparent = true;
         // This is a deliberately finite transparent seam: direct parameter /
         // global roots, scalar work, copies, phi/route, and recursive calls. The old
-        // Selected content remains unresolved except the nonescaping implicit
-        // root reference profile proved above. Env-instance data stays opaque.
+        // Selected fields retain the nonescaping profile above. Env contents
+        // use symbolic input/birth provenance; escaped callee-local Env graphs
+        // and managed capture-return permissions remain unresolved.
         for (function.blocks) |block| for (block.instructions) |op| {
             try c.step(); switch (op.data) {
                 .eh_cell, .eh_load, .eh_store => if (!summary.lexical_cells) { summary.transparent = false; },
-                .environment_alloc, .environment_load, .environment_store,
-                .environment_init, .environment_parent, .domain_array_read, .domain_array_store, .domain_array_resize,
+                .domain_array_read, .domain_array_store, .domain_array_resize,
                 .common_typed_array_create, .domain_read_span => summary.transparent = false,
                 .domain_field_read => |read| if (self.privateField(op.operands[0], read.member) == null) { summary.transparent = false; },
                 .domain_field_store => |write| if (self.privateField(op.operands[0], write.member) == null) { summary.transparent = false; },
                 .eh_field_initialize => |write| if (self.privateField(op.operands[0], write.field) == null) { summary.transparent = false; },
                 .eh_construct => if (!summary.aggregates.contains(op.result.?)) { summary.transparent = false; },
-                .function_make => if (op.operands.len != 0) { summary.transparent = false; },
                 .domain_literal => |data| if (v.types[@intFromEnum(data.actual_type)].kind == .reference) { summary.transparent = false; },
                 else => {},
             }
@@ -455,6 +639,11 @@ const UpperGraph = struct {
         var initial = try UpperState.init(c, function.registers.len); var owns = true; defer if (owns) initial.deinit(c);
         const hidden: usize = if (abi.lexical_environment != null) 1 else 0;
         if (!self.summarizing and hidden != 0) try collector.facet(self.function, .managed_reference);
+        if (abi.lexical_environment) |layout| {
+            // A formal input tied to this SSA entry, not every instance of
+            // its layout. No caller payload, object or permitted code is seeded.
+            _ = try initial.values[@intFromEnum(function.blocks[0].parameters[0])].environments.direct.add(c, .{ .layout = layout, .source = .input });
+        }
         const count = abi.parameters.len + @as(usize, if (abi.receiver != null) 1 else 0);
         for (0..count) |i| {
             try c.step(); const id = if (abi.receiver != null and i == 0) abi.receiver.? else abi.parameters[i - @as(usize, if (abi.receiver != null) 1 else 0)];
@@ -465,7 +654,23 @@ const UpperGraph = struct {
             const binding_value = try initial.slots.getOrPut(c.allocator, .{ .binding = id });
             if (!binding_value.found_existing) binding_value.value_ptr.* = .{};
             _ = try binding_value.value_ptr.add(c, owner);
-            _ = try initial.values[@intFromEnum(function.blocks[0].parameters[hidden + i])].add(c, owner);
+            const entry_register = function.blocks[0].parameters[hidden + i];
+            const entry = &initial.values[@intFromEnum(entry_register)];
+            _ = try entry.add(c, owner);
+            // A formal callable contributes no pair. Its unknown alternative
+            // must survive a phi with a locally constructed, paired closure.
+            var unknown_callable = try collector.callablePayload(v.storage.bindings[@intFromEnum(id)].@"type");
+            // Logical views do not constrain the actual carrier's capacity.
+            switch (function.registers[@intFromEnum(entry_register)].carrier) {
+                .@"type" => |actual| unknown_callable = (try collector.callablePayload(actual)) or unknown_callable,
+                .domain => |actual| for (v.domains[@intFromEnum(actual)].actual_types) |member| {
+                    try c.step(); unknown_callable = (try collector.callablePayload(member)) or unknown_callable;
+                },
+                .payload => unknown_callable = true,
+                else => {},
+            }
+            binding_value.value_ptr.environments.callable_unknown = unknown_callable;
+            entry.environments.callable_unknown = unknown_callable;
             if (!self.summarizing and try collector.managedType(v.storage.bindings[@intFromEnum(id)].@"type")) {
                 try collector.facet(self.function, .managed_reference);
             }
@@ -484,7 +689,13 @@ const UpperGraph = struct {
                     if (logical) |id| if (try collector.managedType(id)) try collector.facet(self.function, .managed_reference);
                 };
                 switch (op.data) {
-                    .global_load => |data| { if (!self.summarizing) try collector.global(self.function, data.global, .read); _ = try result.add(c, .{ .global = data.global }); },
+                    .global_load => |data| {
+                        if (!self.summarizing) try collector.global(self.function, data.global, .read);
+                        _ = try result.add(c, .{ .global = data.global });
+                        // A global permission label is known; its selected
+                        // callable/Env payload has not been derived here.
+                        result.environments.callable_unknown = true; result.environments.direct.unknown = true;
+                    },
                     .global_store => |data| if (!self.summarizing) { try collector.global(self.function, data.global, .write); },
                     .eh_cell => |data| {
                         const id = v.exceptions.bindings[@intFromEnum(data.binding)].binding;
@@ -494,23 +705,28 @@ const UpperGraph = struct {
                         try self.binding(&state, v.exceptions.bindings[@intFromEnum(data.binding)].binding, &result, null, false);
                         // Only the unique, private lexical-Cell protocol above
                         // connects a dynamic handle to the lexical binding flow.
-                        if (!self.lexical_cells) _ = try result.add(c, .unresolved);
+                        if (!self.lexical_cells) _ = try result.makeOpaque(c);
                     },
                     .eh_store => |data| try self.binding(&state, v.exceptions.bindings[@intFromEnum(data.binding)].binding, &result, &state.values[@intFromEnum(op.operands[1])], data.initialize),
                     inline .environment_load, .environment_store, .environment_init => |data| {
                         const env = function.registers[@intFromEnum(op.operands[0])].carrier.environment;
-                        const id = v.closures.environments[@intFromEnum(env)].slots[@intFromEnum(data.slot)].binding;
-                        try self.binding(&state, id, &result, if (op.data == .environment_load) null else &state.values[@intFromEnum(op.operands[1])], op.data == .environment_init);
-                        if (op.data == .environment_load) _ = try result.add(c, .unresolved);
+                        // Resolve the receiver before a store can reallocate
+                        // selected slot maps. This is a borrowed register facet.
+                        try self.environment(&state, &state.values[@intFromEnum(op.operands[0])].environments.direct,
+                            .{ .environment = env, .slot = data.slot }, &result,
+                            if (op.data == .environment_load) null else &state.values[@intFromEnum(op.operands[1])], op.data == .environment_init);
                     },
-                    .environment_parent => _ = try result.add(c, .unresolved),
+                    .environment_parent => {
+                        _ = try result.add(c, .local);
+                        try self.parentEnvironments(&state, &state.values[@intFromEnum(op.operands[0])].environments.direct, &result.environments.direct);
+                    },
                     .domain_field_read => |read| {
                         const receiver = op.operands[0]; try self.mark(&state.values[@intFromEnum(receiver)], .read);
                         if (self.privateField(receiver, read.member)) |slot| {
-                            if (state.slots.getPtr(slot)) |stored| try result.replace(c, stored) else _ = try result.add(c, .unresolved);
+                            if (state.slots.getPtr(slot)) |stored| try result.replace(c, stored) else _ = try result.makeOpaque(c);
                         } else {
                             try result.replace(c, &state.values[@intFromEnum(receiver)]);
-                            _ = try result.add(c, .unresolved);
+                            _ = try result.makeOpaque(c);
                         }
                     },
                     .domain_array_read => {
@@ -521,7 +737,7 @@ const UpperGraph = struct {
                         // this owner-only domain. Keep that absence explicit,
                         // including when the loaded value later becomes a
                         // callable or is transported through Cells/env slots.
-                        _ = try result.add(c, .unresolved);
+                        _ = try result.makeOpaque(c);
                     },
                     .domain_array_length => { try self.mark(&state.values[@intFromEnum(op.operands[0])], .read); result.nonowning = true; },
                     .domain_field_store => |write| {
@@ -540,11 +756,22 @@ const UpperGraph = struct {
                     .eh_carrier => |view| { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (!self.summarizing and view == null) try collector.facet(self.function, .eh_control); },
                     .function_make => {
                         if (op.operands.len == 0) result.nonowning = true else {
-                            try result.replace(c, &state.values[@intFromEnum(op.operands[0])]);
-                            _ = try result.add(c, .unresolved);
+                            _ = try result.add(c, .local);
+                            var selected = try effect_env.Set.clone(c, &state.values[@intFromEnum(op.operands[0])].environments.direct);
+                            defer selected.deinit(c.allocator); if (selected.items.items.len == 0) selected.unknown = true;
+                            try result.environments.pair(c, op.data.function_make.function, &selected);
                         }
                     },
-                    .common_typed_array_create, .environment_alloc, .string_concat => {
+                    .environment_alloc => |data| {
+                        const handle = op.result.?;
+                        var parent: effect_env.Set = .{}; defer parent.deinit(c.allocator);
+                        if (op.operands.len != 0) _ = try parent.join(c, &state.values[@intFromEnum(op.operands[0])].environments.direct);
+                        try state.birth(c, handle, &parent);
+                        _ = try result.add(c, .local);
+                        _ = try result.environments.direct.add(c, .{ .layout = data.environment, .source = .{ .birth = handle } });
+                        if (!self.summarizing) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
+                    },
+                    .common_typed_array_create, .string_concat => {
                         _ = try result.add(c, .local);
                         if (!self.summarizing) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
                     },
@@ -565,7 +792,7 @@ const UpperGraph = struct {
                         switch (v.types[@intFromEnum(data.actual_type)].kind) {
                             .scalar, .@"null", .@"undefined" => result.nonowning = true,
                             .reference, .value, .string, .array, .readSpan => _ = try result.add(c, .local),
-                            else => _ = try result.add(c, .unresolved),
+                            else => _ = try result.makeOpaque(c),
                         }
                         if (!self.summarizing and v.types[@intFromEnum(data.actual_type)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
                     },
@@ -574,7 +801,7 @@ const UpperGraph = struct {
                         if (!self.summarizing) try collector.hostEffects(self.function);
                         // A verified scalar result carries no external owner.
                         // Missing material remains pending, never an empty root.
-                        if (collector.host_material == null) _ = try result.add(c, .unresolved) else result.nonowning = true;
+                        if (collector.host_material == null) _ = try result.makeOpaque(c) else result.nonowning = true;
                     },
                     .string_constant => _ = try result.add(c, .local),
                     .const_i32, .const_integer, .const_float, .const_bool, .add, .sub, .mul, .div, .rem,
@@ -592,14 +819,9 @@ const UpperGraph = struct {
                             .eh_invoke => |call| { const target_abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(call.callee)].abi)]; try self.consume(call.callee, op, &state, if (target_abi.lexical_environment != null) 1 else 0, false, &returned, &thrown, &completions); found = true; },
                             .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| { try c.step(); const target = arm.target orelse return error.InvalidShape; try self.consume(target, op, &state, 0, true, &returned, &thrown, &completions); found = true; },
                             .eh_invoke_indirect => {
-                                // A lexical alias identifies whose value this
-                                // is, not that callable's captured env contents.
-                                // Pure, env-free function_make has no roots;
-                                // external/loaded/returned aliases grant no
-                                // cross-closure instance proof here.
-                                if (!self.summarizing) for (state.values[@intFromEnum(op.operands[0])].items.items) |_| {
-                                    try c.step(); collector.fixed_upper_origin_pending = true;
-                                };
+                                // Permission roots do not establish or refute
+                                // code/env pairs. consume checks the independently
+                                // retained pair for EVERY permitted target.
                                 for (v.closures.calls) |row| {
                                     try c.step(); if (row.function != self.function or @intFromEnum(row.block) != b or row.instruction != index) continue;
                                     for (row.targets) |target| { try c.step(); try self.consume(target, op, &state, 1, false, &returned, &thrown, &completions); found = true; }
@@ -610,7 +832,7 @@ const UpperGraph = struct {
                         if (!found) {
                             if (!self.summarizing) collector.fixed_upper_origin_pending = true;
                             completions = .{ .language = true };
-                            _ = try returned.add(c, .unresolved); _ = try thrown.add(c, .unresolved);
+                            _ = try returned.makeOpaque(c); _ = try thrown.makeOpaque(c);
                         }
                         const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, .common_method_invoke => |call| call.normal, else => unreachable };
                         const exceptional = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, .common_method_invoke => |call| call.exceptional, else => unreachable };
@@ -762,6 +984,15 @@ pub const Collector = struct {
             try self.c.require(switch (access_mode) { .read => row.read, .write => row.write, .structural => row.structural }); return;
         }
         return error.InvalidShape;
+    }
+    fn callablePayload(self: *Collector, ref: t.TypeRef) Error!bool {
+        try self.c.step(); const row = self.common().types[@intFromEnum(ref)];
+        switch (row.kind) {
+            .function, .unknown => return true,
+            .@"union" => for (row.members) |member| { if (try self.callablePayload(member)) return true; },
+            else => {},
+        }
+        return false;
     }
     fn managedType(self: *Collector, ref: t.TypeRef) Error!bool {
         const c = self.c; const id = @intFromEnum(ref); try c.step();
@@ -1098,11 +1329,11 @@ pub const Collector = struct {
         for (self.aliases, 0..) |*summary, function| {
             try c.step(); var changed = false;
             if (!summary.normal_seen) {
-                summary.normal_missing = true; changed = (try summary.normal.add(c, .unresolved)) or changed;
+                summary.normal_missing = true; changed = (try summary.normal.makeOpaque(c)) or changed;
             }
             if (self.upper(@enumFromInt(function))) |bound| {
                 if (bound.facets.may_throw and !summary.language_seen) {
-                    summary.language_missing = true; changed = (try summary.language.add(c, .unresolved)) or changed;
+                    summary.language_missing = true; changed = (try summary.language.makeOpaque(c)) or changed;
                 }
             }
             if (!changed) continue;

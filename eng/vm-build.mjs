@@ -176,7 +176,7 @@ runtimeSources.push(...['wire-program-control','wire-program-host-artifact-check
 // the model/context already staged above; the active wire12 root stays intact.
 // Staging is not proof of lazy body analysis, linking or Runtime admission.
 runtimeSources.push(...['wire-program-actual-data','wire-program-actual-facts','wire-program-borrow-check',
-  'wire-program-effects-check','wire-program-identity-check','wire-program-layout-check','wire-program-publication-refs',
+  'wire-program-effects-check','wire-program-effect-environments','wire-program-identity-check','wire-program-layout-check','wire-program-publication-refs',
   'wire-program-refcheck','wire-program-region-holding','wire-program-ssa-check','wire-program-table-refs',
   'wire-program-targets-check','wire-program-fixed-publication-check','wire-program-kernel-request-check','wire-program-dependencies-check','wire-program-reference-contracts-check','wire-program-fixed-callable-domain','wire-program-fixed-targets-check','wire-program-effective-dependencies-check','wire-program-construction-contracts-check','wire-program-construction-body-check','wire-program-module-contracts-check'].map(name => `runtime/${name}.zig`));
 
