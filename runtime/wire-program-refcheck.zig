@@ -14,6 +14,7 @@ const table_refs = @import("wire-program-table-refs.zig");
 const layout_check = @import("wire-program-layout-check.zig");
 const ssa_check = @import("wire-program-ssa-check.zig");
 const identity_check = @import("wire-program-identity-check.zig");
+const reference_contracts_check = @import("wire-program-reference-contracts-check.zig");
 const fixed_publication_check = @import("wire-program-fixed-publication-check.zig");
 const kernel_request_check = @import("wire-program-kernel-request-check.zig");
 const dependencies_check = @import("wire-program-dependencies-check.zig");
@@ -64,6 +65,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     try layout_check.check(&c);
     try ssa_check.check(&c);
     try identity_check.check(&c);
+    try reference_contracts_check.checkCompatibility(&c);
     // Fixed interface semantics also owns the Common-only boundary.
     try fixed_publication_check.checkInterfaces(&c);
     try kernel_request_check.checkDeclarations(&c);
