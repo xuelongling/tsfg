@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Checks references, layouts, CFG/SSA, derivable typed identities and Common
 // actual targets, borrow and effects obligations through one shared analysis.
-// Source, complete fixed-publication/fixed-flow and implementation-bound Host
-// validation remain separate; success is not full admission or permission to
-// execute. This module neither reads bytes/JSON nor activates Runtime12.
+// Complete Host records are bound once to this Runtime's compiled anchor.
+// Source and complete fixed-publication/fixed-flow validation remain separate;
+// success is not full admission or permission to execute. This module neither
+// reads bytes/JSON nor activates Runtime12.
 const std = @import("std");
 pub const model = @import("wire-program-model.zig");
 const t = model.types;
@@ -16,12 +17,17 @@ const identity_check = @import("wire-program-identity-check.zig");
 const targets_check = @import("wire-program-targets-check.zig");
 const borrow_check = @import("wire-program-borrow-check.zig");
 const effects_check = @import("wire-program-effects-check.zig");
-pub const Error = context.Error || effects_check.FinishError;
+const host_artifact = @import("wire-program-host-artifact-check.zig");
+pub const HostBundle = @import("wire-program-host-binding-check.zig").Bundle;
+pub const Error = context.Error || effects_check.FinishError || host_artifact.Error;
 const Context = context.Context;
 
 // One budget belongs to the complete traversal; helpers cannot refill it.
 // The returned count is accounting only, never a retained verified handle.
-pub fn check(allocator: std.mem.Allocator, program: *const model.Program) Error!usize {
+// Host-free callers explicitly pass null. Host callers supply complete typed
+// records; their presence alone is no proof. The compiled-anchor check below
+// owns verification, before any material enters the one solve/final replay.
+pub fn check(allocator: std.mem.Allocator, program: *const model.Program, material: ?*const HostBundle) Error!usize {
     var c = Context{ .program = program, .allocator = allocator };
     try c.charge(12);
     model.requireFormat(program.envelope, program.target) catch return error.InvalidShape;
@@ -58,14 +64,15 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program) Error!
     // Effects currently has a Common consumer only. Structural checks alone
     // cannot stand in for the complete pipeline in the other two modes.
     if (program.tables.mode != .common) return error.WrongMode;
+    try host_artifact.check(&c, material);
     var actual: targets_check.Analysis = .{};
     defer actual.deinit(allocator);
     var borrowing = borrow_check.Observations.init(&c);
     defer borrowing.deinit();
-    var effects = try effects_check.Collector.init(&c);
+    var effects = try effects_check.Collector.init(&c, material);
     defer effects.deinit();
     const observers = [_]targets_check.facts.Observer{ borrowing.observer(), effects.observer() };
-    actual = try targets_check.analyze(&c, &observers);
+    actual = try targets_check.analyze(&c, material, &observers);
     try borrowing.finish();
     try effects.finish();
     return model.format.max_work - c.remaining;

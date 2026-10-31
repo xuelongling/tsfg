@@ -13,6 +13,7 @@ const V = facts.OwnedValue;
 const Heap = facts.Heap;
 const relation = @import("wire-program-region-holding.zig");
 const region_data = @import("wire-program-actual-data.zig");
+const host_binding = @import("wire-program-host-binding-check.zig");
 
 pub const Relation = enum { exact_closed, known_covered, derived, unresolved, unobserved };
 pub const TargetObservation = struct {
@@ -117,6 +118,7 @@ const Engine = struct {
         copy_source: ?facts.ObjectId=null, copy_parent: ?facts.ObjectId=null, copy_field: ?t.FieldRef=null,
     };
     c: *Context,
+    host_material: ?*const host_binding.Bundle,
     result: Analysis=.{},
     observers: []const facts.Observer=&.{},
     replay: bool=false,
@@ -1298,12 +1300,28 @@ const Engine = struct {
             },
             .global_store => |data| { _=try state.heap.put(self.c,.{.global=data.global},arguments[0].view(),true); },
             .authorized_host => |data| {
-                // This graph contains the claimed HSC/BI digests, not their
-                // verified external binding. Do not seed actual return tags
-                // or heap purity from that claim. The effects consumer may
-                // separately discharge its fixed Counter metadata subset.
-                _=data; for(arguments) |argument| { try self.c.step(); try self.escape(argument.view(),state,true); }
-                value=try V.clone(self.c,self.unknown(at.context)); try self.origin(&value,at.context,.unknown); try self.havoc(at.context,state);
+                // The public boundary already checked the complete material
+                // against this Runtime's compiled anchor. Do not infer a
+                // Counter instance/storage value, or retag an unknown input.
+                _=data; var scalar_input=false;
+                if(self.host_material) |material| {
+                    try self.c.step();
+                    if(arguments.len==1) {
+                        const input=arguments[0].view();
+                        scalar_input=!input.unknown and !input.callable_unknown and input.objects.len==0 and
+                            input.cells.len==0 and input.callables.len==0 and input.tags.len==1 and
+                            input.tags[0]==try self.primitive(material.contract.abi.guest.parameters[0]);
+                    }
+                }
+                if(scalar_input) {
+                    // Fixed scalar-only, no callback/retain/borrow semantics
+                    // touch only the two Host resources, not the caller heap.
+                    // The post-write storage bits are arbitrary i32 here.
+                    value=try self.literal(try self.primitive(self.host_material.?.contract.abi.guest.returns));
+                } else {
+                    for(arguments) |argument| { try self.c.step(); try self.escape(argument.view(),state,true); }
+                    value=try V.clone(self.c,self.unknown(at.context)); try self.origin(&value,at.context,.unknown); try self.havoc(at.context,state);
+                }
             },
             .environment_alloc => |data| {
                 const id=try self.object(at,.environment,null,data.environment,weak); _=try value.object(self.c,id);
@@ -1726,8 +1744,11 @@ const Engine = struct {
 // Missing external actual values and unscoped relations remain explicit; known
 // Common code containment does not validate fixed-flow/HSC or full capacity.
 // One fixed point and one final replay serve every supplied consumer.
-pub fn analyze(c: *Context, observers: []const facts.Observer) Error!Analysis {
-    var engine=Engine{.c=c,.observers=observers}; defer engine.deinit(); errdefer engine.result.deinit(c.allocator);
+// Any nonnull material must already have passed the complete artifact check at
+// the public boundary using this same Context. It is data, not a validity flag;
+// this internal analysis neither rechecks nor grants that boundary's proof.
+pub fn analyze(c: *Context, material: ?*const host_binding.Bundle, observers: []const facts.Observer) Error!Analysis {
+    var engine=Engine{.c=c,.host_material=material,.observers=observers}; defer engine.deinit(); errdefer engine.result.deinit(c.allocator);
     try engine.initialize();
     while(true) {
         try c.step(); engine.changed=false; var cursor: usize=0;

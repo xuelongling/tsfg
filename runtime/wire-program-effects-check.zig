@@ -3,9 +3,10 @@
 // final read-only replay, plus the original normalized graph's independent
 // complete-upper OWNER flow. That flow never produces actual values, targets,
 // allocation versions or an actual World. Origins grant no allocation proof.
-// References/layout/SSA/identity, complete fixed publication/flow and independent
-// implementation-bound HSC verification are separate prerequisites. The latter
-// two are not supplied by today's typed checks or by two matching Host digests.
+// References/layout/SSA/identity and complete fixed publication/flow remain
+// separate prerequisites. Complete Host material, when present, must have been
+// checked once by the public boundary against this Runtime's compiled anchor;
+// matching package digests or a nonnull pointer alone never supply that proof.
 // Success checks these observations against declared bounds; it is not Host,
 // Runtime, kernel, borrow, Source, fixed-flow or execution admission.
 const std = @import("std");
@@ -13,6 +14,7 @@ const model = @import("wire-program-model.zig");
 const tables = @import("wire-program-tables.zig");
 const publication = @import("wire-program-publication.zig");
 const facts = @import("wire-program-actual-facts.zig");
+const host_binding = @import("wire-program-host-binding-check.zig");
 const t = model.types;
 const Context = facts.Context;
 pub const Error = facts.Error;
@@ -222,10 +224,10 @@ const UpperGraph = struct {
                     .domain_literal => |data| if (v.types[@intFromEnum(data.actual_type)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); },
                     .eh_enter => try collector.facet(self.function, .eh_control),
                     .authorized_host => {
-                        // This module has no compiled artifact binding material.
-                        // Matching package metadata/HSC records do not supply it.
-                        collector.fixed_upper_host_pending = true;
-                        _ = try result.add(c, .unresolved);
+                        try collector.hostEffects(self.function);
+                        // A verified scalar result carries no external owner.
+                        // Missing material remains pending, never an empty root.
+                        if (collector.host_material == null) _ = try result.add(c, .unresolved);
                     },
                     else => {},
                 }
@@ -287,6 +289,7 @@ const UpperGraph = struct {
 // from actual replay. Unknown effect-root and Host bindings remain explicit.
 pub const Collector = struct {
     c: *Context,
+    host_material: ?*const host_binding.Bundle,
     contracts: []?usize,
     concrete: []?usize,
     captures: []?Capture,
@@ -296,7 +299,9 @@ pub const Collector = struct {
     fixed_upper_host_pending: bool = false,
     host_binding_required: bool = false,
 
-    pub fn init(c: *Context) Error!Collector {
+    // Internal typed consumer: material was fully verified by the public
+    // compiled-anchor boundary with this same Context, not merely supplied.
+    pub fn init(c: *Context, material: ?*const host_binding.Bundle) Error!Collector {
         if (c.program.tables.mode != .common) return error.WrongMode;
         const v = c.program.tables.mode.common;
         try c.charge(c.program.functions.len + 2 * v.types.len + v.storage.bindings.len);
@@ -331,7 +336,7 @@ pub const Collector = struct {
             try c.require(captures[b] == null);
             captures[b] = .{ .environment = @enumFromInt(e), .slot = @enumFromInt(s) };
         };
-        var result = Collector{ .c = c, .contracts = contracts, .concrete = concrete, .captures = captures, .managed = managed };
+        var result = Collector{ .c = c, .host_material = material, .contracts = contracts, .concrete = concrete, .captures = captures, .managed = managed };
         // An unreachable Host instruction still requires its original metadata
         // dependency. Its runtime effect permission follows actual replay.
         for (c.program.functions, 0..) |f, i| for (f.blocks) |block| for (block.instructions) |op| {
@@ -453,6 +458,18 @@ pub const Collector = struct {
             if (std.mem.eql(u8, id, resource)) return;
         }
         return error.InvalidShape;
+    }
+    fn hostEffects(self: *Collector, function: t.FunctionRef) Error!void {
+        try self.c.step();
+        const material = self.host_material orelse { self.fixed_upper_host_pending = true; return; };
+        // The owning boundary verified exact fixed Counter read-write rows,
+        // scalar-only caller resources and empty callback/borrow/retain lists.
+        // Read the complete original resource rows, including unobserved paths.
+        for (material.contract.semantics.effects) |effect| {
+            try self.c.step();
+            try self.resources(function, effect.resource, false);
+            try self.resources(function, effect.resource, true);
+        }
     }
     fn hostMetadata(self: *Collector, function: t.FunctionRef, host: t.HostRef) Error!void {
         const c = self.c; const v = self.common(); const row = v.modules.hosts[@intFromEnum(host)];
@@ -578,13 +595,7 @@ pub const Collector = struct {
             },
             .eh_enter => try self.facet(function, .eh_control),
             .eh_carrier => |view| if (view == null) try self.facet(function, .eh_control),
-            .authorized_host => {
-                // Existing Counter profile v1, not an arbitrary Host/resource
-                // table. Prior metadata joins do not claim HSC verification.
-                inline for (.{ "runtime.counter.storage", "runtime.counter.events" }) |id| {
-                    try self.resources(function, id, false); try self.resources(function, id, true);
-                }
-            },
+            .authorized_host => try self.hostEffects(function),
             .eh_invoke => |v| {
                 const abi = self.common().abis[@intFromEnum(c.program.functions[@intFromEnum(v.callee)].abi)];
                 try self.consume(site, state, v.callee, if (abi.lexical_environment != null) 1 else 0, false);
