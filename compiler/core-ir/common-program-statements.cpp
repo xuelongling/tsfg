@@ -34,14 +34,29 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
         model.functions.count(id)&&same(field(*model.functions.at(id),"lexicalParent"),field(*current,"id"))&&
         same(field(*model.functions.at(id),"declarationScope"),Object{{"start",int64_t(source->tokens[first-1].start)},{"end",int64_t(source->tokens[end].end)}})&&
         same(field(*model.functions.at(id),"declarationRange"),field(row,"range"))&&nestedDeclarations.insert(id).second,"nested declaration parent, block scope, identity or original range differs"))return false;
-    }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
-      const auto keyword=kind=="constDeclaration"?"const":kind=="letDeclaration"?"let":
+    }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="varDeclaration"||kind=="initialize"){
+      const auto keyword=kind=="constDeclaration"?"const":kind=="letDeclaration"?"let":kind=="varDeclaration"?"var":
         model.globals.count(bindingId)?string(field(*model.globals.at(bindingId),"bindingKind")):std::string();
       if(!model.need(at<end&&(source->tokens[at].text==keyword||source->tokens[at].text==","),"original declaration prefix differs"))return false;++at;
     }
     if(!model.need(a==at&&b<=end,"missing/reordered original statement"))return false;
     if(kind=="functionDeclaration"){
       // Its complete original body is checked through the function directory.
+    }else if(kind=="varDeclaration"){
+      if(!model.need(bindings.count(bindingId)&&model.functionVars.at(string(field(*current,"id"))).count(bindingId),"var is not indexed in its original function scope"))return false;
+      const auto &binding=*bindings.at(bindingId);const auto type=string(field(binding,"declaredType"));
+      if(!source->name(field(row,"nameRange"),string(field(binding,"name"))))return false;
+      std::vector<Json> pieces{field(row,"nameRange")};
+      if(!field(row,"annotationRange").getAsNull()){
+        if(!annotation(field(row,"annotationRange"),type))return false;pieces.push_back(":");pieces.push_back(field(row,"annotationRange"));
+      }
+      if(!field(row,"initializer").getAsNull()){
+        if(!expression(field(row,"initializer"),false,type))return false;
+        if(string(field(binding,"kind"))=="local"&&same(field(row,"range"),field(binding,"declarationRange"))&&
+          field(binding,"annotationRange").getAsNull()&&!model.need(same(field(binding,"declaredType"),field(field(row,"initializer"),"flowType")),"inferred canonical var type differs from original initializer flow"))return false;
+        pieces.push_back("=");pieces.push_back(field(field(row,"initializer"),"range"));
+      }
+      if(!source->sequence(field(row,"range"),pieces))return false;
     }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
       if(!model.need(bindings.count(bindingId),"declaration storage absent from complete inventory"))return false;const auto &binding=*bindings.at(bindingId);
       const bool global=kind=="initialize";

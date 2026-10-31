@@ -307,9 +307,15 @@ struct TargetFlow {
   bool body(Summary &s,State &state,const Json &rows){
     bool live=true;for(const auto &row:items(rows)){
       if(!step()||!e.message.empty())return false;if(!live)break;const auto kind=string(field(row,"kind"));
-      if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
+      if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="varDeclaration"||kind=="initialize"){
+        if(kind=="varDeclaration"&&field(row,"initializer").getAsNull())continue;
         auto value=expression(s,state,field(row,"initializer"));const auto id=string(field(row,"binding"));
-        if(globalIds.count(id)){expose(string(field(field(row,"initializer"),"type")));exposeClosures(value);}else if(value){state[id]=copy(*value);if(capturedLocals.count(id))merge(capturedLocals.at(id),*value);}
+        if(globalIds.count(id)){expose(string(field(field(row,"initializer"),"type")));exposeClosures(value);}else if(value){
+          state[id]=copy(*value);auto owner=capturedParameters.find(id);
+          if(owner!=capturedParameters.end()){
+            auto &summary=summaries.at(owner->second.first);merge(summary.initializedParameters.at(owner->second.second),*value);observe(summary,owner->second.second,*value);
+          }else if(capturedLocals.count(id))merge(capturedLocals.at(id),*value);
+        }
         auto binding=bindingTypes.find(id);if(binding!=bindingTypes.end())erase(binding->second,string(field(field(row,"initializer"),"type")),value);
       }else if(kind=="expression"||kind=="throw"||kind=="return"){
         auto value=field(row,"value").getAsNull()?std::optional<Targets>{}:expression(s,state,field(row,"value"));

@@ -8,6 +8,7 @@ import {commonMethods} from './common-program-methods.mjs';
 import {commonReturnOrigins,commonReturnOriginFormat} from './common-program-return-origins.mjs';
 import {commonReturnOriginsInclusion} from './common-program-return-origin-inclusion.mjs';
 import {commonFacets} from './common-program-effects.mjs';
+import {commonLexicalScopes} from './common-program-lexical.mjs';
 /** @param {((id:string)=>string|null)|null} [fixedTypeKind] */
 export function commonReturnOriginSource(hir,spend,physical=null,storageProjection=null,fixedTypeKind=null,fixedRecords=null,selectedFunctions=null) {
   check(storageProjection===null||storageProjection.status==='complete'||storageProjection.status==='partial','return-origin-storage-open','verified storage directory is unresolved');
@@ -52,7 +53,8 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     check(fn.kind!=='construction-body','return-origin-construction-open','receiver frame/result equations are not connected to this Source producer');
     const result=blank(fn),read=new Set(),write=new Set(),hostRead=new Set(),hostWrite=new Set(),hostCalls=[],params=ownerParameters(fn),origins=new Map(),calls=[],captures=new Map();
     const local=diagnostics?new Map():null;let operationSource=fn.sourcePath;
-    const bindings=new Map();for(const binding of fn.bindings??[]){spend();bindings.set(binding.id,binding);}
+    const bindings=new Map();for(const binding of fn.parameters){spend();bindings.set(binding.id,binding);}
+    for(const binding of fn.bindings??[]){spend();bindings.set(binding.id,binding);}
     const protocol=owner=>({lexicalEnvironment:owner.lexicalEnvironment??null,activationEnvironment:owner.activationEnvironment??null});
     // Code formation requires every admitted signature/Env protocol, even when
     // that function's return graph is unavailable. A null graph never supplies
@@ -105,6 +107,13 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     // grants neither an actual tag nor a managed-reference capability.
     params.forEach((p,index)=>{spend();const selected=graph.root('parameter',p.type,index);origins.set(p.id,selected);const slot=slots.get(p.id);
       if(slot&&slot.layout===fn.activationEnvironment)graph.write(environmentFor(slot.layout),'capture:'+slot.key,selected,{view:'env:'+slot.layout,initialize:true});});
+    const declarations=commonLexicalScopes(fn,spend);
+    for(const binding of fn.bindings??[]){spend();if(binding.kind==='local'&&declarations.get(binding.id)?.variable){
+      // This directory carries owner provenance under the original view;
+      // generated actual undefined belongs to CFG/Actual, not Source types.
+      const selected=nonowning(binding.type);origins.set(binding.id,selected);const slot=slots.get(binding.id);
+      if(slot)graph.write(environmentFor(slot.layout),'capture:'+slot.key,selected,{view:'env:'+slot.layout,initialize:true});
+    }}
     if(reference(fn.returnType)||params.some(p=>reference(p.type)))facet('managedReference','function','signature',fn.range);
     const mergeFacets=facets=>{for(const key of commonFacets)if(key!=='mayThrow')result.facets[key] ||= facets[key];};
     const project=(owners,flag,value)=>{for(const origin of owners){spend();
@@ -215,10 +224,11 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
         spend();if(!completions.has('normal'))break;completions.delete('normal');let current=new Set(['normal']);const rowThrows=local?new Map():null;
         const rowValues=new Set(),rowReturns=new Set(),rowThrowHeaps=new Set(),rowReturnHeaps=new Set(),rowThrowStates=[],rowReturnStates=[];
         const inspect=value=>expression(value,environment),possibleThrow=result=>{if(result.throwing){current.add('throw');join(rowValues,result.thrown);join(rowThrowHeaps,result.throwHeaps);appendStates(rowThrowStates,result.throwStates);}return result.owner;};
-        if(['constDeclaration','letDeclaration','initialize'].includes(row.kind)) {
-          const assigned=possibleThrow(inspect(row.initializer)),binding=globals.get(row.global)??bindings.get(row.binding);
-          environment.set(row.binding,copied(assigned,binding?.type??row.initializer.type,row.range,'declaration-store'));if(row.global)write.add(row.global);
-          const slot=slots.get(row.binding);if(slot)graph.write(environmentFor(slot.layout),'capture:'+slot.key,environment.get(row.binding),{view:'env:'+slot.layout,initialize:true});
+        if(['constDeclaration','letDeclaration','varDeclaration','initialize'].includes(row.kind)) {
+          if(row.initializer){const assigned=possibleThrow(inspect(row.initializer)),binding=globals.get(row.global)??bindings.get(row.binding);
+            environment.set(row.binding,copied(assigned,binding?.type??row.initializer.type,row.range,'declaration-store'));if(row.global)write.add(row.global);
+            const slot=slots.get(row.binding);if(slot)graph.write(environmentFor(slot.layout),'capture:'+slot.key,environment.get(row.binding),{view:'env:'+slot.layout,initialize:row.kind!=='varDeclaration'});
+          }
         }else if(row.kind==='expression')possibleThrow(inspect(row.value));
         else if(row.kind==='return') {
           if(row.value){const evaluated=possibleThrow(inspect(row.value)),assigned=fn.returnType==='void'||types.get(fn.returnType)?.kind==='void'?new Set():copied(evaluated,fn.returnType,row.range,'return');join(rowReturns,assigned);if(reference(fn.returnType))facet('escape','operation',row.kind,row.range);

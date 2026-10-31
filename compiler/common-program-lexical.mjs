@@ -16,13 +16,18 @@ export function commonCaptureType(id,types,spend) {
 // Private structural paths distinguish scopes without hashing source offsets.
 // Each entry retains its original declaration and the visible ancestor layers.
 export function commonLexicalScopes(fn,spend) {
-  const declarations=new Map();
+  spend(fn.parameters.length+fn.bindings.length);const declarations=new Map(),bindings=new Map([...fn.parameters,...fn.bindings].map(row=>[row.id,row]));let body;
   function walk(rows,path=[],chain=[],repeated=false,eligible=true){
-    spend(path.length+chain.length+1);const scope={rows,path,repeated,eligible};scope.chain=[...chain,scope];
+    spend(path.length+chain.length+1);const scope={rows,path,repeated,eligible};scope.chain=[...chain,scope];if(!path.length)body=scope;
     for(const [index,row]of rows.entries()){
       spend();if(['letDeclaration','constDeclaration','functionDeclaration'].includes(row.kind)){
         const id=row.kind==='functionDeclaration'?row.functionId:row.binding;
         check(!declarations.has(id),'lexical');declarations.set(id,{row,scope});
+      }else if(row.kind==='varDeclaration'){
+        const binding=bindings.get(row.binding),previous=declarations.get(row.binding);
+        check(binding&&['local','parameter'].includes(binding.kind)&&binding.writable&&binding.lexicalOwner===fn.id,'binding');
+        check(!previous||previous.variable,'lexical');
+        if(previous)previous.rows.push(row);else declarations.set(row.binding,{row,scope:body,variable:true,rows:[row]});
       }
       const descend=(children,label,again=repeated,allowed=eligible)=>walk(children,[...path,label+':'+index],scope.chain,again,allowed);
       if(row.kind==='block')descend(row.body,'block');
@@ -35,7 +40,15 @@ export function commonLexicalScopes(fn,spend) {
       }
     }
   }
-  walk(fn.body);return declarations;
+  walk(fn.body);spend(fn.parameters.length);const names=new Map(fn.parameters.map(row=>[row.name,row.id]));
+  for(const [id,declaration]of declarations){spend();if(declaration.variable){
+    spend(declaration.rows.length);const binding=bindings.get(id);check(!names.has(binding.name)||names.get(binding.name)===id,'binding');names.set(binding.name,id);
+    if(binding.kind==='local'){
+      const range=binding.declarationRange??binding.range,canonical=declaration.rows.find(row=>same(row.range,range));
+      check(canonical&&same(canonical.nameRange,binding.nameRange),'binding','var lacks its original canonical declaration');declaration.row=canonical;
+    }
+  }}
+  return declarations;
 }
 export function validateCommonLexical(payload,grammars,types,coverage,spend,visible) {
   spend(payload.functions.length+payload.types.length);const functions=new Map(payload.functions.map(fn=>[fn.id,fn]));

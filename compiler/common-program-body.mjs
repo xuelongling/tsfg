@@ -79,6 +79,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     let ancestor=functions.get(fn.lexicalParent);const ancestors=[];while(ancestor){spend();ancestors.push(ancestor);ancestor=functions.get(ancestor.lexicalParent);}
     for(let i=ancestors.length-1;i>=0;i--){const owner=ancestors[i],child=i===0?fn:ancestors[i-1],declaration=scopes.get(owner.id).get(child.id);
       check(declaration,'lexical');for(const b of owner.parameters){spend();scope.set(b.name,b.id);}
+      for(const [id,entry]of scopes.get(owner.id)){spend();if(entry.variable){const b=bindings.get(id).row;scope.set(b.name,b.id);}}
       for(const layer of declaration.scope.chain)for(const row of layer.rows){spend();
         if(['constDeclaration','letDeclaration'].includes(row.kind)){const b=bindings.get(row.binding)?.row;check(b,'binding');scope.set(b.name,b.id);}
         else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child,'lexical');scope.set(child.name,child.id);}}
@@ -109,8 +110,9 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         if(!globals.has(value.binding)&&!inventory.has(value.binding)){
           const owner=functions.get(entry.lexicalOwner),supported=commonCaptureType(entry.declaredType,types,spend);
           check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');
-          const declaration=scopes.get(owner.id).get(entry.id),initialized=entry.kind==='local'&&supported&&declaration?.row.initializer
-            &&(!declaration.scope.path.length||declaration.scope.eligible&&!declaration.scope.repeated&&types.get(entry.declaredType).kind!=='readSpan');
+          const declaration=scopes.get(owner.id).get(entry.id),initialized=entry.kind==='local'&&supported&&declaration
+            &&(declaration.variable?types.get(entry.declaredType).kind!=='readSpan':declaration.row.initializer
+              &&(!declaration.scope.path.length||declaration.scope.eligible&&!declaration.scope.repeated&&types.get(entry.declaredType).kind!=='readSpan'));
           const parameter=entry.kind==='parameter'&&supported&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
           check(initialized||parameter,'capture');
           if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});
@@ -212,8 +214,8 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
       for(const row of items)if(row.kind==='functionDeclaration'){spend();const child=functions.get(row.functionId);check(child,'lexical');inner.set(child.name,child.id);}
       for(const row of items) {
         spend();const at=g.indices(row.range);sourceRange(row.range,g.text,parent);
-        const declaration=['constDeclaration','letDeclaration'].includes(row.kind);
-        if(declaration||row.kind==='initialize'){const keyword=row.kind==='initialize'?globals.get(row.binding)?.bindingKind:row.kind==='constDeclaration'?'const':'let';
+        const variable=row.kind==='varDeclaration',declaration=['constDeclaration','letDeclaration'].includes(row.kind);
+        if(declaration||variable||row.kind==='initialize'){const keyword=variable?'var':row.kind==='initialize'?globals.get(row.binding)?.bindingKind:row.kind==='constDeclaration'?'const':'let';
           check(g.tokens[cursor]?.text===keyword||g.tokens[cursor]?.text===',','source');cursor++;}
         check(cursor===at.first&&at.end<=end,'source','missing or reordered statement');
         const expression=(v,wanted=undefined)=>expr(v,row.range,false,wanted,inner);
@@ -221,6 +223,17 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
           const b=inventory.get(row.binding);check(b&&b.kind==='local'&&!seenDeclarations.has(b.id)&&b.writable===(row.kind==='letDeclaration'),'binding');
           expression(row.initializer,b.declaredType);annotation(b,row.initializer);check(same(row.range,b.declarationRange),'source');
           inner.set(b.name,b.id);declared.add(b.id);seenDeclarations.add(b.id);
+        }else if(variable){
+          const b=inventory.get(row.binding),original=scopes.get(fn.id)?.get(row.binding);
+          check(b&&original?.variable&&b.writable,'binding');
+          sourceRange(row.nameRange,g.text,row.range);g.name(row.nameRange,b.name);
+          if(row.annotationRange)typeAnnotation(fn.sourcePath,row.annotationRange,b.declaredType);
+          if(b.kind==='local'&&same(row.range,b.declarationRange)){
+            check(same(row.nameRange,b.nameRange)&&same(row.annotationRange??null,b.annotationRange),'binding');
+            if(!b.annotationRange&&row.initializer)check(b.declaredType===row.initializer.flowType,'type','inferred var differs from its original initializer flow');
+          }
+          if(row.initializer)expression(row.initializer,b.declaredType);
+          annotation({nameRange:row.nameRange,annotationRange:row.annotationRange??null,declarationRange:row.range},row.initializer??null);seenDeclarations.add(b.id);
         }else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child&&child.lexicalParent===fn.id&&same(child.declarationRange,row.range)&&same(parent,child.declarationScope),'lexical');
         }else if(row.kind==='initialize') {
           const global=globals.get(row.binding);check(global&&global.sourcePath===fn.sourcePath&&initialScope!==undefined,'global');
@@ -272,6 +285,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         declared.add(step.binding);
       }
     }
+    for(const [id,entry]of scopes.get(fn.id)??[]){spend();if(entry.variable){const b=inventory.get(id);scope.set(b.name,b.id);declared.add(id);}}
     for(const {value,type:expected} of initial)expr(value,fn.declarationRange,false,expected,scope);
     if(bodyRange){const bounds=g.indices(bodyRange);rows(fn.body,bounds.first+1,bounds.end-1,bodyRange,scope);}
     check(fn.bindings.every(row=>seenDeclarations.has(row.id)),'binding','unused or omitted binding declaration');

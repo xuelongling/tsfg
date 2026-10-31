@@ -6,9 +6,10 @@ import {commonProgramValues} from './common-program-values.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
 import {sha256,boolTypeId} from './identity.mjs';
+import {commonLexicalScopes} from './common-program-lexical.mjs';
 
 export function planCommonFunction(model,owner) {
-  const collections=commonCollections(model.spend);
+  const collections=commonCollections(model.spend),declarations=commonLexicalScopes(owner,model.spend);
   const constructor=owner.kind==='construction-body';
   const initialization=owner.parameterInitialization;
   const graph=createCommonGraph(model,owner),params=[...(owner.ownerType?[constructor?{id:'receiver:'+owner.id,type:'receiver:'+owner.ownerType,hidden:true,frame:true}:{id:owner.receiverBinding,type:owner.ownerType}]:[]),...owner.parameters.map((p,index)=>initialization?{...p,type:initialization.steps[index].argumentType}:p)];
@@ -64,12 +65,20 @@ export function planCommonFunction(model,owner) {
     }
     if(constructor&&!initialization&&path.length===1&&path[0]==='body')values.enterConstructor(model.types.get(owner.ownerType),state.receiver,
       owner.parameters.map(p=>values.load(values.location({kind:'bindingTarget',binding:p.id,type:p.type,range:owner.range}),owner.range)),owner.range);
+    if(path.length===1&&path[0]==='body')for(const binding of owner.bindings){model.spend();if(binding.kind==='local'&&declarations.get(binding.id)?.variable){
+      const value=values.op('undefined',[],sha256('tsfg.type\0undefined'),{},binding.range);
+      if(!model.slots.has(binding.id)){const cell=values.op('cell',[],model.cell(binding.id),{binding:binding.id},binding.range);state.cells.set(binding.id,cell);}
+      values.store({kind:'bindingTarget',binding:binding.id,type:binding.type},value,binding.range,true,true);
+    }}
     for(const [index,statement]of rows.entries()) {
       model.spend();if(state.current.terminated)break;const at=[...path,index];
       if(['constDeclaration','letDeclaration'].includes(statement.kind)) {
         const b=model.bindings.get(statement.binding),value=values.expression(statement.initializer);
         if(!model.slots.has(b.id)){const cell=values.op('cell',[],model.cell(b.id),{binding:b.id},statement.range);state.cells.set(b.id,cell);}
         values.store({kind:'bindingTarget',binding:b.id,type:b.type},value,statement.range,true);
+      }else if(statement.kind==='varDeclaration'){
+        if(statement.initializer){const b=model.bindings.get(statement.binding),value=values.expression(statement.initializer);
+          values.store({kind:'bindingTarget',binding:b.id,type:b.type},value,statement.range);}
       }else if(statement.kind==='functionDeclaration'){
         // Hoisted declaration: make_closure occurs when the original value is read.
       }else if(statement.kind==='initialize') {

@@ -248,7 +248,12 @@ bool SourceBodies::function(const Json &fn){
       pa<=sa&&sb<=pb&&source->tokens[sa].text=="{"&&source->tokens[sb-1].text=="}","nested function declaration requires its original single-entry block scope"))return false;
   }
   header.push_back(originalBody);
-  if(!source->sequence(field(fn,"declarationRange"),header)||!statements(field(fn,"body"),body+1,b-1))return false;
+  if(!source->sequence(field(fn,"declarationRange"),header))return false;
+  for(const auto &binding:model.functionVars.at(id)){
+    if(!model.spend()||!model.need(bindings.count(binding),"function-scoped var inventory missing"))return false;
+    scope[string(field(*bindings.at(binding),"name"))]=binding;initialized.insert(binding);declared.insert(binding);
+  }
+  if(!statements(field(fn,"body"),body+1,b-1))return false;
   for(const auto &binding:items(field(fn,"bindings")))if(!model.need(declared.count(string(field(binding,"id"))),"omitted original binding declaration"))return false;
   return captures();
 }

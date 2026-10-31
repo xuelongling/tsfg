@@ -69,12 +69,36 @@ void SourcePlan::region(const Array &rows,const Completion &active,const std::fu
     std::vector<Reg> args;for(const auto &p:items(field(owner,"parameters"))){if(!check.step())return;args.push_back(load(bindingLocation(string(field(p,"id")),string(field(p,"type")),sourceAnchor(owner)),sourceAnchor(owner)));}
     enterConstructor(*check.types.at(string(field(owner,"ownerType"))),receiverFrame,args,sourceAnchor(owner));
   }
+  if(path=="body"){
+    std::set<std::string> vars;
+    std::function<void(const Array &)> collect;
+    collect=[&](const Array &body){
+      for(const auto &row:body){
+        if(!check.step())return;const auto kind=string(field(row,"kind"));
+        if(kind=="varDeclaration")vars.insert(string(field(row,"binding")));
+        for(auto key:{"body","then","else"})collect(items(field(row,key)));
+        collect(items(field(field(row,"tryBlock"),"body")));collect(items(field(field(field(row,"catchClause"),"block"),"body")));collect(items(field(field(row,"finallyBlock"),"body")));
+      }
+    };collect(rows);
+    for(const auto &binding:items(field(owner,"bindings"))){
+      if(!check.step())return;const auto id=string(field(binding,"id"));if(!vars.count(id))continue;
+      const auto range=sourceAnchor(binding);const auto type=string(field(binding,"type"));
+      const auto value=emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},range);
+      if(!check.environmentSlots.count(id))cells[id]=emit("cell",{},"cell:"+id,Object{{"binding",id}},range);
+      store(bindingLocation(id,type,range),value,range,true);
+    }
+  }
   for(size_t index=0;index<rows.size()&&ok()&&!ended();++index){
     if(!check.step())return;const auto &s=rows[index];const auto kind=string(field(s,"kind")),at=path+"/"+std::to_string(index);const auto r=sourceAnchor(s);
     if(kind=="constDeclaration"||kind=="letDeclaration"){
       const auto id=string(field(s,"binding"));if(!check.need(check.bindings.count(id),"Source declaration binding missing"))return;
       const auto value=expression(field(s,"initializer"));if(!check.environmentSlots.count(id))cells[id]=emit("cell",{},"cell:"+id,Object{{"binding",id}},r);
       store(bindingLocation(id,string(field(*check.bindings.at(id),"type")),r),value,r,true);
+    }else if(kind=="varDeclaration"){
+      if(!field(s,"initializer").getAsNull()){
+        const auto id=string(field(s,"binding"));if(!check.need(check.bindings.count(id),"Source var binding missing"))return;
+        const auto value=expression(field(s,"initializer"));store(bindingLocation(id,string(field(*check.bindings.at(id),"type")),r),value,r,false);
+      }
     }else if(kind=="functionDeclaration"){
       // Hoisted declaration; reading its value creates a code/environment pair.
     }else if(kind=="initialize"){

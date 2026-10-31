@@ -1,0 +1,77 @@
+{
+  "origin": "Independent literal UTF16 positions and documented hash domains; not an official AST/Symbol run and not derived from producer output",
+  "sourceSha256": "fba862af6ce436740dc4b6fceb428ab3c90a7ec7bcbd84db3decd2aa42926a46",
+  "sourcePath": "/src/main.ts",
+  "functions": [
+    {
+      "name": "first",
+      "id": "sha256:4e3dfa95ffb2b05e25df65c574a377690b64c1fb3d892ba6ba900ddc44bdc8e1",
+      "declarationRange": {
+        "start": 28,
+        "end": 63
+      }
+    },
+    {
+      "name": "second",
+      "id": "sha256:b4725046286873d512e54ec20f435aa40525b0e62bfe27275312bc249c0d234f",
+      "declarationRange": {
+        "start": 64,
+        "end": 100
+      }
+    },
+    {
+      "name": "varBinding",
+      "id": "sha256:4788287d0caf8ae07e8660b9e93b15f3c726187b7c47a0b9f37286f74d17be08",
+      "declarationRange": {
+        "start": 101,
+        "end": 249
+      }
+    },
+    {
+      "name": "read",
+      "id": "sha256:b99e9c58b97bbe350f610539925857be8aeaa044269403dbd0f6ebc74d019c24",
+      "declarationRange": {
+        "start": 151,
+        "end": 194
+      }
+    },
+    {
+      "name": "entry",
+      "id": "sha256:a41b2601e0274094838ffb0679c74dff85851637d75070772bfd95c76dad9caa",
+      "declarationRange": {
+        "start": 250,
+        "end": 308
+      }
+    }
+  ],
+  "selected": {
+    "id": "sha256:a5e20e67e704c3d457db1d1a60d254566fe5c9e493816f1e1b09f05ab53c0d2c",
+    "bindingKind": "parameter",
+    "declarationRange": {
+      "start": 121,
+      "end": 140
+    },
+    "nameRange": {
+      "start": 121,
+      "end": 129
+    },
+    "varDeclaration": {
+      "start": 201,
+      "end": 229
+    },
+    "varName": {
+      "start": 201,
+      "end": 209
+    },
+    "initializer": {
+      "start": 223,
+      "end": 229
+    },
+    "capturedRead": {
+      "start": 181,
+      "end": 189
+    }
+  },
+  "literalExpectedResult": 2,
+  "resultBasis": "entry passes first; var initializer assigns second before read; no application/runtime execution performed"
+}

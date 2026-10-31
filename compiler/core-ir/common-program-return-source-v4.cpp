@@ -364,16 +364,18 @@ ReturnSource::Body ReturnSource::body(const Array &rows,Environment &environment
     if(!step()||!good()||!(result.completions&Normal))break;result.completions&=~Normal;Body current;
     const auto kind=string(field(row,"kind"));if(!text(kind))break;
     const auto inspect=[&](const Json &value){auto evaluated=expression(value,environment);inheritThrows(current,evaluated);return std::move(evaluated.owner);};
-    if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
-      const auto assigned=inspect(field(row,"initializer"));const auto binding=string(field(row,"binding")),global=string(field(row,"global"));const Json *declaration=nullptr;
-      if(!global.empty()){if(!lookup(globals.size(),global)||!need(globals.count(global),"initializer has no owned global"))return result;declaration=globals.at(global);}
-      else{if(!lookup(bindings.size(),binding))return result;auto found=bindings.find(binding);if(found!=bindings.end())declaration=found->second;}
-      const auto type=declaration?string(field(*declaration,"type")):string(field(field(row,"initializer"),"type"));
-      auto stored=copied(assigned,type,field(row,"range"),"declaration-store");if(!text(binding)||!lookup(environment.size(),binding)||!step())return result;environment.insert_or_assign(binding,std::move(stored));
-      if(!global.empty()){if(!text(global)||!lookup(direct.writes.size(),global)||!step())return result;direct.writes.insert(global);}
-      if(!lookup(slots.size(),binding))return result;auto slot=slots.find(binding);
-      if(slot!=slots.end()){if(!text(slot->second.key)||!text(slot->second.layout)||!step(2))return result;
-        write(environmentFor(slot->second.layout),"capture:"+slot->second.key,environment.at(binding),"env:"+slot->second.layout,true);}
+    if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="varDeclaration"||kind=="initialize"){
+      if(kind!="varDeclaration"||!field(row,"initializer").getAsNull()){
+        const auto assigned=inspect(field(row,"initializer"));const auto binding=string(field(row,"binding")),global=string(field(row,"global"));const Json *declaration=nullptr;
+        if(!global.empty()){if(!lookup(globals.size(),global)||!need(globals.count(global),"initializer has no owned global"))return result;declaration=globals.at(global);}
+        else{if(!lookup(bindings.size(),binding))return result;auto found=bindings.find(binding);if(found!=bindings.end())declaration=found->second;}
+        const auto type=declaration?string(field(*declaration,"type")):string(field(field(row,"initializer"),"type"));
+        auto stored=copied(assigned,type,field(row,"range"),"declaration-store");if(!text(binding)||!lookup(environment.size(),binding)||!step())return result;environment.insert_or_assign(binding,std::move(stored));
+        if(!global.empty()){if(!text(global)||!lookup(direct.writes.size(),global)||!step())return result;direct.writes.insert(global);}
+        if(!lookup(slots.size(),binding))return result;auto slot=slots.find(binding);
+        if(slot!=slots.end()){if(!text(slot->second.key)||!text(slot->second.layout)||!step(2))return result;
+          write(environmentFor(slot->second.layout),"capture:"+slot->second.key,environment.at(binding),"env:"+slot->second.layout,kind!="varDeclaration");}
+      }
     }else if(kind=="expression")inspect(field(row,"value"));
     else if(kind=="return"){
       if(const auto *value=row.getAsObject()->get("value")){
@@ -461,7 +463,7 @@ bool ReturnSource::run(Json &raw){
   if(!step(2))return false;heaps.push_back(Object{{"kind","entry"}});controls.push_back(Object{{"kind","entry"}});
   const auto catalog=[&](const Json &rows,auto &directory){if(!step(items(rows).size()))return;for(const auto &row:items(rows)){
     if(!metadata(row))return;const auto id=string(field(row,"id"));if(!lookup(directory.size(),id)||!step())return;directory.emplace(id,&row);}};
-  catalog(field(p.hir,"types"),types);catalog(field(p.hir,"functions"),functions);catalog(field(p.hir,"globals"),globals);catalog(field(p.hir,"environments"),layouts);catalog(field(fn,"bindings"),bindings);
+  catalog(field(p.hir,"types"),types);catalog(field(p.hir,"functions"),functions);catalog(field(p.hir,"globals"),globals);catalog(field(p.hir,"environments"),layouts);catalog(field(fn,"parameters"),bindings);catalog(field(fn,"bindings"),bindings);
   if(!good())return false;
   for(const auto &[id,layout]:layouts)for(const auto &slot:items(field(*layout,"slots"))){
     if(!step(8)||!metadata(slot)||!text(id))return false;const auto binding=string(field(slot,"binding"));
@@ -485,6 +487,25 @@ bool ReturnSource::run(Json &raw){
   for(const auto &parameter:ordinary){if(!metadata(parameter)||!step())return false;parameters.emplace_back(string(field(parameter,"id")),string(field(parameter,"type")));}
   if(!step(parameters.size()))return false;direct.parameters.resize(parameters.size());Environment environment;
   for(size_t i=0;i<parameters.size();++i){const auto &[id,type]=parameters[i];auto value=root("parameter",type,{},i);
+    if(!text(id)||!lookup(environment.size(),id)||!step())return false;environment.emplace(id,std::move(value));
+    if(!lookup(slots.size(),id))return false;auto slot=slots.find(id);
+    if(slot!=slots.end()&&slot->second.layout==activation){if(!text(slot->second.key)||!text(activation)||!step(2))return false;
+      write(environmentFor(activation),"capture:"+slot->second.key,environment.at(id),"env:"+activation,true);}
+  }
+  std::set<std::string> vars;
+  std::function<void(const Array &)> collect;
+  collect=[&](const Array &rows){for(const auto &row:rows){
+    if(!step())return;if(string(field(row,"kind"))=="varDeclaration"){
+      const auto binding=field(row,"binding").getAsString().value();
+      if(!text(binding)||!lookup(vars.size(),binding)||!step())return;vars.insert(binding.str());
+    }
+    for(auto key:{"body","then","else"})collect(items(field(row,key)));
+    collect(items(field(field(row,"tryBlock"),"body")));collect(items(field(field(field(row,"catchClause"),"block"),"body")));collect(items(field(field(row,"finallyBlock"),"body")));
+  }};collect(items(field(fn,"body")));
+  for(const auto &binding:items(field(fn,"bindings"))){
+    if(!step())return false;const auto key=field(binding,"id").getAsString().value();
+    if(!text(key)||!lookup(vars.size(),key)||!step())return false;const auto id=key.str();if(!vars.count(id))continue;
+    auto value=nonowning(string(field(binding,"type")));
     if(!text(id)||!lookup(environment.size(),id)||!step())return false;environment.emplace(id,std::move(value));
     if(!lookup(slots.size(),id))return false;auto slot=slots.find(id);
     if(slot!=slots.end()&&slot->second.layout==activation){if(!text(slot->second.key)||!text(activation)||!step(2))return false;

@@ -23,13 +23,11 @@ function shape(value,name,spend,selectedDescriptor) {
   if(name==='int'||name==='int32'){check(Number.isSafeInteger(value)&&value>=0&&!Object.is(value,-0)&&(name!=='int32'||value<=2147483647),'schema');return;}
   const rule=selectedDescriptor.objects[name];check(rule&&value&&typeof value==='object'&&!Array.isArray(value),'schema');
   check(rule.required.every(key=>Object.hasOwn(value,key))&&Object.keys(value).every(key=>Object.hasOwn(rule.properties,key)),'schema');
-  if(selectedDescriptor.version===3&&name==='arrayGenericStatement'&&value.kind==='varDeclaration')
-    check(false,'capability','Common var declarations are not lowered by this Source3 consumer');
   const group={arrayGenericExpression:'expressionKinds',arrayGenericTarget:'targetKinds',arrayGenericStatement:'statementKinds',arrayGenericType:'typeKinds'}[name];
   if(group){const selected=selectedDescriptor[group][value.kind];check(selected,'kind');
     const optional=name==='arrayGenericExpression'?['compatibilityRoots',...(value.kind==='numericLiteral'?['decimal','bits']:[]),...(value.kind==='call'?['receiver']:[]),...(value.kind==='stringConcat'?['operator']:[])]
       :name==='arrayGenericType'&&['value','reference'].includes(value.kind)?['markerOrigin','base','methods']
-      :name==='arrayGenericStatement'?(value.kind==='return'?['value']:value.kind==='try'?['catchClause','finallyBlock']:[]):[];
+      :name==='arrayGenericStatement'?(value.kind==='return'?['value']:value.kind==='try'?['catchClause','finallyBlock']:value.kind==='varDeclaration'?['annotationRange','initializer']:[]):[];
     check(selected.every(key=>Object.hasOwn(value,key))&&Object.keys(value).every(key=>rule.required.includes(key)||selected.includes(key)||optional.includes(key)),'schema');}
   for(const [key,child]of Object.entries(value))shape(child,rule.properties[key],spend,selectedDescriptor);
 }

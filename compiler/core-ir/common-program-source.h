@@ -31,6 +31,7 @@ struct SourceModel {
   std::map<std::string,std::string> hostIds,hostSignatures;
   std::set<std::string> active;
   std::map<std::string,std::map<std::string,ScopeDeclaration>> scopeDeclarations;
+  std::map<std::string,std::set<std::string>> functionVars;
   explicit SourceModel(Program &p,Error &e):p(p),error(e),facts(field(p.hir,"snapshot")),payload(field(facts,"payload")){}
   bool need(bool condition,llvm::StringRef message){return condition||reject(error,"core-ir-common-source",message);}
   bool spend(size_t n=1){return p.charge(n)||reject(error,"core-ir-common-budget","complete Source reconstruction work exceeded");}

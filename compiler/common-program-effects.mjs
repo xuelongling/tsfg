@@ -194,8 +194,8 @@ export function commonEffects(hir,spend,physical=null) {
       for(const row of rows) {
         spend();if(!completions.has('normal'))break;completions.delete('normal');let current=new Set(['normal']);const rowThrows=local?new Map():null;
         const inspect=value=>expression(value,environment),possibleThrow=result=>{if(result.throwing)current.add('throw');return result.owner;};
-        if(['constDeclaration','letDeclaration','initialize'].includes(row.kind)) {
-          const assigned=possibleThrow(inspect(row.initializer));environment.set(row.binding,assigned);if(row.global)write.add(row.global);
+        if(['constDeclaration','letDeclaration','varDeclaration','initialize'].includes(row.kind)) {
+          if(row.initializer){const assigned=possibleThrow(inspect(row.initializer));environment.set(row.binding,assigned);if(row.global)write.add(row.global);}
         }else if(row.kind==='expression')possibleThrow(inspect(row.value));
         else if(row.kind==='return') {
           if(row.value){const assigned=possibleThrow(inspect(row.value));if(reference(fn.returnType))facet('escape','operation',row.kind,row.range);if(types.get(fn.returnType)?.kind==='readSpan')
@@ -204,7 +204,7 @@ export function commonEffects(hir,spend,physical=null) {
         }else if(row.kind==='throw') {
           possibleThrow(inspect(row.value));facet('ehControl','operation',row.kind,row.range);current=new Set(['throw']);
           if(rowThrows){const origin={kind:'operation',functionId:fn.id,source:{sourceId:operationSource,...row.range},operation:row.kind};rowThrows.set(canonical(origin),origin);}
-        }else if(row.kind==='block')current=body(row.body,collections.map(environment),rowThrows);
+        }else if(row.kind==='block'){const child=collections.map(environment);current=body(row.body,child,rowThrows);if(current.has('normal'))mergeOrigins(environment,child);}
         else if(row.kind==='if') {
           const condition=inspect(row.condition);const yes=collections.map(environment),no=collections.map(environment);
           current=union([body(row.then,yes,rowThrows),body(row.else,no,rowThrows)]);mergeOrigins(environment,yes);mergeOrigins(environment,no);if(condition.throwing)current.add('throw');

@@ -49,12 +49,12 @@ test('Source3 admission checks the owning parameter, expression anchors and raw 
     assert.throws(()=>verifyCommonProgramFacts(changed),error=>error instanceof TypeError&&'code'in error&&error.code===code&&error.code!=='r03-common-program-identity');
   }
 });
-test('a known Source3 Common-var DTO reports unsupported consumer capability',()=>{
+test('a Source3 var DTO cannot replace an unrelated original statement',()=>{
   // Boundary-only negative: this is not an official Source var capture.
   const changed=structuredClone(facts),fn=changed.payload.functions.find(fn=>fn.name==='mark'),original=fn.body[0];
   fn.body[0]={kind:'varDeclaration',range:original.range,binding:fn.parameters[0].id,nameRange:fn.parameters[0].nameRange};
   assert.equal(changed.packageId,facts.packageId);
-  assert.throws(()=>verifyCommonProgramFacts(changed),error=>error instanceof TypeError&&'code'in error&&error.code==='r03-common-program-capability');
+  assert.throws(()=>verifyCommonProgramFacts(changed),error=>error instanceof TypeError&&'code'in error&&error.code==='r03-common-program-source');
 });
 test('a selected constructor signature is owned before its raw argument ordinals are read',()=>{
   const changed=structuredClone(facts),caller=changed.payload.functions.find(fn=>fn.name==='actualUndefined'),construction=caller.body.find(row=>row.kind==='constDeclaration').initializer;

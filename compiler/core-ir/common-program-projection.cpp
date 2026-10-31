@@ -77,6 +77,7 @@ Json SourceModel::statements(const Json &rows){
   for(const auto &r:items(rows)){
     if(!spend()||!need(r.getAsObject(),"statement object required"))return nullptr;
     Object row{{"kind",field(r,"kind")},{"range",field(r,"range")}};
+    copy(row,r,{"nameRange","annotationRange"});
     if(r.getAsObject()->get("functionId"))row["functionId"]=functionIds.at(string(field(r,"functionId")));
     if(r.getAsObject()->get("binding")){row["binding"]=field(r,"binding");const auto id=string(field(r,"binding"));if(globalIds.count(id))row["global"]=globalIds.at(id);}
     for(auto key:{"value","initializer","condition"})if(r.getAsObject()->get(key))row[key]=expression(field(r,key));

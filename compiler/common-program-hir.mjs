@@ -57,6 +57,7 @@ export function projectCommonProgram(facts,hostContext=null) {
   }
   function statements(rows) {return rows.map(row=>{
     spend();const result={kind:row.kind,range:{...row.range}};
+    for(const key of ['nameRange','annotationRange'])if(Object.hasOwn(row,key))result[key]=structuredClone(row[key]);
     if(row.functionId)result.functionId=ids.functionIds.get(row.functionId);
     if(row.binding){result.binding=row.binding;if(ids.globals.has(row.binding))result.global=ids.globals.get(row.binding);}
     for(const key of ['value','initializer','condition'])if(row[key])result[key]=expression(row[key]);

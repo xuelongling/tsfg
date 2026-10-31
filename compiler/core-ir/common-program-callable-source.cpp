@@ -5,7 +5,14 @@
 namespace tsfg::commonProgram {
 bool SourceModel::scopeDirectory(){
   for(const auto &[id,fn]:functions){
+    const auto owner=id;
     auto &declarations=scopeDeclarations[id];
+    const auto &body=items(field(*fn,"body"));auto &vars=functionVars[id];
+    std::map<std::string,const Json *> bindings;std::map<std::string,std::string> names;
+    for(auto key:{"parameters","bindings"})for(const auto &binding:items(field(*fn,key))){
+      if(!spend()||!need(bindings.emplace(string(field(binding,"id")),&binding).second,"function binding directory is duplicated"))return false;
+      if(llvm::StringRef(key)=="parameters")names[string(field(binding,"name"))]=string(field(binding,"id"));
+    }
     std::function<bool(const Array &,Array,std::vector<const Array *>,bool,bool)> walk;
     walk=[&](const Array &rows,Array path,std::vector<const Array *> layers,bool repeated,bool eligible){
       if(!spend(path.size()+layers.size()+1))return false;layers.push_back(&rows);size_t index=0;
@@ -15,6 +22,18 @@ bool SourceModel::scopeDirectory(){
           if(!spend(path.size()+layers.size()))return false;
           const auto key=string(field(row,kind=="functionDeclaration"?"functionId":"binding"));
           if(!need(declarations.emplace(key,ScopeDeclaration{&row,Array(path),layers,repeated,eligible}).second,"duplicate original scoped declaration"))return false;
+        }else if(kind=="varDeclaration"){
+          const auto key=string(field(row,"binding"));
+          if(!need(bindings.count(key),"var declaration has no original function binding"))return false;
+          const auto &binding=*bindings.at(key);const auto role=string(field(binding,"kind")),name=string(field(binding,"name"));
+          if(!need((role=="local"||role=="parameter")&&field(binding,"writable").getAsBoolean()==true&&
+            string(field(binding,"lexicalOwner"))==owner&&(!names.count(name)||names.at(name)==key),"var name, original owner or incoming binding differs"))return false;
+          names[name]=key;const bool first=vars.insert(key).second;
+          if(first){
+            if(!spend()||!need(declarations.emplace(key,ScopeDeclaration{&row,{},std::vector<const Array *>{&body},false,true}).second,"var conflicts with a lexical declaration"))return false;
+            if(role=="local"&&!need(same(field(row,"range"),field(binding,"declarationRange"))&&same(field(row,"nameRange"),field(binding,"nameRange"))&&
+              same(field(row,"annotationRange"),field(binding,"annotationRange")),"var original value declaration anchor differs"))return false;
+          }else if(!need(declarations.count(key)&&string(field(*declarations.at(key).row,"kind"))=="varDeclaration","var redeclaration changed lexical binding"))return false;
         }
         const auto descend=[&](const Json &children,llvm::StringRef label,bool again,bool allowed){
           Array childPath(path);childPath.push_back(label.str()+":"+std::to_string(index));
@@ -32,7 +51,7 @@ bool SourceModel::scopeDirectory(){
       }
       return true;
     };
-    if(!walk(items(field(*fn,"body")),{},{},false,true))return false;
+    if(!walk(body,{},{},false,true))return false;
   }
   return true;
 }
@@ -76,6 +95,9 @@ bool SourceBodies::lexicalScope(const Json &fn){
   };
   for(size_t i=chain.size();i>0;){--i;const auto &owner=*chain[i];
     for(const auto &b:items(field(owner,"parameters"))){if(!model.spend())return false;scope[string(field(b,"name"))]=string(field(b,"id"));}
+    for(const auto &id:model.functionVars.at(string(field(owner,"id")))){
+      if(!model.spend()||!model.need(bindings.count(id),"ancestor var binding missing"))return false;scope[string(field(*bindings.at(id),"name"))]=id;
+    }
     const auto &child=i==0?fn:*chain[i-1];const auto &declarations=model.scopeDeclarations.at(string(field(owner,"id")));
     const auto id=string(field(child,"id"));if(!model.need(declarations.count(id),"nested function original declaration scope is absent"))return false;
     for(const auto *rows:declarations.at(id).layers)if(!layer(owner,*rows))return false;
@@ -107,7 +129,8 @@ bool SourceBodies::lexicalScope(const Json &fn){
     }else{
       const auto &declarations=model.scopeDeclarations.at(owner);const auto found=declarations.find(id);
       if(found!=declarations.end()){const auto &original=found->second;
-        declaration=original.row->getAsObject()->get("initializer")&&(original.path.empty()||(original.eligible&&!original.repeated&&kind!="readSpan"));}
+        declaration=string(field(*original.row,"kind"))=="varDeclaration"?kind!="readSpan":
+          original.row->getAsObject()->get("initializer")&&(original.path.empty()||(original.eligible&&!original.repeated&&kind!="readSpan"));}
     }
     if(!model.need(declaration,"capture lacks an initialized single-entry declaration or original parameter; block ReadSpan requires lifetime qualification"))return false;
     // This is a lexical incoming precondition, not an initialization proof.

@@ -214,8 +214,8 @@ struct Derive {
       const auto kind=string(field(row,"kind"));
       if(kind=="functionDeclaration"){
         // Hoisted lexical identity is not an observation of its environment.
-      }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
-        env[string(field(row,"binding"))]=inspect(field(row,"initializer"));if(row.getAsObject()->get("global"))out.writes.insert(string(field(row,"global")));
+      }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="varDeclaration"||kind=="initialize"){
+        if(!field(row,"initializer").getAsNull())env[string(field(row,"binding"))]=inspect(field(row,"initializer"));if(row.getAsObject()->get("global"))out.writes.insert(string(field(row,"global")));
       }else if(kind=="expression")inspect(field(row,"value"));
       else if(kind=="return"){
         if(row.getAsObject()->get("value")){auto owners=inspect(field(row,"value"));const auto type=string(field(fn,"returnType"));
@@ -224,7 +224,7 @@ struct Derive {
         }current=(current&~Normal)|Returned;
       }else if(kind=="throw"){inspect(field(row,"value"));out.ehControl=true;facet("ehControl",&row);current=Thrown;
         if(diagnostics){auto selected=origin(&row);rowThrows.emplace(canonical(selected),std::move(selected));}}
-      else if(kind=="block"){auto child=snapshot(env);current=body(field(row,"body"),child,&rowThrows);}
+      else if(kind=="block"){auto child=snapshot(env);current=body(field(row,"body"),child,&rowThrows);if(current&Normal)merge(env,child);}
       else if(kind=="if"){
         auto condition=expression(field(row,"condition"),env);auto yes=snapshot(env),no=snapshot(env);current=body(field(row,"then"),yes,&rowThrows)|body(field(row,"else"),no,&rowThrows);
         merge(env,yes);merge(env,no);if(condition.throwing)current|=Thrown;
@@ -295,6 +295,14 @@ struct Derive {
       environment[binding]=unite(environment[binding],value.owners);entryThrow|=value.throwing;
       if(value.throwing)facet("mayThrow",&initializer);
     }
+    std::set<std::string> vars;
+    std::function<void(const Array &)> collect;
+    collect=[&](const Array &rows){for(const auto &row:rows){
+      if(!step())return;if(string(field(row,"kind"))=="varDeclaration")vars.insert(string(field(row,"binding")));
+      for(auto key:{"body","then","else"})collect(items(field(row,key)));
+      collect(items(field(field(row,"tryBlock"),"body")));collect(items(field(field(field(row,"catchClause"),"block"),"body")));collect(items(field(field(row,"finallyBlock"),"body")));
+    }};collect(items(field(fn,"body")));
+    for(const auto &binding:items(field(fn,"bindings"))){if(!step())return false;const auto id=string(field(binding,"id"));if(vars.count(id))environment[id]={};}
     std::map<std::string,Json> throws;const auto completions=body(field(fn,"body"),environment,diagnostics?&throws:nullptr);out.mayThrow=entryThrow||(completions&Thrown);
     if(out.mayThrow)for(const auto &[key,selected]:throws)record(Object{{"kind","facet"},{"facet","mayThrow"}},selected);return e.message.empty();
   }

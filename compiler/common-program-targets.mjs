@@ -212,7 +212,16 @@ export function commonTargets(hir,spend,records=null) {
   const join=(into,from)=>{growState(into,from);return into;};
   const externalFunctions=new Set(),globalIds=new Set();for(const global of hir.globals??[]){spend();globalIds.add(global.id);}
   function body(summary,state,rows){let live=true;for(const row of rows){spend();if(!live)break;
-    if(['constDeclaration','letDeclaration','initialize'].includes(row.kind)){const value=expression(summary,state,row.initializer);erase(bindingTypes.get(row.binding),row.initializer.type,value);if(globalIds.has(row.binding)){expose(row.initializer.type);exposeClosures(value);}else if(value){state.set(row.binding,domain.copy(value));if(capturedLocals.has(row.binding))merge(capturedLocals,row.binding,value);}}
+    if(['constDeclaration','letDeclaration','varDeclaration','initialize'].includes(row.kind)){
+      if(row.initializer){const value=expression(summary,state,row.initializer);erase(bindingTypes.get(row.binding),row.initializer.type,value);
+        if(globalIds.has(row.binding)){expose(row.initializer.type);exposeClosures(value);}else if(value){state.set(row.binding,domain.copy(value));
+          const captured=capturedParameters.get(row.binding);
+          if(captured){merge(summaries.get(captured.owner).initializedParameters,captured.index,value);
+            if(records)observe(captured.owner,captured.index,value);else merge(summaries.get(captured.owner).parameters,captured.index,value);
+          }else if(capturedLocals.has(row.binding))merge(capturedLocals,row.binding,value);
+        }
+      }
+    }
     else if(['expression','throw','return'].includes(row.kind)){const value=row.value?expression(summary,state,row.value):null;if(row.kind==='throw'&&row.value){expose(row.value.type);exposeClosures(value);}if(row.kind==='return'){if(row.value)erase(summary.fn.returnType,row.value.type,value);if(externalFunctions.has(summary.fn.id))exposeClosures(value);if(summary.returns){check(value,'callable');const next=domain.join(summary.returns,value);if(!domain.equal(next,summary.returns)){summary.returns=next;changed=true;}}}if(row.kind!=='expression')live=false;}
     else if(row.kind==='block')live=body(summary,state,row.body);
     else if(row.kind==='if'){expression(summary,state,row.condition);const yes=clone(state),no=clone(state),a=body(summary,yes,row.then),b=body(summary,no,row.else);state.clear();if(a)join(state,yes);if(b)join(state,no);live=a||b;}

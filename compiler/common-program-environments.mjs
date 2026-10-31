@@ -14,8 +14,8 @@ export function commonEnvironments(functions,types,spend) {
     let parent=fn.lexicalParent;const seen=new Set();while(parent&&parent!==binding.owner){spend();check(!seen.has(parent)&&byId.has(parent),'capture');seen.add(parent);parent=byId.get(parent).lexicalParent;}
     check(parent===binding.owner,'capture');const owner=byId.get(binding.owner),supported=commonCaptureType(binding.type,types,spend);
     const declaration=scopes.get(owner.id).get(binding.id),path=declaration?.scope.path??[],
-      local=binding.kind==='local'&&supported&&declaration?.row.initializer&&(!path.length
-        ||declaration.scope.eligible&&!declaration.scope.repeated&&types.get(binding.type).kind!=='readSpan');
+      local=binding.kind==='local'&&supported&&declaration&&(declaration.variable?types.get(binding.type).kind!=='readSpan':declaration.row.initializer&&(!path.length
+        ||declaration.scope.eligible&&!declaration.scope.repeated&&types.get(binding.type).kind!=='readSpan'));
     const parameter=binding.kind==='parameter'&&supported&&owner.parameters.some(row=>{spend();return row.id===binding.id;});
     check(local||parameter,'capability','capture requires an initialized supported local or original parameter; block ReadSpan requires independent borrow lifetime qualification');
     if(slots.has(binding.id))continue;const key=commonIdentity('capture-slot',{owner:binding.owner,name:binding.name,kind:binding.kind,...(path.length?{scope:path}:{})});
