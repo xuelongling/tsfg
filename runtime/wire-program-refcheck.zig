@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Checks typed Program references, layouts and CFG/SSA consistency.
-// Success is not effects/borrow/hash validation, admission or permission to
+// Checks references, layouts, CFG/SSA and derivable typed identities.
+// Success is not Source/effects/borrow validation, admission or permission to
 // execute. This module neither reads bytes/JSON nor activates Runtime12.
 const std = @import("std");
 pub const model = @import("wire-program-model.zig");
@@ -10,6 +10,7 @@ const context = @import("wire-program-refcheck-context.zig");
 const table_refs = @import("wire-program-table-refs.zig");
 const layout_check = @import("wire-program-layout-check.zig");
 const ssa_check = @import("wire-program-ssa-check.zig");
+const identity_check = @import("wire-program-identity-check.zig");
 pub const Error = context.Error;
 const Context = context.Context;
 
@@ -48,6 +49,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program) Error!
     }
     try layout_check.check(&c);
     try ssa_check.check(&c);
+    try identity_check.check(&c);
     return model.format.max_work - c.remaining;
 }
 
