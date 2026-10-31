@@ -17,14 +17,25 @@ pub const Error = records.Error || error{HostArtifactBindingMismatch};
 // check their full HSC/BI/BIS first, then bind their commitments to THIS
 // Runtime's compiled identity. No expected identity/safe flag/verified handle
 // can be supplied, and neither records nor any borrowed view is retained.
-// Success is only this build's Counter material binding. It neither qualifies
+// Declared Upper resources must belong to the bound HSC's resource universe;
+// that membership does not recompute body effects or effective dependencies.
+// Success is only this build's Counter material/declaration binding. It neither qualifies
 // the resource certificate nor grants Host calls, wire17 loading, fixed-flow,
 // effects/borrow completeness, kernel, Runtime or execution admission.
 pub fn check(c: *context.Context, material: ?*const records.Bundle) Error!void {
     try records.check(c, material);
     // records.check already requires Common and the exact absence of a Host
     // context for Host-free input. No Host binding is claimed in that case.
-    if (c.program.tables.mode.common.modules.hosts.len == 0) return;
+    const contracts = c.program.tables.mode.common.authority.fixed_publication.publication.contracts;
+    if (c.program.tables.mode.common.modules.hosts.len == 0) {
+        // With no Host context there is no Host resource universe, including
+        // for unobserved functions or deliberately broad original bounds.
+        for (contracts) |row| {
+            try c.step();
+            try c.require(row.upper.host_resources.reads.len == 0 and row.upper.host_resources.writes.len == 0);
+        }
+        return;
+    }
     const bundle = material orelse return error.MissingHostBinding;
     const contract = bundle.contract;
     // All comparisons, including accepts' native bridge signature/claim join,
@@ -35,4 +46,22 @@ pub fn check(c: *context.Context, material: ?*const records.Bundle) Error!void {
         contract.abi.context.bytes != compiled.context_bytes or
         contract.abi.context.alignment != compiled.context_alignment)
         return error.HostArtifactBindingMismatch;
+    // records.check already proved the fixed Counter profile's TWO read-write
+    // effect rows. Both declared directions therefore use this same complete
+    // resource set. Do not force the two declarations equal or require every
+    // resource: containment of actual/body accesses is a separate obligation.
+    for (contracts) |row| {
+        try c.step();
+        inline for (.{ "reads", "writes" }) |direction| {
+            try c.step();
+            for (@field(row.upper.host_resources, direction)) |id| {
+                try c.step(); var found = false;
+                for (contract.semantics.effects) |effect| {
+                    try c.charge(1 + @min(id.len, effect.resource.len) / 64);
+                    if (std.mem.eql(u8, id, effect.resource)) { found = true; break; }
+                }
+                try c.require(found);
+            }
+        }
+    }
 }
