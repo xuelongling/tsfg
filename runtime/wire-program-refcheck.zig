@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Checks references and record shape of an already constructed owned Program.
+// Checks references, record shape and layouts of an owned typed Program.
 // Success is not SSA/effects/borrow/hash validation, admission or permission to
 // execute. This module neither reads bytes/JSON nor activates Runtime12.
 const std = @import("std");
@@ -8,6 +8,7 @@ const t = model.types;
 const ins = model.instruction;
 const context = @import("wire-program-refcheck-context.zig");
 const table_refs = @import("wire-program-table-refs.zig");
+const layout_check = @import("wire-program-layout-check.zig");
 pub const Error = context.Error;
 const Context = context.Context;
 
@@ -44,6 +45,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program) Error!
         if (found.found_existing) return error.InvalidOrder;
         try functionShape(&c, function, index, &string_units);
     }
+    try layout_check.check(&c);
     return model.format.max_work - c.remaining;
 }
 
