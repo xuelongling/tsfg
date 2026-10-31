@@ -164,6 +164,14 @@ runtimeSources.push(...['array-element','managed-array','managed-handles','manag
   'typed-reference-views','managed-reference-view','typed-field-backing','finite-backing-domain','typed-backing-value','typed-array-backing']
   .map(name => `runtime/${name}.zig`));
 
+// Exact passive wire17 Counter-material import closure. The active wire12
+// request root is unchanged; source staging alone does not establish that Zig
+// analyzed these function bodies or that any checker/Host call was executed.
+runtimeSources.push(...['wire-program-control','wire-program-host-artifact-check','wire-program-host-binding-check',
+  'wire-program-instruction','wire-program-members','wire-program-model','wire-program-publication',
+  'wire-program-refcheck-context','wire-program-storage','wire-program-tables','wire-program-types']
+  .map(name => `runtime/${name}.zig`));
+
 /** Actual production copy boundary, also exercised without starting the VM. */
 export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {
   for (const name of runtimeSources) {
