@@ -9,6 +9,103 @@ import {scalarName} from './identity.mjs';
 const scalarWidths={bool:1,i8:1,u8:1,i16:2,u16:2,i32:4,u32:4,f32:4,i64:8,u64:8,isize:8,usize:8,f64:8};
 const scalarCodes={i32:1,bool:2,i8:3,i16:4,i64:5,u8:6,u16:7,u32:8,u64:9,isize:10,usize:11,f32:12,f64:13};
 
+// Internal typed dependency analysis, used by the real admission below. It
+// grants no storage by itself. Full owning HIR/selected-witness validation is
+// the caller's precondition; Source provenance IDs are joined only here.
+export function commonFixedStorageIsolation(hir,spend) {
+  spend(hir.types.length*3+hir.functions.length+hir.environments.length+1);
+  const types=new Map(hir.types.map(type=>[type.id,type])),sourceTypes=new Map(hir.types.map(type=>[type.sourceType,type.id])),
+    functions=new Map(hir.functions.map(fn=>[fn.id,fn])),environments=new Map(hir.environments.map(env=>[env.id,env])),
+    members=new Map(),bindings=new Map(),edges=new Map(),seeds=new Set();let uncertain=false;
+  const native=new Set(['scalar','null','undefined','void']);
+  for(const type of hir.types){spend();edges.set(type.id,new Set());for(const field of type.fields??[]){spend();members.set(field.sourceBinding,type.id);}}
+  for(const fn of hir.functions){spend(fn.parameters.length+fn.bindings.length+1);if(fn.ownerType)members.set(fn.sourceBinding,fn.ownerType);
+    for(const binding of [...fn.parameters,...fn.bindings])bindings.set(binding.id,binding.type);}
+  spend(hir.globals.length);for(const global of hir.globals)bindings.set(global.sourceBinding,global.type);
+  const identity=id=>{spend();const type=types.get(id);if(!type){uncertain=true;return false;}return !native.has(type.kind);};
+  const connect=(left,right)=>{spend();if(identity(left)&&identity(right)){edges.get(left).add(right);edges.get(right).add(left);}};
+  const source=id=>{spend();const mapped=sourceTypes.get(id);if(mapped===undefined)uncertain=true;return mapped;};
+  const selected=(left,right)=>{const from=source(left),to=source(right);if(from!==undefined&&to!==undefined){connect(from,to);seeds.add(from);seeds.add(to);}};
+  for(const type of hir.types){spend();
+    for(const id of type.members??[]){spend();connect(type.id,id);}
+    for(const field of type.fields??[]){spend();connect(type.id,field.type);}
+    if(type.elementType)connect(type.id,type.elementType);
+    if(type.base){connect(type.id,type.base);seeds.add(type.id);seeds.add(type.base);}
+    if(type.kind==='function'){spend(type.parameters.length+1);for(const id of type.parameters)connect(type.id,id);connect(type.id,type.returnType);}
+    for(const id of type.construction?.signature.parameters??[]){spend();connect(type.id,id);}
+    if(type.construction&&type.construction.kind!=='implicit-base')seeds.add(type.id);
+  }
+  // Read every owned expression, not just signatures or reached observations.
+  // Unknown views cannot prove native payloads. Only literal/binding leaves,
+  // with a narrowly closed catch source, can discharge a native erasure chain.
+  const nativePayload=(initial,catches)=>{let value=initial;
+    while(['as','parentheses','nonNull'].includes(value.kind)){spend();const target=types.get(value.type);
+      if(!target||!native.has(target.kind)&&target.kind!=='unknown')return false;value=value.expression;}
+    spend();if(['bindingReference','globalReference'].includes(value.kind)){
+      const type=bindings.get(value.binding);if(type===undefined){uncertain=true;return false;}
+      return native.has(types.get(type)?.kind)||catches.has(value.binding);}
+    return ['numericLiteral','booleanLiteral','nullLiteral','undefinedLiteral'].includes(value.kind)&&native.has(types.get(value.type)?.kind);
+  };
+  const body=(initial,signature)=>{const rows=[],pending=[initial],writes=new Set();
+    while(pending.length){spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
+      if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}rows.push(row);
+      if(row.type!==undefined){spend();signature.push(row.type);if(row.declaredType!==undefined)signature.push(row.declaredType);}
+      if(row.signature){spend(row.signature.parameters.length+1);signature.push(...row.signature.parameters,row.signature.returnType);}
+      if(['bindingTarget','globalTarget'].includes(row.kind)){spend();writes.add(row.binding);}
+      for(const key in row){spend(Math.ceil(key.length/8)+1);if(key!=='sourceSignature'&&row[key]!==null&&typeof row[key]==='object')pending.push(row[key]);}
+    }
+    // The complete protected region must be exactly a pure throw. A call,
+    // access, allocation, nested control region or a catch write cannot borrow
+    // this proof from the currently observed exception set.
+    const catches=new Set();spend(rows.length);
+    for(const row of rows)if(row.kind==='try'&&row.catchClause?.binding){spend();const caught=row.catchClause.binding.id,protectedRows=row.tryBlock.body;
+      if(!writes.has(caught)&&protectedRows.length===1&&protectedRows[0].kind==='throw'&&nativePayload(protectedRows[0].value,new Set()))catches.add(caught);}
+    spend(rows.length);
+    for(const row of rows)if(['as','parentheses','nonNull'].includes(row.kind)){spend();const target=types.get(row.type),from=types.get(row.expression.type);
+      if(!target||!from){uncertain=true;continue;}
+      if((target.kind==='unknown'||from.kind==='unknown')&&
+        (!native.has(target.kind)&&target.kind!=='unknown'||!nativePayload(row.expression,catches)))uncertain=true;
+    }
+    spend(signature.length);const relevant=signature.filter(id=>{const type=types.get(id);if(!type){uncertain=true;return false;}return type.kind!=='unknown'&&identity(id);});
+    for(let index=1;index<relevant.length;index++)connect(relevant[0],relevant[index]);
+  };
+  // All callable bindings/bodies and lexical layout chains participate. A
+  // shared scalar/absence leaf is deliberately not an object-alias edge.
+  for(const fn of hir.functions){spend(fn.parameters.length+2);const signature=[...(fn.ownerType?[fn.ownerType]:[]),fn.returnType,...fn.parameters.map(parameter=>parameter.type)];
+    spend(2);for(const initial of [fn.lexicalEnvironment,fn.activationEnvironment]){let environment=initial;const visited=new Set();
+      while(environment){spend();if(visited.has(environment)){uncertain=true;break;}visited.add(environment);const layout=environments.get(environment);
+        if(!layout){uncertain=true;break;}spend(layout.slots.length);for(const slot of layout.slots)signature.push(slot.type);environment=layout.parent;}}
+    spend(fn.bindings.length);for(const binding of fn.bindings)signature.push(binding.type);body(fn,signature);
+  }
+  for(const type of hir.types){spend();for(const field of type.fields??[]){spend();if(field.initializer)body(field.initializer,[type.id,field.type]);}
+    if(type.construction)body(type.construction.parameters,[type.id]);}
+  for(const module of hir.modules){spend();body(module.initialization,[]);}
+  const payload=hir.snapshot.payload;spend(payload.compatibilityWitnesses.length+payload.entryCompatibilityRoots.length);
+  for(const record of payload.compatibilityWitnesses){const proof=record.compatibility;spend(record.dependencies.length+proof.members.length+1);
+    selected(proof.sourceType,proof.targetType);
+    for(const dependency of record.dependencies)selected(dependency.sourceType,dependency.targetType);
+    for(const pair of proof.members){spend();const from=members.get(pair.source),to=members.get(pair.target);
+      if(from===undefined||to===undefined){uncertain=true;continue;}connect(from,to);seeds.add(from);seeds.add(to);}
+  }
+  for(const entry of payload.entryCompatibilityRoots){spend(entry.roots.length);for(const root of entry.roots)if(root.sourceType!==root.targetType){selected(root.sourceType,root.targetType);const view=source(entry.viewType);if(view!==undefined)seeds.add(view);}}
+  // A value return may hide a replacement behind assertions/calls/fields. Do
+  // not narrow that source-level uncertainty from observed constructor arms.
+  for(const type of hir.types)if(type.construction?.kind==='explicit'){
+    spend();const fn=functions.get(type.construction.functionId);
+    if(!fn||fn.ownerType!==type.id){uncertain=true;continue;}const pending=[fn.body];
+    while(pending.length){spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
+      if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}
+      if(row.kind==='return'&&row.value!==undefined)uncertain=true;
+      for(const key in row){spend(Math.ceil(key.length/8)+1);if(row[key]!==null&&typeof row[key]==='object')pending.push(row[key]);}
+    }
+  }
+  spend(seeds.size);const pending=Array.from(seeds),affected=new Set();
+  while(pending.length){spend();const id=pending.pop();if(affected.has(id))continue;affected.add(id);if(types.get(id)?.kind==='unknown')uncertain=true;
+    const related=edges.get(id);if(!related){uncertain=true;continue;}spend(related.size);for(const next of related)pending.push(next);}
+  if(uncertain){spend(hir.types.length);for(const type of hir.types)if(type.kind==='reference'||type.kind==='value')affected.add(type.id);}
+  return {affected,uncertain};
+}
+
 // Fixed metadata admission only. The full nonempty directory is owned by this
 // publication, not refreshed from the current body's observations. Acceptance
 // here does not grant a copy projection; physical/source checks below do that.
@@ -49,20 +146,15 @@ export function commonFixedStorageProjection(hir,physical,fixed=null) {
   const {spend}=physical.model;spend(hir.types.length+1);const types=new Map(hir.types.map(type=>[type.id,type]));
   const unavailable=message=>({status:/** @type {const} */('open'),issues:[message],storage:{fields:[],results:[]}});
   check(physical.model.hir.inputIdentity===hir.inputIdentity,'storage-identity');
-  const payload=hir.snapshot.payload;
-  // The already admitted witness worklist proves full selected closure and
-  // consumes every record. Zero records plus no nonnominal entry/base edge is
-  // an exhaustive absence proof, not a search of observed actual objects.
-  spend(payload.compatibilityWitnesses.length+payload.entryCompatibilityRoots.length+1);
-  if(payload.compatibilityWitnesses.length)return unavailable('selected structural M12 storage aliases are not admitted by this tuple subset');
-  for(const entry of payload.entryCompatibilityRoots)for(const root of entry.roots){spend();if(root.sourceType!==root.targetType)return unavailable('entry M12 actual/view storage alias is outside the nominal tuple subset');}
+  const isolation=commonFixedStorageIsolation(hir,spend);
   const nominal=[],bodyIssues=new Map();
   for(const type of hir.types){spend();if(type.kind!=='reference'&&type.kind!=='value')continue;
     const ctor=type.construction;
-    if(type.base!==undefined||!ctor||ctor.kind!=='implicit-base'||ctor.functionId!==null||ctor.implicitForward!==null)
-      return unavailable('base or replacement construction needs a complete nonnominal physical projection');
+    if(!ctor)return unavailable('owned construction role catalogue is unavailable');
     spend(type.fields.length+ctor.initializationFields.length+1);
     const issues=[];bodyIssues.set(type.id,issues);
+    if(isolation.affected.has(type.id)||type.base!==undefined||ctor.kind!=='implicit-base'||ctor.functionId!==null||ctor.implicitForward!==null)
+      issues.push('complete owning dependency closure does not isolate this nominal storage');
     if(ctor.initializationFields.length!==type.fields.length)issues.push('incomplete nominal field initialization catalogue');
     const keys=new Set();
     for(const [index,field]of type.fields.entries()){spend(field.name.length+1);
@@ -76,7 +168,7 @@ export function commonFixedStorageProjection(hir,physical,fixed=null) {
   // This proof excludes opaque foreign stores: their possible mutable input
   // aliases are not a scalar-field type invariant of the closed Source package.
   if(hir.hostImports.length)return unavailable('foreign mutable storage is outside the nominal tuple subset');
-  const fields=[],results=[],bodies=new Map(),fieldBounds=new Map(),resultBounds=new Map();
+  const fields=[],results=[],bodies=new Map(),candidateBodies=new Map(),fieldBounds=new Map(),resultBounds=new Map();
   if(fixed!==null){
     if(fixed.fields.length===0&&fixed.results.length===0&&nominal.length)return unavailable('publication has no admitted fixed nominal storage table');
     spend(fixed.fields.length+fixed.results.length);
@@ -105,16 +197,20 @@ export function commonFixedStorageProjection(hir,physical,fixed=null) {
     byteSize=Math.ceil(byteSize/alignment)*alignment;
     if(issues.length===0){const actual=type.kind==='value'?physical.carriers.layout(type.id):physical.carriers.bodies.get(type.id);spend(6);
       check(actual&&actual.byteSize===byteSize&&actual.alignment===alignment&&actual.referenceCount===0,'storage-layout','complete actual nominal tuple layout differs');}
-    // Every implicit constructor/newTarget pair must actually occur in the
-    // existing complete analysis directory. This cross-check is not the source
-    // of completeness: the implicit-base protocol above proves its sole result.
-    spend(3);const result=physical.values.capacity.storageObservations.results.get(type.construction.id+'/'+type.id);spend(result?.actualTypes.size??0);
-    const knownResult=Boolean(result&&!result.unknown&&result.actualTypes.size===1&&result.actualTypes.has(type.id));
-    const row={construction:type.construction.id,newTarget:type.id,actualTypes:knownResult?[type.id]:[],unknown:!knownResult};results.push(row);
-    spend(3);const bound=resultBounds.get(type.construction.id+'/'+type.id);
-    if(fixed!==null){check(bound,'storage-identity');if(!bound.unknown)check(!row.unknown&&bound.actualTypes[0]===type.id,'storage-identity','actual construction result exceeds the fixed complete nominal upper');}
-    if(!knownResult||bound?.unknown)issues.push('construction result has no admitted complete nominal upper');
-    if(issues.length===0)bodies.set(type.id,Object.freeze({actualType:type.id,kind:type.kind,byteSize,alignment,referenceCount:0,slots:Object.freeze(slots),routes}));
+    if(issues.length===0)candidateBodies.set(type.id,Object.freeze({actualType:type.id,kind:type.kind,byteSize,alignment,referenceCount:0,slots:Object.freeze(slots),routes}));
+  }
+  // Enumerate every ancestor constructor/newTarget role, not merely own pairs.
+  // Conditional capacity discharges only an independently isolated protocol.
+  for(const type of nominal){let owner=type;const issues=bodyIssues.get(type.id);
+    while(owner){spend(3);const ctor=owner.construction,key=ctor.id+'/'+type.id;
+      const result=physical.values.capacity.storageObservations.results.get(key);spend(result?.actualTypes.size??0);
+      const protocol=owner.id===type.id&&!isolation.affected.has(type.id)&&!type.base&&ctor.kind==='implicit-base'&&ctor.functionId===null&&ctor.implicitForward===null;
+      const knownResult=Boolean(protocol&&result&&!result.unknown&&result.actualTypes.size===1&&result.actualTypes.has(type.id));
+      const row={construction:ctor.id,newTarget:type.id,actualTypes:knownResult?[type.id]:[],unknown:!knownResult},bound=resultBounds.get(key);results.push(row);
+      if(fixed!==null){check(bound,'storage-identity');if(!bound.unknown)check(!row.unknown&&bound.actualTypes[0]===type.id,'storage-identity','actual construction result exceeds the fixed complete nominal upper');}
+      if(!knownResult||bound?.unknown)issues.push('construction result has no admitted complete nominal upper');owner=types.get(owner.base);
+    }
+    const body=candidateBodies.get(type.id);if(issues.length===0&&body)bodies.set(type.id,body);
   }
   const compare=(a,b)=>{spend(a.length+b.length+1);return a<b?-1:a>b?1:0;};
   spend(fields.length+results.length);fields.sort((a,b)=>compare(a.fieldId,b.fieldId));results.sort((a,b)=>{

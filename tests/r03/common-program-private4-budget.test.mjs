@@ -7,7 +7,7 @@ import {commonMeter} from '../../compiler/common-program-common.mjs';
 
 test('private4 has its declared finite work profile and a new schema',()=>{
  assert.equal(commonCoreFormat.version,4);assert.equal(descriptor.version,4);assert.equal(descriptor.limits.work,2000000);
- assert.equal(commonCoreSchema,'sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9');assert.notEqual(commonCoreSchema,'sha256:8e6bcef004a94baae52bbf83df50adb1d0f8c0f88ad20d0cb7bbf3ceb357499b');assert.notEqual(commonCoreSchema,'sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769');assert.notEqual(commonCoreSchema,'sha256:ab0fd37a7d73e935d1df3b9a068fbb0daac2ff66734bfce10411f4795a0d7bcb');
+ assert.equal(commonCoreSchema,'sha256:6f14a7569cce9d098fa892d9d0809bf0b11e55e7459070ef94aa90fb0392a498');assert.notEqual(commonCoreSchema,'sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9');assert.notEqual(commonCoreSchema,'sha256:928348225e0dcf59c8dbe9a53b8db8e2ce66afef86fe66e66fb77d8c353aa039');assert.notEqual(commonCoreSchema,'sha256:8e6bcef004a94baae52bbf83df50adb1d0f8c0f88ad20d0cb7bbf3ceb357499b');assert.notEqual(commonCoreSchema,'sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769');assert.notEqual(commonCoreSchema,'sha256:ab0fd37a7d73e935d1df3b9a068fbb0daac2ff66734bfce10411f4795a0d7bcb');
  assert.deepEqual(descriptor.limits,{blocksPerFunction:256,bytes:8388608,depth:128,functions:4096,globals:4096,instructionsPerFunction:8192,jsonTokens:200000,members:65536,parameters:64,registersPerFunction:4096,sources:128,stringBytes:1048576,types:4096,work:2000000});
 });
 test('private4 work is accepted through its exact declared bound then rejected',()=>{

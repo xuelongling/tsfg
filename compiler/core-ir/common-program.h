@@ -19,7 +19,7 @@ inline constexpr llvm::StringLiteral marker="tsfg_program.program";
 inline constexpr int32_t profileVersion=4;
 // This reader admits only the current private4 descriptor identity below.
 inline constexpr size_t programWorkLimit=2000000;
-inline constexpr llvm::StringLiteral schema="sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9";
+inline constexpr llvm::StringLiteral schema="sha256:6f14a7569cce9d098fa892d9d0809bf0b11e55e7459070ef94aa90fb0392a498";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}

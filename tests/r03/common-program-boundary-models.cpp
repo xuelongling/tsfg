@@ -87,29 +87,32 @@ bool budgetControls(const Program &original,size_t graphLimit,bool probe){
   p.remaining=graphLimit;const bool graph=check.graph();passed=(!graph&&e.code=="core-ir-common-budget")&&passed;
   llvm::outs()<<"budget graph "<<(graph?"UNEXPECTED-ACCEPT":e.code)<<" limit="<<graphLimit<<"\n";return passed;
 }
-// Future C++ behavior controls over actual retained Node17 metadata. These
-// calls are only syntax-checked while C++ Graph execution remains stopped.
+// Future C++ behavior controls over the actual isolated Node publication.
+// These are syntax-only while C++ Graph/ActualCheck execution stays stopped.
 bool storageControls(){
-  fixedV3Model::Fixture fixture;if(!fixedV3Model::load(fixedV3Model::file("actual-storage-nominal-partial"),fixture))return false;
-  auto &original=fixture.program;const Json *delta=nullptr,*box=nullptr;
-  for(const auto &type:items(field(original.hir,"types"))){if(string(field(type,"name"))=="Delta")delta=&type;if(string(field(type,"name"))=="Box")box=&type;}
-  const auto *add=fixedV3Model::function(original,"add");
-  if(!delta||!box||!add||items(field(*delta,"fields")).size()!=1||items(field(*box,"fields")).size()!=1)return false;
-  const auto &deltaField=items(field(*delta,"fields"))[0],&boxField=items(field(*box,"fields"))[0];
-  const auto deltaId=string(field(deltaField,"id")),boxId=string(field(boxField,"id")),addId=string(field(*add,"id"));
-  bool deltaKnown=false,boxTop=false;
-  for(const auto &row:items(field(field(field(original.publication,"scope"),"storage"),"fields"))){
+  fixedV3Model::Fixture fixture;if(!fixedV3Model::load(fixedV3Model::file("m12-witness-isolated"),fixture))return false;
+  auto &original=fixture.program;const Json *delta=nullptr,*x=nullptr,*base=nullptr,*derived=nullptr;
+  for(const auto &type:items(field(original.hir,"types"))){const auto name=string(field(type,"name"));if(name=="Delta")delta=&type;if(name=="X")x=&type;if(name=="Base")base=&type;if(name=="Derived")derived=&type;}
+  const auto *add=fixedV3Model::function(original,"add");const Json *xField=nullptr;
+  if(!delta||!x||!base||!derived||!add||items(field(*delta,"fields")).size()!=1)return false;
+  for(const auto &row:items(field(*x,"fields")))if(string(field(row,"name"))=="n")xField=&row;if(!xField)return false;
+  const auto &deltaField=items(field(*delta,"fields"))[0];
+  const auto deltaId=string(field(deltaField,"id")),xId=string(field(*xField,"id")),addId=string(field(*add,"id"));
+  const auto baseCtor=string(field(field(*base,"construction"),"id")),derivedId=string(field(*derived,"id"));
+  const auto &storage=field(field(original.publication,"scope"),"storage");bool deltaKnown=false,xTop=false,ancestorTop=false;
+  for(const auto &row:items(field(storage,"fields"))){
     if(string(field(row,"fieldId"))==deltaId)deltaKnown=field(row,"unknown").getAsBoolean()==false&&items(field(row,"actualTypes")).size()==1&&same(items(field(row,"actualTypes"))[0],field(deltaField,"type"));
-    if(string(field(row,"fieldId"))==boxId)boxTop=field(row,"unknown").getAsBoolean()==true&&items(field(row,"actualTypes")).empty();
+    if(string(field(row,"fieldId"))==xId)xTop=field(row,"unknown").getAsBoolean()==true&&items(field(row,"actualTypes")).empty();
   }
-  Error e;const bool independent=deltaKnown&&boxTop&&fixedReturnOriginAvailable(original,addId)&&verifyKernelProof(original,e);
+  for(const auto &row:items(field(storage,"results")))if(string(field(row,"construction"))==baseCtor&&string(field(row,"newTarget"))==derivedId)ancestorTop=field(row,"unknown").getAsBoolean()==true&&items(field(row,"actualTypes")).empty();
+  Error e;const bool independent=items(field(storage,"fields")).size()==8&&items(field(storage,"results")).size()==7&&deltaKnown&&xTop&&ancestorTop&&fixedReturnOriginAvailable(original,addId)&&verifyKernelProof(original,e);
   const auto refresh=[](Program &p){
     member(p.publication,"scopeDigest")=identity("publication-scope",field(p.publication,"scope"));
     member(p.publication,"expectedDigest")=identity("publication",Object{{"scopeDigest",field(p.publication,"scopeDigest")},{"contracts",field(p.publication,"contracts")}});
     p.remaining=programWorkLimit;
   };
   Program narrow=original;
-  for(auto &row:*member(member(member(narrow.publication,"scope"),"storage"),"fields").getAsArray())if(string(field(row,"fieldId"))==boxId){member(row,"unknown")=false;member(row,"actualTypes")=Array{field(boxField,"type")};}
+  for(auto &row:*member(member(member(narrow.publication,"scope"),"storage"),"fields").getAsArray())if(string(field(row,"fieldId"))==xId){member(row,"unknown")=false;member(row,"actualTypes")=Array{field(*xField,"type")};}
   refresh(narrow);e={};ActualCheck narrowed{narrow,e};
   const bool exceeds=!narrowed.run()&&e.code=="core-ir-common-return-origin"&&e.message=="actual field capacity exceeds its fixed complete scalar upper";
   Program top=original;
@@ -117,14 +120,36 @@ bool storageControls(){
   refresh(top);e={};ActualCheck unresolved{top,e};
   const bool noUpgrade=unresolved.run()&&top.returnOriginPending.count(addId)&&!fixedReturnOriginAvailable(top,addId)&&!top.scalarReturnOriginVerified.count(addId);
   Program malformed=original;
-  for(auto &row:*member(member(member(malformed.publication,"scope"),"storage"),"fields").getAsArray())if(string(field(row,"fieldId"))==boxId)member(row,"actualTypes")=Array{field(boxField,"type")};
+  for(auto &row:*member(member(member(malformed.publication,"scope"),"storage"),"fields").getAsArray())if(string(field(row,"fieldId"))==xId)member(row,"actualTypes")=Array{field(*xField,"type")};
   refresh(malformed);e={};const bool topNotFinite=!admitPublication(malformed,e)&&e.message=="unresolved fixed field storage must be explicit TOP";
-  Program missing=original;auto &rows=*member(member(member(missing.publication,"scope"),"storage"),"fields").getAsArray();
-  rows.erase(std::find_if(rows.begin(),rows.end(),[&](const Json &row){return string(field(row,"fieldId"))==boxId;}));
+  Program missing=original;auto &rows=*member(member(member(missing.publication,"scope"),"storage"),"results").getAsArray();
+  rows.erase(std::find_if(rows.begin(),rows.end(),[&](const Json &row){return string(field(row,"construction"))==baseCtor&&string(field(row,"newTarget"))==derivedId;}));
   refresh(missing);e={};const bool complete=!admitPublication(missing,e)&&e.message=="fixed storage catalogue coverage differs";
-  llvm::outs()<<"partial M12 independent-body="<<independent<<" fixed-upper="<<exceeds<<" immutable-TOP="<<noUpgrade<<" TOP-shape="<<topNotFinite<<" complete-directory="<<complete<<"\n";
-  return independent&&exceeds&&noUpgrade&&topNotFinite&&complete;
+  Program ancestor=original;
+  for(auto &row:*member(member(member(ancestor.publication,"scope"),"storage"),"results").getAsArray())if(string(field(row,"construction"))==baseCtor&&string(field(row,"newTarget"))==derivedId){member(row,"unknown")=false;member(row,"actualTypes")=Array{field(*derived,"id")};}
+  refresh(ancestor);e={};ActualCheck ancestorCheck{ancestor,e};const bool noAncestorGrant=!ancestorCheck.run()&&e.code=="core-ir-common-return-origin"&&e.message=="actual construction result exceeds its fixed complete nominal upper";
+  // Controlled normalized-HIR/compiler-metadata unit, not a newly verified
+  // Source/ActualCheck/Kernel program. Do not edit or re-sign the raw snapshot.
+  // The same declared signature/Scope cannot hide body-local object views.
+  Program erased=original;erased.remaining=programWorkLimit;e={};bool noErasureGrant=false;std::string unknownType;
+  for(const auto &type:items(field(erased.hir,"types")))if(string(field(type,"kind"))=="unknown")unknownType=string(field(type,"id"));
+  if(!unknownType.empty()&&admitPublication(erased,e)){
+    for(auto &fn:*member(erased.hir,"functions").getAsArray())if(string(field(fn,"id"))==addId&&items(field(fn,"parameters")).size()==1){
+      const auto &parameter=items(field(fn,"parameters"))[0];const auto range=field(fn,"range");
+      member(fn,"bindings").getAsArray()->push_back(Object{{"id","model:erased"},{"type",unknownType}});
+      member(fn,"bindings").getAsArray()->push_back(Object{{"id","model:as-X"},{"type",field(*x,"id")}});
+      member(fn,"body")=Array{
+        Object{{"kind","constDeclaration"},{"binding","model:erased"},{"range",range},{"initializer",Object{{"kind","bindingReference"},{"binding",field(parameter,"id")},{"type",field(parameter,"type")},{"range",range}}}},
+        Object{{"kind","constDeclaration"},{"binding","model:as-X"},{"range",range},{"initializer",Object{{"kind","as"},{"type",field(*x,"id")},{"range",range},{"expression",Object{{"kind","bindingReference"},{"binding","model:erased"},{"type",unknownType},{"range",range}}}}}}
+      };
+    }
+    ActualCheck controlled{erased,e};controlled.storageCapacity=fixture.actual.storageCapacity;controlled.constructionCapacity=fixture.actual.constructionCapacity;
+    noErasureGrant=!prepareReturnOriginStorage(controlled)&&e.code=="core-ir-common-return-origin"&&e.message=="actual field capacity exceeds its fixed complete scalar upper";
+  }
+  llvm::outs()<<"isolated M12 independent-body="<<independent<<" fixed-upper="<<exceeds<<" immutable-TOP="<<noUpgrade<<" TOP-shape="<<topNotFinite<<" complete-directory="<<complete<<" ancestor-TOP="<<noAncestorGrant<<" body-erasure="<<noErasureGrant<<"\n";
+  return independent&&exceeds&&noUpgrade&&topNotFinite&&complete&&noAncestorGrant&&noErasureGrant;
 }
+
 bool layoutCase(size_t count,bool expected){
   Program p;Array fields,bindings;const std::string scalar="model:i64",type="model:reference";
   for(size_t i=0;i<count;++i){const auto n=std::to_string(100000+i),id="field:"+n;fields.push_back(Object{{"id",id},{"sourceBinding",id},{"type",scalar}});bindings.push_back(Object{{"id",id},{"carrier",scalar}});}

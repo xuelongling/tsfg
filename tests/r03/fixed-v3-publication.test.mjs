@@ -160,7 +160,13 @@ test('value Source metadata explicitly retains missing fixed M12 capability as n
   const bytes=readFileSync(new URL('./testdata/common-value-capture/local-const.json',import.meta.url)),facts=factsApi.readCommonProgramFacts(bytes),
     current=hirApi.projectCommonProgram(facts),publication=api.createCommonProgramPublication(current),read=api.verifyCommonProgramPublication(publication,current);
   assert.ok(current.types.some(type=>type.kind==='value'));assert.ok(read.contracts.some(row=>row.returnOrigins===null));
-  assert.deepEqual(read.scope.storage,{fields:[],results:[]});retainInteropFixture('value-local-const',current,read);
+  assert.equal(read.scope.storage.fields.length,4);assert.equal(read.scope.storage.results.length,4);
+  for(const name of ['Held','ReaderBox']){const type=current.types.find(type=>type.name===name);assert.equal(type.construction.kind,'explicit');
+    assert.deepEqual(read.scope.storage.fields.find(row=>row.fieldId===type.fields[0].id),{fieldId:type.fields[0].id,actualTypes:[],unknown:true});
+    assert.deepEqual(read.scope.storage.results.find(row=>row.construction===type.construction.id&&row.newTarget===type.id),{construction:type.construction.id,newTarget:type.id,actualTypes:[],unknown:true});}
+  for(const name of ['Delta','Box']){const type=current.types.find(type=>type.name===name);
+    assert.deepEqual(read.scope.storage.fields.find(row=>row.fieldId===type.fields[0].id),{fieldId:type.fields[0].id,actualTypes:[type.fields[0].type],unknown:false});}
+  retainInteropFixture('value-local-const',current,read);
 });
 
 
