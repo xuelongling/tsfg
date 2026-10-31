@@ -19,6 +19,7 @@ const fixed_publication_check = @import("wire-program-fixed-publication-check.zi
 const fixed_targets_check = @import("wire-program-fixed-targets-check.zig");
 const kernel_request_check = @import("wire-program-kernel-request-check.zig");
 const dependencies_check = @import("wire-program-dependencies-check.zig");
+const effective_dependencies_check = @import("wire-program-effective-dependencies-check.zig");
 const targets_check = @import("wire-program-targets-check.zig");
 const borrow_check = @import("wire-program-borrow-check.zig");
 const effects_check = @import("wire-program-effects-check.zig");
@@ -74,6 +75,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     try host_artifact.check(&c, material);
     var fixed_flow = try fixed_targets_check.analyze(&c);
     defer fixed_flow.deinit(allocator);
+    try effective_dependencies_check.checkCallees(&c, &fixed_flow);
     var actual: targets_check.Analysis = .{};
     defer actual.deinit(allocator);
     var borrowing = borrow_check.Observations.init(&c);
