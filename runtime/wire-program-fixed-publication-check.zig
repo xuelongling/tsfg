@@ -2,7 +2,8 @@
 // The original fixed contract's interface obligations, independently joined
 // to the owned Common logical ABI and environment/global directories. These
 // are not actual values: declared code bounds never seed an actual analysis.
-// This checks parameter coverage, write permission and callable signatures;
+// This checks parameter coverage, Global owner identity, capture write
+// permission and callable signatures;
 // it does not derive body fixed-flow/effective dependencies, kernel-group
 // independence, Host resource trust, Source provenance or full admission.
 const std = @import("std");
@@ -41,7 +42,7 @@ const Checker = struct {
     c: *Context,
     common: tables.CommonTables,
     functions: std.AutoHashMapUnmanaged(t.Hash, t.FunctionRef) = .empty,
-    globals: std.AutoHashMapUnmanaged(t.Hash, bool) = .empty,
+    globals: std.AutoHashMapUnmanaged(t.Hash, void) = .empty,
     slots: std.AutoHashMapUnmanaged(t.Hash, bool) = .empty,
 
     fn deinit(self: *Checker) void {
@@ -94,7 +95,9 @@ const Checker = struct {
         try c.require(row.upper.parameters.len == abi.parameters.len + @as(usize, if (abi.receiver != null) 1 else 0));
         for (row.upper.globals.writes) |id| {
             try c.step();
-            try c.require(self.globals.get(id) orelse return error.InvalidReference);
+            // A fixed Global upper names a conditional payload-owner root.
+            // Binding replacement is checked at the Global store operation.
+            if (!self.globals.contains(id)) return error.InvalidReference;
         }
         for (row.upper.captures) |access| {
             try c.step();
@@ -143,10 +146,7 @@ pub fn checkInterfaces(c: *Context) Error!void {
     }
     for (common.modules.globals) |global| {
         try c.step();
-        const kind = common.types[@intFromEnum(global.@"type")].kind;
-        // Const protects the Global binding, not its mutable payload.
-        const writable = global.writable or kind == .array or kind == .reference or kind == .value;
-        try checker.globals.put(c.allocator, global.id, writable);
+        try checker.globals.put(c.allocator, global.id, {});
     }
     var has_captures = false;
     for (common.authority.fixed_publication.publication.contracts) |row| {

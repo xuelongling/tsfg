@@ -183,6 +183,31 @@ const Checker = struct {
         }
     }
 
+    fn globalStores(self: *Checker) Error!void {
+        const c = self.c;
+        for (c.program.functions, 0..) |function, index| {
+            try c.step();
+            for (function.blocks) |block| for (block.instructions) |op| {
+                try c.step();
+                switch (op.data) {
+                    .global_store => |store| {
+                        const global = self.common.modules.globals[@intFromEnum(store.global)];
+                        // Inlined defining-module code can store from another
+                        // function. Core binding permission uses mutability;
+                        // Source import assignment is checked separately.
+                        if (store.initialize) {
+                            try c.step();
+                            const owner = self.source_modules[@intFromEnum(global.source)] orelse return error.InvalidShape;
+                            const module = self.common.modules.modules[@intFromEnum(owner)];
+                            try c.require(function.role == .module_initializer and @intFromEnum(module.initializer) == index);
+                        } else try c.require(global.writable);
+                    },
+                    else => {},
+                }
+            };
+        }
+    }
+
     fn roots(self: *Checker) Error!void {
         const c = self.c; const rows = self.common.modules.roots;
         inline for (.{ rows.roots, rows.required_roots }) |group| for (group) |root| {
@@ -243,7 +268,9 @@ const Checker = struct {
 //
 // Success proves the module business relations above, not that actual Source
 // contains these import/export tokens, complete export-star expansion, original
-// declaration text or an initializer store-once body. Non-nominal Type defining
+// declaration text or an initializer store-once body. Global stores separately
+// prove binding mutability and the exact defining-module initializer owner.
+// Non-nominal Type defining
 // Source is absent from that typed Type row. HSC, effects, borrow, complete
 // publication/admission and any Runtime/GPU/execution authority remain separate.
 pub fn checkModules(c: *Context) Error!void {
@@ -253,5 +280,5 @@ pub fn checkModules(c: *Context) Error!void {
     @memset(source_modules, null);
     var checker = Checker{ .c = c, .common = common, .source_modules = source_modules };
     defer checker.deinit();
-    try checker.catalogue(); try checker.moduleRows(); try checker.roots(); try checker.initialization();
+    try checker.catalogue(); try checker.moduleRows(); try checker.globalStores(); try checker.roots(); try checker.initialization();
 }

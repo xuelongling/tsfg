@@ -73,9 +73,9 @@ function prepare(input,publication) {
     check(commonFacets.every(flag=>typeof row.upper.facets[flag]==='boolean'),'publication');
     for(const key of ['reads','writes']){const set=row.upper.globals[key];check(Array.isArray(set)&&set.length<=4096,'publication');spend(set.length);
       check(sorted(set),'publication');
-      // Binding assignments are checked at Source/HIR. Global write bounds
-      // also cover Array/reference/value payloads held by const bindings.
-      check(set.every(id=>{const global=globals.get(id);return global&&(key!=='writes'||global.writable||['array','reference','value'].includes(types.get(global.type)?.kind));}),'publication-identity');}
+      // This is a conditional payload-owner bound, independent of the declared
+      // view or current actual capacity. Binding replacement is checked apart.
+      check(set.every(id=>globals.has(id)),'publication-identity');}
     const parameters=[...(fn.ownerType?[{type:fn.ownerType}]:[]),...fn.parameters];check(Array.isArray(row.upper.parameters)&&row.upper.parameters.length===parameters.length,'publication');
     for(const [index,p]of row.upper.parameters.entries()){spend();record(p,['index',...flags]);check(p.index===index&&flags.every(flag=>typeof p[flag]==='boolean'),'publication');
       const type=types.get(parameters[index].type);if(type.kind==='readSpan')check(!p.write&&!p.structural,'publication');}

@@ -133,16 +133,15 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
   for(auto [key,to]:flags){auto value=field(facets,key).getAsBoolean();if(!need(bool(value),e,"fixed facet must be boolean"))return false;*to=*value;}
   const auto &captures=field(raw,"captures");
   if(!need(bool(captures.getAsArray()),e,"fixed captures must be a sparse array"))return false;
-  // Both Global and capture writes include mutable payload mutation through
-  // immutable bindings. Binding replacement remains a Source/HIR obligation.
   std::set<std::string> mutableValues;
-  const auto &globalWrites=field(field(raw,"globals"),"writes");
-  if((globalWrites.getAsArray()&&!items(globalWrites).empty())||!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference"||string(field(type,"kind"))=="value")mutableValues.insert(string(field(type,"id")));}
-  std::map<std::string,bool> globals;for(const auto &g:items(field(p.hir,"globals")))globals.emplace(string(field(g,"id")),field(g,"writable").getAsBoolean()==true||mutableValues.count(string(field(g,"type"))));
+  if(!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference"||string(field(type,"kind"))=="value")mutableValues.insert(string(field(type,"id")));}
+  // A fixed Global write is a conditional payload-owner permission, not a
+  // binding-replacement grant or a bound narrowed by its current actual value.
+  std::set<std::string> globals;for(const auto &g:items(field(p.hir,"globals")))globals.insert(string(field(g,"id")));
   for(auto key:{"reads","writes"}){const auto &rawSet=field(field(raw,"globals"),key);auto &to=llvm::StringRef(key)=="reads"?out.reads:out.writes;
     if(!need(rawSet.getAsArray()&&items(rawSet).size()<=4096,e,"fixed global set bound differs"))return false;std::string previous;
     for(const auto &value:items(rawSet)){if(!work(p,e))return false;const auto id=string(value);
-      if(!need(globals.count(id)&&(llvm::StringRef(key)!="writes"||globals.at(id))&&(previous.empty()||previous<id),e,"fixed GlobalId set differs"))return false;
+      if(!need(globals.count(id)&&(previous.empty()||previous<id),e,"fixed GlobalId set differs"))return false;
       previous=id;to.insert(id);}
   }
   const auto count=items(field(fn,"parameters")).size()+(!field(fn,"ownerType").getAsNull());
