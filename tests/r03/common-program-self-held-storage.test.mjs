@@ -16,7 +16,7 @@ function model(mode='complete'){
   let work=0;const spend=(count=1)=>{work+=count;assert.ok(work<100000,'bounded private model work');},
     owner={id:'unit:run',kind:'function-body',sourcePath:'/unit25af.ts'},plan={owner,entry:{name:'entry'},graph:{registers:new Map([['other',{view:'span'}]])}},
     c={id:'unit:activation',root:true,args:[out],entryHeap:new Map(heap),plan,regionScope:''},state={heap,regions:new Map()},
-    observer=commonBorrowObservations({model:{spend,types,fields:new Map(fields.map(row=>[row.id,row])),environments:new Map()},objects});
+    observer=commonBorrowObservations({model:{spend,types,fields:new Map(fields.map(row=>[row.id,row])),environments:new Map()},records:new Map(),objects});
   observer.begin(c,heap);let previous=observer.block(c,'entry');
   const step=(at,name,args=[],result=null,view=null)=>{
     observer.edge(previous,at);const op={name:'tsfg_program.'+name,operands:name==='array_read'?['other']:[],properties:{},range:{start:at==='store'?100:200,end:at==='store'?110:210},view};
@@ -35,11 +35,17 @@ function model(mode='complete'){
 }
 test('stable external storage keeps complete readonly ownership',()=>{const run=model();assert.equal(run.covered,true);assert.ok(run.finish().borrows>0);});
 for(const mode of ['weak-owner','may-owner','mutable-descriptor','unknown-descriptor'])test('stable external storage rejects '+mode,()=>{
-  const run=model(mode);assert.equal(run.covered,false);assert.throws(run.finish,error=>error instanceof Error&&error.code==='r03-common-program-borrow-pending'&&error.primary.start===100&&error.primary.end===110);
+  const run=model(mode);assert.equal(run.covered,false);assert.throws(run.finish,error=>error instanceof Error&&
+    'code'in error&&'primary'in error&&typeof error.primary==='object'&&error.primary!==null&&'start'in error.primary&&'end'in error.primary&&
+    error.code==='r03-common-program-borrow-pending'&&error.primary.start===100&&error.primary.end===110);
 });
 test('stable external storage keeps the descriptor live after transfer',()=>{const run=model('post-resize');assert.equal(run.covered,true);
-  assert.throws(run.finish,error=>error instanceof Error&&error.code==='r03-common-program-borrow-conflict'&&error.primary.start===200&&error.primary.end===210);
+  assert.throws(run.finish,error=>error instanceof Error&&
+    'code'in error&&'primary'in error&&typeof error.primary==='object'&&error.primary!==null&&'start'in error.primary&&'end'in error.primary&&
+    error.code==='r03-common-program-borrow-conflict'&&error.primary.start===200&&error.primary.end===210);
 });
 test('stable external storage separation does not bless other active owners',()=>{const run=model('other-live');assert.equal(run.covered,true);
-  assert.throws(run.finish,error=>error instanceof Error&&error.code==='r03-common-program-borrow-pending'&&error.primary.start===100&&error.primary.end===110);
+  assert.throws(run.finish,error=>error instanceof Error&&
+    'code'in error&&'primary'in error&&typeof error.primary==='object'&&error.primary!==null&&'start'in error.primary&&'end'in error.primary&&
+    error.code==='r03-common-program-borrow-pending'&&error.primary.start===100&&error.primary.end===110);
 });

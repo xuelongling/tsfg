@@ -56,5 +56,6 @@ for(const mode of ['mutable-field','readonly-field','managed-element','mutable-v
   // The reader then replaces its Array Cell before consuming r.
   if(mode==='readonly-field'||mode==='readonly-value')analyzeCommonGraphs(program,records);
   else assert.throws(()=>analyzeCommonGraphs(program,records),error=>error instanceof Error&&
+    'code'in error&&'functionId'in error&&'primary'in error&&typeof error.primary==='object'&&error.primary!==null&&'start'in error.primary&&
     error.code==='r03-common-program-borrow-pending'&&error.functionId==='entry'&&error.primary.start===260);
 });

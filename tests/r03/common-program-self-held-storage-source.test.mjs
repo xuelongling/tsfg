@@ -85,7 +85,8 @@ function original(sample){
 for(const sample of cases)test('complete self-held external Array storage '+sample.name,()=>{
   const {hir,publication,request,run,oracle}=original(sample);
   if(sample.wrong||sample.mutable||sample.resize){const range=sample.resize?oracle.StructuralRange:oracle.StoreRange;assert.throws(()=>commonProgramCore(hir,publication,request,{borrowProof:true}),error=>
-    error instanceof Error&&error.code===(sample.resize?'r03-common-program-borrow-conflict':'r03-common-program-borrow-pending')&&error.functionId===run.id&&
+    error instanceof Error&&'code'in error&&'functionId'in error&&'primary'in error&&typeof error.primary==='object'&&error.primary!==null&&'start'in error.primary&&'end'in error.primary&&
+    error.code===(sample.resize?'r03-common-program-borrow-conflict':'r03-common-program-borrow-pending')&&error.functionId===run.id&&
     error.primary.start===range.start&&error.primary.end===range.end);return;}
   const core=commonProgramCore(hir,publication,request,{borrowProof:true}),proof=core.borrowProof;assert.ok(proof);
   assert.deepEqual(proof.request.targets,[]);assert.ok(proof.functions.some(row=>row.functionId===run.id&&row.sourceBinding===oracle.RunID));
