@@ -172,6 +172,14 @@ runtimeSources.push(...['wire-program-control','wire-program-host-artifact-check
   'wire-program-refcheck-context','wire-program-storage','wire-program-tables','wire-program-types']
   .map(name => `runtime/${name}.zig`));
 
+// Exact additional closure of the public typed wire17 check entry. These share
+// the model/context already staged above; the active wire12 root stays intact.
+// Staging is not proof of lazy body analysis, linking or Runtime admission.
+runtimeSources.push(...['wire-program-actual-data','wire-program-actual-facts','wire-program-borrow-check',
+  'wire-program-effects-check','wire-program-identity-check','wire-program-layout-check','wire-program-publication-refs',
+  'wire-program-refcheck','wire-program-region-holding','wire-program-ssa-check','wire-program-table-refs',
+  'wire-program-targets-check'].map(name => `runtime/${name}.zig`));
+
 /** Actual production copy boundary, also exercised without starting the VM. */
 export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {
   for (const name of runtimeSources) {
