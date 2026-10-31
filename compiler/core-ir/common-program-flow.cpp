@@ -83,6 +83,8 @@ bool ActualCheck::run(){
   // Actual storage/ABI obligations are discharged later by effects(), after
   // their independent calculation; no tentative physical permission is read.
   if(!prepareInternalConstructors(p,e)||!verifyCallableTargets(p,e,initializedArrays)||!admitPublication(p,e)||!catalogs()||!prepareImplicitReceiverPlans()||!graph()||!source()||!verifyInternalConstructorClosure())return false;
+  for(const auto &fn:p.functions){bool receiver=false;for(const auto &block:fn.blocks)for(const auto &operation:block.operations){if(!step())return false;receiver|=llvm::StringRef(operation.name).starts_with("receiver_");}
+    if(receiver){if(!step(fn.id.size()/8+2))return false;p.constructorReturnCFGs.emplace(fn.id,ConstructorReturnCFG(fn));}}
   for(const auto &[id,fn]:functions)if(!environmentGraph(*fn))return false;
   // Public inventory, normalized instructions and registerViews were checked
   // above. Append only independently reconstructed private analysis plans;

@@ -80,6 +80,7 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
   out=std::move(p);return true;
 }
 static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
+  if(!p.charge(p.constructorReturnCFGs.size()))return reject(error,"core-ir-common-budget","constructor CFG witness release exceeded");p.constructorReturnCFGs.clear();
   if(!p.charge(p.internalTypes.size()+p.internalOwners.size()+p.internalBindings.size()+p.internalTargets.size()+p.internalCycleTypes.size()+p.internalDeclarations.size()+p.internalEffects.size()))return reject(error,"core-ir-common-budget","internal constructor metadata release exceeded");
   p.internalTypes.clear();p.internalOwners.clear();p.internalBindings.clear();p.internalTargets.clear();p.internalCycleTypes.clear();p.internalDeclarations.clear();p.internalEffects.clear();p.internalMetadataReady=false;
   p.remaining=std::min(p.remaining,programWorkLimit);p.hosts.clear();p.hostResources.clear();p.hostOrigins.clear();p.hostContractHash.clear();p.layouts.clear();p.referenceBodyLayouts.clear();p.effects.clear();p.fixedEffects.clear();

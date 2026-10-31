@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Independent Graph4 fixed-summary premises. No Source/Program/VM.
+// Independent Graph5 fixed-summary premises. No Source/Program/VM.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {commonReturnOrigins} from '../../compiler/common-program-return-origins.mjs';
@@ -45,10 +45,10 @@ test('unproductive recursive normal control cannot create a continuation write',
   const {make,publish}=setup();
   // The fixed recursive equation exists before any caller is solved. Its
   // literal control has no base return and is not derived from a body result.
-  publish('forever',{format:{family:'tsfg.return-origin-graph-candidate',version:4},
+  publish('forever',{format:{family:'tsfg.return-origin-graph-candidate',version:5},
     nodes:[{kind:'parameter',type:'B',index:0},{kind:'call',type:'B',call:0,completion:'normal'}],
     heaps:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],
-    calls:[{functionId:'forever',arguments:[[0]],environment:null,callee:null,heap:0,control:0,site:'recurse'}],
+    calls:[{functionId:'forever',arguments:[[0]],environment:null,callee:null,receiver:null,heap:0,control:0,site:'recurse'}],
     normal:[1],language:[],exits:{normal:[{heap:1,control:1}],language:[]},accesses:[]});
   const caller=make(),actual=caller.root('parameter','B',0),result=caller.call('forever',[actual],'B','entry');
   caller.write(actual,'field:v',caller.root('global','B','G'),{view:'B'});
@@ -67,11 +67,11 @@ test('recursive projection contexts match left and right counts',()=>{
   const {make,publish}=setup();
   // Independent equation F(x) = x | F(x.left).right, with the recursive
   // projection reading that invocation's returned heap and continuation.
-  publish('F',{format:{family:'tsfg.return-origin-graph-candidate',version:4},
+  publish('F',{format:{family:'tsfg.return-origin-graph-candidate',version:5},
     nodes:[{kind:'parameter',type:'N',index:0},{kind:'projection',type:'N',bases:[0],selector:'field:left',view:'N',heap:0,control:0},
       {kind:'call',type:'N',call:0,completion:'normal'},{kind:'projection',type:'N',bases:[2],selector:'field:right',view:'N',heap:1,control:1}],
     heaps:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],
-    calls:[{functionId:'F',arguments:[[1]],environment:null,callee:null,heap:0,control:0,site:'recurse'}],
+    calls:[{functionId:'F',arguments:[[1]],environment:null,callee:null,receiver:null,heap:0,control:0,site:'recurse'}],
     normal:[0,3],language:[],exits:{normal:[{heap:0,control:0},{heap:1,control:1}],language:[]},accesses:[]});
   // This fixture supplies independent distinct-allocation evidence. It does
   // not qualify a Source allocator/M12 producer or infer noalias from names.

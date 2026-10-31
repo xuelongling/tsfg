@@ -8,7 +8,7 @@ import {commonMeter} from '../../compiler/common-program-common.mjs';
 const range={start:0,end:10},R='recursive',W='wrapper',call=id=>({kind:'call',callee:id,type:'i32',signature:{parameters:[],returnType:'i32'},arguments:[],range});
 const fn=(id,body)=>({id,kind:'source',sourcePath:'/scalar-proof.ts',parameters:[],bindings:[],captures:[],ownerType:null,lexicalEnvironment:null,activationEnvironment:null,returnType:'i32',range,body});
 const upper=()=>({parameters:[],captures:[],globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},facets:{allocation:false,managedReference:false,ehControl:false,mayThrow:false,await:false,lock:false,escape:false,unknownHost:false}});
-const stale=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:4},nodes:[{kind:'nonowning',type:'i32'}],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[0],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
+const stale=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:5},nodes:[{kind:'nonowning',type:'i32'}],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[0],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
 const premise=()=>{const hir={types:[{id:'i32',kind:'scalar',name:'i32'}],globals:[],environments:[],functions:[fn(R,[{kind:'return',range,value:call(R)}]),fn(W,[{kind:'return',range,value:call(R)}])]},spend=commonMeter(1000000),
   availability=commonReturnOriginAvailability(hir,{site:()=>({top:false,functions:[]})},{dispatch:()=>[]},spend),
   records=new Map([[R,{upper:upper(),returnOrigins:stale()}],[W,{upper:upper(),returnOrigins:null}]]);return {availability,records,spend};};

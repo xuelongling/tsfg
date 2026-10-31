@@ -241,7 +241,9 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
           check(same(row.range,global.binding.declarationRange),'source');
         }else if(['return','throw','expression'].includes(row.kind)) {
           const constructor=fn.ownerType&&types.get(fn.ownerType)?.constructor?.id===fn.id;
-          if(row.value)expression(row.value,row.kind==='return'&&!constructor?fn.returnType:undefined);
+          if(row.value){const expected=row.kind!=='return'?undefined:!constructor?fn.returnType:
+            ['reference','value','function'].includes(types.get(row.value.flowType)?.kind)?fn.ownerType:undefined;
+            expression(row.value,expected);}
           else check(row.kind==='return'&&(constructor||fn.returnType==='void'),'type');
           g.sequence(row.range,[...(row.kind==='expression'?[]:[row.kind]),...(row.value?[row.value.range]:[])],true);
         }else if(row.kind==='block') {

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 // A caller supplies fixed Published bounds. Current bodies only discharge
 // those bounds; they never replace a broad permission with a narrower one.
+import {commonIdentity} from './common-program-identities.mjs';
 import {verifyCommonProgramHir} from './common-program-hir.mjs';
 import {commonEffects,commonFacets,commonEffectsCover as covers} from './common-program-effects.mjs';
 import {validateCommonCallableBounds} from './common-program-targets.mjs';
 import {commonHostResources} from './common-program-hosts.mjs';
 import {commonKernelCallChain} from './common-program-diagnostics.mjs';
-import {commonIdentity} from './common-program-identities.mjs';
 import {commonProgramPhysical} from './common-program-physical.mjs';
 import {commonFixedPublicationScope,commonVerifyPublicationScope} from './common-program-publication-scope.mjs';
 import {commonReturnOriginSource,commonReturnOriginAvailability,commonJoinReturnOriginEffects,commonReturnOriginScalarProof} from './common-program-return-origin-source.mjs';
@@ -14,7 +14,7 @@ import {commonCollections} from './common-program-budget.mjs';
 import {commonFixedStorageProjection} from './common-program-fixed-storage.mjs';
 import {commonBudget,commonMeter,commonRecord as record,commonCheck as check,commonSame as same,commonJson,
   canonical,sha256,own} from './common-program-common.mjs';
-const format=Object.freeze({family:'tsfg.program-publication-candidate',version:3});
+const format=Object.freeze({family:'tsfg.program-publication-candidate',version:4});
 const sorted=values=>values.every((value,index)=>index===0||values[index-1]<value);
 const hash=value=>typeof value==='string'&&/^sha256:[0-9a-f]{64}$/.test(value);
 const flags=['read','write','structural'];
@@ -35,8 +35,8 @@ const scopeDigest=(scope,spend)=>publicationIdentity('publication-scope',scope,s
 // contracts when implementations change.
 export function createCommonProgramPublication(input) {
   const hir=verifyCommonProgramHir(input),spend=commonMeter(),physical=commonProgramPhysical(hir),storage=commonFixedStorageProjection(hir,physical),
-    projection=storage.status==='open'?null:storage,effects=commonEffects(hir,spend,physical),derived=effects.derived(),
-    availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection),
+    projection=storage.status==='open'?null:storage,effects=commonEffects(hir,physical.model.spend,physical),derived=effects.derived(),
+    availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection,physical),
     source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,null,null,availability.selected),graphs=source.derived(availability.dependencies);
   spend(hir.functions.length);
   const contracts=hir.functions.map(fn=>{
@@ -99,7 +99,7 @@ function prepare(input,publication) {
   const admitted=admit(input,publication),{hir,spend,records,scope,fixedScope}=admitted;
   const physical=commonProgramPhysical(hir,records),storage=commonFixedStorageProjection(hir,physical,publication.scope.storage),
     projection=storage.status==='open'?null:storage,effects=commonEffects(hir,physical.model.spend,physical),
-    availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection);
+    availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection,physical);
   for(const [id,row]of records){spend();if(row.returnOrigins===null)availability.reasons.set(id,'fixed-return-open');
     else for(const call of row.returnOrigins.calls){spend();availability.dependencies.get(id).add(call.functionId);}
   }
@@ -107,7 +107,7 @@ function prepare(input,publication) {
     for(const target of targets){spend();if(availability.reasons.has(target)){availability.reasons.set(id,'fixed-callee-return-open');changed=true;break;}}
   }}
   for(const id of availability.reasons.keys()){spend();availability.selected.delete(id);}
-  const source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,fixedScope.typeKind,records,availability.selected);
+  const source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,fixedScope.typeKind,records,availability.selected,fixedScope.catalogue);
   return {hir,spend,effects,records,scope,physical,source,availability};
 }
 function analyze(input,publication) {
@@ -121,7 +121,8 @@ function analyze(input,publication) {
     if(!reason){body=prepared.source.derive(fn,null);current.upper=commonJoinReturnOriginEffects(current.upper,body.upper,prepared.physical.model.spend);}
     check(covers(record.upper,current.upper,prepared.physical.model.spend),'contract','current implementation exceeds fixed Published upper',
       {functionId:fn.id,primary:{sourceId:fn.sourcePath,...fn.range}});
-    if(body){check(prepared.source.covers({...record.upper,returnOrigins:record.returnOrigins},body.upper,null),'return-origin-contract','current return/content graph exceeds fixed Published graph',
+    if(body?.pendingReason)returnOriginStatus={status:'open',reason:body.pendingReason};
+    else if(body){check(prepared.source.covers({...record.upper,returnOrigins:record.returnOrigins},body.upper,null),'return-origin-contract','current return/content graph exceeds fixed Published graph',
       {functionId:fn.id,primary:{sourceId:fn.sourcePath,...fn.range}});returnOriginStatus={status:'covered',reason:null};}
     functions.push({functionId:fn.id,derived:derived.get(fn.id),effective:current.upper,returnOriginStatus,dependencies:dependencies(current.calls),hostCalls:current.hostCalls});
   }

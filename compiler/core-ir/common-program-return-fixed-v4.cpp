@@ -63,14 +63,22 @@ bool projectScope(Program &p,const Json &raw,Scope::FixedScope &out,Error &e){
   for(const auto &v:items(field(raw,"functions"))){Scope::Function row;row.functionId=string(field(v,"functionId"));const auto kind=string(field(v,"kind"));
     row.kind=kind=="source"?V4::FunctionKind::Source:kind=="method"?V4::FunctionKind::Method:kind=="construction-body"?V4::FunctionKind::ConstructionBody:V4::FunctionKind::Future;
     for(const auto &type:items(field(v,"parameterTypes")))row.parameterTypes.push_back(string(type));row.returnType=string(field(v,"returnType"));
+    if(!field(v,"construction").getAsNull()){
+      const auto &rawConstruction=field(v,"construction");V4::Constructor construction;
+      construction.id=string(field(rawConstruction,"id"));construction.owner=string(field(rawConstruction,"owner"));construction.receiverIndex=size_t(field(rawConstruction,"receiverIndex").getAsInteger().value());
+      if(!field(rawConstruction,"base").getAsNull())construction.base=string(field(rawConstruction,"base"));row.construction=std::move(construction);
+    }
     if(!field(v,"lexicalEnvironment").getAsNull())row.lexicalEnvironment=string(field(v,"lexicalEnvironment"));if(!field(v,"activationEnvironment").getAsNull())row.activationEnvironment=string(field(v,"activationEnvironment"));out.functions.push_back(std::move(row));}
   for(const auto &v:items(field(raw,"globals")))out.globals.push_back({string(field(v,"globalId")),string(field(v,"type"))});
   for(const auto &v:items(field(raw,"environments"))){Scope::Environment row;row.id=string(field(v,"id"));if(!field(v,"parent").getAsNull())row.parent=string(field(v,"parent"));
     for(const auto &slot:items(field(v,"slots")))row.slots.push_back({string(field(slot,"key")),string(field(slot,"type")),field(slot,"writable").getAsBoolean()==true});out.environments.push_back(std::move(row));}
+  for(const auto &v:items(field(raw,"constructions"))){V4::Construction row;row.id=string(field(v,"id"));row.owner=string(field(v,"owner"));row.kind=string(field(v,"kind"));
+    if(!field(v,"base").getAsNull())row.base=string(field(v,"base"));if(!field(v,"functionId").getAsNull())row.functionId=string(field(v,"functionId"));out.constructions.push_back(std::move(row));
+  }
   return true;
 }
 bool archive(Program &p,const Json &raw,Json &currentScope,Error &e){
-  if(!need(exact(raw,{"profile","rootFile","declarationTypes","types","hostImports","hostContext","functions","environments","globals","modules","roots","storage"})&&field(raw,"types").getAsArray()&&field(raw,"declarationTypes").getAsArray(),e,"complete fixed-v3 archive required")||!publicationScope(p,currentScope,e))return false;
+  if(!need(exact(raw,{"profile","rootFile","declarationTypes","types","hostImports","hostContext","functions","environments","globals","modules","roots","storage","constructions"})&&field(raw,"types").getAsArray()&&field(raw,"declarationTypes").getAsArray(),e,"complete fixed-v4 archive required")||!publicationScope(p,currentScope,e))return false;
   std::map<std::string,const Json *> current,byId,byLabel;std::set<std::string> declared;Array declarationRows;std::string previous;
   for(const auto &v:items(field(p.hir,"types"))){if(!work(p,e))return false;current.emplace(string(field(v,"id")),&v);}
   for(const auto &v:items(field(raw,"declarationTypes"))){if(!text(p,v,e))return false;auto id=string(v);if(!need(previous.empty()||previous<id,e,"archive declaration order differs"))return false;previous=id;declared.insert(std::move(id));}
@@ -501,9 +509,10 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
         if(entry.second.getAsObject()||entry.second.getAsArray()){if(!work(p,e))return false;pending.push_back(&entry.second);}}
     }
   }
+  if(!work(p,e,id.size()/8+1))return false;const bool constructor=p.constructorReturnCFGs.count(id);
   for(const auto *view:views){if(!text(p,*view,e)||!work(p,e,2))return false;const auto type=string(*view);if(type=="void")continue;
     const auto found=state.shapes.find(type);if(!need(found!=state.shapes.end(),e,"Source view is outside the admitted type directory"))return false;
-    const auto &shape=found->second;if(shape.kind==V4::TypeKind::Unknown||shape.kind==V4::TypeKind::Union||(shape.kind==V4::TypeKind::Value&&!shape.completePhysicalFields)){
+    const auto &shape=found->second;if(((shape.kind==V4::TypeKind::Unknown||shape.kind==V4::TypeKind::Union)&&!constructor)||(shape.kind==V4::TypeKind::Value&&!shape.completePhysicalFields)){
       if(!work(p,e))return false;p.returnOriginPending.insert(id);return true;}
   }
   Json raw=nullptr;std::vector<ReturnOriginAccessWitness> witnesses;
@@ -511,6 +520,7 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
     if(e.code!="core-ir-common-return-origin-open")return false;p.returnOriginPending.insert(id);e=Error{};return true;
   }
   const auto charge=[&](size_t n){return work(p,e,n);};auto parsed=state.bodyDirectories.read(id,raw,charge);
+  if(parsed.status==V4::ReadStatus::Open){p.returnOriginPending.insert(id);return true;}
   if(!need(parsed.status==V4::ReadStatus::Typed,e,parsed.reason?parsed.reason:"current body graph rejected"))return false;
   // Data completion reachability cannot narrow the full fixed mayThrow
   // permission. Until that independent potential is routed through Source
@@ -525,7 +535,7 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
   if(included.status==V4::InclusionStatus::BudgetError)return false;
   if(included.status!=V4::InclusionStatus::Covered){p.returnOriginPending.insert(id);return true;}
   auto protocol=state.bodyDirectories.protocol(id,charge);if(!need(protocol.status==Scope::BuildStatus::Ready,e,"body protocol unavailable"))return false;
-  Domain::Callbacks callbacks;callbacks.rootProtocol=std::move(protocol.protocol);callbacks.environments=&state.fixedDirectories.interpretation().environments;
+  Domain::Callbacks callbacks;callbacks.rootProtocol=std::move(protocol.protocol);callbacks.environments=&state.fixedDirectories.interpretation().environments;callbacks.constructions=&state.fixedDirectories.interpretation().constructions;
   callbacks.actualType=[&](llvm::StringRef type,const V4::Charge &paid)->const Domain::ActualShape *{
     V4::Detail::Meter meter(paid);std::string key;if(!meter.lookup(state.shapes.size(),type.size())||!meter.copy(key,type))return nullptr;const auto found=state.shapes.find(key);if(found==state.shapes.end()||(found->second.kind==V4::TypeKind::Value&&!found->second.completePhysicalFields))return nullptr;return &found->second;
   };
@@ -548,6 +558,8 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
         if(route!=found->second.end())return llvm::StringRef(route->second);
       }
     }
+    std::string key;if(!meter.lookup(state.shapes.size(),actual.size())||!meter.copy(key,actual))return std::nullopt;const auto shape=state.shapes.find(key);
+    if(shape!=state.shapes.end()&&shape->second.kind==V4::TypeKind::Reference)return std::nullopt;
     routeOpen=true;return std::nullopt;
   };
   auto result=Domain::solve(parsed.graph,state.fixed,callbacks,charge);

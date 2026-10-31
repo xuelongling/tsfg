@@ -5,8 +5,8 @@ import {readCommonReturnOriginGraph} from './common-program-return-origin-graph.
 import {canonical,sha256} from './identity.mjs';
 
 /** @typedef {{id:string,label:string,shape:{kind:string,fields?:{name:string,index:number}[]}}} ScopeType */
-/** @typedef {{functionId:string,kind:string,parameterTypes:string[],returnType:string,lexicalEnvironment:string|null,activationEnvironment:string|null}} ScopeFunction */
-/** @typedef {{profile:'common-program-fixed-v3',types:ScopeType[],functions:ScopeFunction[],globals:{globalId:string,type:string}[],environments:{id:string,parent:string|null,slots:{key:string,type:string,writable:boolean}[]}[]}} FixedScope */
+/** @typedef {{functionId:string,kind:string,parameterTypes:string[],returnType:string,lexicalEnvironment:string|null,activationEnvironment:string|null,construction:import('./common-program-return-origin-graph.mjs').ConstructionProtocol|null}} ScopeFunction */
+/** @typedef {{profile:'common-program-fixed-v4',types:ScopeType[],functions:ScopeFunction[],constructions:import('./common-program-return-origin-graph.mjs').ConstructionRow[],globals:{globalId:string,type:string}[],environments:{id:string,parent:string|null,slots:{key:string,type:string,writable:boolean}[]}[]}} FixedScope */
 
 /**
  * PRECONDITION: scope has already passed fixed-scope semantic identity/hash,
@@ -25,7 +25,7 @@ export function commonReturnOriginScopeDirectories(admittedFixedScope,spend) {
   const symbol=value=>{spend(Math.ceil(value.length/8)+1);return value;};
   const scope=admittedFixedScope;
   symbol(scope.profile);
-  if(scope.profile!=='common-program-fixed-v3')throw new TypeError('return-origin-scope: fixed-v3 profile required');
+  if(scope.profile!=='common-program-fixed-v4')throw new TypeError('return-origin-scope: fixed-v4 profile required');
   spend(scope.types.length+scope.functions.length+scope.globals.length+scope.environments.length+1);
   /** @type {Map<string,{kind:string}>} */
   const types=new Map();
@@ -37,6 +37,7 @@ export function commonReturnOriginScopeDirectories(admittedFixedScope,spend) {
   const environments=new Map();
   /** @type {Set<string>} */
   const fields=new Set();
+  const constructions=new Map();spend(scope.constructions.length);for(const row of scope.constructions){spend();constructions.set(symbol(row.id),{id:symbol(row.id),owner:symbol(row.owner),base:row.base===null?null:symbol(row.base),kind:symbol(row.kind),functionId:row.functionId===null?null:symbol(row.functionId)});}
   for(const type of scope.types){spend();const id=symbol(type.id),kind=symbol(type.shape.kind);types.set(id,{kind});
     const entries=type.shape.fields??[];spend(entries.length+1);
     for(const field of entries){spend();
@@ -52,7 +53,8 @@ export function commonReturnOriginScopeDirectories(admittedFixedScope,spend) {
     for(const type of fn.parameterTypes){spend();parameterTypes.push(symbol(type));}
     const lexicalEnvironment=fn.lexicalEnvironment===null?null:symbol(fn.lexicalEnvironment);
     const activationEnvironment=fn.activationEnvironment===null?null:symbol(fn.activationEnvironment);
-    functions.set(symbol(fn.functionId),{kind:symbol(fn.kind),parameterTypes,returnType:symbol(fn.returnType),lexicalEnvironment,activationEnvironment});
+    const row=fn.construction,construction=row?{id:symbol(row.id),owner:symbol(row.owner),base:row.base===null?null:symbol(row.base),receiverIndex:row.receiverIndex}:null;
+    functions.set(symbol(fn.functionId),{kind:symbol(fn.kind),parameterTypes,returnType:symbol(fn.returnType),lexicalEnvironment,activationEnvironment,construction});
   }
   for(const global of scope.globals){spend();globals.set(symbol(global.globalId),symbol(global.type));}
   for(const env of scope.environments){spend(env.slots.length+1);const slots=[];
@@ -63,9 +65,9 @@ export function commonReturnOriginScopeDirectories(admittedFixedScope,spend) {
   const read=(functionId,rawGraph)=>{
     symbol(functionId);const fn=functions.get(functionId);
     if(fn===undefined)throw new TypeError('return-origin-scope: unowned function context');
-    // Env/function rows came from this complete hashed fixed Scope; draft4
+    // Env/function rows came from this complete hashed fixed Scope; Graph5
     // derives no instance or payload permission from an unbound side table.
-    return readCommonReturnOriginGraph(rawGraph,{functionId,types,functions,globals,fields,environments},spend);
+    return readCommonReturnOriginGraph(rawGraph,{functionId,types,functions,globals,fields,environments,constructions},spend);
   };
-  return {read};
+  return {read,catalogue:{functions,constructions,types}};
 }

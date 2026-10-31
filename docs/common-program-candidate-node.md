@@ -57,14 +57,16 @@ const core=emitCommonProgramCore(hir,publication,request);
 
 Later consumers retain the supplied publication: they verify it against the current complete Program rather than regenerate a narrower permission. Incoming scalar and function parameters keep their original parameter BindingId, lexical owner and shared environment cell. Callable signature compatibility supplies no closed target set or lifetime proof.
 
-The current private publication is version 3 (`common-program-fixed-v3`). Its
+The current private publication is version 4 (`common-program-fixed-v4`). Its
 complete owned scope binds the declaration, type, module, global, import/export,
-and Env directories together with fixed storage tables. The ordered group binds
-every function's signature, full upper, callable bounds and return Graph4,
-including explicit null rows. A complete ordinary Function/Env protocol directory
-is required even for a function whose fixed return graph is unavailable.
-Declaration identity excludes replaceable bodies and initialization source
-identities; each current body is checked independently against its fixed row.
+Env and construction directories together with fixed storage tables. The ordered
+group binds every function's signature, full upper, callable bounds and return
+Graph5, including explicit null rows. Every function has an ordinary Function/Env
+protocol row and a construction role or null, even when its return graph is
+unavailable. Implicit constructors remain owned construction roles, rather than
+invented public function rows. Declaration identity excludes replaceable bodies
+and initialization source identities; each current body is checked independently
+against its fixed row.
 
 A null return graph means unavailable authority. It does not mean an empty graph
 or grant a return, capture or storage proof. A supplied graph must cover the
@@ -73,6 +75,26 @@ Concrete Code values and observed branches cannot narrow other permitted targets
 full uppers. A primitive scalar exception requires independent complete Source
 views, full fixed-target closure and actual effects covered by the fixed upper;
 it cannot hide a failed nonnull fixed graph in that closure.
+
+Construction return graphs project the admitted normalized CFG, including its
+receiver and initializer protocol. They do not interpret Source constructor
+syntax again or grant initialization rights from a range or site name. Hidden
+receiver frame references stay separate from data, Code and Env references.
+Constructor call data arguments exclude logical receiver0: logical parameter i
+for i >= 1 reads argument i - 1, while full receiver0 permissions apply to actual
+data bound by that constructor throughout normal and language completion. An
+unrelated nested construction does not inherit the caller receiver0 role.
+
+Frame state retains the owned construction, original newTarget and bound or
+unbound receiver. Actual Object, undefined and other primitive categories are
+independent of Source views and owner provenance. Object replacement preserves
+its actual identity and layout; assertions do not change the category. A
+receiver protocol ReferenceError or TypeError is an Object with a data identity
+even without a Source TypeId. Source and call exception payloads retain their
+own categories. Request termination supplies no language completion. A missing
+constructor graph remains null and grants no return or storage proof. Frame
+creation with cyclic control dependencies and CFG global payload stores remain
+Open until their lifetime and data transfer are represented.
 
 Upper capture permissions are transitive stable SlotKeys. They need not belong
 to the incoming lexical Env. Payload transfer must locate the actual owning Env
@@ -99,15 +121,21 @@ tuple. Consumers cannot upgrade fixed TOP using narrower current observations,
 and actual data outside a known fixed bound is rejected. Reference identity can
 remain known while that reference body has no physical field route.
 
-Node cold metadata admission and first-publication effect/identity work retain their
-existing allowance. Current Source/graph/effect analysis shares the existing
-cumulative private4 physical work allowance of 2,000,000; it does not start a
-fresh budget for an inline, context or phase. Per-operation fees remain charged.
+Node metadata admission and publication identity retain their existing 100,000
+work allowance. Source, graph and body-effect analysis share the existing
+cumulative physical allowance of 2,000,000, both at first publication and when
+consuming a supplied publication. An inline, context or phase does not start a
+fresh budget. Per-operation fees remain charged.
 Old or mixed publication/graph formats and mismatched private Core identities
 are rejected rather than upgraded in a reader.
 
 
-Source facts use the private v2 family and `contracts/common-program-source-v2.schema.json`; owned HIR uses its separate private v2 descriptor. Static Core carries the existing `tsfg.core-program-development` v4 marker and exact private 0.12 header. The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
+Source facts use the private v2 or v3 family with the matching Source descriptor;
+owned HIR uses its separate matching v2 or v3 descriptor. The v3 Source and HIR
+formats retain ordered constructor parameter initialization and actual omitted
+arguments. Existing v2 packets retain their original identities. Static Core
+carries the existing `tsfg.core-program-development` v4 marker and exact private
+0.12 header. The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
 
 The formal Frontend/HIR/bytecode registries, Source lock and admission remain unchanged by this private candidate. Candidate metadata never derives its private header from that registry. Shared MLIR string escaping has its own module so the budgeted printer does not import the scalar emitter and its formal registry.
 

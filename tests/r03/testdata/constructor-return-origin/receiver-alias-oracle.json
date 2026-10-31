@@ -1,0 +1,92 @@
+{
+  "origin": "Frozen before producer: independent ASCII/UTF16 literal ranges plus documented Source ID domain hashes, not a separately executed official AST/Symbol oracle",
+  "sourceSha256": "8474a3538faf15bb738960be7ac9da96aa7cf3f1dde96504716e20f34b156445",
+  "sourcePath": "/src/main.ts",
+  "expectedAlias": "pass normal result is incoming p; no runtime execution claimed",
+  "classes": [
+    {
+      "name": "Payload",
+      "id": "nominal:553bff5a4c913f3552b7404410e82e38052e82f5cabf60cf6dea6532117a0473",
+      "declarationRange": {
+        "start": 0,
+        "end": 33
+      }
+    },
+    {
+      "name": "Box",
+      "id": "nominal:daed682f312f0f24c3433dfe7448e91e65c981f694941682ec67a405c6657927",
+      "declarationRange": {
+        "start": 34,
+        "end": 85
+      }
+    }
+  ],
+  "pass": {
+    "id": "sha256:c3d76713e1ddc00b4e49c1c47ff383e7d404f5ba9477f09e813a1565425fe810",
+    "declarationRange": {
+      "start": 86,
+      "end": 156
+    },
+    "parameter": {
+      "id": "sha256:5aa4cb68f3815ea05ada9780ab3438ecd7ee9fe58a9d8234d1c4a14ef208e3e0",
+      "declarationRange": {
+        "start": 107,
+        "end": 117
+      },
+      "nameRange": {
+        "start": 107,
+        "end": 108
+      }
+    }
+  },
+  "constructor": {
+    "id": "sha256:e83a0110ae71fc40de99381c5f00b99be1f4a1572abcc85874e9aa400973dc7b",
+    "ownerType": "nominal:daed682f312f0f24c3433dfe7448e91e65c981f694941682ec67a405c6657927",
+    "declarationRange": {
+      "start": 46,
+      "end": 83
+    },
+    "parameter": {
+      "id": "sha256:50b6f0a777f85ff59fd10883fa383739cc9540d5061f231fa6731e66c815ec52",
+      "fieldId": "sha256:9af849b37dbbc68361983bbdebb9b5805305d929cb2174bfff924d9bf2b740f6",
+      "declarationRange": {
+        "start": 58,
+        "end": 79
+      },
+      "nameRange": {
+        "start": 65,
+        "end": 70
+      }
+    }
+  },
+  "construction": {
+    "type": "nominal:daed682f312f0f24c3433dfe7448e91e65c981f694941682ec67a405c6657927",
+    "range": {
+      "start": 137,
+      "end": 147
+    },
+    "calleeRange": {
+      "start": 141,
+      "end": 144
+    },
+    "argument": {
+      "binding": "sha256:5aa4cb68f3815ea05ada9780ab3438ecd7ee9fe58a9d8234d1c4a14ef208e3e0",
+      "range": {
+        "start": 145,
+        "end": 146
+      }
+    }
+  },
+  "fieldAccess": {
+    "fieldId": "sha256:9af849b37dbbc68361983bbdebb9b5805305d929cb2174bfff924d9bf2b740f6",
+    "type": "nominal:553bff5a4c913f3552b7404410e82e38052e82f5cabf60cf6dea6532117a0473",
+    "range": {
+      "start": 137,
+      "end": 153
+    },
+    "nameRange": {
+      "start": 148,
+      "end": 153
+    }
+  }
+}

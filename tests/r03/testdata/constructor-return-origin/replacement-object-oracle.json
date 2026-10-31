@@ -1,0 +1,157 @@
+{
+  "origin": "Frozen before producer: independent ASCII/UTF16 literal ranges and documented nominal/function/binding/field domain hashes; not an independently executed official AST/Symbol oracle",
+  "sourceSha256": "ae6b0faaf49ded3b30ad5d42ff89f17061adccb7cfc4259f5424274bd91ea00c",
+  "sourcePath": "/src/main.ts",
+  "classes": [
+    {
+      "name": "Payload",
+      "id": "nominal:553bff5a4c913f3552b7404410e82e38052e82f5cabf60cf6dea6532117a0473",
+      "declarationRange": {
+        "start": 0,
+        "end": 33
+      },
+      "nameRange": {
+        "start": 6,
+        "end": 13
+      }
+    },
+    {
+      "name": "Replacement",
+      "id": "nominal:1211ab217c070df99d711e79ae48e925dc2d290f55b0144c9c66ead4d8541034",
+      "declarationRange": {
+        "start": 34,
+        "end": 93
+      },
+      "nameRange": {
+        "start": 40,
+        "end": 51
+      },
+      "constructor": {
+        "id": "sha256:8e025cb1a8a4091593be60281932c2fc13ccff4cfdfdc2b5fb40a4ede8f640ed",
+        "declarationRange": {
+          "start": 54,
+          "end": 91
+        },
+        "parameter": {
+          "id": "sha256:7c49fd9fb40d58716bd62049ba5146d94d836c9bccb8be8d25f618d95d5e29f8",
+          "fieldId": "sha256:f08f97a00b6bdabf321bb93704463d58be13f3303f4b13f26848a6c62ed3f81b",
+          "declarationRange": {
+            "start": 66,
+            "end": 87
+          },
+          "nameRange": {
+            "start": 73,
+            "end": 78
+          }
+        }
+      }
+    },
+    {
+      "name": "Carrier",
+      "id": "nominal:7b0c9d7ea298af378b9b856528150963f771218b6badbb426e03007213e469de",
+      "declarationRange": {
+        "start": 94,
+        "end": 181
+      },
+      "nameRange": {
+        "start": 100,
+        "end": 107
+      },
+      "constructor": {
+        "id": "sha256:aac59e01ec0ad48e21cbfe680cfdebef1037fb38da1b50e9e558779dcbfb1775",
+        "declarationRange": {
+          "start": 110,
+          "end": 179
+        },
+        "parameter": {
+          "id": "sha256:3c6d9e7bce43e81d4b4b658a2919436de571480057dedba271db825fb5441ee7",
+          "fieldId": "sha256:6532b9e156d6d8871536ffe20cfed5547a5e46c9c6569391f4be2f60057f2114",
+          "declarationRange": {
+            "start": 122,
+            "end": 143
+          },
+          "nameRange": {
+            "start": 129,
+            "end": 134
+          }
+        }
+      }
+    }
+  ],
+  "pass": {
+    "id": "sha256:cdfc0d78e7039d1ab7bb81eebdcd5a7370e986ba15a60dbdc67de16203250a97",
+    "declarationRange": {
+      "start": 182,
+      "end": 256
+    },
+    "parameter": {
+      "id": "sha256:3bb3fc5e6cc2f81acc056d30b3a82e10816713ae4ef914071b9c88c7325a3023",
+      "declarationRange": {
+        "start": 203,
+        "end": 213
+      },
+      "nameRange": {
+        "start": 203,
+        "end": 204
+      }
+    }
+  },
+  "constructorReturn": {
+    "ownerType": "nominal:7b0c9d7ea298af378b9b856528150963f771218b6badbb426e03007213e469de",
+    "statementRange": {
+      "start": 147,
+      "end": 177
+    },
+    "expression": {
+      "kind": "new",
+      "type": "nominal:1211ab217c070df99d711e79ae48e925dc2d290f55b0144c9c66ead4d8541034",
+      "range": {
+        "start": 154,
+        "end": 176
+      },
+      "calleeRange": {
+        "start": 158,
+        "end": 169
+      },
+      "argument": {
+        "binding": "sha256:3c6d9e7bce43e81d4b4b658a2919436de571480057dedba271db825fb5441ee7",
+        "range": {
+          "start": 170,
+          "end": 175
+        }
+      }
+    }
+  },
+  "outerNew": {
+    "kind": "new",
+    "type": "nominal:7b0c9d7ea298af378b9b856528150963f771218b6badbb426e03007213e469de",
+    "range": {
+      "start": 233,
+      "end": 247
+    },
+    "calleeRange": {
+      "start": 237,
+      "end": 244
+    },
+    "argument": {
+      "binding": "sha256:3bb3fc5e6cc2f81acc056d30b3a82e10816713ae4ef914071b9c88c7325a3023",
+      "range": {
+        "start": 245,
+        "end": 246
+      }
+    }
+  },
+  "fieldAccess": {
+    "fieldId": "sha256:6532b9e156d6d8871536ffe20cfed5547a5e46c9c6569391f4be2f60057f2114",
+    "type": "nominal:553bff5a4c913f3552b7404410e82e38052e82f5cabf60cf6dea6532117a0473",
+    "range": {
+      "start": 233,
+      "end": 253
+    },
+    "nameRange": {
+      "start": 248,
+      "end": 253
+    }
+  },
+  "relationExpected": "Carrier constructor returns actual Replacement object, keeping original Source type IDs; pass returns incoming p via returned object owner. Nested construction frame is not an additional caller argument/root role. These are literal semantic expectations, no Graph5/Runtime proof."
+}

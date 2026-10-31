@@ -1,0 +1,117 @@
+{
+  "origin": "Frozen before producer: independent ASCII/UTF16 literal ranges and documented Source hash domains; not independent official AST/Symbol execution",
+  "sourceSha256": "a3bc062d91f1fc33947eea68444a2ae03e659a169405f80db56180fe6d3b482d",
+  "sourcePath": "/src/main.ts",
+  "onlySourceChange": "Exactly two flag annotations boolean to bool; original conditional-super bytes and packet remain unchanged",
+  "classes": [
+    {
+      "name": "Base",
+      "id": "nominal:5b3d8cb94354f46dc026a85e489003f428bd70954f2864ab8fe81e5cdd1d622a",
+      "declarationRange": {
+        "start": 0,
+        "end": 30
+      },
+      "nameRange": {
+        "start": 6,
+        "end": 10
+      }
+    },
+    {
+      "name": "Derived",
+      "id": "nominal:f11bc27e6cbada438e1889f05497be83ccae000f341182b97f16f97d8cc83ae8",
+      "declarationRange": {
+        "start": 31,
+        "end": 108
+      },
+      "nameRange": {
+        "start": 37,
+        "end": 44
+      }
+    }
+  ],
+  "constructor": {
+    "id": "sha256:905b8ad8650b270b42da3a68c53a943ad302fed23444db2000f77a76090de689",
+    "ownerType": "nominal:f11bc27e6cbada438e1889f05497be83ccae000f341182b97f16f97d8cc83ae8",
+    "declarationRange": {
+      "start": 60,
+      "end": 106
+    },
+    "parameter": {
+      "id": "sha256:e527d17ba424e1ec7f97115d91de29be538e5669a5487418cfe38de229f07469",
+      "declarationRange": {
+        "start": 72,
+        "end": 82
+      },
+      "nameRange": {
+        "start": 72,
+        "end": 76
+      }
+    },
+    "ifStatement": {
+      "range": {
+        "start": 86,
+        "end": 104
+      },
+      "condition": {
+        "binding": "sha256:e527d17ba424e1ec7f97115d91de29be538e5669a5487418cfe38de229f07469",
+        "range": {
+          "start": 90,
+          "end": 94
+        }
+      }
+    },
+    "superExpression": {
+      "kind": "superConstruct",
+      "callee": "nominal:5b3d8cb94354f46dc026a85e489003f428bd70954f2864ab8fe81e5cdd1d622a",
+      "range": {
+        "start": 96,
+        "end": 103
+      },
+      "calleeRange": {
+        "start": 96,
+        "end": 101
+      }
+    },
+    "explicitReturnStatements": 0,
+    "falseBranch": "No else or explicit return; falls through with derived this unbound",
+    "trueBranch": "super() successful completion binds derived this; falls through with bound receiver"
+  },
+  "create": {
+    "id": "sha256:b3d41a515c4fbaf0d21668c6ae0afd1af6fb7dd83527191c94093c7eed98ced6",
+    "declarationRange": {
+      "start": 109,
+      "end": 182
+    },
+    "parameter": {
+      "id": "sha256:5bbab57f9307db33f6af2960e8732a29b2411355de98bd0fa8bd524b7a7a9639",
+      "declarationRange": {
+        "start": 132,
+        "end": 142
+      },
+      "nameRange": {
+        "start": 132,
+        "end": 136
+      }
+    },
+    "newExpression": {
+      "kind": "new",
+      "type": "nominal:f11bc27e6cbada438e1889f05497be83ccae000f341182b97f16f97d8cc83ae8",
+      "range": {
+        "start": 162,
+        "end": 179
+      },
+      "calleeRange": {
+        "start": 166,
+        "end": 173
+      },
+      "argument": {
+        "binding": "sha256:5bbab57f9307db33f6af2960e8732a29b2411355de98bd0fa8bd524b7a7a9639",
+        "range": {
+          "start": 174,
+          "end": 178
+        }
+      }
+    }
+  },
+  "semanticExpectation": "flag true: normal Derived receiver; flag false: absent super leaves derived this unbound and implicit undefined completion must produce ReferenceError. Literal JS expectation only, no executed Graph/Runtime result."
+}

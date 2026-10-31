@@ -19,7 +19,7 @@ inline constexpr llvm::StringLiteral marker="tsfg_program.program";
 inline constexpr int32_t profileVersion=4;
 // This reader admits only the current private4 descriptor identity below.
 inline constexpr size_t programWorkLimit=2000000;
-inline constexpr llvm::StringLiteral schema="sha256:98c9cf9e7b4c4dce0a8df339264f78d535d4e454af219fd8c71bbaec838ef821";
+inline constexpr llvm::StringLiteral schema="sha256:14304b288b87bc8b32c11319d650abd4dcfe7ae578038eb9add9314a3efb4df8";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}
@@ -118,6 +118,14 @@ struct Function {
   std::vector<std::string> carriers;std::string resultCarrier;
   std::vector<Block> blocks;
 };
+struct ActualCheck;
+class ConstructorReturnCFG {
+  const Function *function;
+  explicit ConstructorReturnCFG(const Function &value):function(&value){}
+  friend struct ActualCheck;
+public:
+  const Function &get()const{return *function;}
+};
 struct Layout {
   uint32_t byteSize=0,alignment=1,referenceCount=0;
   std::vector<uint32_t> fieldOffsets;
@@ -140,6 +148,7 @@ struct Program {
   uint32_t sourceLength=0;
   std::vector<Function> functions;
   std::vector<Function> internalFunctions;
+  std::map<std::string,ConstructorReturnCFG> constructorReturnCFGs;
   // Owned, independently reconstructed compiler metadata, never new HIR,
   // Scope or Published rows. Unknown representation data cannot fill these.
   std::map<std::string,Json> internalTypes,internalOwners,internalBindings;

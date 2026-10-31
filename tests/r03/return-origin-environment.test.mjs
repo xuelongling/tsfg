@@ -18,7 +18,7 @@ const Make='make',Read='read',Caller='caller',range={start:0,end:100},sourcePath
 const none={lexicalEnvironment:null,activationEnvironment:null};
 const protocol=(lexicalEnvironment=null,activationEnvironment=null)=>({lexicalEnvironment,activationEnvironment});
 /** @returns {import('../../compiler/common-program-return-origin-graph.mjs').Graph} */
-const emptyGraph=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:4},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
+const emptyGraph=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:5},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
 /** @param {import('../../compiler/common-program-return-origin-graph.mjs').Graph} returnOrigins */
 const upper=(returnOrigins,parameters=[],captures=[])=>({returnOrigins,parameters:parameters.map((_,index)=>({index,read:false,write:false,structural:false})),captures,
   globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},facets:{allocation:false,managedReference:false,ehControl:false,mayThrow:false,await:false,lock:false,escape:false,unknownHost:false}});
@@ -74,14 +74,14 @@ const fixed=input=>new Map([...input.records].map(([id,row])=>{
   return [id,{graph:row.upper.returnOrigins,upper:row.upper,protocol:protocol(owner.lexicalEnvironment,owner.activationEnvironment)}];
 }));
 
-test('draft4 ordinary control: an environment-free parameter return keeps its owner',()=>{
+test('draft5 ordinary control: an environment-free parameter return keeps its owner',()=>{
   const Relay='ordinaryRelay',relay=fn(Relay,[{id:'relay/p',type:B}],B,[{kind:'return',range,value:ref('relay/p')}]),
     caller=fn(Caller,[{id:'entry/p',type:B}],'void',[writeV(direct(Relay,[ref('entry/p')],B,30))]),hir=hirRows([caller,relay]);hir.environments=[];
   const records=new Map([[Relay,{upper:upper({...emptyGraph(),nodes:[{kind:'parameter',type:B,index:0}],normal:[0]},[B]),callables:noTransfer()}],
     [Caller,{upper:upper(emptyGraph(),[B]),callables:noTransfer()}]]);
   const {body,spend}=extract({hir,caller,records});assert.equal(body.parameters[0].write,true);
   const owned=commonReturnOriginDirectories(hir,spend).read(Caller,body.returnOrigins);assert.ok(owned.status==='typed');
-  assert.deepEqual(owned.graph.format,{family:'tsfg.return-origin-graph-candidate',version:4},'the owning reader must return draft4, not restamp it as draft3');
+  assert.deepEqual(owned.graph.format,{family:'tsfg.return-origin-graph-candidate',version:5},'the owning reader must return draft5, not restamp it as draft3');
 });
 
 test('Source: same FnId from two activations retains each saved Code environment',()=>{
@@ -99,13 +99,13 @@ test('Source: an ordinary wrapper does not merge different arguments at its one 
   /** @type {import('../../compiler/common-program-return-origin-graph.mjs').Graph} */
   const graph={...emptyGraph(),nodes:[{kind:'parameter',type:B,index:0},{kind:'call',type:Fn,call:0,completion:'normal'}],
     heaps:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],
-    calls:[{functionId:Make,arguments:[[0]],environment:null,callee:null,heap:0,control:0,site:'one-fixed-make-site'}],normal:[1],exits:{normal:[{heap:1,control:1}],language:[]}};
+    calls:[{functionId:Make,arguments:[[0]],environment:null,callee:null,receiver:null,heap:0,control:0,site:'one-fixed-make-site'}],normal:[1],exits:{normal:[{heap:1,control:1}],language:[]}};
   const declared=upper(graph,[B]);declared.facets.allocation=true;declared.facets.managedReference=true;declared.facets.escape=true;
   input.records.set(Wrap,{upper:declared,callables:{...noTransfer(),returns:{top:false,functions:[Read]}}});
   const {body}=extract(input);assert.equal(body.parameters[0].write,true);assert.equal(body.parameters[1].write,false);
 });
 
-test('Source: activation/code production and readonly captured payload writes use draft4',()=>{
+test('Source: activation/code production and readonly captured payload writes use draft5',()=>{
   const input=fixture(),spend=commonMeter(1000000),effects=commonEffects(input.hir,spend,null,null,null,input.records),produced=effects.derive(input.make,uppers(input.records)).upper;
   assert.ok(produced.returnOrigins.nodes.some(row=>row.kind==='environmentCreate'));
   assert.ok(produced.returnOrigins.nodes.some(row=>row.kind==='code'&&row.functionId===Read));
@@ -147,24 +147,24 @@ test('Source: a shared captured-cell rebind is a weak slot store, not a write to
   assert.equal(commonReturnOriginDirectories(input.hir,spend).read(Setter,body.returnOrigins).status,'typed');
 });
 
-test('draft4: repeated static activation summary weakly retains earlier and later slot payloads',()=>{
+test('draft5: repeated static activation summary weakly retains earlier and later slot payloads',()=>{
   const input=fixture(),graph={...emptyGraph(),nodes:[{kind:'parameter',type:B,index:0},{kind:'parameter',type:B,index:1},
     {kind:'environmentCreate',type:null,layout:E,parent:null,site:'one-static-allocation',control:0},
     {kind:'code',type:Fn,functionId:Read,environment:[2],control:0},
     {kind:'environmentComponent',type:null,layout:E,functionId:Read,callee:[3],control:0},{kind:'call',type:B,call:0,completion:'normal'}],
     heaps:[{kind:'entry'},{kind:'store',previous:0,bases:[2],selector:'capture:'+S,view:'env:'+E,values:[0],initialize:true,control:0},
       {kind:'store',previous:1,bases:[2],selector:'capture:'+S,view:'env:'+E,values:[1],initialize:false,control:0},{kind:'call',call:0,completion:'normal'}],
-    controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],calls:[{functionId:Read,arguments:[],environment:[4],callee:[3],heap:2,control:0,site:'same-summary-read'}],
+    controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],calls:[{functionId:Read,arguments:[],environment:[4],callee:[3],receiver:null,heap:2,control:0,site:'same-summary-read'}],
     normal:[5],exits:{normal:[{heap:3,control:1}],language:[]}};
   const result=solveReturnOriginContexts(graph,fixed(input),{...callbacks(input),rootProtocol:protocol(null,E)},commonMeter(1000000));
   assert.deepEqual([...result.owners(graph.normal)].sort(),['p:0','p:1'],'weak summary is not a unique last instance or a concrete equality claim');
 });
 
-test('draft4 typed directory: parent capture follows the admitted actual layout chain',()=>{
+test('draft5 typed directory: parent capture follows the admitted actual layout chain',()=>{
   // An independently handwritten directory premise, not a fabricated complete
   // Source program. The separate Source nested-factory case exercises production.
   const Child='fixture:ChildEnv',input=fixture(),spend=commonMeter(1000000),environments=new Map([[E,{parent:null,slots:[{key:S,type:B,writable:false}]}],[Child,{parent:E,slots:[]}]]),
-    directory={functionId:Read,types:new Map([[B,{kind:'reference'}]]),functions:new Map([[Read,{kind:'source',parameterTypes:[],returnType:B,...protocol(Child)}]]),globals:new Map(),fields:new Set(),environments};
+    directory={functionId:Read,types:new Map([[B,{kind:'reference'}]]),functions:new Map([[Read,{kind:'source',parameterTypes:[],returnType:B,...protocol(Child)}]]),globals:new Map(),fields:new Set(),environments,constructions:new Map()};
   /** @type {import('../../compiler/common-program-return-origin-graph.mjs').Graph} */
   const graph={...emptyGraph(),nodes:[{kind:'environmentInput',type:null,layout:Child},{kind:'environmentParent',type:null,layout:E,bases:[0],control:0},
     {kind:'capture',type:B,id:S,layout:E,environment:[1],heap:0,control:0}],normal:[2]};
@@ -206,7 +206,7 @@ test('Source: one nested factory callsite keeps different incoming parent Envs c
   /** @type {import('../../compiler/common-program-return-origin-graph.mjs').Graph} */
   const invokeBound={...emptyGraph(),nodes:[{kind:'parameter',type:Spawner,index:0},{kind:'environmentComponent',type:null,layout:E,functionId:Spawn,callee:[0],control:0},{kind:'call',type:Fn,call:0,completion:'normal'}],
     heaps:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],
-    calls:[{functionId:Spawn,arguments:[],environment:[1],callee:[0],heap:0,control:0,site:'one-fixed-spawn-site'}],normal:[2],exits:{normal:[{heap:1,control:1}],language:[]}};
+    calls:[{functionId:Spawn,arguments:[],environment:[1],callee:[0],receiver:null,heap:0,control:0,site:'one-fixed-spawn-site'}],normal:[2],exits:{normal:[{heap:1,control:1}],language:[]}};
   const makeUpper=upper(makeBound,[B]),spawnUpper=upper(spawnBound,[],[{slot:S,read:true,write:false,structural:false}]),readUpper=upper(readBound,[],[{slot:CS,read:true,write:false,structural:false}]),invokeUpper=upper(invokeBound,[Spawner]);
   for(const bound of [makeUpper,spawnUpper,invokeUpper]){bound.facets.allocation=true;bound.facets.managedReference=true;bound.facets.escape=true;}readUpper.facets.managedReference=true;invokeUpper.parameters[0].read=true;
   input.records=new Map([[Make,{upper:makeUpper,callables:{...noTransfer(),returns:{top:false,functions:[Spawn]}}}],
@@ -216,7 +216,7 @@ test('Source: one nested factory callsite keeps different incoming parent Envs c
   const {body}=extract(input);assert.equal(body.parameters[0].write,true);assert.equal(body.parameters[1].write,false,'the one nested allocation site is contextualized by its incoming parent Env');
 });
 
-test('draft4: missing payload/metadata remains open, and v3 is rejected instead of restamped',()=>{
+test('draft5: missing payload/metadata remains open, and v3 is rejected instead of restamped',()=>{
   const input=fixture();input.records.get(Make).upper.returnOrigins.heaps=[{kind:'entry'}];input.records.get(Make).upper.returnOrigins.exits.normal=[{heap:0,control:0}];
   assert.throws(()=>extract(input),{code:'r03-common-program-return-origin-environment-open'});
   const branch=fixture(),partial=branch.records.get(Make).upper.returnOrigins;
@@ -247,7 +247,7 @@ test('Source: a formal Code parameter carries its own conditional Env component'
   assert.equal(commonReturnOriginDirectories(input.hir,spend).read(Caller,body.returnOrigins).status,'typed');
 });
 
-test('draft4: Fn-only, unbound, wrong-layout and unknown Code components grant no Env',()=>{
+test('draft5: Fn-only, unbound, wrong-layout and unknown Code components grant no Env',()=>{
   const {input}=formalFixture(),{body,spend}=extract(input),directory=commonReturnOriginDirectories(input.hir,spend);
   for(const mutate of [
     graph=>{const node=graph.nodes.find(row=>row.kind==='environmentComponent');assert.ok(node);node.functionId=Make;},
@@ -294,7 +294,7 @@ test('Source authoring: temporary empty return cannot hide a missing/nonowning E
   assert.throws(()=>consumer.derived(),{code:'r03-common-program-publication-mode'});
 });
 
-test('draft4 containment keeps Code target/Env pairing and shared capture-store obligations',()=>{
+test('draft5 containment keeps Code target/Env pairing and shared capture-store obligations',()=>{
   const input=fixture(),graph=makeGraph(),contracts=new Map([...fixed(input)].map(([id,row])=>[id,{graph:row.graph}])),spend=commonMeter(1000000);
   assert.equal(commonReturnOriginsInclusion(graph,graph,contracts,spend).status,'covered');
   const wrong=structuredClone(graph);wrong.nodes.push({kind:'environmentCreate',type:null,layout:E,parent:null,site:'other-activation',control:0});
@@ -304,7 +304,7 @@ test('draft4 containment keeps Code target/Env pairing and shared capture-store 
   assert.equal(commonReturnOriginsInclusion(graph,noStore,contracts,spend).status,'open');
 });
 
-test('draft4: a weak store through alternative Envs cannot establish MUST initialization',()=>{
+test('draft5: a weak store through alternative Envs cannot establish MUST initialization',()=>{
   const input=fixture(),graph=input.records.get(Make).upper.returnOrigins;
   graph.nodes.push({kind:'environmentCreate',type:null,layout:E,parent:null,site:'second-possible-activation',control:0});
   const store=graph.heaps[1];assert.ok(store.kind==='store');store.bases=[1,3];
@@ -371,7 +371,7 @@ test('Source Code formation keeps complete protocol metadata for a null-return m
   assert.throws(()=>source.derive(invoker,null),{code:'r03-common-program-return-origin-call-open'});
 });
 
-test('draft4 MUST rejects an uninitialized language exit even when the normal exit defines the same activation',()=>{
+test('draft5 MUST rejects an uninitialized language exit even when the normal exit defines the same activation',()=>{
   const input=fixture(),graph=makeGraph();graph.language=[...graph.normal];graph.exits.language=[{heap:0,control:0}];
   assert.throws(()=>solveReturnOriginContexts(graph,fixed(input),{...callbacks(input),rootProtocol:protocol(null,E)},commonMeter(1000000)),{code:'r03-common-program-return-origin-environment-open'});
 });

@@ -22,13 +22,13 @@ const rebind=publication=>{
 };
 const boundary=error=>error instanceof TypeError&&'code' in error;
 
-test('first publication binds complete fixed-v3 rows including explicit null capability',()=>{
-  const publication=make();assert.equal(publication.format.version,3);
-  assert.equal(publication.scope.profile,'common-program-fixed-v3');
+test('first publication binds complete fixed-v4 rows including explicit null capability',()=>{
+  const publication=make();assert.equal(publication.format.version,4);
+  assert.equal(publication.scope.profile,'common-program-fixed-v4');
   assert.deepEqual(publication.contracts.map(row=>row.functionId),hir.functions.map(fn=>fn.id));
   assert.equal(publication.scope.functions.length,hir.functions.length);
   assert.ok(publication.contracts.some(row=>row.returnOrigins===null),'Host-dependent return protocol stays unresolved');
-  assert.ok(publication.contracts.some(row=>row.returnOrigins?.format.version===4),'closed ordinary Source has a real Graph4');
+  assert.ok(publication.contracts.some(row=>row.returnOrigins?.format.version===5),'closed ordinary Source has a real Graph5');
   assert.deepEqual(publication.scope.storage,{fields:[],results:[]});
 });
 
@@ -45,9 +45,9 @@ test('same-group null rows cannot be removed even when all digests are recompute
 });
 
 test('old publication and graph formats are rejected at their actual cold boundaries',()=>{
-  const old=copy(make());old.format.version=2;assert.throws(()=>api.verifyCommonProgramPublication(old,hir),boundary);
-  const graph=copy(make()),row=graph.contracts.find(row=>row.returnOrigins!==null);row.returnOrigins.format.version=3;rebind(graph);
-  assert.throws(()=>api.verifyCommonProgramPublication(graph,hir),error=>boundary(error)&&error.code==='return-origin-graph-boundary');
+  for(const version of [2,3]){const old=copy(make());old.format.version=version;assert.throws(()=>api.verifyCommonProgramPublication(old,hir),boundary);}
+  for(const version of [3,4]){const graph=copy(make()),row=graph.contracts.find(row=>row.returnOrigins!==null);row.returnOrigins.format.version=version;rebind(graph);
+    assert.throws(()=>api.verifyCommonProgramPublication(graph,hir),error=>boundary(error)&&error.code==='return-origin-graph-boundary');}
 });
 
 test('scope and graph interpretation corruption cannot be repaired by self-consistent hashes',()=>{
@@ -83,7 +83,7 @@ test('unrelated unresolved rows do not poison a selected closed scalar kernel pa
 });
 
 
-test('real fixed Graph4 owner transfer preserves broader return permissions than the current body',async()=>{
+test('real fixed Graph5 owner transfer preserves broader return permissions than the current body',async()=>{
   // Handwritten admitted-shape Source premises only; this is not a facts or
   // physical permission fixture. The independent fixed graph permits G even
   // though the current callee body merely returns its argument.
@@ -101,7 +101,7 @@ test('real fixed Graph4 owner transfer preserves broader return permissions than
     unit={rootFile:sourcePath,types:[{id:B,kind:'reference',name:'B',methods:[],fields:[{id:V,sourceBinding:'raw:'+V,name:'value',type:'i32',readonly:false}]},
       {id:'i32',kind:'scalar',name:'i32'},{id:'void',kind:'void',name:'void'}],functions:[caller,pick],globals:[G,H].map(id=>({id,sourceBinding:'raw:'+id,type:B,writable:false})),
       environments:[],hostImports:[],hostContext:null,modules:[],closure:{roots:[],requiredRoots:[]},snapshot:{payload:{compatibilityWitnesses:[]}}},
-    empty=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:4},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]}),
+    empty=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:5},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]}),
     upper=parameters=>({globals:{reads:[G],writes:[]},hostResources:{reads:[],writes:[]},captures:[],parameters:parameters.map((_,index)=>({index,read:false,write:false,structural:false})),
       facets:{allocation:false,managedReference:true,ehControl:false,mayThrow:false,await:false,lock:false,escape:true,unknownHost:false}}),
     allowed={...empty(),nodes:[{kind:'parameter',type:B,index:0},{kind:'global',type:B,id:G}],normal:[0,1]},
@@ -138,7 +138,7 @@ test('a claimed empty upper cannot turn actual managed Source views into scalar-
 });
 
 
-test('complete Counter v3 metadata survives cold read and the existing Core writer chain',async()=>{
+test('complete Counter v4 metadata survives cold read and the existing Core writer chain',async()=>{
   const {commonProgramCore}=await import(pathToFileURL(root+'/compiler/common-program-core.mjs').href),
     publication=make(),read=api.readCommonProgramPublication(Buffer.from(api.printCommonProgramPublication(publication,hir)),hir),
     core=commonProgramCore(hir,read,{targets:[]});
@@ -147,7 +147,7 @@ test('complete Counter v3 metadata survives cold read and the existing Core writ
   assert.deepEqual(core.proof.targets,[]);assert.equal(core.borrowProof,null);
 });
 
-test('complete ReadSpan v3 publication preserves the existing physical, borrow and writer limits',async()=>{
+test('complete ReadSpan v4 publication preserves the existing physical, borrow and writer limits',async()=>{
   const {commonProgramCore}=await import(pathToFileURL(root+'/compiler/common-program-core.mjs').href),
     bytes=readFileSync(new URL('./testdata/common-readspan-closures/safe-lastuse.json',import.meta.url)),facts=factsApi.readCommonProgramFacts(bytes),
     current=hirApi.projectCommonProgram(facts),publication=api.createCommonProgramPublication(current),
@@ -176,8 +176,8 @@ test('actual cold-admitted nonnull graph with false completion cannot fall throu
     publication=copy(api.createCommonProgramPublication(current)),byName=new Map(current.functions.map(fn=>[fn.name,fn])),left=byName.get('left'),right=byName.get('right');
   assert.ok(left&&right);assert.equal(left.parameters.length,1);assert.equal(right.parameters.length,1);assert.equal(left.parameters[0].type,right.parameters[0].type);
   const row=publication.contracts.find(row=>row.functionId===left.id);
-  row.returnOrigins={format:{family:'tsfg.return-origin-graph-candidate',version:4},nodes:[{kind:'parameter',type:left.parameters[0].type,index:0}],
-    heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[{functionId:right.id,arguments:[[0]],environment:null,callee:null,heap:0,control:0,site:'independent-permitted-null-target'}],
+  row.returnOrigins={format:{family:'tsfg.return-origin-graph-candidate',version:5},nodes:[{kind:'parameter',type:left.parameters[0].type,index:0}],
+    heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[{functionId:right.id,arguments:[[0]],environment:null,callee:null,receiver:null,heap:0,control:0,site:'independent-permitted-null-target'}],
     normal:[],language:[],exits:{normal:[],language:[]},accesses:[]};
   publication.contracts.find(row=>row.functionId===right.id).returnOrigins=null;rebind(publication);
   api.verifyCommonProgramPublication(publication,current);

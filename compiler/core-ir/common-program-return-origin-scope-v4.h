@@ -18,6 +18,7 @@ struct Function {
   std::vector<std::string> parameterTypes;
   std::string returnType;
   std::optional<std::string> lexicalEnvironment,activationEnvironment;
+  std::optional<V4::Constructor> construction;
 };
 struct Global {std::string globalId,type;};
 using Slot=V4::EnvironmentSlot;
@@ -29,6 +30,7 @@ struct FixedScope {
   std::vector<Function> functions;
   std::vector<Global> globals;
   std::vector<Environment> environments;
+  std::vector<V4::Construction> constructions;
 };
 
 // TRUSTED algorithm dependency, not untrusted data or a field permission:
@@ -92,6 +94,11 @@ public:
     if(!ready_){result.reason="scope-directories-unbuilt";return result;}const auto found=directory_.functions.find(V4::Detail::view(functionId));if(found==directory_.functions.end()){result.reason="scope-unowned-function";return result;}const auto &row=found->second;
     result.protocol.kind=row.kind==V4::FunctionKind::Source||row.kind==V4::FunctionKind::Method?Domain::ProtocolKind::Ordinary:row.kind==V4::FunctionKind::ConstructionBody?Domain::ProtocolKind::ConstructionFrame:Domain::ProtocolKind::Future;
     result.protocol.complete=row.environmentMetadataComplete;
+    if(row.construction){V4::Constructor copy;
+      if(!m.copy(copy.id,row.construction->id)||!m.copy(copy.owner,row.construction->owner)){result.status=BuildStatus::BudgetError;return result;}
+      if(row.construction->base){std::string base;if(!m.copy(base,*row.construction->base)){result.status=BuildStatus::BudgetError;return result;}copy.base=std::move(base);}
+      copy.receiverIndex=row.construction->receiverIndex;result.protocol.construction=std::move(copy);
+    }
     if(row.lexicalEnvironment){std::string copy;if(!m.copy(copy,*row.lexicalEnvironment)){result.status=BuildStatus::BudgetError;return result;}result.protocol.lexicalEnvironment=std::move(copy);}
     if(row.activationEnvironment){std::string copy;if(!m.copy(copy,*row.activationEnvironment)){result.status=BuildStatus::BudgetError;return result;}result.protocol.activationEnvironment=std::move(copy);}
     result.status=BuildStatus::Ready;result.reason=nullptr;return result;
@@ -120,10 +127,17 @@ inline BuildResult build(const FixedScope &scope,const FieldIdentity &fieldIdent
   BuildResult result;Detail::Meter m(charge);
   const auto budget=[&](){result.status=BuildStatus::BudgetError;result.reason="scope-directory-budget";return std::move(result);};
   if(!m.spend()||!m.text(scope.profile.size()))return budget();
-  if(!m.equal(scope.profile,"common-program-fixed-v3")){if(!m.good)return budget();result.reason="fixed-v3-profile-required";return result;}
+  if(!m.equal(scope.profile,"common-program-fixed-v4")){if(!m.good)return budget();result.reason="fixed-v4-profile-required";return result;}
   if(!fieldIdentity){result.reason="trusted-field-identity-required";return result;}
   if(!m.spend(scope.types.size())||!m.spend(scope.functions.size())||!m.spend(scope.globals.size())||!m.spend(scope.environments.size()))return budget();
   auto &saved=result.directories;
+  if(!m.spend(scope.constructions.size()))return budget();
+  for(const auto &source:scope.constructions){V4::Construction row;
+    if(!m.copy(row.id,source.id)||!m.copy(row.owner,source.owner)||!m.copy(row.kind,source.kind))return budget();
+    if(source.base){std::string base;if(!m.copy(base,*source.base))return budget();row.base=std::move(base);}
+    if(source.functionId){std::string fn;if(!m.copy(fn,*source.functionId))return budget();row.functionId=std::move(fn);}
+    std::string id;if(!m.copy(id,row.id)||!Detail::put(saved.directory_.constructions,std::move(id),std::move(row),m))return budget();
+  }
   for(const auto &type:scope.types){
     std::string id;V4::TypeRow row;row.kind=type.shape.kind;
     if(!m.spend()||!m.copy(id,type.id)||!Detail::put(saved.directory_.types,std::move(id),std::move(row),m)||!m.spend(type.shape.fields.size()))return budget();
@@ -138,6 +152,13 @@ inline BuildResult build(const FixedScope &scope,const FieldIdentity &fieldIdent
     V4::FunctionRow row;row.kind=fn.kind;row.environmentMetadataComplete=true;
     if(fn.lexicalEnvironment){std::string copy;if(!m.copy(copy,*fn.lexicalEnvironment))return budget();row.lexicalEnvironment=std::move(copy);}
     if(fn.activationEnvironment){std::string copy;if(!m.copy(copy,*fn.activationEnvironment))return budget();row.activationEnvironment=std::move(copy);}
+    if(fn.construction){V4::Constructor copy;
+      if(!m.copy(copy.id,fn.construction->id)||!m.copy(copy.owner,fn.construction->owner))return budget();
+      if(fn.construction->base){std::string base;if(!m.copy(base,*fn.construction->base))return budget();copy.base=std::move(base);}
+      copy.receiverIndex=fn.construction->receiverIndex;row.construction=std::move(copy);
+      if(!m.lookup(saved.directory_.constructions.size(),row.construction->id.size()))return budget();const auto found=saved.directory_.constructions.find(V4::Detail::view(row.construction->id));
+      if(found==saved.directory_.constructions.end()||!found->second.functionId||!m.equal(*found->second.functionId,fn.functionId)){if(!m.good)return budget();result.reason="constructor-function-catalogue";return result;}
+    }
     if(!m.spend()||!V4::Detail::reserve(row.parameterTypes,fn.parameterTypes.size(),m))return budget();
     for(const auto &type:fn.parameterTypes){std::string copy;if(!m.copy(copy,type)||!V4::Detail::push(row.parameterTypes,std::move(copy),m))return budget();}
     std::string key;if(!m.copy(key,fn.functionId)||!m.copy(row.returnType,fn.returnType)||

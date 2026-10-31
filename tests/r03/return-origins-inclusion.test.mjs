@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {commonReturnOriginsInclusion as inclusion} from '../../compiler/common-program-return-origin-inclusion.mjs';
 
 /** @returns {Parameters<typeof inclusion>[0]} */
-const graph=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:4},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
+const graph=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:5},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
 const meter=()=>{let left=200000;return (units=1)=>{left-=units;if(left<0)throw new Error('fixture budget exhausted');};};
 const prove=(body,upper,contracts=new Map())=>inclusion(body,upper,contracts,meter()).status;
 const parameter=()=>{const row=graph();row.nodes.push({kind:'parameter',type:'View',index:0});row.normal=[0];return row;};
@@ -48,7 +48,7 @@ test('copy scopes have one consistent alpha match across all content edges',()=>
 });
 test('fixed recursive calls are matched without recursively expanding digests',()=>{
   const fixed=parameter();fixed.nodes.push({kind:'call',type:'View',call:0,completion:'normal'});
-  fixed.calls=[{functionId:'F',arguments:[[0]],environment:null,callee:null,heap:0,control:0,site:'recursive-call'}];
+  fixed.calls=[{functionId:'F',arguments:[[0]],environment:null,callee:null,receiver:null,heap:0,control:0,site:'recursive-call'}];
   fixed.controls.push({kind:'call',call:0,completion:'normal'});fixed.heaps.push({kind:'call',call:0,completion:'normal'});
   fixed.normal=[0,1];fixed.exits.normal.push({heap:1,control:1});
   assert.equal(prove(fixed,fixed,new Map([['F',{graph:fixed}]])),'covered');
@@ -68,7 +68,7 @@ test('large valid reference directories exhaust the shared meter',()=>{
 test('old v3 and mixed selected fixed-table graph profiles are explicitly Open',()=>{
   const old=parameter();Object.assign(old.format,{version:3});
   assert.equal(prove(old,old),'open');assert.equal(prove(parameter(),old),'open');
-  const selected=parameter();selected.calls=[{functionId:'old',arguments:[[0]],environment:null,callee:null,heap:0,control:0,site:'old-profile-call'}];
+  const selected=parameter();selected.calls=[{functionId:'old',arguments:[[0]],environment:null,callee:null,receiver:null,heap:0,control:0,site:'old-profile-call'}];
   assert.equal(prove(selected,selected,new Map([['old',{graph:old}]])),'open');
 });
 
@@ -90,14 +90,14 @@ test('a late changed owning edge cannot use the reflexive certificate',()=>{
 });
 
 test('reflexivity rejects a missing fixed call while unrelated unknown remains local',()=>{
-  const called=graph();called.calls=[{functionId:'missing',arguments:[],environment:null,callee:null,heap:0,control:0,site:'call'}];
+  const called=graph();called.calls=[{functionId:'missing',arguments:[],environment:null,callee:null,receiver:null,heap:0,control:0,site:'call'}];
   assert.equal(prove(called,called),'open');
   const unknown=graph();unknown.nodes.push({kind:'unknown',type:null});
   assert.equal(prove(graph(),graph(),new Map([['unknown',{graph:unknown}]])),'covered');
 });
 
 test('a seedless recursive continuation cannot manufacture an upper completion',()=>{
-  const recursive=graph();recursive.calls=[{functionId:'loop',arguments:[],environment:null,callee:null,heap:0,control:0,site:'recursive'}];
+  const recursive=graph();recursive.calls=[{functionId:'loop',arguments:[],environment:null,callee:null,receiver:null,heap:0,control:0,site:'recursive'}];
   recursive.controls.push({kind:'call',call:0,completion:'normal'});recursive.heaps.push({kind:'call',call:0,completion:'normal'});recursive.exits.normal=[{heap:1,control:1}];
   const contracts=new Map([['loop',{graph:recursive}]]);
   assert.equal(prove(graph(),recursive,contracts),'open');

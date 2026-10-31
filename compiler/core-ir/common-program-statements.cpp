@@ -76,7 +76,21 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
       const auto ownerType=string(field(*current,"ownerType"));const bool constructor=model.types.count(ownerType)&&
         string(field(field(*model.types.at(ownerType),"constructor"),"id"))==string(field(*current,"id"));
       if(row.getAsObject()->get("value")){
-        if(!expression(field(row,"value"),false,kind=="return"&&!constructor?string(field(*current,"returnType")):std::string()))return false;pieces.push_back(field(field(row,"value"),"range"));
+        std::string expected;
+        if(kind=="return"){
+          if(!constructor)expected=string(field(*current,"returnType"));
+          else{
+            const auto flowType=field(field(row,"value"),"flowType").getAsString().value();if(!model.spend(flowType.size()/8+1))return false;
+            const auto found=model.types.find(flowType.str());
+            if(found!=model.types.end()){
+              const auto viewKind=field(*found->second,"kind").getAsString().value();
+              if(viewKind=="reference"||viewKind=="value"||viewKind=="function"){
+                if(!model.spend(ownerType.size()/8+1))return false;expected=ownerType;
+              }
+            }
+          }
+        }
+        if(!expression(field(row,"value"),false,expected))return false;pieces.push_back(field(field(row,"value"),"range"));
       }else if(!model.need(kind=="return"&&(constructor||string(field(*current,"returnType"))=="void"),"missing original completion value"))return false;
       if(!source->sequence(field(row,"range"),pieces,true))return false;
     }else if(kind=="block"){

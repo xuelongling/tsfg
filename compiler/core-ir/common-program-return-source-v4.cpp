@@ -3,6 +3,7 @@
 #include "common-program-methods.h"
 #include <algorithm>
 #include <optional>
+#include <limits>
 #include <tuple>
 
 namespace tsfg::commonProgram {
@@ -65,6 +66,9 @@ struct ReturnSource {
     return {node(std::move(owned),std::move(identity))};
   }
   Refs nonowning(const std::string &type){if(!text(type))return {};return type=="void"?Refs{}:root("nonowning",type);}
+  Refs literal(bool undefined,const std::optional<std::string> &type=std::nullopt){
+    if(!step(5)||(type&&!text(*type)))return {};return {node(Object{{"kind","literal"},{"type",type?Json(*type):Json(nullptr)},{"category",undefined?"undefined":"other"}})};
+  }
   Refs gate(const Refs &values,const std::optional<std::string> &type=std::nullopt){
     if(!step(values.size()+6)||(type&&!text(*type)))return {};
     return {node(Object{{"kind","gate"},{"type",type?Json(*type):Json(nullptr)},{"inputs",refs(values)},{"control",int64_t(state.control)}})};
@@ -77,6 +81,7 @@ struct ReturnSource {
     if(!text(id)||!text(role)||!step(12))return {};return encoded(Array{id,field(range,"start"),field(range,"end"),role});
   }
   Refs copied(const Refs &bases,const std::string &type,const Json &range,const std::string &role){
+    bool literals=true;for(auto base:bases){if(!step())return {};literals&=string(field(nodes[base],"kind"))=="literal";}if(literals)return copyRefs(bases);
     const auto location=site(functionId,range,role);if(!step(bases.size()+9)||!text(type)||!text(location))return {};
     const auto value=node(Object{{"kind","copy"},{"type",type},{"bases",refs(bases)},{"heap",int64_t(state.heap)},{"control",int64_t(state.control)},{"site",location}});
     state.heap=append(heaps,Object{{"kind","copy"},{"previous",int64_t(state.heap)},{"value",int64_t(value)}});return {value};
@@ -199,14 +204,17 @@ struct ReturnSource {
   void inherit(Body &into,const Body &from){add(into.returned,from.returned);add(into.thrown,from.thrown);appendStates(into.returns,from.returns);appendStates(into.throws,from.throws);appendEnvironments(into.returnEnvironments,from.returnEnvironments);appendEnvironments(into.throwEnvironments,from.throwEnvironments);}
   Evaluation expression(const Json &,Environment &);
   Body body(const Array &,Environment &);
-  Evaluation call(const std::string &,const std::vector<Refs> &,const Json &,Environment &,const Refs *);
+  Evaluation call(const std::string &,const std::vector<Refs> &,const Json &,Environment &,const Refs *,const Refs *receiver=nullptr);
+  bool normalized(const ConstructorReturnCFG &,Json &);
+  bool finish(const Body &,Json &);
   bool run(Json &);
 };
 
-ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vector<Refs> &arguments,const Json &value,Environment &environment,const Refs *selectedCode){
+ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vector<Refs> &arguments,const Json &value,Environment &environment,const Refs *selectedCode,const Refs *receiver){
   Evaluation result;if(!lookup(functions.size(),id)||!need(functions.count(id),"call has no owned function protocol"))return result;
-  const auto &callee=*functions.at(id);if(string(field(callee,"kind"))=="construction-body"){open("constructor frame equations are not connected to Source return-origin calls");return result;}
-  const auto &ordinary=items(field(callee,"parameters"));const auto count=ordinary.size()+(!field(callee,"ownerType").getAsNull());
+  const auto &callee=*functions.at(id);const bool constructor=string(field(callee,"kind"))=="construction-body";
+  if(!need(constructor==bool(receiver),"constructor call receiver role differs"))return result;
+  const auto &ordinary=items(field(callee,"parameters"));const auto count=ordinary.size()+(!constructor&&!field(callee,"ownerType").getAsNull());
   if(!step(count+1))return result;if(arguments.size()<count){open("call lacks the owned default-parameter return-origin protocol");return result;}
   std::optional<Refs> incoming;const auto layout=string(field(callee,"lexicalEnvironment"));
   if(!layout.empty())incoming=selectedCode?environmentComponent(*selectedCode,id,layout):environmentFor(layout);
@@ -214,7 +222,7 @@ ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vec
   // data solver may schedule fewer Code instances; that never removes this
   // target's stable access/facet obligations from the call boundary.
   if(!lookup(p.fixedEffects.size(),id))return result;const auto fixed=p.fixedEffects.find(id);
-  if(!need(fixed!=p.fixedEffects.end()&&fixed->second.parameters.size()==count,"call fixed permission vector is incomplete"))return result;
+  if(!need(fixed!=p.fixedEffects.end()&&fixed->second.parameters.size()==count+constructor,"call fixed permission vector is incomplete"))return result;
   const auto &upper=fixed->second;
   const auto resources=[&](std::set<std::string> &to,const std::set<std::string> &from){
     if(!step(from.size()))return false;for(const auto &key:from){if(!lookup(to.size(),key)||!text(key)||!step())return false;to.insert(key);}return true;
@@ -223,7 +231,7 @@ ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vec
   direct.allocation|=upper.allocation;direct.managedReference|=upper.managedReference;direct.ehControl|=upper.ehControl;
   direct.await|=upper.await;direct.lock|=upper.lock;direct.escape|=upper.escape;direct.unknownHost|=upper.unknownHost;
   if(!step(upper.parameters.size()))return result;
-  for(size_t i=0;i<upper.parameters.size();++i){const auto &flags=upper.parameters[i];if(!step(3))return result;
+  for(size_t i=0;i<count;++i){const auto &flags=upper.parameters[i+constructor];if(!step(3))return result;
     if(flags.read)mark(arguments[i],"read",&value);if(flags.write)mark(arguments[i],"write",&value);if(flags.structural)mark(arguments[i],"structural",&value);
   }
   // Capture uppers are global transitive SlotKeys. The fixed-context domain
@@ -234,12 +242,13 @@ ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vec
   if(!step(13)||!text(id)||!text(location))return result;
   const auto called=append(calls,Object{{"functionId",id},{"arguments",std::move(supplied)},
     {"environment",incoming?Json(refs(*incoming)):Json(nullptr)},{"callee",selectedCode?Json(refs(*selectedCode)):Json(nullptr)},
+    {"receiver",receiver?Json(refs(*receiver)):Json(nullptr)},
     {"heap",int64_t(state.heap)},{"control",int64_t(state.control)},{"site",location}});
   const auto normalControl=append(controls,Object{{"kind","call"},{"call",int64_t(called)},{"completion","normal"}}),
     languageControl=append(controls,Object{{"kind","call"},{"call",int64_t(called)},{"completion","language"}});
   const State normal{append(heaps,Object{{"kind","call"},{"call",int64_t(called)},{"completion","normal"}}),normalControl},
     language{append(heaps,Object{{"kind","call"},{"call",int64_t(called)},{"completion","language"}}),languageControl};
-  const auto type=string(field(callee,"returnType"));if(!step(13)||!text(type))return result;
+  const auto type=string(field(callee,constructor?"ownerType":"returnType"));if(!step(13)||!text(type))return result;
   result.owner={node(Object{{"kind","call"},{"type",type},{"call",int64_t(called)},{"completion","normal"}})};
   result.thrown={node(Object{{"kind","call"},{"type",nullptr},{"call",int64_t(called)},{"completion","language"}})};
   if(!step(2)||!lookup(direct.calls.size(),id))return result;direct.calls.insert(id);result.throws.push_back(language);
@@ -276,7 +285,7 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
     const auto right=visit(field(value,"right"));auto rightEnvironment=normalEnvironment(environment);result.owner=unite(left,right);
     std::vector<Environment> branches;if(!step(2))return result;branches.push_back(std::move(shortEnvironment));branches.push_back(std::move(rightEnvironment));replaceEnvironment(environment,branches);
     restore(mergeStates({shortState,state}));
-  }else if(kind=="stringLiteral")result.owner=nonowning(type);
+  }else if(kind=="stringLiteral")result.owner=literal(false,type);
   else if(kind=="arrayLiteral"){
     Refs elements;const auto &children=items(field(value,"elements"));if(!step(children.size()))return result;
     for(size_t i=0;i<children.size();++i){const auto &child=children[i];auto nested=visit(child);const auto role="array-element:"+std::to_string(i);
@@ -352,8 +361,9 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
       result.owner=std::move(returned);restore(mergeStates(normalStates));
     }
   }else if(kind=="numericLiteral"||kind=="booleanLiteral"||kind=="undefinedLiteral"||kind=="nullLiteral"||kind=="unary"||kind=="binary"||kind=="stringConcat"){
+    result.owner=literal(kind=="undefinedLiteral",type);
     for(auto name:{"expression","left","right","receiver","index","value"}){if(!step())return result;if(const auto *child=value.getAsObject()->get(name))visit(*child);}
-    if(kind=="stringConcat"){facet("allocation",&value);facet("managedReference",&value);result.owner=nonowning(type);}
+    if(kind=="stringConcat"){facet("allocation",&value);facet("managedReference",&value);result.owner=literal(false,type);}
   }else need(false,"Source expression has no return-origin equation");
   result.owner=gate(result.owner,type);return result;
 }
@@ -456,9 +466,157 @@ ReturnSource::Body ReturnSource::body(const Array &rows,Environment &environment
   return result;
 }
 
+bool ReturnSource::normalized(const ConstructorReturnCFG &admitted,Json &raw){
+  const auto &cfg=admitted.get();if(!step(cfg.carriers.size()+cfg.blocks.size())||!need(cfg.id==functionId&&!cfg.blocks.empty(),"admitted constructor CFG owner differs"))return false;
+  const auto views=p.registerViews.find(functionId);if(!need(views!=p.registerViews.end()&&views->second.size()==cfg.carriers.size(),"admitted CFG has no complete semantic register projection"))return false;
+  std::map<std::string,std::string> fieldOwners;
+  for(const auto &[id,type]:types)for(const auto &member:items(field(*type,"fields"))){
+    if(!step()||!text(id)||!text(string(field(member,"id"))))return false;fieldOwners.emplace(string(field(member,"id")),id);
+  }
+  const auto view=[&](uint16_t reg)->std::optional<std::string>{const auto &type=views->second[reg];if(!text(type))return {};return types.count(type)?std::optional<std::string>{type}:std::nullopt;};
+  const auto mergeInputs=[&](Json &row,const Refs &inputs){
+    Refs merged;for(const auto &input:items(field(row,"inputs"))){if(!step())return false;merged.insert(size_t(input.getAsInteger().value()));}
+    add(merged,inputs);if(!good())return false;(*row.getAsObject())["inputs"]=refs(merged);return good();
+  };
+  const auto absent=std::numeric_limits<Ref>::max();if(!step(cfg.carriers.size()*3))return false;
+  std::vector<Refs> registers(cfg.carriers.size());std::vector<Ref> joins(cfg.carriers.size(),absent);std::vector<bool> blockParameters(cfg.carriers.size(),false);
+  for(size_t block=1;block<cfg.blocks.size();++block)for(auto reg:cfg.blocks[block].parameters){if(!step())return false;blockParameters[reg]=true;}
+  const auto phi=[&](uint16_t reg){
+    if(joins[reg]!=absent)return true;const auto type=view(reg);const auto identity=encoded(Array{"cfg-register",functionId,int64_t(reg)});
+    joins[reg]=node(Object{{"kind","join"},{"type",type?Json(*type):Json(nullptr)},{"inputs",refs(registers[reg])}},identity);
+    if(!step())return false;registers[reg]={joins[reg]};return good();
+  };
+  const auto get=[&](uint16_t reg){if(!step()||(registers[reg].empty()&&!phi(reg)))return Refs{};return copyRefs(registers[reg]);};
+  const auto define=[&](uint16_t reg,const Refs &values){
+    if(blockParameters[reg]||joins[reg]!=absent)return phi(reg)&&mergeInputs(nodes[joins[reg]],values);
+    registers[reg]=copyRefs(values);return good();
+  };
+  const bool constructor=string(field(fn,"kind"))=="construction-body";const auto owner=string(field(fn,"ownerType"));
+  const auto &entry=cfg.blocks[0].parameters;size_t argument=0,parameter=0;
+  if(!lexical.empty()){
+    auto incoming=environmentInput(lexical);if(!define(entry[argument++],incoming))return false;environmentRefs.emplace(lexical,std::move(incoming));facet("managedReference",nullptr,"lexicalEnvironment");
+  }
+  if(!owner.empty()){
+    if(constructor){if(!define(entry[argument++],Refs{node(Object{{"kind","receiverInput"},{"type",nullptr}})}))return false;++parameter;}
+    else if(!define(entry[argument++],root("parameter",owner,{},parameter++)))return false;
+  }
+  for(const auto &binding:items(field(fn,"parameters"))){if(!step()||!define(entry[argument++],root("parameter",string(field(binding,"type")),{},parameter++)))return false;}
+  if(!step(parameter))return false;direct.parameters.resize(parameter);
+  std::map<std::string,std::string> cellTypes;
+  for(const auto &carrier:cfg.carriers){if(!step()||!text(carrier))return false;const auto key=llvm::StringRef(carrier);if(!key.starts_with("cell:"))continue;const auto id=key.drop_front(5).str();
+    if(!lookup(bindings.size(),id)||!step())return false;const auto binding=bindings.find(id);
+    if(binding!=bindings.end())cellTypes.emplace(id,string(field(*binding->second,"type")));
+    else if(id==string(field(fn,"receiverBinding")))cellTypes.emplace(id,owner);else return open("normalized cell lacks its owned binding view");
+  }
+  std::vector<State> entries;std::vector<Environment> environments;if(!step(cfg.blocks.size()*2))return false;entries.reserve(cfg.blocks.size());environments.resize(cfg.blocks.size());
+  for(size_t block=0;block<cfg.blocks.size();++block){
+    if(!step())return false;entries.push_back(block==0?State{}:State{append(heaps,Object{{"kind","join"},{"inputs",Array{}}}),append(controls,Object{{"kind","join"},{"inputs",Array{}}})});
+    for(const auto &[id,type]:cellTypes){
+      if(!text(id)||!text(type)||!step())return false;
+      const auto identity=encoded(Array{"cfg-binding",functionId,int64_t(block),id});
+      environments[block].emplace(id,Refs{node(Object{{"kind","join"},{"type",type},{"inputs",Array{}}},identity)});
+    }
+  }
+  const auto connect=[&](uint16_t target,const std::vector<Refs> &arguments,const State &from,const Environment &environment){
+    if(!step(arguments.size()+1)||!need(target!=0&&arguments.size()==cfg.blocks[target].parameters.size(),"admitted CFG edge arguments differ"))return false;
+    if(!mergeInputs(heaps[entries[target].heap],Refs{from.heap})||!mergeInputs(controls[entries[target].control],Refs{from.control}))return false;
+    for(size_t index=0;index<arguments.size();++index)if(!define(cfg.blocks[target].parameters[index],arguments[index]))return false;
+    for(auto &[id,values]:environments[target]){
+      if(!text(id)||!lookup(environment.size(),id))return false;const auto found=environment.find(id);if(found!=environment.end()&&!mergeInputs(nodes[*values.begin()],found->second))return false;
+    }return true;
+  };
+  const auto action=[&](llvm::StringRef name,const Refs &frames,const Refs &operands,const std::optional<std::string> &type,bool language){
+    const auto heap=append(heaps,Object{{"kind","receiverAction"},{"previous",int64_t(state.heap)},{"control",int64_t(state.control)},
+      {"frames",refs(frames)},{"action",name},{"operands",refs(operands)},{"completion",language?"language":"normal"}});
+    const auto control=append(controls,Object{{"kind","receiverCompletion"},{"action",int64_t(heap)}});
+    Refs result{node(Object{{"kind","receiverValue"},{"type",!language&&type?Json(*type):Json(nullptr)},{"action",int64_t(heap)}})};
+    return std::pair<State,Refs>{{heap,control},std::move(result)};
+  };
+  Body completed;completed.completions=0;
+  for(size_t block=0;block<cfg.blocks.size();++block){
+    restore(entries[block]);auto environment=copyEnvironment(environments[block]);
+    for(size_t ordinal=0;ordinal<cfg.blocks[block].operations.size();++ordinal){
+      const auto &operation=cfg.blocks[block].operations[ordinal];const auto &name=operation.name;const auto &args=operation.operands;const auto &props=operation.properties;
+      if(!step(args.size()+operation.successors.size()+1))return false;const Json range=Object{{"start",int64_t(operation.range.start)},{"end",int64_t(operation.range.end)}};
+      const auto resultType=operation.result==noRegister?std::optional<std::string>{}:view(operation.result);
+      const auto value=[&](size_t index){return get(args[index]);};
+      const auto save=[&](const Refs &values){return operation.result==noRegister?good():define(operation.result,values);};
+      if(name=="pack"||name=="enter_handler"||name=="catch_bind"||name=="finally_enter"||name=="route")facet("ehControl",nullptr,"normalized-eh");
+      if(name=="cell"||name=="fuel"||name=="enter_handler"||name=="finally_enter"||name=="initialize_begin"||name=="initialize_end")continue;
+      if(name=="store"||name=="catch_bind"){
+        const auto binding=string(field(props,"binding"));if(!text(binding)||!lookup(environment.size(),binding)||!step())return false;environment.insert_or_assign(binding,value(name=="store"?1:0));
+      }else if(name=="load"){
+        const auto binding=string(field(props,"binding"));if(!text(binding)||!lookup(environment.size(),binding))return false;const auto found=environment.find(binding);
+        if(!need(found!=environment.end(),"normalized local load lacks an owned cell")||!save(found->second))return false;
+      }else if(name=="undefined"||name=="constant"||name=="floating"||name=="boolean"||name=="null"||name=="string"||name=="unary"||name=="binary"||name=="strict_equal"){
+        if(!save(literal(name=="undefined",resultType)))return false;
+      }else if(name=="assert"||name=="view"||name=="carrier_cast"||name=="pack"){
+        if(!save(value(0)))return false;
+      }else if(name=="value_copy"){
+        if(!resultType)return open("normalized copy Source view is unavailable");if(!save(copied(value(0),*resultType,range,"cfg-copy:"+std::to_string(operation.result))))return false;
+      }else if(name=="global_store"){
+        return open("normalized global store payload has no return-origin projection");
+      }else if(name=="global_load"){
+        const auto id=string(field(props,"global"));if(!lookup(globals.size(),id)||!need(globals.count(id),"normalized global has no owned declaration"))return false;
+        const auto type=string(field(*globals.at(id),"type"));auto selected=root("global",type,id);
+        if(!lookup(direct.reads.size(),id)||!step())return false;direct.reads.insert(id);mark(selected,"read");if(!save(selected))return false;
+      }else if(name=="receiver_create"||name=="receiver_child"){
+        const auto type=string(field(props,"owner"));if(!lookup(types.size(),type)||!need(types.count(type),"normalized receiver owner is outside owned types"))return false;
+        const auto construction=string(field(field(*types.at(type),"construction"),"id"));if(!text(construction)||!step(9))return false;
+        const auto identity=site(functionId,range,"receiver-frame:"+std::to_string(block)+":"+std::to_string(ordinal));
+        if(!save(Refs{node(Object{{"kind","receiverFrame"},{"type",nullptr},{"construction",construction},{"newTarget",name=="receiver_create"?field(props,"new_target"):Json(nullptr)},
+          {"parent",name=="receiver_child"?Json(refs(value(0))):Json(nullptr)},{"site",identity},{"control",int64_t(state.control)}})}))return false;
+      }else if(name=="receiver_allocate"){
+        auto normal=action("allocate",value(0),{},resultType,false);restore(normal.first);facet("allocation",nullptr,"receiver_allocate");facet("managedReference",nullptr,"receiver_allocate");if(!save(normal.second))return false;
+      }else if(name=="receiver_bind"||name=="receiver_get"||name=="receiver_result"){
+        if(!need(operation.successors.size()==2,"normalized receiver action lacks both completions"))return false;
+        const auto type=view(cfg.blocks[operation.successors[0]].parameters[0]);const auto before=state;const auto operands=args.size()==2?value(1):Refs{};
+        auto normal=action(llvm::StringRef(name).drop_front(9),value(0),operands,type,false);restore(before);auto language=action(llvm::StringRef(name).drop_front(9),value(0),operands,std::nullopt,true);
+        if(!connect(operation.successors[0],{normal.second},normal.first,environment)||!connect(operation.successors[1],{language.second},language.first,environment))return false;
+      }else if(name=="initialize_field"||name=="field_store"){
+        const size_t offset=name=="initialize_field"?1:0;const auto id=string(field(props,"field"));if(!lookup(fieldOwners.size(),id)||!need(fieldOwners.count(id),"normalized field store has no owning declaration"))return false;
+        write(value(offset),"field:"+id,value(offset+1),fieldOwners.at(id),name=="initialize_field"||field(props,"initialize").getAsBoolean()==true);
+      }else if(name=="field_load"){
+        if(!resultType)return open("normalized field load has no result view");const auto id=string(field(props,"field"));if(!lookup(fieldOwners.size(),id)||!need(fieldOwners.count(id),"normalized field load has no owning declaration"))return false;
+        const auto base=value(0);mark(base,"read");if(!save(projection(base,"field:"+id,*resultType,fieldOwners.at(id))))return false;
+      }else if(name=="env_alloc"){
+        const auto layout=string(field(props,"layout")),location=site(functionId,range,"activation");std::optional<Refs> parent;if(!args.empty())parent=value(0);
+        auto created=environmentCreate(layout,parent,location);if(!save(created)||!text(layout)||!step())return false;environmentRefs.insert_or_assign(layout,std::move(created));facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");
+      }else if(name=="env_parent"){
+        if(!save(environmentParent(value(0),string(field(props,"layout")))))return false;
+      }else if(name=="env_init"||name=="env_store"){
+        write(value(0),"capture:"+string(field(props,"key")),value(1),"env:"+string(field(props,"layout")),name=="env_init");
+      }else if(name=="env_load"){
+        const auto binding=string(field(props,"binding"));if(!lookup(slots.size(),binding)||!need(slots.count(binding),"normalized environment load lacks an owned slot"))return false;
+        if(!save(capture(value(0),slots.at(binding))))return false;
+      }else if(name=="make_closure"){
+        if(!resultType)return open("normalized closure has no Source view");std::optional<Refs> environment;if(!args.empty())environment=value(0);if(!save(code(string(field(props,"function_id")),environment,*resultType)))return false;
+      }else if(name=="invoke"){
+        const auto target=string(field(props,"function_id"));if(!lookup(functions.size(),target))return false;if(!functions.count(target))return open("private recursive constructor invocation has no public fixed row");
+        const auto &callee=*functions.at(target);size_t offset=!field(callee,"lexicalEnvironment").getAsNull();std::optional<Refs> receiver;
+        if(string(field(callee,"kind"))=="construction-body")receiver=value(offset++);
+        std::vector<Refs> arguments;if(!step(args.size()-offset))return false;for(size_t index=offset;index<args.size();++index)arguments.push_back(value(index));
+        const Json site=Object{{"kind","invoke"},{"range",range}};auto called=call(target,arguments,site,environment,nullptr,receiver?&*receiver:nullptr);
+        if(!good())return false;
+        std::vector<Refs> normal;if(!cfg.blocks[operation.successors[0]].parameters.empty())normal.push_back(called.owner);
+        if(!connect(operation.successors[0],normal,state,environment)||!connect(operation.successors[1],{called.thrown},called.throws[0],environment))return false;
+      }else if(name=="cf.br"||name=="cf.cond_br"||name=="numeric_use"||name=="route"){
+        size_t offset=name=="cf.cond_br"?1:0;
+        for(auto target:operation.successors){std::vector<Refs> arguments;const auto count=cfg.blocks[target].parameters.size();if(!step(count)||!need(offset+count<=args.size(),"normalized branch operands differ"))return false;
+          for(size_t index=0;index<count;++index)arguments.push_back(value(offset+index));if(!connect(target,arguments,state,environment))return false;offset+=count;}
+      }else if(name=="func.return"){
+        if(!args.empty())add(completed.returned,value(0));if(!step())return false;completed.returns.push_back(state);
+      }else if(name=="return_throw"){
+        add(completed.thrown,value(0));if(!step())return false;completed.throws.push_back(state);
+      }else if(name!="unreachable")return open("normalized constructor graph operation has no return-origin projection");
+      if(!good())return false;
+    }
+  }
+  return finish(completed,raw);
+}
+
 bool ReturnSource::run(Json &raw){
   if(!step()||!metadata(fn))return false;
-  if(string(field(fn,"kind"))=="construction-body")return open("constructor Source return-origin frame/result protocol remains open");
   direct=Effects{};functionId=string(field(fn,"id"));lexical=string(field(fn,"lexicalEnvironment"));activation=string(field(fn,"activationEnvironment"));
   if(!step(2))return false;heaps.push_back(Object{{"kind","entry"}});controls.push_back(Object{{"kind","entry"}});
   const auto catalog=[&](const Json &rows,auto &directory){if(!step(items(rows).size()))return;for(const auto &row:items(rows)){
@@ -470,17 +628,20 @@ bool ReturnSource::run(Json &raw){
     if(!lookup(slots.size(),binding)||!need(!slots.count(binding),"binding has multiple environment slot owners"))return false;
     slots.emplace(binding,Slot{string(field(slot,"key")),string(field(slot,"type")),id});
   }
+  for(const auto &capture:items(field(fn,"captures"))){
+    if(!step()||!metadata(capture))return false;const auto binding=string(field(capture,"binding"));
+    if(!lookup(slots.size(),binding)||!need(slots.count(binding),"capture has no owned lexical slot")||!lookup(foreignCaptures.size(),binding)||!step())return false;foreignCaptures.insert(binding);
+    captureAccess(slots.at(binding),field(capture,"read").getAsBoolean()==true,field(capture,"write").getAsBoolean()==true);
+  }
+  auto qualified=p.constructorReturnCFGs.find(functionId);
+  if(qualified!=p.constructorReturnCFGs.end())return normalized(qualified->second,raw);
+  if(string(field(fn,"kind"))=="construction-body")return open("constructor graph requires admitted normalized CFG");
   if(!lexical.empty()){if(!text(lexical)||!step())return false;environmentRefs.emplace(lexical,environmentInput(lexical));facet("managedReference",nullptr,"lexicalEnvironment");}
   if(!activation.empty()){
     if(!lookup(layouts.size(),activation)||!need(layouts.count(activation),"activation environment has no owned layout"))return false;
     const auto parent=string(field(*layouts.at(activation),"parent"));std::optional<Refs> selected;if(!parent.empty())selected=environmentFor(parent);
     auto value=environmentCreate(activation,selected,site(functionId,field(fn,"range"),"activation"));if(!text(activation)||!step())return false;environmentRefs.insert_or_assign(activation,std::move(value));
     facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");
-  }
-  for(const auto &capture:items(field(fn,"captures"))){
-    if(!step()||!metadata(capture))return false;const auto binding=string(field(capture,"binding"));
-    if(!lookup(slots.size(),binding)||!need(slots.count(binding),"capture has no owned lexical slot")||!lookup(foreignCaptures.size(),binding)||!step())return false;foreignCaptures.insert(binding);
-    captureAccess(slots.at(binding),field(capture,"read").getAsBoolean()==true,field(capture,"write").getAsBoolean()==true);
   }
   const auto &ordinary=items(field(fn,"parameters"));if(!step(ordinary.size()+2))return false;parameters.reserve(ordinary.size()+1);
   if(!field(fn,"ownerType").getAsNull())parameters.emplace_back(string(field(fn,"receiverBinding")),string(field(fn,"ownerType")));
@@ -505,7 +666,7 @@ bool ReturnSource::run(Json &raw){
   for(const auto &binding:items(field(fn,"bindings"))){
     if(!step())return false;const auto key=field(binding,"id").getAsString().value();
     if(!text(key)||!lookup(vars.size(),key)||!step())return false;const auto id=key.str();if(!vars.count(id))continue;
-    auto value=nonowning(string(field(binding,"type")));
+    auto value=literal(true);
     if(!text(id)||!lookup(environment.size(),id)||!step())return false;environment.emplace(id,std::move(value));
     if(!lookup(slots.size(),id))return false;auto slot=slots.find(id);
     if(slot!=slots.end()&&slot->second.layout==activation){if(!text(slot->second.key)||!text(activation)||!step(2))return false;
@@ -514,12 +675,15 @@ bool ReturnSource::run(Json &raw){
   bool managed=reference(string(field(fn,"returnType")));for(const auto &[id,type]:parameters){if(!step())return false;managed|=reference(type);}
   if(managed)facet("managedReference",nullptr,"signature");auto completed=body(items(field(fn,"body")),environment);
   if(completed.completions&Normal){if(!step())return false;completed.returns.push_back(state);}
+  return finish(completed,raw);
+}
+bool ReturnSource::finish(const Body &completed,Json &raw){
   const auto exitRows=[&](const std::vector<State> &states){Array rows;std::set<std::pair<Ref,Ref>> unique;if(!step(states.size()+1))return rows;
     for(const auto &selected:states){if(!step(3))return Array{};unique.emplace(selected.heap,selected.control);}if(!step(unique.size()+1))return rows;rows.reserve(unique.size());
     for(const auto &[heap,control]:unique){if(!step(5))return Array{};rows.push_back(Object{{"heap",int64_t(heap)},{"control",int64_t(control)}});}return rows;};
   auto normal=exitRows(completed.returns),language=exitRows(completed.throws);Array recorded;if(!step(accesses.size()+1))return false;recorded.reserve(accesses.size());for(auto &[key,value]:accesses){if(!step())return false;recorded.push_back(std::move(value));}
   auto returned=refs(completed.returned),thrown=refs(completed.thrown);if(!good()||!step(25))return false;
-  raw=Object{{"format",Object{{"family","tsfg.return-origin-graph-candidate"},{"version",4}}},{"nodes",std::move(nodes)},{"heaps",std::move(heaps)},
+  raw=Object{{"format",Object{{"family","tsfg.return-origin-graph-candidate"},{"version",5}}},{"nodes",std::move(nodes)},{"heaps",std::move(heaps)},
     {"controls",std::move(controls)},{"calls",std::move(calls)},{"normal",std::move(returned)},{"language",std::move(thrown)},
     {"exits",Object{{"normal",std::move(normal)},{"language",std::move(language)}}},{"accesses",std::move(recorded)}};
   // mayThrow is determined from the domain's live language completion, not

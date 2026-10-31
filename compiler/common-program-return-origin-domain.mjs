@@ -3,11 +3,28 @@
 // Actual object, Code/Env instance or Borrow proof. Heap contents and control
 // existence are separate lattices. Every call resumes its own saved context.
 import {canonical,commonCheck as check} from './common-program-common.mjs';
+import {commonReturnOriginReceivers,commonReceiverActivations} from './common-program-return-origin-receivers.mjs';
 
-export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actualType,environments,rootProtocol},spend) {
-  const format=graph=>check(graph.format?.family==='tsfg.return-origin-graph-candidate'&&graph.format.version===4,'return-origins','one draft4 graph family is required');
+export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actualType,environments,constructions=new Map(),rootProtocol},spend) {
+  const format=graph=>check(graph.format?.family==='tsfg.return-origin-graph-candidate'&&graph.format.version===5,'return-origins','one draft5 graph family is required');
   format(root);
-  const locations=[],locationIds=new Map(),addresses=[],addressIds=new Map(),contexts=[],contextIds=new Map();
+  // Source excludes recursive publication components before projection. Pure
+  // graph consumers need the same fresh-cell precondition where recursion can
+  // reach a create site; ordinary Code/Env recursion needs no receiver guard.
+  const callGraphs=new Map(),pendingGraphs=[root],freshGraphs=new Set();
+  while(pendingGraphs.length){spend();const graph=pendingGraphs.pop();if(callGraphs.has(graph))continue;
+    const targets=new Set();callGraphs.set(graph,targets);spend(graph.nodes.length+graph.calls.length);
+    for(const row of graph.nodes)if(row.kind==='receiverFrame')freshGraphs.add(graph);
+    for(const call of graph.calls){spend();const target=fixed.get(call.functionId)?.graph;if(target){targets.add(target);if(!callGraphs.has(target))pendingGraphs.push(target);}}
+  }
+  let freshChanged=true;while(freshChanged){freshChanged=false;for(const [graph,targets]of callGraphs){spend();if(freshGraphs.has(graph))continue;
+    for(const target of targets){spend();if(freshGraphs.has(target)){freshGraphs.add(graph);freshChanged=true;break;}}}}
+  const callStates=new Map(),callWork=[{graph:root,exit:false}];
+  while(callWork.length){spend();const {graph,exit}=callWork.pop();if(exit){callStates.set(graph,2);continue;}
+    const state=callStates.get(graph);if(state===2)continue;if(state===1){check(!freshGraphs.has(graph),'return-origin-recursive-frame-open','recursive receiver activation requires a fresh-cell model');continue;}
+    callStates.set(graph,1);const targets=callGraphs.get(graph);spend(targets.size+1);callWork.push({graph,exit:true});for(const target of targets)callWork.push({graph:target,exit:false});
+  }
+  const locations=[],locationIds=new Map(),addresses=[],addressIds=new Map(),contexts=[],contextIds=new Map(),receiverGraphs=new Set();
   const environmentParents=new Map(),slotDirectory=new Map();
   for(const [id,row]of environments)for(const slot of row.slots){spend();slotDirectory.set(slot.key,{id,slot});}
   let changed=false;
@@ -23,11 +40,12 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
   const mergeHeap=(target,source)=>{for(const [address,values]of source){spend();let selected=target.get(address);if(!selected){spend();selected=new Set();target.set(address,selected);changed=true;}add(selected,values);}};
   const location=(identity,node,owner)=>{const encoded=key(identity);let id=locationIds.get(encoded);if(id!==undefined)return id;
     spend();check(locations.length<65536,'limit');id=locations.length;locationIds.set(encoded,id);locations.push({node,owner});changed=true;return id;};
+  const receivers=commonReturnOriginReceivers({spend,constructions,location,locations});
   const address=(base,selector,view)=>{const encoded=key([base,selector,view]);let id=addressIds.get(encoded);if(id!==undefined)return id;
     spend();check(addresses.length<65536,'limit');id=addresses.length;addressIds.set(encoded,id);addresses.push({base,selector,view});changed=true;return id;};
   const put=(heap,base,selector,view,values)=>{if(!values.size)return;const id=address(base,selector,view);let stored=heap.get(id);
     if(!stored){spend();stored=new Set();heap.set(id,stored);changed=true;}add(stored,values);};
-  const inline=id=>{const node=locations[id].node;return node.kind==='copied-value'||node.kind==='local'&&actualType(node.type)?.kind==='value';};
+  const inline=id=>{const node=locations[id].node;return node.kind==='copied-value'||(node.kind==='local'||node.kind==='receiver-object')&&actualType(node.type)?.kind==='value';};
   const aliases=(a,b)=>{spend();const x=locations[a].node,y=locations[b].node;if(x.kind==='nonowning'||y.kind==='nonowning')return false;
     const envX=x.kind.startsWith('environment-'),envY=y.kind.startsWith('environment-');
     if(envX||envY)return envX&&envY&&a===b;
@@ -35,10 +53,10 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
     return mayAlias({id:a,node:x},{id:b,node:y});};
   const sameField=(base,selector,view,stored)=>{spend();if(selector==='element'||stored.selector==='element')return selector===stored.selector;
     if(view===stored.view)return selector===stored.selector;if(selector===stored.selector)return true;const node=locations[base].node;
-    if(node.kind==='local'||node.kind==='copied-value'){const a=projectField(node.type,view,selector),b=projectField(node.type,stored.view,stored.selector);if(a!==null&&b!==null)return a===b;}return true;};
+    if(node.kind==='local'||node.kind==='copied-value'||node.kind==='receiver-object'){const a=projectField(node.type,view,selector),b=projectField(node.type,stored.view,stored.selector);if(a!==null&&b!==null)return a===b;}return true;};
   const read=(heap,base,selector,view,origin)=>{
     spend();const result=new Set(),selected=locations[base],kind=selected.node.kind;
-    if(!['local','copied-value','nonowning'].includes(kind)){
+    if(!['local','copied-value','nonowning','receiver-object'].includes(kind)){
       const id=location(['entry-projection',origin,selected.owner],{kind:'entry-projection',type:null},selected.owner);result.add(id);
     }
     for(const [id,values]of heap){spend();const stored=addresses[id];if(aliases(base,stored.base)&&sameField(base,selector,view,stored))for(const value of values){spend();result.add(value);}}
@@ -109,7 +127,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
     for(const [flag,owners]of called.effects){spend();for(const owner of owners)effect(context,flag,owner);}
     add(context.facets,called.facets);add(context.calls,called.calls);add(context.calls,[called.id]);
     const upper=called.upper;if(!upper)return;
-    for(const [index,parameter]of upper.parameters.entries())for(const flag of ['read','write','structural']){spend();if(parameter[flag])valueEffects(context,flag,called.arguments[index]);}
+    for(const [index,parameter]of upper.parameters.entries())for(const flag of ['read','write','structural']){spend();if(parameter[flag])valueEffects(context,flag,index===0&&called.protocol.construction?called.boundReceivers:called.arguments[index]);}
     for(const access of upper.captures){spend();if(!access.read&&!access.write&&!access.structural)continue;const {selected,sources}=captureSources(called,access.slot);
       for(const source of sources){spend();const values=captureValues(source.heap===null?source.context.input:source.context.heaps[source.heap],source.bases,selected.id,access.slot);
         for(const flag of ['read','write','structural']){spend();if(access[flag])valueEffects(context,flag,values);}}}
@@ -117,34 +135,38 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
     for(const field of ['reads','writes'])for(const id of upper.hostResources[field]){spend();effect(context,field==='reads'?'read':'write','h:'+id);}
     for(const flag in upper.facets){spend();if(flag!=='mayThrow'&&upper.facets[flag])add(context.facets,[flag]);}
   };
-  const ensure=(id,arguments_,environment,input,scope,source=null)=>{
+  const ensure=(id,arguments_,environment,input,scope,source=null,receiver=new Set(),frameWorld=new Map())=>{
     const remember=context=>{if(source!==null){const id=key([source.context.index,source.heap]);if(!context.entrySources.has(id)){context.entrySources.set(id,source);changed=true;}}return context;};
-    spend(arguments_.length+1);const signature=key([id,scope,arguments_.map(ordered),ordered(environment),heapKey(input)]);let index=contextIds.get(signature);if(index!==undefined)return remember(contexts[index]);
+    spend(arguments_.length+1);const signature=key([id,scope,arguments_.map(ordered),ordered(environment),heapKey(input),ordered(receiver),receivers.snapshot(frameWorld)]);let index=contextIds.get(signature);if(index!==undefined)return remember(contexts[index]);
     const record=id===null?{graph:root,upper:null,protocol:rootProtocol}:fixed.get(id);check(record,'return-origins','fixed call member is absent');const graph=record.graph;check(graph,'return-origin-call-open','fixed callee return graph is unavailable');format(graph);
+    if(!receiverGraphs.has(graph)){check(commonReceiverActivations(graph,spend),'return-origin-repeat-frame-open','repeated receiver-frame activation requires a fresh-cell model');receiverGraphs.add(graph);}
     check(record.protocol,'return-origin-environment-open','fixed function environment protocol is missing');
-    spend(graph.nodes.length*3+graph.heaps.length*2+graph.controls.length+graph.calls.length+arguments_.length+environment.size+1);check(contexts.length<65536,'limit');
+    spend(graph.nodes.length*3+graph.heaps.length*5+graph.controls.length+graph.calls.length+arguments_.length+environment.size+receiver.size+1);check(contexts.length<65536,'limit');
     const heap=new Map();mergeHeap(heap,input);const copiedArguments=arguments_.map(values=>{spend(values.size+1);return new Set(values);});
     const context={index:contexts.length,id,scope,graph,protocol:record.protocol,environment:new Set(environment),upper:record.upper,arguments:copiedArguments,input:heap,values:graph.nodes.map(()=>new Set()),heaps:graph.heaps.map(()=>new Map()),
       controls:graph.controls.map(()=>false),ready:graph.nodes.map(()=>false),heapReady:graph.heaps.map(()=>false),targets:graph.calls.map(()=>new Set()),normal:new Set(),language:new Set(),normalHeap:new Map(),languageHeap:new Map(),normalLive:false,languageLive:false,normalReady:false,languageReady:false,
-      effects:new Map(),facets:new Set(),calls:new Set(),entrySources:new Map()};
+      effects:new Map(),facets:new Set(),calls:new Set(),entrySources:new Map(),receiver:new Set(receiver),inputReceivers:receivers.copy(frameWorld),receiverHeaps:graph.heaps.map(()=>new Map()),receiverValues:graph.heaps.map(()=>new Set()),receiverLive:graph.heaps.map(()=>false),normalReceivers:new Map(),languageReceivers:new Map(),boundReceivers:new Set()};
     index=contexts.length;contexts.push(context);contextIds.set(signature,index);changed=true;return remember(context);
   };
   const rootArguments=[];for(const node of root.nodes){spend();if(node.kind==='parameter'){
     const id=location(['parameter',node.index,node.type],node,'p:'+node.index);rootArguments[node.index]=new Set([id]);}}
   check(rootProtocol,'return-origin-environment-open','root function environment protocol is missing');
   const rootEnvironment=rootProtocol.lexicalEnvironment===null?new Set():new Set([entryEnvironment(rootProtocol.lexicalEnvironment)]);
-  spend(rootArguments.length);for(let i=0;i<rootArguments.length;i++)rootArguments[i]??=new Set();const initial=ensure(null,rootArguments,rootEnvironment,new Map(),'root');
+  spend(rootArguments.length);for(let i=0;i<rootArguments.length;i++)rootArguments[i]??=new Set();const rootReceivers=receivers.entry(rootProtocol),initial=ensure(null,rootArguments,rootEnvironment,new Map(),'root',null,rootReceivers,receivers.world(rootReceivers));
   changed=true;
   while(changed){changed=false;
     // New contexts append to this same worklist. Returned values/heaps/effects
     // only wake their recorded callers, never every call of the same FnId.
     for(const context of contexts){spend();const graph=context.graph;
       for(let index=0;index<graph.calls.length;index++){spend();const call=graph.calls[index];if(!context.controls[call.control])continue;
-        if(!context.heapReady[call.heap]||call.arguments.some(refs=>!readyRefs(context,refs))||call.callee!==null&&!readyRefs(context,call.callee)||call.environment!==null&&!readyRefs(context,call.environment))continue;
+        if(!context.heapReady[call.heap]||call.arguments.some(refs=>!readyRefs(context,refs))||call.callee!==null&&!readyRefs(context,call.callee)||call.environment!==null&&!readyRefs(context,call.environment)||call.receiver!==null&&!readyRefs(context,call.receiver))continue;
         // An empty alias set can be an ordinary native/undefined value. Only
         // the independent continuation control can rule out this invocation.
         spend(call.arguments.length);const args=call.arguments.map(refs=>resolved(context,refs));
         const record=fixed.get(call.functionId);check(record?.protocol,'return-origin-environment-open','fixed callee environment protocol is missing');
+        const receiver=call.receiver===null?new Set():resolved(context,call.receiver);
+        if(record.protocol.construction){check(call.receiver!==null,'return-origin-receiver','constructor frame is missing');args.unshift(new Set());}
+        else check(call.receiver===null,'return-origin-receiver','ordinary call cannot receive a frame');
         const expected=record.protocol.lexicalEnvironment,scope=key([context.id,call.site,index]),selected=[];
         if(call.callee!==null){
           for(const id of resolved(context,call.callee)){spend();const node=locations[id].node;
@@ -162,16 +184,20 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
           }
         }else if(expected===null){check(call.environment===null,'return-origin-environment-open','unexpected direct environment');selected.push(new Set());}
         else{check(call.environment!==null,'return-origin-environment-open','direct environment is missing');const values=selectEnvironments(resolved(context,call.environment),expected);if(values.size)selected.push(values);}
-        for(const environment of selected){spend();const called=ensure(call.functionId,args,environment,context.heaps[call.heap],scope,{context,heap:call.heap});add(context.targets[index],[called.index]);}
+        for(const environment of selected){spend();const called=ensure(call.functionId,args,environment,context.heaps[call.heap],scope,{context,heap:call.heap},receiver,context.receiverHeaps[call.heap]);add(context.targets[index],[called.index]);}
       }
       for(let index=0;index<graph.controls.length;index++){spend();const control=graph.controls[index];let live=false;
         if(control.kind==='entry')live=true;else if(control.kind==='join')live=control.inputs.some(input=>{spend();return context.controls[input];});
         else if(control.kind==='call')for(const target of context.targets[control.call]){spend();live ||= contexts[target][control.completion+'Live'];}
+        else if(control.kind==='receiverCompletion')live=context.receiverLive[control.action];
         else check(false,'return-origins','unknown fixed control equation');if(live&&!context.controls[index]){context.controls[index]=true;changed=true;}
       }
       for(let index=0;index<graph.nodes.length;index++){spend();const node=graph.nodes[index],output=context.values[index];
         if(node.kind==='parameter'){if(context.id===null)add(output,rootArguments[node.index]);else{
           const values=context.arguments[node.index];add(output,values);if(!values.size)add(output,[location(['nonowning',node.type],{kind:'nonowning',type:node.type},null)]);}}
+        else if(node.kind==='receiverInput')add(output,context.receiver);
+        else if(node.kind==='receiverFrame'){if(context.controls[node.control])add(output,receivers.create(context,node,index,node.parent===null?new Set():resolved(context,node.parent)));}
+        else if(node.kind==='receiverValue'){if(context.receiverLive[node.action])add(output,context.receiverValues[node.action]);}
         else if(node.kind==='environmentInput'){check(node.layout===context.protocol.lexicalEnvironment,'return-origin-environment-open','entry environment layout differs');add(output,context.environment);}
         else if(node.kind==='environmentCreate'){
           if(!context.controls[node.control])continue;check(node.layout===context.protocol.activationEnvironment,'return-origin-environment-open','activation environment layout differs');
@@ -211,7 +237,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
           add(output,called[node.completion]);if(node.completion==='normal'&&!called.normal.size&&(node.type==='void'||actualType(node.type)?.kind==='void'))add(output,[location(['nonowning',node.type],{kind:'nonowning',type:node.type},null)]);}}
         else{
           const owner=node.kind==='global'?'g:'+node.id:node.kind==='capture'?'c:'+node.id:node.kind==='unknown'?'unknown:return-origin':node.kind==='local'?'local:return-origin':null;
-          const identity=node.kind==='local'?['local',context.id,context.scope,index,node.type]:[node.kind,node.type,node.id??null];add(output,[location(identity,node,owner)]);
+          const identity=node.kind==='local'?['local',context.id,context.scope,index,node.type]:node.kind==='literal'?[node.kind,node.type,node.category]:[node.kind,node.type,node.id??null];add(output,[location(identity,node,owner)]);
         }
         let defined=true;
         if(node.kind==='join')defined=node.inputs.length===0||node.inputs.some(id=>{spend();return context.ready[id];});
@@ -224,11 +250,13 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
         else if(node.kind==='code')defined=context.controls[node.control]&&(node.environment===null||readyRefs(context,node.environment));
         else if(node.kind==='call'){defined=false;for(const target of context.targets[node.call]){spend();const called=contexts[target],completion=node.completion;
           defined ||= called[completion+'Ready']&&(called.graph[completion].length>0&&readyRefs(called,called.graph[completion])||completion==='normal'&&(node.type==='void'||actualType(node.type)?.kind==='void'));}}
+        else if(node.kind==='receiverFrame')defined=context.controls[node.control]&&(node.parent===null||readyRefs(context,node.parent));
+        else if(node.kind==='receiverValue')defined=context.receiverLive[node.action]&&context.heapReady[node.action];
         ready(context.ready,index,defined);
       }
       for(let index=0;index<graph.heaps.length;index++){spend();const heap=graph.heaps[index],output=context.heaps[index];
-        if(heap.kind==='entry')mergeHeap(output,context.input);
-        else if(heap.kind==='join')for(const parent of heap.inputs){spend();mergeHeap(output,context.heaps[parent]);}
+        if(heap.kind==='entry'){mergeHeap(output,context.input);changed=receivers.merge(context.receiverHeaps[index],context.inputReceivers)||changed;}
+        else if(heap.kind==='join')for(const parent of heap.inputs){spend();mergeHeap(output,context.heaps[parent]);if(context.heapReady[parent])changed=receivers.merge(context.receiverHeaps[index],context.receiverHeaps[parent])||changed;}
         else if(heap.kind==='store'){
           mergeHeap(output,context.heaps[heap.previous]);if(context.controls[heap.control])for(const base of resolved(context,heap.bases)){
             if(heap.selector.startsWith('capture:')){const layoutId=heap.view.slice(4);check(heap.view.startsWith('env:')&&locations[base].node.layout===layoutId,'return-origin-environment-open','capture store environment layout differs');slotLayout(layoutId,heap.selector.slice(8));}
@@ -242,20 +270,27 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
             for(const field of shape.fields){spend();const view=field.view??type,values=read(source,original,'field:'+field.id,view,[context.id,heap.value,field.id,view]),children=new Set();
               for(const child of values){spend();children.add(copied(child));if(inline(child))pending.push(child);}put(output,target,'field:'+field.id,view,children);}
           }
-        }else if(heap.kind==='call')for(const target of context.targets[heap.call]){spend();mergeHeap(output,contexts[target][heap.completion+'Heap']);}
+        }else if(heap.kind==='receiverAction'){
+          if(context.controls[heap.control]&&context.heapReady[heap.previous]&&readyRefs(context,heap.frames)&&readyRefs(context,heap.operands)){
+            const action=receivers.apply(context,heap,resolved(context,heap.frames),resolved(context,heap.operands),context.receiverHeaps[heap.previous]);
+            if(action.live){if(!context.receiverLive[index]){context.receiverLive[index]=true;changed=true;}mergeHeap(output,context.heaps[heap.previous]);
+              add(context.receiverValues[index],action.result);add(context.boundReceivers,receivers.bound(action.world,context.receiver));changed=receivers.merge(context.receiverHeaps[index],action.world)||changed;}
+          }
+        }else if(heap.kind==='call')for(const target of context.targets[heap.call]){spend();mergeHeap(output,contexts[target][heap.completion+'Heap']);if(contexts[target][heap.completion+'Ready'])changed=receivers.merge(context.receiverHeaps[index],contexts[target][heap.completion+'Receivers'])||changed;}
         else check(false,'return-origins','unknown fixed heap equation');
         let defined=false;
         if(heap.kind==='entry')defined=true;
         else if(heap.kind==='join')defined=heap.inputs.some(id=>{spend();return context.heapReady[id];});
-        else if(heap.kind==='store')defined=context.controls[heap.control]&&context.heapReady[heap.previous]&&readyRefs(context,heap.bases)&&readyRefs(context,heap.values);
-        else if(heap.kind==='copy')defined=context.heapReady[heap.previous]&&context.ready[heap.value];
+        else if(heap.kind==='store'){defined=context.controls[heap.control]&&context.heapReady[heap.previous]&&readyRefs(context,heap.bases)&&readyRefs(context,heap.values);if(defined)changed=receivers.merge(context.receiverHeaps[index],context.receiverHeaps[heap.previous])||changed;}
+        else if(heap.kind==='copy'){defined=context.heapReady[heap.previous]&&context.ready[heap.value];if(defined)changed=receivers.merge(context.receiverHeaps[index],context.receiverHeaps[heap.previous])||changed;}
+        else if(heap.kind==='receiverAction')defined=context.receiverLive[index];
         else for(const target of context.targets[heap.call]){spend();defined ||= contexts[target][heap.completion+'Ready'];}
         ready(context.heapReady,index,defined);
       }
       for(const completion of ['normal','language']){
         for(const exit of graph.exits[completion]){spend();if(context.controls[exit.control]){
           if(!context[completion+'Live']){context[completion+'Live']=true;changed=true;}
-          if(context.heapReady[exit.heap]&&!context[completion+'Ready']){context[completion+'Ready']=true;changed=true;}mergeHeap(context[completion+'Heap'],context.heaps[exit.heap]);}}
+          if(context.heapReady[exit.heap]&&!context[completion+'Ready']){context[completion+'Ready']=true;changed=true;}mergeHeap(context[completion+'Heap'],context.heaps[exit.heap]);if(context.heapReady[exit.heap])changed=receivers.merge(context[completion+'Receivers'],context.receiverHeaps[exit.heap])||changed;add(context.boundReceivers,receivers.bound(context.receiverHeaps[exit.heap],context.receiver));}}
         if(context[completion+'Live'])add(context[completion],resolved(context,graph[completion]));
       }
       for(const access of graph.accesses){spend();if(context.controls[access.control])valueEffects(context,access.flag,resolved(context,access.values));}
@@ -269,6 +304,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
     else if(heap.kind==='join')live=heap.inputs.some(parent=>possibleHeap(context,parent,forkActive(active)));
     else if(heap.kind==='store')live=context.controls[heap.control]&&possibleHeap(context,heap.previous,active);
     else if(heap.kind==='copy')live=context.controls[context.graph.nodes[heap.value].control]&&possibleHeap(context,heap.previous,active);
+    else if(heap.kind==='receiverAction')live=context.receiverLive[id]&&possibleHeap(context,heap.previous,active);
     else for(const target of context.targets[heap.call]){spend();live ||= contexts[target][heap.completion+'Live'];}
     return live;
   };
@@ -292,7 +328,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
           if(bases.size===1&&bases.has(environment)&&resolved(current.context,row.values).size){defined=true;continue;}}
         pending.push({context:current.context,heap:row.previous});continue;
       }
-      if(row.kind==='copy'){pending.push({context:current.context,heap:row.previous});continue;}
+      if(row.kind==='copy'||row.kind==='receiverAction'){pending.push({context:current.context,heap:row.previous});continue;}
       for(const target of current.context.targets[row.call]){spend();const called=contexts[target];
         for(const state of called.graph.exits[row.completion]){spend();if(called.controls[state.control])pending.push({context:called,heap:state.heap});}}
     }definitionMemo.set(signature,defined);return defined;
@@ -311,6 +347,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
   };
   // Missing worklist data is not absence. Only after the least fixed point may
   // an actually reached capture/parent/callee with no source be declared OPEN.
+  let potentialLanguage=false;
   for(const context of contexts){const graph=context.graph;
     for(const completion of ['normal','language'])for(const state of graph.exits[completion]){spend();if(context.controls[state.control])returnedEnvironments(context,resolved(context,graph[completion]),state.heap);}
     for(let index=0;index<graph.nodes.length;index++){spend();const node=graph.nodes[index];if(!context.controls[node.control])continue;
@@ -330,7 +367,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
       // A fixed allowed target cannot disappear merely because the selected
       // current payload graph has no corresponding Env source. Keep it OPEN.
       check(context.targets[index].size>0,'return-origin-environment-open','permitted Code/environment pair is unresolved');
-      for(const target of context.targets[index]){const called=contexts[target];for(const access of called.upper?.captures??[]){spend();if(!access.read&&!access.write&&!access.structural)continue;
+      for(const target of context.targets[index]){const called=contexts[target];potentialLanguage ||= Boolean(called.upper?.facets.mayThrow&&!called.languageLive);for(const access of called.upper?.captures??[]){spend();if(!access.read&&!access.write&&!access.structural)continue;
         const {selected,sources}=captureSources(called,access.slot);check(sources.length>0,'return-origin-environment-open','fixed capture has no matching saved environment in its complete call closure');
         for(const source of sources){spend();completeCapture(source.context,source.heap,source.bases,selected.id,access.slot);}}}
     }
@@ -340,5 +377,5 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
   const validateReturns=(normal,language,exits)=>{for(const completion of ['normal','language']){
     const values=resolved(initial,completion==='normal'?normal:language);for(const state of exits[completion]){spend();if(initial.controls[state.control])returnedEnvironments(initial,values,state.heap);}
   }};
-  return {owners,holdsEnvironment,validateReturns,effects:initial.effects,facets:initial.facets,calls:initial.calls,normal:initial.normalLive,language:initial.languageLive,live:control=>initial.controls[control]};
+  return {owners,holdsEnvironment,validateReturns,effects:initial.effects,facets:initial.facets,calls:initial.calls,potentialLanguage,normal:initial.normalLive,language:initial.languageLive,live:control=>initial.controls[control],populated:ref=>initial.values[ref].size>0,heapReady:ref=>initial.heapReady[ref]};
 }

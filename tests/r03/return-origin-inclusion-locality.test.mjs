@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
-// Independent Graph4 equation DTO premises only; no Source, Program or Runtime.
+// Independent Graph5 equation DTO premises only; no Source, Program or Runtime.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {commonReturnOriginsInclusion as inclusion} from '../../compiler/common-program-return-origin-inclusion.mjs';
 import {readCommonReturnOriginGraph as read} from '../../compiler/common-program-return-origin-graph.mjs';
 /** @returns {Parameters<typeof inclusion>[0]} */
-const graph=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:4},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
+const graph=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:5},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
 const meter=()=>{let left=200000;return (units=1)=>{left-=units;if(left<0)throw new Error('fixture budget exhausted');};};
 const unknown=()=>{const value=graph();value.nodes.push({kind:'unknown',type:null});return value;};
-const call=(id,dead=false)=>{const value=graph();if(dead)value.controls.push({kind:'join',inputs:[]});value.calls.push({functionId:id,arguments:[],environment:null,callee:null,heap:0,control:dead?1:0,site:'syntax-call'});return value;};
+const call=(id,dead=false)=>{const value=graph();if(dead)value.controls.push({kind:'join',inputs:[]});value.calls.push({functionId:id,arguments:[],environment:null,callee:null,receiver:null,heap:0,control:dead?1:0,site:'syntax-call'});return value;};
 /** @param {Map<string,{graph:Parameters<typeof inclusion>[0]|null}>} contracts */
 const prove=contracts=>inclusion(graph(),graph(),contracts,meter());
 /** @returns {Parameters<typeof read>[1]} */
-const directory=()=>({functionId:'unused',types:new Map([['void',{kind:'void'}]]),functions:new Map([['unused',{kind:'source',parameterTypes:[],returnType:'void',lexicalEnvironment:null,activationEnvironment:null}]]),globals:new Map(),fields:new Set(),environments:new Map()});
+const directory=()=>({functionId:'unused',types:new Map([['void',{kind:'void'}]]),functions:new Map([['unused',{kind:'source',parameterTypes:[],returnType:'void',lexicalEnvironment:null,activationEnvironment:null}]]),globals:new Map(),fields:new Set(),environments:new Map(),constructions:new Map()});
 
 test('a reader-typed unrelated unknown graph cannot contaminate a call-free proof',()=>{
   const typed=read(unknown(),directory(),meter());assert.equal(typed.status,'typed');if(typed.status!=='typed')return;

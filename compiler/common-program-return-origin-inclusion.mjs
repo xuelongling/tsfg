@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
-// A structural certificate for the draft4 Code/Env equation language. Failure to
+// A structural certificate for the Graph5 Code/Env equation language. Failure to
 // find this certificate is OPEN, not a claim that a Source body is invalid.
 // Inputs are typed graphs from ONE admitted, immutable contract table. The
 // reader must already have checked scope/schema/group identities and complete
 // callee references; FnId here never reinterprets an older caller reference.
-// Receiver-frame/Host protocols remain separate and OPEN.
+// Receiver protocols require exact owned equations here; a different receiver
+// equation and Host transfer remain Open.
 
 /** @typedef {import('./common-program-return-origin-graph.mjs').Graph} Graph */
 /** @typedef {import('./common-program-return-origin-graph.mjs').Completion} Completion */
@@ -25,15 +26,15 @@
 export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
   const symbolEqual=(a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a===b;};
   spend(contracts.size+3);
-  const graphs=new Set(),dependencies=[body,upper];
+  const graphs=new Set(),dependencies=[body,upper];let receiverProtocol=false;
   // Unknown is an unresolved boundary, not an implicit permission to discard
   // returned owning data. Its future host semantics must be admitted separately.
   // The complete reader has already admitted every nonnull directory row.
   // Pending belongs only to this comparison's full syntactic call closure,
   // including dead calls. Never select that closure by solved liveness.
   while(dependencies.length){spend();const graph=dependencies.pop();if(graphs.has(graph))continue;graphs.add(graph);
-    if(graph.format.family!=='tsfg.return-origin-graph-candidate'||graph.format.version!==4)return {status:'open',reason:'graph-profile-mismatch'};
-    for(const row of graph.nodes){spend();if(row.kind==='unknown')return {status:'open',reason:'unknown-data-origin'};}
+    if(graph.format.family!=='tsfg.return-origin-graph-candidate'||graph.format.version!==5)return {status:'open',reason:'graph-profile-mismatch'};
+    for(const row of graph.nodes){spend();if(row.kind==='unknown')return {status:'open',reason:'unknown-data-origin'};receiverProtocol ||= row.kind==='receiverInput'||row.kind==='receiverFrame'||row.kind==='receiverValue';}
     for(const row of graph.calls){spend(Math.ceil(row.functionId.length/8)+1);const selected=contracts.get(row.functionId);
       if(!selected||selected.graph===null)return {status:'open',reason:'missing-fixed-call'};
       if(!graphs.has(selected.graph))dependencies.push(selected.graph);
@@ -64,6 +65,10 @@ export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
     spend(leftKeys.length*2+1);for(const key of leftKeys){spend(Math.ceil(key.length/8)+1);if(!Object.hasOwn(right,key)){identical=false;break;}equations.push([/** @type {Record<string,Equation>} */(left)[key],/** @type {Record<string,Equation>} */(right)[key]]);}
   }
   if(identical)return {status:'covered',reason:null};
+  // Receiver completions depend on bind/selection state, not the ordinary
+  // call-only boolean equations below. Until a receiver simulation exists,
+  // a different constructor equation has no structural certificate here.
+  if(receiverProtocol)return {status:'open',reason:'receiver-structural-certificate-open'};
   // Continuation equations are positive booleans. Solve their LEAST fixed
   // point first; greatest simulation must not manufacture a recursive exit.
   let changed=true;

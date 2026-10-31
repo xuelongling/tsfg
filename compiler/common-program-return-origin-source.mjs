@@ -9,8 +9,10 @@ import {commonReturnOrigins,commonReturnOriginFormat} from './common-program-ret
 import {commonReturnOriginsInclusion} from './common-program-return-origin-inclusion.mjs';
 import {commonFacets} from './common-program-effects.mjs';
 import {commonLexicalScopes} from './common-program-lexical.mjs';
+import {projectConstructorReturnOrigins,unavailableConstructorReturnOriginOperation} from './common-program-constructor-return-origins.mjs';
+import {commonReceiverActivations} from './common-program-return-origin-receivers.mjs';
 /** @param {((id:string)=>string|null)|null} [fixedTypeKind] */
-export function commonReturnOriginSource(hir,spend,physical=null,storageProjection=null,fixedTypeKind=null,fixedRecords=null,selectedFunctions=null) {
+export function commonReturnOriginSource(hir,spend,physical=null,storageProjection=null,fixedTypeKind=null,fixedRecords=null,selectedFunctions=null,fixedCatalogue=null) {
   check(storageProjection===null||storageProjection.status==='complete'||storageProjection.status==='partial','return-origin-storage-open','verified storage directory is unresolved');
   const collections=commonCollections(spend);
   const fixedUppers=fixedRecords===null?null:new Map(),owners=selectedFunctions===null?hir.functions:hir.functions.filter(fn=>{spend();return selectedFunctions.has(fn.id);});
@@ -22,7 +24,8 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
   // current-body callable observations; physical capacity is not a code grant.
   const globals=new Map(hir.globals.map(row=>[row.id,row])),referenceMemo=new Map(),methods=commonMethods(hir,spend),
     callables=fixedRecords===null?(physical?.model.callables??commonTargets(hir,spend)):commonTargets(hir,spend,fixedRecords),
-    actualTypes=new Map(),slots=new Map(),environments=new Map(hir.environments.map(row=>[row.id,row])),projectField=storageProjection?.projectField??(()=>null);
+    actualTypes=new Map(),slots=new Map(),environments=new Map(hir.environments.map(row=>[row.id,row]));
+  const projectField=(actual,view,selector)=>{if(!storageProjection)return null;const result=storageProjection.resolveField(actual,view,selector);return result.status==='present'?result.key:null;};
   const actualType=id=>{
     spend();if(actualTypes.has(id))return actualTypes.get(id);
     // A published local/copy tag can survive removal of the implementation
@@ -37,6 +40,13 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     const shape={kind,fields:[]};actualTypes.set(id,shape);return shape;
   };
   for(const env of hir.environments)for(const slot of env.slots){spend(8);slots.set(slot.binding,{...slot,layout:env.id});}
+  const constructions=new Map(),protocols=new Map(),projectionPlans=new Map();
+  for(const type of hir.types){spend();if(type.construction){const row=type.construction;constructions.set(row.id,{id:row.id,owner:type.id,base:type.base??null,kind:row.kind,functionId:row.functionId});}}
+  for(const fn of hir.functions){spend();const owner=fn.kind==='construction-body'?types.get(fn.ownerType):null;
+    protocols.set(fn.id,{lexicalEnvironment:fn.lexicalEnvironment??null,activationEnvironment:fn.activationEnvironment??null,
+      construction:owner?{id:owner.construction.id,owner:owner.id,base:owner.base??null,receiverIndex:0}:null});}
+  for(const plan of physical?.corePlans??[]){spend();let receiver=false;for(const block of plan.graph.blocks)for(const op of block.instructions){spend();receiver ||= op.name.startsWith('tsfg_program.receiver_');}if(receiver)projectionPlans.set(plan.owner.id,plan);}
+  const catalogue={types:fixedCatalogue?.types??types,functions:fixedCatalogue?.functions??new Map(hir.functions.map(fn=>{spend();return [fn.id,{...protocols.get(fn.id),returnType:fn.returnType}];})),constructions:fixedCatalogue?.constructions??constructions,slots,environments};
   function reference(id,active=new Set()) {
     if(id===null||id==='void')return false;
     spend();if(referenceMemo.has(id))return referenceMemo.get(id);check(!active.has(id),'type');active.add(id);
@@ -50,12 +60,11 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     facets:Object.fromEntries(commonFacets.map(flag=>[flag,false])),returnOrigins:{format:commonReturnOriginFormat,normal:[],language:[],nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]}});
   function derive(fn,records,diagnostics=false) {
     records=fixedUppers??records;
-    check(fn.kind!=='construction-body','return-origin-construction-open','receiver frame/result equations are not connected to this Source producer');
     const result=blank(fn),read=new Set(),write=new Set(),hostRead=new Set(),hostWrite=new Set(),hostCalls=[],params=ownerParameters(fn),origins=new Map(),calls=[],captures=new Map();
     const local=diagnostics?new Map():null;let operationSource=fn.sourcePath;
     const bindings=new Map();for(const binding of fn.parameters){spend();bindings.set(binding.id,binding);}
     for(const binding of fn.bindings??[]){spend();bindings.set(binding.id,binding);}
-    const protocol=owner=>({lexicalEnvironment:owner.lexicalEnvironment??null,activationEnvironment:owner.activationEnvironment??null});
+    const protocol=owner=>catalogue.functions.get(owner.id)??protocols.get(owner.id);
     // Code formation requires every admitted signature/Env protocol, even when
     // that function's return graph is unavailable. A null graph never supplies
     // a call summary; actual invocation still requires a complete fixed row.
@@ -65,7 +74,25 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     // projection view. Different concrete tags cannot be one actual object;
     // equal tags and all formal/unknown sources remain conservatively aliasing.
     const mayAlias=(a,b)=>a.node.kind!=='local'||b.node.kind!=='local'||a.node.type===b.node.type;
-    const graph=commonReturnOrigins(spend,{projectField,mayAlias,actualType,contracts,environments,rootProtocol:protocol(fn)}),normalReturns=new Set(),normalExits=new Set(),languageExits=new Set(),marks=[];
+    const graph=commonReturnOrigins(spend,{projectField,mayAlias,actualType,contracts,environments,constructions:catalogue.constructions,rootProtocol:protocol(fn)}),normalReturns=new Set(),normalExits=new Set(),languageExits=new Set(),marks=[];
+    if(projectionPlans.has(fn.id)){
+      const plan=projectionPlans.get(fn.id),projected=projectConstructorReturnOrigins({plan,model:physical.model},catalogue,graph,spend),captureRows=new Map();
+      for(const capture of fn.captures??[]){spend();const slot=slots.get(capture.binding);captureRows.set(slot.key,{slot:slot.key,read:capture.read,write:capture.write,structural:false});}
+      for(const [flag,roots]of projected.effects.accesses)for(const root of roots){spend();
+        if(root.startsWith('p:'))result.parameters[Number(root.slice(2))][flag]=true;
+        else if(root.startsWith('g:'))(flag==='read'?read:write).add(root.slice(2));
+        else if(root.startsWith('h:'))(flag==='read'?hostRead:hostWrite).add(root.slice(2));
+        else if(root.startsWith('c:')){const key=root.slice(2),row=captureRows.get(key)??{slot:key,read:false,write:false,structural:false};row[flag]=true;captureRows.set(key,row);}
+      }
+      for(const flag of projected.effects.facets){spend();result.facets[flag]=true;}
+      result.facets.managedReference ||= physical.references.get(fn.id)??false;result.facets.escape ||= physical.escaping.get(fn.id)??false;
+      for(const block of plan.graph.blocks)for(const op of block.instructions){spend();if(op.name==='tsfg_program.receiver_allocate')result.facets.allocation=true;if(['tsfg_program.pack','tsfg_program.enter_handler','tsfg_program.catch_bind','tsfg_program.finally_enter','tsfg_program.route'].includes(op.name))result.facets.ehControl=true;}
+      result.facets.mayThrow=projected.graph.exits.language.length>0;
+      result.captures=collections.sorted(captureRows.values(),(a,b)=>a.slot<b.slot?-1:a.slot>b.slot?1:0);
+      result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};result.hostResources={reads:collections.sorted(hostRead),writes:collections.sorted(hostWrite)};result.returnOrigins=projected.graph;
+      return {upper:result,calls:projected.calls,hostCalls:[],completions:[...(projected.normal?['return']:[]),...(projected.language?['throw']:[])],local,pendingReason:projected.effects.potentialLanguage?'fixed-potential-language-open':null};
+    }
+    check(fn.kind!=='construction-body','return-origin-construction-open','the owning normalized constructor CFG is unavailable');
     const environmentRefs=new Map();if(fn.lexicalEnvironment)environmentRefs.set(fn.lexicalEnvironment,graph.environmentInput(fn.lexicalEnvironment));
     const environmentFor=id=>{
       if(environmentRefs.has(id))return environmentRefs.get(id);
@@ -111,7 +138,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     for(const binding of fn.bindings??[]){spend();if(binding.kind==='local'&&declarations.get(binding.id)?.variable){
       // This directory carries owner provenance under the original view;
       // generated actual undefined belongs to CFG/Actual, not Source types.
-      const selected=nonowning(binding.type);origins.set(binding.id,selected);const slot=slots.get(binding.id);
+      const selected=graph.literal('undefined');origins.set(binding.id,selected);const slot=slots.get(binding.id);
       if(slot)graph.write(environmentFor(slot.layout),'capture:'+slot.key,selected,{view:'env:'+slot.layout,initialize:true});
     }}
     if(reference(fn.returnType)||params.some(p=>reference(p.type)))facet('managedReference','function','signature',fn.range);
@@ -148,7 +175,8 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
         const left=visit(value.left),shortHeap=graph.checkpoint(),shortEnvironment=normalOrigins(environment),right=visit(value.right),rightEnvironment=normalOrigins(environment);owner=union([left,right]);
         replaceOrigins(environment,[shortEnvironment,rightEnvironment]);
         graph.restore(graph.mergeStates([shortHeap,graph.checkpoint()]));
-      }else if(value.kind==='stringLiteral')owner=nonowning(value.type);
+      }else if(value.kind==='undefinedLiteral')owner=graph.literal('undefined',value.type);
+      else if(['stringLiteral','numericLiteral','booleanLiteral','nullLiteral'].includes(value.kind))owner=graph.literal('other',value.type);
       else if(value.kind==='arrayLiteral'){
         spend(value.elements.length);const elements=value.elements.map((child,index)=>copied(visit(child),child.type,child.range,'array-element:'+index));facet('allocation','operation',value.kind,value.range);facet('managedReference','operation',value.kind,value.range);
         owner=graph.root('local',value.type,null,value.allocationSite);graph.write(owner,'element',union(elements),{view:value.type,initialize:true});
@@ -309,7 +337,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     if(local&&result.facets.mayThrow)for(const origin of throws.values())retain({kind:'facet',facet:'mayThrow'},origin);
     result.captures=collections.sorted(captures.values(),(a,b)=>a.slot<b.slot?-1:a.slot>b.slot?1:0);
     result.returnOrigins=graph.snapshot(normalReturns,languageReturns,{normal:collections.array(normalExits),language:collections.array(languageExits)});
-    result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};result.hostResources={reads:collections.sorted(hostRead),writes:collections.sorted(hostWrite)};return {upper:result,calls,hostCalls,completions:collections.sorted(completions),local};
+    result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};result.hostResources={reads:collections.sorted(hostRead),writes:collections.sorted(hostWrite)};return {upper:result,calls,hostCalls,completions:collections.sorted(completions),local,pendingReason:solved.potentialLanguage?'fixed-potential-language-open':null};
   }
   function derived(dependencies=null) {
     check(fixedRecords===null,'publication-mode','a fixed consumer cannot replace its admitted uppers with current-body derivation');
@@ -340,25 +368,35 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
 
 // Only these known unavailable language protocols produce a null archive row.
 // Malformed data, exhausted work and broken invariants are never caught here.
-export function commonReturnOriginAvailability(hir,callables,methods,spend,storageProjection=null) {
+export function commonReturnOriginAvailability(hir,callables,methods,spend,storageProjection=null,normalized=null) {
   spend(hir.types.length+hir.functions.length+hir.environments.length+1);
   const types=new Map(hir.types.map(row=>[row.id,row])),functions=new Map(hir.functions.map(fn=>[fn.id,fn])),
     slots=new Map(),reasons=new Map(),dependencies=new Map(),scalarLocal=new Map();
+  const normalizedPlans=new Map();for(const plan of normalized?.corePlans??[]){spend();normalizedPlans.set(plan.owner.id,plan);}
   for(const env of hir.environments)for(const slot of env.slots){spend();slots.set(slot.binding,slot);}
   for(const fn of hir.functions){
     spend(fn.parameters.length+(fn.bindings?.length??0)+(fn.captures?.length??0)+1);
+    const normalizedPlan=normalizedPlans.get(fn.id);let construction=false;
+    for(const block of normalizedPlan?.graph.blocks??[])for(const op of block.instructions){spend();construction ||= op.name.startsWith('tsfg_program.receiver_');}
+    if(construction){const blocks=normalizedPlan.graph.blocks,indices=new Map(),controls=[],nodes=[];spend(blocks.length*2+1);
+      for(const [index,block]of blocks.entries()){spend();indices.set(block.name,index);controls.push({kind:'join',inputs:[]});}
+      for(const [index,block]of blocks.entries())for(const op of block.instructions){spend();
+        if(op.name==='tsfg_program.receiver_create'||op.name==='tsfg_program.receiver_child')nodes.push({kind:'receiverFrame',control:index});
+        spend(op.successors.length);for(const successor of op.successors)controls[indices.get(successor)].inputs.push(index);}
+      if(!commonReceiverActivations({nodes,controls},spend))reasons.set(fn.id,'repeated-receiver-frame-activation');
+    }
     let scalar=fn.kind==='source'&&!fn.ownerType&&!fn.lexicalEnvironment&&!fn.activationEnvironment&&(fn.captures?.length??0)===0;
     const calls=new Set(),pending=[fn.body,...(fn.parameterInitialization?.steps??[])],views=[fn.returnType,...fn.parameters.map(row=>row.type),...(fn.bindings??[]).map(row=>row.type)];
     if(fn.ownerType)views.push(fn.ownerType);
     for(const capture of fn.captures??[]){spend();const slot=slots.get(capture.binding);check(slot,'return-origin-capture');views.push(slot.type);}
-    if(fn.kind==='construction-body')reasons.set(fn.id,'construction-frame-open');
+    if(fn.kind==='construction-body'&&normalized===null)reasons.set(fn.id,'construction-frame-open');
     while(pending.length){
       spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
       if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}
       if(typeof row.type==='string')views.push(row.type);
       if(typeof row.argumentType==='string')views.push(row.argumentType);
       if(['new','superConstruct','hostCall','functionReference','indirectCall','globalReference','globalTarget'].includes(row.kind))scalar=false;
-      if(row.kind==='new'||row.kind==='superConstruct')reasons.set(fn.id,'construction-frame-open');
+      if((row.kind==='new'||row.kind==='superConstruct')&&normalized===null)reasons.set(fn.id,'construction-frame-open');
       if(row.kind==='hostCall')reasons.set(fn.id,'host-return-open');
       if(row.kind==='indirectCall'){
         const allowed=callables.site(fn.id,row.range);spend(allowed.functions.length+1);
@@ -372,8 +410,11 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
       for(const key in row){spend(Math.ceil(key.length/8)+1);const child=row[key];if(child!==null&&typeof child==='object')pending.push(child);}
     }
     spend(views.length);for(const view of views){spend();const type=types.get(view);if(view==='void')continue;check(type,'return-origin-type');
-      if(['unknown','union'].includes(type.kind)||type.kind==='value'&&!storageProjection?.supportsValue(type.id))reasons.set(fn.id,'storage-projection-open');
+      if(['unknown','union'].includes(type.kind)&&!construction||type.kind==='value'&&!storageProjection?.supportsValue(type.id))reasons.set(fn.id,'storage-projection-open');
       if(!['scalar','void','null','undefined'].includes(type.kind))scalar=false;}
+    if(normalizedPlan)for(const block of normalizedPlan.graph.blocks)for(const op of block.instructions){spend();if(construction&&op.name==='tsfg_program.global_store')reasons.set(fn.id,'global-payload-transfer-open');if(op.name==='tsfg_program.invoke'){
+      const target=op.properties.function_id;if(functions.has(target))calls.add(target);else reasons.set(fn.id,'private-construction-call-open');}}
+    if(construction&&!reasons.has(fn.id)&&unavailableConstructorReturnOriginOperation(normalizedPlan,spend)!==null)reasons.set(fn.id,'construction-transfer-open');
     scalarLocal.set(fn.id,scalar);
     dependencies.set(fn.id,calls);
   }
