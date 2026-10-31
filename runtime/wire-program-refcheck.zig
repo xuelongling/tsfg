@@ -14,6 +14,7 @@ const table_refs = @import("wire-program-table-refs.zig");
 const layout_check = @import("wire-program-layout-check.zig");
 const ssa_check = @import("wire-program-ssa-check.zig");
 const identity_check = @import("wire-program-identity-check.zig");
+const fixed_publication_check = @import("wire-program-fixed-publication-check.zig");
 const targets_check = @import("wire-program-targets-check.zig");
 const borrow_check = @import("wire-program-borrow-check.zig");
 const effects_check = @import("wire-program-effects-check.zig");
@@ -61,9 +62,8 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     try layout_check.check(&c);
     try ssa_check.check(&c);
     try identity_check.check(&c);
-    // Effects currently has a Common consumer only. Structural checks alone
-    // cannot stand in for the complete pipeline in the other two modes.
-    if (program.tables.mode != .common) return error.WrongMode;
+    // Fixed interface semantics also owns the Common-only boundary.
+    try fixed_publication_check.checkInterfaces(&c);
     try host_artifact.check(&c, material);
     var actual: targets_check.Analysis = .{};
     defer actual.deinit(allocator);
