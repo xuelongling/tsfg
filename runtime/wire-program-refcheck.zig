@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
-// Checks references, layouts, CFG/SSA and derivable typed identities.
-// Success is not Source/effects/borrow validation, admission or permission to
+// Checks references, layouts, CFG/SSA, derivable typed identities and Common
+// actual targets, borrow and effects obligations through one shared analysis.
+// Source, complete fixed-publication/fixed-flow and implementation-bound Host
+// validation remain separate; success is not full admission or permission to
 // execute. This module neither reads bytes/JSON nor activates Runtime12.
 const std = @import("std");
 pub const model = @import("wire-program-model.zig");
@@ -11,7 +13,10 @@ const table_refs = @import("wire-program-table-refs.zig");
 const layout_check = @import("wire-program-layout-check.zig");
 const ssa_check = @import("wire-program-ssa-check.zig");
 const identity_check = @import("wire-program-identity-check.zig");
-pub const Error = context.Error;
+const targets_check = @import("wire-program-targets-check.zig");
+const borrow_check = @import("wire-program-borrow-check.zig");
+const effects_check = @import("wire-program-effects-check.zig");
+pub const Error = context.Error || effects_check.FinishError;
 const Context = context.Context;
 
 // One budget belongs to the complete traversal; helpers cannot refill it.
@@ -50,6 +55,19 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program) Error!
     try layout_check.check(&c);
     try ssa_check.check(&c);
     try identity_check.check(&c);
+    // Effects currently has a Common consumer only. Structural checks alone
+    // cannot stand in for the complete pipeline in the other two modes.
+    if (program.tables.mode != .common) return error.WrongMode;
+    var actual: targets_check.Analysis = .{};
+    defer actual.deinit(allocator);
+    var borrowing = borrow_check.Observations.init(&c);
+    defer borrowing.deinit();
+    var effects = try effects_check.Collector.init(&c);
+    defer effects.deinit();
+    const observers = [_]targets_check.facts.Observer{ borrowing.observer(), effects.observer() };
+    actual = try targets_check.analyze(&c, &observers);
+    try borrowing.finish();
+    try effects.finish();
     return model.format.max_work - c.remaining;
 }
 
