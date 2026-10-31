@@ -1,175 +1,31 @@
 // SPDX-License-Identifier: MIT
 // Common current-allocation relations, separate from raw abstract identity.
-// The actual transfer must supply roots, scopes and selected relation slots.
-// Today's actual-facts has no such facet: neither a weak ObjectId, its first
-// creation site nor an effect-origin token can manufacture a current root.
-// This module is a finite relation kernel and a negative-only replay observer;
-// its plain answers are not coverage, Source, borrow or execution admission.
+// The one actual transfer supplies roots, scopes and selected relation slots;
+// weak raw identity and effect-origin tokens cannot manufacture a current root.
+// Plain answers grant no Source, borrow or execution admission.
 const std = @import("std");
 const facts = @import("wire-program-actual-facts.zig");
+const data = @import("wire-program-actual-data.zig");
 const model = @import("wire-program-model.zig");
 const t = model.types;
 const Context = facts.Context;
 pub const Error = facts.Error;
 pub const Outcome = enum { proved, disproved, unresolved };
-pub const Root = enum(u32) { _ };
-pub const ScopeRef = enum(u16) { _ };
+pub const Root = data.Root;
+pub const ScopeRef = data.ScopeRef;
+pub const Value = data.Value;
+pub const OwnedValue = data.OwnedValue;
+pub const Node = data.Node;
+pub const Scope = data.Scope;
+pub const Slot = data.Slot;
+pub const Heap = data.Heap;
 const RootSet = std.AutoHashMapUnmanaged(Root, void);
 
-pub const Value = struct {
-    roots: []const Root = &.{},
-    known: bool = false,
-    unresolved: bool = false,
-    empty: bool = false,
-    number: ?i64 = null,
-};
-pub const OwnedValue = struct {
-    roots: std.ArrayListUnmanaged(Root) = .empty,
-    known: bool = false,
-    unresolved: bool = false,
-    empty: bool = false,
-    number: ?i64 = null,
-
-    pub fn view(self: *const OwnedValue) Value {
-        return .{ .roots = self.roots.items, .known = self.known, .unresolved = self.unresolved, .empty = self.empty, .number = self.number };
-    }
-    pub fn deinit(self: *OwnedValue, allocator: std.mem.Allocator) void { self.roots.deinit(allocator); self.* = .{}; }
-    pub fn clone(c: *Context, source: Value) Error!OwnedValue {
-        var result: OwnedValue = .{}; errdefer result.deinit(c.allocator);
-        _ = try result.join(c, source); return result;
-    }
-    pub fn join(self: *OwnedValue, c: *Context, incoming: Value) Error!bool {
-        try c.step();
-        const bottom = !self.unresolved and !self.empty and self.roots.items.len == 0;
-        const next_number = if (bottom) incoming.number else if (self.number == incoming.number) self.number else null;
-        const incoming_unresolved = incoming.unresolved or !incoming.known;
-        var changed = !self.known or (incoming_unresolved and !self.unresolved) or (incoming.empty and !self.empty) or self.number != next_number;
-        self.known = true; self.unresolved = self.unresolved or incoming_unresolved;
-        self.empty = self.empty or incoming.empty; self.number = next_number;
-        for (incoming.roots) |root| {
-            var position: usize = 0;
-            while (position < self.roots.items.len) : (position += 1) {
-                try c.step(); if (@intFromEnum(self.roots.items[position]) >= @intFromEnum(root)) break;
-            }
-            if (position < self.roots.items.len and self.roots.items[position] == root) continue;
-            // This is Common's existing current-allocation alternative bound.
-            try c.require(self.roots.items.len < 256); try c.charge(self.roots.items.len - position + 1);
-            try self.roots.insert(c.allocator, position, root); changed = true;
-        }
-        return changed;
-    }
-    pub fn age(self: *OwnedValue, c: *Context) Error!void {
-        try c.charge(self.roots.items.len + 1);
-        if (self.roots.items.len != 0) { self.roots.clearRetainingCapacity(); self.known = true; self.unresolved = true; }
-    }
-};
-
-// No relation roots can be recovered from the raw fallback. Even a strong raw
-// object is not, by itself, a selected current-version relation.
+// An existing same-transfer facet wins; missing evidence is interpreted only
+// by the shared raw fallback, never by reconstruction from a weak ID or site.
 pub fn fallback(c: *Context, raw: facts.Value) Error!Value {
-    try c.charge(raw.objects.len + raw.cells.len + raw.callables.len + 1);
-    var result = Value{ .known = true, .number = raw.number,
-        .unresolved = raw.unknown or raw.callable_unknown or raw.objects.len != 0 or raw.cells.len != 0 };
-    for (raw.callables) |pair| {
-        if (pair.environment == null) result.empty = true else result.unresolved = true;
-    }
-    result.empty = result.empty or (raw.tags.len != 0 and raw.objects.len == 0 and raw.callables.len == 0);
-    return result;
+    return facts.relation(c, raw);
 }
-
-// A root is an allocation VERSION supplied by the same transfer. reference is
-// only a raw alias family used to revoke scopes after roots have been aged.
-pub const Node = struct { scope: ScopeRef, reference: facts.ObjectId };
-pub const Scope = struct {
-    function: t.FunctionRef,
-    // Representative for reporting only. Distinct argument/heap contexts can
-    // describe one physical activation; no equality/uniqueness follows here.
-    activation: facts.ContextId,
-    blocked: bool = false,
-    hard: bool = false,
-};
-pub const Slot = union(enum) {
-    field: t.FieldRef,
-    element: ?i64,
-    length: void,
-    span_owner: void,
-    span_start: void,
-    span_length: void,
-    environment_slot: t.EnvironmentSlotRef,
-    parent: void,
-};
-const Slots = std.AutoHashMapUnmanaged(Slot, OwnedValue);
-pub const Heap = struct {
-    nodes: std.AutoHashMapUnmanaged(Root, Slots) = .empty,
-
-    pub fn deinit(self: *Heap, allocator: std.mem.Allocator) void {
-        var nodes_it = self.nodes.valueIterator();
-        while (nodes_it.next()) |slots| {
-            var values_it = slots.valueIterator(); while (values_it.next()) |stored| stored.deinit(allocator);
-            slots.deinit(allocator);
-        }
-        self.nodes.deinit(allocator); self.* = .{};
-    }
-    // The allocation transfer calls this for a real current birth, including
-    // an empty initialized object. It never infers a birth from a load/site.
-    pub fn reset(self: *Heap, c: *Context, root: Root) Error!void {
-        try c.step(); const found = try self.nodes.getOrPut(c.allocator, root);
-        if (found.found_existing) {
-            try c.charge(found.value_ptr.count());
-            var values_it = found.value_ptr.valueIterator(); while (values_it.next()) |stored| stored.deinit(c.allocator);
-            found.value_ptr.clearRetainingCapacity();
-        } else found.value_ptr.* = .empty;
-    }
-    pub fn get(self: *const Heap, root: Root, slot: Slot) ?Value {
-        const slots = self.nodes.getPtr(root) orelse return null;
-        const stored = slots.getPtr(slot) orelse return null; return stored.view();
-    }
-    pub fn clone(c: *Context, source: *const Heap) Error!Heap {
-        var result: Heap = .{}; errdefer result.deinit(c.allocator);
-        var nodes_it = source.nodes.iterator();
-        while (nodes_it.next()) |entry| {
-            try result.reset(c, entry.key_ptr.*);
-            var slots_it = entry.value_ptr.iterator();
-            while (slots_it.next()) |stored| {
-                try c.step(); var copied = try OwnedValue.clone(c, stored.value_ptr.view()); errdefer copied.deinit(c.allocator);
-                try result.nodes.getPtr(entry.key_ptr.*).?.put(c.allocator, stored.key_ptr.*, copied);
-            }
-        }
-        return result;
-    }
-    pub fn join(self: *Heap, c: *Context, source: *const Heap) Error!bool {
-        // Missing slots on either incoming path are unproved, not empty.
-        // Do not alias the two heaps: incoming is the other immutable path.
-        try c.step(); if (self == source) return false;
-        var changed = false; var nodes_it = source.nodes.iterator();
-        while (nodes_it.next()) |entry| {
-            try c.step(); const found = try self.nodes.getOrPut(c.allocator, entry.key_ptr.*);
-            if (!found.found_existing) {
-                found.value_ptr.* = .empty; changed = true;
-                var slots_it = entry.value_ptr.iterator();
-                while (slots_it.next()) |stored| {
-                    try c.step(); var copied = try OwnedValue.clone(c, stored.value_ptr.view()); errdefer copied.deinit(c.allocator);
-                    try found.value_ptr.put(c.allocator, stored.key_ptr.*, copied);
-                }
-                continue;
-            }
-            var old_it = found.value_ptr.iterator();
-            while (old_it.next()) |stored| {
-                try c.step(); if (!entry.value_ptr.contains(stored.key_ptr.*) and !stored.value_ptr.unresolved) { stored.value_ptr.unresolved = true; changed = true; }
-            }
-            var slots_it = entry.value_ptr.iterator();
-            while (slots_it.next()) |stored| {
-                try c.step(); const previous = try found.value_ptr.getOrPut(c.allocator, stored.key_ptr.*);
-                if (!previous.found_existing) {
-                    previous.value_ptr.* = .{};
-                    previous.value_ptr.* = try OwnedValue.clone(c, stored.value_ptr.view()); previous.value_ptr.unresolved = true; changed = true;
-                } else changed = (try previous.value_ptr.join(c, stored.value_ptr.view())) or changed;
-            }
-        }
-        return changed;
-    }
-};
-
 // This facet does not allocate raw objects, select calls, interpret an opcode,
 // or solve SSA. Its input directories are derived by the ONE actual transfer.
 // Root/Scope ordinals and root references must belong to those directories.

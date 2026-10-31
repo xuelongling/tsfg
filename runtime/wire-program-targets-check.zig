@@ -11,6 +11,8 @@ const Context = facts.Context;
 pub const Error = facts.Error;
 const V = facts.OwnedValue;
 const Heap = facts.Heap;
+const relation = @import("wire-program-region-holding.zig");
+const region_data = @import("wire-program-actual-data.zig");
 
 pub const Relation = enum { exact_closed, known_covered, derived, unresolved, unobserved };
 pub const TargetObservation = struct {
@@ -26,11 +28,14 @@ pub const Invocation = struct {
     root: bool,
     repeated: bool,
     activation: usize,
+    region_scope: ?relation.ScopeRef=null,
     unresolved: bool=false,
     arguments: []V,
     entry: Heap=.{},
     returned: V=.{}, thrown: V=.{},
     normal_heap: Heap=.{}, language_heap: Heap=.{},
+    entry_relations: relation.Heap=.{},
+    normal_relations: relation.Heap=.{}, language_relations: relation.Heap=.{},
     normal: bool=false, language: bool=false,
 };
 pub const Analysis = struct {
@@ -44,33 +49,40 @@ pub const Analysis = struct {
     observations: std.ArrayListUnmanaged(TargetObservation)=.empty,
     creation_storage: std.ArrayListUnmanaged(std.ArrayListUnmanaged(facts.Site))=.empty,
     unresolved: bool=false,
-    region_correlation_available: bool=false,
+    // These are derived current-version facts, not a coverage/admission bit.
+    // External/unscoped alternatives remain unresolved in each Value.
+    region_nodes: std.ArrayListUnmanaged(relation.Node)=.empty,
+    region_scopes: std.ArrayListUnmanaged(relation.Scope)=.empty,
 
     pub fn view(self: *const Analysis) facts.WorldView {
-        return .{.objects=self.objects.items,.cells=self.cells.items,.contexts=self.contexts.items};
+        return .{.objects=self.objects.items,.cells=self.cells.items,.contexts=self.contexts.items,
+            .region_nodes=self.region_nodes.items,.region_scopes=self.region_scopes.items};
     }
     pub fn deinit(self: *Analysis, allocator: std.mem.Allocator) void {
         for(self.invocations.items) |item| {
             for(item.arguments) |*value|value.deinit(allocator); allocator.free(item.arguments);
             item.entry.deinit(allocator); item.returned.deinit(allocator); item.thrown.deinit(allocator);
-            item.normal_heap.deinit(allocator); item.language_heap.deinit(allocator); allocator.destroy(item);
+            item.normal_heap.deinit(allocator); item.language_heap.deinit(allocator);
+            item.entry_relations.deinit(allocator); item.normal_relations.deinit(allocator); item.language_relations.deinit(allocator); allocator.destroy(item);
         }
         for(self.observations.items) |*row|row.known.deinit(allocator);
         for(self.creation_storage.items) |*sites|sites.deinit(allocator); self.creation_storage.deinit(allocator);
         self.objects.deinit(allocator); self.cells.deinit(allocator); self.invocations.deinit(allocator);
-        self.contexts.deinit(allocator); self.observations.deinit(allocator); self.*=.{};
+        self.contexts.deinit(allocator); self.observations.deinit(allocator);
+        self.region_nodes.deinit(allocator); self.region_scopes.deinit(allocator); self.*=.{};
     }
 };
 const State = struct {
     values: []V,
     heap: Heap=.{},
+    relations: relation.Heap=.{},
     fn init(c: *Context, count: usize) Error!State {
         try c.charge(count); const values=try c.allocator.alloc(V,count); @memset(values,.{}); return .{.values=values};
     }
     fn deinit(self: *State, c: *Context) void {
-        for(self.values) |*v|v.deinit(c.allocator); c.allocator.free(self.values); self.heap.deinit(c.allocator);
+        for(self.values) |*v|v.deinit(c.allocator); c.allocator.free(self.values); self.heap.deinit(c.allocator); self.relations.deinit(c.allocator);
     }
-    fn view(self: *const State) facts.StateView { return .{.values=.{.values=self.values},.heap=self.heap.view()}; }
+    fn view(self: *const State) facts.StateView { return .{.values=.{.values=self.values},.heap=.{.heap=&self.heap,.relations=&self.relations},.relations=&self.relations}; }
     fn read(self: *const State, r: t.RegisterRef) facts.Value { return self.values[@intFromEnum(r)].view(); }
     fn assign(self: *State, c: *Context, r: t.RegisterRef, value: facts.Value) Error!void {
         const replacement=try V.clone(c,value); const target=&self.values[@intFromEnum(r)];
@@ -79,14 +91,26 @@ const State = struct {
     fn clone(c: *Context, source: *const State) Error!State {
         var result=try State.init(c,source.values.len); errdefer result.deinit(c);
         for(source.values,0..) |value,i| { result.values[i]=try V.clone(c,value.view()); }
-        result.heap=try Heap.clone(c,source.heap.view()); return result;
+        result.heap=try Heap.clone(c,source.heap.view()); result.relations=try relation.Heap.clone(c,&source.relations); return result;
     }
     fn join(self: *State, c: *Context, incoming: *const State) Error!bool {
         var changed=try self.heap.join(c,incoming.heap.view());
+        changed=(try self.relations.join(c,&incoming.relations)) or changed;
         for(self.values,incoming.values) |*a,b| { if(try a.join(c,b.view()))changed=true; } return changed;
     }
 };
 const Engine = struct {
+    const RegionKey = struct { scope: relation.ScopeRef, activation: usize, reference: facts.ObjectId, copied: ?relation.Root=null };
+    const ScopeKey = struct { activation: usize, location: facts.Location, target: t.FunctionRef };
+    const RegionGraph = struct {
+        blocks: usize, registers: usize,
+        cuts: []bool, live: []bool, repeating: []bool,
+        acyclic: bool,
+        fn deinit(self: *RegionGraph, allocator: std.mem.Allocator) void {
+            allocator.free(self.cuts); allocator.free(self.live); allocator.free(self.repeating);
+        }
+    };
+    const CopyPair = struct { original: facts.ObjectId, copied: facts.ObjectId, parent: ?usize, field: ?t.FieldRef=null };
     const Activation = struct { function: t.FunctionRef, parent: ?usize, site: ?facts.Location, recursive: bool };
     const ObjectKey = struct {
         activation: usize, location: facts.Location, kind: facts.ObjectKind, @"type": ?t.TypeRef, environment: ?t.EnvironmentRef,
@@ -104,12 +128,240 @@ const Engine = struct {
     cell_activations: std.ArrayListUnmanaged(usize)=.empty,
     captured: std.AutoHashMapUnmanaged(struct { environment: t.EnvironmentRef, slot: t.EnvironmentSlotRef },V)=.{},
     primitives: std.StringHashMapUnmanaged(t.TypeRef)=.{},
+    region_keys: std.ArrayListUnmanaged(RegionKey)=.empty,
+    scope_keys: std.ArrayListUnmanaged(ScopeKey)=.empty,
+    region_graphs: std.AutoHashMapUnmanaged(t.FunctionRef,RegionGraph)=.empty,
+    recursive: std.AutoHashMapUnmanaged(t.FunctionRef,bool)=.empty,
 
     fn deinit(self: *Engine) void {
         self.initial_globals.deinit(self.c.allocator); self.activations.deinit(self.c.allocator);
         self.object_keys.deinit(self.c.allocator); self.cell_activations.deinit(self.c.allocator);
         var iterator=self.captured.valueIterator(); while(iterator.next()) |value|value.deinit(self.c.allocator); self.captured.deinit(self.c.allocator);
         self.primitives.deinit(self.c.allocator);
+        self.region_keys.deinit(self.c.allocator); self.scope_keys.deinit(self.c.allocator);
+        var graphs=self.region_graphs.valueIterator(); while(graphs.next()) |graph|graph.deinit(self.c.allocator);
+        self.region_graphs.deinit(self.c.allocator); self.recursive.deinit(self.c.allocator);
+    }
+    fn domain(self: *Engine) relation.Domain {
+        return .{.c=self.c,.nodes=self.result.region_nodes.items,.scopes=self.result.region_scopes.items};
+    }
+    fn setRegion(self: *Engine, value: *V, selected: region_data.Value) Error!void {
+        var replacement=try region_data.OwnedValue.clone(self.c,selected); errdefer replacement.deinit(self.c.allocator);
+        value.region.deinit(self.c.allocator); value.region=replacement;
+    }
+    fn prepareRegionGraph(self: *Engine, ref: t.FunctionRef) Error!*const RegionGraph {
+        try self.c.step();
+        if(self.region_graphs.getPtr(ref)) |cached|return cached;
+        const function=self.c.program.functions[@intFromEnum(ref)]; const n=function.blocks.len; const r=function.registers.len;
+        try self.c.charge(n*n*3+n*r*3+n*4+1);
+        const pred=try self.c.allocator.alloc(bool,n*n); defer self.c.allocator.free(pred); @memset(pred,false);
+        const dom=try self.c.allocator.alloc(bool,n*n); defer self.c.allocator.free(dom); @memset(dom,true); @memset(dom[0..n],false); dom[0]=true;
+        const defs=try self.c.allocator.alloc(bool,n*r); defer self.c.allocator.free(defs); @memset(defs,false);
+        const uses=try self.c.allocator.alloc(bool,n*r); defer self.c.allocator.free(uses); @memset(uses,false);
+        const live=try self.c.allocator.alloc(bool,n*r); errdefer self.c.allocator.free(live); @memset(live,false);
+        const cuts=try self.c.allocator.alloc(bool,n*n); errdefer self.c.allocator.free(cuts); @memset(cuts,false);
+        const repeating=try self.c.allocator.alloc(bool,n); errdefer self.c.allocator.free(repeating); @memset(repeating,false);
+        for(function.blocks,0..) |block,b| {
+            for(block.instructions) |op| {
+                try self.c.step();
+                if(op.data!=.@"br" and op.data!=.eh_route)for(op.operands) |reg| {
+                    try self.c.step(); const v=@intFromEnum(reg); if(!defs[b*r+v])uses[b*r+v]=true;
+                };
+                if(op.result) |reg|defs[b*r+@intFromEnum(reg)]=true;
+            }
+            const next=successors(block.instructions[block.instructions.len-1]);
+            for(next.blocks[0..next.count]) |to| { try self.c.step(); pred[@intFromEnum(to)*n+b]=true; }
+        }
+        var changed=true;
+        while(changed) {
+            changed=false;
+            for(1..n) |b|for(0..n) |d| {
+                try self.c.step(); var present=b==d;
+                if(!present) { present=true; for(0..n) |p| { try self.c.step(); if(pred[b*n+p])present=present and dom[p*n+d]; } }
+                if(dom[b*n+d]!=present) { dom[b*n+d]=present; changed=true; }
+            };
+        }
+        var cyclic=false;
+        for(0..n) |to|for(0..n) |from| {
+            try self.c.step(); if(pred[to*n+from] and dom[from*n+to]) { cuts[from*n+to]=true; cyclic=true; }
+        };
+        const degrees=try self.c.allocator.alloc(usize,n); defer self.c.allocator.free(degrees); @memset(degrees,0);
+        const queue=try self.c.allocator.alloc(usize,n); defer self.c.allocator.free(queue); var count: usize=0;
+        for(0..n) |to| { for(0..n) |from| { try self.c.step(); if(pred[to*n+from] and !cuts[from*n+to])degrees[to]+=1; } if(degrees[to]==0) { queue[count]=to; count+=1; } }
+        var cursor: usize=0;
+        while(cursor<count) : (cursor+=1) {
+            const from=queue[cursor];
+            for(0..n) |to| { try self.c.step(); if(!pred[to*n+from] or cuts[from*n+to])continue; degrees[to]-=1; if(degrees[to]==0) { queue[count]=to; count+=1; } }
+        }
+        const reducible=count==n;
+        if(!reducible)@memset(cuts,false) else if(cyclic) {
+            try self.c.charge(n*n);
+            const back=try self.c.allocator.dupe(bool,cuts); defer self.c.allocator.free(back);
+            const members=try self.c.allocator.alloc(bool,n); defer self.c.allocator.free(members);
+            var valid=true;
+            for(0..n) |head| {
+                try self.c.charge(n);
+                @memset(members,false); members[head]=true; count=0; cursor=0; var has_backedge=false;
+                for(0..n) |tail| { try self.c.step(); if(back[tail*n+head]) { has_backedge=true; if(!members[tail]) { members[tail]=true; queue[count]=tail; count+=1; } } }
+                if(!has_backedge)continue;
+                while(cursor<count) : (cursor+=1) {
+                    const b=queue[cursor]; try self.c.step(); if(!dom[b*n+head]) { valid=false; break; }
+                    for(0..n) |p| { try self.c.step(); if(pred[b*n+p] and !members[p]) { members[p]=true; queue[count]=p; count+=1; } }
+                }
+                if(!valid)break;
+                for(0..n) |from| { try self.c.step(); if(!members[from])continue; repeating[from]=true;
+                    const next=successors(function.blocks[from].instructions[function.blocks[from].instructions.len-1]);
+                    for(next.blocks[0..next.count]) |to| { try self.c.step(); if(!members[@intFromEnum(to)])cuts[from*n+@intFromEnum(to)]=true; }
+                }
+            }
+            if(!valid) { @memset(cuts,false); @memset(repeating,false); }
+        }
+        const next_live=try self.c.allocator.alloc(bool,r); defer self.c.allocator.free(next_live);
+        changed=true;
+        while(changed) {
+            changed=false; var b=n;
+            while(b!=0) { b-=1; const last=function.blocks[b].instructions[function.blocks[b].instructions.len-1]; const next=successors(last);
+                try self.c.charge(r); @memcpy(next_live,uses[b*r..][0..r]);
+                for(next.blocks[0..next.count]) |target| {
+                    const to=@intFromEnum(target);
+                    for(0..r) |v| { try self.c.step(); if(!live[to*r+v])continue; var translated=v; var parameter=false;
+                        for(function.blocks[to].parameters,0..) |ref_param,index| { try self.c.step(); if(@intFromEnum(ref_param)==v) {
+                            parameter=true; if(last.data==.@"br" or last.data==.eh_route)translated=@intFromEnum(last.operands[index]); break;
+                        } }
+                        if(parameter and last.data!=.@"br" and last.data!=.eh_route)continue;
+                        if(!defs[b*r+translated])next_live[translated]=true;
+                    }
+                }
+                for(next_live,0..) |wanted,reg| { try self.c.step(); if(live[b*r+reg]!=wanted) { live[b*r+reg]=wanted; changed=true; } }
+            }
+        }
+        try self.region_graphs.put(self.c.allocator,ref,.{.blocks=n,.registers=r,.cuts=cuts,.live=live,.repeating=repeating,.acyclic=reducible and !cyclic});
+        return self.region_graphs.getPtr(ref).?;
+    }
+    fn appendRegionCallees(self: *Engine, function: t.FunctionRef, pending: *std.ArrayListUnmanaged(t.FunctionRef)) Error!void {
+        const common=self.c.program.tables.mode.common;
+        for(self.c.program.functions[@intFromEnum(function)].blocks,0..) |block,b|for(block.instructions,0..) |op,index| {
+            try self.c.step(); switch(op.data) {
+                .eh_invoke => |call|try pending.append(self.c.allocator,call.callee),
+                .eh_invoke_indirect => {
+                    // This complete finite directory is only a conservative
+                    // cycle restriction. It never seeds the actual code set.
+                    for(common.closures.calls) |row| { try self.c.step(); if(row.function==function and @intFromEnum(row.block)==b and row.instruction==index) { try self.c.charge(row.targets.len); try pending.appendSlice(self.c.allocator,row.targets); } }
+                },
+                .common_method_invoke => |call|for(common.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| {
+                    try self.c.step();
+                    // The shared dispatch data permits null, but a Common
+                    // method arm must join an actual Method function/ABI.
+                    // Missing implementations are omitted, never null edges
+                    // that could silently certify a closed acyclic function.
+                    const callee=arm.target orelse return error.InvalidShape;
+                    try pending.append(self.c.allocator,callee);
+                },
+                else => {},
+            }
+        };
+    }
+    fn recursiveFunction(self: *Engine, function: t.FunctionRef) Error!bool {
+        try self.c.step();
+        if(self.recursive.get(function)) |cached|return cached;
+        var pending: std.ArrayListUnmanaged(t.FunctionRef)=.empty; defer pending.deinit(self.c.allocator);
+        var visited: std.AutoHashMapUnmanaged(t.FunctionRef,void)=.empty; defer visited.deinit(self.c.allocator);
+        try self.appendRegionCallees(function,&pending); var cursor: usize=0; var recursive=false;
+        while(cursor<pending.items.len) : (cursor+=1) {
+            try self.c.step(); const next=pending.items[cursor]; if(next==function) { recursive=true; break; }
+            const found=try visited.getOrPut(self.c.allocator,next); if(!found.found_existing)try self.appendRegionCallees(next,&pending);
+        }
+        try self.recursive.put(self.c.allocator,function,recursive); return recursive;
+    }
+    fn birth(self: *Engine, at: facts.Site, reference: facts.ObjectId, heap: *relation.Heap, copied: ?relation.Root, inherited: ?relation.ScopeRef) Error!region_data.OwnedValue {
+        var out=region_data.OwnedValue{.known=true}; errdefer out.deinit(self.c.allocator);
+        if(self.c.program.tables.mode!=.common) { out.unresolved=true; return out; }
+        const scope=inherited orelse self.info(at.context).region_scope orelse { out.unresolved=true; return out; };
+        if(copied==null and !(try self.prepareRegionGraph(at.location.function)).acyclic) { out.unresolved=true; return out; }
+        const key=RegionKey{.scope=scope,.activation=self.info(at.context).activation,.reference=reference,.copied=copied};
+        var selected: ?relation.Root=null;
+        for(self.region_keys.items,0..) |old,i| { try self.c.step(); if(std.meta.eql(old,key)) { selected=@enumFromInt(i); break; } }
+        if(selected==null) {
+            try self.c.require(!self.replay and self.region_keys.items.len<65536);
+            try self.region_keys.ensureUnusedCapacity(self.c.allocator,1); try self.result.region_nodes.ensureUnusedCapacity(self.c.allocator,1);
+            selected=@enumFromInt(self.region_keys.items.len); self.region_keys.appendAssumeCapacity(key);
+            self.result.region_nodes.appendAssumeCapacity(.{.scope=scope,.reference=reference}); self.changed=true;
+        }
+        try heap.reset(self.c,selected.?); try out.roots.append(self.c.allocator,selected.?); return out;
+    }
+    fn selectedReachable(self: *Engine, values: []const V, heap: *const relation.Heap) Error!relation.Heap {
+        var out: relation.Heap=.{}; errdefer out.deinit(self.c.allocator);
+        var pending: std.ArrayListUnmanaged(relation.Root)=.empty; defer pending.deinit(self.c.allocator);
+        for(values) |value| { const selected=try facts.relation(self.c,value.view()); try self.c.charge(selected.roots.len+1); try pending.appendSlice(self.c.allocator,selected.roots); }
+        var cursor: usize=0;
+        while(cursor<pending.items.len) : (cursor+=1) {
+            try self.c.step(); const root=pending.items[cursor]; if(out.nodes.contains(root))continue;
+            const slots=heap.nodes.getPtr(root) orelse continue; try out.reset(self.c,root);
+            var iterator=slots.iterator(); while(iterator.next()) |entry| {
+                try self.c.step(); var stored=try region_data.OwnedValue.clone(self.c,entry.value_ptr.view()); errdefer stored.deinit(self.c.allocator);
+                try pending.appendSlice(self.c.allocator,stored.roots.items); try self.c.charge(stored.roots.items.len);
+                try out.nodes.getPtr(root).?.put(self.c.allocator,entry.key_ptr.*,stored);
+            }
+        }
+        return out;
+    }
+    fn hardEscape(self: *Engine, value: facts.Value, heap: facts.HeapView) Error!void {
+        if(self.c.program.tables.mode!=.common)return;
+        var d=self.domain(); var observer=relation.HardEscapes.init(&d); try observer.observe(self.result.view(),value,heap);
+    }
+    fn escape(self: *Engine, value: facts.Value, state: *const State, hard: bool) Error!void {
+        if(self.c.program.tables.mode!=.common)return;
+        var d=self.domain(); try d.escape(try facts.relation(self.c,value),&state.relations,hard);
+        if(hard)try self.hardEscape(value,state.heap.view());
+    }
+    fn callScope(self: *Engine, at: facts.Site, target: t.FunctionRef, arguments: []const V, state: *const State, complete: bool) Error!?relation.ScopeRef {
+        if(self.c.program.tables.mode!=.common)return null;
+        const graph=try self.prepareRegionGraph(target);
+        if(!complete or !graph.acyclic or try self.recursiveFunction(target)) {
+            for(arguments) |argument| { try self.c.step(); try self.escape(argument.view(),state,true); } return null;
+        }
+        const parent=self.info(at.context); if(parent.region_scope) |scope|return scope;
+        var inherited: ?relation.ScopeRef=null; var uncertain=false;
+        for(arguments) |argument| {
+            const selected=try facts.relation(self.c,argument.view()); uncertain=uncertain or selected.unresolved;
+            for(selected.roots) |root| { try self.c.step(); const scope=self.result.region_nodes.items[@intFromEnum(root)].scope;
+                if(inherited) |old| { uncertain=uncertain or old!=scope; } else inherited=scope;
+            }
+        }
+        if(inherited!=null)return if(uncertain)null else inherited;
+        const caller=try self.prepareRegionGraph(at.location.function);
+        if(parent.repeated or try self.recursiveFunction(at.location.function) or !caller.repeating[@intFromEnum(at.location.block)])return null;
+        var any_cut=false; for(caller.cuts) |is_cut| { try self.c.step(); any_cut=any_cut or is_cut; } if(!any_cut)return null;
+        const key=ScopeKey{.activation=parent.activation,.location=at.location,.target=target};
+        for(self.scope_keys.items,0..) |old,i| { try self.c.step(); if(std.meta.eql(old,key))return @enumFromInt(i); }
+        try self.c.require(!self.replay and self.scope_keys.items.len<4096);
+        try self.scope_keys.ensureUnusedCapacity(self.c.allocator,1); try self.result.region_scopes.ensureUnusedCapacity(self.c.allocator,1);
+        const scope: relation.ScopeRef=@enumFromInt(self.scope_keys.items.len); self.scope_keys.appendAssumeCapacity(key);
+        self.result.region_scopes.appendAssumeCapacity(.{.function=at.location.function,.activation=at.context}); self.changed=true; return scope;
+    }
+    fn cut(self: *Engine, at: facts.Site, target: t.BlockRef, state: *State) Error!void {
+        if(self.c.program.tables.mode!=.common or self.result.region_nodes.items.len==0)return;
+        const graph=try self.prepareRegionGraph(at.location.function); const to=@intFromEnum(target);
+        if(!graph.cuts[@intFromEnum(at.location.block)*graph.blocks+to])return;
+        var demanded: std.ArrayListUnmanaged(region_data.Value)=.empty; defer demanded.deinit(self.c.allocator);
+        var globals: std.ArrayListUnmanaged(region_data.Value)=.empty; defer globals.deinit(self.c.allocator);
+        var roots: std.ArrayListUnmanaged(V)=.empty; defer roots.deinit(self.c.allocator);
+        for(state.values,0..) |value,index| {
+            try self.c.step(); if(!graph.live[to*graph.registers+index])continue;
+            try demanded.append(self.c.allocator,try facts.relation(self.c,value.view())); try roots.append(self.c.allocator,value);
+        }
+        var reached_heap=try self.reachable(roots.items,state.heap.view()); defer reached_heap.deinit(self.c.allocator);
+        var entries=reached_heap.view().iterator(); while(entries.next()) |entry| { try self.c.step(); try demanded.append(self.c.allocator,try facts.relation(self.c,entry.value)); }
+        var all=state.heap.entries.iterator(); while(all.next()) |entry| {
+            try self.c.step(); if(entry.key_ptr.*==.global)try globals.append(self.c.allocator,try facts.relation(self.c,entry.value_ptr.view()));
+        }
+        var d=self.domain();
+        // Only phi-assigned continuation-live values export a relation. The
+        // subsequent age affects every raw value, not only those arguments.
+        var no_registers: [0]region_data.OwnedValue=.{};
+        try d.cut(demanded.items,globals.items,&no_registers,&state.relations);
+        for(state.values) |*value|try value.region.age(self.c);
+        var raw=state.heap.entries.valueIterator(); while(raw.next()) |value|try value.region.age(self.c);
     }
     fn activationFor(self: *Engine, function: t.FunctionRef, parent: ?facts.Site) Error!usize {
         if(self.closureLegacy()) {
@@ -153,8 +405,8 @@ const Engine = struct {
         self.result.contexts.clearRetainingCapacity();
         for(self.result.invocations.items) |invocation| {
             try self.c.step(); try self.result.contexts.append(self.c.allocator,.{.function=invocation.function,
-                .arguments=.{.values=invocation.arguments},.entry=invocation.entry.view(),.root=invocation.root,
-                .repeated=invocation.repeated,.unresolved=invocation.unresolved});
+                .arguments=.{.values=invocation.arguments},.entry=.{.heap=&invocation.entry,.relations=&invocation.entry_relations},.root=invocation.root,
+                .repeated=invocation.repeated,.unresolved=invocation.unresolved,.region_scope=invocation.region_scope});
         }
     }
     fn observe(self: *Engine, at: facts.Site, called: facts.Value) Error!void {
@@ -222,10 +474,12 @@ const Engine = struct {
         }
         return result;
     }
-    fn contextFor(self: *Engine, function: t.FunctionRef, arguments: []const V, heap: facts.HeapView, parent: ?facts.Site, is_root: bool, repeated: bool) Error!facts.ContextId {
+    fn contextFor(self: *Engine, function: t.FunctionRef, arguments: []const V, heap: facts.HeapView, parent: ?facts.Site, is_root: bool, repeated: bool, versions: ?*const relation.Heap, scope: ?relation.ScopeRef) Error!facts.ContextId {
         const activation=try self.activationFor(function,parent);
         const summarized=repeated or self.activations.items[activation].recursive;
         var entry=try self.reachable(arguments,heap); defer entry.deinit(self.c.allocator);
+        var current: relation.Heap=.{}; defer current.deinit(self.c.allocator);
+        if(versions) |selected|current=try self.selectedReachable(arguments,selected);
         for(self.result.invocations.items,0..) |invocation,i| {
             if(self.closureLegacy() and invocation.function==function) {
                 try self.c.require(invocation.arguments.len==arguments.len);
@@ -247,10 +501,10 @@ const Engine = struct {
                 if(try invocation.entry.join(self.c,entry.view()))self.changed=true;
                 return @enumFromInt(i);
             }
-            try self.c.step(); if(invocation.function!=function or invocation.root!=is_root or invocation.repeated!=summarized or invocation.activation!=activation or invocation.arguments.len!=arguments.len)continue;
+            try self.c.step(); if(invocation.function!=function or invocation.root!=is_root or invocation.repeated!=summarized or invocation.activation!=activation or invocation.arguments.len!=arguments.len or invocation.region_scope!=scope)continue;
             var same=true;
             for(invocation.arguments,arguments) |a,b| { if(!try self.dataEqual(a.view(),b.view())) { same=false; break; } }
-            if(same and try self.heapEqual(invocation.entry.view(),entry.view())) {
+            if(same and try self.heapEqual(invocation.entry.view(),entry.view()) and try invocation.entry_relations.equal(self.c,&current)) {
                 if(self.replay) {
                     for(invocation.arguments,arguments) |a,b|try self.provenanceSubset(a.view(),b.view());
                     var iterator=entry.view().iterator(); while(iterator.next()) |slot| { try self.c.step(); try self.provenanceSubset(invocation.entry.view().get(slot.slot).?,slot.value); }
@@ -268,9 +522,10 @@ const Engine = struct {
         var copied_count: usize=0; errdefer for(values[0..copied_count]) |*value|value.deinit(self.c.allocator);
         for(arguments,0..) |value,i| { values[i]=try V.clone(self.c,value.view()); copied_count+=1; }
         var unresolved=false; for(values) |value| { try self.c.step(); unresolved=unresolved or value.unknown or value.callable_unknown; }
-        invocation.*=.{.function=function,.parent=parent,.root=is_root,.repeated=summarized,.activation=activation,.arguments=values,.entry=entry,.unresolved=unresolved}; entry=.{};
+        invocation.*=.{.function=function,.parent=parent,.root=is_root,.repeated=summarized,.activation=activation,.arguments=values,.entry=entry,.unresolved=unresolved,.region_scope=scope,.entry_relations=current}; entry=.{}; current=.{};
         self.result.unresolved=self.result.unresolved or unresolved;
         errdefer invocation.entry.deinit(self.c.allocator);
+        errdefer invocation.entry_relations.deinit(self.c.allocator);
         try self.result.invocations.append(self.c.allocator,invocation); self.changed=true; return @enumFromInt(self.result.invocations.items.len-1);
     }
     fn object(self: *Engine, at: facts.Site, kind: facts.ObjectKind, actual_type: ?t.TypeRef, environment: ?t.EnvironmentRef, weak: bool) Error!facts.ObjectId {
@@ -379,6 +634,10 @@ const Engine = struct {
     }
     fn completion(self: *Engine, at: facts.Site, kind: facts.Completion, value: facts.Value, state: *const State) Error!void {
         const invocation=self.info(at.context);
+        if(self.c.program.tables.mode==.common and kind!=.request_trap) {
+            var d=self.domain(); try d.returned(invocation.region_scope,invocation.root,try facts.relation(self.c,value),&state.relations);
+            if(invocation.root)try self.hardEscape(value,state.heap.view());
+        }
         if(kind!=.request_trap and !self.replay) {
             const normal=kind==.normal; const flag=if(normal)&invocation.normal else &invocation.language;
             if(!flag.*) { flag.*=true; self.changed=true; }
@@ -389,8 +648,10 @@ const Engine = struct {
             var extra=try V.clone(self.c,value); defer extra.deinit(self.c.allocator); try roots.append(self.c.allocator,extra);
             var heap=try self.reachable(roots.items,state.heap.view()); defer heap.deinit(self.c.allocator);
             if(try (if(normal)&invocation.normal_heap else &invocation.language_heap).join(self.c,heap.view()))self.changed=true;
+            var selected=try self.selectedReachable(roots.items,&state.relations); defer selected.deinit(self.c.allocator);
+            if(try (if(normal)&invocation.normal_relations else &invocation.language_relations).join(self.c,&selected))self.changed=true;
         }
-        if(self.emit)for(self.observers) |observer| { try self.c.step(); if(observer.completed) |f|try f(observer.client,self.c,self.result.view(),at,kind,value,state.heap.view()); };
+        if(self.emit)for(self.observers) |observer| { try self.c.step(); if(observer.completed) |f|try f(observer.client,self.c,self.result.view(),at,kind,value,.{.heap=&state.heap,.relations=&state.relations}); };
     }
     const Graph = struct {
         invocation: facts.ContextId,
@@ -411,6 +672,7 @@ const Engine = struct {
         if(!graph.collect)return;
         var incoming=try State.clone(self.c,state); var owns=true; defer if(owns)incoming.deinit(self.c);
         for(parameters,arguments) |parameter,argument|try incoming.assign(self.c,parameter,argument.view());
+        try self.cut(at,target,&incoming);
         const grew=if(graph.incoming[b]) |*old|try old.join(self.c,&incoming) else blk: {
             graph.incoming[b]=incoming; owns=false; break :blk true;
         };
@@ -450,20 +712,26 @@ const Engine = struct {
             _=try state.heap.put(self.c,entry.slot,entry.value,!weak);
         }
     }
-    fn invoke(self: *Engine, graph: *Graph, at: facts.Site, target: t.FunctionRef, arguments: []const V, state: *State, normal: ?t.BlockRef, language: ?t.BlockRef, weak: bool, output: *V) Error!void {
-        const callee=try self.contextFor(target,arguments,state.heap.view(),at,false,weak);
+    fn invoke(self: *Engine, graph: *Graph, at: facts.Site, target: t.FunctionRef, arguments: []const V, state: *State, normal: ?t.BlockRef, language: ?t.BlockRef, weak: bool, output: *V, complete: bool) Error!void {
+        const scope=try self.callScope(at,target,arguments,state,complete);
+        try self.c.charge(arguments.len); const passed=try self.c.allocator.alloc(V,arguments.len); @memset(passed,.{});
+        defer { for(passed) |*argument|argument.deinit(self.c.allocator); self.c.allocator.free(passed); }
+        for(arguments,passed) |argument,*out| { out.*=try V.clone(self.c,argument.view()); if(self.c.program.tables.mode==.common and scope==null)try out.region.age(self.c); }
+        const callee=try self.contextFor(target,passed,state.heap.view(),at,false,weak,if(scope!=null)&state.relations else null,scope);
         const next=facts.Location{.function=at.location.function,.block=normal orelse at.location.block,.instruction=if(normal==null)at.location.instruction+1 else 0};
         try self.notifyCall(at,callee,next,if(language) |b| .{.function=at.location.function,.block=b,.instruction=0} else null);
         const called=self.info(callee);
         if(normal) |b| {
             if(called.normal) {
                 var after=try State.clone(self.c,state); defer after.deinit(self.c); try self.overlay(&after,called.normal_heap.view());
+                try after.relations.overlay(self.c,&called.normal_relations);
                 var value=try self.copyOrigins(at,callee,arguments,called.returned.view()); defer value.deinit(self.c.allocator);
                 const count=self.c.program.functions[@intFromEnum(at.location.function)].blocks[@intFromEnum(b)].parameters.len;
                 try self.edge(graph,at,b,&after,if(count==0)&.{} else @as([]const V, &.{value}));
             }
             if(called.language) {
                 var after=try State.clone(self.c,state); defer after.deinit(self.c); try self.overlay(&after,called.language_heap.view());
+                try after.relations.overlay(self.c,&called.language_relations);
                 var value=try self.copyOrigins(at,callee,arguments,called.thrown.view()); defer value.deinit(self.c.allocator);
                 try self.edge(graph,at,language.?,&after,&.{value});
             }
@@ -473,19 +741,23 @@ const Engine = struct {
             // according to a callee's current completion approximation.
             var value=try self.copyOrigins(at,callee,arguments,called.returned.view()); defer value.deinit(self.c.allocator);
             _=try output.join(self.c,value.view()); try self.overlay(state,called.normal_heap.view());
+            try state.relations.overlay(self.c,&called.normal_relations);
         }
     }
     fn havoc(self: *Engine, context: facts.ContextId, state: *State) Error!void {
         // Without caller code a call may mutate every reachable argument and
         // global. Preserve object identity/weakness, not invented field facts.
+        for(state.values) |value| { try self.c.step(); try self.escape(value.view(),state,true); }
         var present: V=.{}; defer present.deinit(self.c.allocator);
         var slots=state.heap.view().iterator(); while(slots.next()) |entry| { try self.c.step();
+            try self.escape(entry.value,state,true);
             switch(entry.slot) {
                 inline .field,.element,.environment_slot,.capture => |v| { _=try present.object(self.c,v.object); },
                 .length,.span_owner,.span_start,.span_length,.parent => |v| { _=try present.object(self.c,v); },
                 .cell,.global => {},
             }
         }
+        state.relations.deinit(self.c.allocator);
         var iterator=state.heap.entries.valueIterator();
         while(iterator.next()) |value| { try self.c.step(); value.deinit(self.c.allocator); value.*=try V.clone(self.c,self.unknown(context)); }
         for(present.objects.items) |id| { try self.c.step();
@@ -581,13 +853,12 @@ const Engine = struct {
         var result=try self.literal(id); errdefer result.deinit(self.c.allocator);
         _=try result.object(self.c,try self.object(at,kind,id,null,weak)); return result;
     }
-    fn copied(self: *Engine, at: facts.Site, input: facts.Value, state: *State, weak: bool) Error!V {
+    fn copyValue(self: *Engine, at: facts.Site, input: facts.Value, state: *State, weak: bool) Error!V {
         var result=try V.clone(self.c,input); errdefer result.deinit(self.c.allocator); result.objects.clearRetainingCapacity();
         // An inline value copy copies its value children, not references or
         // closure environments. A work list handles shared/cyclic references
         // without reinterpreting a site as a runtime instance.
-        const Pair=struct { original: facts.ObjectId, copied: facts.ObjectId, parent: ?usize };
-        var copies: std.ArrayListUnmanaged(Pair)=.empty; defer copies.deinit(self.c.allocator);
+        var copies: std.ArrayListUnmanaged(CopyPair)=.empty; defer copies.deinit(self.c.allocator);
         for(input.objects) |id| { try self.c.step(); const old=self.result.objects.items[@intFromEnum(id)];
             if(old.kind!=.value) { _=try result.object(self.c,id); continue; }
             const copy_id=try self.objectKey(at,.{.activation=self.info(at.context).activation,.location=at.location,.kind=.value,.@"type"=old.@"type",.environment=null,.copy_source=id},weak or old.weak or input.objects.len>1);
@@ -608,12 +879,138 @@ const Engine = struct {
                 const child_copy=try self.objectKey(at,.{.activation=self.info(at.context).activation,.location=at.location,.kind=.value,.@"type"=child_info.@"type",.environment=null,
                     .copy_source=child,.copy_parent=pair.copied,.copy_field=entry.slot.field.field},weak or child_info.weak or entry.value.objects.len>1);
                 if(!self.replay)self.result.objects.items[@intFromEnum(child_copy)].origin=.{.copy=.{.site=at,.original=child}};
-                _=try stored.object(self.c,child_copy); try copies.append(self.c.allocator,.{.original=child,.copied=child_copy,.parent=cursor});
+                _=try stored.object(self.c,child_copy); try copies.append(self.c.allocator,.{.original=child,.copied=child_copy,.parent=cursor,.field=entry.slot.field.field});
             }
             try entries.append(self.c.allocator,.{.slot=.{.field=.{.object=pair.copied,.field=entry.slot.field.field}},.value=stored});
         } }
         for(entries.items) |entry|_=try state.heap.put(self.c,entry.slot,entry.value.view(),!self.result.objects.items[@intFromEnum(entry.slot.field.object)].weak);
+        if(self.c.program.tables.mode==.common) {
+            var selected=try self.copyRegion(at,try facts.relation(self.c,input),copies.items,null,null,state,0); defer selected.deinit(self.c.allocator);
+            try self.setRegion(&result,selected.view());
+        }
         return result;
+    }
+    fn projectRegion(self: *Engine, selected: *V, source: facts.Value) Error!void {
+        if(self.c.program.tables.mode!=.common)return;
+        const original=try facts.relation(self.c,source);
+        var projected=region_data.OwnedValue{.known=true,.unresolved=original.unresolved,.empty=original.empty,.number=original.number}; defer projected.deinit(self.c.allocator);
+        for(original.roots) |root| { try self.c.step(); const reference=self.result.region_nodes.items[@intFromEnum(root)].reference;
+            for(selected.objects.items) |object_id| { try self.c.step(); if(reference==object_id) { const one=[_]relation.Root{root}; _=try projected.join(self.c,.{.known=true,.roots=&one}); break; } }
+        }
+        if(selected.objects.items.len!=0 and projected.roots.items.len==0)projected.unresolved=true;
+        try self.setRegion(selected,projected.view());
+    }
+    fn currentLoad(self: *Engine, receiver: facts.Value, slot: relation.Slot, state: *const State) Error!region_data.OwnedValue {
+        var d=self.domain(); return d.load(try facts.relation(self.c,receiver),slot,&state.relations);
+    }
+    fn currentStore(self: *Engine, receiver: facts.Value, slot: relation.Slot, incoming: facts.Value, state: *State) Error!void {
+        var d=self.domain(); try d.store(try facts.relation(self.c,receiver),slot,try facts.relation(self.c,incoming),&state.relations,true);
+        // Aged aliases carry no selected roots, but can still revoke the birth
+        // family. They never recover those roots or make a weak ID strong.
+        const selected=try facts.relation(self.c,receiver);
+        if(selected.unresolved or selected.empty or selected.roots.len==0)try self.hardEscape(incoming,state.heap.view());
+    }
+    fn currentOwners(self: *Engine, receiver: facts.Value, state: *const State) Error!region_data.OwnedValue {
+        const selected=try facts.relation(self.c,receiver);
+        var out=region_data.OwnedValue{.known=true,.unresolved=selected.unresolved or selected.empty,.empty=selected.empty}; errdefer out.deinit(self.c.allocator);
+        for(selected.roots) |root| { try self.c.step(); const node=self.result.region_nodes.items[@intFromEnum(root)]; const object_info=self.result.objects.items[@intFromEnum(node.reference)];
+            if(object_info.kind==.array) { const one=[_]relation.Root{root}; _=try out.join(self.c,.{.known=true,.roots=&one}); }
+            else if(object_info.kind==.read_span) {
+                if(state.relations.get(root,.span_owner)) |owner|_=try out.join(self.c,owner) else out.unresolved=true;
+            } else out.unresolved=true;
+        }
+        if(selected.roots.len==0)out.unresolved=true; return out;
+    }
+    fn copyRegion(self: *Engine, at: facts.Site, original: region_data.Value, copies: []const CopyPair, parent: ?usize, field: ?t.FieldRef, state: *State, depth: usize) Error!region_data.OwnedValue {
+        try self.c.require(depth<=32); try self.c.step();
+        var out=region_data.OwnedValue{.known=original.known,.unresolved=original.unresolved,.empty=original.empty,.number=original.number}; errdefer out.deinit(self.c.allocator);
+        for(original.roots) |old_root| {
+            try self.c.step(); const node=self.result.region_nodes.items[@intFromEnum(old_root)];
+            if(self.result.objects.items[@intFromEnum(node.reference)].kind!=.value) { const one=[_]relation.Root{old_root}; _=try out.join(self.c,.{.known=true,.roots=&one}); continue; }
+            var selected: ?usize=null;
+            for(copies,0..) |pair,i| { try self.c.step(); if(pair.original==node.reference and pair.parent==parent and pair.field==field) { selected=i; break; } }
+            if(selected==null) { out.unresolved=true; continue; }
+            var fresh=try self.birth(at,copies[selected.?].copied,&state.relations,old_root,node.scope); defer fresh.deinit(self.c.allocator);
+            _=try out.join(self.c,fresh.view()); if(fresh.roots.items.len==0)continue;
+            const slots=state.relations.nodes.getPtr(old_root) orelse { out.unresolved=true; continue; };
+            // Copy before inserting: another root can grow the outer map.
+            var captured: relation.Heap=.{}; defer captured.deinit(self.c.allocator); try captured.reset(self.c,old_root);
+            var iterator=slots.iterator(); while(iterator.next()) |entry| {
+                try self.c.step(); var child=try region_data.OwnedValue.clone(self.c,entry.value_ptr.view()); errdefer child.deinit(self.c.allocator);
+                try captured.nodes.getPtr(old_root).?.put(self.c.allocator,entry.key_ptr.*,child);
+            }
+            var source=captured.nodes.getPtr(old_root).?.iterator(); while(source.next()) |entry| {
+                try self.c.step(); var child=if(entry.key_ptr.*==.field)
+                    try self.copyRegion(at,entry.value_ptr.view(),copies,selected,entry.key_ptr.field,state,depth+1)
+                    else try region_data.OwnedValue.clone(self.c,entry.value_ptr.view());
+                errdefer child.deinit(self.c.allocator);
+                if(entry.key_ptr.*==.field) {
+                    if(state.heap.entries.getPtr(.{.field=.{.object=copies[selected.?].copied,.field=entry.key_ptr.field}})) |raw|try self.setRegion(raw,child.view());
+                }
+                try state.relations.nodes.getPtr(fresh.roots.items[0]).?.put(self.c.allocator,entry.key_ptr.*,child);
+            }
+        }
+        return out;
+    }
+    fn operationRegion(self: *Engine, at: facts.Site, state: *State, op: ins.Instruction, arguments: []const V, value: *V) Error!void {
+        if(self.c.program.tables.mode!=.common)return;
+        switch(op.data) {
+            .environment_alloc,.eh_construct,.common_typed_array_create,.domain_read_span => {
+                if(value.objects.items.len!=1)return error.InvalidShape;
+                var current=try self.birth(at,value.objects.items[0],&state.relations,null,null); defer current.deinit(self.c.allocator);
+                try self.setRegion(value,current.view());
+                switch(op.data) {
+                    .environment_alloc => { if(arguments.len!=0)try self.currentStore(value.view(),.parent,arguments[0].view(),state); },
+                    .common_typed_array_create => {
+                        for(arguments,0..) |argument,index| { try self.c.step(); try self.currentStore(value.view(),.{.element=@intCast(index)},argument.view(),state); }
+                        const length=facts.Value{.number=@intCast(arguments.len),.region=.{.known=true,.empty=true,.number=@intCast(arguments.len)}};
+                        try self.currentStore(value.view(),.length,length,state);
+                    },
+                    .domain_read_span => {
+                        try self.currentStore(value.view(),.span_owner,arguments[0].view(),state);
+                        try self.currentStore(value.view(),.span_start,arguments[1].view(),state);
+                        try self.currentStore(value.view(),.span_length,arguments[2].view(),state);
+                    },
+                    else => {},
+                }
+            },
+            .environment_parent => { var loaded=try self.currentLoad(arguments[0].view(),.parent,state); defer loaded.deinit(self.c.allocator); try self.setRegion(value,loaded.view()); },
+            .environment_load => |slot| { var loaded=try self.currentLoad(arguments[0].view(),.{.environment_slot=slot.slot},state); defer loaded.deinit(self.c.allocator); try self.setRegion(value,loaded.view()); },
+            inline .environment_init,.environment_store => |slot|try self.currentStore(arguments[0].view(),.{.environment_slot=slot.slot},arguments[1].view(),state),
+            .function_make => { try self.setRegion(value,if(arguments.len==0).{.known=true,.empty=true} else try facts.relation(self.c,arguments[0].view())); },
+            .global_store => try self.escape(arguments[0].view(),state,true),
+            .domain_field_read => |read| {
+                var selected=region_data.OwnedValue{.known=true,.unresolved=arguments[0].unknown}; defer selected.deinit(self.c.allocator);
+                for(arguments[0].objects.items) |object_id| {
+                    try self.c.step(); const member=try self.fieldFor(self.result.objects.items[@intFromEnum(object_id)].@"type".?,read.member);
+                    var receiver: V=.{}; defer receiver.deinit(self.c.allocator); _=try receiver.object(self.c,object_id); try self.projectRegion(&receiver,arguments[0].view());
+                    var loaded=try self.currentLoad(receiver.view(),.{.field=member},state); defer loaded.deinit(self.c.allocator); _=try selected.join(self.c,loaded.view());
+                }
+                if(arguments[0].objects.items.len==0)selected.unresolved=true; try self.setRegion(value,selected.view());
+            },
+            .domain_field_store => |write| {
+                for(arguments[0].objects.items) |object_id| { try self.c.step(); const member=try self.fieldFor(self.result.objects.items[@intFromEnum(object_id)].@"type".?,write.member); try self.currentStore(arguments[0].view(),.{.field=member},arguments[1].view(),state); }
+            },
+            .eh_field_initialize => |write|try self.currentStore(arguments[0].view(),.{.field=write.field},arguments[1].view(),state),
+            .domain_array_read,.domain_array_store,.domain_array_resize => {
+                var owners_current=try self.currentOwners(arguments[0].view(),state); defer owners_current.deinit(self.c.allocator);
+                var receiver: V=.{}; defer receiver.deinit(self.c.allocator); try self.setRegion(&receiver,owners_current.view());
+                if(op.data==.domain_array_store)try self.currentStore(receiver.view(),.{.element=arguments[1].number},arguments[2].view(),state)
+                else if(op.data==.domain_array_resize)try self.currentStore(receiver.view(),.length,arguments[1].view(),state)
+                else {
+                    var index=arguments[1].number;
+                    const source=try facts.relation(self.c,arguments[0].view());
+                    for(source.roots) |root| { try self.c.step(); if(self.result.objects.items[@intFromEnum(self.result.region_nodes.items[@intFromEnum(root)].reference)].kind==.read_span)index=null; }
+                    var d=self.domain(); var loaded=try d.load(owners_current.view(),.{.element=index},&state.relations); defer loaded.deinit(self.c.allocator);
+                    loaded.empty=true;
+                    if(index==null)loaded.unresolved=true;
+                    for(owners_current.roots.items) |root| { try self.c.step(); if(state.relations.get(root,.{.element=null})) |wildcard| { _=try loaded.join(self.c,wildcard); loaded.unresolved=true; } }
+                    try self.setRegion(value,loaded.view());
+                }
+            },
+            else => {},
+        }
+        if(!value.view().bottom() and !value.region.known)try self.setRegion(value,try facts.relation(self.c,value.view()));
     }
     fn operate(self: *Engine, graph: *Graph, at: facts.Site, state: *State) Error!bool {
         const function=self.c.program.functions[@intFromEnum(at.location.function)];
@@ -639,7 +1036,7 @@ const Engine = struct {
                 if(try self.is(data.actual_type,"function") or try self.is(data.actual_type,"callable"))value.callable_unknown=true;
             },
             .domain_view,.domain_refine,.eh_pack,.eh_presence_widen,.eh_carrier,.eh_assertion => value=try V.clone(self.c,arguments[0].view()),
-            .domain_copy => value=try self.copied(at,arguments[0].view(),state,weak),
+            .domain_copy => value=try self.copyValue(at,arguments[0].view(),state,weak),
             .@"string_constant" => value=try self.literal(try self.primitive("string")),
             .@"string_concat",.@"string_slice" => value=try self.literal(try self.primitive("string")),
             .@"string_length",.@"string_codeunit",.@"string_compare",.@"convert_checked",.@"convert_wrap",.@"reinterpret" => {
@@ -701,7 +1098,8 @@ const Engine = struct {
                 // verified external binding. Do not seed actual return tags
                 // or heap purity from that claim. The effects consumer may
                 // separately discharge its fixed Counter metadata subset.
-                _=data; value=try V.clone(self.c,self.unknown(at.context)); try self.origin(&value,at.context,.unknown); try self.havoc(at.context,state);
+                _=data; for(arguments) |argument| { try self.c.step(); try self.escape(argument.view(),state,true); }
+                value=try V.clone(self.c,self.unknown(at.context)); try self.origin(&value,at.context,.unknown); try self.havoc(at.context,state);
             },
             .environment_alloc => |data| {
                 const id=try self.object(at,.environment,null,data.environment,weak); _=try value.object(self.c,id);
@@ -830,6 +1228,7 @@ const Engine = struct {
             // uses the same argument marshalling and completion projection.
             .@"call",.function_call,.domain_method_call,.eh_invoke,.eh_invoke_indirect,.common_method_invoke,.domain_construct,.domain_super,.domain_initialize_fields,.domain_field_define,.domain_field_initialize => try self.calls(graph,at,state,op,arguments,weak,&value,&continues),
         }
+        try self.operationRegion(at,state,op,arguments,&value);
         if(op.result) |result|try state.assign(self.c,result,value.view());
         try self.callback(false,at,state);
         if(continues)try self.notifyEdge(at,.{.function=at.location.function,.block=at.location.block,.instruction=at.location.instruction+1});
@@ -862,7 +1261,7 @@ const Engine = struct {
         if(code==.@"call" or code==.eh_invoke) {
             const target=if(code==.@"call")op.data.@"call".callee else op.data.eh_invoke.callee;
             var called: V=.{}; defer called.deinit(self.c.allocator); _=try called.callable(self.c,.{.code=target,.environment=null}); try self.observe(at,called.view());
-            try self.invoke(graph,at,target,arguments,state,if(code==.eh_invoke)op.data.eh_invoke.normal else null,if(code==.eh_invoke)op.data.eh_invoke.exceptional else null,weak,value);
+            try self.invoke(graph,at,target,arguments,state,if(code==.eh_invoke)op.data.eh_invoke.normal else null,if(code==.eh_invoke)op.data.eh_invoke.exceptional else null,weak,value,true);
             if(code==.eh_invoke)continues.*=false; return;
         }
         if(code==.function_call or code==.eh_invoke_indirect) {
@@ -891,13 +1290,14 @@ const Engine = struct {
                     if(environment) |env| {
                         if(pair.environment) |id| {
                             const object_info=self.result.objects.items[@intFromEnum(id)]; try self.c.require(object_info.kind==.environment and object_info.environment==env);
-                            var actual: V=.{}; errdefer actual.deinit(self.c.allocator); _=try actual.object(self.c,id); passed.appendAssumeCapacity(actual);
+                            var actual: V=.{}; errdefer actual.deinit(self.c.allocator); _=try actual.object(self.c,id);
+                            try self.projectRegion(&actual,input); passed.appendAssumeCapacity(actual);
                         } else complete=false;
                     } else try self.c.require(pair.environment==null);
                     for(arguments[1..]) |argument|passed.appendAssumeCapacity(try V.clone(self.c,argument.view()));
                 }
                 if(!complete) { self.info(at.context).unresolved=true; self.result.unresolved=true; continue; }
-                try self.invoke(graph,at,pair.code,passed.items,state,if(code==.eh_invoke_indirect)op.data.eh_invoke_indirect.normal else null,if(code==.eh_invoke_indirect)op.data.eh_invoke_indirect.exceptional else null,weak,value);
+                try self.invoke(graph,at,pair.code,passed.items,state,if(code==.eh_invoke_indirect)op.data.eh_invoke_indirect.normal else null,if(code==.eh_invoke_indirect)op.data.eh_invoke_indirect.exceptional else null,weak,value,!input.unknown and !input.callable_unknown);
             }
             if(input.unknown or input.callable_unknown) {
                 if(code==.eh_invoke_indirect)try self.unknownInvoke(graph,at,state,op.data.eh_invoke_indirect.normal,op.data.eh_invoke_indirect.exceptional)
@@ -932,9 +1332,10 @@ const Engine = struct {
                 for(arguments[0..count],passed) |argument,*out|out.*=try V.clone(self.c,argument.view());
                 passed[0].tags.clearRetainingCapacity(); _=try passed[0].tag(self.c,tag); passed[0].objects.clearRetainingCapacity();
                 for(input.objects) |id| { try self.c.step(); if(self.result.objects.items[@intFromEnum(id)].@"type"==tag)_=try passed[0].object(self.c,id); }
+                try self.projectRegion(&passed[0],input);
                 if(passed[0].objects.items.len==0) { called.unknown=true; self.result.unresolved=true; continue; }
                 _=try called.callable(self.c,.{.code=target,.environment=null});
-                try self.invoke(graph,at,target,passed,state,if(code==.common_method_invoke)op.data.common_method_invoke.normal else null,if(code==.common_method_invoke)op.data.common_method_invoke.exceptional else null,weak,value);
+                try self.invoke(graph,at,target,passed,state,if(code==.common_method_invoke)op.data.common_method_invoke.normal else null,if(code==.common_method_invoke)op.data.common_method_invoke.exceptional else null,weak,value,!input.unknown);
             }
             try self.observe(at,called.view());
             if(input.unknown or (input.tags.len!=0 and called.callables.items.len==0)) {
@@ -951,9 +1352,9 @@ const Engine = struct {
                 defer { for(passed) |*argument|argument.deinit(self.c.allocator); self.c.allocator.free(passed); }
                 passed[0]=try V.clone(self.c,value.view()); for(arguments,passed[1..]) |argument,*out|out.*=try V.clone(self.c,argument.view());
                 var discarded: V=.{}; defer discarded.deinit(self.c.allocator);
-                try self.invoke(graph,at,legacy.members.constructions[@intFromEnum(data.construction)].function,passed,state,null,null,weak,&discarded);
+                try self.invoke(graph,at,legacy.members.constructions[@intFromEnum(data.construction)].function,passed,state,null,null,weak,&discarded,true);
             },
-            .domain_super => |data| try self.invoke(graph,at,legacy.members.constructions[@intFromEnum(data.construction)].function,arguments,state,null,null,weak,value),
+            .domain_super => |data| try self.invoke(graph,at,legacy.members.constructions[@intFromEnum(data.construction)].function,arguments,state,null,null,weak,value,true),
             .domain_initialize_fields => {}, // The following define/init SSA operations carry the actual values.
             .domain_field_define => |data| {
                 var absent=try self.literal(try self.primitive("undefined")); defer absent.deinit(self.c.allocator);
@@ -1002,6 +1403,7 @@ const Engine = struct {
         incoming[0]=entry: {
             var state=try State.init(self.c,function.registers.len); errdefer state.deinit(self.c);
             state.heap=try Heap.clone(self.c,invocation.entry.view()); try self.c.require(invocation.arguments.len==function.blocks[0].parameters.len);
+            state.relations=try relation.Heap.clone(self.c,&invocation.entry_relations);
             for(function.blocks[0].parameters,invocation.arguments) |reg,argument| {
                 try state.assign(self.c,reg,argument.view()); try self.origin(&state.values[@intFromEnum(reg)],context,.{.parameter=reg});
             }
@@ -1029,7 +1431,7 @@ const Engine = struct {
             }
         }
     }
-    fn root(self: *Engine, target: t.FunctionRef) Error!void {
+    fn seedRoot(self: *Engine, target: t.FunctionRef) Error!void {
         const function=self.c.program.functions[@intFromEnum(target)]; const parameters=function.blocks[0].parameters;
         try self.c.charge(parameters.len+1); const arguments=try self.c.allocator.alloc(V,parameters.len); @memset(arguments,.{});
         defer { for(arguments) |*argument|argument.deinit(self.c.allocator); self.c.allocator.free(arguments); }
@@ -1046,7 +1448,7 @@ const Engine = struct {
                 },
             }
         }
-        const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false);
+        const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false,null,null);
         if(parameters.len!=0 and self.c.program.tables.mode==.common) { self.info(id).unresolved=true; self.result.unresolved=true; }
     }
     fn initialize(self: *Engine) Error!void {
@@ -1062,20 +1464,20 @@ const Engine = struct {
                 for(self.c.program.functions,0..) |function,i| {
                     try self.c.step(); const ref: t.FunctionRef=@enumFromInt(i); var is_root=function.role==.module_initializer;
                     for(v.closures.functions) |row| { try self.c.step(); if(row.function==ref) { is_root=row.parent==null; break; } }
-                    if(is_root)try self.root(ref);
+                    if(is_root)try self.seedRoot(ref);
                 }
                 // Global initial values are missing external actual facts as
                 // well. A declared type or capacity is not their actual seed.
                 if(v.modules.globals.len!=0)self.result.unresolved=true;
             },
-            .exception => |v| for(self.c.program.functions,0..) |function,i| { try self.c.step(); if(function.role==.module_initializer or v.exceptions.functions[i].parent==null)try self.root(@enumFromInt(i)); },
+            .exception => |v| for(self.c.program.functions,0..) |function,i| { try self.c.step(); if(function.role==.module_initializer or v.exceptions.functions[i].parent==null)try self.seedRoot(@enumFromInt(i)); },
             .legacy => |v| {
                 for(v.modules.globals,0..) |_,i| { try self.c.step(); _=try self.initial_globals.put(self.c,.{.global=@enumFromInt(i)},.{.unknown=true},true); }
                 if(self.closureLegacy()) {
-                    for(v.closures.functions) |row| { try self.c.step(); if(row.parent==null)try self.root(row.function); }
+                    for(v.closures.functions) |row| { try self.c.step(); if(row.parent==null)try self.seedRoot(row.function); }
                 } else {
-                    for(v.modules.initialization) |function| { try self.c.step(); try self.root(function); }
-                    for(v.modules.roots) |row| { try self.c.step(); try self.root(row.function); }
+                    for(v.modules.initialization) |function| { try self.c.step(); try self.seedRoot(function); }
+                    for(v.modules.roots) |row| { try self.c.step(); try self.seedRoot(row.function); }
                 }
             },
         }
@@ -1117,7 +1519,7 @@ const Engine = struct {
 // Preconditions: the same Context has completed typed references, layouts,
 // SSA and derivable identities. This returns passive, owning analysis facts,
 // not an admission token. It neither parses nor loads bytes or executes code.
-// Missing external actual values/region correlation remain explicit; known
+// Missing external actual values and unscoped relations remain explicit; known
 // Common code containment does not validate fixed-flow/HSC or full capacity.
 // One fixed point and one final replay serve every supplied consumer.
 pub fn analyze(c: *Context, observers: []const facts.Observer) Error!Analysis {
@@ -1129,7 +1531,11 @@ pub fn analyze(c: *Context, observers: []const facts.Observer) Error!Analysis {
         if(!engine.changed)break;
     }
     try engine.finish(); try engine.refresh(); engine.replay=true;
+    try c.charge(engine.result.region_scopes.items.len);
+    const scopes=try c.allocator.dupe(relation.Scope,engine.result.region_scopes.items); defer c.allocator.free(scopes);
     for(0..engine.result.invocations.items.len) |index|try engine.execute(@enumFromInt(index));
     try c.require(!engine.changed);
+    try c.require(scopes.len==engine.result.region_scopes.items.len);
+    for(scopes,engine.result.region_scopes.items) |before,after| { try c.step(); try c.require(std.meta.eql(before,after)); }
     const result=engine.result; engine.result=.{}; return result;
 }

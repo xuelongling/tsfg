@@ -6,14 +6,15 @@
 const std = @import("std");
 const model = @import("wire-program-model.zig");
 const context = @import("wire-program-refcheck-context.zig");
+const data = @import("wire-program-actual-data.zig");
 const t = model.types;
 pub const Context = context.Context;
 pub const Error = context.Error;
-pub const ContextId = enum(u32) { _ };
-pub const ObjectId = enum(u32) { _ };
-pub const CellId = enum(u32) { _ };
-pub const Location = struct { function: t.FunctionRef, block: t.BlockRef, instruction: u16 };
-pub const Site = struct { context: ContextId, location: Location };
+pub const ContextId = data.ContextId;
+pub const ObjectId = data.ObjectId;
+pub const CellId = data.CellId;
+pub const Location = data.Location;
+pub const Site = data.Site;
 pub const Callable = struct { code: t.FunctionRef, environment: ?ObjectId };
 // Source-effect ownership is separate from physical aliasing. A callee's
 // parameter does not become a global just because its current object came
@@ -60,6 +61,7 @@ pub const Value = struct {
     cells: []const CellId=&.{},
     callables: []const Callable=&.{},
     effect_origins: []const EffectOrigin=&.{},
+    region: data.Value=.{},
     truth: u2=0,
     number: ?i64=null,
     unknown: bool=false,
@@ -69,6 +71,19 @@ pub const Value = struct {
             self.callables.len==0 and !self.unknown and !self.callable_unknown;
     }
 };
+// Absent relation evidence is not a selected allocation version. This is the
+// single raw-to-relation fallback; consumers never reconstruct roots from IDs.
+pub fn relation(c: *Context, raw: Value) Error!data.Value {
+    try c.step(); if(raw.region.known)return raw.region;
+    try c.charge(raw.objects.len+raw.cells.len+raw.callables.len);
+    var result=data.Value{.known=true,.number=raw.number,
+        .unresolved=raw.unknown or raw.callable_unknown or raw.objects.len!=0 or raw.cells.len!=0};
+    for(raw.callables) |pair| {
+        if(pair.environment==null)result.empty=true else result.unresolved=true;
+    }
+    result.empty=result.empty or (raw.tags.len!=0 and raw.objects.len==0 and raw.callables.len==0);
+    return result;
+}
 pub fn equal(c: *Context, a: Value, b: Value) Error!bool {
     try c.charge(5);
     if(a.truth!=b.truth or a.number!=b.number or a.unknown!=b.unknown or a.callable_unknown!=b.callable_unknown)return false;
@@ -77,7 +92,7 @@ pub fn equal(c: *Context, a: Value, b: Value) Error!bool {
         if(left.len!=right.len)return false;
         for(left,right) |x,y| { try c.step(); if(!std.meta.eql(x,y))return false; }
     }
-    return true;
+    return data.equal(c,a.region,b.region);
 }
 
 fn less(comptime T: type, a: T, b: T) bool {
@@ -119,14 +134,15 @@ pub const OwnedValue = struct {
     cells: std.ArrayListUnmanaged(CellId)=.empty,
     callables: std.ArrayListUnmanaged(Callable)=.empty,
     effect_origins: std.ArrayListUnmanaged(EffectOrigin)=.empty,
+    region: data.OwnedValue=.{},
     truth: u2=0, number: ?i64=null, unknown: bool=false, callable_unknown: bool=false,
 
     pub fn view(self: *const OwnedValue) Value {
         return .{.tags=self.tags.items,.objects=self.objects.items,.cells=self.cells.items,.callables=self.callables.items,
-            .effect_origins=self.effect_origins.items,.truth=self.truth,.number=self.number,.unknown=self.unknown,.callable_unknown=self.callable_unknown};
+            .effect_origins=self.effect_origins.items,.region=self.region.view(),.truth=self.truth,.number=self.number,.unknown=self.unknown,.callable_unknown=self.callable_unknown};
     }
     pub fn deinit(self: *OwnedValue, allocator: std.mem.Allocator) void {
-        self.tags.deinit(allocator); self.objects.deinit(allocator); self.cells.deinit(allocator); self.callables.deinit(allocator); self.effect_origins.deinit(allocator); self.*=.{};
+        self.tags.deinit(allocator); self.objects.deinit(allocator); self.cells.deinit(allocator); self.callables.deinit(allocator); self.effect_origins.deinit(allocator); self.region.deinit(allocator); self.*=.{};
     }
     pub fn tag(self: *OwnedValue, c: *Context, id: t.TypeRef) Error!bool { return add(t.TypeRef,c,&self.tags,id); }
     pub fn object(self: *OwnedValue, c: *Context, id: ObjectId) Error!bool { return add(ObjectId,c,&self.objects,id); }
@@ -139,11 +155,14 @@ pub const OwnedValue = struct {
         try result.tags.appendSlice(c.allocator,value.tags); try result.objects.appendSlice(c.allocator,value.objects);
         try result.cells.appendSlice(c.allocator,value.cells); try result.callables.appendSlice(c.allocator,value.callables);
         try result.effect_origins.appendSlice(c.allocator,value.effect_origins);
+        result.region=try data.OwnedValue.clone(c,value.region);
         result.truth=value.truth; result.number=value.number; result.unknown=value.unknown; result.callable_unknown=value.callable_unknown;
         return result;
     }
     pub fn join(self: *OwnedValue, c: *Context, incoming: Value) Error!bool {
         try c.step(); const was_bottom=self.view().bottom(); var changed=false;
+        if(!was_bottom and !self.region.known) { changed=try self.region.join(c,try relation(c,self.view())); }
+        if(!incoming.bottom() or incoming.region.known) { changed=(try self.region.join(c,try relation(c,incoming))) or changed; }
         for(incoming.tags) |id| { if(try self.tag(c,id))changed=true; }
         for(incoming.objects) |id| { if(try self.object(c,id))changed=true; }
         for(incoming.cells) |id| { if(try self.cell(c,id))changed=true; }
@@ -184,6 +203,9 @@ pub const Heap = struct {
 };
 pub const HeapView = struct {
     heap: *const Heap,
+    // Borrowed selected current-version heap, when the same state has one.
+    // Its lifetime is exactly the lifetime of this raw heap view.
+    relations: ?*const data.Heap=null,
     pub fn get(self: HeapView, slot: Slot) ?Value {
         const value=self.heap.entries.getPtr(slot) orelse return null; return value.view();
     }
@@ -202,7 +224,7 @@ pub const ValuesView = struct {
     pub fn get(self: ValuesView, index: usize) Value { return self.values[index].view(); }
     pub fn reg(self: ValuesView, ref: t.RegisterRef) Value { return self.get(@intFromEnum(ref)); }
 };
-pub const StateView = struct {values: ValuesView,heap: HeapView};
+pub const StateView = struct {values: ValuesView,heap: HeapView,relations:?*const data.Heap=null};
 pub const ContextInfo = struct {
     function: t.FunctionRef,
     // SSA entry-block arguments: Common includes hidden env/receiver, legacy
@@ -216,11 +238,14 @@ pub const ContextInfo = struct {
     // An unresolved external argument/call is an absence of actual facts, not
     // an empty code set and not every function that happens to be in a module.
     unresolved: bool,
+    region_scope: ?data.ScopeRef=null,
 };
 pub const WorldView = struct {
     objects: []const ObjectInfo,
     cells: []const CellInfo,
     contexts: []const ContextInfo,
+    region_nodes: []const data.Node=&.{},
+    region_scopes: []const data.Scope=&.{},
     pub fn object(self: WorldView, ref: ObjectId) ObjectInfo { return self.objects[@intFromEnum(ref)]; }
     pub fn cell(self: WorldView, ref: CellId) CellInfo { return self.cells[@intFromEnum(ref)]; }
     pub fn invocation(self: WorldView, ref: ContextId) ContextInfo { return self.contexts[@intFromEnum(ref)]; }
