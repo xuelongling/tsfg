@@ -49,6 +49,19 @@ const Owners = struct {
         const replacement = try Owners.clone(c, source); self.deinit(c.allocator); self.* = replacement;
     }
 };
+// Callee-relative lexical roots, never an actual result or selected heap.
+// An absent completion, a nontransparent body, or a cyclic dependency is NOT
+// an empty owner set. Call sites explicitly preserve unresolved in those cases.
+const AliasSummary = struct {
+    normal: Owners = .{},
+    language: Owners = .{},
+    normal_seen: bool = false,
+    language_seen: bool = false,
+    available: bool = false,
+    transparent: bool = true,
+    fn deinit(self: *AliasSummary, allocator: std.mem.Allocator) void { self.normal.deinit(allocator); self.language.deinit(allocator); }
+};
+const AliasLink = struct { from: usize, to: usize };
 const UpperState = struct {
     values: []Owners,
     bindings: std.AutoHashMapUnmanaged(t.BindingRef, Owners) = .empty,
@@ -73,9 +86,16 @@ const UpperState = struct {
     fn join(self: *UpperState, c: *Context, source: *const UpperState) Error!bool {
         var changed = false;
         for (self.values, source.values) |*value, *incoming| changed = (try value.join(c, incoming)) or changed;
+        // A Cell/binding absent on either path is uninitialized/unproved, not
+        // a known local empty value. Preserve that alternative at the join.
+        var previous = self.bindings.iterator(); while (previous.next()) |cell| {
+            try c.step(); if (!source.bindings.contains(cell.key_ptr.*)) changed = (try cell.value_ptr.add(c, .unresolved)) or changed;
+        }
         var cells = source.bindings.iterator(); while (cells.next()) |cell| {
             try c.step(); const destination = try self.bindings.getOrPut(c.allocator, cell.key_ptr.*);
-            if (!destination.found_existing) { destination.value_ptr.* = .{}; changed = true; }
+            if (!destination.found_existing) {
+                destination.value_ptr.* = .{}; _ = try destination.value_ptr.add(c, .unresolved); changed = true;
+            }
             changed = (try destination.value_ptr.join(c, cell.value_ptr)) or changed;
         }
         return changed;
@@ -88,12 +108,58 @@ const UpperState = struct {
 const UpperGraph = struct {
     collector: *Collector,
     function: t.FunctionRef,
+    lexical_cells: bool = false,
+    fn proveLexicalCells(self: *UpperGraph) Error!bool {
+        const c = self.collector.c; const v = self.collector.common(); const function = c.program.functions[@intFromEnum(self.function)];
+        var created: std.AutoHashMapUnmanaged(t.BindingRef, struct { cell: t.CellRef, handle: t.RegisterRef }) = .empty; defer created.deinit(c.allocator);
+        var forward = true;
+        for (function.blocks, 0..) |block, b| for (block.instructions) |op| {
+            try c.step(); switch (op.data) {
+                .eh_cell => |cell| {
+                    const id = v.exceptions.bindings[@intFromEnum(cell.binding)].binding;
+                    const binding_row = v.storage.bindings[@intFromEnum(id)];
+                    const owner = switch (binding_row.owner) { .param, .local, .receiver => |owner_id| owner_id, else => return false };
+                    if (owner != self.function) return false;
+                    const one = try created.getOrPut(c.allocator, id);
+                    if (one.found_existing) return false;
+                    one.value_ptr.* = .{ .cell = cell.binding, .handle = op.result.? };
+                },
+                .@"br" => |branch| forward = forward and @intFromEnum(branch.destination) > b,
+                .@"cond_br" => |branch| forward = forward and @intFromEnum(branch.true_destination) > b and @intFromEnum(branch.false_destination) > b,
+                inline .eh_invoke, .eh_invoke_indirect, .common_method_invoke => |call| forward = forward and @intFromEnum(call.normal) > b and @intFromEnum(call.exceptional) > b,
+                .eh_route => |route| forward = forward and @intFromEnum(route.successor) > b,
+                .domain_numeric_use => |guard| forward = forward and @intFromEnum(guard.normal_successor) > b,
+                else => {},
+            }
+        };
+        if (!forward) return false;
+        // Typed SSA already owns dominance. This extra protocol proves one
+        // local dynamic Cell per invocation, with no alias, phi, capture, call
+        // argument or returned handle. It stores no heap or per-op snapshots.
+        for (function.blocks) |block| for (block.instructions) |op| for (op.operands, 0..) |reg, i| {
+            try c.step(); const carrier = function.registers[@intFromEnum(reg)].carrier;
+            if (carrier != .cell) continue;
+            const id = v.exceptions.bindings[@intFromEnum(carrier.cell)].binding;
+            const one = created.get(id) orelse return false;
+            if (i != 0 or one.cell != carrier.cell or one.handle != reg) return false;
+            switch (op.data) {
+                .eh_load => |load| if (load.binding != carrier.cell) { return false; },
+                .eh_store => |store| if (store.binding != carrier.cell) { return false; },
+                else => return false,
+            }
+        };
+        return true;
+    }
     fn mark(self: *UpperGraph, owners: *const Owners, mode: Access) Error!void {
         const collector = self.collector; const c = collector.c;
         for (owners.items.items) |owner| {
             try c.step(); switch (owner) {
                 .parameter => |index| {
                     const upper_bound = collector.upper(self.function) orelse continue;
+                    const v = collector.common(); const function = c.program.functions[@intFromEnum(self.function)];
+                    const abi = v.abis[@intFromEnum(function.abi)];
+                    const binding_id = if (abi.receiver != null and index == 0) abi.receiver.? else abi.parameters[index - @as(usize, if (abi.receiver != null) 1 else 0)];
+                    if (!try collector.managedType(v.storage.bindings[@intFromEnum(binding_id)].@"type")) continue;
                     const access_mode = upper_bound.parameters[index];
                     try c.require(switch (mode) { .read => access_mode.read, .write => access_mode.write, .structural => access_mode.structural });
                 },
@@ -117,7 +183,7 @@ const UpperGraph = struct {
             if (!destination.found_existing) destination.value_ptr.* = .{};
             if (!initialize) try self.mark(destination.value_ptr, .write);
             try destination.value_ptr.replace(c, value);
-        } else if (state.bindings.getPtr(id)) |value| try loaded.replace(c, value);
+        } else if (state.bindings.getPtr(id)) |value| try loaded.replace(c, value) else _ = try loaded.add(c, .unresolved);
     }
     fn edge(self: *UpperGraph, entries: []?UpperState, queued: []bool, pending: *std.ArrayListUnmanaged(t.BlockRef), target: t.BlockRef, state: *const UpperState, arguments: []const Owners) Error!void {
         const c = self.collector.c; const function = c.program.functions[@intFromEnum(self.function)]; const b = @intFromEnum(target);
@@ -127,7 +193,22 @@ const UpperGraph = struct {
         const changed = if (entries[b]) |*old| try old.join(c, &incoming) else blk: { entries[b] = incoming; owns = false; break :blk true; };
         if (changed and !queued[b]) { queued[b] = true; try pending.append(c.allocator, target); }
     }
-    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, prefix: bool) Error!bool {
+    fn projectSummary(self: *UpperGraph, source: *const Owners, op: model.instruction.Instruction, state: *const UpperState, offset: usize, into: *Owners) Error!void {
+        const c = self.collector.c;
+        for (source.items.items) |owner| {
+            try c.step(); switch (owner) {
+                .parameter => |index| {
+                    try c.require(offset <= op.operands.len and index < op.operands.len - offset);
+                    _ = try into.join(c, &state.values[@intFromEnum(op.operands[offset + index])]);
+                },
+                .global => _ = try into.add(c, owner),
+                // A lexical capture key alone is not a cross-instance env
+                // content projection. This slice does not synthesize one.
+                .capture, .unresolved => _ = try into.add(c, .unresolved),
+            }
+        }
+    }
+    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners) Error!bool {
         const collector = self.collector; const c = collector.c; const full = try collector.consumeUpper(self.function, target);
         if (op.data == .eh_invoke and offset != 0) for (full.captures) |captured| {
             try c.step();
@@ -144,11 +225,38 @@ const UpperGraph = struct {
             if (access_mode.write) try self.mark(argument, .write);
             if (access_mode.structural) try self.mark(argument, .structural);
         }
+        const summary = &collector.aliases[@intFromEnum(target)];
+        if (summary.available and summary.transparent and summary.normal_seen)
+            try self.projectSummary(&summary.normal, op, state, offset, returned)
+        else _ = try returned.add(c, .unresolved);
+        if (full.facets.may_throw) {
+            if (summary.available and summary.transparent and summary.language_seen)
+                try self.projectSummary(&summary.language, op, state, offset, thrown)
+            else _ = try thrown.add(c, .unresolved);
+        }
         return full.facets.may_throw;
     }
     fn run(self: *UpperGraph) Error!void {
         const collector = self.collector; const c = collector.c; const v = collector.common();
         const function = c.program.functions[@intFromEnum(self.function)]; const abi = v.abis[@intFromEnum(function.abi)];
+        const summary = &collector.aliases[@intFromEnum(self.function)];
+        self.lexical_cells = try self.proveLexicalCells();
+        summary.transparent = abi.lexical_environment == null;
+        // This is a deliberately finite transparent seam: direct parameter /
+        // global roots, scalar work, copies, phi/route, and DAG calls. The old
+        // unresolved treatment of selected-content / env-instance data remains.
+        for (function.blocks) |block| for (block.instructions) |op| {
+            try c.step(); switch (op.data) {
+                .eh_cell, .eh_load, .eh_store => if (!self.lexical_cells) { summary.transparent = false; },
+                .environment_alloc, .environment_load, .environment_store,
+                .environment_init, .environment_parent, .domain_field_read, .domain_field_store,
+                .eh_field_initialize, .domain_array_read, .domain_array_store, .domain_array_resize,
+                .common_typed_array_create, .domain_read_span, .eh_construct => summary.transparent = false,
+                .function_make => if (op.operands.len != 0) { summary.transparent = false; },
+                .domain_literal => |data| if (v.types[@intFromEnum(data.actual_type)].kind == .reference) { summary.transparent = false; },
+                else => {},
+            }
+        };
         try c.charge(function.blocks.len * 2 + 1);
         const entries = try c.allocator.alloc(?UpperState, function.blocks.len); @memset(entries, null);
         defer { for (entries) |*entry| if (entry.*) |*saved| saved.deinit(c); c.allocator.free(entries); }
@@ -160,12 +268,15 @@ const UpperGraph = struct {
         const count = abi.parameters.len + @as(usize, if (abi.receiver != null) 1 else 0);
         for (0..count) |i| {
             try c.step(); const id = if (abi.receiver != null and i == 0) abi.receiver.? else abi.parameters[i - @as(usize, if (abi.receiver != null) 1 else 0)];
+            // Alias identity also matters for a callable/scalar later returned
+            // or packed as a language payload. Access permissions remain
+            // managed-only in mark(), just like the actual observer.
+            const owner = Owner{ .parameter = i };
+            const binding_value = try initial.bindings.getOrPut(c.allocator, id);
+            if (!binding_value.found_existing) binding_value.value_ptr.* = .{};
+            _ = try binding_value.value_ptr.add(c, owner);
+            _ = try initial.values[@intFromEnum(function.blocks[0].parameters[hidden + i])].add(c, owner);
             if (try collector.managedType(v.storage.bindings[@intFromEnum(id)].@"type")) {
-                const owner = Owner{ .parameter = i };
-                const binding_value = try initial.bindings.getOrPut(c.allocator, id);
-                if (!binding_value.found_existing) binding_value.value_ptr.* = .{};
-                _ = try binding_value.value_ptr.add(c, owner);
-                _ = try initial.values[@intFromEnum(function.blocks[0].parameters[hidden + i])].add(c, owner);
                 try collector.facet(self.function, .managed_reference);
             }
         }
@@ -185,11 +296,15 @@ const UpperGraph = struct {
                 switch (op.data) {
                     .global_load => |data| { try collector.global(self.function, data.global, .read); _ = try result.add(c, .{ .global = data.global }); },
                     .global_store => |data| try collector.global(self.function, data.global, .write),
+                    .eh_cell => |data| {
+                        const id = v.exceptions.bindings[@intFromEnum(data.binding)].binding;
+                        if (state.bindings.fetchRemove(id)) |removed| { var old = removed.value; old.deinit(c.allocator); }
+                    },
                     .eh_load => |data| {
                         try self.binding(&state, v.exceptions.bindings[@intFromEnum(data.binding)].binding, &result, null, false);
-                        // Binding roots are lexical observations, not proof of
-                        // this handle's selected dynamic Cell contents.
-                        _ = try result.add(c, .unresolved);
+                        // Only the unique, private, forward-CFG protocol above
+                        // connects a dynamic handle to the lexical binding flow.
+                        if (!self.lexical_cells) _ = try result.add(c, .unresolved);
                     },
                     .eh_store => |data| try self.binding(&state, v.exceptions.bindings[@intFromEnum(data.binding)].binding, &result, &state.values[@intFromEnum(op.operands[1])], data.initialize),
                     inline .environment_load, .environment_store, .environment_init => |data| {
@@ -235,29 +350,35 @@ const UpperGraph = struct {
                 switch (op.data) {
                     .eh_invoke, .eh_invoke_indirect, .common_method_invoke => {
                         var throwing = false; var found = false;
+                        var returned: Owners = .{}; defer returned.deinit(c.allocator);
+                        var thrown: Owners = .{}; defer thrown.deinit(c.allocator);
                         switch (op.data) {
-                            .eh_invoke => |call| { const target_abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(call.callee)].abi)]; throwing = try self.consume(call.callee, op, &state, if (target_abi.lexical_environment != null) 1 else 0, false); found = true; },
-                            .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| { try c.step(); const target = arm.target orelse return error.InvalidShape; throwing = (try self.consume(target, op, &state, 0, true)) or throwing; found = true; },
+                            .eh_invoke => |call| { const target_abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(call.callee)].abi)]; throwing = try self.consume(call.callee, op, &state, if (target_abi.lexical_environment != null) 1 else 0, false, &returned, &thrown); found = true; },
+                            .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| { try c.step(); const target = arm.target orelse return error.InvalidShape; throwing = (try self.consume(target, op, &state, 0, true, &returned, &thrown)) or throwing; found = true; },
                             .eh_invoke_indirect => {
-                                // An indirect loaded callable can carry an
-                                // unproved captured environment even though
-                                // its complete permitted code set is known.
-                                for (state.values[@intFromEnum(op.operands[0])].items.items) |owner| {
-                                    try c.step(); if (owner == .unresolved) collector.fixed_upper_origin_pending = true;
+                                // A lexical alias identifies whose value this
+                                // is, not that callable's captured env contents.
+                                // Pure, env-free function_make has no roots;
+                                // external/loaded/returned aliases grant no
+                                // cross-closure instance proof here.
+                                for (state.values[@intFromEnum(op.operands[0])].items.items) |_| {
+                                    try c.step(); collector.fixed_upper_origin_pending = true;
                                 }
                                 for (v.closures.calls) |row| {
                                     try c.step(); if (row.function != self.function or @intFromEnum(row.block) != b or row.instruction != index) continue;
-                                    for (row.targets) |target| { try c.step(); throwing = (try self.consume(target, op, &state, 1, false)) or throwing; found = true; }
+                                    for (row.targets) |target| { try c.step(); throwing = (try self.consume(target, op, &state, 1, false, &returned, &thrown)) or throwing; found = true; }
                                 }
                             },
                             else => unreachable,
                         }
-                        if (!found) { collector.fixed_upper_origin_pending = true; throwing = true; }
+                        if (!found) {
+                            collector.fixed_upper_origin_pending = true; throwing = true;
+                            _ = try returned.add(c, .unresolved); _ = try thrown.add(c, .unresolved);
+                        }
                         const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, .common_method_invoke => |call| call.normal, else => unreachable };
                         const exceptional = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, .common_method_invoke => |call| call.exceptional, else => unreachable };
-                        var returned: Owners = .{}; defer returned.deinit(c.allocator); _ = try returned.add(c, .unresolved);
                         try self.edge(entries, queued, &pending, normal, &state, if (function.blocks[@intFromEnum(normal)].parameters.len == 0) &.{} else &.{returned});
-                        if (throwing) try self.edge(entries, queued, &pending, exceptional, &state, &.{returned});
+                        if (throwing) try self.edge(entries, queued, &pending, exceptional, &state, &.{thrown});
                     },
                     .@"br", .eh_route => {
                         const target = switch (op.data) { .@"br" => |branch| branch.destination, .eh_route => |route| route.successor, else => unreachable };
@@ -272,8 +393,17 @@ const UpperGraph = struct {
                         try self.edge(entries, queued, &pending, branch.false_destination, &state, arguments[branch.true_count..]);
                     },
                     .domain_numeric_use => |guard| try self.edge(entries, queued, &pending, guard.normal_successor, &state, &.{Owners{}}),
-                    .eh_raise => try collector.facet(self.function, .may_throw),
-                    .@"return" => if (op.operands.len != 0) { if (abi.result) |id| if (try collector.managedType(id)) try collector.facet(self.function, .escape); },
+                    .eh_raise => {
+                        try collector.facet(self.function, .may_throw); summary.language_seen = true;
+                        _ = try summary.language.join(c, &state.values[@intFromEnum(op.operands[0])]);
+                    },
+                    .@"return" => {
+                        summary.normal_seen = true;
+                        if (op.operands.len != 0) {
+                            if (abi.result) |id| if (try collector.managedType(id)) try collector.facet(self.function, .escape);
+                            _ = try summary.normal.join(c, &state.values[@intFromEnum(op.operands[0])]);
+                        }
+                    },
                     else => {},
                 }
             }
@@ -294,6 +424,7 @@ pub const Collector = struct {
     concrete: []?usize,
     captures: []?Capture,
     managed: []Managed,
+    aliases: []AliasSummary,
     unresolved: bool = false,
     fixed_upper_origin_pending: bool = false,
     fixed_upper_host_pending: bool = false,
@@ -304,7 +435,7 @@ pub const Collector = struct {
     pub fn init(c: *Context, material: ?*const host_binding.Bundle) Error!Collector {
         if (c.program.tables.mode != .common) return error.WrongMode;
         const v = c.program.tables.mode.common;
-        try c.charge(c.program.functions.len + 2 * v.types.len + v.storage.bindings.len);
+        try c.charge(2 * c.program.functions.len + 2 * v.types.len + v.storage.bindings.len);
         const contracts = try c.allocator.alloc(?usize, c.program.functions.len);
         errdefer c.allocator.free(contracts);
         const concrete = try c.allocator.alloc(?usize, v.types.len);
@@ -313,6 +444,8 @@ pub const Collector = struct {
         errdefer c.allocator.free(captures);
         const managed = try c.allocator.alloc(Managed, v.types.len);
         errdefer c.allocator.free(managed);
+        const aliases = try c.allocator.alloc(AliasSummary, c.program.functions.len);
+        errdefer c.allocator.free(aliases); @memset(aliases, .{});
         @memset(contracts, null); @memset(concrete, null);
         @memset(captures, null); @memset(managed, .empty);
         var ids: std.AutoHashMapUnmanaged(t.Hash, usize) = .empty;
@@ -336,7 +469,7 @@ pub const Collector = struct {
             try c.require(captures[b] == null);
             captures[b] = .{ .environment = @enumFromInt(e), .slot = @enumFromInt(s) };
         };
-        var result = Collector{ .c = c, .host_material = material, .contracts = contracts, .concrete = concrete, .captures = captures, .managed = managed };
+        var result = Collector{ .c = c, .host_material = material, .contracts = contracts, .concrete = concrete, .captures = captures, .managed = managed, .aliases = aliases };
         // An unreachable Host instruction still requires its original metadata
         // dependency. Its runtime effect permission follows actual replay.
         for (c.program.functions, 0..) |f, i| for (f.blocks) |block| for (block.instructions) |op| {
@@ -347,6 +480,7 @@ pub const Collector = struct {
     pub fn deinit(self: *Collector) void {
         self.c.allocator.free(self.contracts); self.c.allocator.free(self.concrete);
         self.c.allocator.free(self.captures); self.c.allocator.free(self.managed);
+        for (self.aliases) |*summary| summary.deinit(self.c.allocator); self.c.allocator.free(self.aliases);
     }
     fn common(self: *const Collector) tables.CommonTables { return self.c.program.tables.mode.common; }
     fn upper(self: *Collector, function: t.FunctionRef) ?*const publication.EffectUpper {
@@ -636,10 +770,57 @@ pub const Collector = struct {
     pub fn observer(self: *Collector) facts.Observer {
         return .{ .client = self, .before = onBefore, .after = onAfter, .completed = onCompleted };
     }
-    pub fn finish(self: *Collector) FinishError!void {
-        for (self.c.program.functions, 0..) |_, index| {
-            try self.c.step(); var graph = UpperGraph{ .collector = self, .function = @enumFromInt(index) }; try graph.run();
+    fn aliasDependency(self: *Collector, from: usize, target: t.FunctionRef, links: *std.AutoHashMapUnmanaged(AliasLink, void), remaining: []usize, callers: []std.ArrayListUnmanaged(usize)) Error!void {
+        const c = self.c; const to = @intFromEnum(target); try c.step();
+        const edge = try links.getOrPut(c.allocator, .{ .from = from, .to = to });
+        if (!edge.found_existing) { try callers[to].append(c.allocator, from); remaining[from] += 1; }
+    }
+    fn upperFlows(self: *Collector) Error!void {
+        const c = self.c; const v = self.common(); const count = c.program.functions.len;
+        try c.charge(count * 2 + 1);
+        const remaining = try c.allocator.alloc(usize, count); defer c.allocator.free(remaining); @memset(remaining, 0);
+        const callers = try c.allocator.alloc(std.ArrayListUnmanaged(usize), count); @memset(callers, .empty);
+        defer { for (callers) |*rows| rows.deinit(c.allocator); c.allocator.free(callers); }
+        var links: std.AutoHashMapUnmanaged(AliasLink, void) = .empty; defer links.deinit(c.allocator);
+        // Dependency order is derived from ALL typed call instructions and the
+        // complete finite permission tables, never actual selected targets or
+        // a caller-supplied order. Extra/dead cyclic edges conservatively deny
+        // transparent summaries; they cannot grant a narrower implementation.
+        for (c.program.functions, 0..) |function, from| for (function.blocks, 0..) |block, b| for (block.instructions, 0..) |op, i| {
+            try c.step(); switch (op.data) {
+                .eh_invoke => |call| try self.aliasDependency(from, call.callee, &links, remaining, callers),
+                .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| {
+                    try c.step(); try self.aliasDependency(from, arm.target orelse return error.InvalidShape, &links, remaining, callers);
+                },
+                .eh_invoke_indirect => for (v.closures.calls) |row| {
+                    try c.step(); if (@intFromEnum(row.function) != from or @intFromEnum(row.block) != b or row.instruction != i) continue;
+                    for (row.targets) |target| { try c.step(); try self.aliasDependency(from, target, &links, remaining, callers); }
+                },
+                else => {},
+            }
+        };
+        var pending: std.ArrayListUnmanaged(usize) = .empty; defer pending.deinit(c.allocator);
+        for (remaining, 0..) |degree, function| { try c.step(); if (degree == 0) try pending.append(c.allocator, function); }
+        var cursor: usize = 0;
+        while (cursor < pending.items.len) : (cursor += 1) {
+            try c.step(); const function = pending.items[cursor];
+            var graph = UpperGraph{ .collector = self, .function = @enumFromInt(function) }; try graph.run();
+            self.aliases[function].available = true;
+            for (callers[function].items) |caller| {
+                try c.step(); remaining[caller] -= 1;
+                if (remaining[caller] == 0) try pending.append(c.allocator, caller);
+            }
         }
+        // SCCs and functions depending on them still receive the full upper
+        // effects walk. Their alias outputs stay unavailable; no recursion or
+        // iterative alias guess can turn an in-progress bottom into a proof.
+        for (remaining, 0..) |degree, function| {
+            try c.step(); if (degree == 0) continue;
+            var graph = UpperGraph{ .collector = self, .function = @enumFromInt(function) }; try graph.run();
+        }
+    }
+    pub fn finish(self: *Collector) FinishError!void {
+        try self.upperFlows();
         // Missing origin facts remain a capability gap, never an empty effect.
         try self.c.require(!self.unresolved);
         try self.c.step();
