@@ -218,8 +218,9 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
           expression(row.initializer,global.binding.declaredType);annotation(global.binding,row.initializer);
           check(same(row.range,global.binding.declarationRange),'source');
         }else if(['return','throw','expression'].includes(row.kind)) {
-          if(row.value)expression(row.value,row.kind==='return'?fn.returnType:undefined);
-          else check(row.kind==='return'&&fn.returnType==='void','type');
+          const constructor=fn.ownerType&&types.get(fn.ownerType)?.constructor?.id===fn.id;
+          if(row.value)expression(row.value,row.kind==='return'&&!constructor?fn.returnType:undefined);
+          else check(row.kind==='return'&&(constructor||fn.returnType==='void'),'type');
           g.sequence(row.range,[...(row.kind==='expression'?[]:[row.kind]),...(row.value?[row.value.range]:[])],true);
         }else if(row.kind==='block') {
           check(g.tokens[at.first].text==='{'&&g.tokens[at.end-1].text==='}','source');rows(row.body,at.first+1,at.end-1,row.range,inner);

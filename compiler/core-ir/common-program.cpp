@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program.h"
 #include "common-program-borrows.h"
-#include "common-program-header.h"
+#include "bytecode.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -17,6 +17,8 @@ public:
     addOperations<HostCallOp,ConstantOp,FloatingOp,BooleanOp,StringOp,UndefinedOp,NullOp,CellOp,LoadOp,StoreOp,
       GlobalLoadOp,GlobalStoreOp,AssertOp,ViewOp,ValueCopyOp,CarrierCastOp,UnaryOp,BinaryOp,EqualOp,
       NumericUseOp,FieldLoadOp,FieldStoreOp,ConstructValueOp,AllocateReferenceOp,ArrayCreateOp,
+      ReceiverCreateOp,ReceiverChildOp,ReceiverAllocateOp,ReceiverBindOp,ReceiverGetOp,ReceiverResultOp,
+      InitializeBeginOp,InitializeFieldOp,InitializeEndOp,
       ArrayReadOp,ArrayStoreOp,ArrayResizeOp,ArrayLengthOp,ReadSpanOp,ReadSpanLengthOp,PackOp,
       EnvAllocOp,EnvParentOp,EnvInitOp,EnvLoadOp,EnvStoreOp,MakeClosureOp,InvokeIndirectOp,InvokeOp,InvokeMethodOp,EnterHandlerOp,CatchBindOp,FinallyEnterOp,RouteOp,ReturnThrowOp,UnreachableOp,FuelOp>();
   }
@@ -44,13 +46,13 @@ bool moduleAttributes(mlir::ModuleOp module){
 }
 bool metadata(mlir::ModuleOp module,Program &p,Error &error){
   coreHeader::Identity header;
-  if(!coreHeader::read(module,header)||!moduleAttributes(module))return reject(error,"core-ir-common-header","ordinary header or mixed representation differs");
+  if(!coreHeader::read(module,header)||header.sourcePath.contains(':')||!moduleAttributes(module))return reject(error,"core-ir-common-header","ordinary header or mixed representation differs");
   const auto attr=module->getAttrOfType<mlir::DictionaryAttr>(marker);
   if(!attr||attr.size()!=10)return reject(error,"core-ir-common-metadata","complete common manifest required");
   const auto text=[&](llvm::StringRef key){auto value=attr.getAs<mlir::StringAttr>(key);return value?value.getValue():llvm::StringRef();};
   const auto version=attr.getAs<mlir::IntegerAttr>("version");
   if(text("family")!="tsfg.core-program-development"||text("schema")!=schema||!version||
-    !version.getType().isSignlessInteger(32)||version.getInt()!=3)return reject(error,"core-ir-common-identity","common manifest identity differs");
+    !version.getType().isSignlessInteger(32)||version.getInt()!=profileVersion)return reject(error,"core-ir-common-identity","common manifest identity differs");
   if(!readJson(text("hir"),p.hir,p,error)||!readJson(text("representation"),p.representation,p,error)||
     !readJson(text("publication"),p.publication,p,error)||!readJson(text("request"),p.request,p,error)||
     !readJson(text("proof"),p.proof,p,error))return false;
@@ -78,12 +80,15 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
   out=std::move(p);return true;
 }
 static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
-  p.remaining=std::min(p.remaining,size_t(1000000));p.hosts.clear();p.hostResources.clear();p.hostOrigins.clear();p.hostContractHash.clear();p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
+  if(!p.charge(p.internalTypes.size()+p.internalOwners.size()+p.internalBindings.size()+p.internalTargets.size()+p.internalCycleTypes.size()+p.internalDeclarations.size()+p.internalEffects.size()))return reject(error,"core-ir-common-budget","internal constructor metadata release exceeded");
+  p.internalTypes.clear();p.internalOwners.clear();p.internalBindings.clear();p.internalTargets.clear();p.internalCycleTypes.clear();p.internalDeclarations.clear();p.internalEffects.clear();p.internalMetadataReady=false;
+  p.remaining=std::min(p.remaining,programWorkLimit);p.hosts.clear();p.hostResources.clear();p.hostOrigins.clear();p.hostContractHash.clear();p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
   Json events=nullptr;
   if(!check.run()||!verifyCommonBorrows(check,borrowProof?&events:nullptr)||!verifyKernelProof(p,error))return false;
   if(borrowProof){
+    if(!p.internalFunctions.empty())return reject(error,"core-ir-common-construction-borrow-open","printed internal constructor borrow proof is not admitted");
     Array functions,sources;std::map<std::string,const Function *> ordered;
     for(const auto &fn:p.functions)ordered.emplace(fn.id,&fn);
     for(const auto &[id,fn]:ordered){

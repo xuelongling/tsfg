@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Constructor control metadata for the existing actual solver. No AST, heap
 // interpreter, entry object, fixed upper, layout or independent work budget.
-import {canonical,commonCheck as check} from './common-program-common.mjs';
+import {commonCheck as check} from './common-program-common.mjs';
 
-// a is trusted, owned ValueOps: copy/merge precharge their own traversal and
-// key precharges collection expansion, comparisons and worst-case escaped
-// serialization BEFORE doing that work, using this same spend callback.
-// The later text(bound) fee pays for embedding the completed key string in
-// the outer frame key; it cannot pay retroactively for a.key's construction.
+// ValueOps own copying/joins. Exact entry comparisons use the shared typed
+// payload/Value callbacks, never a second value interpretation or encoding.
 export function commonReceiverActual({spend,types,objects},a) {
   const frames=new Map(),cursors=new Map();
   const text=value=>spend(Math.ceil(value.length/8)+1);
@@ -17,16 +14,34 @@ export function commonReceiverActual({spend,types,objects},a) {
   const frame=id=>{spend();const info=frames.get(id);check(info,'receiver-actual','unknown frame identity');return info;};
   const cursor=id=>{spend();const info=cursors.get(id);check(info,'receiver-actual','unknown cursor identity');return info;};
   const state=(world,id)=>{spend();const value=world.get(id);check(value,'receiver-actual','frame is absent from this completion');return value;};
-  const copyBinding=value=>{spend(8);return {...value,bound:a.copy(value.bound)};};
+  // Birth defaults are temporary contributions of this construction, not
+  // actual stores. Keep the historical/real lattice separately so a definite
+  // definition can remove only this birth's default, including on weak sites.
+  // Values here are analysis data, never a fresh-object or GC permission.
+  const copyReal=value=>{const copied=a.copy(value);spend(value.region.roots.size+4);
+    copied.region={...value.region,roots:new Set(value.region.roots)};return copied;};
+  const copyBirth=row=>{spend(3);return {...row,real:copyReal(row.real)};};
+  const copyBinding=value=>{spend(value.births.size+9);const births=new Map();
+    for(const [slot,row]of value.births)births.set(slot,copyBirth(row));return {...value,bound:a.copy(value.bound),births};};
+  const shared=new WeakSet();
   const store=()=>new Map();
   const clone=world=>{spend(world.size);const result=store();for(const [id,value]of world)result.set(id,copyBinding(value));return result;};
+  // Solver-only forks share read-only rows. Mark both sides by row identity;
+  // every owner mutation detaches its destination, including a later parent write.
+  const fork=world=>{spend(world.size*3+1);const result=store();for(const [id,value]of world){shared.add(value);result.set(id,value);}return result;};
+  const edit=(world,id)=>{const value=state(world,id);spend();if(!shared.has(value))return value;
+    const owned=copyBinding(value);spend();world.set(id,owned);return owned;};
   function join(into,from) {
     if(into===from)return false;
     spend(from.size);let changed=false;
     for(const [id,incoming]of from){
-      spend();const value=into.get(id);
-      if(!value){const copied=copyBinding(incoming);into.set(id,copied);changed=true;continue;}
-      changed=a.merge(value.bound,incoming.bound)||changed;
+      spend();const previous=into.get(id);
+      if(!previous){const copied=copyBinding(incoming);into.set(id,copied);changed=true;continue;}
+      const value=edit(into,id);changed=a.merge(value.bound,incoming.bound)||changed;
+      spend(incoming.births.size);
+      for(const [slot,row]of incoming.births){const old=value.births.get(slot);
+        if(!old){value.births.set(slot,copyBirth(row));changed=true;}
+        else {changed=a.merge(old.real,row.real)||changed;if(row.pending&&!old.pending){old.pending=true;changed=true;}}}
       const unbound=value.unbound||incoming.unbound,weak=value.weak||incoming.weak,pending=value.pending||incoming.pending,
         initializing=value.initializing||incoming.initializing,aborted=value.aborted||incoming.aborted,
         prefixMin=Math.min(value.prefixMin,incoming.prefixMin),prefixMax=Math.max(value.prefixMax,incoming.prefixMax);
@@ -37,13 +52,20 @@ export function commonReceiverActual({spend,types,objects},a) {
     return changed;
   }
   const overlay=(into,from)=>{if(into===from)return;spend(from.size);for(const [id,value]of from){const copied=copyBinding(value);into.set(id,copied);}};
-  const key=world=>{
-    spend(world.size);const rows=[];
-    for(const [id,value]of world){text(id);const bound=a.key(value.bound);text(bound);
-      rows.push([id,value.unbound,value.weak,value.pending,value.initializing,value.aborted,value.prefixMin,value.prefixMax,bound]);}
-    rows.sort((left,right)=>{text(left[0]);text(right[0]);return left[0]<right[0]?-1:left[0]>right[0]?1:0;});return canonical(rows);
+  const same=(left,right,identity)=>{
+    spend(left.size+right.size+1);if(left.size!==right.size)return false;
+    for(const [id,value]of left){text(id);const other=right.get(id);if(!other)return false;
+      spend(7+value.births.size+other.births.size);
+      if(value.unbound!==other.unbound||value.weak!==other.weak||value.pending!==other.pending||value.initializing!==other.initializing||value.aborted!==other.aborted||value.prefixMin!==other.prefixMin||value.prefixMax!==other.prefixMax||value.births.size!==other.births.size)return false;
+      // Bound regions are deliberately outside the former control payload key.
+      // The ordered retained Value projection compares those regions separately.
+      if(!identity.samePayload(value.bound,other.bound))return false;
+      for(const [slot,row]of value.births){text(slot);const prior=other.births.get(slot);if(!prior)return false;
+        text(row.ref);text(prior.ref);spend(2);
+        if(row.ref!==prior.ref||row.pending!==prior.pending||!identity.sameValue(row.real,prior.real))return false;}
+    }return true;
   };
-  function selectedIds(world,values) {
+  function selectedIds(world,values,heap) {
     spend(values.length);const selected=new Set(),pending=[];
     for(const value of values){spend(value.frames.size+value.cursors.size);
       for(const id of value.frames)pending.push(id);for(const id of value.cursors)pending.push(cursor(id).frame);}
@@ -51,15 +73,64 @@ export function commonReceiverActual({spend,types,objects},a) {
       spend();const id=pending[index];if(selected.has(id))continue;state(world,id);selected.add(id);
       const parent=frame(id).parent;if(parent!==null)pending.push(parent);
     }
+    // An ordinary helper may receive the allocated object without its Frame.
+    // Keep provenance for reachable births too; no new language/data identity
+    // is made. Use the existing paid reachability, including nested objects.
+    spend(world.size);let births=false;for(const value of world.values())births ||= value.births.size>0;
+    if(births){const refs=heap?a.reachableRefs(values,heap):new Set();
+      if(!heap){spend(values.length);for(const value of values){spend(value.refs.size);for(const ref of value.refs)refs.add(ref);}}
+      spend(world.size);for(const [id,value]of world){spend(value.births.size);for(const row of value.births.values())if(refs.has(row.ref)){selected.add(id);break;}}
+    }
+    spend(selected.size);for(const id of selected){let parent=frame(id).parent;
+      while(parent!==null&&!selected.has(parent)){state(world,parent);selected.add(parent);parent=frame(parent).parent;}}
     return selected;
   }
-  const select=(world,values)=>{const result=store();for(const id of selectedIds(world,values)){const copied=copyBinding(state(world,id));result.set(id,copied);}return result;};
+  const copySelected=(world,selected)=>{const result=store();for(const id of selected){const copied=copyBinding(state(world,id));result.set(id,copied);}return result;};
+  const select=(world,values,heap)=>copySelected(world,selectedIds(world,values,heap));
   // API order: bound payloads follow stable codepoint FrameId order, including
   // selected parents. Callers may attach region keys by this position.
-  const retained=(world,values)=>{
-    const selected=selectedIds(world,values);spend(selected.size*2+1);
+  const retainedSelected=(world,selected)=>{
+    spend(selected.size*2+1);
     const ids=[...selected];ids.sort((left,right)=>{text(left);text(right);return left<right?-1:left>right?1:0;});
-    const result=[];for(const id of ids){const value=state(world,id).bound;if(data(value))result.push(a.copy(value));}return result;
+    const result=[];for(const id of ids){const value=state(world,id);if(data(value.bound))result.push(a.copy(value.bound));
+      spend(value.births.size*2);const slots=[...value.births.keys()];slots.sort((left,right)=>{text(left);text(right);return left<right?-1:left>right?1:0;});
+      for(const slot of slots)result.push(copyReal(value.births.get(slot).real));}return result;
+  };
+  const retained=(world,values,heap)=>retainedSelected(world,selectedIds(world,values,heap));
+  // Selection is the shared deep boundary. Both outputs own their payloads;
+  // no caller heap is reused or kept alive across a later mutation.
+  const snapshot=(world,values,heap)=>{const selected=selectedIds(world,values,heap);return {frames:copySelected(world,selected),retained:retainedSelected(world,selected)};};
+  // The trusted relation-plane callback visits owned bound Values, not
+  // retained copies. Include non-live bindings so a later GetThis cannot
+  // restore an old relation. The callback preserves payload/control facts.
+  const feedback=(world,visitBound)=>{
+    spend(world.size);for(const id of world.keys()){const value=edit(world,id);visitBound(value.bound);spend(value.births.size);for(const row of value.births.values())visitBound(row.real);}
+  };
+
+  const birth=(world,id,ref,fields,heap,repeated)=>{
+    text(ref);spend(fields.length);const rows=[];
+    for(const field of fields){text(field);const slot=ref+'/field/'+field;
+      rows.push([slot,{ref,real:repeated&&heap.has(slot)?copyReal(heap.get(slot)):a.empty(),pending:true}]);}
+    for(let current=id;current!==null;current=frame(current).parent){const value=edit(world,current);spend(rows.length);
+      for(const [slot,row]of rows)value.births.set(slot,copyBirth(row));}
+  };
+  // All real logical writes, including helper stores of undefined, feed this
+  // lattice. Synthetic allocation/begin defaults must not use this boundary.
+  const write=(world,slot,input,strong=false)=>{spend(world.size);for(const [id,binding]of world){
+    if(binding.births.has(slot)){const row=edit(world,id).births.get(slot);if(strong){row.real=copyReal(input);row.pending=false;}else a.merge(row.real,input);}}};
+  const define=(world,ids,selected,field)=>{
+    // A union receiver may leave another current birth uninitialized. Only
+    // the exact selected birth loses its own temporary default.
+    if(selected.unknown||selected.refs.size!==1||ids.size!==1)return;
+    const id=ids.values().next().value,ref=selected.refs.values().next().value;const value=state(world,cursor(id).frame);
+    text(ref);text(field);const slot=ref+'/field/'+field;if(!value.births.has(slot))return;
+    spend(world.size);for(const [id,binding]of world)if(binding.births.has(slot))edit(world,id).births.get(slot).pending=false;
+  };
+  const reconcile=(world,heap,missing)=>{
+    spend(world.size);const rows=new Map();
+    for(const value of world.values()){spend(value.births.size);for(const [slot,row]of value.births){const old=rows.get(slot);
+      if(!old)rows.set(slot,copyBirth(row));else {a.merge(old.real,row.real);old.pending ||= row.pending;}}}
+    for(const [slot,row]of rows){if(row.pending)a.merge(row.real,missing);heap.set(slot,row.real);}
   };
 
   function create(world,{activation,site,owner,construction,newTarget,derived,fields,repeated=false,parent=null}) {
@@ -70,8 +141,8 @@ export function commonReceiverActual({spend,types,objects},a) {
       const info=Object.freeze({owner,construction,newTarget,parent,derived,fields:Object.freeze([...fields])});frames.set(id,info);
     }
     const old=world.get(id);
-    if(old&&repeated){old.weak=true;old.unbound=true;old.prefixMin=0;}
-    else {spend(8);world.set(id,{unbound:true,weak:repeated,pending:false,bound:a.empty(),initializing:false,aborted:false,prefixMin:0,prefixMax:0});}
+    if(old&&repeated){const value=edit(world,id);value.weak=true;value.unbound=true;value.prefixMin=0;}
+    else {spend(9);world.set(id,{unbound:true,weak:repeated,pending:false,bound:a.empty(),initializing:false,aborted:false,prefixMin:0,prefixMax:0,births:new Map()});}
     return id;
   }
   const child=(world,parents,definition)=>{
@@ -125,20 +196,20 @@ export function commonReceiverActual({spend,types,objects},a) {
     if(!data(parts.object))return out;
     spend(ids.size);
     for(const id of ids){const before=state(world,id);
-      if(before.unbound){const after=clone(world),value=state(after,id);
+      if(before.unbound){const after=clone(world),value=edit(after,id);
         if(value.weak){a.merge(value.bound,parts.object);value.prefixMin=0;value.pending ||= parts.pending;}
         else {value.bound=a.copy(parts.object);value.unbound=false;value.pending=parts.pending;value.initializing=false;value.aborted=false;value.prefixMin=0;value.prefixMax=0;}
         normal(out,after,parts.object);
       }
-      if(data(before.bound)){const after=clone(world);if(!before.weak)state(after,id).unbound=false;language(out,after,'duplicate-bind');}
+      if(data(before.bound)){const after=clone(world);if(!before.weak)edit(after,id).unbound=false;language(out,after,'duplicate-bind');}
     }
     return out;
   }
   function get(world,ids) {
     const out=output();spend(ids.size);
     for(const id of ids){const before=state(world,id);
-      if(data(before.bound)){const after=clone(world);if(!before.weak)state(after,id).unbound=false;normal(out,after,before.bound);out.pending ||= before.pending||before.bound.unknown;}
-      if(before.unbound){const after=clone(world);if(!before.weak){const value=state(after,id);value.bound=a.empty();value.initializing=false;value.prefixMin=0;value.prefixMax=0;}
+      if(data(before.bound)){const after=clone(world);if(!before.weak)edit(after,id).unbound=false;normal(out,after,before.bound);out.pending ||= before.pending||before.bound.unknown;}
+      if(before.unbound){const after=clone(world);if(!before.weak){const value=edit(after,id);value.bound=a.empty();value.initializing=false;value.prefixMin=0;value.prefixMax=0;}
         language(out,after,'unbound-this');}
     }
     return out;
@@ -163,21 +234,21 @@ export function commonReceiverActual({spend,types,objects},a) {
     if(!cursors.has(key))cursors.set(key,Object.freeze({frame:id,position}));return key;
   };
   const begin=(world,ids)=>{
-    spend(ids.size);const result=new Set();for(const id of ids){const value=state(world,id);check(data(value.bound),'receiver-actual','initialization requires selected bound this');
+    spend(ids.size);const result=new Set();for(const id of ids){check(data(state(world,id).bound),'receiver-actual','initialization requires selected bound this');const value=edit(world,id);
       value.initializing=true;if(value.weak)value.prefixMin=0;else {value.aborted=false;value.prefixMin=0;value.prefixMax=0;}result.add(token(id,0));}return result;
   };
   const advance=(world,ids,field)=>{
-    spend(ids.size);const result=new Set();for(const id of ids){const current=cursor(id),info=frame(current.frame),value=state(world,current.frame);
-      check(value.initializing&&info.fields[current.position]===field,'receiver-actual','initializer must advance its exact field prefix');
-      const next=current.position+1;if(value.weak)value.prefixMax=Math.max(value.prefixMax,next);else value.prefixMin=value.prefixMax=next;result.add(token(current.frame,next));}return result;
+    spend(ids.size);const result=new Set();for(const id of ids){const current=cursor(id),info=frame(current.frame);
+      check(state(world,current.frame).initializing&&info.fields[current.position]===field,'receiver-actual','initializer must advance its exact field prefix');
+      const value=edit(world,current.frame),next=current.position+1;if(value.weak)value.prefixMax=Math.max(value.prefixMax,next);else value.prefixMin=value.prefixMax=next;result.add(token(current.frame,next));}return result;
   };
   const end=(world,ids)=>{
     spend(ids.size);for(const id of ids){const current=cursor(id),info=frame(current.frame),value=state(world,current.frame);
-      check(value.initializing&&current.position===info.fields.length,'receiver-actual','initializer must end its complete prefix');if(!value.weak)value.initializing=false;}
+      check(value.initializing&&current.position===info.fields.length,'receiver-actual','initializer must end its complete prefix');if(!value.weak)edit(world,current.frame).initializing=false;}
   };
   const abort=(world,ids=null)=>{
-    if(ids===null){spend(world.size);for(const value of world.values())if(value.initializing){if(!value.weak)value.initializing=false;value.aborted=true;}return;}
-    spend(ids.size);for(const id of ids){const value=state(world,cursor(id).frame);if(value.initializing){if(!value.weak)value.initializing=false;value.aborted=true;}}
+    if(ids===null){spend(world.size);for(const [id,binding]of world)if(binding.initializing){const value=edit(world,id);if(!value.weak)value.initializing=false;value.aborted=true;}return;}
+    spend(ids.size);for(const id of ids){const frameId=cursor(id).frame;if(state(world,frameId).initializing){const value=edit(world,frameId);if(!value.weak)value.initializing=false;value.aborted=true;}}
   };
-  return {store,clone,join,overlay,key,select,retained,frame,cursor,create,child,allocate,bind,get,result,begin,advance,end,abort};
+  return {store,clone,fork,join,overlay,same,select,retained,snapshot,feedback,birth,write,define,reconcile,frame,cursor,create,child,allocate,bind,get,result,begin,advance,end,abort};
 }

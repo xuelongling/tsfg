@@ -3,18 +3,26 @@
 namespace tsfg::commonProgram {
 namespace {
 size_t weight(const ActualValue &v){
-  size_t cost=v.tags.size()+v.objects.size()+v.cells.size()+v.callables.size()+regionWeight(v.region)+1;
-  for(const auto *set:{&v.tags,&v.objects,&v.cells})for(const auto &id:*set)cost+=id.size()/64;
+  size_t cost=v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+regionWeight(v.region)+1;
+  for(const auto *set:{&v.tags,&v.objects,&v.cells,&v.frames,&v.cursors})for(const auto &id:*set)cost+=id.size()/64;
   for(const auto &[code,environment]:v.callables)cost+=(code.size()+environment.size())/64+1;
   return cost;
 }
 }
-std::string ActualCheck::key(const ActualValue &v)const{
-  Array tags,refs,cells,pairs;for(const auto &[code,environment]:v.callables)pairs.push_back(Array{code,environment});for(const auto &id:v.tags)tags.push_back(id);for(const auto &id:v.objects)refs.push_back(id);for(const auto &id:v.cells)cells.push_back(id);
+std::string ActualCheck::key(const ActualValue &v){
+  if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+v.region.roots.size()+256))return {};
+  Array tags,refs,cells,pairs,frames,cursors;
+  const auto ids=[&](const std::set<std::string> &from,Array &to){for(const auto &id:from){if(!step(12*id.size()+8))return false;to.push_back(id);}return true;};
+  if(!ids(v.tags,tags)||!ids(v.objects,refs)||!ids(v.cells,cells)||!ids(v.frames,frames)||!ids(v.cursors,cursors))return {};
+  for(const auto &[code,environment]:v.callables){if(!step(12*(code.size()+environment.size())+16))return {};pairs.push_back(Array{code,environment});}
+  for(const auto &id:v.region.roots)if(!step(12*id.size()+8))return {};
   return canonical(Object{{"tags",std::move(tags)},{"refs",std::move(refs)},{"cells",std::move(cells)},
-    {"callableTop",v.callableTop},{"callables",std::move(pairs)},{"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)},{"region",regionKey(v.region)}});
+    {"frames",std::move(frames)},{"cursors",std::move(cursors)},{"callableTop",v.callableTop},{"callables",std::move(pairs)},
+    {"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)},{"region",regionKey(v.region)}});
 }
-ActualValue ActualCheck::copy(const ActualValue &v){if(!step(weight(v)))return {};return v;}
+ActualValue ActualCheck::copy(const ActualValue &v){
+  if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+1)||!step(weight(v)))return {};return v;
+}
 bool ActualCheck::arrayReceiver(const ActualValue &value){
   if(!step()||value.unknown||value.callableTop||!value.cells.empty()||!value.callables.empty()||value.objects.empty()||value.tags.empty())return false;
   std::set<std::string> actual;
@@ -27,17 +35,19 @@ bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
   // Visit incoming identities once; only the relation plane still projects
   // the old target. Internal change detection must retain exact int64 facts,
   // independently of the bounded JSON key's binary64 representation.
-  if(!step(weight(from)+1+regionWeight(to.region)))return false;
+  if(!step(from.frames.size()+from.cursors.size()+1)||!step(weight(from)+1+regionWeight(to.region)))return false;
   // An absent relation is lazily unproved, not a runtime allocation fact.
   // Capacity/tag-only values need no relation plane or spurious state change.
   const bool tracked=to.region.known||from.region.known;RegionValue provenance;
   if(tracked){provenance=regionValue(*this,to);regionMerge(*this,provenance,regionValue(*this,from));}
-  const bool bottom=to.tags.empty()&&to.objects.empty()&&to.cells.empty()&&to.callables.empty()&&!to.unknown&&!to.callableTop;
+  const bool bottom=to.tags.empty()&&to.objects.empty()&&to.cells.empty()&&to.callables.empty()&&to.frames.empty()&&to.cursors.empty()&&!to.unknown&&!to.callableTop;
   bool changed=false;
   for(const auto &id:from.tags)if(to.tags.insert(id).second)changed=true;
   for(const auto &id:from.objects)if(to.objects.insert(id).second)changed=true;
   for(const auto &id:from.cells)if(to.cells.insert(id).second)changed=true;
   for(const auto &pair:from.callables)if(to.callables.insert(pair).second)changed=true;
+  for(const auto &id:from.frames)if(to.frames.insert(id).second)changed=true;
+  for(const auto &id:from.cursors)if(to.cursors.insert(id).second)changed=true;
   const auto top=to.callableTop,unknown=to.unknown;const auto truth=to.truth;const auto number=to.number;
   to.callableTop|=from.callableTop;to.truth|=from.truth;to.unknown|=from.unknown;to.number=bottom?from.number:to.number==from.number?to.number:std::nullopt;
   changed|=top!=to.callableTop||truth!=to.truth||unknown!=to.unknown||number!=to.number;
@@ -47,6 +57,11 @@ bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
   }
   if(!need(to.tags.size()<=256&&to.objects.size()<=256&&to.cells.size()<=256&&to.callables.size()<=256,"actual alternative/object/Cell set limit exceeded"))return false;
   return e.message.empty()&&changed;
+}
+void ActualCheck::seedStorage(std::map<std::string,ActualValue> &seeds,const std::string &id,const ActualValue &v,bool conditional,bool &changed){
+  if(!conditional||!step(v.tags.size()+1))return;for(const auto &tag:v.tags)if(!receiverText(tag))return;
+  ActualValue tags;tags.tags=v.tags;tags.unknown=v.unknown;tags.truth=v.truth;
+  const bool grew=merge(seeds[id],tags);seedChanged|=grew;changed|=grew;
 }
 bool ActualCheck::recordCapacity(CapacityValue &to,const ActualValue &from){
   // The producer may be a freshly constructed value rather than merge's
@@ -78,14 +93,14 @@ bool ActualCheck::mergeHeap(ActualHeap &into,ActualHeap &&from){
 }
 ActualState ActualCheck::copyState(const ActualState &s){
   ActualState out;if(!step(s.values.size()))return out;out.heap=copyHeap(s.heap);
-  out.regions=regionCopy(*this,s.regions);
+  out.regions=regionCopy(*this,s.regions);out.frames=copyFrames(s.frames);
   for(const auto &[id,v]:s.values){out.values.emplace(id,copy(v));if(!e.message.empty())return {};}
   return out;
 }
 bool ActualCheck::join(ActualState &to,ActualState &&from){
   // The caller transfers a private edge state. Moving its heap/value payloads
   // leaves the independent relation plane available for the original join.
-  bool changed=mergeHeap(to.heap,std::move(from.heap));changed=regionJoin(*this,to.regions,from.regions)||changed;if(!step(from.values.size()))return false;
+  bool changed=joinFrames(to.frames,from.frames);changed=mergeHeap(to.heap,std::move(from.heap))||changed;changed=regionJoin(*this,to.regions,from.regions)||changed;if(!step(from.values.size()))return false;
   for(auto &[id,v]:from.values){auto found=to.values.find(id);
     if(found==to.values.end()){if(!step())return false;to.values.emplace(id,std::move(v));changed=true;}else changed=merge(found->second,v)||changed;
     if(!e.message.empty())return false;
@@ -211,15 +226,25 @@ ActualValue ActualCheck::entryValue(const Function &fn,size_t index,ActualHeap &
   if(sourceFunctions.count(fn.id)){
     const auto &owner=*sourceFunctions.at(fn.id);const size_t receiver=(!field(owner,"ownerType").getAsNull())+(!field(owner,"lexicalEnvironment").getAsNull());
     if(index>=receiver&&index-receiver<items(field(owner,"parameters")).size()){
-      const auto binding=string(field(items(field(owner,"parameters"))[index-receiver],"id"));
+      auto binding=string(field(items(field(owner,"parameters"))[index-receiver],"id"));
+      auto inherited=analysisParameterSources.find(binding);
+      if(inherited!=analysisParameterSources.end()){
+        const auto &[original,parameter]=inherited->second;const auto &parameters=items(field(*sourceFunctions.at(original),"parameters"));
+        if(!need(parameter<parameters.size(),"implicit parameter source index differs"))return {};
+        binding=string(field(parameters[parameter],"id"));
+      }
       auto found=p.entryCandidates.find(binding);if(found!=p.entryCandidates.end())role=&found->second;
     }
   }
   const auto origin="entry/"+fn.id+"/"+std::to_string(reg);
   if(commonCallableType(types,type,[&]{return step();})&&sourceFunctions.count(fn.id)){
     const auto &source=*sourceFunctions.at(fn.id);const size_t hidden=!field(source,"lexicalEnvironment").getAsNull(),receiver=!field(source,"ownerType").getAsNull();
-    if(!need(index>=hidden+receiver&&p.callableParameters.count(fn.id)&&index-hidden-receiver<p.callableParameters.at(fn.id).size(),"callable root parameter lacks independent fixed authority"))return {};
-    const auto &bound=p.callableParameters.at(fn.id)[index-hidden-receiver];ActualValue out;out.callableTop=bound.top;out.unknown=bound.top;
+    if(!need(index>=hidden+receiver,"callable root parameter index differs"))return {};
+    auto original=fn.id;auto parameter=index-hidden-receiver;
+    const auto binding=string(field(items(field(source,"parameters"))[parameter],"id"));auto inherited=analysisParameterSources.find(binding);
+    if(inherited!=analysisParameterSources.end()){original=inherited->second.first;parameter=inherited->second.second;}
+    if(!need(p.callableParameters.count(original)&&parameter<p.callableParameters.at(original).size(),"callable root parameter lacks independent fixed authority"))return {};
+    const auto &bound=p.callableParameters.at(original)[parameter];ActualValue out;out.callableTop=bound.top;out.unknown=bound.top;
     if(string(field(*types.at(type),"kind"))=="function")out.tags.insert(type);
     else for(const auto &member:items(field(*types.at(type),"members"))){if(!step())return {};out.tags.insert(string(member));}
     for(const auto &code:bound.functions){

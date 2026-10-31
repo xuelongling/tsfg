@@ -1,0 +1,102 @@
+{
+  "qualification": "literal metadata expectations only; NOT RUN, not executable Graph/Program/State construction",
+  "schema": "sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769",
+  "publicInventory": "exact original Source functions and module initializers; no added PublishedFnID",
+  "positive": [
+    {
+      "case": "acyclic",
+      "input": "original public canonical graph, internalConstructors=[]",
+      "expected": "original public instructions, ABI/register checks and Source/publication inventory retained; required empty fourth table present"
+    },
+    {
+      "case": "self-cycle",
+      "input": "public construction of implicit reference C whose initializer constructs C",
+      "expected": "public projected invoke selects analysis-construction:<C.CtorId>; exactly C helper is printed, individually SourcePlan/SSA matched and solved; no compiler recursive inline"
+    },
+    {
+      "case": "mutual-cycle",
+      "input": "public C construction; C implicit initializer invokes D, D invokes C",
+      "expected": "exact two-helper transitive closure, b239 source signatures, Frame parameter first, real normal/language CFG; same ActualCheck solver and actual result capacities"
+    },
+    {
+      "case": "unused-cycle",
+      "input": "implicit C/D cycle owned in HIR but no emitted public invoke reaches either",
+      "expected": "all-owned analysis roots remain solved; no printed helper or public table extension"
+    },
+    {
+      "case": "dead-frontier",
+      "input": "a public owner has a cycle candidate only after a guaranteed lowering completion",
+      "expected": "actual projected lowering emits no cycle-reaching private invoke; canonical public inline plan is matched"
+    },
+    {
+      "case": "receiver-data-is-not-frame",
+      "input": "helper entry has receiver:Owner plus ordinary arguments",
+      "expected": "Frame/cursor remains control, never p0 source permission; constructor Source receiver is fresh local for base, empty for derived until super selects data roots; old logical parameter table indices remain"
+    },
+    {
+      "case": "replacement-write",
+      "input": "Base fixed upper may select existing global G or argument U; D defines own x=1",
+      "expected": "own initialize_field contributes write to selected g:G/p:i/c:slot roots including default/parameter definitions; fresh local produces no external write; insufficient public caller upper is rejected before any layout permission"
+    },
+    {
+      "case": "scalar-view-owner",
+      "input": "public reference p:U passes as i32 to Base, which may return it as Base; D defines own x=1",
+      "expected": "Source views and scalar formal/capture types do not erase logical owner; ordinary parameter/capture roots survive summary entry and selected-root union; hidden control is never seeded"
+    },
+    {
+      "case": "fixed-public-leaf",
+      "input": "helper Source invokes public B whose allowed upper reads/writes more than its current body",
+      "expected": "consume complete fixed B upper without deriving/narrowing its body; transitive helper summaries retain public B dependency, never a private Published row"
+    }
+  ],
+  "negative": [
+    {
+      "mutation": "omit internalConstructors even when no helper is emitted",
+      "expected": "reject four-table/profile contract"
+    },
+    {
+      "mutation": "helper id is not deterministic analysis-construction:<owned CtorId>",
+      "expected": "reject independently rebuilt ownership/signature"
+    },
+    {
+      "mutation": "use an explicit constructor or foreign type as helper owner",
+      "expected": "reject missing implicit owner"
+    },
+    {
+      "mutation": "omit reachable helper, its body, or its declaration",
+      "expected": "reject complete definition/ABI or exact transitive closure"
+    },
+    {
+      "mutation": "print a valid but unused helper",
+      "expected": "reject extraneous exact closure"
+    },
+    {
+      "mutation": "move helper into public function directory or Published contracts",
+      "expected": "reject unchanged complete public inventory"
+    },
+    {
+      "mutation": "change helper role, source path/range, signature or normal/language successor",
+      "expected": "reject header or full independent SourcePlan/SSA match"
+    },
+    {
+      "mutation": "add a receiver Cell/public/global/field binding to internal bindings",
+      "expected": "reject exact ordinary parameter storage ownership"
+    },
+    {
+      "mutation": "reorder parameter ordinal carriers or lexical bindings order",
+      "expected": "reject Frame-first/ordinal ABI or strict binding id order"
+    },
+    {
+      "mutation": "force normal Bottom or selected replacement U result to owner C",
+      "expected": "reject result/register/storage capacities independently calculated by the one solver"
+    },
+    {
+      "mutation": "request a published-style borrow proof for a printed internal constructor",
+      "expected": "construction-borrow-open; conservative call fence does not create a private fixed contract or native/Runtime qualification"
+    },
+    {
+      "mutation": "request borrow proof when a valid helper is printed in a constant-false public branch but the actual replay never reaches its call",
+      "expected": "construction-borrow-open after genuine Source/types/actual/kernel checks, before any public-only proof output; printed private role still has no admitted proof"
+    }
+  ]
+}

@@ -11,6 +11,83 @@ import {commonIdentity} from '../../compiler/common-program-identities.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 const packet=name=>readCommonProgramFacts(readFileSync(new URL('./testdata/common-value-capture/'+name+'.json',import.meta.url)));
 const names=['local-const','local-let','owner-write','sibling-write','sibling-early-write','parameter','parameter-rebind','ancestor','ancestor-rebind','shadow','copy-scalar','return-copy','nested-value','nested-copy','managed-fields','owner-resize','slot-replaced','borrow-slot-replaced','alias-type','named-import','const-field-write','const-managed-field-write'];
+// These retained fixtures construct base value classes. Check the Source9
+// control/data protocol across both inline and explicit public constructors;
+// physical inline layout, sharing and copy isolation remain the tests below.
+/** @param {string} core @param {ReturnType<typeof projectCommonProgram>} hir */
+function assertValueConstructionProtocol(core,hir){
+  const unquote=token=>{/** @type {unknown} */ const value=JSON.parse(token);assert.ok(typeof value==='string');return value;},
+    functions=core.slice(core.indexOf('\n')+1).split(/(?=^  func\.func )/m).filter(text=>text.startsWith('  func.func ')).map(text=>{
+      const header=text.split('\n')[0],identity=/tsfg_program.function_id = "([^"]+)"/.exec(header);assert.ok(identity);
+      const rows=text.split('\n').flatMap(line=>{
+        const op=/^\s+(?:(%\w+) = )?"([^"]+)"\(([^)]*)\)/.exec(line);if(!op)return [];
+        const property=/properties = ("(?:\\.|[^"\\])*")/.exec(line),view=/view_type = ("(?:\\.|[^"\\])*")/.exec(line),
+          edges=/\[([^\]]+)\]/.exec(line),source=/tsfg_source.start = (\d+) : i64, tsfg_source.end = (\d+) : i64/.exec(line);assert.ok(source);
+        /** @type {Record<string,unknown>} */ const properties=property?JSON.parse(unquote(property[1])):{};
+        return [{name:op[2],result:op[1]??null,operands:op[3]?op[3].split(',').map(value=>value.trim()):[],properties,
+          view:view?unquote(view[1]):null,successors:edges?edges[1].split(',').map(value=>value.trim().slice(1)):[],
+          range:[Number(source[1]),Number(source[2])],line}];
+      });
+      return {id:identity[1],header,text,rows};
+    });
+  const blockValue=(fn,label)=>{
+    const line=fn.text.split('\n').find(row=>row.startsWith('  ^'+label+'('));assert.ok(line);
+    const parameter=/^  \^[^(]+\((%\w+): (.+)\):$/.exec(line);assert.ok(parameter);
+    assert.equal(/carrier<"(?:receiver|initialization):/.test(parameter[2]),false,'normal selected result is language data, not a control carrier');
+    return parameter[1];
+  };
+  let constructions=0;
+  for(const caller of functions)for(const create of caller.rows.filter(row=>row.name==='tsfg_program.receiver_create')){
+    const type=hir.types.find(row=>row.kind==='value'&&row.id===create.properties.owner);if(!type)continue;
+    constructions++;assert.ok(!type.base,'these fixed value fixtures use base constructors');
+    assert.deepEqual(create.properties,{construction:type.construction.id,new_target:type.id,owner:type.id});
+    const frame=create.result;assert.ok(frame);assert.deepEqual(create.operands,[]);assert.equal(create.view,'receiver:'+type.id);
+    let owner=caller,entryFrame=frame,completion;
+    if(type.construction.functionId){
+      const call=caller.rows.find(row=>row.name==='tsfg_program.invoke'&&row.properties.function_id===type.construction.functionId&&row.operands.includes(frame));assert.ok(call);
+      assert.ok(caller.rows.indexOf(create)<caller.rows.indexOf(call));assert.equal(call.successors.length,2);
+      const ctor=functions.find(fn=>fn.id===type.construction.functionId);assert.ok(ctor);owner=ctor;
+      assert.ok(ctor.header.includes('tsfg_program.role = "construction-body"'));
+      const parameters=/\((.*?)\) (?:->|attributes)/.exec(ctor.header);assert.ok(parameters);
+      const signature=parameters[1].split(',').map(value=>value.trim()),frameIndex=signature.findIndex(value=>value.endsWith(': !tsfg_program.carrier<"receiver:'+type.id+'">'));
+      assert.ok(frameIndex>=0);entryFrame=signature[frameIndex].split(': ')[0];assert.equal(call.operands[frameIndex],frame);
+      assert.deepEqual(caller.rows.filter(row=>row.operands.includes(frame)).map(row=>row.name),['tsfg_program.invoke'],'caller passes Frame only to its real constructor');
+      completion=call;
+    }
+    const allocate=owner.rows.find(row=>row.name==='tsfg_program.receiver_allocate'&&row.operands[0]===entryFrame),
+      bind=owner.rows.find(row=>row.name==='tsfg_program.receiver_bind'&&row.operands[0]===entryFrame);assert.ok(allocate&&bind);
+    assert.deepEqual(allocate.properties,{owner:type.id});assert.equal(allocate.view,type.id);
+    assert.deepEqual(bind.properties,{owner:type.id});assert.deepEqual(bind.operands,[entryFrame,allocate.result]);assert.equal(bind.successors.length,2);
+    const selected=blockValue(owner,bind.successors[0]),begin=owner.rows.find(row=>row.name==='tsfg_program.initialize_begin'&&row.operands[0]===entryFrame);assert.ok(begin);
+    assert.deepEqual(begin.properties,{owner:type.id});assert.deepEqual(begin.operands,[entryFrame,selected]);assert.equal(begin.view,'initialization:'+type.id);
+    assert.ok(owner.rows.indexOf(allocate)<owner.rows.indexOf(bind)&&owner.rows.indexOf(bind)<owner.rows.indexOf(begin));
+    let cursor=begin.result;assert.ok(cursor);let previous=owner.rows.indexOf(begin);
+    for(const fieldId of type.construction.initializationFields){
+      const previousCursor=cursor,field=type.fields.find(row=>row.id===fieldId),define=owner.rows.find(row=>row.name==='tsfg_program.initialize_field'&&row.properties.field===fieldId&&row.operands[0]===previousCursor);assert.ok(field&&define);
+      assert.deepEqual(define.properties,{field:field.id,owner:type.id});assert.deepEqual(define.operands.slice(0,2),[previousCursor,selected]);
+      assert.equal(define.view,'initialization:'+type.id);assert.deepEqual(define.range,[field.origin.start,field.origin.end]);
+      let copied=owner.rows.find(row=>row.result===define.operands[2]);const visited=new Set();
+      while(copied?.name==='tsfg_program.carrier_cast'){assert.equal(visited.has(copied),false);visited.add(copied);const value=copied.operands[0];copied=owner.rows.find(row=>row.result===value);}
+      assert.ok(copied);assert.equal(copied.name,'tsfg_program.value_copy');assert.equal(copied.properties.type,field.type);
+      assert.ok(owner.rows.indexOf(copied)<owner.rows.indexOf(define)&&owner.rows.indexOf(define)>previous);
+      assert.deepEqual(owner.rows.filter(row=>row.operands.includes(previousCursor)).map(row=>row.name),['tsfg_program.initialize_field'],'cursor is consumed only by its next field');
+      previous=owner.rows.indexOf(define);cursor=define.result;assert.ok(cursor);
+    }
+    const finalCursor=cursor,end=owner.rows.find(row=>row.name==='tsfg_program.initialize_end'&&row.operands[0]===finalCursor),
+      result=owner.rows.find(row=>row.name==='tsfg_program.receiver_result'&&row.operands[0]===entryFrame);assert.ok(end&&result);
+    assert.deepEqual(end.properties,{owner:type.id});assert.deepEqual(end.operands,[finalCursor,selected]);assert.ok(previous<owner.rows.indexOf(end)&&owner.rows.indexOf(end)<owner.rows.indexOf(result));
+    assert.deepEqual(owner.rows.filter(row=>row.operands.includes(finalCursor)).map(row=>row.name),['tsfg_program.initialize_end']);
+    assert.deepEqual(result.properties,{owner:type.id});assert.equal(result.successors.length,2);
+    assert.ok(owner.rows.filter(row=>row.operands.includes(entryFrame)).every(row=>['receiver_allocate','receiver_bind','initialize_begin','receiver_get','receiver_result'].map(name=>'tsfg_program.'+name).includes(row.name)),
+      'constructor Frame never enters ordinary value copies, storage, environments or returns');
+    completion??=result;const returned=blockValue(caller,completion.successors[0]);
+    assert.ok(caller.rows.some(row=>row.name==='tsfg_program.value_copy'&&row.operands[0]===returned&&row.properties.type===type.id),
+      'successful value receiver is copied as value data at the caller');
+    assert.ok(caller.rows.indexOf(create)<caller.rows.indexOf(completion));
+  }
+  assert.ok(constructions>0,'the public source really constructs a value via Source9');
+  assert.doesNotMatch(core,/"tsfg_program\.construct_value"/);
+}
 for(const name of names)test('complete official nominal value capture retains inline copies in shared environment: '+name,()=>{
   const source=packet(name),hir=projectCommonProgram(source),types=new Map(hir.types.map(t=>[t.id,t])),
     slots=hir.environments.flatMap(e=>e.slots).filter(s=>types.get(s.type)?.kind==='value');
@@ -21,7 +98,7 @@ for(const name of names)test('complete official nominal value capture retains in
     assert.throws(()=>emitCommonProgramCore(hir,publication,request),e=>e instanceof Error&&'code'in e&&['r03-common-program-borrow-pending','r03-common-program-borrow-conflict'].includes(String(e.code)));return;
   }
   const core=emitCommonProgramCore(hir,publication,request);
-  assert.match(core,/tsfg_program.env_load/);assert.match(core,/tsfg_program.construct_value/);assert.match(core,/tsfg_program.value_copy/);
+  assert.match(core,/tsfg_program.env_load/);assertValueConstructionProtocol(core,hir);assert.match(core,/tsfg_program.value_copy/);
   if(process.env.TSFG_VALUE_CORE_ROOT){mkdirSync(process.env.TSFG_VALUE_CORE_ROOT,{recursive:true});writeFileSync(process.env.TSFG_VALUE_CORE_ROOT+'/'+name+'.mlir',core);}
 });
 for(const change of ['owner','binding','type','occurrence','entry-root','source-spelling'])test('self-hashed original value capture rejects '+change,()=>{

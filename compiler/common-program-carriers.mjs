@@ -29,8 +29,8 @@ export function selectCommonCarriers({model,plans},values) {
     const parameters=plan.parameters.map(p=>p.hidden?p.type:bindings.get(p.id));
     functions.set(fn,{id:fn,parameters,result:plan.returnType==='void'||types.get(plan.returnType)?.kind==='void'?'void':domain(results.get(fn))});
     for(const [name,row]of plan.graph.registers){spend();const op=row.operation?.name;
-      const carrier=row.view.startsWith('cell:')||row.view.startsWith('env:')?row.view:row.view===payload?payload
-        :['tsfg_program.constant','tsfg_program.floating','tsfg_program.boolean','tsfg_program.construct_value','tsfg_program.allocate_reference','tsfg_program.array_create','tsfg_program.readspan'].includes(op)?row.view
+      const carrier=row.view.startsWith('cell:')||row.view.startsWith('env:')||row.view.startsWith('receiver:')||row.view.startsWith('initialization:')?row.view:row.view===payload?payload
+        :['tsfg_program.constant','tsfg_program.floating','tsfg_program.boolean','tsfg_program.construct_value','tsfg_program.allocate_reference','tsfg_program.receiver_allocate','tsfg_program.array_create','tsfg_program.readspan'].includes(op)?row.view
           :domain(bound(fn,name));rows.set(name,carrier);}
   }
   const joined=ids=>{
@@ -48,7 +48,13 @@ export function selectCommonCarriers({model,plans},values) {
   function layout(id) {
     spend();if(layouts.has(id))return layouts.get(id);check(!active.has(id),'type','cyclic physical inline layout');active.add(id);
     let bytes=0,alignment=1,roots=0;const t=types.get(id),d=domains.get(id);
-    if(id.startsWith('env:')){check(model.environments.has(id.slice(4)),'environment');bytes=alignment=8;roots=1;}
+    if(id.startsWith('receiver:')||id.startsWith('initialization:')){
+      const frame=id.startsWith('receiver:'),owner=types.get(id.slice(frame?9:15));
+      check(owner?.construction&&['reference','value'].includes(owner.kind),'construction');
+      // Internal activation state is not a script object or a union member.
+      // A frame retains the bound payload; a token retains its frame plus cursor.
+      bytes=frame?32:16;alignment=8;roots=1;
+    }else if(id.startsWith('env:')){check(model.environments.has(id.slice(4)),'environment');bytes=alignment=8;roots=1;}
     else if(t?.kind==='function'){bytes=40;alignment=8;roots=1;}
     else if(id===payload||t?.kind==='unknown'){bytes=16;alignment=8;roots=1;}
     else if(t?.kind==='scalar'){const width={bool:1,i8:1,u8:1,i16:2,u16:2,i32:4,u32:4,f32:4,i64:8,u64:8,isize:8,usize:8,f64:8}[scalarName(id)];check(width,'type');bytes=alignment=width;}
@@ -68,6 +74,7 @@ export function selectCommonCarriers({model,plans},values) {
   }
   // Layout can discover field domains, so selections above precede all layout.
   for(const id of domains.keys())layout(id);for(const type of types.values())if(type.kind!=='union')layout(type.id);
+  for(const rows of registers.values())for(const id of rows.values())if(id.startsWith('receiver:')||id.startsWith('initialization:'))layout(id);
   // A reference's public carrier is an eight-byte handle. Its separately
   // allocated body still obeys the complete inherited field storage limits.
   const bodies=new Map();
@@ -81,7 +88,8 @@ export function selectCommonCarriers({model,plans},values) {
   const coreType=id=>{
     if(id==='void')return '()';if(id.startsWith('cell:'))return '!tsfg_program.cell<'+JSON.stringify(id.slice(5))+'>';
     const name=scalarName(id);if(name)return name==='bool'?'i1':['i32','f32','f64'].includes(name)?name:'!tsfg_core.integer<'+JSON.stringify(name)+'>';
-    check(id.startsWith('env:')&&model.environments.has(id.slice(4))||id===payload||types.has(id)||domains.has(id),'type');return '!tsfg_program.carrier<'+JSON.stringify(id)+'>';
+    const internal=id.startsWith('receiver:')||id.startsWith('initialization:');if(internal)layout(id);
+    check(internal||id.startsWith('env:')&&model.environments.has(id.slice(4))||id===payload||types.has(id)||domains.has(id),'type');return '!tsfg_program.carrier<'+JSON.stringify(id)+'>';
   };
   const entries=rows=>collections.sorted(rows,([a],[b])=>a<b?-1:a>b?1:0);
   const record=()=>{spend(domains.size+bindings.size+functions.size);return {domains:entries(domains).map(([,row])=>row),

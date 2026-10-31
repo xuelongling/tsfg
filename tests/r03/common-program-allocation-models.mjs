@@ -55,7 +55,7 @@ export function allocationArgumentContextsModel(){
     {signature_hash:reader.owner.signatureHash,targets:{top:false,functions:[{function_id:reader.owner.id,signature_hash:reader.owner.signatureHash}]}},range);
   chooser.graph.terminal(normal,'func.return',[{...normal.parameters[0]}],[],{},range);
   chooser.graph.terminal(language,'return_throw',[{...language.parameters[0]}],[],{},range);
-  return {...value,reader:reader.owner.id,allocationRegister:allocated.name,allocationSuffix:'/'+reader.owner.id+'/object/'+allocated.name};
+  return {...value,reader:reader.owner.id,allocationRegister:allocated.name};
 }
 export function allocationRepeatedHolderModel(){
   const value=commonBorrowModel('return-holder'),{model,plans}=value.program,p=plans.find(p=>p.owner.id==='entry'),

@@ -230,8 +230,21 @@ scheduling. Normal/language completion, returned
 values, heaps, region summaries and request traps all participate in invalidation.
 Any raw weak promotion, including a colliding declared entry identity, invalidates
 all contexts. Final borrow replay does not schedule further solving and rejects
-new summary, trap, weak or context facts. The original work/context limits and
-physical allocation provenance remain unchanged.
+new summary, trap, weak or context facts. Scheduling preserves the context
+limits and physical allocation provenance. The work allowance belongs to the
+versioned development profile below.
+
+Private Core3 retains its original 1,000,000-work profile. The first adopted
+private Core4 development profile provides 2,000,000 finite compiler work units
+for receiver and construction analysis. This is a version decision for the
+unreleased, same-repository development format, not a change to language Fuel
+or request execution. It preserves every operation fee and all other limits,
+including context, text, JSON and allocation bounds. Node meters and the shared
+C++ Program default/clamp use the same allowance; scheduling never resets it.
+The descriptor status, schema hash, marker and C++ reader advance together.
+The reader accepts only the exact version/hash pair; Core3 and earlier draft
+Core4 hashes receive no compatibility path. Old one-million-work failures stay
+failed. Constructor-body borrow proof and Runtime execution remain OPEN.
 
 Node borrow liveness uses dirty rounds in the original point order. A changed
 successor schedules only its predecessors, with earlier/self predecessors in the
@@ -244,4 +257,4 @@ Core text quoting reuses immutable escaped fragments only inside one writer.
 Every lookup pays for input length and a nonzero lookup fee; a first conversion
 also prepays the complete escaped expansion. A hit still checks remaining bytes.
 Append, line, terminal failure and finish keep their original limits. This avoids
-repeated conversion without increasing the aggregate work or output caps.
+repeated conversion without changing the selected profile's aggregate work or output caps.

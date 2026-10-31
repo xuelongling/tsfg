@@ -3,7 +3,7 @@
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonBorrowEvents} from './common-program-borrow-events.mjs';
-import {commonActualArrayReceiver} from './common-program-abstract.mjs';
+import {commonActualArrayReceiver,commonActualHeapPrefixes} from './common-program-abstract.mjs';
 // Code permission and current graph holding are separate. Scalar/String writes
 // are nonowning. Canonical Array<scalar> Cell writes need independent immutable
 // holding; neither their old payload nor Span.owner contributes that proof.
@@ -59,20 +59,13 @@ export function commonClosureHolding({model,objects,records,closedTarget}){
   }
   return {permitsCode,wholeValue,hasReferenceWrites};
 }
-export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,holdingPolicy=null,borrowProof=false,cyclicFunctions=new Set()}) {
-  const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
-  const futureStores=new Map();
-  const proof=borrowProof?commonBorrowEvents({model,objects,cyclicFunctions}):null;
-  if(proof)for(const key of ['define','use','effect','edge']){const verify=graph[key];graph[key]=(...args)=>{verify(...args);proof[key](...args);};}
-  const slotLayouts=new Map();spend(model.environments?.size??0);
-  for(const env of model.environments?.values()??[]){spend(env.slots.length);for(const slot of env.slots){check(!slotLayouts.has(slot.key)||slotLayouts.get(slot.key)===env.id,'environment');slotLayouts.set(slot.key,env.id);}}
-  const entry=c=>c.id+'/entry',block=(c,name)=>c.id+'/block/'+name;
-  const origin=(c,op)=>({functionId:c.plan.owner.id,primary:{sourceId:c.plan.owner.sourcePath,...op.range}});
+// One descriptor projection serves all borrow observation modes. It discovers
+// logical references only; graph permissions and lifetime checks remain callers.
+export function commonBorrowCollector({spend,types,objects}) {
   const kind=ref=>types.get(objects.get(ref)?.type)?.kind;
-  const environment=ref=>{const tag=objects.get(ref)?.type;return typeof tag==='string'&&tag.startsWith('env:')?model.environments.get(tag.slice(4)):undefined;};
   const environmentSlot=(ref,slot)=>objects.get(ref)?.type.startsWith('env:')&&(slot.startsWith(ref+'/slot/')||slot===ref+'/parent');
   function collect(value,heap,mode) {
-    const ids=new Set(),seen=new Set(),cells=new Set(),pending=[value],hard=mode==='hard';let unknown=false;
+    const ids=new Set(),seen=new Set(),cells=new Set(),pending=[value],hard=mode==='hard';let unknown=false,prefixes=null;
     for(let i=0;i<pending.length;i++){
       spend();const v=pending[i];unknown ||= v.unknown;
       let selected=v.refs;if(hard){spend(v.refs.size+v.cells.size+v.pairs.size);selected=new Set(v.refs);
@@ -85,11 +78,27 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
           continue;
         }
         if(type==='array'&&(mode==='structural'||mode==='owning'))ids.add(ref);
-        for(const [slot,stored]of heap){spend(hard?Math.ceil((ref.length+slot.length)/64)+1:1);if(slot.startsWith(ref+'/field/')||slot.startsWith(ref+'/element/')||(mode==='escape'||hard)&&environmentSlot(ref,slot))pending.push(stored);}
+        prefixes ??= commonActualHeapPrefixes(heap,spend);
+        for(const [slot,stored]of prefixes.inHeapOrder(ref)){spend(hard?Math.ceil((ref.length+slot.length)/64)+1:1);if(slot.startsWith(ref+'/field/')||slot.startsWith(ref+'/element/')||(mode==='escape'||hard)&&environmentSlot(ref,slot))pending.push(stored);}
       }
     }
     check(ids.size<=4096,'limit');return {ids,pending:unknown};
   }
+    return collect;
+}
+export function commonBorrowObservations({model,records,objects,internalFunctions,regions=null,readEnvironmentSlot=null,holdingPolicy=null,borrowProof=false,cyclicFunctions=new Set()}) {
+  const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
+  const futureStores=new Map();
+  const proof=borrowProof?commonBorrowEvents({model,objects,cyclicFunctions}):null;
+  if(proof)for(const key of ['define','use','effect','edge']){const verify=graph[key];graph[key]=(...args)=>{verify(...args);proof[key](...args);};}
+  const slotLayouts=new Map();spend(model.environments?.size??0);
+  for(const env of model.environments?.values()??[]){spend(env.slots.length);for(const slot of env.slots){check(!slotLayouts.has(slot.key)||slotLayouts.get(slot.key)===env.id,'environment');slotLayouts.set(slot.key,env.id);}}
+  const entry=c=>c.id+'/entry',block=(c,name)=>c.id+'/block/'+name;
+  const origin=(c,op)=>({functionId:c.plan.owner.id,primary:{sourceId:c.plan.owner.sourcePath,...op.range}});
+  const kind=ref=>types.get(objects.get(ref)?.type)?.kind;
+  const environment=ref=>{const tag=objects.get(ref)?.type;return typeof tag==='string'&&tag.startsWith('env:')?model.environments.get(tag.slice(4)):undefined;};
+  const environmentSlot=(ref,slot)=>objects.get(ref)?.type.startsWith('env:')&&(slot.startsWith(ref+'/slot/')||slot===ref+'/parent');
+  const collect=commonBorrowCollector({spend,types,objects});
   function hardEscape(value,heap){regions?.hardRaw(collect(value,heap,'hard').ids);}
   // Environment storage is transport, not consumption. Only escape checks walk
   // the actual closure's selected slots/parent; never-called captures stay dead.
@@ -291,7 +300,19 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     else targets=[p.function_id];
     // This is the whole fixed table, independently of actual arm filtering.
     if(indirect&&p.targets.top)graph.effect(at,{ids:new Set(),pending:true},where,eligible);
-    for(const id of targets){spend();const row=records.get(id);check(row,'publication');const upper=row.upper;
+    for(const id of targets){spend();
+      if(internalFunctions.has(id)){
+        check(!indirect&&!name.endsWith('invoke_method'),'construction','internal control helper is not a language callable target');
+        // Internal body effects are composed by the Source effect producer,
+        // not Published rows. This public-only borrow replay cannot prove a
+        // private constructor lifetime: conservatively cut every live borrow
+        // and refuse an exported proof instead of inventing private events.
+        check(!proof,'construction-borrow-open','internal constructor borrow provenance has no public proof representation');
+        graph.effect(at,{ids:new Set(),pending:true},where,eligible);
+        for(const value of args)graph.escape(at,escapingSpans(value,state.heap),false,where);
+        continue;
+      }
+      const row=records.get(id);check(row,'publication');const upper=row.upper;
       const offset=indirect||name.endsWith('.invoke')&&model.functions.get(id)?.lexicalEnvironment?1:0;
       for(const parameter of upper.parameters){spend();if(parameter.structural){const value=args[parameter.index+offset];if(value)effect(at,value,state.heap,where,eligible);else graph.effect(at,{ids:new Set(),pending:true},where,eligible);}}
       for(const id of upper.globals.writes){spend();const value=state.heap.get('global:'+id);if(value)effect(at,value,state.heap,where,eligible);}
@@ -306,7 +327,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     if(indirect)spend(p.targets.functions.length);else if(method)spend(p.dispatch.length);
     const targets=indirect?p.targets.functions.map(row=>{spend();return row.function_id;}):method?p.dispatch.map(row=>{spend();return row.target;}):[p.function_id];
     let complete=!(indirect&&p.targets.top)&&actual.size>0;
-    for(const id of targets){spend();complete &&= actual.has(id)&&records.has(id)&&!records.get(id).upper.facets.unknownHost;}
+    for(const id of targets){spend();complete &&= !internalFunctions.has(id)&&actual.has(id)&&records.has(id)&&!records.get(id).upper.facets.unknownHost;}
     if(!complete){for(const [index,value]of args.entries())use(at,value,state.heap,c.plan.graph.registers.get(op.operands[index]).view,origin(c,op));callEffects(at,c,op,args,state);return;}
     // Every permitted target is connected to the actual graph. Its internal
     // reads/effects establish order; the full fixed upper still protects every
@@ -393,7 +414,11 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     if(name==='readspan')for(const ref of value.refs){spend();define(at,ref,state.heap,objects.get(ref)?.weak);
       remember(creations,ref,c,{element:types.get(op.view).elementType,weak:objects.get(ref).weak,owner:owners(ref,state.heap)});}
   }
-  function call(at,callee,caller,successors){spend();proof?.call(at,callee,caller,successors);graph.edge(at,entry(callee));const routes=callReturns.get(at);
+  function call(at,callee,caller,successors){spend();
+    if(internalFunctions.has(callee.plan.owner.id)){
+      if(callee.normal)graph.edge(at,block(caller,successors[0]));if(callee.language)graph.edge(at,block(caller,successors[1]));return;
+    }
+    proof?.call(at,callee,caller,successors);graph.edge(at,entry(callee));const routes=callReturns.get(at);
     calls.push({caller:caller.id,callee:callee.id,normal:routes?.normal??block(caller,successors[0]),language:routes?.language??block(caller,successors[1]),
       normalSuccessor:routes?block(caller,successors[0]):null,languageSuccessor:routes?block(caller,successors[1]):null});}
   function finish(){

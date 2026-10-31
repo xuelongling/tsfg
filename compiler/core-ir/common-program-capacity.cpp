@@ -9,12 +9,16 @@ bool ActualCheck::representation(){
   };
   for(const auto &[id,row]:physicalBindings)if(!step()||!selected(string(field(*row,"carrier")),storageCapacity[id]))return false;
   for(const auto &[id,fn]:functions){
+    if(!step())return false;if(analysisFunctions.count(id)&&!printedConstructors.count(id))continue;
     const auto &abi=*physicalFunctions.at(id);const auto &parameters=items(field(abi,"parameters"));std::vector<std::string> sourceBindings;
     if(sourceFunctions.count(id)){
       const auto &source=*sourceFunctions.at(id);const size_t hidden=!field(source,"lexicalEnvironment").getAsNull();
-      if(hidden&&!need(!parameters.empty()&&string(parameters[0])=="env:"+string(field(source,"lexicalEnvironment")),"conditional hidden environment ABI differs"))return false;if(!field(source,"ownerType").getAsNull())sourceBindings.push_back(string(field(source,"receiverBinding")));
+      if(hidden&&!need(!parameters.empty()&&string(parameters[0])=="env:"+string(field(source,"lexicalEnvironment")),"conditional hidden environment ABI differs"))return false;
+      const bool constructor=string(field(source,"kind"))=="construction-body";
+      if(constructor&&!need(parameters.size()>hidden&&string(parameters[hidden])=="receiver:"+string(field(source,"ownerType")),"conditional constructor frame ABI differs"))return false;
+      if(!constructor&&!field(source,"ownerType").getAsNull())sourceBindings.push_back(string(field(source,"receiverBinding")));
       for(const auto &parameter:items(field(source,"parameters")))sourceBindings.push_back(string(field(parameter,"id")));
-      for(size_t i=0;i<sourceBindings.size();++i)if(!step()||!selected(string(parameters[i+hidden]),storageCapacity[sourceBindings[i]]))return false;
+      for(size_t i=0;i<sourceBindings.size();++i)if(!step()||!selected(string(parameters[i+hidden+constructor]),storageCapacity[sourceBindings[i]]))return false;
       const auto result=string(field(source,"returnType"));const bool empty=result=="void"||types.count(result)&&string(field(*types.at(result),"kind"))=="void";
       if(empty){if(!need(string(field(abi,"result"))=="void","Source void ABI differs"))return false;}
       else if(!selected(string(field(abi,"result")),resultCapacity[id]))return false;
@@ -44,11 +48,11 @@ bool ActualCheck::representation(){
       else if(name=="cf.br"||name=="route"){
         const auto &target=fn->blocks[op.successors[0]].parameters;for(size_t i=0;i<target.size();++i)adapters[op.operands[i]]=fn->carriers[target[i]];
       }
-      if(name=="store"||name=="env_init"||name=="env_store"||name=="global_store"||name=="field_store"||name=="array_store"){
+      if(name=="store"||name=="env_init"||name=="env_store"||name=="global_store"||name=="field_store"||name=="initialize_field"||name=="array_store"){
         std::string storage;size_t index=1;
         if(name=="store"||name=="env_init"||name=="env_store")storage=string(field(op.properties,"binding"));
         else if(name=="global_store"){storage=string(field(*globals.at(string(field(op.properties,"global"))),"sourceBinding"));index=0;}
-        else if(name=="field_store")storage=string(field(*fields.at(string(field(op.properties,"field"))),"sourceBinding"));
+        else if(name=="field_store"||name=="initialize_field"){storage=string(field(*fields.at(string(field(op.properties,"field"))),"sourceBinding"));if(name=="initialize_field")index=2;}
         else{
           index=2;const auto view=views.at(id+"/"+std::to_string(op.operands[0]));const auto &type=*types.at(view);
           if(string(field(type,"kind"))=="array")storage="element:"+view;
@@ -60,7 +64,8 @@ bool ActualCheck::representation(){
       if(name=="cell"||name=="catch_bind")forced[op.result]="cell:"+string(field(op.properties,"binding"));
       // Typed scalar instructions keep their result ABI even when no actual
       // value reaches the instruction. Their actual capacity remains bottom.
-      else if(name=="constant"||name=="floating"||name=="boolean"||name=="binary"||name=="unary"||name=="construct_value"||name=="allocate_reference"||name=="array_create"||name=="readspan")forced[op.result]=op.view;
+      else if(name=="constant"||name=="floating"||name=="boolean"||name=="binary"||name=="unary"||name=="receiver_allocate"||name=="array_create"||name=="readspan")forced[op.result]=op.view;
+      else if(name=="receiver_create"||name=="receiver_child"||name=="initialize_begin"||name=="initialize_field")forced[op.result]=op.view;
       else if(name=="env_alloc"||name=="env_parent"||name=="make_closure")forced[op.result]=op.view;
       else if(name=="pack")forced[op.result]="payload:"+schema.str();
       else if(name=="load"||name=="env_load"||name=="global_load"||name=="field_load"){
@@ -94,13 +99,19 @@ bool ActualCheck::effects(){
     }return false;
   };
   for(const auto &[id,fn]:functions){
+    if(!step())return false;if(analysisFunctions.count(id)&&!printedConstructors.count(id))continue;
     Effects obligations;
     for(size_t r=0;r<fn->carriers.size();++r){
       if(!step())return false;if(llvm::StringRef(fn->carriers[r]).starts_with("cell:"))continue;
       auto found=registerCapacity.find(id+"/"+std::to_string(r));if(found!=registerCapacity.end())obligations.managedReference|=managed(found->second);
     }
     obligations.escape=managed(resultCapacity[id]);
-    if(sourceFunctions.count(id)){
+    if(printedConstructors.count(id)){
+      // Actual parameter/result/register carriers were checked above against
+      // the one solve. Source effects are independently composed into each
+      // public caller; this internal ABI is not a Published authority row.
+      if(!need(p.internalEffects.count(id),"internal constructor lacks independently composed Source effects"))return false;
+    }else if(sourceFunctions.count(id)){
       const auto upper=p.fixedEffects.find(id);
       if(!need(upper!=p.fixedEffects.end(),"actual ABI has no validated fixed contract"))return false;
       if((obligations.managedReference&&!upper->second.managedReference)||(obligations.escape&&!upper->second.escape)){
@@ -110,7 +121,7 @@ bool ActualCheck::effects(){
     }
     // Retain the already discharged Source observations. These two physical
     // obligations add to them; they cannot replace or narrow that proof.
-    auto &effective=p.effects[id];effective.managedReference|=obligations.managedReference;effective.escape|=obligations.escape;
+    if(!printedConstructors.count(id)){auto &effective=p.effects[id];effective.managedReference|=obligations.managedReference;effective.escape|=obligations.escape;}
   }return e.message.empty();
 }
 } // namespace tsfg::commonProgram

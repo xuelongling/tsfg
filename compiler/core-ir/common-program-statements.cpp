@@ -58,9 +58,11 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
       scope[string(field(binding,"name"))]=bindingId;initialized.insert(bindingId);declared.insert(bindingId);
     }else if(kind=="return"||kind=="throw"||kind=="expression"){
       std::vector<Json> pieces;if(kind!="expression")pieces.push_back(kind);
+      const auto ownerType=string(field(*current,"ownerType"));const bool constructor=model.types.count(ownerType)&&
+        string(field(field(*model.types.at(ownerType),"constructor"),"id"))==string(field(*current,"id"));
       if(row.getAsObject()->get("value")){
-        if(!expression(field(row,"value"),false,kind=="return"?string(field(*current,"returnType")):std::string()))return false;pieces.push_back(field(field(row,"value"),"range"));
-      }else if(!model.need(kind=="return"&&string(field(*current,"returnType"))=="void","missing original completion value"))return false;
+        if(!expression(field(row,"value"),false,kind=="return"&&!constructor?string(field(*current,"returnType")):std::string()))return false;pieces.push_back(field(field(row,"value"),"range"));
+      }else if(!model.need(kind=="return"&&(constructor||string(field(*current,"returnType"))=="void"),"missing original completion value"))return false;
       if(!source->sequence(field(row,"range"),pieces,true))return false;
     }else if(kind=="block"){
       if(!model.need(source->tokens[a].text=="{"&&source->tokens[b-1].text=="}","original block punctuation differs")||!statements(field(row,"body"),a+1,b-1))return false;

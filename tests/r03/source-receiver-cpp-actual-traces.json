@@ -1,0 +1,22 @@
+{
+  "status": "independent literal expectations only; NOT RUN, no C++ behavior qualification",
+  "domain": "compiler SSA metadata; frame/cursor IDs are not ordinary object roots",
+  "traces": [
+    {"case":"dynamic-newTarget","input":"derived D frame -> direct B child -> B allocate -> bind child -> result","expected":"allocated and selected actual tag D; child owner B never retags D"},
+    {"case":"replacement","input":"B Construct returns pre-existing U; derived D binds U","expected":"bound/result payload stays U; no synthetic D object/tag or U-to-D physical field permission"},
+    {"case":"duplicate","input":"frame binds U, complete another base Construct, attempt bind D","expected":"language snapshot retains first U and prior heap effects; input world unchanged"},
+    {"case":"unbound","input":"derived frame has no binding; GetThis or undefined result","expected":"language only; no selected object synthesized"},
+    {"case":"returns","input":"base bound B returns String; derived bound D returns scalar; derived unbound returns U","expected":"base selects B; derived scalar language-fails; explicit U object succeeds before binding"},
+    {"case":"prefix-abandon","input":"bind D, begin, successful F0 write/advance, language continuation with only that cursor in SSA","expected":"D binding, F0 and prefix1 persist; its initializing right ends; unrelated frame initialization remains active"},
+    {"case":"weak","input":"same repeated frame site first binds U, rebirth then binds D","expected":"normal bound U|D with an unbound possibility; language alternative retains U; prior prefixes are not strongly erased"},
+    {"case":"regions","input":"two same-payload FrameIds exchange distinct bound region facets","expected":"frame/context identity changes; every retained bound payload contributes reachable heap and relation roots"},
+    {"case":"pending","input":"ReadSpan/unresolved actual payload used as constructor result","expected":"construction-open; no object classification/permission fabricated"},
+    {"case":"implicit-base","input":"owned implicit base has field initializer but no public functionId","expected":"preinstalled private analysis owner/parameter table; ordinary SourcePlan initialize body; same ActualCheck root; public function inventory and HIR unchanged"},
+    {"case":"implicit-derived","input":"implicit D forwards parameters through implicit B to explicit A","expected":"all private targets registered before lowering; super invoke edges preserve newTarget D; callable parameter source is nearest explicit A, never a guessed upper"},
+    {"case":"implicit-cycle","input":"unused implicit C field constructs C or C/D form mutually recursive field construction","expected":"private roots use invoke edges and existing SCC/worklist, never recursively inline their Source initializers"},
+    {"case":"public-recursive-core-gap","input":"public normalized owner would need recursive implicit inline expansion","expected":"construction-open before host recursion; no added public512 row or printed private invoke"},
+    {"case":"private-callable-gap","input":"implicit initializer callable site or forwarded callable parameter lacks closed Source evidence","expected":"analysisComplete false and construction-open, no fabricated finite upper or receiver TOP"},
+    {"case":"public-projection","input":"private root writes a shared field and invokes a public callee exclusively from its private activation","expected":"shared all-owned capacity sees the real write; public register/ABI checks remain complete; borrow proof emits no invented private function/root provenance"},
+    {"case":"resource","input":"shared Program work fails while copying a binding or snapshot","expected":"budget error propagates; no completed snapshot or normal/language language-error substitute is published"}
+  ]
+}

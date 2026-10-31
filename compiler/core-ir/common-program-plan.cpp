@@ -5,7 +5,7 @@ SourceAnchor sourceAnchor(const Json &v){
   const auto &r=field(v,"range").getAsNull()?v:field(v,"range");
   return {uint32_t(field(r,"start").getAsInteger().value_or(0)),uint32_t(field(r,"end").getAsInteger().value_or(0))};
 }
-SourcePlan::SourcePlan(ActualCheck &check,const Json &owner):check(check),owner(owner){
+SourcePlan::SourcePlan(ActualCheck &check,const Json &owner,bool projected):check(check),owner(owner),projected(projected){
   function.id=string(field(owner,"id"));function.path=sourcePath=string(field(owner,"sourcePath"));
   function.range=sourceAnchor(owner);function.resultCarrier=string(field(owner,"returnType"));
 }
@@ -42,6 +42,7 @@ SourcePlan::Reg SourcePlan::view(Reg v,const std::string &type,SourceAnchor r){
   return v==noRegister||function.carriers[v]==type?v:emit("view",{v},type,Object{{"target",type}},r);
 }
 SourcePlan::Reg SourcePlan::receiver(SourceAnchor r){
+  if(string(field(owner,"kind"))=="construction-body")return constructionAction("receiver_get",{receiverFrame},string(field(owner,"ownerType")),Object{{"owner",field(owner,"ownerType")}},r);
   const auto id=string(field(owner,"receiverBinding"));if(!check.need(cells.count(id),"Source receiver Cell missing"))return noRegister;
   return emit("load",{cells.at(id)},string(field(owner,"ownerType")),Object{{"binding",id}},r);
 }
@@ -97,11 +98,12 @@ SourcePlan::Reg SourcePlan::shortCircuit(Reg left,const std::string &op,const st
   cells=snapshot(saved);if(!ok())return noRegister;const auto value=right();branch(join,{value},r);
   current=join;cells=std::move(saved);return function.blocks[join].parameters[0];
 }
-void SourcePlan::initialize(const Json &type,Reg value,const std::vector<Reg> &args){
+void SourcePlan::initialize(const Json &type,Reg value,const std::vector<Reg> &args,Reg frame,SourceAnchor r){
   const auto before=currentReceiver;const auto previousPath=sourcePath;currentReceiver=value;
-  for(const auto &id:items(field(field(type,"construction"),"initializationFields"))){
-    if(!check.step()||!check.need(check.fields.count(string(id)),"Source initialization field missing"))break;
-    const auto &f=*check.fields.at(string(id));sourcePath=string(field(field(f,"origin"),"source"));
+  const auto id=string(field(type,"id"));auto phase=emit("initialize_begin",{frame,value},"initialization:"+id,Object{{"owner",id}},r);
+  for(const auto &fieldId:items(field(field(type,"construction"),"initializationFields"))){
+    if(!check.step()||!check.need(check.fields.count(string(fieldId)),"Source initialization field missing"))break;
+    const auto &f=*check.fields.at(string(fieldId));sourcePath=string(field(field(f,"origin"),"source"));
     if(sourcePath.empty())sourcePath=previousPath;
     Reg initial=noRegister;const auto parameter=string(field(f,"parameterBinding"));
     if(!parameter.empty()){
@@ -109,17 +111,43 @@ void SourcePlan::initialize(const Json &type,Reg value,const std::vector<Reg> &a
       while(index<parameters.size()&&string(field(parameters[index],"symbol"))!=parameter){if(!check.step())break;++index;}
       if(!check.need(index<args.size(),"Source constructor parameter field missing"))break;initial=args[index];
     }else initial=field(f,"initializer").getAsNull()?emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},sourceAnchor(field(f,"origin"))):expression(field(f,"initializer"));
-    store({"field",string(field(f,"id")),string(field(f,"type")),value},initial,sourceAnchor(field(f,"origin")),true);
+    const auto at=sourceAnchor(field(f,"origin"));const auto copied=copy(initial,string(field(f,"type")),at);
+    phase=emit("initialize_field",{phase,value,copied},"initialization:"+id,Object{{"owner",id},{"field",field(f,"id")}},at);
     if(!ok())break;
-  }currentReceiver=before;sourcePath=previousPath;
+  }currentReceiver=before;sourcePath=previousPath;emit("initialize_end",{phase,value},"",Object{{"owner",id}},r);
 }
-SourcePlan::Reg SourcePlan::construct(const Json &type,Reg value,const std::vector<Reg> &args,SourceAnchor r){
-  if(!check.step())return noRegister;const auto &construction=field(type,"construction");const auto fn=string(field(construction,"functionId")),base=string(field(type,"base"));
+void SourcePlan::enterConstructor(const Json &type,Reg frame,const std::vector<Reg> &args,SourceAnchor r){
+  if(!string(field(type,"base")).empty())return;const auto id=string(field(type,"id"));
+  const auto allocated=emit("receiver_allocate",{frame},id,Object{{"owner",id}},r);
+  const auto value=constructionAction("receiver_bind",{frame,allocated},id,Object{{"owner",id}},r);
+  initialize(type,value,args,frame,r);
+}
+SourcePlan::Reg SourcePlan::constructorResult(Reg value,SourceAnchor r){
+  std::vector<Reg> args{receiverFrame};if(value!=noRegister)args.push_back(value);
+  return constructionAction("receiver_result",std::move(args),string(field(owner,"ownerType")),Object{{"owner",field(owner,"ownerType")}},r,
+    [this](Reg thrown,SourceAnchor at){emit("return_throw",{thrown},"",Object{},at);});
+}
+SourcePlan::Reg SourcePlan::construct(const Json &type,Reg frame,const std::vector<Reg> &args,SourceAnchor r){
+  if(!check.step())return noRegister;const auto &construction=field(type,"construction");auto fn=string(field(construction,"functionId"));const auto base=string(field(type,"base"));
+  if(fn.empty()&&projected){const auto target=check.implicitTargets.find(string(field(type,"id")));if(target!=check.implicitTargets.end())fn=target->second;}
   if(!fn.empty()){
-    if(base.empty())initialize(type,value,args);if(!check.need(check.sourceFunctions.count(fn),"Source construction function missing"))return noRegister;
-    std::vector<Reg> call{value};call.insert(call.end(),args.begin(),args.end());
+    if(!check.need(check.sourceFunctions.count(fn),"Source construction function missing"))return noRegister;
+    std::vector<Reg> call{frame};call.insert(call.end(),args.begin(),args.end());
     return invoke(Object{{"type",field(type,"id")},{"range",Object{{"start",r.start},{"end",r.end}}}},std::move(call),*check.sourceFunctions.at(fn));
   }
-  if(!base.empty())construct(*check.types.at(base),value,args,r);initialize(type,value,args);return value;
+  const auto id=string(field(type,"id"));
+  // This is the existing public inline lowerer, not the private analysis
+  // directory. A recursive implicit graph cannot be encoded in its public
+  // inventory; reject that real dependency before recursive host expansion.
+  if(!check.receiverText(id)||!check.step())return noRegister;
+  if(!activeImplicit.insert(id).second){reject(check.e,"core-ir-common-construction-open","recursive implicit construction needs private analysis/Core separation");return noRegister;}
+  struct ActiveGuard{std::set<std::string> &active;const std::string &id;~ActiveGuard(){active.erase(id);}} activeGuard{activeImplicit,id};
+  if(!base.empty()){
+    const auto child=emit("receiver_child",{frame},"receiver:"+base,Object{{"owner",base}},r);
+    const auto result=construct(*check.types.at(base),child,args,r);
+    const auto value=constructionAction("receiver_bind",{frame,result},id,Object{{"owner",id}},r);
+    initialize(type,value,args,frame,r);
+  }else enterConstructor(type,frame,args,r);
+  return constructionAction("receiver_result",{frame},id,Object{{"owner",id}},r);
 }
 } // namespace tsfg::commonProgram

@@ -5,6 +5,9 @@ namespace tsfg::commonProgram {
 SourcePlan::Reg SourcePlan::indirect(const Json &e,Reg callee,std::vector<Reg> args){
   const auto r=sourceAnchor(e);const auto type=string(field(e,"type"));
   const auto key=function.id+"/"+std::to_string(r.start)+":"+std::to_string(r.end);
+  if(!check.p.callableSites.count(key)&&check.analysisOwners.count(function.id)){
+    check.analysisComplete=false;reject(check.e,"core-ir-common-construction-open","private initializer callable site has no independently closed Source evidence");return noRegister;
+  }
   if(!check.need(check.p.callableSites.count(key),"indirect site has no independent fixed target flow"))return noRegister;
   const auto &targets=check.p.callableSites.at(key);Array rows;
   for(const auto &id:targets.functions){

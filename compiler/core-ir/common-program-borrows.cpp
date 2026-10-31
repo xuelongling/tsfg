@@ -49,7 +49,7 @@ struct BorrowTrace::Impl {
     // Only universal-entry arguments/globals are external authority. A local
     // allocation is never classified by a spelling prefix of its identity.
     for(const auto &[id,context]:c.contexts){
-      if(!step())return;if(!context.root)continue;
+      if(!step())return;if(!context.root||!c.publicBorrowContexts.count(id))continue;
       for(const auto &value:context.arguments){entryObjects(value);if(!c.e.message.empty())return;}
       for(const auto &[slot,value]:context.entry){if(!step())return;entryObjects(value);if(!c.e.message.empty())return;}
     }
@@ -115,7 +115,7 @@ struct BorrowTrace::Impl {
   }
   bool projectEvents(Json &out){
     std::map<std::string,Array> paths;
-    for(const auto &[id,context]:c.contexts)if(context.root)paths[id].push_back(Object{{"root",context.function->id},{"recursive",false},{"steps",Array{}}});
+    for(const auto &[id,context]:c.contexts)if(context.root&&c.publicBorrowContexts.count(id))paths[id].push_back(Object{{"root",context.function->id},{"recursive",false},{"steps",Array{}}});
     bool changed=true;
     while(changed){changed=false;for(const auto &call:calls){
       if(!step())return false;const auto &target=c.contexts.at(call.callee).function->id;const auto &location=proofPoints.at(call.point);
@@ -513,6 +513,14 @@ struct BorrowTrace::Impl {
       if(!step(upper->second.functions.size()))return;targets.assign(upper->second.functions.begin(),upper->second.functions.end());
     }
     for(const auto &id:targets){
+      if(c.printedConstructors.count(id)){
+        // The helper is part of this caller's implementation, not a new fixed
+        // Published contract. Its Source effects were composed independently.
+        // Unavailable constructor borrow provenance remains a pending fence.
+        boundary.conservative=true;boundary.owner.pending=true;boundary.hard=true;
+        if(project){reject(c.e,"core-ir-common-construction-borrow-open","internal constructor borrow proof is not admitted");return;}
+        continue;
+      }
       if(!step()||!c.need(c.p.fixedEffects.count(id)&&c.sourceFunctions.count(id),"borrow call fixed effects missing"))return;
       boundary.targets.insert(id);
       boundary.hard|=!holdingCall(c,id);
@@ -612,13 +620,14 @@ bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t
   if(op.name=="global_store"&&!args.empty())b.store(context,at,{},args[0],state.heap,true);
   if(op.name=="global_store"&&!args.empty())regionHardEscape(b.c,args[0],state.heap);
   if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init")&&args.size()>1)b.store(context,at,args[0],args[1],state.heap);
+  if(op.name=="initialize_field"&&args.size()>2)b.store(context,at,args[1],args[2],state.heap);
   if(op.name=="array_store"&&args.size()>2){
     storeCovered=b.coveredArrayStore(context,at,args[0],args[2],state);
     if(!storeCovered)b.store(context,at,args[0],args[2],state.heap);
   }
-  if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init"||op.name=="array_store")&&args.size()>1){
-    const auto receiver=regionValue(b.c,args[0]),value=regionValue(b.c,args.back());
-    const bool transport=(op.name=="field_store"&&holdingFieldTransport(b.c,args[0],args.back()))||
+  if((op.name=="field_store"||op.name=="initialize_field"||op.name=="env_store"||op.name=="env_init"||op.name=="array_store")&&args.size()>1){
+    const auto &destination=args[op.name=="initialize_field"?1:0];const auto receiver=regionValue(b.c,destination),value=regionValue(b.c,args.back());
+    const bool transport=((op.name=="field_store"||op.name=="initialize_field")&&holdingFieldTransport(b.c,destination,args.back()))||
       (op.name=="array_store"&&(storeCovered||holdingArrayTransport(b.c,args[0],args.back())));
     if(!transport&&(receiver.opaque||receiver.empty||receiver.roots.empty()||value.opaque))regionHardEscape(b.c,args.back(),state.heap);
   }
@@ -642,7 +651,7 @@ bool BorrowTrace::after(const ActualContext &context,const Operation &op,size_t 
       b.proofOrigin(ref,Object{{"kind","allocation"},{"functionId",context.function->id},{"binding",nullptr},{"index",nullptr},
         {"path",Array{}},{"site",b.site(b.proofPoints.at(at))}},context.id);
   }
-  if((op.name=="array_create"||op.name=="allocate_reference"||op.name=="construct_value"||op.name=="value_copy")&&op.result!=noRegister){
+  if((op.name=="array_create"||op.name=="receiver_allocate"||op.name=="value_copy")&&op.result!=noRegister){
     auto value=state.values.find(op.result);if(value!=state.values.end()){
       std::vector<std::string> pending;std::set<std::string> seen;if(!b.step(value->second.objects.size()))return false;
       pending.assign(value->second.objects.begin(),value->second.objects.end());
@@ -670,6 +679,13 @@ bool BorrowTrace::edge(const ActualContext &context,const Operation &op,size_t b
 }
 bool BorrowTrace::call(const ActualContext &context,const Operation &op,size_t block,const ActualContext &callee){
   auto &b=*impl;if(!b.step())return false;const auto at=b.point(context,op,block);
+  if(b.c.printedConstructors.count(callee.function->id)){
+    // Private activation definitions are deliberately absent from public
+    // proof paths. Connect only actual solved completions through the fence.
+    if(callee.normal&&!b.addEdge(at,b.point(context,op.successors[0],0)))return false;
+    if(callee.language&&!b.addEdge(at,b.point(context,op.successors[1],0)))return false;
+    return b.c.e.message.empty();
+  }
   if(!b.step(callee.function->id.size()/64+2))return false;b.connectedTargets[at].insert(callee.function->id);
   if(!callee.region.empty()){if(!b.step(callee.region.size()/64+1))return false;b.boundaries[at].regions.insert(callee.region);}
   else b.boundaries[at].unconfined=true;
@@ -776,8 +792,10 @@ bool BorrowTrace::solve(Json *events){
   return !events||b.projectEvents(*events);
 }
 bool verifyCommonBorrows(ActualCheck &check,Json *events){
+  if(!check.preparePublicBorrowContexts())return false;
   BorrowTrace trace(check,events!=nullptr);check.borrowTrace=&trace;bool changed=false,ok=true;const auto size=check.contexts.size();
-  for(auto it=check.contexts.begin();it!=check.contexts.end();++it)if(!check.step()||!check.execute(it->second,false,changed)){ok=false;break;}
+  for(auto it=check.contexts.begin();it!=check.contexts.end();++it){if(!check.step()){ok=false;break;}
+    if(check.publicBorrowContexts.count(it->first)&&!check.execute(it->second,false,changed)){ok=false;break;}}
   check.borrowTrace=nullptr;if(!ok||!check.need(!changed&&!check.weakChanged&&!check.scheduling&&size==check.contexts.size(),"borrow observation changed the solved actual contexts"))return false;
   return trace.solve(events);
 }

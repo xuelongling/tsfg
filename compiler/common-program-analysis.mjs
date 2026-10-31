@@ -2,13 +2,13 @@
 // A caller supplies fixed Published bounds. Current bodies only discharge
 // those bounds; they never replace a broad permission with a narrower one.
 import {verifyCommonProgramHir} from './common-program-hir.mjs';
-import {commonEffects,commonFacets} from './common-program-effects.mjs';
+import {commonEffects,commonFacets,commonEffectsCover as covers} from './common-program-effects.mjs';
 import {validateCommonCallableBounds} from './common-program-targets.mjs';
 import {commonHostResources} from './common-program-hosts.mjs';
 import {commonKernelCallChain} from './common-program-diagnostics.mjs';
 import {commonIdentity} from './common-program-identities.mjs';
 import {commonProgramPhysical} from './common-program-physical.mjs';
-import {commonSortedSubset,commonCollections} from './common-program-budget.mjs';
+import {commonCollections} from './common-program-budget.mjs';
 import {commonBudget,commonMeter,commonRecord as record,commonCheck as check,commonSame as same,commonJson,
   canonical,sha256,own} from './common-program-common.mjs';
 const format=Object.freeze({family:'tsfg.program-publication-candidate',version:2});
@@ -73,9 +73,7 @@ function prepare(input,publication) {
     check(commonFacets.every(flag=>typeof row.upper.facets[flag]==='boolean'),'publication');
     for(const key of ['reads','writes']){const set=row.upper.globals[key];check(Array.isArray(set)&&set.length<=4096,'publication');spend(set.length);
       check(sorted(set),'publication');
-      // This is a conditional payload-owner bound, independent of the declared
-      // view or current actual capacity. Binding replacement is checked apart.
-      check(set.every(id=>globals.has(id)),'publication-identity');}
+      check(set.every(id=>globals.has(id)&&(key!=='writes'||globals.get(id).writable)),'publication-identity');}
     const parameters=[...(fn.ownerType?[{type:fn.ownerType}]:[]),...fn.parameters];check(Array.isArray(row.upper.parameters)&&row.upper.parameters.length===parameters.length,'publication');
     for(const [index,p]of row.upper.parameters.entries()){spend();record(p,['index',...flags]);check(p.index===index&&flags.every(flag=>typeof p[flag]==='boolean'),'publication');
       const type=types.get(parameters[index].type);if(type.kind==='readSpan')check(!p.write&&!p.structural,'publication');}
@@ -92,28 +90,20 @@ function prepare(input,publication) {
   const scope=scopeDigest(hir,spend);check(publication.scopeDigest===scope&&publication.expectedDigest===publicationDigest(scope,publication.contracts),'publication-identity');
   const physical=commonProgramPhysical(hir,records),effects=commonEffects(hir,spend,physical);return {hir,spend,effects,records,scope,physical};
 }
-function covers(upper,body,spend) {
-  spend(commonFacets.length+body.parameters.length*flags.length);
-  spend(upper.captures.length+body.captures.length*flags.length);const captures=new Map(upper.captures.map(row=>[row.slot,row]));
-  return body.captures.every(row=>captures.has(row.slot)&&flags.every(flag=>!row[flag]||captures.get(row.slot)[flag]))&&commonSortedSubset(body.globals.reads,upper.globals.reads,spend)&&commonSortedSubset(body.globals.writes,upper.globals.writes,spend)
-    &&commonSortedSubset(body.hostResources.reads,upper.hostResources.reads,spend)&&commonSortedSubset(body.hostResources.writes,upper.hostResources.writes,spend)
-    &&commonFacets.every(flag=>!body.facets[flag]||upper.facets[flag])
-    &&body.parameters.every((row,index)=>flags.every(flag=>!row[flag]||upper.parameters[index][flag]));
-}
 function analyze(input,publication) {
   const prepared=prepare(input,publication),{hir,effects,spend,records}=prepared,derived=effects.derived();
   const collections=commonCollections(spend),dependencies=calls=>{spend(calls.length);const selected=collections.sorted(collections.set(calls.map(call=>call.target)));
     spend(selected.length);return selected.map(functionId=>({functionId,digest:records.get(functionId).digest}));};
-  const uppers=collections.map(records,row=>row.upper),functions=[];
+  const uppers=collections.map(records,row=>row.upper),batch=effects.fixed(uppers),functions=[];
   for(const fn of hir.functions) {
-    spend();const current=effects.derive(fn,uppers),record=records.get(fn.id);
+    spend();const current=batch.derive(fn),record=records.get(fn.id);
     check(covers(record.upper,current.upper,spend),'contract','current implementation exceeds fixed Published upper',
       {functionId:fn.id,primary:{sourceId:fn.sourcePath,...fn.range}});
     functions.push({functionId:fn.id,derived:derived.get(fn.id),effective:current.upper,dependencies:dependencies(current.calls),hostCalls:current.hostCalls});
   }
   spend(hir.modules.length);const initializers=hir.modules.map(module=>{
     const fn={id:module.initializer,sourcePath:module.sourcePath,returnType:'void',parameters:[],bindings:[],body:module.initialization};
-    const current=effects.derive(fn,uppers);return {functionId:module.initializer,effective:current.upper,dependencies:dependencies(current.calls),hostCalls:current.hostCalls};
+    const current=batch.derive(fn);return {functionId:module.initializer,effective:current.upper,dependencies:dependencies(current.calls),hostCalls:current.hostCalls};
   });
   const report={inputIdentity:hir.inputIdentity,hirDigest:sha256(canonical(hir)+'\n'),scopeDigest:prepared.scope,publishedDigest:publication.expectedDigest,
     contracts:publication.contracts,functions,initializers,initializationOrder:hir.closure.initialization};commonBudget(report);return {report:own(report),prepared};

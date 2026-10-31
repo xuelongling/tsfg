@@ -2,11 +2,12 @@
 // One logical typed SSA/CFG precedes actual flow and physical carrier selection.
 import descriptor from '../contracts/common-program-core-development.json' with {type:'json'};
 import {verifyCommonProgramHir} from './common-program-hir.mjs';
-import {planCommonFunction} from './common-program-control.mjs';
+import {commonConstructionPlans} from './common-program-construction-plans.mjs';
 import {commonCheck as check,commonMeter,canonical,sha256} from './common-program-common.mjs';
 import {commonTargets} from './common-program-targets.mjs';
 import {commonMethods} from './common-program-methods.mjs';
 export const commonCoreSchema=sha256(canonical(descriptor));
+export const commonCoreFormat=Object.freeze({family:descriptor.family,version:descriptor.version,marker:descriptor.marker.name});
 export function createCommonGraph(model,owner) {
   const blocks=[],registers=new Map();let next=0,nextBlock=0,operations=0,edges=0;
   const variable=view=>{model.spend();check(registers.size<descriptor.limits.registersPerFunction,'limit');const id='%v'+next++;registers.set(id,{view});return id;};
@@ -25,7 +26,7 @@ export function createCommonGraph(model,owner) {
     branch(from,to,args,range){terminal(from,'cf.br',args,[to],{},range);},
     conditional(from,value,left,right,range){terminal(from,'cf.cond_br',[value],[left,right],{},range);}};
 }
-export function commonProgramPlan(input,records=null) {
+export function commonProgramModel(input,records=null) {
   const hir=verifyCommonProgramHir(input),spend=commonMeter(descriptor.limits.work),types=new Map(hir.types.map(row=>[row.id,row]));
   for(const name of ['undefined','null','bool']){const id=sha256('tsfg.type\0'+name);if(!types.has(id))types.set(id,{id,kind:name==='bool'?'scalar':name,name});}
   const functions=new Map(hir.functions.map(fn=>[fn.id,fn])),bindings=new Map(),fields=new Map(),globals=new Map(hir.globals.map(row=>[row.id,row]));
@@ -43,5 +44,11 @@ export function commonProgramPlan(input,records=null) {
   const hosts=new Map(hir.hostImports.map(row=>[row.id,row]));
   const model={hir,types,functions,bindings,fields,globals,hosts,spend,environments,slots,callables,methods:commonMethods(hir,spend),schema:commonCoreSchema,payload:'payload:'+commonCoreSchema,limits:descriptor.limits,
     cell:id=>'cell:'+id};
-  const plans=[...hir.functions,...modules].map(owner=>planCommonFunction(model,owner));return {model,plans};
+  spend(hir.functions.length+modules.length+2);
+  return {model,owners:[...hir.functions,...modules]};
+}
+
+export function commonProgramPlan(input,records=null) {
+  const {model,owners}=commonProgramModel(input,records);
+  return commonConstructionPlans(model,owners);
 }

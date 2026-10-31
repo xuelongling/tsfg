@@ -23,6 +23,8 @@ struct TargetFlow {
   std::map<std::string,Targets> capturedLocals;
   std::set<std::string> externalFunctions,globalIds;
   std::vector<const Json *> defaultLiterals;
+  struct Initializer {std::optional<State> inputs;bool grew=false;};
+  std::map<std::string,Initializer> activeInitializers;
   ArrayTargets arrays{p,e,types,dirty,[this](const Targets &a,const Targets &b){return join(a,b);},[this](const Targets &value){exposeClosures(value);}};
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent callable target work exceeded");}
   bool need(bool c,llvm::StringRef detail){return c||reject(e,"core-ir-common-callable",detail);}
@@ -98,6 +100,15 @@ struct TargetFlow {
   void combine(State &into,const State &from){for(const auto &[id,value]:from){if(!step())return;into[id]=join(into[id],value);if(!e.message.empty())return;}}
   bool equalState(const State &a,const State &b){if(!step(a.size()+b.size())||a.size()!=b.size())return false;
     for(const auto &[id,value]:a){if(!step())return false;auto other=b.find(id);if(other==b.end()||!equal(value,other->second))return false;}return true;}
+  bool growInitializerState(State &into,const State &from){
+    if(!step(from.size()))return false;bool changed=false;
+    for(const auto &[id,value]:from){
+      if(!step(id.size()/64+1))return false;auto found=into.find(id);
+      if(found==into.end()){into.emplace(id,copy(value));changed=true;}
+      else {auto next=join(found->second,value);if(!e.message.empty())return false;
+        if(!equal(found->second,next)){found->second=std::move(next);changed=true;}}
+    }return changed;
+  }
   Targets readSet(const Json &value){Targets result;result.top=field(value,"top").getAsBoolean()==true;
     const auto &rows=items(field(value,"functions"));if(!step(rows.size()))return result;
     for(const auto &row:rows)result.functions.insert(string(row));return result;}
@@ -160,7 +171,21 @@ struct TargetFlow {
     }
   }
   void initialize(Summary &s,State &state,const Json &type,const std::vector<std::optional<Targets>> &args){
-    if(!step())return;const auto &construction=field(type,"construction");const auto fn=string(field(construction,"functionId")),base=string(field(type,"base"));
+    if(!step())return;const auto identity=field(type,"id").getAsString().value_or("");if(!step(identity.size()/64+2))return;
+    const auto id=identity.str();auto active=activeInitializers.find(id);
+    if(active!=activeInitializers.end()){
+      // Preserve original argument/parameter transfer at the expression site;
+      // only initializer expansion feeds State back to the active transfer.
+      if(!active->second.inputs){active->second.inputs=snapshot(state);active->second.grew=true;}
+      else active->second.grew=growInitializerState(*active->second.inputs,state)||active->second.grew;
+      return;
+    }
+    if(!step(1))return;auto inserted=activeInitializers.emplace(id,Initializer{});
+    struct ActiveGuard{std::map<std::string,Initializer> &active;std::map<std::string,Initializer>::iterator item;~ActiveGuard(){active.erase(item);}} guard{activeInitializers,inserted.first};
+    auto &frame=inserted.first->second;bool repeat;
+    do{
+    if(!step())return;frame.grew=false;if(frame.inputs)growInitializerState(state,*frame.inputs);
+    const auto &construction=field(type,"construction");const auto fn=string(field(construction,"functionId")),base=string(field(type,"base"));
     if(!base.empty()&&fn.empty()&&types.count(base))initialize(s,state,*types.at(base),args);
     for(const auto &id:items(field(construction,"initializationFields"))){
       if(!step()||!need(fields.count(string(id)),"construction field is not owned"))return;const auto &member=*fields.at(string(id));std::optional<Targets> initial;
@@ -174,6 +199,9 @@ struct TargetFlow {
       }else if(!field(member,"initializer").getAsNull()){initial=expression(s,state,field(member,"initializer"));erase(string(field(member,"type")),string(field(field(member,"initializer"),"type")),initial);}
       write(string(id),initial);
     }
+    repeat=false;
+    if(frame.inputs){repeat=growInitializerState(*frame.inputs,state)||frame.grew;growInitializerState(state,*frame.inputs);}
+    }while(repeat&&e.message.empty());
   }
   std::optional<Targets> expression(Summary &s,State &state,const Json &value){
     if(!step()||!e.message.empty())return {};const auto kind=string(field(value,"kind")),type=string(field(value,"type"));

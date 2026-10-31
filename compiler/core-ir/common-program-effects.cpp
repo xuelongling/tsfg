@@ -3,6 +3,7 @@
 #include "common-program-methods.h"
 #include "llvm/ADT/STLExtras.h"
 #include <tuple>
+#include <optional>
 namespace tsfg::commonProgram {
 namespace {
 using Origins=std::set<std::string>;using Environment=std::map<std::string,Origins>;
@@ -14,6 +15,8 @@ struct Derive {
   std::map<std::string,const Json *> types,functions;std::map<std::string,bool> references;
   Environment environment;std::set<std::string> activeTypes;
   std::string operationSource;
+  std::set<std::string> activeConstructions;
+  std::optional<Origins> currentReceiver;
   bool ok(bool c,llvm::StringRef detail){return c||reject(e,"core-ir-common-effects",detail);}
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent body effects work exceeded");}
   Json origin(const Json *operation=nullptr,llvm::StringRef functionOperation={}){
@@ -65,10 +68,17 @@ struct Derive {
     }
   }
   const Effects *consume(const std::string &id,const std::vector<Origins> &args,const Json &operation){
-    if(!step()||!ok(functions.count(id)&&upper.count(id),"complete fixed callee bound missing"))return nullptr;
-    const auto &u=upper.at(id);out.calls.insert(id);
-    if(diagnostics){if(!step())return nullptr;diagnostics->calls.push_back(Object{{"caller",field(fn,"id")},{"callee",id},{"kind",field(operation,"kind")},
-      {"source",Object{{"sourceId",operationSource},{"start",field(field(operation,"range"),"start")},{"end",field(field(operation,"range"),"end")}}}});}
+    const bool internal=p.internalOwners.count(id);
+    if(!step()||!ok(functions.count(id)&&(internal?p.internalEffects.count(id):upper.count(id)),"complete fixed/internal callee bound missing"))return nullptr;
+    const auto &u=internal?p.internalEffects.at(id):upper.at(id);
+    if(internal){if(!step(u.calls.size()))return nullptr;out.calls.insert(u.calls.begin(),u.calls.end());}
+    else out.calls.insert(id);
+    if(diagnostics){if(!step(internal?u.calls.size():1))return nullptr;
+      const auto call=[&](const std::string &target){diagnostics->calls.push_back(Object{{"caller",field(fn,"id")},{"callee",target},{"kind",field(operation,"kind")},
+        {"source",Object{{"sourceId",operationSource},{"start",field(field(operation,"range"),"start")},{"end",field(field(operation,"range"),"end")}}}});};
+      if(internal)for(const auto &target:u.calls)call(target);else call(id);
+    }
+    if(internal){auto host=p.hostOrigins.find(id);if(host!=p.hostOrigins.end())p.hostOrigins.try_emplace(string(field(fn,"id")),host->second);}
     if(!step(u.reads.size()+u.writes.size()+u.hostReads.size()+u.hostWrites.size()+u.parameters.size()+u.captures.size()))return nullptr;
     out.hostReads.insert(u.hostReads.begin(),u.hostReads.end());out.hostWrites.insert(u.hostWrites.begin(),u.hostWrites.end());
     out.reads.insert(u.reads.begin(),u.reads.end());out.writes.insert(u.writes.begin(),u.writes.end());
@@ -80,12 +90,39 @@ struct Derive {
       if(u.parameters[i].read)mark(args[i],0);if(u.parameters[i].write)mark(args[i],1);if(u.parameters[i].structural)mark(args[i],2);}
     return &u;
   }
+  Origins selected(const std::vector<Origins> &args,const Effects &u){
+    // Source views do not prove primitive actual data. Preserve every logical
+    // owner even through scalar assertions; primitive literals have no owner.
+    Origins result=args.empty()?Origins{}:ownerCopy(args[0]);
+    for(size_t i=1;i<args.size();++i){if(!step())return {};result=unite(result,args[i]);}
+    for(const auto &id:u.reads){if(!step(id.size()/8+1))return {};result.insert("g:"+id);}
+    for(const auto &[slot,access]:u.captures){if(!step(slot.size()/8+1))return {};result.insert("c:"+slot);}
+    return result;
+  }
+  bool initialize(const Json &type,const std::vector<Origins> &supplied,Environment &env){
+    auto selectedEnvironment=snapshot(env);const auto &ctor=field(type,"construction");const auto &params=items(field(ctor,"parameters"));
+    for(size_t i=0;i<params.size();++i){if(!step())return false;selectedEnvironment[string(field(params[i],"symbol"))]=i+1<supplied.size()?ownerCopy(supplied[i+1]):Origins{};}
+    auto previousReceiver=std::move(currentReceiver);auto previousSource=std::move(operationSource);
+    currentReceiver=supplied.empty()?Origins{}:ownerCopy(supplied[0]);bool throwing=false;
+    std::map<std::string,const Json *> fields;for(const auto &f:items(field(type,"fields"))){if(!step())return false;fields.emplace(string(field(f,"id")),&f);}
+    for(const auto &id:items(field(ctor,"initializationFields"))){if(!step())return false;const auto &f=*fields.at(string(id));
+      operationSource=string(field(field(f,"origin"),"source"));
+      if(!field(f,"initializer").getAsNull()){auto result=expression(field(f,"initializer"),selectedEnvironment);throwing|=result.throwing;}
+      // Definition itself writes the selected object, including default and
+      // parameter-property definitions. Fresh local roots impose no external
+      // capability; replacement p/g/c roots retain their ordinary write.
+      if(!step(32))return false;Json definition=Object{{"kind","initialize_field"},{"range",Object{{"start",field(field(f,"origin"),"start")},{"end",field(field(f,"origin"),"end")}}}};
+      mark(*currentReceiver,1,&definition);
+    }
+    currentReceiver=std::move(previousReceiver);operationSource=std::move(previousSource);return throwing;
+  }
   Value expression(const Json &v,Environment &env){
     Value result;if(!step())return result;const auto kind=string(field(v,"kind")),type=string(field(v,"type"));
     if(reference(type)){out.managedReference=true;facet("managedReference",&v);}
     const auto visit=[&](const Json &child){auto value=expression(child,env);result.throwing|=value.throwing;return value.owners;};
     if(kind=="bindingReference"||kind=="bindingTarget"||kind=="thisReference"){
-      const auto id=kind=="thisReference"?string(field(fn,"receiverBinding")):string(field(v,"binding"));if(env.count(id))result.owners=ownerCopy(env.at(id));
+      const auto id=kind=="thisReference"?string(field(fn,"receiverBinding")):string(field(v,"binding"));
+      if(kind=="thisReference"&&currentReceiver)result.owners=ownerCopy(*currentReceiver);else if(env.count(id))result.owners=ownerCopy(env.at(id));
     }else if(kind=="globalReference"||kind=="globalTarget"){
       const auto id=string(field(v,"global"));result.owners.insert("g:"+id);if(kind=="globalReference")out.reads.insert(id);
     }else if(kind=="parentheses"||kind=="as"||kind=="nonNull")result.owners=visit(field(v,"expression"));
@@ -106,31 +143,29 @@ struct Derive {
       const auto &t=*types.at(tid);if(string(field(t,"kind"))=="reference"){out.allocation=true;out.managedReference=true;facet("allocation",&v);facet("managedReference",&v);}
       result.owners.insert("local:"+string(v.getAsObject()->get("allocationSite")?field(v,"allocationSite"):field(v,"construction")));
       if(!step(args.size()+1))return result;args.insert(args.begin(),ownerCopy(result.owners));
-      const auto initialize=[&](const Json &current){
-        std::map<std::string,const Json *> fields;
-        for(const auto &f:items(field(current,"fields"))){if(!step())return false;fields.emplace(string(field(f,"id")),&f);}
-        for(const auto &id:items(field(field(current,"construction"),"initializationFields"))){
-          if(!step())return false;const auto &f=*fields.at(string(id));
-          if(f.getAsObject()->get("initializer")){
-            const auto previousSource=operationSource;operationSource=string(field(field(f,"origin"),"source"));
-            visit(field(f,"initializer"));operationSource=previousSource;if(!e.message.empty())return false;
-          }
-        }return true;
-      };
-      // Explicit derived bodies own super; implicit hops forward these saved
-      // arguments and initialize their own fields only after successful base.
-      const auto construct=[&](auto &&self,const Json &current)->void{
-        if(!step())return;const auto fid=string(field(field(current,"construction"),"functionId")),base=string(field(current,"base"));
+      const auto construct=[&](auto &&self,const Json &current)->Origins{
+        if(!step())return {};const auto owner=string(field(current,"id")),fid=string(field(field(current,"construction"),"functionId")),base=string(field(current,"base"));
         if(!fid.empty()){
-          if(base.empty()&&!initialize(current))return;
-          if(auto *u=consume(fid,args,v))result.throwing|=u->mayThrow;
-        }else{
-          if(!base.empty())self(self,*types.at(base));
-          if(e.message.empty())initialize(current);
+          if(base.empty()&&!activeConstructions.count(owner)){
+            activeConstructions.insert(owner);result.throwing|=initialize(current,args,env);activeConstructions.erase(owner);
+          }
+          if(auto *u=consume(fid,args,v)){result.throwing|=u->mayThrow;return selected(args,*u);}return {};
         }
+        if(activeConstructions.count(owner)){
+          if(!ok(p.internalTargets.count(owner),"recursive implicit construction has no rebuilt effect owner"))return {};
+          if(auto *u=consume(p.internalTargets.at(owner),args,v)){result.throwing|=u->mayThrow;return selected(args,*u);}return {};
+        }
+        activeConstructions.insert(owner);auto receiver=base.empty()?ownerCopy(args[0]):self(self,*types.at(base));
+        if(!step(args.size()))return {};std::vector<Origins> own;own.reserve(args.size());
+        for(size_t i=0;i<args.size();++i){own.push_back(ownerCopy(i?args[i]:receiver));if(!e.message.empty())return {};}
+        result.throwing|=initialize(current,own,env);activeConstructions.erase(owner);return receiver;
       };
-      construct(construct,t);
-      if(e.message.empty()&&kind=="superConstruct")initialize(*types.at(string(field(fn,"ownerType"))));
+      result.owners=construct(construct,t);
+      if(e.message.empty()&&kind=="superConstruct"){
+        env[string(field(fn,"receiverBinding"))]=ownerCopy(result.owners);std::vector<Origins> supplied{ownerCopy(result.owners)};
+        for(const auto &parameter:items(field(fn,"parameters"))){if(!step())return result;const auto key=string(field(parameter,"id"));supplied.push_back(env.count(key)?ownerCopy(env.at(key)):Origins{});}
+        result.throwing|=initialize(*types.at(string(field(fn,"ownerType"))),supplied,env);
+      }
     }else if(kind=="indirectCall"){
       // Resolve the saved callee before its arguments. Permission comes from
       // the independently rebuilt complete fixed code-target upper, not SSA
@@ -213,6 +248,8 @@ struct Derive {
     if(!step(items(field(p.hir,"types")).size()+items(field(p.hir,"functions")).size()))return false;
     for(const auto &t:items(field(p.hir,"types")))types.emplace(string(field(t,"id")),&t);
     for(const auto &f:items(field(p.hir,"functions")))functions.emplace(string(field(f,"id")),&f);
+    for(const auto &[id,t]:p.internalTypes){if(!step())return false;types.emplace(id,&t);}
+    for(const auto &[id,f]:p.internalOwners){if(!step())return false;functions.emplace(id,&f);}
     if(!field(fn,"activationEnvironment").getAsNull()){out.allocation=out.managedReference=true;facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");}
     if(!field(fn,"lexicalEnvironment").getAsNull()){out.managedReference=true;facet("managedReference",nullptr,"lexicalEnvironment");}
     if(!items(field(fn,"captures")).empty()){
@@ -222,10 +259,8 @@ struct Derive {
       }
       for(const auto &capture:items(field(fn,"captures"))){if(!step())return false;const auto binding=string(field(capture,"binding"));
         if(!ok(slots.count(binding),"captured binding has no owned environment slot"))return false;
-        const auto &[key,type]=slots.at(binding);auto &access=out.captures[key];
-        const auto &shape=*types.at(type);const auto kind=string(field(shape,"kind"));bool value=kind=="value";
-        if(kind=="union")for(const auto &member:items(field(shape,"members"))){if(!step())return false;value|=string(field(*types.at(string(member)),"kind"))=="value";}
-        if(reference(type)||value)environment[binding]={"c:"+key};access.read|=field(capture,"read").getAsBoolean()==true;
+        const auto &key=slots.at(binding).first;auto &access=out.captures[key];
+        environment[binding]={"c:"+key};access.read|=field(capture,"read").getAsBoolean()==true;
         access.write|=field(capture,"write").getAsBoolean()==true;
         if(access.read)witness(Object{{"kind","capture"},{"slot",key},{"access","read"}},nullptr,"capture");
         if(access.write)witness(Object{{"kind","capture"},{"slot",key},{"access","write"}},nullptr,"capture");
@@ -235,12 +270,46 @@ struct Derive {
     if(!field(fn,"ownerType").getAsNull())parameters.emplace_back(string(field(fn,"receiverBinding")),string(field(fn,"ownerType")));
     for(const auto &b:items(field(fn,"parameters")))parameters.emplace_back(string(field(b,"id")),string(field(b,"type")));
     out.parameters.resize(parameters.size());
-    for(size_t i=0;i<parameters.size();++i){if(!step())return false;auto [binding,type]=parameters[i];if(reference(type)){environment[binding]={"p:"+std::to_string(i)};out.managedReference=true;facet("managedReference",nullptr,"signature");}}
+    for(size_t i=0;i<parameters.size();++i){if(!step())return false;auto [binding,type]=parameters[i];
+      if(string(field(fn,"kind"))=="construction-body"&&binding==string(field(fn,"receiverBinding"))){
+        const auto &owner=*types.at(string(field(fn,"ownerType")));if(string(field(owner,"base")).empty())environment[binding]={"local:"+string(field(field(owner,"construction"),"id"))};else environment[binding]={};
+      }else environment[binding]={"p:"+std::to_string(i)};
+      if(reference(type)){out.managedReference=true;facet("managedReference",nullptr,"signature");}}
     if(reference(string(field(fn,"returnType")))){out.managedReference=true;facet("managedReference",nullptr,"signature");}
-    std::map<std::string,Json> throws;out.mayThrow=body(field(fn,"body"),environment,diagnostics?&throws:nullptr)&Thrown;
+    bool entryThrow=false;
+    if(field(fn,"analysisOnly").getAsBoolean().value_or(false)){
+      const auto owner=string(field(fn,"ownerType"));activeConstructions.insert(owner);
+      if(string(field(*types.at(owner),"base")).empty()){
+        if(!step(parameters.size()))return false;std::vector<Origins> supplied;
+        for(const auto &[id,type]:parameters)supplied.push_back(environment.count(id)?ownerCopy(environment.at(id)):Origins{});
+        entryThrow=initialize(*types.at(owner),supplied,environment);
+      }
+    }
+    std::map<std::string,Json> throws;const auto completions=body(field(fn,"body"),environment,diagnostics?&throws:nullptr);out.mayThrow=entryThrow||(completions&Thrown);
     if(out.mayThrow)for(const auto &[key,selected]:throws)record(Object{{"kind","facet"},{"facet","mayThrow"}},selected);return e.message.empty();
   }
 };
+}
+bool deriveInternalEffects(Program &p,const std::map<std::string,Effects> &upper,Error &e){
+  if(!prepareInternalConstructors(p,e))return false;p.internalEffects.clear();
+  const auto spend=[&](size_t n){return p.charge(n)||reject(e,"core-ir-common-budget","internal constructor effect fixed point exceeded");};
+  if(!spend(p.internalOwners.size()))return false;
+  for(const auto &[id,owner]:p.internalOwners){if(!spend(id.size()/8+items(field(owner,"parameters")).size()+2))return false;
+    Effects blank;blank.parameters.resize(items(field(owner,"parameters")).size()+1);p.internalEffects.emplace(id,std::move(blank));}
+  bool changed;
+  do{changed=false;for(const auto &[id,owner]:p.internalOwners){
+    if(!spend(1))return false;Effects next;Derive derive{p,owner,upper,next,e};if(!derive.run())return false;auto &into=p.internalEffects.at(id);
+    const auto join=[&](auto &to,const auto &from){for(const auto &key:from){if(!spend(key.size()/8+1))return false;changed|=to.insert(key).second;}return true;};
+    if(!join(into.reads,next.reads)||!join(into.writes,next.writes)||!join(into.calls,next.calls)||!join(into.hostReads,next.hostReads)||!join(into.hostWrites,next.hostWrites))return false;
+    const auto flag=[&](bool &to,bool from){if(from&&!to){to=true;changed=true;}};
+    flag(into.allocation,next.allocation);flag(into.managedReference,next.managedReference);flag(into.ehControl,next.ehControl);flag(into.mayThrow,next.mayThrow);
+    flag(into.await,next.await);flag(into.lock,next.lock);flag(into.escape,next.escape);flag(into.unknownHost,next.unknownHost);
+    if(!spend(next.parameters.size()+next.captures.size()))return false;
+    if(into.parameters.size()!=next.parameters.size())return reject(e,"core-ir-common-effects","internal effect parameter arity differs");
+    for(size_t i=0;i<next.parameters.size();++i){flag(into.parameters[i].read,next.parameters[i].read);flag(into.parameters[i].write,next.parameters[i].write);flag(into.parameters[i].structural,next.parameters[i].structural);}
+    for(const auto &[slot,access]:next.captures){if(!spend(slot.size()/8+1))return false;auto inserted=into.captures.try_emplace(slot);changed|=inserted.second;auto &to=inserted.first->second;flag(to.read,access.read);flag(to.write,access.write);flag(to.structural,access.structural);}
+  }}while(changed);
+  return e.message.empty();
 }
 bool deriveEffects(Program &p,const Json &fn,const std::map<std::string,Effects> &upper,Effects &out,Error &e){
   Derive derive{p,fn,upper,out,e};return derive.run();

@@ -28,9 +28,9 @@ bool dispatchLimits(){
     p.hir=Object{{"types",std::move(types)},{"functions",Array{Object{{"id","model:m"},{"kind","method"},
       {"ownerType","model:Base"},{"name","m"},{"overrideTarget",nullptr},{"signatureHash","model:signature"}}}}};return p;
   };
-  Program p=catalogue(256);Error e;Json out="unchanged";
+  Program p=catalogue(256);const auto initialWork=p.remaining;Error e;Json out="unchanged";
   bool passed=methodDispatch(p,"model:Base","model:m",out,e)&&items(out).size()==256;
-  const auto work=1000000-p.remaining;
+  const auto work=initialWork-p.remaining;
   llvm::outs()<<"owned method table 256 "<<(passed?"PASS":"FAIL")<<"\n";
   p=catalogue(257);e={};out="unchanged";
   const bool overflow=!methodDispatch(p,"model:Base","model:m",out,e)&&e.code=="core-ir-common-method"&&same(out,Json("unchanged"));

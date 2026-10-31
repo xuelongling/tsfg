@@ -5,14 +5,17 @@ import {sha256,i32TypeId,boolTypeId} from './identity.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
 const undefinedId=sha256('tsfg.type\0undefined'),nullId=sha256('tsfg.type\0null');
-export function commonProgramValues(model,graph,state,invoke,indirect) {
+export function commonProgramValues(model,graph,state,invoke,indirect,constructionAction) {
   const {types,bindings}=model,collections=commonCollections(model.spend);let currentReceiver=null;
   const op=(name,args,type,properties,range)=>graph.emit(state.current,name,args,type,properties,range);
   const terminal=(name,args,targets,properties,range)=>graph.terminal(state.current,name,args,targets,properties,range);
   const copy=(value,type,range)=>value?op('value_copy',[value],type,{type},range):value;
   const view=(value,type,range)=>value.type===type?value:op('view',[value],type,{target:type},range);
   const pack=(value,range)=>op('pack',[value],model.payload,{type:value.type},range);
-  const receiver=(owner,range)=>{check(state.cells.has(owner.receiverBinding),'scope');return op('load',[state.cells.get(owner.receiverBinding)],owner.ownerType,{binding:owner.receiverBinding},range);};
+  const receiver=(owner,range)=>{
+    if(owner.kind==='construction-body')return constructionAction('receiver_get',[state.receiver],owner.ownerType,{owner:owner.ownerType},range);
+    check(state.cells.has(owner.receiverBinding),'scope');return op('load',[state.cells.get(owner.receiverBinding)],owner.ownerType,{binding:owner.receiverBinding},range);
+  };
   function environment(layout,range){
     model.spend(state.environments.size);for(const [id,value]of state.environments){let current=id,selected=value;const seen=new Set();while(current){model.spend();check(!seen.has(current),'environment');seen.add(current);if(current===layout)return selected;const parent=model.environments.get(current)?.parent;if(!parent)break;selected=op('env_parent',[selected],'env:'+parent,{layout:parent},range);current=parent;}}
     check(false,'environment','lexical environment not in current activation');
@@ -61,25 +64,41 @@ export function commonProgramValues(model,graph,state,invoke,indirect) {
   function scalar(kind,operator,args,type,range) {
     return op(['===','!=='].includes(operator)?'strict_equal':kind,args,type,{operator},range);
   }
-  function initializeOwn(type,value,args,range) {
+  function initializeOwn(type,value,args,range,frame) {
     const before=currentReceiver;currentReceiver=value;
+    let phase=op('initialize_begin',[frame,value],'initialization:'+type.id,{owner:type.id},range);
     try {
       for(const fieldId of type.construction.initializationFields) {
         model.spend();const field=model.fields.get(fieldId);check(field,'identity');let initial;
         if(field.parameterBinding){const index=type.construction.parameters.findIndex(p=>p.symbol===field.parameterBinding);check(index>=0&&args[index],'identity');initial=args[index];}
         else initial=field.initializer?expression(field.initializer):op('undefined',[],undefinedId,{},field.origin);
-        write({kind:'field',receiver:value,field:field.id,type:field.type},initial,field.origin,true);
+        phase=op('initialize_field',[phase,value,copy(initial,field.type,field.origin)],'initialization:'+type.id,{owner:type.id,field:field.id},field.origin);
       }
     } finally {currentReceiver=before;}
+    op('initialize_end',[phase,value],null,{owner:type.id},range);
   }
-  function construct(type,value,args,range) {
+  function enterConstructor(type,frame,args,range) {
+    if(type.base)return;
+    const allocated=op('receiver_allocate',[frame],type.id,{owner:type.id},range);
+    const value=constructionAction('receiver_bind',[frame,allocated],type.id,{owner:type.id},range);
+    initializeOwn(type,value,args,range,frame);
+  }
+  function completeConstructor(value,range,onThrow) {
+    const owner=graph.owner;
+    return constructionAction('receiver_result',[state.receiver,...(value?[value]:[])],owner.ownerType,{owner:owner.ownerType},range,onThrow);
+  }
+  function construct(type,frame,args,range) {
     model.spend();check(type.construction,'identity');
     if(type.construction.functionId) {
-      if(!type.base)initializeOwn(type,value,args,range);
-      const fn=model.functions.get(type.construction.functionId);return invoke({type:type.id,range},[value,...args],fn);
+      const fn=model.functions.get(type.construction.functionId);return invoke({type:type.id,range},[frame,...args],fn);
     }
-    if(type.base)construct(types.get(type.base),value,args,range);
-    initializeOwn(type,value,args,range);return value;
+    if(type.base){
+      const child=op('receiver_child',[frame],'receiver:'+type.base,{owner:type.base},range);
+      const result=construct(types.get(type.base),child,args,range);
+      const value=constructionAction('receiver_bind',[frame,result],type.id,{owner:type.id},range);
+      initializeOwn(type,value,args,range,frame);
+    }else enterConstructor(type,frame,args,range);
+    return constructionAction('receiver_result',[frame],type.id,{owner:type.id},range);
   }
   function expression(e) {
     model.spend();check(e&&types.has(e.type),'type');const type=types.get(e.type);
@@ -125,15 +144,18 @@ export function commonProgramValues(model,graph,state,invoke,indirect) {
     }
     if(e.kind==='new') {
       const args=e.arguments.map((arg,index)=>copy(expression(arg),e.signature.parameters[index],arg.range));
-      const value=op(type.kind==='value'?'construct_value':'allocate_reference',[],e.type,{type:e.type,construction:e.construction},e.range);
-      return construct(type,value,args,e.range);
+      const frame=op('receiver_create',[],'receiver:'+type.id,{owner:type.id,new_target:type.id,construction:e.construction},e.range);
+      return construct(type,frame,args,e.range);
     }
     if(e.kind==='superConstruct') {
-      const fn=graph.owner,value=receiver(fn,e.range),args=e.arguments.map((arg,index)=>copy(expression(arg),e.signature.parameters[index],arg.range));
-      construct(types.get(e.callee),value,args,e.range);initializeOwn(types.get(fn.ownerType),value,fn.parameters.map(p=>op('load',[state.cells.get(p.id)],p.type,{binding:p.id},e.range)),e.range);
-      return op('undefined',[],undefinedId,{},e.range);
+      const fn=graph.owner,args=e.arguments.map((arg,index)=>copy(expression(arg),e.signature.parameters[index],arg.range));
+      const child=op('receiver_child',[state.receiver],'receiver:'+e.callee,{owner:e.callee},e.range);
+      const result=construct(types.get(e.callee),child,args,e.range);
+      const value=constructionAction('receiver_bind',[state.receiver,result],fn.ownerType,{owner:fn.ownerType},e.range);
+      initializeOwn(types.get(fn.ownerType),value,fn.parameters.map(p=>load(location({kind:'bindingTarget',binding:p.id,type:p.type,range:e.range}),e.range)),e.range,state.receiver);
+      return view(value,e.type,e.range);
     }
     check(false,'capability','common expression has no complete SSA lowering: '+e.kind);
   }
-  return {expression,environment,op,copy,view,pack,receiver,store,location,load,write};
+  return {expression,environment,op,copy,view,pack,receiver,store,location,load,write,enterConstructor,completeConstructor};
 }

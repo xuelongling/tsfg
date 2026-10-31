@@ -1,0 +1,169 @@
+{
+  "privateVersion": 4,
+  "schema": "sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769",
+  "representationTables": [
+    "domains",
+    "bindings",
+    "functions",
+    "internalConstructors"
+  ],
+  "operations": [
+    {
+      "name": "receiver_create",
+      "properties": [
+        "owner",
+        "new_target",
+        "construction"
+      ],
+      "minOperands": 0,
+      "maxOperands": 0,
+      "results": 1,
+      "successors": 0,
+      "cppClass": "ReceiverCreateOp"
+    },
+    {
+      "name": "receiver_child",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 1,
+      "maxOperands": 1,
+      "results": 1,
+      "successors": 0,
+      "cppClass": "ReceiverChildOp"
+    },
+    {
+      "name": "receiver_allocate",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 1,
+      "maxOperands": 1,
+      "results": 1,
+      "successors": 0,
+      "cppClass": "ReceiverAllocateOp"
+    },
+    {
+      "name": "receiver_bind",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 2,
+      "maxOperands": 2,
+      "results": 0,
+      "successors": 2,
+      "cppClass": "ReceiverBindOp"
+    },
+    {
+      "name": "receiver_get",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 1,
+      "maxOperands": 1,
+      "results": 0,
+      "successors": 2,
+      "cppClass": "ReceiverGetOp"
+    },
+    {
+      "name": "receiver_result",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 1,
+      "maxOperands": 2,
+      "results": 0,
+      "successors": 2,
+      "cppClass": "ReceiverResultOp"
+    },
+    {
+      "name": "initialize_begin",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 2,
+      "maxOperands": 2,
+      "results": 1,
+      "successors": 0,
+      "cppClass": "InitializeBeginOp"
+    },
+    {
+      "name": "initialize_field",
+      "properties": [
+        "owner",
+        "field"
+      ],
+      "minOperands": 3,
+      "maxOperands": 3,
+      "results": 1,
+      "successors": 0,
+      "cppClass": "InitializeFieldOp"
+    },
+    {
+      "name": "initialize_end",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 2,
+      "maxOperands": 2,
+      "results": 0,
+      "successors": 0,
+      "cppClass": "InitializeEndOp"
+    }
+  ],
+  "invalidShapes": [
+    {
+      "name": "receiver_create",
+      "properties": [
+        "owner",
+        "new_target"
+      ],
+      "minOperands": 0,
+      "maxOperands": 0,
+      "results": 1,
+      "successors": 0
+    },
+    {
+      "name": "receiver_bind",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 1,
+      "maxOperands": 1,
+      "results": 0,
+      "successors": 2
+    },
+    {
+      "name": "receiver_get",
+      "properties": [
+        "owner"
+      ],
+      "minOperands": 1,
+      "maxOperands": 1,
+      "results": 0,
+      "successors": 1
+    },
+    {
+      "name": "receiver_result",
+      "properties": [
+        "owner",
+        "sourceProof"
+      ],
+      "minOperands": 1,
+      "maxOperands": 2,
+      "results": 0,
+      "successors": 2
+    },
+    {
+      "name": "initialize_field",
+      "properties": [
+        "owner",
+        "field"
+      ],
+      "minOperands": 2,
+      "maxOperands": 2,
+      "results": 1,
+      "successors": 0
+    }
+  ]
+}

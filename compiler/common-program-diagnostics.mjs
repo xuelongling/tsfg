@@ -22,13 +22,13 @@ export function commonKernelCallChain(prepared,analysis,root,reason){
   const exhausted=new RangeError('bounded kernel diagnostic search exhausted');let remaining=100000;
   const spend=(amount=1)=>{if(amount>remaining)throw exhausted;remaining-=amount;};
   try{
-    const effects=commonEffects(hir,spend,physical),uppers=new Map([...records].map(([id,row])=>[id,row.upper]));
+    const effects=commonEffects(hir,spend,physical),uppers=new Map([...records].map(([id,row])=>[id,row.upper])),batch=effects.fixed(uppers);
     for(let index=0;index<pending.length;index++){
       spend();selected=pending[index];origin={kind:'unknown',functionId:selected,source:source(selected)};
       if(!contains(current.get(selected).effective)){
         origin={kind:'fixed-upper',functionId:selected,source:source(selected),contractDigest:records.get(selected).digest};break;
       }
-      const derived=effects.derive(functions.get(selected),uppers,true),local=derived.local.get(canonical(reason));
+      const derived=batch.derive(functions.get(selected),true),local=derived.local.get(canonical(reason));
       if(local){origin=local;break;}
       if(reason.kind==='facet'&&!contains(derived.upper)&&['managedReference','escape'].includes(reason.facet)){
         origin={kind:'function',functionId:selected,source:source(selected),operation:reason.facet==='escape'?'derivedEscape':'derivedManagedReference'};break;

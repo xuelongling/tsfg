@@ -15,7 +15,10 @@ struct SourceAnchor {uint32_t start=0,end=0;};
 inline constexpr uint16_t noRegister=UINT16_MAX;
 using Json=llvm::json::Value;using Object=llvm::json::Object;using Array=llvm::json::Array;
 inline constexpr llvm::StringLiteral marker="tsfg_program.program";
-inline constexpr llvm::StringLiteral schema="sha256:1f721a2d436376053779d62be603a21444d89183e10cbfebac7a5a76a996c369";
+inline constexpr int32_t profileVersion=4;
+// This reader admits only the current private4 descriptor identity below.
+inline constexpr size_t programWorkLimit=2000000;
+inline constexpr llvm::StringLiteral schema="sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}
@@ -90,6 +93,15 @@ TSFG_PROGRAM_OP(RouteOp,"route",mlir::OpTrait::OneSuccessor,mlir::OpTrait::IsTer
 TSFG_PROGRAM_OP(ReturnThrowOp,"return_throw",mlir::OpTrait::ZeroSuccessors,mlir::OpTrait::IsTerminator)
 TSFG_PROGRAM_OP(UnreachableOp,"unreachable",mlir::OpTrait::ZeroSuccessors,mlir::OpTrait::IsTerminator)
 TSFG_PROGRAM_OP(FuelOp,"fuel",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(ReceiverCreateOp,"receiver_create",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(ReceiverChildOp,"receiver_child",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(ReceiverAllocateOp,"receiver_allocate",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(ReceiverBindOp,"receiver_bind",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
+TSFG_PROGRAM_OP(ReceiverGetOp,"receiver_get",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
+TSFG_PROGRAM_OP(ReceiverResultOp,"receiver_result",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
+TSFG_PROGRAM_OP(InitializeBeginOp,"initialize_begin",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(InitializeFieldOp,"initialize_field",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(InitializeEndOp,"initialize_end",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 #undef TSFG_PROGRAM_OP
 
 // This is rebuilt from actual MLIR. No producer SSA plan, MLIR pointer or
@@ -125,11 +137,25 @@ struct Program {
   std::string hirHash,representationHash,inputIdentity,sourcePath,sourceHash;
   uint32_t sourceLength=0;
   std::vector<Function> functions;
+  std::vector<Function> internalFunctions;
+  // Owned, independently reconstructed compiler metadata, never new HIR,
+  // Scope or Published rows. Unknown representation data cannot fill these.
+  std::map<std::string,Json> internalTypes,internalOwners,internalBindings;
+  std::map<std::string,std::string> internalTargets;
+  std::set<std::string> internalCycleTypes;
+  std::map<std::string,const Json *> internalDeclarations;
+  std::map<std::string,Effects> internalEffects;
+  bool internalMetadataReady=false;
   std::map<std::string,HostBinding> hosts;
   std::set<std::string> hostResources;
   std::map<std::string,HostOrigin> hostOrigins;
   std::string hostContractHash;
   // Independently derived facts, never filled from the publication/proof table.
+  // Exact original Source paths from the independently matched Source graph.
+  std::map<std::string,std::map<std::pair<uint16_t,uint16_t>,std::string>> operationSources;
+  // Original structural lexical paths, retained from Source reconstruction.
+  std::map<std::string,std::vector<std::string>> bindingScopes;
+  std::map<std::string,std::vector<std::string>> registerViews;
   std::map<std::string,Layout> layouts;
   std::map<std::string,Effects> effects;
   std::map<std::string,Effects> fixedEffects;
@@ -143,7 +169,7 @@ struct Program {
   struct EntryRole {ReferenceCandidates candidates;ReferenceFields fields;};
   ReferenceFields referenceFields,referenceMethods;
   std::map<std::string,EntryRole> entryCandidates;
-  size_t remaining=1000000;
+  size_t remaining=programWorkLimit;
   bool charge(size_t n=1){if(n>remaining){remaining=0;return false;}remaining-=n;return true;}
 };
 struct Error {std::string code,message,path;SourceAnchor range;};
@@ -159,11 +185,16 @@ bool same(const Json &,const Json &);
 bool verifySource(Program &,Error &);
 bool verifyTypes(Program &,Error &);
 bool verifyOperations(Program &,Error &);
+bool internalConstructionCost(Program &,const Json &,Error &);
+bool prepareInternalConstructors(Program &,Error &);
+bool projectInternalConstruction(Program &,const Json &,bool &,Error &);
 bool verifyPublication(Program &,Error &);
+bool publicationScope(Program &,Json &,Error &);
 bool validateCallableBounds(Program &,const Json &,const Json &,Error &);
 bool verifyCallableTargets(Program &,Error &);
 bool verifyKernelProof(Program &,Error &);
 bool deriveEffects(Program &,const Json &,const std::map<std::string,Effects> &,Effects &,Error &);
+bool deriveInternalEffects(Program &,const std::map<std::string,Effects> &,Error &);
 bool readEffects(Program &,const Json &,const Json &,Effects &,Error &);
 Json writeEffects(const Effects &);
 bool verifyProgram(Program &,Error &);

@@ -40,10 +40,10 @@ test('actual Source2 physical pair and factory activations',()=>{
   assert(bumpContexts.length>=3);const environments=new Set(bumpContexts.flatMap(c=>[...c.args[0].refs]));assert(environments.size>=2);
 });
 
-test('actual Source2 fixed upper singleton kernels and complete Core3',()=>{
+test('actual Source2 fixed upper singleton kernels and complete Core4',()=>{
   const hir=projectCommonProgram(facts('common-indirect-valid')),publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
   assert.equal(publication.format.version,2);verifyCommonKernelGroup(hir,publication,request);
-  const core=emitCommonProgramCore(hir,publication,request);assert.match(core,/version = 3 : i32/);assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_alloc/);assert.match(core,/tsfg_program.make_closure/);
+  const core=emitCommonProgramCore(hir,publication,request);assert.match(core,/version = 4 : i32/);assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_alloc/);assert.match(core,/tsfg_program.make_closure/);
   assert.equal((core.match(/func.func @/g)??[]).length,12);
 });
 test('actual Source2 broad apply keeps full Published upper conflict',()=>{
@@ -96,7 +96,7 @@ for(const indirect of [false,true])test('owned model preserves ReadSpan return o
  // An isolated owned effect-transfer model, not a Source package or execution.
  const range={start:0,end:1},span='span',array='array',scalar='i32-model',callable='callable',borrow={id:'borrow',name:'borrow',kind:'source',returnType:span,parameters:[{id:'s',type:span}],bindings:[],captures:[],body:[],range,sourcePath:'/model.ts'},caller={id:'caller',kind:'source',returnType:span,parameters:[{id:'a',type:array}],bindings:[],captures:[],body:[],range,sourcePath:'/model.ts'};
  const argument={kind:'call',callee:'intrinsic:readSpan',type:span,range,arguments:[{kind:'bindingReference',binding:'a',type:array,range}]},value={kind:indirect?'indirectCall':'call',callee:'borrow',expression:{kind:'functionReference',functionId:'borrow',type:callable,range},type:span,range,arguments:[argument]};caller.body=[{kind:'return',value,range}];
- const hir={types:[{id:scalar,kind:'scalar'},{id:span,kind:'readSpan',elementType:scalar},{id:array,kind:'array',elementType:scalar},{id:callable,kind:'function',parameters:[span],returnType:span}],functions:[borrow,caller],globals:[],environments:[],snapshot:{payload:{compatibilityWitnesses:[]}}},physical={model:{callables:{site:()=>({top:false,functions:['borrow']})}},references:new Map(),escaping:new Map()},effects=commonEffects(hir,commonMeter(),physical),upper={captures:[],globals:{reads:[],writes:[]},parameters:[{index:0,read:true,write:false,structural:false}],facets:Object.fromEntries(commonFacets.map(key=>[key,key==='managedReference']))};
+ const hir={types:[{id:scalar,kind:'scalar'},{id:span,kind:'readSpan',elementType:scalar},{id:array,kind:'array',elementType:scalar},{id:callable,kind:'function',parameters:[span],returnType:span}],functions:[borrow,caller],globals:[],environments:[],hostImports:[],hostContext:null,snapshot:{payload:{compatibilityWitnesses:[]}}},physical={model:{callables:{site:()=>({top:false,functions:['borrow']})}},references:new Map(),escaping:new Map()},effects=commonEffects(hir,commonMeter(),physical),upper={captures:[],globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:[{index:0,read:true,write:false,structural:false}],facets:Object.fromEntries(commonFacets.map(key=>[key,key==='managedReference']))};
  assert.throws(()=>effects.derive(caller,new Map([['borrow',upper]])),/** @param {any} e */e=>e.code==='r03-common-program-readspan-return-escape');
 });
 

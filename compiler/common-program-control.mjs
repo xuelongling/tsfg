@@ -8,13 +8,17 @@ import {commonCollections} from './common-program-budget.mjs';
 
 export function planCommonFunction(model,owner) {
   const collections=commonCollections(model.spend);
-  const graph=createCommonGraph(model,owner),params=[...(owner.ownerType?[{id:owner.receiverBinding,type:owner.ownerType}]:[]),...owner.parameters];
+  const constructor=owner.kind==='construction-body';
+  const graph=createCommonGraph(model,owner),params=[...(owner.ownerType?[constructor?{id:'receiver:'+owner.id,type:'receiver:'+owner.ownerType,hidden:true,frame:true}:{id:owner.receiverBinding,type:owner.ownerType}]:[]),...owner.parameters];
   if(owner.lexicalEnvironment)params.unshift({id:'lexical:'+owner.id,type:'env:'+owner.lexicalEnvironment,hidden:true});
   check(params.length<=model.limits.parameters,'limit');const entry=graph.newBlock(params.map(p=>p.type));
-  const state={current:entry,cells:new Map(),environments:new Map()},tasks=[];let clones=0;
+  const state={current:entry,cells:new Map(),environments:new Map(),receiver:null},tasks=[];let clones=0;
   const terminator=(name,args,targets,properties,range)=>graph.terminal(state.current,name,args,targets,properties,range);
   const route=(target,args,completion,handler,range)=>terminator('route',args,[target],{completion,handler},range);
-  const outer={returned:(value,range)=>terminator('func.return',value?[value]:[],[],{},range),
+  const outer={returned:(value,range)=>{
+    const result=constructor?values.completeConstructor(value,range,(thrown,at)=>terminator('return_throw',[thrown],[],{},at)):value;
+    terminator('func.return',result?[result]:[],[],{},range);
+  },
     thrown:(value,range)=>terminator('return_throw',[value],[],{},range)};
   let handlers=outer;
   const isVoid=id=>id==='void'||model.types.get(id)?.kind==='void';
@@ -36,7 +40,15 @@ export function planCommonFunction(model,owner) {
     terminator('invoke_indirect',[callee,...args],[normal,exceptional],properties,expression.range);
     tasks.push(()=>{state.current=exceptional;state.cells=collections.map(saved);handlers=active;active.thrown({...exceptional.parameters[0]},expression.range);});state.current=normal;return normal.parameters[0]?{...normal.parameters[0]}:null;
   };
-  const values=commonProgramValues(model,graph,state,invoke,indirect);
+  const constructionAction=(name,args,type,properties,range,onThrow)=>{
+    const normal=graph.newBlock([type]),exceptional=graph.newBlock([model.payload]);
+    const saved=collections.map(state.cells),active=handlers,thrown=onThrow??active.thrown;
+    terminator(name,args,[normal,exceptional],properties,range);
+    tasks.push(()=>{state.current=exceptional;state.cells=collections.map(saved);handlers=active;thrown({...exceptional.parameters[0]},range);});
+    state.current=normal;return {...normal.parameters[0]};
+  };
+  const values=commonProgramValues(model,graph,state,invoke,indirect,constructionAction);
+  if(constructor)state.receiver={...entry.parameters[params.findIndex(p=>p.frame)]};
   if(owner.lexicalEnvironment)state.environments.set(owner.lexicalEnvironment,{...entry.parameters[0]});
   if(owner.activationEnvironment){const layout=model.environments.get(owner.activationEnvironment),parent=layout.parent?values.environment(layout.parent,owner.range):null;
     const env=values.op('env_alloc',parent?[parent]:[],'env:'+layout.id,{layout:layout.id},owner.range);state.environments.set(layout.id,env);}
@@ -48,6 +60,8 @@ export function planCommonFunction(model,owner) {
       if(!model.slots.has(binding)){const cell=values.op('cell',[],model.cell(binding),{binding},b.range);state.cells.set(binding,cell);}
       values.store({kind:'bindingTarget',binding,type:b.type},value,b.range,true,false);
     }
+    if(constructor&&path.length===1&&path[0]==='body')values.enterConstructor(model.types.get(owner.ownerType),state.receiver,
+      owner.parameters.map(p=>values.load(values.location({kind:'bindingTarget',binding:p.id,type:p.type,range:owner.range}),owner.range)),owner.range);
     for(const [index,statement]of rows.entries()) {
       model.spend();if(state.current.terminated)break;const at=[...path,index];
       if(['constDeclaration','letDeclaration'].includes(statement.kind)) {
@@ -61,8 +75,8 @@ export function planCommonFunction(model,owner) {
           values.expression(statement.initializer),statement.range,true);
       }else if(statement.kind==='expression')values.expression(statement.value);
       else if(statement.kind==='return') {
-        const value=statement.value?values.expression(statement.value):owner.kind==='construction-body'?values.receiver(owner,statement.range):null;
-        active.returned(value&&!isVoid(owner.returnType)?values.copy(value,owner.returnType,statement.range):null,statement.range);
+        const value=statement.value?values.expression(statement.value):null;
+        active.returned(constructor?value:value&&!isVoid(owner.returnType)?values.copy(value,owner.returnType,statement.range):null,statement.range);
       }else if(statement.kind==='throw')active.thrown(values.pack(values.expression(statement.value),statement.range),statement.range);
       else if(statement.kind==='block')region(statement.body,active,()=>{},at);
       else if(statement.kind==='if')conditional(statement,active,at);
@@ -106,10 +120,10 @@ export function planCommonFunction(model,owner) {
         ()=>finish('normal',null,statement.range),[...path,'catch']);}
     state.cells=cells;if(after.incoming)state.current=after;else graph.blocks.splice(graph.blocks.indexOf(after),1);
   }
-  if(owner.kind!=='module-initializer')values.op('fuel',[],null,{event:1},owner.range);
-  const initial=params.map((p,index)=>[p.id,{...entry.parameters[index]}]);
+  if(owner.kind!=='module-initializer'&&!owner.analysisOnly)values.op('fuel',[],null,{event:1},owner.range);
+  const initial=params.flatMap((p,index)=>p.frame?[]:[[p.id,{...entry.parameters[index]}]]);
   region(owner.body,outer,()=>{
-    if(owner.kind==='construction-body')outer.returned(values.receiver(owner,owner.range),owner.range);
+    if(constructor)outer.returned(null,owner.range);
     else {check(owner.returnType==='void'||model.types.get(owner.returnType)?.kind==='void','capability','unproved successful function fallthrough');outer.returned(null,owner.range);}
   },['body'],initial);
   while(tasks.length){model.spend();tasks.shift()();}

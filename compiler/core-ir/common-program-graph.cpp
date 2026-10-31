@@ -3,6 +3,144 @@
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 namespace tsfg::commonProgram {
+namespace {
+// These relations are rebuilt from typed SSA, not Source ranges or producer
+// certificates. Dynamic binding state remains part of the actual CFG solver.
+bool constructionProtocol(ActualCheck &c,const Function &fn,const std::vector<std::set<uint16_t>> &predecessors){
+  struct Frame{std::string owner;uint16_t parent=noRegister;};
+  struct Value{uint16_t allocated=noRegister,constructed=noRegister,bound=noRegister,binding=noRegister;};
+  struct Token{uint16_t frame=noRegister,binding=noRegister;size_t position=0;};
+  std::map<uint16_t,Frame> frames;std::map<uint16_t,Value> values;std::map<uint16_t,Token> tokens;
+  uint16_t entryFrame=noRegister;
+  auto source=c.sourceFunctions.find(fn.id);
+  if(source!=c.sourceFunctions.end()&&string(field(*source->second,"kind"))=="construction-body"){
+    const size_t hidden=!field(*source->second,"lexicalEnvironment").getAsNull();entryFrame=fn.blocks[0].parameters[hidden];
+    frames.emplace(entryFrame,Frame{string(field(*source->second,"ownerType"))});
+  }
+  bool changed=true;
+  while(changed){changed=false;
+    for(size_t b=0;b<fn.blocks.size();++b)for(const auto &op:fn.blocks[b].operations){
+      if(!c.step(op.operands.size()+1))return false;const auto &name=op.name;
+      if(name=="receiver_create"&&!frames.count(op.result)){frames.emplace(op.result,Frame{string(field(op.properties,"owner"))});changed=true;}
+      else if(name=="receiver_child"&&!frames.count(op.result)&&frames.count(op.operands[0])){frames.emplace(op.result,Frame{string(field(op.properties,"owner")),op.operands[0]});changed=true;}
+      else if(name=="receiver_allocate"&&!values.count(op.result)&&frames.count(op.operands[0])){Value value;value.allocated=op.operands[0];values.emplace(op.result,value);changed=true;}
+      else if((name=="carrier_cast"||name=="view")&&!values.count(op.result)&&op.operands.size()==1&&values.count(op.operands[0])){values.emplace(op.result,values.at(op.operands[0]));changed=true;}
+      else if((name=="receiver_bind"||name=="receiver_get"||name=="receiver_result")&&frames.count(op.operands[0])){
+        const auto frame=op.operands[0],normal=fn.blocks[op.successors[0]].parameters[0];if(values.count(normal))continue;
+        Value value;
+        if(name=="receiver_result")value.constructed=frame;
+        else if(name=="receiver_get")value.bound=frame;
+        else{
+          const auto input=values.find(op.operands[1]);if(input==values.end())continue;
+          const auto &owner=*c.types.at(frames.at(frame).owner);const auto base=string(field(owner,"base"));
+          if(base.empty()){if(input->second.allocated!=frame)continue;}
+          else{const auto child=frames.find(input->second.constructed);if(child==frames.end()||child->second.parent!=frame||child->second.owner!=base)continue;}
+          value.bound=frame;value.binding=normal;
+        }
+        values.emplace(normal,value);changed=true;
+      }else if(name=="invoke"){
+        const auto callee=c.sourceFunctions.find(string(field(op.properties,"function_id")));
+        if(callee==c.sourceFunctions.end()||string(field(*callee->second,"kind"))!="construction-body")continue;
+        const size_t hidden=!field(*callee->second,"lexicalEnvironment").getAsNull();const auto frame=op.operands[hidden];
+        const auto normal=fn.blocks[op.successors[0]].parameters[0];
+        if(!c.need(predecessors[op.successors[0]]==std::set<uint16_t>{uint16_t(b)},"constructor call result has a foreign predecessor"))return false;
+        if(!values.count(normal)&&frames.count(frame)&&frames.at(frame).owner==string(field(*callee->second,"ownerType"))){Value value;value.constructed=frame;values.emplace(normal,value);changed=true;}
+      }else if(name=="initialize_begin"&&!tokens.count(op.result)){
+        const auto input=values.find(op.operands[1]);
+        if(frames.count(op.operands[0])&&input!=values.end()&&input->second.bound==op.operands[0]&&input->second.binding!=noRegister){tokens.emplace(op.result,Token{op.operands[0],input->second.binding,0});changed=true;}
+      }else if(name=="initialize_field"&&!tokens.count(op.result)){
+        const auto token=tokens.find(op.operands[0]);const auto receiver=values.find(op.operands[1]);if(token==tokens.end()||receiver==values.end())continue;
+        const auto &fields=items(field(field(*c.types.at(frames.at(token->second.frame).owner),"construction"),"initializationFields"));
+        if(!c.need(token->second.position<fields.size()&&string(fields[token->second.position])==string(field(op.properties,"field"))&&
+          receiver->second.bound==token->second.frame&&receiver->second.binding==token->second.binding,"initializer cursor/receiver identity differs"))return false;
+        auto next=token->second;++next.position;tokens.emplace(op.result,next);changed=true;
+      }
+    }
+  }
+  for(size_t b=0;b<fn.blocks.size();++b){
+    for(auto reg:fn.blocks[b].parameters)if(!c.step()||!c.need(!llvm::StringRef(fn.carriers[reg]).starts_with("initialization:")&&
+      (!llvm::StringRef(fn.carriers[reg]).starts_with("receiver:")||reg==entryFrame),"unproved construction control block parameter"))return false;
+    for(const auto &op:fn.blocks[b].operations){
+      if(!c.step(op.operands.size()+1))return false;const auto &name=op.name;
+      for(auto reg:op.operands)if(llvm::StringRef(fn.carriers[reg]).starts_with("initialization:")){
+        if(!c.need((name=="initialize_field"||name=="initialize_end")&&reg==op.operands[0]&&tokens.count(reg),"unproved initializer token use"))return false;
+      }
+      if(name=="receiver_create"||name=="receiver_child"){if(!c.need(frames.count(op.result),"unproved receiver/newTarget lineage"))return false;}
+      else if(name=="receiver_allocate"){if(!c.need(values.count(op.result),"unproved base receiver allocation"))return false;}
+      else if(name=="receiver_bind"||name=="receiver_get"||name=="receiver_result"){
+        if(!c.need(values.count(fn.blocks[op.successors[0]].parameters[0]),"receiver binding/result is not a completed Construct relation"))return false;
+      }else if(name=="initialize_begin"){
+        if(!c.need(tokens.count(op.result),"initialization did not follow the successful receiver binding"))return false;
+      }else if(name=="initialize_field"){if(!c.need(tokens.count(op.result),"unproved initializer cursor step"))return false;}
+      else if(name=="initialize_end"){
+        const auto token=tokens.find(op.operands[0]);const auto receiver=values.find(op.operands[1]);
+        if(!c.need(token!=tokens.end()&&receiver!=values.end(),"unproved initializer completion"))return false;
+        const auto &fields=items(field(field(*c.types.at(frames.at(token->second.frame).owner),"construction"),"initializationFields"));
+        if(!c.need(token->second.position==fields.size()&&receiver->second.bound==token->second.frame&&receiver->second.binding==token->second.binding,"incomplete or changed initializer receiver"))return false;
+      }else if(name=="func.return"&&entryFrame!=noRegister){
+        if(!c.need(op.operands.size()==1&&values.count(op.operands[0])&&values.at(op.operands[0]).constructed==entryFrame,"constructor return bypassed receiver result selection"))return false;
+      }
+    }
+  }
+  // A right is pending-begin (noRegister) or the exact current token. Preserve
+  // alternatives at joins: intersecting them would hide a skipped initializer.
+  // These are control rights, not this-binding state or rollback snapshots.
+  using Rights=std::map<uint16_t,uint16_t>;
+  std::vector<std::set<Rights>> seen(fn.blocks.size());
+  std::vector<std::pair<uint16_t,const Rights *>> pending;
+  const auto enqueue=[&](uint16_t block,const Rights &rights){
+    if(!c.step())return false;
+    // Prepay the red-black tree's comparison path plus one ownership copy.
+    // Lexicographic map comparison examines at most rights.size()+1 entries.
+    size_t comparisons=2;for(auto count=seen[block].size();count;count>>=1)comparisons+=4;
+    if(!c.step((rights.size()+1)*(comparisons+1)))return false;
+    const auto inserted=seen[block].insert(rights);
+    if(inserted.second)pending.emplace_back(block,&*inserted.first);return true;
+  };
+  if(!enqueue(0,{}))return false;
+  for(size_t index=0;index<pending.size();++index){
+    const auto block=pending[index].first;const auto &entry=*pending[index].second;
+    if(!c.step(entry.size()+1))return false;auto rights=entry;
+    for(const auto &op:fn.blocks[block].operations){
+      if(!c.step(op.operands.size()+rights.size()+1))return false;const auto &name=op.name;
+      if(name=="initialize_begin"){
+        const auto &token=tokens.at(op.result);const auto right=rights.find(token.binding);
+        if(!c.need(right!=rights.end()&&right->second==noRegister,"initializer begin has no pending binding right on this path"))return false;
+        right->second=op.result;
+      }else if(name=="initialize_field"||name=="initialize_end"){
+        const auto &token=tokens.at(op.operands[0]);const auto right=rights.find(token.binding);
+        if(!c.need(right!=rights.end()&&right->second==op.operands[0],"initializer consumed an absent, aborted or stale token on this path"))return false;
+        if(name=="initialize_end")rights.erase(right);else right->second=op.result;
+      }else if(name=="receiver_create"||name=="receiver_child"){
+        for(const auto &[binding,token]:rights)if(!c.need(values.at(binding).bound!=op.result,"new receiver activation abandoned an unfinished initializer"))return false;
+      }
+      if(name=="receiver_bind"||name=="receiver_get"||name=="receiver_result"){
+        const auto frame=op.operands[0];
+        if(name=="receiver_result"||name=="receiver_bind")for(const auto &[binding,token]:rights)
+          if(!c.need(values.at(binding).bound!=frame,"receiver completion or rebinding skipped an unfinished initializer"))return false;
+        if(name=="receiver_bind")rights.emplace(fn.blocks[op.successors[0]].parameters[0],noRegister);
+        if(!enqueue(op.successors[0],rights)||!enqueue(op.successors[1],{}))return false;
+        break;
+      }
+      if(name=="invoke"||name=="invoke_method"||name=="invoke_indirect"){
+        // A language exception aborts the enclosing initializer evaluation;
+        // selected receivers and their already committed effects stay bound.
+        if(!enqueue(op.successors[0],rights)||!enqueue(op.successors[1],{}))return false;
+        break;
+      }
+      if(name=="func.return"){
+        if(!c.need(rights.empty(),"normal return skipped an unfinished initializer"))return false;break;
+      }
+      if(name=="return_throw"||name=="unreachable")break;
+      if(!op.successors.empty()){
+        if(name=="route"&&string(field(op.properties,"completion"))=="throw")rights.clear();
+        for(auto to:op.successors)if(!enqueue(to,rights))return false;break;
+      }
+    }
+  }
+  return true;
+}
+}
 bool ActualCheck::catalogs(){
   for(const auto &t:items(field(p.hir,"types"))){if(!step())return false;types.emplace(string(field(t,"id")),&t);}
   for(auto name:{"bool","undefined","null"}){
@@ -33,18 +171,26 @@ bool ActualCheck::catalogs(){
   for(const auto &row:items(field(p.representation,"bindings"))){if(!step())return false;physicalBindings.emplace(string(field(row,"id")),&row);}
   for(const auto &row:items(field(p.representation,"functions"))){if(!step())return false;physicalFunctions.emplace(string(field(row,"id")),&row);}
   for(const auto &f:p.functions)if(!step()||!need(functions.emplace(f.id,&f).second,"duplicate normalized function identity"))return false;
-  return need(functions.size()==sourceFunctions.size()+modules.size(),"complete normalized function/module inventory differs");
+  if(!need(functions.size()==sourceFunctions.size()+modules.size(),"complete normalized function/module inventory differs"))return false;
+  for(const auto &[id,type]:analysisTypes){if(!step())return false;types.emplace(id,&type);}
+  for(const auto &[id,owner]:analysisOwners)if(!step()||!need(sourceFunctions.emplace(id,&owner).second,"internal owner collides with public Source"))return false;
+  for(const auto &[id,binding]:analysisBindings)if(!step()||!need(bindings.emplace(id,&binding).second,"internal binding collides with Source storage"))return false;
+  for(const auto &[id,row]:p.internalDeclarations){if(!step())return false;physicalFunctions.emplace(id,row);
+    for(const auto &binding:items(field(*row,"bindings"))){if(!step())return false;physicalBindings.emplace(string(field(binding,"id")),&binding);}}
+  for(const auto &fn:p.internalFunctions){if(!step()||!need(analysisOwners.count(fn.id)&&printedConstructors.emplace(fn.id,&fn).second&&functions.emplace(fn.id,&fn).second,"unowned/duplicate internal function"))return false;}
+  return true;
 }
 bool ActualCheck::graph(){
   const auto boolId=digest(std::string("tsfg.type")+std::string(1,'\0')+"bool");
   const auto i32Id=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32");
   const auto payload="payload:"+schema.str();
   for(const auto &[id,fn]:functions){
+    if(analysisFunctions.count(id)&&!printedConstructors.count(id))continue;
     const bool init=modules.count(id);const auto *owner=init?modules.at(id):sourceFunctions.count(id)?sourceFunctions.at(id):nullptr;
     if(!step()||!need(owner&&physicalFunctions.count(id)&&!fn->blocks.empty()&&fn->blocks.size()<=256&&fn->carriers.size()<=4096,"normalized function identity/size differs"))return false;
     const auto &abi=*physicalFunctions.at(id);const auto expectedSignature=init?digest(std::string("tsfg.common-program.initializer-signature.v1")+std::string(1,'\0')+"void"):string(field(*owner,"signatureHash"));
     if(!need(fn->signature==expectedSignature&&fn->path==string(field(*owner,"sourcePath"))&&
-      fn->role==(init?"module-initializer":string(field(*owner,"kind")))&&fn->resultCarrier==string(field(abi,"result")),"normalized function stable header/ABI differs"))return false;
+      fn->role==(printedConstructors.count(id)?"implicit-construction-helper":init?"module-initializer":string(field(*owner,"kind")))&&fn->resultCarrier==string(field(abi,"result")),"normalized function stable header/ABI differs"))return false;
     if(!init&&!need(field(field(*owner,"range"),"start").getAsInteger()==fn->range.start&&field(field(*owner,"range"),"end").getAsInteger()==fn->range.end,"function anchor differs from Source"))return false;
     if(init){bool found=false;for(const auto &s:items(field(p.hir,"sources")))if(string(field(s,"path"))==fn->path){
       found=true;for(const auto &raw:items(field(field(field(p.hir,"snapshot"),"payload"),"files")))if(string(field(raw,"path"))==fn->path&&
@@ -86,8 +232,53 @@ bool ActualCheck::graph(){
     for(size_t b=0;b<fn->blocks.size();++b)for(size_t i=0;i<fn->blocks[b].operations.size();++i){const auto &op=fn->blocks[b].operations[i];
       for(auto reg:op.operands)if(!step()||!need(reg<n&&definition[reg]>=0&&
         (definition[reg]==int(b)?position[reg]<int(i):!reachable[b]||dominators[b].count(uint16_t(definition[reg]))),"operand lacks independent SSA dominance"))return false;
+      for(auto reg:op.operands){const auto carrier=llvm::StringRef(fn->carriers[reg]);
+        if(carrier.starts_with("receiver:")&&!need(op.name=="receiver_child"||op.name=="receiver_allocate"||op.name=="receiver_bind"||op.name=="receiver_get"||op.name=="receiver_result"||op.name=="initialize_begin"||op.name=="invoke"||op.name=="cf.br"||op.name=="cf.cond_br"||op.name=="route","constructor frame used as a language object"))return false;
+        if(carrier.starts_with("initialization:")&&!need(op.name=="initialize_field"||op.name=="initialize_end"||op.name=="cf.br"||op.name=="cf.cond_br"||op.name=="route","initializer token escaped its control protocol"))return false;
+      }
       const auto noResult=op.result==noRegister;
-      if(op.name=="func.return"){
+      if(!noResult){const auto carrier=llvm::StringRef(fn->carriers[op.result]);
+        if(carrier.starts_with("receiver:")&&!need(op.name=="receiver_create"||op.name=="receiver_child","foreign operation forged a constructor frame"))return false;
+        if(carrier.starts_with("initialization:")&&!need(op.name=="initialize_begin"||op.name=="initialize_field","foreign operation forged an initializer token"))return false;
+      }
+      if(llvm::StringRef(op.name).starts_with("receiver_")||llvm::StringRef(op.name).starts_with("initialize_")){
+        const auto ownerId=string(field(op.properties,"owner"));
+        if(!need(types.count(ownerId)&&!field(*types.at(ownerId),"construction").getAsNull(),"construction operation owner missing"))return false;
+        const auto &ownerType=*types.at(ownerId);const auto frame="receiver:"+ownerId,phase="initialization:"+ownerId;
+        const auto frameOperand=[&op,&frame,function=fn](size_t index){return op.operands.size()>index&&function->carriers[op.operands[index]]==frame;};
+        const auto languageValue=[&op,function=fn](size_t index){if(op.operands.size()<=index)return false;const auto value=llvm::StringRef(function->carriers[op.operands[index]]);return !value.starts_with("receiver:")&&!value.starts_with("initialization:")&&!value.starts_with("cell:")&&!value.starts_with("env:");};
+        if(op.name=="receiver_get"||op.name=="receiver_bind"||op.name=="receiver_result"){
+          const size_t count=op.name=="receiver_bind"?2:1;const bool returned=op.name=="receiver_result";
+          if(!need(noResult&&op.successors.size()==2&&frameOperand(0)&&
+            (op.operands.size()==count||(returned&&op.operands.size()==2))&&(op.operands.size()==1||languageValue(1))&&op.successors[0]!=op.successors[1],"receiver normal/language operation shape differs"))return false;
+          const auto &normal=fn->blocks[op.successors[0]].parameters,&language=fn->blocks[op.successors[1]].parameters;
+          if(!need(normal.size()==1&&language.size()==1&&fn->carriers[language[0]]==payload&&
+            !llvm::StringRef(fn->carriers[normal[0]]).starts_with("receiver:")&&!llvm::StringRef(fn->carriers[normal[0]]).starts_with("initialization:")&&
+            predecessors[op.successors[0]]==std::set<uint16_t>{uint16_t(b)}&&predecessors[op.successors[1]]==std::set<uint16_t>{uint16_t(b)},"receiver continuation ABI/ownership differs"))return false;
+        }else if(op.name=="receiver_create"){
+          if(!need(!noResult&&op.operands.empty()&&op.successors.empty()&&fn->carriers[op.result]==frame&&op.view==frame&&
+            string(field(op.properties,"new_target"))==ownerId&&same(field(op.properties,"construction"),field(field(ownerType,"construction"),"id")),"root receiver/newTarget identity differs"))return false;
+        }else if(op.name=="receiver_child"){
+          if(!need(!noResult&&op.operands.size()==1&&op.successors.empty()&&fn->carriers[op.result]==frame&&op.view==frame,"child receiver shape differs"))return false;
+          const auto parent=llvm::StringRef(fn->carriers[op.operands[0]]);const auto parentId=parent.starts_with("receiver:")?parent.drop_front(9).str():std::string();
+          if(!need(types.count(parentId)&&string(field(*types.at(parentId),"base"))==ownerId,"child receiver is not direct-base Construct"))return false;
+        }else if(op.name=="receiver_allocate"){
+          if(!need(!noResult&&op.operands.size()==1&&frameOperand(0)&&op.successors.empty()&&fn->carriers[op.result]==ownerId&&op.view==ownerId&&
+            string(field(ownerType,"base")).empty(),"allocation requires the base receiver/newTarget frame"))return false;
+        }else if(op.name=="initialize_begin"){
+          if(!need(!noResult&&op.operands.size()==2&&frameOperand(0)&&languageValue(1)&&op.successors.empty()&&fn->carriers[op.result]==phase&&op.view==phase,"initializer begin receiver/token shape differs"))return false;
+        }else if(op.name=="initialize_field"){
+          const auto fieldId=string(field(op.properties,"field"));bool own=false;
+          for(const auto &f:items(field(ownerType,"fields"))){if(!step())return false;own|=string(field(f,"id"))==fieldId;}
+          if(!need(!noResult&&op.operands.size()==3&&fn->carriers[op.operands[0]]==phase&&languageValue(1)&&languageValue(2)&&op.successors.empty()&&
+            fn->carriers[op.result]==phase&&op.view==phase&&own&&fields.count(fieldId),"initializer field/token owner differs"))return false;
+          const auto storage=string(field(*fields.at(fieldId),"sourceBinding"));
+          if(!need(physicalBindings.count(storage)&&fn->carriers[op.operands[2]]==string(field(*physicalBindings.at(storage),"carrier")),"initializer field storage capacity differs"))return false;
+        }else if(op.name=="initialize_end"){
+          if(!need(noResult&&op.operands.size()==2&&fn->carriers[op.operands[0]]==phase&&languageValue(1)&&op.successors.empty(),"initializer end token/receiver shape differs"))return false;
+        }else return need(false,"unknown construction protocol operation");
+        if(op.name!="receiver_get"&&op.name!="receiver_bind"&&op.name!="receiver_result"&&!need(i+1<fn->blocks[b].operations.size(),"construction operation omitted block completion"))return false;
+      }else if(op.name=="func.return"){
         if(!need(noResult&&op.successors.empty()&&op.operands.size()==(fn->resultCarrier=="void"?0:1)&&
           (op.operands.empty()||fn->carriers[op.operands[0]]==fn->resultCarrier),"return ABI differs"))return false;
       }else if(op.name=="cf.br"||op.name=="route"){
@@ -135,6 +326,7 @@ bool ActualCheck::graph(){
           (op.operands.empty()||fn->carriers[op.operands[0]]==payload),"abrupt terminator shape differs"))return false;
       }else if(!need(op.successors.empty()&&i+1<fn->blocks[b].operations.size(),"missing/foreign block terminator"))return false;
     }
+    if(!constructionProtocol(*this,*fn,predecessors))return false;
   }
   return true;
 }

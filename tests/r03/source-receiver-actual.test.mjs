@@ -4,13 +4,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {commonReceiverActual} from '../../compiler/common-program-receiver-actual.mjs';
+import {commonActualContextValues} from '../../compiler/common-program-actual-context.mjs';
+import {commonRegions} from '../../compiler/common-program-regions.mjs';
 import {canonical,sha256,commonMeter} from '../../compiler/common-program-common.mjs';
 
 function fixture(limit=100000){
   const spend=commonMeter(limit),types=new Map([['B',{kind:'reference'}],['D',{kind:'reference'}],['U',{kind:'reference'}],
     ['i32',{kind:'scalar'}],['String',{kind:'string'}],['Undefined',{kind:'undefined'}],['Span',{kind:'readSpan'}]]),objects=new Map();
   const empty=()=>({tags:new Set(),refs:new Set(),cells:new Set(),pairs:new Map(),frames:new Set(),cursors:new Set(),unknown:false,
-    truth:0,number:null,region:{roots:new Set(),opaque:false,empty:false}});
+    truth:0,number:null,region:{roots:new Set(),opaque:false,empty:false,number:null}});
   const copy=value=>{spend(value.tags.size+value.refs.size+value.cells.size+value.pairs.size+value.frames.size+value.cursors.size+value.region.roots.size+1);
     return {...value,tags:new Set(value.tags),refs:new Set(value.refs),cells:new Set(value.cells),pairs:new Map(value.pairs),frames:new Set(value.frames),cursors:new Set(value.cursors),
       region:{...value.region,roots:new Set(value.region.roots)}};};
@@ -19,26 +21,12 @@ function fixture(limit=100000){
     spend(from.pairs.size+from.region.roots.size+1);for(const [id,pair]of from.pairs)if(!into.pairs.has(id)){into.pairs.set(id,pair);changed=true;}
     for(const id of from.region.roots)if(!into.region.roots.has(id)){into.region.roots.add(id);changed=true;}
     if(from.unknown&&!into.unknown){into.unknown=true;changed=true;}return changed;};
-  const key=value=>{
-    // ValueOps own this work. Reject insufficient budget before spreading,
-    // sorting or canonicalizing any variable-size payload collection/string.
-    spend(128);
-    for(const name of ['tags','refs','cells','frames','cursors']){
-      spend(value[name].size);for(const id of value[name])spend(id.length*8+32);
-    }
-    spend(value.pairs.size);for(const [id,pair]of value.pairs){
-      spend(id.length*8+pair.functionId.length*8+(pair.environment?.length??0)*8+128);
-    }
-    const order=(left,right)=>{spend(left.length+right.length+1);return left<right?-1:left>right?1:0;};
-    return canonical({tags:[...value.tags].sort(order),refs:[...value.refs].sort(order),cells:[...value.cells].sort(order),
-      pairs:[...value.pairs].sort(([left],[right])=>order(left,right)),frames:[...value.frames].sort(order),cursors:[...value.cursors].sort(order),unknown:value.unknown});
-  };
-  const a={empty,copy,merge,key,id:value=>sha256(canonical(value))},r=commonReceiverActual({spend,types,objects},a);
+  const a={empty,copy,merge,id:value=>sha256(canonical(value))},r=commonReceiverActual({spend,types,objects},a),identity=commonActualContextValues(a,commonRegions(spend),spend);
   const object=(tag,ref)=>{const value=empty();value.tags.add(tag);value.refs.add(ref);value.region.roots.add(ref);objects.set(ref,{type:tag});return value;};
   const literal=tag=>{const value=empty();value.tags.add(tag);return value;};
   const definition=(derived=false,repeated=false)=>({activation:'activation',site:'new-site',owner:derived?'D':'B',construction:derived?'ctor:D':'ctor:B',
     newTarget:derived?'D':'B',derived,fields:['first','second'],repeated});
-  return {a,r,object,literal,definition};
+  return {a,r,identity,object,literal,definition};
 }
 const only=id=>new Set([id]);
 const requireNormal=out=>{assert.ok(out.normal);return out.normal;};
@@ -57,12 +45,12 @@ test('receiver metadata: child allocation uses dynamic newTarget and controls ha
 });
 
 test('receiver metadata: duplicate bind preserves the first receiver and already completed base effects',()=>{
-  const {r,object,definition}=fixture(),world=r.store(),id=r.create(world,definition(true)),first=object('U','global:G'),
-    bound=requireNormal(r.bind(world,only(id),first)),before=r.key(bound.frames),baseEffects=['second-base-construct-completed'];
+  const {r,identity,object,definition}=fixture(),world=r.store(),id=r.create(world,definition(true)),first=object('U','global:G'),
+    bound=requireNormal(r.bind(world,only(id),first)),before=r.clone(bound.frames),baseEffects=['second-base-construct-completed'];
   const duplicate=r.bind(bound.frames,only(id),object('D','second-base-result'));
   assert.equal(duplicate.normal,null);assert.ok(duplicate.language);assert.equal(duplicate.language.reasons.has('duplicate-bind'),true);
   assert.deepEqual([...requireNormal(r.get(duplicate.language.frames,only(id))).value.refs],['global:G']);
-  assert.deepEqual(baseEffects,['second-base-construct-completed']);assert.equal(r.key(bound.frames),before);
+  assert.deepEqual(baseEffects,['second-base-construct-completed']);assert.equal(r.same(bound.frames,before,identity),true);
   first.tags.clear();assert.deepEqual([...requireNormal(r.get(bound.frames,only(id))).value.tags],['U']);
 });
 
@@ -124,14 +112,9 @@ test('receiver metadata: cursor/frame roots retain actual bindings and ReadSpan 
 });
 
 
-test('receiver metadata: ValueOps key rejects a long payload before key materialization under a small shared budget',()=>{
-  const {a}=fixture(1024),payload=a.empty(),ref='r'.repeat(8192);payload.refs.add(ref);
-  assert.throws(()=>a.key(payload),{code:'r03-common-program-limit'});
-  assert.equal(payload.refs.has(ref),true,'budget rejection leaves the owned input unchanged');
-});
 
 test('receiver metadata: retained payload regions follow FrameId order independently of control insertion order',()=>{
-  const {a,r,object,definition}=fixture(),world=r.store(),F=r.create(world,{...definition(),site:'same-payload:F'}),G=r.create(world,{...definition(),site:'same-payload:G'}),
+  const {a,r,identity,object,definition}=fixture(),world=r.store(),F=r.create(world,{...definition(),site:'same-payload:F'}),G=r.create(world,{...definition(),site:'same-payload:G'}),
     f=object('U','shared-payload'),g=object('U','shared-payload');
   f.region.opaque=true;f.region.empty=false;g.region.opaque=false;g.region.empty=true;
   const boundF=requireNormal(r.bind(world,only(F),f)),bound=requireNormal(r.bind(boundF.frames,only(G),g)).frames,
@@ -145,11 +128,11 @@ test('receiver metadata: retained payload regions follow FrameId order independe
     assert.deepEqual([...value.tags],['U']);assert.deepEqual([...value.refs],['shared-payload']);
     assert.equal(value.frames.size,0);assert.equal(value.cursors.size,0);
   }
-  // Payload/control identity keys intentionally do not encode these region
+  // Payload/control identity intentionally does not encode these region
   // relations. Swapping per-frame regions must still change their ordered
   // retained roots, even when the control insertion order is also reversed.
   const swapped=r.clone(bound),left=swapped.get(F).bound.region;swapped.get(F).bound.region=swapped.get(G).bound.region;swapped.get(G).bound.region=left;
-  assert.equal(a.key(forward),a.key(reverse));assert.equal(r.key(bound),r.key(swapped));
+  assert.equal(identity.samePayload(forward,reverse),true);assert.equal(r.same(bound,swapped,identity),true);
   assert.notDeepEqual(r.retained(bound,[forward]).map(region),r.retained(swapped,[reverse]).map(region));
   assert.deepEqual(region(bound.get(F).bound),region(f));assert.deepEqual(region(bound.get(G).bound),region(g));
 });

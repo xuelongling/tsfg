@@ -14,13 +14,17 @@ struct SourcePlan {
     std::string kind,id,type;Reg receiver=noRegister,index=noRegister;
   };
   ActualCheck &check;const Json &owner;Function function;
+  // Existing public lowering keeps its semantic fuel. Only privately
+  // reconstructed analysis owners omit public entry/fuel obligations.
+  std::set<std::string> activeImplicit;
+  bool projected=false;
   std::vector<size_t> incoming;std::map<std::string,Reg> cells;
   std::vector<std::function<void()>> deferred;
   Completion handlers;size_t current=0,clones=0;
-  Reg currentReceiver=noRegister,lexicalEnvironment=noRegister,activationEnvironment=noRegister;
+  Reg currentReceiver=noRegister,receiverFrame=noRegister,lexicalEnvironment=noRegister,activationEnvironment=noRegister;
   std::map<std::pair<size_t,size_t>,std::string> paths;
   std::string sourcePath;
-  SourcePlan(ActualCheck &,const Json &);
+  SourcePlan(ActualCheck &,const Json &,bool projected=false);
   bool run();bool ok()const{return check.e.message.empty();}
   Reg emit(llvm::StringRef,std::vector<Reg>,std::string,Json,SourceAnchor,std::vector<Reg> = {});
   size_t block(const std::vector<std::string> & = {});
@@ -29,13 +33,17 @@ struct SourcePlan {
   Reg environment(const std::string &,SourceAnchor);
   Location bindingLocation(const std::string &,const std::string &,SourceAnchor);
   Reg receiver(SourceAnchor);Reg expression(const Json &);
+  Reg constructionAction(llvm::StringRef,std::vector<Reg>,const std::string &,Json,SourceAnchor,
+    const std::function<void(Reg,SourceAnchor)> & = {});
+  Reg constructorResult(Reg,SourceAnchor);
+  void enterConstructor(const Json &,Reg,const std::vector<Reg> &,SourceAnchor);
   Reg invoke(const Json &,std::vector<Reg>,const Json &);
   Reg indirect(const Json &,Reg,std::vector<Reg>);
   Reg scalar(const std::string &,const std::string &,std::vector<Reg>,const std::string &,SourceAnchor);
   Location location(const Json &);Reg load(const Location &,SourceAnchor);
   void store(const Location &,Reg,SourceAnchor,bool=false,bool=true);
   Reg shortCircuit(Reg,const std::string &,const std::function<Reg()> &,const std::string &,SourceAnchor);
-  void initialize(const Json &,Reg,const std::vector<Reg> &);
+  void initialize(const Json &,Reg,const std::vector<Reg> &,Reg,SourceAnchor);
   Reg construct(const Json &,Reg,const std::vector<Reg> &,SourceAnchor);
   void region(const Array &,const Completion &,const std::function<void()> &,const std::string &,
     const std::vector<std::pair<std::string,Reg>> & = {});

@@ -34,7 +34,7 @@ export function commonJson(bytes) {
     commonFailure(error.code?.endsWith('-limit')?'limit':'json');}
 }
 export function commonMeter(limit=100000) {
-  commonCheck(Number.isInteger(limit)&&limit>0&&limit<=1000000,'limit');let remaining=limit;
+  commonCheck(Number.isInteger(limit)&&limit>0&&limit<=2000000,'limit');let remaining=limit;
   return (amount=1)=>{commonCheck(Number.isSafeInteger(amount)&&amount>=0&&amount<=remaining,'limit');remaining-=amount;};
 }
 export const commonSame=(a,b)=>canonical(a)===canonical(b);

@@ -19,10 +19,10 @@ export function commonRegions(spend){
     const number=blank?from.number:into.number===from.number?into.number:null;if(number!==into.number){into.number=number;changed=true;}
     return changed;
   }
-  function key(value){
-    spend(weight(value));const roots=[];for(const id of value.roots){chargeString(id);roots.push(id);}
-    roots.sort((a,b)=>{spend();return a<b?-1:a>b?1:0;});
-    spend(roots.length+1);return canonical({roots,opaque:value.opaque,empty:value.empty,number:value.number});
+  function same(left,right){
+    spend(left.roots.size+right.roots.size+4);
+    if(left.opaque!==right.opaque||left.empty!==right.empty||left.number!==right.number||left.roots.size!==right.roots.size)return false;
+    for(const id of left.roots){chargeString(id);if(!right.roots.has(id))return false;}return true;
   }
   function heapCopy(heap){
     spend(heap.size);const result=new Map();for(const [receiver,slots]of heap){
@@ -42,11 +42,12 @@ export function commonRegions(spend){
       }
     }return changed;
   }
-  function heapKey(heap){
-    spend(heap.size);const rows=[];for(const [receiver,slots]of heap){chargeString(receiver);spend(slots.size);const fields=[];
-      for(const [slot,value]of slots){chargeString(slot);fields.push([slot,key(value)]);}
-      fields.sort(([a],[b])=>{spend();return a<b?-1:a>b?1:0;});rows.push([receiver,fields]);
-    }rows.sort(([a],[b])=>{spend();return a<b?-1:a>b?1:0;});return canonical(rows);
+  function heapSame(left,right){
+    spend(left.size+right.size+1);if(left.size!==right.size)return false;
+    for(const [id,slots]of left){chargeString(id);const other=right.get(id);if(!other)return false;
+      spend(slots.size+other.size+1);if(slots.size!==other.size)return false;
+      for(const [slot,value]of slots){chargeString(slot);const prior=other.get(slot);if(!prior||!same(value,prior))return false;}
+    }return true;
   }
   function scope(region,invocation){
     chargeString(region);chargeString(invocation);const id=sha256(canonical({region,invocation}));
@@ -274,19 +275,23 @@ export function commonRegions(spend){
     return selected;
   }
   function observe(value,heap){if(value.opaque&&value.roots.size)escape(value,heap,true);}
-  function feedback(context,from,to,state,witness=false){
+  function feedback(context,from,to,state,witness=false,receiver){
     const layout=layouts.get(context.plan.owner.id),headers=layout?.cuts.get(from)?.get(to);if(!headers)return;
     const selected=[];for(const [id,row]of scopes){spend();for(const header of headers){spend();if(row.region===context.id+'/'+header)selected.push(id);}}
     for(const selectedScope of selected){
+      spend(layout.demand.get(to).size);const live=[];
       for(const name of layout.demand.get(to)){spend();const value=state.values.get(name);if(!value)continue;
+        live.push(value);
         if(age(value.region,selectedScope)&&witness)escape(value.region,state.regions,true);
         for(const cell of value.cells){spend();const stored=state.heap.get(cell)?.region;if(stored&&age(stored,selectedScope)&&witness)escape(stored,state.regions,true);}}
+      for(const value of receiver.retained(state.frames,live,state.heap))if(age(value.region,selectedScope)&&witness)escape(value.region,state.regions,true);
+      receiver.feedback(state.frames,value=>age(value.region,selectedScope));
       for(const value of state.values.values())age(value.region,selectedScope);
       for(const value of state.heap.values())age(value.region,selectedScope);
       spend(state.regions.size);
       for(const slots of state.regions.values())for(const value of slots.values())age(value,selectedScope);
     }
   }
-  return {nodes,scopes,layouts,weight,copy,merge,key,heapCopy,heapJoin,heapKey,scope,allocate,load,store,reachable,escape,hardRaw,age,closed,number,
+  return {nodes,scopes,layouts,weight,copy,merge,same,heapCopy,heapJoin,heapSame,scope,allocate,load,store,reachable,escape,hardRaw,age,closed,number,
     prepare,loopAt,observe,feedback,select,elements,holds,ownedReturnHolds};
 }

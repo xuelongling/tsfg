@@ -41,11 +41,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   };
   const auto observe=[&](const std::string &id,const ActualValue &v){if(conditional)recordCapacity(storageCapacity[id],v);};
   const auto seed=[&](std::map<std::string,ActualValue> &seeds,const std::string &id,const ActualValue &v){
-    if(!conditional)return;ActualValue tags;tags.tags=v.tags;tags.unknown=v.unknown;tags.truth=v.truth;
-    const bool grew=merge(seeds[id],tags);seedChanged|=grew;changed|=grew;
+    seedStorage(seeds,id,v,conditional,changed);
   };
   const bool weak=repeatedAllocation(context,block);
-  if(name=="env_alloc"){
+  if(llvm::StringRef(name).starts_with("receiver_")||llvm::StringRef(name).starts_with("initialize_")){
+    if(!receiverInstruction(context,op,block,state,args,conditional,changed,edge,value,continues))return false;
+  }else if(name=="env_alloc"){
     const auto layout=string(field(props,"layout")),ref=allocate(context,op,block,"environment","env:"+layout);if(!e.message.empty())return false;
     if(!need(environments.count(layout),"actual activation layout missing"))return false;
     value=literal("env:"+layout);value.objects.insert(ref);
@@ -152,7 +153,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="assert"||name=="view"||name=="carrier_cast"||name=="pack")value=copy(args[0]);
   else if(name=="value_copy"){const auto origin=allocationSite(context,"copy",op.result);if(!e.message.empty())return false;value=valueCopy(args[0],state,origin+"/root",weak);
     if(!conditional)value.region=regionCopyValue(*this,regionValue(*this,args[0]),origin+"/root",state.regions);}
-  else if(name=="construct_value"||name=="allocate_reference"||name=="array_create"){
+  else if(name=="array_create"){
     value=literal(op.view);const auto ref=allocate(context,op,block,"object",op.view);if(!e.message.empty())return false;value.objects.insert(ref);
     if(!conditional)value.region=regionAllocate(*this,context,ref,op.view,state.regions);
     if(name=="array_create"){
@@ -176,10 +177,11 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       }
       if(!need(owned&&fields.count(selected),"actual field lacks an independently verified nominal member mapping")){e.path=fn.path;e.range=op.range;return false;}
       const auto slot=ref+"/field/"+selected;auto stored=state.heap.find(slot);
-      if(name=="field_load"){if(stored!=state.heap.end())merge(value,stored->second);
+      if(name=="field_load"){if(stored!=state.heap.end())merge(value,stored->second);else merge(value,literal(typeId("undefined")));
         if(!conditional){auto receiver=regionValue(*this,args[0]);for(auto it=receiver.roots.begin();it!=receiver.roots.end();)if(regions.nodes.at(*it).reference!=ref)it=receiver.roots.erase(it);else ++it;
           regionMerge(*this,projected,regionLoad(*this,receiver,"/field/"+selected,state.regions));}}
-      else{put(slot,args[1],!object.weak&&args[0].objects.size()==1);const auto raw=string(field(*fields.at(selected),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);
+      else{const bool strong=!object.weak&&args[0].objects.size()==1;if(!receiverWrite(state.frames,slot,args[1],strong&&!args[0].unknown&&!args[0].callableTop)||!put(slot,args[1],strong))return false;
+        const auto raw=string(field(*fields.at(selected),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);
         if(!conditional&&!regionStore(*this,regionValue(*this,args[0]),"/field/"+selected,regionValue(*this,args[1]),state.regions,!transport))return false;}
     }if(args[0].unknown)value.unknown=true;
     if(!conditional&&name=="field_load")value.region=std::move(projected);
@@ -246,8 +248,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     }
     if(conditional||reaches)value=literal(op.view,op.view==typeId("bool")?3:0);if(!conditional&&!reaches)continues=false;
   }else if(name=="invoke"||name=="invoke_method"||name=="invoke_indirect"){
-    const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap,const RegionHeap &versions,ActualState after){
-      if(!e.message.empty()||!step(heap.size()))return false;
+    const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap,const RegionHeap &versions,const ActualFrameWorld &frames,bool language,ActualState after){
+      if(!e.message.empty()||!overlayFrames(after.frames,frames)||(language&&!abortInitializers(after))||!step(heap.size()))return false;
       for(const auto &[slot,value]:heap){
         const bool summarized=summarizedSlot(*this,slot);if(!e.message.empty())return false;
         auto old=after.heap.find(slot);
@@ -256,6 +258,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         if(summarized&&old!=after.heap.end())merge(old->second,value);else after.heap.insert_or_assign(slot,copy(value));
         if(!e.message.empty())return false;
       }
+      if(!receiverReconcile(after.frames,after.heap,literal(typeId("undefined"))))return false;
       auto current=regionCopy(*this,versions);for(auto &[id,slots]:current){if(!step())return false;after.regions.insert_or_assign(id,std::move(slots));}
       // Each completion owns its merged state; the edge consumes it without
       // cloning it again. Callers whose input remains live pass an explicit paid copy.
@@ -267,12 +270,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       const auto active=conditional?std::string():regionCall(*this,context,op,block,target,actual);if(!e.message.empty())return false;
       if(!conditional&&active.empty())for(auto &arg:actual){if(!step(regionWeight(arg.region)))return false;
         if(!arg.region.roots.empty()){arg.region.roots.clear();arg.region.known=true;arg.region.opaque=true;}}
-      auto *call=this->context(target,actual,state.heap,false,changed,activation,repeated,conditional||active.empty()?nullptr:&state.regions,active);if(!call)return false;
+      auto *call=this->context(target,actual,state.heap,false,changed,activation,repeated,conditional?nullptr:&state.regions,active,&state.frames);if(!call)return false;
       if(scheduling){if(!step(context.id.size()/64+1))return false;call->callers.insert(context.id);}
       if(borrowTrace&&!borrowTrace->call(context,op,block,*call))return false;
-      if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap,call->normalRegions,
+      if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap,call->normalRegions,call->normalFrames,false,
         name=="invoke"&&!call->language?std::move(state):copyState(state)))return false;
-      if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap,call->languageRegions,
+      if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap,call->languageRegions,call->languageFrames,true,
         name=="invoke"?std::move(state):copyState(state)))return false;return true;
     };
     if(name=="invoke"){if(!invoke(string(field(props,"function_id")),std::move(owned)))return false;}
@@ -284,7 +287,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       for(const auto &tag:args[0].tags)if(!step()||!need(types.count(tag)&&string(field(*types.at(tag),"kind"))=="function","actual indirect operand is not callable"))return false;
       if(upper.top){
         ActualValue unknown;unknown.unknown=true;for(const auto &arg:args)regionEscape(*this,regionValue(*this,arg),state.regions);
-        if(!complete(op.successors[0],unknown,{},{},copyState(state))||!complete(op.successors[1],unknown,{},{},copyState(state)))return false;
+        if(!complete(op.successors[0],unknown,{},{},{},false,copyState(state))||!complete(op.successors[1],unknown,{},{},{},true,copyState(state)))return false;
       }
       for(const auto &[code,environment]:args[0].callables){
         if(!step()||!need(sourceFunctions.count(code)&&(upper.top||upper.functions.count(code)),"indirect pair target exceeds fixed authority"))return false;
@@ -325,7 +328,14 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     const bool normal=name=="func.return";auto &completed=normal?context.normal:context.language;auto &returned=normal?context.returned:context.thrown;auto &heap=normal?context.normalHeap:context.languageHeap;
     const bool initial=!completed;
     if(!completed){completed=true;changed=true;}if(!args.empty())changed=merge(returned,args[0])||changed;
-    std::vector<ActualValue> roots;for(const auto &arg:context.arguments)roots.push_back(copy(arg));if(!args.empty())roots.push_back(copy(args[0]));
+    if(!normal&&!abortInitializers(state))return false;
+    if(!step(context.arguments.size()+args.size()))return false;std::vector<ActualValue> frameRoots;
+    for(const auto &arg:context.arguments)frameRoots.push_back(copy(arg));if(!args.empty())frameRoots.push_back(copy(args[0]));
+    auto selected=selectFrames(state.frames,frameRoots,state.heap);if(!e.message.empty())return false;
+    changed=joinFrames(normal?context.normalFrames:context.languageFrames,selected)||changed;
+    auto retained=retainedFrames(selected);if(!e.message.empty()||!step(frameRoots.size()+retained.size()))return false;
+    std::vector<ActualValue> roots=std::move(frameRoots);roots.reserve(roots.size()+retained.size());
+    for(auto &v:retained)roots.push_back(std::move(v));
     auto live=reachable(roots,state.heap);changed=mergeHeap(heap,std::move(live))||changed;continues=false;
     if(!conditional){if(!args.empty()&&!regionObserveReturn(*this,context,args[0],state.regions))return false;
       auto projected=regionReachable(*this,roots,state.regions);auto &summary=normal?context.normalRegions:context.languageRegions;

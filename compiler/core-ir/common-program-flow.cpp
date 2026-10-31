@@ -56,7 +56,9 @@ bool ActualCheck::callGraph(){
           if(!step(site->second.functions.size()))return false;targets.assign(site->second.functions.begin(),site->second.functions.end());
         }else if(!methodTargets(p,field(op.properties,"dispatch"),targets,e))return false;
         closed&=!targets.empty();for(const auto &target:targets){if(!step())return false;calls[id].insert(target);
-          auto upper=p.fixedEffects.find(target);closed&=upper!=p.fixedEffects.end()&&!upper->second.unknownHost;
+          // Private Source-derived constructors are closed internal targets,
+          // not entries in the published permission table.
+          auto upper=p.fixedEffects.find(target);closed&=analysisFunctions.count(target)||(upper!=p.fixedEffects.end()&&!upper->second.unknownHost);
         }
         if(!closed){if(!step())return false;unresolvedCalls.insert(&op);}
       }
@@ -80,8 +82,11 @@ bool ActualCheck::run(){
   // Actual storage/ABI obligations are discharged later by effects(), after
   // their independent calculation; no tentative physical permission is read.
   p.fixedEffects.clear();p.effects.clear();
-  if(!verifyCallableTargets(p,e,initializedArrays)||!verifyPublication(p,e)||!catalogs()||!graph()||!source())return false;
+  if(!prepareInternalConstructors(p,e)||!verifyCallableTargets(p,e,initializedArrays)||!verifyPublication(p,e)||!catalogs()||!prepareImplicitReceiverPlans()||!graph()||!source()||!verifyInternalConstructorClosure())return false;
   for(const auto &[id,fn]:functions)if(!environmentGraph(*fn))return false;
+  // Public inventory, normalized instructions and registerViews were checked
+  // above. Append only independently reconstructed private analysis plans;
+  // the same solver now observes every owned constructor/newTarget root.
   return callGraph()&&solve(true)&&representation()&&effects()&&solve(false);
 }
 bool verifyOperations(Program &p,Error &e){ActualCheck check{p,e};return check.run();}

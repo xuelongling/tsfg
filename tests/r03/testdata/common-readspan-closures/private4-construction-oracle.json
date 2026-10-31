@@ -1,0 +1,334 @@
+{
+  "schema": "sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769",
+  "cases": [
+    {
+      "name": "safe-lastuse",
+      "retainedPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M19-block-existing-payloads-checks-20261030/borrow-golden-probe01/safe-lastuse.mlir",
+      "retainedSha256": "sha256:e964131c0ef29ace6b79b9adbff2244ff248f4f160996339a45ae1186a73c2ca",
+      "historicalFunctionsSha256": "sha256:1efd93893ce26d9b0b3ec782075d6b92e7602a9a9a8a9dc6fa485f68353dc7e0",
+      "unchangedFunctionsSha256": "sha256:4f366eaa79abe94ddef1c6d3f40922d1ff0101fe66c8817e83b0bc89ffc32f1e"
+    },
+    {
+      "name": "never-called",
+      "retainedPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M19-block-existing-payloads-checks-20261030/borrow-golden-probe01/never-called.mlir",
+      "retainedSha256": "sha256:9f4c23af59671161f2ad72d4a873807d2a03d65cbd5d9b36522fe6b785a8c47a",
+      "historicalFunctionsSha256": "sha256:36182197ec26fc1e88f5ca6ea194ff6dfd9a0db836d68e617be463d35694dfaa",
+      "unchangedFunctionsSha256": "sha256:5db3365490a344f743f7798270d4b21fcea48edb142853114d23de31bb5afd46"
+    },
+    {
+      "name": "mutable-safe",
+      "retainedPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M19-block-existing-payloads-checks-20261030/borrow-golden-probe01/mutable-safe.mlir",
+      "retainedSha256": "sha256:b67b7b52e3939bcbdbf1890a5187097b3c9f5cdbf811e98f08068813a425c10c",
+      "historicalFunctionsSha256": "sha256:ef3079d15f9522fca97b1b3bec015300d7cab343f36fb2c0730bf335c6229979",
+      "unchangedFunctionsSha256": "sha256:04c1c89169013733768357fc1a1e36251e885059bcff92b6bb3b16297a69c5ac"
+    },
+    {
+      "name": "parameter-safe",
+      "retainedPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M19-block-existing-payloads-checks-20261030/borrow-golden-probe01/parameter-safe.mlir",
+      "retainedSha256": "sha256:a3108d20e7731738c428a37f55e714b5a718796aba874a5c429bd6f4f826c2d6",
+      "historicalFunctionsSha256": "sha256:ccdc8d3c9c760079f8e6d1ecc1448bd75e4997c55d599043d8ea4b7c9dfb91fe",
+      "unchangedFunctionsSha256": "sha256:e8e7eaf8e9800195097cd0165b5284f4a077b260b29f5ad7e3626f9c4bdf6dcf"
+    }
+  ],
+  "ordinary": {
+    "functionId": "sha256:8fb342f4d80f2f6a2f030072eb81af6f23b8d1e12d59173e72d284cf878762f3",
+    "range": [
+      960,
+      1123
+    ],
+    "newRange": [
+      1019,
+      1028
+    ],
+    "fieldRange": [
+      143,
+      154
+    ],
+    "owner": "sha256:07fcb3e28537f23e116e16f1254f12f53a104efc84d25b64e454870bd7b12ccf",
+    "construction": "sha256:c99ce62706455dc12a291036a0af235f07e279497d04d45b31b480f8f17b955c",
+    "field": "sha256:c5a557f8c371b8cf1794b588ea1fac7a11dc9999517dd88896582fd506c66a4a",
+    "protocolOrder": [
+      "receiver_create",
+      "receiver_allocate",
+      "receiver_bind",
+      "initialize_begin",
+      "initialize_field",
+      "initialize_end",
+      "receiver_result"
+    ],
+    "unchangedOperations": [
+      {
+        "name": "tsfg_program.fuel",
+        "properties": "{\"event\":1}",
+        "view": "void",
+        "range": [
+          960,
+          1123
+        ],
+        "operands": 0
+      },
+      {
+        "name": "tsfg_program.cell",
+        "properties": "{\"binding\":\"sha256:f8da8f3258b6f43080579e2aad02cbc913cc2ab70a65a942105bd5d9d5be7857\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          985,
+          991
+        ],
+        "operands": 0
+      },
+      {
+        "name": "tsfg_program.store",
+        "properties": "{\"binding\":\"sha256:f8da8f3258b6f43080579e2aad02cbc913cc2ab70a65a942105bd5d9d5be7857\",\"initialize\":true}",
+        "view": "void",
+        "range": [
+          985,
+          991
+        ],
+        "operands": 2
+      },
+      {
+        "name": "tsfg_program.constant",
+        "properties": "{\"decimal\":\"0\",\"token\":\"0\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          152,
+          153
+        ],
+        "operands": 0
+      },
+      {
+        "name": "tsfg_program.value_copy",
+        "properties": "{\"type\":\"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          143,
+          154
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.cell",
+        "properties": "{\"binding\":\"sha256:40e161f37f2038a05663ea64c1a4db36d35220fb41f914038bac2cd613ab6503\"}",
+        "view": "sha256:07fcb3e28537f23e116e16f1254f12f53a104efc84d25b64e454870bd7b12ccf",
+        "range": [
+          1008,
+          1028
+        ],
+        "operands": 0
+      },
+      {
+        "name": "tsfg_program.value_copy",
+        "properties": "{\"type\":\"sha256:07fcb3e28537f23e116e16f1254f12f53a104efc84d25b64e454870bd7b12ccf\"}",
+        "view": "sha256:07fcb3e28537f23e116e16f1254f12f53a104efc84d25b64e454870bd7b12ccf",
+        "range": [
+          1008,
+          1028
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.store",
+        "properties": "{\"binding\":\"sha256:40e161f37f2038a05663ea64c1a4db36d35220fb41f914038bac2cd613ab6503\",\"initialize\":true}",
+        "view": "void",
+        "range": [
+          1008,
+          1028
+        ],
+        "operands": 2
+      },
+      {
+        "name": "tsfg_program.enter_handler",
+        "properties": "{\"handler\":\"sha256:8fb342f4d80f2f6a2f030072eb81af6f23b8d1e12d59173e72d284cf878762f3/body/1\",\"hasCatch\":true,\"hasFinally\":false}",
+        "view": "void",
+        "range": [
+          1032,
+          1121
+        ],
+        "operands": 0
+      },
+      {
+        "name": "tsfg_program.load",
+        "properties": "{\"binding\":\"sha256:f8da8f3258b6f43080579e2aad02cbc913cc2ab70a65a942105bd5d9d5be7857\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          1044,
+          1045
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.pack",
+        "properties": "{\"type\":\"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          1038,
+          1046
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.route",
+        "properties": "{\"completion\":\"throw\",\"handler\":\"sha256:8fb342f4d80f2f6a2f030072eb81af6f23b8d1e12d59173e72d284cf878762f3/body/1\"}",
+        "view": "void",
+        "range": [
+          1038,
+          1046
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.catch_bind",
+        "properties": "{\"binding\":\"sha256:6a4081d3ff5c00ff769916112341ddd393aac652d19d37b4a49aa4f42725c8b5\"}",
+        "view": "sha256:ad8c21da2b1d9b77a4c3858a2ccdd35c6a72d12bfb5818a7d593b2cf4f877d65",
+        "range": [
+          1056,
+          1062
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.load",
+        "properties": "{\"binding\":\"sha256:40e161f37f2038a05663ea64c1a4db36d35220fb41f914038bac2cd613ab6503\"}",
+        "view": "sha256:07fcb3e28537f23e116e16f1254f12f53a104efc84d25b64e454870bd7b12ccf",
+        "range": [
+          1066,
+          1069
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.load",
+        "properties": "{\"binding\":\"sha256:6a4081d3ff5c00ff769916112341ddd393aac652d19d37b4a49aa4f42725c8b5\"}",
+        "view": "sha256:ad8c21da2b1d9b77a4c3858a2ccdd35c6a72d12bfb5818a7d593b2cf4f877d65",
+        "range": [
+          1074,
+          1080
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.assert",
+        "properties": "{\"annotationRange\":{\"end\":1087,\"start\":1084},\"operator\":\"as\",\"operatorRange\":{\"end\":1083,\"start\":1081}}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          1074,
+          1087
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.value_copy",
+        "properties": "{\"type\":\"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          1066,
+          1087
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.field_store",
+        "properties": "{\"field\":\"sha256:c5a557f8c371b8cf1794b588ea1fac7a11dc9999517dd88896582fd506c66a4a\",\"initialize\":false}",
+        "view": "void",
+        "range": [
+          1066,
+          1087
+        ],
+        "operands": 2
+      },
+      {
+        "name": "tsfg_program.make_closure",
+        "properties": "{\"environment_layout\":null,\"function_id\":\"sha256:2c238a030e9ec33db45a65e3e3602f91d9a62f6f3be07a061b98344e3af98542\",\"signature_hash\":\"sha256:e193bf5b49dcad706855ee9e34c2335cb6e015ffb15f838ab79aff5b82e0fc06\"}",
+        "view": "sha256:7a4f56d127707c588babd4d4d17aeb9b04badb05f83fe6a2e2d4245f55535aa4",
+        "range": [
+          1102,
+          1110
+        ],
+        "operands": 0
+      },
+      {
+        "name": "tsfg_program.value_copy",
+        "properties": "{\"type\":\"sha256:7a4f56d127707c588babd4d4d17aeb9b04badb05f83fe6a2e2d4245f55535aa4\"}",
+        "view": "sha256:7a4f56d127707c588babd4d4d17aeb9b04badb05f83fe6a2e2d4245f55535aa4",
+        "range": [
+          1102,
+          1110
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.load",
+        "properties": "{\"binding\":\"sha256:40e161f37f2038a05663ea64c1a4db36d35220fb41f914038bac2cd613ab6503\"}",
+        "view": "sha256:07fcb3e28537f23e116e16f1254f12f53a104efc84d25b64e454870bd7b12ccf",
+        "range": [
+          1112,
+          1115
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.field_load",
+        "properties": "{\"field\":\"sha256:c5a557f8c371b8cf1794b588ea1fac7a11dc9999517dd88896582fd506c66a4a\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          1112,
+          1117
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.value_copy",
+        "properties": "{\"type\":\"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          1112,
+          1117
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.invoke",
+        "properties": "{\"function_id\":\"sha256:f81224112d56acf107ebcf77097425c259eb0a799f1e560036b3ab120eddaf07\",\"signature_hash\":\"sha256:641220ec0eb8862a99571776799a9ed87f3a704de83b4c4d64d9e2d9371a74ba\"}",
+        "view": "void",
+        "range": [
+          1096,
+          1118
+        ],
+        "operands": 2
+      },
+      {
+        "name": "tsfg_program.value_copy",
+        "properties": "{\"type\":\"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\"}",
+        "view": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+        "range": [
+          1089,
+          1119
+        ],
+        "operands": 1
+      },
+      {
+        "name": "func.return",
+        "properties": null,
+        "view": null,
+        "range": [
+          1089,
+          1119
+        ],
+        "operands": 1
+      },
+      {
+        "name": "tsfg_program.return_throw",
+        "properties": "{}",
+        "view": "void",
+        "range": [
+          1096,
+          1118
+        ],
+        "operands": 1
+      }
+    ],
+    "header": "  func.func @\"program_8fb342f4d80f2f6a2f030072eb81af6f23b8d1e12d59173e72d284cf878762f3\"(%v0: i32) -> i32 attributes {tsfg_program.function_id = \"sha256:8fb342f4d80f2f6a2f030072eb81af6f23b8d1e12d59173e72d284cf878762f3\", tsfg_program.signature_hash = \"sha256:e193bf5b49dcad706855ee9e34c2335cb6e015ffb15f838ab79aff5b82e0fc06\", tsfg_program.source_path = \"/src/main.ts\", tsfg_program.role = \"source\", tsfg_source.start = 960 : i64, tsfg_source.end = 1123 : i64} {",
+    "unchangedBranches": []
+  }
+}

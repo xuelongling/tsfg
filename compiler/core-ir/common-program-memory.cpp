@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
 #include "common-program-borrows.h"
+#include "llvm/Support/raw_ostream.h"
+#include <cstdlib>
 namespace tsfg::commonProgram {
 ActualHeap ActualCheck::reachable(const std::vector<ActualValue> &values,const ActualHeap &heap){
   ActualHeap out;std::vector<const ActualValue *> pending;std::set<std::string> visited;
@@ -26,10 +28,10 @@ ActualHeap ActualCheck::reachable(const std::vector<ActualValue> &values,const A
 ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,const std::string &origin,bool weak,std::map<std::string,std::string> active){
   // Object identities are rebuilt below. Copy only the facets retained by
   // this result, paying the original copy weights for those actual copies.
-  size_t cost=source.tags.size()+source.cells.size()+source.callables.size()+regionWeight(source.region)+1;
-  for(const auto *set:{&source.tags,&source.cells})for(const auto &id:*set)cost+=id.size()/64;
+  size_t cost=source.tags.size()+source.cells.size()+source.frames.size()+source.cursors.size()+source.callables.size()+regionWeight(source.region)+1;
+  for(const auto *set:{&source.tags,&source.cells,&source.frames,&source.cursors})for(const auto &id:*set)cost+=id.size()/64;
   for(const auto &[code,environment]:source.callables)cost+=(code.size()+environment.size())/64+1;
-  if(!step(cost))return {};ActualValue value;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;
+  if(!step(cost))return {};ActualValue value;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;value.frames=source.frames;value.cursors=source.cursors;
   value.truth=source.truth;value.unknown=source.unknown;value.callableTop=source.callableTop;value.number=source.number;value.region=source.region;
   // Distinct source instances of the same nominal value share this copy-site
   // identity. Decide multiplicity before the first field write, not after one
@@ -94,24 +96,37 @@ std::string ActualCheck::callActivation(const ActualContext &context,const Opera
   if(!step((context.activation.size()+location->size()+target.size())/64+4))return {};
   return "activation/"+digest(canonical(Object{{"parent",context.activation},{"site",*location},{"target",target}}));
 }
-ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region){
+ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,
+  const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region,const ActualFrameWorld *frameWorld,const std::string &newTarget){
   if(!step(args.size()+1)||!need(functions.count(target)&&functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
-  auto entry=reachable(args,heap);Array arguments,memory;
-  auto current=versions?regionReachable(*this,args,*versions):RegionHeap{};
-  for(const auto &v:args){if(!step(regionWeight(v.region)+1))return nullptr;arguments.push_back(key(v));}
-  for(const auto &[id,v]:entry){if(!step())return nullptr;memory.push_back(Array{id,key(v)});}
-  if(!step((activation.size()+target.size())/64+1))return nullptr;const auto physical=root?"entry/"+target:activation;
-  auto upper=p.fixedEffects.find(target);repeated|=physical.empty()||cyclicFunctions.count(target)||upper==p.fixedEffects.end()||upper->second.unknownHost;
-  if(root)repeated=cyclicFunctions.count(target)||upper==p.fixedEffects.end()||upper->second.unknownHost;
-  for(const auto &[id,slots]:current){if(!step(id.size()/64+1))return nullptr;for(const auto &[slot,v]:slots)if(!step(slot.size()/64+regionWeight(v)+1))return nullptr;}
-  const auto relation=regionKey(current);if(!step(region.size()/64+1))return nullptr;
-  const auto id=target+"/"+digest(canonical(Object{{"activation",physical},{"repeated",repeated},{"args",std::move(arguments)},{"memory",std::move(memory)},{"region",region},{"versions",relation}}));
+  auto selected=frameWorld?selectFrames(*frameWorld,args,heap):ActualFrameWorld{};if(!e.message.empty())return nullptr;
+  auto retained=retainedFrames(selected);if(!step(args.size()+retained.size()+1)||!e.message.empty())return nullptr;
+  std::vector<ActualValue> roots;roots.reserve(args.size()+retained.size());for(const auto &v:args)roots.push_back(copy(v));for(auto &v:retained)roots.push_back(std::move(v));
+  auto entry=reachable(roots,heap);Array arguments,memory;if(!step(entry.size()+args.size()))return nullptr;
+  for(const auto &v:args){const auto encoded=key(v);if(!e.message.empty()||!receiverText(encoded))return nullptr;arguments.push_back(encoded);}
+  // Global-only reachable payloads can carry relation state too.
+  if(!step(roots.size()+entry.size()))return nullptr;roots.reserve(roots.size()+entry.size());
+  for(const auto &[id,v]:entry){const auto encoded=key(v);if(!e.message.empty()||!receiverText(id)||!receiverText(encoded))return nullptr;memory.push_back(Array{id,encoded});roots.push_back(copy(v));}
+  auto current=versions?regionReachable(*this,roots,*versions):RegionHeap{};
+  if(!receiverText(activation)||!receiverText(target)||!receiverText(region)||!receiverText(newTarget))return nullptr;
+  const auto physical=root?(activation.empty()?"entry/"+target:activation):activation;
+  auto upper=p.fixedEffects.find(target);const bool opaque=!analysisFunctions.count(target)&&(upper==p.fixedEffects.end()||upper->second.unknownHost);
+  repeated|=physical.empty()||cyclicFunctions.count(target)||opaque;
+  if(root)repeated=cyclicFunctions.count(target)||opaque;
+  if(!step(current.size()+128))return nullptr;Array relationRows;
+  for(const auto &[id,slots]:current){if(!receiverText(id)||!step(slots.size()))return nullptr;Array fields;
+    for(const auto &[slot,v]:slots){if(!receiverText(slot)||!step(v.roots.size()+128))return nullptr;for(const auto &origin:v.roots)if(!receiverText(origin))return nullptr;
+      const auto encoded=regionKey(v);if(!receiverText(encoded))return nullptr;fields.push_back(Array{slot,encoded});}
+    relationRows.push_back(Array{id,std::move(fields)});}
+  const auto relation=canonical(Json(std::move(relationRows))),frames=frameKey(selected);if(!e.message.empty()||!receiverText(relation)||!receiverText(frames)||!step(256))return nullptr;
+  const auto id=target+"/"+digest(canonical(Object{{"activation",physical},{"repeated",repeated},{"args",std::move(arguments)},{"memory",std::move(memory)},
+    {"region",region},{"versions",relation},{"frames",frames},{"newTarget",newTarget}}));
   auto found=contexts.find(id);if(found!=contexts.end()){found->second.called|=!root;return &found->second;}
-  if(!need(contexts.size()<4096,"actual call-context bound exceeded"))return nullptr;
+  if(!need(contexts.size()<4096,"actual call-context bound exceeded")||!receiverText(id))return nullptr;
   ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.entry=std::move(entry);c.activation=physical;c.repeated=repeated;
-  c.region=region;c.entryRegions=std::move(current);
-  for(const auto &v:args)c.arguments.push_back(copy(v));auto inserted=contexts.emplace(id,std::move(c));changed=true;
-  if(!schedule(id))return nullptr;return &inserted.first->second;
+  c.region=region;c.entryRegions=std::move(current);c.entryFrames=std::move(selected);c.constructionNewTarget=newTarget;
+  if(!step(args.size()))return nullptr;for(const auto &v:args)c.arguments.push_back(copy(v));if(!e.message.empty())return nullptr;
+  auto inserted=contexts.emplace(id,std::move(c));changed=true;if(!schedule(id))return nullptr;return &inserted.first->second;
 }
 bool ActualCheck::schedule(const std::string &id){
   if(!scheduling)return true;if(!step(id.size()/64+1))return false;
@@ -121,24 +136,34 @@ bool ActualCheck::schedule(const std::string &id){
 }
 bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed){
   const auto &fn=*context.function;
-  if(!step(2*fn.blocks.size()))return false;
-  std::vector<size_t> incoming(fn.blocks.size());std::vector<bool> single(fn.blocks.size());
-  for(const auto &block:fn.blocks){const auto &successors=block.operations.back().successors;
-    if(!step(successors.size()+1))return false;for(auto to:successors)++incoming[to];
-  }
-  std::vector<uint16_t> once;
-  if(!incoming[0]){if(!step(2))return false;single[0]=true;once.push_back(0);}
-  for(size_t index=0;index<once.size();++index){const auto &successors=fn.blocks[once[index]].operations.back().successors;
-    if(!step(successors.size()+1))return false;for(auto to:successors)if(incoming[to]==1){
-      if(!step(2))return false;single[to]=true;once.push_back(to);
+  struct Trace {
+    const ActualContext &context;const Program &program;size_t before;bool conditional,enabled;
+    ~Trace(){if(enabled)llvm::errs()<<"[DEBUG-23j-common-execute] "<<(conditional?"conditional":"final")<<" function="<<context.function->name
+      <<" work="<<(before-program.remaining)<<" remaining="<<program.remaining<<'\n';}
+  } trace{context,p,p.remaining,conditional,std::getenv("TSFG_COMMON_ACTUAL_TRACE")!=nullptr};
+  if(!step())return false;auto cached=singleExecution.find(&fn);
+  if(cached==singleExecution.end()){
+    if(!step(2*fn.blocks.size()))return false;
+    std::vector<size_t> incoming(fn.blocks.size());std::vector<bool> single(fn.blocks.size());
+    for(const auto &block:fn.blocks){const auto &successors=block.operations.back().successors;
+      if(!step(successors.size()+1))return false;for(auto to:successors)++incoming[to];
     }
+    std::vector<uint16_t> once;
+    if(!incoming[0]){if(!step(2))return false;single[0]=true;once.push_back(0);}
+    for(size_t index=0;index<once.size();++index){const auto &successors=fn.blocks[once[index]].operations.back().successors;
+      if(!step(successors.size()+1))return false;for(auto to:successors)if(incoming[to]==1){
+        if(!step(2))return false;single[to]=true;once.push_back(to);
+      }
+    }
+    cached=singleExecution.emplace(&fn,std::move(single)).first;
   }
+  const auto &single=cached->second;
   // A single-execution predecessor delivers all callee completions before
   // returning. Its unique static successor edge can never arrive again in
   // this execute's queue. Keep join snapshots for every other block.
   ActualState entry;
   if(!context.root)entry.heap=copyHeap(context.entry);
-  entry.regions=regionCopy(*this,context.entryRegions);
+  entry.regions=regionCopy(*this,context.entryRegions);entry.frames=copyFrames(context.entryFrames);
   if(context.root){
     entry.heap.clear();context.arguments.clear();
     for(const auto &[id,g]:globals){
@@ -147,7 +172,8 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
         for(const auto &tag:globalSeeds.at(raw).tags){auto alternative=declared(tag,entry.heap,"global-entry/"+id);merge(value,alternative);}}
       entry.heap.emplace("global:"+id,std::move(value));
     }
-    for(size_t i=0;i<fn.blocks[0].parameters.size();++i)context.arguments.push_back(entryValue(fn,i,entry.heap,conditional,changed));
+    entry.frames.clear();if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.arguments,context.constructionNewTarget,context.activation))return false;
+    context.entryFrames=copyFrames(entry.frames);
     context.entry=copyHeap(entry.heap);
   }
   for(size_t i=0;i<context.arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(context.arguments[i]));
@@ -178,7 +204,7 @@ bool ActualCheck::solve(bool conditional){
   if(!step(pendingContexts.size()+queuedContexts.size()))return false;
   scheduling=true;weakChanged=false;seedChanged=false;pendingContexts.clear();queuedContexts.clear();
   struct SchedulingGuard{ActualCheck &c;~SchedulingGuard(){c.scheduling=false;}} schedulingGuard{*this};
-  contexts.clear();objects.clear();
+  contexts.clear();objects.clear();receiverFrames.clear();receiverCursors.clear();receiverRouteOpen=false;
   regions.nodes.clear();regions.scopes.clear();
   if(conditional){
     registerCapacity.clear();resultCapacity.clear();storageCapacity.clear();
@@ -193,11 +219,13 @@ bool ActualCheck::solve(bool conditional){
   bool changed=false;
   for(const auto &[id,fn]:functions){
     if(sourceFunctions.count(id)&&!field(*sourceFunctions.at(id),"lexicalParent").getAsNull())continue;
+    if(sourceFunctions.count(id)&&string(field(*sourceFunctions.at(id),"kind"))=="construction-body")continue;
     ActualHeap heap;
     for(const auto &[gid,g]:globals){auto value=declared(string(field(*g,"type")),heap,"global-entry/"+gid);heap.emplace("global:"+gid,std::move(value));}
     std::vector<ActualValue> args;for(size_t i=0;i<fn->blocks[0].parameters.size();++i)args.push_back(entryValue(*fn,i,heap,conditional,changed));
     if(!context(id,args,heap,true,changed))return false;
   }
+  if(!seedReceiverRoots(conditional,changed))return false;
   if(conditional){
     // Every initial root is queued after rebuilding this mode's contexts.
     // Shared entry seeds and weak promotion invalidate every conditional
@@ -227,6 +255,8 @@ bool ActualCheck::solve(bool conditional){
   if(conditional){
     for(const auto &[id,c]:contexts)if(!recordCapacity(resultCapacity[c.function->id],c.returned))return false;
     for(const auto *seeds:{&fieldSeeds,&globalSeeds,&elementSeeds})for(const auto &[id,v]:*seeds)if(!recordCapacity(storageCapacity[id],v))return false;
-  }weakChanged=false;seedChanged=false;return e.message.empty();
+  }weakChanged=false;seedChanged=false;
+  if(receiverRouteOpen)return reject(e,"core-ir-common-construction-open","logical initializer route has no independently admitted physical projection");
+  return e.message.empty();
 }
 } // namespace tsfg::commonProgram

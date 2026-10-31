@@ -208,7 +208,16 @@ bool regionEdge(ActualCheck &c,const ActualContext &context,uint16_t from,uint16
   for(auto reg:live){if(!c.step())return false;auto value=state.values.find(reg);if(value==state.values.end())continue;
     regionEscape(c,regionValue(c,value->second),state.regions,false);
     auto root=c.copy(value->second);if(!c.e.message.empty())return false;
-    std::vector<ActualValue> roots;roots.push_back(std::move(root));
+    if(!c.step(1))return false;std::vector<ActualValue> roots;roots.push_back(std::move(root));
+    // A live Frame/cursor also retains its selected bound data and ancestor
+    // bindings. These have the same escape obligation as an ordinary live
+    // value; controls do not grant a new current-region permission.
+    if(!value->second.frames.empty()||!value->second.cursors.empty()){
+      auto selected=c.selectFrames(state.frames,roots,state.heap);if(!c.e.message.empty())return false;
+      auto retained=c.retainedFrames(selected);if(!c.e.message.empty()||!c.step(roots.size()+retained.size()))return false;
+      roots.reserve(roots.size()+retained.size());
+      for(auto &bound:retained){regionEscape(c,regionValue(c,bound),state.regions,false);if(!c.e.message.empty())return false;roots.push_back(std::move(bound));}
+    }
     auto reached=c.reachable(roots,state.heap);for(const auto &[slot,child]:reached){if(!c.step())return false;regionEscape(c,regionValue(c,child),state.regions,false);}
     for(const auto &cell:value->second.cells){if(!c.step())return false;auto stored=state.heap.find(cell);if(stored!=state.heap.end())regionEscape(c,regionValue(c,stored->second),state.regions,false);}
   }
@@ -217,9 +226,11 @@ bool regionEdge(ActualCheck &c,const ActualContext &context,uint16_t from,uint16
   // Raw aliases, weak objects,
   // normal heap joins and the old BorrowFlow descriptor definitions survive.
   const auto age=[&](ActualValue &v){if(!v.region.roots.empty()){v.region.roots.clear();v.region.known=true;v.region.opaque=true;}};
-  if(!c.step(state.values.size()+state.heap.size()))return false;
+  if(!c.step(state.values.size()+state.heap.size()+state.frames.size()))return false;
   for(auto &[reg,v]:state.values){if(!c.step(regionWeight(v.region)))return false;age(v);}
   for(auto &[slot,v]:state.heap){if(!c.step(regionWeight(v.region)))return false;age(v);}
+  for(auto &[frame,binding]:state.frames){if(!c.step(regionWeight(binding.bound.region)+binding.births.size()))return false;age(binding.bound);
+    for(auto &[slot,row]:binding.births){if(!c.step(regionWeight(row.real.region)))return false;age(row.real);}}
   for(const auto &[id,slots]:state.regions){if(!c.step())return false;for(const auto &[slot,v]:slots)if(!c.step(regionWeight(v)))return false;}
   state.regions.clear();return c.e.message.empty();
 }

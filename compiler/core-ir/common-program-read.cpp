@@ -37,6 +37,9 @@ const std::map<std::string,std::vector<llvm::StringRef>> properties={
   {"numeric_use",{"operator","index","operand_view"}},{"field_load",{"field"}},
   {"field_store",{"field","initialize"}},{"construct_value",{"type","construction"}},
   {"allocate_reference",{"type","construction"}},{"array_create",{"allocation"}},
+  {"receiver_create",{"owner","new_target","construction"}},{"receiver_child",{"owner"}},
+  {"receiver_allocate",{"owner"}},{"receiver_bind",{"owner"}},{"receiver_get",{"owner"}},{"receiver_result",{"owner"}},
+  {"initialize_begin",{"owner"}},{"initialize_field",{"owner","field"}},{"initialize_end",{"owner"}},
   {"array_read",{"element"}},{"array_store",{"element"}},{"array_resize",{}},
   {"array_length",{}},{"readspan",{}},{"readspan_length",{}},{"pack",{"type"}},
   {"env_alloc",{"layout"}},{"env_parent",{"layout"}},{"env_init",{"layout","binding","key"}},
@@ -118,10 +121,10 @@ bool readFunctions(mlir::ModuleOp module,Program &p,Error &e){
   std::set<std::string> ids,names;
   for(auto &op:module.getBody()->getOperations()){
     auto source=llvm::dyn_cast<mlir::func::FuncOp>(op);
-    if(!source||p.functions.size()>=4096||!p.charge())return reject(e,"core-ir-common-function","only complete bounded function inventory permitted");
+    if(!source||p.functions.size()+p.internalFunctions.size()>=4096||!p.charge())return reject(e,"core-ir-common-function","only complete bounded function inventory permitted");
     Function f;if(!readFunction(source,p,f,e))return false;
     if(!ids.insert(f.id).second||!names.insert(f.name).second)return reject(e,"core-ir-common-function","duplicate function identity or symbol");
-    p.functions.push_back(std::move(f));
+    if(f.role=="implicit-construction-helper")p.internalFunctions.push_back(std::move(f));else p.functions.push_back(std::move(f));
   }
   return !p.functions.empty()||reject(e,"core-ir-common-function","complete function inventory is empty");
 }

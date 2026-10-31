@@ -61,7 +61,8 @@ bool covers(Program &p,const Effects &upper,const Effects &body,Error &e){
   }
   return true;
 }
-bool scope(Program &p,Json &out,Error &e){
+}
+bool publicationScope(Program &p,Json &out,Error &e){
   std::map<std::string,const Json *> types;for(const auto &t:items(field(p.hir,"types"))){if(!work(p,e))return false;types.emplace(string(field(t,"id")),&t);}
   std::set<std::string> seen;std::vector<std::string> pending;
   for(const auto &g:items(field(p.hir,"globals")))pending.push_back(string(field(g,"type")));
@@ -118,7 +119,6 @@ bool scope(Program &p,Json &out,Error &e){
     {"functions",std::move(functions)},{"environments",std::move(environments)},{"globals",std::move(globals)},{"modules",std::move(modules)},
     {"roots",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(required)}}}};return true;
 }
-}
 bool validateCallableBounds(Program &p,const Json &fn,const Json &value,Error &e){return callableBounds(p,fn,value,e);}
 bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e){
   if(!need(exact(raw,{"globals","hostResources","parameters","facets","captures"})&&exact(field(raw,"globals"),{"reads","writes"})&&
@@ -131,17 +131,11 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
   const std::pair<llvm::StringRef,bool *> flags[]={{"allocation",&out.allocation},{"managedReference",&out.managedReference},{"ehControl",&out.ehControl},{"mayThrow",&out.mayThrow},
     {"await",&out.await},{"lock",&out.lock},{"escape",&out.escape},{"unknownHost",&out.unknownHost}};
   for(auto [key,to]:flags){auto value=field(facets,key).getAsBoolean();if(!need(bool(value),e,"fixed facet must be boolean"))return false;*to=*value;}
-  const auto &captures=field(raw,"captures");
-  if(!need(bool(captures.getAsArray()),e,"fixed captures must be a sparse array"))return false;
-  std::set<std::string> mutableValues;
-  if(!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference"||string(field(type,"kind"))=="value")mutableValues.insert(string(field(type,"id")));}
-  // A fixed Global write is a conditional payload-owner permission, not a
-  // binding-replacement grant or a bound narrowed by its current actual value.
-  std::set<std::string> globals;for(const auto &g:items(field(p.hir,"globals")))globals.insert(string(field(g,"id")));
+  std::map<std::string,bool> globals;for(const auto &g:items(field(p.hir,"globals")))globals.emplace(string(field(g,"id")),field(g,"writable").getAsBoolean()==true);
   for(auto key:{"reads","writes"}){const auto &rawSet=field(field(raw,"globals"),key);auto &to=llvm::StringRef(key)=="reads"?out.reads:out.writes;
     if(!need(rawSet.getAsArray()&&items(rawSet).size()<=4096,e,"fixed global set bound differs"))return false;std::string previous;
     for(const auto &value:items(rawSet)){if(!work(p,e))return false;const auto id=string(value);
-      if(!need(globals.count(id)&&(previous.empty()||previous<id),e,"fixed GlobalId set differs"))return false;
+      if(!need(globals.count(id)&&(llvm::StringRef(key)!="writes"||globals.at(id))&&(previous.empty()||previous<id),e,"fixed GlobalId set differs"))return false;
       previous=id;to.insert(id);}
   }
   const auto count=items(field(fn,"parameters")).size()+(!field(fn,"ownerType").getAsNull());
@@ -151,8 +145,12 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
     auto r=field(param,"read").getAsBoolean(),w=field(param,"write").getAsBoolean(),s=field(param,"structural").getAsBoolean();
     if(!need(r&&w&&s,e,"fixed parameter flags must be boolean"))return false;out.parameters.push_back({*r,*w,*s});
   }
-  // Build the slot directory only for a nonempty capture obligation.
-  std::map<std::string,bool> slots;
+  const auto &captures=field(raw,"captures");
+  if(!need(bool(captures.getAsArray()),e,"fixed captures must be a sparse array"))return false;
+  // Build only for a nonempty capture obligation; unrelated layouts cannot
+  // turn every empty function contract into a full slot-directory scan.
+  std::map<std::string,bool> slots;std::set<std::string> mutableValues;
+  if(!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference"||string(field(type,"kind"))=="value")mutableValues.insert(string(field(type,"id")));}
   if(!items(captures).empty())for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){
     if(!work(p,e))return false;slots.emplace(string(field(slot,"key")),field(slot,"writable").getAsBoolean()==true||mutableValues.count(string(field(slot,"type"))));
   }
@@ -177,8 +175,9 @@ bool verifyPublication(Program &p,Error &e){
       !need(string(field(row,"digest"))==identity("published-contract",body),e,"fixed contract digest differs"))return false;
     p.fixedEffects.emplace(id,std::move(upper));
   }
-  Json stableScope=nullptr;if(!scope(p,stableScope,e))return false;const auto scopeHash=identity("publication-scope",stableScope);
+  Json stableScope=nullptr;if(!publicationScope(p,stableScope,e))return false;const auto scopeHash=identity("publication-scope",stableScope);
   if(!need(string(field(pub,"scopeDigest"))==scopeHash&&string(field(pub,"expectedDigest"))==identity("publication",Object{{"scopeDigest",scopeHash},{"contracts",field(pub,"contracts")}}),e,"stable scope/fixed table digest differs"))return false;
+  if(!deriveInternalEffects(p,p.fixedEffects,e))return false;
   for(const auto &fn:functions){Effects effective;const auto id=string(field(fn,"id"));
     if(!deriveEffects(p,fn,p.fixedEffects,effective,e))return false;
     // Actual storage and callee ABI obligations may be wider than a Source

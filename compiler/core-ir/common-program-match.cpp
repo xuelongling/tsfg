@@ -29,10 +29,17 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
   }
   while(cursor<actual.blocks.size()&&numericBlocks.count(uint16_t(cursor)))++cursor;
   if(!c.need(cursor==actual.blocks.size(),"foreign logical block was added"))return false;
-  std::map<uint16_t,uint16_t> values;std::map<uint16_t,SourceAnchor> origins;std::set<uint16_t> seenActual;
-  for(const auto &block:expected.blocks)for(const auto &op:block.operations){
-    if(!c.step())return false;if(op.result!=noRegister)origins.emplace(op.result,op.range);
-    if(op.name=="invoke"||op.name=="invoke_method"||op.name=="invoke_indirect")for(auto r:expected.blocks[op.successors[0]].parameters)origins.emplace(r,op.range);
+  struct Origin {SourceAnchor range;std::string path;};
+  std::map<uint16_t,uint16_t> values;std::map<uint16_t,Origin> origins;std::set<uint16_t> seenActual;
+  auto &operationSources=c.p.operationSources[actual.id];operationSources.clear();
+  for(size_t b=0;b<expected.blocks.size();++b)for(size_t n=0;n<expected.blocks[b].operations.size();++n){
+    const auto &op=expected.blocks[b].operations[n];const auto path=source.paths.find({b,n});
+    if(!c.step()||!c.need(path!=source.paths.end(),"complete Source operation path is absent"))return false;
+    const auto remember=[&](uint16_t r){
+      if(!c.step(1+path->second.size()/64))return false;origins.emplace(r,Origin{op.range,path->second});return true;
+    };
+    if(op.result!=noRegister&&!remember(op.result))return false;
+    if(op.name=="invoke"||op.name=="invoke_method"||op.name=="invoke_indirect")for(auto r:expected.blocks[op.successors[0]].parameters)if(!remember(r))return false;
   }
   const auto bind=[&](uint16_t raw,uint16_t semantic){
     auto found=values.find(raw);if(found!=values.end())return c.need(found->second==semantic,"SSA value changed its Source origin");
@@ -48,6 +55,12 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
     const auto resolve=[&](uint16_t r){auto found=values.find(r);return found==values.end()?noRegister:found->second;};
     for(size_t expectedIndex=0;expectedIndex<expected.blocks[from].operations.size();++expectedIndex){
       const auto &op=expected.blocks[from].operations[expectedIndex];size_t checked=0;
+      const auto sourcePath=source.paths.find({from,expectedIndex});
+      if(!c.need(sourcePath!=source.paths.end(),"complete Source operation path is absent"))return false;
+      const auto record=[&](size_t b,size_t i,const std::string &path){
+        if(!c.step(1+path.size()/64))return false;
+        return c.need(operationSources.emplace(std::pair<uint16_t,uint16_t>{uint16_t(b),uint16_t(i)},path).second,"actual operation Source was assigned twice");
+      };
       while(true){
         if(!c.step()||!c.need(index<actual.blocks[block].operations.size(),"Source operation was omitted"))return false;
         const auto &raw=actual.blocks[block].operations[index];
@@ -55,7 +68,9 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
           if(!c.need(raw.result!=noRegister&&raw.operands.size()==1&&raw.successors.empty()&&
             resolve(raw.operands[0])!=noRegister&&string(field(raw.properties,"carrier"))==actual.carriers[raw.result],"invalid capacity-only carrier adapter"))return false;
           const auto origin=resolve(raw.operands[0]);
-          if(!c.need(raw.view==expected.carriers[origin]&&(sameAnchor(raw.range,op.range)||origins.count(origin)&&sameAnchor(raw.range,origins.at(origin))),"carrier adapter changed the original view or anchor")||!bind(raw.result,origin))return false;
+          if(!c.need(raw.view==expected.carriers[origin]&&(sameAnchor(raw.range,op.range)||origins.count(origin)&&sameAnchor(raw.range,origins.at(origin).range)),"carrier adapter changed the original view or anchor")||!bind(raw.result,origin))return false;
+          const auto &path=sameAnchor(raw.range,op.range)?sourcePath->second:origins.at(origin).path;
+          if(!record(block,index,path))return false;
           ++index;continue;
         }
         if(raw.name=="numeric_use"){
@@ -65,6 +80,7 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
               field(raw.properties,"index").getAsInteger()==int64_t(checked)&&
               string(field(raw.properties,"operand_view"))==expected.carriers[op.operands[checked]]&&
               raw.view==digest(std::string("tsfg.type")+std::string(1,'\0')+"i32"),"numeric consumption changed Source order/view/operand"))return false;
+          if(!record(block,index,sourcePath->second))return false;
           const auto target=raw.successors[0];if(!c.need(seenActual.insert(target).second,"numeric continuation reused"))return false;
           if(!bind(actual.blocks[target].parameters[0],op.operands[checked++]))return false;block=target;index=0;continue;
         }break;
@@ -79,20 +95,40 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
       for(size_t n=0;n<op.operands.size();++n)if(!c.step()||!c.need(resolve(raw.operands[n])==op.operands[n],"actual operand changed Source evaluation/storage identity"))return false;
       for(size_t n=0;n<op.successors.size();++n)if(!c.step()||!c.need(blocks.count(op.successors[n])&&blocks.at(op.successors[n])==raw.successors[n],"actual CFG changed Source completion routing"))return false;
       if(op.result!=noRegister&&!bind(raw.result,op.result))return false;
+      if(!record(block,index-1,sourcePath->second))return false;
     }
     if(!c.need(index==actual.blocks[block].operations.size(),"foreign instruction after Source completion"))return false;
   }
-  return c.need(seenActual.size()==actual.blocks.size()&&values.size()==actual.carriers.size(),"unproved physical block/register remains");
+  if(!c.need(seenActual.size()==actual.blocks.size()&&values.size()==actual.carriers.size(),"unproved physical block/register remains")||!c.step(actual.carriers.size()))return false;
+  std::vector<std::string> views(actual.carriers.size());
+  for(const auto &[raw,semantic]:values){
+    const auto &view=expected.carriers[semantic];if(!c.step(1+view.size()/64))return false;views[raw]=view;
+  }
+  c.p.registerViews.insert_or_assign(actual.id,std::move(views));return true;
 }
 bool ActualCheck::source(){
   for(const auto &[id,fn]:functions){
     if(!step())return false;
+    if(analysisFunctions.count(id)&&!printedConstructors.count(id))continue;
     if(sourceFunctions.count(id)){
-      SourcePlan plan(*this,*sourceFunctions.at(id));if(!plan.run()||!matchSourcePlan(*this,plan,*fn))return false;
+      const auto &owner=*sourceFunctions.at(id);bool projected=printedConstructors.count(id);
+      if(!projected&&!projectInternalConstruction(p,owner,projected,e))return false;
+      SourcePlan plan(*this,owner,projected);if(!plan.run())return false;
+      if(projected&&!printedConstructors.count(id)){
+        bool reachesCycle=false;for(const auto &block:plan.function.blocks)for(const auto &op:block.operations){if(!step())return false;
+          if(op.name=="invoke"){auto target=analysisOwners.find(string(field(op.properties,"function_id")));if(target!=analysisOwners.end())reachesCycle|=p.internalCycleTypes.count(string(field(target->second,"ownerType")))!=0;}}
+        if(!reachesCycle){SourcePlan canonical(*this,owner);if(!canonical.run()||!matchSourcePlan(*this,canonical,*fn))return false;continue;}
+      }
+      if(!matchSourcePlan(*this,plan,*fn))return false;
     }else{
       const auto &module=*modules.at(id);Json owner=Object{{"id",id},{"sourcePath",field(module,"sourcePath")},{"kind","module-initializer"},
         {"returnType","void"},{"parameters",Array{}},{"body",field(module,"initialization")},{"range",Object{{"start",fn->range.start},{"end",fn->range.end}}}};
-      SourcePlan plan(*this,owner);if(!plan.run()||!matchSourcePlan(*this,plan,*fn))return false;
+      bool projected=false;if(!projectInternalConstruction(p,owner,projected,e))return false;
+      SourcePlan plan(*this,owner,projected);if(!plan.run())return false;
+      bool reachesCycle=false;for(const auto &block:plan.function.blocks)for(const auto &op:block.operations){if(!step())return false;
+        if(op.name=="invoke"){auto target=analysisOwners.find(string(field(op.properties,"function_id")));if(target!=analysisOwners.end())reachesCycle|=p.internalCycleTypes.count(string(field(target->second,"ownerType")))!=0;}}
+      if(projected&&!reachesCycle){SourcePlan canonical(*this,owner);if(!canonical.run()||!matchSourcePlan(*this,canonical,*fn))return false;}
+      else if(!matchSourcePlan(*this,plan,*fn))return false;
     }
   }return true;
 }

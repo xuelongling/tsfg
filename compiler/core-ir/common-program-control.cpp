@@ -3,6 +3,18 @@
 #include "common-program-methods.h"
 #include <memory>
 namespace tsfg::commonProgram {
+SourcePlan::Reg SourcePlan::constructionAction(llvm::StringRef name,std::vector<Reg> args,const std::string &type,Json properties,SourceAnchor range,
+    const std::function<void(Reg,SourceAnchor)> &onThrow){
+  const auto normal=block({type}),exceptional=block({"payload:"+schema.str()});
+  if(!check.step(cells.size()+1))return noRegister;
+  const auto saved=std::make_shared<const std::map<std::string,Reg>>(cells);
+  const auto active=std::make_shared<const Completion>(handlers);const auto path=sourcePath;
+  emit(name,std::move(args),"",std::move(properties),range,{uint16_t(normal),uint16_t(exceptional)});
+  deferred.push_back([this,exceptional,saved,active,range,path,onThrow]{
+    if(!check.step(saved->size()+1))return;current=exceptional;cells=*saved;handlers=*active;sourcePath=path;
+    const auto thrown=function.blocks[exceptional].parameters[0];if(onThrow)onThrow(thrown,range);else active->thrown(thrown,range);
+  });current=normal;return function.blocks[normal].parameters[0];
+}
 SourcePlan::Reg SourcePlan::invoke(const Json &e,std::vector<Reg> args,const Json &callee){
   if(!field(callee,"lexicalEnvironment").getAsNull())args.insert(args.begin(),environment(string(field(callee,"lexicalEnvironment")),sourceAnchor(e)));
   const auto result=string(field(callee,"returnType"));const bool empty=result=="void"||check.types.count(result)&&string(field(*check.types.at(result),"kind"))=="void";
@@ -26,6 +38,10 @@ void SourcePlan::region(const Array &rows,const Completion &active,const std::fu
     if(!check.environmentSlots.count(id))cells[id]=emit("cell",{},"cell:"+id,Object{{"binding",id}},r);
     store(bindingLocation(id,type,r),value,r,true,false);
   }
+  if(path=="body"&&string(field(owner,"kind"))=="construction-body"){
+    std::vector<Reg> args;for(const auto &p:items(field(owner,"parameters"))){if(!check.step())return;args.push_back(load(bindingLocation(string(field(p,"id")),string(field(p,"type")),sourceAnchor(owner)),sourceAnchor(owner)));}
+    enterConstructor(*check.types.at(string(field(owner,"ownerType"))),receiverFrame,args,sourceAnchor(owner));
+  }
   for(size_t index=0;index<rows.size()&&ok()&&!ended();++index){
     if(!check.step())return;const auto &s=rows[index];const auto kind=string(field(s,"kind")),at=path+"/"+std::to_string(index);const auto r=sourceAnchor(s);
     if(kind=="constDeclaration"||kind=="letDeclaration"){
@@ -40,8 +56,8 @@ void SourcePlan::region(const Array &rows,const Completion &active,const std::fu
     }else if(kind=="expression")expression(field(s,"value"));
     else if(kind=="return"){
       const auto type=string(field(owner,"returnType"));const bool empty=type=="void"||check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="void";
-      const auto value=field(s,"value").getAsNull()?(string(field(owner,"kind"))=="construction-body"?receiver(r):noRegister):expression(field(s,"value"));
-      active.returned(empty?noRegister:copy(value,type,r),r);
+      const auto value=field(s,"value").getAsNull()?noRegister:expression(field(s,"value"));
+      active.returned(string(field(owner,"kind"))=="construction-body"?value:empty?noRegister:copy(value,type,r),r);
     }else if(kind=="throw"){
       const auto value=expression(field(s,"value"));const auto packed=emit("pack",{value},"payload:"+schema.str(),Object{{"type",function.carriers[value]}},r);active.thrown(packed,r);
     }else if(kind=="block")region(items(field(s,"body")),active,[]{},at);
@@ -104,17 +120,18 @@ bool SourcePlan::run(){
   std::vector<std::pair<std::string,Reg>> initial;std::vector<std::string> parameters;
   const auto lexical=string(field(owner,"lexicalEnvironment")),activation=string(field(owner,"activationEnvironment"));
   if(!lexical.empty())parameters.push_back("env:"+lexical);
-  const auto receiverId=string(field(owner,"receiverBinding"));if(!receiverId.empty())parameters.push_back(string(field(owner,"ownerType")));
+  const bool constructor=string(field(owner,"kind"))=="construction-body";
+  const auto receiverId=string(field(owner,"receiverBinding"));if(!receiverId.empty())parameters.push_back((constructor?"receiver:":"")+string(field(owner,"ownerType")));
   for(const auto &p:items(field(owner,"parameters")))parameters.push_back(string(field(p,"type")));
   block(parameters);size_t index=0;if(!lexical.empty())lexicalEnvironment=function.blocks[0].parameters[index++];
   if(!activation.empty()){const auto parent=string(field(*check.environments.at(activation),"parent"));std::vector<Reg> args;if(!parent.empty())args.push_back(environment(parent,sourceAnchor(owner)));activationEnvironment=emit("env_alloc",std::move(args),"env:"+activation,Object{{"layout",activation}},sourceAnchor(owner));}
-  if(!receiverId.empty())initial.emplace_back(receiverId,function.blocks[0].parameters[index++]);
+  if(!receiverId.empty()){const auto value=function.blocks[0].parameters[index++];if(constructor)receiverFrame=value;else initial.emplace_back(receiverId,value);}
   for(const auto &p:items(field(owner,"parameters")))initial.emplace_back(string(field(p,"id")),function.blocks[0].parameters[index++]);
-  Completion outer{[this](Reg value,SourceAnchor r){emit("func.return",value==noRegister?std::vector<Reg>{}:std::vector<Reg>{value},"",Object{},r);},
+  Completion outer{[this,constructor](Reg value,SourceAnchor r){const auto result=constructor?constructorResult(value,r):value;emit("func.return",result==noRegister?std::vector<Reg>{}:std::vector<Reg>{result},"",Object{},r);},
     [this](Reg value,SourceAnchor r){emit("return_throw",{value},"",Object{},r);}};handlers=outer;
-  if(string(field(owner,"kind"))!="module-initializer")emit("fuel",{},"",Object{{"event",1}},sourceAnchor(owner));
+  if(string(field(owner,"kind"))!="module-initializer"&&!field(owner,"analysisOnly").getAsBoolean().value_or(false))emit("fuel",{},"",Object{{"event",1}},sourceAnchor(owner));
   region(items(field(owner,"body")),outer,[this,outer]{
-    if(string(field(owner,"kind"))=="construction-body")outer.returned(receiver(sourceAnchor(owner)),sourceAnchor(owner));
+    if(string(field(owner,"kind"))=="construction-body")outer.returned(noRegister,sourceAnchor(owner));
     else{
       const auto type=string(field(owner,"returnType"));if(!check.need(type=="void"||check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="void","Source unproved successful fallthrough"))return;
       outer.returned(noRegister,sourceAnchor(owner));

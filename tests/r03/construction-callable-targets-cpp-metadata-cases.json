@@ -1,0 +1,50 @@
+{
+  "qualification": "independent literal metadata expectations; NOT RUN; no constructed Graph/Program, compiler execution, Native or VM behavior",
+  "domain": "existing TargetFlow State = binding -> {top, finite public function IDs}; all operations use existing Program::charge",
+  "cases": [
+    {
+      "id": "self-recursive-local-state",
+      "initialState": {"main:x": {"top": false, "functions": ["real:f"]}},
+      "construction": {"owner": "A", "fieldsInOrder": [
+        {"id": "A/loop", "initializer": {"kind": "new", "type": "A", "arguments": []}},
+        {"id": "A/use", "initializer": {"kind": "indirectCall", "calleeBinding": "main:x", "range": [100, 101]}},
+        {"id": "A/assigned", "initializer": {"kind": "bindingAssignment", "binding": "main:x", "targetFunction": "real:g"}}
+      ]},
+      "expectedTransfer": [
+        "first active A revisit records State[x]={f} and returns to the original expression-site argument/nearest-explicit transfer",
+        "the outer field use observes f, assignment strongly writes g, poststate joins active inputs into {f,g}",
+        "revisit entry/use sees {f,g}; intermediate frame.grew and poststate union retain both despite the final strong assignment to g",
+        "the finite set stabilizes without recursive re-expansion of active A"
+      ],
+      "expectedSite": {"range": [100, 101], "top": false, "functions": ["real:f", "real:g"]},
+      "expectedFinalState": {"main:x": {"top": false, "functions": ["real:f", "real:g"]}}
+    },
+    {
+      "id": "acyclic-strong-update",
+      "initialState": {"main:x": {"top": false, "functions": ["real:f"]}},
+      "construction": {"owner": "A", "fieldsInOrder": [
+        {"id": "A/use", "initializer": {"kind": "indirectCall", "calleeBinding": "main:x", "range": [100, 101]}},
+        {"id": "A/assigned", "initializer": {"kind": "bindingAssignment", "binding": "main:x", "targetFunction": "real:g"}}
+      ]},
+      "expectedSite": {"range": [100, 101], "top": false, "functions": ["real:f"]},
+      "expectedFinalState": {"main:x": {"top": false, "functions": ["real:g"]}},
+      "expectedTransfer": "no backedge means frame.inputs stays absent; one original-order pass, no unsolicited weak join"
+    },
+    {
+      "id": "recursive-fixed-parameter-observation",
+      "construction": {
+        "A": {"kind": "explicit", "function": "ctor:A", "parameters": ["callback"], "fieldsInOrder": [
+          {"id": "A/loop", "initializer": {"kind": "new", "type": "D", "argumentFunctions": ["real:g"]}},
+          {"id": "A/callback", "parameterBinding": "callback"}
+        ]},
+        "D": {"kind": "implicit-derived", "base": "A", "inheritedParameters": ["callback"], "fieldsInOrder": []}
+      },
+      "entry": {"kind": "new", "type": "A", "argumentFunctions": ["real:f"]},
+      "expectedObservedParameter": {"function": "ctor:A", "index": 0, "top": false, "functions": ["real:f", "real:g"]},
+      "acceptedFixedUpper": {"function": "ctor:A", "index": 0, "top": false, "functions": ["real:f", "real:g"]},
+      "rejectedFixedUpper": {"function": "ctor:A", "index": 0, "top": false, "functions": ["real:f"]},
+      "expectedRejection": "core-ir-common-callable: argument exceeds fixed callable upper; active initialize return does not suppress expression-site nearest-explicit arguments/observations"
+    }
+  ],
+  "reference": "same bounded transfer semantics as independently authored JS f3bccfc2c6192d6c429f27558786c97fcf3a650dcbee8ff7e8806e11c7ab4379; JS test execution is not C++ behavior qualification"
+}

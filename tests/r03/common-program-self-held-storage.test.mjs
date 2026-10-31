@@ -16,7 +16,7 @@ function model(mode='complete'){
   let work=0;const spend=(count=1)=>{work+=count;assert.ok(work<100000,'bounded private model work');},
     owner={id:'unit:run',kind:'function-body',sourcePath:'/unit25af.ts'},plan={owner,entry:{name:'entry'},graph:{registers:new Map([['other',{view:'span'}]])}},
     c={id:'unit:activation',root:true,args:[out],entryHeap:new Map(heap),plan,regionScope:''},state={heap,regions:new Map()},
-    observer=commonBorrowObservations({model:{spend,types,fields:new Map(fields.map(row=>[row.id,row])),environments:new Map()},records:new Map(),objects});
+    observer=commonBorrowObservations({internalFunctions:new Set(),model:{spend,types,fields:new Map(fields.map(row=>[row.id,row])),environments:new Map()},records:new Map(),objects});
   observer.begin(c,heap);let previous=observer.block(c,'entry');
   const step=(at,name,args=[],result=null,view=null)=>{
     observer.edge(previous,at);const op={name:'tsfg_program.'+name,operands:name==='array_read'?['other']:[],properties:{},range:{start:at==='store'?100:200,end:at==='store'?110:210},view};

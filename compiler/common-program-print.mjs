@@ -60,7 +60,7 @@ export function printCommonFunction(plan,model,carriers,publication=null,project
     return emit(op.name,args,op.view,op.properties,op.view,op.range,op.result);
   }
   spend(entry.parameters.length);const attrs=['tsfg_program.function_id = '+quote(owner.id),'tsfg_program.signature_hash = '+quote(owner.signatureHash),
-    'tsfg_program.source_path = '+quote(owner.sourcePath),'tsfg_program.role = '+quote(owner.kind),anchor(owner.range)];
+    'tsfg_program.source_path = '+quote(owner.sourcePath),'tsfg_program.role = '+quote(owner.analysisOnly?'implicit-construction-helper':owner.kind),anchor(owner.range)];
   const parameters=entry.parameters.map((p,i)=>p.name+': '+coreType(abi.parameters[i]));
   line('  func.func @',quote('program_'+owner.id.slice(7)),'(',join(parameters),')',abi.result==='void'?'':' -> '+coreType(abi.result),' attributes {',join(attrs),'} {');
   for(const [index,block]of graph.blocks.entries()) {
@@ -85,7 +85,11 @@ export function printCommonFunction(plan,model,carriers,publication=null,project
         for(const [i,carrier]of called.parameters.entries())args[i]=adapt(args[i],carrier,op.range,graph.registers.get(op.operands[i]).view);
         emit(name,args,null,p,'void',op.range,null,op.successors);continue;
       }
-      if(name==='tsfg_program.binary'||name==='tsfg_program.unary')result=scalar(op,args);
+      if(name==='tsfg_program.initialize_field'){
+        const carrier=carriers.bindings.get(model.fields.get(p.field).sourceBinding);check(carrier,'type');
+        args[2]=adapt(args[2],carrier,op.range,graph.registers.get(op.operands[2]).view);
+        result=emit(name,args,type,p,view,op.range,op.result);
+      }else if(name==='tsfg_program.binary'||name==='tsfg_program.unary')result=scalar(op,args);
       else if(['tsfg_program.load','tsfg_program.env_load','tsfg_program.global_load','tsfg_program.field_load'].includes(name)) {
         const carrier=carriers.bindings.get(name.endsWith('field_load')?model.fields.get(p.field).sourceBinding:name.endsWith('global_load')?model.globals.get(p.global).sourceBinding:p.binding);
         result=emit(name,args,carrier,p,view,op.range,type===carrier?op.result:null);result=adapt(result,type,op.range,view);
