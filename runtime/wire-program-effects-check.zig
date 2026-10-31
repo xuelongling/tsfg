@@ -128,30 +128,30 @@ const UpperGraph = struct {
     fn proveLexicalCells(self: *UpperGraph) Error!bool {
         const c = self.collector.c; const v = self.collector.common(); const function = c.program.functions[@intFromEnum(self.function)];
         var created: std.AutoHashMapUnmanaged(t.BindingRef, struct { cell: t.CellRef, handle: t.RegisterRef }) = .empty; defer created.deinit(c.allocator);
-        var forward = true;
-        for (function.blocks, 0..) |block, b| for (block.instructions) |op| {
+        for (function.blocks) |block| for (block.instructions) |op| {
             try c.step(); switch (op.data) {
                 .eh_cell => |cell| {
                     const id = v.exceptions.bindings[@intFromEnum(cell.binding)].binding;
                     const binding_row = v.storage.bindings[@intFromEnum(id)];
                     const owner = switch (binding_row.owner) { .param, .local, .receiver => |owner_id| owner_id, else => return false };
                     if (owner != self.function) return false;
+                    // No environment slot may name this binding, including an
+                    // otherwise unobserved capture. A nonescaping handle alone
+                    // would not exclude that independently declared alias.
+                    try c.step(); if (self.collector.captures[@intFromEnum(id)] != null) return false;
                     const one = try created.getOrPut(c.allocator, id);
                     if (one.found_existing) return false;
                     one.value_ptr.* = .{ .cell = cell.binding, .handle = op.result.? };
                 },
-                .@"br" => |branch| forward = forward and @intFromEnum(branch.destination) > b,
-                .@"cond_br" => |branch| forward = forward and @intFromEnum(branch.true_destination) > b and @intFromEnum(branch.false_destination) > b,
-                inline .eh_invoke, .eh_invoke_indirect, .common_method_invoke => |call| forward = forward and @intFromEnum(call.normal) > b and @intFromEnum(call.exceptional) > b,
-                .eh_route => |route| forward = forward and @intFromEnum(route.successor) > b,
-                .domain_numeric_use => |guard| forward = forward and @intFromEnum(guard.normal_successor) > b,
                 else => {},
             }
         };
-        if (!forward) return false;
-        // Typed SSA already owns dominance. This extra protocol proves one
-        // local dynamic Cell per invocation, with no alias, phi, capture, call
-        // argument or returned handle. It stores no heap or per-op snapshots.
+        // SSA owns dominance; all handle uses must name this single static
+        // birth without phi, capture, call argument or returned-handle aliases.
+        // Backedges are valid: the existing owner-state fixed point joins
+        // lexical contents, and each execution of eh_cell kills the old binding
+        // before a new store/load. This identifies no dynamic allocation/version
+        // and grants no Region/holding fact or initialization from an upper.
         for (function.blocks) |block| for (block.instructions) |op| for (op.operands, 0..) |reg, i| {
             try c.step(); const carrier = function.registers[@intFromEnum(reg)].carrier;
             if (carrier != .cell) continue;
@@ -342,7 +342,7 @@ const UpperGraph = struct {
                     },
                     .eh_load => |data| {
                         try self.binding(&state, v.exceptions.bindings[@intFromEnum(data.binding)].binding, &result, null, false);
-                        // Only the unique, private, forward-CFG protocol above
+                        // Only the unique, private lexical-Cell protocol above
                         // connects a dynamic handle to the lexical binding flow.
                         if (!self.lexical_cells) _ = try result.add(c, .unresolved);
                     },
