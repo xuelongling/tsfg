@@ -15,6 +15,28 @@ const t = model.types;
 const Context = context.Context;
 pub const Error = context.Error;
 
+// Shared fixed-callable classification: one function signature, optionally
+// plus null and/or undefined. References/Type structure already passed.
+pub fn callableType(c: *Context, common: tables.CommonTables, id: t.TypeRef) Error!?t.TypeRef {
+    try c.step();
+    const row = common.types[@intFromEnum(id)];
+    if (row.kind == .function) return id;
+    if (row.kind != .@"union" or row.members.len < 2 or row.members.len > 3) return null;
+    var payload: ?t.TypeRef = null;
+    for (row.members) |member| {
+        try c.step();
+        switch (common.types[@intFromEnum(member)].kind) {
+            .@"null", .@"undefined" => {},
+            .function => {
+                if (payload != null) return null;
+                payload = member;
+            },
+            else => return null,
+        }
+    }
+    return payload;
+}
+
 const Checker = struct {
     c: *Context,
     common: tables.CommonTables,
@@ -31,28 +53,6 @@ const Checker = struct {
     fn abiFor(self: *const Checker, function: t.FunctionRef) *const storage.CommonAbi {
         const record = self.c.program.functions[@intFromEnum(function)];
         return &self.common.abis[@intFromEnum(record.abi)];
-    }
-
-    // This is the fixed-callable business rule, not arbitrary union widening:
-    // one original function signature, optionally plus null and/or undefined.
-    fn callableType(self: *Checker, id: t.TypeRef) Error!?t.TypeRef {
-        try self.c.step();
-        const row = self.common.types[@intFromEnum(id)];
-        if (row.kind == .function) return id;
-        if (row.kind != .@"union" or row.members.len < 2 or row.members.len > 3) return null;
-        var payload: ?t.TypeRef = null;
-        for (row.members) |member| {
-            try self.c.step();
-            switch (self.common.types[@intFromEnum(member)].kind) {
-                .@"null", .@"undefined" => {},
-                .function => {
-                    if (payload != null) return null;
-                    payload = member;
-                },
-                else => return null,
-            }
-        }
-        return payload;
     }
 
     fn checkTargetSet(self: *Checker, expected_type: t.TypeRef, allowed: publication.CodeTargets) Error!void {
@@ -106,7 +106,7 @@ const Checker = struct {
         for (abi.parameters, 0..) |binding, index| {
             try c.step();
             const parameter_type = self.common.storage.bindings[@intFromEnum(binding)].@"type";
-            const callable = try self.callableType(parameter_type) orelse continue;
+            const callable = try callableType(c, self.common, parameter_type) orelse continue;
             try c.require(record < row.callables.parameters.len);
             const bound = row.callables.parameters[record];
             try c.require(bound.index == index);
@@ -114,7 +114,7 @@ const Checker = struct {
             record += 1;
         }
         try c.require(record == row.callables.parameters.len);
-        const returned = if (abi.result) |id| try self.callableType(id) else null;
+        const returned = if (abi.result) |id| try callableType(c, self.common, id) else null;
         if (returned) |callable| {
             try c.require(row.callables.returns != null);
             try self.checkTargetSet(callable, row.callables.returns.?);

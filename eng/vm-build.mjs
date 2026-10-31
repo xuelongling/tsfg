@@ -178,7 +178,7 @@ runtimeSources.push(...['wire-program-control','wire-program-host-artifact-check
 runtimeSources.push(...['wire-program-actual-data','wire-program-actual-facts','wire-program-borrow-check',
   'wire-program-effects-check','wire-program-identity-check','wire-program-layout-check','wire-program-publication-refs',
   'wire-program-refcheck','wire-program-region-holding','wire-program-ssa-check','wire-program-table-refs',
-  'wire-program-targets-check','wire-program-fixed-publication-check','wire-program-kernel-request-check','wire-program-dependencies-check','wire-program-reference-contracts-check'].map(name => `runtime/${name}.zig`));
+  'wire-program-targets-check','wire-program-fixed-publication-check','wire-program-kernel-request-check','wire-program-dependencies-check','wire-program-reference-contracts-check','wire-program-fixed-callable-domain','wire-program-fixed-targets-check'].map(name => `runtime/${name}.zig`));
 
 /** Actual production copy boundary, also exercised without starting the VM. */
 export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {

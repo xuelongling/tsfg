@@ -2,7 +2,7 @@
 // Checks references, layouts, CFG/SSA, derivable typed identities and Common
 // actual targets, borrow and effects obligations through one shared analysis.
 // Complete Host records are bound once to this Runtime's compiled anchor.
-// Source and complete fixed-publication/fixed-flow validation remain separate;
+// Source and complete fixed-publication validation remain separate;
 // success is not full admission or permission to execute. This module neither
 // reads bytes/JSON nor activates Runtime12.
 const std = @import("std");
@@ -16,6 +16,7 @@ const ssa_check = @import("wire-program-ssa-check.zig");
 const identity_check = @import("wire-program-identity-check.zig");
 const reference_contracts_check = @import("wire-program-reference-contracts-check.zig");
 const fixed_publication_check = @import("wire-program-fixed-publication-check.zig");
+const fixed_targets_check = @import("wire-program-fixed-targets-check.zig");
 const kernel_request_check = @import("wire-program-kernel-request-check.zig");
 const dependencies_check = @import("wire-program-dependencies-check.zig");
 const targets_check = @import("wire-program-targets-check.zig");
@@ -71,6 +72,8 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     try kernel_request_check.checkDeclarations(&c);
     try dependencies_check.checkHostSites(&c);
     try host_artifact.check(&c, material);
+    var fixed_flow = try fixed_targets_check.analyze(&c);
+    defer fixed_flow.deinit(allocator);
     var actual: targets_check.Analysis = .{};
     defer actual.deinit(allocator);
     var borrowing = borrow_check.Observations.init(&c);
