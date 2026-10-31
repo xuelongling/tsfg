@@ -28,20 +28,26 @@ const Managed = enum { empty, active, no, yes };
 // lexical effect roots cross its CFG. Fresh locals have no external root;
 // unknown call/exception results retain an explicit unresolved root. They are
 // not used as actual tags, code sets, heap entries or callable permissions.
-const Owner = union(enum) { parameter: usize, global: t.GlobalRef, capture: Capture, unresolved: void };
+const Owner = union(enum) { parameter: usize, global: t.GlobalRef, capture: Capture, local: void, unresolved: void };
 const Owners = struct {
+    // Bottom is an as-yet uncomputed RESULT, not an empty alias proof. A
+    // represented nonowning value is a separate atom, not just an empty set.
+    // Managed local definitions have a local atom, never an allocation/holding
+    // identity. This is GraphEffects' lexical local: root category only.
+    nonowning: bool = false,
     items: std.ArrayListUnmanaged(Owner) = .empty,
+    fn known(self: *const Owners) bool { return self.nonowning or self.items.items.len != 0; }
     fn deinit(self: *Owners, allocator: std.mem.Allocator) void { self.items.deinit(allocator); self.* = .{}; }
     fn add(self: *Owners, c: *Context, owner: Owner) Error!bool {
         for (self.items.items) |old| { try c.step(); if (std.meta.eql(old, owner)) return false; }
         try c.step(); try self.items.append(c.allocator, owner); return true;
     }
     fn clone(c: *Context, source: *const Owners) Error!Owners {
-        try c.charge(source.items.items.len + 1); var result: Owners = .{};
+        try c.charge(source.items.items.len + 1); var result = Owners{ .nonowning = source.nonowning };
         errdefer result.deinit(c.allocator); try result.items.appendSlice(c.allocator, source.items.items); return result;
     }
     fn join(self: *Owners, c: *Context, incoming: *const Owners) Error!bool {
-        var changed = false;
+        try c.step(); var changed = incoming.nonowning and !self.nonowning; self.nonowning = self.nonowning or incoming.nonowning;
         for (incoming.items.items) |owner| changed = (try self.add(c, owner)) or changed;
         return changed;
     }
@@ -50,18 +56,24 @@ const Owners = struct {
     }
 };
 // Callee-relative lexical roots, never an actual result or selected heap.
-// An absent completion, a nontransparent body, or a cyclic dependency is NOT
-// an empty owner set. Call sites explicitly preserve unresolved in those cases.
+// A result not yet derived is bottom only during private fixed-point work,
+// never an empty owner proof. After that closure, missing result values acquire
+// unresolved and propagate again before any effect permission is validated.
 const AliasSummary = struct {
     normal: Owners = .{},
     language: Owners = .{},
     normal_seen: bool = false,
     language_seen: bool = false,
+    normal_missing: bool = false,
+    language_missing: bool = false,
     available: bool = false,
     transparent: bool = true,
+    lexical_cells: bool = false,
     fn deinit(self: *AliasSummary, allocator: std.mem.Allocator) void { self.normal.deinit(allocator); self.language.deinit(allocator); }
 };
 const AliasLink = struct { from: usize, to: usize };
+const AliasVisit = struct { function: usize, next: usize = 0 };
+const UpperCompletions = struct { language: bool = false };
 const UpperState = struct {
     values: []Owners,
     bindings: std.AutoHashMapUnmanaged(t.BindingRef, Owners) = .empty,
@@ -109,6 +121,10 @@ const UpperGraph = struct {
     collector: *Collector,
     function: t.FunctionRef,
     lexical_cells: bool = false,
+    // Private analysis phase, not an admission/coverage bit. The same typed
+    // transfer computes lexical summaries; only the final pass checks effects.
+    summarizing: bool = false,
+    changed: bool = false,
     fn proveLexicalCells(self: *UpperGraph) Error!bool {
         const c = self.collector.c; const v = self.collector.common(); const function = c.program.functions[@intFromEnum(self.function)];
         var created: std.AutoHashMapUnmanaged(t.BindingRef, struct { cell: t.CellRef, handle: t.RegisterRef }) = .empty; defer created.deinit(c.allocator);
@@ -151,7 +167,9 @@ const UpperGraph = struct {
         return true;
     }
     fn mark(self: *UpperGraph, owners: *const Owners, mode: Access) Error!void {
+        if (self.summarizing) return;
         const collector = self.collector; const c = collector.c;
+        try c.step(); if (!owners.known()) { collector.fixed_upper_origin_pending = true; return; }
         for (owners.items.items) |owner| {
             try c.step(); switch (owner) {
                 .parameter => |index| {
@@ -165,6 +183,7 @@ const UpperGraph = struct {
                 },
                 .global => |id| try collector.global(self.function, id, mode),
                 .capture => |slot| try collector.capture(self.function, slot.environment, slot.slot, mode),
+                .local => {}, // Typed lexical local origin, no external access root.
                 // The fixed contract has no return/throw alias-root mapping.
                 // Dropping this token would turn missing evidence into empty.
                 .unresolved => collector.fixed_upper_origin_pending = true,
@@ -175,8 +194,12 @@ const UpperGraph = struct {
         const collector = self.collector; const c = collector.c; const v = collector.common(); const b = @intFromEnum(id);
         const owner = switch (v.storage.bindings[b].owner) { .param, .local, .receiver => |function| function, else => return error.InvalidShape };
         if (owner != self.function) {
-            const captured = collector.captures[b] orelse { collector.fixed_upper_origin_pending = true; return; };
-            try collector.capture(self.function, captured.environment, captured.slot, if (incoming != null) .write else .read);
+            const captured = collector.captures[b] orelse {
+                if (!self.summarizing) collector.fixed_upper_origin_pending = true;
+                if (incoming == null) _ = try loaded.add(c, .unresolved);
+                return;
+            };
+            if (!self.summarizing) try collector.capture(self.function, captured.environment, captured.slot, if (incoming != null) .write else .read);
             if (incoming == null and try collector.managedType(v.storage.bindings[b].@"type")) _ = try loaded.add(c, .{ .capture = captured });
         } else if (incoming) |value| {
             const destination = try state.bindings.getOrPut(c.allocator, id);
@@ -195,22 +218,28 @@ const UpperGraph = struct {
     }
     fn projectSummary(self: *UpperGraph, source: *const Owners, op: model.instruction.Instruction, state: *const UpperState, offset: usize, into: *Owners) Error!void {
         const c = self.collector.c;
+        // A known-empty summary must survive projection, while bottom may not
+        // become known merely because this call has a normal continuation.
+        try c.step(); into.nonowning = into.nonowning or source.nonowning;
         for (source.items.items) |owner| {
             try c.step(); switch (owner) {
                 .parameter => |index| {
                     try c.require(offset <= op.operands.len and index < op.operands.len - offset);
                     _ = try into.join(c, &state.values[@intFromEnum(op.operands[offset + index])]);
                 },
-                .global => _ = try into.add(c, owner),
+                .global, .local => _ = try into.add(c, owner),
                 // A lexical capture key alone is not a cross-instance env
                 // content projection. This slice does not synthesize one.
                 .capture, .unresolved => _ = try into.add(c, .unresolved),
             }
         }
     }
-    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners) Error!bool {
-        const collector = self.collector; const c = collector.c; const full = try collector.consumeUpper(self.function, target);
-        if (op.data == .eh_invoke and offset != 0) for (full.captures) |captured| {
+    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
+        const collector = self.collector; const c = collector.c;
+        const full = if (self.summarizing) original: {
+            try c.step(); break :original collector.upper(target) orelse return error.InvalidShape;
+        } else try collector.consumeUpper(self.function, target);
+        if (!self.summarizing and op.data == .eh_invoke and offset != 0) for (full.captures) |captured| {
             try c.step();
             // A typed hidden env/layout identifies a lexical slot, not the
             // external aliases in this instance of that slot. No selected
@@ -219,35 +248,40 @@ const UpperGraph = struct {
         };
         try c.require(offset <= op.operands.len);
         try c.require(if (prefix) full.parameters.len <= op.operands.len - offset else full.parameters.len == op.operands.len - offset);
-        for (full.parameters, 0..) |access_mode, i| {
+        if (!self.summarizing) for (full.parameters, 0..) |access_mode, i| {
             try c.step(); const argument = &state.values[@intFromEnum(op.operands[offset + i])];
             if (access_mode.read) try self.mark(argument, .read);
             if (access_mode.write) try self.mark(argument, .write);
             if (access_mode.structural) try self.mark(argument, .structural);
-        }
+        };
         const summary = &collector.aliases[@intFromEnum(target)];
-        if (summary.available and summary.transparent and summary.normal_seen)
-            try self.projectSummary(&summary.normal, op, state, offset, returned)
-        else _ = try returned.add(c, .unresolved);
-        if (full.facets.may_throw) {
-            if (summary.available and summary.transparent and summary.language_seen)
-                try self.projectSummary(&summary.language, op, state, offset, thrown)
-            else _ = try thrown.add(c, .unresolved);
+        const project = summary.transparent and (self.summarizing or summary.available);
+        if (project and (summary.normal_seen or summary.normal_missing)) {
+            try self.projectSummary(&summary.normal, op, state, offset, returned);
+        } else if (!self.summarizing or !summary.transparent) {
+            _ = try returned.add(c, .unresolved);
         }
-        return full.facets.may_throw;
+        if (full.facets.may_throw) {
+            if (project and (summary.language_seen or summary.language_missing)) {
+                try self.projectSummary(&summary.language, op, state, offset, thrown);
+            } else if (!self.summarizing or !summary.transparent) {
+                _ = try thrown.add(c, .unresolved);
+            }
+            completions.language = true;
+        }
     }
-    fn run(self: *UpperGraph) Error!void {
+    fn prepare(self: *UpperGraph) Error!void {
         const collector = self.collector; const c = collector.c; const v = collector.common();
         const function = c.program.functions[@intFromEnum(self.function)]; const abi = v.abis[@intFromEnum(function.abi)];
         const summary = &collector.aliases[@intFromEnum(self.function)];
-        self.lexical_cells = try self.proveLexicalCells();
+        summary.lexical_cells = try self.proveLexicalCells();
         summary.transparent = abi.lexical_environment == null;
         // This is a deliberately finite transparent seam: direct parameter /
-        // global roots, scalar work, copies, phi/route, and DAG calls. The old
+        // global roots, scalar work, copies, phi/route, and recursive calls. The old
         // unresolved treatment of selected-content / env-instance data remains.
         for (function.blocks) |block| for (block.instructions) |op| {
             try c.step(); switch (op.data) {
-                .eh_cell, .eh_load, .eh_store => if (!self.lexical_cells) { summary.transparent = false; },
+                .eh_cell, .eh_load, .eh_store => if (!summary.lexical_cells) { summary.transparent = false; },
                 .environment_alloc, .environment_load, .environment_store,
                 .environment_init, .environment_parent, .domain_field_read, .domain_field_store,
                 .eh_field_initialize, .domain_array_read, .domain_array_store, .domain_array_resize,
@@ -257,6 +291,12 @@ const UpperGraph = struct {
                 else => {},
             }
         };
+    }
+    fn run(self: *UpperGraph) Error!void {
+        const collector = self.collector; const c = collector.c; const v = collector.common();
+        const function = c.program.functions[@intFromEnum(self.function)]; const abi = v.abis[@intFromEnum(function.abi)];
+        const summary = &collector.aliases[@intFromEnum(self.function)];
+        self.lexical_cells = summary.lexical_cells;
         try c.charge(function.blocks.len * 2 + 1);
         const entries = try c.allocator.alloc(?UpperState, function.blocks.len); @memset(entries, null);
         defer { for (entries) |*entry| if (entry.*) |*saved| saved.deinit(c); c.allocator.free(entries); }
@@ -264,7 +304,7 @@ const UpperGraph = struct {
         var pending: std.ArrayListUnmanaged(t.BlockRef) = .empty; defer pending.deinit(c.allocator);
         var initial = try UpperState.init(c, function.registers.len); var owns = true; defer if (owns) initial.deinit(c);
         const hidden: usize = if (abi.lexical_environment != null) 1 else 0;
-        if (hidden != 0) try collector.facet(self.function, .managed_reference);
+        if (!self.summarizing and hidden != 0) try collector.facet(self.function, .managed_reference);
         const count = abi.parameters.len + @as(usize, if (abi.receiver != null) 1 else 0);
         for (0..count) |i| {
             try c.step(); const id = if (abi.receiver != null and i == 0) abi.receiver.? else abi.parameters[i - @as(usize, if (abi.receiver != null) 1 else 0)];
@@ -276,11 +316,11 @@ const UpperGraph = struct {
             if (!binding_value.found_existing) binding_value.value_ptr.* = .{};
             _ = try binding_value.value_ptr.add(c, owner);
             _ = try initial.values[@intFromEnum(function.blocks[0].parameters[hidden + i])].add(c, owner);
-            if (try collector.managedType(v.storage.bindings[@intFromEnum(id)].@"type")) {
+            if (!self.summarizing and try collector.managedType(v.storage.bindings[@intFromEnum(id)].@"type")) {
                 try collector.facet(self.function, .managed_reference);
             }
         }
-        if (abi.result) |result| if (try collector.managedType(result)) try collector.facet(self.function, .managed_reference);
+        if (!self.summarizing) if (abi.result) |result| if (try collector.managedType(result)) try collector.facet(self.function, .managed_reference);
         entries[0] = initial; owns = false; queued[0] = true; try pending.append(c.allocator, @enumFromInt(0));
         var cursor: usize = 0;
         while (cursor < pending.items.len) : (cursor += 1) {
@@ -288,14 +328,14 @@ const UpperGraph = struct {
             var state = try UpperState.clone(c, &entries[b].?); defer state.deinit(c);
             for (function.blocks[b].instructions, 0..) |op, index| {
                 try c.charge(op.operands.len + 1); var result: Owners = .{}; defer result.deinit(c.allocator);
-                if (op.result) |reg| {
+                if (!self.summarizing) if (op.result) |reg| {
                     const saved = function.registers[@intFromEnum(reg)];
                     const logical: ?t.TypeRef = saved.view orelse if (saved.carrier == .@"type") saved.carrier.@"type" else null;
                     if (logical) |id| if (try collector.managedType(id)) try collector.facet(self.function, .managed_reference);
-                }
+                };
                 switch (op.data) {
-                    .global_load => |data| { try collector.global(self.function, data.global, .read); _ = try result.add(c, .{ .global = data.global }); },
-                    .global_store => |data| try collector.global(self.function, data.global, .write),
+                    .global_load => |data| { if (!self.summarizing) try collector.global(self.function, data.global, .read); _ = try result.add(c, .{ .global = data.global }); },
+                    .global_store => |data| if (!self.summarizing) { try collector.global(self.function, data.global, .write); },
                     .eh_cell => |data| {
                         const id = v.exceptions.bindings[@intFromEnum(data.binding)].binding;
                         if (state.bindings.fetchRemove(id)) |removed| { var old = removed.value; old.deinit(c.allocator); }
@@ -324,61 +364,84 @@ const UpperGraph = struct {
                         // callable or is transported through Cells/env slots.
                         _ = try result.add(c, .unresolved);
                     },
-                    .domain_array_length => try self.mark(&state.values[@intFromEnum(op.operands[0])], .read),
+                    .domain_array_length => { try self.mark(&state.values[@intFromEnum(op.operands[0])], .read); result.nonowning = true; },
                     .domain_field_store => try self.mark(&state.values[@intFromEnum(op.operands[0])], .write),
                     .domain_array_store, .domain_array_resize => { const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .write); try self.mark(receiver, .structural); },
                     .domain_view, .domain_refine, .domain_copy, .domain_read_span, .eh_assertion, .eh_presence_widen => try result.replace(c, &state.values[@intFromEnum(op.operands[0])]),
-                    .eh_pack => { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); try collector.facet(self.function, .eh_control); },
-                    .eh_carrier => |view| { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (view == null) try collector.facet(self.function, .eh_control); },
-                    .function_make => if (op.operands.len != 0) {
-                        try result.replace(c, &state.values[@intFromEnum(op.operands[0])]);
-                        _ = try result.add(c, .unresolved);
+                    .eh_pack => { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (!self.summarizing) try collector.facet(self.function, .eh_control); },
+                    .eh_carrier => |view| { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (!self.summarizing and view == null) try collector.facet(self.function, .eh_control); },
+                    .function_make => {
+                        if (op.operands.len == 0) result.nonowning = true else {
+                            try result.replace(c, &state.values[@intFromEnum(op.operands[0])]);
+                            _ = try result.add(c, .unresolved);
+                        }
                     },
-                    .common_typed_array_create, .environment_alloc, .string_concat => { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); },
-                    .eh_construct => |data| if (v.types[@intFromEnum(data.owner)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); },
-                    .domain_literal => |data| if (v.types[@intFromEnum(data.actual_type)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); },
-                    .eh_enter => try collector.facet(self.function, .eh_control),
+                    .common_typed_array_create, .environment_alloc, .string_concat => {
+                        _ = try result.add(c, .local);
+                        if (!self.summarizing) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
+                    },
+                    .eh_construct => |data| {
+                        _ = try result.add(c, .local);
+                        if (!self.summarizing and v.types[@intFromEnum(data.owner)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
+                    },
+                    .domain_literal => |data| {
+                        switch (v.types[@intFromEnum(data.actual_type)].kind) {
+                            .scalar, .@"null", .@"undefined" => result.nonowning = true,
+                            .reference, .value, .string, .array, .readSpan => _ = try result.add(c, .local),
+                            else => _ = try result.add(c, .unresolved),
+                        }
+                        if (!self.summarizing and v.types[@intFromEnum(data.actual_type)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
+                    },
+                    .eh_enter => if (!self.summarizing) { try collector.facet(self.function, .eh_control); },
                     .authorized_host => {
-                        try collector.hostEffects(self.function);
+                        if (!self.summarizing) try collector.hostEffects(self.function);
                         // A verified scalar result carries no external owner.
                         // Missing material remains pending, never an empty root.
-                        if (collector.host_material == null) _ = try result.add(c, .unresolved);
+                        if (collector.host_material == null) _ = try result.add(c, .unresolved) else result.nonowning = true;
                     },
+                    .string_constant => _ = try result.add(c, .local),
+                    .const_i32, .const_integer, .const_float, .const_bool, .add, .sub, .mul, .div, .rem,
+                    .shl, .shr, .ushr, .@"and", .@"or", .xor, .neg, .not, .pos, .bool_not, .eq, .ne,
+                    .lt, .le, .gt, .ge, .eh_equal => result.nonowning = true,
                     else => {},
                 }
                 if (op.result) |reg| try state.values[@intFromEnum(reg)].replace(c, &result);
                 switch (op.data) {
                     .eh_invoke, .eh_invoke_indirect, .common_method_invoke => {
-                        var throwing = false; var found = false;
+                        var completions: UpperCompletions = .{}; var found = false;
                         var returned: Owners = .{}; defer returned.deinit(c.allocator);
                         var thrown: Owners = .{}; defer thrown.deinit(c.allocator);
                         switch (op.data) {
-                            .eh_invoke => |call| { const target_abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(call.callee)].abi)]; throwing = try self.consume(call.callee, op, &state, if (target_abi.lexical_environment != null) 1 else 0, false, &returned, &thrown); found = true; },
-                            .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| { try c.step(); const target = arm.target orelse return error.InvalidShape; throwing = (try self.consume(target, op, &state, 0, true, &returned, &thrown)) or throwing; found = true; },
+                            .eh_invoke => |call| { const target_abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(call.callee)].abi)]; try self.consume(call.callee, op, &state, if (target_abi.lexical_environment != null) 1 else 0, false, &returned, &thrown, &completions); found = true; },
+                            .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| { try c.step(); const target = arm.target orelse return error.InvalidShape; try self.consume(target, op, &state, 0, true, &returned, &thrown, &completions); found = true; },
                             .eh_invoke_indirect => {
                                 // A lexical alias identifies whose value this
                                 // is, not that callable's captured env contents.
                                 // Pure, env-free function_make has no roots;
                                 // external/loaded/returned aliases grant no
                                 // cross-closure instance proof here.
-                                for (state.values[@intFromEnum(op.operands[0])].items.items) |_| {
+                                if (!self.summarizing) for (state.values[@intFromEnum(op.operands[0])].items.items) |_| {
                                     try c.step(); collector.fixed_upper_origin_pending = true;
-                                }
+                                };
                                 for (v.closures.calls) |row| {
                                     try c.step(); if (row.function != self.function or @intFromEnum(row.block) != b or row.instruction != index) continue;
-                                    for (row.targets) |target| { try c.step(); throwing = (try self.consume(target, op, &state, 1, false, &returned, &thrown)) or throwing; found = true; }
+                                    for (row.targets) |target| { try c.step(); try self.consume(target, op, &state, 1, false, &returned, &thrown, &completions); found = true; }
                                 }
                             },
                             else => unreachable,
                         }
                         if (!found) {
-                            collector.fixed_upper_origin_pending = true; throwing = true;
+                            if (!self.summarizing) collector.fixed_upper_origin_pending = true;
+                            completions = .{ .language = true };
                             _ = try returned.add(c, .unresolved); _ = try thrown.add(c, .unresolved);
                         }
                         const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, .common_method_invoke => |call| call.normal, else => unreachable };
                         const exceptional = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, .common_method_invoke => |call| call.exceptional, else => unreachable };
+                        // GraphEffects normal control is unconditional. Only
+                        // the RESULT may be bottom; an ignored result cannot
+                        // gate independently computed caller data/effects.
                         try self.edge(entries, queued, &pending, normal, &state, if (function.blocks[@intFromEnum(normal)].parameters.len == 0) &.{} else &.{returned});
-                        if (throwing) try self.edge(entries, queued, &pending, exceptional, &state, &.{thrown});
+                        if (completions.language) try self.edge(entries, queued, &pending, exceptional, &state, &.{thrown});
                     },
                     .@"br", .eh_route => {
                         const target = switch (op.data) { .@"br" => |branch| branch.destination, .eh_route => |route| route.successor, else => unreachable };
@@ -392,16 +455,24 @@ const UpperGraph = struct {
                         try self.edge(entries, queued, &pending, branch.true_destination, &state, arguments[0..branch.true_count]);
                         try self.edge(entries, queued, &pending, branch.false_destination, &state, arguments[branch.true_count..]);
                     },
-                    .domain_numeric_use => |guard| try self.edge(entries, queued, &pending, guard.normal_successor, &state, &.{Owners{}}),
+                    .domain_numeric_use => |guard| try self.edge(entries, queued, &pending, guard.normal_successor, &state, &.{Owners{ .nonowning = true }}),
                     .eh_raise => {
-                        try collector.facet(self.function, .may_throw); summary.language_seen = true;
-                        _ = try summary.language.join(c, &state.values[@intFromEnum(op.operands[0])]);
+                        if (self.summarizing) {
+                            const value = &state.values[@intFromEnum(op.operands[0])];
+                            if (value.known() and !summary.language_seen) { summary.language_seen = true; self.changed = true; }
+                            self.changed = (try summary.language.join(c, value)) or self.changed;
+                        } else try collector.facet(self.function, .may_throw);
                     },
                     .@"return" => {
-                        summary.normal_seen = true;
+                        if (self.summarizing) {
+                            const known = op.operands.len == 0 or state.values[@intFromEnum(op.operands[0])].known();
+                            if (known and !summary.normal_seen) { summary.normal_seen = true; self.changed = true; }
+                            if (op.operands.len == 0 and !summary.normal.nonowning) { summary.normal.nonowning = true; self.changed = true; }
+                        }
                         if (op.operands.len != 0) {
-                            if (abi.result) |id| if (try collector.managedType(id)) try collector.facet(self.function, .escape);
-                            _ = try summary.normal.join(c, &state.values[@intFromEnum(op.operands[0])]);
+                            if (self.summarizing) {
+                                self.changed = (try summary.normal.join(c, &state.values[@intFromEnum(op.operands[0])])) or self.changed;
+                            } else if (abi.result) |id| if (try collector.managedType(id)) try collector.facet(self.function, .escape);
                         }
                     },
                     else => {},
@@ -770,52 +841,108 @@ pub const Collector = struct {
     pub fn observer(self: *Collector) facts.Observer {
         return .{ .client = self, .before = onBefore, .after = onAfter, .completed = onCompleted };
     }
-    fn aliasDependency(self: *Collector, from: usize, target: t.FunctionRef, links: *std.AutoHashMapUnmanaged(AliasLink, void), remaining: []usize, callers: []std.ArrayListUnmanaged(usize)) Error!void {
+    fn aliasDependency(self: *Collector, from: usize, target: t.FunctionRef, links: *std.AutoHashMapUnmanaged(AliasLink, void), callers: []std.ArrayListUnmanaged(usize), callees: []std.ArrayListUnmanaged(usize)) Error!void {
         const c = self.c; const to = @intFromEnum(target); try c.step();
         const edge = try links.getOrPut(c.allocator, .{ .from = from, .to = to });
-        if (!edge.found_existing) { try callers[to].append(c.allocator, from); remaining[from] += 1; }
+        if (!edge.found_existing) { try callers[to].append(c.allocator, from); try callees[from].append(c.allocator, to); }
+    }
+    fn solveAliases(self: *Collector, callers: []const std.ArrayListUnmanaged(usize), queued: []bool, pending: *std.ArrayListUnmanaged(usize)) Error!void {
+        const c = self.c; var cursor: usize = 0;
+        while (cursor < pending.items.len) : (cursor += 1) {
+            try c.step(); const function = pending.items[cursor]; queued[function] = false;
+            var graph = UpperGraph{ .collector = self, .function = @enumFromInt(function), .summarizing = true };
+            try graph.run();
+            if (!graph.changed) continue;
+            for (callers[function].items) |caller| {
+                try c.step(); if (queued[caller]) continue;
+                try pending.append(c.allocator, caller); queued[caller] = true;
+            }
+        }
     }
     fn upperFlows(self: *Collector) Error!void {
         const c = self.c; const v = self.common(); const count = c.program.functions.len;
-        try c.charge(count * 2 + 1);
-        const remaining = try c.allocator.alloc(usize, count); defer c.allocator.free(remaining); @memset(remaining, 0);
+        try c.charge(count * 4 + 1);
         const callers = try c.allocator.alloc(std.ArrayListUnmanaged(usize), count); @memset(callers, .empty);
         defer { for (callers) |*rows| rows.deinit(c.allocator); c.allocator.free(callers); }
+        const callees = try c.allocator.alloc(std.ArrayListUnmanaged(usize), count); @memset(callees, .empty);
+        defer { for (callees) |*rows| rows.deinit(c.allocator); c.allocator.free(callees); }
+        const entered = try c.allocator.alloc(bool, count); defer c.allocator.free(entered); @memset(entered, false);
+        const queued = try c.allocator.alloc(bool, count); defer c.allocator.free(queued); @memset(queued, false);
         var links: std.AutoHashMapUnmanaged(AliasLink, void) = .empty; defer links.deinit(c.allocator);
-        // Dependency order is derived from ALL typed call instructions and the
-        // complete finite permission tables, never actual selected targets or
-        // a caller-supplied order. Extra/dead cyclic edges conservatively deny
-        // transparent summaries; they cannot grant a narrower implementation.
+        // Both dependency directions come from ALL typed call instructions and
+        // complete permitted target tables, never claimed dependency rows or
+        // actual selected arms. They schedule only lexical OWNER equations.
         for (c.program.functions, 0..) |function, from| for (function.blocks, 0..) |block, b| for (block.instructions, 0..) |op, i| {
             try c.step(); switch (op.data) {
-                .eh_invoke => |call| try self.aliasDependency(from, call.callee, &links, remaining, callers),
+                .eh_invoke => |call| try self.aliasDependency(from, call.callee, &links, callers, callees),
                 .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| {
-                    try c.step(); try self.aliasDependency(from, arm.target orelse return error.InvalidShape, &links, remaining, callers);
+                    try c.step(); try self.aliasDependency(from, arm.target orelse return error.InvalidShape, &links, callers, callees);
                 },
                 .eh_invoke_indirect => for (v.closures.calls) |row| {
                     try c.step(); if (@intFromEnum(row.function) != from or @intFromEnum(row.block) != b or row.instruction != i) continue;
-                    for (row.targets) |target| { try c.step(); try self.aliasDependency(from, target, &links, remaining, callers); }
+                    for (row.targets) |target| { try c.step(); try self.aliasDependency(from, target, &links, callers, callees); }
                 },
                 else => {},
             }
         };
+        // Classify every body before using any summary. Local structural
+        // transparency is immutable; SCC membership grants no such property.
+        for (0..count) |function| {
+            try c.step(); var graph = UpperGraph{ .collector = self, .function = @enumFromInt(function) }; try graph.prepare();
+        }
         var pending: std.ArrayListUnmanaged(usize) = .empty; defer pending.deinit(c.allocator);
-        for (remaining, 0..) |degree, function| { try c.step(); if (degree == 0) try pending.append(c.allocator, function); }
-        var cursor: usize = 0;
-        while (cursor < pending.items.len) : (cursor += 1) {
-            try c.step(); const function = pending.items[cursor];
-            var graph = UpperGraph{ .collector = self, .function = @enumFromInt(function) }; try graph.run();
-            self.aliases[function].available = true;
-            for (callers[function].items) |caller| {
-                try c.step(); remaining[caller] -= 1;
-                if (remaining[caller] == 0) try pending.append(c.allocator, caller);
+        var stack: std.ArrayListUnmanaged(AliasVisit) = .empty; defer stack.deinit(c.allocator);
+        // Iterative postorder keeps acyclic callees first without host-stack
+        // recursion. Within an SCC, later growth requeues all dependent callers.
+        for (0..count) |function| {
+            try c.step(); if (entered[function]) continue;
+            try stack.append(c.allocator, .{ .function = function }); entered[function] = true;
+            while (stack.items.len != 0) {
+                try c.step(); const last = stack.items.len - 1; const at = stack.items[last].function;
+                if (stack.items[last].next < callees[at].items.len) {
+                    const target = callees[at].items[stack.items[last].next]; stack.items[last].next += 1;
+                    if (!entered[target]) { try stack.append(c.allocator, .{ .function = target }); entered[target] = true; }
+                } else {
+                    try pending.append(c.allocator, at); queued[at] = true; stack.items.len -= 1;
+                }
             }
         }
-        // SCCs and functions depending on them still receive the full upper
-        // effects walk. Their alias outputs stay unavailable; no recursion or
-        // iterative alias guess can turn an in-progress bottom into a proof.
-        for (remaining, 0..) |degree, function| {
-            try c.step(); if (degree == 0) continue;
+        // Phase 1 is the least RESULT closure of parameter/global transfer and
+        // typed return/raise nodes. Normal control is always open; language
+        // control follows upper.mayThrow. Bottom DATA is not a known-empty
+        // value, but an ignored bottom does not taint independently computed p.
+        try self.solveAliases(callers, queued, &pending);
+        pending.clearRetainingCapacity();
+        // A result still bottom after closure means UNKNOWN, not an empty owner
+        // set. Seed only that missing RESULT and saturate once more. All upper
+        // control paths already participated: g():void{throw0}; f(p){g();return
+        // p} therefore derives f.normal=p before any fallback is installed.
+        // A catch returning q is likewise independent of an unknown payload.
+        for (self.aliases, 0..) |*summary, function| {
+            try c.step(); var changed = false;
+            if (!summary.normal_seen) {
+                summary.normal_missing = true; changed = (try summary.normal.add(c, .unresolved)) or changed;
+            }
+            if (self.upper(@enumFromInt(function))) |bound| {
+                if (bound.facets.may_throw and !summary.language_seen) {
+                    summary.language_missing = true; changed = (try summary.language.add(c, .unresolved)) or changed;
+                }
+            }
+            if (!changed) continue;
+            for (callers[function].items) |caller| {
+                try c.step(); if (queued[caller]) continue;
+                try pending.append(c.allocator, caller); queued[caller] = true;
+            }
+        }
+        try self.solveAliases(callers, queued, &pending);
+        // Only a closed summary is consumed by validation. This flag is wholly
+        // private availability, not an exported effect/admission certificate.
+        for (self.aliases) |*summary| { try c.step(); summary.available = true; }
+        // Phase 3 covers complete-upper normal/language CFG effects. Trial
+        // iterations neither set sticky pending flags nor check a permission
+        // using an interim alias. Final observations retain all old barriers.
+        for (0..count) |function| {
+            try c.step();
             var graph = UpperGraph{ .collector = self, .function = @enumFromInt(function) }; try graph.run();
         }
     }
