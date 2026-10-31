@@ -1,0 +1,95 @@
+{
+  "status": "Handwritten mathematical DTO premises, NOT RUN; not Frontend, Scope admission, Actual instances or execution authority",
+  "sharedGraphFamily": "tsfg.return-origin-graph-candidate",
+  "sharedGraphVersion": 4,
+  "directoryPremise": {
+    "types": {"B":{"kind":"reference"},"Fn":{"kind":"function"}},
+    "environments": {
+      "E":{"parent":null,"slots":[{"key":"S","type":"B","writable":false}]},
+      "H":{"parent":null,"slots":[{"key":"C","type":"Fn","writable":false}]}
+    },
+    "fixedReadFunction":{"kind":"source","parameterTypes":[],"returnType":"B","lexicalEnvironment":"E","activationEnvironment":null},
+    "physicalPremise": "B is a reference Source view; no inline Value fields or allocated Actual/GC instance is supplied"
+  },
+  "fixedRead": {
+    "protocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":"E","activationEnvironment":null},
+    "upper":{"parameters":[],"captures":[{"slot":"S","read":true,"write":false,"structural":false}],"globals":{"reads":[],"writes":[]},"hostResources":{"reads":[],"writes":[]},"facets":["managedReference"]},
+    "graph":{
+      "format":{"family":"tsfg.return-origin-graph-candidate","version":4},
+      "nodes":[{"kind":"environmentInput","type":null,"layout":"E"},{"kind":"capture","type":"B","id":"S","layout":"E","environment":[0],"heap":0,"control":0}],
+      "heaps":[{"kind":"entry"}],"controls":[{"kind":"entry"}],"calls":[],"normal":[1],"language":[],"exits":{"normal":[{"heap":0,"control":0}],"language":[]},"accesses":[]
+    }
+  },
+  "cases":[
+    {
+      "name":"ordinary-parameter-owner",
+      "rootSignature":{"parameterTypes":["B"],"returnType":"B"},
+      "rootProtocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":null,"activationEnvironment":null},
+      "graph":{"format":{"family":"tsfg.return-origin-graph-candidate","version":4},"nodes":[{"kind":"parameter","type":"B","index":0}],"heaps":[{"kind":"entry"}],"controls":[{"kind":"entry"}],"calls":[],"normal":[0],"language":[],"exits":{"normal":[{"heap":0,"control":0}],"language":[]},"accesses":[]},
+      "expected":{"read":"Typed","solve":"Solved","normalOwners":["p:0"],"normal":true,"language":false,"readOwners":[],"writeOwners":[]}
+    },
+    {
+      "name":"may-target-is-not-must-initialization",
+      "rootSignature":{"parameterTypes":["B"],"returnType":"Fn"},
+      "rootProtocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":null,"activationEnvironment":"E"},
+      "graph":{
+        "format":{"family":"tsfg.return-origin-graph-candidate","version":4},
+        "nodes":[{"kind":"parameter","type":"B","index":0},{"kind":"environmentCreate","type":null,"layout":"E","parent":null,"site":"A","control":0},{"kind":"code","type":"Fn","functionId":"read","environment":[1],"control":0},{"kind":"environmentCreate","type":null,"layout":"E","parent":null,"site":"B","control":0}],
+        "heaps":[{"kind":"entry"},{"kind":"store","previous":0,"bases":[1,3],"selector":"capture:S","view":"env:E","values":[0],"initialize":true,"control":0}],"controls":[{"kind":"entry"}],"calls":[],"normal":[2],"language":[],"exits":{"normal":[{"heap":1,"control":0}],"language":[]},"accesses":[]
+      },
+      "expected":{"read":"Typed","solve":"Open","reason":"A may remain uninitialized when the store selects B; MAY payload union cannot prove MUST"}
+    },
+    {
+      "name":"prior-must-retains-later-may-payload",
+      "rootSignature":{"parameterTypes":["B","B"],"returnType":"B"},
+      "rootProtocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":null,"activationEnvironment":"E"},
+      "graph":{
+        "format":{"family":"tsfg.return-origin-graph-candidate","version":4},
+        "nodes":[{"kind":"parameter","type":"B","index":0},{"kind":"parameter","type":"B","index":1},{"kind":"environmentCreate","type":null,"layout":"E","parent":null,"site":"A","control":0},{"kind":"environmentCreate","type":null,"layout":"E","parent":null,"site":"B","control":0},{"kind":"code","type":"Fn","functionId":"read","environment":[2],"control":0},{"kind":"environmentComponent","type":null,"layout":"E","functionId":"read","callee":[4],"control":0},{"kind":"call","type":"B","call":0,"completion":"normal"}],
+        "heaps":[{"kind":"entry"},{"kind":"store","previous":0,"bases":[2],"selector":"capture:S","view":"env:E","values":[0],"initialize":true,"control":0},{"kind":"store","previous":1,"bases":[2,3],"selector":"capture:S","view":"env:E","values":[1],"initialize":false,"control":0},{"kind":"call","call":0,"completion":"normal"}],
+        "controls":[{"kind":"entry"},{"kind":"call","call":0,"completion":"normal"}],"calls":[{"functionId":"read","arguments":[],"environment":[5],"callee":[4],"heap":2,"control":0,"site":"invoke-A"}],"normal":[6],"language":[],"exits":{"normal":[{"heap":3,"control":1}],"language":[]},"accesses":[{"values":[6],"flag":"write","control":1}]
+      },
+      "expected":{"read":"Typed","solve":"Solved","normalOwners":["p:0","p:1"],"readOwners":["p:0","p:1"],"writeOwners":["p:0","p:1"],"normal":true,"language":false}
+    },
+    {
+      "name":"formal-code-conditional-component",
+      "rootSignature":{"parameterTypes":["Fn"],"returnType":"B"},
+      "rootProtocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":null,"activationEnvironment":null},
+      "graph":{
+        "format":{"family":"tsfg.return-origin-graph-candidate","version":4},
+        "nodes":[{"kind":"parameter","type":"Fn","index":0},{"kind":"environmentComponent","type":null,"layout":"E","functionId":"read","callee":[0],"control":0},{"kind":"call","type":"B","call":0,"completion":"normal"}],
+        "heaps":[{"kind":"entry"},{"kind":"call","call":0,"completion":"normal"}],"controls":[{"kind":"entry"},{"kind":"call","call":0,"completion":"normal"}],"calls":[{"functionId":"read","arguments":[],"environment":[1],"callee":[0],"heap":0,"control":0,"site":"formal"}],"normal":[2],"language":[],"exits":{"normal":[{"heap":1,"control":1}],"language":[]},"accesses":[]
+      },
+      "expected":{"read":"Typed","solve":"Solved","normalOwners":["p:0"],"readOwners":["p:0"],"allocation":false,"note":"No environmentCreate and no Actual/GC instance are inferred"}
+    },
+    {
+      "name":"captured-readonly-code-keeps-own-owner",
+      "rootSignature":{"parameterTypes":[],"returnType":"B"},
+      "rootProtocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":"H","activationEnvironment":null},
+      "graph":{
+        "format":{"family":"tsfg.return-origin-graph-candidate","version":4},
+        "nodes":[{"kind":"environmentInput","type":null,"layout":"H"},{"kind":"capture","type":"Fn","id":"C","layout":"H","environment":[0],"heap":0,"control":0},{"kind":"environmentComponent","type":null,"layout":"E","functionId":"read","callee":[1],"control":0},{"kind":"call","type":"B","call":0,"completion":"normal"}],
+        "heaps":[{"kind":"entry"},{"kind":"call","call":0,"completion":"normal"}],"controls":[{"kind":"entry"},{"kind":"call","call":0,"completion":"normal"}],"calls":[{"functionId":"read","arguments":[],"environment":[2],"callee":[1],"heap":0,"control":0,"site":"captured"}],"normal":[3],"language":[],"exits":{"normal":[{"heap":1,"control":1}],"language":[]},"accesses":[]
+      },
+      "expected":{"read":"Typed","solve":"Solved","normalOwners":["c:C"],"readOwners":["c:C"],"forbiddenOwner":"c:S","note":"Readonly slot is not frozen payload; component remains conditional on captured Code C"}
+    },
+    {
+      "name":"component-must-bind-this-callee",
+      "rootSignature":{"parameterTypes":["Fn","Fn"],"returnType":"B"},
+      "rootProtocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":null,"activationEnvironment":null},
+      "graph":{
+        "format":{"family":"tsfg.return-origin-graph-candidate","version":4},
+        "nodes":[{"kind":"parameter","type":"Fn","index":0},{"kind":"parameter","type":"Fn","index":1},{"kind":"environmentComponent","type":null,"layout":"E","functionId":"read","callee":[1],"control":0},{"kind":"call","type":"B","call":0,"completion":"normal"}],
+        "heaps":[{"kind":"entry"},{"kind":"call","call":0,"completion":"normal"}],"controls":[{"kind":"entry"},{"kind":"call","call":0,"completion":"normal"}],"calls":[{"functionId":"read","arguments":[],"environment":[2],"callee":[0],"heap":0,"control":0,"site":"wrong-callee"}],"normal":[3],"language":[],"exits":{"normal":[{"heap":1,"control":1}],"language":[]},"accesses":[]
+      },
+      "expected":{"read":"Rejected","reason":"Component from p1 cannot authorize the p0 Code call"}
+    },
+    {
+      "name":"draft3-not-restamped",
+      "rootSignature":{"parameterTypes":["B"],"returnType":"B"},
+      "rootProtocol":{"kind":"ordinary","complete":true,"lexicalEnvironment":null,"activationEnvironment":null},
+      "graph":{"format":{"family":"tsfg.return-origin-graph-candidate","version":3},"nodes":[{"kind":"parameter","type":"B","index":0}],"heaps":[{"kind":"entry"}],"controls":[{"kind":"entry"}],"calls":[],"normal":[0],"language":[],"exits":{"normal":[{"heap":0,"control":0}],"language":[]},"accesses":[]},
+      "expected":{"read":"Rejected","reason":"Only Graph4 is admitted; no dual-version reader"}
+    }
+  ]
+}

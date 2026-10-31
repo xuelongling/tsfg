@@ -17,8 +17,8 @@
 #include <utility>
 #include <vector>
 
-// Ordinary v3 data equations only. No Source/Runtime/Actual/Borrow adapter.
-namespace CommonReturnOriginV3 {
+// Draft4 Code/Env data equations only. No Source/Runtime/Actual/Borrow adapter.
+namespace CommonReturnOriginV4 {
 using Ref=std::size_t;
 using Charge=std::function<bool(std::size_t)>;
 struct SymbolLess {
@@ -35,21 +35,28 @@ struct FunctionRow {
   // Ordered LOGICAL vector, including an ordinary method receiver.
   std::vector<std::string> parameterTypes;
   std::string returnType;
-  bool hasLexicalEnvironment=false,hasActivationEnvironment=false;
+  bool environmentMetadataComplete=false;
+  std::optional<std::string> lexicalEnvironment,activationEnvironment;
 };
+struct EnvironmentSlot {std::string key,type;bool writable=false;};
+struct EnvironmentRow {std::optional<std::string> parent;std::vector<EnvironmentSlot> slots;};
+using Environments=Symbols<EnvironmentRow>;
 struct Directory {
   std::string functionId;
   Symbols<TypeRow> types;
   Symbols<FunctionRow> functions;
-  Symbols<std::string> globals,captures;
+  Symbols<std::string> globals;
+  Environments environments;
   SymbolSet fields;
 };
 enum class Completion {Normal,Language};
-enum class ValueKind {Parameter,Global,Capture,Local,Nonowning,Unknown,Join,Gate,Projection,Copy,Call};
+enum class ValueKind {Parameter,Global,Capture,EnvironmentInput,EnvironmentCreate,EnvironmentParent,EnvironmentComponent,Code,Local,Nonowning,Unknown,Join,Gate,Projection,Copy,Call};
 struct Value {
   ValueKind kind=ValueKind::Unknown;
   std::optional<std::string> type;
-  std::string id,selector,view,site;
+  std::string id,selector,view,site,layout,functionId;
+  std::optional<std::vector<Ref>> environment,parent;
+  std::vector<Ref> callee;
   Ref index=0,heap=0,control=0,call=0;
   std::vector<Ref> inputs,bases;
   Completion completion=Completion::Normal;
@@ -65,12 +72,13 @@ struct Heap {
 };
 enum class ControlKind {Entry,Join,Call};
 struct Control {ControlKind kind=ControlKind::Entry;std::vector<Ref> inputs;Ref call=0;Completion completion=Completion::Normal;};
-struct Call {std::string functionId,site;std::vector<std::vector<Ref>> arguments;Ref heap=0,control=0;};
+struct Call {std::string functionId,site;std::vector<std::vector<Ref>> arguments;std::optional<std::vector<Ref>> environment,callee;Ref heap=0,control=0;};
 struct State {Ref heap=0,control=0;};
 struct Exits {std::vector<State> normal,language;};
 enum class AccessFlag {Read,Write,Structural};
 struct Access {std::vector<Ref> values;AccessFlag flag=AccessFlag::Read;Ref control=0;};
 struct Graph {
+  unsigned version=4; // One draft family only; never a wire/Runtime version.
   std::vector<Value> nodes;
   std::vector<Heap> heaps;
   std::vector<Control> controls;
@@ -148,17 +156,30 @@ class Reader {
   bool ownedType(const std::string &id){const auto *row=find(directory_.types,id);return m_.good&&(row||reject("unowned-signature-type"));}
   bool nullableType(const Json *raw,std::optional<std::string> &out){if(!raw)return reject("missing-type");if(raw->getAsNull()){out.reset();return m_.spend();}std::string type;if(!ownedType(raw,type))return false;out=std::move(type);return true;}
   bool protocol(const FunctionRow &fn){if(!m_.spend())return false;if(fn.kind==FunctionKind::ConstructionBody)return open("construction-frame-open");
-    if(fn.hasLexicalEnvironment||fn.hasActivationEnvironment)return open("code-environment-open");if(fn.kind!=FunctionKind::Source&&fn.kind!=FunctionKind::Method)return open("function-protocol-open");return true;}
+    if(!fn.environmentMetadataComplete)return open("code-environment-metadata-open");if(fn.kind!=FunctionKind::Source&&fn.kind!=FunctionKind::Method)return open("function-protocol-open");return true;}
   bool signature(const FunctionRow &fn){if(!m_.spend(fn.parameterTypes.size()+1))return false;for(const auto &type:fn.parameterTypes)if(!ownedType(type))return false;return ownedType(fn.returnType);}
   bool channel(const Json *raw,Completion &out){llvm::StringRef name;if(!symbol(raw,name))return false;if(m_.equal(name,"normal")){out=Completion::Normal;return true;}if(!m_.good)return false;if(m_.equal(name,"language")){out=Completion::Language;return true;}return m_.good&&reject("completion");}
   bool selector(const Json *raw,std::string &out){llvm::StringRef name;if(!symbol(raw,name))return false;if(m_.equal(name,"element"))return m_.copy(out,name);if(!m_.good)return false;
     if(!m_.text(name.size())||!m_.equal(name.take_front(6),"field:"))return m_.good&&reject("field-selector");const auto id=name.drop_front(6);
     if(!m_.lookup(directory_.fields.size(),id.size()))return false;if(directory_.fields.find(view(id))==directory_.fields.end())return reject("unowned-field");return m_.copy(out,name);}
+  bool nullableRefs(const Json *raw,std::optional<std::vector<Ref>> &out){
+    if(!raw)return reject("missing-reference-field");if(raw->getAsNull()){out.reset();return m_.spend();}
+    std::vector<Ref> values;if(!refs(raw,nodes_,values))return false;out=std::move(values);return true;
+  }
+  bool ownedLayout(const Json *raw,std::string &out){llvm::StringRef id;if(!symbol(raw,id))return false;
+    const auto *row=find(directory_.environments,id);if(!m_.good)return false;if(!row)return reject("unowned-environment-layout");return m_.copy(out,id);
+  }
+  const EnvironmentRow *layout(const std::string &id){return find(directory_.environments,id);}
+  const EnvironmentSlot *slot(const std::string &layoutId,llvm::StringRef key){const auto *row=layout(layoutId);if(!m_.good)return nullptr;
+    for(const auto &entry:row->slots){if(!m_.spend())return nullptr;if(m_.equal(entry.key,key))return &entry;if(!m_.good)return nullptr;}
+    reject("unowned-capture-slot");return nullptr;
+  }
   bool discriminator(const Json &raw,const Object *&row,llvm::StringRef &kind){row=raw.getAsObject();if(!row)return reject("record-required");return symbol(row->get("kind"),kind);}
-  bool readCall(const Json &raw){const Object *row;if(!object(raw,row,{"functionId","arguments","heap","control","site"}))return false;llvm::StringRef id;if(!symbol(row->get("functionId"),id))return false;
+  bool readCall(const Json &raw){const Object *row;if(!object(raw,row,{"functionId","arguments","environment","callee","heap","control","site"}))return false;llvm::StringRef id;if(!symbol(row->get("functionId"),id))return false;
     const auto *fn=find(directory_.functions,id);if(!m_.good)return false;if(!fn)return reject("unowned-function");if(!protocol(*fn)||!signature(*fn))return false;
     const Array *arguments;if(!array(row->get("arguments"),arguments))return false;if(arguments->size()!=fn->parameterTypes.size())return reject("logical-call-arity");
-    Call call;if(!m_.copy(call.functionId,id)||!text(row->get("site"),call.site)||!ref(row->get("heap"),heaps_,call.heap)||!ref(row->get("control"),controls_,call.control)||!reserve(call.arguments,arguments->size(),m_))return false;
+    Call call;if(!m_.copy(call.functionId,id)||!text(row->get("site"),call.site)||!ref(row->get("heap"),heaps_,call.heap)||!ref(row->get("control"),controls_,call.control)||!reserve(call.arguments,arguments->size(),m_)||!nullableRefs(row->get("environment"),call.environment)||!nullableRefs(row->get("callee"),call.callee))return false;
+    if(bool(fn->lexicalEnvironment)!=bool(call.environment))return reject("call-environment-protocol");
     for(const auto &argument:*arguments){std::vector<Ref> values;if(!refs(&argument,nodes_,values)||!push(call.arguments,std::move(values),m_))return false;}
     return push(result.graph.calls,std::move(call),m_)&&push(callees_,fn,m_);
   }
@@ -166,10 +187,28 @@ class Reader {
     if(m_.equal(kind,"parameter")){
       value.kind=ValueKind::Parameter;if(!object(raw,row,{"kind","type","index"})||!ref(row->get("index"),current_->parameterTypes.size(),value.index)||!ownedType(row->get("type"),type))return false;
       if(!m_.equal(type,current_->parameterTypes[value.index]))return m_.good&&reject("parameter-source-view");value.type=std::move(type);
-    }else if(m_.equal(kind,"global")||m_.equal(kind,"capture")){
-      value.kind=m_.equal(kind,"global")?ValueKind::Global:ValueKind::Capture;if(!object(raw,row,{"kind","type","id"})||!ownedType(row->get("type"),type))return false;llvm::StringRef id;if(!symbol(row->get("id"),id))return false;
-      const auto *declared=find(m_.equal(kind,"global")?directory_.globals:directory_.captures,id);if(!m_.good)return false;if(!declared)return reject("unowned-global-capture");if(!m_.equal(type,*declared))return m_.good&&reject("root-source-view");
+    }else if(m_.equal(kind,"global")){
+      value.kind=ValueKind::Global;if(!object(raw,row,{"kind","type","id"})||!ownedType(row->get("type"),type))return false;llvm::StringRef id;if(!symbol(row->get("id"),id))return false;
+      const auto *declared=find(directory_.globals,id);if(!m_.good)return false;if(!declared)return reject("unowned-global");if(!m_.equal(type,*declared))return m_.good&&reject("root-source-view");
       if(!m_.copy(value.id,id))return false;value.type=std::move(type);
+    }else if(m_.equal(kind,"capture")){
+      value.kind=ValueKind::Capture;if(!object(raw,row,{"kind","type","id","layout","environment","heap","control"})||!ownedType(row->get("type"),type)||!text(row->get("id"),value.id)||!ownedLayout(row->get("layout"),value.layout))return false;
+      const auto *entry=slot(value.layout,value.id);if(!entry||!m_.equal(type,entry->type))return m_.good&&reject("capture-source-view");
+      std::vector<Ref> env;if(!refs(row->get("environment"),nodes_,env)||!ref(row->get("heap"),heaps_,value.heap)||!ref(row->get("control"),controls_,value.control))return false;value.environment=std::move(env);value.type=std::move(type);
+    }else if(m_.equal(kind,"environmentInput")){
+      value.kind=ValueKind::EnvironmentInput;if(!object(raw,row,{"kind","type","layout"})||!row->get("type")->getAsNull()||!ownedLayout(row->get("layout"),value.layout))return reject("entry-environment-row");
+      if(!current_->lexicalEnvironment||!m_.equal(value.layout,*current_->lexicalEnvironment))return m_.good&&reject("entry-environment-protocol");
+    }else if(m_.equal(kind,"environmentCreate")){
+      value.kind=ValueKind::EnvironmentCreate;if(!object(raw,row,{"kind","type","layout","parent","site","control"})||!row->get("type")->getAsNull()||!ownedLayout(row->get("layout"),value.layout)||!nullableRefs(row->get("parent"),value.parent)||!text(row->get("site"),value.site)||!ref(row->get("control"),controls_,value.control))return false;
+      const auto *shape=layout(value.layout);if(!m_.good)return false;if(!current_->activationEnvironment||!m_.equal(value.layout,*current_->activationEnvironment)||bool(shape->parent)!=bool(value.parent))return m_.good&&reject("activation-environment-protocol");
+    }else if(m_.equal(kind,"environmentParent")){
+      value.kind=ValueKind::EnvironmentParent;if(!object(raw,row,{"kind","type","layout","bases","control"})||!row->get("type")->getAsNull()||!ownedLayout(row->get("layout"),value.layout)||!refs(row->get("bases"),nodes_,value.bases)||!ref(row->get("control"),controls_,value.control))return false;
+    }else if(m_.equal(kind,"environmentComponent")){
+      value.kind=ValueKind::EnvironmentComponent;if(!object(raw,row,{"kind","type","layout","functionId","callee","control"})||!row->get("type")->getAsNull()||!ownedLayout(row->get("layout"),value.layout)||!text(row->get("functionId"),value.functionId)||!refs(row->get("callee"),nodes_,value.callee)||!ref(row->get("control"),controls_,value.control))return false;
+      const auto *fn=find(directory_.functions,value.functionId);if(!m_.good)return false;if(!fn||fn->kind!=FunctionKind::Source||!fn->lexicalEnvironment||!m_.equal(value.layout,*fn->lexicalEnvironment))return m_.good&&reject("component-function-layout");
+    }else if(m_.equal(kind,"code")){
+      value.kind=ValueKind::Code;const TypeRow *shape;if(!object(raw,row,{"kind","type","functionId","environment","control"})||!ownedType(row->get("type"),type,&shape)||!text(row->get("functionId"),value.functionId)||!nullableRefs(row->get("environment"),value.environment)||!ref(row->get("control"),controls_,value.control))return false;
+      const auto *fn=find(directory_.functions,value.functionId);if(!m_.good)return false;if(!fn||fn->kind!=FunctionKind::Source||shape->kind!=TypeKind::Function||bool(fn->lexicalEnvironment)!=bool(value.environment))return reject("ordinary-code-protocol");value.type=std::move(type);
     }else if(m_.equal(kind,"local")||m_.equal(kind,"nonowning")){
       value.kind=m_.equal(kind,"local")?ValueKind::Local:ValueKind::Nonowning;const TypeRow *shape;if(!object(raw,row,{"kind","type"})||!ownedType(row->get("type"),type,&shape))return false;
       if(value.kind==ValueKind::Local&&(shape->kind==TypeKind::Unknown||shape->kind==TypeKind::Union||shape->kind==TypeKind::Void||shape->kind==TypeKind::Future))return reject("local-actual-tag");value.type=std::move(type);
@@ -190,11 +229,19 @@ class Reader {
     }else return reject("ordinary-value-kind");
     return push(result.graph.nodes,std::move(value),m_);
   }
+  bool storeAddress(const Object *row,Heap &heap){llvm::StringRef selected,viewId;if(!symbol(row->get("selector"),selected)||!symbol(row->get("view"),viewId))return false;
+    if(!m_.text(selected.size())||!m_.text(viewId.size()))return false;
+    if(selected.starts_with("capture:")){
+      if(!viewId.starts_with("env:"))return reject("capture-store-view");const auto id=viewId.drop_front(4);
+      const auto *env=find(directory_.environments,id);if(!m_.good)return false;if(!env)return reject("unowned-environment-layout");std::string name;if(!m_.copy(name,id)||!slot(name,selected.drop_front(8)))return false;
+      return m_.copy(heap.selector,selected)&&m_.copy(heap.view,viewId);
+    }return selector(row->get("selector"),heap.selector)&&ownedType(row->get("view"),heap.view);
+  }
   bool readHeap(const Json &raw){const Object *row;llvm::StringRef kind;if(!discriminator(raw,row,kind))return false;Heap heap;
     if(m_.equal(kind,"entry")){if(!object(raw,row,{"kind"}))return false;}
     else if(m_.equal(kind,"join")){heap.kind=HeapKind::Join;if(!object(raw,row,{"kind","inputs"})||!refs(row->get("inputs"),heaps_,heap.inputs))return false;}
     else if(m_.equal(kind,"store")){
-      heap.kind=HeapKind::Store;if(!object(raw,row,{"kind","previous","bases","selector","view","values","control","initialize"})||!ref(row->get("previous"),heaps_,heap.previous)||!refs(row->get("bases"),nodes_,heap.bases)||!selector(row->get("selector"),heap.selector)||!ownedType(row->get("view"),heap.view)||!refs(row->get("values"),nodes_,heap.values)||!ref(row->get("control"),controls_,heap.control))return false;
+      heap.kind=HeapKind::Store;if(!object(raw,row,{"kind","previous","bases","selector","view","values","control","initialize"})||!ref(row->get("previous"),heaps_,heap.previous)||!refs(row->get("bases"),nodes_,heap.bases)||!storeAddress(row,heap)||!refs(row->get("values"),nodes_,heap.values)||!ref(row->get("control"),controls_,heap.control))return false;
       const auto initialize=row->get("initialize")->getAsBoolean();if(!initialize)return reject("initialize-boolean");heap.initialize=*initialize;
     }else if(m_.equal(kind,"copy")){
       heap.kind=HeapKind::Copy;if(!object(raw,row,{"kind","previous","value"})||!ref(row->get("previous"),heaps_,heap.previous)||!ref(row->get("value"),nodes_,heap.value))return false;if(result.graph.nodes[heap.value].kind!=ValueKind::Copy)return reject("clone-copy-node");
@@ -217,6 +264,41 @@ class Reader {
     if(!m_.text(capacity))return false;out.reserve(capacity);out="{\"control\":";out+=std::to_string(access.control);out+=",\"flag\":\"";out+=flagName(access.flag);out+="\",\"values\":[";
     bool first=true;for(auto id:access.values){if(!m_.spend())return false;if(!first)out+=',';first=false;out+=std::to_string(id);}out+="]}";return true;
   }
+  bool carriers(const std::vector<Ref> &refs,std::vector<Ref> &environments,bool &ordinary){
+    std::vector<Ref> pending;std::set<Ref> seen;if(!copyRefs(pending,refs,m_))return false;ordinary=false;
+    while(!pending.empty()){if(!m_.spend())return false;const auto id=pending.back();pending.pop_back();if(!m_.lookup(seen.size(),sizeof(Ref)))return false;if(seen.find(id)!=seen.end())continue;if(!m_.spend())return false;seen.insert(id);const auto &row=result.graph.nodes[id];
+      if(row.kind==ValueKind::Join||row.kind==ValueKind::Gate){for(auto next:row.inputs)if(!push(pending,next,m_))return false;}
+      else if(row.kind==ValueKind::EnvironmentInput||row.kind==ValueKind::EnvironmentCreate||row.kind==ValueKind::EnvironmentParent||row.kind==ValueKind::EnvironmentComponent){if(!push(environments,id,m_))return false;}
+      else ordinary=true;
+    }return true;
+  }
+  bool environmentRefs(const std::vector<Ref> &refs,const std::string &expected){std::vector<Ref> rows;bool ordinary;if(!carriers(refs,rows,ordinary))return false;if(ordinary)return reject("ordinary-used-as-environment");
+    for(auto id:rows){if(!m_.spend()||!m_.equal(result.graph.nodes[id].layout,expected))return m_.good&&reject("environment-layout-identity");}return true;
+  }
+  bool ordinaryRefs(const std::vector<Ref> &refs){std::vector<Ref> rows;bool ordinary;if(!carriers(refs,rows,ordinary))return false;return rows.empty()||reject("environment-used-as-payload");}
+  bool typedCarriers(){const auto &graph=result.graph;
+    for(const auto &node:graph.nodes){if(!m_.spend())return false;
+      if(node.kind==ValueKind::EnvironmentCreate&&node.parent){const auto *row=layout(node.layout);if(!m_.good||!environmentRefs(*node.parent,*row->parent))return false;}
+      else if(node.kind==ValueKind::EnvironmentParent){std::vector<Ref> rows;bool ordinary;if(!carriers(node.bases,rows,ordinary))return false;if(ordinary)return reject("ordinary-parent-environment");
+        for(auto id:rows){const auto *row=layout(graph.nodes[id].layout);if(!m_.good)return false;if(!row->parent||!m_.equal(*row->parent,node.layout))return m_.good&&reject("parent-layout-identity");}}
+      else if(node.kind==ValueKind::Capture){if(!environmentRefs(*node.environment,node.layout))return false;}
+      else if(node.kind==ValueKind::EnvironmentComponent){if(!ordinaryRefs(node.callee))return false;}
+      else if(node.kind==ValueKind::Code&&node.environment){const auto *fn=find(directory_.functions,node.functionId);if(!m_.good||!environmentRefs(*node.environment,*fn->lexicalEnvironment))return false;}
+      else if(node.kind==ValueKind::Projection||node.kind==ValueKind::Copy){if(!ordinaryRefs(node.bases))return false;}
+    }
+    for(const auto &heap:graph.heaps){if(!m_.spend())return false;if(heap.kind!=HeapKind::Store)continue;
+      if(!m_.text(heap.selector.size()))return false;if(llvm::StringRef(heap.selector).starts_with("capture:")){std::string id;if(!m_.copy(id,llvm::StringRef(heap.view).drop_front(4))||!environmentRefs(heap.bases,id))return false;}
+      else if(!ordinaryRefs(heap.bases))return false;if(!ordinaryRefs(heap.values))return false;
+    }
+    for(Ref index=0;index<graph.calls.size();++index){if(!m_.spend())return false;const auto &call=graph.calls[index];for(const auto &argument:call.arguments)if(!ordinaryRefs(argument))return false;
+      if(call.callee){if(!ordinaryRefs(*call.callee))return false;if(call.environment){
+        if(!environmentRefs(*call.environment,*callees_[index]->lexicalEnvironment))return false;std::vector<Ref> atoms;bool ordinary;if(!carriers(*call.environment,atoms,ordinary))return false;
+        for(auto id:atoms){const auto &component=graph.nodes[id];if(!m_.spend(call.callee->size()+1))return false;
+          if(component.kind!=ValueKind::EnvironmentComponent||!m_.equal(component.functionId,call.functionId)||component.callee!=*call.callee)return m_.good&&reject("component-not-bound-to-code-selection");}
+      }}else if(call.environment&&!environmentRefs(*call.environment,*callees_[index]->lexicalEnvironment))return false;
+    }
+    if(!ordinaryRefs(graph.normal)||!ordinaryRefs(graph.language))return false;for(const auto &access:graph.accesses)if(!ordinaryRefs(access.values))return false;return true;
+  }
 public:
   ReadResult result;
   Reader(const Directory &directory,Meter &meter):directory_(directory),m_(meter){}
@@ -224,7 +306,7 @@ public:
     current_=find(directory_.functions,directory_.functionId);if(!m_.good)return false;if(!current_)return reject("unowned-current-function");if(!protocol(*current_)||!signature(*current_))return false;
     const Object *row;if(!object(raw,row,{"format","nodes","heaps","controls","calls","normal","language","exits","accesses"}))return false;
     const Object *format;if(!object(*row->get("format"),format,{"family","version"}))return false;llvm::StringRef family;if(!symbol(format->get("family"),family))return false;
-    if(!m_.equal(family,"tsfg.return-origin-graph-candidate"))return m_.good&&reject("ordinary-v3-format");Ref version;if(!ref(format->get("version"),4,version)||version!=3)return reject("ordinary-v3-format");
+    if(!m_.equal(family,"tsfg.return-origin-graph-candidate"))return m_.good&&reject("draft4-format");Ref version;if(!ref(format->get("version"),5,version)||version!=4)return reject("draft4-format");
     const Array *values,*heaps,*controls,*calls,*accesses;
     if(!array(row->get("nodes"),values)||!array(row->get("heaps"),heaps)||!array(row->get("controls"),controls)||!array(row->get("calls"),calls)||!array(row->get("accesses"),accesses))return false;
     nodes_=values->size();heaps_=heaps->size();controls_=controls->size();calls_=calls->size();
@@ -236,7 +318,7 @@ public:
       if(m_.equal(flag,"read"))output.flag=AccessFlag::Read;else if(m_.equal(flag,"write"))output.flag=AccessFlag::Write;else if(m_.equal(flag,"structural"))output.flag=AccessFlag::Structural;else return reject("access-flag");
       std::string order;if(!accessKey(output,order)||!m_.text(previous.size())||!m_.text(order.size()))return false;if(!first&&previous>=order)return reject("canonical-access-order");first=false;previous=std::move(order);if(!push(result.graph.accesses,std::move(output),m_))return false;
     }
-    result.status=ReadStatus::Typed;result.reason=nullptr;return true;
+    if(!typedCarriers())return false;result.status=ReadStatus::Typed;result.reason=nullptr;return true;
   }
 };
 } // namespace Detail
@@ -283,7 +365,7 @@ class Inclusion {
   bool completes(const Graph &graph,Completion completion){for(const auto &state:exits(graph,completion)){if(!m_.spend())return false;if(live(graph,state.control))return true;if(!m_.good)return false;}return false;}
   bool valueLive(const Graph &graph,const Value &value){
     if(!m_.spend())return false;
-    if(value.kind==ValueKind::Gate||value.kind==ValueKind::Copy||value.kind==ValueKind::Projection)return live(graph,value.control);
+    if(value.kind==ValueKind::Gate||value.kind==ValueKind::Copy||value.kind==ValueKind::Projection||value.kind==ValueKind::Capture||value.kind==ValueKind::EnvironmentCreate||value.kind==ValueKind::EnvironmentParent||value.kind==ValueKind::EnvironmentComponent||value.kind==ValueKind::Code)return live(graph,value.control);
     if(value.kind==ValueKind::Call){const auto &call=graph.calls[value.call];if(!live(graph,call.control))return false;const auto *callee=fixed(call.functionId);return callee&&completes(*callee,value.completion);}return true;
   }
   bool controlClosure(){
@@ -361,19 +443,27 @@ class Inclusion {
   }
   bool matchCall(Certificate &state,const Task &task,bool &matches){
     const auto &a=body_.calls[task.left],&b=upper_.calls[task.right];if(!alpha(state.calls,task.left,task.right,matches)||!matches)return m_.good;
-    if(!m_.equal(a.functionId,b.functionId)||a.arguments.size()!=b.arguments.size()){matches=false;return m_.good;}
+    if(!m_.equal(a.functionId,b.functionId)||a.arguments.size()!=b.arguments.size()||bool(a.environment)!=bool(b.environment)||bool(a.callee)!=bool(b.callee)){matches=false;return m_.good;}
     bool old;if(!seen(state,task,old))return false;if(old)return true;
     if(live(body_,a.control)&&!live(upper_,b.control)){matches=false;return m_.good;}if(!m_.good)return false;
-    if(!m_.spend(a.arguments.size()+1))return false;for(Ref i=0;i<a.arguments.size();++i)if(!values(state,a.arguments[i],b.arguments[i]))return false;return heap(state,a.heap,b.heap);
+    if(!m_.spend(a.arguments.size()+1))return false;for(Ref i=0;i<a.arguments.size();++i)if(!values(state,a.arguments[i],b.arguments[i]))return false;
+    if(a.environment&&!values(state,*a.environment,*b.environment))return false;if(a.callee&&!values(state,*a.callee,*b.callee))return false;return heap(state,a.heap,b.heap);
   }
   bool matchNode(Certificate &state,const Task &task,bool &matches){
     const auto &a=body_.nodes[task.left],&b=upper_.nodes[task.right];if(a.kind!=b.kind){matches=false;return true;}
     if(a.kind==ValueKind::Parameter){matches=a.index==b.index;return true;}
-    if(a.kind==ValueKind::Global||a.kind==ValueKind::Capture){matches=m_.equal(a.id,b.id);return m_.good;}
+    if(a.kind==ValueKind::Global){matches=m_.equal(a.id,b.id);return m_.good;}
+    if(a.kind==ValueKind::EnvironmentInput){matches=m_.equal(a.layout,b.layout);return m_.good;}
     if(a.kind==ValueKind::Unknown)return true; // Overall scan already returns Open.
     if(a.kind==ValueKind::Local){if(!m_.equal(*a.type,*b.type)){matches=false;return m_.good;}return alpha(state.locals,task.left,task.right,matches);}
+    if(a.kind==ValueKind::EnvironmentCreate){if(!m_.equal(a.layout,b.layout)||bool(a.parent)!=bool(b.parent)){matches=false;return m_.good;}if(!alpha(state.locals,task.left,task.right,matches)||!matches)return m_.good;}
     if(a.kind==ValueKind::Copy&&(!copyAlpha(state,a.site,b.site,matches)||!matches))return m_.good;
     bool old;if(!seen(state,task,old))return false;if(old)return true;
+    if(a.kind==ValueKind::Capture){if(!m_.equal(a.id,b.id)||!m_.equal(a.layout,b.layout)){matches=false;return m_.good;}return values(state,*a.environment,*b.environment)&&heap(state,a.heap,b.heap);}
+    if(a.kind==ValueKind::EnvironmentCreate)return !a.parent||values(state,*a.parent,*b.parent);
+    if(a.kind==ValueKind::EnvironmentParent){if(!m_.equal(a.layout,b.layout)){matches=false;return m_.good;}return values(state,a.bases,b.bases);}
+    if(a.kind==ValueKind::EnvironmentComponent){if(!m_.equal(a.layout,b.layout)||!m_.equal(a.functionId,b.functionId)){matches=false;return m_.good;}return values(state,a.callee,b.callee);}
+    if(a.kind==ValueKind::Code){if(!m_.equal(a.functionId,b.functionId)||bool(a.environment)!=bool(b.environment)){matches=false;return m_.good;}return !a.environment||values(state,*a.environment,*b.environment);}
     if(a.kind==ValueKind::Projection){if(!m_.equal(a.selector,b.selector)||!m_.equal(a.view,b.view)){matches=false;return m_.good;}return values(state,a.bases,b.bases)&&heap(state,a.heap,b.heap);}
     if(a.kind==ValueKind::Copy)return values(state,a.bases,b.bases)&&heap(state,a.heap,b.heap);
     if(a.kind==ValueKind::Call){if(a.completion!=b.completion){matches=false;return true;}return pair(state,TaskKind::Call,a.call,b.call);}
@@ -394,6 +484,7 @@ public:
   bool run(){
     if(!m_.spend(fixed_.size()+3)||!addGraph(body_)||!addGraph(upper_))return false;
     for(const auto &row:fixed_){if(!m_.spend())return false;if(!row.second)return open("missing-fixed-call");if(!addGraph(*row.second))return false;}
+    for(const auto *graph:graphs_)if(graph->version!=4)return open("draft4-only");
     for(const auto *graph:graphs_)for(const auto &node:graph->nodes){if(!m_.spend())return false;if(node.kind==ValueKind::Unknown)return open("unknown-data-origin");}
     for(const auto *graph:graphs_)for(const auto &call:graph->calls)if(!fixed(call.functionId))return false;
     if(!controlClosure())return false;Certificate first;if(!initial(first))return false;if(!push(search_,std::move(first),m_))return false;
@@ -422,4 +513,4 @@ inline InclusionResult covered(const Graph &body,const Graph &upper,const FixedC
   Detail::Meter meter(charge);Detail::Inclusion proof(body,upper,fixed,meter);proof.run();
   if(!meter.good){proof.result.status=InclusionStatus::BudgetError;proof.result.reason="work-exhausted";}return proof.result;
 }
-} // namespace CommonReturnOriginV3
+} // namespace CommonReturnOriginV4
