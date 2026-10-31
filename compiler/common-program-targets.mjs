@@ -115,6 +115,37 @@ export function commonTargets(hir,spend,records=null) {
   for(const fn of hir.functions){spend();const parameters=new Map();for(const [index,p]of fn.parameters.entries()){spend();if(callable(p.type))parameters.set(index,records?domain.from(records.get(fn.id).callables.parameters.find(row=>row.index===index).allowed):domain.bottom());}
     summaries.set(fn.id,{fn,reached:true,parameters,returns:callable(fn.returnType)?domain.bottom():null});}
   const siteKey=(fn,range)=>fn+'/'+range.start+':'+range.end;
+  const activeInitializers=new Map();
+  function initialize(summary,state,type,args){
+    spend();const active=activeInitializers.get(type.id);
+    if(active){
+      // The recursive expression still evaluates its arguments and performs
+      // the ordinary constructor-parameter transfer below. Feed this local
+      // state back into the active transfer instead of expanding it forever.
+      if(active.inputs===null){active.inputs=clone(state);active.grew=true;}
+      else active.grew=growState(active.inputs,state)||active.grew;
+      return;
+    }
+    const frame={inputs:null,grew:false};spend();activeInitializers.set(type.id,frame);
+    let repeat;
+    do{
+      spend();frame.grew=false;
+      if(frame.inputs!==null)growState(state,frame.inputs);
+      if(type.base&&!type.construction?.functionId)initialize(summary,state,types.get(type.base),args);
+      for(const id of type.construction?.initializationFields??[]){
+        spend();const field=fields.get(id);check(field,'callable');let initial;
+        if(field.parameterBinding){const index=type.construction.parameters.findIndex(p=>{spend();return p.symbol===field.parameterBinding;});check(index>=0,'callable');
+          const fn=type.construction.functionId;initial=fn?summaries.get(fn).parameters.get(index):args[index];}
+        else if(field.initializer){initial=expression(summary,state,field.initializer);erase(field.type,field.initializer.type,initial);}write(id,initial);
+      }
+      repeat=false;
+      if(frame.inputs!==null){
+        repeat=growState(frame.inputs,state)||frame.grew;
+        growState(state,frame.inputs);
+      }
+    }while(repeat);
+    activeInitializers.delete(type.id);
+  }
   function expression(summary,state,value) {
     spend();if(value.kind==='functionReference')return domain.single(value.functionId);
     if(['nullLiteral','undefinedLiteral'].includes(value.kind))return domain.bottom();
@@ -157,11 +188,7 @@ export function commonTargets(hir,spend,records=null) {
     for(const child of value.elements??[]){expression(summary,state,child);erase(types.get(value.type)?.elementType,child.type);}
     if(value.kind==='new'||value.kind==='superConstruct'){spend(value.arguments.length);const args=value.arguments.map(arg=>expression(summary,state,arg));let owner=types.get(value.kind==='new'?value.type:value.callee);
       for(const [index,p]of (owner.construction?.parameters??[]).entries()){spend();erase(p.type,value.arguments[index]?.type,args[index]);}
-      const initialize=type=>{spend();if(type.base&&!type.construction?.functionId)initialize(types.get(type.base));for(const id of type.construction?.initializationFields??[]){spend();const field=fields.get(id);check(field,'callable');let initial;
-        if(field.parameterBinding){const index=type.construction.parameters.findIndex(p=>{spend();return p.symbol===field.parameterBinding;});check(index>=0,'callable');
-          const fn=type.construction.functionId;initial=fn?summaries.get(fn).parameters.get(index):args[index];}
-        else if(field.initializer){initial=expression(summary,state,field.initializer);erase(field.type,field.initializer.type,initial);}write(id,initial);}};
-      initialize(owner);
+      initialize(summary,state,owner,args);
       while(owner&&!owner.construction?.functionId){spend();owner=types.get(owner.base);}if(owner?.construction?.functionId){const callee=reach(owner.construction.functionId);
         if(records){fixedCallableTransfer(records.get(callee.fn.id).callables,args,domain,(index,targets)=>observe(callee.fn.id,index,targets),spend,message=>commonFailure('callable',message));
           if(records.get(callee.fn.id).upper?.facets.unknownHost){unknownCall(value,args);if(value.kind==='superConstruct'){check(summary,'callable');expose(summary.fn.ownerType);}}}
@@ -170,7 +197,11 @@ export function commonTargets(hir,spend,records=null) {
   }
   const clone=state=>collections.map(state,domain.copy);
   const stateKey=state=>{spend(state.size);return [...state].map(([id,value])=>[id,domain.wire(value)]);};
-  const join=(into,from)=>{for(const [id,value]of from){spend();into.set(id,domain.join(into.get(id)??domain.bottom(),value));}return into;};
+  const growState=(into,from)=>{spend(from.size);let grew=false;for(const [id,value]of from){
+      const before=into.get(id)??domain.bottom(),next=domain.join(before,value);
+      if(!into.has(id)||!domain.equal(before,next)){into.set(id,next);grew=true;}
+    }return grew;};
+  const join=(into,from)=>{growState(into,from);return into;};
   const externalFunctions=new Set(),globalIds=new Set();for(const global of hir.globals??[]){spend();globalIds.add(global.id);}
   function body(summary,state,rows){let live=true;for(const row of rows){spend();if(!live)break;
     if(['constDeclaration','letDeclaration','initialize'].includes(row.kind)){const value=expression(summary,state,row.initializer);erase(bindingTypes.get(row.binding),row.initializer.type,value);if(globalIds.has(row.binding)){expose(row.initializer.type);exposeClosures(value);}else if(value){state.set(row.binding,domain.copy(value));if(capturedLocals.has(row.binding))merge(capturedLocals,row.binding,value);}}
