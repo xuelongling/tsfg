@@ -68,7 +68,9 @@ export function solveConstructionStorageClosure(input,charge) {
   /** @param {FixedUpper} upper @param {string} label @param {boolean} objects */
   const upper=(upper,label,objects)=>{
     charge(upper.actualTypes.length+1);
-    if(!upper.complete||upper.unknown||!upper.proof||upper.actualTypes.length===0)open.push('unproved fixed upper: '+label);
+    // A proved empty upper is Bottom. It contributes no normal result or
+    // defined payload; opacity/incompleteness is separate from emptiness.
+    if(!upper.complete||upper.unknown||!upper.proof)open.push('unproved fixed upper: '+label);
     if(upper.actualTypes.length>256||new Set(upper.actualTypes).size!==upper.actualTypes.length)invalid.push('invalid finite upper: '+label);
     for(const id of upper.actualTypes){charge(1);if(objects?!classes.has(id):!payloads.has(id))open.push('unknown concrete upper member: '+label+'/'+id);}
   };
