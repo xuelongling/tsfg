@@ -19,24 +19,31 @@
  * separate obligations. Data heap Bottom is an empty relation, not dead code.
  * @param {Graph} body
  * @param {Graph} upper
- * @param {Map<string,{graph:Graph}>} contracts
+ * @param {Map<string,{graph:Graph|null}>} contracts
  * @param {(units?:number)=>void} spend
  */
 export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
   const symbolEqual=(a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a===b;};
   spend(contracts.size+3);
-  const graphs=new Set([body,upper]);
-  for(const row of contracts.values()){spend();graphs.add(row.graph);}
+  const graphs=new Set(),dependencies=[body,upper];
   // Unknown is an unresolved boundary, not an implicit permission to discard
   // returned owning data. Its future host semantics must be admitted separately.
-  for(const graph of graphs){spend();if(graph.format.family!=='tsfg.return-origin-graph-candidate'||graph.format.version!==4)return {status:'open',reason:'graph-profile-mismatch'};
-    for(const row of graph.nodes){spend();if(row.kind==='unknown')return {status:'open',reason:'unknown-data-origin'};}}
+  // The complete reader has already admitted every nonnull directory row.
+  // Pending belongs only to this comparison's full syntactic call closure,
+  // including dead calls. Never select that closure by solved liveness.
+  while(dependencies.length){spend();const graph=dependencies.pop();if(graphs.has(graph))continue;graphs.add(graph);
+    if(graph.format.family!=='tsfg.return-origin-graph-candidate'||graph.format.version!==4)return {status:'open',reason:'graph-profile-mismatch'};
+    for(const row of graph.nodes){spend();if(row.kind==='unknown')return {status:'open',reason:'unknown-data-origin'};}
+    for(const row of graph.calls){spend(Math.ceil(row.functionId.length/8)+1);const selected=contracts.get(row.functionId);
+      if(!selected||selected.graph===null)return {status:'open',reason:'missing-fixed-call'};
+      if(!graphs.has(selected.graph))dependencies.push(selected.graph);
+    }
+  }
   /** @type {Map<Graph,boolean[]>} */
   const controls=new Map();
   for(const graph of graphs){spend(graph.controls.length+1);controls.set(graph,new Array(graph.controls.length).fill(false));}
   const live=(graph,id)=>controls.get(graph)[id];
   const completes=(graph,completion)=>{for(const state of graph.exits[completion]){spend();if(live(graph,state.control))return true;}return false;};
-  for(const graph of graphs)for(const row of graph.calls){spend(Math.ceil(row.functionId.length/8)+1);if(!contracts.has(row.functionId))return {status:'open',reason:'missing-fixed-call'};}
   // Exact, owned equations have the identity simulation even when their JSON
   // object field order differs. Compare every value and edge before accepting;
   // this is a complete structural certificate, not a digest or FnId assertion.

@@ -65,10 +65,11 @@ test('large valid reference directories exhaust the shared meter',()=>{
   assert.throws(()=>inclusion(body,upper,new Map(),(units=1)=>{remaining-=units;if(remaining<0)throw new Error('fixture budget exhausted');}),/fixture budget exhausted/);
 });
 
-test('old v3 and mixed fixed-table graph profiles are explicitly Open',()=>{
+test('old v3 and mixed selected fixed-table graph profiles are explicitly Open',()=>{
   const old=parameter();Object.assign(old.format,{version:3});
   assert.equal(prove(old,old),'open');assert.equal(prove(parameter(),old),'open');
-  assert.equal(prove(parameter(),parameter(),new Map([['old',{graph:old}]])),'open');
+  const selected=parameter();selected.calls=[{functionId:'old',arguments:[[0]],environment:null,callee:null,heap:0,control:0,site:'old-profile-call'}];
+  assert.equal(prove(selected,selected,new Map([['old',{graph:old}]])),'open');
 });
 
 test('complete structural reflexivity is linear despite JSON field order and weak heap alternatives',()=>{
@@ -88,11 +89,11 @@ test('a late changed owning edge cannot use the reflexive certificate',()=>{
   assert.equal(prove(body,upper),'open');
 });
 
-test('reflexivity still rejects a missing fixed call and a mixed unknown table',()=>{
+test('reflexivity rejects a missing fixed call while unrelated unknown remains local',()=>{
   const called=graph();called.calls=[{functionId:'missing',arguments:[],environment:null,callee:null,heap:0,control:0,site:'call'}];
   assert.equal(prove(called,called),'open');
   const unknown=graph();unknown.nodes.push({kind:'unknown',type:null});
-  assert.equal(prove(graph(),graph(),new Map([['unknown',{graph:unknown}]])),'open');
+  assert.equal(prove(graph(),graph(),new Map([['unknown',{graph:unknown}]])),'covered');
 });
 
 test('a seedless recursive continuation cannot manufacture an upper completion',()=>{
