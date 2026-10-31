@@ -47,6 +47,7 @@ const Predecessors = struct {
 const Graph = struct {
     c: *Context, f: *const model.Function, function: usize, mode: table.Mode,
     definitions: []Definition, uses: []Use, facts: []Facts, dom: []Bits, fully_reached: bool=false,
+    has_environment_init: bool=false,
 
     fn init(c: *Context, index: usize) Error!Graph {
         const f=&c.program.functions[index];
@@ -460,8 +461,15 @@ const Graph = struct {
                     const env=@intFromEnum(self.carrierOf(op.operands[0]).environment);
                     const r=if(std.meta.activeTag(op.data)==.environment_load)op.result.? else op.operands[1];
                     switch(c.program.tables.mode) {
-                        .common => |rows| { const binding=rows.closures.environments[env].slots[@intFromEnum(v.slot)].binding;
-                            try c.require(exact(self.carrierOf(r),rows.storage.bindings[@intFromEnum(binding)].carrier)); },
+                        .common => |rows| {
+                            const environment=rows.closures.environments[env];
+                            const slot=environment.slots[@intFromEnum(v.slot)];
+                            try c.require(exact(self.carrierOf(r),rows.storage.bindings[@intFromEnum(slot.binding)].carrier));
+                            // A mutable payload upper never grants replacement
+                            // of a const binding's environment slot.
+                            if(op.data==.environment_store)try c.require(slot.writable);
+                            if(op.data==.environment_init)self.has_environment_init=true;
+                        },
                         .legacy => |rows| try self.legacyType(r,rows.closures.environments[env].slots[@intFromEnum(v.slot)].@"type"),
                         .exception => unreachable,
                     }
@@ -475,6 +483,100 @@ const Graph = struct {
             try c.step(); const code=std.meta.activeTag(self.f.blocks[b].instructions[self.f.blocks[b].instructions.len-1].data);
             if(code==.eh_invoke or code==.eh_invoke_indirect)for(fact.successors[0..fact.count]) |next|try c.require(self.facts[next].predecessor_count==1);
         };
+    }
+    fn environmentInitializers(self: *Graph) Error!void {
+        if(self.mode!=.common or !self.has_environment_init)return;
+        const c=self.c;
+        const rows=c.program.tables.mode.common;
+        var activation: ?t.EnvironmentRef=null;
+        for(rows.closures.functions) |function| {
+            try c.step(); if(@intFromEnum(function.function)!=self.function)continue;
+            activation=function.activation_environment; break;
+        }
+        const layout=activation orelse return error.InvalidShape;
+        try c.require(@intFromEnum(rows.closures.environments[@intFromEnum(layout)].owner)==self.function);
+
+        // Reverse the finite SSA forwarding graph from every init receiver.
+        // Same-layout input/parent/foreign values are not allocation evidence.
+        const count=self.f.registers.len;
+        try c.charge(4*count);
+        const seen=try c.allocator.alloc(bool,count); defer c.allocator.free(seen); @memset(seen,false);
+        const born=try c.allocator.alloc(bool,count); defer c.allocator.free(born); @memset(born,false);
+        const pending=try c.allocator.alloc(t.RegisterRef,count); defer c.allocator.free(pending);
+        const followers=try c.allocator.alloc(std.ArrayListUnmanaged(t.RegisterRef),count);
+        defer c.allocator.free(followers); @memset(followers,.empty);
+        defer for(followers) |*list| list.deinit(c.allocator);
+        var size: usize=0;
+        for(self.f.blocks) |block| for(block.instructions) |op| {
+            try c.step(); if(op.data!=.environment_init)continue;
+            const receiver=op.operands[0]; const index=@intFromEnum(receiver);
+            if(!seen[index]) { seen[index]=true; pending[size]=receiver; size+=1; }
+        };
+        var cursor: usize=0;
+        while(cursor<size) : (cursor+=1) {
+            try c.step(); const receiver=pending[cursor]; const index=@intFromEnum(receiver);
+            try c.require(exact(self.carrierOf(receiver),.{.environment=layout}));
+            const definition=self.definitions[index];
+            if(definition.position>=0) {
+                const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
+                switch(producer.data) {
+                    .environment_alloc => |allocation| { try c.require(allocation.environment==layout); born[index]=true; },
+                    // These existing Common operations retain the complete
+                    // input Env instance; domain_copy copies value objects,
+                    // but explicitly retains environments by identity.
+                    .domain_view,.domain_copy,.eh_carrier,.eh_assertion => {
+                        const source=producer.operands[0]; const source_index=@intFromEnum(source);
+                        try c.step(); try followers[source_index].append(c.allocator,receiver);
+                        if(!seen[source_index]) { seen[source_index]=true; pending[size]=source; size+=1; }
+                    },
+                    else => return error.InvalidShape,
+                }
+                continue;
+            }
+            // Block arguments preserve complete Env values through the exact
+            // branch/route operand vectors already checked by operations().
+            try c.require(definition.block!=0);
+            var ordinal: ?usize=null;
+            for(self.f.blocks[definition.block].parameters,0..) |parameter,n| {
+                try c.step(); if(parameter==receiver) { ordinal=n; break; }
+            }
+            const parameter=ordinal orelse return error.InvalidShape;
+            var incoming: usize=0;
+            var predecessors=Predecessors{.bits=self.facts[definition.block].predecessors};
+            while(try predecessors.next(c)) |pred| {
+                const block=self.f.blocks[pred]; const op=block.instructions[block.instructions.len-1];
+                const edges=self.facts[pred];
+                for(edges.successors[0..edges.count],0..) |next,edge| {
+                    try c.step(); if(next!=definition.block)continue;
+                    const arguments=switch(op.data) {
+                        .br,.eh_route => op.operands,
+                        .cond_br => |conditional| if(edge==0)op.operands[1..1+conditional.true_count] else op.operands[1+conditional.true_count..],
+                        // Invoke/numeric successors create values; they are
+                        // not transparent Env forwarding operations.
+                        else => return error.InvalidShape,
+                    };
+                    const source=arguments[parameter]; const source_index=@intFromEnum(source);
+                    try c.step(); try followers[source_index].append(c.allocator,receiver);
+                    if(!seen[source_index]) { seen[source_index]=true; pending[size]=source; size+=1; }
+                    incoming+=1;
+                }
+            }
+            try c.require(incoming!=0);
+        }
+        // Ground every discovered forwarding component in a real allocation.
+        // Seedless cycles fail; joins inspect every possible incoming source.
+        size=0;
+        for(born,0..) |seed,index| {
+            try c.step(); if(seed) { pending[size]=@enumFromInt(index); size+=1; }
+        }
+        cursor=0;
+        while(cursor<size) : (cursor+=1) for(followers[@intFromEnum(pending[cursor])].items) |receiver| {
+            try c.step(); const index=@intFromEnum(receiver);
+            if(!born[index]) { born[index]=true; pending[size]=receiver; size+=1; }
+        };
+        for(seen,born) |needed,grounded| { try c.require(!needed or grounded); }
+        // This is only source/creation authority. Once-only initialization,
+        // observation and CFG ordering remain separate obligations.
     }
     fn fuel(self: *Graph) Error!void {
         const c=self.c; var entries: usize=0;
@@ -618,7 +720,7 @@ const Graph = struct {
     }
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
-        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.numeric(); try self.fuel();
+        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.numeric(); try self.fuel();
     }
 };
 

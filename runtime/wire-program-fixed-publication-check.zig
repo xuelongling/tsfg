@@ -2,8 +2,8 @@
 // The original fixed contract's interface obligations, independently joined
 // to the owned Common logical ABI and environment/global directories. These
 // are not actual values: declared code bounds never seed an actual analysis.
-// This checks parameter coverage, Global owner identity, capture write
-// permission and callable signatures;
+// This checks parameter coverage, Global/capture owner identity and callable
+// signatures;
 // it does not derive body fixed-flow/effective dependencies, kernel-group
 // independence, Host resource trust, Source provenance or full admission.
 const std = @import("std");
@@ -43,7 +43,7 @@ const Checker = struct {
     common: tables.CommonTables,
     functions: std.AutoHashMapUnmanaged(t.Hash, t.FunctionRef) = .empty,
     globals: std.AutoHashMapUnmanaged(t.Hash, void) = .empty,
-    slots: std.AutoHashMapUnmanaged(t.Hash, bool) = .empty,
+    slots: std.AutoHashMapUnmanaged(t.Hash, void) = .empty,
 
     fn deinit(self: *Checker) void {
         self.functions.deinit(self.c.allocator);
@@ -101,8 +101,9 @@ const Checker = struct {
         }
         for (row.upper.captures) |access| {
             try c.step();
-            const writable = self.slots.get(access.slot) orelse return error.InvalidReference;
-            try c.require(!access.write or writable);
+            // A fixed capture upper names a conditional payload-owner root.
+            // Slot replacement is checked at the environment store operation.
+            if (!self.slots.contains(access.slot)) return error.InvalidReference;
         }
 
         var record: usize = 0;
@@ -157,13 +158,7 @@ pub fn checkInterfaces(c: *Context) Error!void {
         try c.step();
         for (environment.slots) |slot| {
             try c.step();
-            const kind = common.types[@intFromEnum(slot.@"type")].kind;
-            // A readonly binding can still write through its managed value.
-            // Preserve the original rule's direct Array/reference/value kinds;
-            // unions or scalar/string/Span bindings gain no such permission.
-            const writable = slot.writable or kind == .array or kind == .reference or kind == .value;
-            const entry = try checker.slots.getOrPut(c.allocator, slot.key);
-            if (!entry.found_existing) entry.value_ptr.* = writable;
+            try checker.slots.put(c.allocator, slot.key, {});
         }
     };
     for (common.authority.fixed_publication.publication.contracts) |row| try checker.checkContract(row);
