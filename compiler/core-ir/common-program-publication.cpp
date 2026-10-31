@@ -68,7 +68,8 @@ bool publicationScope(Program &p,Json &out,Error &e){
   for(const auto &g:items(field(p.hir,"globals")))pending.push_back(string(field(g,"type")));
   for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){if(!work(p,e))return false;pending.push_back(string(field(slot,"type")));}
   for(const auto &fn:items(field(p.hir,"functions"))){pending.push_back(string(field(fn,"returnType")));if(!field(fn,"ownerType").getAsNull())pending.push_back(string(field(fn,"ownerType")));
-    for(const auto &a:items(field(fn,"parameters"))){if(!work(p,e))return false;pending.push_back(string(field(a,"type")));}}
+    for(const auto &a:items(field(fn,"parameters"))){if(!work(p,e))return false;pending.push_back(string(field(a,"type")));}
+    for(const auto &step:items(field(field(fn,"parameterInitialization"),"steps"))){if(!returnOriginMetadataCost(p,field(step,"argumentType"),e)||!work(p,e))return false;pending.push_back(string(field(step,"argumentType")));}}
   for(const auto &[id,t]:types)if(string(field(*t,"kind"))=="value"||string(field(*t,"kind"))=="reference")pending.push_back(id);
   while(!pending.empty()){
     if(!work(p,e))return false;const auto id=pending.back();pending.pop_back();if(!seen.insert(id).second)continue;

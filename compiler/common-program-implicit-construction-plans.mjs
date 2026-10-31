@@ -24,16 +24,18 @@ export function commonImplicitConstructionPlans(input,owners){
     check(['implicit-base','implicit-derived'].includes(construction.kind),'construction','unknown admitted construction kind');
     text(construction.id);spend();const id='analysis-construction:'+construction.id;
     check(!functions.has(id),'identity','private analysis target collides with a declared function');
+    let effective=type;while(effective&&!effective.construction.functionId&&effective.base){spend();effective=input.types.get(effective.base);}
+    const steps=effective?.construction.functionId?input.functions.get(effective.construction.functionId)?.parameterInitialization?.steps:null;
     spend(construction.parameters.length*3+8);
     const parameters=construction.parameters.map((parameter,index)=>{
       text(id);text(parameter.type);text(parameter.symbol);
-      return {id:id+'/parameter/'+index,name:'$'+index,kind:'parameter',type:parameter.type,writable:true,
+      return {id:id+'/parameter/'+index,name:'$'+index,kind:'parameter',type:steps?.[index].argumentType??parameter.type,writable:true,
         range:{start:parameter.origin.start,end:parameter.origin.end},nameRange:{start:parameter.origin.start,end:parameter.origin.end}};
     });
     const range={start:construction.origin.start,end:construction.origin.end};
     for(const value of [id,type.id,...construction.signature.parameters])text(value);
     spend(128+construction.parameters.length*8);
-    const signatureHash=sha256('tsfg.common-program.analysis-construction-signature.v1\0'+canonical({construction:construction.id,parameters:construction.signature.parameters,returnType:type.id}));
+    const signatureHash=sha256('tsfg.common-program.analysis-construction-signature.v1\0'+canonical({construction:construction.id,parameters:parameters.map(parameter=>parameter.type),returnType:type.id}));
     const owner={id,name:'$implicitConstruction',kind:'construction-body',analysisOnly:true,ownerType:type.id,receiverBinding:'analysis-receiver:'+id,
       sourcePath:construction.origin.source,range,nameRange:range,returnType:type.id,signatureHash,parameters,bindings:[],body:[],
       lexicalParent:null,lexicalEnvironment:null,activationEnvironment:null,captures:[]};

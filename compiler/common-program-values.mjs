@@ -64,24 +64,28 @@ export function commonProgramValues(model,graph,state,invoke,indirect,constructi
   function scalar(kind,operator,args,type,range) {
     return op(['===','!=='].includes(operator)?'strict_equal':kind,args,type,{operator},range);
   }
-  function initializeOwn(type,value,args,range,frame) {
+  function initializeOwn(type,value,args,range,frame,beforeParameterProperties=null) {
     const before=currentReceiver;currentReceiver=value;
     let phase=op('initialize_begin',[frame,value],'initialization:'+type.id,{owner:type.id},range);
+    let parametersPending=beforeParameterProperties!==null;
     try {
       for(const fieldId of type.construction.initializationFields) {
         model.spend();const field=model.fields.get(fieldId);check(field,'identity');let initial;
-        if(field.parameterBinding){const index=type.construction.parameters.findIndex(p=>p.symbol===field.parameterBinding);check(index>=0&&args[index],'identity');initial=args[index];}
+        if(field.parameterBinding){
+          if(parametersPending){args=beforeParameterProperties();parametersPending=false;}
+          const index=type.construction.parameters.findIndex(p=>p.symbol===field.parameterBinding);check(index>=0&&args[index],'identity');initial=args[index];}
         else initial=field.initializer?expression(field.initializer):op('undefined',[],undefinedId,{},field.origin);
         phase=op('initialize_field',[phase,value,copy(initial,field.type,field.origin)],'initialization:'+type.id,{owner:type.id,field:field.id},field.origin);
       }
+      if(parametersPending)beforeParameterProperties();
     } finally {currentReceiver=before;}
     op('initialize_end',[phase,value],null,{owner:type.id},range);
   }
-  function enterConstructor(type,frame,args,range) {
+  function enterConstructor(type,frame,args,range,beforeParameterProperties=null) {
     if(type.base)return;
     const allocated=op('receiver_allocate',[frame],type.id,{owner:type.id},range);
     const value=constructionAction('receiver_bind',[frame,allocated],type.id,{owner:type.id},range);
-    initializeOwn(type,value,args,range,frame);
+    initializeOwn(type,value,args,range,frame,beforeParameterProperties);
   }
   function completeConstructor(value,range,onThrow) {
     const owner=graph.owner;
@@ -90,7 +94,9 @@ export function commonProgramValues(model,graph,state,invoke,indirect,constructi
   function construct(type,frame,args,range) {
     model.spend();check(type.construction,'identity');
     if(type.construction.functionId) {
-      const fn=model.functions.get(type.construction.functionId);return invoke({type:type.id,range},[frame,...args],fn);
+      const fn=model.functions.get(type.construction.functionId),steps=fn.parameterInitialization?.steps;
+      const passed=type.construction.signature.minimumArgumentCount!==undefined?fn.parameters.map((parameter,index)=>copy(args[index]??op('undefined',[],undefinedId,{},range),steps?.[index].argumentType??parameter.type,range)):args;
+      return invoke({type:type.id,range},[frame,...passed],fn);
     }
     if(type.base){
       const child=op('receiver_child',[frame],'receiver:'+type.base,{owner:type.base},range);
@@ -143,12 +149,12 @@ export function commonProgramValues(model,graph,state,invoke,indirect,constructi
       return value??op('undefined',[],undefinedId,{},e.range);
     }
     if(e.kind==='new') {
-      const args=e.arguments.map((arg,index)=>copy(expression(arg),e.signature.parameters[index],arg.range));
+      const args=e.arguments.map((arg,index)=>e.signature.minimumArgumentCount===undefined?copy(expression(arg),e.signature.parameters[index],arg.range):expression(arg));
       const frame=op('receiver_create',[],'receiver:'+type.id,{owner:type.id,new_target:type.id,construction:e.construction},e.range);
       return construct(type,frame,args,e.range);
     }
     if(e.kind==='superConstruct') {
-      const fn=graph.owner,args=e.arguments.map((arg,index)=>copy(expression(arg),e.signature.parameters[index],arg.range));
+      const fn=graph.owner,args=e.arguments.map((arg,index)=>e.signature.minimumArgumentCount===undefined?copy(expression(arg),e.signature.parameters[index],arg.range):expression(arg));
       const child=op('receiver_child',[state.receiver],'receiver:'+e.callee,{owner:e.callee},e.range);
       const result=construct(types.get(e.callee),child,args,e.range);
       const value=constructionAction('receiver_bind',[state.receiver,result],fn.ownerType,{owner:fn.ownerType},e.range);

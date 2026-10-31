@@ -113,7 +113,10 @@ export function commonTargets(hir,spend,records=null) {
   const reach=id=>{const row=summaries.get(id);check(row,'callable');if(!row.reached){row.reached=true;changed=true;}return row;};
   const observe=(id,index,value)=>merge(observations,id+'/'+index,value);
   for(const fn of hir.functions){spend();const parameters=new Map();for(const [index,p]of fn.parameters.entries()){spend();if(callable(p.type))parameters.set(index,records?domain.from(records.get(fn.id).callables.parameters.find(row=>row.index===index).allowed):domain.bottom());}
-    summaries.set(fn.id,{fn,reached:true,parameters,returns:callable(fn.returnType)?domain.bottom():null});}
+    // Field initializers may read a parameter summary before its body is
+    // visited. Retain an explicit Bottom/fixed upper instead of a missing row,
+    // which the field writer correctly treats as unknown callable storage.
+    summaries.set(fn.id,{fn,reached:true,parameters,initializedParameters:collections.map(parameters,domain.copy),returns:callable(fn.returnType)?domain.bottom():null});}
   const siteKey=(fn,range)=>fn+'/'+range.start+':'+range.end;
   const activeInitializers=new Map();
   function initialize(summary,state,type,args){
@@ -135,7 +138,7 @@ export function commonTargets(hir,spend,records=null) {
       for(const id of type.construction?.initializationFields??[]){
         spend();const field=fields.get(id);check(field,'callable');let initial;
         if(field.parameterBinding){const index=type.construction.parameters.findIndex(p=>{spend();return p.symbol===field.parameterBinding;});check(index>=0,'callable');
-          const fn=type.construction.functionId;initial=fn?summaries.get(fn).parameters.get(index):args[index];}
+          const fn=type.construction.functionId;initial=fn?summaries.get(fn).initializedParameters.get(index):args[index];}
         else if(field.initializer){initial=expression(summary,state,field.initializer);erase(field.type,field.initializer.type,initial);}write(id,initial);
       }
       repeat=false;
@@ -151,12 +154,15 @@ export function commonTargets(hir,spend,records=null) {
     if(['nullLiteral','undefinedLiteral'].includes(value.kind))return domain.bottom();
     if(value.kind==='bindingReference'){
       if(!callable(value.type))return null;const captured=capturedParameters.get(value.binding);
-      return domain.copy(captured?summaries.get(captured.owner).parameters.get(captured.index):capturedLocals.get(value.binding)??state.get(value.binding)??domain.bottom());
+      return domain.copy(captured?summaries.get(captured.owner).initializedParameters.get(captured.index)??domain.bottom():capturedLocals.get(value.binding)??state.get(value.binding)??domain.bottom());
     }
     if(['parentheses','as','nonNull'].includes(value.kind)){const actual=expression(summary,state,value.expression);if(value.kind==='as'){erase(value.type,value.expression.type,actual);if(!verifiedView(value.expression.type,value.type,value.compatibilityRoots??[])){expose(value.expression.type);expose(value.type);exposeClosures(actual);}else linkArrays(value.expression.type,value.type);}return actual??(callable(value.type)?domain.top():null);}
     if(value.kind==='bindingAssignment') {const result=expression(summary,state,value.value);erase(value.target.type??bindingTypes.get(value.target.binding),value.value.type,result);
       if(value.target.kind==='globalTarget'){expose(value.value.type);exposeClosures(result);}else if(result){state.set(value.target.binding,domain.copy(result));const captured=capturedParameters.get(value.target.binding);
-        if(captured){if(records)observe(captured.owner,captured.index,result);else merge(summaries.get(captured.owner).parameters,captured.index,result);}
+        if(captured){
+          merge(summaries.get(captured.owner).initializedParameters,captured.index,result);
+          if(records)observe(captured.owner,captured.index,result);else merge(summaries.get(captured.owner).parameters,captured.index,result);
+        }
         else if(capturedLocals.has(value.target.binding))merge(capturedLocals,value.target.binding,result);}
       return result;}
     if(value.kind==='fieldAccess'){expression(summary,state,value.receiver);return callable(value.type)?domain.copy(fieldValues.get(slot(value.property))??domain.bottom()):null;}
@@ -190,9 +196,11 @@ export function commonTargets(hir,spend,records=null) {
       for(const [index,p]of (owner.construction?.parameters??[]).entries()){spend();erase(p.type,value.arguments[index]?.type,args[index]);}
       initialize(summary,state,owner,args);
       while(owner&&!owner.construction?.functionId){spend();owner=types.get(owner.base);}if(owner?.construction?.functionId){const callee=reach(owner.construction.functionId);
-        if(records){fixedCallableTransfer(records.get(callee.fn.id).callables,args,domain,(index,targets)=>observe(callee.fn.id,index,targets),spend,message=>commonFailure('callable',message));
+        spend(callee.fn.parameters.length);const supplied=callee.fn.parameters.map((p,index)=>args[index]??(callee.fn.parameterInitialization?.steps[index].initializer?domain.bottom():null));
+        if(records){fixedCallableTransfer(records.get(callee.fn.id).callables,supplied,domain,(index,targets)=>observe(callee.fn.id,index,targets),spend,message=>commonFailure('callable',message));
           if(records.get(callee.fn.id).upper?.facets.unknownHost){unknownCall(value,args);if(value.kind==='superConstruct'){check(summary,'callable');expose(summary.fn.ownerType);}}}
-        else for(const [index,p]of callee.fn.parameters.entries()){spend();if(callable(p.type)){check(args[index],'callable');merge(callee.parameters,index,args[index]);}}}}
+        else for(const [index,p]of callee.fn.parameters.entries()){spend();if(callable(p.type)){
+          check(supplied[index],'callable');merge(callee.parameters,index,supplied[index]);}}}}
     else for(const arg of value.arguments??[])expression(summary,state,arg);return callable(value.type)?domain.top():null;
   }
   const clone=state=>collections.map(state,domain.copy);
@@ -238,7 +246,7 @@ export function commonTargets(hir,spend,records=null) {
   }
   for(const type of types.values()){spend();if(type.kind==='union')for(const member of type.members){spend();linkArrays(type.id,member);}
     for(const field of type.fields??[]){spend();if(field.initializer)scan(field.initializer,true);}}
-  for(const fn of functions.values()){spend();for(const parameter of fn.parameters){spend();unknownArrayOrigin(parameter.type);}scan(fn.body);}
+  for(const fn of functions.values()){spend();for(const parameter of fn.parameters){spend();unknownArrayOrigin(parameter.type);}scan(fn.body);if(fn.parameterInitialization)scan(fn.parameterInitialization.steps);}
   for(const global of hir.globals??[]){spend();unknownArrayOrigin(global.type);}
   for(const module of hir.modules??[]){spend();scan(module.initialization);}
   for(const root of hir.closure.roots)if(root.kind!=='module-initialization'){externalFunctions.add(root.target);const row=reach(root.target);expose(row.fn.returnType);for(const [index,p]of row.fn.parameters.entries()){spend();expose(p.type);if(callable(p.type)){if(records)observe(row.fn.id,index,domain.top());else merge(row.parameters,index,domain.top());}}}
@@ -249,7 +257,13 @@ export function commonTargets(hir,spend,records=null) {
         // These are storage writer observations, not invented callsite arms.
         for(const literal of defaultLiterals){spend();expression(null,state,literal);}}
       for(const module of hir.modules??[]){spend();body({fn:{id:module.initializer}},new Map(),module.initialization??[]);}
-      for(const summary of summaries.values())if(summary.reached){spend();const state=new Map();for(const [i,value]of summary.parameters)state.set(summary.fn.parameters[i].id,domain.copy(value));body(summary,state,summary.fn.body);}}while(changed);
+      for(const summary of summaries.values())if(summary.reached){spend();const state=new Map();for(const [i,value]of summary.parameters)state.set(summary.fn.parameters[i].id,domain.copy(value));
+        for(const step of summary.fn.parameterInitialization?.steps??[]){spend();if(step.initializer){const before=clone(state),value=expression(summary,state,step.initializer);growState(state,before);if(value)state.set(step.binding,domain.join(state.get(step.binding)??domain.bottom(),value));}}
+        for(const [index,parameter]of summary.fn.parameters.entries()){spend();if(!callable(parameter.type))continue;const value=state.get(parameter.id);if(value){
+          merge(summary.initializedParameters,index,value);
+          if(summary.fn.parameterInitialization){if(records)observe(summary.fn.id,index,value);else merge(summary.parameters,index,value);}
+        }}
+        body(summary,state,summary.fn.body);}}while(changed);
     missing=false;for(const field of fields.values())if(callable(field.type)){spend();const id=slot(field.id),value=fieldValues.get(id);if(!value||!value.top&&!value.ids.size){merge(fieldValues,id,domain.top());missing=true;}}
     for(const type of types.values())if(arrayParents.has(type.id)&&callable(type.elementType)){spend();const id=arrayRoot(type.id),value=elementValues.get(id);if(!value||!value.top&&!value.ids.size){merge(elementValues,id,domain.top());missing=true;}}
   }while(missing);

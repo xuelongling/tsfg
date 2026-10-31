@@ -32,13 +32,40 @@ SourcePlan::Reg SourcePlan::invoke(const Json &e,std::vector<Reg> args,const Jso
 void SourcePlan::region(const Array &rows,const Completion &active,const std::function<void()> &onNormal,const std::string &path,
     const std::vector<std::pair<std::string,Reg>> &initial){
   if(!ok()||!check.step(cells.size()+1))return;auto inherited=cells;const auto previous=handlers;handlers=active;
-  for(const auto &[id,value]:initial){
+  const bool parameterEntry=path=="body"&&!field(owner,"parameterInitialization").getAsNull();
+  const auto initializeBinding=[&](const std::string &id,Reg value){
     if(!check.need(check.bindings.count(id),"Source entry binding missing"))return;
     const auto &b=*check.bindings.at(id);const auto r=sourceAnchor(b);const auto type=string(field(b,"type"));
     if(!check.environmentSlots.count(id))cells[id]=emit("cell",{},"cell:"+id,Object{{"binding",id}},r);
     store(bindingLocation(id,type,r),value,r,true,false);
-  }
-  if(path=="body"&&string(field(owner,"kind"))=="construction-body"){
+  };
+  if(parameterEntry){
+    std::vector<Reg> args;const auto &steps=items(field(field(owner,"parameterInitialization"),"steps"));
+    const auto initializeParameters=[&]{
+      for(size_t index=0;index<initial.size();++index){
+        if(!check.step()||!check.need(index<steps.size(),"Source parameter initialization step missing"))return;
+        const auto &[id,raw]=initial[index];const auto &step=steps[index],&binding=*check.bindings.at(id);const auto type=string(field(binding,"type"));
+        const auto range=sourceAnchor(step);auto value=raw;
+        if(!field(step,"initializer").getAsNull()){
+          const auto undef=emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},range);
+          const auto condition=scalar("binary","===",{raw,undef},digest(std::string("tsfg.type")+std::string(1,'\0')+"bool"),range);
+          const auto defaulted=block(),supplied=block(),joined=block({type});
+          emit("cf.cond_br",{condition},"",Object{},range,{uint16_t(defaulted),uint16_t(supplied)});
+          current=supplied;branch(joined,{copy(raw,type,range)},range);
+          current=defaulted;const auto result=expression(field(step,"initializer"));branch(joined,{copy(result,type,range)},range);
+          current=joined;value=function.blocks[joined].parameters[0];
+        }
+        initializeBinding(id,value);
+      }
+      for(const auto &parameter:items(field(owner,"parameters"))){
+        if(!check.step())return;args.push_back(load(bindingLocation(string(field(parameter,"id")),string(field(parameter,"type")),sourceAnchor(owner)),sourceAnchor(owner)));
+      }
+    };
+    const auto &type=*check.types.at(string(field(owner,"ownerType")));
+    if(string(field(type,"base")).empty())enterConstructor(type,receiverFrame,args,sourceAnchor(owner),initializeParameters);
+    else initializeParameters();
+  }else for(const auto &[id,value]:initial)initializeBinding(id,value);
+  if(!parameterEntry&&path=="body"&&string(field(owner,"kind"))=="construction-body"){
     std::vector<Reg> args;for(const auto &p:items(field(owner,"parameters"))){if(!check.step())return;args.push_back(load(bindingLocation(string(field(p,"id")),string(field(p,"type")),sourceAnchor(owner)),sourceAnchor(owner)));}
     enterConstructor(*check.types.at(string(field(owner,"ownerType"))),receiverFrame,args,sourceAnchor(owner));
   }
@@ -122,7 +149,10 @@ bool SourcePlan::run(){
   if(!lexical.empty())parameters.push_back("env:"+lexical);
   const bool constructor=string(field(owner,"kind"))=="construction-body";
   const auto receiverId=string(field(owner,"receiverBinding"));if(!receiverId.empty())parameters.push_back((constructor?"receiver:":"")+string(field(owner,"ownerType")));
-  for(const auto &p:items(field(owner,"parameters")))parameters.push_back(string(field(p,"type")));
+  const auto &steps=items(field(field(owner,"parameterInitialization"),"steps"));size_t parameterIndex=0;
+  for(const auto &p:items(field(owner,"parameters"))){
+    if(!check.step())return false;parameters.push_back(steps.empty()?string(field(p,"type")):string(field(steps[parameterIndex++],"argumentType")));
+  }
   block(parameters);size_t index=0;if(!lexical.empty())lexicalEnvironment=function.blocks[0].parameters[index++];
   if(!activation.empty()){const auto parent=string(field(*check.environments.at(activation),"parent"));std::vector<Reg> args;if(!parent.empty())args.push_back(environment(parent,sourceAnchor(owner)));activationEnvironment=emit("env_alloc",std::move(args),"env:"+activation,Object{{"layout",activation}},sourceAnchor(owner));}
   if(!receiverId.empty()){const auto value=function.blocks[0].parameters[index++];if(constructor)receiverFrame=value;else initial.emplace_back(receiverId,value);}

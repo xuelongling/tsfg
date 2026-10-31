@@ -29,6 +29,11 @@ export function commonSemanticIdentities(payload,spend) {
     active.delete(id);labels.set(id,result);return result;
   }
   for(const id of types.keys())label(id);
+  const argumentTypes=row=>{
+    let owner=row;while(owner&&!owner.constructor&&owner.base){spend();owner=types.get(owner.base);}
+    const steps=owner?.constructor?.parameterInitialization?.steps;if(!steps)return row.construction?.signature.parameters??[];
+    spend(steps.length);return steps.map(step=>step.argumentType);
+  };
   const callableShape=fn=>({parameters:fn.parameters.map(p=>label(p.declaredType)),returnType:label(fn.returnType)});
   function shape(row) {
     const result={label:label(row.id),kind:row.kind};
@@ -40,13 +45,14 @@ export function commonSemanticIdentities(payload,spend) {
     if(row.methods)result.methods=row.methods.map(id=>{spend();const fn=functions.get(id);
       if(!fn)throw new TypeError('method missing from semantic type directory');return {name:fn.name,access:fn.access,...callableShape(fn)};});
     if(row.construction)result.construction={access:row.construction.access,
-      parameters:row.construction.signature.parameters.map(label),returnType:label(row.id)};
+      parameters:row.construction.signature.parameters.map(label),returnType:label(row.id),
+      ...(row.construction.signature.minimumArgumentCount===undefined?{}:{minimumArgumentCount:row.construction.signature.minimumArgumentCount,argumentTypes:argumentTypes(row).map(label)})};
     return result;
   }
   for(const row of types.values())shapes.set(row.id,shape(row));
   const children=row=>[...(row.base?[row.base]:[]),...(row.elementType?[row.elementType]:[]),...(row.members??[]),
     ...(row.fields??[]).map(field=>field.type),...(row.methods??[]).flatMap(id=>{const fn=functions.get(id);return [fn.returnType,...fn.parameters.map(p=>p.declaredType)];}),
-    ...(row.construction?.signature.parameters??[]),...(row.kind==='function'?[...row.parameters,row.returnType]:[])];
+    ...(row.construction?.signature.parameters??[]),...(row.construction?.signature.minimumArgumentCount===undefined?[]:argumentTypes(row)),...(row.kind==='function'?[...row.parameters,row.returnType]:[])];
   function semanticType(id) {
     if(typeIds.has(id))return typeIds.get(id);spend();const row=types.get(id);
     if(row.kind==='scalar'){typeIds.set(id,scalarTypeIds[row.name]);return scalarTypeIds[row.name];}

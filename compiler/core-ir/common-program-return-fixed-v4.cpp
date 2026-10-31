@@ -196,6 +196,7 @@ bool isolateReturnStorage(Program &p,const std::map<std::string,const Json *> &t
       if(const auto *array=row->getAsArray()){if(!work(p,e,array->size()))return false;for(const auto &child:*array)pending.push_back(&child);continue;}
       const auto *object=row->getAsObject();if(!object)continue;if(!work(p,e))return false;rows.push_back(row);
       if(const auto *type=object->get("type")){if(!append(*type))return false;if(const auto *declared=object->get("declaredType"))if(!append(*declared))return false;}
+      if(const auto *type=object->get("argumentType"))if(!append(*type))return false;
       if(const auto *called=object->get("signature")){if(!work(p,e,items(field(*called,"parameters")).size()+1))return false;for(const auto &type:items(field(*called,"parameters")))if(!append(type))return false;if(!append(field(*called,"returnType")))return false;}
       const auto kind=field(*row,"kind").getAsString();if(kind&&(*kind=="bindingTarget"||*kind=="globalTarget")&&field(*row,"binding").getAsString()){
         std::string binding;if(!copyId(field(*row,"binding"),binding)||!work(p,e))return false;writes.insert(std::move(binding));}
@@ -426,7 +427,7 @@ bool scalarReturnOriginProof(Program &p,const std::string &root,Error &e){
       if(scalar)scalar=view(field(fn,"returnType"));
       for(const auto &row:items(field(fn,"parameters"))){if(!work(p,e))return false;if(scalar)scalar=view(field(row,"type"));}
       for(const auto &row:items(field(fn,"bindings"))){if(!work(p,e))return false;if(scalar)scalar=view(field(row,"type"));}
-      std::set<std::string> targets;std::vector<const Json *> pending{&field(fn,"body")};
+      std::set<std::string> targets;std::vector<const Json *> pending{&field(fn,"body"),&field(fn,"parameterInitialization")};
       // Once a member is not scalar-local, every closure reaching it fails;
       // its remaining data/source paths cannot confer this exception.
       while(scalar&&!pending.empty()){
@@ -482,7 +483,7 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
   // to the mere presence of a partial program-wide storage projection. Match
   // the Source availability premise for signature, capture and body views.
   if(!work(p,e,3))return false;
-  std::vector<const Json *> views{&field(fn,"returnType")},pending{&field(fn,"body")};
+  std::vector<const Json *> views{&field(fn,"returnType")},pending{&field(fn,"body"),&field(fn,"parameterInitialization")};
   if(!field(fn,"ownerType").getAsNull()){if(!work(p,e))return false;views.push_back(&field(fn,"ownerType"));}
   for(const auto name:{"parameters","bindings"})for(const auto &row:items(field(fn,name))){if(!work(p,e,2))return false;views.push_back(&field(row,"type"));}
   std::set<std::string> captured;
@@ -495,7 +496,7 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
     if(!work(p,e))return false;const auto *row=pending.back();pending.pop_back();
     if(const auto *array=row->getAsArray()){if(!work(p,e,array->size()))return false;for(const auto &child:*array)pending.push_back(&child);continue;}
     if(const auto *object=row->getAsObject()){
-      if(const auto *type=object->get("type");type&&type->getAsString()){if(!work(p,e))return false;views.push_back(type);}
+      for(auto key:{"type","argumentType"})if(const auto *type=object->get(key);type&&type->getAsString()){if(!work(p,e))return false;views.push_back(type);}
       for(const auto &entry:*object){if(!work(p,e,llvm::StringRef(entry.first).size()/8+1))return false;
         if(entry.second.getAsObject()||entry.second.getAsArray()){if(!work(p,e))return false;pending.push_back(&entry.second);}}
     }

@@ -34,6 +34,8 @@ bool prepareInternalConstructors(Program &p,Error &e){
   if(p.internalMetadataReady)return true;
   const auto &rawTypes=items(field(p.hir,"types"));if(!work(p,e,rawTypes.size()))return false;
   std::map<std::string,const Json *> types,fields;
+  std::map<std::string,const Json *> functions;
+  for(const auto &fn:items(field(p.hir,"functions"))){if(!text(p,e,field(fn,"id").getAsString().value_or("")))return false;functions.emplace(string(field(fn,"id")),&fn);}
   for(const auto &type:rawTypes){const auto id=field(type,"id").getAsString().value_or("");if(!text(p,e,id))return false;types.emplace(id.str(),&type);
     for(const auto &f:items(field(type,"fields"))){if(!work(p,e))return false;fields.emplace(string(field(f,"id")),&f);}}
   if(!work(p,e,128))return false;const auto voidId=digest(std::string("tsfg.type")+std::string(1,'\0')+"void");
@@ -43,17 +45,26 @@ bool prepareInternalConstructors(Program &p,Error &e){
     if((kind!="reference"&&kind!="value")||ctor.getAsNull()||string(field(ctor,"kind"))=="explicit")continue;
     if(!internalConstructionCost(p,ctor,e)||!text(p,e,owner)||!work(p,e,192))return false;
     const auto construction=string(field(ctor,"id")),id="analysis-construction:"+construction;
+    const Json *selected=type;std::set<std::string> ancestry;
+    while(string(field(field(*selected,"construction"),"functionId")).empty()&&!string(field(*selected,"base")).empty()){
+      if(!work(p,e)||!ancestry.insert(string(field(*selected,"id"))).second)return reject(e,"core-ir-common-source","implicit parameter ancestry cycle");
+      selected=types.at(string(field(*selected,"base")));
+    }
+    const auto selectedId=string(field(field(*selected,"construction"),"functionId"));
+    const auto &steps=selectedId.empty()?items(Json(nullptr)):items(field(field(*functions.at(selectedId),"parameterInitialization"),"steps"));
     Array parameters;const auto &input=items(field(ctor,"parameters"));if(!work(p,e,8*input.size()))return false;
     for(size_t i=0;i<input.size();++i){
       if(!text(p,e,id)||!internalConstructionCost(p,input[i],e)||!work(p,e,32))return false;
+      if(!steps.empty()&&!internalConstructionCost(p,steps[i],e))return false;
       const auto binding=id+"/parameter/"+std::to_string(i);const auto &origin=field(input[i],"origin");
       Json range=Object{{"start",field(origin,"start")},{"end",field(origin,"end")}};
-      Json parameter=Object{{"id",binding},{"name","$"+std::to_string(i)},{"kind","parameter"},{"type",field(input[i],"type")},
+      Json parameter=Object{{"id",binding},{"name","$"+std::to_string(i)},{"kind","parameter"},{"type",steps.empty()?field(input[i],"type"):field(steps[i],"argumentType")},
         {"writable",true},{"range",range},{"nameRange",range}};
       if(!internalConstructionCost(p,parameter,e))return false;p.internalBindings.emplace(binding,parameter);parameters.push_back(std::move(parameter));
     }
+    Array argumentTypes;for(const auto &parameter:parameters){if(!internalConstructionCost(p,field(parameter,"type"),e)||!work(p,e))return false;argumentTypes.push_back(field(parameter,"type"));}
     const auto signature=digest(std::string("tsfg.common-program.analysis-construction-signature.v1")+std::string(1,'\0')+
-      canonical(Object{{"construction",construction},{"parameters",field(field(ctor,"signature"),"parameters")},{"returnType",owner}}));
+      canonical(Object{{"construction",construction},{"parameters",std::move(argumentTypes)},{"returnType",owner}}));
     Json range=Object{{"start",field(field(ctor,"origin"),"start")},{"end",field(field(ctor,"origin"),"end")}};
     Json source=Object{{"id",id},{"name","$implicitConstruction"},{"kind","construction-body"},{"analysisOnly",true},{"ownerType",owner},
       {"receiverBinding","analysis-receiver:"+id},{"sourcePath",field(field(ctor,"origin"),"source")},{"range",range},{"nameRange",range},
@@ -89,6 +100,7 @@ bool prepareInternalConstructors(Program &p,Error &e){
 bool projectInternalConstruction(Program &p,const Json &owner,bool &project,Error &e){
   project=false;std::set<std::string> seeds;bool hasSuper=false;
   if(!collect(p,field(owner,"body"),seeds,hasSuper,e))return false;
+  for(const auto &step:items(field(field(owner,"parameterInitialization"),"steps")))if(!collect(p,field(step,"initializer"),seeds,hasSuper,e))return false;
   if(string(field(owner,"kind"))=="construction-body"){
     const auto own=string(field(owner,"ownerType"));const Json *type=nullptr;
     for(const auto &row:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(row,"id"))==own){type=&row;break;}}

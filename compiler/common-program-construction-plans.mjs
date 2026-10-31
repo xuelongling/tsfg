@@ -53,7 +53,9 @@ export function commonConstructionPlans(input,owners){
   }
   spend(projected.privateTargets.size);const privateIds=new Set(projected.privateTargets.values());
   for(const owner of owners){
-    spend();const initial=collect(owner.body),seeds=initial.targets,type=input.types.get(owner.ownerType);
+    spend();const steps=owner.parameterInitialization?.steps??[];spend(steps.length);
+    const defaults=steps.flatMap(step=>step.initializer?[step.initializer]:[]);spend(defaults.length+owner.body.length);
+    const initial=collect([...defaults,...owner.body]),seeds=initial.targets,type=input.types.get(owner.ownerType);
     // Base constructors initialize own fields at entry. Derived fields are
     // lowered at actual super occurrences, including syntactically untaken arms.
     if(owner.kind==='construction-body'&&type&&(!type.base||initial.hasSuper)){

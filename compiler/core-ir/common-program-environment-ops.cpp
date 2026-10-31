@@ -61,7 +61,7 @@ bool ActualCheck::environmentRequirements(){
   std::map<std::string,std::set<std::string>> needs,calls;
   for(const auto &[id,fn]:sourceFunctions){
     for(const auto &capture:items(field(*fn,"captures"))){if(!step())return false;needs[id].insert(string(field(capture,"binding")));}
-    std::vector<const Json *> pending{&field(*fn,"body")};
+    std::vector<const Json *> pending{&field(*fn,"body"),&field(*fn,"parameterInitialization")};
     while(!pending.empty()){
       if(!step())return false;const auto *node=pending.back();pending.pop_back();
       if(const auto *object=node->getAsObject()){

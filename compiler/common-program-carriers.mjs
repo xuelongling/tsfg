@@ -26,7 +26,7 @@ export function selectCommonCarriers({model,plans},values) {
   const bound=(fn,name)=>values.capacity.observed.get(fn+'/'+name);
   for(const plan of plans) {
     const fn=plan.owner.id,rows=new Map();registers.set(fn,rows);
-    const parameters=plan.parameters.map(p=>p.hidden?p.type:bindings.get(p.id));
+    const parameters=plan.parameters.map((p,index)=>p.hidden?p.type:plan.owner.parameterInitialization?domain(bound(fn,plan.entry.parameters[index].name)):bindings.get(p.id));
     functions.set(fn,{id:fn,parameters,result:plan.returnType==='void'||types.get(plan.returnType)?.kind==='void'?'void':domain(results.get(fn))});
     for(const [name,row]of plan.graph.registers){spend();const op=row.operation?.name;
       const carrier=row.view.startsWith('cell:')||row.view.startsWith('env:')||row.view.startsWith('receiver:')||row.view.startsWith('initialization:')?row.view:row.view===payload?payload

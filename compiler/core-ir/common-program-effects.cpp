@@ -143,6 +143,10 @@ struct Derive {
       const auto &t=*types.at(tid);if(string(field(t,"kind"))=="reference"){out.allocation=true;out.managedReference=true;facet("allocation",&v);facet("managedReference",&v);}
       result.owners.insert("local:"+string(v.getAsObject()->get("allocationSite")?field(v,"allocationSite"):field(v,"construction")));
       if(!step(args.size()+1))return result;args.insert(args.begin(),ownerCopy(result.owners));
+      if(field(field(p.hir,"format"),"version").getAsInteger()==3){
+        const auto count=items(field(field(t,"construction"),"parameters")).size()+1;
+        if(!step(count))return result;if(args.size()<count)args.resize(count);
+      }
       const auto construct=[&](auto &&self,const Json &current)->Origins{
         if(!step())return {};const auto owner=string(field(current,"id")),fid=string(field(field(current,"construction"),"functionId")),base=string(field(current,"base"));
         if(!fid.empty()){
@@ -284,6 +288,12 @@ struct Derive {
         for(const auto &[id,type]:parameters)supplied.push_back(environment.count(id)?ownerCopy(environment.at(id)):Origins{});
         entryThrow=initialize(*types.at(owner),supplied,environment);
       }
+    }
+    for(const auto &parameter:items(field(field(fn,"parameterInitialization"),"steps"))){
+      if(!step())return false;const auto &initializer=field(parameter,"initializer");if(initializer.getAsNull())continue;
+      auto value=expression(initializer,environment);const auto binding=string(field(parameter,"binding"));
+      environment[binding]=unite(environment[binding],value.owners);entryThrow|=value.throwing;
+      if(value.throwing)facet("mayThrow",&initializer);
     }
     std::map<std::string,Json> throws;const auto completions=body(field(fn,"body"),environment,diagnostics?&throws:nullptr);out.mayThrow=entryThrow||(completions&Thrown);
     if(out.mayThrow)for(const auto &[key,selected]:throws)record(Object{{"kind","facet"},{"facet","mayThrow"}},selected);return e.message.empty();

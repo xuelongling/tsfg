@@ -31,14 +31,15 @@ Json sorted(SourceModel &m,Array values,bool objects=false){
 }
 bool SourceModel::directory(){
   if(!verifySourceShape(*this))return false;
+  const auto version=field(facts,"version").getAsInteger();const auto selectedSchema=version==3?sourceConstructorSchema:sourceSchema;
   if(!need(exact(facts,{"family","version","schemaHash","requestId","packageId","payload"})&&
-    string(field(facts,"family"))=="tsfg.program-facts-package-candidate"&&field(facts,"version").getAsInteger()==2&&
-    string(field(facts,"schemaHash"))==sourceSchema&&string(field(facts,"packageId"))==p.inputIdentity,
+    string(field(facts,"family"))=="tsfg.program-facts-package-candidate"&&(version==2||version==3)&&
+    string(field(facts,"schemaHash"))==selectedSchema&&string(field(facts,"packageId"))==p.inputIdentity,
     "selected whole Source package identity differs"))return false;
   if(!need(exact(payload,{"arrayLength","closure","compatibilityWitnesses","config","declarations","diagnostics",
     "entryCompatibilityRoots","exports","files","functions","globals","hostImports","modules","positionUnit","readSpanIntrinsic",
     "readSpanLength","rootFile","sourceRoot","target","typeAliases","types"}),"complete common Source payload shape differs"))return false;
-  if(!need(string(field(facts,"packageId"))==digest(std::string("tsfg.program-facts.package.v2")+std::string(1,'\0')+sourceSchema.str()+
+  if(!need(string(field(facts,"packageId"))==digest(std::string(version==3?"tsfg.program-facts.package.v3":"tsfg.program-facts.package.v2")+std::string(1,'\0')+selectedSchema.str()+
     std::string(1,'\0')+canonical(payload)),"whole Source package hash differs"))return false;
   const auto table=[&](llvm::StringRef name,std::map<std::string,const Json *> &to,llvm::StringRef key,size_t limit){
     const auto &raw=field(payload,name);if(!need(raw.getAsArray()&&items(raw).size()<=limit,"complete directory bounds"))return false;
@@ -46,11 +47,62 @@ bool SourceModel::directory(){
       if(!need(!id.empty()&&to.emplace(id,&row).second,"duplicate or missing protocol directory ID"))return false;}return true;};
   if(!table("types",types,"id",4096)||!table("functions",functions,"id",4096)||!table("files",sources,"path",128)||
     !table("hostImports",hosts,"id",1)||!table("modules",modules,"sourcePath",128)||!table("typeAliases",aliases,"id",4096))return false;
+  std::set<std::string> constructors;
   for(const auto &[id,t]:types){const auto &ctor=field(*t,"constructor");if(!ctor.getAsNull()){
-    const auto fid=string(field(ctor,"id"));if(!spend()||!need(!fid.empty()&&functions.emplace(fid,&ctor).second,"constructor protocol ID differs"))return false;}}
+    const auto fid=string(field(ctor,"id"));if(!spend()||!need(!fid.empty()&&functions.emplace(fid,&ctor).second,"constructor protocol ID differs"))return false;
+    if(version==3){if(!spend(fid.size()/8+1))return false;constructors.insert(fid);}}}
   if(!need(field(payload,"globals").getAsArray()&&items(field(payload,"globals")).size()<=4096,"global directory bound"))return false;
   for(const auto &g:items(field(payload,"globals"))){const auto id=string(field(field(g,"binding"),"id"));
     if(!spend()||!need(!id.empty()&&globals.emplace(id,&g).second,"global storage identity differs"))return false;}
+  // Check the complete constructor stage inventory before any identity,
+  // declaration or body traversal can follow another constructor's steps.
+  // Function-ID order is not an initialization-metadata dependency order.
+  if(version==3)for(const auto &[id,fn]:functions){
+    if(!spend())return false;
+    const auto &initialization=field(*fn,"parameterInitialization");
+    const bool constructor=constructors.count(id);
+    if(!need(constructor==!initialization.getAsNull(),"constructor parameter initialization inventory differs"))return false;
+    if(!constructor)continue;
+    const auto &steps=items(field(initialization,"steps")),&parameters=items(field(*fn,"parameters"));
+    if(!spend(steps.size()+parameters.size()+1)||!need(steps.size()==parameters.size(),"constructor parameter initialization step count differs"))return false;
+    size_t minimum=0;bool hasExpressions=false;
+    for(size_t index=0;index<parameters.size();++index){
+      const auto &parameter=parameters[index],&stage=steps[index];
+      const auto declared=field(parameter,"declaredType").getAsString().value(),argument=field(stage,"argumentType").getAsString().value();
+      if(!spend((declared.size()+argument.size())/4+1))return false;const auto declaredType=declared.str(),argumentType=argument.str();
+      if(!need(types.count(declaredType)&&types.count(argumentType),"constructor parameter declared/raw type is outside the complete directory"))return false;
+      const bool defaulted=!field(stage,"initializer").getAsNull();hasExpressions|=defaulted;if(!defaulted)minimum=index+1;
+      std::set<std::string> members;
+      const auto addMember=[&](llvm::StringRef member){
+        size_t comparisons=2;for(auto count=members.size();count;count>>=1)comparisons+=2;
+        if(!spend(comparisons*(member.size()/8+1)+1))return false;members.insert(member.str());return true;
+      };
+      if(string(field(*types.at(declaredType),"kind"))=="union"){
+        for(const auto &member:items(field(*types.at(declaredType),"members")))if(!addMember(member.getAsString().value()))return false;
+      }else if(!addMember(declaredType))return false;
+      if(defaulted&&!addMember("undefined"))return false;
+      size_t bytes=declaredType.size()+8;for(const auto &member:members){if(!spend())return false;bytes+=member.size()+1;}
+      if(!spend(bytes/4+members.size()+1))return false;
+      std::string expected=declaredType;if(members.size()>1){expected="union<";for(const auto &member:members){if(expected!="union<")expected+=",";expected+=member;}expected+=">";}
+      if(!need(same(field(stage,"binding"),field(parameter,"id"))&&same(field(stage,"range"),field(parameter,"declarationRange"))&&argumentType==expected,
+        "constructor raw argument type, binding or source range differs"))return false;
+    }
+    if(!need(field(initialization,"minimumArgumentCount").getAsInteger()==int64_t(minimum)&&field(initialization,"hasParameterExpressions").getAsBoolean()==hasExpressions,
+      "constructor minimum arity or parameter expression flag differs"))return false;
+  }
+  if(version==3)for(const auto &[id,type]:types){
+    if(!spend())return false;const auto &construction=field(*type,"construction");if(construction.getAsNull())continue;
+    const auto *selected=constructionFunction(*type);if(!error.message.empty())return false;
+    const auto &signature=field(construction,"signature");const auto &arguments=items(field(signature,"parameters"));
+    const auto &parameters=selected?items(field(*selected,"parameters")):items(Json(nullptr));
+    if(!spend(arguments.size()+parameters.size()+1)||!need(arguments.size()==parameters.size(),"construction signature arity differs from its selected constructor"))return false;
+    for(size_t index=0;index<arguments.size();++index){
+      const auto declared=field(parameters[index],"declaredType").getAsString().value();
+      if(!spend(declared.size()/8+1)||!need(same(arguments[index],field(parameters[index],"declaredType")),"construction signature parameter differs from its selected declaration"))return false;
+    }
+    const auto minimum=selected?field(field(*selected,"parameterInitialization"),"minimumArgumentCount"):Json(0);
+    if(!need(same(field(signature,"minimumArgumentCount"),minimum),"construction minimum arity differs from its selected constructor"))return false;
+  }
   return true;
 }
 std::string SourceModel::label(const std::string &id){
@@ -88,7 +140,14 @@ Json SourceModel::shape(const Json &row){
       {"returnType",label(string(field(fn,"returnType")))}});}out["methods"]=std::move(methods);}
   if(row.getAsObject()->get("construction")){Array parameters;
     for(const auto &a:items(field(field(field(row,"construction"),"signature"),"parameters"))){if(!spend())return nullptr;parameters.push_back(label(string(a)));}
-    out["construction"]=Object{{"access",field(field(row,"construction"),"access")},{"parameters",std::move(parameters)},{"returnType",label(id)}};}
+    out["construction"]=Object{{"access",field(field(row,"construction"),"access")},{"parameters",std::move(parameters)},{"returnType",label(id)}};
+    if(field(facts,"version").getAsInteger()==3){
+      const auto *selected=constructionFunction(row);Array arguments;
+      if(selected)for(const auto &step:items(field(field(*selected,"parameterInitialization"),"steps"))){if(!spend())return nullptr;arguments.push_back(label(string(field(step,"argumentType"))));}
+      else for(const auto &parameter:items(field(field(field(row,"construction"),"signature"),"parameters"))){if(!spend())return nullptr;arguments.push_back(label(string(parameter)));}
+      auto &construction=*out["construction"].getAsObject();construction["minimumArgumentCount"]=field(field(field(row,"construction"),"signature"),"minimumArgumentCount");construction["argumentTypes"]=std::move(arguments);
+    }
+  }
   return out;
 }
 std::string SourceModel::semanticType(const std::string &id){
@@ -112,6 +171,9 @@ std::string SourceModel::semanticType(const std::string &id){
     for(const auto &m:items(field(current,"methods"))){if(!spend()||!need(functions.count(string(m)),"method shape dependency missing"))return {};
       const auto &fn=*functions.at(string(m));add(field(fn,"returnType"));for(const auto &a:items(field(fn,"parameters"))){if(!spend())return {};add(field(a,"declaredType"));}}
     for(const auto &a:items(field(field(field(current,"construction"),"signature"),"parameters"))){if(!spend())return {};add(a);}
+    if(field(facts,"version").getAsInteger()==3&&!field(current,"construction").getAsNull()){
+      if(const auto *selected=constructionFunction(current))for(const auto &step:items(field(field(*selected,"parameterInitialization"),"steps"))){if(!spend())return {};add(field(step,"argumentType"));}
+    }
   }
   Array ordered;for(auto &[key,row]:graph)ordered.push_back(std::move(row));auto order=sorted(*this,std::move(ordered),true);
   if(!error.message.empty())return {};return typeIds[id]=identity("type",Object{{"root",labels.at(id)},{"graph",std::move(order)}});

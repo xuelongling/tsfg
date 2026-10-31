@@ -241,9 +241,14 @@ export function commonEffects(hir,spend,physical=null) {
         mark(supplied[0]??new Set(),'write',{kind:'initialize_field',range:field.origin});}
       currentReceiver=previousReceiver;operationSource=previousSource;return throwing;
     }
+    let parameterThrow=false;
+    for(const step of fn.parameterInitialization?.steps??[]){
+      spend();if(step.initializer){const before=collections.map(origins),evaluated=expression(step.initializer,origins);
+        parameterThrow ||= evaluated.throwing;mergeOrigins(origins,before);origins.set(step.binding,union([origins.get(step.binding)??new Set(),evaluated.owner]));}
+    }
     const throws=local?new Map():null,entryThrow=fn.analysisOnly&&!types.get(fn.ownerType).base
       ?initialize(types.get(fn.ownerType),params.map(parameter=>origins.get(parameter.id)??new Set()),origins):false,
-      completions=body(fn.body,origins,throws);if(entryThrow)completions.add('throw');result.facets.mayThrow=completions.has('throw');
+      completions=body(fn.body,origins,throws);if(entryThrow||parameterThrow)completions.add('throw');result.facets.mayThrow=completions.has('throw');
     if(local&&result.facets.mayThrow)for(const origin of throws.values())retain({kind:'facet',facet:'mayThrow'},origin);
     result.captures=collections.sorted(captures.values(),(a,b)=>a.slot<b.slot?-1:a.slot>b.slot?1:0);
     result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};result.hostResources={reads:collections.sorted(hostRead),writes:collections.sorted(hostWrite)};return {upper:result,calls,hostCalls,completions:collections.sorted(completions),local};

@@ -11,29 +11,33 @@ import {validateCommonLexical} from './common-program-lexical.mjs';
 import {validateCommonHostDeclarations} from './common-program-hosts.mjs';
 import {commonSemanticIdentities} from './common-program-identities.mjs';
 import {commonSourceDescriptor as descriptor,commonSourceFormat as format,canonical,sha256,own,
+  commonSourceDescriptorV3,commonSourceFormatV3,
   commonBudget,commonJson,commonCheck as check,commonSame as same,commonMeter} from './common-program-common.mjs';
 export {commonSourceFormat} from './common-program-common.mjs';
 
-function shape(value,name,spend) {
-  spend();if(name.startsWith('*')){if(value===null)return;return shape(value,name.slice(1),spend);}
-  if(name.startsWith('[]')){check(Array.isArray(value),'schema');spend(value.length);for(const child of value)shape(child,name.slice(2),spend);return;}
+function shape(value,name,spend,selectedDescriptor) {
+  spend();if(name.startsWith('*')){if(value===null)return;return shape(value,name.slice(1),spend,selectedDescriptor);}
+  if(name.startsWith('[]')){check(Array.isArray(value),'schema');spend(value.length);for(const child of value)shape(child,name.slice(2),spend,selectedDescriptor);return;}
   if(name==='string'){check(typeof value==='string'&&value.isWellFormed(),'schema');return;}
   if(name==='bool'){check(typeof value==='boolean','schema');return;}
   if(name==='int'||name==='int32'){check(Number.isSafeInteger(value)&&value>=0&&!Object.is(value,-0)&&(name!=='int32'||value<=2147483647),'schema');return;}
-  const rule=descriptor.objects[name];check(rule&&value&&typeof value==='object'&&!Array.isArray(value),'schema');
+  const rule=selectedDescriptor.objects[name];check(rule&&value&&typeof value==='object'&&!Array.isArray(value),'schema');
   check(rule.required.every(key=>Object.hasOwn(value,key))&&Object.keys(value).every(key=>Object.hasOwn(rule.properties,key)),'schema');
+  if(selectedDescriptor.version===3&&name==='arrayGenericStatement'&&value.kind==='varDeclaration')
+    check(false,'capability','Common var declarations are not lowered by this Source3 consumer');
   const group={arrayGenericExpression:'expressionKinds',arrayGenericTarget:'targetKinds',arrayGenericStatement:'statementKinds',arrayGenericType:'typeKinds'}[name];
-  if(group){const selected=descriptor[group][value.kind];check(selected,'kind');
+  if(group){const selected=selectedDescriptor[group][value.kind];check(selected,'kind');
     const optional=name==='arrayGenericExpression'?['compatibilityRoots',...(value.kind==='numericLiteral'?['decimal','bits']:[]),...(value.kind==='call'?['receiver']:[]),...(value.kind==='stringConcat'?['operator']:[])]
       :name==='arrayGenericType'&&['value','reference'].includes(value.kind)?['markerOrigin','base','methods']
       :name==='arrayGenericStatement'?(value.kind==='return'?['value']:value.kind==='try'?['catchClause','finallyBlock']:[]):[];
     check(selected.every(key=>Object.hasOwn(value,key))&&Object.keys(value).every(key=>rule.required.includes(key)||selected.includes(key)||optional.includes(key)),'schema');}
-  for(const [key,child]of Object.entries(value))shape(child,rule.properties[key],spend);
+  for(const [key,child]of Object.entries(value))shape(child,rule.properties[key],spend,selectedDescriptor);
 }
 
 export function verifyCommonProgramFacts(value) {
-  commonBudget(value);const spend=commonMeter();shape(value,'commonProgramPackage',spend);
-  check(value.family===format.family&&value.version===format.version&&value.schemaHash===format.schemaHash,'identity');
+  commonBudget(value);const spend=commonMeter(),selected=value?.version===3?commonSourceFormatV3:format;
+  shape(value,'commonProgramPackage',spend,value?.version===3?commonSourceDescriptorV3:descriptor);
+  check(value.family===selected.family&&value.version===selected.version&&value.schemaHash===selected.schemaHash,'identity');
   const p=value.payload;logicalPath(p.sourceRoot);logicalPath(p.rootFile);
   check(p.rootFile.startsWith(p.sourceRoot+'/')&&p.rootFile.endsWith('.ts')&&!p.rootFile.endsWith('.d.ts')&&p.positionUnit==='utf16','source');
   check(same(p.config,{strict:true,noEmit:true,allowJs:false})&&p.diagnostics.length===0,'config');
@@ -50,7 +54,33 @@ export function verifyCommonProgramFacts(value) {
   spend(p.types.length);const sourceTypeIds=new Set(p.types.map(type=>type.id));
   for(const type of p.types)if(type.kind==='function'){spend(type.parameters.length+1);check(type.parameters.length<=64&&type.constructor===null&&type.parameters.every(id=>sourceTypeIds.has(id))&&sourceTypeIds.has(type.returnType),'function-type');
     check(type.id===sha256('tsfg.program.function-type.v2\0'+canonical({parameters:type.parameters,returnType:type.returnType})),'function-type');}
-  const types=validateTypedArrayTypes(p,sources);validateTypedArrayDeclarations(p,sources);validateCommonHostDeclarations(p,sources,types,spend);
+  const types=validateTypedArrayTypes(p,sources);
+  // Own the complete constructor directory before any caller can select an
+  // ordinal raw argument type. Expression checks below consume these rows.
+  spend(p.functions.length+p.types.length);
+  for(const fn of p.functions)check(fn.parameterInitialization===undefined,'parameter-initialization');
+  for(const type of p.types){
+    if(type.construction)check(selected.version===3?type.construction.signature.minimumArgumentCount!==undefined:type.construction.signature.minimumArgumentCount===undefined,'parameter-initialization');
+    const fn=type.constructor;if(!fn)continue;
+    check(selected.version===3?Boolean(fn.parameterInitialization):fn.parameterInitialization===undefined,'parameter-initialization');
+    if(!fn.parameterInitialization)continue;
+    const initialization=fn.parameterInitialization,steps=initialization.steps;
+    check(fn.ownerType===type.id&&fn.name==='constructor','parameter-initialization');
+    spend(steps.length+fn.parameters.length);
+    check(steps.length===fn.parameters.length&&initialization.hasParameterExpressions===steps.some(step=>step.initializer),'parameter-initialization');
+    let minimum=0;
+    for(const [index,step]of steps.entries()){
+      spend();const parameter=fn.parameters[index];
+      check(step.binding===parameter.id&&same(step.range,parameter.declarationRange),'parameter-initialization');
+      const declared=types.get(parameter.declaredType);check(declared,'parameter-initialization');
+      const members=declared.kind==='union'?declared.members:[declared.id];spend(members.length*3+1);
+      const argument=step.initializer?[...new Set([...members,'undefined'])].sort((a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a<b?-1:a>b?1:0;}):members;
+      check(types.has(step.argumentType)&&step.argumentType===(argument.length===1?argument[0]:'union<'+argument.join(',')+'>'),'parameter-initialization');
+      if(!step.initializer)minimum=index+1;
+    }
+    check(initialization.minimumArgumentCount===minimum&&type.construction.signature.minimumArgumentCount===minimum,'parameter-initialization');
+  }
+  validateTypedArrayDeclarations(p,sources);validateCommonHostDeclarations(p,sources,types,spend);
   const grammars=new Map([...sources].filter(([path])=>!path.endsWith('.d.ts')).map(([path,row])=>[path,commonSourceGrammar(row,spend)]));
   const functions=new Map(p.functions.map(fn=>[fn.id,fn])),globals=new Map(p.globals.map(row=>[row.binding.id,row]));
   check(functions.size===p.functions.length&&globals.size===p.globals.length,'identity');
@@ -123,7 +153,7 @@ export function verifyCommonProgramFacts(value) {
       commonSourceAccess(g,field.origin,{start:name.start,end:name.end},field.access);
       check(field.readonly===prefix.includes('readonly'),'permission');
       const colon=bounds.first+next+1;check(all[colon]?.text===':','source');const end=field.initializer?g.indices(field.initializer.range).first-1:bounds.end-(all[bounds.end-1].text===';'?1:0);
-      if(field.initializer)check(all[end].text==='=','source');const annotationRange={start:all[colon+1].start,end:all[end-1].end};
+      if(field.initializer)check(all[end].text==='=','source');const annotationRange=field.parameterBinding?row.constructor.parameters.find(parameter=>parameter.id===field.parameterBinding).annotationRange:{start:all[colon+1].start,end:all[end-1].end};
       commonTypeSyntax(g,annotationRange,field.type,types,spend,p.typeAliases,visible.get(row.sourcePath));
       check(index===0||row.fields[index-1].origin.start<field.origin.start,'source');
     }
@@ -138,10 +168,10 @@ export function verifyCommonProgramFacts(value) {
     if(root.kind==='module-initialization')check(root.name==='$moduleInit'&&root.target===root.sourcePath&&same(root.range,{start:0,end:sources.get(root.sourcePath).content.length}),'closure');
     else {const fn=functions.get(root.target);check(fn&&fn.sourcePath===root.sourcePath&&fn.name===root.name&&same(root.range,fn.declarationRange),'closure');}}
   check(p.closure.requiredRoots.every(root=>p.closure.roots.some(candidate=>same(candidate,root))),'closure');
-  const request={family:'tsfg.program-facts-request-candidate',version:2,schemaHash:format.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
+  const request={family:'tsfg.program-facts-request-candidate',version:selected.version,schemaHash:selected.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:p.declarations,config:p.config,target:p.target,compilationClosure:closure,hostImports:p.hostImports.map(({sourcePath,name,capabilityId,parameterTypes,returnType})=>({sourcePath,name,capabilityId,parameterTypes,returnType}))}};
-  check(value.requestId===sha256('tsfg.program-facts.request.v2\0'+canonical(request)+'\n')
-    &&value.packageId===sha256('tsfg.program-facts.package.v2\0'+format.schemaHash+'\0'+canonical(p)),'identity');
+  check(value.requestId===sha256('tsfg.program-facts.request.v'+selected.version+'\0'+canonical(request)+'\n')
+    &&value.packageId===sha256('tsfg.program-facts.package.v'+selected.version+'\0'+selected.schemaHash+'\0'+canonical(p)),'identity');
   const semantic=commonSemanticIdentities(p,spend);check(new Set(semantic.typeIds.values()).size===p.types.length,'identity','duplicate owned semantic TypeId');
   return own(value);
 }

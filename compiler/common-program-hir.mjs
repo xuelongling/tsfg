@@ -7,7 +7,7 @@ import {isProxy} from 'node:util/types';
 import {copyGenericJsonBytes} from './generic-json.mjs';
 import {readCommonProgramFacts,verifyCommonProgramFacts,writeCommonProgramFacts} from './common-program-facts.mjs';
 import {commonSemanticIdentities,commonFieldId,commonIdentity,commonDeclKey} from './common-program-identities.mjs';
-import {commonHirFormat,commonJsonPolicy,commonBudget,commonMeter,commonCheck as check,commonSame as same,
+import {commonHirFormat,commonHirFormatV3,commonJsonPolicy,commonBudget,commonMeter,commonCheck as check,commonSame as same,
   commonJson,canonical,sha256,own} from './common-program-common.mjs';
 
 export function isCommonProgramContext(value) {
@@ -17,7 +17,8 @@ export function isCommonProgramContext(value) {
 export function commonProgramContext(value) {
   check(isCommonProgramContext(value),'context');const fields=Object.getOwnPropertyDescriptors(value),keys=['family','version','factsBytes','expectedPackageId'];
   check(Reflect.ownKeys(value).length===keys.length&&keys.every(key=>fields[key]?.enumerable&&Object.hasOwn(fields[key],'value')),'context');
-  check(fields.version.value===2,'context');const bytes=copyGenericJsonBytes(fields.factsBytes.value,commonJsonPolicy),facts=readCommonProgramFacts(bytes);
+  check(fields.version.value===2||fields.version.value===3,'context');const bytes=copyGenericJsonBytes(fields.factsBytes.value,commonJsonPolicy),facts=readCommonProgramFacts(bytes);
+  check(fields.version.value===facts.version,'context');
   check(facts.packageId===fields.expectedPackageId.value,'context');return {bytes,facts};
 }
 
@@ -42,10 +43,10 @@ export function projectCommonProgram(facts,hostContext=null) {
     for(const key of ['operatorRange','annotationRange','calleeRange','nameRange'])if(value[key])result[key]={...value[key]};
     for(const key of ['receiver','index','expression','value','left','right','target'])if(value[key])result[key]=expression(value[key]);
     for(const key of ['elements','arguments'])if(value[key])result[key]=value[key].map(expression);
-    if(value.signature){result.signature={parameters:value.signature.parameters.map(type),returnType:type(value.signature.returnType)};result.sourceSignature=structuredClone(value.signature);}
+    if(value.signature){result.signature={parameters:value.signature.parameters.map(type),returnType:type(value.signature.returnType),...(value.signature.minimumArgumentCount===undefined?{}:{minimumArgumentCount:value.signature.minimumArgumentCount})};result.sourceSignature=structuredClone(value.signature);}
     if(value.callee) {
       result.callee=value.callee===p.readSpanIntrinsic.id?'intrinsic:readSpan':target(value.callee);check(result.callee,'identity');
-      result.signature={parameters:value.signature.parameters.map(type),returnType:type(value.signature.returnType)};
+      result.signature={parameters:value.signature.parameters.map(type),returnType:type(value.signature.returnType),...(value.signature.minimumArgumentCount===undefined?{}:{minimumArgumentCount:value.signature.minimumArgumentCount})};
       result.sourceSignature=structuredClone(value.signature);
       if(ids.signatures.has(value.callee))result.signatureHash=ids.signatures.get(value.callee);
       if(hosts.has(value.callee))result.signatureHash=hosts.get(value.callee).signatureHash;
@@ -73,7 +74,9 @@ export function projectCommonProgram(facts,hostContext=null) {
     access:fn.access,signatureHash:ids.signatures.get(fn.id),returnType:type(fn.returnType),
     parameters:fn.parameters.map(binding),bindings:fn.bindings.map(binding),body:statements(fn.body),range:{...fn.declarationRange},nameRange:{...fn.nameRange},
     returnAnnotationRange:structuredClone(fn.returnAnnotationRange),...(fn.ownerType?{ownerType:type(fn.ownerType),receiverBinding:'this@'+fn.id}:{}),
-    ...(fn.overrideTarget?{overrideTarget:ids.functionIds.get(fn.overrideTarget)}:{})})).sort((a,b)=>a.id<b.id?-1:1);
+    ...(fn.overrideTarget?{overrideTarget:ids.functionIds.get(fn.overrideTarget)}:{}),
+    ...(fn.parameterInitialization?{parameterInitialization:{minimumArgumentCount:fn.parameterInitialization.minimumArgumentCount,hasParameterExpressions:fn.parameterInitialization.hasParameterExpressions,
+      steps:fn.parameterInitialization.steps.map(step=>{spend();return {binding:step.binding,range:{...step.range},argumentType:type(step.argumentType),...(step.initializer?{initializer:expression(step.initializer)}:{})};})}}:{})})).sort((a,b)=>a.id<b.id?-1:1);
   const types=p.types.map(row=>{
     spend();const result={id:type(row.id),sourceType:row.id,kind:row.kind,name:row.name??(['value','reference'].includes(row.kind)?row.nominalKey.declarationPath.at(-1):row.kind),
       semanticLabel:ids.labels.get(row.id),semanticShape:ids.shapes.get(row.id)};
@@ -89,7 +92,7 @@ export function projectCommonProgram(facts,hostContext=null) {
     if(row.construction)result.construction={id:constructionIds.get(row.construction.id),kind:row.construction.kind,access:row.construction.access,
       initializationPhase:row.construction.initializationPhase,initializationFields:row.construction.initializationFields.map(id=>fields.get(id)),
       parameters:row.construction.parameters.map(p=>({...structuredClone(p),type:type(p.type)})),
-      signature:{parameters:row.construction.signature.parameters.map(type),returnType:type(row.id)},
+      signature:{parameters:row.construction.signature.parameters.map(type),returnType:type(row.id),...(row.construction.signature.minimumArgumentCount===undefined?{}:{minimumArgumentCount:row.construction.signature.minimumArgumentCount})},
       sourceSignature:structuredClone(row.construction.signature),origin:{...row.construction.origin},
       functionId:row.constructor?ids.functionIds.get(row.constructor.id):null,
       implicitForward:row.construction.implicitForward?structuredClone(row.construction.implicitForward):null};
@@ -110,7 +113,7 @@ export function projectCommonProgram(facts,hostContext=null) {
   modules.forEach(module=>enter(module.sourcePath));
   const closure={roots:p.closure.roots.map(root),requiredRoots:p.closure.requiredRoots.map(root),modules:modules.map(row=>row.id),
     functions:functions.map(row=>row.id),initialization};
-  const hir={format:commonHirFormat,snapshot,inputIdentity:snapshot.packageId,rootFile:p.rootFile,
+  const hir={format:snapshot.version===3?commonHirFormatV3:commonHirFormat,snapshot,inputIdentity:snapshot.packageId,rootFile:p.rootFile,
     hostImports,hostContext:ownedHostContext,sources:p.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),target:structuredClone(p.target),types,functions,modules,globals,closure,environments:environment.environments};
   commonBudget(hir);return own(hir);
 }
@@ -119,7 +122,7 @@ export function buildCommonProgramHir(input,context,hostContext=null) {
   const selected=commonProgramContext(context);check(writeCommonProgramFacts(input).equals(selected.bytes),'context');return projectCommonProgram(selected.facts,hostContext);
 }
 export function verifyCommonProgramHir(hir) {
-  commonBudget(hir);check(same(hir?.format,commonHirFormat),'identity');const rebuilt=projectCommonProgram(hir.snapshot,hir.hostContext);
+  commonBudget(hir);check(same(hir?.format,hir?.snapshot?.version===3?commonHirFormatV3:commonHirFormat),'identity');const rebuilt=projectCommonProgram(hir.snapshot,hir.hostContext);
   check(same(hir,rebuilt),'reconstruct');return rebuilt;
 }
 export const printCommonProgramHir=hir=>canonical(verifyCommonProgramHir(hir))+'\n';

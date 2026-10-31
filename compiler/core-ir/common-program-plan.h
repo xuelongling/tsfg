@@ -36,14 +36,14 @@ struct SourcePlan {
   Reg constructionAction(llvm::StringRef,std::vector<Reg>,const std::string &,Json,SourceAnchor,
     const std::function<void(Reg,SourceAnchor)> & = {});
   Reg constructorResult(Reg,SourceAnchor);
-  void enterConstructor(const Json &,Reg,const std::vector<Reg> &,SourceAnchor);
+  void enterConstructor(const Json &,Reg,const std::vector<Reg> &,SourceAnchor,const std::function<void()> & = {});
   Reg invoke(const Json &,std::vector<Reg>,const Json &);
   Reg indirect(const Json &,Reg,std::vector<Reg>);
   Reg scalar(const std::string &,const std::string &,std::vector<Reg>,const std::string &,SourceAnchor);
   Location location(const Json &);Reg load(const Location &,SourceAnchor);
   void store(const Location &,Reg,SourceAnchor,bool=false,bool=true);
   Reg shortCircuit(Reg,const std::string &,const std::function<Reg()> &,const std::string &,SourceAnchor);
-  void initialize(const Json &,Reg,const std::vector<Reg> &,Reg,SourceAnchor);
+  void initialize(const Json &,Reg,const std::vector<Reg> &,Reg,SourceAnchor,const std::function<void()> & = {});
   Reg construct(const Json &,Reg,const std::vector<Reg> &,SourceAnchor);
   void region(const Array &,const Completion &,const std::function<void()> &,const std::string &,
     const std::vector<std::pair<std::string,Reg>> & = {});

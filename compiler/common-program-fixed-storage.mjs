@@ -50,6 +50,7 @@ export function commonFixedStorageIsolation(hir,spend) {
     while(pending.length){spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
       if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}rows.push(row);
       if(row.type!==undefined){spend();signature.push(row.type);if(row.declaredType!==undefined)signature.push(row.declaredType);}
+      if(row.argumentType!==undefined){spend();signature.push(row.argumentType);}
       if(row.signature){spend(row.signature.parameters.length+1);signature.push(...row.signature.parameters,row.signature.returnType);}
       if(['bindingTarget','globalTarget'].includes(row.kind)){spend();writes.add(row.binding);}
       for(const key in row){spend(Math.ceil(key.length/8)+1);if(key!=='sourceSignature'&&row[key]!==null&&typeof row[key]==='object')pending.push(row[key]);}

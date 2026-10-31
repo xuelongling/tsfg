@@ -33,6 +33,10 @@ export function validateTypedArrayConstruction(payload,types,sources) {
     const origin={source:ctor?.sourcePath??type.sourcePath,...(ctor?.declarationRange??type.declarationRange)};
     check(equal(value.origin,origin),'construction');anchor(value.origin);
     const signature=value.signature;const source=sources.get(signature.sourcePath);
+    if(signature.minimumArgumentCount!==undefined){
+      const minimum=ctor?.parameterInitialization?.minimumArgumentCount??(type.base?types.get(type.base).construction.signature.minimumArgumentCount:0);
+      check(signature.minimumArgumentCount===minimum,'construction-parameter');
+    }
     check(source&&signature.id===signatureId(signature.sourcePath,signature.declarationRange)
       &&signature.returnType===type.id&&equal(signature.parameters,value.parameters.map(parameter=>parameter.type)),'construction');
     sourceRange(signature.declarationRange,source.content);

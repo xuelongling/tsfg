@@ -19,7 +19,8 @@ export function validateCommonDeclarations(payload,grammars,types,spend,visible)
       const modifiers=all.slice(pb.first,pn.first).map(token=>token.text);
       check(modifiers.every(token=>['public','private','protected','readonly'].includes(token)),'capability');
       check(p.annotationRange,'capability','complete concrete parameter annotation required');
-      g.sequence(p.declarationRange,[...modifiers,p.nameRange,':',p.annotationRange]);
+      const step=fn.parameterInitialization?.steps[i];
+      g.sequence(p.declarationRange,[...modifiers,p.nameRange,':',p.annotationRange,...(step?.initializer?['=',step.initializer.range]:[])]);
       commonTypeSyntax(g,p.annotationRange,p.declaredType,types,spend,payload.typeAliases,visible.get(fn.sourcePath));
     }
     if(fn.returnAnnotationRange)commonTypeSyntax(g,fn.returnAnnotationRange,fn.returnType,types,spend,payload.typeAliases,visible.get(fn.sourcePath));

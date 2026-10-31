@@ -85,7 +85,7 @@ SourcePlan::Reg SourcePlan::expression(const Json &e){
     if(kind=="call"&&!field(e,"receiver").getAsNull())args.push_back(expression(field(e,"receiver")));
     for(const auto &arg:items(field(e,"arguments"))){
       if(!check.need(index<parameters.size(),"Source call argument index missing"))return noRegister;
-      const auto value=expression(arg);args.push_back(copy(value,string(parameters[index++]),sourceAnchor(arg)));
+      const auto value=expression(arg);args.push_back(kind=="call"||field(field(check.p.hir,"format"),"version").getAsInteger()!=3?copy(value,string(parameters[index]),sourceAnchor(arg)):value);++index;
     }
     const auto callee=string(field(e,"callee"));
     if(kind=="call"){

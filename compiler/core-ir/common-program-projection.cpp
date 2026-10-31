@@ -49,6 +49,7 @@ Json SourceModel::expression(const Json &v){
   if(v.getAsObject()->get("signature")){
     Array parameters;for(const auto &a:items(field(field(v,"signature"),"parameters"))){if(!spend())return nullptr;parameters.push_back(type(a));}
     out["signature"]=Object{{"parameters",std::move(parameters)},{"returnType",type(field(field(v,"signature"),"returnType"))}};out["sourceSignature"]=field(v,"signature");
+    if(field(v,"signature").getAsObject()->get("minimumArgumentCount"))(*out["signature"].getAsObject())["minimumArgumentCount"]=field(field(v,"signature"),"minimumArgumentCount");
   }
   if(v.getAsObject()->get("callee")){
     const auto callee=string(field(v,"callee"));
@@ -56,6 +57,7 @@ Json SourceModel::expression(const Json &v){
     if(!need(!string(out["callee"]).empty(),"expression target has no independently owned declaration"))return nullptr;
     Array parameters;for(const auto &a:items(field(field(v,"signature"),"parameters"))){if(!spend())return nullptr;parameters.push_back(type(a));}
     out["signature"]=Object{{"parameters",std::move(parameters)},{"returnType",type(field(field(v,"signature"),"returnType"))}};
+    if(field(v,"signature").getAsObject()->get("minimumArgumentCount"))(*out["signature"].getAsObject())["minimumArgumentCount"]=field(field(v,"signature"),"minimumArgumentCount");
     out["sourceSignature"]=field(v,"signature");
     if(signatures.count(callee))out["signatureHash"]=signatures.at(callee);
     if(hostSignatures.count(callee))out["signatureHash"]=hostSignatures.at(callee);
@@ -103,6 +105,14 @@ Json SourceModel::projectFunction(const Json &fn){
     {"body",statements(field(fn,"body"))},{"range",field(fn,"declarationRange")},{"nameRange",field(fn,"nameRange")},
     {"returnAnnotationRange",field(fn,"returnAnnotationRange")}};
   if(!owner.empty()){out["ownerType"]=typeIds.at(owner);out["receiverBinding"]="this@"+id;}
+  if(!field(fn,"parameterInitialization").getAsNull()){
+    const auto &initialization=field(fn,"parameterInitialization");Array steps;
+    for(const auto &step:items(field(initialization,"steps"))){
+      if(!spend())return nullptr;Object row{{"binding",field(step,"binding")},{"range",field(step,"range")},{"argumentType",type(field(step,"argumentType"))}};
+      if(!field(step,"initializer").getAsNull())row["initializer"]=expression(field(step,"initializer"));steps.push_back(std::move(row));
+    }
+    out["parameterInitialization"]=Object{{"minimumArgumentCount",field(initialization,"minimumArgumentCount")},{"hasParameterExpressions",field(initialization,"hasParameterExpressions")},{"steps",std::move(steps)}};
+  }
   if(fn.getAsObject()->get("overrideTarget")){
     const auto overridden=string(field(fn,"overrideTarget"));if(!need(functionIds.count(overridden),"override target missing"))return nullptr;
     out["overrideTarget"]=functionIds.at(overridden);
@@ -140,6 +150,9 @@ Json SourceModel::projectType(const Json &t){
       {"initializationPhase",field(c,"initializationPhase")},{"initializationFields",std::move(initialization)},{"parameters",std::move(parameters)},
       {"signature",Object{{"parameters",std::move(signature)},{"returnType",typeIds.at(id)}}},{"sourceSignature",field(c,"signature")},
       {"origin",field(c,"origin")},{"functionId",ctor.empty()?Json(nullptr):Json(functionIds.at(ctor))},{"implicitForward",field(c,"implicitForward")}};
+    if(field(c,"signature").getAsObject()->get("minimumArgumentCount")){
+      auto &signature=(*out["construction"].getAsObject())["signature"];(*signature.getAsObject())["minimumArgumentCount"]=field(field(c,"signature"),"minimumArgumentCount");
+    }
   }
   return out;
 }
@@ -179,7 +192,8 @@ bool SourceModel::projection(){
   for(const auto &s:items(field(payload,"files"))){if(!spend())return false;projectedSources.push_back(Object{{"path",field(s,"path")},{"content",field(s,"content")},{"hash","sha256:"+string(field(s,"sha256"))}});}
   auto projectedEnvironments=environments(projectedFunctions);if(!error.message.empty())return false;
   Array projectedHosts;for(const auto &host:items(field(payload,"hostImports"))){if(!spend())return false;projectedHosts.push_back(ownedHosts.at(string(field(host,"id"))));}
-  Json rebuilt=Object{{"hostImports",std::move(projectedHosts)},{"hostContext",field(p.hir,"hostContext")},{"format",Object{{"family","tsfg.program-hir-candidate"},{"version",2},{"schemaHash",hirSchema}}},{"snapshot",facts},
+  const bool constructorDefaults=field(facts,"version").getAsInteger()==3;
+  Json rebuilt=Object{{"hostImports",std::move(projectedHosts)},{"hostContext",field(p.hir,"hostContext")},{"format",Object{{"family","tsfg.program-hir-candidate"},{"version",constructorDefaults?3:2},{"schemaHash",constructorDefaults?hirConstructorSchema:hirSchema}}},{"snapshot",facts},
     {"inputIdentity",field(facts,"packageId")},{"rootFile",field(payload,"rootFile")},{"sources",std::move(projectedSources)},{"target",field(payload,"target")},
     {"types",ordered(std::move(projectedTypes))},{"functions",ordered(std::move(projectedFunctions))},{"modules",std::move(projectedModules)},
     {"globals",ordered(std::move(projectedGlobals))},{"environments",std::move(projectedEnvironments)},{"closure",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(requiredRoots)},

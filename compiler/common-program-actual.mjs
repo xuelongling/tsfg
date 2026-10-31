@@ -479,7 +479,20 @@ export function analyzeCommonGraphs({model,plans},records=null,options=/** @type
               check(!args[0].unknown&&[...args[0].tags].every(tag=>tag===boolTypeId),'capability','condition has no proved boolean actual value');
               // The final selected edge owns this terminal state. Only a
               // coexisting branch needs a separate mutable snapshot.
-              const truth=args[0].truth||3;if(truth&2)edge(op.successors[0],state,[],false,!(truth&1));if(truth&1)edge(op.successors[1],state,[],false,true);continues=false;
+              const truth=args[0].truth||3,comparison=plan.graph.registers.get(op.operands[0])?.operation;
+              spend(comparison?.operands.length??0);
+              const absence=comparison?.name==='tsfg_program.strict_equal'?comparison.operands.findIndex(id=>plan.graph.registers.get(id)?.operation?.name==='tsfg_program.undefined'):-1;
+              const conditionEdge=(target,yes)=>{
+                spend();
+                const selected=truth===3&&yes?cloneWorld(state):state;
+                if(absence>=0){
+                  const id=comparison.operands[1-absence],equal=yes===(comparison.properties.operator==='==='),source=read(selected,id);
+                  if(equal)selected.values.set(id,a.literal(undefinedId));
+                  else{const value=a.copy(source);value.tags.delete(undefinedId);if(!value.tags.size&&!value.unknown)return;selected.values.set(id,value);}
+                }
+                edge(target,selected,[],false,true);
+              };
+              if(truth&2)conditionEdge(op.successors[0],true);if(truth&1)conditionEdge(op.successors[1],false);continues=false;
             }else if(name==='func.return'||name==='return_throw') {
               const normal=name==='func.return',field=normal?'returned':'thrown',heap=normal?'normalHeap':'languageHeap';if(!normal)abandonInitializers(state);
               if(!c[normal?'normal':'language']){c[normal?'normal':'language']=true;changed=true;}if(args.length)changed=a.merge(c[field],args[0])||changed;

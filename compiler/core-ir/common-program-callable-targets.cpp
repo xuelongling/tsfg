@@ -9,7 +9,7 @@ namespace tsfg::commonProgram {
 namespace {
 using Targets=CallableTargets;using State=std::map<std::string,Targets>;
 struct Bound {std::vector<Targets> parameters;std::optional<Targets> returned;bool unknownHost=false;};
-struct Summary {const Json *fn=nullptr;bool reached=false;std::vector<Targets> parameters,observations;std::optional<Targets> returned;};
+struct Summary {const Json *fn=nullptr;bool reached=false;std::vector<Targets> parameters,initializedParameters,observations;std::optional<Targets> returned;};
 struct TargetFlow {
   Program &p;Error &e;bool fixed=false,dirty=false;
   std::map<std::string,const Json *> types,functions;
@@ -167,6 +167,7 @@ struct TargetFlow {
   void arguments(Summary &callee,const std::vector<std::optional<Targets>> &args){
     const auto &params=items(field(*callee.fn,"parameters"));for(size_t i=0;i<params.size();++i){
       if(!step())return;if(!callable(string(field(params[i],"type"))))continue;
+      if(i>=args.size()&&!field(*callee.fn,"parameterInitialization").getAsNull()){observe(callee,i,Targets{});continue;}
       if(!need(i<args.size()&&args[i].has_value(),"callable argument is not represented"))return;observe(callee,i,*args[i]);
     }
   }
@@ -194,7 +195,7 @@ struct TargetFlow {
         size_t index=0;const auto &parameters=items(field(construction,"parameters"));
         for(;index<parameters.size();++index){if(!step())return;if(string(field(parameters[index],"symbol"))==parameter)break;}
         if(!need(index<parameters.size(),"construction parameter field has no original parameter"))return;
-        if(!fn.empty()){auto *callee=reach(fn);if(!callee||!need(index<callee->parameters.size(),"construction parameter transfer differs"))return;initial=copy(callee->parameters[index]);}
+        if(!fn.empty()){auto *callee=reach(fn);if(!callee||!need(index<callee->initializedParameters.size(),"construction parameter transfer differs"))return;initial=copy(callee->initializedParameters[index]);}
         else if(index<args.size()&&args[index])initial=copy(*args[index]);
       }else if(!field(member,"initializer").getAsNull()){initial=expression(s,state,field(member,"initializer"));erase(string(field(member,"type")),string(field(field(member,"initializer"),"type")),initial);}
       write(string(id),initial);
@@ -213,7 +214,10 @@ struct TargetFlow {
     if(kind=="bindingReference"){
       if(!callable(type))return {};const auto key=field(value,"binding").getAsString().value_or("");if(!step(key.size()/64+1))return {};
       const auto binding=key.str();auto owner=capturedParameters.find(binding);
-      if(owner!=capturedParameters.end())return copy(summaries.at(owner->second.first).parameters.at(owner->second.second));
+      if(owner!=capturedParameters.end()){
+        const auto &summary=summaries.at(owner->second.first);
+        return copy(summary.initializedParameters.at(owner->second.second));
+      }
       auto local=capturedLocals.find(binding);if(local!=capturedLocals.end())return copy(local->second);
       auto found=state.find(binding);return found==state.end()?Targets{}:copy(found->second);
     }
@@ -227,7 +231,11 @@ struct TargetFlow {
       if(string(field(target,"kind"))=="globalTarget"){expose(string(field(field(value,"value"),"type")));exposeClosures(result);}
       else if(result){const auto key=field(target,"binding").getAsString().value_or("");if(!step(key.size()/64+2))return {};const auto binding=key.str();
         state[binding]=copy(*result);auto owner=capturedParameters.find(binding);
-        if(owner!=capturedParameters.end())observe(summaries.at(owner->second.first),owner->second.second,*result);
+        if(owner!=capturedParameters.end()){
+          auto &summary=summaries.at(owner->second.first);
+          merge(summary.initializedParameters.at(owner->second.second),*result);
+          observe(summary,owner->second.second,*result);
+        }
         else if(capturedLocals.count(binding))merge(capturedLocals.at(binding),*result);
       }return result;
     }
@@ -350,7 +358,7 @@ struct TargetFlow {
     fixed=withFixed;summaries.clear();sites.clear();fieldValues.clear();fieldCaptures.clear();exposed.clear();exposedFields.clear();externalFunctions.clear();defaultLiterals.clear();arrays.reset();dirty=false;
     for(auto &[id,value]:capturedLocals){if(!step())return false;value=Targets{};}
     for(const auto &[id,fn]:functions){
-      const auto &params=items(field(*fn,"parameters"));if(!step(params.size()*2+1))return false;Summary s;s.fn=fn;s.reached=true;s.parameters.resize(params.size());s.observations.resize(params.size());
+      const auto &params=items(field(*fn,"parameters"));if(!step(params.size()*3+1))return false;Summary s;s.fn=fn;s.reached=true;s.parameters.resize(params.size());s.initializedParameters.resize(params.size());s.observations.resize(params.size());
       if(fixed){if(!step(params.size()))return false;for(const auto &value:bounds.at(id).parameters)if(!step(value.functions.size()))return false;s.parameters=bounds.at(id).parameters;}
       if(callable(string(field(*fn,"returnType"))))s.returned=Targets{};summaries.emplace(id,std::move(s));
     }
@@ -362,7 +370,7 @@ struct TargetFlow {
     for(const auto &module:items(field(p.hir,"modules")))for(const auto &exported:items(field(module,"exports")))for(const auto &global:items(field(p.hir,"globals"))){
       if(!step())return false;if(same(field(exported,"target"),field(global,"id")))expose(string(field(global,"type")));}
     for(const auto &[id,type]:types)for(const auto &member:items(field(*type,"fields"))){if(!step())return false;if(!field(member,"initializer").getAsNull())scan(field(member,"initializer"),true);}
-    for(const auto &[id,fn]:functions){if(!step())return false;for(const auto &parameter:items(field(*fn,"parameters"))){if(!step())return false;std::set<std::string> seen;unknownArrays(string(field(parameter,"type")),seen);}scan(field(*fn,"body"));}
+    for(const auto &[id,fn]:functions){if(!step())return false;for(const auto &parameter:items(field(*fn,"parameters"))){if(!step())return false;std::set<std::string> seen;unknownArrays(string(field(parameter,"type")),seen);}scan(field(*fn,"body"));scan(field(*fn,"parameterInitialization"));}
     for(const auto &global:items(field(p.hir,"globals"))){if(!step())return false;std::set<std::string> seen;unknownArrays(string(field(global,"type")),seen);}
     for(const auto &module:items(field(p.hir,"modules"))){if(!step())return false;scan(field(module,"initialization"));}
     bool missing;do{
@@ -373,6 +381,20 @@ struct TargetFlow {
     for(auto &[id,s]:summaries)if(s.reached){
       if(!step())return false;State state;const auto &params=items(field(*s.fn,"parameters"));
       for(size_t i=0;i<params.size();++i){if(!step())return false;if(callable(string(field(params[i],"type"))))state.emplace(string(field(params[i],"id")),copy(s.parameters[i]));}
+      const auto &steps=items(field(field(*s.fn,"parameterInitialization"),"steps"));
+      for(size_t i=0;i<steps.size();++i){
+        if(!step())return false;const auto binding=string(field(steps[i],"binding"));const auto &initializer=field(steps[i],"initializer");
+        if(!initializer.getAsNull()){
+          const auto supplied=snapshot(state);auto value=expression(s,state,initializer);combine(state,supplied);
+          erase(string(field(params[i],"type")),string(field(initializer,"type")),value);
+          if(value)merge(state[binding],*value);else if(callable(string(field(params[i],"type"))))merge(state[binding],Targets{true,{}});
+        }
+      }
+      for(size_t i=0;i<params.size();++i){
+        if(!step())return false;if(!callable(string(field(params[i],"type"))))continue;
+        const auto &value=state[string(field(params[i],"id"))];merge(s.initializedParameters[i],value);
+        if(!field(*s.fn,"parameterInitialization").getAsNull())observe(s,i,value);
+      }
       body(s,state,field(*s.fn,"body"));if(!e.message.empty())return false;
     }}while(dirty);
     missing=false;for(const auto &[id,member]:fields)if(callable(string(field(*member,"type")))){if(!step())return false;auto &value=fieldValues[slot(id)];

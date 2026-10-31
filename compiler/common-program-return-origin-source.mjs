@@ -338,7 +338,7 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
   for(const fn of hir.functions){
     spend(fn.parameters.length+(fn.bindings?.length??0)+(fn.captures?.length??0)+1);
     let scalar=fn.kind==='source'&&!fn.ownerType&&!fn.lexicalEnvironment&&!fn.activationEnvironment&&(fn.captures?.length??0)===0;
-    const calls=new Set(),pending=[fn.body],views=[fn.returnType,...fn.parameters.map(row=>row.type),...(fn.bindings??[]).map(row=>row.type)];
+    const calls=new Set(),pending=[fn.body,...(fn.parameterInitialization?.steps??[])],views=[fn.returnType,...fn.parameters.map(row=>row.type),...(fn.bindings??[]).map(row=>row.type)];
     if(fn.ownerType)views.push(fn.ownerType);
     for(const capture of fn.captures??[]){spend();const slot=slots.get(capture.binding);check(slot,'return-origin-capture');views.push(slot.type);}
     if(fn.kind==='construction-body')reasons.set(fn.id,'construction-frame-open');
@@ -346,6 +346,7 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
       spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
       if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}
       if(typeof row.type==='string')views.push(row.type);
+      if(typeof row.argumentType==='string')views.push(row.argumentType);
       if(['new','superConstruct','hostCall','functionReference','indirectCall','globalReference','globalTarget'].includes(row.kind))scalar=false;
       if(row.kind==='new'||row.kind==='superConstruct')reasons.set(fn.id,'construction-frame-open');
       if(row.kind==='hostCall')reasons.set(fn.id,'host-return-open');

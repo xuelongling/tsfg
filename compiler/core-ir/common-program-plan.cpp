@@ -98,15 +98,17 @@ SourcePlan::Reg SourcePlan::shortCircuit(Reg left,const std::string &op,const st
   cells=snapshot(saved);if(!ok())return noRegister;const auto value=right();branch(join,{value},r);
   current=join;cells=std::move(saved);return function.blocks[join].parameters[0];
 }
-void SourcePlan::initialize(const Json &type,Reg value,const std::vector<Reg> &args,Reg frame,SourceAnchor r){
+void SourcePlan::initialize(const Json &type,Reg value,const std::vector<Reg> &args,Reg frame,SourceAnchor r,const std::function<void()> &beforeParameterProperties){
   const auto before=currentReceiver;const auto previousPath=sourcePath;currentReceiver=value;
   const auto id=string(field(type,"id"));auto phase=emit("initialize_begin",{frame,value},"initialization:"+id,Object{{"owner",id}},r);
+  bool parametersInitialized=false;
   for(const auto &fieldId:items(field(field(type,"construction"),"initializationFields"))){
     if(!check.step()||!check.need(check.fields.count(string(fieldId)),"Source initialization field missing"))break;
     const auto &f=*check.fields.at(string(fieldId));sourcePath=string(field(field(f,"origin"),"source"));
     if(sourcePath.empty())sourcePath=previousPath;
     Reg initial=noRegister;const auto parameter=string(field(f,"parameterBinding"));
     if(!parameter.empty()){
+      if(beforeParameterProperties&&!parametersInitialized){sourcePath=previousPath;beforeParameterProperties();parametersInitialized=true;}
       const auto &parameters=items(field(field(type,"construction"),"parameters"));size_t index=0;
       while(index<parameters.size()&&string(field(parameters[index],"symbol"))!=parameter){if(!check.step())break;++index;}
       if(!check.need(index<args.size(),"Source constructor parameter field missing"))break;initial=args[index];
@@ -114,13 +116,15 @@ void SourcePlan::initialize(const Json &type,Reg value,const std::vector<Reg> &a
     const auto at=sourceAnchor(field(f,"origin"));const auto copied=copy(initial,string(field(f,"type")),at);
     phase=emit("initialize_field",{phase,value,copied},"initialization:"+id,Object{{"owner",id},{"field",field(f,"id")}},at);
     if(!ok())break;
-  }currentReceiver=before;sourcePath=previousPath;emit("initialize_end",{phase,value},"",Object{{"owner",id}},r);
+  }
+  if(beforeParameterProperties&&!parametersInitialized){sourcePath=previousPath;beforeParameterProperties();}
+  currentReceiver=before;sourcePath=previousPath;emit("initialize_end",{phase,value},"",Object{{"owner",id}},r);
 }
-void SourcePlan::enterConstructor(const Json &type,Reg frame,const std::vector<Reg> &args,SourceAnchor r){
+void SourcePlan::enterConstructor(const Json &type,Reg frame,const std::vector<Reg> &args,SourceAnchor r,const std::function<void()> &beforeParameterProperties){
   if(!string(field(type,"base")).empty())return;const auto id=string(field(type,"id"));
   const auto allocated=emit("receiver_allocate",{frame},id,Object{{"owner",id}},r);
   const auto value=constructionAction("receiver_bind",{frame,allocated},id,Object{{"owner",id}},r);
-  initialize(type,value,args,frame,r);
+  initialize(type,value,args,frame,r,beforeParameterProperties);
 }
 SourcePlan::Reg SourcePlan::constructorResult(Reg value,SourceAnchor r){
   std::vector<Reg> args{receiverFrame};if(value!=noRegister)args.push_back(value);
@@ -132,8 +136,20 @@ SourcePlan::Reg SourcePlan::construct(const Json &type,Reg frame,const std::vect
   if(fn.empty()&&projected){const auto target=check.implicitTargets.find(string(field(type,"id")));if(target!=check.implicitTargets.end())fn=target->second;}
   if(!fn.empty()){
     if(!check.need(check.sourceFunctions.count(fn),"Source construction function missing"))return noRegister;
-    std::vector<Reg> call{frame};call.insert(call.end(),args.begin(),args.end());
-    return invoke(Object{{"type",field(type,"id")},{"range",Object{{"start",r.start},{"end",r.end}}}},std::move(call),*check.sourceFunctions.at(fn));
+    if(field(field(check.p.hir,"format"),"version").getAsInteger()!=3){
+      std::vector<Reg> call{frame};call.insert(call.end(),args.begin(),args.end());
+      return invoke(Object{{"type",field(type,"id")},{"range",Object{{"start",r.start},{"end",r.end}}}},std::move(call),*check.sourceFunctions.at(fn));
+    }
+    const auto &callee=*check.sourceFunctions.at(fn);const auto &steps=items(field(field(callee,"parameterInitialization"),"steps"));
+    std::vector<Reg> call{frame};const auto &parameters=items(field(callee,"parameters"));
+    if(!check.need(args.size()<=parameters.size(),"Source construction actual arity exceeds selected constructor"))return noRegister;
+    for(size_t index=0;index<parameters.size();++index){
+      if(!check.step())return noRegister;
+      const auto value=index<args.size()?args[index]:emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},r);
+      const auto target=steps.empty()?string(field(parameters[index],"type")):string(field(steps[index],"argumentType"));
+      call.push_back(copy(value,target,r));
+    }
+    return invoke(Object{{"type",field(type,"id")},{"range",Object{{"start",r.start},{"end",r.end}}}},std::move(call),callee);
   }
   const auto id=string(field(type,"id"));
   // This is the existing public inline lowerer, not the private analysis

@@ -38,7 +38,8 @@ export function commonProgramPublicationScope(hir,spend=commonMeter()) {
   const types=new Map(),roots=new Set(),captureKeys=new Map();
   for(const type of hir.types){spend();types.set(type.id,type);if(type.kind==='value'||type.kind==='reference')roots.add(type.id);}
   for(const global of hir.globals){spend();roots.add(global.type);}
-  for(const fn of hir.functions){spend(fn.parameters.length+2);roots.add(fn.returnType);if(fn.ownerType)roots.add(fn.ownerType);for(const parameter of fn.parameters)roots.add(parameter.type);}
+  for(const fn of hir.functions){spend(fn.parameters.length+2);roots.add(fn.returnType);if(fn.ownerType)roots.add(fn.ownerType);for(const parameter of fn.parameters)roots.add(parameter.type);
+    for(const step of fn.parameterInitialization?.steps??[]){spend();roots.add(step.argumentType);}}
   for(const env of hir.environments)for(const slot of env.slots){spend();roots.add(slot.type);captureKeys.set(slot.binding,slot.key);}
   const selected=closure(types,roots,spend),declarationTypes=ids(selected,spend);
   const binding=alias=>({kind:alias.kind,name:alias.name,imported:alias.imported,target:alias.target,targetSourcePath:alias.targetSourcePath});

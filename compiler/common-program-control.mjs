@@ -5,11 +5,13 @@ import {createCommonGraph} from './common-program-plan.mjs';
 import {commonProgramValues} from './common-program-values.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+import {sha256,boolTypeId} from './identity.mjs';
 
 export function planCommonFunction(model,owner) {
   const collections=commonCollections(model.spend);
   const constructor=owner.kind==='construction-body';
-  const graph=createCommonGraph(model,owner),params=[...(owner.ownerType?[constructor?{id:'receiver:'+owner.id,type:'receiver:'+owner.ownerType,hidden:true,frame:true}:{id:owner.receiverBinding,type:owner.ownerType}]:[]),...owner.parameters];
+  const initialization=owner.parameterInitialization;
+  const graph=createCommonGraph(model,owner),params=[...(owner.ownerType?[constructor?{id:'receiver:'+owner.id,type:'receiver:'+owner.ownerType,hidden:true,frame:true}:{id:owner.receiverBinding,type:owner.ownerType}]:[]),...owner.parameters.map((p,index)=>initialization?{...p,type:initialization.steps[index].argumentType}:p)];
   if(owner.lexicalEnvironment)params.unshift({id:'lexical:'+owner.id,type:'env:'+owner.lexicalEnvironment,hidden:true});
   check(params.length<=model.limits.parameters,'limit');const entry=graph.newBlock(params.map(p=>p.type));
   const state={current:entry,cells:new Map(),environments:new Map(),receiver:null},tasks=[];let clones=0;
@@ -60,7 +62,7 @@ export function planCommonFunction(model,owner) {
       if(!model.slots.has(binding)){const cell=values.op('cell',[],model.cell(binding),{binding},b.range);state.cells.set(binding,cell);}
       values.store({kind:'bindingTarget',binding,type:b.type},value,b.range,true,false);
     }
-    if(constructor&&path.length===1&&path[0]==='body')values.enterConstructor(model.types.get(owner.ownerType),state.receiver,
+    if(constructor&&!initialization&&path.length===1&&path[0]==='body')values.enterConstructor(model.types.get(owner.ownerType),state.receiver,
       owner.parameters.map(p=>values.load(values.location({kind:'bindingTarget',binding:p.id,type:p.type,range:owner.range}),owner.range)),owner.range);
     for(const [index,statement]of rows.entries()) {
       model.spend();if(state.current.terminated)break;const at=[...path,index];
@@ -122,6 +124,30 @@ export function planCommonFunction(model,owner) {
   }
   if(owner.kind!=='module-initializer'&&!owner.analysisOnly)values.op('fuel',[],null,{event:1},owner.range);
   const initial=params.flatMap((p,index)=>p.frame?[]:[[p.id,{...entry.parameters[index]}]]);
+  if(initialization){
+    model.spend(params.length);
+    const parameterValues=new Map(params.map((p,index)=>[p.id,{...entry.parameters[index]}]));
+    const initializeParameters=()=>{
+      for(const step of initialization.steps){
+        model.spend();const binding=model.bindings.get(step.binding),range=step.range;let value=parameterValues.get(step.binding);
+        if(step.initializer){
+          const absent=values.op('undefined',[],sha256('tsfg.type\0undefined'),{},range),condition=values.op('strict_equal',[value,absent],boolTypeId,{operator:'==='},range),
+            fallback=graph.newBlock(),supplied=graph.newBlock(),joined=graph.newBlock([binding.type]);
+          graph.conditional(state.current,condition,fallback,supplied,range);
+          state.current=supplied;graph.branch(state.current,joined,[values.copy(value,binding.type,range)],range);
+          state.current=fallback;const evaluated=values.expression(step.initializer);graph.branch(state.current,joined,[values.copy(evaluated,binding.type,range)],range);
+          state.current=joined;value={...joined.parameters[0]};
+        }
+        if(!model.slots.has(binding.id)){const cell=values.op('cell',[],model.cell(binding.id),{binding:binding.id},range);state.cells.set(binding.id,cell);}
+        values.store({kind:'bindingTarget',binding:binding.id,type:binding.type},value,range,true,false);
+      }
+      return owner.parameters.map(p=>values.load(values.location({kind:'bindingTarget',binding:p.id,type:p.type,range:owner.range}),owner.range));
+    };
+    const type=model.types.get(owner.ownerType);
+    if(type.base)initializeParameters();else values.enterConstructor(type,state.receiver,[],owner.range,initializeParameters);
+    initial.length=0;
+    if(owner.lexicalEnvironment)initial.push(['lexical:'+owner.id,{...entry.parameters[0]}]);
+  }
   region(owner.body,outer,()=>{
     if(constructor)outer.returned(null,owner.range);
     else {check(owner.returnType==='void'||model.types.get(owner.returnType)?.kind==='void','capability','unproved successful function fallthrough');outer.returned(null,owner.range);}

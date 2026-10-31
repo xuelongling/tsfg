@@ -74,6 +74,7 @@ bool verifySourceLiteral(SourceSyntax &source,const Json &value){return literal(
 bool SourceBodies::expression(const Json &v,bool target,const std::string &expected,bool readTarget){
   if(!model.spend())return false;size_t a,b;if(!source->span(field(v,"range"),a,b))return false;
   const auto kind=string(field(v,"kind")),type=string(field(v,"type")),actual=flow(v);
+  if(parameterInitializer&&kind=="superConstruct")return reject(model.error,"core-ir-common-source-capability","super construction in a parameter initializer is outside the official constructor-body context");
   if(!model.need(model.types.count(type)&&(target||model.types.count(actual)),"expression type catalogue membership differs"))return false;
   if(!target){
     const auto declaredKind=string(field(*model.types.at(type),"kind"));
@@ -147,10 +148,19 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
   if(kind=="call"||kind=="hostCall"||kind=="new"||kind=="superConstruct"){
     if(v.getAsObject()->get("receiver")&&!child("receiver"))return false;
     const auto &sig=field(v,"signature");const auto callee=string(field(v,"callee")),path=string(field(sig,"sourcePath"));
+    const bool constructor=kind=="new"||kind=="superConstruct";const Json *selected=nullptr;
+    if(constructor){
+      if(!model.need(model.types.count(callee)&&same(field(field(*model.types.at(callee),"construction"),"signature"),sig),"construction source signature differs"))return false;
+      selected=model.constructionFunction(*model.types.at(callee));
+    }
+    const auto &steps=selected?items(field(field(*selected,"parameterInitialization"),"steps")):items(Json(nullptr));
+    const auto count=items(field(sig,"parameters")).size(),actualCount=items(field(v,"arguments")).size();
+    const auto minimum=field(sig,"minimumArgumentCount").getAsInteger();
+    const bool arity=constructor&&field(model.facts,"version").getAsInteger()==3?minimum&&*minimum>=0&&size_t(*minimum)<=actualCount&&actualCount<=count:count==actualCount&&!minimum;
     if(!model.need(string(field(sig,"id"))==digest(std::string("tsfg.array-facts.signature.v8")+std::string(1,'\0')+
-      canonical(Object{{"sourcePath",path},{"declarationRange",field(sig,"declarationRange")}}))&&items(field(sig,"parameters")).size()==items(field(v,"arguments")).size(),"original call signature identity/arity differs"))return false;
+      canonical(Object{{"sourcePath",path},{"declarationRange",field(sig,"declarationRange")}}))&&arity,"original call signature identity/arity differs"))return false;
     std::vector<Json> pieces;if(kind=="new")pieces.push_back("new");pieces.push_back(field(v,"calleeRange"));pieces.push_back("(");size_t i=0;
-    for(const auto &arg:items(field(v,"arguments"))){if(!expression(arg,false,string(items(field(sig,"parameters"))[i])))return false;
+    for(const auto &arg:items(field(v,"arguments"))){if(!expression(arg,false,string(!steps.empty()?field(steps[i],"argumentType"):items(field(sig,"parameters"))[i])))return false;
       if(i++)pieces.push_back(",");pieces.push_back(field(arg,"range"));}pieces.push_back(")");
     if(kind=="hostCall"){
       if(!model.need(model.hosts.count(callee)&&same(sig,field(*model.hosts.at(callee),"signature"))&&type=="i32"&&actual=="i32"&&
@@ -174,8 +184,7 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
         }
       }
       if(!model.need(type==string(field(sig,"returnType")),"call result differs from original signature"))return false;
-    }else if(!model.need(model.types.count(callee)&&same(field(field(*model.types.at(callee),"construction"),"signature"),sig)&&
-      (kind!="new"||model.need(resolve(field(v,"calleeRange"))==callee&&type==callee,"construction spelling resolves to another nominal symbol")),"construction source signature differs"))return false;
+    }else if(kind=="new"&&!model.need(resolve(field(v,"calleeRange"))==callee&&type==callee,"construction spelling resolves to another nominal symbol"))return false;
     return sequence(pieces);
   }
   return model.need(false,"unsupported complete common Source expression; no partial body admission");

@@ -54,7 +54,8 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     spend();const g=grammars.get(owner.sourcePath),at=g.indices(field.origin);let colon=at.first;
     while(['public','private','protected','readonly','declare'].includes(g.tokens[colon].text)){spend();colon++;}colon++;
     check(g.tokens[colon]?.text===':','source');const end=field.initializer?g.indices(field.initializer.range).first-1:at.end-(g.tokens[at.end-1].text===';'?1:0);
-    typeAnnotation(owner.sourcePath,{start:g.tokens[colon+1].start,end:g.tokens[end-1].end},field.type);
+    const annotation=field.parameterBinding?owner.constructor.parameters.find(parameter=>parameter.id===field.parameterBinding).annotationRange:{start:g.tokens[colon+1].start,end:g.tokens[end-1].end};
+    typeAnnotation(owner.sourcePath,annotation,field.type);
   }}
   const relations=typedArrayRelations(types,functions,payload.compatibilityWitnesses);
   const scopes=new Map([...functions].map(([id,fn])=>[id,commonLexicalScopes(fn,spend)]));
@@ -74,7 +75,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     const g=grammars.get(fn.sourcePath),inventory=new Map(),declared=new Set();spend(fn.parameters.length+fn.bindings.length);
     for(const group of [fn.parameters,fn.bindings])for(const row of group)inventory.set(row.id,row);
     spend(fn.parameters.length);for(const row of fn.parameters)declared.add(row.id);const seenDeclarations=collections.set(declared);
-    const scope=collections.map(initialScope??visibility.get(fn.sourcePath)),captureObserved=new Map();
+    const scope=collections.map(initialScope??visibility.get(fn.sourcePath)),captureObserved=new Map();let parameterInitializer=false;
     let ancestor=functions.get(fn.lexicalParent);const ancestors=[];while(ancestor){spend();ancestors.push(ancestor);ancestor=functions.get(ancestor.lexicalParent);}
     for(let i=ancestors.length-1;i>=0;i--){const owner=ancestors[i],child=i===0?fn:ancestors[i-1],declaration=scopes.get(owner.id).get(child.id);
       check(declaration,'lexical');for(const b of owner.parameters){spend();scope.set(b.name,b.id);}
@@ -176,11 +177,19 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
       }
       if(['call','hostCall','new','superConstruct'].includes(value.kind)) {
         const signature=value.signature;check(signature&&signature.id===signatureId(signature.sourcePath,signature.declarationRange),'signature');
-        check(signature.parameters.length===value.arguments.length&&signature.parameters.every(id=>types.has(id))&&types.has(signature.returnType),'signature');
+        const construction=value.kind==='new'||value.kind==='superConstruct',minimum=signature.minimumArgumentCount??signature.parameters.length;
+        check(!parameterInitializer||value.kind!=='superConstruct','capability','super construction in a parameter initializer is outside the accepted official Source subset');
+        check(construction||signature.minimumArgumentCount===undefined,'signature');
+        check(value.arguments.length>=(construction?minimum:signature.parameters.length)&&value.arguments.length<=signature.parameters.length&&signature.parameters.every(id=>types.has(id))&&types.has(signature.returnType),'signature');
         if(value.receiver)child(value.receiver);
-        value.arguments.forEach((arg,i)=>child(arg,false,signature.parameters[i]));
+        const argumentOwner=construction?types.get(value.kind==='new'?value.type:value.callee):null;
+        if(construction)check(argumentOwner?.construction&&same(signature,argumentOwner.construction.signature)&&value.callee===argumentOwner.id,'construction');
+        let parameterOwner=argumentOwner;
+        while(parameterOwner&&!parameterOwner.constructor&&parameterOwner.base){spend();parameterOwner=types.get(parameterOwner.base);}
+        const steps=parameterOwner?.constructor?.parameterInitialization?.steps;
+        value.arguments.forEach((arg,i)=>child(arg,false,steps?.[i].argumentType??signature.parameters[i]));
         if(value.kind==='new'||value.kind==='superConstruct') {
-          const owner=types.get(value.kind==='new'?value.type:value.callee);check(owner&&same(signature,owner.construction.signature)&&value.callee===owner.id,'construction');
+          const owner=argumentOwner;
           if(value.kind==='new'){const name=identifierName(text(value.calleeRange));check(value.flowType===owner.id&&(name===owner.nominalKey.declarationPath.at(-1)||local.get(name)===owner.id),'construction');}
           else check(fn.ownerType&&types.get(fn.ownerType).base===owner.id&&text(value.calleeRange)==='super','construction');
         }else if(value.kind==='hostCall'){
@@ -253,6 +262,15 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
       if(g.tokens[start]?.text==='{') {let depth=1,finish=start+1;while(finish<end&&depth){spend();if(g.tokens[finish].text==='{')depth++;if(g.tokens[finish].text==='}')depth--;finish++;}
         check(depth===0,'source');rows(items,start+1,finish-1,{start:g.tokens[start].start,end:g.tokens[finish-1].end},local);return finish;}
       check(items.length===1,'source');const child=g.indices(items[0].range);rows(items,start,child.end,parent,local);return child.end;
+    }
+    if(fn.parameterInitialization){
+      const steps=fn.parameterInitialization.steps;
+      spend(steps.length+fn.parameters.length);
+      for(const parameter of fn.parameters)declared.delete(parameter.id);
+      for(const step of steps){
+        spend();if(step.initializer){parameterInitializer=true;expr(step.initializer,step.range,false,inventory.get(step.binding).declaredType,scope);parameterInitializer=false;}
+        declared.add(step.binding);
+      }
     }
     for(const {value,type:expected} of initial)expr(value,fn.declarationRange,false,expected,scope);
     if(bodyRange){const bounds=g.indices(bodyRange);rows(fn.body,bounds.first+1,bounds.end-1,bodyRange,scope);}

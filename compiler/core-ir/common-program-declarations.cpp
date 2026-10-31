@@ -3,6 +3,15 @@
 #include "common-program-relations.h"
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::commonProgram {
+const Json *SourceModel::constructionFunction(const Json &type){
+  const Json *current=&type;std::set<std::string> seen;
+  while(current){
+    if(!spend()||!need(seen.insert(string(field(*current,"id"))).second,"construction parameter ancestry cycle"))return nullptr;
+    const auto &constructor=field(*current,"constructor");if(!constructor.getAsNull())return &constructor;
+    const auto base=string(field(*current,"base"));if(base.empty())return nullptr;
+    if(!need(types.count(base),"construction parameter ancestor missing"))return nullptr;current=types.at(base);
+  }return nullptr;
+}
 namespace {
 Json span(const Json &v){return Object{{"start",field(v,"start")},{"end",field(v,"end")}};}
 bool primitive(SourceModel &m,const Json &t){

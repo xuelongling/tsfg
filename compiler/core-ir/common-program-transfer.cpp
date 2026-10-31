@@ -322,8 +322,32 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!need(!args[0].unknown,"condition requires a proved boolean actual value"))return false;
     for(const auto &tag:args[0].tags)if(!step()||!need(tag==typeId("bool"),"condition actual tag is not boolean"))return false;
     const auto truth=args[0].truth?args[0].truth:3;
-    if((truth&2)&&!edge(op.successors[0],(truth&1)?copyState(state):std::move(state),{}))return false;
-    if((truth&1)&&!edge(op.successors[1],std::move(state),{}))return false;continues=false;
+    const auto definition=[&](uint16_t reg)->const Operation *{
+      for(const auto &candidate:fn.blocks)for(const auto &before:candidate.operations){if(!step())return nullptr;if(before.result==reg)return &before;}return nullptr;
+    };
+    const auto *condition=definition(op.operands[0]);uint16_t tested=noRegister;bool equalUndefined=false;
+    if(condition&&condition->name=="strict_equal"&&condition->operands.size()==2){
+      const auto operation=string(field(condition->properties,"operator"));equalUndefined=operation=="===";
+      if(equalUndefined||operation=="!==")for(size_t index=0;index<2;++index){
+        const auto *literal=definition(condition->operands[index]);if(literal&&literal->name=="undefined")tested=condition->operands[1-index];
+      }
+    }
+    const auto selectedEdge=[&](size_t index,ActualState next){
+      if(tested!=noRegister){
+        auto found=next.values.find(tested);if(found!=next.values.end()){
+          const auto undefined=typeId("undefined");const bool same=equalUndefined==(index==0);auto &actual=found->second;
+          if(same){if(!actual.unknown&&!actual.tags.count(undefined))return true;actual=literal(undefined);}
+          else{
+            actual.tags.erase(undefined);
+            if(!actual.unknown&&actual.tags.empty()&&actual.objects.empty()&&actual.cells.empty()&&actual.callables.empty()&&!actual.callableTop&&actual.frames.empty()&&actual.cursors.empty())return true;
+          }
+        }
+      }
+      return edge(op.successors[index],std::move(next),{});
+    };
+    if(!e.message.empty())return false;
+    if((truth&2)&&!selectedEdge(0,(truth&1)?copyState(state):std::move(state)))return false;
+    if((truth&1)&&!selectedEdge(1,std::move(state)))return false;continues=false;
   }else if(name=="func.return"||name=="return_throw"){
     const bool normal=name=="func.return";auto &completed=normal?context.normal:context.language;auto &returned=normal?context.returned:context.thrown;auto &heap=normal?context.normalHeap:context.languageHeap;
     const bool initial=!completed;

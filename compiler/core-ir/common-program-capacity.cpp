@@ -18,7 +18,13 @@ bool ActualCheck::representation(){
       if(constructor&&!need(parameters.size()>hidden&&string(parameters[hidden])=="receiver:"+string(field(source,"ownerType")),"conditional constructor frame ABI differs"))return false;
       if(!constructor&&!field(source,"ownerType").getAsNull())sourceBindings.push_back(string(field(source,"receiverBinding")));
       for(const auto &parameter:items(field(source,"parameters")))sourceBindings.push_back(string(field(parameter,"id")));
-      for(size_t i=0;i<sourceBindings.size();++i)if(!step()||!selected(string(parameters[i+hidden+constructor]),storageCapacity[sourceBindings[i]]))return false;
+      for(size_t i=0;i<sourceBindings.size();++i){
+        if(!step())return false;const auto position=i+hidden+constructor;
+        if(constructor&&field(field(p.hir,"format"),"version").getAsInteger()==3){
+          if(!receiverText(id)||!step(16))return false;const auto key=id+"/"+std::to_string(fn->blocks[0].parameters[position]);
+          if(!selected(string(parameters[position]),registerCapacity[key]))return false;
+        }else if(!selected(string(parameters[position]),storageCapacity[sourceBindings[i]]))return false;
+      }
       const auto result=string(field(source,"returnType"));const bool empty=result=="void"||types.count(result)&&string(field(*types.at(result),"kind"))=="void";
       if(empty){if(!need(string(field(abi,"result"))=="void","Source void ABI differs"))return false;}
       else if(!selected(string(field(abi,"result")),resultCapacity[id]))return false;

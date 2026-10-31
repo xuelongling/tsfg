@@ -13,7 +13,8 @@ constexpr bool sameText(llvm::StringRef left,llvm::StringRef right){
 static_assert(profileVersion==4);
 static_assert(programWorkLimit==2000000);
 static_assert(std::numeric_limits<size_t>::max()>=programWorkLimit);
-static_assert(sameText(schema,"sha256:6f14a7569cce9d098fa892d9d0809bf0b11e55e7459070ef94aa90fb0392a498"));
+static_assert(sameText(schema,"sha256:98c9cf9e7b4c4dce0a8df339264f78d535d4e454af219fd8c71bbaec838ef821"));
+static_assert(!sameText(schema,"sha256:6f14a7569cce9d098fa892d9d0809bf0b11e55e7459070ef94aa90fb0392a498"));
 static_assert(!sameText(schema,"sha256:928348225e0dcf59c8dbe9a53b8db8e2ce66afef86fe66e66fb77d8c353aa039"));
 static_assert(!sameText(schema,"sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9"));
 static_assert(!sameText(schema,"sha256:8e6bcef004a94baae52bbf83df50adb1d0f8c0f88ad20d0cb7bbf3ceb357499b"));

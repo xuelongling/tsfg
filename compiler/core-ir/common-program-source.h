@@ -6,6 +6,8 @@ namespace tsfg::commonProgram {
 using exception::field;using exception::items;using exception::string;
 inline constexpr llvm::StringLiteral sourceSchema="sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78";
 inline constexpr llvm::StringLiteral hirSchema="sha256:c669863a42e3a1e77962dfc58f46d7fca68c5fce09ef85c0678a51191d0d378c";
+inline constexpr llvm::StringLiteral sourceConstructorSchema="sha256:27ec37bdb71bbfc957906bcf3bbd5fc5594ab2c7394a97efdee9879addc46ae3";
+inline constexpr llvm::StringLiteral hirConstructorSchema="sha256:3d5ac4262b5fd1d8fc0eb4f4fd69c7bb13593b7b18836f26ef3d7906fd9ce076";
 // Nullable storage retains one original callable signature; absence contributes
 // no code target. Other unions do not acquire a callable transfer contract.
 template<class Spend> const Json *commonCallableType(const std::map<std::string,const Json *> &types,const std::string &id,Spend spend){
@@ -33,6 +35,7 @@ struct SourceModel {
   bool need(bool condition,llvm::StringRef message){return condition||reject(error,"core-ir-common-source",message);}
   bool spend(size_t n=1){return p.charge(n)||reject(error,"core-ir-common-budget","complete Source reconstruction work exceeded");}
   bool directory();bool scopeDirectory();bool identities();bool sourceText();bool projection();
+  const Json *constructionFunction(const Json &);
   std::string label(const std::string &);
   Json shape(const Json &);
   std::string semanticType(const std::string &);

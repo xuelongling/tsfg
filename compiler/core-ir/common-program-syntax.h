@@ -20,6 +20,7 @@ struct SourceBodies {
   std::map<std::string,const Json *> bindings;
   std::map<std::string,std::map<std::string,std::string>> visible;
   const Json *current=nullptr;SourceSyntax *source=nullptr;
+  bool parameterInitializer=false;
   std::map<std::string,std::string> scope;std::set<std::string> initialized,declared;
   SourceRelations *relations=nullptr;
   std::map<std::string,Array> captureOccurrences;

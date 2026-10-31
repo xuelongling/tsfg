@@ -164,7 +164,7 @@ bool SourceBodies::function(const Json &fn){
   const auto id=string(field(fn,"id"));
   for(const auto &b:items(field(fn,"parameters"))){
     if(!model.spend()||!model.need(string(field(b,"kind"))=="parameter","original parameter kind differs"))return false;
-    scope[string(field(b,"name"))]=string(field(b,"id"));initialized.insert(string(field(b,"id")));declared.insert(string(field(b,"id")));
+    scope[string(field(b,"name"))]=string(field(b,"id"));declared.insert(string(field(b,"id")));
   }
   size_t a,b;if(!source->span(field(fn,"declarationRange"),a,b))return false;
   std::vector<Json> header;size_t cursor=a;bool overrideToken=false;
@@ -176,6 +176,9 @@ bool SourceBodies::function(const Json &fn){
   }
   Json actualName=field(fn,"nameRange");const auto owner=string(field(fn,"ownerType"));
   const bool constructor=model.types.count(owner)&&string(field(field(*model.types.at(owner),"constructor"),"id"))==id;
+  const bool parameterInitialization=!field(fn,"parameterInitialization").getAsNull();
+  const auto &initialization=field(fn,"parameterInitialization");const auto &steps=items(field(initialization,"steps"));
+  if(!parameterInitialization)for(const auto &p:items(field(fn,"parameters"))){if(!model.spend())return false;initialized.insert(string(field(p,"id")));}
   if(constructor){
     // The official constructor DTO anchors nameRange to its entire original
     // declaration. Recover only the keyword token for grammar checking; retain
@@ -188,6 +191,7 @@ bool SourceBodies::function(const Json &fn){
   header.push_back(std::move(actualName));header.push_back("(");size_t index=0;
   for(const auto &p:items(field(fn,"parameters"))){
     if(!model.spend())return false;if(index++)header.push_back(",");
+    const Json *step=parameterInitialization?&steps[index-1]:nullptr;
     size_t pa,pb,na,nb;if(!source->span(field(p,"declarationRange"),pa,pb)||!source->span(field(p,"nameRange"),na,nb))return false;
     std::vector<Json> pieces;bool readonly=false;std::string access;
     for(auto token=pa;token<na;++token){
@@ -215,7 +219,13 @@ bool SourceBodies::function(const Json &fn){
       if(!annotation(field(p,"annotationRange"),string(field(p,"declaredType"))))return false;
       pieces.push_back(":");pieces.push_back(field(p,"annotationRange"));
     }
+    if(step&&!field(*step,"initializer").getAsNull()){
+      parameterInitializer=true;const bool valid=expression(field(*step,"initializer"),false,string(field(p,"declaredType")));parameterInitializer=false;
+      if(!valid)return false;
+      pieces.push_back("=");pieces.push_back(field(field(*step,"initializer"),"range"));
+    }
     if(!source->sequence(field(p,"declarationRange"),pieces))return false;header.push_back(field(p,"declarationRange"));
+    initialized.insert(string(field(p,"id")));
   }
   header.push_back(")");
   if(!field(fn,"returnAnnotationRange").getAsNull()){
