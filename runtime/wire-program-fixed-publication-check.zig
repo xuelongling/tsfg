@@ -143,7 +143,10 @@ pub fn checkInterfaces(c: *Context) Error!void {
     }
     for (common.modules.globals) |global| {
         try c.step();
-        try checker.globals.put(c.allocator, global.id, global.writable);
+        const kind = common.types[@intFromEnum(global.@"type")].kind;
+        // Const protects the Global binding, not its mutable payload.
+        const writable = global.writable or kind == .array or kind == .reference or kind == .value;
+        try checker.globals.put(c.allocator, global.id, writable);
     }
     var has_captures = false;
     for (common.authority.fixed_publication.publication.contracts) |row| {

@@ -131,7 +131,14 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
   const std::pair<llvm::StringRef,bool *> flags[]={{"allocation",&out.allocation},{"managedReference",&out.managedReference},{"ehControl",&out.ehControl},{"mayThrow",&out.mayThrow},
     {"await",&out.await},{"lock",&out.lock},{"escape",&out.escape},{"unknownHost",&out.unknownHost}};
   for(auto [key,to]:flags){auto value=field(facets,key).getAsBoolean();if(!need(bool(value),e,"fixed facet must be boolean"))return false;*to=*value;}
-  std::map<std::string,bool> globals;for(const auto &g:items(field(p.hir,"globals")))globals.emplace(string(field(g,"id")),field(g,"writable").getAsBoolean()==true);
+  const auto &captures=field(raw,"captures");
+  if(!need(bool(captures.getAsArray()),e,"fixed captures must be a sparse array"))return false;
+  // Both Global and capture writes include mutable payload mutation through
+  // immutable bindings. Binding replacement remains a Source/HIR obligation.
+  std::set<std::string> mutableValues;
+  const auto &globalWrites=field(field(raw,"globals"),"writes");
+  if((globalWrites.getAsArray()&&!items(globalWrites).empty())||!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference"||string(field(type,"kind"))=="value")mutableValues.insert(string(field(type,"id")));}
+  std::map<std::string,bool> globals;for(const auto &g:items(field(p.hir,"globals")))globals.emplace(string(field(g,"id")),field(g,"writable").getAsBoolean()==true||mutableValues.count(string(field(g,"type"))));
   for(auto key:{"reads","writes"}){const auto &rawSet=field(field(raw,"globals"),key);auto &to=llvm::StringRef(key)=="reads"?out.reads:out.writes;
     if(!need(rawSet.getAsArray()&&items(rawSet).size()<=4096,e,"fixed global set bound differs"))return false;std::string previous;
     for(const auto &value:items(rawSet)){if(!work(p,e))return false;const auto id=string(value);
@@ -145,12 +152,8 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
     auto r=field(param,"read").getAsBoolean(),w=field(param,"write").getAsBoolean(),s=field(param,"structural").getAsBoolean();
     if(!need(r&&w&&s,e,"fixed parameter flags must be boolean"))return false;out.parameters.push_back({*r,*w,*s});
   }
-  const auto &captures=field(raw,"captures");
-  if(!need(bool(captures.getAsArray()),e,"fixed captures must be a sparse array"))return false;
-  // Build only for a nonempty capture obligation; unrelated layouts cannot
-  // turn every empty function contract into a full slot-directory scan.
-  std::map<std::string,bool> slots;std::set<std::string> mutableValues;
-  if(!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array"||string(field(type,"kind"))=="reference"||string(field(type,"kind"))=="value")mutableValues.insert(string(field(type,"id")));}
+  // Build the slot directory only for a nonempty capture obligation.
+  std::map<std::string,bool> slots;
   if(!items(captures).empty())for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){
     if(!work(p,e))return false;slots.emplace(string(field(slot,"key")),field(slot,"writable").getAsBoolean()==true||mutableValues.count(string(field(slot,"type"))));
   }
