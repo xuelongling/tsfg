@@ -26,7 +26,7 @@ async function program(name){
 test('abstract key charges before reading a nontrivial actual set',()=>{
   let iterated=false;const tags=new Set(['a','b','c']),original=tags[Symbol.iterator].bind(tags);
   tags[Symbol.iterator]=()=>{iterated=true;return original();};
-  const a=commonAbstract({types:new Map(),spend:commonMeter(2)}),value={tags,refs:new Set(),cells:new Set(),pairs:new Map(),truth:0,unknown:false,number:null};
+  const a=commonAbstract({types:new Map(),spend:commonMeter(2)}),value={...a.empty(),tags};
   assert.throws(()=>a.key(value),limit);assert.equal(iterated,false);
 });
 test('inherited field collection pays for members before copying them',()=>{

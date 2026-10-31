@@ -18,20 +18,29 @@ export function commonAbstract(model) {
   const {spend,types}=model,collections=commonCollections(spend),regions=commonRegions(spend),arrays=new Map();
   const noOrigin=Object.freeze(emptyRegionValue()),emptyOrigin=Object.freeze({...emptyRegionValue(),empty:true});
   for(const type of types.values()){spend();if(type.kind==='array')arrays.set(type.elementType,type);}
-  const empty=()=>({tags:new Set(),refs:new Set(),cells:new Set(),pairs:new Map(),truth:0,unknown:false,number:null,region:noOrigin});
+  const empty=()=>({tags:new Set(),refs:new Set(),cells:new Set(),pairs:new Map(),frames:new Set(),cursors:new Set(),truth:0,unknown:false,number:null,region:noOrigin});
   // Relation operations pay for their own copies/joins; do not charge that
   // work twice as part of the independent payload collections.
-  const weight=v=>v.tags.size+v.refs.size+v.cells.size+v.pairs.size+1;
-  const key=v=>{check(v.tags.size<=256&&v.refs.size<=256&&v.cells.size<=256&&v.pairs.size<=256,'limit');return canonical({tags:collections.sorted(v.tags),refs:collections.sorted(v.refs),cells:collections.sorted(v.cells),pairs:collections.sorted(v.pairs,([a],[b])=>a<b?-1:a>b?1:0),truth:v.truth,unknown:v.unknown,number:v.number});};
+  const weight=v=>v.tags.size+v.refs.size+v.cells.size+v.pairs.size+v.frames.size+v.cursors.size+1;
+  const key=v=>{
+    check(v.tags.size<=256&&v.refs.size<=256&&v.cells.size<=256&&v.pairs.size<=256,'limit');
+    spend(weight(v));
+    const text=value=>spend(Math.ceil(value.length*6/8)+1);
+    const compare=(left,right)=>{spend(Math.ceil(Math.min(left.length,right.length)/8)+1);return left<right?-1:left>right?1:0;};
+    for(const name of ['tags','refs','cells','frames','cursors'])for(const id of v[name])text(id);
+    for(const [id,pair]of v.pairs){text(id);text(pair.functionId);if(pair.environment!==null)text(pair.environment);}
+    return canonical({tags:collections.sorted(v.tags,compare),refs:collections.sorted(v.refs,compare),cells:collections.sorted(v.cells,compare),
+      pairs:collections.sorted(v.pairs,([left],[right])=>compare(left,right)),frames:collections.sorted(v.frames,compare),cursors:collections.sorted(v.cursors,compare),truth:v.truth,unknown:v.unknown,number:v.number});
+  };
   // Absence is an immutable facet; only actual origin sets need snapshots.
-  const copy=v=>{spend(weight(v));return {...v,tags:new Set(v.tags),refs:new Set(v.refs),cells:new Set(v.cells),pairs:new Map(v.pairs),
+  const copy=v=>{spend(weight(v));return {...v,tags:new Set(v.tags),refs:new Set(v.refs),cells:new Set(v.cells),pairs:new Map(v.pairs),frames:new Set(v.frames),cursors:new Set(v.cursors),
     region:!v.region.roots.size&&!v.region.opaque?v.region.empty?emptyOrigin:noOrigin:regions.copy(v.region)};};
   function merge(to,from) {
     spend(weight(to)+weight(from));let changed=false;const blank=to.tags.size===0&&!to.unknown;
     // Detect the finite lattice delta while visiting its collections once;
     // serializing and sorting the entire value twice is unnecessary here.
     for(const [key,pair]of from.pairs){const prior=to.pairs.get(key);if(!prior||prior.functionId!==pair.functionId||prior.environment!==pair.environment){to.pairs.set(key,pair);changed=true;}}
-    for(const name of ['tags','refs','cells'])for(const id of from[name])if(!to[name].has(id)){to[name].add(id);changed=true;}
+    for(const name of ['tags','refs','cells','frames','cursors'])for(const id of from[name])if(!to[name].has(id)){to[name].add(id);changed=true;}
     check(to.tags.size<=256&&to.refs.size<=256&&to.cells.size<=256&&to.pairs.size<=256,'limit');
     const truth=to.truth|from.truth,unknown=to.unknown||from.unknown,number=blank?from.number:to.number===from.number?to.number:null;
     changed ||= truth!==to.truth||unknown!==to.unknown||number!==to.number;to.truth=truth;to.unknown=unknown;to.number=number;
