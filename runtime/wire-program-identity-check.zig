@@ -546,7 +546,7 @@ const Common = struct {
             try equal(c,f.id,try digest(c,"tsfg.common-program.initializer.v1",.{.module=m.id}));
             try equal(c,f.signature,try parts(c,&.{"tsfg.common-program.initializer-signature.v1\x00void"}));
         }
-        for(v.modules.globals) |g| { try c.step(); try equal(c,g.id,try parts(c,&.{"tsfg.global\x00",source(c,g.source).path,"\x00",g.name,"\x00",&idText(v.types[@intFromEnum(g.@"type")].id)})); }
+        for(v.modules.globals) |g| { try c.step(); try equal(c,g.id,try parts(c,&.{"tsfg.global\x00",source(c,g.source).path,"\x00",if(g.generated)"$default" else g.name,"\x00",&idText(v.types[@intFromEnum(g.@"type")].id)})); }
         for(v.modules.hosts) |h| {
             try c.step(); const ids=try domainIds(c,v.types,h.parameter_types); defer c.allocator.free(ids);
             try equal(c,h.signature,try digest(c,"tsfg.module-callable-signature.candidate.v1",.{.parameters=ids,.returns=v.types[@intFromEnum(h.return_type)].id}));
