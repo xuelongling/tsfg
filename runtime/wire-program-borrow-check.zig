@@ -8,6 +8,7 @@
 const std = @import("std");
 const context = @import("wire-program-refcheck-context.zig");
 const facts = @import("wire-program-actual-facts.zig");
+const region = @import("wire-program-region-holding.zig");
 const model = @import("wire-program-model.zig");
 const Context = context.Context;
 const t = model.types;
@@ -322,7 +323,7 @@ const Collected = struct {
         while (iterator.next()) |id| { try c.step(); try self.ids.put(c.allocator, id.*, {}); }
     }
 };
-const Scan = enum { use, escape, arrays, owning };
+const Scan = enum { use, escape, arrays, owning, region_scopes };
 fn slotObject(slot: facts.Slot) ?facts.ObjectId {
     return switch (slot) {
         .field => |v| v.object, .element => |v| v.object, .environment_slot => |v| v.object, .capture => |v| v.object,
@@ -369,11 +370,24 @@ fn collect(c: *Context, world: facts.WorldView, initial: facts.Value, heap: fact
             try c.step(); const entry = try seen.getOrPut(c.allocator, @intFromEnum(object));
             if (entry.found_existing) continue;
             const info = world.object(object);
+            if (mode == .region_scopes) {
+                // Aged raw aliases may revoke every matching birth family,
+                // including through Span.owner. They restore no current root.
+                for (world.region_nodes) |node| {
+                    try c.step(); if (node.reference == object) try result.ids.put(c.allocator, @intFromEnum(node.scope), {});
+                }
+                if (deep) {
+                    var slots = heap.iterator();
+                    while (slots.next()) |stored| { try c.step(); if (slotObject(stored.slot) == object) try pending.append(c.allocator, stored.value); }
+                }
+                continue;
+            }
             if (info.kind == .read_span) {
                 switch (mode) {
                     .use, .escape => try result.ids.put(c.allocator, @intFromEnum(object), {}),
                     .arrays => { var owners = try spanOwners(c, world, heap, object); defer owners.deinit(c.allocator); try result.merge(c, &owners); },
                     .owning => {}, // Span.owner is deliberately not an owning path.
+                    .region_scopes => unreachable,
                 }
                 continue;
             }
@@ -414,11 +428,20 @@ const StableStore = struct {
     descriptors: Set = .empty,
     local_owners: Set = .empty,
     receivers: Set = .empty,
+    holding: ?region.Holding = null,
     fn deinit(self: *StableStore, allocator: std.mem.Allocator) void {
         self.descriptors.deinit(allocator); self.local_owners.deinit(allocator); self.receivers.deinit(allocator);
+        if (self.holding) |*holding| holding.deinit();
     }
 };
+const RegionReturn = struct {
+    holding: region.Holding,
+    readers: Set = .empty,
+    fn deinit(self: *RegionReturn, allocator: std.mem.Allocator) void { self.holding.deinit(); self.readers.deinit(allocator); }
+};
+const RegionContext = struct { function: t.FunctionRef, scope: ?region.ScopeRef };
 const Boundary = struct {
+    site: facts.Site = undefined,
     permitted: Set = .empty,
     connected: Set = .empty,
     existing: Set = .empty,
@@ -427,9 +450,14 @@ const Boundary = struct {
     conservative: bool = false,
     escaping: bool = false,
     ordered: bool = false,
+    regions: Set = .empty,
+    raw_regions: Set = .empty,
+    hard: bool = false,
+    unconfined: bool = false,
     fn deinit(self: *Boundary, allocator: std.mem.Allocator) void {
         self.permitted.deinit(allocator); self.connected.deinit(allocator);
         self.existing.deinit(allocator); self.arguments.deinit(allocator); self.owners.deinit(allocator);
+        self.regions.deinit(allocator); self.raw_regions.deinit(allocator);
     }
 };
 
@@ -608,6 +636,11 @@ pub const Observations = struct {
     external: Set = .empty,
     root_entries_collected: bool = false,
     stable_stores: std.ArrayListUnmanaged(StableStore) = .empty,
+    region_returns: std.ArrayListUnmanaged(RegionReturn) = .empty,
+    region_nodes: []const region.Node = &.{},
+    region_scopes: []region.Scope = &.{},
+    region_contexts: []RegionContext = &.{},
+    regions_collected: bool = false,
     catalogued: bool = false,
     function_indexes: std.AutoHashMapUnmanaged(t.Hash, usize) = .empty,
     global_indexes: std.AutoHashMapUnmanaged(t.Hash, t.GlobalRef) = .empty,
@@ -626,6 +659,8 @@ pub const Observations = struct {
         self.effects.deinit(a); self.edges.deinit(a); self.call_successors.deinit(a); self.boundaries.deinit(a);
         self.calls.deinit(a); self.fresh.deinit(a); self.external.deinit(a); self.flow.deinit();
         for (self.stable_stores.items) |*stored| stored.deinit(a); self.stable_stores.deinit(a);
+        for (self.region_returns.items) |*result| result.deinit(a); self.region_returns.deinit(a);
+        a.free(self.region_nodes); a.free(self.region_scopes); a.free(self.region_contexts);
         self.function_indexes.deinit(a); self.global_indexes.deinit(a); self.contract_rows.deinit(a); self.capture_slots.deinit(a);
     }
     fn point(self: *Observations, site: facts.Site) Error!usize {
@@ -675,6 +710,18 @@ pub const Observations = struct {
         for (value.callables) |pair| { try self.c.step(); if (pair.environment) |environment| try self.external.put(self.c.allocator, @intFromEnum(environment), {}); }
     }
     fn ensureContext(self: *Observations, world: facts.WorldView, id: facts.ContextId) Error!void {
+        if (!self.regions_collected and self.c.program.tables.mode == .common) {
+            // Final replay's world is immutable. Own only its finite relation
+            // directories: later Borrow barriers revoke this PRIVATE copy.
+            try self.c.charge(world.region_nodes.len + world.region_scopes.len + world.contexts.len);
+            self.region_nodes = try self.c.allocator.dupe(region.Node, world.region_nodes);
+            self.region_scopes = try self.c.allocator.dupe(region.Scope, world.region_scopes);
+            self.region_contexts = try self.c.allocator.alloc(RegionContext, world.contexts.len);
+            for (world.contexts, 0..) |context_info, i| {
+                try self.c.step(); self.region_contexts[i] = .{ .function = context_info.function, .scope = context_info.region_scope };
+            }
+            self.regions_collected = true;
+        }
         if (!self.root_entries_collected) {
             // The world is the complete, converged replay input. Classify every
             // root before any event: a later root can retain an earlier object.
@@ -702,6 +749,15 @@ pub const Observations = struct {
         }
         try self.connect(record.entry, try self.point(.{ .context = id, .location = .{ .function = info.function, .block = @enumFromInt(0), .instruction = 0 } }));
         try self.contexts.put(self.c.allocator, id, record);
+    }
+    fn regionDomain(self: *Observations) region.Domain { return .{ .c = self.c, .nodes = self.region_nodes, .scopes = self.region_scopes }; }
+    fn revokeRaw(self: *Observations, world: facts.WorldView, value: facts.Value, heap: facts.HeapView) Error!void {
+        if (self.c.program.tables.mode != .common) return;
+        var affected = try collect(self.c, world, value, heap, .region_scopes, true); defer affected.deinit(self.c.allocator);
+        var scopes = affected.ids.keyIterator();
+        while (scopes.next()) |scope_id| {
+            try self.c.step(); const scope = &self.region_scopes[scope_id.*]; scope.blocked = true; scope.hard = true;
+        }
     }
     fn observe(self: *Observations, world: facts.WorldView, at: usize, value: facts.Value, heap: facts.HeapView, deep: bool, expected_span: bool) Error!void {
         var spans = try collect(self.c, world, value, heap, .use, deep); defer spans.deinit(self.c.allocator);
@@ -745,6 +801,118 @@ pub const Observations = struct {
         }
         self.catalogued = true;
     }
+    fn readerPermission(self: *Observations, function: usize, private_reader: bool) Error!bool {
+        const c = self.c; if (c.program.tables.mode != .common) return false;
+        const v = c.program.tables.mode.common;
+        const contract_index = self.contract_rows.get(function) orelse return false;
+        const upper_bound = v.authority.fixed_publication.publication.contracts[contract_index].upper;
+        if (upper_bound.facets.unknown_host or upper_bound.facets.@"await" or upper_bound.facets.lock or
+            (private_reader and upper_bound.facets.escape) or upper_bound.globals.reads.len != 0 or upper_bound.globals.writes.len != 0 or
+            upper_bound.host_resources.reads.len != 0 or upper_bound.host_resources.writes.len != 0) return false;
+        var private_parent = false;
+        for (v.closures.functions) |row| { try c.step(); if (@intFromEnum(row.function) == function) private_parent = row.parent != null; }
+        if (private_reader and !private_parent) return false;
+        for (upper_bound.parameters) |access| { try c.step(); if (access.write or access.structural) return false; }
+        for (upper_bound.captures) |access| {
+            try c.step(); if (access.structural) return false; if (!access.write) continue;
+            const wanted = self.capture_slots.get(access.slot) orelse return false;
+            const slot = v.closures.environments[@intFromEnum(wanted.layout)].slots[@intFromEnum(wanted.slot)];
+            const typed = v.types[@intFromEnum(slot.@"type")];
+            const scalar_array = typed.kind == .array and typed.element != null and v.types[@intFromEnum(typed.element.?)].kind == .scalar;
+            if (!slot.writable or (typed.kind != .scalar and typed.kind != .string and !scalar_array)) return false;
+            var current = v.abis[@intFromEnum(c.program.functions[function].abi)].lexical_environment;
+            var found = false;
+            while (current) |layout| {
+                try c.step(); if (layout == wanted.layout) { found = true; break; }
+                current = v.closures.environments[@intFromEnum(layout)].parent;
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+    fn returnedReaders(self: *Observations, world: facts.WorldView, function: t.FunctionRef, value: facts.Value, readers: *Set) Error!void {
+        const c = self.c;
+        if (c.program.tables.mode != .common or value.unknown or value.callable_unknown or value.objects.len != 0 or
+            value.cells.len != 0 or value.callables.len == 0) return;
+        const v = c.program.tables.mode.common;
+        const index = self.contract_rows.get(@intFromEnum(function)) orelse return;
+        const permitted = v.authority.fixed_publication.publication.contracts[index].callables.returns orelse return;
+        if (permitted.top or permitted.functions.len == 0) return;
+        for (value.tags) |tag| { try c.step(); if (v.types[@intFromEnum(tag)].kind != .function) return; }
+        var selected: Set = .empty; defer selected.deinit(c.allocator);
+        for (value.callables) |pair| {
+            try c.step(); const layout = v.abis[@intFromEnum(c.program.functions[@intFromEnum(pair.code)].abi)].lexical_environment orelse return;
+            const object = pair.environment orelse return;
+            if (world.object(object).kind != .environment or world.object(object).environment != layout) return;
+            if (!try self.readerPermission(@intFromEnum(pair.code), true)) return;
+            try selected.put(c.allocator, @intFromEnum(pair.code), {});
+        }
+        if (selected.count() != permitted.functions.len) return;
+        for (permitted.functions) |id| {
+            try c.step(); const target = self.function_indexes.get(id) orelse return;
+            if (!selected.contains(target)) return;
+        }
+        readers.* = selected; selected = .empty;
+    }
+    fn closedReaders(self: *Observations, returned_readers: *const Set, scope: region.ScopeRef) Error!bool {
+        const c = self.c; if (returned_readers.count() == 0) return false;
+        var pending: std.ArrayListUnmanaged(usize) = .empty; defer pending.deinit(c.allocator);
+        var seen: Set = .empty; defer seen.deinit(c.allocator);
+        var call_edges: std.AutoHashMapUnmanaged(FlowEdge, void) = .empty; defer call_edges.deinit(c.allocator);
+        var first = returned_readers.keyIterator();
+        while (first.next()) |function| { try c.step(); try pending.append(c.allocator, function.*); }
+        var cursor: usize = 0;
+        while (cursor < pending.items.len) : (cursor += 1) {
+            try c.step(); const function = pending.items[cursor];
+            const visited = try seen.getOrPut(c.allocator, function); if (visited.found_existing) continue;
+            if (!try self.readerPermission(function, returned_readers.contains(function))) return false;
+            // A scoped actual invocation implies the producer's independently
+            // derived acyclic/nonrecursive ENTRY restriction only. It does not
+            // establish body permission; every typed call below is also checked.
+            var scoped = false;
+            for (self.region_contexts) |context_info| {
+                try c.step(); scoped = scoped or (@intFromEnum(context_info.function) == function and context_info.scope == scope);
+            }
+            if (!scoped) return false;
+            for (c.program.functions[function].blocks, 0..) |block, b| for (block.instructions, 0..) |op, i| {
+                try c.step(); if (op.data == .authorized_host) return false;
+                if (!invocation(&op)) continue;
+                var observed = false; var boundaries = self.boundaries.valueIterator();
+                while (boundaries.next()) |bound| {
+                    try c.step(); const location = bound.site.location;
+                    if (@intFromEnum(location.function) != function or @intFromEnum(location.block) != b or location.instruction != i) continue;
+                    observed = true;
+                    if (!bound.ordered or bound.hard or bound.unconfined) return false;
+                    var targets = bound.permitted.keyIterator();
+                    while (targets.next()) |target| {
+                        try c.step(); try pending.append(c.allocator, target.*);
+                        try call_edges.put(c.allocator, .{ .from = function, .to = target.* }, {});
+                    }
+                }
+                // An unvisited branch is not proof that its call is harmless.
+                if (!observed) return false;
+            };
+        }
+        // The complete permitted graph, rather than a narrow observed arm,
+        // must also be acyclic. Scope presence is not a recursion exemption.
+        var indegrees: std.AutoHashMapUnmanaged(usize, usize) = .empty; defer indegrees.deinit(c.allocator);
+        var functions = seen.keyIterator();
+        while (functions.next()) |function| { try c.step(); try indegrees.put(c.allocator, function.*, 0); }
+        var links = call_edges.keyIterator();
+        while (links.next()) |link| { try c.step(); indegrees.getPtr(link.to).?.* += 1; }
+        pending.clearRetainingCapacity(); var degrees = indegrees.iterator();
+        while (degrees.next()) |degree| { try c.step(); if (degree.value_ptr.* == 0) try pending.append(c.allocator, degree.key_ptr.*); }
+        cursor = 0;
+        while (cursor < pending.items.len) : (cursor += 1) {
+            try c.step(); links = call_edges.keyIterator();
+            while (links.next()) |link| {
+                try c.step(); if (link.from != pending.items[cursor]) continue;
+                const degree = indegrees.getPtr(link.to).?; degree.* -= 1;
+                if (degree.* == 0) try pending.append(c.allocator, link.to);
+            }
+        }
+        return pending.items.len == seen.count();
+    }
     fn captureEffects(self: *Observations, world: facts.WorldView, roots: []const facts.ObjectId, wanted: Capture, heap: facts.HeapView, into: *Collected) Error!void {
         var pending: std.ArrayListUnmanaged(facts.ObjectId) = .empty; defer pending.deinit(self.c.allocator);
         var seen: Set = .empty; defer seen.deinit(self.c.allocator);
@@ -770,6 +938,7 @@ pub const Observations = struct {
         const c = self.c; const v = c.program.tables.mode.common; const op = self.instruction(site);
         const contract = v.authority.fixed_publication.publication.contracts[self.contract_rows.get(target) orelse return error.InvalidShape];
         const effect = contract.upper; const indirect = op.data == .eh_invoke_indirect or op.data == .function_call;
+        bound.hard = bound.hard or !try self.readerPermission(target, false);
         const abi = v.abis[@intFromEnum(c.program.functions[target].abi)];
         const offset: usize = if (indirect) 1 else if (op.data == .eh_invoke and abi.lexical_environment != null) 1 else 0;
         for (effect.parameters) |access| {
@@ -810,7 +979,7 @@ pub const Observations = struct {
     fn boundary(self: *Observations, world: facts.WorldView, site: facts.Site, at: usize, state: facts.StateView) Error!void {
         try self.catalogs(); const c = self.c; const op = self.instruction(site);
         try c.step(); const entry = try self.boundaries.getOrPut(c.allocator, at);
-        if (!entry.found_existing) entry.value_ptr.* = .{};
+        if (!entry.found_existing) entry.value_ptr.* = .{ .site = site };
         const bound = entry.value_ptr;
         switch (op.data) {
             .call => |v| try bound.permitted.put(c.allocator, @intFromEnum(v.callee), {}),
@@ -849,6 +1018,7 @@ pub const Observations = struct {
         }
         for (op.operands) |reg| {
             try c.step(); const argument = state.values.reg(reg);
+            bound.hard = bound.hard or argument.unknown or argument.callable_unknown;
             var used = try collect(c, world, argument, state.heap, .use, true); defer used.deinit(c.allocator);
             var uses_it = used.ids.keyIterator(); while (uses_it.next()) |id| { try c.step(); try bound.arguments.put(c.allocator, id.*, {}); }
             var escaping = try collect(c, world, argument, state.heap, .escape, true); defer escaping.deinit(c.allocator);
@@ -863,6 +1033,20 @@ pub const Observations = struct {
                 try c.step(); if (world.object(object).kind == .read_span) try bound.existing.put(c.allocator, @intFromEnum(object), {});
             }
             if (stored.slot == .span_owner) try bound.existing.put(c.allocator, @intFromEnum(stored.slot.span_owner), {});
+        }
+        if (c.program.tables.mode == .common) {
+            if (world.invocation(site.context).region_scope) |scope| try bound.regions.put(c.allocator, @intFromEnum(scope), {});
+            if (state.relations) |relations| {
+                var roots = relations.nodes.keyIterator();
+                while (roots.next()) |root| {
+                    try c.step(); try bound.regions.put(c.allocator, @intFromEnum(self.region_nodes[@intFromEnum(root.*)].scope), {});
+                }
+            }
+            if (self.region_nodes.len != 0) for (0..state.values.len()) |i| {
+                try c.step(); var affected = try collect(c, world, state.values.get(i), state.heap, .region_scopes, true); defer affected.deinit(c.allocator);
+                var scopes = affected.ids.keyIterator();
+                while (scopes.next()) |scope_id| { try c.step(); try bound.raw_regions.put(c.allocator, scope_id.*, {}); }
+            };
         }
     }
     fn constructorReceiver(self: *Observations, world: facts.WorldView, site: facts.Site, receiver: facts.Value) Error!bool {
@@ -898,12 +1082,13 @@ pub const Observations = struct {
         }
         return false;
     }
-    fn returned(self: *Observations, world: facts.WorldView, site: facts.Site, value: facts.Value, heap: facts.HeapView, spans: *const Collected) Error!void {
+    fn returned(self: *Observations, world: facts.WorldView, site: facts.Site, value: facts.Value, heap: facts.HeapView, spans: *const Collected, normal: bool) Error!void {
         if (spans.ids.count() == 0) return;
         const c = self.c; try c.require(!spans.pending);
         var projection = Projection{ .arena = std.heap.ArenaAllocator.init(c.allocator) }; defer projection.deinit();
         const stable = try self.referenceWrites(world, value, heap);
         try projection.build(c, world, value, heap, stable);
+        var needs_region = false;
         var iterator = spans.ids.keyIterator();
         while (iterator.next()) |descriptor| {
             try c.step(); var owners = try spanOwners(c, world, heap, @enumFromInt(descriptor.*)); defer owners.deinit(c.allocator);
@@ -913,11 +1098,23 @@ pub const Observations = struct {
             var owner_ids = owners.ids.keyIterator();
             while (owner_ids.next()) |owner| {
                 try c.step(); if (self.contexts.get(site.context).?.incoming_owners.contains(owner.*) or held.contains(owner.*)) continue;
-                try c.require(try self.retained(world, site.context, &projection, descriptor.*, owner.*));
+                if (!try self.retained(world, site.context, &projection, descriptor.*, owner.*)) needs_region = true;
             }
         }
-        // A weak, opaque or unclosed graph is not repaired with a raw site.
-        // RegionDomain/Holding correlation is a separate, unresolved facet.
+        if (needs_region) {
+            // A raw weak family does not become strong. Only this value's
+            // selected SAME-TRANSFER relation can discharge the extra duty.
+            try c.require(c.program.tables.mode == .common);
+            const current = heap.relations orelse return error.InvalidShape;
+            const context_info = world.invocation(site.context);
+            try c.require(context_info.region_scope != null);
+            var domain = self.regionDomain();
+            var obligation = RegionReturn{ .holding = try region.Holding.capture(&domain, world, context_info.region_scope,
+                try facts.relation(c, value), current, stable) };
+            errdefer obligation.deinit(c.allocator);
+            if (normal and !context_info.root) try self.returnedReaders(world, site.location.function, value, &obligation.readers);
+            try self.region_returns.append(c.allocator, obligation);
+        }
     }
     fn referenceWrites(self: *Observations, world: facts.WorldView, initial: facts.Value, heap: facts.HeapView) Error!bool {
         const c = self.c; if (c.program.tables.mode != .common) return true;
@@ -998,6 +1195,11 @@ pub const Observations = struct {
             try c.step(); const kind = world.object(object).kind;
             if (kind != .reference and kind != .value) { stored.deinit(c.allocator); return false; }
         }
+        if (c.program.tables.mode == .common and (invocation_info.region_scope != null or value.region.roots.len != 0)) {
+            const current = heap.relations orelse { stored.deinit(c.allocator); return false; };
+            var domain = self.regionDomain();
+            stored.holding = try region.Holding.capture(&domain, world, invocation_info.region_scope, try facts.relation(c, value), current, true);
+        }
         var projection = Projection{ .arena = std.heap.ArenaAllocator.init(c.allocator) }; defer projection.deinit();
         try projection.build(c, world, value, heap, true);
         for (projection.nodes.items) |node| {
@@ -1021,6 +1223,7 @@ pub const Observations = struct {
     fn storageLifetime(self: *Observations, world: facts.WorldView, site: facts.Site, at: usize, destination: facts.Value, value: facts.Value, heap: facts.HeapView, global: bool) Error!void {
         const c = self.c; var external = global or destination.unknown;
         for (destination.objects) |object| { try c.step(); external = external or self.external.contains(@intFromEnum(object)); }
+        if (global) try self.revokeRaw(world, value, heap);
         if (!external or try self.constructorReceiver(world, site, destination)) return;
         var spans = try collect(c, world, value, heap, .escape, true); defer spans.deinit(c.allocator);
         if (spans.ids.count() == 0) return;
@@ -1126,11 +1329,16 @@ pub const Observations = struct {
         const at = try self.point(call.caller); try self.c.step();
         const boundary_row = self.boundaries.getPtr(at) orelse return error.InvalidShape;
         try boundary_row.connected.put(self.c.allocator, @intFromEnum(world.invocation(call.callee).function), {});
+        if (self.c.program.tables.mode == .common) {
+            if (world.invocation(call.callee).region_scope) |scope| try boundary_row.regions.put(self.c.allocator, @intFromEnum(scope), {})
+            else boundary_row.unconfined = true;
+        }
         try self.calls.append(self.c.allocator, call); try self.connect(at, self.contexts.get(call.callee).?.entry);
     }
     fn completed(pointer: *anyopaque, _: *Context, world: facts.WorldView, site: facts.Site, completion: facts.Completion, value: facts.Value, heap: facts.HeapView) Error!void {
         const self = client(pointer); try self.ensureContext(world, site.context); const at = try self.point(site);
         if (completion == .request_trap) return;
+        if (world.invocation(site.context).root) try self.revokeRaw(world, value, heap);
         const record = self.contexts.getPtr(site.context).?;
         if (completion == .normal) try record.normal.put(self.c.allocator, at, {}) else try record.language.put(self.c.allocator, at, {});
         try self.observe(world, at, value, heap, true, false);
@@ -1139,7 +1347,7 @@ pub const Observations = struct {
         // Typed role alone does not prove that this result is the original
         // receiver; SourcePlan is not among this passive checker's inputs.
         if (completion == .normal and try self.constructorReceiver(world, site, value)) return;
-        try self.returned(world, site, value, heap, &spans);
+        try self.returned(world, site, value, heap, &spans, completion == .normal);
     }
     fn copyIds(self: *Observations, set: *const Set) Error![]usize {
         try self.c.charge(set.count()); const result = try self.c.allocator.alloc(usize, set.count());
@@ -1164,12 +1372,39 @@ pub const Observations = struct {
             var complete = !bound.conservative and bound.permitted.count() != 0;
             var permitted = bound.permitted.keyIterator();
             while (permitted.next()) |target| { try c.step(); complete = complete and bound.connected.contains(target.*); }
+            const hard = bound.hard or !complete;
+            if (c.program.tables.mode == .common) {
+                var scopes = bound.regions.keyIterator();
+                while (scopes.next()) |scope_id| {
+                    try c.step(); const scope = &self.region_scopes[scope_id.*];
+                    if (hard or bound.unconfined) { scope.blocked = true; scope.hard = scope.hard or hard; }
+                }
+                if (hard) {
+                    var raw_scopes = bound.raw_regions.keyIterator();
+                    while (raw_scopes.next()) |scope_id| {
+                        try c.step(); const scope = &self.region_scopes[scope_id.*]; scope.blocked = true; scope.hard = true;
+                    }
+                }
+            }
+            if (bound.regions.count() != 0 and bound.unconfined) complete = false;
             bound.ordered = complete;
             if (!complete) {
                 if (c.program.tables.mode != .common) bound.owners.pending = true;
                 try self.addEffect(entry.key_ptr.*, &bound.owners); try self.addUses(entry.key_ptr.*, &bound.arguments);
-                try c.require(!bound.escaping);
+                try c.require(!bound.escaping or !hard);
             }
+        }
+        if (c.program.tables.mode == .common) {
+            var domain = self.regionDomain();
+            for (self.region_returns.items) |*obligation| {
+                try c.step(); var outcome = try obligation.holding.evaluate(&domain, false);
+                if (outcome != .proved and obligation.holding.scope != null and
+                    try self.closedReaders(&obligation.readers, obligation.holding.scope.?)) outcome = try obligation.holding.evaluate(&domain, true);
+                try c.require(outcome == .proved);
+            }
+            for (self.stable_stores.items) |*stored| if (stored.holding) |*holding| {
+                try c.step(); try c.require(try holding.evaluate(&domain, true) == .proved);
+            };
         }
         var descriptors: std.AutoHashMapUnmanaged(usize, std.ArrayListUnmanaged(usize)) = .empty;
         defer { var iterator = descriptors.valueIterator(); while (iterator.next()) |row| row.deinit(c.allocator); descriptors.deinit(c.allocator); }
