@@ -13,10 +13,11 @@ const origin={source:path,...range},B='literal:B',D='literal:D',U='literal:U',V=
 const number=value=>({kind:'numericLiteral',type:i32TypeId,token:String(value),decimal:String(value),range});
 const field=(owner,name,type=i32TypeId,initializer=null)=>({id:owner+'/'+name,sourceBinding:owner+'/'+name,owner,name,type,origin:range,
   ...(initializer?{initializer}:{})});
+// Source provenance is a distinct literal namespace inside this normalized model.
 function nominal(id,fields=[],base=null,kind='reference',parameters=[]){
   const construction={id:id+'/ctor',kind:base?'implicit-derived':'implicit-base',parameters,signature:{parameters:parameters.map(p=>p.type),returnType:id},
-    functionId:null,origin,initializationFields:fields.map(f=>f.id),implicitForward:base?{target:base+'/ctor',parameters:parameters.map(p=>({source:p.symbol,target:p.inheritedFrom}))}:null};
-  return {id,kind,fields,methods:[],...(base?{base}:{}),construction};
+    functionId:null,origin,initializationFields:fields.map(f=>f.id),implicitForward:base?{target:'literal-source:'+base+'.ctor',parameters:parameters.map(p=>({source:p.symbol,target:p.inheritedFrom}))}:null};
+  return {id,sourceType:'literal-source:'+id,kind,fields,methods:[],...(base?{base}:{}),construction};
 }
 function source(id,returnType,parameters=[],body=[],ownerType=null){
   return {id,name:id,kind:ownerType?'construction-body':'source',returnType,parameters,bindings:[],body,ownerType,

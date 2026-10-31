@@ -8,64 +8,58 @@ import {commonHostResources} from './common-program-hosts.mjs';
 import {commonKernelCallChain} from './common-program-diagnostics.mjs';
 import {commonIdentity} from './common-program-identities.mjs';
 import {commonProgramPhysical} from './common-program-physical.mjs';
+import {commonFixedPublicationScope,commonVerifyPublicationScope} from './common-program-publication-scope.mjs';
+import {commonReturnOriginSource,commonReturnOriginAvailability,commonJoinReturnOriginEffects,commonReturnOriginScalarProof} from './common-program-return-origin-source.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+import {commonFixedStorageProjection} from './common-program-fixed-storage.mjs';
 import {commonBudget,commonMeter,commonRecord as record,commonCheck as check,commonSame as same,commonJson,
   canonical,sha256,own} from './common-program-common.mjs';
-const format=Object.freeze({family:'tsfg.program-publication-candidate',version:2});
+const format=Object.freeze({family:'tsfg.program-publication-candidate',version:3});
 const sorted=values=>values.every((value,index)=>index===0||values[index-1]<value);
 const hash=value=>typeof value==='string'&&/^sha256:[0-9a-f]{64}$/.test(value);
 const flags=['read','write','structural'];
 
-export function commonProgramPublicationScope(hir,spend=commonMeter()) {
-  const types=new Map(),seen=new Set(),pending=[],captureKeys=new Map();for(const env of hir.environments){spend(env.slots.length);for(const slot of env.slots)captureKeys.set(slot.binding,slot.key);}spend(hir.types.length+hir.globals.length);
-  for(const row of hir.types){types.set(row.id,row);if(['value','reference'].includes(row.kind))pending.push(row.id);}
-  for(const row of hir.globals)pending.push(row.type);
-  for(const fn of hir.functions){spend(fn.parameters.length+2);pending.push(fn.returnType);if(fn.ownerType)pending.push(fn.ownerType);for(const p of fn.parameters)pending.push(p.type);}
-  while(pending.length){spend();const id=pending.pop();if(seen.has(id))continue;seen.add(id);const row=types.get(id);check(row,'type');
-    spend(2);if(row.base)pending.push(row.base);if(row.elementType)pending.push(row.elementType);
-    if(row.kind==='function'){spend(row.parameters.length+1);pending.push(...row.parameters,row.returnType);}
-    for(const child of row.members??[]){spend();pending.push(child);}for(const field of row.fields??[]){spend();pending.push(field.type);}}
-  const binding=alias=>({kind:alias.kind,name:alias.name,imported:alias.imported,target:alias.target,targetSourcePath:alias.targetSourcePath});
-  const root=({kind,sourcePath,name,target})=>({kind,sourcePath,name,target});
-  const scopedTypes=[];spend(hir.types.length+hir.functions.length+hir.globals.length+hir.modules.length+hir.closure.roots.length+hir.closure.requiredRoots.length);
-  for(const row of hir.types)if(seen.has(row.id))scopedTypes.push({id:row.id,label:row.semanticLabel,shape:row.semanticShape});
-  return {profile:'common-program-fixed-v2',rootFile:hir.rootFile,
-    hostImports:hir.hostImports.map(({id,sourcePath,name,capabilityId,signatureHash,parameterTypes,returnType})=>{spend(parameterTypes.length+1);return {id,sourcePath,name,capabilityId,signatureHash,parameterTypes,returnType};}),
-    hostContext:hir.hostContext?{contractDigest:hir.hostContext.contract.digest,buildIdentityDigest:hir.hostContext.identity.buildIdentity.digest}:null,
-    types:scopedTypes,
-    functions:hir.functions.map(fn=>{spend(fn.parameters.length+1);const parameterTypes=fn.ownerType?[fn.ownerType]:[];for(const p of fn.parameters)parameterTypes.push(p.type);
-      spend(fn.captures.length);const captures=fn.captures.map(row=>captureKeys.get(row.binding));captures.sort((a,b)=>{spend();return a<b?-1:a>b?1:0;});
-      return {captures,lexicalParent:fn.lexicalParent,lexicalEnvironment:fn.lexicalEnvironment,activationEnvironment:fn.activationEnvironment,functionId:fn.id,declKey:fn.declKey,kind:fn.kind,access:fn.access,signatureHash:fn.signatureHash,parameterTypes,returnType:fn.returnType};}),
-    environments:hir.environments.map(env=>{spend(env.slots.length);return {id:env.id,owner:env.owner,parent:env.parent,slots:env.slots.map(({key,type,writable,kind})=>({key,type,writable,kind}))};}),
-    globals:hir.globals.map(row=>({globalId:row.id,declKey:row.declKey,type:row.type,writable:row.writable})),
-    modules:hir.modules.map(row=>{spend(row.imports.length+row.exports.length);return {id:row.id,sourcePath:row.sourcePath,external:row.external,dependencies:row.dependencies,initializer:row.initializer,
-      imports:row.imports.map(edge=>{spend(edge.bindings.length);return {kind:edge.kind,specifier:edge.specifier,sourcePath:edge.sourcePath,bindings:edge.bindings.map(binding)};}),
-      exports:row.exports.map(({name,kind,target,targetSourcePath})=>({name,kind,target,targetSourcePath})),globals:row.globals};}),
-    roots:{roots:hir.closure.roots.map(root),requiredRoots:hir.closure.requiredRoots.map(root)}};
+function publicationIdentity(kind,value,spend) {
+  const pending=[value];while(pending.length){spend();const row=pending.pop();
+    if(typeof row==='string')spend(Math.ceil(row.length/8)+1);
+    else if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);}
+    else if(row!==null&&typeof row==='object')for(const name in row){spend(Math.ceil(name.length/8)+1);pending.push(row[name]);}
+  }
+  return commonIdentity(kind,value);
 }
-const contractDigest=body=>commonIdentity('published-contract',body);
-const publicationDigest=(scopeDigest,contracts)=>commonIdentity('publication',{scopeDigest,contracts});
-function scopeDigest(hir,spend){return commonIdentity('publication-scope',commonProgramPublicationScope(hir,spend));}
+const contractDigest=(body,spend)=>publicationIdentity('published-contract',body,spend);
+const publicationDigest=(scopeDigest,contracts,spend)=>publicationIdentity('publication',{scopeDigest,contracts},spend);
+const scopeDigest=(scope,spend)=>publicationIdentity('publication-scope',scope,spend);
 
 // Explicit first publication only. No consumer calls this to refresh supplied
 // contracts when implementations change.
 export function createCommonProgramPublication(input) {
-  const hir=verifyCommonProgramHir(input),spend=commonMeter(),physical=commonProgramPhysical(hir),effects=commonEffects(hir,spend,physical),derived=effects.derived();
+  const hir=verifyCommonProgramHir(input),spend=commonMeter(),physical=commonProgramPhysical(hir),storage=commonFixedStorageProjection(hir,physical),
+    projection=storage.status==='open'?null:storage,effects=commonEffects(hir,spend,physical),derived=effects.derived(),
+    availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection),
+    source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,null,null,availability.selected),graphs=source.derived(availability.dependencies);
   spend(hir.functions.length);
-  const contracts=hir.functions.map(fn=>{const body={functionId:fn.id,signatureHash:fn.signatureHash,upper:derived.get(fn.id),callables:physical.model.callables.contracts.get(fn.id)};return {...body,digest:contractDigest(body)};});
-  const scope=scopeDigest(hir,spend);return own({format,mode:'fixed',scopeDigest:scope,expectedDigest:publicationDigest(scope,contracts),contracts});
+  const contracts=hir.functions.map(fn=>{
+    spend();const projected=graphs.get(fn.id),body={functionId:fn.id,signatureHash:fn.signatureHash,
+      upper:projected?commonJoinReturnOriginEffects(derived.get(fn.id),projected,physical.model.spend):derived.get(fn.id),
+      callables:physical.model.callables.contracts.get(fn.id),returnOrigins:projected?.returnOrigins??null};
+    return {...body,digest:contractDigest(body,spend)};
+  });
+  const uppers=new Map(contracts.map(row=>[row.functionId,{returnOrigins:row.returnOrigins}])),
+    scope=commonFixedPublicationScope(hir,uppers,storage.storage,spend),scopeHash=scopeDigest(scope,spend);
+  return own({format,mode:'fixed',scope,scopeDigest:scopeHash,expectedDigest:publicationDigest(scopeHash,contracts,spend),contracts});
 }
 
-function prepare(input,publication) {
+function admit(input,publication) {
   commonBudget(publication);const hir=verifyCommonProgramHir(input),spend=commonMeter();
-  record(publication,['format','mode','scopeDigest','expectedDigest','contracts']);
+  record(publication,['format','mode','scope','scopeDigest','expectedDigest','contracts']);
   check(same(publication.format,format)&&publication.mode==='fixed'&&hash(publication.scopeDigest)&&hash(publication.expectedDigest),'publication');
   check(Array.isArray(publication.contracts)&&publication.contracts.length===hir.functions.length,'publication');spend(publication.contracts.length);
   check(sorted(publication.contracts.map(row=>row.functionId)),'publication');
   spend(hir.globals.length+hir.types.length);const records=new Map(),globals=new Map(hir.globals.map(row=>[row.id,row])),types=new Map(hir.types.map(row=>[row.id,row])),slotByKey=new Map();
   spend(hir.environments.length);for(const env of hir.environments){spend(env.slots.length);for(const slot of env.slots)slotByKey.set(slot.key,slot);}
   for(const [i,row]of publication.contracts.entries()) {
-    spend();record(row,['functionId','signatureHash','upper','callables','digest']);const fn=hir.functions[i];
+    spend();record(row,['functionId','signatureHash','upper','callables','returnOrigins','digest']);const fn=hir.functions[i];
     check(row.functionId===fn.id&&row.signatureHash===fn.signatureHash,'publication-identity');record(row.upper,['globals','hostResources','parameters','facets','captures']);
     record(row.upper.hostResources,['reads','writes']);
     for(const key of ['reads','writes']){const selected=row.upper.hostResources[key],allowed=commonHostResources(hir.hostContext);check(Array.isArray(selected)&&selected.length<=allowed.length,'publication');spend(selected.length+allowed.length);check(sorted(selected)&&selected.every(id=>allowed.includes(id)),'publication-identity');}
@@ -85,10 +79,36 @@ function prepare(input,publication) {
       // immutable binding. This does not grant childless holding permission.
       const mutableValue=slot&&['array','reference','value'].includes(types.get(slot.type)?.kind);
       check(slot&&(!previous||previous<c.slot)&&flags.every(flag=>typeof c[flag]==='boolean')&&(!c.write||slot.writable||mutableValue),'publication');previous=c.slot;}
-    const {digest,...body}=row;check(digest===contractDigest(body),'publication-identity');records.set(row.functionId,row);
+    const {digest,...body}=row;check(digest===contractDigest(body,spend),'publication-identity');records.set(row.functionId,row);
   }
-  const scope=scopeDigest(hir,spend);check(publication.scopeDigest===scope&&publication.expectedDigest===publicationDigest(scope,publication.contracts),'publication-identity');
-  const physical=commonProgramPhysical(hir,records),effects=commonEffects(hir,spend,physical);return {hir,spend,effects,records,scope,physical};
+  const fixedScope=commonVerifyPublicationScope(hir,publication.scope,spend),scope=scopeDigest(publication.scope,spend);
+  check(publication.scopeDigest===scope&&publication.expectedDigest===publicationDigest(scope,publication.contracts,spend),'publication-identity');
+  for(const [id,row]of records){spend();if(row.returnOrigins!==null){
+    const checked=fixedScope.read(id,row.returnOrigins);
+    if(checked.status==='typed')records.set(id,{...row,returnOrigins:checked.graph});
+    else check(false,'publication-return-open','a supplied graph must have a complete ordinary return protocol');
+  }}
+  return {hir,spend,records,scope,fixedScope};
+}
+// These entry points admit fixed metadata identity only. They do not certify
+// containment of current bodies or grant Source/Actual/Borrow permissions.
+export function verifyCommonProgramPublication(publication,input) {admit(input,publication);return own(publication);}
+export const readCommonProgramPublication=(bytes,input)=>verifyCommonProgramPublication(commonJson(bytes),input);
+export const printCommonProgramPublication=(publication,input)=>canonical(verifyCommonProgramPublication(publication,input))+'\n';
+function prepare(input,publication) {
+  const admitted=admit(input,publication),{hir,spend,records,scope,fixedScope}=admitted;
+  const physical=commonProgramPhysical(hir,records),storage=commonFixedStorageProjection(hir,physical,publication.scope.storage),
+    projection=storage.status==='open'?null:storage,effects=commonEffects(hir,physical.model.spend,physical),
+    availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection);
+  for(const [id,row]of records){spend();if(row.returnOrigins===null)availability.reasons.set(id,'fixed-return-open');
+    else for(const call of row.returnOrigins.calls){spend();availability.dependencies.get(id).add(call.functionId);}
+  }
+  let changed=true;while(changed){changed=false;for(const [id,targets]of availability.dependencies){spend();if(availability.reasons.has(id))continue;
+    for(const target of targets){spend();if(availability.reasons.has(target)){availability.reasons.set(id,'fixed-callee-return-open');changed=true;break;}}
+  }}
+  for(const id of availability.reasons.keys()){spend();availability.selected.delete(id);}
+  const source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,fixedScope.typeKind,records,availability.selected);
+  return {hir,spend,effects,records,scope,physical,source,availability};
 }
 function analyze(input,publication) {
   const prepared=prepare(input,publication),{hir,effects,spend,records}=prepared,derived=effects.derived();
@@ -96,10 +116,14 @@ function analyze(input,publication) {
     spend(selected.length);return selected.map(functionId=>({functionId,digest:records.get(functionId).digest}));};
   const uppers=collections.map(records,row=>row.upper),batch=effects.fixed(uppers),functions=[];
   for(const fn of hir.functions) {
-    spend();const current=batch.derive(fn),record=records.get(fn.id);
-    check(covers(record.upper,current.upper,spend),'contract','current implementation exceeds fixed Published upper',
+    spend();const current=batch.derive(fn),record=records.get(fn.id),reason=prepared.availability.reasons.get(fn.id);
+    let returnOriginStatus={status:'open',reason:reason??'fixed-return-open'},body=null;
+    if(!reason){body=prepared.source.derive(fn,null);current.upper=commonJoinReturnOriginEffects(current.upper,body.upper,prepared.physical.model.spend);}
+    check(covers(record.upper,current.upper,prepared.physical.model.spend),'contract','current implementation exceeds fixed Published upper',
       {functionId:fn.id,primary:{sourceId:fn.sourcePath,...fn.range}});
-    functions.push({functionId:fn.id,derived:derived.get(fn.id),effective:current.upper,dependencies:dependencies(current.calls),hostCalls:current.hostCalls});
+    if(body){check(prepared.source.covers({...record.upper,returnOrigins:record.returnOrigins},body.upper,null),'return-origin-contract','current return/content graph exceeds fixed Published graph',
+      {functionId:fn.id,primary:{sourceId:fn.sourcePath,...fn.range}});returnOriginStatus={status:'covered',reason:null};}
+    functions.push({functionId:fn.id,derived:derived.get(fn.id),effective:current.upper,returnOriginStatus,dependencies:dependencies(current.calls),hostCalls:current.hostCalls});
   }
   spend(hir.modules.length);const initializers=hir.modules.map(module=>{
     const fn={id:module.initializer,sourcePath:module.sourcePath,returnType:'void',parameters:[],bindings:[],body:module.initialization};
@@ -118,9 +142,11 @@ export function verifyCommonKernelGroup(input,publication,request) {
   spend(request.targets.length);check(request.targets.every(id=>roots.has(id)),'kernel-identity');
   spend(analysis.contracts.length+hir.functions.length);
   const contracts=new Map(analysis.contracts.map(row=>[row.functionId,row])),functions=new Map(hir.functions.map(fn=>[fn.id,fn]));
-  const analyzed=new Map(analysis.functions.map(row=>[row.functionId,row]));
+  const analyzed=new Map(analysis.functions.map(row=>[row.functionId,row])),covered=new Set();
+  spend(analysis.functions.length);for(const row of analysis.functions)if(row.returnOriginStatus.status==='covered')covered.add(row.functionId);
   function hostOrigin(id,seen=new Set()){spend();if(seen.has(id))return null;seen.add(id);const current=analyzed.get(id);
     if(current.hostCalls.length)return current.hostCalls[0];for(const edge of current.dependencies){spend();const origin=hostOrigin(edge.functionId,seen);if(origin)return origin;}return null;}
+  const unresolved=[];
   const accesses=request.targets.map(functionId=>{spend();const row=contracts.get(functionId),fn=functions.get(functionId);
     if(row.upper.hostResources.reads.length||row.upper.hostResources.writes.length){
       const host=hostOrigin(functionId),access=row.upper.hostResources.reads.length?'read':'write',resource=row.upper.hostResources[access==='read'?'reads':'writes'][0];
@@ -132,6 +158,8 @@ export function verifyCommonKernelGroup(input,publication,request) {
       const reason=capture?{kind:/** @type {'capture'} */('capture'),slot:capture.slot,access:/** @type {'read'|'write'|'structural'} */(capture.read?'read':capture.write?'write':'structural')}:{kind:/** @type {'facet'} */('facet'),facet:facets[0]};
       check(false,'kernel-capability','fixed Published kernel capability is not proved',{functionId,primary:{sourceId:fn.sourcePath,...fn.range},facets,callChain:commonKernelCallChain(prepared,analysis,functionId,reason)});
     }
+    const origin=analyzed.get(functionId).returnOriginStatus;
+    if(origin.status!=='covered'&&!commonReturnOriginScalarProof(functionId,prepared.availability,prepared.records,spend,covered)){spend();unresolved.push({functionId,primary:{sourceId:fn.sourcePath,...fn.range},reason:origin.reason});}
     return {functionId,publishedContractDigest:row.digest,reads:row.upper.globals.reads,writes:row.upper.globals.writes,parameters:row.upper.parameters,captures:row.upper.captures,facets:row.upper.facets,hostResources:row.upper.hostResources};});
   const pairs=[],intersection=(a,b)=>{const out=[];let i=0,j=0;while(i<a.length&&j<b.length){spend();if(a[i]<b[j])i++;else if(a[i]>b[j])j++;else{out.push(a[i]);i++;j++;}}return out;};
   for(let i=0;i<accesses.length;i++)for(let j=i+1;j<accesses.length;j++) {
@@ -140,6 +168,7 @@ export function verifyCommonKernelGroup(input,publication,request) {
     check(!pair.writeWrite.length&&!pair.writeRead.length&&!pair.readWrite.length,'kernel-conflict','fixed Published global bounds conflict',
       {primary:{sourceId:functions.get(a.functionId).sourcePath,...functions.get(a.functionId).range},related:[{sourceId:functions.get(b.functionId).sourcePath,...functions.get(b.functionId).range}],conflicts:pair});pairs.push(pair);
   }
+  for(const issue of unresolved){spend();check(false,'kernel-return-origin-open','fixed return/content authority is unresolved',issue);}
   const proof={inputIdentity:analysis.inputIdentity,hirDigest:analysis.hirDigest,scopeDigest:analysis.scopeDigest,publishedDigest:analysis.publishedDigest,targets:request.targets,accesses,pairs};
   commonBudget(proof);return own(proof);
 }

@@ -100,7 +100,7 @@ struct ActualCheck {
   bool environmentNeedsReady=false;
   std::map<std::string,ActualObject> objects;
   std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds;
-  std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity;
+  std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity,constructionCapacity;
   std::map<std::string,size_t> initializedArrays;
   std::map<std::string,std::string> views;
   // CFG ownership is immutable for all contexts, both solve modes and borrow

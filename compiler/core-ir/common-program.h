@@ -6,6 +6,7 @@
 #include "mlir/IR/TypeSupport.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <map>
+#include <memory>
 #include <set>
 #include <cstdint>
 #include <string>
@@ -18,7 +19,7 @@ inline constexpr llvm::StringLiteral marker="tsfg_program.program";
 inline constexpr int32_t profileVersion=4;
 // This reader admits only the current private4 descriptor identity below.
 inline constexpr size_t programWorkLimit=2000000;
-inline constexpr llvm::StringLiteral schema="sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769";
+inline constexpr llvm::StringLiteral schema="sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}
@@ -132,6 +133,7 @@ struct Effects {
 };
 struct HostBinding {std::string id,sourceBinding,path,name,signature,returnType;std::vector<std::string> parameters;};
 struct HostOrigin {std::string path;SourceAnchor range;};
+struct ReturnOriginContracts;
 struct Program {
   Json hir=nullptr,representation=nullptr,publication=nullptr,request=nullptr,proof=nullptr;
   std::string hirHash,representationHash,inputIdentity,sourcePath,sourceHash;
@@ -157,8 +159,13 @@ struct Program {
   std::map<std::string,std::vector<std::string>> bindingScopes;
   std::map<std::string,std::vector<std::string>> registerViews;
   std::map<std::string,Layout> layouts;
+  // Independently reconstructed reference payload tuples, separate from handles.
+  std::map<std::string,Layout> referenceBodyLayouts;
   std::map<std::string,Effects> effects;
   std::map<std::string,Effects> fixedEffects;
+  // One admitted immutable fixed-v3 group. Unavailable members grant no return proof.
+  std::shared_ptr<ReturnOriginContracts> returnOriginContracts;
+  std::set<std::string> returnOriginVerified,returnOriginPending,scalarReturnOriginVerified;
   // Independently reconstructed fixed flow; never copied from Core arm rows.
   std::map<std::string,CallableTargets> callableSites,callableReturns;
   std::map<std::string,std::vector<CallableTargets>> callableParameters;
@@ -188,12 +195,13 @@ bool verifyOperations(Program &,Error &);
 bool internalConstructionCost(Program &,const Json &,Error &);
 bool prepareInternalConstructors(Program &,Error &);
 bool projectInternalConstruction(Program &,const Json &,bool &,Error &);
+bool admitPublication(Program &,Error &);
 bool verifyPublication(Program &,Error &);
 bool publicationScope(Program &,Json &,Error &);
 bool validateCallableBounds(Program &,const Json &,const Json &,Error &);
 bool verifyCallableTargets(Program &,Error &);
 bool verifyKernelProof(Program &,Error &);
-bool deriveEffects(Program &,const Json &,const std::map<std::string,Effects> &,Effects &,Error &);
+bool deriveEffects(Program &,const Json &,Effects &,Error &);
 bool deriveInternalEffects(Program &,const std::map<std::string,Effects> &,Error &);
 bool readEffects(Program &,const Json &,const Json &,Effects &,Error &);
 Json writeEffects(const Effects &);

@@ -1,6 +1,6 @@
 {
   "privateVersion": 4,
-  "schema": "sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769",
+  "schema": "sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9",
   "representationTables": [
     "domains",
     "bindings",

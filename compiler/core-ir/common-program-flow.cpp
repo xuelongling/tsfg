@@ -72,7 +72,8 @@ bool ActualCheck::callGraph(){
     edges[indices.at(from)].push_back(indices.at(to));
   }
   std::vector<bool> cyclic;if(!cycles(edges,cyclic))return false;
-  for(size_t i=0;i<ids.size();++i)if(cyclic[i]){if(!step())return false;repeatingFunctions.insert(*ids[i]);cyclicFunctions.insert(*ids[i]);}
+  for(size_t i=0;i<ids.size();++i)if(cyclic[i]){if(!step())return false;repeatingFunctions.insert(*ids[i]);cyclicFunctions.insert(*ids[i]);
+    if(p.returnOriginContracts){p.returnOriginPending.insert(*ids[i]);p.returnOriginVerified.erase(*ids[i]);}}
   // Multiple acyclic incoming sites are different invocations, not a repeated
   // allocation. CFG/SCC multiplicity is inherited by each actual call path.
   return prepareRegions(*this);
@@ -81,13 +82,12 @@ bool ActualCheck::run(){
   // Invocation multiplicity consumes only the complete validated fixed table.
   // Actual storage/ABI obligations are discharged later by effects(), after
   // their independent calculation; no tentative physical permission is read.
-  p.fixedEffects.clear();p.effects.clear();
-  if(!prepareInternalConstructors(p,e)||!verifyCallableTargets(p,e,initializedArrays)||!verifyPublication(p,e)||!catalogs()||!prepareImplicitReceiverPlans()||!graph()||!source()||!verifyInternalConstructorClosure())return false;
+  if(!prepareInternalConstructors(p,e)||!verifyCallableTargets(p,e,initializedArrays)||!admitPublication(p,e)||!catalogs()||!prepareImplicitReceiverPlans()||!graph()||!source()||!verifyInternalConstructorClosure())return false;
   for(const auto &[id,fn]:functions)if(!environmentGraph(*fn))return false;
   // Public inventory, normalized instructions and registerViews were checked
   // above. Append only independently reconstructed private analysis plans;
   // the same solver now observes every owned constructor/newTarget root.
-  return callGraph()&&solve(true)&&representation()&&effects()&&solve(false);
+  return callGraph()&&solve(true)&&representation()&&prepareReturnOriginStorage(*this)&&verifyPublication(p,e)&&effects()&&solve(false);
 }
 bool verifyOperations(Program &p,Error &e){ActualCheck check{p,e};return check.run();}
 } // namespace tsfg::commonProgram

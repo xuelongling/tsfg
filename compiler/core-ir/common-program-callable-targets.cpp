@@ -146,7 +146,7 @@ struct TargetFlow {
     if(!need(field(p.publication,"contracts").getAsArray()&&contracts.size()==functions.size(),"complete fixed callable rows required"))return false;
     size_t index=0;for(const auto &fn:items(field(p.hir,"functions"))){
       if(!step())return false;const auto &record=contracts[index++];const auto id=string(field(fn,"id"));
-      if(!need(exact(record,{"functionId","signatureHash","upper","callables","digest"})&&same(field(record,"functionId"),field(fn,"id"))&&
+      if(!need(exact(record,{"functionId","signatureHash","upper","callables","returnOrigins","digest"})&&same(field(record,"functionId"),field(fn,"id"))&&
         same(field(record,"signatureHash"),field(fn,"signatureHash")),"fixed callable row identity or order differs")||
         !validateCallableBounds(p,fn,field(record,"callables"),e))return false;
       Bound bound;bound.unknownHost=field(field(field(record,"upper"),"facets"),"unknownHost").getAsBoolean()==true;

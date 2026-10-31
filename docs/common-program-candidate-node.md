@@ -57,9 +57,59 @@ const core=emitCommonProgramCore(hir,publication,request);
 
 Later consumers retain the supplied publication: they verify it against the current complete Program rather than regenerate a narrower permission. Incoming scalar and function parameters keep their original parameter BindingId, lexical owner and shared environment cell. Callable signature compatibility supplies no closed target set or lifetime proof.
 
-Source facts use the private v2 family and `contracts/common-program-source-v2.schema.json`; owned HIR uses its separate private v2 descriptor. Static Core carries the existing `tsfg.core-program-development` v3 marker and exact private 0.12 header. The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
+The current private publication is version 3 (`common-program-fixed-v3`). Its
+complete owned scope binds the declaration, type, module, global, import/export,
+and Env directories together with fixed storage tables. The ordered group binds
+every function's signature, full upper, callable bounds and return Graph4,
+including explicit null rows. A complete ordinary Function/Env protocol directory
+is required even for a function whose fixed return graph is unavailable.
+Declaration identity excludes replaceable bodies and initialization source
+identities; each current body is checked independently against its fixed row.
 
-The dev formal Frontend/HIR/bytecode 0.10 registry, Source lock and admission remain unchanged. Candidate metadata never derives its private header from that registry. Shared MLIR string escaping has its own module so the budgeted printer does not import the scalar emitter and its formal registry.
+A null return graph means unavailable authority. It does not mean an empty graph
+or grant a return, capture or storage proof. A supplied graph must cover the
+independently derived body, including its normal and language completions.
+Concrete Code values and observed branches cannot narrow other permitted targets'
+full uppers. A primitive scalar exception requires independent complete Source
+views, full fixed-target closure and actual effects covered by the fixed upper;
+it cannot hide a failed nonnull fixed graph in that closure.
+
+Upper capture permissions are transitive stable SlotKeys. They need not belong
+to the incoming lexical Env. Payload transfer must locate the actual owning Env
+in the same fixed call context; a name or directory entry does not supply it.
+Initialization joins distinguish an absent Env from an existing undefined slot,
+and require every present arm to define the slot. Missing or unproved payload
+relations remain open. Distinct Source views, sites or names do not grant noalias;
+a current actual allocation tag can exclude aliasing only when its invariant is
+independently established.
+
+The current storage subset is nominal scalar tuples. The complete owned
+catalogue and selected-witness/entry closure establish completeness; observed
+fields do not. Actual field carriers, complete tuple offsets and conditional
+constructor/newTarget results must match the fixed table before copy/address
+callbacks become available. Metadata admission alone grants neither callback.
+Structural aliases, inheritance, explicit/replacement construction and foreign
+storage stay outside this subset. Future storage-v2 plans are not its authority.
+
+The fixed table still enumerates every field and constructor/newTarget role.
+An unknown row has `unknown:true` and an empty actualTypes array: unresolved TOP,
+not an empty permission. Completeness and copy/address eligibility are checked
+per owning type; an unsupported body does not remove an independent closed
+tuple. Consumers cannot upgrade fixed TOP using narrower current observations,
+and actual data outside a known fixed bound is rejected. Reference identity can
+remain known while that reference body has no physical field route.
+
+Node cold metadata admission and first-publication effect/identity work retain their
+existing allowance. Current Source/graph/effect analysis shares the existing
+cumulative private4 physical work allowance of 2,000,000; it does not start a
+fresh budget for an inline, context or phase. Per-operation fees remain charged.
+Old or mixed publication/graph formats and mismatched private Core identities
+are rejected rather than upgraded in a reader.
+
+
+Source facts use the private v2 family and `contracts/common-program-source-v2.schema.json`; owned HIR uses its separate private v2 descriptor. Static Core carries the existing `tsfg.core-program-development` v4 marker and exact private 0.12 header. The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
+
+The formal Frontend/HIR/bytecode registries, Source lock and admission remain unchanged by this private candidate. Candidate metadata never derives its private header from that registry. Shared MLIR string escaping has its own module so the budgeted printer does not import the scalar emitter and its formal registry.
 
 Run the pure Node regressions with:
 

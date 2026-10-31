@@ -3,6 +3,7 @@
 // separately; these models neither manufacture Source facts nor execute guests.
 #include "common-program-borrows.h"
 #include "common-program-retention.h"
+#include "common-program-fixed-v3-model-fixture.h"
 #include "common-program-syntax.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -140,15 +141,20 @@ bool localTargets(const std::string &mode){
   const auto site=p.callableSites.find("reader/20:30");return accepted&&site!=p.callableSites.end()&&!site->second.top&&site->second.functions==(writer?std::set<std::string>{"left","right"}:std::set<std::string>{"left"});
 }
 bool effects(){
-  Program p;Error e;Effects out;Json fn=Object{{"id","reader"},{"ownerType",nullptr},{"parameters",Array{}},{"returnType","I"},
-    {"lexicalEnvironment","L"},{"activationEnvironment",nullptr},{"captures",Array{Object{{"binding","a"},{"read",true},{"write",false}}}},
-    {"body",Array{Object{{"kind","expression"},{"value",Object{{"kind","elementAssignment"},{"type","I"},{"operator","="},
-      {"target",Object{{"kind","elementTarget"},{"type","I"},{"receiver",Object{{"kind","bindingReference"},{"binding","a"},{"type","A"}}},{"index",Object{{"kind","integerLiteral"},{"type","I"}}}}},
-      {"value",Object{{"kind","integerLiteral"},{"type","I"}}}}}}}}};
-  p.hir=Object{{"types",Array{Object{{"id","A"},{"kind","array"},{"elementType","I"}},Object{{"id","I"},{"kind","scalar"}}}},
-    {"functions",Array{fn}},{"environments",Array{Object{{"id","L"},{"slots",Array{Object{{"key","slot"},{"binding","a"},{"type","A"},{"writable",false}}}}}}}};
-  if(!deriveEffects(p,fn,{},out,e)||!out.captures.count("slot")||!out.captures.at("slot").write||!out.captures.at("slot").structural)return false;
-  Effects read;return readEffects(p,writeEffects(out),fn,read,e);
+  fixedV3Model::Fixture fixture;if(!fixedV3Model::load(fixedV3Model::file("readonly-array-content-write"),fixture)){
+    llvm::errs()<<fixture.error.code<<": "<<fixture.error.message<<"\n";return false;
+  }
+  auto &p=fixture.program;auto &e=fixture.error;const auto *fn=fixedV3Model::function(p,"reader");if(!fn)return false;
+  std::map<std::string,std::string> kinds;for(const auto &type:items(field(p.hir,"types")))kinds.emplace(string(field(type,"id")),string(field(type,"kind")));
+  std::set<std::string> captured;for(const auto &row:items(field(*fn,"captures")))captured.insert(string(field(row,"binding")));
+  std::string slot;
+  for(const auto &env:items(field(p.hir,"environments")))for(const auto &row:items(field(env,"slots")))if(captured.count(string(field(row,"binding")))&&kinds.at(string(field(row,"type")))=="array"&&field(row,"writable").getAsBoolean()==false){if(!slot.empty())return false;slot=string(field(row,"key"));}
+  const auto id=string(field(*fn,"id"));if(slot.empty()||!fixedReturnOriginAvailable(p,id)){
+    llvm::errs()<<"model-fixed-v3-open: readonly Array content-write premise is not closed\n";return false;
+  }
+  const auto &out=p.effects.at(id);const auto access=out.captures.find(slot);
+  if(access==out.captures.end()||!access->second.write||!access->second.structural)return false;
+  Effects read;return readEffects(p,writeEffects(out),*fn,read,e);
 }
 bool owningBoundary(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};Json array=Object{{"id","A"},{"kind","array"}},absence=Object{{"id","U"},{"kind","undefined"}},
@@ -214,6 +220,7 @@ bool returnedAlternatives(const std::string &mode){
 }
 }
 int main(int argc,char **argv){
+  if(!fixedV3Model::option(argc,argv))return 2;
   const std::vector<std::string> boundaries={"weak-environment","alternative-environments","same-owner-environments","owner-or-undefined","unclosed-environment","zero-work"};
   std::vector<std::string> all={"held","restored","throw-held","parent","descriptor","replaced","throw-replaced","may-owner","resized","local-gate","parameter-gate","capture-effects"};all.insert(all.end(),boundaries.begin(),boundaries.end());
   for(const auto *name:{"alternative-held","alternative-pure","alternative-throw","alternative-bad","alternative-throw-bad","alternative-duplicate-slot-key"})all.push_back(name);

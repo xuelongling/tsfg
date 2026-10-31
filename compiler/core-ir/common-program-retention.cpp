@@ -41,7 +41,7 @@ static bool permittedCaptureWrite(ActualCheck &c,const Json &reader,const std::s
 }
 bool holdingCall(ActualCheck &c,const std::string &id,bool privateReader,bool *referenceWrites){
   if(referenceWrites)*referenceWrites=false;bool writes=false;
-  if(!c.step()||!c.p.fixedEffects.count(id)||!c.sourceFunctions.count(id)||!c.regions.acyclic.count(id)||c.cyclicFunctions.count(id))return false;
+  if(!c.step()||!fixedReturnOriginAvailable(c.p,id)||!c.p.fixedEffects.count(id)||!c.sourceFunctions.count(id)||!c.regions.acyclic.count(id)||c.cyclicFunctions.count(id))return false;
   const auto &source=*c.sourceFunctions.at(id);const auto &upper=c.p.fixedEffects.at(id);
   const auto parent=string(field(source,"lexicalParent"));if(privateReader&&(parent.empty()||!c.sourceFunctions.count(parent)))return false;
   if(privateReader&&upper.escape)return false;

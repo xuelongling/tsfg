@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
+import {commonProgramPublicationScope} from '../../compiler/common-program-publication-scope.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
 import {commonIdentity} from '../../compiler/common-program-identities.mjs';
-import {createCommonProgramPublication,analyzeCommonProgram,commonProgramPublicationScope,verifyCommonKernelGroup,
+import {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup,
   verifyCommonKernelProof,printCommonKernelProof,readCommonKernelProof} from '../../compiler/common-program-analysis.mjs';
 const programs=new Map();
 for(const name of ['positive','reachable-managed','reference-value','mixed']) {

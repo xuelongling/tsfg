@@ -523,6 +523,7 @@ struct BorrowTrace::Impl {
       }
       if(!step()||!c.need(c.p.fixedEffects.count(id)&&c.sourceFunctions.count(id),"borrow call fixed effects missing"))return;
       boundary.targets.insert(id);
+      if(!fixedReturnOriginAvailable(c.p,id)){boundary.conservative=true;boundary.owner.pending=true;boundary.hard=true;}
       boundary.hard|=!holdingCall(c,id);
       const auto &upper=c.p.fixedEffects.at(id);const auto hidden=op.name=="invoke"&&!field(*c.sourceFunctions.at(id),"lexicalEnvironment").getAsNull();
       for(size_t i=0;i<upper.parameters.size();++i){if(!step())return;if(!upper.parameters[i].structural)continue;

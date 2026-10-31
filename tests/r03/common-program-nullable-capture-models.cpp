@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Independent compiler data checks, never numerical, Guest, VM or GC runs.
 #include "common-program-retention.h"
+#include "common-program-fixed-v3-model-fixture.h"
 #include "common-program-plan.h"
 #include "common-program-borrows.h"
 #include "common-program-syntax.h"
@@ -218,57 +219,25 @@ bool childless(const std::string &kind){
   return report("nullable never grants childless write "+kind,!holdingCall(c,f.id),e);
 }
 bool valueAuthority(){
-  Program p;Error e;Json range=Object{{"start",0},{"end",1}},
-    receiver=Object{{"kind","bindingReference"},{"type","V"},{"binding","held"},{"range",range}},
-    target=Object{{"kind","fieldTarget"},{"type","I"},{"receiver",receiver},{"property","n"},{"range",range}},
-    assignment=Object{{"kind","fieldAssignment"},{"type","I"},{"operator","="},{"target",target},{"value",Object{{"kind","numericLiteral"},{"type","I"},{"range",range}}},{"range",range}},
-    fn=Object{{"id","reader"},{"returnType","I"},{"ownerType",nullptr},{"lexicalEnvironment","L"},{"activationEnvironment",nullptr},{"parameters",Array{}},
-      {"captures",Array{Object{{"binding","held"},{"read",true},{"write",false}}}},{"body",Array{Object{{"kind","expression"},{"value",assignment},{"range",range}}}}};
-  p.hir=Object{{"types",Array{Object{{"id","I"},{"kind","scalar"}},Object{{"id","N"},{"kind","null"}},
-    Object{{"id","V"},{"kind","value"},{"fields",Array{Object{{"id","n"},{"type","I"}}}}},Object{{"id","U"},{"kind","union"},{"members",Array{"V","N"}}}}},
-    {"functions",Array{fn}},{"environments",Array{Object{{"id","L"},{"slots",Array{Object{{"binding","held"},{"key","held"},{"type","U"},{"writable",false}}}}}}}};
-  Effects out;return report("nullable const value field retains original write authority",deriveEffects(p,fn,{},out,e)&&out.captures.at("held").write,e);
+  fixedV3Model::Fixture fixture;
+  if(!fixedV3Model::load(fixedV3Model::file("nullable-const-value-write"),fixture))return report("nullable fixed-v3 prerequisite",false,fixture.error);
+  auto &p=fixture.program;auto &e=fixture.error;const auto *fn=fixedV3Model::function(p,"reader");if(!fn)return false;
+  std::map<std::string,const Json *> types;for(const auto &type:items(field(p.hir,"types")))types.emplace(string(field(type,"id")),&type);
+  std::set<std::string> captured;for(const auto &row:items(field(*fn,"captures")))captured.insert(string(field(row,"binding")));
+  std::string slot;
+  for(const auto &env:items(field(p.hir,"environments")))for(const auto &row:items(field(env,"slots"))){
+    if(!captured.count(string(field(row,"binding")))||field(row,"writable").getAsBoolean()!=false)continue;
+    const auto &type=*types.at(string(field(row,"type")));if(string(field(type,"kind"))!="union")continue;bool value=false,absence=false;
+    for(const auto &member:items(field(type,"members"))){const auto kind=string(field(*types.at(string(member)),"kind"));value|=kind=="value";absence|=kind=="null";}
+    if(value&&absence){if(!slot.empty())return false;slot=string(field(row,"key"));}
+  }
+  const auto id=string(field(*fn,"id"));if(slot.empty()||!fixedReturnOriginAvailable(p,id))return report("nullable const Value origin/storage remains Open",false,e);
+  const auto &out=p.effects.at(id);const auto access=out.captures.find(slot);
+  return report("nullable const value field retains original write authority",access!=out.captures.end()&&access->second.write,e);
 }
 bool ownedBorrow(const char *path){
-  auto bytes=llvm::MemoryBuffer::getFile(path);if(!bytes)return report(path,false);
-  auto json=llvm::json::parse((*bytes)->getBuffer());if(!json)return report(path,false);
-  Program p;Error e;p.hir=field(*json,"hir");p.publication=field(*json,"publication");p.request=field(*json,"request");
-  p.inputIdentity=string(field(p.hir,"inputIdentity"));p.sourcePath=string(field(p.hir,"rootFile"));p.hirHash=digest(canonical(p.hir)+"\n");
-  for(const auto &file:items(field(field(field(p.hir,"snapshot"),"payload"),"files")))if(string(field(file,"path"))==p.sourcePath){
-    p.sourceHash="sha256:"+string(field(file,"sha256"));p.sourceLength=uint32_t(field(file,"utf16Length").getAsInteger().value_or(0));
-  }
-  std::map<std::string,size_t> initialized;
-  if(!verifySource(p,e)||!verifyCallableTargets(p,e,initialized)||!verifyPublication(p,e))return report(path,false,e);
-  // This is the existing private consumer lowering over genuinely owned HIR.
-  // No rejected Program is emitted, parsed, or labelled as a formal Core.
-  std::vector<Json> owners;for(const auto &fn:items(field(p.hir,"functions")))owners.push_back(fn);
-  for(const auto &module:items(field(p.hir,"modules"))){
-    int64_t length=0;for(const auto &file:items(field(field(field(p.hir,"snapshot"),"payload"),"files")))if(same(field(file,"path"),field(module,"sourcePath")))length=field(file,"utf16Length").getAsInteger().value_or(0);
-    owners.push_back(Object{{"id",field(module,"initializer")},{"sourcePath",field(module,"sourcePath")},{"kind","module-initializer"},
-      {"returnType","void"},{"parameters",Array{}},{"body",field(module,"initialization")},{"range",Object{{"start",0},{"end",length}}}});
-  }
-  p.functions.resize(owners.size());for(size_t i=0;i<owners.size();++i)p.functions[i].id=string(field(owners[i],"id"));
-  ActualCheck check{p,e};check.initializedArrays=std::move(initialized);if(!check.catalogs())return report(path,false,e);
-  for(size_t i=0;i<owners.size();++i){SourcePlan plan(check,owners[i]);if(!plan.run())return report(path,false,e);
-    // The Source matcher omits zero-incoming scaffolding. Use that same block
-    // numbering before invoking analyses that require normalized graphs.
-    std::map<uint16_t,uint16_t> blocks;std::vector<Block> normalized;
-    for(size_t b=0;b<plan.function.blocks.size();++b){
-      if(!check.step())return report(path,false,e);auto &block=plan.function.blocks[b];
-      if(block.operations.empty()){
-        if(!check.need(plan.incoming[b]==0,"empty Source block has an incoming edge"))return report(path,false,e);
-      }else{blocks.emplace(uint16_t(b),uint16_t(normalized.size()));normalized.push_back(std::move(block));}
-    }
-    for(auto &block:normalized)for(auto &op:block.operations)for(auto &target:op.successors){
-      if(!check.step()||!check.need(blocks.count(target),"Source successor has no normalized block"))return report(path,false,e);
-      target=blocks.at(target);
-    }
-    plan.function.blocks=std::move(normalized);p.functions[i]=std::move(plan.function);
-    p.functions[i].signature=string(field(owners[i],"signatureHash"));p.functions[i].role=string(field(owners[i],"kind"));
-    for(const auto &block:p.functions[i].blocks){for(const auto reg:block.parameters)check.views[p.functions[i].id+"/"+std::to_string(reg)]=p.functions[i].carriers[reg];
-      for(const auto &op:block.operations)if(op.result!=noRegister)check.views[p.functions[i].id+"/"+std::to_string(op.result)]=op.view;}
-  }
-  const bool accepted=check.callGraph()&&check.solve(true)&&check.solve(false)&&verifyCommonBorrows(check);
+  fixedV3Model::Fixture fixture;if(!fixedV3Model::load(path,fixture))return report(path,false,fixture.error);
+  const bool accepted=verifyCommonBorrows(fixture.actual);const auto &e=fixture.error;
   return report(std::string("same-source owned borrow rejection ")+path,!accepted&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains("escaping storage lifetime is unproved"),e);
 }
 bool core(const char *path,mlir::MLIRContext &context){
@@ -352,6 +321,7 @@ int main(int argc,char **argv){
   _set_error_mode(_OUT_TO_STDERR);_set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
   _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);_CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
 #endif
+  if(!fixedV3Model::option(argc,argv))return 2;
   bool ok=scalarResultAbi();ok&=scalarUnionActual();ok&=integerLiterals();for(const std::string mode:{"direct","null","undefined","both","multiple","scalar","span","absence"})ok&=callableShape(mode);
   for(const std::string presence:{"direct","null","undefined","both"})for(const std::string mode:{"top","closed","absence"})ok&=callableEntry(presence,mode);
   ok&=genericCallableUnknown();

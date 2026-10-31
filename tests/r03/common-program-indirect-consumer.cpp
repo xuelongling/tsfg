@@ -3,7 +3,9 @@
 // program or generated code. The broad case stops at the fixed-contract seam;
 // it has no successful Core and is not presented as normalized Core acceptance.
 #include "../../compiler/core-ir/common-program-actual.h"
+#include "../../compiler/core-ir/common-program-borrows.h"
 #include "../../compiler/core-ir/common-program-syntax.h"
+#include "common-program-fixed-v3-model-fixture.h"
 #include "../../compiler/core-ir/dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -38,7 +40,7 @@ bool broad(int argc,char **argv){
   if(argc!=6)return false;Program p;Error e;
   if(!json(argv[2],p.hir,p,e)||!json(argv[3],p.publication,p,e)||!json(argv[4],p.request,p,e))return report("broad inputs",false,e);
   sourceHeader(p);
-  if(!verifySource(p,e)||!verifyCallableTargets(p,e)||!verifyPublication(p,e))return report("broad complete Source/owned/fixed Published",false,e);
+  if(!verifySource(p,e)||!verifyCallableTargets(p,e)||!admitPublication(p,e)||!verifyPublication(p,e))return report("broad complete Source/owned/fixed Published",false,e);
   // Kernel diagnostics need the real Source declaration anchors, not generated
   // blocks. These are an explicit domain-boundary adapter, never a fake Core.
   for(const auto &row:items(field(p.hir,"functions"))){
@@ -117,30 +119,39 @@ bool callableManaged(const std::string &mode){
   return report("synthetic callable managed "+mode,actual.effects()&&p.effects.at("model").managedReference==expected&&!p.effects.at("model").escape,e);
 }
 bool indirectOwner(const std::string &mode){
-  // The public effect derivation receives an owned model with a separately
-  // supplied fixed site. No producer Source facts or success IR are invented.
-  Program p;Error e;Effects out;const bool span=mode=="span-top"||mode=="span-empty"||mode=="span-finite"||mode=="borrowed";
-  const auto returned=span?"span":"i32";
-  Json types=Array{Object{{"id","i32"},{"kind","scalar"}},Object{{"id","array"},{"kind","array"},{"elementType","i32"}},
-    Object{{"id","span"},{"kind","readSpan"},{"elementType","i32"}},Object{{"id","callable"},{"kind","function"}}};
-  Json call=Object{{"kind","indirectCall"},{"type",returned},{"expression",Object{{"kind","bindingReference"},{"binding","f"},{"type","callable"}}},
-    {"arguments",Array{}},{"range",Object{{"start",10},{"end",20}}}};
-  Array parameters;
-  if(mode=="borrowed"){
-    parameters.push_back(Object{{"id","a"},{"type","array"}});
-    call=Object{{"kind","call"},{"callee","intrinsic:readSpan"},{"type","span"},{"arguments",Array{
-      Object{{"kind","bindingReference"},{"binding","a"},{"type","array"}},Object{{"kind","integerLiteral"},{"type","i32"}},Object{{"kind","integerLiteral"},{"type","i32"}}}}};
+  const bool span=llvm::StringRef(mode).starts_with("span-")||mode=="borrowed";
+  // The retained finite scalar fixture contains a real formal Code parameter
+  // and a fixed indirect site. Other roles require their own producer input;
+  // a missing companion is a failed prerequisite, never a skipped PASS.
+  fixedV3Model::Fixture fixture;
+  const auto input=mode=="scalar-finite"?fixedV3Model::file("readspan-safe-lastuse"):fixedV3Model::file("indirect-"+mode);
+  if(!fixedV3Model::load(input,fixture))return report("fixed-v3 indirect prerequisite "+mode,false,fixture.error);
+  auto &p=fixture.program;auto &e=fixture.error;const auto *fn=fixedV3Model::function(p,mode=="scalar-finite"?"apply":"probe");
+  if(!fn)return report("fixed-v3 indirect Source role "+mode,false);
+  const auto id=string(field(*fn,"id")),returned=string(field(*fn,"returnType"));std::string kind;
+  for(const auto &type:items(field(p.hir,"types")))if(string(field(type,"id"))==returned)kind=string(field(type,"kind"));
+  if(kind!=(span?"readSpan":"scalar"))return report("fixed-v3 indirect return view "+mode,false);
+  const auto effect=p.effects.find(id);if(effect==p.effects.end())return report("fixed-v3 indirect effect stage "+mode,false);
+  const auto &out=effect->second;
+  if(mode=="borrowed")return report("fixed-v3 borrowed parameter owner",fixedReturnOriginAvailable(p,id)&&out.escape&&!out.unknownHost,e);
+  const bool finite=mode=="span-finite"||mode=="scalar-finite",top=mode=="span-top"||mode=="scalar-top";bool site=false;
+  for(const auto &[key,targets]:p.callableSites)if(llvm::StringRef(key).starts_with(id+"/")){
+    site|=targets.top==top&&(finite?!targets.functions.empty():targets.functions.empty());
   }
-  Json fn=Object{{"id","model"},{"ownerType",nullptr},{"lexicalEnvironment",nullptr},{"activationEnvironment",nullptr},
-    {"parameters",std::move(parameters)},{"returnType",returned},{"body",Array{Object{{"kind","return"},{"value",std::move(call)}}}}};
-  Json target=Object{{"id","target"},{"kind","function"}};p.hir=Object{{"types",std::move(types)},{"functions",Array{fn,target}}};
-  const bool finite=mode=="span-finite"||mode=="scalar-finite";
-  p.callableSites.emplace("model/10:20",CallableTargets{mode=="span-top"||mode=="scalar-top",finite?std::set<std::string>{"target"}:std::set<std::string>{}});
-  std::map<std::string,Effects> upper{{"target",Effects{}}};const bool accepted=deriveEffects(p,fn,upper,out,e);
-  const bool denied=span&&mode!="borrowed";
-  const bool correct=denied?!accepted&&e.code=="core-ir-common-effects"&&e.message=="ReadSpan returned beyond current owner activation":
-    accepted&&(mode=="borrowed"?out.escape&&!out.unknownHost:finite?!out.unknownHost&&!out.mayThrow:out.unknownHost&&out.mayThrow);
-  return report("synthetic indirect owner "+mode,correct,e);
+  if(!site)return report("fixed-v3 complete indirect target role "+mode,false);
+  if(span){
+    // Return lifetime is now checked by the real Borrow consumer, not by the
+    // retired bare effect oracle's synthetic ReadSpan failure string.
+    const bool borrowed=verifyCommonBorrows(fixture.actual);
+    return report("fixed-v3 indirect ReadSpan lifetime "+mode,!borrowed&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains("lifetime"),e);
+  }
+  if(!finite){const auto &upper=p.fixedEffects.at(id);
+    return report("fixed-v3 unresolved indirect remains Open "+mode,p.returnOriginPending.count(id)&&!fixedReturnOriginAvailable(p,id)&&upper.unknownHost&&upper.mayThrow,e);}
+  std::string left;for(const auto &global:items(field(p.hir,"globals")))if(string(field(global,"name"))=="leftTotal")left=string(field(global,"id"));
+  const auto *leaf=fixedV3Model::function(p,"leafLeft");if(!leaf)return report("fixed-v3 finite target Source role",false);
+  const auto leafId=string(field(*leaf,"id"));size_t sites=0;bool exact=false;
+  for(const auto &[key,targets]:p.callableSites)if(llvm::StringRef(key).starts_with(id+"/")){++sites;exact=!targets.top&&targets.functions==std::set<std::string>{leafId};}
+  return report("fixed-v3 finite indirect retains supplied global authority",sites==1&&exact&&!left.empty()&&fixedReturnOriginAvailable(p,id)&&out.calls.count(leafId)&&out.reads.count(left)&&out.writes.count(left)&&!out.unknownHost&&!out.mayThrow,e);
 }
 bool reviewModels(){
   bool ok=true;for(const auto &mode:{"bottom","leaf","top","environment"})ok&=callableManaged(mode);
@@ -216,7 +227,6 @@ bool core(const char *path,mlir::MLIRContext &context){
   stage("types");if(!verifyTypes(p,e))return report(path,false,e);
   stage("actual");ActualCheck actual{p,e};if(!actual.run())return report(path,false,e);
   if(!report("independent code/environment activation and GC roots",activations(actual),e))return false;
-  stage("publication");if(!verifyPublication(p,e))return report(path,false,e);
   stage("kernel");if(!verifyKernelProof(p,e))return report(path,false,e);
   if(!normalized(p))return false;return report(path,true);
 }
@@ -226,6 +236,7 @@ int main(int argc,char **argv){
   _set_error_mode(_OUT_TO_STDERR);_set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
   _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);_CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
 #endif
+  if(!fixedV3Model::option(argc,argv))return 2;
   if(argc<2)return 2;if(std::string(argv[1])=="--broad")return broad(argc,argv)?0:1;
   if(argc==2&&std::string(argv[1])=="--review-models")return reviewModels()?0:1;
   if(argc==2&&std::string(argv[1])=="--activation-models")return activationModels()?0:1;

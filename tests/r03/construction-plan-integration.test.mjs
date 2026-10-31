@@ -16,9 +16,10 @@ import {signatureId} from '../../compiler/module-callable-common.mjs';
 const B='literal:B',D='literal:D',F='literal:F',absent=sha256('tsfg.type\0undefined'),voidId=sha256('tsfg.type\0void'),range={start:0,end:1},origin={source:'/plan-literal.ts',...range};
 const num=()=>({kind:'numericLiteral',type:i32TypeId,token:'1',decimal:'1',range});
 const field=(owner,name,initializer=null)=>({id:owner+'/'+name,sourceBinding:owner+'/'+name,name,type:i32TypeId,origin:range,...(initializer?{initializer}:{})});
-function nominal(id,fields=[],base=null,parameters=[]){return {id,kind:'reference',fields,methods:[],...(base?{base}:{}),
+// Source provenance is a distinct literal namespace inside this normalized model.
+function nominal(id,fields=[],base=null,parameters=[]){return {id,sourceType:'literal-source:'+id,kind:'reference',fields,methods:[],...(base?{base}:{}),
   construction:{id:id+'/ctor',kind:base?'implicit-derived':'implicit-base',functionId:null,origin,parameters,initializationFields:fields.map(f=>f.id),
-    signature:{parameters:parameters.map(p=>p.type),returnType:id},implicitForward:base?{target:base+'/ctor'}:null}};}
+    signature:{parameters:parameters.map(p=>p.type),returnType:id},implicitForward:base?{target:'literal-source:'+base+'.ctor'}:null}};}
 const parameter=(id,type)=>({id,name:id,type,kind:'parameter',writable:true,range,nameRange:range});
 function owner(id,returnType,body,parameters=[],ownerType=null){return {id,name:id,kind:ownerType?'construction-body':'source',ownerType,sourceBinding:id,returnType,parameters,bindings:[],body,
   receiverBinding:ownerType?'this:'+id:null,sourcePath:origin.source,range,nameRange:range,signatureHash:signatureId({parameters:parameters.map(p=>p.type),returns:returnType}),captures:[],lexicalParent:null,lexicalEnvironment:null,activationEnvironment:null};}

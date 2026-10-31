@@ -152,14 +152,15 @@ struct Types {
     for(const auto &fn:p.internalFunctions)for(const auto &carrier:fn.carriers)if(internal(carrier)){layout(carrier);if(!e.message.empty())return false;}
     for(const auto &[id,row]:p.internalDeclarations){for(const auto &parameter:items(field(*row,"parameters"))){layout(string(parameter));if(!e.message.empty())return false;}layout(string(field(*row,"result")));if(!e.message.empty())return false;}
     for(const auto &[id,t]:types)if(string(field(*t,"kind"))=="reference"){
-      uint32_t bytes=0,alignment=1,roots=0;
+      uint32_t bytes=0,alignment=1,roots=0;std::vector<uint32_t> offsets;
       for(const auto *f:fields(id)){
         const auto raw=string(field(*f,"sourceBinding"));if(!need(bindings.count(raw),"heap field storage missing"))return false;
-        const auto &child=layout(string(field(*bindings.at(raw),"carrier")));bytes=(bytes+child.alignment-1)/child.alignment*child.alignment+child.byteSize;
+        const auto &child=layout(string(field(*bindings.at(raw),"carrier")));if(!step())return false;bytes=(bytes+child.alignment-1)/child.alignment*child.alignment;offsets.push_back(bytes);bytes+=child.byteSize;
         alignment=std::max(alignment,child.alignment);roots+=child.referenceCount;
         if(!need(bytes<=65536&&roots<=256,"heap object field bytes/GC roots exceeded"))return false;
       }
-      if(!e.message.empty()||!need((bytes+alignment-1)/alignment*alignment<=65536,"aligned heap object bytes exceeded"))return false;
+      if(!e.message.empty()||!need((bytes+alignment-1)/alignment*alignment<=65536,"aligned heap object bytes exceeded")||!step(id.size()/8+1))return false;
+      p.referenceBodyLayouts.insert_or_assign(id,Layout{(bytes+alignment-1)/alignment*alignment,alignment,roots,std::move(offsets)});
     }
     for(const auto &[id,environment]:environments){
       uint32_t bytes=field(*environment,"parent").getAsNull()?0:8,alignment=field(*environment,"parent").getAsNull()?1:8,roots=field(*environment,"parent").getAsNull()?0:1;

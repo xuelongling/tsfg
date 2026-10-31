@@ -337,9 +337,23 @@
       "writes": "Sorted fixed resources; complete callees/SCC/indirect upper consumption, never narrowed by body"
     },
     "mode": "fixed",
-    "record": "Complete functionId/signatureHash/fixed upper/digest; body plus every actual callee fixed upper must satisfy it before selecting kernels.",
-    "scope": "Stable complete semantic declarations/type shapes/modules/globals/imports/exports/roots; excludes current bodies and initialization-body/source identities.",
-    "version": 2
+    "record": "Exact ordered contracts contain functionId, signatureHash, full fixed upper, callables, returnOrigins and digest. The complete group digest binds every row including null; current body and every permitted target must satisfy the fixed contracts before kernel proof.",
+    "scope": "Complete owned semantic declaration/type/module/global/import/export/Env directory and fixed storage tables, bound to the same scope and group. Current bodies and initialization source identities are excluded from declaration identity; fixed return Graph4 belongs to each contract, not the scope.",
+    "version": 3,
+    "returnOrigins": {
+      "format": "tsfg.return-origin-graph-candidate version4",
+      "fixed": "Owned immutable Graph4/protocol/upper for the complete permitted function group; normal and language channels stay distinct.",
+      "null": "Unavailable fixed return/content protocol; never Bottom, empty graph or an implicit proof grant.",
+      "body": "Derive the current Source body graph independently and require it to be covered by the admitted fixed graph. Concrete Code or observed arms never remove a different permitted target upper.",
+      "unavailable": "Only proof independent of unavailable return/content authority can proceed. A scalar exception requires separately verified complete Source views and full fixed-target closure, not a claimed upper alone."
+    },
+    "storage": {
+      "record": "Complete fields[{fieldId,actualTypes,unknown}] and results[{construction,newTarget,actualTypes,unknown}], or both arrays empty when global ownership/alias authority is unavailable. Every role remains present in a nonempty table. unknown:true requires actualTypes:[] and means unresolved TOP, never Bottom or a sampled finite bound.",
+      "admission": "Metadata admission binds the full table to the same owned catalogue. It does not authorize copy/address callbacks.",
+      "currentProfile": "Current private4 nominal scalar tuple copy capability is per actual type: the complete owned catalogue and selected-witness/entry closure globally exclude structural aliases, base/replacement/explicit construction and foreign storage. A body is complete only when all its own field identities, scalar initialization, fixed field bounds and constructor/newTarget result are independently closed; another body's unresolved storage does not remove that capability.",
+      "proof": "Independently cross-check actual field carriers, every admitted complete tuple layout and every owned conditional constructor/newTarget result against the same fixed table before exposing that body's copy/address callbacks. Fixed TOP cannot upgrade from a narrower current carrier; an actual capacity exceeding a known fixed bound is rejected. An unresolved body retains reference identity where applicable but supplies no physical field route or Value copy. Do not substitute Source field declarations or future storage-v2 state/tag plans.",
+      "budget": "Use the existing cumulative physical/Program work remaining; never create or reset a separate work allowance."
+    }
   },
   "receiverProtocol": {
     "allocation": "receiver_create/child create only control identities. Only a base receiver_allocate allocates the dynamic newTarget instance. Bind occurs after complete base Construct; duplicate binding language-fails without replacing the previous bound value.",

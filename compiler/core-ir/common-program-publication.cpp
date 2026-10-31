@@ -3,7 +3,7 @@
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::commonProgram {
 namespace {
-Json select(const Json &v,llvm::ArrayRef<llvm::StringRef> keys){Object out;for(auto key:keys)out[key]=field(v,key);return out;}
+Json select(Program &p,const Json &v,llvm::ArrayRef<llvm::StringRef> keys,Error &e){Object out;for(auto key:keys){if(!returnOriginMetadataCost(p,field(v,key),e))return out;out[key]=field(v,key);}return out;}
 bool work(Program &p,Error &e,size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","fixed Published verification work exceeded");}
 bool need(bool c,Error &e,llvm::StringRef detail){return c||reject(e,"core-ir-common-publication",detail);}
 bool callableBounds(Program &p,const Json &fn,const Json &value,Error &e){
@@ -66,6 +66,7 @@ bool publicationScope(Program &p,Json &out,Error &e){
   std::map<std::string,const Json *> types;for(const auto &t:items(field(p.hir,"types"))){if(!work(p,e))return false;types.emplace(string(field(t,"id")),&t);}
   std::set<std::string> seen;std::vector<std::string> pending;
   for(const auto &g:items(field(p.hir,"globals")))pending.push_back(string(field(g,"type")));
+  for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){if(!work(p,e))return false;pending.push_back(string(field(slot,"type")));}
   for(const auto &fn:items(field(p.hir,"functions"))){pending.push_back(string(field(fn,"returnType")));if(!field(fn,"ownerType").getAsNull())pending.push_back(string(field(fn,"ownerType")));
     for(const auto &a:items(field(fn,"parameters"))){if(!work(p,e))return false;pending.push_back(string(field(a,"type")));}}
   for(const auto &[id,t]:types)if(string(field(*t,"kind"))=="value"||string(field(*t,"kind"))=="reference")pending.push_back(id);
@@ -75,24 +76,27 @@ bool publicationScope(Program &p,Json &out,Error &e){
     for(auto key:{"base","elementType"})if(!field(t,key).getAsNull())pending.push_back(string(field(t,key)));
     for(const auto &m:items(field(t,"members"))){if(!work(p,e))return false;pending.push_back(string(m));}
     for(const auto &f:items(field(t,"fields"))){if(!work(p,e))return false;pending.push_back(string(field(f,"type")));}
+    for(const auto &a:items(field(field(field(t,"construction"),"signature"),"parameters"))){if(!work(p,e))return false;pending.push_back(string(a));}
     if(string(field(t,"kind"))=="function"){
       for(const auto &type:items(field(t,"parameters"))){if(!work(p,e))return false;pending.push_back(string(type));}
       pending.push_back(string(field(t,"returnType")));
     }
   }
-  Array typeRows,functions,environments,globals,modules,roots,required;
+  Array typeRows,functions,environments,globals,modules,roots,required,declarationTypes;
+  for(const auto &id:seen){if(!work(p,e,id.size()/8+1))return false;declarationTypes.push_back(id);}
   std::map<std::string,std::string> slotKeys;
   for(const auto &env:items(field(p.hir,"environments"))){
     if(!work(p,e))return false;Array slots;
     for(const auto &slot:items(field(env,"slots"))){
       if(!work(p,e))return false;slotKeys.emplace(string(field(slot,"binding")),string(field(slot,"key")));
-      slots.push_back(select(slot,{"key","type","writable","kind"}));
+      slots.push_back(select(p,slot,{"key","type","writable","kind"},e));
     }
     environments.push_back(Object{{"id",field(env,"id")},{"owner",field(env,"owner")},{"parent",field(env,"parent")},{"slots",std::move(slots)}});
   }
   for(const auto &t:items(field(p.hir,"types")))if(seen.count(string(field(t,"id")))){
-    if(!work(p,e))return false;typeRows.push_back(Object{{"id",field(t,"id")},{"label",field(t,"semanticLabel")},{"shape",field(t,"semanticShape")}});}
+    if(!returnOriginMetadataCost(p,field(t,"semanticLabel"),e)||!returnOriginMetadataCost(p,field(t,"semanticShape"),e)||!work(p,e))return false;typeRows.push_back(Object{{"id",field(t,"id")},{"label",field(t,"semanticLabel")},{"shape",field(t,"semanticShape")}});}
   for(const auto &fn:items(field(p.hir,"functions"))){
+    for(auto key:{"id","declKey","kind","access","lexicalParent","lexicalEnvironment","activationEnvironment","signatureHash","parameters","captures","returnType"})if(!returnOriginMetadataCost(p,field(fn,key),e))return false;
     if(!work(p,e))return false;Array parameters;if(!field(fn,"ownerType").getAsNull())parameters.push_back(field(fn,"ownerType"));
     for(const auto &a:items(field(fn,"parameters"))){if(!work(p,e))return false;parameters.push_back(field(a,"type"));}
     std::set<std::string> captured;
@@ -104,20 +108,20 @@ bool publicationScope(Program &p,Json &out,Error &e){
       {"captures",std::move(captureKeys)},
       {"signatureHash",field(fn,"signatureHash")},{"parameterTypes",std::move(parameters)},{"returnType",field(fn,"returnType")}});
   }
-  for(const auto &g:items(field(p.hir,"globals"))){if(!work(p,e))return false;globals.push_back(Object{{"globalId",field(g,"id")},{"declKey",field(g,"declKey")},{"type",field(g,"type")},{"writable",field(g,"writable")}});}
-  for(const auto &m:items(field(p.hir,"modules"))){if(!work(p,e))return false;auto row=*select(m,{"id","sourcePath","external","dependencies","initializer","globals"}).getAsObject();Array imports,exports;
-    for(const auto &edge:items(field(m,"imports"))){if(!work(p,e))return false;auto r=*select(edge,{"kind","specifier","sourcePath"}).getAsObject();Array aliases;
-      for(const auto &alias:items(field(edge,"bindings"))){if(!work(p,e))return false;aliases.push_back(select(alias,{"kind","name","imported","target","targetSourcePath"}));}r["bindings"]=std::move(aliases);imports.push_back(std::move(r));}
-    for(const auto &x:items(field(m,"exports"))){if(!work(p,e))return false;exports.push_back(select(x,{"name","kind","target","targetSourcePath"}));}
+  for(const auto &g:items(field(p.hir,"globals"))){if(!returnOriginMetadataCost(p,g,e)||!work(p,e))return false;globals.push_back(Object{{"globalId",field(g,"id")},{"declKey",field(g,"declKey")},{"type",field(g,"type")},{"writable",field(g,"writable")}});}
+  for(const auto &m:items(field(p.hir,"modules"))){if(!work(p,e))return false;auto row=*select(p,m,{"id","sourcePath","external","dependencies","initializer","globals"},e).getAsObject();Array imports,exports;
+    for(const auto &edge:items(field(m,"imports"))){if(!work(p,e))return false;auto r=*select(p,edge,{"kind","specifier","sourcePath"},e).getAsObject();Array aliases;
+      for(const auto &alias:items(field(edge,"bindings"))){if(!work(p,e))return false;aliases.push_back(select(p,alias,{"kind","name","imported","target","targetSourcePath"},e));}r["bindings"]=std::move(aliases);imports.push_back(std::move(r));}
+    for(const auto &x:items(field(m,"exports"))){if(!work(p,e))return false;exports.push_back(select(p,x,{"name","kind","target","targetSourcePath"},e));}
     row["imports"]=std::move(imports);row["exports"]=std::move(exports);modules.push_back(std::move(row));
   }
-  for(const auto &r:items(field(field(p.hir,"closure"),"roots"))){if(!work(p,e))return false;roots.push_back(select(r,{"kind","sourcePath","name","target"}));}
-  for(const auto &r:items(field(field(p.hir,"closure"),"requiredRoots"))){if(!work(p,e))return false;required.push_back(select(r,{"kind","sourcePath","name","target"}));}
-  Array hosts;for(const auto &host:items(field(p.hir,"hostImports"))){if(!work(p,e))return false;hosts.push_back(select(host,{"id","sourcePath","name","capabilityId","signatureHash","parameterTypes","returnType"}));}
+  for(const auto &r:items(field(field(p.hir,"closure"),"roots"))){if(!work(p,e))return false;roots.push_back(select(p,r,{"kind","sourcePath","name","target"},e));}
+  for(const auto &r:items(field(field(p.hir,"closure"),"requiredRoots"))){if(!work(p,e))return false;required.push_back(select(p,r,{"kind","sourcePath","name","target"},e));}
+  Array hosts;for(const auto &host:items(field(p.hir,"hostImports"))){if(!work(p,e))return false;hosts.push_back(select(p,host,{"id","sourcePath","name","capabilityId","signatureHash","parameterTypes","returnType"},e));}
   Json hostContext=nullptr;if(!p.hosts.empty())hostContext=Object{{"contractDigest",p.hostContractHash},{"buildIdentityDigest",field(field(field(field(p.hir,"hostContext"),"identity"),"buildIdentity"),"digest")}};
-  out=Object{{"hostImports",std::move(hosts)},{"hostContext",std::move(hostContext)},{"profile","common-program-fixed-v2"},{"rootFile",field(p.hir,"rootFile")},{"types",std::move(typeRows)},
+  out=Object{{"hostImports",std::move(hosts)},{"hostContext",std::move(hostContext)},{"profile","common-program-fixed-v3"},{"rootFile",field(p.hir,"rootFile")},{"declarationTypes",std::move(declarationTypes)},{"types",std::move(typeRows)},
     {"functions",std::move(functions)},{"environments",std::move(environments)},{"globals",std::move(globals)},{"modules",std::move(modules)},
-    {"roots",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(required)}}}};return true;
+    {"roots",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(required)}}}};return e.message.empty();
 }
 bool validateCallableBounds(Program &p,const Json &fn,const Json &value,Error &e){return callableBounds(p,fn,value,e);}
 bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e){
@@ -163,32 +167,50 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
   }
   return true;
 }
-bool verifyPublication(Program &p,Error &e){
+bool admitPublication(Program &p,Error &e){
+  if(!work(p,e,p.fixedEffects.size()+p.effects.size()+p.returnOriginVerified.size()+p.returnOriginPending.size()+p.scalarReturnOriginVerified.size()+1))return false;
+  p.fixedEffects.clear();p.effects.clear();p.returnOriginVerified.clear();p.returnOriginPending.clear();p.scalarReturnOriginVerified.clear();p.returnOriginContracts.reset();
   const auto &pub=p.publication;const auto &contracts=items(field(pub,"contracts")),&functions=items(field(p.hir,"functions"));
-  if(!need(exact(pub,{"format","mode","scopeDigest","expectedDigest","contracts"})&&
-    same(field(pub,"format"),Object{{"family","tsfg.program-publication-candidate"},{"version",2}})&&
+  if(!need(exact(pub,{"format","mode","scope","scopeDigest","expectedDigest","contracts"})&&
+    same(field(pub,"format"),Object{{"family","tsfg.program-publication-candidate"},{"version",3}})&&
     string(field(pub,"mode"))=="fixed"&&field(pub,"contracts").getAsArray()&&contracts.size()==functions.size(),e,"complete fixed publication required"))return false;
   for(size_t i=0;i<contracts.size();++i){const auto &row=contracts[i],&fn=functions[i];const auto id=string(field(fn,"id"));
-    if(!work(p,e)||!need(exact(row,{"functionId","signatureHash","upper","callables","digest"})&&same(field(row,"functionId"),field(fn,"id"))&&same(field(row,"signatureHash"),field(fn,"signatureHash")),e,"fixed contract identity/order differs"))return false;
-    Json body=select(row,{"functionId","signatureHash","upper","callables"});Effects upper;
+    if(!work(p,e)||!need(exact(row,{"functionId","signatureHash","upper","callables","returnOrigins","digest"})&&same(field(row,"functionId"),field(fn,"id"))&&same(field(row,"signatureHash"),field(fn,"signatureHash")),e,"fixed contract identity/order differs"))return false;
+    Json body=select(p,row,{"functionId","signatureHash","upper","callables","returnOrigins"},e);Effects upper;
+    if(!returnOriginMetadataCost(p,row,e))return false;
     if(!readEffects(p,field(row,"upper"),fn,upper,e)||!validateCallableBounds(p,fn,field(row,"callables"),e)||
       !need(string(field(row,"digest"))==identity("published-contract",body),e,"fixed contract digest differs"))return false;
     p.fixedEffects.emplace(id,std::move(upper));
   }
-  Json stableScope=nullptr;if(!publicationScope(p,stableScope,e))return false;const auto scopeHash=identity("publication-scope",stableScope);
+  if(!returnOriginMetadataCost(p,field(pub,"scope"),e)||!returnOriginMetadataCost(p,field(pub,"contracts"),e))return false;const auto scopeHash=identity("publication-scope",field(pub,"scope"));
   if(!need(string(field(pub,"scopeDigest"))==scopeHash&&string(field(pub,"expectedDigest"))==identity("publication",Object{{"scopeDigest",scopeHash},{"contracts",field(pub,"contracts")}}),e,"stable scope/fixed table digest differs"))return false;
-  if(!deriveInternalEffects(p,p.fixedEffects,e))return false;
+  if(!prepareReturnOriginContracts(p,e)||!deriveInternalEffects(p,p.fixedEffects,e))return false;
+  return true;
+}
+bool verifyPublication(Program &p,Error &e){
+  if(!p.returnOriginContracts)return reject(e,"core-ir-common-publication","fixed group must be admitted before body proof");
+  const auto &functions=items(field(p.hir,"functions"));
   for(const auto &fn:functions){Effects effective;const auto id=string(field(fn,"id"));
-    if(!deriveEffects(p,fn,p.fixedEffects,effective,e))return false;
+    if(!deriveEffects(p,fn,effective,e))return false;
     // Actual storage and callee ABI obligations may be wider than a Source
     // assertion's view. They only add requirements to this fixed contract.
     auto physical=p.effects.find(id);if(physical!=p.effects.end()){
       effective.managedReference|=physical->second.managedReference;effective.escape|=physical->second.escape;
     }
-    if(!covers(p,p.fixedEffects.at(id),effective,e))return false;p.effects.insert_or_assign(id,std::move(effective));
+    if(!p.returnOriginPending.count(id)&&!covers(p,p.fixedEffects.at(id),effective,e))return false;p.effects.insert_or_assign(id,std::move(effective));
+  }
+  if(!finishReturnOriginProofs(p,e))return false;
+  // Only after all supplied graph proofs and their dependencies are settled
+  // may an unavailable/null member receive the independent scalar certificate.
+  // Its closure must still honor every nonnull supplied graph contract.
+  for(const auto &fn:functions){const auto id=string(field(fn,"id"));
+    if(!work(p,e,id.size()/8+1))return false;if(!p.returnOriginPending.count(id))continue;
+    if(!scalarReturnOriginProof(p,id,e)){if(!e.message.empty())return false;continue;}
+    Effects scalar;if(!deriveScalarEffects(p,fn,scalar,e)||!covers(p,p.fixedEffects.at(id),scalar,e))return false;
+    p.effects.insert_or_assign(id,std::move(scalar));p.scalarReturnOriginVerified.insert(id);
   }
   for(const auto &m:items(field(p.hir,"modules"))){Effects init;Json fn=Object{{"id",field(m,"initializer")},{"sourcePath",field(m,"sourcePath")},{"returnType","void"},{"parameters",Array{}},{"body",field(m,"initialization")}};
-    if(!deriveEffects(p,fn,p.fixedEffects,init,e))return false;}
+    if(!deriveEffects(p,fn,init,e))return false;}
   return true;
 }
 } // namespace tsfg::commonProgram

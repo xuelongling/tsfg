@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {commonProgramPublicationScope} from '../../compiler/common-program-publication-scope.mjs';
 // Private low-budget probes do not represent Source/Runtime execution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir,projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {commonProgramPlan} from '../../compiler/common-program-plan.mjs';
 import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
-import {createCommonProgramPublication,commonProgramPublicationScope} from '../../compiler/common-program-analysis.mjs';
+import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {coreExchangeFormat} from '../../compiler/core-ssa-emitter.mjs';
 import {commonCollections,commonSortedSubset,commonTextBudget} from '../../compiler/common-program-budget.mjs';

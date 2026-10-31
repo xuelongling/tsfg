@@ -207,7 +207,7 @@ bool ActualCheck::solve(bool conditional){
   contexts.clear();objects.clear();receiverFrames.clear();receiverCursors.clear();receiverRouteOpen=false;
   regions.nodes.clear();regions.scopes.clear();
   if(conditional){
-    registerCapacity.clear();resultCapacity.clear();storageCapacity.clear();
+    registerCapacity.clear();resultCapacity.clear();storageCapacity.clear();constructionCapacity.clear();
     ActualHeap heap;
     for(const auto &[raw,b]:bindings){if(!step())return false;
       if(fields.count(raw))continue;

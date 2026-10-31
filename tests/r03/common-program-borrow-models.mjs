@@ -19,7 +19,7 @@ export function commonBorrowModel(mode='direct',structural=false) {
       sourcePath:'/unit-model.ts',range:{start:0,end:1},signatureHash:'unit:signature',parameters:method?parameters.slice(1):parameters,returnType},
       graph=createCommonGraph(model,owner),entry=graph.newBlock(types),p={owner,parameters,graph,entry,returnType};
     for(const parameter of parameters)bindings.set(parameter.id,{...parameter,role:'parameter'});functions.set(id,owner);plans.push(p);
-    records.set(id,{upper:{globals:{reads:[],writes:[]},parameters:parameters.map((_,index)=>({index,read:true,write:false,structural:false})),captures:[],facets:{unknownHost:false}}});return p;
+    records.set(id,{upper:{globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:parameters.map((_,index)=>({index,read:true,write:false,structural:false})),captures:[],facets:{unknownHost:false}}});return p;
   }
   const emit=(p,b,name,args,type,properties={})=>p.graph.emit(b,name,args,type,properties,{start:10,end:20});
   const constant=(p,b,n)=>emit(p,b,'constant',[],i32TypeId,{decimal:String(n),token:String(n)});

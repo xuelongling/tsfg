@@ -52,7 +52,18 @@ bool verifySourceShapeValue(SourceModel &,const Json &,llvm::StringRef);
 // Diagnostic provenance is observed by the same owned effects derivation.
 // It is not a second effect bound or permission table.
 struct EffectDiagnostics {std::map<std::string,Json> local;Array calls;};
-bool deriveEffectDiagnostics(Program &,const Json &,const std::map<std::string,Effects> &,Effects &,Error &,EffectDiagnostics &);
+struct ReturnOriginAccessWitness {std::vector<size_t> values;unsigned flag=0;Json origin=nullptr;};
+struct ActualCheck;
+bool prepareReturnOriginContracts(Program &,Error &);
+bool prepareReturnOriginStorage(ActualCheck &);
+bool finishReturnOriginProofs(Program &,Error &);
+bool deriveReturnOriginBody(Program &,const Json &,Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,std::vector<ReturnOriginAccessWitness> *accesses=nullptr);
+bool deriveFixedReturnEffects(Program &,const Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr);
+bool fixedReturnOriginAvailable(const Program &,const std::string &);
+bool scalarReturnOriginProof(Program &,const std::string &,Error &);
+bool deriveScalarEffects(Program &,const Json &,Effects &,Error &);
+bool returnOriginMetadataCost(Program &,const Json &,Error &);
+bool deriveEffectDiagnostics(Program &,const Json &,Effects &,Error &,EffectDiagnostics &);
 inline std::string moduleId(llvm::StringRef path){return digest(std::string("tsfg.module")+std::string(1,'\0')+path.str());}
 inline std::string initializerId(llvm::StringRef path){return identity("initializer",Object{{"module",moduleId(path)}});}
 inline Json declKey(const Json &path,const Json &scope,llvm::StringRef kind,const Json &name){

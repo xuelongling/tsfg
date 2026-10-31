@@ -21,9 +21,10 @@ const num=()=>({kind:'numericLiteral',type:i32TypeId,token:'1',decimal:'1',range
 const fn=(id,returnType,body)=>({id,name:id,kind:'source',ownerType:null,sourceBinding:id,returnType,parameters:[],bindings:[],body,
   receiverBinding:null,sourcePath:origin.source,range,nameRange:range,signatureHash:signatureId({parameters:[],returns:returnType}),
   captures:[],lexicalParent:null,lexicalEnvironment:null,activationEnvironment:null});
-const nominal=(id,fields=[],base=null)=>({id,kind:'reference',fields,methods:[],...(base?{base}:{}),
+// Source provenance is a distinct literal namespace inside this normalized model.
+const nominal=(id,fields=[],base=null)=>({id,sourceType:'literal-source:'+id,kind:'reference',fields,methods:[],...(base?{base}:{}),
   construction:{id:id+'/ctor',kind:base?'implicit-derived':'implicit-base',functionId:null,origin,parameters:[],
-    initializationFields:fields.map(field=>field.id),signature:{parameters:[],returnType:id},implicitForward:base?{target:base+'/ctor'}:null}});
+    initializationFields:fields.map(field=>field.id),signature:{parameters:[],returnType:id},implicitForward:base?{target:'literal-source:'+base+'.ctor'}:null}});
 const create=type=>({kind:'new',type:type.id,callee:type.id,construction:type.construction.id,range,signature:type.construction.signature,arguments:[]});
 const field=(owner,name,type,initializer)=>({id:owner+'/'+name,sourceBinding:owner+'/'+name,name,type,origin,initializer,readonly:false});
 function fixture(cyclic=false) {

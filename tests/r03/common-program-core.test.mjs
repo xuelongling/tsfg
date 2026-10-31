@@ -21,7 +21,7 @@ for(const name of ['positive','mixed'])test('public complete Program lowering pr
   const publication=createCommonProgramPublication(hir),request={targets:hir.closure.roots.filter(r=>r.kind==='kernel').map(r=>r.target).sort()};
   const text=lowerHir(hir,context,{publication,request});assert.equal((text.match(/func\.func @/g)??[]).length,hir.functions.length+hir.modules.length);
   assert.match(text,/tsfg_program\.program/);assert.match(text,/"tsfg_program\.enter_handler"/);assert.match(text,/"tsfg_program\.catch_bind"/);
-  assert.ok(text.includes('"tsfg_program.allocate_reference"'));assert.ok(text.includes('"tsfg_program.value_copy"'));assert.ok(text.includes('"tsfg_program.return_throw"'));
+  assert.ok(text.includes('"tsfg_program.receiver_create"'));assert.ok(text.includes('"tsfg_program.initialize_field"'));assert.ok(text.includes('"tsfg_program.value_copy"'));assert.ok(text.includes('"tsfg_program.return_throw"'));
   assert.equal(physical.carriers.layout(fn(hir,'add').parameters[0].type).byteSize,4);
   assert.equal(physical.carriers.layout(fn(hir,'add').parameters[0].type).referenceCount,0);
   assert.throws(()=>lowerHir(hir,context));assert.deepEqual(verifyHir(hir),hir);

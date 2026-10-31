@@ -4,7 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {commonReturnOriginsInclusion as inclusion} from '../../compiler/common-program-return-origin-inclusion.mjs';
 
-const graph=()=>/** @type {Parameters<typeof inclusion>[0]} */ ({nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
+/** @returns {Parameters<typeof inclusion>[0]} */
+const graph=()=>({format:{family:'tsfg.return-origin-graph-candidate',version:4},nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],normal:[],language:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]});
 const meter=()=>{let left=200000;return (units=1)=>{left-=units;if(left<0)throw new Error('fixture budget exhausted');};};
 const prove=(body,upper,contracts=new Map())=>inclusion(body,upper,contracts,meter()).status;
 const parameter=()=>{const row=graph();row.nodes.push({kind:'parameter',type:'View',index:0});row.normal=[0];return row;};
@@ -47,7 +48,7 @@ test('copy scopes have one consistent alpha match across all content edges',()=>
 });
 test('fixed recursive calls are matched without recursively expanding digests',()=>{
   const fixed=parameter();fixed.nodes.push({kind:'call',type:'View',call:0,completion:'normal'});
-  fixed.calls=[{functionId:'F',arguments:[[0]],heap:0,control:0,site:'recursive-call'}];
+  fixed.calls=[{functionId:'F',arguments:[[0]],environment:null,callee:null,heap:0,control:0,site:'recursive-call'}];
   fixed.controls.push({kind:'call',call:0,completion:'normal'});fixed.heaps.push({kind:'call',call:0,completion:'normal'});
   fixed.normal=[0,1];fixed.exits.normal.push({heap:1,control:1});
   assert.equal(prove(fixed,fixed,new Map([['F',{graph:fixed}]])),'covered');
@@ -62,4 +63,42 @@ test('large valid reference directories exhaust the shared meter',()=>{
   for(let index=0;index<512;index++){body.nodes.push({kind:'parameter',type:'View',index});upper.nodes.push({kind:'parameter',type:'View',index});body.normal.push(index);upper.normal.push(index);}
   let remaining=1500;
   assert.throws(()=>inclusion(body,upper,new Map(),(units=1)=>{remaining-=units;if(remaining<0)throw new Error('fixture budget exhausted');}),/fixture budget exhausted/);
+});
+
+test('old v3 and mixed fixed-table graph profiles are explicitly Open',()=>{
+  const old=parameter();Object.assign(old.format,{version:3});
+  assert.equal(prove(old,old),'open');assert.equal(prove(parameter(),old),'open');
+  assert.equal(prove(parameter(),parameter(),new Map([['old',{graph:old}]])),'open');
+});
+
+test('complete structural reflexivity is linear despite JSON field order and weak heap alternatives',()=>{
+  const body=afterWrite(true);
+  for(let index=1;index<48;index++)body.heaps.push({kind:'store',previous:index,bases:[0],selector:'field:owner',view:'Box',values:[2],initialize:false,control:0});
+  body.exits.normal=[{heap:body.heaps.length-1,control:0}];
+  const upper=JSON.parse(JSON.stringify(body));
+  upper.heaps=upper.heaps.map(row=>Object.fromEntries(Object.entries(row).reverse()));
+  let spent=0;
+  assert.equal(inclusion(body,upper,new Map(),(units=1)=>{spent+=units;if(spent>12000)throw new Error('fixture budget exhausted');}).status,'covered');
+  assert.ok(spent>1000);
+});
+
+test('a late changed owning edge cannot use the reflexive certificate',()=>{
+  const body=afterWrite(true),upper=afterWrite(true);
+  body.normal=[2];upper.normal=[0];
+  assert.equal(prove(body,upper),'open');
+});
+
+test('reflexivity still rejects a missing fixed call and a mixed unknown table',()=>{
+  const called=graph();called.calls=[{functionId:'missing',arguments:[],environment:null,callee:null,heap:0,control:0,site:'call'}];
+  assert.equal(prove(called,called),'open');
+  const unknown=graph();unknown.nodes.push({kind:'unknown',type:null});
+  assert.equal(prove(graph(),graph(),new Map([['unknown',{graph:unknown}]])),'open');
+});
+
+test('a seedless recursive continuation cannot manufacture an upper completion',()=>{
+  const recursive=graph();recursive.calls=[{functionId:'loop',arguments:[],environment:null,callee:null,heap:0,control:0,site:'recursive'}];
+  recursive.controls.push({kind:'call',call:0,completion:'normal'});recursive.heaps.push({kind:'call',call:0,completion:'normal'});recursive.exits.normal=[{heap:1,control:1}];
+  const contracts=new Map([['loop',{graph:recursive}]]);
+  assert.equal(prove(graph(),recursive,contracts),'open');
+  assert.equal(prove(recursive,recursive,contracts),'covered');
 });

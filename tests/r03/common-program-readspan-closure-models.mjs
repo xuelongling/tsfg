@@ -81,7 +81,7 @@ export function readspanClosureParentModel(){
     middle={owner,graph,parameters,entry,returnType:i32TypeId},emit=(p,b,name,args,type,props={})=>p.graph.emit(b,name,args,type,props,range);
   model.environments.set(child.id,child);model.hir.environments.push(child);model.functions.set(owner.id,owner);plans.push(middle);
   model.bindings.set('middle/n',{id:'middle/n',type:i32TypeId,role:'local'});model.slots.set('middle/n',{...child.slots[0],layout:child.id});
-  result.records.set('middle',{upper:{globals:{reads:[],writes:[]},parameters:[],captures:[],facets:{unknownHost:false}}});model.callables.summaries.set('middle',{parameters:new Map()});
+  result.records.set('middle',{upper:{globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:[],captures:[],facets:{unknownHost:false}}});model.callables.summaries.set('middle',{parameters:new Map()});
   const env=emit(middle,entry,'env_alloc',[{...entry.parameters[0]}],'env:'+child.id,{layout:child.id}),one=emit(middle,entry,'constant',[],i32TypeId,{decimal:'1',token:'1'});
   emit(middle,entry,'env_init',[env,one],null,{layout:child.id,binding:'middle/n',key:child.slots[0].key});
   const normal=graph.newBlock([i32TypeId]),language=graph.newBlock([model.payload]);graph.terminal(entry,'invoke',[env],[normal,language],{function_id:'target',signature_hash:'unit:signature'},range);
@@ -173,7 +173,7 @@ export function readspanReturnedCaptureModel(modified=false,thrown=false){
   result.records.get('entry').upper.parameters=parameters.map((_,index)=>({index,read:true,write:false,structural:modified&&index===0}));
   const owner={...factory.owner,id:'caller',parameters:[],returnType:i32TypeId,lexicalParent:null,activationEnvironment:null},
     callerGraph=createCommonGraph(model,owner),callerEntry=callerGraph.newBlock(),caller={owner,graph:callerGraph,entry:callerEntry,parameters:[],returnType:i32TypeId};
-  model.functions.set(owner.id,owner);plans.push(caller);result.records.set(owner.id,{upper:{globals:{reads:[],writes:[]},parameters:[],captures:[],facets:{unknownHost:false}}});
+  model.functions.set(owner.id,owner);plans.push(caller);result.records.set(owner.id,{upper:{globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:[],captures:[],facets:{unknownHost:false}}});
   const a=emit(caller,callerEntry,'array_create',[constant(caller,callerEntry,1)],array,{allocation:'a'}),
     s=emit(caller,callerEntry,'readspan',[a,constant(caller,callerEntry,0),constant(caller,callerEntry,1)],span),
     normal=callerGraph.newBlock([callable]),language=callerGraph.newBlock([model.payload]);

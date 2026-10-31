@@ -77,7 +77,9 @@ export function commonImplicitConstructionPlans(input,owners){
     summaries.set(owner.id,{fn:owner,parameters:parameterUppers,returns:null,reached:true});
     if(construction.kind==='implicit-derived'){
       const base=types.get(type.base),forward=construction.implicitForward;
-      check(base?.construction&&forward?.target===base.construction.id,'construction','implicit forward does not join its direct base');
+      // implicitForward is Source provenance; construction.id is semantic.
+      if(base?.construction)text(base.sourceType);
+      check(base?.construction&&forward?.target===base.sourceType+'.ctor','construction','implicit forward does not join its direct base');
       spend(owner.parameters.length*2+8);
       const args=owner.parameters.map(parameter=>({kind:'bindingReference',binding:parameter.id,type:parameter.type,range:parameter.range}));
       owner.body.push({kind:'expression',range:owner.range,value:{kind:'superConstruct',type:voidId,callee:base.id,range:owner.range,

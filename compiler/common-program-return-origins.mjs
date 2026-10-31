@@ -3,7 +3,8 @@
 // and Actual/Borrow authority remain separate. This module accepts no AST.
 import {canonical,commonCheck as check} from './common-program-common.mjs';
 import {solveReturnOriginContexts} from './common-program-return-origin-domain.mjs';
-const format=Object.freeze({family:'tsfg.return-origin-graph-candidate',version:3});
+export const commonReturnOriginFormat=Object.freeze({family:'tsfg.return-origin-graph-candidate',version:4});
+const format=commonReturnOriginFormat;
 const flags=['read','write','structural'];
 const chargeValue=(value,spend)=>{const pending=[value];while(pending.length){spend();const selected=pending.pop();
   if(typeof selected==='string')spend(Math.ceil(selected.length/8)+1);
@@ -12,7 +13,7 @@ const chargeValue=(value,spend)=>{const pending=[value];while(pending.length){sp
 const graphCanonical=(value,spend)=>{chargeValue(value,spend);return canonical(value);};
 const add=(target,source,spend)=>{for(const value of source){spend();target.add(value);}};
 
-export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>true,actualType=()=>null,contracts=new Map()}={}) {
+export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>true,actualType=()=>null,contracts=new Map(),environments,rootProtocol}) {
   const nodes=[],heaps=[{kind:'entry'}],controls=[{kind:'entry'}],calls=[],accesses=new Map(),interned=new Map(),valuePhis=new Map(),heapPhis=new Map(),controlPhis=new Map();
   let state={heap:0,control:0},revision=0,solvedRevision=-1,solved;
   const key=value=>graphCanonical(value,spend);
@@ -22,12 +23,18 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
     check(nodes.length<65536,'limit');const id=nodes.length;nodes.push(value);interned.set(encoded,id);revision++;return id;};
   const append=(directory,value)=>{spend();chargeValue(value,spend);check(directory.length<65536,'limit');const id=directory.length;directory.push(value);revision++;return id;};
   const root=(kind,type,value=null,site=null)=>{
-    check(['parameter','global','capture','local','nonowning','unknown'].includes(kind),'return-origins');
-    const row=kind==='parameter'?{kind,type,index:value}:['global','capture'].includes(kind)?{kind,type,id:value}:{kind,type:kind==='unknown'?null:type};
+    check(['parameter','global','local','nonowning','unknown'].includes(kind),'return-origins');
+    const row=kind==='parameter'?{kind,type,index:value}:kind==='global'?{kind,type,id:value}:{kind,type:kind==='unknown'?null:type};
     return new Set([node(row,site===null?null:key([row,site]))]);
   };
   const select=(bases,selector,type,view)=>{spend(bases.size+1);return new Set([node({kind:'projection',type,bases:ordered(bases),selector,view,...state})]);};
   const gate=(inputs,type=null)=>{spend(inputs.size+1);return new Set([node({kind:'gate',type,inputs:ordered(inputs),control:state.control})]);};
+  const environmentInput=layout=>new Set([node({kind:'environmentInput',type:null,layout})]);
+  const environmentCreate=(layout,parent,site)=>new Set([node({kind:'environmentCreate',type:null,layout,parent:parent===null?null:ordered(parent),site,control:state.control})]);
+  const environmentParent=(bases,layout)=>new Set([node({kind:'environmentParent',type:null,layout,bases:ordered(bases),control:state.control})]);
+  const environmentComponent=(callee,functionId,layout)=>new Set([node({kind:'environmentComponent',type:null,layout,functionId,callee:ordered(callee),control:state.control})]);
+  const capture=(environment,layout,id,type)=>new Set([node({kind:'capture',type,id,layout,environment:ordered(environment),...state})]);
+  const code=(functionId,environment,type)=>new Set([node({kind:'code',type,functionId,environment:environment===null?null:ordered(environment),control:state.control})]);
   const copy=(bases,type,site)=>{spend(bases.size+1);const id=node({kind:'copy',type,bases:ordered(bases),...state,site});
     state={heap:append(heaps,{kind:'copy',previous:state.heap,value:id}),control:state.control};return new Set([id]);};
   const access=(values,flag)=>{check(flags.includes(flag),'return-origins');spend(values.size+1);const row={values:ordered(values),flag,control:state.control};const encoded=key(row);
@@ -39,7 +46,7 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
    * @param {{view?:string, initialize?:boolean}} [options]
    */
   const write=(bases,selector,values,{view,initialize=false}={})=>{
-    spend(bases.size+values.size+1);access(bases,'write');
+    spend(bases.size+values.size+1);if(!selector.startsWith('capture:'))access(bases,'write');
     state={heap:append(heaps,{kind:'store',previous:state.heap,bases:ordered(bases),selector,view,values:ordered(values),initialize,control:state.control}),control:state.control};
   };
   const phi=(type,values,site)=>{
@@ -58,19 +65,23 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
   };
   const checkpoint=()=>({...state});
   const restore=selected=>{spend();check(Number.isInteger(selected.heap)&&selected.heap>=0&&selected.heap<heaps.length&&Number.isInteger(selected.control)&&selected.control>=0&&selected.control<controls.length,'return-origins');state={...selected};};
-  const call=(functionId,args,type,site)=>{
-    spend(args.length+1);const arguments_=args.map(ordered),id=append(calls,{functionId,arguments:arguments_,...state,site});
+  /** @param {string} functionId @param {Set<number>[]} args @param {string} type @param {string} site
+   * @param {{environment?:Set<number>|null,callee?:Set<number>|null}} [selection] */
+  const call=(functionId,args,type,site,{environment=null,callee=null}={})=>{
+    spend(args.length+1);const arguments_=args.map(ordered),id=append(calls,{functionId,arguments:arguments_,environment:environment===null?null:ordered(environment),callee:callee===null?null:ordered(callee),...state,site});
     const normalControl=append(controls,{kind:'call',call:id,completion:'normal'}),languageControl=append(controls,{kind:'call',call:id,completion:'language'});
     const normalState={heap:append(heaps,{kind:'call',call:id,completion:'normal'}),control:normalControl},languageState={heap:append(heaps,{kind:'call',call:id,completion:'language'}),control:languageControl};
     const normal=new Set([node({kind:'call',type,call:id,completion:'normal'})]),language=new Set([node({kind:'call',type:null,call:id,completion:'language'})]);
     state=normalState;return {normal,language,normalState,languageState};
   };
-  const solve=()=>{if(solvedRevision===revision)return solved;spend(accesses.size+1);const graph={nodes,heaps,controls,calls,accesses:[...accesses.values()],normal:[],language:[],exits:{normal:[state],language:[]}};
-    solved=solveReturnOriginContexts(graph,contracts,{projectField,mayAlias,actualType},spend);solvedRevision=revision;return solved;};
+  const solve=()=>{if(solvedRevision===revision)return solved;spend(accesses.size+1);const graph={format,nodes,heaps,controls,calls,accesses:[...accesses.values()],normal:[],language:[],exits:{normal:[state],language:[]}};
+    solved=solveReturnOriginContexts(graph,contracts,{projectField,mayAlias,actualType,environments,rootProtocol},spend);solvedRevision=revision;return solved;};
   const owners=values=>solve().owners(values);
+  const holdsEnvironment=values=>solve().holdsEnvironment(values);
   const effects=()=>{const result=solve();return {accesses:result.effects,facets:result.facets,calls:result.calls};};
   const live=selected=>solve().live(selected.control);
   const snapshot=(normal,language,exits={normal:[state],language:language.size?[state]:[]})=>{
+    solve().validateReturns(normal,language,exits);
     spend(normal.size+language.size+exits.normal.length*2+exits.language.length*2+accesses.size+calls.length+1);
     const seen={nodes:new Set(),heaps:new Set(),controls:new Set(),calls:new Set()},pending=[];
     const push=(kind,ids)=>{spend(ids.length??ids.size);for(const id of ids)pending.push({kind,id});};
@@ -83,6 +94,11 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
         if(row.kind==='gate'||row.kind==='projection'||row.kind==='copy')push('controls',[row.control]);
         if(row.kind==='projection'||row.kind==='copy'){push('nodes',row.bases);push('heaps',[row.heap]);}
         if(row.kind==='call')push('calls',[row.call]);
+        if(row.kind==='environmentCreate'){if(row.parent!==null)push('nodes',row.parent);push('controls',[row.control]);}
+        if(row.kind==='environmentParent'){push('nodes',row.bases);push('controls',[row.control]);}
+        if(row.kind==='environmentComponent'){push('nodes',row.callee);push('controls',[row.control]);}
+        if(row.kind==='capture'){push('nodes',row.environment);push('heaps',[row.heap]);push('controls',[row.control]);}
+        if(row.kind==='code'){if(row.environment!==null)push('nodes',row.environment);push('controls',[row.control]);}
       }else if(kind==='heaps'){
         if(row.kind==='join')push('heaps',row.inputs);
         if(row.kind==='store'){push('heaps',[row.previous]);push('nodes',row.bases);push('nodes',row.values);push('controls',[row.control]);}
@@ -90,23 +106,28 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
         if(row.kind==='call')push('calls',[row.call]);
       }else if(kind==='controls'){
         if(row.kind==='join')push('controls',row.inputs);if(row.kind==='call')push('calls',[row.call]);
-      }else{push('heaps',[row.heap]);push('controls',[row.control]);for(const argument of row.arguments)push('nodes',argument);}
+      }else{push('heaps',[row.heap]);push('controls',[row.control]);for(const argument of row.arguments)push('nodes',argument);if(row.environment!==null)push('nodes',row.environment);if(row.callee!==null)push('nodes',row.callee);}
     }
     const ids={},maps={};for(const kind of ['nodes','heaps','controls','calls']){ids[kind]=ordered(seen[kind]);spend(ids[kind].length*2);maps[kind]=new Map(ids[kind].map((id,index)=>[id,index]));}
     const refs=(kind,values)=>{spend((values.size??values.length)*2+1);return ordered(new Set([...values].map(id=>maps[kind].get(id))));};
     const valueRows=ids.nodes.map(id=>{spend();const row=nodes[id];if(row.kind==='join')return {...row,inputs:refs('nodes',row.inputs)};
       if(row.kind==='gate')return {...row,inputs:refs('nodes',row.inputs),control:maps.controls.get(row.control)};
       if(row.kind==='projection'||row.kind==='copy')return {...row,bases:refs('nodes',row.bases),heap:maps.heaps.get(row.heap),control:maps.controls.get(row.control)};
+      if(row.kind==='environmentCreate')return {...row,parent:row.parent===null?null:refs('nodes',row.parent),control:maps.controls.get(row.control)};
+      if(row.kind==='environmentParent')return {...row,bases:refs('nodes',row.bases),control:maps.controls.get(row.control)};
+      if(row.kind==='environmentComponent')return {...row,callee:refs('nodes',row.callee),control:maps.controls.get(row.control)};
+      if(row.kind==='capture')return {...row,environment:refs('nodes',row.environment),heap:maps.heaps.get(row.heap),control:maps.controls.get(row.control)};
+      if(row.kind==='code')return {...row,environment:row.environment===null?null:refs('nodes',row.environment),control:maps.controls.get(row.control)};
       return row.kind==='call'?{...row,call:maps.calls.get(row.call)}:{...row};});
     const heapRows=ids.heaps.map(id=>{spend();const row=heaps[id];if(row.kind==='join')return {...row,inputs:refs('heaps',row.inputs)};
       if(row.kind==='store')return {...row,previous:maps.heaps.get(row.previous),bases:refs('nodes',row.bases),values:refs('nodes',row.values),control:maps.controls.get(row.control)};
       if(row.kind==='copy')return {...row,previous:maps.heaps.get(row.previous),value:maps.nodes.get(row.value)};return row.kind==='call'?{...row,call:maps.calls.get(row.call)}:{...row};});
     const controlRows=ids.controls.map(id=>{spend();const row=controls[id];return row.kind==='join'?{...row,inputs:refs('controls',row.inputs)}:row.kind==='call'?{...row,call:maps.calls.get(row.call)}:{...row};});
-    const callRows=ids.calls.map(id=>{spend();const row=calls[id];spend(row.arguments.length);return {...row,arguments:row.arguments.map(argument=>refs('nodes',argument)),heap:maps.heaps.get(row.heap),control:maps.controls.get(row.control)};});
+    const callRows=ids.calls.map(id=>{spend();const row=calls[id];spend(row.arguments.length);return {...row,arguments:row.arguments.map(argument=>refs('nodes',argument)),environment:row.environment===null?null:refs('nodes',row.environment),callee:row.callee===null?null:refs('nodes',row.callee),heap:maps.heaps.get(row.heap),control:maps.controls.get(row.control)};});
     spend(accesses.size*2);const terminals=[...accesses.values()].map(row=>({values:refs('nodes',row.values),flag:row.flag,control:maps.controls.get(row.control)}));
     const decorated=terminals.map(row=>({row,key:key(row)}));decorated.sort((a,b)=>{spend();return a.key<b.key?-1:a.key>b.key?1:0;});
     const exitRows=values=>{spend(values.length*2+1);const result=values.map(value=>({heap:maps.heaps.get(value.heap),control:maps.controls.get(value.control)}));result.sort((a,b)=>{spend();return a.heap-b.heap||a.control-b.control;});return result.filter((value,index)=>{spend();return index===0||value.heap!==result[index-1].heap||value.control!==result[index-1].control;});};
     return {format,nodes:valueRows,heaps:heapRows,controls:controlRows,calls:callRows,normal:refs('nodes',normal),language:refs('nodes',language),exits:{normal:exitRows(exits.normal),language:exitRows(exits.language)},accesses:decorated.map(item=>item.row)};
   };
-  return {root,select,gate,copy,write,access,call,owners,effects,live,snapshot,union,phi,checkpoint,restore,mergeStates};
+  return {root,select,gate,copy,write,access,call,environmentInput,environmentCreate,environmentParent,environmentComponent,capture,code,owners,holdsEnvironment,effects,live,snapshot,union,phi,checkpoint,restore,mergeStates};
 }

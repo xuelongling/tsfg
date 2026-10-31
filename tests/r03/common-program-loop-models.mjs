@@ -20,7 +20,7 @@ export function loopFactoryModel(mode='held'){
       graph=createCommonGraph(model,owner),entry=graph.newBlock(parameters.map(p=>p.type)),value={owner,graph,entry,parameters,returnType};
     for(const parameter of parameters)model.bindings.set(parameter.id,{...parameter,role:'parameter'});
     model.functions.set(id,owner);plans.push(value);model.callables.summaries.set(id,{parameters:new Map()});
-    result.records.set(id,{upper:{globals:{reads:[],writes:[]},parameters:parameters.map((_,index)=>({index,read:true,write:false,structural:false})),captures:[],facets:{unknownHost:false}}});
+    result.records.set(id,{upper:{globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:parameters.map((_,index)=>({index,read:true,write:false,structural:false})),captures:[],facets:{unknownHost:false}}});
     return value;
   }
   const emit=(p,b,name,args,type,props={})=>p.graph.emit(b,name,args,type,props,range),

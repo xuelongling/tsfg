@@ -40,7 +40,7 @@ void appendCallChain(Program &p,Error &e,const std::string &root,const Reason &r
       origin=Object{{"kind","fixed-upper"},{"functionId",row.id},{"source",source(row.id)},{"contractDigest",field(*contracts.at(row.id),"digest")}};break;
     }
     EffectDiagnostics diagnostics;Effects derived;Error diagnosticError;
-    if(!deriveEffectDiagnostics(p,*functions.at(row.id),p.fixedEffects,derived,diagnosticError,diagnostics))break;
+    if(!deriveEffectDiagnostics(p,*functions.at(row.id),derived,diagnosticError,diagnostics))break;
     auto local=diagnostics.local.find(canonical(reasonJson));if(local!=diagnostics.local.end()){origin=local->second;break;}
     if(reason.kind=="facet"&&!reason.contains(derived)&&(reason.key=="managedReference"||reason.key=="escape")){
       origin=Object{{"kind","function"},{"functionId",row.id},{"source",source(row.id)},
@@ -73,10 +73,13 @@ bool verifyKernelProof(Program &p,Error &e){
   for(const auto &r:items(field(field(p.hir,"closure"),"roots"))){if(!step(p,e))return false;if(string(field(r,"kind"))=="kernel")kernelRoots.insert(string(field(r,"target")));}
   std::map<std::string,const Json *> contracts;
   for(const auto &c:items(field(p.publication,"contracts"))){if(!step(p,e))return false;contracts.emplace(string(field(c,"functionId")),&c);}
-  Array accesses,pairs;std::vector<std::string> ids;std::string previous;
+  Array accesses,pairs;std::vector<std::string> ids,unresolved;std::string previous;
   for(const auto &target:targets){
     if(!step(p,e))return false;const auto id=string(target);
     if(!need(kernelRoots.count(id)&&contracts.count(id)&&p.fixedEffects.count(id)&&declarations.count(id)&&(previous.empty()||previous<id),e,"selected target is not an ordered unique declared kernel root"))return false;
+    if(!fixedReturnOriginAvailable(p,id)&&!p.scalarReturnOriginVerified.count(id)){
+      if(!step(p,e,id.size()/8+1))return false;unresolved.push_back(id);
+    }
     const auto &upper=p.fixedEffects.at(id);
     if(!upper.hostReads.empty()||!upper.hostWrites.empty()){
       const Reason reason{"host-resource",!upper.hostReads.empty()?*upper.hostReads.begin():*upper.hostWrites.begin(),!upper.hostReads.empty()?"read":"write"};
@@ -107,6 +110,9 @@ bool verifyKernelProof(Program &p,Error &e){
     pairs.push_back(Object{{"left",ids[i]},{"right",ids[j]},{"readRead",std::move(rr)},{"writeWrite",std::move(ww)},
       {"writeRead",std::move(wr)},{"readWrite",std::move(rw)}});
   }
+  // Fixed permission failures are independent of an unavailable content
+  // proof. Report them first; no unresolved root can reach acceptance.
+  if(!unresolved.empty()){locate(unresolved.front());return need(false,e,"selected kernel fixed return/content proof remains open");}
   Json rebuilt=Object{{"inputIdentity",p.inputIdentity},{"hirDigest",p.hirHash},{"scopeDigest",field(p.publication,"scopeDigest")},
     {"publishedDigest",field(p.publication,"expectedDigest")},{"targets",field(p.request,"targets")},
     {"accesses",std::move(accesses)},{"pairs",std::move(pairs)}};

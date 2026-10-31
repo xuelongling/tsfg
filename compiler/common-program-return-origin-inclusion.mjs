@@ -1,18 +1,14 @@
 // SPDX-License-Identifier: MIT
-// A structural certificate for the ordinary v3 equation language. Failure to
+// A structural certificate for the draft4 Code/Env equation language. Failure to
 // find this certificate is OPEN, not a claim that a Source body is invalid.
 // Inputs are typed graphs from ONE admitted, immutable contract table. The
 // reader must already have checked scope/schema/group identities and complete
 // callee references; FnId here never reinterprets an older caller reference.
-// Code/Env and receiver-frame equations are not part of this language yet.
+// Receiver-frame/Host protocols remain separate and OPEN.
 
-/** @typedef {'normal'|'language'} Completion */
-/** @typedef {{kind:'parameter',type:string,index:number}|{kind:'global'|'capture',type:string,id:string}|{kind:'local'|'nonowning',type:string}|{kind:'unknown',type:null}|{kind:'join',type:string|null,inputs:number[]}|{kind:'gate',type:string|null,inputs:number[],control:number}|{kind:'projection',type:string,bases:number[],selector:string,view:string,heap:number,control:number}|{kind:'copy',type:string,bases:number[],site:string,heap:number,control:number}|{kind:'call',type:string|null,call:number,completion:Completion}} Value */
-/** @typedef {{kind:'entry'}|{kind:'join',inputs:number[]}|{kind:'store',previous:number,bases:number[],selector:string,view:string,values:number[],control:number,initialize:boolean}|{kind:'copy',previous:number,value:number}|{kind:'call',call:number,completion:Completion}} Heap */
-/** @typedef {{kind:'entry'}|{kind:'join',inputs:number[]}|{kind:'call',call:number,completion:Completion}} Control */
-/** @typedef {{functionId:string,arguments:number[][],heap:number,control:number,site:string}} Call */
-/** @typedef {{heap:number,control:number}} State */
-/** @typedef {{nodes:Value[],heaps:Heap[],controls:Control[],calls:Call[],normal:number[],language:number[],exits:{normal:State[],language:State[]},accesses:{values:number[],flag:string,control:number}[]}} Graph */
+/** @typedef {import('./common-program-return-origin-graph.mjs').Graph} Graph */
+/** @typedef {import('./common-program-return-origin-graph.mjs').Completion} Completion */
+/** @typedef {string|number|boolean|null|object} Equation */
 /** @typedef {{kind:'values',left:number[],right:number[]}|{kind:'node',left:number,right:number}|{kind:'valueChoice',left:number,right:number[]}|{kind:'heapChoice',left:number,right:number[]}|{kind:'heapAlternatives',left:number,right:number[]}|{kind:'callChoice',left:number,right:number[]}|{kind:'heap'|'call',left:number,right:number}} Obligation */
 /** @typedef {{pending:Obligation[],seen:Set<string>,copies:Map<string,string>,locals:Map<number,number>,calls:Map<number,number>}} Certificate */
 
@@ -33,13 +29,34 @@ export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
   for(const row of contracts.values()){spend();graphs.add(row.graph);}
   // Unknown is an unresolved boundary, not an implicit permission to discard
   // returned owning data. Its future host semantics must be admitted separately.
-  for(const graph of graphs)for(const row of graph.nodes){spend();if(row.kind==='unknown')return {status:'open',reason:'unknown-data-origin'};}
+  for(const graph of graphs){spend();if(graph.format.family!=='tsfg.return-origin-graph-candidate'||graph.format.version!==4)return {status:'open',reason:'graph-profile-mismatch'};
+    for(const row of graph.nodes){spend();if(row.kind==='unknown')return {status:'open',reason:'unknown-data-origin'};}}
   /** @type {Map<Graph,boolean[]>} */
   const controls=new Map();
   for(const graph of graphs){spend(graph.controls.length+1);controls.set(graph,new Array(graph.controls.length).fill(false));}
   const live=(graph,id)=>controls.get(graph)[id];
   const completes=(graph,completion)=>{for(const state of graph.exits[completion]){spend();if(live(graph,state.control))return true;}return false;};
   for(const graph of graphs)for(const row of graph.calls){spend(Math.ceil(row.functionId.length/8)+1);if(!contracts.has(row.functionId))return {status:'open',reason:'missing-fixed-call'};}
+  // Exact, owned equations have the identity simulation even when their JSON
+  // object field order differs. Compare every value and edge before accepting;
+  // this is a complete structural certificate, not a digest or FnId assertion.
+  // All typed records have at most nine fields. Charge their key vectors before
+  // allocation and charge each array edge/symbol before following/comparing it.
+  /** @type {[Equation,Equation][]} */
+  const equations=[[body,upper]];
+  let identical=true;
+  while(equations.length&&identical){spend();const [left,right]=equations.pop();
+    if(typeof left==='string'&&typeof right==='string'){if(!symbolEqual(left,right))identical=false;continue;}
+    if(left===null||right===null||typeof left!=='object'||typeof right!=='object'){if(left!==right)identical=false;continue;}
+    if(Array.isArray(left)||Array.isArray(right)){
+      if(!Array.isArray(left)||!Array.isArray(right)||left.length!==right.length){identical=false;continue;}
+      spend(left.length*2+1);for(let index=0;index<left.length;index++)equations.push([left[index],right[index]]);continue;
+    }
+    spend(19);const leftKeys=Object.keys(left),rightKeys=Object.keys(right);
+    if(leftKeys.length!==rightKeys.length){identical=false;continue;}
+    spend(leftKeys.length*2+1);for(const key of leftKeys){spend(Math.ceil(key.length/8)+1);if(!Object.hasOwn(right,key)){identical=false;break;}equations.push([/** @type {Record<string,Equation>} */(left)[key],/** @type {Record<string,Equation>} */(right)[key]]);}
+  }
+  if(identical)return {status:'covered',reason:null};
   // Continuation equations are positive booleans. Solve their LEAST fixed
   // point first; greatest simulation must not manufacture a recursive exit.
   let changed=true;
@@ -53,7 +70,7 @@ export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
     }
   }
   const valueLive=(graph,row)=>{
-    spend();if(row.kind==='gate'||row.kind==='copy'||row.kind==='projection')return live(graph,row.control);
+    spend();if(row.kind==='gate'||row.kind==='copy'||row.kind==='projection'||row.kind==='capture'||row.kind==='environmentCreate'||row.kind==='environmentParent'||row.kind==='environmentComponent'||row.kind==='code')return live(graph,row.control);
     if(row.kind==='call'){const call=graph.calls[row.call];return live(graph,call.control)&&completes(contracts.get(call.functionId).graph,row.completion);}return true;
   };
   // Epsilon unions are LEAST unions. A seedless join cycle has no atoms.
@@ -129,16 +146,21 @@ export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
         state.calls.set(task.left,task.right);if(state.seen.has(key))continue;state.seen.add(key);
         if(live(body,a.control)&&!live(upper,b.control)){failed=true;continue;}
         spend(a.arguments.length+1);for(let index=0;index<a.arguments.length;index++)state.pending.push({kind:'values',left:a.arguments[index],right:b.arguments[index]});
+        if((a.environment===null)!==(b.environment===null)||(a.callee===null)!==(b.callee===null)){failed=true;continue;}
+        if(a.environment!==null&&b.environment!==null)state.pending.push({kind:'values',left:a.environment,right:b.environment});
+        if(a.callee!==null&&b.callee!==null)state.pending.push({kind:'values',left:a.callee,right:b.callee});
         state.pending.push({kind:'heapChoice',left:a.heap,right:[b.heap]});continue;
       }
       if(task.kind==='node'){
         const a=body.nodes[task.left],b=upper.nodes[task.right];if(a.kind!==b.kind){failed=true;continue;}
         if(a.kind==='parameter'&&b.kind==='parameter'){if(a.index!==b.index)failed=true;continue;}
-        if((a.kind==='global'||a.kind==='capture')&&(b.kind==='global'||b.kind==='capture')){if(!symbolEqual(a.id,b.id))failed=true;continue;}
+        if(a.kind==='global'&&b.kind==='global'){if(!symbolEqual(a.id,b.id))failed=true;continue;}
+        if(a.kind==='environmentInput'&&b.kind==='environmentInput'){if(!symbolEqual(a.layout,b.layout))failed=true;continue;}
         if(a.kind==='unknown')continue;
-        if(a.kind==='local'&&b.kind==='local'){
-          const mapped=state.locals.get(task.left);if(!symbolEqual(a.type,b.type)||mapped!==undefined&&mapped!==task.right){failed=true;continue;}
-          state.locals.set(task.left,task.right);continue;
+        if(a.kind==='local'&&b.kind==='local'||a.kind==='environmentCreate'&&b.kind==='environmentCreate'){
+          const mapped=state.locals.get(task.left),same=a.kind==='local'&&b.kind==='local'?symbolEqual(a.type,b.type):a.kind==='environmentCreate'&&b.kind==='environmentCreate'&&symbolEqual(a.layout,b.layout);
+          if(!same||mapped!==undefined&&mapped!==task.right){failed=true;continue;}
+          state.locals.set(task.left,task.right);if(a.kind==='local')continue;
         }
         if(a.kind==='copy'&&b.kind==='copy'){
           spend(Math.ceil((a.site.length+b.site.length)/8)+1);const mapped=state.copies.get(a.site);
@@ -152,6 +174,19 @@ export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
           state.pending.push({kind:'values',left:a.bases,right:b.bases},{kind:'heapChoice',left:a.heap,right:[b.heap]});
         }else if(a.kind==='call'&&b.kind==='call'){
           if(a.completion!==b.completion){failed=true;continue;}state.pending.push({kind:'call',left:a.call,right:b.call});
+        }else if(a.kind==='capture'&&b.kind==='capture'){
+          if(!symbolEqual(a.id,b.id)||!symbolEqual(a.layout,b.layout)){failed=true;continue;}
+          state.pending.push({kind:'values',left:a.environment,right:b.environment},{kind:'heapChoice',left:a.heap,right:[b.heap]});
+        }else if(a.kind==='environmentCreate'&&b.kind==='environmentCreate'){
+          if((a.parent===null)!==(b.parent===null)){failed=true;continue;}
+          if(a.parent!==null&&b.parent!==null)state.pending.push({kind:'values',left:a.parent,right:b.parent});
+        }else if(a.kind==='environmentParent'&&b.kind==='environmentParent'){
+          if(!symbolEqual(a.layout,b.layout)){failed=true;continue;}state.pending.push({kind:'values',left:a.bases,right:b.bases});
+        }else if(a.kind==='environmentComponent'&&b.kind==='environmentComponent'){
+          if(!symbolEqual(a.layout,b.layout)||!symbolEqual(a.functionId,b.functionId)){failed=true;continue;}state.pending.push({kind:'values',left:a.callee,right:b.callee});
+        }else if(a.kind==='code'&&b.kind==='code'){
+          if(!symbolEqual(a.functionId,b.functionId)||(a.environment===null)!==(b.environment===null)){failed=true;continue;}
+          if(a.environment!==null&&b.environment!==null)state.pending.push({kind:'values',left:a.environment,right:b.environment});
         }else failed=true;
         continue;
       }

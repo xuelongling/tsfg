@@ -311,11 +311,16 @@ bool deriveInternalEffects(Program &p,const std::map<std::string,Effects> &upper
   }}while(changed);
   return e.message.empty();
 }
-bool deriveEffects(Program &p,const Json &fn,const std::map<std::string,Effects> &upper,Effects &out,Error &e){
-  Derive derive{p,fn,upper,out,e};return derive.run();
+// The caller has proved the complete fixed target closure scalar-only.
+// Reuse Source completion/effect transfer, not a return-content fallback.
+bool deriveScalarEffects(Program &p,const Json &fn,Effects &out,Error &e){
+  Derive derive{p,fn,p.fixedEffects,out,e};return derive.run();
 }
-bool deriveEffectDiagnostics(Program &p,const Json &fn,const std::map<std::string,Effects> &upper,Effects &out,Error &e,EffectDiagnostics &diagnostics){
-  Derive derive{p,fn,upper,out,e,&diagnostics};return derive.run();
+bool deriveEffects(Program &p,const Json &fn,Effects &out,Error &e){
+  return deriveFixedReturnEffects(p,fn,out,e);
+}
+bool deriveEffectDiagnostics(Program &p,const Json &fn,Effects &out,Error &e,EffectDiagnostics &diagnostics){
+  return deriveFixedReturnEffects(p,fn,out,e,&diagnostics);
 }
 Json writeEffects(const Effects &e){
   Array hostReads,hostWrites;for(const auto &id:e.hostReads)hostReads.push_back(id);for(const auto &id:e.hostWrites)hostWrites.push_back(id);

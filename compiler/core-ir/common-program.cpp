@@ -82,7 +82,8 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
 static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
   if(!p.charge(p.internalTypes.size()+p.internalOwners.size()+p.internalBindings.size()+p.internalTargets.size()+p.internalCycleTypes.size()+p.internalDeclarations.size()+p.internalEffects.size()))return reject(error,"core-ir-common-budget","internal constructor metadata release exceeded");
   p.internalTypes.clear();p.internalOwners.clear();p.internalBindings.clear();p.internalTargets.clear();p.internalCycleTypes.clear();p.internalDeclarations.clear();p.internalEffects.clear();p.internalMetadataReady=false;
-  p.remaining=std::min(p.remaining,programWorkLimit);p.hosts.clear();p.hostResources.clear();p.hostOrigins.clear();p.hostContractHash.clear();p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
+  p.remaining=std::min(p.remaining,programWorkLimit);p.hosts.clear();p.hostResources.clear();p.hostOrigins.clear();p.hostContractHash.clear();p.layouts.clear();p.referenceBodyLayouts.clear();p.effects.clear();p.fixedEffects.clear();
+  p.returnOriginContracts.reset();p.returnOriginVerified.clear();p.returnOriginPending.clear();
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
   Json events=nullptr;

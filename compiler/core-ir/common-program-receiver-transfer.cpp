@@ -48,6 +48,14 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     const auto action=name=="receiver_bind"?ReceiverAction::Bind:name=="receiver_get"?ReceiverAction::Get:ReceiverAction::Result;
     auto result=receiverCompletion(state.frames,args[0].frames,action,args.size()>1?&args[1]:nullptr);
     if(!e.message.empty())return false;if(result.pending)return reject(e,"core-ir-common-construction-open","receiver payload category remains unresolved (including ReadSpan)");
+    if(conditional&&name=="receiver_result"&&result.normal){
+      if(!step(args[0].frames.size()))return false;
+      for(const auto &id:args[0].frames){if(!receiverText(id)||!need(receiverFrames.count(id),"construction result frame is missing"))return false;
+        const auto &info=receiverFrames.at(id);if(!receiverText(info.construction)||!receiverText(info.newTarget)||!step())return false;
+        const auto key=info.construction+"/"+info.newTarget;
+        if(!recordCapacity(constructionCapacity[key],result.selected))return false;
+      }
+    }
     if(result.normal){auto after=copyState(state);if(!e.message.empty()||!overlayFrames(after.frames,result.normalFrames)||!step())return false;
       std::vector<ActualValue> values;values.push_back(copy(result.selected));if(!e.message.empty()||!edge(op.successors[0],std::move(after),values))return false;}
     if(result.language){auto after=copyState(state);if(!e.message.empty()||!overlayFrames(after.frames,result.languageFrames)||!abortInitializers(after)||!step())return false;

@@ -49,7 +49,7 @@ export function ownedClosureChoiceModel(mode='held') {
     const owner={id,name:id,sourceBinding:id,kind:'source',sourcePath:'/unit-model.ts',range,signatureHash:'unit:signature',
       parameters:parameters.filter(p=>!p.hidden),returnType:returns,lexicalParent:parent,lexicalEnvironment:environment,activationEnvironment:null},graph=createCommonGraph(model,owner),entry=graph.newBlock(parameters.map(p=>p.type)),p={owner,parameters,graph,entry,returnType:returns};
     for(const parameter of parameters)model.bindings.set(parameter.id,{...parameter,role:'parameter'});
-    model.functions.set(id,owner);plans.push(p);result.records.set(id,{upper:{globals:{reads:[],writes:[]},parameters:owner.parameters.map((_,index)=>({index,read:true,write:false,structural:false})),captures:[],facets:{unknownHost:false}}});
+    model.functions.set(id,owner);plans.push(p);result.records.set(id,{upper:{globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:owner.parameters.map((_,index)=>({index,read:true,write:false,structural:false})),captures:[],facets:{unknownHost:false}}});
     model.callables.summaries.set(id,{parameters:new Map()});return p;
   }
   const scalar=model.types.get(array).elementType,
