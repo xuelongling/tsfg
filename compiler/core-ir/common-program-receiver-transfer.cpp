@@ -60,7 +60,8 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       return copyStateWithOwnedStores(state.values,std::move(heap),std::move(regions),std::move(frames));
     };
     if(result.normal){auto after=edgeState(std::move(result.normalFrames),!result.language);if(!e.message.empty()||!step())return false;
-      std::vector<ActualValue> values;values.push_back(copy(result.selected));if(!e.message.empty()||!edge(op.successors[0],std::move(after),values))return false;}
+      // The final selected use transfers one complete Value into one vector slot.
+      std::vector<ActualValue> values;if(!step(2))return false;values.push_back(std::move(result.selected));if(!e.message.empty()||!edge(op.successors[0],std::move(after),values))return false;}
     if(result.language){auto after=edgeState(std::move(result.languageFrames),true);if(!e.message.empty()||!abortInitializers(after)||!step())return false;
       ActualValue thrown;thrown.unknown=true; // Universal language payload, not a selected receiver/object.
       if(!edge(op.successors[1],std::move(after),std::vector<ActualValue>{std::move(thrown)}))return false;}
