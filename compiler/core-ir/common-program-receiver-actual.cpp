@@ -42,10 +42,23 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   if(!step(reference->size()+member->size()+8))return nullptr;
   auto spelling=*reference+"/field/"+*member;
   if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
-  if(!empty){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.find(spelling);}
-  if(found==fieldSlotArchive.end()){
-    if((!empty&&!receiverText(spelling))||!step(4))return nullptr;
-    found=fieldSlotArchive.emplace(std::move(spelling),ActualFieldSlot{this,fieldSlotArchive.size(),nullptr}).first;
+  if(!empty){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(spelling);}
+  bool present=false;
+  if(found!=fieldSlotArchive.end()){
+    if(!step(found->first.size()+spelling.size()+1))return nullptr;present=found->first==spelling;
+  }
+  if(!present){
+    // A strict lower-bound miss supplies the insertion hint. Its two local
+    // neighbour checks still read strings; debug STL also checks each reverse
+    // predicate. Pay that bounded work before node growth, not another search.
+    if(found!=fieldSlotArchive.end()&&!step(2*(spelling.size()+found->first.size()+1)))return nullptr;
+    if(found!=fieldSlotArchive.begin()){
+      if(!step(fieldSlotArchive.size()+1))return nullptr;
+      const auto previous=std::prev(found);
+      if(!step(2*(previous->first.size()+spelling.size()+1)))return nullptr;
+    }
+    if(!step(4))return nullptr;
+    found=fieldSlotArchive.emplace_hint(found,std::move(spelling),ActualFieldSlot{this,fieldSlotArchive.size(),nullptr});
     found->second.spelling=&found->first;
   }
   if(fieldSlotAssociations.size()==fieldSlotAssociations.capacity()){
