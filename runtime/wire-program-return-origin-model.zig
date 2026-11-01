@@ -505,7 +505,7 @@ fn accessOrder(a: Access, b: Access, a_length: usize, b_length: usize, budget: *
 // A static creation site cannot represent a fresh bind-once frame when its
 // activation control depends on a cycle. Input-frame uses create no new frame.
 // All ranges and carrier roles have already been checked by validateGraph.
-fn receiverActivations(allocator: std.mem.Allocator, graph: *const Graph, budget: *Budget) Error!bool {
+pub fn receiverActivations(allocator: std.mem.Allocator, graph: *const Graph, budget: *Budget) Error!bool {
     var creates = false;
     for (graph.nodes) |node| { try budget.step(); if (node == .receiver_frame) { creates = true; break; } }
     if (!creates) return true;

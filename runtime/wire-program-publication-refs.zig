@@ -163,16 +163,18 @@ fn symbols(c: *Context, allocator: std.mem.Allocator, ids: []const t.Hash) Error
 fn optionalSymbol(c: *Context, allocator: std.mem.Allocator, id: ?t.Hash) Error!?origin.Symbol {
     try c.step(); return if (id) |value| try symbol(c, allocator, value) else null;
 }
-fn graphCharge(pointer: *anyopaque, units: usize) error{BudgetExceeded}!void {
+pub fn graphCharge(pointer: *anyopaque, units: usize) error{BudgetExceeded}!void {
     const c: *Context = @ptrCast(@alignCast(pointer)); c.charge(units) catch return error.BudgetExceeded;
 }
-fn graphFailure(err: origin.Error) Error {
+pub fn graphFailure(err: origin.Error) Error {
     return switch (err) { error.BudgetExceeded => error.WorkLimit, error.OutOfMemory => error.OutOfMemory,
         error.InvalidReference => error.InvalidReference, error.InvalidOrder => error.InvalidOrder, error.InvalidGraph => error.InvalidShape };
 }
-fn returnGraphs(c: *Context, value: model.FixedPublication) Error!void {
+// Typed projection of this same Context's owning fixed scope. Callers own the
+// allocator lifetime; this neither validates nor manufactures a second scope.
+pub fn returnOriginDirectory(c: *Context, allocator: std.mem.Allocator, value: model.FixedPublication) Error!origin.Directory {
     const owned = c.program.tables.mode.common; const fixed = value.publication.scope;
-    try c.step(); var arena = std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit(); const allocator = arena.allocator();
+    try c.step();
     try c.charge(fixed.types.len + fixed.functions.len + fixed.globals.len + fixed.environments.len + fixed.constructions.len + owned.members.fields.len + 6);
     const types = try allocator.alloc(origin.TypeRow, fixed.types.len);
     for (fixed.types, 0..) |row, i| { try c.step(); types[i] = .{ .id = try symbol(c, allocator, row.id), .kind = switch (row.shape) {
@@ -203,7 +205,11 @@ fn returnGraphs(c: *Context, value: model.FixedPublication) Error!void {
         while (index != 0) { try c.charge(20); if (std.mem.order(u8, fields[index - 1], id) == .lt) break; fields[index] = fields[index - 1]; index -= 1; }
         fields[index] = id;
     }
-    const directory: origin.Directory = .{ .types = types, .functions = functions, .globals = globals, .environments = environments, .fields = fields, .constructions = constructions };
+    return .{ .types = types, .functions = functions, .globals = globals, .environments = environments, .fields = fields, .constructions = constructions };
+}
+fn returnGraphs(c: *Context, value: model.FixedPublication) Error!void {
+    try c.step(); var arena = std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit(); const allocator = arena.allocator();
+    const directory = try returnOriginDirectory(c, allocator, value);
     var budget: origin.Budget = .{ .context = c, .charge = graphCharge };
     origin.validateDirectory(c.allocator, &directory, &budget) catch |err| return graphFailure(err);
     // Validate every supplied graph, including unavailable constructor proofs.

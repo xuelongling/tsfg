@@ -16,6 +16,9 @@ const publication = @import("wire-program-publication.zig");
 const facts = @import("wire-program-actual-facts.zig");
 const host_binding = @import("wire-program-host-binding-check.zig");
 const effect_env = @import("wire-program-effect-environments.zig");
+const origin_model = @import("wire-program-return-origin-model.zig");
+const construction_origins = @import("wire-program-return-origin-construction.zig");
+const publication_refs = @import("wire-program-publication-refs.zig");
 const t = model.types;
 const Context = facts.Context;
 pub const Error = facts.Error;
@@ -552,6 +555,34 @@ const UpperGraph = struct {
             try into.environments.pair(c, pair.key_ptr.*, &selected);
         }
     }
+    fn fixedConstructionSummary(self: *UpperGraph, target: t.FunctionRef, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners) Error!bool {
+        const collector = self.collector; const c = collector.c;
+        const contract_index = collector.contracts[@intFromEnum(target)] orelse return false;
+        const fixed = &c.program.tables.mode.common.authority.fixed_publication;
+        const graph = if (fixed.publication.contracts[contract_index].return_origins) |*value| value else return false;
+        var receiver = false;
+        for (graph.nodes) |node| { try c.step(); if (node == .receiver_input or node == .receiver_frame or node == .receiver_value) { receiver = true; break; } }
+        if (!receiver) return false;
+        // References, complete original contracts and directory ownership were
+        // checked by this same Context before Collector. Reuse their typed
+        // immutable projection; current-body AliasSummary is not fixed data.
+        var arena = std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit();
+        const directory = try publication_refs.returnOriginDirectory(c, arena.allocator(), fixed.*);
+        var budget: origin_model.Budget = .{ .context = c, .charge = publication_refs.graphCharge };
+        var analysis = construction_origins.analyze(c.allocator, &directory, graph, &budget) catch |err| return publication_refs.graphFailure(err);
+        defer analysis.deinit();
+        // Domain ready describes ONLY the original fixed graph. No independent
+        // current normalized-body <= fixed receiver-graph certificate is owned
+        // here yet (structural covered keeps that protocol Pending). In
+        // particular an ordinary current body may have no receiver operation:
+        // its old receiver guards cannot establish this missing relationship.
+        // Keep the canonical interpretation, but grant no caller origins from
+        // it and do not fall back to current-body aliases as self-evidence.
+        if (!self.summarizing) collector.fixed_upper_origin_pending = true;
+        _ = try returned.makeOpaque(c);
+        if (full.facets.may_throw) _ = try thrown.makeOpaque(c);
+        return true;
+    }
     fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
         const collector = self.collector; const c = collector.c;
         const full = if (self.summarizing) original: {
@@ -573,18 +604,23 @@ const UpperGraph = struct {
             if (access_mode.write) try self.mark(argument, .write);
             if (access_mode.structural) try self.mark(argument, .structural);
         };
+        const fixed = try self.fixedConstructionSummary(target, full, returned, thrown);
         const summary = &collector.aliases[@intFromEnum(target)];
         const project = summary.transparent and (self.summarizing or summary.available);
-        if (project and (summary.normal_seen or summary.normal_missing)) {
-            try self.projectSummary(&summary.normal, target, op, state, offset, returned);
-        } else if (!self.summarizing or !summary.transparent) {
-            _ = try returned.makeOpaque(c);
+        if (!fixed) {
+            if (project and (summary.normal_seen or summary.normal_missing)) {
+                try self.projectSummary(&summary.normal, target, op, state, offset, returned);
+            } else if (!self.summarizing or !summary.transparent) {
+                _ = try returned.makeOpaque(c);
+            }
         }
         if (full.facets.may_throw) {
-            if (project and (summary.language_seen or summary.language_missing)) {
-                try self.projectSummary(&summary.language, target, op, state, offset, thrown);
-            } else if (!self.summarizing or !summary.transparent) {
-                _ = try thrown.makeOpaque(c);
+            if (!fixed) {
+                if (project and (summary.language_seen or summary.language_missing)) {
+                    try self.projectSummary(&summary.language, target, op, state, offset, thrown);
+                } else if (!self.summarizing or !summary.transparent) {
+                    _ = try thrown.makeOpaque(c);
+                }
             }
             completions.language = true;
         }
