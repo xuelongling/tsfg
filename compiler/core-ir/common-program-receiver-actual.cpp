@@ -26,6 +26,24 @@ std::string ownedCursor(ActualCheck &c,std::shared_ptr<const std::string> &&fram
     if(!c.step())return {};c.receiverCursorIndex.push_back(&*entry);
   }return id;
 }
+template<class Directory>
+auto selectionFrameLookup(ActualCheck &c,const Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
+  if(!c.step())return std::nullopt;if(directory.empty())return directory.end();
+  if(directory.size()==1){const auto entry=directory.begin();
+    // A single full equality determines hit/miss. No lower-bound predicate
+    // followed by the opposite duplicate predicate reads the same bytes again.
+    if(!c.step(query.size()+entry->first.size()+2))return std::nullopt;
+    return entry->first==query?entry:directory.end();
+  }return paidFrameLookup(c,directory,llvm::StringRef(query));
+}
+template<class Directory>
+auto selectionLowerBound(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
+  const auto count=directory.size();size_t height=0;
+  for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return std::nullopt;height+=2;}
+  height=std::min(height,count);
+  if(!c.step(1+height+(count?height+1:0)*(2*query.size()+1)))return std::nullopt;
+  return directory.lower_bound(query);
+}
 bool data(const ActualValue &v){return v.unknown||v.callableTop||!v.tags.empty()||!v.objects.empty()||!v.callables.empty();}
 bool ordinary(ActualCheck &c,const ActualValue &v){
   if(!c.need(v.frames.empty()&&v.cursors.empty()&&v.cells.empty(),"control/Cell is not a selected language receiver"))return false;
@@ -154,39 +172,83 @@ bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &f
   for(auto &[id,value]:owned)into.insert_or_assign(id,std::move(value));return true;
 }
 ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const std::vector<ActualValue> &values,const ActualHeap &heap){
-  std::set<std::string> selected;std::vector<std::string> pending;if(!step(values.size()))return {};
+  using Entry=ActualFrameWorld::value_type;
+  struct Selection {const Entry *row;const ActualFrameInfo *info;};
+  std::map<llvm::StringRef,Selection,std::less<>> selected;std::vector<const std::string *> pending;
+  const auto append=[&](auto &queue,auto pointer){
+    if(queue.size()==queue.capacity()){
+      if(!step(queue.size()+1))return false;queue.reserve(std::max<size_t>(1,queue.size()*2));}
+    if(!step())return false;queue.push_back(pointer);return true;
+  };
+  const auto admit=[&](const std::string &id,const Entry *known,bool &fresh)->Selection *{
+    if(!step())return nullptr;fresh=false;const auto at=selectionLowerBound(*this,selected,id);if(!at)return nullptr;
+    if(*at!=selected.end()&&(*at)->first==id){if(!step())return nullptr;return &(*at)->second;}
+    const Entry *row=known;
+    if(!row){const auto found=selectionFrameLookup(*this,world,id);
+      if(!found||!need(*found!=world.end(),"selected frame is absent from completion"))return nullptr;row=&**found;}
+    const ActualFrameInfo *info=nullptr;
+    if(!known){const auto frame=selectionFrameLookup(*this,receiverFrames,id);
+      if(!frame||!need(*frame!=receiverFrames.end(),"selected frame is absent from completion"))return nullptr;info=&(*frame)->second;}
+    if(*at!=selected.end()&&!step(2*(id.size()+(*at)->first.size()+1)))return nullptr;
+    if(*at!=selected.begin()){if(!step(selected.size()+1))return nullptr;const auto previous=std::prev(*at);
+      if(!step(2*(previous->first.size()+id.size()+1)))return nullptr;}
+    // View construction/copy4, two selected pointers constructed/moved4, node1;
+    // then one fresh flag and one returned pointer. No owned ID is created.
+    if(!step(11))return nullptr;const auto inserted=selected.try_emplace(*at,llvm::StringRef(row->first),Selection{row,info});
+    fresh=true;return &inserted->second;
+  };
+  // Collect all roots/cursors first, retaining the original error-stage order.
+  if(!step(values.size()))return {};
   for(const auto &value:values){if(!step(value.frames.size()+value.cursors.size()))return {};
-    for(const auto &id:value.frames){if(!receiverText(id))return {};pending.push_back(id);}
+    for(const auto &id:value.frames)if(!append(pending,&id))return {};
     for(const auto &id:value.cursors){const auto *cursor=cursorMetadata(id);
-      if(!e.message.empty()||!need(cursor,"unknown initializer cursor"))return {};
-      const auto &parent=*cursor->frame;if(!receiverText(parent))return {};pending.push_back(parent);}}
-  for(size_t i=0;i<pending.size();++i){if(!receiverText(pending[i]))return {};const auto id=pending[i];if(!selected.insert(id).second)continue;
-    if(!need(world.count(id)&&receiverFrames.count(id),"selected frame is absent from completion"))return {};
-    const auto &parent=receiverFrames.at(id).parent;if(!parent.empty()){if(!receiverText(parent))return {};pending.push_back(parent);}}
-  // Ordinary helpers can receive an allocated object without its control Frame.
-  // Carry the matching birth journal through direct and nested data arguments.
+      if(!e.message.empty()||!need(cursor,"unknown initializer cursor"))return {};if(!append(pending,cursor->frame.get()))return {};}}
+  for(size_t i=0;i<pending.size();++i){if(!step())return {};bool fresh=false;
+    const auto row=admit(*pending[i],nullptr,fresh);if(!row)return {};
+    if(fresh&&!row->info->parent.empty()&&!append(pending,&row->info->parent))return {};}
+  // Heap-derived refs borrow only values and this block's independently owned
+  // reachable snapshot. Neither this set nor the selected views escape.
   if(!step(world.size()))return {};bool births=false;for(const auto &[id,value]:world)births|=!value.births.empty();
   if(births){auto reached=reachable(values,heap);if(!e.message.empty()||!step(values.size()+reached.size()+1))return {};
-    std::set<std::string> refs;
+    std::set<llvm::StringRef,std::less<>> refs;
     const auto objectsIn=[&](const ActualValue &value){if(!step(value.objects.size()))return false;
-      for(const auto &ref:value.objects){if(!receiverText(ref))return false;refs.insert(ref);}return true;};
+      for(const auto &ref:value.objects){const auto at=selectionLowerBound(*this,refs,ref);if(!at)return false;
+        if(*at!=refs.end()&&**at==ref)continue;
+        if(*at!=refs.end()&&!step(2*(ref.size()+(**at).size()+1)))return false;
+        if(*at!=refs.begin()){if(!step(refs.size()+1))return false;const auto previous=std::prev(*at);
+          if(!step(2*(previous->size()+ref.size()+1)))return false;}
+        if(!step(3))return false;refs.emplace_hint(*at,ref);
+      }return true;};
     for(const auto &value:values)if(!objectsIn(value))return {};
     for(const auto &[slot,value]:reached)if(!objectsIn(value))return {};
     if(!step(world.size()))return {};
-    for(const auto &[id,value]:world){if(!step(value.births.size()))return {};
-      for(const auto &[slot,row]:value.births){if(!receiverText(row.reference))return {};if(refs.count(row.reference)){
-        if(!receiverText(id))return {};selected.insert(id);break;}}}
+    for(const auto &entry:world){if(!step(entry.second.births.size()))return {};
+      for(const auto &[slot,row]:entry.second.births){const auto at=selectionLowerBound(*this,refs,row.reference);if(!at)return {};
+        if(*at!=refs.end()&&**at==row.reference){bool fresh=false;if(!admit(entry.first,&entry,fresh))return {};break;}}}
   }
-  // Add ancestors of journals selected through data, just as for controls.
-  if(!step(selected.size()))return {};pending.clear();
-  for(const auto &id:selected){if(!receiverText(id))return {};pending.push_back(id);}
-  for(size_t i=0;i<pending.size();++i){if(!step()||!need(receiverFrames.count(pending[i]),"selected birth frame is absent"))return {};
-    const auto &parent=receiverFrames.at(pending[i]).parent;if(parent.empty())continue;
-    if(!receiverText(parent)||!need(world.count(parent),"selected birth parent is absent"))return {};
-    if(selected.insert(parent).second)pending.push_back(parent);}
+  // Visit initial selections in full-key order. Resolve each row's metadata,
+  // then its parent's World before appending that parent's deferred metadata.
+  if(!step(selected.size()+1))return {};pending.clear();std::vector<Selection *> ancestry;
+  for(auto &[id,row]:selected)if(!append(ancestry,&row))return {};
+  for(size_t i=0;i<ancestry.size();++i){if(!step())return {};auto &row=*ancestry[i];
+    if(!row.info){const auto frame=selectionFrameLookup(*this,receiverFrames,row.row->first);
+      if(!frame||!need(*frame!=receiverFrames.end(),"selected birth frame is absent")||!step())return {};row.info=&(*frame)->second;}
+    const auto &parent=row.info->parent;if(parent.empty())continue;
+    const auto found=selectionFrameLookup(*this,world,parent);
+    if(!found||!need(*found!=world.end(),"selected birth parent is absent"))return {};bool fresh=false;
+    const auto next=admit(parent,&**found,fresh);if(!next)return {};
+    if(fresh&&!append(ancestry,next))return {};}
   ActualFrameWorld result;if(!step(selected.size()))return {};
-  for(const auto &id:selected){if(!receiverText(id))return {};auto next=copyFrame(world.at(id));if(!e.message.empty())return {};result.emplace(id,std::move(next));}
-  return result;
+  for(const auto &[id,row]:selected){
+    // Independent complete output key: existing copyHeap key-copy units, node,
+    // and owned binding move. All payload/history copying remains copyFrame.
+    // Full-key order proves a strict end hint. Pay its last-neighbour compare
+    // and debug reverse before the independent key/binding are constructed.
+    if(!result.empty()){if(!step(result.size()+1))return {};const auto previous=std::prev(result.end());
+      if(!step(2*(previous->first.size()+id.size()+1)))return {};}
+    if(!step(id.size()/64+3))return {};auto next=copyFrame(row.row->second);if(!e.message.empty())return {};
+    result.emplace_hint(result.end(),row.row->first,std::move(next));
+  }return result;
 }
 std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &world){
   if(!step(world.size()))return {};std::vector<ActualValue> result;result.reserve(world.size());

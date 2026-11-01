@@ -149,5 +149,133 @@ bool reconcile(){
   return true;
 }
 }
-int main(){if(!reconcile()||!indexedReconcile())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
+namespace {
+bool frameSelection(){
+  // Literal full-length identity and fixed completion budget from the actual
+  // return-transfer failure. This is a selector fixture, not Source admission.
+  const std::string id="receiver:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;
+  ActualFrameInfo info;info.owner="B";info.construction="ctor";info.newTarget="B";info.fields={"F"};info.derived=true;
+  check.receiverFrames.emplace(id,info);ActualFrameBinding binding;
+  binding.unbound=false;binding.weak=true;binding.pending=true;binding.initializing=true;binding.aborted=true;binding.prefixMin=1;binding.prefixMax=3;
+  binding.bound=payload("old");binding.bound.cells={"cell"};binding.bound.callables={{"code","env"}};binding.bound.truth=3;
+  binding.bound.unknown=true;binding.bound.callableTop=true;binding.bound.number=9007199254740993LL;
+  binding.bound.region.opaque=true;binding.bound.region.empty=true;binding.bound.region.number=9007199254740995LL;
+  world.emplace(id,binding);ActualValue root;root.frames={id};std::vector<ActualValue> roots{root};
+  const auto original=world;const auto originalRoot=root;
+  if(!expect(id.size()==80&&world.size()==1&&check.receiverFrames.size()==1&&binding.births.empty()&&info.parent.empty(),"literal80B unique frame and complete binding precede the fixed468 cutoff"))return false;
+  program.remaining=468;auto selected=check.selectFrames(world,roots,heap);
+  if(!expect(error.message.empty()&&selected.size()==1&&selected.begin()->first==id&&same(selected.begin()->second,binding)&&
+      sameMap(world,original,[](const auto &a,const auto &b){return same(a,b);})&&same(roots[0],originalRoot)&&heap.empty(),
+      "468 selects one complete owned World row with every binding/value/Region facet and immutable inputs"))return false;
+  const auto output=selected;world.at(id).bound.objects.clear();world.at(id).bound.region.roots.clear();roots[0].frames.clear();
+  check.receiverFrames.clear();
+  if(!expect(sameMap(selected,output,[](const auto &a,const auto &b){return same(a,b);}),"selected output survives input value and FrameInfo destruction"))return false;
+  const auto changedInput=world;selected.begin()->second.bound.cells.clear();selected.begin()->second.bound.callables.clear();
+  if(!expect(sameMap(world,changedInput,[](const auto &a,const auto &b){return same(a,b);}),"output mutation cannot change the independent input World"))return false;
+  world.clear();roots.clear();
+  if(!expect(selected.size()==1&&selected.begin()->first==id&&selected.begin()->second.bound.objects==std::set<std::string>{"old"},"output owns its complete frame key and payload after source World and roots are destroyed"))return false;
+  for(const size_t available:{size_t(0),size_t(128)}){Program limitedProgram;Error limitedError;ActualCheck limited{limitedProgram,limitedError};
+    limited.receiverFrames.emplace(id,info);limitedProgram.remaining=available;const auto result=limited.selectFrames(original,{root},heap);
+    if(!expect(result.empty()&&limitedError.code=="core-ir-common-budget"&&sameMap(original,ActualFrameWorld{{id,binding}},[](const auto &a,const auto &b){return same(a,b);}),"coarse hard cutoff is an error and never a successful partial selection"))return false;
+  }
+  llvm::errs()<<"PASS fixed468 literal80B frame selection, complete binding, ownership and hard cutoffs\n";return true;
+}
+bool frameSelectionClosure(){
+  {Fixture f;const auto input=f.state;auto wanted=f.state.frames;wanted.erase(f.unrelated);
+    // Cycles and duplicate Frame/cursor roots terminate while preserving both
+    // actual ancestor rows, including their full independent birth journals.
+    f.check.receiverFrames.at(f.parent).parent=f.selected;ActualValue controls;controls.frames={f.selected};controls.cursors={f.cursor,f.parentCursor};
+    f.program.remaining=200000;auto output=f.check.selectFrames(f.state.frames,{controls,controls},f.state.heap);
+    if(!expect(f.error.message.empty()&&sameMap(output,wanted,[](const auto &a,const auto &b){return same(a,b);})&&same(f.state,input),"duplicate controls and parent cycle select exactly both complete ancestors without input mutation"))return false;
+    const auto kept=output;f.state.frames.at(f.selected).births.begin()->second.real.objects.clear();f.state.frames.at(f.parent).births.clear();
+    if(!expect(sameMap(output,kept,[](const auto &a,const auto &b){return same(a,b);}),"selected birth payloads and journals own their copies independently"))return false;
+    const auto changed=f.state;output.begin()->second.births.clear();output.clear();
+    if(!expect(same(f.state,changed),"output birth mutation cannot affect input journals"))return false;
+  }
+  {Fixture f(false);for(auto &[key,binding]:f.state.frames)binding.births.clear();
+    auto real=payload("nested-data");real.truth=2;real.number=17;real.region.number=29;
+    f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{"nested",real,true});
+    f.state.frames.at(f.unrelated).births.emplace(f.slot("only","G"),ActualBirth{"not-reached",payload("excluded"),false});
+    ActualValue data;data.objects={"outer"};ActualValue nested;nested.objects={"nested"};ActualValue back;back.objects={"outer"};
+    ActualHeap heap;heap.emplace("outer/field/next",nested);heap.emplace("nested/field/back",back);heap.emplace("elsewhere/field/unused",payload("not-reached"));
+    const auto input=f.state;const auto beforeHeap=heap;auto wanted=f.state.frames;wanted.erase(f.unrelated);
+    f.program.remaining=200000;auto output=f.check.selectFrames(f.state.frames,{data},heap);
+    if(!expect(f.error.message.empty()&&sameMap(output,wanted,[](const auto &a,const auto &b){return same(a,b);})&&same(f.state,input)&&
+        sameMap(heap,beforeHeap,[](const auto &a,const auto &b){return same(a,b);})&&data.objects==std::set<std::string>{"outer"},
+        "ordinary nested data with a heap cycle retains only its matching birth journal and complete ancestor"))return false;
+  }
+  llvm::errs()<<"PASS selector duplicate/cursor/parent-cycle and birth-only nested closure subcases\n";return true;
+}
+bool frameSelectionErrors(){
+  struct Failure {unsigned mode;const char *message;};
+  const std::vector<Failure> failures={{0,"selected frame is absent from completion"},{1,"selected frame is absent from completion"},
+    {2,"unknown initializer cursor"},{3,"unknown initializer cursor"},{4,"selected frame is absent from completion"},
+    {5,"selected birth frame is absent"},{6,"selected birth parent is absent"}};
+  for(const auto &failure:failures){Fixture f(false);for(auto &[key,binding]:f.state.frames)binding.births.clear();ActualValue root;ActualHeap heap;
+    if(failure.mode==0)root.frames={"absent"};
+    if(failure.mode==1){root.frames={f.selected};f.check.receiverFrames.erase(f.selected);}
+    if(failure.mode==2||failure.mode==3)root.cursors={"absent-cursor"};
+    if(failure.mode==3)root.frames={"absent"}; // Cursor admission precedes unknown-Frame selection.
+    if(failure.mode==4){root.frames={f.selected};f.state.frames.erase(f.parent);}
+    if(failure.mode==5||failure.mode==6){root.objects={"shared"};f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{"shared",payload("birth-real"),false});
+      if(failure.mode==5)f.check.receiverFrames.erase(f.selected);else f.state.frames.erase(f.parent);}
+    const auto input=f.state;const auto before=root;f.program.remaining=200000;const auto output=f.check.selectFrames(f.state.frames,{root},heap);
+    if(!expect(output.empty()&&!f.error.code.empty()&&f.error.code!="core-ir-common-budget"&&f.error.message==failure.message&&same(f.state,input)&&same(root,before),
+        "missing Frame/cursor/birth/parent reports the original precise error and priority without mutating inputs"))return false;
+  }
+  for(const bool ancestorPresent:{false,true}){Fixture f(false);f.state.frames.clear();f.check.receiverFrames.clear();
+    ActualFrameBinding binding;binding.births.emplace(f.slot("shared","F"),ActualBirth{"shared",payload("birth-real"),false});
+    f.state.frames.emplace("A",binding);f.state.frames.emplace("B",binding);ActualFrameInfo a;a.parent="P";f.check.receiverFrames.emplace("A",a);
+    if(ancestorPresent){f.state.frames.emplace("P",ActualFrameBinding{});ActualFrameInfo b;b.parent="Q";f.check.receiverFrames.emplace("B",b);}
+    // A/B are initial birth selections in literal full lexical order. A's
+    // missing parent World precedes B's missing metadata; if P exists, B's
+    // absent Q precedes the newly queued P's missing metadata.
+    ActualValue root;root.objects={"shared"};ActualHeap heap;const auto before=f.state;const auto beforeRoot=root;f.program.remaining=200000;
+    const auto output=f.check.selectFrames(f.state.frames,{root},heap);
+    if(!expect(output.empty()&&f.error.code=="core-ir-common-actual"&&f.error.message=="selected birth parent is absent"&&same(f.state,before)&&same(root,beforeRoot)&&heap.empty(),
+        "initial birth rows preserve lexicographic metadata/parent-World errors before deferred ancestor metadata"))return false;
+  }
+  llvm::errs()<<"PASS selector missing metadata, birth ancestry, competing birth failures and mixed cursor/frame error precedence\n";return true;
+}
+bool frameSelectionDirectories(){
+  const std::vector<std::string> keys={"","a",std::string("a\0",2),std::string("a\0b",3),"aa",std::string(1,char(0x80)),std::string(1,char(0xff))};
+  for(const bool singleton:{true,false})for(size_t index=0;index<keys.size();++index){Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;
+    for(size_t row=0;row<keys.size();++row){if(singleton&&row!=index)continue;ActualFrameInfo info;info.owner="owner:"+std::to_string(row);check.receiverFrames.emplace(keys[row],info);
+      ActualFrameBinding binding;binding.bound.tags={"tag:"+std::to_string(row)};binding.bound.number=int64_t(row);binding.weak=row%2;world.emplace(keys[row],binding);}
+    ActualValue root;root.frames={keys[index]};program.remaining=200000;const auto output=check.selectFrames(world,{root},heap);
+    if(!expect(error.message.empty()&&output.size()==1&&output.begin()->first==keys[index]&&output.begin()->second.bound.tags==std::set<std::string>{"tag:"+std::to_string(index)}&&
+        output.begin()->second.bound.number==int64_t(index)&&output.begin()->second.weak==bool(index%2),"singleton and tree directories preserve full empty/NUL/prefix/unsigned-byte frame identity"))return false;
+  }
+  {Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;
+    for(size_t remaining=keys.size();remaining;--remaining){const auto index=remaining-1;ActualFrameInfo info;info.owner="owner:"+std::to_string(index);check.receiverFrames.emplace(keys[index],info);
+      ActualFrameBinding binding;binding.bound.tags={"tag:"+std::to_string(index)};binding.bound.number=int64_t(index);binding.weak=index%2;binding.prefixMin=index;binding.prefixMax=index+1;world.emplace(keys[index],binding);}
+    ActualValue root;root.frames.insert(keys.begin(),keys.end());const auto wanted=world;const auto beforeRoot=root;program.remaining=200000;
+    const auto output=check.selectFrames(world,{root},heap);std::vector<std::string> ordered;for(const auto &[id,binding]:output)ordered.push_back(id);
+    if(!expect(error.message.empty()&&ordered==keys&&sameMap(output,wanted,[](const auto &a,const auto &b){return same(a,b);})&&
+        sameMap(world,wanted,[](const auto &a,const auto &b){return same(a,b);})&&same(root,beforeRoot)&&heap.empty(),
+        "all empty/NUL/prefix/high-byte keys coexist in selected with literal full-byte lexical order and complete distinct bindings"))return false;
+  }
+  struct Miss {std::vector<std::string> stored;std::string query;};
+  const std::vector<Miss> misses={{{},"missing"},{{"a"},std::string("a\0",2)},{{std::string("a\0b",3)},"a"},
+    {{std::string(1,char(0x80))},std::string(1,char(0xff))},{keys,std::string("a\0c",3)},{keys,"ab"},{keys,std::string(1,char(0x81))}};
+  for(const auto &miss:misses){Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;
+    for(const auto &key:miss.stored){world.emplace(key,ActualFrameBinding{});check.receiverFrames.emplace(key,ActualFrameInfo{});}
+    ActualValue root;root.frames={miss.query};program.remaining=200000;const auto output=check.selectFrames(world,{root},heap);
+    if(!expect(output.empty()&&error.message=="selected frame is absent from completion"&&error.code!="core-ir-common-budget"&&world.size()==miss.stored.size()&&check.receiverFrames.size()==miss.stored.size(),
+        "empty/singleton/tree misses neither truncate identity nor publish phantom frames"))return false;
+  }
+  for(const unsigned mode:{0u,1u,2u}){Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;
+    if(mode!=0)world.emplace("wanted",ActualFrameBinding{});
+    if(mode!=1)check.receiverFrames.emplace(mode==2?"different":"wanted",ActualFrameInfo{});
+    ActualValue root;root.frames={"wanted"};program.remaining=200000;const auto output=check.selectFrames(world,{root},heap);
+    if(!expect(output.empty()&&error.message=="selected frame is absent from completion"&&error.code!="core-ir-common-budget"&&world.size()==size_t(mode!=0)&&check.receiverFrames.size()==size_t(mode!=1),
+        "World and FrameInfo empty/singleton lookup misses are independently rejected"))return false;
+  }
+  {Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;program.remaining=16;
+    if(!expect(check.selectFrames(world,{},heap).empty()&&error.message.empty(),"empty input and empty directories are a successful empty selection"))return false;}
+  llvm::errs()<<"PASS selector empty/singleton/tree hit/miss, NUL/prefix/high-byte identity\n";return true;
+}
+}
+int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
   llvm::errs()<<"1 independent group passed; old11 results reused, complete Source820b remains independent\n";return 0;}
