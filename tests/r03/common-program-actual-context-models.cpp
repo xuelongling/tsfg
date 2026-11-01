@@ -43,6 +43,35 @@ struct Fixture {
     return check.context(function.id,value.args,value.heap,true,changed,activation,false,&value.regions,"scope",&value.frames,newTarget);
   }
 };
+bool calledSeedOwnership(){
+  for(const bool limited:{true,false}){Fixture f;const std::string frame(80,'f');
+    auto metadata=f.check.receiverFrames.extract("frame");metadata.key()=frame;f.check.receiverFrames.insert(std::move(metadata));
+    auto selected=f.input.frames.extract("frame");selected.key()=frame;f.input.frames.insert(std::move(selected));f.input.args[0].frames={frame};
+    if(limited){f.input.heap.clear();f.input.regions.clear();auto &binding=f.input.frames.at(frame);binding.births.clear();
+      binding.bound=ActualValue{};binding.bound.tags={"B"};binding.bound.number=17;binding.bound.region.known=true;binding.bound.region.number=13;}
+    Operation done;done.name="func.return";f.function.blocks[0].operations.push_back(std::move(done));
+    const auto expected=f.input;bool changed=false;if(limited)f.program.remaining=1000;
+    auto *entry=f.check.context(f.function.id,f.input.args,f.input.heap,false,changed,"entry/activation",false,&f.input.regions,"scope",&f.input.frames,"B");
+    if(!expect(entry&&entry->identity&&changed&&f.error.message.empty(),"fixed1000 nonroot context publishes its sole immutable Frame seed without an extra full World cache"))return false;
+    if(!expect(entry->identity->frames.size()==1&&entry->identity->frames.count(frame)&&entry->identity->frames.at(frame).bound.number==
+        expected.frames.at(frame).bound.number,"factory identity owns the literal full80B seed and optional number"))return false;
+    if(limited)continue;
+    for(unsigned run=0;run<2;++run){changed=false;if(!expect(f.check.execute(*entry,true,changed)&&entry->normal&&f.error.message.empty(),
+        "called execution can independently rebuild the same immutable Frame seed twice"))return false;}
+    entry->normalFrames.at(frame).bound.region.roots.insert("output-mutation");f.input.frames.at(frame).bound.region.roots.insert("input-mutation");
+    const auto &seed=entry->identity->frames.at(frame);const auto &normal=entry->normalFrames.at(frame);
+    if(!expect(!seed.unbound&&!seed.weak&&!seed.pending&&!seed.initializing&&!seed.aborted&&seed.prefixMin==0&&seed.prefixMax==0&&
+        seed.bound.tags==std::set<std::string>{"B"}&&seed.bound.objects==std::set<std::string>{"object:B"}&&seed.bound.region.roots==std::set<std::string>{"origin"}&&
+        seed.births.size()==1&&seed.births.at(f.birthSlot).reference=="object:B"&&seed.births.at(f.birthSlot).pending&&
+        seed.births.at(f.birthSlot).real.tags==std::set<std::string>{"i32"}&&!normal.bound.region.roots.count("input-mutation")&&
+        !f.input.frames.at(frame).bound.region.roots.count("output-mutation"),"execution/output/caller mutations retain full independent seed flags, payload, region and birth history"))return false;
+    changed=false;if(!expect(f.check.context(f.function.id,expected.args,expected.heap,false,changed,"entry/activation",false,&expected.regions,"scope",&expected.frames,"B")==entry&&
+        !changed&&f.error.message.empty(),"execution does not alter the immutable full-context interner identity"))return false;
+    f.check.receiverFrames.clear();f.input.frames.clear();
+    if(!expect(entry->identity->frames.begin()->first==frame&&entry->identity->frames.at(frame).bound.region.roots==std::set<std::string>{"origin"},
+        "immutable seed owns full keys and payload after input World and FrameInfo destruction"))return false;
+  }return true;
+}
 bool reuseAndOwnership(){
   Fixture f;bool changed=false;auto *first=f.intern(f.input,changed);
   if(!expect(first&&changed&&f.error.message.empty(),"first identity inserted"))return false;
@@ -52,11 +81,11 @@ bool reuseAndOwnership(){
   const auto original=f.input;
   f.input.frames.at("frame").bound.region.roots.insert("later");f.input.heap.at("object:B/field/F").tags.insert("later");
   f.input.regions.at("origin").emplace("later",RegionValue{});
-  first->arguments.clear();first->entry.clear();first->entryFrames.clear();first->entryRegions.clear();
+  first->arguments.clear();first->entry.clear();first->entryRegions.clear();
   changed=false;if(!expect(f.intern(original,changed)==first&&!changed,"root execution refresh and caller mutation do not change immutable identity"))return false;
   if(!expect(!first->identity->frames.at("frame").bound.region.roots.count("later")&&
     !first->identity->heap.at("object:B/field/F").tags.count("later")&&!first->identity->regions.at("origin").count("later"),"snapshot owns all nested storage"))return false;
-  return true;
+  return calledSeedOwnership();
 }
 bool hiddenRegionsAndBirths(){
   Fixture f;bool changed=false;auto *base=f.intern(f.input,changed);if(!base)return false;

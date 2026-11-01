@@ -133,8 +133,9 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   ActualState entry;
   if(!context.root)entry.heap=copyHeap(context.entry);
   entry.regions=regionCopy(*this,context.entryRegions);
-  // Roots rebuild their World below; only called activations use its snapshot.
-  if(!context.root)entry.frames=copyFrames(context.entryFrames);
+  // Called activations copy the immutable identity World directly; a second
+  // context-owned seed cache would duplicate exactly the same full snapshot.
+  if(!context.root){if(!step())return false;entry.frames=copyFrames(context.identity->frames);}
   if(context.root){
     entry.heap.clear();context.arguments.clear();
     for(const auto &[id,g]:globals){

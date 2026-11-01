@@ -154,7 +154,7 @@ struct ActualContext {
   std::string activation;bool repeated=true;
   std::string region;RegionHeap entryRegions,normalRegions,languageRegions;
   std::set<std::string> callers;
-  ActualFrameWorld entryFrames,normalFrames,languageFrames;
+  ActualFrameWorld normalFrames,languageFrames;
   std::string constructionNewTarget;
 };
 // This state is rebuilt from matched public instructions and independently

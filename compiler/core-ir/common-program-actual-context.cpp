@@ -95,7 +95,6 @@ ActualContext *ActualCheck::context(const std::string &target,const std::vector<
   // the immutable identity later compared by this invocation interner.
   if(!step(incoming.arguments.size()))return nullptr;for(const auto &v:incoming.arguments)c.arguments.push_back(copy(v));
   c.entry=copyHeap(incoming.heap);
-  if(!root)c.entryFrames=copyFrames(incoming.frames);
   c.entryRegions=regionCopy(*this,incoming.regions);
   if(!e.message.empty()||!step(id.size()/64+3))return nullptr;
   c.identity=std::make_unique<const ActualContextIdentity>(std::move(incoming));
