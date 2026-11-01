@@ -30,16 +30,19 @@ pub const HostBundle = @import("wire-program-host-binding-check.zig").Bundle;
 pub const Error = context.Error || effects_check.FinishError || host_artifact.Error;
 const Context = context.Context;
 
-// One budget belongs to the complete traversal; helpers cannot refill it.
-// The returned count is accounting only, never a retained verified handle.
+// The caller owns this traversal's remaining budget; helpers cannot refill it.
+// Return this phase's charge, not prior decoding work or a verified handle.
 // Host-free callers explicitly pass null. Host callers supply complete typed
 // records; their presence alone is no proof. The compiled-anchor check below
 // owns verification, before any material enters the one solve/final replay.
-pub fn check(allocator: std.mem.Allocator, program: *const model.Program, material: ?*const HostBundle) Error!usize {
+pub fn check(allocator: std.mem.Allocator, program: *const model.Program, material: ?*const HostBundle, remaining: *usize) Error!usize {
+    if (remaining.* > model.format.max_work) return error.WorkLimit;
     // This overlay changes required Common fields and control meaning. Until
     // Root adopts a complete newer exact format/hash, wire17 fails closed.
     if (program.tables.mode == .common and model.format.version <= 17) return error.WrongMode;
-    var c = Context{ .program = program, .allocator = allocator };
+    const initial = remaining.*;
+    var c = Context{ .program = program, .allocator = allocator, .remaining = initial };
+    defer remaining.* = c.remaining;
     try c.charge(12);
     model.requireFormat(program.envelope, program.target) catch return error.InvalidShape;
     try c.require(program.tables.sources.len > 0 and program.tables.sources.len <= 128 and
@@ -93,7 +96,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     actual = try targets_check.analyze(&c, material, &observers);
     try borrowing.finish();
     try effects.finish();
-    return model.format.max_work - c.remaining;
+    return initial - c.remaining;
 }
 
 fn physicalParameters(c: *Context, index: usize) Error!usize {

@@ -115,9 +115,11 @@ const Reader=struct{
 // This function is source-only/typechecked in the current candidate. Its byte
 // slice signature is not permission to invoke it on original or test packets.
 // Success conveys ownership and exact syntactic shape, never semantic proof.
-pub fn readOwned(allocator:std.mem.Allocator,borrowed:[]const u8)Error!model.OwnedProgram{
+// remaining belongs to the calling boundary; failures also retain all charges.
+pub fn readOwned(allocator:std.mem.Allocator,borrowed:[]const u8,remaining:*usize)Error!model.OwnedProgram{
+    if(remaining.*>model.format.max_work)return error.WorkLimit;
     if(borrowed.len<80 or borrowed.len>model.format.max_bytes)return error.PacketLimit;
-    var meter=json.Meter{};try meter.bytes(borrowed.len);
+    var meter=json.Meter{.remaining=remaining.*};defer remaining.*=meter.remaining;try meter.bytes(borrowed.len);
     var arena=std.heap.ArenaAllocator.init(allocator);errdefer arena.deinit();
     const encoded=try arena.allocator().dupe(u8,borrowed);
     var decoder=json.Decoder{.allocator=arena.allocator(),.meter=&meter};var reader=Reader{.bytes=encoded,.decoder=&decoder};
