@@ -62,12 +62,13 @@ public:
   template<class Key,class Value> auto insert_or_assign(Key&& key,Value&& value){return entries_.insert_or_assign(std::forward<Key>(key),std::forward<Value>(value));}
   void clear(){fields_.clear();entries_.clear();}
 private:
-  struct FieldNode {const std::string *key;ActualValue *value;};
+  struct FieldNode {const std::string *key;ActualValue *value;std::shared_ptr<const std::string> identity;};
   struct FieldTarget {ActualValue *value=nullptr;bool inserted=false;};
   Directory entries_;std::vector<FieldNode> fields_;
-  bool appendField(ActualCheck &,iterator);
-  bool rememberField(ActualCheck &,iterator);
-  FieldTarget fieldTarget(ActualCheck &,const std::string &);
+  bool appendField(ActualCheck &,iterator,const std::shared_ptr<const std::string> &);
+  bool retargetField(ActualCheck &,FieldNode &,const std::shared_ptr<const std::string> &);
+  bool rememberField(ActualCheck &,iterator,const std::shared_ptr<const std::string> &);
+  FieldTarget fieldTarget(ActualCheck &,const std::shared_ptr<const std::string> &);
   friend struct ActualCheck;
 };
 // Compiler control identities never inhabit the ordinary tag/object domain.
@@ -80,9 +81,10 @@ struct ActualReceiverWrite {bool success=false,matched=false;};
 // A birth default is not a real write or a permission. Keep prior instance
 // data separately so a definite definition consumes only its temporary default.
 struct ActualBirth {std::string reference;ActualValue real;bool pending=true;};
-// Analysis-only symbols. The archive owns each complete physical spelling;
-// tokens do not replace physical IDs or prove an allocation/permission.
-struct ActualFieldSlot {const void *owner=nullptr;size_t ordinal=0;const std::string *spelling=nullptr;};
+// Analysis-only symbols. Immutable complete spellings can outlive their
+// archive through an owning Heap index. Tokens themselves still expire with
+// the archive and never replace physical IDs or prove a permission.
+struct ActualFieldSlot {const void *owner=nullptr;size_t ordinal=0;std::shared_ptr<const std::string> spelling;};
 struct ActualFieldSlotLess {
   bool operator()(const ActualFieldSlot *a,const ActualFieldSlot *b)const{
     return a->owner==b->owner?a->ordinal<b->ordinal:std::less<const void *>{}(a->owner,b->owner);
@@ -165,7 +167,9 @@ struct ActualCheck {
   ActualObjectDirectory objects;
   // Stable throughout a solve and its final Borrow replay. Destroy context
   // Worlds before these symbols, and symbols before their directory keys.
-  std::map<std::string,ActualFieldSlot> fieldSlotArchive;
+  // Every view borrows its mapped Slot's immutable spelling. That mapped
+  // owner is initialized once on insertion and is never reassigned.
+  std::map<llvm::StringRef,ActualFieldSlot> fieldSlotArchive;
   std::vector<ActualFieldSlotAssociation> fieldSlotAssociations;
   std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds;
   std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity,constructionCapacity;

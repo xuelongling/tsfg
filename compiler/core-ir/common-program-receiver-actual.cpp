@@ -73,9 +73,10 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
       if(!append){if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(found);}
       if(!step(2*(previous->first.size()+spelling.size()+1)))return nullptr;
     }
-    if(!step(4))return nullptr;
-    found=fieldSlotArchive.emplace_hint(found,std::move(spelling),ActualFieldSlot{this,fieldSlotArchive.size(),nullptr});
-    found->second.spelling=&found->first;
+    if(!step(4)||!step(8))return nullptr;
+    auto owned=std::make_shared<const std::string>(std::move(spelling));
+    const llvm::StringRef view(*owned);
+    found=fieldSlotArchive.emplace_hint(found,view,ActualFieldSlot{this,fieldSlotArchive.size(),std::move(owned)});
   }
   if(fieldSlotAssociations.size()==fieldSlotAssociations.capacity()){
     if(!step(fieldSlotAssociations.size()*4+1))return nullptr;

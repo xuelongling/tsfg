@@ -180,7 +180,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       if(!need(member!=fields.end(),"actual field lacks an independently verified nominal member mapping")){e.path=fn.path;e.range=op.range;return false;}
       const ActualFieldSlot *token=nullptr;std::string localSlot;const std::string *slotText;
       if(name=="field_store"&&!state.frames.empty()){
-        if(!receiverText(ref)||!receiverText(selected))return false;token=fieldSlot(receiver,member);if(!e.message.empty())return false;slotText=token->spelling;
+        if(!receiverText(ref)||!receiverText(selected))return false;token=fieldSlot(receiver,member);if(!e.message.empty())return false;slotText=token->spelling.get();
       }else{localSlot=ref+"/field/"+selected;slotText=&localSlot;}
       const auto &slot=*slotText;auto stored=state.heap.find(slot);
       if(name=="field_load"){if(stored!=state.heap.end())merge(value,stored->second);else merge(value,literal(typeId("undefined")));

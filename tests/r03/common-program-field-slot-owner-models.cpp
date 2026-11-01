@@ -324,6 +324,64 @@ bool birthCoveredStores(){
   }
   llvm::errs()<<"PASS birth-covered strong-store, no-birth/weak/uncertain/ancestor/alias/clone/Region/ordinary/budget subcases\n";return true;
 }
+bool heapKeyIdentity(){
+  for(const bool longKey:{false,true}){Symbols f;
+    const std::string reference=longKey?std::string(165,'r'):"object",fieldId=longKey?"sha256:"+std::string(64,'d'):"F",key=reference+"/field/"+fieldId;
+    if(longKey){f.check.objects.emplace(reference,ActualObject{"T",false});const auto row=f.check.builtins.emplace("long-field",Object{{"id",fieldId},{"type","T"},{"sourceBinding","long-raw"}}).first;
+      f.check.fields.emplace(fieldId,&row->second);}
+    const auto token=f.get(reference,fieldId);ActualHeap heap;
+    if(!expect(token&&f.error.message.empty()&&key.size()==(longKey?243:14)&&*token->spelling==key,"factory owns the complete SSO14 or long243 canonical spelling"))return false;
+    const auto row=f.check.fieldSlotArchive.find(key);
+    if(!expect(row!=f.check.fieldSlotArchive.end()&&row->first==llvm::StringRef(key)&&row->first.data()==token->spelling->data(),
+        "archive view borrows its own immutable mapped string after construction, including SSO storage"))return false;
+    if(!expect(f.check.defaultField(heap,*token,false)&&f.error.message.empty(),"fresh real default creation registers the canonical identity"))return false;
+    const auto original=heapPayload();heap.insert_or_assign(std::string(key),original);auto incoming=heapPayload();incoming.number=9007199254740995LL;incoming.region.number=73;
+    const auto expected=incoming;f.program.remaining=64;
+    if(!expect(f.check.putField(heap,*token,incoming,true)&&f.error.message.empty()&&sameHeapValue(heap.at(key),expected),
+        "first unwarmed registered SSO/long identity hit fits64 without a487 full-key comparison or payload loss"))return false;
+    incoming.objects.clear();incoming.region.roots.clear();incoming.number.reset();
+    if(!expect(sameHeapValue(heap.at(key),expected),"first identity hit copies all mutable payload planes independently"))return false;
+  }
+  {Symbols f;const auto first=f.get("object","F/field/G"),alias=f.get("object/field/F","G");ActualHeap heap;
+    if(!expect(first&&alias&&first==alias&&first->spelling==alias->spelling&&f.check.defaultField(heap,*first,false),"complete component aliases share one canonical identity"))return false;
+    const auto value=heapPayload();f.program.remaining=64;
+    if(!expect(f.check.putField(heap,*alias,value,true)&&f.error.message.empty()&&sameHeapValue(heap.at("object/field/F/field/G"),value),"canonical alias reaches this Heap's own current node"))return false;
+  }
+  for(unsigned lifetime=0;lifetime<3;++lifetime)for(const bool limited:{false,true}){ // Check destruction, solve reset, two live owners.
+    ActualHeap heap;std::weak_ptr<const std::string> oldIdentity;auto prior=std::make_unique<Symbols>();
+    {const auto token=prior->get("object","F");if(!expect(token&&prior->check.defaultField(heap,*token,false),"old owner establishes its real indexed Heap"))return false;
+      oldIdentity=token->spelling;heap.at("object/field/F")=heapPayload();}
+    std::unique_ptr<Symbols> next;Symbols *current;
+    if(lifetime==1){if(!expect(prior->check.solve(false)&&prior->error.message.empty()&&prior->check.contexts.empty()&&prior->check.fieldSlotArchive.empty(),"real solve clears the old archive without consuming the independent Heap"))return false;
+      prior->check.objects.emplace("object",ActualObject{"T",false});current=prior.get();}
+    else {if(lifetime==0)prior.reset();next=std::make_unique<Symbols>();current=next.get();}
+    if(!expect(!oldIdentity.expired()&&sameHeapValue(heap.at("object/field/F"),heapPayload()),"old Heap retains immutable key bytes and all data with a live, reset or destroyed original owner"))return false;
+    const auto token=current->get("object","F");const auto replacement=heapPayload();
+    if(!expect(token&&current->error.message.empty(),"current owner independently creates its same-text canonical symbol"))return false;
+    if(limited)current->program.remaining=32; // Fast hit+full payload fits; the required same-text fallback comparison cannot.
+    const bool ok=current->check.putField(heap,*token,replacement,true);
+    if(limited){if(!expect(!ok&&current->error.code=="core-ir-common-budget"&&!oldIdentity.expired()&&sameHeapValue(heap.at("object/field/F"),heapPayload()),
+        "same text from a new universe cannot forge an identity hit; complete fallback budget error retains the prior binding"))return false;}
+    else {if(!expect(ok&&current->error.message.empty()&&oldIdentity.expired()==(lifetime!=2)&&sameHeapValue(heap.at("object/field/F"),replacement),
+        "full canonical fallback retargets the one own-node identity and releases the obsolete Heap reference"))return false;}
+    if(lifetime==2)prior.reset();heap.clear();if(!expect(oldIdentity.expired(),"clear releases the last old identity without touching any expired Slot"))return false;
+  }
+  for(const bool limited:{false,true}){Symbols f;const auto token=f.get("object","F");ActualHeap heap;const auto original=heapPayload();heap.emplace("object/field/F",original);
+    auto replacement=original;replacement.number=61;if(limited)f.program.remaining=64;
+    const bool ok=f.check.putField(heap,*token,replacement,true);
+    if(limited){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&sameHeapValue(heap.at("object/field/F"),original),"generic text-only node has no unearned identity cache and retains full fallback cost"))return false;}
+    else if(!expect(ok&&f.error.message.empty()&&sameHeapValue(heap.at("object/field/F"),replacement),"generic complete-key fallback binds and updates the existing own node"))return false;
+  }
+  for(const bool assign:{false,true}){Symbols f;ActualHeap source;std::weak_ptr<const std::string> identity;
+    {const auto token=f.get("object","F");if(!expect(token&&f.check.defaultField(source,*token,false),"move-lifetime source owns a real registered identity"))return false;identity=token->spelling;source.at("object/field/F")=heapPayload();}
+    ActualHeap copied(source),moved(std::move(source)),destination;
+    if(assign)destination=std::move(moved);
+    if(!expect(f.check.solve(false)&&f.error.message.empty()&&!identity.expired(),"move destination independently retains identity beyond archive clear"))return false;
+    source.clear();if(assign)destination.clear();else moved.clear();
+    if(!expect(identity.expired()&&sameHeapValue(copied.at("object/field/F"),heapPayload()),"copy owns full canonical/data storage without retaining the source index; move clear releases the identity"))return false;
+  }
+  llvm::errs()<<"PASS immutable Heap-key SSO/long/alias/foreign/reset/clone/move/fallback/budget subcases\n";return true;
+}
 bool ownedSlots(){
   Symbols f;const auto first=f.get("object","F");
   if(!expect(first&&f.error.message.empty()&&first->owner==&f.check&&*first->spelling=="object/field/F","owned pair preserves its complete physical spelling"))return false;
@@ -353,7 +411,7 @@ bool ownedSlots(){
   Symbols badObject;if(!expect(!badObject.check.fieldSlot(badObject.check.objects.end(),badObject.check.fields.find("F"))&&badObject.error.code=="core-ir-common-actual","missing object directory entry is a hard ownership error"))return false;
   Symbols badField;if(!expect(!badField.check.fieldSlot(badField.check.objects.find("object"),badField.check.fields.end())&&badField.error.code=="core-ir-common-actual","missing field directory entry is a hard ownership error"))return false;
   Symbols limited;limited.program.remaining=0;
-  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership()&&birthCoveredStores();
+  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership()&&birthCoveredStores()&&heapKeyIdentity();
 }
 }
 int main(){if(!ownedSlots())return 1;llvm::errs()<<"PASS owned physical field-slot spelling, alias, identity, reset and errors\n";return 0;}

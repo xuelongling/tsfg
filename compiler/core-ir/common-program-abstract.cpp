@@ -94,26 +94,37 @@ bool ActualCheck::recordCapacity(CapacityValue &to,const ActualValue &from){
   for(const auto &[code,environment]:from.callables)to.hasEnvironment|=!environment.empty();
   return need(to.tags.size()<=256,"conditional capacity tag limit exceeded");
 }
-bool ActualHeap::appendField(ActualCheck &c,iterator node){
+bool ActualHeap::appendField(ActualCheck &c,iterator node,const std::shared_ptr<const std::string> &identity){
   if(fields_.size()==fields_.capacity()){
-    if(!c.step(fields_.size()*2+1))return false;fields_.reserve(fields_.capacity()?fields_.capacity()*2:1);
+    if(!c.step(fields_.size()*4+1))return false;fields_.reserve(fields_.capacity()?fields_.capacity()*2:1);
   }
-  if(!c.step(2))return false;fields_.push_back({&node->first,&node->second});return true;
+  // Prepay the node pointers, shared reference copy and its eventual release.
+  if(!c.step(6))return false;fields_.push_back({&node->first,&node->second,identity});return true;
 }
-bool ActualHeap::rememberField(ActualCheck &c,iterator node){
-  for(const auto &entry:fields_){if(!c.step(3))return false;if(entry.key==&node->first)return true;}
-  return appendField(c,node);
+bool ActualHeap::retargetField(ActualCheck &c,FieldNode &entry,const std::shared_ptr<const std::string> &identity){
+  if(!c.step())return false;if(entry.identity==identity)return true;
+  if(!c.step(6))return false;entry.identity=identity;return true;
 }
-ActualHeap::FieldTarget ActualHeap::fieldTarget(ActualCheck &c,const std::string &key){
+bool ActualHeap::rememberField(ActualCheck &c,iterator node,const std::shared_ptr<const std::string> &identity){
+  for(auto &entry:fields_){if(!c.step(3))return false;if(entry.key==&node->first)return retargetField(c,entry,identity);}
+  return appendField(c,node,identity);
+}
+ActualHeap::FieldTarget ActualHeap::fieldTarget(ActualCheck &c,const std::shared_ptr<const std::string> &identity){
   if(!c.step())return {};
   for(const auto &entry:fields_){
-    if(!c.step(3)||!c.step(entry.key->size()+key.size()+1))return {};
-    if(*entry.key!=key)continue;if(!c.step(2))return {};return {entry.value,false};
+    if(!c.step(3)||!c.step())return {};
+    if(entry.identity!=identity)continue;if(!c.step(2))return {};return {entry.value,false};
   }
-  // Cache misses retain the original complete-key directory operation. The
-  // index never stores a SlotToken or a pointer into another heap's nodes.
+  // Identity inequality says nothing about canonical text across owners or
+  // resets. Keep the complete original text-index and directory fallback.
+  const auto &key=*identity;
+  for(auto &entry:fields_){
+    if(!c.step(3)||!c.step(entry.key->size()+key.size()+1))return {};
+    if(*entry.key!=key)continue;
+    if(!retargetField(c,entry,identity)||!c.step(2))return {};return {entry.value,false};
+  }
   if(!c.receiverText(key))return {};auto [node,inserted]=entries_.try_emplace(key);
-  if(!appendField(c,node)||!c.step(2))return {};return {&node->second,inserted};
+  if(!appendField(c,node,identity)||!c.step(2))return {};return {&node->second,inserted};
 }
 bool ActualCheck::defaultField(ActualHeap &heap,const ActualFieldSlot &slot,bool repeated){
   const auto &key=*slot.spelling;if(!receiverText(key))return false;
@@ -121,15 +132,15 @@ bool ActualCheck::defaultField(ActualHeap &heap,const ActualFieldSlot &slot,bool
   ActualHeap::iterator node;
   if(!repeated)node=heap.entries_.insert_or_assign(key,std::move(missing)).first;
   else {auto inserted=heap.entries_.try_emplace(key,std::move(missing));node=inserted.first;if(!inserted.second)merge(node->second,missing);}
-  if(!e.message.empty())return false;return heap.rememberField(*this,node);
+  if(!e.message.empty())return false;return heap.rememberField(*this,node,slot.spelling);
 }
 bool ActualCheck::putField(ActualHeap &heap,const ActualFieldSlot &slot,const ActualValue &value,bool strong){
-  const auto target=heap.fieldTarget(*this,*slot.spelling);if(!target.value)return false;
+  const auto target=heap.fieldTarget(*this,slot.spelling);if(!target.value)return false;
   if(strong||target.inserted)*target.value=copy(value);else merge(*target.value,value);
   return e.message.empty();
 }
 bool ActualCheck::putOwnedField(ActualHeap &heap,const ActualFieldSlot &slot,ActualValue &&value){
-  const auto target=heap.fieldTarget(*this,*slot.spelling);
+  const auto target=heap.fieldTarget(*this,slot.spelling);
   if(!target.value||!e.message.empty()||!step())return false;
   *target.value=std::move(value);return true;
 }
