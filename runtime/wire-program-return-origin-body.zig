@@ -7,7 +7,7 @@ const context = @import("wire-program-refcheck-context.zig");
 const refs = @import("wire-program-publication-refs.zig");
 const origin = @import("wire-program-return-origin-model.zig");
 const t = wire.types;
-pub const Pending = enum { mode, control_flow, entry_protocol, raw_input, operation, view, archive_type, literal_protocol, receiver_fields, implicit_protocol, archive_construction };
+pub const Pending = enum { mode, control_flow, entry_protocol, raw_input, operation, view, archive_type, literal_protocol, receiver_fields, implicit_protocol, archive_construction, archive_field, archive_global, global_payload, span_transfer, array_view };
 pub const Projection = struct {
     // Node storage is owned here; type symbols borrow Directory, which must
     // outlive this projection (the real consumer's arena encloses both).
@@ -44,6 +44,7 @@ const Builder = struct {
 const RefList = std.ArrayListUnmanaged(origin.Ref);
 const Flow = struct { heap: origin.Ref, control: origin.Ref };
 const CFG = struct {
+    const FieldAddress = struct { id: origin.Symbol, view: origin.Symbol };
     b: *Builder, f: *const wire.Function,
     heaps: std.ArrayListUnmanaged(origin.Heap) = .empty, controls: std.ArrayListUnmanaged(origin.Control) = .empty,
     values: []RefList, incoming_heaps: []RefList, incoming_controls: []RefList,
@@ -132,18 +133,9 @@ const CFG = struct {
         if (into.items.len == into.capacity) try self.b.c.charge(into.items.len + 1);
         try into.insert(self.b.allocator, at, .{ .heap = flow.heap, .control = flow.control });
     }
-    fn scalarField(self: *CFG, index: t.FieldRef) context.Error!?struct { id: origin.Symbol, view: origin.Symbol } {
-        const v = &self.b.c.program.tables.mode.common; const field = &v.members.fields[@intFromEnum(index)];
-        const binding = &v.storage.bindings[@intFromEnum(field.binding)];
-        try self.b.c.charge(6);
-        // A fixed native scalar slot has no Value/string/managed clone duty.
-        // This bounds the transfer, not the actual payload's category (which
-        // is separately established from its defining instruction below).
-        if (v.types[@intFromEnum(field.owner)].kind != .reference or v.types[@intFromEnum(field.@"type")].kind != .scalar or
-            field.declared_type != field.@"type" or binding.@"type" != field.@"type" or
-            binding.carrier != .@"type" or binding.carrier.@"type" != field.@"type") { self.b.pending = .receiver_fields; return null; }
-        _ = try self.b.typeSymbol(field.@"type") orelse return null;
-        const view = try self.b.typeSymbol(field.owner) orelse return null;
+    fn fieldAddress(self: *CFG, index: t.FieldRef, receiver_view: t.TypeRef) context.Error!?FieldAddress {
+        const field = &self.b.c.program.tables.mode.common.members.fields[@intFromEnum(index)];
+        const view = try self.b.typeSymbol(receiver_view) orelse return null;
         const id = try refs.symbol(self.b.c, self.b.allocator, field.id);
         self.b.budget.lookup(self.b.directory.fields.len, id.len) catch |err| return refs.graphFailure(err);
         var lo: usize = 0; var hi = self.b.directory.fields.len;
@@ -154,19 +146,26 @@ const CFG = struct {
                 .eq => { try self.b.c.charge(3); return .{ .id = self.b.directory.fields[mid], .view = view }; },
             }
         }
-        self.b.pending = .receiver_fields; return null;
+        self.b.pending = .archive_field; return null;
     }
-    fn scalarStore(self: *CFG, flow: Flow, field: t.FieldRef, receiver: t.RegisterRef, payload: t.RegisterRef) context.Error!Flow {
-        const row = try self.scalarField(field) orelse return flow;
-        const bases = try self.one(self.registerRef(receiver)); const values = try self.one(self.registerRef(payload));
-        // Exact original semantic selector, not an offset or capacity route.
-        try self.b.c.charge(row.id.len + 7); const selector = try std.mem.concat(self.b.allocator, u8, &.{ "field:", row.id });
-        const next = try self.heap(.{ .store = .{ .previous = flow.heap, .bases = bases, .selector = selector, .view = row.view, .values = values, .control = flow.control, .initialize = true } });
-        // The source Graph records the write access as well as its heap edge.
+    fn scalarField(self: *CFG, index: t.FieldRef) context.Error!?FieldAddress {
+        const v = &self.b.c.program.tables.mode.common; const field = &v.members.fields[@intFromEnum(index)];
+        const binding = &v.storage.bindings[@intFromEnum(field.binding)];
+        try self.b.c.charge(6);
+        // A fixed native scalar slot has no Value/string/managed clone duty.
+        // This bounds the transfer, not the actual payload's category (which
+        // is separately established from its defining instruction below).
+        if (v.types[@intFromEnum(field.owner)].kind != .reference or v.types[@intFromEnum(field.@"type")].kind != .scalar or
+            field.declared_type != field.@"type" or binding.@"type" != field.@"type" or
+            binding.carrier != .@"type" or binding.carrier.@"type" != field.@"type") { self.b.pending = .receiver_fields; return null; }
+        _ = try self.b.typeSymbol(field.@"type") orelse return null;
+        return self.fieldAddress(index, field.owner);
+    }
+    fn access(self: *CFG, flow: Flow, bases: []const origin.Ref, flag: origin.AccessFlag) context.Error!void {
         // Canonical keys order by decimal JSON text, not numeric Ref order.
         // Count/render, allocation, comparisons and both list shifts are paid.
         try self.b.c.charge(2 * (80 + 24 * (bases.len + 1)));
-        const key = try std.json.Stringify.valueAlloc(self.b.allocator, .{ .control = flow.control, .flag = "write", .values = bases }, .{});
+        const key = try std.json.Stringify.valueAlloc(self.b.allocator, .{ .control = flow.control, .flag = @tagName(flag), .values = bases }, .{});
         var at: usize = 0; var found = false;
         while (at < self.access_keys.items.len) : (at += 1) {
             try self.b.c.step(); try self.b.c.charge(key.len / 8 + self.access_keys.items[at].len / 8 + 2);
@@ -177,10 +176,58 @@ const CFG = struct {
             try self.b.c.charge(2 * (self.access_keys.items.len - at + 1) + 4);
             if (self.accesses.items.len == self.accesses.capacity) try self.b.c.charge(self.accesses.items.len + 1);
             if (self.access_keys.items.len == self.access_keys.capacity) try self.b.c.charge(self.access_keys.items.len + 1);
-            try self.accesses.insert(self.b.allocator, at, .{ .values = bases, .flag = .write, .control = flow.control });
+            try self.accesses.insert(self.b.allocator, at, .{ .values = bases, .flag = flag, .control = flow.control });
             try self.access_keys.insert(self.b.allocator, at, key);
         }
+    }
+    fn store(self: *CFG, flow: Flow, bases: []const origin.Ref, selector: origin.Symbol, view: origin.Symbol, values: []const origin.Ref, initialize: bool) context.Error!Flow {
+        try self.access(flow, bases, .write);
+        const next = try self.heap(.{ .store = .{ .previous = flow.heap, .bases = bases, .selector = selector, .view = view, .values = values, .control = flow.control, .initialize = initialize } });
         try self.b.c.charge(3); return .{ .heap = next, .control = flow.control };
+    }
+    fn fieldSelector(self: *CFG, id: origin.Symbol) context.Error!origin.Symbol {
+        // Original semantic identity, never an offset or capacity route.
+        try self.b.c.charge(id.len + 7); return std.mem.concat(self.b.allocator, u8, &.{ "field:", id });
+    }
+    fn scalarStore(self: *CFG, flow: Flow, field: t.FieldRef, receiver: t.RegisterRef, payload: t.RegisterRef) context.Error!Flow {
+        const row = try self.scalarField(field) orelse return flow;
+        return self.store(flow, try self.one(self.registerRef(receiver)), try self.fieldSelector(row.id), row.view, try self.one(self.registerRef(payload)), true);
+    }
+    fn select(self: *CFG, flow: Flow, bases: []const origin.Ref, selector: origin.Symbol, view: origin.Symbol, result_type: origin.Symbol) context.Error!origin.Ref {
+        try self.access(flow, bases, .read);
+        return self.b.value(.{ .projection = .{ .@"type" = result_type, .bases = bases, .selector = selector, .view = view, .heap = flow.heap, .control = flow.control } });
+    }
+    fn site(self: *CFG, function_id: origin.Symbol, op: *const wire.instruction.Instruction, block: usize, ordinal: usize) context.Error!origin.Symbol {
+        try self.b.c.charge(128); const suffix = try std.fmt.allocPrint(self.b.allocator, "body-copy:{d}:{d}", .{ block, ordinal });
+        try self.b.c.charge(2 * (function_id.len + suffix.len + 64));
+        return std.json.Stringify.valueAlloc(self.b.allocator, .{ function_id, op.source.start, op.source.end, suffix }, .{});
+    }
+    fn global(self: *CFG, index: t.GlobalRef) context.Error!?origin.Ref {
+        const row = &self.b.c.program.tables.mode.common.modules.globals[@intFromEnum(index)];
+        const view = try self.b.typeSymbol(row.@"type") orelse return null;
+        const id = try refs.symbol(self.b.c, self.b.allocator, row.id);
+        self.b.budget.lookup(self.b.directory.globals.len, id.len) catch |err| return refs.graphFailure(err);
+        var lo: usize = 0; var hi = self.b.directory.globals.len;
+        while (lo < hi) {
+            const mid = lo + (hi - lo) / 2; const original = &self.b.directory.globals[mid];
+            switch (std.mem.order(u8, original.id, id)) {
+                .lt => lo = mid + 1, .gt => hi = mid,
+                .eq => {
+                    if (!(self.b.budget.equal(original.@"type", view) catch |err| return refs.graphFailure(err))) break;
+                    return try self.b.value(.{ .global = .{ .@"type" = view, .id = original.id } });
+                },
+            }
+        }
+        self.b.pending = .archive_global; return null;
+    }
+    fn arrayView(self: *CFG, receiver: t.RegisterRef) context.Error!?origin.Symbol {
+        const ref = self.f.registers[@intFromEnum(receiver)].view orelse { self.b.pending = .view; return null; };
+        try self.b.c.step();
+        // A span needs its backing-owner/start projection, which is not an
+        // Array identity. This is an interpretation gate, not an Actual tag.
+        const kind = self.b.c.program.tables.mode.common.types[@intFromEnum(ref)].kind;
+        if (kind != .array) { self.b.pending = if (kind == .readSpan) .span_transfer else .array_view; return null; }
+        return self.b.typeSymbol(ref);
     }
     fn construction(self: *CFG, index: t.ConstructionIndex) context.Error!?origin.Symbol {
         const v = &self.b.c.program.tables.mode.common; const current = &v.members.constructions[@intFromEnum(index)];
@@ -357,7 +404,11 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     for (f.blocks) |*block| { try c.step(); for (block.instructions) |*op| {
         try c.step(); switch (op.data) {
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
-            .br, .cond_br, .eh_pack, .@"return", .eh_raise, .eh_unreachable => {},
+            .br, .cond_br, .eh_pack, .@"return", .eh_raise, .eh_unreachable,
+            .global_load, .domain_field_read, .domain_field_store, .domain_array_read, .domain_array_store, .domain_array_length, .domain_array_resize,
+            .common_typed_array_create, .domain_array_create, .domain_copy => {},
+            .global_store => { result.pending = .global_payload; return result; },
+            .domain_read_span => { result.pending = .span_transfer; return result; },
             .add, .sub, .mul, .div, .rem, .shl, .shr, .ushr, .@"and", .@"or", .xor, .neg, .@"not", .pos, .bool_not, .eq, .ne, .lt, .le, .gt, .ge => {
                 // These native operations produce an i32 (or native bool)
                 // on success, independently of the operands' Source views.
@@ -394,9 +445,10 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
         try cfg.insert(&cfg.values[@intFromEnum(reg)], input);
     }
     if (builder.pending) |reason| { result.pending = reason; return result; }
+    const function_id = try refs.symbol(c, a, f.id);
     for (f.blocks, 0..) |*block, block_index| {
-        try c.row(Flow); const flow = cfg.blocks[block_index];
-        for (block.instructions) |*op| {
+        try c.row(Flow); var flow = cfg.blocks[block_index];
+        for (block.instructions, 0..) |*op, ordinal| {
         try c.step(); switch (op.data) {
             .fuel => {}, // Request fuel control is not a Graph5 language exit.
             .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal => {
@@ -431,6 +483,77 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
                 // Actual packing retains the complete Data atom/category. A
                 // payload carrier is not a new primitive/undefined literal.
                 try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control);
+            },
+            .domain_copy => |row| {
+                // The real opcode copies actual Value children, retaining
+                // reference/code identities. Its full Source view does not
+                // choose the actual category or erase the cloning heap edge.
+                const view = try builder.typeSymbol(row.static_view) orelse break;
+                const copied = try builder.value(.{ .copy = .{ .@"type" = view, .bases = try cfg.one(cfg.registerRef(op.operands[0])), .site = try cfg.site(function_id, op, block_index, ordinal), .heap = flow.heap, .control = flow.control } });
+                flow.heap = try cfg.heap(.{ .copy = .{ .previous = flow.heap, .value = copied } });
+                try cfg.define(op.result.?, copied, flow.control);
+            },
+            .global_load => |row| {
+                // Graph.global denotes the owned global root. No store is
+                // admitted in this body, and calls cannot replace its payload.
+                const value = try cfg.global(row.global) orelse break;
+                try cfg.access(flow, try cfg.one(value), .read);
+                try cfg.define(op.result.?, value, flow.control);
+            },
+            .domain_field_read => |row| {
+                const field = try cfg.fieldAddress(row.member, row.receiver_view) orelse break;
+                const view = try builder.view(f, op.result.?) orelse break;
+                const selected = try cfg.select(flow, try cfg.one(cfg.registerRef(op.operands[0])), try cfg.fieldSelector(field.id), field.view, view);
+                try cfg.define(op.result.?, selected, flow.control);
+            },
+            .domain_field_store => |row| {
+                const field = try cfg.fieldAddress(row.member, row.receiver_view) orelse break;
+                flow = try cfg.store(flow, try cfg.one(cfg.registerRef(op.operands[0])), try cfg.fieldSelector(field.id), field.view, try cfg.one(cfg.registerRef(op.operands[1])), false);
+            },
+            .domain_array_read => {
+                const view = try cfg.arrayView(op.operands[0]) orelse break;
+                const result_type = try builder.view(f, op.result.?) orelse break;
+                // The original Graph protocol intentionally merges indices
+                // into one element selector. Every index definition remains
+                // in the complete graph; no sampled bound prunes the load.
+                const selected = try cfg.select(flow, try cfg.one(cfg.registerRef(op.operands[0])), "element", view, result_type);
+                try cfg.define(op.result.?, selected, flow.control);
+            },
+            .domain_array_store => |row| {
+                _ = try cfg.arrayView(op.operands[0]) orelse break;
+                const view = try builder.typeSymbol(row.receiver_view) orelse break;
+                const bases = try cfg.one(cfg.registerRef(op.operands[0]));
+                flow = try cfg.store(flow, bases, "element", view, try cfg.one(cfg.registerRef(op.operands[2])), false);
+                try cfg.access(flow, bases, .structural);
+            },
+            .domain_array_length => {
+                _ = try cfg.arrayView(op.operands[0]) orelse break;
+                try cfg.access(flow, try cfg.one(cfg.registerRef(op.operands[0])), .read);
+                const view = try builder.view(f, op.result.?) orelse break;
+                // Successful Array length is a native scalar by opcode,
+                // independently of the retained view. Request traps have no
+                // normal/language completion, just as for native arithmetic.
+                const value = try builder.value(.{ .literal = .{ .@"type" = view, .category = .other } });
+                try cfg.define(op.result.?, value, flow.control);
+            },
+            .domain_array_resize => |row| {
+                _ = try cfg.arrayView(op.operands[0]) orelse break;
+                _ = try builder.typeSymbol(row.receiver_view) orelse break;
+                const bases = try cfg.one(cfg.registerRef(op.operands[0]));
+                try cfg.access(flow, bases, .write); try cfg.access(flow, bases, .structural);
+                // Source Graph5 has no length/index-delete cell. Its May heap
+                // retains former element owners after a shrink; no alias is
+                // erased or fabricated. The real structural write is kept.
+            },
+            inline .common_typed_array_create, .domain_array_create => |row| {
+                const actual = try builder.typeSymbol(row.actual_array_type) orelse break;
+                const value = try builder.value(.{ .local = .{ .@"type" = actual } });
+                var elements: RefList = .empty;
+                for (op.operands) |reg| { try c.step(); try cfg.insert(&elements, cfg.registerRef(reg)); }
+                // Value clones are separate current SSA domain_copy ops. Do
+                // not add an AST-inspired copy or drop an existing one.
+                flow = try cfg.store(flow, try cfg.one(value), "element", actual, elements.items, true);
+                try cfg.define(op.result.?, value, flow.control);
             },
             .add, .sub, .mul, .div, .rem, .shl, .shr, .ushr, .@"and", .@"or", .xor, .neg, .@"not", .pos, .bool_not, .eq, .ne, .lt, .le, .gt, .ge => {
                 const reg = op.result.?; const view = try builder.view(f, reg) orelse break;
