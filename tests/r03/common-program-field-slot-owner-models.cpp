@@ -236,6 +236,94 @@ bool cursorFactoryOwnership(){
         "fresh first cursor miss fits1200 after one owned-frame move; old2003 duplicate-copy path cannot fit"))return false;}
   llvm::errs()<<"PASS cursor factory canonical/owned-input/alias/first-gate/copy-budget subcases\n";return true;
 }
+bool sameBirthWorld(const ActualFrameWorld &a,const ActualFrameWorld &b){
+  if(a.size()!=b.size())return false;auto right=b.begin();
+  for(const auto &[id,v]:a){const auto &[other,w]=*right++;
+    if(id!=other||v.unbound!=w.unbound||v.weak!=w.weak||v.pending!=w.pending||v.initializing!=w.initializing||v.aborted!=w.aborted||
+        v.prefixMin!=w.prefixMin||v.prefixMax!=w.prefixMax||!sameHeapValue(v.bound,w.bound)||v.births.size()!=w.births.size())return false;
+    auto birth=w.births.begin();for(const auto &[slot,row]:v.births){const auto &[otherSlot,otherRow]=*birth++;
+      if(slot!=otherSlot||row.reference!=otherRow.reference||row.pending!=otherRow.pending||!sameHeapValue(row.real,otherRow.real))return false;}
+  }return true;
+}
+bool birthCoveredStores(){
+  const std::string undefined="sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b";
+  // strong matched, no birth, HeapWeak overflow, receiver unknown/Top,
+  // clone without index, false-phase RegionStore, ordinary store, Bottom, alias.
+  for(unsigned mode=0;mode<11;++mode){
+    Symbols f;const bool alias=mode==9,ordinary=mode==7,uncertain=mode==3||mode==4;
+    const std::string reference=alias?"object/field/F":"object",fieldId=alias?"G":"F",key=reference+"/field/"+fieldId;
+    auto &type=*f.check.builtins.at("T").getAsObject();type["fields"]=Array{*f.check.fields.at("F"),*f.check.fields.at("G")};
+    type["construction"]=Object{{"initializationFields",Array{fieldId}}};
+    const auto token=f.get(reference,fieldId),other=f.get("second","G");if(!expect(token&&other&&f.error.message.empty(),"covered-store owned symbols established"))return false;
+    if(alias&&!expect(f.get("object","F/field/G")==token,"independent component pairs denote the exact same full canonical slot"))return false;
+    Function function;function.id="birth-covered-store";function.blocks.resize(1);ActualContext context;context.function=&function;context.activation="owned-invocation";context.repeated=false;
+    ActualState state;const auto parent=f.check.createFrame(state.frames,context.activation,"parent","T","ctor:T","T",false);
+    const auto frame=f.check.createFrame(state.frames,context.activation,"child","T","ctor:T","T",false,parent);
+    if(!expect(!parent.empty()&&!frame.empty()&&f.error.message.empty(),"owned parent and selected frame established"))return false;
+    ActualValue receiver;receiver.tags={"T"};receiver.objects={reference};receiver.region.known=true;receiver.region.roots={"root:receiver"};
+    ActualValue oldValue;oldValue.tags={"T"};oldValue.objects={"old-data"};oldValue.truth=1;oldValue.number=9007199254740993LL;
+    oldValue.region.known=true;oldValue.region.roots={"root:old"};oldValue.region.number=37;
+    ActualValue incoming;incoming.tags={"T"};incoming.objects={"new-data"};incoming.truth=2;incoming.number=9007199254740994LL;
+    incoming.region.known=true;incoming.region.roots={"root:new"};incoming.region.number=41;if(mode==8)incoming=ActualValue{};
+    for(const auto &id:{parent,frame}){auto &binding=state.frames.at(id);binding.bound=receiver;binding.unbound=false;binding.initializing=true;}
+    if(mode!=1){state.frames.at(frame).births.emplace(token,ActualBirth{"wrong-selected-reference",oldValue,true});
+      state.frames.at(parent).births.emplace(token,ActualBirth{"wrong-ancestor-reference",oldValue,true});}
+    state.frames.at(parent).births.emplace(other,ActualBirth{"unrelated-original-reference",oldValue,true});
+    if(!expect(f.check.defaultField(state.heap,*token,false)&&f.check.defaultField(state.heap,*other,false)&&f.error.message.empty(),"original default nodes registered"))return false;
+    state.heap.insert_or_assign(key,oldValue);state.heap.insert_or_assign("second/field/G",oldValue);state.heap.emplace("global:untouched",heapPayload());
+    if(mode==2){f.check.objects.at(reference).weak=true;auto &full=state.heap.at(key);full.tags.clear();for(unsigned i=0;i<256;++i)full.tags.insert("old-tag:"+std::to_string(i));}
+    if(mode==5){auto clone=f.check.copyHeap(state.heap);if(!expect(f.error.message.empty(),"independent clone discards source index"))return false;state.heap=std::move(clone);}
+    if(mode==6){f.check.regions.nodes.emplace("root:receiver",RegionNode{"region",reference,"T"});f.check.regions.nodes.emplace("root:new",RegionNode{"region","new-data","T"});
+      state.regions["root:receiver"].emplace("/field/"+fieldId,oldValue.region);}
+    const auto bound=receiver;if(mode==3)receiver.unknown=true;if(mode==4)receiver.callableTop=true;
+    ActualValue controls;controls.cursors={f.check.receiverCursor(frame,0)};if(!expect(f.error.message.empty(),"initial selected cursor established"))return false;
+    const auto input=state;const auto receiverBefore=receiver,incomingBefore=incoming,controlsBefore=controls;auto expected=state;
+    Operation op;op.name=ordinary?"field_store":"initialize_field";op.properties=Object{{"field",fieldId}};bool changed=false,continues=true;ActualValue output;size_t edges=0;
+    const auto edge=[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;};
+    if(mode==10)f.program.remaining=0; // All owned fixtures/snapshots precede the tested cutoff.
+    bool ok;if(ordinary){state.values.emplace(0,receiver);state.values.emplace(1,incoming);expected.values=state.values;op.operands={0,1};ok=f.check.instruction(context,op,0,state,true,changed,edge,continues);}
+    else{std::vector<const ActualValue*> args{&controls,&receiver,&incoming};ok=f.check.receiverInstruction(context,op,0,state,ActualOperands{args},mode!=6,changed,edge,output,continues);}
+    if(mode==2||mode==10){if(!expect(!ok&&f.error.code==(mode==2?"core-ir-common-actual":"core-ir-common-budget")&&edges==0&&output.cursors.empty(),
+        "weak257 merge or hard budget failure cannot publish a completed initializer or fallback"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&edges==0&&continues,"real covered initializer or ordinary store completes"))return false;
+    ActualValue real=incoming;if(uncertain){real=oldValue;real.objects={"old-data","new-data"};real.truth=3;real.number.reset();real.region.roots={"root:old","root:new"};real.region.number.reset();}
+    ActualValue selected=real;if(uncertain){selected.tags.insert(undefined);selected.region.empty=true;}
+    if(mode!=1)for(const auto &id:{parent,frame}){expected.frames.at(id).births.at(token).real=real;expected.frames.at(id).births.at(token).pending=uncertain;}
+    if(!ordinary)expected.frames.at(frame).prefixMin=expected.frames.at(frame).prefixMax=1;
+    auto otherValue=oldValue;if(!ordinary){otherValue.tags.insert(undefined);otherValue.number.reset();otherValue.region.empty=true;otherValue.region.number.reset();}
+    expected.heap.insert_or_assign(key,mode==1?incoming:selected);expected.heap.insert_or_assign("second/field/G",otherValue);
+    if(mode==6)expected.regions.at("root:receiver").at("/field/"+fieldId)=incoming.region;
+    if(!expect(sameBirthWorld(state.frames,expected.frames)&&state.heap.size()==3&&sameHeapValue(state.heap.at(key),expected.heap.at(key))&&
+        sameHeapValue(state.heap.at("second/field/G"),expected.heap.at("second/field/G"))&&sameHeapValue(state.heap.at("global:untouched"),heapPayload()),
+        "full ancestor Worlds, wrong references, Bottom/pending-U, clone/alias and untouched Heap planes match independent literal results"))return false;
+    if(!expect(sameHeapValue(receiver,receiverBefore)&&sameHeapValue(incoming,incomingBefore)&&sameHeapValue(controls,controlsBefore)&&
+        sameHeapValue(state.frames.at(frame).bound,bound)&&!f.check.receiverRouteOpen,"all borrowed inputs and bound payload remain independent and owned route remains direct"))return false;
+    if(!expect(state.values.size()==expected.values.size(),"instruction retains every SSA node"))return false;
+    for(const auto &[reg,value]:expected.values)if(!expect(sameHeapValue(state.values.at(reg),value),"all existing SSA value planes remain complete"))return false;
+    if(mode==6){const auto &relation=state.regions.at("root:receiver").at("/field/"+fieldId);
+      if(!expect(relation.roots==std::set<std::string>{"root:new"}&&relation.number==41&&relation.known&&!relation.opaque&&!relation.empty&&state.regions.size()==1,
+          "false-phase RegionStore still records the actual current relation before tail reconciliation"))return false;}
+    else if(!expect(state.regions.empty(),"no relation plane is invented in other cases"))return false;
+    if(ordinary){if(!expect(output.cursors.empty()&&state.frames.at(frame).prefixMax==0&&sameHeapValue(state.heap.at(key),incoming),"ordinary matched-birth field_store still writes Heap immediately without initializer reconciliation"))return false;}
+    else if(!expect(output.cursors.size()==1&&f.check.receiverCursors.at(*output.cursors.begin()).frame==frame&&f.check.receiverCursors.at(*output.cursors.begin()).position==1,
+        "normal initializer advances its original selected frame to the next cursor"))return false;
+    std::vector<std::string> ordered;for(const auto &[slot,value]:state.heap)ordered.push_back(slot);
+    if(!expect(ordered==std::vector<std::string>{"global:untouched",key,"second/field/G"},"full canonical Heap lexicographic order is preserved"))return false;
+    state.heap.at(key).objects.insert("output-only");state.frames.at(parent).births.clear();
+    if(!expect(sameHeapValue(input.heap.at(key),oldValue)&&input.frames.at(parent).births.size()==(mode==1?1:2)&&sameHeapValue(incoming,incomingBefore),
+        "successful mutable outputs do not alias the independent input snapshot or SSA payload"))return false;
+  }
+  for(unsigned mode=0;mode<4;++mode){Symbols f;const auto token=f.get("object","F"),other=f.get("second","G");ActualFrameWorld world;
+    world["frame"].births.emplace(mode==0?other:token,ActualBirth{"independent-reference",heapPayload(),true});const auto before=world;const auto incoming=heapPayload();
+    if(mode>=2)f.program.remaining=mode==2?0:4;
+    const auto written=f.check.receiverWrite(world,*token,incoming,true);
+    if(mode>=2){if(!expect(!written.success&&f.error.code=="core-ir-common-budget","write-result budget failure is not successful matched or absent-birth authority"))return false;}
+    else if(!expect(written.success&&written.matched==(mode==1)&&f.error.message.empty()&&(mode==1||sameBirthWorld(world,before)),"explicit success/matched result distinguishes a real birth from no matching row"))return false;
+    if(mode==1&&!expect(sameHeapValue(world.at("frame").births.at(token).real,incoming)&&!world.at("frame").births.at(token).pending&&
+        world.at("frame").births.at(token).reference=="independent-reference","matched result preserves complete payload and the independent birth reference"))return false;
+  }
+  llvm::errs()<<"PASS birth-covered strong-store, no-birth/weak/uncertain/ancestor/alias/clone/Region/ordinary/budget subcases\n";return true;
+}
 bool ownedSlots(){
   Symbols f;const auto first=f.get("object","F");
   if(!expect(first&&f.error.message.empty()&&first->owner==&f.check&&*first->spelling=="object/field/F","owned pair preserves its complete physical spelling"))return false;
@@ -252,7 +340,7 @@ bool ownedSlots(){
   ActualFrameWorld world;world["frame"].births.emplace(alias,ActualBirth{"original-reference",oldValue,true});
   world["ancestor"].births.emplace(aliasPair,ActualBirth{"ancestor-reference",oldValue,true});
   world["frame"].births.emplace(first,ActualBirth{"unrelated-reference",oldValue,true});
-  if(!expect(f.check.receiverWrite(world,*aliasPair,replacement,true)&&f.error.message.empty(),"actual write accepts the owned canonical alias symbol"))return false;
+  if(!expect(f.check.receiverWrite(world,*aliasPair,replacement,true).success&&f.error.message.empty(),"actual write accepts the owned canonical alias symbol"))return false;
   const auto &a=world.at("frame").births.at(alias),&b=world.at("ancestor").births.at(aliasPair),&unrelated=world.at("frame").births.at(first);
   if(!expect(a.real.objects==replacement.objects&&b.real.objects==replacement.objects&&a.real.number==replacement.number&&b.real.number==replacement.number&&!a.pending&&!b.pending&&
     a.reference=="original-reference"&&b.reference=="ancestor-reference"&&unrelated.reference=="unrelated-reference"&&unrelated.pending&&unrelated.real.objects==oldValue.objects,
@@ -265,7 +353,7 @@ bool ownedSlots(){
   Symbols badObject;if(!expect(!badObject.check.fieldSlot(badObject.check.objects.end(),badObject.check.fields.find("F"))&&badObject.error.code=="core-ir-common-actual","missing object directory entry is a hard ownership error"))return false;
   Symbols badField;if(!expect(!badField.check.fieldSlot(badField.check.objects.find("object"),badField.check.fields.end())&&badField.error.code=="core-ir-common-actual","missing field directory entry is a hard ownership error"))return false;
   Symbols limited;limited.program.remaining=0;
-  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership();
+  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership()&&birthCoveredStores();
 }
 }
 int main(){if(!ownedSlots())return 1;llvm::errs()<<"PASS owned physical field-slot spelling, alias, identity, reset and errors\n";return 0;}

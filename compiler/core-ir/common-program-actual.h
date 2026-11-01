@@ -76,6 +76,7 @@ struct ActualFrameInfo {
   std::vector<std::string> fields;
 };
 struct ActualCursorInfo {std::string frame;size_t position=0;};
+struct ActualReceiverWrite {bool success=false,matched=false;};
 // A birth default is not a real write or a permission. Keep prior instance
 // data separately so a definite definition consumes only its temporary default.
 struct ActualBirth {std::string reference;ActualValue real;bool pending=true;};
@@ -229,7 +230,7 @@ struct ActualCheck {
   const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualFieldDirectory::const_iterator);
   ActualFieldSlotMatch existingFieldSlot(const std::string &,ActualFieldDirectory::const_iterator);
   bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
-  bool receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
+  ActualReceiverWrite receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const ActualCursorInfo &,const ActualFieldSlot &);
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);
   std::string createFrame(ActualFrameWorld &,const std::string &,const std::string &,const std::string &,const std::string &,const std::string &,bool,const std::string &parent={});

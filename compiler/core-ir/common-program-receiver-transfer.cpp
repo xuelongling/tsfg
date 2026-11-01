@@ -99,8 +99,12 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       receiverRouteOpen|=!direct;
       const auto token=existing.slot?existing.slot:fieldSlot(selected,member);if(!e.message.empty())return false;
       if(definite){if(!step())return false;definedSlot=token;}
-      const bool strong=!object->weak&&args[1].objects.size()==1;if(!receiverWrite(state.frames,*token,args[2],strong&&!args[1].unknown&&!args[1].callableTop))return false;
-      if(!putField(state.heap,*token,args[2],strong))return false;
+      const bool strong=!object->weak&&args[1].objects.size()==1;
+      const auto written=receiverWrite(state.frames,*token,args[2],strong&&!args[1].unknown&&!args[1].callableTop);
+      if(!written.success||!step())return false;
+      // Matching birth data is reconciled below before any successful observer.
+      // Only a strong Heap overwrite is redundant; weak merging stays here.
+      if((!strong||!written.matched)&&!putField(state.heap,*token,args[2],strong))return false;
       if(!conditional&&!regionStore(*this,regionValue(*this,args[1]),"/field/"+fieldId,regionValue(*this,args[2]),state.regions))return false;
     }
     const ActualCursorInfo *definedCursor=nullptr;

@@ -187,7 +187,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         if(!conditional){auto receiver=regionValue(*this,args[0]);for(auto it=receiver.roots.begin();it!=receiver.roots.end();)if(regions.nodes.at(*it).reference!=ref)it=receiver.roots.erase(it);else ++it;
           regionMerge(*this,projected,regionLoad(*this,receiver,"/field/"+selected,state.regions));}}
       else{const bool strong=!object.weak&&args[0].objects.size()==1;
-        if(token&&!receiverWrite(state.frames,*token,args[1],strong&&!args[0].unknown&&!args[0].callableTop))return false;if(!put(slot,args[1],strong))return false;
+        if(token){const auto written=receiverWrite(state.frames,*token,args[1],strong&&!args[0].unknown&&!args[0].callableTop);
+          if(!written.success)return false;}
+        if(!put(slot,args[1],strong))return false;
         const auto raw=string(field(*member->second,"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);
         if(!conditional&&!regionStore(*this,regionValue(*this,args[0]),"/field/"+selected,regionValue(*this,args[1]),state.regions,!transport))return false;}
     }if(args[0].unknown)value.unknown=true;

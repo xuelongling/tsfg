@@ -204,12 +204,13 @@ bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,co
   }
   return true;
 }
-bool ActualCheck::receiverWrite(ActualFrameWorld &world,const ActualFieldSlot &slot,const ActualValue &input,bool strong){
-  if(!step(world.size()))return false;
-  for(auto &[id,value]:world){if(!step())return false;auto row=value.births.find(&slot);if(row==value.births.end())continue;
+ActualReceiverWrite ActualCheck::receiverWrite(ActualFrameWorld &world,const ActualFieldSlot &slot,const ActualValue &input,bool strong){
+  if(!step(world.size()+1))return {};bool matched=false;
+  for(auto &[id,value]:world){if(!step())return {};auto row=value.births.find(&slot);if(row==value.births.end())continue;
+    if(!step())return {};matched=true;
     if(strong){row->second.real=copy(input);row->second.pending=false;}else merge(row->second.real,input);
-    if(!e.message.empty())return false;}
-  return true;
+    if(!e.message.empty())return {};}
+  if(!e.message.empty()||!step(2))return {};return {true,matched};
 }
 bool ActualCheck::receiverDefine(ActualFrameWorld &world,const ActualCursorInfo &cursor,const ActualFieldSlot &slot){
   const auto own=world.find(cursor.frame);
