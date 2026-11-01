@@ -6,7 +6,6 @@ const ctx = @import("wire-program-refcheck-context.zig");
 const t = @import("wire-program-types.zig");
 const model = @import("wire-program-publication.zig");
 const origin = @import("wire-program-return-origin-model.zig");
-const storage_bounds = @import("wire-program-storage-bounds.zig");
 const Context = ctx.Context;
 const Error = ctx.Error;
 const HashSet = std.AutoHashMapUnmanaged(t.Hash, void);
@@ -73,7 +72,9 @@ fn scope(c: *Context, value: model.StableScope, functions: *const HashSet, types
     var environment_ids = try build(c, value.environments, "id", 4096, true); defer environment_ids.deinit(c.allocator); var module_ids = try build(c, value.modules, "id", 128, false); defer module_ids.deinit(c.allocator);
     var host_ids = try build(c, value.host_imports, "id", 128, true); defer host_ids.deinit(c.allocator);
     try c.charge(value.types.len + 1); var labels: StringSet = .{}; defer labels.deinit(c.allocator); try labels.ensureTotalCapacity(c.allocator, @intCast(value.types.len));
-    for (value.types) |row| { try c.row(@TypeOf(row)); try hashRef(c, row.id, types); try c.text(row.label, 1048576, 1); if (labels.getOrPutAssumeCapacity(row.label).found_existing) return error.InvalidOrder; }
+    // The archive owns its own interpretations, including removed private
+    // nonnominal types. Only declarations must also exist in the current HIR.
+    for (value.types) |row| { try c.row(@TypeOf(row)); try c.text(row.label, 1048576, 1); if (labels.getOrPutAssumeCapacity(row.label).found_existing) return error.InvalidOrder; }
     for (value.types) |row| { try shape(c, row.shape, &labels); switch (row.shape) { inline else => |v| { try c.charge(1 + row.label.len / 64 + v.label.len / 64); try c.require(std.mem.eql(u8, row.label, v.label)); } } }
     var slot_count: usize = 0; for (value.environments) |env| { try c.step(); try c.require(env.slots.len <= 65536 - slot_count); slot_count += env.slots.len; }
     try c.charge(slot_count + 1); var all_slots: HashSet = .{}; defer all_slots.deinit(c.allocator); try all_slots.ensureTotalCapacity(c.allocator, @intCast(slot_count));
@@ -88,6 +89,7 @@ fn scope(c: *Context, value: model.StableScope, functions: *const HashSet, types
         try bound(c, row.slots.len, 65536); var previous: ?t.Hash = null; for (row.slots) |slot| { try c.row(@TypeOf(slot)); try hashRef(c, slot.@"type", types); if (previous) |p| if (std.mem.order(u8, &p, &slot.key) != .lt) return error.InvalidOrder; previous = slot.key; }
     }
     try hashRefs(c, value.declaration_types, types, 4096, .sorted);
+    try hashRefs(c, value.declaration_types, &type_ids, 4096, .sorted);
     var construction_ids = try build(c, value.constructions, "id", 4096, true); defer construction_ids.deinit(c.allocator);
     const owned = c.program.tables.mode.common;
     try c.require(value.constructions.len == owned.members.constructions.len);
@@ -116,6 +118,20 @@ fn scope(c: *Context, value: model.StableScope, functions: *const HashSet, types
             try c.require(entry.function_id != null and std.mem.eql(u8, &entry.function_id.?, &row.function_id));
             try c.require(std.mem.eql(u8, &entry.owner, &metadata.owner) and std.meta.eql(entry.base, metadata.base));
         }
+    }
+    var field_ids = try build(c, owned.members.fields, "id", 65536, true); defer field_ids.deinit(c.allocator);
+    try c.require(value.storage.fields.len == owned.members.fields.len);
+    var prior_field: ?t.Hash = null;
+    for (value.storage.fields) |row| {
+        try c.row(@TypeOf(row)); try hashRef(c, row.field_id, &field_ids);
+        if (prior_field) |prior| if (std.mem.order(u8, &prior, &row.field_id) != .lt) return error.InvalidOrder;
+        prior_field = row.field_id; try hashRefs(c, row.actual_types, &type_ids, 4096, .sorted);
+    }
+    var prior_result: ?[2]t.Hash = null;
+    for (value.storage.results) |row| {
+        try c.row(@TypeOf(row)); try hashRef(c, row.construction, &construction_ids); try hashRef(c, row.new_target, &type_ids); try hashRef(c, row.new_target, types);
+        if (prior_result) |prior| { const order = std.mem.order(u8, &prior[0], &row.construction); if (order == .gt or (order == .eq and std.mem.order(u8, &prior[1], &row.new_target) != .lt)) return error.InvalidOrder; }
+        prior_result = .{ row.construction, row.new_target }; try hashRefs(c, row.actual_types, &type_ids, 4096, .sorted);
     }
     try bound(c, value.host_imports.len, 128); for (value.host_imports) |row| { try c.row(@TypeOf(row)); try hashRef(c, row.id, hosts); try c.text(row.name, 4096, 1); try c.text(row.source_path, 4096, 1); try c.require(row.capability_id == 31); try hashRefs(c, row.parameter_types, types, 64, .any); try hashRef(c, row.return_type, types); }
     for (value.modules) |row| { try c.row(@TypeOf(row)); try hashRef(c, row.id, modules); try c.text(row.source_path, 4096, 1); try hashRef(c, row.initializer, functions); try textList(c, row.dependencies, 128, 4096, 1, .unique); try hashRefs(c, row.globals, globals, 4096, .unique);
@@ -217,8 +233,6 @@ pub fn check(c: *Context, value: model.FixedPublication) Error!void {
         try bound(c, row.callees.len, 4096); var previous: ?t.Hash = null; for (row.callees) |callee| { try c.row(@TypeOf(callee)); try hashRef(c, callee.function_id, &contracts); if (previous) |p| if (std.mem.order(u8, &p, &callee.function_id) != .lt) return error.InvalidOrder; previous = callee.function_id; }
         try bound(c, row.hosts.len, 128); previous = null; for (row.hosts) |host| { try c.row(@TypeOf(host)); try hashRef(c, host.host_id, &hosts); if (previous) |p| if (std.mem.order(u8, &p, &host.host_id) != .lt) return error.InvalidOrder; previous = host.host_id; }
     }
-    var fixed_storage = try storage_bounds.init(c, value.stable_scope.storage, value.publication.scope.storage, value.publication.expected_digest);
-    defer fixed_storage.deinit();
     try returnGraphs(c, value);
     try c.require(value.request.targets.len != 1); try hashRefs(c, value.request.targets, &functions, 32, .unique);
 }

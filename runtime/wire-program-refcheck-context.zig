@@ -5,7 +5,7 @@ const std = @import("std");
 const model = @import("wire-program-model.zig");
 const t = model.types;
 
-pub const Error = error{ WorkLimit, InvalidReference, InvalidOrigin, InvalidShape, InvalidOrder, WrongMode, OutOfMemory };
+pub const Error = error{ WorkLimit, InvalidReference, InvalidOrigin, InvalidShape, InvalidOrder, WrongMode, OutOfMemory, FixedInterpretationPending };
 pub const Counts = struct {
     types: usize, fields: usize, methods: usize, constructions: usize,
     domains: usize, bindings: usize, cells: usize, scopes: usize,

@@ -14,9 +14,11 @@ pub const Field = std.meta.Child(@TypeOf(@as(Storage, undefined).fields));
 pub const Result = std.meta.Child(@TypeOf(@as(Storage, undefined).results));
 pub const Upper = struct {
     actual_type_ids: []const t.Hash = &.{},
-    actual_types: []const t.TypeRef = &.{},
+    // null preserves the complete finite ID set but lacks a current physical
+    // interpretation. It is neither Bottom, TOP nor a shortened finite upper.
+    actual_types: ?[]const t.TypeRef = &.{},
     unknown: bool = false,
-    pub fn isBottom(self: Upper) bool { return !self.unknown and self.actual_types.len == 0; }
+    pub fn isBottom(self: Upper) bool { return !self.unknown and self.actual_types != null and self.actual_types.?.len == 0; }
 };
 pub const Reference = union(enum) {
     field: t.Hash,
@@ -37,10 +39,10 @@ pub const Directory = struct {
     // Input Hash slices and the verified owning directories are borrowed for this
     // Directory's lifetime. Only mapped TypeRef slices and lookup storage are owned.
     pub fn deinit(self: *Directory) void {
-        for (self.fields) |upper| self.allocator.free(upper.actual_types);
+        for (self.fields) |upper| if (upper.actual_types) |refs| self.allocator.free(refs);
         self.allocator.free(self.fields);
         var values = self.results.valueIterator();
-        while (values.next()) |upper| self.allocator.free(upper.actual_types);
+        while (values.next()) |upper| if (upper.actual_types) |refs| self.allocator.free(refs);
         self.results.deinit(self.allocator);
         self.* = undefined;
     }
@@ -50,6 +52,7 @@ pub const Directory = struct {
     // the independently verified union of every co-visible alias contribution.
     pub fn fieldWriteUpper(self: *const Directory, c: *Context, id: t.FieldRef) Error!Selection {
         const index = try c.ref(id, self.fields.len);
+        if (self.fields[index].actual_types == null) return error.FixedInterpretationPending;
         return .{ .publication_digest = self.publication_digest,
             .reference = .{ .field = self.field_ids[index].id }, .upper = self.fields[index] };
     }
@@ -60,6 +63,7 @@ pub const Directory = struct {
         const ti = try c.ref(new_target, self.type_ids.len);
         try c.step();
         const upper = self.results.get(.{ .construction = construction, .new_target = new_target }) orelse return null;
+        if (upper.actual_types == null) return error.FixedInterpretationPending;
         return .{ .publication_digest = self.publication_digest,
             .reference = .{ .result = .{ .construction = self.construction_ids[ci].id,
                 .new_target = self.type_ids[ti].id } }, .upper = upper };
@@ -76,17 +80,21 @@ fn mapUpper(c: *Context, types: *const std.AutoHashMapUnmanaged(t.Hash, t.TypeRe
     try c.charge(ids.len + 1);
     const refs = try c.allocator.alloc(t.TypeRef, ids.len);
     errdefer c.allocator.free(refs);
+    var complete = true;
     for (ids, 0..) |id, i| {
         try c.step();
         if (i != 0) try c.require(std.mem.order(u8, &ids[i - 1], &id) == .lt);
-        refs[i] = types.get(id) orelse return error.InvalidReference;
+        if (types.get(id)) |ref| refs[i] = ref else complete = false;
     }
+    if (!complete) { c.allocator.free(refs); return .{ .actual_type_ids = ids, .actual_types = null, .unknown = unknown }; }
     // Empty+known is a proved empty set; unknown+empty stays unknown. No kind
     // filtering or declaration/body-derived replacement is permitted here.
     return .{ .actual_type_ids = ids, .actual_types = refs, .unknown = unknown };
 }
 
 pub fn init(c: *Context, scope: Storage, publication: Storage, expected_digest: t.Hash) Error!Directory {
+    // The real caller first validates complete archive/Graph/storage references
+    // and semantic identities. Mapping does not fill gaps from a current body.
     const owned = switch (c.program.tables.mode) { .common => |value| value, else => return error.WrongMode };
     try c.require(scope.fields.len == publication.fields.len and scope.results.len == publication.results.len);
     try c.require(publication.fields.len == owned.members.fields.len);

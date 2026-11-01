@@ -7,6 +7,7 @@ const std = @import("std");
 const model = @import("wire-program-model.zig");
 const tables = @import("wire-program-tables.zig");
 const storage = @import("wire-program-storage.zig");
+const storage_bounds = @import("wire-program-storage-bounds.zig");
 const publication = @import("wire-program-publication.zig");
 const return_origin = @import("wire-program-return-origin-model.zig");
 const context = @import("wire-program-refcheck-context.zig");
@@ -16,6 +17,28 @@ pub const Error = context.Error;
 const Raw = struct { bytes: []const u8 };
 const Hex = struct { value: t.Hash };
 const none = std.math.maxInt(usize);
+
+const LabelKey = struct { index: usize, units: []u16, count: usize };
+fn lessLabel(_: void, a: LabelKey, b: LabelKey) bool { return std.mem.order(u16, a.units[0..a.count], b.units[0..b.count]) == .lt; }
+// Both current and archived semantic identities use Source's UTF16 label order.
+fn sortLabelIndexes(c: *Context, type_indexes: []const usize, labels: anytype) Error![]usize {
+    try c.charge(type_indexes.len * 2);
+    const keys = try c.allocator.alloc(LabelKey, type_indexes.len); defer c.allocator.free(keys);
+    var count: usize = 0; defer for (keys[0..count]) |key| c.allocator.free(key.units);
+    var rounds: usize = 1; var n = type_indexes.len; while (n > 1) : (n = (n + 1) / 2) rounds += 1;
+    for (type_indexes, 0..) |index, i| {
+        const text: []const u8 = if (@typeInfo(@TypeOf(labels[index])) == .optional) labels[index].? else labels[index];
+        try c.charge(rounds * (1 + text.len / 8));
+        const units = try c.allocator.alloc(u16, text.len); keys[i] = .{ .index = index, .units = units, .count = 0 }; count += 1;
+        var iterator = std.unicode.Utf8View.initUnchecked(text).iterator();
+        while (iterator.nextCodepoint()) |point| {
+            if (point <= 0xffff) { units[keys[i].count] = @intCast(point); keys[i].count += 1; }
+            else { const pair = point - 0x10000; units[keys[i].count] = @intCast(0xd800 + (pair >> 10)); units[keys[i].count + 1] = @intCast(0xdc00 + (pair & 1023)); keys[i].count += 2; }
+        }
+    }
+    std.mem.sort(LabelKey, keys, {}, lessLabel);
+    const out = try c.allocator.alloc(usize, type_indexes.len); for (keys, 0..) |key, i| out[i] = key.index; return out;
+}
 
 // The keys here come from typed records, never unknown JSON. The sole encoding
 // seam uses the existing canonical UTF8 escapes and lexicographic JSON keys.
@@ -443,6 +466,97 @@ fn exception(c:*Context,v:*const tables.ExceptionTables) Error!void {
     for(v.exceptions.bindings) |b| { try c.step(); const f=c.program.functions[@intFromEnum(b.owner)]; try equal(c,b.id,try ehDigest(c,"binding",.{.owner_kind=if(f.role==.module_initializer)@as([]const u8,"module") else "function",.owner=f.id,.scope_path=v.exceptions.scopes[@intFromEnum(b.scope)].path,.role=b.role,.index=b.index})); }
 }
 
+const ArchiveType = std.meta.Child(@TypeOf(@as(publication.StableScope, undefined).types));
+// The fixed archive is an interpretation directory, never the current body's
+// inventory. Every edge and hash below is reconstructed from its own rows.
+const Archive = struct {
+    c: *Context, allocator: std.mem.Allocator, rows: []const ArchiveType,
+    ids: std.AutoHashMapUnmanaged(t.Hash, usize) = .empty,
+    labels: std.StringHashMapUnmanaged(usize) = .empty,
+    symbols: std.StringHashMapUnmanaged(usize) = .empty,
+    texts: []const []const u8, shapes: []const []const u8,
+    edges: []std.ArrayListUnmanaged(usize),
+    fn init(c: *Context, allocator: std.mem.Allocator, rows: []const ArchiveType) Error!Archive {
+        try c.charge(rows.len * 7 + 3);
+        const texts = try allocator.alloc([]const u8, rows.len);
+        const shapes = try allocator.alloc([]const u8, rows.len);
+        const edges = try allocator.alloc(std.ArrayListUnmanaged(usize), rows.len); @memset(edges, .empty);
+        var result = Archive{ .c = c, .allocator = allocator, .rows = rows, .texts = texts, .shapes = shapes, .edges = edges };
+        try result.ids.ensureTotalCapacity(allocator, @intCast(rows.len));
+        try result.labels.ensureTotalCapacity(allocator, @intCast(rows.len));
+        try result.symbols.ensureTotalCapacity(allocator, @intCast(rows.len));
+        for (rows, 0..) |row, i| {
+            try c.charge(3 + row.label.len / 64 + 72); texts[i] = row.label;
+            result.ids.putAssumeCapacityNoClobber(row.id, i); result.labels.putAssumeCapacityNoClobber(row.label, i);
+            const text = try allocator.alloc(u8, 71); @memcpy(text, &idText(row.id));
+            result.symbols.putAssumeCapacityNoClobber(text, i);
+            const bytes = try encoded(c, row.shape); defer c.allocator.free(bytes);
+            try c.charge(bytes.len); shapes[i] = try allocator.dupe(u8, bytes);
+        }
+        for (rows, 0..) |row, i| switch (row.shape) {
+            .primitive => {},
+            .function => |value| { for (value.parameters) |label| try result.edge(i, label); try result.edge(i, value.return_type); },
+            .union_type => |value| { for (value.members) |label| try result.edge(i, label); },
+            .element => |value| try result.edge(i, value.element_type),
+            .nominal => |value| {
+                if (value.base) |base| try result.edge(i, base);
+                for (value.construction.parameters) |label| try result.edge(i, label);
+                for (value.fields) |field| try result.edge(i, field.@"type");
+                if (value.methods) |methods| for (methods) |method| { for (method.parameters) |label| try result.edge(i, label); try result.edge(i, method.return_type); };
+            },
+        };
+        return result;
+    }
+    fn edge(self: *Archive, index: usize, label: []const u8) Error!void {
+        try self.c.charge(1 + label.len / 64);
+        const child = self.labels.get(label) orelse return error.InvalidReference;
+        try self.c.step(); try self.edges[index].append(self.allocator, child);
+    }
+    fn hashRoot(self: *const Archive, id: t.Hash, pending: *std.ArrayListUnmanaged(usize)) Error!void {
+        try self.c.charge(2); const index = self.ids.get(id) orelse return error.InvalidReference; try pending.append(self.allocator, index);
+    }
+    fn symbolRoot(self: *const Archive, id: []const u8, pending: *std.ArrayListUnmanaged(usize)) Error!void {
+        try self.c.charge(2 + id.len / 64); const index = self.symbols.get(id) orelse return error.InvalidReference; try pending.append(self.allocator, index);
+    }
+    fn closure(self: *const Archive, pending: *std.ArrayListUnmanaged(usize), selected: []bool) Error!usize {
+        var count: usize = 0;
+        while (pending.pop()) |i| { try self.c.step(); if (selected[i]) continue; selected[i] = true; count += 1;
+            try self.c.charge(self.edges[i].items.len); try pending.appendSlice(self.allocator, self.edges[i].items); }
+        return count;
+    }
+    fn identity(self: *const Archive, index: usize) Error!void {
+        const c = self.c; const row = self.rows[index];
+        switch (row.shape) {
+            .primitive => |value| {
+                if (value.kind == .scalar) {
+                    const names = [_][]const u8{ "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64" };
+                    for (names) |name| { const label = try encoded(c, .{ .kind = "scalar", .name = name }); defer c.allocator.free(label);
+                        try c.charge(1 + @min(label.len, row.label.len) / 64);
+                        if (std.mem.eql(u8, label, row.label)) { try equal(c, row.id, try primitive(c, name)); return; } }
+                    return error.InvalidShape;
+                }
+                const label = try encoded(c, .{ .kind = value.kind, .name = @tagName(value.kind) }); defer c.allocator.free(label);
+                try textEqual(c, row.label, label); try equal(c, row.id, try primitive(c, @tagName(value.kind))); return;
+            },
+            .function => |value| { const label = try encoded(c, .{ .kind = value.kind, .parameters = value.parameters, .return_type = value.return_type }); defer c.allocator.free(label); try textEqual(c, row.label, label); },
+            .union_type => |value| { const label = try encoded(c, .{ .kind = value.kind, .members = value.members }); defer c.allocator.free(label); try textEqual(c, row.label, label); },
+            .element => |value| { const label = try encoded(c, .{ .kind = value.kind, .element = value.element_type }); defer c.allocator.free(label); try textEqual(c, row.label, label); },
+            .nominal => {}, // Joined to an owned current declaration by caller.
+        }
+        try c.charge(self.rows.len); const seen = try self.allocator.alloc(bool, self.rows.len); @memset(seen, false);
+        var pending: std.ArrayListUnmanaged(usize) = .empty; var graph: std.ArrayListUnmanaged(usize) = .empty;
+        try c.step(); try pending.append(self.allocator, index);
+        while (pending.pop()) |i| { try c.step(); if (seen[i]) continue; seen[i] = true; try graph.append(self.allocator, i);
+            try c.charge(self.edges[i].items.len); try pending.appendSlice(self.allocator, self.edges[i].items); }
+        const sorted = try sortLabelIndexes(c, graph.items, self.texts);
+        defer c.allocator.free(sorted);
+        var out = Json{ .c = c }; defer out.deinit(); try out.raw("{\"graph\":[");
+        for (sorted, 0..) |i, at| { if (at != 0) try out.raw(","); try out.raw(self.shapes[i]); }
+        try out.raw("],\"root\":"); try out.value(row.label); try out.raw("}");
+        try equal(c, row.id, try parts(c, &.{ "tsfg.common-program.type.v1\x00", out.bytes.items }));
+    }
+};
+
 const Common = struct {
     c:*Context, v:*const tables.CommonTables,
     labels:[]?[]u8, shapes:[]?[]u8, states:[]u2,
@@ -464,28 +578,7 @@ const Common = struct {
         self.c.allocator.free(self.labels); self.c.allocator.free(self.shapes); self.c.allocator.free(self.states);
         self.c.allocator.free(self.fields); self.c.allocator.free(self.edges); self.c.allocator.free(self.ctors);
     }
-    const Key=struct {index:usize,units:[]u16,count:usize};
-    fn lessKey(_:void,a:Key,b:Key) bool { return std.mem.order(u16,a.units[0..a.count],b.units[0..b.count])==.lt; }
-    fn sortLabels(self:*Common,type_indexes:[]const usize) Error![]usize {
-        const c=self.c; try c.charge(type_indexes.len*2);
-        const keys=try c.allocator.alloc(Key,type_indexes.len); defer c.allocator.free(keys);
-        var count:usize=0; defer for(keys[0..count]) |key| c.allocator.free(key.units);
-        var rounds:usize=1; var n=type_indexes.len; while(n>1):(n=(n+1)/2)rounds+=1;
-        for(type_indexes,0..) |index,i| {
-            const label_text=self.labels[index].?; try c.charge(rounds*(1+label_text.len/8));
-            // UTF8 was validated at the owning ref boundary; convert without
-            // parsing it again. UTF16 code-unit order is required by this hash.
-            const units=try c.allocator.alloc(u16,label_text.len);
-            keys[i]=.{.index=index,.units=units,.count=0}; count+=1;
-            var iterator=std.unicode.Utf8View.initUnchecked(label_text).iterator();
-            while(iterator.nextCodepoint()) |point| {
-                if(point<=0xffff) { units[keys[i].count]=@intCast(point); keys[i].count+=1; }
-                else { const pair=point-0x10000; units[keys[i].count]=@intCast(0xd800+(pair>>10)); units[keys[i].count+1]=@intCast(0xdc00+(pair&1023)); keys[i].count+=2; }
-            }
-        }
-        std.mem.sort(Key,keys,{},lessKey);
-        const out=try c.allocator.alloc(usize,type_indexes.len); for(keys,0..) |key,i| out[i]=key.index; return out;
-    }
+    fn sortLabels(self:*Common,type_indexes:[]const usize) Error![]usize { return sortLabelIndexes(self.c,type_indexes,self.labels); }
     fn label(self:*Common,index:usize,depth:usize) Error![]const u8 {
         const c=self.c; try c.step(); try c.require(depth<=128);
         if(self.labels[index]) |out| return out;
@@ -702,8 +795,9 @@ const Common = struct {
         var type_ids=std.AutoHashMapUnmanaged(t.Hash,usize){}; defer type_ids.deinit(c.allocator);
         for(v.types,0..) |row,i| { try c.step(); try type_ids.put(c.allocator,row.id,i); }
         for(scope.types) |row| {
-            try c.step(); const i=type_ids.get(row.id) orelse return error.InvalidShape; try textEqual(c,self.labels[i].?,row.label);
-            try sameValue(c,Raw{.bytes=self.shapes[i].?},row.shape);
+            try c.step(); if(type_ids.get(row.id)) |i| {
+                try textEqual(c,self.labels[i].?,row.label); try sameValue(c,Raw{.bytes=self.shapes[i].?},row.shape);
+            } else try c.require(row.shape!=.nominal);
         }
         try self.scopeDirectories();
     }
@@ -751,8 +845,9 @@ const Common = struct {
             const ids=try domainIds(c,v.types,a.parameter_types); defer c.allocator.free(ids); try sameValue(c,h.parameter_types,ids);
             try equal(c,scope.host_context.?.contract_digest,a.contract_digest); try equal(c,scope.host_context.?.build_identity_digest,a.build_identity_digest);
         }
-        // The stable type directory is the interface/global/all-nominal closure,
-        // not every body-only temporary Type and not a producer-selected subset.
+        // Match only the stable declaration projection to current owned HIR.
+        // FDI raw inputs are declaration roots, never signature parameters or
+        // observed Actual tags. Captured slots are declaration roots as well.
         try c.charge(v.types.len); const required=try c.allocator.alloc(bool,v.types.len); defer c.allocator.free(required); @memset(required,false);
         var pending:std.ArrayListUnmanaged(usize)=.empty; defer pending.deinit(c.allocator);
         for(v.types,0..) |row,i| { try c.step(); if(row.kind==.reference or row.kind==.value)try pending.append(c.allocator,i); }
@@ -766,17 +861,48 @@ const Common = struct {
                 for(v.types,0..) |row,n| { try c.step(); if(row.kind==.@"void") { try pending.append(c.allocator,n); break; } }
             }
         }
+        for(v.closures.environments) |env| for(env.slots) |slot| { try c.step(); try pending.append(c.allocator,@intFromEnum(slot.@"type")); };
         var count:usize=0;
         while(pending.pop()) |i| { try c.step(); if(required[i])continue; required[i]=true; count+=1; try c.charge(self.edges[i].items.len); try pending.appendSlice(c.allocator,self.edges[i].items); }
-        try c.require(scope.types.len==count);
+        try c.require(scope.declaration_types.len==count);
         const type_ids=try indexes(c,v.types,"id"); defer { var map=type_ids; map.deinit(c.allocator); }
-        for(scope.types) |row| { try c.step(); try c.require(required[type_ids.get(row.id) orelse return error.InvalidShape]); }
+        for(scope.declaration_types) |id| { try c.step(); try c.require(required[type_ids.get(id) orelse return error.InvalidShape]); }
+        // Archive roots come solely from the original declarations, fixed
+        // graphs and fixed storage. A new body cannot fill or expand this set.
+        var arena=std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit();
+        var archive=try Archive.init(c,arena.allocator(),scope.types);
+        for(scope.types,0..) |_,i| { try c.step(); try archive.identity(i); }
+        var archived:std.ArrayListUnmanaged(usize)=.empty;
+        for(scope.declaration_types) |id| try archive.hashRoot(id,&archived);
+        for(v.authority.fixed_publication.publication.contracts) |contract| {
+            try c.step(); if(contract.return_origins) |graph| {
+                for(graph.nodes) |node| {
+                    try c.step(); switch(node) {
+                        inline .literal,.receiver_value,.join,.gate,.call => |value| { if(value.@"type") |id| try archive.symbolRoot(id,&archived); },
+                        inline .parameter,.global,.capture,.code,.local,.nonowning,.projection,.copy => |value| try archive.symbolRoot(value.@"type",&archived),
+                        else => {},
+                    }
+                    if(node==.projection)try archive.symbolRoot(node.projection.view,&archived);
+                }
+                for(graph.heaps) |heap| { try c.step(); if(heap==.store) {
+                    const view=heap.store.view; try c.charge(1+view.len/64);
+                    if(!std.mem.startsWith(u8,view,"env:"))try archive.symbolRoot(view,&archived);
+                } }
+            }
+        }
+        for(scope.storage.fields) |field| for(field.actual_types) |id| try archive.hashRoot(id,&archived);
+        for(scope.storage.results) |result| { try archive.hashRoot(result.new_target,&archived); for(result.actual_types) |id| try archive.hashRoot(id,&archived); }
+        try c.charge(scope.types.len); const selected=try arena.allocator().alloc(bool,scope.types.len); @memset(selected,false);
+        // Cold consumption retains authenticated extra interpretations. All
+        // rows above were checked, not just this required-root dependency walk.
+        _=try archive.closure(&archived,selected);
     }
     fn checkPublication(self:*Common) Error!void {
         const c=self.c; const v=self.v; const fixed=v.authority.fixed_publication; const p=fixed.publication;
         // This authenticates declared interfaces/upper bounds, never derives
         // effective call membership or grants the upper as an actual-flow seed.
         try equal(c,p.scope_digest,try digest(c,"tsfg.common-program.publication-scope.v1",fixed.stable_scope));
+        try equal(c,p.scope_digest,try digest(c,"tsfg.common-program.publication-scope.v1",p.scope));
         var contracts=std.AutoHashMapUnmanaged(t.Hash,usize){}; defer contracts.deinit(c.allocator);
         try c.require(p.contracts.len==fixed.stable_scope.functions.len);
         for(p.contracts,0..) |row,i| {
@@ -795,6 +921,11 @@ const Common = struct {
             }
         }
         for(fixed.request.targets) |id| { try c.step(); try c.require(contracts.contains(id)); }
+        // Structural refs/Graph checks precede this identity phase. Complete
+        // archive semantics and both original scope digests precede physical
+        // mapping; absent current metadata is retained, never a new permission.
+        var fixed_storage=try storage_bounds.init(c,fixed.stable_scope.storage,p.scope.storage,p.expected_digest);
+        defer fixed_storage.deinit();
     }
 };
 
