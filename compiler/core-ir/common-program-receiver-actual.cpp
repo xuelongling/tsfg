@@ -41,9 +41,10 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   }
   if(!step(reference->size()+member->size()+8))return nullptr;
   auto spelling=*reference+"/field/"+*member;
-  if(!receiverText(spelling))return nullptr;auto found=fieldSlotArchive.find(spelling);
+  if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
+  if(!empty){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.find(spelling);}
   if(found==fieldSlotArchive.end()){
-    if(!receiverText(spelling)||!step(4))return nullptr;
+    if((!empty&&!receiverText(spelling))||!step(4))return nullptr;
     found=fieldSlotArchive.emplace(std::move(spelling),ActualFieldSlot{this,fieldSlotArchive.size(),nullptr}).first;
     found->second.spelling=&found->first;
   }
@@ -141,9 +142,10 @@ std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &wor
   return result;
 }
 bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,const std::string &ref,const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
-  if(!receiverText(ref)||!step(fields.size()))return false;ActualBirthJournal rows;
-  for(const auto slot:fields){if(!step()||!receiverText(*slot->spelling))return false;
-    ActualBirth row;row.reference=ref;const auto old=heap.find(*slot->spelling);if(repeated&&old!=heap.end())row.real=copy(old->second);
+  if(!step(fields.size()))return false;ActualBirthJournal rows;
+  for(const auto slot:fields){if(!step()||!receiverText(ref))return false;
+    ActualBirth row;row.reference=ref;
+    if(repeated){if(!receiverText(*slot->spelling))return false;const auto old=heap.find(*slot->spelling);if(old!=heap.end())row.real=copy(old->second);}
     if(!e.message.empty())return false;rows.emplace(slot,std::move(row));}
   for(auto current=id;!current.empty();){
     if(!receiverText(current)||!need(world.count(current)&&receiverFrames.count(current),"birth frame is absent"))return false;
