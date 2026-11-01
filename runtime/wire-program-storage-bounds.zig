@@ -30,6 +30,7 @@ const Key = struct { construction: t.ConstructionRef, new_target: t.TypeRef };
 pub const Directory = struct {
     allocator: std.mem.Allocator,
     publication_digest: t.Hash,
+    metadata_available: bool,
     fields: []Upper,
     field_ids: []const @import("wire-program-members.zig").CommonField,
     type_ids: []const @import("wire-program-tables.zig").CommonType,
@@ -51,7 +52,8 @@ pub const Directory = struct {
     // bound or capacity of a shared physical property. Reads/copies/GC require
     // the independently verified union of every co-visible alias contribution.
     pub fn fieldWriteUpper(self: *const Directory, c: *Context, id: t.FieldRef) Error!Selection {
-        const index = try c.ref(id, self.fields.len);
+        const index = try c.ref(id, self.field_ids.len);
+        if (!self.metadata_available) return error.FixedInterpretationPending;
         if (self.fields[index].actual_types == null) return error.FixedInterpretationPending;
         return .{ .publication_digest = self.publication_digest,
             .reference = .{ .field = self.field_ids[index].id }, .upper = self.fields[index] };
@@ -62,6 +64,18 @@ pub const Directory = struct {
         const ci = try c.ref(construction, self.construction_ids.len);
         const ti = try c.ref(new_target, self.type_ids.len);
         try c.step();
+        if (!self.metadata_available) {
+            const target = self.type_ids[ti];
+            try c.require(target.kind == .reference or target.kind == .value);
+            var cursor: ?t.TypeRef = new_target; var depth: usize = 0;
+            while (cursor) |current| {
+                const owner = try c.ref(current, self.type_ids.len);
+                try c.require(depth < self.type_ids.len); depth += 1;
+                if (current == self.construction_ids[ci].owner) return error.FixedInterpretationPending;
+                cursor = self.type_ids[owner].base;
+            }
+            return error.InvalidReference;
+        }
         const upper = self.results.get(.{ .construction = construction, .new_target = new_target }) orelse return null;
         if (upper.actual_types == null) return error.FixedInterpretationPending;
         return .{ .publication_digest = self.publication_digest,
@@ -97,8 +111,9 @@ pub fn init(c: *Context, scope: Storage, publication: Storage, expected_digest: 
     // and semantic identities. Mapping does not fill gaps from a current body.
     const owned = switch (c.program.tables.mode) { .common => |value| value, else => return error.WrongMode };
     try c.require(scope.fields.len == publication.fields.len and scope.results.len == publication.results.len);
-    try c.require(publication.fields.len == owned.members.fields.len);
-    try c.charge(owned.types.len + owned.members.fields.len + owned.members.constructions.len + publication.results.len + 4);
+    try c.step(); const available = publication.fields.len != 0 or publication.results.len != 0;
+    if (available) try c.require(publication.fields.len == owned.members.fields.len);
+    try c.charge(owned.types.len + owned.members.fields.len + owned.members.constructions.len + publication.results.len + 5);
     try c.require(owned.types.len <= std.math.maxInt(u32) and owned.members.fields.len <= std.math.maxInt(u32) and
         owned.members.constructions.len <= std.math.maxInt(u32) and publication.results.len <= std.math.maxInt(u32));
     var types: std.AutoHashMapUnmanaged(t.Hash, t.TypeRef) = .empty;
@@ -114,13 +129,15 @@ pub fn init(c: *Context, scope: Storage, publication: Storage, expected_digest: 
     for (owned.members.fields, 0..) |row, i| { try c.step(); fields.putAssumeCapacityNoClobber(row.id, @enumFromInt(i)); }
     for (owned.members.constructions, 0..) |row, i| { try c.step(); constructions.putAssumeCapacityNoClobber(row.id, @enumFromInt(i)); }
 
-    try c.charge(owned.members.fields.len + owned.types.len + 2);
+    const field_count = if (available) owned.members.fields.len else 0;
+    try c.charge(field_count + owned.types.len + 2);
     const owner_constructor = try c.allocator.alloc(?t.ConstructionRef, owned.types.len);
     defer c.allocator.free(owner_constructor);
     @memset(owner_constructor, null);
-    const mapped_fields = try c.allocator.alloc(Upper, owned.members.fields.len);
+    const mapped_fields = try c.allocator.alloc(Upper, field_count);
     @memset(mapped_fields, .{});
     var directory = Directory{ .allocator = c.allocator, .publication_digest = expected_digest,
+        .metadata_available = available,
         .fields = mapped_fields, .field_ids = owned.members.fields, .type_ids = owned.types,
         .construction_ids = owned.members.constructions };
     errdefer directory.deinit();
@@ -167,12 +184,12 @@ pub fn init(c: *Context, scope: Storage, publication: Storage, expected_digest: 
             depth += 1;
             if (owner_constructor[owner]) |construction| {
                 try c.step();
-                try c.require(directory.results.contains(.{ .construction = construction, .new_target = @enumFromInt(i) }));
+                if (available) try c.require(directory.results.contains(.{ .construction = construction, .new_target = @enumFromInt(i) }));
                 pairs += 1;
             }
             cursor = owned.types[owner].base;
         }
     }
-    try c.require(pairs == publication.results.len);
+    if (available) try c.require(pairs == publication.results.len);
     return directory;
 }

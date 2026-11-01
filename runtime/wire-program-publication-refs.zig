@@ -120,7 +120,10 @@ fn scope(c: *Context, value: model.StableScope, functions: *const HashSet, types
         }
     }
     var field_ids = try build(c, owned.members.fields, "id", 65536, true); defer field_ids.deinit(c.allocator);
-    try c.require(value.storage.fields.len == owned.members.fields.len);
+    // Source admits the original both-empty declaration as unavailable. A
+    // partially supplied directory retains the complete nonempty coverage rule.
+    try c.step();
+    if (value.storage.fields.len != 0 or value.storage.results.len != 0) try c.require(value.storage.fields.len == owned.members.fields.len);
     var prior_field: ?t.Hash = null;
     for (value.storage.fields) |row| {
         try c.row(@TypeOf(row)); try hashRef(c, row.field_id, &field_ids);
