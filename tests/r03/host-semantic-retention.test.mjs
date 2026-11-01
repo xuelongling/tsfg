@@ -54,6 +54,11 @@ test('M22 production stage closes actual Runtime and String codec imports', asyn
   const codec = await readFile(path.join(product,'runtime/string-codec.zig'));
   assert.deepEqual(codec,await readFile(path.join(productRoot,'runtime/string-codec.zig')));
   const staged = await readdir(path.join(product,'runtime'));
+  // Every declared passive wire source must survive the production stage.
+  for (const entry of names.filter(entry => entry.path.startsWith('runtime/wire-program-'))) {
+    assert.deepEqual(await readFile(path.join(product,entry.path)),
+      await readFile(path.join(productRoot,entry.path)));
+  }
   assert.ok(staged.includes('managed-heap.zig'));
   for (const name of staged.filter(name=>name.endsWith('.zig'))) {
     const text = await readFile(path.join(product,'runtime',name),'utf8');

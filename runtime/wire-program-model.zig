@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Owned formal wire17 data, not an activated Runtime contract or VM handle.
-// The future formal decoder owns every slice in arena before publishing this
+// Prospective formal18 data, not an activated Runtime contract or VM handle.
+// The formal candidate decoder owns every slice in arena before publishing this
 // value. Type construction alone proves no schema, effects, SSA or lifetime.
 const std = @import("std");
 pub const types = @import("wire-program-types.zig");
@@ -9,11 +9,10 @@ pub const instruction = @import("wire-program-instruction.zig");
 
 pub const format = struct {
     pub const magic = "TSFGTBC0".*;
-    pub const version: u32 = 17;
-    pub const capability: u32 = 1017;
-    pub const schema_hash_hex = "9510a8cacb405ec7637e30e9883ab79f099e98b35c3fab55c8224f53ef2904a8";
-    pub const schema_hash: types.Hash = .{ 0x95, 0x10, 0xa8, 0xca, 0xcb, 0x40, 0x5e, 0xc7, 0x63, 0x7e, 0x30, 0xe9, 0x88, 0x3a, 0xb7, 0x9f,
-        0x09, 0x9e, 0x98, 0xb3, 0x5c, 0x3f, 0xab, 0x55, 0xc8, 0x22, 0x4f, 0x53, 0xef, 0x29, 0x04, 0xa8 };
+    pub const version: u32 = 18;
+    pub const capability: u32 = 1018;
+    pub const schema_hash_hex = "b0b2c6c9b37155f3241725cc733014436df182f1966ab767d76e44ee2b39d951";
+    pub const schema_hash: types.Hash = .{ 0xb0, 0xb2, 0xc6, 0xc9, 0xb3, 0x71, 0x55, 0xf3, 0x24, 0x17, 0x25, 0xcc, 0x73, 0x30, 0x14, 0x43, 0x6d, 0xf1, 0x82, 0xf1, 0x96, 0x6a, 0xb7, 0x67, 0xd7, 0x6e, 0x44, 0xee, 0x2b, 0x39, 0xd9, 0x51 };
     pub const max_bytes: usize = 8388608;
     pub const max_work: usize = 100000;
     pub const table_count: u8 = 11;
@@ -66,7 +65,7 @@ pub const Program = struct {
 };
 
 // No init-from-borrowed-Program API: such a shallow copy would falsely claim
-// ownership of caller memory. The future decoder transfers its private arena
+// ownership of caller memory. The prospective decoder transfers its private arena
 // and complete original bytes here; all views expire together at deinit.
 pub const OwnedProgram = struct {
     arena: std.heap.ArenaAllocator,
@@ -80,7 +79,7 @@ pub const OwnedProgram = struct {
 };
 
 // Identity/size checks only. Payload hashing, strict JSON admission, every
-// reference join and independent graph proofs remain future reader duties.
+// reference join and independent graph proofs remain separate typed-check duties.
 pub fn requireFormat(envelope: Envelope, target: Target) error{WrongFormat, WrongTarget, PacketLimit}!void {
     if (!std.mem.eql(u8, &envelope.magic, &format.magic) or envelope.version != format.version or
         !std.mem.eql(u8, &envelope.schema_hash, &format.schema_hash) or target.capability != format.capability)

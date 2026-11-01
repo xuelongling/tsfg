@@ -167,8 +167,8 @@ runtimeSources.push(...['array-element','managed-array','managed-handles','manag
 // Exact passive wire17 Counter-material import closure. The active wire12
 // request root is unchanged; source staging alone does not establish that Zig
 // analyzed these function bodies or that any checker/Host call was executed.
-runtimeSources.push(...['wire-program-control','wire-program-host-artifact-check','wire-program-host-binding-check',
-  'wire-program-instruction','wire-program-members','wire-program-model','wire-program-publication',
+runtimeSources.push(...['wire-program-control','wire-program-decoder','wire-program-host-artifact-check','wire-program-host-binding-check',
+  'wire-program-instruction','wire-program-members','wire-program-model','wire-program-publication','wire18-json-reader',
   'wire-program-refcheck-context','wire-program-storage','wire-program-tables','wire-program-types']
   .map(name => `runtime/${name}.zig`));
 
