@@ -55,12 +55,12 @@ ActualContext *ActualCheck::context(const std::string &target,const std::vector<
   std::vector<ActualValue> roots;roots.reserve(args.size()+retainedCount);
   for(const auto &v:args)roots.push_back(copy(v));for(auto &v:retained)roots.push_back(std::move(v));
   if(!e.message.empty())return nullptr;
-  auto entry=reachable(roots,heap);
+  if(!step(4))return nullptr;auto entry=reachable({roots,{}},heap);
   // reachable retains every global: entry, including payloads reachable only
   // from globals. Their region relations remain part of the owned identity.
   if(!step(roots.size()+entry.size()))return nullptr;roots.reserve(roots.size()+entry.size());
   for(const auto &[id,v]:entry)roots.push_back(copy(v));if(!e.message.empty())return nullptr;
-  auto current=versions?regionReachable(*this,roots,*versions):RegionHeap{};if(!e.message.empty())return nullptr;
+  if(versions&&!step(4))return nullptr;auto current=versions?regionReachable(*this,{roots,{}},*versions):RegionHeap{};if(!e.message.empty())return nullptr;
   if(!step((target.size()+activation.size()+region.size()+newTarget.size())/64+5))return nullptr;
   const auto physical=root?(activation.empty()?"entry/"+target:activation):activation;
   auto upper=p.fixedEffects.find(target);const bool opaque=!analysisFunctions.count(target)&&(upper==p.fixedEffects.end()||upper->second.unknownHost);

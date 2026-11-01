@@ -4,9 +4,10 @@
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 namespace tsfg::commonProgram {
-ActualHeap ActualCheck::reachable(const std::vector<ActualValue> &values,const ActualHeap &heap){
+ActualHeap ActualCheck::reachable(const ActualRoots &values,const ActualHeap &heap){
   ActualHeap out;std::vector<const ActualValue *> pending;std::set<std::string> visited;
-  if(!step(values.size()+heap.size()))return out;for(const auto &v:values)pending.push_back(&v);
+  if(!step())return out;const auto count=values.size();
+  if(!step(count+heap.size()))return out;for(size_t i=0;i<count;++i){if(!step(2))return {};pending.push_back(&values[i]);}
   for(const auto &[id,v]:heap)if(llvm::StringRef(id).starts_with("global:")){out.emplace(id,copy(v));pending.push_back(&v);}
   for(size_t index=0;index<pending.size();++index){
     // Pointees belong to the immutable inputs, so growing the work vector

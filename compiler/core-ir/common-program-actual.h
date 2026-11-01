@@ -25,6 +25,13 @@ struct ActualValue {
   uint8_t truth=0;bool unknown=false,callableTop=false;std::optional<int64_t> number;
   RegionValue region;
 };
+// Synchronous read-only roots. Both spans and every pointee belong to the
+// caller; reachable results own their payloads and retain no part of this view.
+struct ActualRoots {
+  llvm::ArrayRef<ActualValue> values;llvm::ArrayRef<const ActualValue *> retained;
+  size_t size()const{return values.size()+retained.size();}
+  const ActualValue &operator[](size_t i)const{return i<values.size()?values[i]:*retained[i-values.size()];}
+};
 // Read-only operands live only for the current instruction. Call/branch
 // boundaries point into an independent paid snapshot; other instructions
 // point into stable SSA map nodes. Consumers must not retain this view.
@@ -241,6 +248,7 @@ struct ActualCheck {
   bool overlayFrames(ActualFrameWorld &,const ActualFrameWorld &);
   ActualFrameWorld selectFrames(const ActualFrameWorld &,const std::vector<ActualValue> &,const ActualHeap &);
   std::vector<ActualValue> retainedFrames(const ActualFrameWorld &);
+  std::vector<const ActualValue *> retainedFrameRoots(const ActualFrameWorld &);
   // Both iterators belong to this check's already owned directories. No
   // execution value, heap node or temporary string may supply a symbol.
   const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualFieldDirectory::const_iterator);
@@ -268,7 +276,7 @@ struct ActualCheck {
   bool indirectAbi(const Function &,const Operation &,std::vector<std::string> &,std::string &);
   std::string joinCarriers(const std::vector<std::string> &);
   bool methodAbi(const Function &,const Operation &,std::vector<std::string> &,std::string &);
-  ActualHeap reachable(const std::vector<ActualValue> &,const ActualHeap &);
+  ActualHeap reachable(const ActualRoots &,const ActualHeap &);
   ActualValue valueCopy(const ActualValue &,ActualState &,const std::string &,bool,std::map<std::string,std::string> = {});
   bool repeatedAllocation(const ActualContext &,size_t)const;
   std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);

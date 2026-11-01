@@ -7,7 +7,7 @@
 #include <vector>
 #include <cstdint>
 namespace tsfg::commonProgram {
-struct ActualCheck;struct ActualValue;struct ActualState;struct ActualContext;struct Operation;class ActualHeap;
+struct ActualRoots;struct ActualCheck;struct ActualValue;struct ActualState;struct ActualContext;struct Operation;class ActualHeap;
 // A finite relation facet of the actual interpreter, not another value/heap
 // interpretation. A root names one current allocation version. Opaque includes
 // older/unproved alternatives; empty is a real non-owning runtime alternative.
@@ -38,7 +38,7 @@ RegionValue regionAllocate(ActualCheck &,const ActualContext &,const std::string
 RegionValue regionCopyValue(ActualCheck &,const RegionValue &,const std::string &,RegionHeap &);
 RegionValue regionLoad(ActualCheck &,const RegionValue &,const std::string &,const RegionHeap &);
 bool regionStore(ActualCheck &,const RegionValue &,const std::string &,const RegionValue &,RegionHeap &,bool hard=true);
-RegionHeap regionReachable(ActualCheck &,const std::vector<ActualValue> &,const RegionHeap &);
+RegionHeap regionReachable(ActualCheck &,const ActualRoots &,const RegionHeap &);
 bool regionEdge(ActualCheck &,const ActualContext &,uint16_t,uint16_t,ActualState &);
 void regionEscape(ActualCheck &,const RegionValue &,const RegionHeap &,bool hard=true);
 void regionHardEscape(ActualCheck &,const ActualValue &,const ActualHeap &);

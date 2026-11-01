@@ -45,6 +45,24 @@ auto selectionLowerBound(ActualCheck &c,Directory &directory,const std::string &
   return directory.lower_bound(query);
 }
 bool data(const ActualValue &v){return v.unknown||v.callableTop||!v.tags.empty()||!v.objects.empty()||!v.callables.empty();}
+template<class Retain>
+bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&retain){
+  // The world is already selected. Preserve FrameId then complete slot order.
+  for(const auto &[id,value]:world){if(!c.step())return false;if(data(value.bound)&&!retain(value.bound))return false;
+    if(!c.step(value.births.size()))return false;
+    std::vector<ActualBirthJournal::const_iterator> ordered;ordered.reserve(value.births.size());
+    for(auto row=value.births.begin();row!=value.births.end();++row){
+      if(!c.step())return false;ordered.push_back(row);size_t at=ordered.size()-1;
+      while(at){
+        const auto &left=*ordered[at-1]->first->spelling,&right=*ordered[at]->first->spelling;
+        if(!c.receiverText(left)||!c.receiverText(right))return false;if(left<right)break;
+        if(!c.step(3))return false;std::swap(ordered[at-1],ordered[at]);--at;
+      }
+    }
+    for(const auto row:ordered){if(!retain(row->second.real)||!c.e.message.empty())return false;}
+    if(!c.e.message.empty())return false;
+  }return true;
+}
 bool ordinary(ActualCheck &c,const ActualValue &v){
   if(!c.need(v.frames.empty()&&v.cursors.empty()&&v.cells.empty(),"control/Cell is not a selected language receiver"))return false;
   for(const auto &tag:v.tags)if(!c.receiverText(tag)||!c.need(!llvm::StringRef(tag).starts_with("env:"),"Env carrier is not a selected language receiver"))return false;
@@ -209,7 +227,7 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
   // Heap-derived refs borrow only values and this block's independently owned
   // reachable snapshot. Neither this set nor the selected views escape.
   if(!step(world.size()))return {};bool births=false;for(const auto &[id,value]:world)births|=!value.births.empty();
-  if(births){auto reached=reachable(values,heap);if(!e.message.empty()||!step(values.size()+reached.size()+1))return {};
+  if(births){if(!step(4))return {};auto reached=reachable({values,{}},heap);if(!e.message.empty()||!step(values.size()+reached.size()+1))return {};
     // These refs have only a membership consumer. Sorting or deduplicating
     // would compare complete object spellings without changing that answer.
     std::vector<const std::string *> refs;
@@ -255,22 +273,16 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
 }
 std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &world){
   if(!step(world.size()))return {};std::vector<ActualValue> result;result.reserve(world.size());
-  // The world is already selected. Preserve FrameId then slot order, including
-  // journals carried by nested ordinary data arguments.
-  for(const auto &[id,value]:world){if(!step())return {};if(data(value.bound))result.push_back(copy(value.bound));
-    if(!step(value.births.size()))return {};
-    std::vector<ActualBirthJournal::const_iterator> ordered;ordered.reserve(value.births.size());
-    for(auto row=value.births.begin();row!=value.births.end();++row){
-      if(!step())return {};ordered.push_back(row);size_t at=ordered.size()-1;
-      while(at){
-        const auto &left=*ordered[at-1]->first->spelling,&right=*ordered[at]->first->spelling;
-        if(!receiverText(left)||!receiverText(right))return {};if(left<right)break;
-        if(!step(3))return {};std::swap(ordered[at-1],ordered[at]);--at;
-      }
-    }
-    for(const auto row:ordered){result.push_back(copy(row->second.real));if(!e.message.empty())return {};}
-    if(!e.message.empty())return {};}
+  if(!step(2)||!visitRetainedFrames(*this,world,[&](const ActualValue &value){result.push_back(copy(value));return true;}))return {};
   return result;
+}
+std::vector<const ActualValue *> ActualCheck::retainedFrameRoots(const ActualFrameWorld &world){
+  if(!step(world.size()))return {};std::vector<const ActualValue *> result;
+  if(!step(2)||!visitRetainedFrames(*this,world,[&](const ActualValue &value){
+    if(result.size()==result.capacity()){
+      if(!step(result.size()+1))return false;result.reserve(std::max<size_t>(1,result.size()*2));}
+    if(!step(2))return false;result.push_back(&value);return true;
+  }))return {};return result;
 }
 bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,const std::string &ref,const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
   if(!step(fields.size()))return false;ActualBirthJournal rows;

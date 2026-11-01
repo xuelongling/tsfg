@@ -161,8 +161,9 @@ bool regionStore(ActualCheck &c,const RegionValue &receiver,const std::string &s
     else regionMerge(c,prior->second,value);
   }return c.e.message.empty();
 }
-RegionHeap regionReachable(ActualCheck &c,const std::vector<ActualValue> &args,const RegionHeap &heap){
-  RegionHeap out;std::vector<std::string> pending;for(const auto &arg:args){const auto v=regionValue(c,arg);if(!c.step(regionWeight(v)))return {};pending.insert(pending.end(),v.roots.begin(),v.roots.end());}
+RegionHeap regionReachable(ActualCheck &c,const ActualRoots &args,const RegionHeap &heap){
+  RegionHeap out;std::vector<std::string> pending;if(!c.step())return {};const auto count=args.size();
+  for(size_t i=0;i<count;++i){if(!c.step(2))return {};const auto &arg=args[i];const auto v=regionValue(c,arg);if(!c.step(regionWeight(v)))return {};pending.insert(pending.end(),v.roots.begin(),v.roots.end());}
   for(size_t i=0;i<pending.size();++i){if(!c.step())return {};const auto root=pending[i];if(out.count(root))continue;auto node=heap.find(root);if(node==heap.end())continue;
     auto &slots=out[root];for(const auto &[slot,v]:node->second){if(!c.step(slot.size()/64+regionWeight(v)))return {};slots.emplace(slot,v);pending.insert(pending.end(),v.roots.begin(),v.roots.end());}
   }return out;
@@ -206,13 +207,14 @@ bool regionEdge(ActualCheck &c,const ActualContext &context,uint16_t from,uint16
     // A live Frame/cursor also retains its selected bound data and ancestor
     // bindings. These have the same escape obligation as an ordinary live
     // value; controls do not grant a new current-region permission.
-    if(!value->second.frames.empty()||!value->second.cursors.empty()){
-      auto selected=c.selectFrames(state.frames,roots,state.heap);if(!c.e.message.empty())return false;
-      auto retained=c.retainedFrames(selected);if(!c.e.message.empty()||!c.step(roots.size()+retained.size()))return false;
-      roots.reserve(roots.size()+retained.size());
-      for(auto &bound:retained){regionEscape(c,regionValue(c,bound),state.regions,false);if(!c.e.message.empty())return false;roots.push_back(std::move(bound));}
+    if(!c.step(5))return false;const bool controls=!value->second.frames.empty()||!value->second.cursors.empty();
+    if(!controls&&!c.step(4))return false;
+    auto selected=controls?c.selectFrames(state.frames,roots,state.heap):ActualFrameWorld{};if(!c.e.message.empty())return false;
+    auto retained=controls?c.retainedFrameRoots(selected):std::vector<const ActualValue *>{};
+    if(controls){if(!c.e.message.empty()||!c.step(retained.size()))return false;
+      for(const auto *bound:retained){if(!c.step())return false;regionEscape(c,regionValue(c,*bound),state.regions,false);if(!c.e.message.empty())return false;}
     }
-    auto reached=c.reachable(roots,state.heap);for(const auto &[slot,child]:reached){if(!c.step())return false;regionEscape(c,regionValue(c,child),state.regions,false);}
+    if(!c.step(4))return false;auto reached=c.reachable({roots,retained},state.heap);for(const auto &[slot,child]:reached){if(!c.step())return false;regionEscape(c,regionValue(c,child),state.regions,false);}
     for(const auto &cell:value->second.cells){if(!c.step())return false;auto stored=state.heap.find(cell);if(stored!=state.heap.end())regionEscape(c,regionValue(c,stored->second),state.regions,false);}
   }
   for(const auto &[slot,v]:state.heap){if(!c.step())return false;if(llvm::StringRef(slot).starts_with("global:"))regionEscape(c,regionValue(c,v),state.regions);}

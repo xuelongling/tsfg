@@ -372,9 +372,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(adopted){if(!step())return false;
       if(!selected.empty()){if(!step(2))return false;changed=true;frameSummary=std::move(selected);}}
     else changed=joinFrames(frameSummary,selected)||changed;
-    auto retained=retainedFrames(adopted?frameSummary:selected);if(!e.message.empty()||!step(frameRoots.size()+retained.size()))return false;
-    std::vector<ActualValue> roots=std::move(frameRoots);roots.reserve(roots.size()+retained.size());
-    for(auto &v:retained)roots.push_back(std::move(v));
+    auto retained=retainedFrameRoots(adopted?frameSummary:selected);if(!e.message.empty()||!step(4))return false;
+    const ActualRoots roots{frameRoots,retained};
     auto live=reachable(roots,state.heap);changed=mergeHeap(heap,std::move(live))||changed;continues=false;
     if(!conditional){if(!args.empty()&&!regionObserveReturn(*this,context,args[0],state.regions))return false;
       auto projected=regionReachable(*this,roots,state.regions);auto &summary=normal?context.normalRegions:context.languageRegions;

@@ -378,5 +378,65 @@ bool returnFrameAdoption(){
   llvm::errs()<<"PASS actual return normal/language empty-summary adoption, nonempty union/current projection, ownership and fixed1000 cutoff\n";return true;
 }
 }
-int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories()||!frameRefMembership()||!returnFrameAdoption())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
+namespace {
+bool retainedRootBorrowing(){
+  {Fixture f(false);ActualFrameWorld world;ActualValue tag;tag.tags={"tag-only"};ActualValue object;object.objects={"object-only"};
+    ActualValue callable;callable.callables={{"code","env"}};ActualValue unknown;unknown.unknown=true;ActualValue top;top.callableTop=true;
+    ActualValue filtered;filtered.cells={"cell"};filtered.frames={"frame"};filtered.cursors={"cursor"};filtered.truth=3;filtered.number=17;filtered.region.known=true;filtered.region.roots={"filtered-region"};
+    auto full=f.state.values.at(8);full.unknown=true;full.callableTop=true;full.region.opaque=true;full.region.empty=true;ActualValue regionOnly;regionOnly.region.known=true;regionOnly.region.roots={"journal-region"};
+    world["g"].bound=full;world["f"].bound=filtered;world["f"].births.emplace(f.slot("shared","F"),ActualBirth{"shared",tag,true});
+    world["e"].bound=top;world["d"].bound=unknown;world["c"].bound=callable;world["b"].bound=object;world["a"].bound=tag;
+    world["b"].births.emplace(f.slot("historical-object","F"),ActualBirth{"historical-object",ActualValue{},true});
+    world["b"].births.emplace(f.slot("shared","F"),ActualBirth{"shared",regionOnly,false});
+    world["b"].births.emplace(f.slot("different-object","G"),ActualBirth{"different-object",full,false});
+    // Frame a..g, then full slot spelling different<historical<shared; this
+    // deliberately differs from the genuine physical-slot registration order.
+    const std::vector<ActualValue> wanted={tag,object,full,ActualValue{},regionOnly,callable,unknown,top,tag,full};const auto before=world;
+    auto roots=f.check.retainedFrames(world);if(!expect(f.error.message.empty()&&roots.size()==wanted.size()&&sameMap(world,before,[](const auto &a,const auto &b){return same(a,b);}),"owned retained roots preserve bound data classes, unfiltered Bottom/pending birth rows, duplicates and full frame/slot order"))return false;
+    for(size_t i=0;i<wanted.size();++i)if(!expect(same(roots[i],wanted[i]),"retained root ordinal has every exact ordinary/control/Region facet"))return false;
+    roots.back().objects.clear();roots[2].region.roots.clear();
+    if(!expect(sameMap(world,before,[](const auto &a,const auto &b){return same(a,b);}),"owning retained root mutation cannot change source bindings or journals"))return false;world.clear();
+    if(!expect(same(roots[0],tag)&&same(roots[4],regionOnly)&&same(roots[8],tag),"owning retained API remains independent after root mutation and World destruction"))return false;
+  }
+  {Fixture f(false);auto binding=f.state.frames.at(f.selected);binding.births.clear();binding.bound=f.state.values.at(8);binding.bound.tags.clear();binding.bound.cells.clear();binding.bound.region.roots.clear();
+    for(size_t i=0;i<256;++i){binding.bound.tags.insert("tag:"+std::to_string(i));binding.bound.cells.insert("cell:"+std::to_string(i));binding.bound.region.roots.insert("region:"+std::to_string(i));}
+    binding.unbound=false;binding.weak=true;binding.pending=true;binding.initializing=true;binding.aborted=true;binding.prefixMin=1;binding.prefixMax=3;
+    binding.bound.unknown=true;binding.bound.callableTop=true;binding.bound.region.opaque=true;binding.bound.region.empty=true;
+    f.state.frames.clear();f.state.frames.emplace(f.selected,binding);f.state.values.clear();f.state.heap.clear();f.state.regions.clear();f.check.receiverFrames.at(f.selected).parent.clear();
+    f.check.receiverFrames.erase(f.parent);f.check.receiverFrames.erase(f.unrelated);ActualValue control;control.frames={f.selected};f.context.arguments={control};f.context.normal=true;
+    auto &op=f.function.blocks[0].operations[0];op.name="func.return";const auto before=f.state;bool changed=false,continues=true;size_t edges=0;
+    if(!expect(f.selected.size()==80&&binding.bound.tags.size()==256&&binding.bound.cells.size()==256&&binding.bound.region.roots.size()==256,"independent fixed2000 fixture owns full bounded value planes before transfer"))return false;
+    f.program.remaining=2000;if(!expect(f.check.instruction(f.context,op,0,f.state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues)&&
+        f.error.message.empty()&&!continues&&changed&&edges==0&&same(f.state,before)&&sameMap(f.context.normalFrames,before.frames,[](const auto &a,const auto &b){return same(a,b);})&&f.context.normalHeap.empty(),
+        "fixed2000 genuine return retains all selected value planes without cloning a temporary retained root"))return false;
+  }
+  for(const bool normal:{true,false})for(const bool populated:{false,true}){Fixture f(false);auto binding=f.state.frames.at(f.selected);binding.bound=f.state.values.at(8);binding.bound.objects={"bound"};binding.bound.region.roots={"bound-r"};binding.births.clear();
+    auto birth=payload("birth");birth.truth=2;birth.number=9007199254740993LL;birth.region.number=9007199254740995LL;birth.region.roots={"birth-r"};birth.unknown=true;birth.callableTop=true;
+    ActualValue relation;relation.region.known=true;relation.region.roots={"journal-r"};binding.births.emplace(f.slot("historical-object","F"),ActualBirth{"historical-object",birth,false});
+    binding.births.emplace(f.slot("different-object","G"),ActualBirth{"different-object",relation,true});binding.births.emplace(f.slot("shared","F"),ActualBirth{"shared",ActualValue{},true});
+    f.state.frames.clear();f.state.frames.emplace(f.selected,binding);f.state.values.clear();f.state.heap.clear();f.state.regions.clear();f.check.receiverFrames.at(f.selected).parent.clear();
+    f.state.heap.emplace("bound/field/value",payload("bound-child"));f.state.heap.emplace("birth/field/value",payload("birth-child"));f.state.heap.emplace("environment/field/capture",payload("env-child"));f.state.heap.emplace("summary-only/field/secret",payload("excluded"));
+    RegionValue child;child.known=true;child.opaque=true;child.empty=true;child.number=9007199254740993LL;child.roots={"child-r"};RegionValue loop;loop.known=true;loop.roots={"journal-r"};
+    f.state.regions["bound-r"].emplace("/child",child);f.state.regions.emplace("birth-r",std::map<std::string,RegionValue>{});f.state.regions["journal-r"].emplace("/self",loop);
+    f.state.regions.emplace("child-r",std::map<std::string,RegionValue>{});f.state.regions.emplace("summary-only-r",std::map<std::string,RegionValue>{});
+    ActualValue control;control.frames={f.selected};f.context.arguments={control};f.context.normal=normal;f.context.language=!normal;auto wanted=f.state.frames;auto &summary=normal?f.context.normalFrames:f.context.languageFrames;
+    if(populated){ActualFrameBinding old;old.bound=payload("summary-only");old.bound.region.roots={"summary-only-r"};summary.emplace(f.unrelated,old);wanted.emplace(f.unrelated,old);}
+    ActualHeap wantedHeap;wantedHeap.emplace("bound/field/value",payload("bound-child"));wantedHeap.emplace("birth/field/value",payload("birth-child"));wantedHeap.emplace("environment/field/capture",payload("env-child"));
+    RegionHeap wantedRegions;wantedRegions["bound-r"].emplace("/child",child);wantedRegions.emplace("birth-r",std::map<std::string,RegionValue>{});wantedRegions["journal-r"].emplace("/self",loop);wantedRegions.emplace("child-r",std::map<std::string,RegionValue>{});
+    auto &op=f.function.blocks[0].operations[0];op.name=normal?"func.return":"return_throw";const auto before=f.state;bool changed=false,continues=true;size_t edges=0;f.program.remaining=500000;
+    if(!expect(f.check.instruction(f.context,op,0,f.state,false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues)&&f.error.message.empty()&&!continues&&changed&&edges==0&&same(f.state,before)&&
+        sameMap(summary,wanted,[](const auto &a,const auto &b){return same(a,b);}),"false-mode return completes exact normal/language current World with either adoption or cumulative union"))return false;
+    auto &heap=normal?f.context.normalHeap:f.context.languageHeap;auto &regions=normal?f.context.normalRegions:f.context.languageRegions;
+    if(!expect(sameMap(heap,wantedHeap,[](const auto &a,const auto &b){return same(a,b);})&&sameMap(regions,wantedRegions,[](const auto &a,const auto &b){return sameMap(a,b,[](const auto &x,const auto &y){return same(x,y);});}),
+        "borrowed roots reach bound, callable environment, full birth and Region-only birth data including cyclic/empty Region nodes, excluding summary-only roots"))return false;
+    f.state.frames.at(f.selected).bound.region.roots.clear();f.state.frames.at(f.selected).births.clear();f.state.heap.clear();f.state.regions.clear();f.state.frames.clear();f.check.receiverFrames.clear();f.context.arguments.clear();
+    if(!expect(sameMap(summary,wanted,[](const auto &a,const auto &b){return same(a,b);})&&sameMap(heap,wantedHeap,[](const auto &a,const auto &b){return same(a,b);})&&
+        sameMap(regions,wantedRegions,[](const auto &a,const auto &b){return sameMap(a,b,[](const auto &x,const auto &y){return same(x,y);});}),"final World, Heap and Region outputs own all data after borrowed sources expire"))return false;
+    const auto changedInput=f.state;heap.begin()->second.objects.clear();regions.at("bound-r").at("/child").roots.clear();summary.begin()->second.births.clear();
+    if(!expect(same(f.state,changedInput),"output mutation cannot reach the destroyed source root planes"))return false;
+  }
+  llvm::errs()<<"PASS retained root full ordering/filter/births, fixed2000 return and false-mode owned Heap/Region projections\n";return true;
+}
+}
+int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories()||!frameRefMembership()||!returnFrameAdoption()||!retainedRootBorrowing())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
   llvm::errs()<<"1 independent group passed; old11 results reused, complete Source820b remains independent\n";return 0;}
