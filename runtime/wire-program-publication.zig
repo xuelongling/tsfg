@@ -48,7 +48,13 @@ pub const ScopeShape = union(enum) {
         label: []const u8,
         // Optional semantic-shape properties preserve absence, not JSON null.
         base: ?[]const u8,
-        construction: struct { access: member.Access, parameters: []const []const u8, return_type: []const u8 },
+        construction: struct {
+            access: member.Access, parameters: []const []const u8, return_type: []const u8,
+            // Paired Source3 shape metadata; flattened to its two original
+            // canonical keys. null means absent Source2 keys, not JSON null.
+            // These labels/minimum retain no initializer or Source-step proof.
+            argument_signature: ?struct { minimum_argument_count: u16, argument_types: []const []const u8 },
+        },
         fields: []const struct { access: member.Access, index: u16, name: []const u8, readonly: bool, @"type": []const u8 },
         methods: ?[]const struct { access: member.Access, name: []const u8, parameters: []const []const u8, return_type: []const u8 },
     },

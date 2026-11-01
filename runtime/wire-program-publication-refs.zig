@@ -61,6 +61,12 @@ fn shape(c: *Context, value: model.ScopeShape, labels: *const StringSet) Error!v
         .element => |v| { try c.row(@TypeOf(v)); try c.text(v.label, 1048576, 1); try checkLabel(c, v.element_type, labels, false); },
         .nominal => |v| { try c.row(@TypeOf(v)); try c.text(v.label, 1048576, 1); if (v.base) |base| try checkLabel(c, base, labels, true);
             try bound(c, v.construction.parameters.len, 64); for (v.construction.parameters) |p| try checkLabel(c, p, labels, false); try checkLabel(c, v.construction.return_type, labels, false);
+            if (v.construction.argument_signature) |inputs| {
+                try c.row(@TypeOf(inputs)); try c.require(inputs.minimum_argument_count <= v.construction.parameters.len and inputs.argument_types.len == v.construction.parameters.len);
+                // Positional order and duplicates are meaningful; these are
+                // semantic archive labels, not observed Actual type IDs.
+                for (inputs.argument_types) |label| try checkLabel(c, label, labels, false);
+            }
             try bound(c, v.fields.len, 256); for (v.fields) |field| { try c.row(@TypeOf(field)); try c.text(field.name, 4096, 1); try c.require(field.index <= 255); try checkLabel(c, field.@"type", labels, false); }
             if (v.methods) |methods| { try bound(c, methods.len, 4096); for (methods) |method| { try c.row(@TypeOf(method)); try c.text(method.name, 4096, 1); try bound(c, method.parameters.len, 64); for (method.parameters) |p| try checkLabel(c, p, labels, false); try checkLabel(c, method.return_type, labels, false); } }
         },

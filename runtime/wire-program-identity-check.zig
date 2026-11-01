@@ -204,7 +204,11 @@ const Json = struct {
         // Optional semantic-shape properties are absent, unlike nullable refs.
         try self.raw("{");
         if (v.base) |base| { try self.raw("\"base\":"); try self.value(base); try self.raw(","); }
-        try self.raw("\"construction\":"); try self.value(v.construction);
+        try self.raw("\"construction\":");
+        if (v.construction.argument_signature) |inputs| {
+            try self.value(.{ .access=v.construction.access, .argument_types=inputs.argument_types,
+                .minimum_argument_count=inputs.minimum_argument_count, .parameters=v.construction.parameters, .return_type=v.construction.return_type });
+        } else try self.value(.{ .access=v.construction.access, .parameters=v.construction.parameters, .return_type=v.construction.return_type });
         try self.raw(",\"fields\":"); try self.value(v.fields);
         try self.raw(",\"kind\":"); try self.value(v.kind);
         try self.raw(",\"label\":"); try self.value(v.label);
@@ -501,6 +505,7 @@ const Archive = struct {
             .nominal => |value| {
                 if (value.base) |base| try result.edge(i, base);
                 for (value.construction.parameters) |label| try result.edge(i, label);
+                if (value.construction.argument_signature) |inputs| for (inputs.argument_types) |label| try result.edge(i, label);
                 for (value.fields) |field| try result.edge(i, field.@"type");
                 if (value.methods) |methods| for (methods) |method| { for (method.parameters) |label| try result.edge(i, label); try result.edge(i, method.return_type); };
             },
@@ -561,6 +566,7 @@ const Common = struct {
     c:*Context, v:*const tables.CommonTables,
     labels:[]?[]u8, shapes:[]?[]u8, states:[]u2,
     fields:[]std.ArrayListUnmanaged(usize), edges:[]std.ArrayListUnmanaged(usize), ctors:[]usize,
+    fdi_pending: ?[]bool = null,
     fn init(c:*Context,v:*const tables.CommonTables) Error!Common {
         const n=v.types.len; try c.charge(n*6);
         const labels=try c.allocator.alloc(?[]u8,n); errdefer c.allocator.free(labels); @memset(labels,null);
@@ -577,6 +583,7 @@ const Common = struct {
         for(self.fields) |*p| p.deinit(self.c.allocator); for(self.edges) |*p| p.deinit(self.c.allocator);
         self.c.allocator.free(self.labels); self.c.allocator.free(self.shapes); self.c.allocator.free(self.states);
         self.c.allocator.free(self.fields); self.c.allocator.free(self.edges); self.c.allocator.free(self.ctors);
+        if(self.fdi_pending) |pending| self.c.allocator.free(pending);
     }
     fn sortLabels(self:*Common,type_indexes:[]const usize) Error![]usize { return sortLabelIndexes(self.c,type_indexes,self.labels); }
     fn label(self:*Common,index:usize,depth:usize) Error![]const u8 {
@@ -659,6 +666,14 @@ const Common = struct {
         var labels=std.StringHashMapUnmanaged(void){}; defer labels.deinit(c.allocator); var void_index:usize=none;
         for(v.types,0..) |row,i| { try c.step(); const text=try self.label(i,0); try c.charge(1+text.len/64); try c.require(!(try labels.getOrPut(c.allocator,text)).found_existing); if(row.kind==.@"void")void_index=i; }
         for(v.types,0..) |_,i| try self.shape(i,void_index);
+        // The original shape can retain FDI metadata, but the current cold
+        // catalogue has no independently admitted parameter steps. Preserve
+        // every other check and defer only that unavailable identity evidence.
+        const scope=v.authority.fixed_publication.stable_scope;
+        for(scope.types) |row| { try c.step(); if(row.shape==.nominal and row.shape.nominal.construction.argument_signature!=null) {
+            if(self.fdi_pending==null) { try c.charge(v.types.len); self.fdi_pending=try c.allocator.alloc(bool,v.types.len); @memset(self.fdi_pending.?,false); }
+            for(v.types,0..) |current,i| { try c.step(); if(std.mem.eql(u8,&row.id,&current.id))self.fdi_pending.?[i]=true; }
+        } }
         for(v.types,0..) |row,i| {
             try c.step();
             if(row.kind==.scalar or row.kind==.string or row.kind==.unknown or row.kind==.@"undefined" or row.kind==.@"null" or row.kind==.@"void") {
@@ -667,14 +682,16 @@ const Common = struct {
                 var seen=std.AutoHashMapUnmanaged(usize,void){}; defer seen.deinit(c.allocator);
                 var pending:std.ArrayListUnmanaged(usize)=.empty; defer pending.deinit(c.allocator); try pending.append(c.allocator,i);
                 var graph:std.ArrayListUnmanaged(usize)=.empty; defer graph.deinit(c.allocator);
+                var unavailable=false;
                 while(pending.pop()) |current| {
                     try c.step(); if((try seen.getOrPut(c.allocator,current)).found_existing)continue;
+                    if(self.fdi_pending) |missing| { if(missing[current])unavailable=true; }
                     try graph.append(c.allocator,current); try c.charge(self.edges[current].items.len); try pending.appendSlice(c.allocator,self.edges[current].items);
                 }
                 const sorted=try self.sortLabels(graph.items); defer c.allocator.free(sorted);
                 var out=Json{.c=c}; defer out.deinit(); try out.raw("{\"graph\":[");
                 for(sorted,0..) |n,at| { if(at!=0)try out.raw(","); try out.raw(self.shapes[n].?); } try out.raw("],\"root\":"); try out.value(self.labels[i].?); try out.raw("}");
-                try equal(c,row.id,try parts(c,&.{"tsfg.common-program.type.v1\x00",out.bytes.items}));
+                if(unavailable) { self.fdi_pending.?[i]=true; } else try equal(c,row.id,try parts(c,&.{"tsfg.common-program.type.v1\x00",out.bytes.items}));
             }
             if(row.nominal_key) |key| {
                 try equal(c,row.runtime_key.?,try runtimeClass(c,key));
@@ -712,6 +729,9 @@ const Common = struct {
             else => {}, // Original Source Binding IDs omit the necessary Source declaration keys.
         };
         try self.environments(); try self.interfaces(); try self.checkPublication();
+        // All fixed archive/Graph structures and semantic IDs, declaration
+        // joins and original digests precede this no-authority result.
+        if(self.fdi_pending) |pending| for(pending) |missing| { try c.step(); if(missing)return error.FixedInterpretationPending; };
     }
     fn environments(self:*Common) Error!void {
         const c=self.c; const v=self.v;
@@ -796,7 +816,13 @@ const Common = struct {
         for(v.types,0..) |row,i| { try c.step(); try type_ids.put(c.allocator,row.id,i); }
         for(scope.types) |row| {
             try c.step(); if(type_ids.get(row.id)) |i| {
-                try textEqual(c,self.labels[i].?,row.label); try sameValue(c,Raw{.bytes=self.shapes[i].?},row.shape);
+                try textEqual(c,self.labels[i].?,row.label);
+                if(row.shape==.nominal and row.shape.nominal.construction.argument_signature!=null) {
+                    // Compare all independently owned declaration components;
+                    // never fill current FDI data from an ABI or archive claim.
+                    try c.row(@TypeOf(row.shape.nominal)); var declaration=row.shape; declaration.nominal.construction.argument_signature=null;
+                    try sameValue(c,Raw{.bytes=self.shapes[i].?},declaration);
+                } else try sameValue(c,Raw{.bytes=self.shapes[i].?},row.shape);
             } else try c.require(row.shape!=.nominal);
         }
         try self.scopeDirectories();
