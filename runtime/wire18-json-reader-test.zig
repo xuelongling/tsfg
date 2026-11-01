@@ -2,6 +2,8 @@
 // Syntax/ownership tests only: no bytecode envelope, Program, graph or VM.
 const std = @import("std");
 const json = @import("wire18-json-reader.zig");
+const types = @import("wire-program-types.zig");
+const tables = @import("wire-program-tables.zig");
 
 test "canonical JSON preserves primitive values and owned UTF8 text" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -90,4 +92,55 @@ fn parseWithFailingAllocator(allocator: std.mem.Allocator) !void {
 
 test "JSON arena releases every allocation failure path" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, parseWithFailingAllocator, .{});
+}
+
+test "JSON carrier tags preserve widths and reject extra payload" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var meter = json.Meter{};
+    var decoder = json.Decoder{ .allocator = arena.allocator(), .meter = &meter };
+    const domain = try decoder.convert(types.Carrier, try decoder.parse("{\"kind\":0,\"ref\":4294967295}"));
+    try std.testing.expectEqual(@as(u32, 4294967295), @intFromEnum(domain.domain));
+    const environment = try decoder.convert(types.Carrier, try decoder.parse("{\"kind\":1,\"ref\":65535}"));
+    try std.testing.expectEqual(@as(u16, 65535), @intFromEnum(environment.environment));
+    const native_type = try decoder.convert(types.Carrier, try decoder.parse("{\"kind\":2,\"ref\":65535}"));
+    try std.testing.expectEqual(@as(u16, 65535), @intFromEnum(native_type.@"type"));
+    const cell = try decoder.convert(types.Carrier, try decoder.parse("{\"kind\":3,\"ref\":4294967295}"));
+    try std.testing.expectEqual(@as(u32, 4294967295), @intFromEnum(cell.cell));
+    try std.testing.expect((try decoder.convert(types.Carrier, try decoder.parse("{\"kind\":4,\"ref\":0}"))) == .payload);
+    const receiver = try decoder.convert(types.Carrier, try decoder.parse("{\"kind\":5,\"ref\":65536}"));
+    try std.testing.expectEqual(@as(u32, 65536), @intFromEnum(receiver.receiver));
+    const initialization = try decoder.convert(types.Carrier, try decoder.parse("{\"kind\":6,\"ref\":4294967295}"));
+    try std.testing.expectEqual(@as(u32, 4294967295), @intFromEnum(initialization.initialization));
+    for ([_][]const u8{ "{\"kind\":7,\"ref\":0}", "{\"kind\":4,\"ref\":1}", "{\"kind\":2,\"ref\":65536}", "{\"kind\":0,\"ref\":4294967296}", "{\"extra\":0,\"kind\":0,\"ref\":0}", "{\"kind\":0}" }) |source| {
+        try std.testing.expectError(error.InvalidShape, decoder.convert(types.Carrier, try decoder.parse(source)));
+    }
+}
+
+test "JSON source rows preserve hash and reject invalid numeric or record shape" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var meter = json.Meter{};
+    var decoder = json.Decoder{ .allocator = arena.allocator(), .meter = &meter };
+    const hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    const row = try decoder.convert(tables.Source, try decoder.parse("{\"hash\":\"" ++ hash ++ "\",\"length\":3,\"path\":\"a.ts\"}"));
+    try std.testing.expectEqual([_]u8{0} ** 32, row.hash);
+    try std.testing.expectEqual(@as(u32, 3), row.length);
+    try std.testing.expectEqualStrings("a.ts", row.path);
+    try std.testing.expectError(error.InvalidShape, decoder.convert(tables.Source, try decoder.parse("{\"hash\":\"" ++ hash ++ "\",\"length\":4294967296,\"path\":\"a.ts\"}")));
+    try std.testing.expectError(error.InvalidShape, decoder.convert(tables.Source, try decoder.parse("{\"hash\":\"" ++ hash ++ "\",\"path\":\"a.ts\"}")));
+    try std.testing.expectError(error.InvalidShape, decoder.convert(types.Hash, try decoder.parse("\"sha256:000000000000000000000000000000000000000000000000000000000000000A\"")));
+}
+
+test "JSON flattened field layout keeps all offsets and rejects narrowing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var meter = json.Meter{};
+    var decoder = json.Decoder{ .allocator = arena.allocator(), .meter = &meter };
+    const layout = try decoder.convert(types.FieldLayout, try decoder.parse("{\"alignment\":4,\"byteSize\":8,\"fieldOffsets\":[0,4],\"referenceCount\":0}"));
+    try std.testing.expectEqual(@as(u32, 8), layout.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 4), layout.layout.alignment);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 4 }, layout.field_offsets);
+    try std.testing.expectError(error.InvalidShape, decoder.convert(types.FieldLayout, try decoder.parse("{\"alignment\":65536,\"byteSize\":8,\"fieldOffsets\":[0,4],\"referenceCount\":0}")));
+    try std.testing.expectError(error.InvalidShape, decoder.convert(types.FieldLayout, try decoder.parse("{\"alignment\":4,\"byteSize\":8,\"fieldOffsets\":[4294967296],\"referenceCount\":0}")));
 }

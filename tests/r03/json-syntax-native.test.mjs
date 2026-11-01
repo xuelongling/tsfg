@@ -25,5 +25,5 @@ test('protocol JSON syntax and caller arena cleanup pass the native unit suite',
     error: result.error?.message }));
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr?.toString());
-  assert.match(result.stderr.toString(), /All 6 tests passed\./);
+  assert.match(result.stderr.toString(), /All 9 tests passed\./);
 });
