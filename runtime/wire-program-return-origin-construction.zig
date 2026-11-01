@@ -7,6 +7,9 @@ const Ref = model.Ref;
 const Budget = model.Budget;
 const Error = model.Error;
 pub const Category = enum { object, @"undefined", other };
+// Borrowed original directory IDs derived from ALL final current entrances.
+// Only an actually proved unbound root with known newTarget is representable.
+pub const Entry = struct { function_id: model.Symbol, construction: model.Symbol, new_target: model.Symbol };
 pub const Atom = struct {
     source: union(enum) { node: Ref, allocation: Ref, language_error: Ref },
     category: Category,
@@ -116,6 +119,7 @@ const Engine = struct {
             for (self.graph.nodes, 0..) |node, index| {
                 try self.budget.step(); const into = &self.values[index];
                 switch (node) {
+                    .receiver_input => try self.add(Ref, &into.frames, index),
                     .literal => |row| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = if (row.category == .@"undefined") .@"undefined" else .other }),
                     .local => try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = .object }),
                     .code => |row| if (self.controls[row.control]) { try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = .object }); },
@@ -173,14 +177,17 @@ const Engine = struct {
 
 // The owning model reader already checked every row/ref/carrier and creation
 // activation gate using this same immutable directory and cumulative Budget.
-// No raw decoder, Source/FDI facts, Actual inputs or permission upper is accepted.
-pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget) Error!Analysis {
+// Optional entry carries only original IDs for an independently proved unbound
+// root. It must belong to this graph's owning function and completed same-
+// Context actual analysis. No raw payload, Source/FDI or permission is accepted.
+pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry) Error!Analysis {
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
     if (!try model.receiverActivations(allocator, graph, budget)) { result.pending = .frame_activation; return result; }
     if (graph.calls.len != 0) { result.pending = .fixed_call; return result; }
-    for (graph.nodes) |node| {
+    var input: ?Ref = null;
+    for (graph.nodes,0..) |node,index| {
         try budget.step(); switch (node) {
-            .receiver_input => { result.pending = .entry_state; return result; },
+            .receiver_input => { if(entry==null or input!=null) { result.pending = .entry_state; return result; } input=index; },
             .unknown => { result.pending = .unknown_origin; return result; },
             .literal, .local, .parameter, .global, .nonowning, .join, .gate, .receiver_frame, .receiver_value => {},
             .code => |row| if (row.environment != null) { result.pending = .data_protocol; return result; },
@@ -196,6 +203,15 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
     for (worlds) |*world| { try budget.spend(graph.nodes.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len) }; @memset(world.bindings, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
     var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results };
+    if(input) |id| {
+        try budget.spend(3); const seed=entry.?; const function=try model.findFunction(directory,seed.function_id,budget);
+        const role=try engine.construction(seed.construction); try budget.spend(7);
+        if(function.kind!=.construction_body or function.construction==null or role.kind!=.explicit or role.base!=null or
+            !try budget.equal(function.construction.?.id,role.id) or !try budget.equal(seed.new_target,role.owner)) { result.pending=.entry_state; return result; }
+        // Every heap entry starts from this observed unbound state. No frame
+        // data/category is invented and no bound entry payload is supported.
+        frames[id]=.{.role=role,.new_target=seed.new_target,.parent=null};
+    }
     try engine.run(); if (engine.pending) |reason| { result.pending = reason; return result; }
     // A circular/uncomputed data equation is bottom, never a known-empty
     // payload. Only an actually absent operand vector denotes generated U.

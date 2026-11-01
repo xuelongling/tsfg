@@ -32,6 +32,10 @@ pub const Invocation = struct {
     activation: usize,
     region_scope: ?relation.ScopeRef=null,
     unresolved: bool=false,
+    // Reasons remain independent: a fixed receiver upper gap is NOT evidence
+    // that the actual entry frame is unknown. Neither clears unresolved.
+    actual_unresolved: bool=false,
+    receiver_upper_gap: bool=false,
     arguments: []V,
     entry: Heap=.{},
     returned: V=.{}, thrown: V=.{},
@@ -43,6 +47,9 @@ pub const Invocation = struct {
     receiver_lifetimes: facts.ReceiverLifetimes=.{},
 };
 pub const Analysis = struct {
+    owner: ?*const Context=null,
+    final_replay_complete: bool=false,
+    receiver_calls: std.ArrayListUnmanaged(facts.CallEdge)=.empty,
     frames: std.ArrayListUnmanaged(region_data.FrameInfo)=.empty,
     // Passive facts. Neither construction nor a known-subset comparison is an
     // admission marker; unresolved inputs and unavailable region correlation
@@ -58,6 +65,108 @@ pub const Analysis = struct {
     // External/unscoped alternatives remain unresolved in each Value.
     region_nodes: std.ArrayListUnmanaged(relation.Node)=.empty,
     region_scopes: std.ArrayListUnmanaged(relation.Scope)=.empty,
+
+    pub const ReceiverEntry = struct { construction: t.ConstructionIndex, new_target: t.TypeRef };
+    fn strictReceiverCaller(c: *Context, ref: t.FunctionRef, target: t.FunctionRef, construction: t.ConstructionIndex) Error!bool {
+        const v=&c.program.tables.mode.common; const f=&c.program.functions[@intFromEnum(ref)]; const abi=&v.abis[@intFromEnum(f.abi)];
+        try c.charge(8);
+        if((f.role!=.ordinary and f.role!=.module_initializer) or abi.parameters.len!=0 or abi.argument_types.len!=0 or abi.receiver!=null or abi.receiver_frame!=null or abi.construction!=null or abi.lexical_environment!=null or f.blocks[0].parameters.len!=0)return false;
+        for(v.modules.modules) |*module| { try c.step(); if(module.external and module.source==f.source)return false; }
+        var creates:usize=0; var calls:usize=0;
+        for(f.registers) |*reg| { try c.step(); if(reg.carrier==.cell or reg.carrier==.environment or reg.carrier==.initialization)return false; }
+        for(f.blocks) |*block| { try c.step(); for(block.instructions) |*op| {
+            try c.step(); switch(op.data) {
+                .fuel,.br,.@"return",.eh_raise,.eh_unreachable,.const_i32,.const_integer,.const_bool,.const_float=>{},
+                .domain_literal=>|row|switch(v.types[@intFromEnum(row.actual_type)].kind){.scalar,.@"undefined",.@"null",.@"void"=>{},else=>return false},
+                .domain_view=>{
+                    const a=&f.registers[@intFromEnum(op.operands[0])]; const b=&f.registers[@intFromEnum(op.result.?)]; try c.charge(2);
+                    if(a.view!=b.view or !std.meta.eql(a.carrier,b.carrier))return false;
+                },
+                .receiver_create=>|row|{ creates+=1; if(row.construction!=construction or row.new_target!=v.members.constructions[@intFromEnum(construction)].owner)return false; },
+                .eh_invoke=>|row|{ calls+=1; if(row.callee!=target or op.operands.len!=1)return false; },
+                else=>return false,
+            }
+        } }
+        return creates==1 and calls==1;
+    }
+    fn receiverIncoming(self:*const Analysis,c:*Context,target:t.FunctionRef,construction:t.ConstructionIndex,edge:facts.CallEdge) Error!bool {
+        try c.charge(12);
+        const invocation=self.invocations.items[@intFromEnum(edge.callee)]; const caller=self.invocations.items[@intFromEnum(edge.caller.context)];
+        if(invocation.function!=target or invocation.root or invocation.repeated or invocation.unresolved or invocation.actual_unresolved or invocation.arguments.len!=1 or invocation.entry_frames.entries.count()!=1 or invocation.parent==null)return false;
+        try c.row(facts.Site); if(!std.meta.eql(invocation.parent.?,edge.caller))return false;
+        if(caller.function!=edge.caller.location.function or !caller.root or caller.parent!=null or caller.repeated or caller.actual_unresolved or caller.arguments.len!=0 or (caller.unresolved and !caller.receiver_upper_gap))return false;
+        if(!invocation.receiver_lifetimes.final_replay_complete or !caller.receiver_lifetimes.final_replay_complete)return false;
+        try c.row(facts.Value); const passed=invocation.arguments[0].view(); try c.charge(9);
+        if(passed.unknown or passed.callable_unknown or passed.frames.len!=1 or passed.cursors.len!=0 or passed.tags.len!=0 or passed.objects.len!=0 or passed.cells.len!=0 or passed.callables.len!=0 or passed.effect_origins.len!=0)return false;
+        const frame=passed.frames[0]; try c.step(); const metadata=&self.frames.items[@intFromEnum(frame)];
+        const v=&c.program.tables.mode.common; const role=&v.members.constructions[@intFromEnum(construction)];
+        try c.charge(6);
+        if(metadata.weak or metadata.parent!=null or metadata.construction!=construction or metadata.new_target!=role.owner or metadata.site.context!=edge.caller.context or metadata.site.location.function!=caller.function)return false;
+        try c.charge(invocation.entry_frames.entries.count()+1);
+        const binding=invocation.entry_frames.entries.getPtr(frame) orelse return false; try c.charge(7);
+        try c.row(facts.Value);
+        if(!binding.unbound or binding.unresolved or binding.initializing or binding.aborted or binding.prefix_min!=0 or binding.prefix_max!=0 or !binding.bound.view().bottom())return false;
+        // The creator is a REAL same-context operation, not the representative
+        // site of a merged frame from a different incoming invocation.
+        const f=&c.program.functions[@intFromEnum(caller.function)];
+        const create=&f.blocks[@intFromEnum(metadata.site.location.block)].instructions[metadata.site.location.instruction];
+        const call=&f.blocks[@intFromEnum(edge.caller.location.block)].instructions[edge.caller.location.instruction];
+        try c.charge(8);
+        if(create.data!=.receiver_create or call.data!=.eh_invoke or create.result==null or call.operands.len!=1 or call.operands[0]!=create.result.? or call.data.eh_invoke.callee!=target)return false;
+        if(create.data.receiver_create.construction!=construction or create.data.receiver_create.new_target!=role.owner)return false;
+        const normal=facts.Location{.function=caller.function,.block=call.data.eh_invoke.normal,.instruction=0};
+        const language=facts.Location{.function=caller.function,.block=call.data.eh_invoke.exceptional,.instruction=0};
+        try c.charge(6); if(!std.meta.eql(normal,edge.normal) or edge.language==null or !std.meta.eql(language,edge.language.?))return false;
+        return true;
+    }
+    // A narrow entry-value proof over the SAME completed actual analysis.
+    // This is not a fixed-upper, activation-uniqueness or Source certificate.
+    pub fn receiverEntry(self:*const Analysis,c:*Context,target:t.FunctionRef) Error!?ReceiverEntry {
+        try c.charge(3); try c.require(self.owner==c);
+        if(!self.final_replay_complete or c.program.tables.mode!=.common)return null;
+        const v=&c.program.tables.mode.common; const f=&c.program.functions[@intFromEnum(target)]; const abi=&v.abis[@intFromEnum(f.abi)];
+        try c.charge(7);
+        if(f.role!=.construction_body or abi.construction==null or abi.receiver_frame!=0 or abi.parameters.len!=0 or abi.argument_types.len!=0 or abi.lexical_environment!=null or abi.receiver!=null or f.blocks[0].parameters.len!=1)return null;
+        const construction=abi.construction.?; const role=&v.members.constructions[@intFromEnum(construction)]; const owner=&v.types[@intFromEnum(role.owner)];
+        try c.charge(7);
+        if(role.kind!=.explicit or role.function!=target or role.parameters.len!=0 or role.signature.parameters.len!=0 or role.initialization_fields.len!=0 or owner.kind!=.reference or owner.base!=null)return null;
+        // Root policy independently distinguishes a lexical closure row from
+        // an actual outside entry capable of providing this hidden Frame.
+        if(try receiverOutside(c,target))return null;
+        var sites:usize=0;
+        // Quantify current syntax first, including dead sites. EACH such site
+        // must be represented for EVERY stabilized context of its caller.
+        for(c.program.functions,0..) |*caller,fn_index| { try c.step(); for(caller.blocks,0..) |*block,b| { try c.step(); for(block.instructions,0..) |*op,i| {
+            try c.step();
+            if(op.data==.function_make and op.data.function_make.function==target)return null;
+            if(op.data==.call and op.data.call.callee==target)return null;
+            if(op.data!=.eh_invoke or op.data.eh_invoke.callee!=target)continue;
+            sites+=1; const caller_ref:t.FunctionRef=@enumFromInt(fn_index);
+            if(!try strictReceiverCaller(c,caller_ref,target,construction))return null;
+            var contexts:usize=0;
+            for(self.invocations.items,0..) |invocation,context_index| {
+                try c.step(); if(invocation.function!=caller_ref)continue; contexts+=1; var represented=false;
+                const location=facts.Location{.function=caller_ref,.block=@enumFromInt(b),.instruction=@intCast(i)};
+                for(self.receiver_calls.items) |edge| { try c.row(facts.CallEdge);
+                    if(@intFromEnum(edge.caller.context)!=context_index or !std.meta.eql(edge.caller.location,location))continue;
+                    if(!try self.receiverIncoming(c,target,construction,edge))return null; represented=true;
+                }
+                if(!represented)return null;
+            }
+            if(contexts==0)return null;
+        } } }
+        if(sites==0)return null; var incoming:usize=0;
+        // Conversely EVERY target context and EVERY recorded incoming edge
+        // must be explained; not merely some matching observed invocation.
+        for(self.invocations.items,0..) |invocation,index| {
+            try c.step(); if(invocation.function!=target)continue; incoming+=1; var represented=false;
+            for(self.receiver_calls.items) |edge| { try c.row(facts.CallEdge); if(@intFromEnum(edge.callee)!=index)continue;
+                if(!try self.receiverIncoming(c,target,construction,edge))return null; represented=true;
+            }
+            if(!represented)return null;
+        }
+        if(incoming==0)return null; try c.charge(3); return .{.construction=construction,.new_target=role.owner};
+    }
 
     pub fn view(self: *const Analysis) facts.WorldView {
         return .{.frames=self.frames.items,.objects=self.objects.items,.cells=self.cells.items,.contexts=self.contexts.items,
@@ -76,10 +185,36 @@ pub const Analysis = struct {
         for(self.creation_storage.items) |*sites|sites.deinit(allocator); self.creation_storage.deinit(allocator);
         self.objects.deinit(allocator); self.cells.deinit(allocator); self.invocations.deinit(allocator);
         self.frames.deinit(allocator);
+        self.receiver_calls.deinit(allocator);
         self.contexts.deinit(allocator); self.observations.deinit(allocator);
         self.region_nodes.deinit(allocator); self.region_scopes.deinit(allocator); self.*=.{};
     }
 };
+// Closure.parent is lexical ownership, not permission to supply an internal
+// constructor Frame. Preserve real module/Host/Kernel roots, direct function
+// exports/imports and Code entries. Exporting a nominal TYPE is not exporting
+// its hidden Frame ABI. SSA forbids Frame flow through ordinary Data/Env and
+// fixed Code target admission excludes constructor ABIs.
+fn receiverOutside(c:*Context,target:t.FunctionRef) Error!bool {
+    const v=&c.program.tables.mode.common; const f=&c.program.functions[@intFromEnum(target)];
+    inline for(.{v.modules.roots.roots,v.modules.roots.required_roots}) |group| for(group) |*row| {
+        try c.charge(5); if(std.mem.eql(u8,&row.target,&f.id))return true;
+    };
+    for(v.modules.modules) |*module| {
+        try c.step(); if(module.external and module.source==f.source)return true;
+        for(module.exports) |*row| { try c.charge(5); if(row.kind==.function and std.mem.eql(u8,&row.target,&f.id))return true; }
+        for(module.imports) |*dependency| { try c.step(); for(dependency.bindings) |*row| {
+            try c.charge(5); if(row.kind==.function and std.mem.eql(u8,&row.target,&f.id))return true;
+        } }
+    }
+    for(v.closures.calls) |*row| { try c.step(); for(row.targets) |selected| { try c.step(); if(selected==target)return true; } }
+    for(v.members.methods) |*row| { try c.step(); if(row.function==target)return true; }
+    for(c.program.functions) |*caller| { try c.step(); for(caller.blocks) |*block| { try c.step(); for(block.instructions) |*op| {
+        try c.step(); if(op.data==.function_make and op.data.function_make.function==target)return true;
+    } } }
+    return false;
+}
+
 const State = struct {
     frames: facts.FrameStore=.{},
     values: []V,
@@ -448,6 +583,7 @@ const Engine = struct {
         self.result.unresolved=self.result.unresolved or row.unresolved;
     }
     fn unknown(self: *Engine, id: facts.ContextId) facts.Value {
+        if(!self.info(id).actual_unresolved) { self.info(id).actual_unresolved=true; self.changed=true; }
         if(!self.info(id).unresolved) { self.info(id).unresolved=true; self.changed=true; }
         self.result.unresolved=true;
         return .{.unknown=true,.callable_unknown=true};
@@ -559,7 +695,7 @@ const Engine = struct {
         var copied_count: usize=0; errdefer for(values[0..copied_count]) |*value|value.deinit(self.c.allocator);
         for(arguments,0..) |value,i| { values[i]=try V.clone(self.c,value.view()); copied_count+=1; }
         var unresolved=false; for(values) |value| { try self.c.step(); unresolved=unresolved or value.unknown or value.callable_unknown; }
-        invocation.*=.{.function=function,.parent=parent,.root=is_root,.repeated=summarized,.activation=activation,.arguments=values,.entry=entry,.unresolved=unresolved,.region_scope=scope,.entry_relations=current,.entry_frames=selected_frames}; entry=.{}; current=.{}; selected_frames=.{};
+        invocation.*=.{.function=function,.parent=parent,.root=is_root,.repeated=summarized,.activation=activation,.arguments=values,.entry=entry,.unresolved=unresolved,.actual_unresolved=unresolved,.region_scope=scope,.entry_relations=current,.entry_frames=selected_frames}; entry=.{}; current=.{}; selected_frames=.{};
         self.result.unresolved=self.result.unresolved or unresolved;
         errdefer invocation.entry.deinit(self.c.allocator);
         errdefer invocation.entry_relations.deinit(self.c.allocator);
@@ -788,7 +924,10 @@ const Engine = struct {
         if(self.c.program.tables.mode==.common and self.c.program.tables.mode.common.abis[self.abi(target)].construction!=null) {
             // Keep current body actual identities for heap safety. They are
             // NOT the missing fixed construction/newTarget caller upper.
-            _=self.unknown(at.context);
+            try self.c.charge(2); const caller=self.info(at.context);
+            caller.receiver_upper_gap=true;
+            if(!caller.unresolved) { caller.unresolved=true; self.changed=true; }
+            self.result.unresolved=true;
         }
         const scope=try self.callScope(at,target,arguments,state,complete);
         try self.c.charge(arguments.len); const passed=try self.c.allocator.alloc(V,arguments.len); @memset(passed,.{});
@@ -796,6 +935,17 @@ const Engine = struct {
         for(arguments,passed) |argument,*out| { out.*=try V.clone(self.c,argument.view()); if(self.c.program.tables.mode==.common and scope==null)try out.region.age(self.c); }
         const callee=try self.contextFor(target,passed,state.heap.view(),at,false,weak,if(scope!=null)&state.relations else null,scope,&state.frames);
         const next=facts.Location{.function=at.location.function,.block=normal orelse at.location.block,.instruction=if(normal==null)at.location.instruction+1 else 0};
+        if(self.replay and self.c.program.tables.mode==.common and self.c.program.tables.mode.common.abis[self.abi(target)].construction!=null) {
+            try self.c.row(facts.CallEdge);
+            const call_edge=facts.CallEdge{.caller=at,.callee=callee,.normal=next,.language=if(language) |b| .{.function=at.location.function,.block=b,.instruction=0} else null};
+            var found=false;
+            for(self.result.receiver_calls.items) |old| { try self.c.row(facts.CallEdge); if(std.meta.eql(old,call_edge)) { found=true; break; } }
+            if(!found) {
+                try self.c.row(facts.CallEdge);
+                if(self.result.receiver_calls.items.len==self.result.receiver_calls.capacity)try self.c.charge(self.result.receiver_calls.items.len+1);
+                try self.result.receiver_calls.append(self.c.allocator,call_edge);
+            }
+        }
         try self.notifyCall(at,callee,next,if(language) |b| .{.function=at.location.function,.block=b,.instruction=0} else null);
         const called=self.info(callee);
         if(normal) |b| {
@@ -1648,7 +1798,7 @@ const Engine = struct {
             .domain_numeric_use => |data| {
                 const input=arguments[0].view(); const integer_type=try self.primitive("i32"); var normal=input.unknown; var trap=input.unknown;
                 for(input.tags) |tag| { try self.c.step(); if(tag==integer_type)normal=true else { try self.c.require(try self.is(tag,"undefined")); trap=true; } }
-                if(input.unknown) { self.info(at.context).unresolved=true; self.result.unresolved=true; }
+                if(input.unknown) { self.info(at.context).actual_unresolved=true; self.info(at.context).unresolved=true; self.result.unresolved=true; }
                 if(normal) { var selected=try self.literal(data.target_type); defer selected.deinit(self.c.allocator);
                     if(input.tags.len==1 and input.tags[0]==integer_type and !input.unknown)selected.number=input.number;
                     try self.edge(graph,at,data.normal_successor,state,&.{selected});
@@ -1658,7 +1808,7 @@ const Engine = struct {
             .@"br" => |data| { try self.edge(graph,at,data.destination,state,arguments); continues=false; },
             .@"cond_br" => |data| {
                 const input=arguments[0].view(); const truth=if(self.closureLegacy() or input.unknown or input.truth==0)@as(u2,3) else input.truth;
-                if(input.unknown) { self.info(at.context).unresolved=true; self.result.unresolved=true; }
+                if(input.unknown) { self.info(at.context).actual_unresolved=true; self.info(at.context).unresolved=true; self.result.unresolved=true; }
                 if(truth&2!=0)try self.edge(graph,at,data.true_destination,state,arguments[1..1+data.true_count]);
                 if(truth&1!=0)try self.edge(graph,at,data.false_destination,state,arguments[1+data.true_count..]); continues=false;
             },
@@ -1740,7 +1890,7 @@ const Engine = struct {
                     } else try self.c.require(pair.environment==null);
                     for(arguments[1..]) |argument|passed.appendAssumeCapacity(try V.clone(self.c,argument.view()));
                 }
-                if(!complete) { self.info(at.context).unresolved=true; self.result.unresolved=true; continue; }
+                if(!complete) { self.info(at.context).actual_unresolved=true; self.info(at.context).unresolved=true; self.result.unresolved=true; continue; }
                 try self.invoke(graph,at,pair.code,passed.items,state,if(code==.eh_invoke_indirect)op.data.eh_invoke_indirect.normal else null,if(code==.eh_invoke_indirect)op.data.eh_invoke_indirect.exceptional else null,weak,value,!input.unknown and !input.callable_unknown);
             }
             if(input.unknown or input.callable_unknown) {
@@ -1752,7 +1902,7 @@ const Engine = struct {
             // explicit; target coverage alone cannot discharge it.
             for(input.tags) |id| { try self.c.step();
                 const expected=if(self.c.program.tables.mode==.exception)"callable" else "function";
-                if(!try self.is(id,expected)) { self.result.unresolved=true; self.info(at.context).unresolved=true; try self.completion(at,.request_trap,input,state); }
+                if(!try self.is(id,expected)) { self.result.unresolved=true; self.info(at.context).actual_unresolved=true; self.info(at.context).unresolved=true; try self.completion(at,.request_trap,input,state); }
             }
             if(code==.eh_invoke_indirect)continues.*=false; return;
         }
@@ -1897,7 +2047,7 @@ const Engine = struct {
             }
         }
         const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false,null,null,null);
-        if(parameters.len!=0 and self.c.program.tables.mode==.common) { self.info(id).unresolved=true; self.result.unresolved=true; }
+        if(parameters.len!=0 and self.c.program.tables.mode==.common) { self.info(id).actual_unresolved=true; self.info(id).unresolved=true; self.result.unresolved=true; }
     }
     fn initialize(self: *Engine) Error!void {
         switch(self.c.program.tables.mode) {
@@ -1912,6 +2062,7 @@ const Engine = struct {
                 for(self.c.program.functions,0..) |function,i| {
                     try self.c.step(); const ref: t.FunctionRef=@enumFromInt(i); var is_root=function.role==.module_initializer;
                     for(v.closures.functions) |row| { try self.c.step(); if(row.function==ref) { is_root=row.parent==null; break; } }
+                    if(function.role==.construction_body)is_root=try receiverOutside(self.c,ref);
                     if(is_root)try self.seedRoot(ref);
                 }
                 // Global initial values are missing external actual facts as
@@ -1974,7 +2125,8 @@ const Engine = struct {
 // the public boundary using this same Context. It is data, not a validity flag;
 // this internal analysis neither rechecks nor grants that boundary's proof.
 pub fn analyze(c: *Context, material: ?*const host_binding.Bundle, observers: []const facts.Observer) Error!Analysis {
-    var engine=Engine{.c=c,.host_material=material,.observers=observers}; defer engine.deinit(); errdefer engine.result.deinit(c.allocator);
+    try c.step(); // Borrowed owning Context identity on the returned analysis.
+    var engine=Engine{.c=c,.host_material=material,.observers=observers,.result=.{.owner=c}}; defer engine.deinit(); errdefer engine.result.deinit(c.allocator);
     try engine.initialize();
     while(true) {
         try c.step(); engine.changed=false; var cursor: usize=0;
@@ -1991,5 +2143,6 @@ pub fn analyze(c: *Context, material: ?*const host_binding.Bundle, observers: []
     if(c.program.tables.mode==.common)for(engine.result.invocations.items) |invocation| {
         try c.step(); invocation.receiver_lifetimes.final_replay_complete=true;
     };
+    try c.step(); engine.result.final_replay_complete=true;
     const result=engine.result; engine.result=.{}; return result;
 }

@@ -95,7 +95,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     const observers = [_]targets_check.facts.Observer{ borrowing.observer(), effects.observer() };
     actual = try targets_check.analyze(&c, material, &observers);
     try borrowing.finish();
-    try effects.finish();
+    try effects.finish(&actual);
     return initial - c.remaining;
 }
 

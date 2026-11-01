@@ -21,6 +21,7 @@ const construction_origins = @import("wire-program-return-origin-construction.zi
 const publication_refs = @import("wire-program-publication-refs.zig");
 const body_origins = @import("wire-program-return-origin-body.zig");
 const structural_origins = @import("wire-program-return-origins.zig");
+const actual_targets = @import("wire-program-targets-check.zig");
 const t = model.types;
 const Context = facts.Context;
 pub const Error = facts.Error;
@@ -593,7 +594,17 @@ const UpperGraph = struct {
         // The immutable complete fixed contract vector is solely the upper.
         const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
         if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
-        var analysis = construction_origins.analyze(c.allocator, &directory, graph, &budget) catch |err| return publication_refs.graphFailure(err);
+        var entry: ?construction_origins.Entry = null;
+        if(receiver) {
+            const actual=collector.final_actual orelse return self.noFixedBodyProof(full,returned,thrown);
+            const observed=try actual.receiverEntry(c,target) orelse return self.noFixedBodyProof(full,returned,thrown);
+            const common=&c.program.tables.mode.common;
+            const role=&common.members.constructions[@intFromEnum(observed.construction)];
+            try c.row(construction_origins.Entry);
+            entry=.{.function_id=function_id,.construction=try publication_refs.symbol(c,arena.allocator(),role.id),
+                .new_target=try publication_refs.symbol(c,arena.allocator(),common.types[@intFromEnum(observed.new_target)].id)};
+        }
+        var analysis = construction_origins.analyze(c.allocator, &directory, graph, &budget,entry) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
         if (analysis.pending != null) return self.noFixedBodyProof(full, returned, thrown);
         var normal: Owners = .{}; defer normal.deinit(c.allocator);
@@ -1004,6 +1015,8 @@ pub const Collector = struct {
     aliases: []AliasSummary,
     unresolved: bool = false,
     fixed_upper_origin_pending: bool = false,
+    // Borrowed only during finish, after actual fixed point AND replay checks.
+    final_actual: ?*const actual_targets.Analysis = null,
     fixed_upper_host_pending: bool = false,
     host_binding_required: bool = false,
 
@@ -1467,7 +1480,9 @@ pub const Collector = struct {
             var graph = UpperGraph{ .collector = self, .function = @enumFromInt(function) }; try graph.run();
         }
     }
-    pub fn finish(self: *Collector) FinishError!void {
+    pub fn finish(self: *Collector, actual: *const actual_targets.Analysis) FinishError!void {
+        try self.c.step(); try self.c.require(actual.owner==self.c and actual.final_replay_complete);
+        self.final_actual=actual; defer self.final_actual=null;
         try self.upperFlows();
         // Missing origin facts remain a capability gap, never an empty effect.
         try self.c.require(!self.unresolved);
