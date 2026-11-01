@@ -2,7 +2,20 @@
 #include "common-program-actual.h"
 #include "common-program-retention.h"
 #include <algorithm>
+#include <cstring>
+#include <iterator>
 namespace tsfg::commonProgram {
+namespace {
+int compareConstructionKey(const ActualConstructionKeyView &query,llvm::StringRef flat){
+  const llvm::StringRef segments[]={query.construction,"/",query.newTarget};size_t at=0;
+  for(const auto &segment:segments){const auto count=std::min(segment.size(),flat.size()-at);
+    if(count){const auto order=std::memcmp(segment.data(),flat.data()+at,count);if(order)return order;}
+    at+=count;if(count<segment.size())return 1;
+  }return at<flat.size()?-1:0;
+}
+}
+bool ActualConstructionKeyLess::operator()(const ActualConstructionKeyView &a,const std::string &b)const{return compareConstructionKey(a,b)<0;}
+bool ActualConstructionKeyLess::operator()(const std::string &a,const ActualConstructionKeyView &b)const{return compareConstructionKey(b,a)>0;}
 bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op,size_t block,ActualState &state,const ActualOperands &args,
   bool conditional,bool &changed,const std::function<bool(uint16_t,ActualState,const std::vector<ActualValue> &)> &edge,ActualValue &value,bool &continues){
   const auto &name=op.name;const auto &props=op.properties;const bool repeated=repeatedAllocation(context,block);
@@ -46,9 +59,33 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     if(conditional&&name=="receiver_result"&&result.normal){
       if(!step(args[0].frames.size()))return false;
       for(const auto &id:args[0].frames){if(!receiverText(id)||!need(receiverFrames.count(id),"construction result frame is missing"))return false;
-        const auto &info=receiverFrames.at(id);if(!receiverText(info.construction)||!receiverText(info.newTarget)||!step())return false;
-        const auto key=info.construction+"/"+info.newTarget;
-        if(!recordCapacity(constructionCapacity[key],result.selected))return false;
+        const auto &info=receiverFrames.at(id);if(!step(5))return false;
+        const ActualConstructionKeyView query{info.construction,info.newTarget};
+        const auto bytes=query.construction.size()+1+query.newTarget.size();
+        const auto count=constructionCapacity.size();size_t height=0;
+        for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
+        height=std::min(height,count);
+        // Each comparison reads at most two complete query byte streams. The
+        // fixed allowance covers three segment views/visits and their controls.
+        if(!step(1+height+(count?height+1:0)*(2*bytes+24)))return false;
+        auto target=constructionCapacity.lower_bound(query);
+        const bool present=target!=constructionCapacity.end()&&!ActualConstructionKeyLess{}(query,target->first);
+        if(!present){
+          // The exact lower-bound hint pays both neighbour predicates and the
+          // same-type debug reverse checks before key allocation or insertion.
+          if(target!=constructionCapacity.end()&&!step(2*(bytes+target->first.size()+1)))return false;
+          if(target!=constructionCapacity.begin()){
+            if(!step(count+1))return false;const auto previous=std::prev(target);
+            if(!step(2*(previous->first.size()+bytes+1)))return false;
+          }
+          // One bounded key copy, allocation, three appends, node, string move
+          // and four fields defaulted directly in the node, without a mapped temporary.
+          if(!step(bytes/64+11))return false;std::string key;key.reserve(bytes);
+          key.append(query.construction.data(),query.construction.size());key.push_back('/');
+          key.append(query.newTarget.data(),query.newTarget.size());
+          target=constructionCapacity.try_emplace(target,std::move(key));
+        }
+        if(!recordCapacity(target->second,result.selected))return false;
       }
     }
     // No receiver-terminator observer retains a store-node borrow. Preserve

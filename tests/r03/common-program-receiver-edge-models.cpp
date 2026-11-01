@@ -405,6 +405,36 @@ bool initializerCache(){
         "cached path retains actual type/member guards and propagates budget error without successful fallback"))return false;
   }llvm::errs()<<"PASS initialize_field cache hit/miss/weak/route/World/Heap/error subcases\n";return true;
 }
+bool constructionCapacityResults(){
+  struct Pair {std::string construction,target,key;};
+  const std::vector<Pair> pairs={{"a/","b","a//b"},{"a","/b","a//b"},{"","","/"},{"a","","a/"},
+    {std::string("a\0",2),"b",std::string("a\0/b",4)},{"a","b","a/b"},{std::string("\xc2\x80",2),"",std::string("\xc2\x80/",3)},{std::string("\xc3\xbf",2),"",std::string("\xc3\xbf/",3)}};
+  Fixture f(false);auto &op=f.function.blocks[0].operations[0];op.name="receiver_result";op.successors={1,2};
+  for(size_t i=0;i<pairs.size();++i){const auto &pair=pairs[i];f.state.frames.clear();f.check.types.emplace(pair.target,&f.check.builtins.at("B"));
+    const auto frame=f.check.createFrame(f.state.frames,f.context.activation,"capacity:"+std::to_string(i),"B",pair.construction,pair.target,false);auto &binding=f.state.frames.at(frame);binding.bound=payload("old");binding.unbound=false;
+    if(!expect(f.error.message.empty(),"owned real Result metadata fixture precedes the tested lookup"))return false;
+    ActualValue control,out;control.frames={frame};std::vector<const ActualValue*> args{&control};bool changed=false,continues=true;size_t edges=0;
+    const auto edge=[&](uint16_t target,ActualState,const std::vector<ActualValue>&){++edges;return target==1;};
+    if(!expect(f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{args},true,changed,edge,out,continues)&&f.error.message.empty()&&!continues&&edges==1,"actual conditional Result completes miss or canonical alias hit with its normal edge"))return false;
+    const auto found=f.check.constructionCapacity.find(pair.key);
+    if(!expect(found!=f.check.constructionCapacity.end()&&found->first==pair.key&&found->second.tags==std::set<std::string>{"B"}&&!found->second.unknown&&!found->second.callableTop&&!found->second.hasEnvironment&&f.check.constructionCapacity.size()==(i==0?1:i),"real Result owns one full-flat capacity key and preserves all four literal CapacityValue facets"))return false;
+  }
+  for(auto &[id,info]:f.check.receiverFrames){info.construction.assign("mutated-frame-info");info.newTarget.clear();}f.state.frames.clear();f.check.types.clear();
+  if(!expect(f.check.types.empty()&&f.check.functions.empty()&&f.check.solve(false)&&f.error.message.empty()&&f.check.receiverFrames.empty(),"real constructor-free empty-catalog false solve clears FrameInfo while preserving its independent capacity universe"))return false;
+  const std::vector<std::string> ordered={"/",std::string("a\0/b",4),"a/","a//b","a/b",std::string("\xc2\x80/",3),std::string("\xc3\xbf/",3)};std::vector<std::string> actual;
+  for(const auto &[key,value]:f.check.constructionCapacity)actual.push_back(key);
+  if(!expect(actual==ordered&&f.check.constructionCapacity.find(std::string("a//b"))->second.tags==std::set<std::string>{"B"},"flat reader and lexical bytes survive query destruction, FrameInfo mutation and false-phase clear"))return false;
+  for(const bool existing:{false,true}){Fixture limited(false);limited.program.remaining=4000000;limited.state.frames.clear();
+    const auto frame=limited.check.createFrame(limited.state.frames,limited.context.activation,"long-capacity","B",std::string(131072,'q'),"B",false);limited.state.frames.at(frame).bound=payload("old");limited.state.frames.at(frame).unbound=false;
+    if(!expect(!frame.empty()&&limited.error.message.empty(),"long actual frame fixture is fully established before the independent budget cutoff"))return false;
+    if(existing){CapacityValue prior;prior.tags={"prior"};prior.unknown=true;prior.hasEnvironment=true;limited.check.constructionCapacity.emplace(std::string(131072,'q')+"/B",prior);}
+    auto &limitedOp=limited.function.blocks[0].operations[0];limitedOp.name="receiver_result";limitedOp.successors={1,2};ActualValue control,out;control.frames={frame};std::vector<const ActualValue*> args{&control};bool changed=false,continues=true;size_t edges=0;
+    limited.program.remaining=4000;const bool ok=limited.check.receiverInstruction(limited.context,limitedOp,0,limited.state,ActualOperands{args},true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return true;},out,continues);
+    if(!expect(!ok&&limited.error.code=="core-ir-common-budget"&&edges==0&&limited.check.constructionCapacity.size()==size_t(existing),"query comparison or first miss key-copy cutoff is a hard budget error before publishing a capacity row or edge"))return false;
+    if(existing){const auto &prior=limited.check.constructionCapacity.at(std::string(131072,'q')+"/B");if(!expect(prior.tags==std::set<std::string>{"prior"}&&prior.unknown&&!prior.callableTop&&prior.hasEnvironment,"lookup-budget failure leaves the existing full-query owned capacity facets intact"))return false;}
+  }
+  llvm::errs()<<"PASS real conditional Result capacity-key hit, miss, ownership, false-phase and hard-budget subcases\n";return true;
+}
 bool completionOwnedLookup(){
   const std::vector<std::string> ids{"frame",std::string("frame\0a",7),std::string("frame\0ab",8)};
   const auto equal=[](const auto &a,const auto &b){return same(a,b);};
@@ -457,6 +487,6 @@ int main(){unsigned passed=0;
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
   if(!birthBudget()||!initializerCache()||!defaultNodeMove()||!cursorCallerErrors()||!fieldDirectoryBorrow())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
-  if(!completionOwnedLookup())return 1;
+  if(!completionOwnedLookup()||!constructionCapacityResults())return 1;
   llvm::errs()<<passed<<" groups passed; full Source820b/cold100k remains independent\n";return 0;
 }

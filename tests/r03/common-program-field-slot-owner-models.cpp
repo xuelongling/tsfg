@@ -422,6 +422,22 @@ bool sharedCursorFrames(){
     if(!expect(absent.empty()&&invalid.error.code=="core-ir-common-actual"&&invalid.check.receiverCursors.empty(),"unadmitted empty predecessor is a hard error, not an owning frame"))return false;}
   llvm::errs()<<"PASS shared cursor-frame first-use, canonical, identity, input, alias, reset and lifetime subcases\n";return true;
 }
+bool constructionKeyOrder(){
+  Symbols f;const std::vector<std::string> ordered={std::string("\0/",2),"/","/a",std::string("a\0/b",4),"a/","a//b","a/b","a/b/","b/",std::string("\x7f/",2),std::string("\x80/",2),std::string("\xff/",2)};
+  for(size_t i=0;i<ordered.size();++i){CapacityValue value;value.tags={"literal:"+std::to_string(i)};value.unknown=i%2;value.callableTop=i%3==0;value.hasEnvironment=i%3==1;f.check.constructionCapacity.emplace(ordered[i],value);}
+  struct Query {std::string construction,target,key;size_t index;};
+  const std::vector<Query> queries={{"a/","b","a//b",5},{"a","/b","a//b",5},{"","","/",1},{"","a","/a",2},{"a","","a/",4},
+    {std::string("a\0",2),"b",std::string("a\0/b",4),3},{"a","b","a/b",6},{"a/b","","a/b/",7},{"b","","b/",8},
+    {std::string(1,char(0x7f)),"",std::string("\x7f/",2),9},{std::string(1,char(0x80)),"",std::string("\x80/",2),10},{std::string(1,char(0xff)),"",std::string("\xff/",2),11}};
+  for(const auto &query:queries){const auto view=f.check.constructionCapacity.find(ActualConstructionKeyView{query.construction,query.target}),flat=f.check.constructionCapacity.find(query.key);
+    if(!expect(view!=f.check.constructionCapacity.end()&&view==flat&&view->first==query.key&&view->second.tags==std::set<std::string>{"literal:"+std::to_string(query.index)}&&
+        view->second.unknown==bool(query.index%2)&&view->second.callableTop==(query.index%3==0)&&view->second.hasEnvironment==(query.index%3==1),"virtual full-flat query and existing flat reader select the same complete independent capacity row"))return false;}
+  if(!expect(f.check.constructionCapacity.find(ActualConstructionKeyView{"a","bc"})==f.check.constructionCapacity.end()&&
+      f.check.constructionCapacity.find(ActualConstructionKeyView{"a",std::string("b\0",2)})==f.check.constructionCapacity.end()&&f.check.constructionCapacity.size()==ordered.size(),"prefix and embedded-NUL misses are not aliases or insertions"))return false;
+  auto row=f.check.constructionCapacity.begin();for(const auto &key:ordered){if(!expect(row!=f.check.constructionCapacity.end()&&row->first==key,"capacity directory keeps exact full unsigned-byte lexical order"))return false;++row;}
+  if(!expect(row==f.check.constructionCapacity.end(),"canonical directory has no phantom pair-key rows"))return false;
+  llvm::errs()<<"PASS capacity virtual-flat alias, NUL, empty, prefix, unsigned-order and whole-flat reader subcases\n";return true;
+}
 bool ownedSlots(){
   Symbols f;const auto first=f.get("object","F");
   if(!expect(first&&f.error.message.empty()&&first->owner==&f.check&&*first->spelling=="object/field/F","owned pair preserves its complete physical spelling"))return false;
@@ -451,7 +467,7 @@ bool ownedSlots(){
   Symbols badObject;if(!expect(!badObject.check.fieldSlot(badObject.check.objects.end(),badObject.check.fields.find("F"))&&badObject.error.code=="core-ir-common-actual","missing object directory entry is a hard ownership error"))return false;
   Symbols badField;if(!expect(!badField.check.fieldSlot(badField.check.objects.find("object"),badField.check.fields.end())&&badField.error.code=="core-ir-common-actual","missing field directory entry is a hard ownership error"))return false;
   Symbols limited;limited.program.remaining=0;
-  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership()&&birthCoveredStores()&&heapKeyIdentity()&&sharedCursorFrames();
+  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership()&&birthCoveredStores()&&heapKeyIdentity()&&sharedCursorFrames()&&constructionKeyOrder();
 }
 }
 int main(){if(!ownedSlots())return 1;llvm::errs()<<"PASS owned physical field-slot spelling, alias, identity, reset and errors\n";return 0;}

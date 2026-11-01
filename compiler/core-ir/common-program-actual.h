@@ -116,6 +116,15 @@ struct CapacityValue {
   std::set<std::string> tags;
   bool unknown=false,callableTop=false,hasEnvironment=false;
 };
+// Query components borrow only for a lookup. Stored capacity keys stay complete,
+// independently owned flat strings, including aliases across the separator.
+struct ActualConstructionKeyView {llvm::StringRef construction,newTarget;};
+struct ActualConstructionKeyLess {
+  using is_transparent=void;
+  bool operator()(const std::string &a,const std::string &b)const{return a<b;}
+  bool operator()(const ActualConstructionKeyView &,const std::string &)const;
+  bool operator()(const std::string &,const ActualConstructionKeyView &)const;
+};
 struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;ActualFrameWorld frames;};
 struct ActualObject {std::string type;bool weak=false;};
 using ActualObjectDirectory=std::map<std::string,ActualObject>;
@@ -174,7 +183,8 @@ struct ActualCheck {
   std::map<llvm::StringRef,ActualFieldSlot> fieldSlotArchive;
   std::vector<ActualFieldSlotAssociation> fieldSlotAssociations;
   std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds;
-  std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity,constructionCapacity;
+  std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity;
+  std::map<std::string,CapacityValue,ActualConstructionKeyLess> constructionCapacity;
   std::map<std::string,size_t> initializedArrays;
   std::map<std::string,std::string> views;
   // CFG ownership is immutable for all contexts, both solve modes and borrow
