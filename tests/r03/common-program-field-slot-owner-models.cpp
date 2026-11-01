@@ -193,6 +193,49 @@ bool archiveTail(){
   }
   llvm::errs()<<"PASS field-slot archive fresh full-size tail/equal/alias/interior/fallback/cutoff subcases\n";return true;
 }
+bool cursorFactoryOwnership(){
+  static_assert(sizeof(size_t)==8,"cursor identity pins target the qualified Windows64 model");
+  const std::string normal="receiver:sha256:"+std::string(64,'a');
+  const std::string unusual=std::string("quoted\"\\\b\f\n\r\t")+std::string(1,'\0')+"\xE9\x9B\xAA\xF0\x9F\x98\x80";
+  struct Case {std::string frame;size_t position;std::string bytes;const char *id;};
+  const std::vector<Case> cases={
+    {normal,0,"[\""+normal+"\",0]","initialization:sha256:c3e39d4cc946446d6344b7e048b6610996c54eefc3393cf3d6edb91c1935f6f6"},
+    {unusual,1,"[\"quoted\\\"\\\\\\b\\f\\n\\r\\t\\u0000\xE9\x9B\xAA\xF0\x9F\x98\x80\",1]","initialization:sha256:c9a8bd78d17ebd061ba5717a7d14a764618a703a34e9a47f238048c51107fcc5"},
+    {"",~size_t(0),"[\"\",-1]","initialization:sha256:35f8da38b3f67e237528df49084c428a421e271bf6214b3ef0ddcbc77e5381da"},
+    {normal,size_t(9223372036854775807ULL),"[\""+normal+"\",9223372036854776000]","initialization:sha256:51fcd4c95c5a81d40b5a58008daf6f7b9922d105c66ca9b54183599290ae5352"}
+  };
+  // Generic cursor-codec inputs are not a Source receiver activation claim.
+  // Expected bytes/hashes are fixed independently, never obtained from factory.
+  for(const auto &row:cases){Symbols f;std::string id;
+    if(!expect(canonical(Array{row.frame,int64_t(row.position)})==row.bytes,"original owning-JSON bytes keep escaping, NUL, UTF8 and int64/binary64 semantics"))return false;
+    {std::string input=row.frame;id=f.check.receiverCursor(input,row.position);
+      if(!expect(f.error.message.empty()&&id==row.id&&input==row.frame,"cursor factory keeps pinned opaque identity without consuming its input frame"))return false;
+      input.assign("overwritten after factory");
+      if(!expect(f.check.receiverCursors.at(id).frame==row.frame,"metadata does not retain the caller's mutable frame storage"))return false;}
+    const auto *metadata=&f.check.receiverCursors.at(id);
+    if(!expect(metadata->frame==row.frame&&metadata->position==row.position&&f.check.receiverCursorIndex.size()==1,
+        "mapped metadata owns the complete original frame after caller storage is destroyed"))return false;
+    std::string copied=row.frame;const auto again=f.check.receiverCursor(copied,row.position);
+    if(!expect(f.error.message.empty()&&again==row.id&&copied==row.frame&&f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&
+        &f.check.receiverCursors.at(id)==metadata,"repeated copied-frame hit leaves one current owned node and one index entry"))return false;
+    Symbols other;const auto independent=other.check.receiverCursor(row.frame,row.position);
+    if(!expect(other.error.message.empty()&&independent==row.id&&&other.check.receiverCursors.at(independent)!=metadata&&
+        other.check.receiverCursors.at(independent).frame==row.frame,"same opaque cursor in two live owners has independently owned metadata"))return false;
+  }
+  {Symbols f;const size_t exact=9007199254740992ULL,adjacent=9007199254740993ULL;
+    const auto first=f.check.receiverCursor(normal,exact),alias=f.check.receiverCursor(normal,adjacent);
+    if(!expect(f.error.message.empty()&&first=="initialization:sha256:015b309aa6aaee95fdb4bdb9ac232b4919d7c7d41e8a8517dbbf5f4f5c974114"&&alias==first&&
+        f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&f.check.receiverCursors.at(first).position==exact&&
+        f.check.receiverCursors.at(first).frame==normal,"original JCS binary64 position aliases retain the first metadata and do not grow the index"))return false;}
+  {Symbols f;f.program.remaining=942;const auto failed=f.check.receiverCursor(normal,1);
+    if(!expect(failed.empty()&&f.error.code=="core-ir-common-budget"&&f.check.receiverCursors.empty()&&f.check.receiverCursorIndex.empty(),
+        "true first 968-unit frame gate still fails942 before publishing any cursor metadata"))return false;}
+  {Symbols f;std::string input=normal;f.program.remaining=1200;const auto first=f.check.receiverCursor(input,0);
+    if(!expect(f.error.message.empty()&&first=="initialization:sha256:c3e39d4cc946446d6344b7e048b6610996c54eefc3393cf3d6edb91c1935f6f6"&&input==normal&&
+        f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&f.check.receiverCursors.at(first).frame==normal&&f.check.receiverCursors.at(first).position==0,
+        "fresh first cursor miss fits1200 after one owned-frame move; old2003 duplicate-copy path cannot fit"))return false;}
+  llvm::errs()<<"PASS cursor factory canonical/owned-input/alias/first-gate/copy-budget subcases\n";return true;
+}
 bool ownedSlots(){
   Symbols f;const auto first=f.get("object","F");
   if(!expect(first&&f.error.message.empty()&&first->owner==&f.check&&*first->spelling=="object/field/F","owned pair preserves its complete physical spelling"))return false;
@@ -222,7 +265,7 @@ bool ownedSlots(){
   Symbols badObject;if(!expect(!badObject.check.fieldSlot(badObject.check.objects.end(),badObject.check.fields.find("F"))&&badObject.error.code=="core-ir-common-actual","missing object directory entry is a hard ownership error"))return false;
   Symbols badField;if(!expect(!badField.check.fieldSlot(badField.check.objects.find("object"),badField.check.fields.end())&&badField.error.code=="core-ir-common-actual","missing field directory entry is a hard ownership error"))return false;
   Symbols limited;limited.program.remaining=0;
-  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail();
+  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership();
 }
 }
 int main(){if(!ownedSlots())return 1;llvm::errs()<<"PASS owned physical field-slot spelling, alias, identity, reset and errors\n";return 0;}

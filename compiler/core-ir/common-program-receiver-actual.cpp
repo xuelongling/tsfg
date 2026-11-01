@@ -246,9 +246,15 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
   else {if(!step(8))return {};ActualFrameBinding value;value.weak=repeated;world.insert_or_assign(id,std::move(value));}return id;
 }
 std::string ActualCheck::receiverCursor(const std::string &frame,size_t position){
-  if(!receiverText(frame)||!step(64))return {};const auto id="initialization:"+digest(canonical(Array{frame,int64_t(position)}));
-  if(!receiverCursors.count(id)){if(!receiverText(frame)||!step())return {};
-    const auto entry=receiverCursors.emplace(id,ActualCursorInfo{frame,position}).first;
+  if(!receiverText(frame)||!step(64))return {};
+  // One paid owning copy outlives the borrowed JSON view and is then consumed
+  // by a new cursor row. The generic canonical encoder and int64 path stay exact.
+  auto ownedFrame=frame;const auto id="initialization:"+digest(canonical(Array{llvm::StringRef(ownedFrame),int64_t(position)}));
+  if(!receiverCursors.count(id)){
+    // Retain the node unit, pay the key copy in existing heap-key units and
+    // the two real string moves. No second frame deep copy is performed.
+    if(!step(id.size()/64+4))return {};
+    const auto entry=receiverCursors.emplace(id,ActualCursorInfo{std::move(ownedFrame),position}).first;
     if(receiverCursorIndex.size()==receiverCursorIndex.capacity()){
       if(!step(receiverCursorIndex.size()+1))return {};receiverCursorIndex.reserve(std::max<size_t>(1,receiverCursorIndex.size()*2));}
     if(!step())return {};receiverCursorIndex.push_back(&*entry);
