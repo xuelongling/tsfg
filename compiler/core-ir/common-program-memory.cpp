@@ -131,7 +131,9 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   // this execute's queue. Keep join snapshots for every other block.
   ActualState entry;
   if(!context.root)entry.heap=copyHeap(context.entry);
-  entry.regions=regionCopy(*this,context.entryRegions);entry.frames=copyFrames(context.entryFrames);
+  entry.regions=regionCopy(*this,context.entryRegions);
+  // Roots rebuild their World below; only called activations use its snapshot.
+  if(!context.root)entry.frames=copyFrames(context.entryFrames);
   if(context.root){
     entry.heap.clear();context.arguments.clear();
     for(const auto &[id,g]:globals){
@@ -140,7 +142,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
         for(const auto &tag:globalSeeds.at(raw).tags){auto alternative=declared(tag,entry.heap,"global-entry/"+id);merge(value,alternative);}}
       entry.heap.emplace("global:"+id,std::move(value));
     }
-    entry.frames.clear();if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.arguments,context.constructionNewTarget,context.activation))return false;
+    if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.arguments,context.constructionNewTarget,context.activation))return false;
     context.entryFrames=copyFrames(entry.frames);
     context.entry=copyHeap(entry.heap);
   }

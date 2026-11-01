@@ -145,10 +145,13 @@ bool ActualCheck::receiverDefine(ActualFrameWorld &world,const std::set<std::str
   return true;
 }
 bool ActualCheck::receiverReconcile(const ActualFrameWorld &world,ActualHeap &heap,const ActualValue &missing){
-  if(!step(world.size()))return false;std::map<std::string,ActualBirth> rows;
+  // Reconciliation observes data and absence; birth reference metadata is not
+  // consumed here. Keep that identity in the original, unchanged World only.
+  struct Row {ActualValue real;bool pending;};
+  if(!step(world.size()))return false;std::map<std::string,Row> rows;
   for(const auto &[id,value]:world){if(!step(value.births.size()))return false;
     for(const auto &[slot,row]:value.births){if(!receiverText(slot))return false;auto old=rows.find(slot);
-      if(old==rows.end()){auto owned=copyBirth(row);if(!e.message.empty())return false;rows.emplace(slot,std::move(owned));}
+      if(old==rows.end()){if(!step(2))return false;auto real=copy(row.real);if(!e.message.empty())return false;rows.emplace(slot,Row{std::move(real),row.pending});}
       else {merge(old->second.real,row.real);old->second.pending|=row.pending;if(!e.message.empty())return false;}}}
   if(!step(rows.size()))return false;
   for(auto &[slot,row]:rows){if(row.pending)merge(row.real,missing);if(!e.message.empty())return false;heap.insert_or_assign(slot,std::move(row.real));}
