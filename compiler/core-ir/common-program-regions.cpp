@@ -2,12 +2,6 @@
 #include "common-program-actual.h"
 #include <algorithm>
 namespace tsfg::commonProgram {
-RegionValue regionValue(ActualCheck &c,const ActualValue &v){
-  if(!c.step(regionWeight(v.region)+v.callables.size()+1))return {};if(v.region.known)return v.region;RegionValue out;out.known=true;out.number=v.number;
-  out.opaque=v.unknown||v.callableTop||!v.objects.empty();
-  for(const auto &[code,env]:v.callables){if(env.empty())out.empty=true;else out.opaque=true;}
-  out.empty|=!v.tags.empty()&&v.objects.empty()&&v.callables.empty();return out;
-}
 size_t regionWeight(const RegionValue &v){if(!v.known)return 0;size_t n=v.roots.size()+1;for(const auto &id:v.roots)n+=id.size()/64;return n;}
 std::string regionKey(const RegionValue &v){Array roots;for(const auto &id:v.roots)roots.push_back(id);
   return canonical(Object{{"roots",std::move(roots)},{"known",v.known},{"opaque",v.opaque},{"empty",v.empty},{"number",v.number?Json(*v.number):Json(nullptr)}});

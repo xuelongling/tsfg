@@ -2,50 +2,33 @@
 #include "common-program-actual.h"
 namespace tsfg::commonProgram {
 namespace {
-size_t weight(const ActualValue &v){
-  size_t cost=v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+regionWeight(v.region)+1;
-  for(const auto *set:{&v.tags,&v.objects,&v.cells,&v.frames,&v.cursors})for(const auto &id:*set)cost+=id.size()/64;
+size_t weight(const ActualValue &v,const std::set<std::string> &tags){
+  size_t cost=tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+regionWeight(v.region)+1;
+  for(const auto *set:{&tags,&v.objects,&v.cells,&v.frames,&v.cursors})for(const auto &id:*set)cost+=id.size()/64;
   for(const auto &[code,environment]:v.callables)cost+=(code.size()+environment.size())/64+1;
   return cost;
 }
+RegionValue regionValueInput(ActualCheck &c,const ActualValue &v,bool hasTags){
+  if(!c.step(regionWeight(v.region)+v.callables.size()+1))return {};if(v.region.known)return v.region;RegionValue out;out.known=true;out.number=v.number;
+  out.opaque=v.unknown||v.callableTop||!v.objects.empty();
+  for(const auto &[code,env]:v.callables){if(env.empty())out.empty=true;else out.opaque=true;}
+  out.empty|=hasTags&&v.objects.empty()&&v.callables.empty();return out;
 }
-std::string ActualCheck::key(const ActualValue &v){
-  if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+v.region.roots.size()+256))return {};
-  Array tags,refs,cells,pairs,frames,cursors;
-  const auto ids=[&](const std::set<std::string> &from,Array &to){for(const auto &id:from){if(!step(12*id.size()+8))return false;to.push_back(id);}return true;};
-  if(!ids(v.tags,tags)||!ids(v.objects,refs)||!ids(v.cells,cells)||!ids(v.frames,frames)||!ids(v.cursors,cursors))return {};
-  for(const auto &[code,environment]:v.callables){if(!step(12*(code.size()+environment.size())+16))return {};pairs.push_back(Array{code,environment});}
-  for(const auto &id:v.region.roots)if(!step(12*id.size()+8))return {};
-  return canonical(Object{{"tags",std::move(tags)},{"refs",std::move(refs)},{"cells",std::move(cells)},
-    {"frames",std::move(frames)},{"cursors",std::move(cursors)},{"callableTop",v.callableTop},{"callables",std::move(pairs)},
-    {"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)},{"region",regionKey(v.region)}});
-}
-ActualValue ActualCheck::copy(const ActualValue &v){
-  if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+1)||!step(weight(v)))return {};return v;
-}
-bool ActualCheck::arrayReceiver(const ActualValue &value){
-  if(!step()||value.unknown||value.callableTop||!value.cells.empty()||!value.callables.empty()||value.objects.empty()||value.tags.empty())return false;
-  std::set<std::string> actual;
-  for(const auto &tag:value.tags){if(!step(tag.size()/64+1)||!types.count(tag)||string(field(*types.at(tag),"kind"))!="array")return false;}
-  for(const auto &ref:value.objects){if(!step(ref.size()/64+1))return false;auto found=objects.find(ref);
-    if(found==objects.end()||!value.tags.count(found->second.type)||!step(found->second.type.size()/64+1))return false;actual.insert(found->second.type);}
-  return step(actual.size()+value.tags.size())&&actual==value.tags&&e.message.empty();
-}
-bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
+bool mergeInput(ActualCheck &c,ActualValue &to,const ActualValue &from,const std::set<std::string> &tags){
   // Visit incoming identities once; only the relation plane still projects
   // the old target. Internal change detection must retain exact int64 facts,
   // independently of the bounded JSON key's binary64 representation.
-  if(!step(from.frames.size()+from.cursors.size()+1)||!step(weight(from)+1+regionWeight(to.region)))return false;
+  if(!c.step(from.frames.size()+from.cursors.size()+1)||!c.step(weight(from,tags)+1+regionWeight(to.region)))return false;
   // An absent relation is lazily unproved, not a runtime allocation fact.
   // Capacity/tag-only values need no relation plane or spurious state change.
   const bool tracked=to.region.known||from.region.known;RegionValue provenance;
-  if(tracked){provenance=regionValue(*this,to);regionMerge(*this,provenance,regionValue(*this,from));}
+  if(tracked){provenance=regionValue(c,to);regionMerge(c,provenance,regionValueInput(c,from,!tags.empty()));}
   const bool bottom=to.tags.empty()&&to.objects.empty()&&to.cells.empty()&&to.callables.empty()&&to.frames.empty()&&to.cursors.empty()&&!to.unknown&&!to.callableTop;
   // Only a completely empty incoming value is the numeric join identity.
   // Code/Env, scalar uncertainty and every relation fact still widen it.
-  const bool incomingBottom=from.tags.empty()&&from.objects.empty()&&from.cells.empty()&&from.callables.empty()&&from.frames.empty()&&from.cursors.empty()&&!from.unknown&&!from.callableTop&&from.truth==0&&!from.number&&!from.region.known&&!from.region.opaque&&!from.region.empty&&!from.region.number&&from.region.roots.empty();
+  const bool incomingBottom=tags.empty()&&from.objects.empty()&&from.cells.empty()&&from.callables.empty()&&from.frames.empty()&&from.cursors.empty()&&!from.unknown&&!from.callableTop&&from.truth==0&&!from.number&&!from.region.known&&!from.region.opaque&&!from.region.empty&&!from.region.number&&from.region.roots.empty();
   bool changed=false;
-  for(const auto &id:from.tags)if(to.tags.insert(id).second)changed=true;
+  for(const auto &id:tags)if(to.tags.insert(id).second)changed=true;
   for(const auto &id:from.objects)if(to.objects.insert(id).second)changed=true;
   for(const auto &id:from.cells)if(to.cells.insert(id).second)changed=true;
   for(const auto &pair:from.callables)if(to.callables.insert(pair).second)changed=true;
@@ -58,13 +41,43 @@ bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
     changed|=to.region.known!=provenance.known||to.region.opaque!=provenance.opaque||to.region.empty!=provenance.empty||to.region.number!=provenance.number||to.region.roots!=provenance.roots;
     to.region=std::move(provenance);
   }
-  if(!need(to.tags.size()<=256&&to.objects.size()<=256&&to.cells.size()<=256&&to.callables.size()<=256,"actual alternative/object/Cell set limit exceeded"))return false;
-  return e.message.empty()&&changed;
+  if(!c.need(to.tags.size()<=256&&to.objects.size()<=256&&to.cells.size()<=256&&to.callables.size()<=256,"actual alternative/object/Cell set limit exceeded"))return false;
+  return c.e.message.empty()&&changed;
+}
+
+}
+RegionValue regionValue(ActualCheck &c,const ActualValue &v){return regionValueInput(c,v,!v.tags.empty());}
+std::string ActualCheck::key(const ActualValue &v){
+  if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+v.region.roots.size()+256))return {};
+  Array tags,refs,cells,pairs,frames,cursors;
+  const auto ids=[&](const std::set<std::string> &from,Array &to){for(const auto &id:from){if(!step(12*id.size()+8))return false;to.push_back(id);}return true;};
+  if(!ids(v.tags,tags)||!ids(v.objects,refs)||!ids(v.cells,cells)||!ids(v.frames,frames)||!ids(v.cursors,cursors))return {};
+  for(const auto &[code,environment]:v.callables){if(!step(12*(code.size()+environment.size())+16))return {};pairs.push_back(Array{code,environment});}
+  for(const auto &id:v.region.roots)if(!step(12*id.size()+8))return {};
+  return canonical(Object{{"tags",std::move(tags)},{"refs",std::move(refs)},{"cells",std::move(cells)},
+    {"frames",std::move(frames)},{"cursors",std::move(cursors)},{"callableTop",v.callableTop},{"callables",std::move(pairs)},
+    {"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)},{"region",regionKey(v.region)}});
+}
+ActualValue ActualCheck::copy(const ActualValue &v){
+  if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+1)||!step(weight(v,v.tags)))return {};return v;
+}
+bool ActualCheck::arrayReceiver(const ActualValue &value){
+  if(!step()||value.unknown||value.callableTop||!value.cells.empty()||!value.callables.empty()||value.objects.empty()||value.tags.empty())return false;
+  std::set<std::string> actual;
+  for(const auto &tag:value.tags){if(!step(tag.size()/64+1)||!types.count(tag)||string(field(*types.at(tag),"kind"))!="array")return false;}
+  for(const auto &ref:value.objects){if(!step(ref.size()/64+1))return false;auto found=objects.find(ref);
+    if(found==objects.end()||!value.tags.count(found->second.type)||!step(found->second.type.size()/64+1))return false;actual.insert(found->second.type);}
+  return step(actual.size()+value.tags.size())&&actual==value.tags&&e.message.empty();
+}
+bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
+  return mergeInput(*this,to,from,from.tags);
 }
 void ActualCheck::seedStorage(std::map<std::string,ActualValue> &seeds,const std::string &id,const ActualValue &v,bool conditional,bool &changed){
-  if(!conditional||!step(v.tags.size()+1))return;for(const auto &tag:v.tags)if(!receiverText(tag))return;
-  ActualValue tags;tags.tags=v.tags;tags.unknown=v.unknown;tags.truth=v.truth;
-  const bool grew=merge(seeds[id],tags);seedChanged|=grew;changed|=grew;
+  if(!conditional||!step(v.tags.size()+1))return;
+  // Borrow only the tag plane; the temporary metadata carries no payload,
+  // number or relation facts. The shared merge owns the final seed copies.
+  ActualValue metadata;metadata.unknown=v.unknown;metadata.truth=v.truth;
+  const bool grew=mergeInput(*this,seeds[id],metadata,v.tags);seedChanged|=grew;changed|=grew;
 }
 bool ActualCheck::recordCapacity(CapacityValue &to,const ActualValue &from){
   // The producer may be a freshly constructed value rather than merge's
