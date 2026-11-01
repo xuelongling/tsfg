@@ -242,7 +242,7 @@ bool sameBirthWorld(const ActualFrameWorld &a,const ActualFrameWorld &b){
     if(id!=other||v.unbound!=w.unbound||v.weak!=w.weak||v.pending!=w.pending||v.initializing!=w.initializing||v.aborted!=w.aborted||
         v.prefixMin!=w.prefixMin||v.prefixMax!=w.prefixMax||!sameHeapValue(v.bound,w.bound)||v.births.size()!=w.births.size())return false;
     auto birth=w.births.begin();for(const auto &[slot,row]:v.births){const auto &[otherSlot,otherRow]=*birth++;
-      if(slot!=otherSlot||row.reference!=otherRow.reference||row.pending!=otherRow.pending||!sameHeapValue(row.real,otherRow.real))return false;}
+      if(slot!=otherSlot||row.referenceText()!=otherRow.referenceText()||row.pending!=otherRow.pending||!sameHeapValue(row.real,otherRow.real))return false;}
   }return true;
 }
 bool birthCoveredStores(){
@@ -266,9 +266,9 @@ bool birthCoveredStores(){
     ActualValue incoming;incoming.tags={"T"};incoming.objects={"new-data"};incoming.truth=2;incoming.number=9007199254740994LL;
     incoming.region.known=true;incoming.region.roots={"root:new"};incoming.region.number=41;if(mode==8)incoming=ActualValue{};
     for(const auto &id:{parent,frame}){auto &binding=state.frames.at(id);binding.bound=receiver;binding.unbound=false;binding.initializing=true;}
-    if(mode!=1){state.frames.at(frame).births.emplace(token,ActualBirth{"wrong-selected-reference",oldValue,true});
-      state.frames.at(parent).births.emplace(token,ActualBirth{"wrong-ancestor-reference",oldValue,true});}
-    state.frames.at(parent).births.emplace(other,ActualBirth{"unrelated-original-reference",oldValue,true});
+    if(mode!=1){state.frames.at(frame).births.emplace(token,ActualBirth{std::make_shared<const std::string>("wrong-selected-reference"),oldValue,true});
+      state.frames.at(parent).births.emplace(token,ActualBirth{std::make_shared<const std::string>("wrong-ancestor-reference"),oldValue,true});}
+    state.frames.at(parent).births.emplace(other,ActualBirth{std::make_shared<const std::string>("unrelated-original-reference"),oldValue,true});
     if(!expect(f.check.defaultField(state.heap,*token,false)&&f.check.defaultField(state.heap,*other,false)&&f.error.message.empty(),"original default nodes registered"))return false;
     state.heap.insert_or_assign(key,oldValue);state.heap.insert_or_assign("second/field/G",oldValue);state.heap.emplace("global:untouched",heapPayload());
     if(mode==2){f.check.objects.at(reference).weak=true;auto &full=state.heap.at(key);full.tags.clear();for(unsigned i=0;i<256;++i)full.tags.insert("old-tag:"+std::to_string(i));}
@@ -314,13 +314,13 @@ bool birthCoveredStores(){
         "successful mutable outputs do not alias the independent input snapshot or SSA payload"))return false;
   }
   for(unsigned mode=0;mode<4;++mode){Symbols f;const auto token=f.get("object","F"),other=f.get("second","G");ActualFrameWorld world;
-    world["frame"].births.emplace(mode==0?other:token,ActualBirth{"independent-reference",heapPayload(),true});const auto before=world;const auto incoming=heapPayload();
+    world["frame"].births.emplace(mode==0?other:token,ActualBirth{std::make_shared<const std::string>("independent-reference"),heapPayload(),true});const auto before=world;const auto incoming=heapPayload();
     if(mode>=2)f.program.remaining=mode==2?0:4;
     const auto written=f.check.receiverWrite(world,*token,incoming,true);
     if(mode>=2){if(!expect(!written.success&&f.error.code=="core-ir-common-budget","write-result budget failure is not successful matched or absent-birth authority"))return false;}
     else if(!expect(written.success&&written.matched==(mode==1)&&f.error.message.empty()&&(mode==1||sameBirthWorld(world,before)),"explicit success/matched result distinguishes a real birth from no matching row"))return false;
     if(mode==1&&!expect(sameHeapValue(world.at("frame").births.at(token).real,incoming)&&!world.at("frame").births.at(token).pending&&
-        world.at("frame").births.at(token).reference=="independent-reference","matched result preserves complete payload and the independent birth reference"))return false;
+        world.at("frame").births.at(token).referenceText()=="independent-reference","matched result preserves complete payload and the independent birth reference"))return false;
   }
   llvm::errs()<<"PASS birth-covered strong-store, no-birth/weak/uncertain/ancestor/alias/clone/Region/ordinary/budget subcases\n";return true;
 }
@@ -451,13 +451,13 @@ bool ownedSlots(){
   if(!expect(foreign&&foreign->ordinal==first->ordinal&&foreign->owner!=first->owner&&foreign!=first&&less(first,foreign)!=less(foreign,first),"equal ordinals/spellings in live different owners are never the same symbol"))return false;
   ActualValue oldValue;oldValue.tags.insert("T");oldValue.objects.insert("old-data");
   ActualValue replacement;replacement.tags.insert("T");replacement.objects.insert("new-data");replacement.number=9007199254740993LL;
-  ActualFrameWorld world;world["frame"].births.emplace(alias,ActualBirth{"original-reference",oldValue,true});
-  world["ancestor"].births.emplace(aliasPair,ActualBirth{"ancestor-reference",oldValue,true});
-  world["frame"].births.emplace(first,ActualBirth{"unrelated-reference",oldValue,true});
+  ActualFrameWorld world;world["frame"].births.emplace(alias,ActualBirth{std::make_shared<const std::string>("original-reference"),oldValue,true});
+  world["ancestor"].births.emplace(aliasPair,ActualBirth{std::make_shared<const std::string>("ancestor-reference"),oldValue,true});
+  world["frame"].births.emplace(first,ActualBirth{std::make_shared<const std::string>("unrelated-reference"),oldValue,true});
   if(!expect(f.check.receiverWrite(world,*aliasPair,replacement,true).success&&f.error.message.empty(),"actual write accepts the owned canonical alias symbol"))return false;
   const auto &a=world.at("frame").births.at(alias),&b=world.at("ancestor").births.at(aliasPair),&unrelated=world.at("frame").births.at(first);
   if(!expect(a.real.objects==replacement.objects&&b.real.objects==replacement.objects&&a.real.number==replacement.number&&b.real.number==replacement.number&&!a.pending&&!b.pending&&
-    a.reference=="original-reference"&&b.reference=="ancestor-reference"&&unrelated.reference=="unrelated-reference"&&unrelated.pending&&unrelated.real.objects==oldValue.objects,
+    a.referenceText()=="original-reference"&&b.referenceText()=="ancestor-reference"&&unrelated.referenceText()=="unrelated-reference"&&unrelated.pending&&unrelated.real.objects==oldValue.objects,
     "canonical alias updates both journals, preserves independent references and leaves unrelated slot untouched"))return false;
   // Destroy all local Worlds before asking the real empty-function solve to
   // reset its context/symbol/object universe. Never inspect old tokens again.

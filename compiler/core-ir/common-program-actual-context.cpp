@@ -25,7 +25,9 @@ bool framesSame(ActualCheck &c,const ActualFrameWorld &a,const ActualFrameWorld 
     if(!textSame(c,id,otherId)||!c.step(8)||v.unbound!=w.unbound||v.weak!=w.weak||v.pending!=w.pending||v.initializing!=w.initializing||v.aborted!=w.aborted||v.prefixMin!=w.prefixMin||v.prefixMax!=w.prefixMax||!valueSame(c,v.bound,w.bound))return false;
     if(!c.step(v.births.size()+w.births.size()+1)||v.births.size()!=w.births.size())return false;
     auto birth=w.births.begin();for(const auto &[slot,row]:v.births){const auto &[otherSlot,other]=*birth++;
-      if(!c.step()||slot!=otherSlot||!textSame(c,row.reference,other.reference)||!c.step()||row.pending!=other.pending||!valueSame(c,row.real,other.real))return false;}
+      if(!c.step()||slot!=otherSlot||!c.step(6))return false;
+      const auto reference=row.referenceText(),otherReference=other.referenceText();
+      if(!c.step((reference.size()+otherReference.size())/64+1)||reference!=otherReference||!c.step()||row.pending!=other.pending||!valueSame(c,row.real,other.real))return false;}
   }return true;
 }
 bool regionsSame(ActualCheck &c,const RegionHeap &a,const RegionHeap &b){

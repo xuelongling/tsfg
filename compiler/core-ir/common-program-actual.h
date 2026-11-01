@@ -89,7 +89,11 @@ struct ActualCursorInfo {std::shared_ptr<const std::string> frame;size_t positio
 struct ActualReceiverWrite {bool success=false,matched=false;};
 // A birth default is not a real write or a permission. Keep prior instance
 // data separately so a definite definition consumes only its temporary default.
-struct ActualBirth {std::string reference;ActualValue real;bool pending=true;};
+struct ActualBirth {
+  std::shared_ptr<const std::string> reference;ActualValue real;bool pending=true;
+  // A default row has the original empty text, without allocating an owner.
+  llvm::StringRef referenceText()const{return reference?llvm::StringRef(*reference):llvm::StringRef();}
+};
 // Analysis-only symbols. Immutable complete spellings can outlive their
 // archive through an owning Heap index. Tokens themselves still expire with
 // the archive and never replace physical IDs or prove a permission.
@@ -253,7 +257,7 @@ struct ActualCheck {
   // execution value, heap node or temporary string may supply a symbol.
   const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualFieldDirectory::const_iterator);
   ActualFieldSlotMatch existingFieldSlot(const std::string &,ActualFieldDirectory::const_iterator);
-  bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
+  bool receiverBirth(ActualFrameWorld &,const std::string &,std::string &&,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
   ActualReceiverWrite receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const ActualCursorInfo &,const ActualFieldSlot &);
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);

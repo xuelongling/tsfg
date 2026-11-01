@@ -36,7 +36,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     for(const auto &id:args[0].frames){
       if(!receiverText(id)||!need(receiverFrames.count(id)&&state.frames.count(id),"allocation frame missing"))return false;
       const auto &info=receiverFrames.at(id);if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
-      if(!receiverText(info.newTarget))return false;const auto ref="construction/"+id+"/"+info.newTarget;
+      if(!receiverText(info.newTarget))return false;auto ref="construction/"+id+"/"+info.newTarget;
       const bool weak=state.frames.at(id).weak;auto old=objects.find(ref);
       if(old!=objects.end()&&!old->second.weak&&weak)weakChanged=true;
       const bool repeated=weak||(old!=objects.end()&&old->second.weak);
@@ -47,7 +47,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       const auto members=allFields(info.newTarget);if(!step(members.size()+1))return false;std::vector<const ActualFieldSlot *> fieldSlots;fieldSlots.reserve(members.size());
       for(const auto *row:members){const auto fieldId=string(field(*row,"id"));if(!receiverText(fieldId))return false;
         const auto slot=fieldSlot(object,fields.find(fieldId));if(!e.message.empty()||!step())return false;fieldSlots.push_back(slot);}
-      if(!receiverBirth(state.frames,id,ref,fieldSlots,state.heap,repeated))return false;
+      if(!receiverBirth(state.frames,id,std::move(ref),fieldSlots,state.heap,repeated))return false;
       // Virtual missing properties are data, never define/write observations.
       for(const auto token:fieldSlots)if(!defaultField(state.heap,*token,repeated))return false;
       merge(value,allocated);if(!e.message.empty())return false;

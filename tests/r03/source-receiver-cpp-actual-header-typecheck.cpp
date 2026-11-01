@@ -14,6 +14,8 @@ static_assert(std::is_same_v<decltype(std::declval<ActualContextIdentity>().fram
 static_assert(std::is_const_v<std::remove_reference_t<decltype(*std::declval<ActualContext>().identity)>>);
 static_assert(std::is_same_v<decltype(std::declval<ActualContext>().normalFrames),ActualFrameWorld>);
 static_assert(std::is_same_v<decltype(std::declval<ActualContext>().languageFrames),ActualFrameWorld>);
+static_assert(std::is_same_v<decltype(std::declval<ActualBirth>().reference),std::shared_ptr<const std::string>>);
+static_assert(std::is_same_v<decltype(std::declval<const ActualBirth>().referenceText()),llvm::StringRef>);
 static_assert(std::is_same_v<ActualFrameWorld::mapped_type,ActualFrameBinding>);
 static_assert(std::is_same_v<decltype(std::declval<ActualCheck &>().copyFrames(std::declval<const ActualFrameWorld &>())),ActualFrameWorld>);
 static_assert(std::is_same_v<decltype(std::declval<ActualCheck &>().receiverCompletion(std::declval<ActualFrameWorld &&>(),

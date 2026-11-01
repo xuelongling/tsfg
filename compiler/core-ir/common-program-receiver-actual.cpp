@@ -161,7 +161,8 @@ ActualFieldSlotMatch ActualCheck::existingFieldSlot(const std::string &reference
   return {};
 }
 ActualBirth ActualCheck::copyBirth(const ActualBirth &row){
-  if(!receiverText(row.reference)||!step(3))return {};
+  // Share only immutable reference bytes; every real payload is still owned.
+  if(!step(7))return {};
   ActualBirth result;result.reference=row.reference;result.pending=row.pending;result.real=copy(row.real);return result;
 }
 ActualFrameBinding ActualCheck::copyFrame(const ActualFrameBinding &value){
@@ -243,12 +244,13 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
     if(!step(world.size()))return {};
     for(const auto &entry:world){if(!step(entry.second.births.size()))return {};
       for(const auto &[slot,row]:entry.second.births){if(!step())return {};bool matched=false;
+        if(!step(3))return {};const auto reference=row.referenceText();
         for(size_t i=0;i<refs.size();++i){
           // Visit/load and length rejection precede any byte comparison. Equal
           // lengths still require the complete identity, including NUL bytes.
-          if(!step(3))return {};const auto &ref=*refs[i];if(ref.size()!=row.reference.size())continue;
-          if(!step(ref.size()+row.reference.size()+1))return {};
-          if(ref==row.reference){if(!step())return {};matched=true;break;}
+          if(!step(3))return {};const auto &ref=*refs[i];if(ref.size()!=reference.size())continue;
+          if(!step(ref.size()+reference.size()+1)||!step(2))return {};
+          if(llvm::StringRef(ref)==reference){if(!step())return {};matched=true;break;}
         }
         if(matched){bool fresh=false;if(!admit(entry.first,&entry,fresh))return {};break;}}}
   }
@@ -289,10 +291,12 @@ std::vector<const ActualValue *> ActualCheck::retainedFrameRoots(const ActualFra
     if(!step(2))return false;result.push_back(&value);return true;
   }))return {};return result;
 }
-bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,const std::string &ref,const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
+bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,std::string &&ref,const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
   if(!step(fields.size()))return false;ActualBirthJournal rows;
-  for(const auto slot:fields){if(!step()||!receiverText(ref))return false;
-    ActualBirth row;row.reference=ref;
+  if(!step(2))return false;std::shared_ptr<const std::string> reference;
+  for(const auto slot:fields){if(!step()||!step())return false;
+    if(!reference){if(!step(8))return false;reference=std::make_shared<const std::string>(std::move(ref));}
+    if(!step(4))return false;ActualBirth row;row.reference=reference;
     if(repeated){if(!receiverText(*slot->spelling))return false;const auto old=heap.find(*slot->spelling);if(old!=heap.end())row.real=copy(old->second);}
     if(!e.message.empty())return false;rows.emplace(slot,std::move(row));}
   for(auto current=id;!current.empty();){

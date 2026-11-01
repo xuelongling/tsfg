@@ -12,7 +12,7 @@ bool same(const ActualValue &a,const ActualValue &b){return std::tie(a.tags,a.ob
 template<class Map,class Equal> bool sameMap(const Map &a,const Map &b,Equal equal){
   if(a.size()!=b.size())return false;auto x=a.begin(),y=b.begin();for(;x!=a.end();++x,++y)if(x->first!=y->first||!equal(x->second,y->second))return false;return true;
 }
-bool same(const ActualBirth &a,const ActualBirth &b){return a.reference==b.reference&&a.pending==b.pending&&same(a.real,b.real);}
+bool same(const ActualBirth &a,const ActualBirth &b){return a.referenceText()==b.referenceText()&&a.pending==b.pending&&same(a.real,b.real);}
 bool same(const ActualFrameBinding &a,const ActualFrameBinding &b){return std::tie(a.unbound,a.weak,a.pending,a.initializing,a.aborted,a.prefixMin,a.prefixMax)==
   std::tie(b.unbound,b.weak,b.pending,b.initializing,b.aborted,b.prefixMin,b.prefixMax)&&same(a.bound,b.bound)&&sameMap(a.births,b.births,[](const auto &x,const auto &y){return same(x,y);});}
 bool same(const ActualState &a,const ActualState &b){const auto eq=[](const auto &x,const auto &y){return same(x,y);};
@@ -42,9 +42,9 @@ struct Fixture {
     for(const auto &id:{parent,selected,unrelated}){
       auto &binding=state.frames.at(id);binding.bound=payload("old");binding.unbound=id==selected;binding.initializing=true;
       binding.prefixMin=1;binding.prefixMax=2;
-      ActualBirth birth;birth.reference="historical-object";birth.pending=false;birth.real=payload("historical-data");
+      ActualBirth birth;birth.reference=std::make_shared<const std::string>("historical-object");birth.pending=false;birth.real=payload("historical-data");
       binding.births.emplace(slot("historical-object","F"),birth);
-      birth.reference="different-object";birth.pending=true;birth.real.number=9007199254740993LL;
+      birth.reference=std::make_shared<const std::string>("different-object");birth.pending=true;birth.real.number=9007199254740993LL;
       binding.births.emplace(slot("different-object","G"),birth);
     }
     state.frames.at(unrelated).pending=true;
@@ -85,9 +85,9 @@ bool indexedReconcile(){
     if(!expect(f.check.receiverInstruction(f.context,store,1,f.state,ActualOperands{args},true,changed,noEdge,advanced,continues)&&f.error.message.empty(),"real first initialize_field produces complete birth/prefix/cursor state"))return false;
     const auto token=f.check.existingFieldSlot(reference,f.check.fields.find(field)).slot;if(!expect(token&&f.error.message.empty(),"full field token belongs to the current model"))return false;
     const auto &own=f.state.frames.at(frame);const auto &birth=own.births.at(token);
-    if(!expect(own.prefixMin==1&&own.prefixMax==1&&own.initializing&&!own.unbound&&!birth.pending&&birth.reference==reference&&same(birth.real,source)&&advanced.cursors.size()==1&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1&&same(f.state.heap.at(key),source)&&same(f.state.heap.at(other),missing),"first field has exact literal real payload, original reference, ordered prefix and untouched U field"))return false;
+    if(!expect(own.prefixMin==1&&own.prefixMax==1&&own.initializing&&!own.unbound&&!birth.pending&&birth.referenceText()==reference&&same(birth.real,source)&&advanced.cursors.size()==1&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1&&same(f.state.heap.at(key),source)&&same(f.state.heap.at(other),missing),"first field has exact literal real payload, original reference, ordered prefix and untouched U field"))return false;
     auto wanted=source;
-    if(mode==1){f.check.objects.emplace("array-right",ActualObject{array,true});auto right=source;right.objects={"array-right"};right.truth=2;right.region.roots={"root:right"};f.state.frames.at(f.parent).weak=true;f.state.frames.at(f.parent).births.emplace(token,ActualBirth{"independent-ancestor-reference",right,true});
+    if(mode==1){f.check.objects.emplace("array-right",ActualObject{array,true});auto right=source;right.objects={"array-right"};right.truth=2;right.region.roots={"root:right"};f.state.frames.at(f.parent).weak=true;f.state.frames.at(f.parent).births.emplace(token,ActualBirth{std::make_shared<const std::string>("independent-ancestor-reference"),right,true});
       wanted.tags.insert(*missing.tags.begin());wanted.objects.insert("array-right");wanted.truth=3;wanted.number.reset();wanted.region.empty=true;wanted.region.number.reset();wanted.region.roots.insert("root:right");}
     // After genuine first-field execution, only generic aliases stale these
     // nodes; no intervening put-helper lookup warms the budgeted reconciliation.
@@ -108,11 +108,11 @@ bool reconcile(){
     auto left=payload("left");left.truth=1;left.number=9007199254740993LL;left.region.number=9007199254740995LL;
     auto right=payload("right");right.truth=2;right.number=9007199254740993LL;right.region.number=9007199254740995LL;
     auto only=payload("only");only.truth=1;only.number=9007199254740993LL;only.region.number=9007199254740995LL;
-    f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{"shared",left,false});
-    f.state.frames.at(f.parent).births.emplace(f.slot("shared","F"),ActualBirth{"shared",right,true});
-    f.state.frames.at(f.selected).births.emplace(f.slot("only","G"),ActualBirth{"only",only,false});
-    f.state.frames.at(f.parent).births.emplace(f.slot("bottom","F"),ActualBirth{"bottom",ActualValue{},false});
-    f.state.frames.at(f.unrelated).births.emplace(f.slot("pending-only","G"),ActualBirth{"pending-only",ActualValue{},true});
+    f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("shared"),left,false});
+    f.state.frames.at(f.parent).births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("shared"),right,true});
+    f.state.frames.at(f.selected).births.emplace(f.slot("only","G"),ActualBirth{std::make_shared<const std::string>("only"),only,false});
+    f.state.frames.at(f.parent).births.emplace(f.slot("bottom","F"),ActualBirth{std::make_shared<const std::string>("bottom"),ActualValue{},false});
+    f.state.frames.at(f.unrelated).births.emplace(f.slot("pending-only","G"),ActualBirth{std::make_shared<const std::string>("pending-only"),ActualValue{},true});
     // Reconciliation must replace these stale slots, not join stale heap data.
     f.state.heap.emplace("shared/field/F",payload("stale-shared"));f.state.heap.emplace("only/field/G",payload("stale-only"));
     f.state.heap.emplace("bottom/field/F",payload("stale-bottom"));f.state.heap.emplace("pending-only/field/G",payload("stale-pending"));
@@ -132,7 +132,7 @@ bool reconcile(){
     "ancestor real payloads union, pending adds U, nonpending exact data/Bottom replace stale slots, unrelated heap remains exact"))return false;
   if(!expect(same(f.state,input)&&same(missing,missingBefore),"reconcile does not mutate any input Frame binding, reference, birth, flags or missing value"))return false;
   const auto output=heap;
-  f.state.frames.at(f.selected).births.at(f.slot("shared","F")).reference="changed-input-reference";
+  f.state.frames.at(f.selected).births.at(f.slot("shared","F")).reference=std::make_shared<const std::string>("changed-input-reference");
   f.state.frames.at(f.parent).births.at(f.slot("shared","F")).real.objects.clear();
   f.state.frames.at(f.selected).births.at(f.slot("only","G")).real.region.roots.clear();missing.tags.clear();
   if(!expect(sameMap(heap,output,[](const auto &a,const auto &b){return same(a,b);}),"result does not borrow input World payloads or missing value"))return false;
@@ -195,8 +195,8 @@ bool frameSelectionClosure(){
   }
   {Fixture f(false);for(auto &[key,binding]:f.state.frames)binding.births.clear();
     auto real=payload("nested-data");real.truth=2;real.number=17;real.region.number=29;
-    f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{"nested",real,true});
-    f.state.frames.at(f.unrelated).births.emplace(f.slot("only","G"),ActualBirth{"not-reached",payload("excluded"),false});
+    f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("nested"),real,true});
+    f.state.frames.at(f.unrelated).births.emplace(f.slot("only","G"),ActualBirth{std::make_shared<const std::string>("not-reached"),payload("excluded"),false});
     ActualValue data;data.objects={"outer"};ActualValue nested;nested.objects={"nested"};ActualValue back;back.objects={"outer"};
     ActualHeap heap;heap.emplace("outer/field/next",nested);heap.emplace("nested/field/back",back);heap.emplace("elsewhere/field/unused",payload("not-reached"));
     const auto input=f.state;const auto beforeHeap=heap;auto wanted=f.state.frames;wanted.erase(f.unrelated);
@@ -218,14 +218,14 @@ bool frameSelectionErrors(){
     if(failure.mode==2||failure.mode==3)root.cursors={"absent-cursor"};
     if(failure.mode==3)root.frames={"absent"}; // Cursor admission precedes unknown-Frame selection.
     if(failure.mode==4){root.frames={f.selected};f.state.frames.erase(f.parent);}
-    if(failure.mode==5||failure.mode==6){root.objects={"shared"};f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{"shared",payload("birth-real"),false});
+    if(failure.mode==5||failure.mode==6){root.objects={"shared"};f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("shared"),payload("birth-real"),false});
       if(failure.mode==5)f.check.receiverFrames.erase(f.selected);else f.state.frames.erase(f.parent);}
     const auto input=f.state;const auto before=root;f.program.remaining=200000;const auto output=f.check.selectFrames(f.state.frames,{root},heap);
     if(!expect(output.empty()&&!f.error.code.empty()&&f.error.code!="core-ir-common-budget"&&f.error.message==failure.message&&same(f.state,input)&&same(root,before),
         "missing Frame/cursor/birth/parent reports the original precise error and priority without mutating inputs"))return false;
   }
   for(const bool ancestorPresent:{false,true}){Fixture f(false);f.state.frames.clear();f.check.receiverFrames.clear();
-    ActualFrameBinding binding;binding.births.emplace(f.slot("shared","F"),ActualBirth{"shared",payload("birth-real"),false});
+    ActualFrameBinding binding;binding.births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("shared"),payload("birth-real"),false});
     f.state.frames.emplace("A",binding);f.state.frames.emplace("B",binding);ActualFrameInfo a;a.parent="P";f.check.receiverFrames.emplace("A",a);
     if(ancestorPresent){f.state.frames.emplace("P",ActualFrameBinding{});ActualFrameInfo b;b.parent="Q";f.check.receiverFrames.emplace("B",b);}
     // A/B are initial birth selections in literal full lexical order. A's
@@ -282,7 +282,7 @@ bool frameRefMembership(){
   const auto prepare=[](Fixture &f,const std::string &reference){
     f.check.objects.emplace(reference,ActualObject{"B",false});const auto slot=f.check.fieldSlot(f.check.objects.find(reference),f.check.fields.find("F"));
     if(!expect(slot&&f.error.message.empty(),"refs membership fixture owns its actual physical field slot before the independent cutoff"))return false;
-    auto binding=f.state.frames.at(f.selected);binding.births.clear();binding.births.emplace(slot,ActualBirth{reference,payload("birth-real"),false});
+    auto binding=f.state.frames.at(f.selected);binding.births.clear();binding.births.emplace(slot,ActualBirth{std::make_shared<const std::string>(reference),payload("birth-real"),false});
     f.state.frames.clear();f.state.frames.emplace(f.selected,std::move(binding));f.check.receiverFrames.at(f.selected).parent.clear();
     f.check.receiverFrames.erase(f.parent);f.check.receiverFrames.erase(f.unrelated);f.state.heap.clear();return true;
   };
@@ -308,13 +308,13 @@ bool frameRefMembership(){
     if(!expect(f.error.message.empty()&&(item.hit?sameMap(output,wanted,[](const auto &a,const auto &b){return same(a,b);}):output.empty())&&
         same(f.state,input)&&same(roots[0],beforeRoots[0])&&same(roots[1],beforeRoots[1]),
         "full long/NUL/prefix/high-byte membership uses complete equality and duplicate refs preserve exact row identity"))return false;
-    if(!item.hit)continue;const auto kept=output;f.state.frames.at(f.selected).births.begin()->second.reference="changed-input";
+    if(!item.hit)continue;const auto kept=output;f.state.frames.at(f.selected).births.begin()->second.reference=std::make_shared<const std::string>("changed-input");
     f.state.frames.at(f.selected).births.begin()->second.real.objects.clear();roots[0].objects.clear();f.state.heap.clear();
     if(!expect(sameMap(output,kept,[](const auto &a,const auto &b){return same(a,b);}),"member-selected birth references and payloads own independent copies after roots and heap mutation"))return false;
     const auto changedInput=f.state;output.begin()->second.births.begin()->second.real.region.roots.clear();
     if(!expect(same(f.state,changedInput),"member-selected output journal mutation cannot affect its source World"))return false;
     f.state.frames.clear();f.check.receiverFrames.clear();
-    if(!expect(output.size()==1&&output.begin()->first==f.selected&&output.begin()->second.births.begin()->second.reference==item.birth,
+    if(!expect(output.size()==1&&output.begin()->first==f.selected&&output.begin()->second.births.begin()->second.referenceText()==item.birth,
         "member-selected complete frame and birth identities survive source World and metadata destruction"))return false;
   }
   llvm::errs()<<"PASS refs-only fixed4000 nonmembership, full equality, duplicate nested refs and owned birth results\n";return true;
@@ -361,7 +361,7 @@ bool returnFrameAdoption(){
         sameMap(summary,wanted,[](const auto &a,const auto &b){return same(a,b);})&&sameMap(heap,wantedHeap,[](const auto &a,const auto &b){return same(a,b);})&&
         !heap.count("summary-only/field/secret")&&(normal?f.context.languageFrames.empty():f.context.normalFrames.empty()),
         "actual normal/language return preserves all World/history facets and the exact current retained heap, excluding accumulated-summary roots"))return false;
-    const auto kept=summary;f.state.frames.at(f.selected).births.begin()->second.reference="mutated-input";f.state.frames.at(f.selected).births.begin()->second.real.objects.clear();f.state.heap.clear();
+    const auto kept=summary;f.state.frames.at(f.selected).births.begin()->second.reference=std::make_shared<const std::string>("mutated-input");f.state.frames.at(f.selected).births.begin()->second.real.objects.clear();f.state.heap.clear();
     if(!expect(sameMap(summary,kept,[](const auto &a,const auto &b){return same(a,b);}),"complete return-summary birth reference and payload copies survive input mutation"))return false;
     const auto changedInput=f.state;summary.begin()->second.bound.objects.clear();summary.begin()->second.births.clear();
     if(!expect(same(f.state,changedInput),"normal/language summary mutation cannot change current input journals"))return false;
@@ -384,11 +384,11 @@ bool retainedRootBorrowing(){
     ActualValue callable;callable.callables={{"code","env"}};ActualValue unknown;unknown.unknown=true;ActualValue top;top.callableTop=true;
     ActualValue filtered;filtered.cells={"cell"};filtered.frames={"frame"};filtered.cursors={"cursor"};filtered.truth=3;filtered.number=17;filtered.region.known=true;filtered.region.roots={"filtered-region"};
     auto full=f.state.values.at(8);full.unknown=true;full.callableTop=true;full.region.opaque=true;full.region.empty=true;ActualValue regionOnly;regionOnly.region.known=true;regionOnly.region.roots={"journal-region"};
-    world["g"].bound=full;world["f"].bound=filtered;world["f"].births.emplace(f.slot("shared","F"),ActualBirth{"shared",tag,true});
+    world["g"].bound=full;world["f"].bound=filtered;world["f"].births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("shared"),tag,true});
     world["e"].bound=top;world["d"].bound=unknown;world["c"].bound=callable;world["b"].bound=object;world["a"].bound=tag;
-    world["b"].births.emplace(f.slot("historical-object","F"),ActualBirth{"historical-object",ActualValue{},true});
-    world["b"].births.emplace(f.slot("shared","F"),ActualBirth{"shared",regionOnly,false});
-    world["b"].births.emplace(f.slot("different-object","G"),ActualBirth{"different-object",full,false});
+    world["b"].births.emplace(f.slot("historical-object","F"),ActualBirth{std::make_shared<const std::string>("historical-object"),ActualValue{},true});
+    world["b"].births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("shared"),regionOnly,false});
+    world["b"].births.emplace(f.slot("different-object","G"),ActualBirth{std::make_shared<const std::string>("different-object"),full,false});
     // Frame a..g, then full slot spelling different<historical<shared; this
     // deliberately differs from the genuine physical-slot registration order.
     const std::vector<ActualValue> wanted={tag,object,full,ActualValue{},regionOnly,callable,unknown,top,tag,full};const auto before=world;
@@ -412,8 +412,8 @@ bool retainedRootBorrowing(){
   }
   for(const bool normal:{true,false})for(const bool populated:{false,true}){Fixture f(false);auto binding=f.state.frames.at(f.selected);binding.bound=f.state.values.at(8);binding.bound.objects={"bound"};binding.bound.region.roots={"bound-r"};binding.births.clear();
     auto birth=payload("birth");birth.truth=2;birth.number=9007199254740993LL;birth.region.number=9007199254740995LL;birth.region.roots={"birth-r"};birth.unknown=true;birth.callableTop=true;
-    ActualValue relation;relation.region.known=true;relation.region.roots={"journal-r"};binding.births.emplace(f.slot("historical-object","F"),ActualBirth{"historical-object",birth,false});
-    binding.births.emplace(f.slot("different-object","G"),ActualBirth{"different-object",relation,true});binding.births.emplace(f.slot("shared","F"),ActualBirth{"shared",ActualValue{},true});
+    ActualValue relation;relation.region.known=true;relation.region.roots={"journal-r"};binding.births.emplace(f.slot("historical-object","F"),ActualBirth{std::make_shared<const std::string>("historical-object"),birth,false});
+    binding.births.emplace(f.slot("different-object","G"),ActualBirth{std::make_shared<const std::string>("different-object"),relation,true});binding.births.emplace(f.slot("shared","F"),ActualBirth{std::make_shared<const std::string>("shared"),ActualValue{},true});
     f.state.frames.clear();f.state.frames.emplace(f.selected,binding);f.state.values.clear();f.state.heap.clear();f.state.regions.clear();f.check.receiverFrames.at(f.selected).parent.clear();
     f.state.heap.emplace("bound/field/value",payload("bound-child"));f.state.heap.emplace("birth/field/value",payload("birth-child"));f.state.heap.emplace("environment/field/capture",payload("env-child"));f.state.heap.emplace("summary-only/field/secret",payload("excluded"));
     RegionValue child;child.known=true;child.opaque=true;child.empty=true;child.number=9007199254740993LL;child.roots={"child-r"};RegionValue loop;loop.known=true;loop.roots={"journal-r"};
@@ -466,7 +466,7 @@ bool retainedArchiveOrder(){
   f.program.remaining=100000;auto owned=f.check.retainedFrames(f.state.frames);
   if(!expect(f.error.message.empty()&&owned.size()==wanted.size()&&same(f.state,before),"owning callback shares the same complete archive order and immutable input"))return false;
   for(size_t i=0;i<wanted.size();++i)if(!expect(same(owned[i],wanted[i]),"owning archive root has the identical independent literal complete value"))return false;
-  binding.bound.objects.clear();binding.births.at(a).reference="changed-input";binding.births.at(a).real.region.roots.clear();
+  binding.bound.objects.clear();binding.births.at(a).reference=std::make_shared<const std::string>("changed-input");binding.births.at(a).real.region.roots.clear();
   if(!expect(same(owned[0],wanted[0])&&same(owned[1],wanted[1])&&same(owned[2],wanted[2]),"owning retained values do not borrow mutated World payloads"))return false;
   const auto changedInput=f.state;owned[0].cells.clear();owned[2].objects.clear();
   if(!expect(same(f.state,changedInput),"owning root mutation cannot change input flags, journals or heap"))return false;
