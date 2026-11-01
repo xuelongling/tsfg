@@ -49,17 +49,22 @@ template<class Retain>
 bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&retain){
   // The world is already selected. Preserve FrameId then complete slot order.
   for(const auto &[id,value]:world){if(!c.step())return false;if(data(value.bound)&&!retain(value.bound))return false;
-    if(!c.step(value.births.size()))return false;
-    std::vector<ActualBirthJournal::const_iterator> ordered;ordered.reserve(value.births.size());
-    for(auto row=value.births.begin();row!=value.births.end();++row){
-      if(!c.step())return false;ordered.push_back(row);size_t at=ordered.size()-1;
-      while(at){
-        const auto &left=*ordered[at-1]->first->spelling,&right=*ordered[at]->first->spelling;
-        if(!c.receiverText(left)||!c.receiverText(right))return false;if(left<right)break;
-        if(!c.step(3))return false;std::swap(ordered[at-1],ordered[at]);--at;
+    // Live Worlds contain symbols from this check's current archive. Its
+    // immutable full spelling order already supplies the retained root order.
+    if(!c.step(2))return false;const auto count=value.births.size();
+    if(count){size_t height=0;
+      for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return false;height+=2;}
+      height=std::min(height,count);size_t retained=0;
+      for(const auto &[spelling,slot]:c.fieldSlotArchive){
+        // Visit/load the archive node, then a numeric owner/ordinal tree find.
+        // Cover both directions of same-key debug predicates before lookup:
+        // two owner reads/equality/branch, two ordinal reads and comparison.
+        if(!c.step(2)||!c.step(3+height+2*(height+1)*7))return false;
+        const auto row=value.births.find(&slot);if(row==value.births.end())continue;
+        if(!c.step(3)||!retain(row->second.real)||!c.e.message.empty())return false;
+        if(++retained==count)break;
       }
     }
-    for(const auto row:ordered){if(!retain(row->second.real)||!c.e.message.empty())return false;}
     if(!c.e.message.empty())return false;
   }return true;
 }

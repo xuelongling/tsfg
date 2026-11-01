@@ -438,5 +438,42 @@ bool retainedRootBorrowing(){
   llvm::errs()<<"PASS retained root full ordering/filter/births, fixed2000 return and false-mode owned Heap/Region projections\n";return true;
 }
 }
-int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories()||!frameRefMembership()||!returnFrameAdoption()||!retainedRootBorrowing())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
+namespace {
+bool retainedArchiveOrder(){
+  Fixture f(false);const std::string owner="sha256:354199e42929c36a0b4b3be7a57e791d922bd965b6da4df341782f7a42eda44a";
+  const std::string first="sha256:82967726dabe5bd3b0c895a09f78003562197949b38d174e2d4d362a0649b80d",second="sha256:e329b28282ed4c495cb1953cfed967c758d75e7a06f332ec3311ce3d06ead28b";
+  for(const auto &id:{second,first}){f.check.builtins.emplace(id,Object{{"id",id},{"sourceBinding","binding:"+id},{"type","B"}});f.check.fields.emplace(id,&f.check.builtins.at(id));}
+  f.check.builtins.emplace(owner,Object{{"kind","reference"},{"base",nullptr},{"construction",Object{{"initializationFields",Array{second,first}}}},
+    {"fields",Array{*f.check.fields.at(second),*f.check.fields.at(first)}}});f.check.types.emplace(owner,&f.check.builtins.at(owner));
+  f.state.frames.clear();const auto frame=f.check.createFrame(f.state.frames,f.context.activation,"retained-archive",owner,"ctor:"+owner,owner,false);
+  ActualValue control,allocated;control.frames={frame};std::vector<const ActualValue *> args{&control};auto &op=f.function.blocks[0].operations[0];op.name="receiver_allocate";
+  bool changed=false,continues=true;size_t edges=0;
+  if(!expect(!frame.empty()&&f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{args},true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},allocated,continues)&&f.error.message.empty()&&edges==0,
+      "archive-order fixture allocates a genuine same-check receiver and physical field journals before the cutoff"))return false;
+  const std::string reference="construction/"+frame+"/"+owner;const auto a=f.check.existingFieldSlot(reference,f.check.fields.find(first)).slot,b=f.check.existingFieldSlot(reference,f.check.fields.find(second)).slot;
+  if(!expect(a&&b&&f.error.message.empty()&&reference.size()==165&&a->spelling->size()==243&&b->spelling->size()==243&&*a->spelling==reference+"/field/"+first&&*b->spelling==reference+"/field/"+second&&a->ordinal>b->ordinal&&f.state.frames.at(frame).births.size()==2&&f.check.fieldSlotArchive.size()>2,
+      "two complete243B factory slots have lexical order opposite their numeric registration, with unrelated live archive rows"))return false;
+  auto &binding=f.state.frames.at(frame);binding.bound=f.state.values.at(8);binding.unbound=false;binding.weak=true;binding.pending=true;binding.initializing=true;binding.aborted=true;binding.prefixMin=1;binding.prefixMax=2;
+  auto left=payload("first-real");left.cells={"cell"};left.callables={{"code","environment"}};left.truth=1;left.unknown=true;left.callableTop=true;left.number=9007199254740993LL;left.region.opaque=true;left.region.empty=true;left.region.number=9007199254740995LL;
+  auto right=payload("second-real");right.truth=2;right.number=-17;right.region.number=29;binding.births.at(a).real=left;binding.births.at(a).pending=true;binding.births.at(b).real=right;binding.births.at(b).pending=false;
+  const std::vector<ActualValue> wanted={binding.bound,left,right};const auto before=f.state;
+  // Coarse independent workload budget; no selector or fee computation is part
+  // of this regression. Complete field spellings remain mandatory identities.
+  f.program.remaining=1500;const auto roots=f.check.retainedFrameRoots(f.state.frames);
+  if(!expect(f.error.message.empty()&&roots.size()==3&&roots[0]==&binding.bound&&roots[1]==&binding.births.at(a).real&&roots[2]==&binding.births.at(b).real&&same(f.state,before),
+      "fixed1500 direct borrowed roots contain only the bound value and two complete birth values in full spelling order"))return false;
+  for(size_t i=0;i<wanted.size();++i)if(!expect(same(*roots[i],wanted[i]),"borrowed archive root preserves every exact value/Region facet"))return false;
+  f.program.remaining=100000;auto owned=f.check.retainedFrames(f.state.frames);
+  if(!expect(f.error.message.empty()&&owned.size()==wanted.size()&&same(f.state,before),"owning callback shares the same complete archive order and immutable input"))return false;
+  for(size_t i=0;i<wanted.size();++i)if(!expect(same(owned[i],wanted[i]),"owning archive root has the identical independent literal complete value"))return false;
+  binding.bound.objects.clear();binding.births.at(a).reference="changed-input";binding.births.at(a).real.region.roots.clear();
+  if(!expect(same(owned[0],wanted[0])&&same(owned[1],wanted[1])&&same(owned[2],wanted[2]),"owning retained values do not borrow mutated World payloads"))return false;
+  const auto changedInput=f.state;owned[0].cells.clear();owned[2].objects.clear();
+  if(!expect(same(f.state,changedInput),"owning root mutation cannot change input flags, journals or heap"))return false;
+  f.state.frames.clear();f.check.receiverFrames.clear();
+  if(!expect(same(owned[1],left),"complete owned birth value survives source World and FrameInfo destruction"))return false;
+  llvm::errs()<<"PASS direct fixed1500 two243B archive roots, complete lexical identity, filtering and owned callback isolation\n";return true;
+}
+}
+int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories()||!frameRefMembership()||!returnFrameAdoption()||!retainedRootBorrowing()||!retainedArchiveOrder())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
   llvm::errs()<<"1 independent group passed; old11 results reused, complete Source820b remains independent\n";return 0;}
