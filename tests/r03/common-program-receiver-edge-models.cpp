@@ -405,6 +405,46 @@ bool initializerCache(){
         "cached path retains actual type/member guards and propagates budget error without successful fallback"))return false;
   }llvm::errs()<<"PASS initialize_field cache hit/miss/weak/route/World/Heap/error subcases\n";return true;
 }
+bool completionOwnedLookup(){
+  const std::vector<std::string> ids{"frame",std::string("frame\0a",7),std::string("frame\0ab",8)};
+  const auto equal=[](const auto &a,const auto &b){return same(a,b);};
+  for(const unsigned mode:{0u,1u,2u,3u,4u,5u,6u,7u}){
+    Fixture f(true);f.state.values.at(7).cursors.clear();
+    const auto metadata=f.check.receiverFrames.at(f.selected);const auto binding=f.state.frames.at(f.selected);
+    for(size_t i=0;i<ids.size();++i){auto info=metadata;info.parent.clear();info.derived=mode==1&&i==0;
+      f.check.receiverFrames.emplace(ids[i],std::move(info));auto row=binding;row.weak=true;row.unbound=true;row.pending=i==1;
+      row.bound=f.state.values.at(8);row.bound.objects={i==0?"one":i==1?"two":"three"};
+      f.state.frames.emplace(ids[i],std::move(row));}
+    f.check.builtins.emplace("P",Object{{"kind","scalar"}});f.check.types.emplace("P",&f.check.builtins.at("P"));
+    std::set<std::string> selected=mode<2?std::set<std::string>(ids.begin(),ids.end()):std::set<std::string>{ids[0]};
+    if(mode==2)f.state.frames.clear(); // Missing World must fail before querying the larger metadata directory.
+    if(mode==3||mode==6){auto row=f.state.frames.at(ids[0]);f.state.frames.clear();f.state.frames.emplace(ids[0],std::move(row));}
+    if(mode==3)f.check.receiverFrames.clear();
+    if(mode==4)selected={std::string("frame\0",6)};
+    if(mode==7)selected={std::string("frame\0abc",9)};
+    const auto input=f.state;auto owned=f.check.copyFrames(f.state.frames);
+    if(!expect(f.error.message.empty(),"owned completion lookup fixture and paid private World established"))return false;
+    ActualValue returned;if(mode==1)returned.tags={"P"};const auto returnedBefore=returned;
+    if(mode==2||mode==3||mode==6)f.program.remaining=40;
+    if(mode==5)f.program.remaining=20;
+    auto result=f.check.receiverCompletion(std::move(owned),selected,mode==1?ReceiverAction::Result:ReceiverAction::Get,mode==1?&returned:nullptr);
+    if(mode>=2){const bool cutoff=mode==5||mode==6;
+      if(!expect(f.error.code==(cutoff?"core-ir-common-budget":"core-ir-common-actual")&&!result.normal&&!result.language&&same(f.state,input)&&same(returned,returnedBefore),
+          "full-byte missing World/metadata and lookup budget failures remain hard errors, with original shortcircuit and no completion"))return false;
+      continue; // No rollback requirement for the consumed private World; never refill this failed check.
+    }
+    auto expected=f.state.values.at(8);expected.objects=mode==1?std::set<std::string>{"two","three"}:std::set<std::string>{"one","two","three"};
+    if(!expect(f.error.message.empty()&&result.normal&&result.language&&result.pending&&same(result.selected,expected)&&same(returned,returnedBefore),
+        "NUL/prefix/different-length IDs select complete distinct owned bindings and preserve derived primitive Result semantics"))return false;
+    if(!expect(sameMap(result.normalFrames,input.frames,equal)&&sameMap(result.languageFrames,input.frames,equal)&&same(f.state,input),
+        "all normal/language candidates retain exact complete Worlds, journals, numbers, pending flags and independent original data"))return false;
+    const auto language=result.languageFrames;result.normalFrames.at(ids[1]).births.clear();result.normalFrames.at(ids[0]).bound.region.roots.clear();
+    if(!expect(sameMap(result.languageFrames,language,equal)&&same(f.state,input),"nonlast copied World changes cannot affect language or original input"))return false;
+    const auto normal=result.normalFrames;result.languageFrames.at(ids[2]).bound.objects.clear();result.languageFrames.at(ids[1]).pending=false;
+    if(!expect(sameMap(result.normalFrames,normal,equal)&&same(f.state,input),"last consumed World changes cannot affect a different arm or the original input"))return false;
+  }
+  llvm::errs()<<"PASS completion owned lookup full-ID/shortcircuit/budget/multi-arm/derived/isolation subcases\n";return true;
+}
 }
 int main(){unsigned passed=0;
   for(const auto &[name,weak]:std::vector<std::pair<std::string,bool>>{{"receiver_get",true},{"receiver_bind",false},{"receiver_result",true}}){if(!transfer(name,weak))return 1;llvm::errs()<<"PASS "<<name<<" independent complete edge worlds\n";++passed;}
@@ -417,5 +457,6 @@ int main(){unsigned passed=0;
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
   if(!birthBudget()||!initializerCache()||!defaultNodeMove()||!cursorCallerErrors()||!fieldDirectoryBorrow())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
+  if(!completionOwnedLookup())return 1;
   llvm::errs()<<passed<<" groups passed; full Source820b/cold100k remains independent\n";return 0;
 }

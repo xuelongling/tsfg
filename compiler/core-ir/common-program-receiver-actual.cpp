@@ -4,6 +4,16 @@
 #include <tuple>
 namespace tsfg::commonProgram {
 namespace {
+template<class Directory>
+auto paidFrameLookup(ActualCheck &c,Directory &directory,llvm::StringRef query)->std::optional<decltype(directory.begin())>{
+  const auto count=directory.size();size_t height=0;
+  for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return std::nullopt;height+=2;}
+  height=std::min(height,count);
+  // Heterogeneous find reads at most query.size() bytes on each side per
+  // predicate, without the same-type debug reverse comparison.
+  if(!c.step(1+height+(count?height+1:0)*(2*query.size()+1)))return std::nullopt;
+  return directory.find(query);
+}
 bool data(const ActualValue &v){return v.unknown||v.callableTop||!v.tags.empty()||!v.objects.empty()||!v.callables.empty();}
 bool ordinary(ActualCheck &c,const ActualValue &v){
   if(!c.need(v.frames.empty()&&v.cursors.empty()&&v.cells.empty(),"control/Cell is not a selected language receiver"))return false;
@@ -270,26 +280,30 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
   // Decide every alternative against the same immutable input before consuming
   // it. These pointers borrow only that input, its separate ids, or local parts.
   enum class Update {None,Bind,Bound,Unbound};
-  struct Arm {const std::string *id;const ActualValue *selected;Update update;bool normal;};
+  struct Arm {const std::string *id;const ActualValue *selected;ActualFrameBinding *binding;Update update;bool normal;};
   std::vector<Arm> arms;
-  const auto arm=[&](const std::string &id,const ActualValue *selected,Update update,bool normal){
-    if(!step()||(arms.size()==arms.capacity()&&!step(arms.size()+1)))return false;
-    arms.push_back(Arm{&id,selected,update,normal});return true;
+  const auto arm=[&](const std::string &id,ActualFrameBinding &binding,const ActualValue *selected,Update update,bool normal){
+    // The added binding pointer is written once and copied on vector growth.
+    if(!step(2)||(arms.size()==arms.capacity()&&!step(2*arms.size()+1)))return false;
+    arms.push_back(Arm{&id,selected,&binding,update,normal});return true;
   };
   if(!step(ids.size()))return out;
-  for(const auto &id:ids){if(!receiverText(id)||!need(world.count(id)&&receiverFrames.count(id),"receiver frame is absent from completion"))return {};
-    const auto &before=world.at(id);const auto &info=receiverFrames.at(id);
+  for(const auto &id:ids){const llvm::StringRef query(id);const auto binding=paidFrameLookup(*this,world,query);
+    if(!binding||!need(*binding!=world.end(),"receiver frame is absent from completion"))return {};
+    const auto frame=paidFrameLookup(*this,receiverFrames,query);
+    if(!frame||!need(*frame!=receiverFrames.end(),"receiver frame is absent from completion"))return {};
+    auto &before=(*binding)->second;const auto &info=(*frame)->second;
     if(action==ReceiverAction::Bind){
       if(!data(parts.object))continue;
-      if(before.unbound&&!arm(id,&parts.object,Update::Bind,true))return {};
-      if(data(before.bound)&&!arm(id,nullptr,Update::Bound,false))return {};
+      if(before.unbound&&!arm(id,before,&parts.object,Update::Bind,true))return {};
+      if(data(before.bound)&&!arm(id,before,nullptr,Update::Bound,false))return {};
     }else {
-      if(action==ReceiverAction::Result&&data(parts.object)&&!arm(id,&parts.object,Update::None,true))return {};
+      if(action==ReceiverAction::Result&&data(parts.object)&&!arm(id,before,&parts.object,Update::None,true))return {};
       const bool get=action==ReceiverAction::Get||parts.undefined||(parts.primitive&&!info.derived);
       if(get){
-        if(data(before.bound)){if(!arm(id,&before.bound,Update::Bound,true))return {};out.pending|=before.pending||before.bound.unknown;}
-        if(before.unbound&&!arm(id,nullptr,Update::Unbound,false))return {};}
-      if(action==ReceiverAction::Result&&parts.primitive&&info.derived&&!arm(id,nullptr,Update::None,false))return {};
+        if(data(before.bound)){if(!arm(id,before,&before.bound,Update::Bound,true))return {};out.pending|=before.pending||before.bound.unknown;}
+        if(before.unbound&&!arm(id,before,nullptr,Update::Unbound,false))return {};}
+      if(action==ReceiverAction::Result&&parts.primitive&&info.derived&&!arm(id,before,nullptr,Update::None,false))return {};
     }
     if(!e.message.empty())return {};
   }
@@ -298,10 +312,17 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
     // Get can select a bound Value inside world. Finish that read before its
     // final move; Bind instead selects the independently owned local parts.
     if(a.normal){if(!out.normal)out.selected=copy(*a.selected);else merge(out.selected,*a.selected);if(!e.message.empty())return {};}
-    ActualFrameWorld next;
-    if(i+1==arms.size()){if(!step())return {};next=std::move(world);}
+    const bool last=i+1==arms.size();ActualFrameWorld next;
+    if(last){if(!step())return {};next=std::move(world);}
     else {next=copyFrames(world);if(!e.message.empty())return {};}
-    if(a.update!=Update::None){auto &v=next.at(*a.id);
+    if(a.update!=Update::None){ActualFrameBinding *binding;
+      if(last){if(!step())return {};binding=a.binding;}
+      else {const auto found=paidFrameLookup(*this,next,llvm::StringRef(*a.id));
+        if(!found||!need(*found!=next.end(),"receiver frame is absent from completion"))return {};binding=&(*found)->second;}
+      // The standard allocator propagates on move-assignment: the final
+      // destination owns the original nodes. A clone needs its own lookup.
+      static_assert(std::allocator_traits<ActualFrameWorld::allocator_type>::propagate_on_container_move_assignment::value);
+      auto &v=*binding;
       if(a.update==Update::Bind){
         if(v.weak){merge(v.bound,parts.object);v.prefixMin=0;v.pending|=parts.pending;}
         else {v.bound=copy(parts.object);v.unbound=false;v.pending=parts.pending;v.initializing=false;v.aborted=false;v.prefixMin=v.prefixMax=0;}

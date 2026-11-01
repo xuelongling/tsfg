@@ -101,7 +101,7 @@ struct ActualFrameBinding {
   size_t prefixMin=0,prefixMax=0;ActualValue bound;
   ActualBirthJournal births;
 };
-using ActualFrameWorld=std::map<std::string,ActualFrameBinding>;
+using ActualFrameWorld=std::map<std::string,ActualFrameBinding,std::less<>>;
 enum class ReceiverAction {Bind,Get,Result};
 struct ActualReceiverCompletion {
   bool normal=false,language=false,pending=false;
@@ -187,7 +187,7 @@ struct ActualCheck {
   std::map<const Operation *,std::string> callSites;
   std::set<const Operation *> unresolvedCalls;
   RegionDomain regions;
-  std::map<std::string,ActualFrameInfo> receiverFrames;
+  std::map<std::string,ActualFrameInfo,std::less<>> receiverFrames;
   std::map<std::string,ActualCursorInfo> receiverCursors;
   // Derived lookup only: immutable map nodes, never execution World values.
   std::vector<const std::pair<const std::string,ActualCursorInfo> *> receiverCursorIndex;
