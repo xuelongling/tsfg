@@ -14,6 +14,18 @@ auto paidFrameLookup(ActualCheck &c,Directory &directory,llvm::StringRef query)-
   if(!c.step(1+height+(count?height+1:0)*(2*query.size()+1)))return std::nullopt;
   return directory.find(query);
 }
+std::string ownedCursor(ActualCheck &c,std::shared_ptr<const std::string> &&frame,size_t position){
+  const auto id="initialization:"+digest(canonical(Array{llvm::StringRef(*frame),int64_t(position)}));
+  if(!c.receiverCursors.count(id)){
+    // Key copy and node are unchanged; each of two shared-owner moves writes
+    // both pointer words, without copying the immutable frame bytes.
+    if(!c.step(id.size()/64+6))return {};
+    const auto entry=c.receiverCursors.emplace(id,ActualCursorInfo{std::move(frame),position}).first;
+    if(c.receiverCursorIndex.size()==c.receiverCursorIndex.capacity()){
+      if(!c.step(c.receiverCursorIndex.size()+1))return {};c.receiverCursorIndex.reserve(std::max<size_t>(1,c.receiverCursorIndex.size()*2));}
+    if(!c.step())return {};c.receiverCursorIndex.push_back(&*entry);
+  }return id;
+}
 bool data(const ActualValue &v){return v.unknown||v.callableTop||!v.tags.empty()||!v.objects.empty()||!v.callables.empty();}
 bool ordinary(ActualCheck &c,const ActualValue &v){
   if(!c.need(v.frames.empty()&&v.cursors.empty()&&v.cells.empty(),"control/Cell is not a selected language receiver"))return false;
@@ -147,7 +159,7 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
     for(const auto &id:value.frames){if(!receiverText(id))return {};pending.push_back(id);}
     for(const auto &id:value.cursors){const auto *cursor=cursorMetadata(id);
       if(!e.message.empty()||!need(cursor,"unknown initializer cursor"))return {};
-      const auto &parent=cursor->frame;if(!receiverText(parent))return {};pending.push_back(parent);}}
+      const auto &parent=*cursor->frame;if(!receiverText(parent))return {};pending.push_back(parent);}}
   for(size_t i=0;i<pending.size();++i){if(!receiverText(pending[i]))return {};const auto id=pending[i];if(!selected.insert(id).second)continue;
     if(!need(world.count(id)&&receiverFrames.count(id),"selected frame is absent from completion"))return {};
     const auto &parent=receiverFrames.at(id).parent;if(!parent.empty()){if(!receiverText(parent))return {};pending.push_back(parent);}}
@@ -224,7 +236,7 @@ ActualReceiverWrite ActualCheck::receiverWrite(ActualFrameWorld &world,const Act
   if(!e.message.empty()||!step(2))return {};return {true,matched};
 }
 bool ActualCheck::receiverDefine(ActualFrameWorld &world,const ActualCursorInfo &cursor,const ActualFieldSlot &slot){
-  const auto own=world.find(cursor.frame);
+  const auto own=world.find(*cursor.frame);
   if(!need(own!=world.end(),"birth definition frame is absent"))return false;
   if(!own->second.births.count(&slot))return true;if(!step(world.size()))return false;
   for(auto &[frame,binding]:world){if(!step())return false;auto row=binding.births.find(&slot);if(row!=binding.births.end())row->second.pending=false;}
@@ -258,19 +270,15 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
   else {if(!step(8))return {};ActualFrameBinding value;value.weak=repeated;world.insert_or_assign(id,std::move(value));}return id;
 }
 std::string ActualCheck::receiverCursor(const std::string &frame,size_t position){
-  if(!receiverText(frame)||!step(64))return {};
-  // One paid owning copy outlives the borrowed JSON view and is then consumed
-  // by a new cursor row. The generic canonical encoder and int64 path stay exact.
-  auto ownedFrame=frame;const auto id="initialization:"+digest(canonical(Array{llvm::StringRef(ownedFrame),int64_t(position)}));
-  if(!receiverCursors.count(id)){
-    // Retain the node unit, pay the key copy in existing heap-key units and
-    // the two real string moves. No second frame deep copy is performed.
-    if(!step(id.size()/64+4))return {};
-    const auto entry=receiverCursors.emplace(id,ActualCursorInfo{std::move(ownedFrame),position}).first;
-    if(receiverCursorIndex.size()==receiverCursorIndex.capacity()){
-      if(!step(receiverCursorIndex.size()+1))return {};receiverCursorIndex.reserve(std::max<size_t>(1,receiverCursorIndex.size()*2));}
-    if(!step())return {};receiverCursorIndex.push_back(&*entry);
-  }return id;
+  // The bare-string boundary owns its first copy, allocation and final release.
+  if(!receiverText(frame)||!step(64)||!step(8))return {};
+  auto owned=std::make_shared<const std::string>(frame);
+  return ownedCursor(*this,std::move(owned),position);
+}
+std::string ActualCheck::receiverCursor(const ActualCursorInfo &previous,size_t position){
+  if(!need(bool(previous.frame),"initializer cursor frame owner is absent")||!step(64)||!step(4))return {};
+  // Copy both owner words and prepay the retain/release before sharing them.
+  auto owned=previous.frame;return ownedCursor(*this,std::move(owned),position);
 }
 ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&world,const std::set<std::string> &ids,ReceiverAction action,const ActualValue *returned){
   ActualReceiverCompletion out;Parts parts;
@@ -339,7 +347,7 @@ bool ActualCheck::abortInitializers(ActualState &state){
   std::set<std::string> selected;if(!step(state.values.size()))return false;
   for(const auto &[reg,v]:state.values){if(!step(v.cursors.size()))return false;for(const auto &id:v.cursors){
     const auto *cursor=cursorMetadata(id);if(!e.message.empty()||!need(cursor,"initializer abandonment cursor missing"))return false;
-    if(!receiverText(cursor->frame))return false;selected.insert(cursor->frame);}}
+    if(!receiverText(*cursor->frame))return false;selected.insert(*cursor->frame);}}
   for(const auto &id:selected){if(!step()||!need(state.frames.count(id),"initializer abandonment frame missing"))return false;auto &v=state.frames.at(id);
     if(v.initializing){if(!v.weak)v.initializing=false;v.aborted=true;}}return true;
 }

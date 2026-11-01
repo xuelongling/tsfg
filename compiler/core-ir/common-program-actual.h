@@ -76,7 +76,9 @@ struct ActualFrameInfo {
   std::string owner,construction,newTarget,parent;bool derived=false;
   std::vector<std::string> fields;
 };
-struct ActualCursorInfo {std::string frame;size_t position=0;};
+// Cursor rows retain immutable frame bytes independently of any check/map.
+// A default or moved-from row is not admitted metadata; factories publish owners.
+struct ActualCursorInfo {std::shared_ptr<const std::string> frame;size_t position=0;};
 struct ActualReceiverWrite {bool success=false,matched=false;};
 // A birth default is not a real write or a permission. Keep prior instance
 // data separately so a definite definition consumes only its temporary default.
@@ -239,6 +241,7 @@ struct ActualCheck {
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);
   std::string createFrame(ActualFrameWorld &,const std::string &,const std::string &,const std::string &,const std::string &,const std::string &,bool,const std::string &parent={});
   std::string receiverCursor(const std::string &,size_t);
+  std::string receiverCursor(const ActualCursorInfo &,size_t);
   const ActualCursorInfo *cursorMetadata(const std::string &);
   // Terminator-owned input: no caller may inspect this World after completion.
   ActualReceiverCompletion receiverCompletion(ActualFrameWorld &&,const std::set<std::string> &,ReceiverAction,const ActualValue *);

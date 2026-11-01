@@ -116,21 +116,21 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     if(!receiverReconcile(state.frames,state.heap,missing)||!step(args[0].cursors.size()))return false;
     for(const auto &id:args[0].cursors){const auto *current=definite?definedCursor:cursorMetadata(id);
       if(!e.message.empty()||!need(current,"initializer cursor missing"))return false;
-      const auto frame=receiverFrames.find(current->frame);
+      const auto frame=receiverFrames.find(*current->frame);
       if(!need(frame!=receiverFrames.end(),"initializer cursor frame missing"))return false;
-      const auto binding=state.frames.find(current->frame);
+      const auto binding=state.frames.find(*current->frame);
       if(!need(binding!=state.frames.end(),"initializer cursor frame missing"))return false;
       const auto &info=frame->second;auto &v=binding->second;
       if(!need(v.initializing&&current->position<info.fields.size()&&info.fields[current->position]==fieldId,"initializer did not advance its ordered field prefix"))return false;
       const auto next=current->position+1;if(v.weak)v.prefixMax=std::max(v.prefixMax,next);else v.prefixMin=v.prefixMax=next;
-      const auto cursor=receiverCursor(current->frame,next);if(!e.message.empty())return false;value.cursors.insert(cursor);}
+      const auto cursor=receiverCursor(*current,next);if(!e.message.empty())return false;value.cursors.insert(cursor);}
   }else if(name=="initialize_end"){
     if(!step(args[0].cursors.size()))return false;
     for(const auto &id:args[0].cursors){const auto *current=cursorMetadata(id);
       if(!e.message.empty()||!need(current,"initializer end cursor missing"))return false;
-      const auto frame=receiverFrames.find(current->frame);
+      const auto frame=receiverFrames.find(*current->frame);
       if(!need(frame!=receiverFrames.end(),"initializer end frame missing"))return false;
-      const auto binding=state.frames.find(current->frame);
+      const auto binding=state.frames.find(*current->frame);
       if(!need(binding!=state.frames.end(),"initializer end frame missing"))return false;
       auto &v=binding->second;if(!need(v.initializing&&current->position==frame->second.fields.size(),"initializer ended an incomplete prefix"))return false;
       if(!v.weak)v.initializing=false;}

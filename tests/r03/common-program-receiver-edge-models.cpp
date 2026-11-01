@@ -270,7 +270,7 @@ bool defaultNodeMove(){
     const auto before=next;const auto beforeCursor=cursor;const std::string copiedCursor=expectedCursor;
     f.program.remaining=600; // Three registered rows fit527; old86B fulltext1040 cannot.
     const auto metadata=f.check.cursorMetadata(copiedCursor);
-    if(!expect(metadata&&f.error.message.empty()&&metadata->frame==expectedFrame&&metadata->position==0&&same(next,before)&&same(cursor,beforeCursor),
+    if(!expect(metadata&&f.error.message.empty()&&metadata->frame&&*metadata->frame==expectedFrame&&metadata->position==0&&same(next,before)&&same(cursor,beforeCursor),
         "first unwarmed full-ID metadata lookup fits and preserves every input state plane"))return false;
     continue;
   }
@@ -291,7 +291,7 @@ bool defaultNodeMove(){
   if(!expect(token&&f.error.message.empty(),"creator pair retains its current owned field token"))return false;
   const auto &world=next.frames.at(fresh);const auto &birth=world.births.at(token);
   if(!expect(token&&!f.check.receiverRouteOpen&&same(next.heap.at(key),replacement)&&same(next.heap.at(other),missing)&&world.prefixMin==1&&world.prefixMax==1&&world.initializing&&!world.aborted&&!world.unbound&&same(world.bound,expectedAllocated)&&
-      !birth.pending&&birth.reference==ref&&same(birth.real,replacement)&&advanced.cursors==std::set<std::string>{"initialization:sha256:d4213d9e38b5441d4408c4be325f087141964c7d8a2fb07ad8c020b4889f0dc6"}&&f.check.receiverCursors.at(*advanced.cursors.begin()).frame==fresh&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1,
+      !birth.pending&&birth.reference==ref&&same(birth.real,replacement)&&advanced.cursors==std::set<std::string>{"initialization:sha256:d4213d9e38b5441d4408c4be325f087141964c7d8a2fb07ad8c020b4889f0dc6"}&&*f.check.receiverCursors.at(*advanced.cursors.begin()).frame==fresh&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1,
       "moved field write retains exact World, birth reference, current payload, other U default and actual prefix"))return false;
   }
   llvm::errs()<<"PASS receiver_allocate -> bind -> single-predecessor move -> initialize_field own-node hit\n";return true;
