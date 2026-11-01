@@ -52,7 +52,14 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   if(!step(reference->size()+member->size()+8))return nullptr;
   auto spelling=*reference+"/field/"+*member;
   if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
-  if(!empty){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(spelling);}
+  bool append=false;auto previous=fieldSlotArchive.end();
+  if(!empty){
+    if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(fieldSlotArchive.end());
+    if(!step(previous->first.size()+spelling.size()+1))return nullptr;append=previous->first<spelling;
+    // A paid strict upper-edge proof already supplies a unique end hint.
+    // Equal/earlier spellings still use the complete canonical lookup below.
+    if(!append){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(spelling);}
+  }
   bool present=false;
   if(found!=fieldSlotArchive.end()){
     if(!step(found->first.size()+spelling.size()+1))return nullptr;present=found->first==spelling;
@@ -63,8 +70,7 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
     // predicate. Pay that bounded work before node growth, not another search.
     if(found!=fieldSlotArchive.end()&&!step(2*(spelling.size()+found->first.size()+1)))return nullptr;
     if(found!=fieldSlotArchive.begin()){
-      if(!step(fieldSlotArchive.size()+1))return nullptr;
-      const auto previous=std::prev(found);
+      if(!append){if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(found);}
       if(!step(2*(previous->first.size()+spelling.size()+1)))return nullptr;
     }
     if(!step(4))return nullptr;
