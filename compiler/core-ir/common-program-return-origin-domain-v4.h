@@ -64,6 +64,8 @@ struct Summary {
   // an unreachable continuation. Owner strings are conditional lexical roots.
   std::vector<V4::SymbolSet> owners;
   std::vector<bool> live,holdsEnvironment;
+  // Root solution, including primitive data and control frames with no owner.
+  std::vector<bool> populated,heapReady;
   std::array<V4::SymbolSet,3> effects; // Read, Write, Structural
   V4::SymbolSet facets,calls;
   bool normal=false,language=false;
@@ -756,7 +758,8 @@ class Solver {
   bool summarize(){
     const auto &initial=*contexts_[initial_];auto &out=result_.summary;
     if(!m_.spend(initial.values.size())||!m_.spend(initial.values.size())||!m_.spend(initial.controls.size()))return false;out.owners.resize(initial.values.size());out.holdsEnvironment.resize(initial.values.size(),false);out.live=initial.controls;
-    for(Ref i=0;i<initial.values.size();++i){Set owners;if(!m_.spend()||!m_.spend(initial.values[i].size()))return false;for(auto id:initial.values[i]){if(locations_[id].owner!=None&&!insert(owners,locations_[id].owner,false))return false;if(locations_[id].kind==LocationKind::Code&&locations_[id].environment!=None)out.holdsEnvironment[i]=true;}if(!exportSet(out.owners[i],owners))return false;}
+    if(!m_.spend(initial.values.size())||!m_.spend(initial.heapReady.size()))return false;out.populated.resize(initial.values.size(),false);out.heapReady=initial.heapReady;
+    for(Ref i=0;i<initial.values.size();++i){Set owners;if(!m_.spend(2)||!m_.spend(initial.values[i].size()))return false;out.populated[i]=!initial.values[i].empty();for(auto id:initial.values[i]){if(locations_[id].owner!=None&&!insert(owners,locations_[id].owner,false))return false;if(locations_[id].kind==LocationKind::Code&&locations_[id].environment!=None)out.holdsEnvironment[i]=true;}if(!exportSet(out.owners[i],owners))return false;}
     for(Ref i=0;i<3;++i)if(!m_.spend()||!exportSet(out.effects[i],initial.effects[i]))return false;
     if(!exportSet(out.facets,initial.facets)||!exportSet(out.calls,initial.calls))return false;
     out.normal=initial.normalLive;out.language=initial.languageLive;return true;

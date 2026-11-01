@@ -190,6 +190,7 @@
       "common-program-relations.h",
       "common-program-retention.h",
       "common-program-return-origin-domain-v4.h",
+      "common-program-return-origin-normalize-v5.h",
       "common-program-return-origin-scope-v4.h",
       "common-program-return-origins-v4.h",
       "common-program-source.h",

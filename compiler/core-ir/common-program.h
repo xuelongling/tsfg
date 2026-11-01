@@ -167,6 +167,8 @@ struct Program {
   // Original structural lexical paths, retained from Source reconstruction.
   std::map<std::string,std::vector<std::string>> bindingScopes;
   std::map<std::string,std::vector<std::string>> registerViews;
+  // Actual SSA identities joined to the independently matched Source plan.
+  std::map<std::string,std::vector<uint16_t>> sourceRegisters,sourceBlocks;
   std::map<std::string,Layout> layouts;
   // Independently reconstructed reference payload tuples, separate from handles.
   std::map<std::string,Layout> referenceBodyLayouts;

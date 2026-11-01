@@ -87,9 +87,14 @@ struct ReturnSource {
   std::string site(const std::string &id,const Json &range,const std::string &role){
     if(!text(id)||!text(role)||!step(12))return {};return encoded(Array{id,field(range,"start"),field(range,"end"),role});
   }
-  Refs copied(const Refs &bases,const std::string &type,const Json &range,const std::string &role){
+  std::string registerSite(uint16_t reg){
+    if(!lookup(p.sourceRegisters.size(),functionId))return {};const auto found=p.sourceRegisters.find(functionId);
+    if(found==p.sourceRegisters.end()){open("normalized allocation lacks independently matched SSA identity");return {};}
+    if(!text(functionId)||!step(2))return {};return functionId+"/%v"+std::to_string(found->second[reg]);
+  }
+  Refs copied(const Refs &bases,const std::string &type,const Json &range,const std::string &role,std::optional<uint16_t> normalizedRegister=std::nullopt){
     bool literals=true;for(auto base:bases){if(!step())return {};literals&=string(field(nodes[base],"kind"))=="literal";}if(literals)return copyRefs(bases);
-    const auto location=site(functionId,range,role);if(!step(bases.size()+9)||!text(type)||!text(location))return {};
+    const auto location=normalizedRegister?registerSite(*normalizedRegister):site(functionId,range,role);if(!step(bases.size()+9)||!text(type)||!text(location))return {};
     const auto value=node(Object{{"kind","copy"},{"type",type},{"bases",refs(bases)},{"heap",int64_t(state.heap)},{"control",int64_t(state.control)},{"site",location}});
     state.heap=append(heaps,Object{{"kind","copy"},{"previous",int64_t(state.heap)},{"value",int64_t(value)}});return {value};
   }
@@ -211,14 +216,14 @@ struct ReturnSource {
   void inherit(Body &into,const Body &from){add(into.returned,from.returned);add(into.thrown,from.thrown);appendStates(into.returns,from.returns);appendStates(into.throws,from.throws);appendEnvironments(into.returnEnvironments,from.returnEnvironments);appendEnvironments(into.throwEnvironments,from.throwEnvironments);}
   Evaluation expression(const Json &,Environment &);
   Body body(const Array &,Environment &);
-  Evaluation call(const std::string &,const std::vector<Refs> &,const Json &,Environment &,const Refs *,const Refs *receiver=nullptr);
+  Evaluation call(const std::string &,const std::vector<Refs> &,const Json &,Environment &,const Refs *,const Refs *receiver=nullptr,const std::string *ownedSite=nullptr);
   bool initialize();
   bool normalized(const Function &,Json &);
   bool finish(const Body &,Json &);
   bool run(Json &);
 };
 
-ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vector<Refs> &arguments,const Json &value,Environment &environment,const Refs *selectedCode,const Refs *receiver){
+ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vector<Refs> &arguments,const Json &value,Environment &environment,const Refs *selectedCode,const Refs *receiver,const std::string *ownedSite){
   Evaluation result;if(!lookup(functions.size(),id)||!need(functions.count(id),"call has no owned function protocol"))return result;
   const auto &callee=*functions.at(id);const bool constructor=string(field(callee,"kind"))=="construction-body";
   if(!need(constructor==bool(receiver),"constructor call receiver role differs"))return result;
@@ -246,7 +251,7 @@ ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vec
   // resolves their actual incoming/activation payload across the full saved
   // call closure; an immediate lexical projection here would be unsound.
   Array supplied;if(!step(count+1))return result;supplied.reserve(count);for(size_t i=0;i<count;++i)supplied.push_back(refs(arguments[i]));
-  const auto location=site(id,field(value,"range"),string(field(value,"kind")));
+  const auto location=ownedSite?(text(*ownedSite)?*ownedSite:std::string{}):site(id,field(value,"range"),string(field(value,"kind")));
   if(!step(13)||!text(id)||!text(location))return result;
   const auto called=append(calls,Object{{"functionId",id},{"arguments",std::move(supplied)},
     {"environment",incoming?Json(refs(*incoming)):Json(nullptr)},{"callee",selectedCode?Json(refs(*selectedCode)):Json(nullptr)},
@@ -561,7 +566,7 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
       }else if(name=="assert"||name=="view"||name=="carrier_cast"||name=="pack"){
         if(!save(value(0)))return false;
       }else if(name=="value_copy"){
-        if(!resultType)return open("normalized copy Source view is unavailable");if(!save(copied(value(0),*resultType,range,"cfg-copy:"+std::to_string(operation.result))))return false;
+        if(!resultType)return open("normalized copy Source view is unavailable");if(!save(copied(value(0),*resultType,range,"",operation.result)))return false;
       }else if(name=="global_store"){
         return open("normalized global store payload has no return-origin projection");
       }else if(name=="global_load"){
@@ -571,7 +576,7 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
       }else if(name=="receiver_create"||name=="receiver_child"){
         const auto type=string(field(props,"owner"));if(!lookup(types.size(),type)||!need(types.count(type),"normalized receiver owner is outside owned types"))return false;
         const auto construction=string(field(field(*types.at(type),"construction"),"id"));if(!text(construction)||!step(9))return false;
-        const auto identity=site(functionId,range,"receiver-frame:"+std::to_string(block)+":"+std::to_string(ordinal));
+        const auto identity=registerSite(operation.result);
         if(!save(Refs{node(Object{{"kind","receiverFrame"},{"type",nullptr},{"construction",construction},{"newTarget",name=="receiver_create"?field(props,"new_target"):Json(nullptr)},
           {"parent",name=="receiver_child"?Json(refs(value(0))):Json(nullptr)},{"site",identity},{"control",int64_t(state.control)}})}))return false;
       }else if(name=="receiver_allocate"){
@@ -588,7 +593,7 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
         if(!resultType)return open("normalized field load has no result view");const auto id=string(field(props,"field"));if(!lookup(fieldOwners.size(),id)||!need(fieldOwners.count(id),"normalized field load has no owning declaration"))return false;
         const auto base=value(0);mark(base,"read");if(!save(projection(base,"field:"+id,*resultType,fieldOwners.at(id))))return false;
       }else if(name=="env_alloc"){
-        const auto layout=string(field(props,"layout")),location=site(functionId,range,"activation");std::optional<Refs> parent;if(!args.empty())parent=value(0);
+        const auto layout=string(field(props,"layout")),location=registerSite(operation.result);std::optional<Refs> parent;if(!args.empty())parent=value(0);
         auto created=environmentCreate(layout,parent,location);if(!save(created)||!text(layout)||!step())return false;environmentRefs.insert_or_assign(layout,std::move(created));facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");
       }else if(name=="env_parent"){
         if(!save(environmentParent(value(0),string(field(props,"layout")))))return false;
@@ -610,7 +615,10 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
         const auto &callee=*functions.at(target);size_t offset=!field(callee,"lexicalEnvironment").getAsNull();std::optional<Refs> receiver;
         if(string(field(callee,"kind"))=="construction-body")receiver=value(offset++);
         std::vector<Refs> arguments;if(!step(args.size()-offset))return false;for(size_t index=offset;index<args.size();++index)arguments.push_back(value(index));
-        const Json site=Object{{"kind","invoke"},{"range",range}};auto called=call(target,arguments,site,environment,nullptr,receiver?&*receiver:nullptr);
+        if(!lookup(p.sourceBlocks.size(),functionId))return false;const auto sourceBlocks=p.sourceBlocks.find(functionId);
+        if(sourceBlocks==p.sourceBlocks.end()||sourceBlocks->second.size()!=cfg.blocks.size()||sourceBlocks->second[block]==noRegister)return open("normalized call lacks independently matched block identity");
+        if(!text(functionId)||!step(3))return false;const auto location=functionId+"/bb"+std::to_string(sourceBlocks->second[block])+"/"+std::to_string(calls.size());
+        const Json site=Object{{"kind","invoke"},{"range",range}};auto called=call(target,arguments,site,environment,nullptr,receiver?&*receiver:nullptr,&location);
         if(!good())return false;
         std::vector<Refs> normal;if(!cfg.blocks[operation.successors[0]].parameters.empty())normal.push_back(called.owner);
         if(!connect(operation.successors[0],normal,state,environment)||!connect(operation.successors[1],{called.thrown},called.throws[0],environment))return false;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
 #include "common-program-return-origin-scope-v4.h"
+#include "common-program-return-origin-normalize-v5.h"
 #include "llvm/Support/ConvertUTF.h"
 namespace tsfg::commonProgram {
 namespace V4=CommonReturnOriginV4;
@@ -541,9 +542,6 @@ bool deriveProjectedReturnEffects(Program &p,const Json &fn,const Json &raw,Effe
     if(!need(upper!=p.fixedEffects.end(),e,"body call lacks complete fixed throw permission"))return false;
     if(upper->second.mayThrow){p.returnOriginPending.insert(id);return true;}
   }
-  const auto included=V4::covered(parsed.graph,bound->second,state.graphBounds,charge);
-  if(included.status==V4::InclusionStatus::BudgetError)return false;
-  if(included.status!=V4::InclusionStatus::Covered){p.returnOriginPending.insert(id);return true;}
   auto protocol=state.bodyDirectories.protocol(id,charge);if(!need(protocol.status==Scope::BuildStatus::Ready,e,"body protocol unavailable"))return false;
   Domain::Callbacks callbacks;callbacks.rootProtocol=std::move(protocol.protocol);callbacks.environments=&state.fixedDirectories.interpretation().environments;callbacks.constructions=&state.fixedDirectories.interpretation().constructions;
   callbacks.actualType=[&](llvm::StringRef type,const V4::Charge &paid)->const Domain::ActualShape *{
@@ -575,6 +573,14 @@ bool deriveProjectedReturnEffects(Program &p,const Json &fn,const Json &raw,Effe
   auto result=Domain::solve(parsed.graph,state.fixed,callbacks,charge);
   if(routeOpen){p.returnOriginPending.insert(id);return e.message.empty();}
   if(result.status==Domain::Status::BudgetError)return false;if(result.status!=Domain::Status::Solved){p.returnOriginPending.insert(id);return true;}
+  // Normalize only from the independently solved body. The complete fixed
+  // archive and exact receiver certificate remain separate obligations.
+  auto normalized=CommonReturnOriginNormalizeV5::normalize(parsed.graph,result.summary,charge);
+  if(normalized.status==CommonReturnOriginNormalizeV5::Status::BudgetError)return false;
+  if(normalized.status!=CommonReturnOriginNormalizeV5::Status::Normalized){p.returnOriginPending.insert(id);return true;}
+  const auto included=V4::covered(normalized.graph,bound->second,state.graphBounds,charge);
+  if(included.status==V4::InclusionStatus::BudgetError)return false;
+  if(included.status!=V4::InclusionStatus::Covered){p.returnOriginPending.insert(id);return true;}
   const auto mark=[&](const std::string &owner,unsigned flag,const Json *origin){
     if(!work(p,e,owner.size()/8+1))return false;const auto selected=llvm::StringRef(owner);
     if(selected.starts_with("unknown:")){p.returnOriginPending.insert(id);return true;}

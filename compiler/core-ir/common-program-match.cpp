@@ -50,6 +50,7 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
     if(!c.step(a.size()+1)||!c.need(a.size()==b.size(),"Source block parameter arity changed"))return false;
     for(size_t n=0;n<a.size();++n)if(!bind(a[n],b[n]))return false;
   }
+  if(!c.step(actual.blocks.size()))return false;std::vector<uint16_t> sourceBlocks(actual.blocks.size(),noRegister);
   for(const auto &[from,to]:blocks){
     size_t block=to,index=0;seenActual.insert(to);
     const auto resolve=[&](uint16_t r){auto found=values.find(r);return found==values.end()?noRegister:found->second;};
@@ -58,7 +59,7 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
       const auto sourcePath=source.paths.find({from,expectedIndex});
       if(!c.need(sourcePath!=source.paths.end(),"complete Source operation path is absent"))return false;
       const auto record=[&](size_t b,size_t i,const std::string &path){
-        if(!c.step(1+path.size()/64))return false;
+        if(!c.step(2+path.size()/64))return false;sourceBlocks[b]=from;
         return c.need(operationSources.emplace(std::pair<uint16_t,uint16_t>{uint16_t(b),uint16_t(i)},path).second,"actual operation Source was assigned twice");
       };
       while(true){
@@ -100,10 +101,16 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
     if(!c.need(index==actual.blocks[block].operations.size(),"foreign instruction after Source completion"))return false;
   }
   if(!c.need(seenActual.size()==actual.blocks.size()&&values.size()==actual.carriers.size(),"unproved physical block/register remains")||!c.step(actual.carriers.size()))return false;
+  if(!c.step(actual.carriers.size()))return false;std::vector<uint16_t> sourceRegisters(actual.carriers.size());
   std::vector<std::string> views(actual.carriers.size());
   for(const auto &[raw,semantic]:values){
-    const auto &view=expected.carriers[semantic];if(!c.step(1+view.size()/64))return false;views[raw]=view;
+    const auto &view=expected.carriers[semantic];if(!c.step(2+view.size()/64))return false;views[raw]=view;sourceRegisters[raw]=semantic;
   }
+  for(const auto *directory:{&c.p.sourceRegisters,&c.p.sourceBlocks}){
+    size_t comparisons=1;for(auto count=directory->size();count;count>>=1){if(!c.step())return false;comparisons+=2;}
+    if(!c.step((comparisons+1)*(actual.id.size()/64+1)))return false;
+  }
+  c.p.sourceRegisters.insert_or_assign(actual.id,std::move(sourceRegisters));c.p.sourceBlocks.insert_or_assign(actual.id,std::move(sourceBlocks));
   c.p.registerViews.insert_or_assign(actual.id,std::move(views));return true;
 }
 bool ActualCheck::source(){
