@@ -113,10 +113,18 @@ bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,co
   for(const auto &field:fields){if(!receiverText(field)||!step(ref.size()+field.size()+8))return false;const auto slot=ref+"/field/"+field;
     ActualBirth row;row.reference=ref;const auto old=heap.find(slot);if(repeated&&old!=heap.end())row.real=copy(old->second);
     if(!e.message.empty())return false;rows.emplace(slot,std::move(row));}
-  for(auto current=id;!current.empty();current=receiverFrames.at(current).parent){
-    if(!receiverText(current)||!need(world.count(current)&&receiverFrames.count(current),"birth frame is absent")||!step(rows.size()))return false;
-    auto &binding=world.at(current);for(const auto &[slot,row]:rows){if(!receiverText(slot))return false;auto owned=copyBirth(row);
-      if(!e.message.empty())return false;binding.births.insert_or_assign(slot,std::move(owned));}}
+  for(auto current=id;!current.empty();){
+    if(!receiverText(current)||!need(world.count(current)&&receiverFrames.count(current),"birth frame is absent"))return false;
+    auto &binding=world.at(current);const auto &parent=receiverFrames.at(current).parent;
+    // Earlier ancestors require independent journals. The final empty one
+    // can take this complete pre-default snapshot without another deep copy.
+    if(parent.empty()&&binding.births.empty()){
+      if(!step())return false;binding.births=std::move(rows);break;
+    }
+    if(!step(rows.size()))return false;for(const auto &[slot,row]:rows){if(!receiverText(slot))return false;auto owned=copyBirth(row);
+      if(!e.message.empty())return false;binding.births.insert_or_assign(slot,std::move(owned));}
+    current=parent;
+  }
   return true;
 }
 bool ActualCheck::receiverWrite(ActualFrameWorld &world,const std::string &slot,const ActualValue &input,bool strong){

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Pure compiler abstract metadata regression: no loader, VM, bytecode or backend.
+// Birth increment of the fixed five-group receiver edge regression below.
+// Pure compiler abstract metadata: no loader, VM, bytecode or backend.
 #include "common-program-actual.h"
 #include "llvm/Support/raw_ostream.h"
 #include <tuple>
@@ -94,10 +95,71 @@ bool budget(){Fixture f;const auto before=f.state;auto &op=f.function.blocks[0].
   const bool ok=f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{pointers},false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue> &){++edges;return true;},out,continues);
   return expect(!ok&&f.error.code=="core-ir-common-budget"&&edges==0&&same(f.state,before),"budget exhaustion reports error, not a completed edge or language substitute");
 }
+ActualValue historical(){auto value=payload("old-instance");value.number=9007199254740993LL;value.truth=3;
+  value.callables.emplace("old-code","old-environment");value.region.number=9007199254740995LL;return value;
+}
+bool birthEmpty(){
+  for(const bool repeated:{false,true}){
+    Fixture f;auto &parent=f.state.frames.at(f.parent);parent.births.clear();parent.weak=repeated;
+    f.state.heap.insert_or_assign("reborn/field/F",historical());const auto before=f.state;
+    const auto frameCount=f.check.receiverFrames.size(),cursorCount=f.check.receiverCursors.size();
+    if(!expect(f.check.receiverBirth(f.state.frames,f.parent,"reborn",{"F","G"},f.state.heap,repeated)&&f.error.message.empty(),"single empty ancestor accepts complete birth snapshot"))return false;
+    const auto &births=parent.births;
+    if(!expect(births.size()==2&&births.at("reborn/field/F").reference=="reborn"&&births.at("reborn/field/F").pending&&
+      same(births.at("reborn/field/F").real,repeated?historical():ActualValue{})&&births.at("reborn/field/G").reference=="reborn"&&
+      births.at("reborn/field/G").pending&&same(births.at("reborn/field/G").real,ActualValue{}),"birth preserves exact historical data only for repeated existing slots; missing stays bottom"))return false;
+    auto observed=f.state;observed.frames.at(f.parent).births=before.frames.at(f.parent).births;
+    if(!expect(same(observed,before),"birth adds only its journal, preserving weak, bound, prefix, flags and unrelated rows"))return false;
+    ActualValue undefined;undefined.tags.insert("U");f.state.heap.at("reborn/field/F")=undefined;
+    if(!expect(same(births.at("reborn/field/F").real,repeated?historical():ActualValue{}),"default installed after birth cannot overwrite pre-default snapshot"))return false;
+    if(!expect(f.check.receiverFrames.size()==frameCount&&f.check.receiverCursors.size()==cursorCount&&f.check.receiverCursor(f.selected,1)==f.cursor&&
+      f.check.receiverFrames.at(f.selected).parent==f.parent&&f.check.receiverFrames.at(f.parent).newTarget=="B","birth snapshot does not alter physical frame or cursor identity"))return false;
+  }return true;
+}
+bool birthAncestors(){Fixture f;f.state.frames.at(f.selected).births.clear();f.state.frames.at(f.parent).births.clear();
+  f.state.heap.insert_or_assign("reborn/field/F",historical());const auto before=f.state;
+  if(!expect(f.check.receiverBirth(f.state.frames,f.selected,"reborn",{"F","G"},f.state.heap,true)&&f.error.message.empty(),"child birth reaches every ancestor"))return false;
+  const auto &child=f.state.frames.at(f.selected).births,&parent=f.state.frames.at(f.parent).births;
+  if(!expect(child.size()==2&&sameMap(child,parent,[](const auto &a,const auto &b){return same(a,b);})&&same(child.at("reborn/field/F").real,historical())&&
+    same(f.state.frames.at(f.unrelated),before.frames.at(f.unrelated)),"each ancestor owns the complete journal and unrelated frame is untouched"))return false;
+  const auto parentBefore=f.state.frames.at(f.parent),unrelatedBefore=f.state.frames.at(f.unrelated);
+  auto &changed=f.state.frames.at(f.selected).births.at("reborn/field/F");changed.reference="child-only";changed.pending=false;
+  changed.real.region.roots.insert("child-only");changed.real.callables.clear();changed.real.number=7;
+  if(!expect(same(f.state.frames.at(f.parent),parentBefore)&&same(f.state.frames.at(f.unrelated),unrelatedBefore)&&same(f.state.heap.at("reborn/field/F"),historical()),"child journal mutation cannot affect ancestor, unrelated frame or source heap"))return false;
+  const auto childBefore=f.state.frames.at(f.selected);f.state.frames.at(f.parent).births.clear();
+  return expect(same(f.state.frames.at(f.selected),childBefore),"ancestor journal mutation cannot affect child");
+}
+bool birthNonempty(){Fixture f;f.state.heap.insert_or_assign("reborn/field/F",historical());
+  ActualBirth collision;collision.reference="wrong-old-reference";collision.pending=false;collision.real=payload("wrong-old-data");
+  for(const auto &id:{f.selected,f.parent})f.state.frames.at(id).births.emplace("reborn/field/F",collision);
+  const auto before=f.state;
+  if(!expect(f.check.receiverBirth(f.state.frames,f.selected,"reborn",{"F","G"},f.state.heap,true)&&f.error.message.empty(),"nonempty ancestor journals accept a new birth"))return false;
+  for(const auto &id:{f.selected,f.parent}){
+    const auto &births=f.state.frames.at(id).births;
+    if(!expect(births.size()==4&&births.at("reborn/field/F").reference=="reborn"&&births.at("reborn/field/F").pending&&same(births.at("reborn/field/F").real,historical())&&
+      births.at("reborn/field/G").pending&&same(births.at("reborn/field/G").real,ActualValue{}),"colliding slot is replaced with current complete birth; absent historical slot stays bottom"))return false;
+    for(const auto &slot:{"historical-object/field/F","different-object/field/G"})if(!expect(same(births.at(slot),before.frames.at(id).births.at(slot)),"noncolliding old journal entries remain exact"))return false;
+  }
+  auto observed=f.state;observed.frames.at(f.selected).births=before.frames.at(f.selected).births;observed.frames.at(f.parent).births=before.frames.at(f.parent).births;
+  return expect(same(observed,before),"nonempty merge leaves all non-journal state and heap unchanged");
+}
+bool birthBudget(){Fixture measured;measured.state.frames.at(measured.selected).births.clear();measured.state.frames.at(measured.parent).births.clear();
+  measured.state.heap.emplace("reborn/field/F",historical());const auto start=measured.program.remaining;
+  if(!expect(measured.check.receiverBirth(measured.state.frames,measured.selected,"reborn",{"F","G"},measured.state.heap,true)&&measured.error.message.empty(),"measured birth completes under ordinary budget"))return false;
+  const auto cost=start-measured.program.remaining;if(!expect(cost>1,"birth performs charged work"))return false;
+  for(const size_t available:{size_t(0),size_t(1),cost/2,cost-1}){
+    Fixture f;f.state.frames.at(f.selected).births.clear();f.state.frames.at(f.parent).births.clear();f.state.heap.emplace("reborn/field/F",historical());f.program.remaining=available;
+    if(!expect(!f.check.receiverBirth(f.state.frames,f.selected,"reborn",{"F","G"},f.state.heap,true)&&f.error.code=="core-ir-common-budget","birth cutoff must fail with budget error, never report a completed journal"))return false;
+  }return true; // A failed private check has no added rollback obligation.
+}
 }
 int main(){unsigned passed=0;
   for(const auto &[name,weak]:std::vector<std::pair<std::string,bool>>{{"receiver_get",true},{"receiver_bind",false},{"receiver_result",true}}){if(!transfer(name,weak))return 1;llvm::errs()<<"PASS "<<name<<" independent complete edge worlds\n";++passed;}
   if(!originalCopy())return 1;++passed;llvm::errs()<<"PASS original copyState ownership\n";
   if(!budget())return 1;++passed;llvm::errs()<<"PASS budget failure does not publish completion\n";
+  if(!birthEmpty())return 1;++passed;llvm::errs()<<"PASS empty single-ancestor birth and pre-default history\n";
+  if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
+  if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
+  if(!birthBudget())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
   llvm::errs()<<passed<<" groups passed; full Source820b/cold100k remains independent\n";return 0;
 }
