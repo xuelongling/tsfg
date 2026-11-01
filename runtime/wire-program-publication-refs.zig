@@ -152,7 +152,7 @@ fn scope(c: *Context, value: model.StableScope, functions: *const HashSet, types
 }
 // Translate the already owned Hash directory once into the existing borrowed
 // graph seam. The arena owns only interpretation rows, never a Program/receipt.
-fn symbol(c: *Context, allocator: std.mem.Allocator, id: t.Hash) Error!origin.Symbol {
+pub fn symbol(c: *Context, allocator: std.mem.Allocator, id: t.Hash) Error!origin.Symbol {
     try c.charge(72); const text = try allocator.alloc(u8, 71);
     @memcpy(text[0..7], "sha256:"); const digits = std.fmt.bytesToHex(id, .lower); @memcpy(text[7..], &digits); return text;
 }

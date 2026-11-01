@@ -19,6 +19,8 @@ const effect_env = @import("wire-program-effect-environments.zig");
 const origin_model = @import("wire-program-return-origin-model.zig");
 const construction_origins = @import("wire-program-return-origin-construction.zig");
 const publication_refs = @import("wire-program-publication-refs.zig");
+const body_origins = @import("wire-program-return-origin-body.zig");
+const structural_origins = @import("wire-program-return-origins.zig");
 const t = model.types;
 const Context = facts.Context;
 pub const Error = facts.Error;
@@ -555,32 +557,78 @@ const UpperGraph = struct {
             try into.environments.pair(c, pair.key_ptr.*, &selected);
         }
     }
-    fn fixedConstructionSummary(self: *UpperGraph, target: t.FunctionRef, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners) Error!bool {
+    fn noFixedBodyProof(self: *UpperGraph, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners) Error!bool {
+        if (!self.summarizing) self.collector.fixed_upper_origin_pending = true;
+        _ = try returned.makeOpaque(self.collector.c);
+        if (full.facets.may_throw) _ = try thrown.makeOpaque(self.collector.c);
+        return true;
+    }
+    fn fixedGraphSummary(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners) Error!bool {
         const collector = self.collector; const c = collector.c;
         const contract_index = collector.contracts[@intFromEnum(target)] orelse return false;
         const fixed = &c.program.tables.mode.common.authority.fixed_publication;
         const graph = if (fixed.publication.contracts[contract_index].return_origins) |*value| value else return false;
         var receiver = false;
         for (graph.nodes) |node| { try c.step(); if (node == .receiver_input or node == .receiver_frame or node == .receiver_value) { receiver = true; break; } }
-        if (!receiver) return false;
         // References, complete original contracts and directory ownership were
         // checked by this same Context before Collector. Reuse their typed
         // immutable projection; current-body AliasSummary is not fixed data.
         var arena = std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit();
         const directory = try publication_refs.returnOriginDirectory(c, arena.allocator(), fixed.*);
         var budget: origin_model.Budget = .{ .context = c, .charge = publication_refs.graphCharge };
+        var body = try body_origins.project(c, target, &directory, &budget); defer body.deinit();
+        if (body.pending != null) {
+            // Unsupported nonreceiver bodies retain their existing independent
+            // path; a receiver fixed contract can never use that Alias fallback.
+            if (!receiver) return false;
+            return self.noFixedBodyProof(full, returned, thrown);
+        }
+        try c.charge(fixed.publication.contracts.len + 1);
+        const contracts = try arena.allocator().alloc(structural_origins.FixedContract, fixed.publication.contracts.len);
+        for (fixed.publication.contracts, contracts) |*row, *entry| {
+            try c.step(); entry.* = .{ .function_id = try publication_refs.symbol(c, arena.allocator(), row.function_id), .graph = if (row.return_origins) |*value| value else null };
+        }
+        const function_id = try publication_refs.symbol(c, arena.allocator(), c.program.functions[@intFromEnum(target)].id);
+        // Body is independently derived ONLY from the current owned SSA/ABI.
+        // The immutable complete fixed contract vector is solely the upper.
+        const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
+        if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
         var analysis = construction_origins.analyze(c.allocator, &directory, graph, &budget) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
-        // Domain ready describes ONLY the original fixed graph. No independent
-        // current normalized-body <= fixed receiver-graph certificate is owned
-        // here yet (structural covered keeps that protocol Pending). In
-        // particular an ordinary current body may have no receiver operation:
-        // its old receiver guards cannot establish this missing relationship.
-        // Keep the canonical interpretation, but grant no caller origins from
-        // it and do not fall back to current-body aliases as self-evidence.
-        if (!self.summarizing) collector.fixed_upper_origin_pending = true;
-        _ = try returned.makeOpaque(c);
-        if (full.facets.may_throw) _ = try thrown.makeOpaque(c);
+        if (analysis.pending != null) return self.noFixedBodyProof(full, returned, thrown);
+        var normal: Owners = .{}; defer normal.deinit(c.allocator);
+        var language: Owners = .{}; defer language.deinit(c.allocator);
+        const outputs = [_][]const construction_origins.Atom{ analysis.normal, analysis.language };
+        const into = [_]*Owners{ &normal, &language };
+        for (outputs, into) |atoms, owners| for (atoms) |atom| {
+            try c.step(); switch (atom.source) {
+                .allocation, .language_error => { _ = try owners.add(c, .local); },
+                .node => |id| switch (graph.nodes[id]) {
+                    .parameter => |row| { _ = try owners.add(c, .{ .parameter = row.index }); },
+                    .global => |row| {
+                        var found = false;
+                        for (collector.common().modules.globals, 0..) |global, index| {
+                            try c.charge(72 + row.id.len / 8 + 1);
+                            var text: [71]u8 = undefined; @memcpy(text[0..7], "sha256:");
+                            const hex = std.fmt.bytesToHex(global.id, .lower); @memcpy(text[7..], &hex);
+                            if (std.mem.eql(u8, row.id, &text)) { _ = try owners.add(c, .{ .global = @enumFromInt(index) }); found = true; break; }
+                        }
+                        try c.require(found);
+                    },
+                    .local => { _ = try owners.add(c, .local); },
+                    .literal, .nonowning => owners.nonowning = true,
+                    .code => { _ = try owners.makeOpaque(c); },
+                    else => unreachable,
+                },
+            }
+        };
+        if (analysis.normal_live) {
+            if (analysis.normal.len == 0) normal.nonowning = true;
+            try self.projectSummary(&normal, target, op, state, offset, returned);
+        } else _ = try returned.makeOpaque(c);
+        if (full.facets.may_throw) {
+            if (analysis.language_live and analysis.language.len != 0) try self.projectSummary(&language, target, op, state, offset, thrown) else _ = try thrown.makeOpaque(c);
+        }
         return true;
     }
     fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
@@ -604,7 +652,7 @@ const UpperGraph = struct {
             if (access_mode.write) try self.mark(argument, .write);
             if (access_mode.structural) try self.mark(argument, .structural);
         };
-        const fixed = try self.fixedConstructionSummary(target, full, returned, thrown);
+        const fixed = try self.fixedGraphSummary(target, op, state, offset, full, returned, thrown);
         const summary = &collector.aliases[@intFromEnum(target)];
         const project = summary.transparent and (self.summarizing or summary.available);
         if (!fixed) {
