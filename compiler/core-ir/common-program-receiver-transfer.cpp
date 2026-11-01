@@ -56,9 +56,9 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
         if(!recordCapacity(constructionCapacity[key],result.selected))return false;
       }
     }
-    if(result.normal){auto after=copyState(state);if(!e.message.empty()||!overlayFrames(after.frames,result.normalFrames)||!step())return false;
+    if(result.normal){auto after=copyStateWithFrames(state,std::move(result.normalFrames));if(!e.message.empty()||!step())return false;
       std::vector<ActualValue> values;values.push_back(copy(result.selected));if(!e.message.empty()||!edge(op.successors[0],std::move(after),values))return false;}
-    if(result.language){auto after=copyState(state);if(!e.message.empty()||!overlayFrames(after.frames,result.languageFrames)||!abortInitializers(after)||!step())return false;
+    if(result.language){auto after=copyStateWithFrames(state,std::move(result.languageFrames));if(!e.message.empty()||!abortInitializers(after)||!step())return false;
       ActualValue thrown;thrown.unknown=true; // Universal language payload, not a selected receiver/object.
       if(!edge(op.successors[1],std::move(after),std::vector<ActualValue>{std::move(thrown)}))return false;}
     continues=false;

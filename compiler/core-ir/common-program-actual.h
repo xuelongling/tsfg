@@ -144,6 +144,8 @@ struct ActualCheck {
   void seedStorage(std::map<std::string,ActualValue> &,const std::string &,const ActualValue &,bool,bool &);
   bool arrayReceiver(const ActualValue &);
   ActualHeap copyHeap(const ActualHeap &);
+  // The caller transfers a complete private completion world; data is copied.
+  ActualState copyStateWithFrames(const ActualState &,ActualFrameWorld);
   ActualState copyState(const ActualState &);
   bool join(ActualState &,ActualState &&);
   ActualValue declared(const std::string &,ActualHeap &,const std::string &,std::set<std::string> = {});

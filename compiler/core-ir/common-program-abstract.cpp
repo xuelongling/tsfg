@@ -94,11 +94,14 @@ bool ActualCheck::mergeHeap(ActualHeap &into,ActualHeap &&from){
     if(!e.message.empty())return false;
   }return changed;
 }
-ActualState ActualCheck::copyState(const ActualState &s){
+ActualState ActualCheck::copyStateWithFrames(const ActualState &s,ActualFrameWorld frames){
   ActualState out;if(!step(s.values.size()))return out;out.heap=copyHeap(s.heap);
-  out.regions=regionCopy(*this,s.regions);out.frames=copyFrames(s.frames);
+  out.regions=regionCopy(*this,s.regions);out.frames=std::move(frames);
   for(const auto &[id,v]:s.values){out.values.emplace(id,copy(v));if(!e.message.empty())return {};}
   return out;
+}
+ActualState ActualCheck::copyState(const ActualState &s){
+  return copyStateWithFrames(s,copyFrames(s.frames));
 }
 bool ActualCheck::join(ActualState &to,ActualState &&from){
   // The caller transfers a private edge state. Moving its heap/value payloads
