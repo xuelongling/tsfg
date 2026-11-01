@@ -304,6 +304,59 @@ bool cursorCallerErrors(){
         f.error.code=="core-ir-common-actual"&&edges==0,"real end caller distinguishes unknown metadata from a known but incomplete prefix"))return false;
   }return true;
 }
+bool fieldDirectoryBorrow(){
+  // Isolate the real lookup on Bottom data/control inputs. This creates no
+  // Frame, activation, Source permission or successful initializer completion.
+  const std::string first="sha256:"+std::string(64,'a'),second="sha256:"+std::string(64,'b');
+  const std::string nulA=std::string("prefix\0a",8),nulB=std::string("prefix\0b",8);
+  const std::string longA=std::string(1023,'x')+"a",longB=std::string(1023,'x')+"b";
+  std::vector<std::string> large;
+  for(unsigned i=0;i<255;++i){const char *hex="0123456789abcdef";std::string suffix;
+    for(const unsigned shift:{12u,8u,4u,0u})suffix+=hex[(i>>shift)&15];large.push_back("sha256:"+std::string(60,'c')+suffix);}
+  // Literal prepaid thresholds: 2-row/71B434; 255-row/71B2456. Neither
+  // expected value calls the candidate lookup or duplicates its height loop.
+  using Case=std::tuple<std::vector<std::string>,Json,bool,bool,size_t>;
+  std::vector<Case> cases;
+  cases.emplace_back(std::vector<std::string>{},Json(first),false,false,1);
+  cases.emplace_back(std::vector<std::string>{first,second},Json(first),true,false,434);
+  cases.emplace_back(std::vector<std::string>{first,second},Json(second),true,false,434);
+  cases.emplace_back(std::vector<std::string>{first,second},Json("sha256:"+std::string(64,'z')),false,false,434);
+  cases.emplace_back(std::vector<std::string>{first,second},Json(first),false,true,433);
+  cases.emplace_back(std::vector<std::string>{first,second},Json(nullptr),false,false,8);
+  cases.emplace_back(std::vector<std::string>{first,second},Json(17),false,false,8);
+  cases.emplace_back(std::vector<std::string>{"","other"},Json(nullptr),true,false,8);
+  cases.emplace_back(std::vector<std::string>{"","other"},Json(""),true,false,8);
+  cases.emplace_back(std::vector<std::string>{"","other"},Json(17),true,false,8);
+  cases.emplace_back(std::vector<std::string>{nulA,nulB},Json(nulA),true,false,56);
+  cases.emplace_back(std::vector<std::string>{nulA,nulB},Json(nulB),true,false,56);
+  cases.emplace_back(std::vector<std::string>{nulA,nulB},Json("prefix"),false,false,44);
+  cases.emplace_back(std::vector<std::string>{longA,longB},Json(longB),true,false,6152);
+  cases.emplace_back(large,Json(large.back()),true,false,2456);
+  for(const auto &[keys,query,wanted,cutoff,available]:cases){
+    Program program;Error error;ActualCheck check{program,error};Function function;function.id="directory-lookup";function.blocks.resize(1);
+    ActualContext context;context.function=&function;ActualState state;ActualValue bottom,output;
+    for(const auto &key:keys){const auto row=check.builtins.emplace("field-row:"+key,Object{{"id",key},{"sourceBinding","raw-binding"},{"type","unused"}}).first;
+      check.fields.emplace(key,&row->second);}
+    const auto directory=check.fields;const auto before=state;Operation op;op.name="initialize_field";op.properties=Object{{"field",query}};
+    if(query.getAsNull())op.properties=Object{}; // Missing and non-string retain the original empty-key semantics.
+    const auto originalProperties=canonical(op.properties);std::vector<const ActualValue*> args{&bottom,&bottom,&bottom};
+    size_t edges=0;bool changed=false,continues=true;program.remaining=available;
+    const bool ok=check.receiverInstruction(context,op,0,state,ActualOperands{args},false,changed,
+      [&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},output,continues);
+    if(!expect(ok==wanted&&error.code==(cutoff?"core-ir-common-budget":wanted?"":"core-ir-common-actual")&&program.remaining==0,
+        "borrowed owned-directory lookup obeys literal logarithmic/long-key thresholds and hard-error boundary"))return false;
+    if(!wanted&&!cutoff&&!expect(error.message=="initializer field is not owned","unknown field is the original owned-member error"))return false;
+    if(!expect(same(state,before)&&same(output,ActualValue{})&&same(bottom,ActualValue{})&&edges==0&&continues&&!changed&&!check.seedChanged&&
+        check.fields==directory&&check.fieldSeeds.empty()&&check.storageCapacity.empty()&&check.fieldSlotAssociations.empty()&&
+        check.receiverFrames.empty()&&check.receiverCursors.empty()&&canonical(op.properties)==originalProperties,
+        "lookup preserves all input planes and cannot create receiver, seed, slot or completion authority"))return false;
+    op.properties=Object{{"field","overwritten caller bytes"}};
+    for(const auto &key:keys){const auto member=check.fields.find(key);
+      if(!expect(member!=check.fields.end()&&member->first==key&&field(*member->second,"id").getAsString()==llvm::StringRef(key),
+          "owned complete field keys outlive caller properties, including NUL and common-prefix spellings"))return false;}
+  }
+  llvm::errs()<<"PASS borrowed field directory empty/NUL/prefix/ownership/log-bound/budget subcases\n";return true;
+}
 bool initializerCache(){
   // All variants use the real initialize_field operation and existing fixture.
   // A registered pair must still read the actual object's current type/weakness.
@@ -346,7 +399,7 @@ bool initializerCache(){
     ActualValue controls;controls.cursors.insert(f.check.receiverCursor(f.selected,0));const auto receiver=payload("old"),replacement=payload("replacement");
     auto &op=f.function.blocks[0].operations[0];op.name="initialize_field";op.properties=Object{{"field",mode==1?"unknown-field":"F"}};
     std::vector<const ActualValue *> pointers{&controls,&receiver,&replacement};ActualValue output;bool changed=false,continues=true;size_t edges=0;
-    const auto associations=f.check.fieldSlotAssociations.size();if(mode==2)f.program.remaining=21; // F text20 + object visit1; lookup's own first unit must fail.
+    const auto associations=f.check.fieldSlotAssociations.size();if(mode==2)f.program.remaining=21; // Paid directory lookup precedes a hard cutoff in the owned-pair lookup.
     const bool ok=f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{pointers},false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return true;},output,continues);
     if(!expect(!ok&&f.error.code==(mode==2?"core-ir-common-budget":"core-ir-common-actual")&&edges==0&&output.cursors.empty()&&f.check.fieldSlotAssociations.size()==associations,
         "cached path retains actual type/member guards and propagates budget error without successful fallback"))return false;
@@ -363,6 +416,6 @@ int main(){unsigned passed=0;
   if(!birthEmpty())return 1;++passed;llvm::errs()<<"PASS empty single-ancestor birth and pre-default history\n";
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
-  if(!birthBudget()||!initializerCache()||!defaultNodeMove()||!cursorCallerErrors())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
+  if(!birthBudget()||!initializerCache()||!defaultNodeMove()||!cursorCallerErrors()||!fieldDirectoryBorrow())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
   llvm::errs()<<passed<<" groups passed; full Source820b/cold100k remains independent\n";return 0;
 }

@@ -72,8 +72,16 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       v.initializing=true;if(v.weak)v.prefixMin=0;else {v.aborted=false;v.prefixMin=v.prefixMax=0;}
       const auto cursor=receiverCursor(id,0);if(!e.message.empty())return false;value.cursors.insert(cursor);}
   }else if(name=="initialize_field"){
-    const auto fieldId=string(field(props,"field"));if(!receiverText(fieldId))return false;
-    const auto member=fields.find(fieldId);if(!need(member!=fields.end(),"initializer field is not owned"))return false;
+    const auto query=field(props,"field").getAsString().value_or(llvm::StringRef{});
+    const auto count=fields.size();size_t height=0;
+    for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
+    height=std::min(height,count);
+    // Prepay a red-black-tree height bound and its final equality check. The
+    // heterogeneous predicates read at most query.size() bytes on each side;
+    // unlike same-type debug predicates, they do not compare in reverse.
+    if(!step(1+height+(count?height+1:0)*(2*query.size()+1)))return false;
+    const auto member=fields.find(query);if(!need(member!=fields.end(),"initializer field is not owned"))return false;
+    const auto &fieldId=member->first;
     const auto raw=string(field(*member->second,"sourceBinding"));
     if(conditional&&!recordCapacity(storageCapacity[raw],args[2]))return false;
     seedStorage(fieldSeeds,raw,args[2],conditional,changed);

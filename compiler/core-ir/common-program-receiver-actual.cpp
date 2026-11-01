@@ -41,7 +41,7 @@ const ActualCursorInfo *ActualCheck::cursorMetadata(const std::string &id){
   if(!receiverText(id))return nullptr;const auto found=receiverCursors.find(id);
   return found==receiverCursors.end()?nullptr:&found->second;
 }
-const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_iterator object,ActualOwnedDirectory::const_iterator field){
+const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_iterator object,ActualFieldDirectory::const_iterator field){
   if(!step()||!need(object!=objects.end()&&field!=fields.end(),"physical field slot symbols are not owned"))return nullptr;
   const auto *reference=&object->first,*member=&field->first;
   // Registration order, rather than address rank, determines lookup work.
@@ -83,7 +83,7 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   }
   if(!step(4))return nullptr;fieldSlotAssociations.push_back({reference,member,&found->second,&object->second});return &found->second;
 }
-ActualFieldSlotMatch ActualCheck::existingFieldSlot(const std::string &reference,ActualOwnedDirectory::const_iterator field){
+ActualFieldSlotMatch ActualCheck::existingFieldSlot(const std::string &reference,ActualFieldDirectory::const_iterator field){
   if(!step()||!need(field!=fields.end(),"physical field lookup member is not owned"))return {};
   const auto *member=&field->first;
   // Only a complete canonical-reference equality reuses this pair's live

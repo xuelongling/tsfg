@@ -115,6 +115,8 @@ struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;Region
 struct ActualObject {std::string type;bool weak=false;};
 using ActualObjectDirectory=std::map<std::string,ActualObject>;
 using ActualOwnedDirectory=std::map<std::string,const Json *>;
+// Only field lookup borrows an operation JSON key; directory keys stay owned.
+using ActualFieldDirectory=std::map<std::string,const Json *,std::less<>>;
 // Owned interner identity is separate from root execution state, which is
 // refreshed from entry seeds. Never serialize these values to compare them.
 struct ActualContextIdentity {
@@ -140,7 +142,8 @@ struct ActualContext {
 struct ActualCheck {
   Program &p;Error &e;
   std::map<std::string,Json> builtins;
-  ActualOwnedDirectory types,domains,sourceFunctions,modules,globals,bindings,fields,physicalBindings,physicalFunctions;
+  ActualOwnedDirectory types,domains,sourceFunctions,modules,globals,bindings,physicalBindings,physicalFunctions;
+  ActualFieldDirectory fields;
   std::map<std::string,const Function *> functions;
   // Owned analysis-only projections. Public p.functions, HIR, fixed contracts
   // and physical directory rows remain untouched and keep their original IDs.
@@ -223,8 +226,8 @@ struct ActualCheck {
   std::vector<ActualValue> retainedFrames(const ActualFrameWorld &);
   // Both iterators belong to this check's already owned directories. No
   // execution value, heap node or temporary string may supply a symbol.
-  const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualOwnedDirectory::const_iterator);
-  ActualFieldSlotMatch existingFieldSlot(const std::string &,ActualOwnedDirectory::const_iterator);
+  const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualFieldDirectory::const_iterator);
+  ActualFieldSlotMatch existingFieldSlot(const std::string &,ActualFieldDirectory::const_iterator);
   bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
   bool receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const ActualCursorInfo &,const ActualFieldSlot &);
