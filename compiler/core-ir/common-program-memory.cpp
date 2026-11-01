@@ -143,7 +143,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
       entry.heap.emplace("global:"+id,std::move(value));
     }
     if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.arguments,context.constructionNewTarget,context.activation))return false;
-    context.entryFrames=copyFrames(entry.frames);
+    // Roots rebuild the local World; immutable identity owns their input.
     context.entry=copyHeap(entry.heap);
   }
   for(size_t i=0;i<context.arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(context.arguments[i]));
