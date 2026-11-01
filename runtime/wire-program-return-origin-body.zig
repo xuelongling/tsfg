@@ -52,6 +52,7 @@ const ReceiverCFG = struct {
     values: []RefList, incoming_heaps: []RefList, incoming_controls: []RefList,
     blocks: []Flow, normal: RefList = .empty, language: RefList = .empty,
     normal_exits: std.ArrayListUnmanaged(origin.Exit) = .empty, language_exits: std.ArrayListUnmanaged(origin.Exit) = .empty,
+    accesses: std.ArrayListUnmanaged(origin.Access) = .empty, access_keys: std.ArrayListUnmanaged(origin.Symbol) = .empty,
     fn insert(self: *ReceiverCFG, into: *RefList, id: origin.Ref) context.Error!void {
         var at: usize = 0;
         while (at < into.items.len) : (at += 1) { try self.b.c.step(); if (into.items[at] == id) return; if (into.items[at] > id) break; }
@@ -104,10 +105,60 @@ const ReceiverCFG = struct {
         if (into.items.len == into.capacity) try self.b.c.charge(into.items.len + 1);
         try into.insert(self.b.allocator, at, .{ .heap = flow.heap, .control = flow.control });
     }
+    fn scalarField(self: *ReceiverCFG, index: t.FieldRef) context.Error!?struct { id: origin.Symbol, view: origin.Symbol } {
+        const v = &self.b.c.program.tables.mode.common; const field = &v.members.fields[@intFromEnum(index)];
+        const binding = &v.storage.bindings[@intFromEnum(field.binding)];
+        try self.b.c.charge(6);
+        // A fixed native scalar slot has no Value/string/managed clone duty.
+        // This bounds the transfer, not the actual payload's category (which
+        // is separately established from its defining instruction below).
+        if (v.types[@intFromEnum(field.owner)].kind != .reference or v.types[@intFromEnum(field.@"type")].kind != .scalar or
+            field.declared_type != field.@"type" or binding.@"type" != field.@"type" or
+            binding.carrier != .@"type" or binding.carrier.@"type" != field.@"type") { self.b.pending = .receiver_fields; return null; }
+        _ = try self.b.typeSymbol(field.@"type") orelse return null;
+        const view = try self.b.typeSymbol(field.owner) orelse return null;
+        const id = try refs.symbol(self.b.c, self.b.allocator, field.id);
+        self.b.budget.lookup(self.b.directory.fields.len, id.len) catch |err| return refs.graphFailure(err);
+        var lo: usize = 0; var hi = self.b.directory.fields.len;
+        while (lo < hi) {
+            const mid = lo + (hi - lo) / 2;
+            switch (std.mem.order(u8, self.b.directory.fields[mid], id)) {
+                .lt => lo = mid + 1, .gt => hi = mid,
+                .eq => { try self.b.c.charge(3); return .{ .id = self.b.directory.fields[mid], .view = view }; },
+            }
+        }
+        self.b.pending = .receiver_fields; return null;
+    }
+    fn scalarStore(self: *ReceiverCFG, flow: Flow, field: t.FieldRef, receiver: t.RegisterRef, payload: t.RegisterRef) context.Error!Flow {
+        const row = try self.scalarField(field) orelse return flow;
+        const bases = try self.one(self.registerRef(receiver)); const values = try self.one(self.registerRef(payload));
+        // Exact original semantic selector, not an offset or capacity route.
+        try self.b.c.charge(row.id.len + 7); const selector = try std.mem.concat(self.b.allocator, u8, &.{ "field:", row.id });
+        const next = try self.heap(.{ .store = .{ .previous = flow.heap, .bases = bases, .selector = selector, .view = row.view, .values = values, .control = flow.control, .initialize = true } });
+        // The source Graph records the write access as well as its heap edge.
+        // Canonical keys order by decimal JSON text, not numeric Ref order.
+        // Count/render, allocation, comparisons and both list shifts are paid.
+        try self.b.c.charge(2 * (80 + 24 * (bases.len + 1)));
+        const key = try std.json.Stringify.valueAlloc(self.b.allocator, .{ .control = flow.control, .flag = "write", .values = bases }, .{});
+        var at: usize = 0; var found = false;
+        while (at < self.access_keys.items.len) : (at += 1) {
+            try self.b.c.step(); try self.b.c.charge(key.len / 8 + self.access_keys.items[at].len / 8 + 2);
+            const order = std.mem.order(u8, self.access_keys.items[at], key);
+            if (order == .eq) { found = true; break; } if (order == .gt) break;
+        }
+        if (!found) {
+            try self.b.c.charge(2 * (self.access_keys.items.len - at + 1) + 4);
+            if (self.accesses.items.len == self.accesses.capacity) try self.b.c.charge(self.accesses.items.len + 1);
+            if (self.access_keys.items.len == self.access_keys.capacity) try self.b.c.charge(self.access_keys.items.len + 1);
+            try self.accesses.insert(self.b.allocator, at, .{ .values = bases, .flag = .write, .control = flow.control });
+            try self.access_keys.insert(self.b.allocator, at, key);
+        }
+        try self.b.c.charge(3); return .{ .heap = next, .control = flow.control };
+    }
     fn construction(self: *ReceiverCFG, index: t.ConstructionIndex) context.Error!?origin.Symbol {
         const v = &self.b.c.program.tables.mode.common; const current = &v.members.constructions[@intFromEnum(index)];
         if (current.kind != .explicit) { self.b.pending = .implicit_protocol; return null; }
-        if (current.initialization_fields.len != 0) { self.b.pending = .receiver_fields; return null; }
+        for (current.initialization_fields) |field| { try self.b.c.step(); _ = try self.scalarField(field) orelse return null; }
         if (current.parameters.len != 0 or current.signature.parameters.len != 0) { self.b.pending = .raw_input; return null; }
         const id = try refs.symbol(self.b.c, self.b.allocator, current.id);
         const owner = try self.b.typeSymbol(current.owner) orelse return null;
@@ -146,7 +197,28 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
             .receiver_create, .receiver_child, .receiver_allocate, .receiver_bind, .receiver_get, .receiver_result, .initialize_begin, .initialize_end,
             .br, .@"return", .eh_raise, .eh_unreachable => {},
-            .initialize_field => { result.pending = .receiver_fields; return; },
+            .initialize_field => {
+                const payload = op.operands[2]; const carrier = f.registers[@intFromEnum(payload)].carrier;
+                try c.charge(2);
+                if (carrier != .@"type" or v.types[@intFromEnum(carrier.@"type")].kind != .scalar) { result.pending = .receiver_fields; return; }
+                // Only an independently defined native literal is supported.
+                // A Source/static view, phi, field load or arbitrary result is
+                // not evidence of actual scalar payload or identity-copy.
+                var literal = false;
+                definitions: for (f.blocks) |*definition_block| {
+                    try c.step();
+                    for (definition_block.instructions) |*definition| {
+                        try c.step(); if (definition.result != payload) continue;
+                        literal = switch (definition.data) {
+                            .const_i32, .const_integer, .const_bool, .const_float => true,
+                            .domain_literal => |row| row.actual_type == carrier.@"type" and v.types[@intFromEnum(row.actual_type)].kind == .scalar,
+                            else => false,
+                        };
+                        break :definitions;
+                    }
+                }
+                if (!literal) { result.pending = .receiver_fields; return; }
+            },
             else => { result.pending = .operation; return; },
         }
     };
@@ -224,6 +296,13 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                     try cfg.connect(row.normal, normal.flow, try cfg.one(normal.value)); try cfg.connect(row.language, language.flow, try cfg.one(language.value));
                 },
                 inline .initialize_begin, .initialize_end => |row| { _ = try cfg.construction(row.construction) orelse break; },
+                .initialize_field => |row| {
+                    _ = try cfg.construction(row.construction) orelse break;
+                    // The linear checker proves operand1 is the bound data
+                    // for operand0's exact cursor frame/binding/position.
+                    // No cursor or Frame is ever inserted into the heap.
+                    flow = try cfg.scalarStore(flow, row.field, op.operands[1], op.operands[2]);
+                },
                 .br => |row| {
                     try c.charge(op.operands.len); const args = try a.alloc(origin.Ref, op.operands.len);
                     for (op.operands, args) |reg, *value| { try c.step(); value.* = cfg.registerRef(reg); }
@@ -244,7 +323,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     if (b.pending) |reason| { result.pending = reason; return; }
     for (registers, values) |id, incoming| { try c.step(); if (id) |node_id| b.nodes.items[node_id].join.inputs = incoming.items; }
     for (blocks, incoming_heaps, incoming_controls) |flow, heaps, controls| { try c.charge(3); cfg.heaps.items[flow.heap].join.inputs = heaps.items; cfg.controls.items[flow.control].join.inputs = controls.items; }
-    try c.row(origin.Graph); result.graph = .{ .nodes = b.nodes.items, .heaps = cfg.heaps.items, .controls = cfg.controls.items, .calls = &.{}, .normal = cfg.normal.items, .language = cfg.language.items, .exits = .{ .normal = cfg.normal_exits.items, .language = cfg.language_exits.items }, .accesses = &.{} };
+    try c.row(origin.Graph); result.graph = .{ .nodes = b.nodes.items, .heaps = cfg.heaps.items, .controls = cfg.controls.items, .calls = &.{}, .normal = cfg.normal.items, .language = cfg.language.items, .exits = .{ .normal = cfg.normal_exits.items, .language = cfg.language_exits.items }, .accesses = cfg.accesses.items };
 }
 
 // Directory/typed current Fn are borrowed from this Context's complete owning
