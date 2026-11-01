@@ -241,6 +241,54 @@ bool birthBudget(){Fixture measured;measured.state.frames.at(measured.selected).
     if(!expect(!f.check.receiverBirth(f.state.frames,f.selected,"reborn",{f.slot("reborn","F"),f.slot("reborn","G")},f.state.heap,true)&&f.error.code=="core-ir-common-budget","birth cutoff must fail with budget error, never report a completed journal"))return false;
   }return true; // A failed private check has no added rollback obligation.
 }
+bool initializerCache(){
+  // All variants use the real initialize_field operation and existing fixture.
+  // A registered pair must still read the actual object's current type/weakness.
+  for(const unsigned mode:{0u,1u,2u,3u}){ // miss, strong hit, mapped weak hit, routed hit
+    Fixture f(false);auto *type=f.check.builtins.at("B").getAsObject();(*type)["fields"]=Array{*f.check.fields.at("F"),*f.check.fields.at("G")};
+    const ActualFieldSlot *token=nullptr;
+    if(mode){token=f.check.fieldSlot(f.check.objects.find("old"),f.check.fields.find("F"));if(!token)return false;}
+    if(mode==2)f.check.objects.insert_or_assign("old",ActualObject{"B",true});
+    if(mode==3){f.check.builtins.emplace("Other",Object{{"kind","reference"},{"base",nullptr},{"construction",nullptr},{"fields",Array{}}});
+      f.check.types.emplace("Other",&f.check.builtins.at("Other"));f.check.objects.insert_or_assign("old",ActualObject{"Other",false});}
+    auto &binding=f.state.frames.at(f.selected);binding.unbound=false;binding.prefixMin=binding.prefixMax=0;
+    const auto old=payload("old"),replacement=payload("replacement");f.state.heap.emplace("old/field/F",old);
+    if(token)binding.births.emplace(token,ActualBirth{"independent-original-reference",old,true});
+    ActualValue controls;controls.cursors.insert(f.check.receiverCursor(f.selected,0));ActualValue receiver=old;
+    const auto input=f.state;const auto controlsBefore=controls;const auto beforeAssociations=f.check.fieldSlotAssociations.size();
+    auto &op=f.function.blocks[0].operations[0];op.name="initialize_field";op.properties=Object{{"field","F"}};
+    std::vector<const ActualValue *> pointers{&controls,&receiver,&replacement};ActualValue output;bool changed=false,continues=true;size_t edges=0;
+    if(!expect(f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{pointers},true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return true;},output,continues)&&f.error.message.empty(),"real initializer cache hit or fallback completes"))return false;
+    auto expected=replacement;if(mode==2){expected.objects={"old","replacement"};expected.region.roots={"root:old","root:replacement"};}
+    if(!expect(same(f.state.heap.at("old/field/F"),expected)&&f.check.receiverRouteOpen==(mode==3)&&f.check.fieldSlotAssociations.size()==beforeAssociations+(mode==0?1:0),
+        "hit preserves current weak merge, allFields logical route, or exact miss registration"))return false;
+    const auto &after=f.state.frames.at(f.selected);
+    if(!expect(after.prefixMin==1&&after.prefixMax==1&&after.initializing&&!after.aborted&&!after.unbound&&same(after.bound,old)&&output.cursors==std::set<std::string>{f.cursor}&&edges==0&&continues,
+        "initializer advances actual selected cursor without fabricating completion or receiver data"))return false;
+    if(token){const auto &birth=after.births.at(token);if(!expect(!birth.pending&&birth.reference=="independent-original-reference"&&same(birth.real,expected),"cache preserves journal reference and actual strong/weak real payload"))return false;}
+    auto expectedState=input;expectedState.heap["old/field/F"]=expected;
+    auto historical=payload("historical-data");expectedState.heap["historical-object/field/F"]=historical;
+    auto pending=historical;pending.tags.insert("sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b");pending.region.empty=true;
+    expectedState.heap["different-object/field/G"]=pending;
+    auto &expectedBinding=expectedState.frames.at(f.selected);expectedBinding.prefixMin=expectedBinding.prefixMax=1;
+    if(token){expectedBinding.births.at(token).real=expected;expectedBinding.births.at(token).pending=false;}
+    ActualValue expectedOutput;expectedOutput.cursors={f.cursor};
+    if(!expect(same(f.state,expectedState)&&same(output,expectedOutput)&&same(controls,controlsBefore)&&same(receiver,old)&&same(replacement,payload("replacement")),
+        "whole World/Heap/SSA/Region state includes literal pending-U reconciliation and preserves all other input planes"))return false;
+    if(!expect(changed&&f.check.seedChanged&&f.check.fieldSeeds.at("binding:F").tags==std::set<std::string>{"B"},"full initializer keeps original conditional seed/capacity path"))return false;
+  }
+  for(const unsigned mode:{0u,1u,2u}){ // cached unowned type, unknown field, cutoff inside cache lookup
+    Fixture f(false);const auto token=f.check.fieldSlot(f.check.objects.find("old"),f.check.fields.find("F"));if(!token)return false;
+    if(mode==0)f.check.objects.insert_or_assign("old",ActualObject{"unowned-type",false});
+    ActualValue controls;controls.cursors.insert(f.check.receiverCursor(f.selected,0));const auto receiver=payload("old"),replacement=payload("replacement");
+    auto &op=f.function.blocks[0].operations[0];op.name="initialize_field";op.properties=Object{{"field",mode==1?"unknown-field":"F"}};
+    std::vector<const ActualValue *> pointers{&controls,&receiver,&replacement};ActualValue output;bool changed=false,continues=true;size_t edges=0;
+    const auto associations=f.check.fieldSlotAssociations.size();if(mode==2)f.program.remaining=21; // F text20 + object visit1; lookup's own first unit must fail.
+    const bool ok=f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{pointers},false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return true;},output,continues);
+    if(!expect(!ok&&f.error.code==(mode==2?"core-ir-common-budget":"core-ir-common-actual")&&edges==0&&output.cursors.empty()&&f.check.fieldSlotAssociations.size()==associations,
+        "cached path retains actual type/member guards and propagates budget error without successful fallback"))return false;
+  }llvm::errs()<<"PASS initialize_field cache hit/miss/weak/route/World/Heap/error subcases\n";return true;
+}
 }
 int main(){unsigned passed=0;
   for(const auto &[name,weak]:std::vector<std::pair<std::string,bool>>{{"receiver_get",true},{"receiver_bind",false},{"receiver_result",true}}){if(!transfer(name,weak))return 1;llvm::errs()<<"PASS "<<name<<" independent complete edge worlds\n";++passed;}
@@ -252,6 +300,6 @@ int main(){unsigned passed=0;
   if(!birthEmpty())return 1;++passed;llvm::errs()<<"PASS empty single-ancestor birth and pre-default history\n";
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
-  if(!birthBudget())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
+  if(!birthBudget()||!initializerCache())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
   llvm::errs()<<passed<<" groups passed; full Source820b/cold100k remains independent\n";return 0;
 }

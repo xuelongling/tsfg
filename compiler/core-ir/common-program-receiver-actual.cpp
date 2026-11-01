@@ -62,10 +62,23 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
     found->second.spelling=&found->first;
   }
   if(fieldSlotAssociations.size()==fieldSlotAssociations.capacity()){
-    if(!step(fieldSlotAssociations.size()*3+1))return nullptr;
+    if(!step(fieldSlotAssociations.size()*4+1))return nullptr;
     fieldSlotAssociations.reserve(fieldSlotAssociations.capacity()?fieldSlotAssociations.capacity()*2:1);
   }
-  if(!step(3))return nullptr;fieldSlotAssociations.push_back({reference,member,&found->second});return &found->second;
+  if(!step(4))return nullptr;fieldSlotAssociations.push_back({reference,member,&found->second,&object->second});return &found->second;
+}
+ActualFieldSlotMatch ActualCheck::existingFieldSlot(const std::string &reference,ActualOwnedDirectory::const_iterator field){
+  if(!step()||!need(field!=fields.end(),"physical field lookup member is not owned"))return {};
+  const auto *member=&field->first;
+  // Only a complete canonical-reference equality reuses this pair's live
+  // directory node. Returning pointer values cannot borrow vector storage.
+  for(const auto &entry:fieldSlotAssociations){
+    if(!step(3))return {};if(entry.field!=member)continue;
+    if(!step(entry.reference->size()+reference.size()+1))return {};
+    if(*entry.reference!=reference)continue;
+    if(!step(2))return {};return {entry.object,entry.slot};
+  }
+  return {};
 }
 ActualBirth ActualCheck::copyBirth(const ActualBirth &row){
   if(!receiverText(row.reference)||!step(3))return {};

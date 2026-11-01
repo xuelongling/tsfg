@@ -54,7 +54,11 @@ struct ActualFieldSlotLess {
   }
 };
 using ActualBirthJournal=std::map<const ActualFieldSlot *,ActualBirth,ActualFieldSlotLess>;
-struct ActualFieldSlotAssociation {const std::string *reference,*field;const ActualFieldSlot *slot;};
+struct ActualObject;
+// Directory map nodes survive insert_or_assign. These views expire when the
+// association universe is cleared, before the owned object directory itself.
+struct ActualFieldSlotAssociation {const std::string *reference,*field;const ActualFieldSlot *slot;const ActualObject *object;};
+struct ActualFieldSlotMatch {const ActualObject *object=nullptr;const ActualFieldSlot *slot=nullptr;};
 struct ActualFrameBinding {
   bool unbound=true,weak=false,pending=false,initializing=false,aborted=false;
   size_t prefixMin=0,prefixMax=0;ActualValue bound;
@@ -181,6 +185,7 @@ struct ActualCheck {
   // Both iterators belong to this check's already owned directories. No
   // execution value, heap node or temporary string may supply a symbol.
   const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualOwnedDirectory::const_iterator);
+  ActualFieldSlotMatch existingFieldSlot(const std::string &,ActualOwnedDirectory::const_iterator);
   bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
   bool receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const std::set<std::string> &,const ActualValue &,const std::string &);

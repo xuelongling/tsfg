@@ -84,14 +84,17 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     if(conditional&&!recordCapacity(storageCapacity[raw],args[2]))return false;
     seedStorage(fieldSeeds,raw,args[2],conditional,changed);
     if(!step(args[1].objects.size()))return false;
-    for(const auto &ref:args[1].objects){if(!receiverText(ref))return false;const auto selected=objects.find(ref);
-      if(!need(selected!=objects.end(),"initializer selected receiver object missing"))return false;const auto &object=selected->second;
-      bool direct=false;for(const auto *f:allFields(object.type)){if(!step())return false;direct|=string(field(*f,"id"))==fieldId;}
+    for(const auto &ref:args[1].objects){
+      const auto existing=existingFieldSlot(ref,member);if(!e.message.empty())return false;
+      auto selected=objects.end();const auto *object=existing.object;
+      if(!object){if(!receiverText(ref))return false;selected=objects.find(ref);
+        if(!need(selected!=objects.end(),"initializer selected receiver object missing"))return false;object=&selected->second;}
+      bool direct=false;for(const auto *f:allFields(object->type)){if(!step())return false;direct|=string(field(*f,"id"))==fieldId;}
       // Keep logical contribution and prefix data without inventing a physical
       // U-to-D slot projection. Whole Core admission remains explicitly OPEN.
       receiverRouteOpen|=!direct;
-      const auto token=fieldSlot(selected,member);if(!e.message.empty())return false;const auto &slot=*token->spelling;
-      const bool strong=!object.weak&&args[1].objects.size()==1;if(!receiverWrite(state.frames,*token,args[2],strong&&!args[1].unknown&&!args[1].callableTop))return false;
+      const auto token=existing.slot?existing.slot:fieldSlot(selected,member);if(!e.message.empty())return false;const auto &slot=*token->spelling;
+      const bool strong=!object->weak&&args[1].objects.size()==1;if(!receiverWrite(state.frames,*token,args[2],strong&&!args[1].unknown&&!args[1].callableTop))return false;
       if(!receiverText(slot))return false;
       if(strong||!state.heap.count(slot))state.heap.insert_or_assign(slot,copy(args[2]));else merge(state.heap.at(slot),args[2]);
       if(!conditional&&!regionStore(*this,regionValue(*this,args[1]),"/field/"+fieldId,regionValue(*this,args[2]),state.regions))return false;
