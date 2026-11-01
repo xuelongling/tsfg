@@ -86,6 +86,9 @@ struct Context {
   const Protocol *protocol=nullptr;
   Set environment;
   Set receivers,boundReceivers;
+  // Keep each actual Frame's lifetime separate so child-call prefixes can be
+  // inherited without attributing an independent nested new to receiver0.
+  std::map<Ref,Set> boundHistory;
   std::set<std::pair<Ref,Ref>> entrySources;
   std::vector<Set> arguments,values,targets;
   Heap input,normalHeap,languageHeap;
@@ -300,6 +303,22 @@ class Solver {
     Key identity;Location value;value.kind=LocationKind::ReceiverFrame;value.label=construction;value.type=target;value.source=parent;value.categories=0;
     value.receiverRoot=root;return key(identity,{20,context.index,context.function,context.scope,index,construction,target,parent,root})&&location(std::move(identity),value,out);
   }
+  bool recordBoundReceiver(Context &context,Ref frame,const Set &values){
+    if(context.receivers.empty()||values.empty())return true;bool owned=false;
+    for(auto current=frame;current!=None;current=locations_[current].source){
+      if(!m_.spend()||!numericLookup(context.receivers.size()))return false;
+      if(locations_[current].kind!=LocationKind::ReceiverFrame)return open("receiver-history-frame-open");
+      if(context.receivers.count(current)){owned=true;break;}
+    }
+    if(!owned)return true;
+    if(!numericLookup(context.boundHistory.size())||!m_.spend())return false;
+    return add(context.boundHistory[frame],values)&&add(context.boundReceivers,values);
+  }
+  bool recordBoundWorld(Context &context,const FrameWorld &world){
+    if(context.receivers.empty()||!world.live)return true;if(!m_.spend(world.size()))return false;
+    for(const auto &[frame,binding]:world)if(!m_.spend()||!recordBoundReceiver(context,frame,binding.values))return false;
+    return true;
+  }
   const V4::Construction *construction(Ref id){
     if(!callbacks_.constructions){open("construction-directory-open");return nullptr;}
     if(!m_.lookup(callbacks_.constructions->size(),name(id).size()))return nullptr;const auto found=callbacks_.constructions->find(V4::Detail::view(name(id)));
@@ -348,6 +367,7 @@ class Solver {
     value->inputFrames.live=true;
     for(auto receiver:receivers){if(!m_.spend()||!numericLookup(value->inputFrames.size()))return false;
       if(value->inputFrames.find(receiver)==value->inputFrames.end()){if(!m_.spend())return false;value->inputFrames.emplace(receiver,Binding{});}}
+    if(!recordBoundWorld(*value,value->inputFrames))return false;
     out=value->index;contextIds_.emplace(std::move(identity),out);contexts_.push_back(std::move(value));changed_=true;return true;
   }
   bool effect(Context &context,V4::AccessFlag flag,Ref owner){return insert(context.effects[static_cast<std::size_t>(flag)],owner);}
@@ -395,6 +415,10 @@ class Solver {
     return true;
   }
   bool inherit(Context &context,const Context &called){
+    if(!context.receivers.empty()){
+      if(!m_.spend(called.boundHistory.size()))return false;
+      for(const auto &[frame,values]:called.boundHistory)if(!m_.spend()||!recordBoundReceiver(context,frame,values))return false;
+    }
     for(Ref i=0;i<3;++i)if(!m_.spend()||!add(context.effects[i],called.effects[i]))return false;
     if(!add(context.facets,called.facets)||!add(context.calls,called.calls)||!insert(context.calls,called.function))return false;
     const auto &upper=*called.upper;if(!m_.spend(upper.parameters.size())||!m_.spend(upper.captures.size())||!m_.spend(upper.facets.size()))return false;
@@ -602,8 +626,9 @@ class Solver {
       FrameWorld world;if(!mergeFrames(world,previous,false))return false;
       if(heap.completion==V4::Completion::Normal&&heap.action==V4::ReceiverAction::Bind){
         if(!numericLookup(world.size())||!m_.spend())return false;auto &bound=world[frame];bound.unbound=false;bound.values.clear();if(!add(bound.values,objects,false))return false;
-        if(!numericLookup(context.receivers.size()))return false;if(context.receivers.count(frame)&&!add(context.boundReceivers,objects))return false;
       }
+      if(!numericLookup(world.size()))return false;const auto bound=world.find(frame);
+      if(bound!=world.end()&&!recordBoundReceiver(context,frame,bound->second.values))return false;
       if(!merge(output,context.heaps[heap.previous])||!mergeFrames(context.frames[index],world))return false;
       if(heap.completion==V4::Completion::Normal){if(!add(context.receiverValues[index],selected))return false;}
       else{Ref owner,error;Key identity;Location thrown;thrown.kind=LocationKind::ReceiverError;thrown.categories=1;
@@ -644,7 +669,7 @@ class Solver {
     const auto &graph=*context.graph;
     for(unsigned channel=0;channel<2;++channel){const bool normal=channel==0;auto &live=normal?context.normalLive:context.languageLive;auto &heap=normal?context.normalHeap:context.languageHeap;auto &values=normal?context.normal:context.language;
       const auto &exits=normal?graph.exits.normal:graph.exits.language;if(!m_.spend(exits.size()))return false;
-      for(const auto &exit:exits){if(!m_.spend())return false;if(context.controls[exit.control]){if(!live){live=true;changed_=true;}auto &ready=normal?context.normalReady:context.languageReady;if(context.heapReady[exit.heap]&&!ready){ready=true;changed_=true;}if(context.heapReady[exit.heap]&&(!merge(heap,context.heaps[exit.heap])||!mergeFrames(normal?context.normalFrames:context.languageFrames,context.frames[exit.heap])))return false;}}
+      for(const auto &exit:exits){if(!m_.spend())return false;if(context.controls[exit.control]){if(!live){live=true;changed_=true;}auto &ready=normal?context.normalReady:context.languageReady;if(context.heapReady[exit.heap]&&!ready){ready=true;changed_=true;}if(context.heapReady[exit.heap]&&(!recordBoundWorld(context,context.frames[exit.heap])||!merge(heap,context.heaps[exit.heap])||!mergeFrames(normal?context.normalFrames:context.languageFrames,context.frames[exit.heap])))return false;}}
       if(live){Set returned;if(!resolve(context,normal?graph.normal:graph.language,returned)||!add(values,returned))return false;}
     }
     if(!m_.spend(graph.accesses.size()))return false;for(const auto &access:graph.accesses){if(!m_.spend())return false;if(context.controls[access.control]){Set values;if(!resolve(context,access.values,values)||!valueEffects(context,access.flag,values))return false;}}
