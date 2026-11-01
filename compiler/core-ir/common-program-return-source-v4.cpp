@@ -42,6 +42,13 @@ struct ReturnSource {
   bool metadata(const Json &value){
     return returnOriginMetadataCost(p,value,error);
   }
+  bool declarationMetadata(const Json &row){
+    for(const auto &entry:*row.getAsObject()){
+      if(!step()||!text(entry.first))return false;
+      if(entry.first!="body"&&entry.first!="parameterInitialization"&&!metadata(entry.second))return false;
+    }
+    return good();
+  }
   std::string encoded(const Json &value){if(!metadata(value))return {};return canonical(value);}
   bool lookup(size_t count,llvm::StringRef key){size_t depth=1;for(auto n=count;n;n>>=1){if(!step())return false;depth+=2;}
     for(size_t i=0;i<depth;++i)if(!text(key))return false;return true;}
@@ -205,7 +212,8 @@ struct ReturnSource {
   Evaluation expression(const Json &,Environment &);
   Body body(const Array &,Environment &);
   Evaluation call(const std::string &,const std::vector<Refs> &,const Json &,Environment &,const Refs *,const Refs *receiver=nullptr);
-  bool normalized(const ConstructorReturnCFG &,Json &);
+  bool initialize();
+  bool normalized(const Function &,Json &);
   bool finish(const Body &,Json &);
   bool run(Json &);
 };
@@ -466,8 +474,8 @@ ReturnSource::Body ReturnSource::body(const Array &rows,Environment &environment
   return result;
 }
 
-bool ReturnSource::normalized(const ConstructorReturnCFG &admitted,Json &raw){
-  const auto &cfg=admitted.get();if(!step(cfg.carriers.size()+cfg.blocks.size())||!need(cfg.id==functionId&&!cfg.blocks.empty(),"admitted constructor CFG owner differs"))return false;
+bool ReturnSource::normalized(const Function &cfg,Json &raw){
+  if(!step(cfg.carriers.size()+cfg.blocks.size())||!need(cfg.id==functionId&&!cfg.blocks.empty(),"admitted constructor CFG owner differs"))return false;
   const auto views=p.registerViews.find(functionId);if(!need(views!=p.registerViews.end()&&views->second.size()==cfg.carriers.size(),"admitted CFG has no complete semantic register projection"))return false;
   std::map<std::string,std::string> fieldOwners;
   for(const auto &[id,type]:types)for(const auto &member:items(field(*type,"fields"))){
@@ -615,12 +623,12 @@ bool ReturnSource::normalized(const ConstructorReturnCFG &admitted,Json &raw){
   return finish(completed,raw);
 }
 
-bool ReturnSource::run(Json &raw){
-  if(!step()||!metadata(fn))return false;
+bool ReturnSource::initialize(){
+  if(!step()||!declarationMetadata(fn))return false;
   direct=Effects{};functionId=string(field(fn,"id"));lexical=string(field(fn,"lexicalEnvironment"));activation=string(field(fn,"activationEnvironment"));
   if(!step(2))return false;heaps.push_back(Object{{"kind","entry"}});controls.push_back(Object{{"kind","entry"}});
   const auto catalog=[&](const Json &rows,auto &directory){if(!step(items(rows).size()))return;for(const auto &row:items(rows)){
-    if(!metadata(row))return;const auto id=string(field(row,"id"));if(!lookup(directory.size(),id)||!step())return;directory.emplace(id,&row);}};
+    if(!declarationMetadata(row))return;const auto id=string(field(row,"id"));if(!lookup(directory.size(),id)||!step())return;directory.emplace(id,&row);}};
   catalog(field(p.hir,"types"),types);catalog(field(p.hir,"functions"),functions);catalog(field(p.hir,"globals"),globals);catalog(field(p.hir,"environments"),layouts);catalog(field(fn,"parameters"),bindings);catalog(field(fn,"bindings"),bindings);
   if(!good())return false;
   for(const auto &[id,layout]:layouts)for(const auto &slot:items(field(*layout,"slots"))){
@@ -633,8 +641,11 @@ bool ReturnSource::run(Json &raw){
     if(!lookup(slots.size(),binding)||!need(slots.count(binding),"capture has no owned lexical slot")||!lookup(foreignCaptures.size(),binding)||!step())return false;foreignCaptures.insert(binding);
     captureAccess(slots.at(binding),field(capture,"read").getAsBoolean()==true,field(capture,"write").getAsBoolean()==true);
   }
-  auto qualified=p.constructorReturnCFGs.find(functionId);
-  if(qualified!=p.constructorReturnCFGs.end())return normalized(qualified->second,raw);
+  return good();
+}
+
+bool ReturnSource::run(Json &raw){
+  if(!initialize())return false;
   if(string(field(fn,"kind"))=="construction-body")return open("constructor graph requires admitted normalized CFG");
   if(!lexical.empty()){if(!text(lexical)||!step())return false;environmentRefs.emplace(lexical,environmentInput(lexical));facet("managedReference",nullptr,"lexicalEnvironment");}
   if(!activation.empty()){
@@ -692,7 +703,18 @@ bool ReturnSource::finish(const Body &completed,Json &raw){
 }
 } // namespace
 
+bool projectNormalizedReturnOriginBody(Program &p,const Json &fn,const Function &cfg,Json &raw,Effects &direct,Error &error,EffectDiagnostics *diagnostics,std::vector<ReturnOriginAccessWitness> *accesses){
+  ReturnSource source{p,fn,direct,error,diagnostics,accesses};return source.initialize()&&source.normalized(cfg,raw);
+}
+
 bool deriveReturnOriginBody(Program &p,const Json &fn,Json &raw,Effects &direct,Error &error,EffectDiagnostics *diagnostics,std::vector<ReturnOriginAccessWitness> *accesses){
+  // Only the Source owner supplies this witness after its independent match.
+  // The shared projection itself neither constructs nor requires that token.
+  const auto id=field(fn,"id").getAsString().value();
+  size_t lookup=1;for(auto count=p.constructorReturnCFGs.size();count;count>>=1)lookup+=2;
+  if(!p.charge((id.size()/8+1)*(lookup+1)))return reject(error,"core-ir-common-budget","Source return-origin CFG dispatch exceeded shared work");
+  const auto qualified=p.constructorReturnCFGs.find(id.str());
+  if(qualified!=p.constructorReturnCFGs.end())return projectNormalizedReturnOriginBody(p,fn,qualified->second.get(),raw,direct,error,diagnostics,accesses);
   ReturnSource source{p,fn,direct,error,diagnostics,accesses};return source.run(raw);
 }
 } // namespace tsfg::commonProgram

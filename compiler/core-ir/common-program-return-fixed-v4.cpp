@@ -519,6 +519,16 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
   if(!deriveReturnOriginBody(p,fn,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr)){
     if(e.code!="core-ir-common-return-origin-open")return false;p.returnOriginPending.insert(id);e=Error{};return true;
   }
+  return deriveProjectedReturnEffects(p,fn,raw,out,e,diagnostics,witnesses);
+}
+
+bool deriveProjectedReturnEffects(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses){
+  if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return false;
+  auto &state=*p.returnOriginContracts;
+  if(!text(p,field(fn,"id"),e))return false;const auto id=string(field(fn,"id"));
+  size_t lookup=1;for(auto count=state.graphs.size();count;count>>=1)lookup+=2;
+  if(!work(p,e,lookup*(id.size()/8+1)))return false;const auto bound=state.graphs.find(id);
+  if(bound==state.graphs.end()){if(!work(p,e,id.size()/8+1))return false;p.returnOriginPending.insert(id);return true;}
   const auto charge=[&](size_t n){return work(p,e,n);};auto parsed=state.bodyDirectories.read(id,raw,charge);
   if(parsed.status==V4::ReadStatus::Open){p.returnOriginPending.insert(id);return true;}
   if(!need(parsed.status==V4::ReadStatus::Typed,e,parsed.reason?parsed.reason:"current body graph rejected"))return false;
@@ -584,6 +594,7 @@ bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,Ef
     if(facet=="allocation")out.allocation=true;else if(facet=="managedReference")out.managedReference=true;else if(facet=="ehControl")out.ehControl=true;else if(facet=="await")out.await=true;else if(facet=="lock")out.lock=true;else if(facet=="escape")out.escape=true;else if(facet=="unknownHost")out.unknownHost=true;
   }
   out.mayThrow=result.summary.language;
+  if(!text(p,field(fn,"returnType"),e))return false;
   const auto returned=state.shapes.find(string(field(fn,"returnType")));
   if(returned!=state.shapes.end()&&returned->second.kind==V4::TypeKind::Function)for(auto ref:parsed.graph.normal)if(ref<result.summary.holdsEnvironment.size()&&(result.summary.holdsEnvironment[ref]||!result.summary.owners[ref].empty()))out.managedReference=out.escape=true;
   if(!p.returnOriginPending.count(id))p.returnOriginVerified.insert(id);return e.message.empty();

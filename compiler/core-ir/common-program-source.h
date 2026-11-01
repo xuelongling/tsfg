@@ -61,7 +61,20 @@ struct ActualCheck;
 bool prepareReturnOriginContracts(Program &,Error &);
 bool prepareReturnOriginStorage(ActualCheck &);
 bool finishReturnOriginProofs(Program &,Error &);
+// Projects an independently admitted normalized CFG using its owned function,
+// type/global/environment/binding directories and complete semantic registerViews.
+// No Source body or FDI steps are read; callers must own those admission facts.
+// The result is raw equations plus direct effects, not reader/inclusion/domain
+// proof or cold authorization. The existing cumulative Program charge is shared.
+bool projectNormalizedReturnOriginBody(Program &,const Json &ownedFunction,const Function &admittedCFG,Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,std::vector<ReturnOriginAccessWitness> *accesses=nullptr);
 bool deriveReturnOriginBody(Program &,const Json &,Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,std::vector<ReturnOriginAccessWitness> *accesses=nullptr);
+// Consumes equations derived from the complete independently owned current
+// body, with all semantic views/physical Value capabilities admitted. The raw
+// input is not the Published graph, and direct effects/witnesses must also be
+// independently derived. Reads the owned fixed group through its typed reader,
+// inclusion and Domain; unavailable proofs stay Pending. Does not admit Source
+// or replace the caller's physical-effect union/final fixed-upper containment.
+bool deriveProjectedReturnEffects(Program &,const Json &ownedFunction,const Json &currentBody,Effects &direct,Error &,EffectDiagnostics *,const std::vector<ReturnOriginAccessWitness> &);
 bool deriveFixedReturnEffects(Program &,const Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr);
 bool fixedReturnOriginAvailable(const Program &,const std::string &);
 bool scalarReturnOriginProof(Program &,const std::string &,Error &);
