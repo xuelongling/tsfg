@@ -100,9 +100,43 @@ pub fn birth(c: *Context, store: *Store, id: facts.FrameId, weak: bool) Error!vo
     } else try insertNew(c,store,id,.{.unresolved=weak});
 }
 pub fn bind(c: *Context, store: *Store, id: facts.FrameId, selected: facts.Value) Error!void {
+    // This owning conversion stores data in a control frame; it never turns
+    // another Frame or initializer cursor into a language payload.
+    try c.require(selected.frames.len==0 and selected.cursors.len==0);
     const old = store.entries.getPtr(id) orelse return error.InvalidShape;
     const copied = try V.clone(c, selected); old.bound.deinit(c.allocator); old.bound = copied;
     old.unbound = false; old.initializing = false; old.aborted = false; old.prefix_min = 0; old.prefix_max = 0;
+}
+// Only the final actual replay calls this accumulator. Each store belongs to
+// one analysis context; unrelated nested frames remain distinct map entries.
+// Values come only from the actual FrameState, never a view/capacity/upper.
+pub fn observeLifetimes(c: *Context, into: *facts.ReceiverLifetimes, world: facts.WorldView,
+    context: facts.ContextId, source: *const Store, phase: facts.ReceiverPhase) Error!void {
+    try c.charge(2); const invocation=&world.contexts[@intFromEnum(context)];
+    into.unresolved=into.unresolved or invocation.unresolved;
+    var iterator=source.entries.iterator();
+    while(iterator.next()) |entry| {
+        try c.charge(2); const binding=entry.value_ptr; const info=&world.frames[@intFromEnum(entry.key_ptr.*)];
+        var row=into.entries.getPtr(entry.key_ptr.*);
+        if(row==null) {
+            var created=facts.ReceiverLifetime{.payload=try V.clone(c,binding.bound.view())};
+            errdefer created.payload.deinit(c.allocator);
+            try c.step();
+            if(into.entries.available==0) {
+                const previous=into.entries.capacity(); const next=@max(@as(usize,8),@as(usize,previous)*2);
+                try c.charge(previous+next+into.entries.count()+1);
+                try into.entries.ensureUnusedCapacity(c.allocator,1);
+            }
+            into.entries.putAssumeCapacityNoClobber(entry.key_ptr.*,created);
+            row=into.entries.getPtr(entry.key_ptr.*);
+        } else _=try row.?.payload.join(c,binding.bound.view());
+        try c.charge(4); const saved=row.?;
+        saved.unbound=saved.unbound or binding.unbound;
+        saved.unresolved=saved.unresolved or binding.unresolved or invocation.unresolved;
+        saved.weak=saved.weak or info.weak or invocation.repeated;
+        switch(phase) { .entry=>saved.phases.entry=true, .prefix=>saved.phases.prefix=true,
+            .normal=>saved.phases.normal=true, .language=>saved.phases.language=true, .request_trap=>saved.phases.request_trap=true }
+    }
 }
 pub fn abortInitializers(c: *Context, store: *Store) Error!void {
     var values = store.entries.valueIterator(); while (values.next()) |value| {

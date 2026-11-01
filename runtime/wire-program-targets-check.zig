@@ -40,6 +40,7 @@ pub const Invocation = struct {
     normal_relations: relation.Heap=.{}, language_relations: relation.Heap=.{},
     normal: bool=false, language: bool=false,
     entry_frames: facts.FrameStore=.{}, normal_frames: facts.FrameStore=.{}, language_frames: facts.FrameStore=.{},
+    receiver_lifetimes: facts.ReceiverLifetimes=.{},
 };
 pub const Analysis = struct {
     frames: std.ArrayListUnmanaged(region_data.FrameInfo)=.empty,
@@ -68,6 +69,7 @@ pub const Analysis = struct {
             item.entry.deinit(allocator); item.returned.deinit(allocator); item.thrown.deinit(allocator);
             item.normal_heap.deinit(allocator); item.language_heap.deinit(allocator);
             receiver_actual.deinit(&item.entry_frames,allocator); receiver_actual.deinit(&item.normal_frames,allocator); receiver_actual.deinit(&item.language_frames,allocator);
+            item.receiver_lifetimes.deinit(allocator);
             item.entry_relations.deinit(allocator); item.normal_relations.deinit(allocator); item.language_relations.deinit(allocator); allocator.destroy(item);
         }
         for(self.observations.items) |*row|row.known.deinit(allocator);
@@ -426,7 +428,7 @@ const Engine = struct {
     fn refresh(self: *Engine) Error!void {
         self.result.contexts.clearRetainingCapacity();
         for(self.result.invocations.items) |invocation| {
-            try self.c.step(); try self.result.contexts.append(self.c.allocator,.{.function=invocation.function,
+            try self.c.charge(2); try self.result.contexts.append(self.c.allocator,.{.function=invocation.function,.receiver_lifetimes=&invocation.receiver_lifetimes,
                 .arguments=.{.values=invocation.arguments},.entry=.{.heap=&invocation.entry,.relations=&invocation.entry_relations},.root=invocation.root,.frames=&invocation.entry_frames,
                 .repeated=invocation.repeated,.unresolved=invocation.unresolved,.region_scope=invocation.region_scope});
         }
@@ -552,7 +554,7 @@ const Engine = struct {
         }
         if(self.replay)return error.InvalidShape; // Final replay never invents contexts.
         if(self.c.program.tables.mode!=.legacy)try self.c.require(self.result.invocations.items.len<4096);
-        const invocation=try self.c.allocator.create(Invocation); errdefer self.c.allocator.destroy(invocation);
+        try self.c.step(); const invocation=try self.c.allocator.create(Invocation); errdefer self.c.allocator.destroy(invocation);
         const values=try self.c.allocator.alloc(V,arguments.len); errdefer self.c.allocator.free(values); @memset(values,.{});
         var copied_count: usize=0; errdefer for(values[0..copied_count]) |*value|value.deinit(self.c.allocator);
         for(arguments,0..) |value,i| { values[i]=try V.clone(self.c,value.view()); copied_count+=1; }
@@ -656,7 +658,12 @@ const Engine = struct {
     fn origin(self: *Engine, value: *V, context: facts.ContextId, owner: @FieldType(facts.EffectOrigin,"owner")) Error!void {
         const one=[_]facts.EffectOrigin{.{.context=context,.owner=owner}}; try self.origins(value,&one);
     }
+    fn receiverLifetimes(self: *Engine, at: facts.Site, state: *const State, phase: facts.ReceiverPhase) Error!void {
+        if(!self.emit or self.c.program.tables.mode!=.common)return;
+        try receiver_actual.observeLifetimes(self.c,&self.info(at.context).receiver_lifetimes,self.result.view(),at.context,&state.frames,phase);
+    }
     fn callback(self: *Engine, before: bool, at: facts.Site, state: *const State) Error!void {
+        try self.receiverLifetimes(at,state,.prefix);
         if(!self.emit)return;
         for(self.observers) |observer| { try self.c.step(); const action=if(before)observer.before else observer.after;
             if(action) |f|try f(observer.client,self.c,self.result.view(),at,state.view());
@@ -669,6 +676,7 @@ const Engine = struct {
         if(self.emit)for(self.observers) |observer| { try self.c.step(); if(observer.call) |f|try f(observer.client,self.c,self.result.view(),.{.caller=at,.callee=callee,.normal=normal,.language=language}); };
     }
     fn completion(self: *Engine, at: facts.Site, kind: facts.Completion, value: facts.Value, state: *const State) Error!void {
+        try self.receiverLifetimes(at,state,switch(kind){.normal=>.normal,.language=>.language,.request_trap=>.request_trap});
         const invocation=self.info(at.context);
         if(self.c.program.tables.mode==.common and kind!=.request_trap) {
             var d=self.domain(); try d.returned(invocation.region_scope,invocation.root,try facts.relation(self.c,value),&state.relations);
@@ -709,6 +717,9 @@ const Engine = struct {
         }
     };
     fn edge(self: *Engine, graph: *Graph, at: facts.Site, target: t.BlockRef, state: *const State, arguments: []const V) Error!void {
+        // Fork-local receiver_bind states are not the caller's after-callback
+        // state. Sample the actual edge state even when the replay won't join it.
+        try self.receiverLifetimes(at,state,.prefix);
         const function=self.c.program.functions[@intFromEnum(at.location.function)]; const b=@intFromEnum(target);
         const parameters=function.blocks[b].parameters; try self.c.require(parameters.len==arguments.len);
         try self.notifyEdge(at,.{.function=at.location.function,.block=target,.instruction=0});
@@ -1860,6 +1871,7 @@ const Engine = struct {
             graph.collect=false; self.emit=true; defer self.emit=false;
             for(incoming,0..) |saved,b| { if(saved==null)continue;
                 var state=try State.clone(self.c,&saved.?); defer state.deinit(self.c);
+                if(b==0)try self.receiverLifetimes(.{.context=context,.location=.{.function=invocation.function,.block=@enumFromInt(b),.instruction=0}},&state,.entry);
                 for(function.blocks[b].instructions,0..) |_,index| {
                     const at=facts.Site{.context=context,.location=.{.function=invocation.function,.block=@enumFromInt(b),.instruction=@intCast(index)}};
                     if(!try self.operate(&graph,at,&state))break;
@@ -1976,5 +1988,8 @@ pub fn analyze(c: *Context, material: ?*const host_binding.Bundle, observers: []
     try c.require(!engine.changed);
     try c.require(scopes.len==engine.result.region_scopes.items.len);
     for(scopes,engine.result.region_scopes.items) |before,after| { try c.step(); try c.require(std.meta.eql(before,after)); }
+    if(c.program.tables.mode==.common)for(engine.result.invocations.items) |invocation| {
+        try c.step(); invocation.receiver_lifetimes.final_replay_complete=true;
+    };
     const result=engine.result; engine.result=.{}; return result;
 }

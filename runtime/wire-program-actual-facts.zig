@@ -248,9 +248,42 @@ pub const FrameState = struct {
     initializing: bool=false, aborted: bool=false, prefix_min:u16=0, prefix_max:u16=0,
 };
 pub const FrameStore = struct { entries: std.AutoHashMapUnmanaged(FrameId,FrameState)=.{} };
+pub const ReceiverPhase = enum { entry, prefix, normal, language, request_trap };
+pub const ReceiverPhases = struct { entry: bool=false, prefix: bool=false, normal: bool=false, language: bool=false, request_trap: bool=false };
+pub const ReceiverLifetime = struct {
+    // A union of observed data payloads, not a live control binding or a
+    // logical-receiver grant. Frame identity stays solely in the map key.
+    payload: OwnedValue=.{}, phases: ReceiverPhases=.{},
+    unbound: bool=false, unresolved: bool=false, weak: bool=false,
+};
+pub const ReceiverLifetimeView = struct {
+    frame: FrameId, payload: Value, phases: ReceiverPhases,
+    unbound: bool, unresolved: bool, weak: bool,
+};
+pub const ReceiverLifetimes = struct {
+    entries: std.AutoHashMapUnmanaged(FrameId,ReceiverLifetime)=.{},
+    unresolved: bool=false,
+    // Observation phase only, never coverage/admission/effect authority. Views
+    // inside callbacks still contain only the prefix collected so far.
+    final_replay_complete: bool=false,
+    // Missing means unobserved, never a proved empty receiver upper. The same
+    // FrameId may be abstract/weak; no unique dynamic activation follows.
+    pub fn get(self: *const ReceiverLifetimes, c: *Context, frame: FrameId) Error!?ReceiverLifetimeView {
+        try c.step();
+        if(!self.final_replay_complete)return error.FixedInterpretationPending;
+        const row=self.entries.getPtr(frame) orelse return null;
+        try c.row(ReceiverLifetimeView);
+        return .{.frame=frame,.payload=row.payload.view(),.phases=row.phases,.unbound=row.unbound,.unresolved=row.unresolved,.weak=row.weak};
+    }
+    pub fn deinit(self: *ReceiverLifetimes, allocator: std.mem.Allocator) void {
+        var values=self.entries.valueIterator(); while(values.next()) |value|value.payload.deinit(allocator);
+        self.entries.deinit(allocator); self.*=.{};
+    }
+};
 pub const StateView = struct {values: ValuesView,heap: HeapView,relations:?*const data.Heap=null,frames:?*const FrameStore=null};
 pub const ContextInfo = struct {
     frames: ?*const FrameStore=null,
+    receiver_lifetimes: ?*const ReceiverLifetimes=null,
     function: t.FunctionRef,
     // SSA entry-block arguments: Common includes hidden env/receiver, legacy
     // has one value per logical domain parameter plus a closure hidden env,
