@@ -44,7 +44,7 @@ fn ehLayout(c: *Context, value: storage.ExceptionLayout) Error!void {
 fn ehCarrier(c: *Context, value: storage.ExceptionCarrier) Error!void {
     try c.step(); const n = c.counts(); switch (value) { .domain => |v| { _ = try c.ref(v, n.domains); }, .@"type" => |v| { _ = try c.ref(v, n.types); }, .payload => try c.step() }
 }
-fn abiCarrier(c: *Context, value: t.Carrier) Error!void { try c.carrier(value); if (value == .cell) return error.InvalidShape; }
+fn abiCarrier(c: *Context, value: t.Carrier) Error!void { try c.carrier(value); if (value == .cell or value == .initialization) return error.InvalidShape; }
 fn optionalOrigin(c: *Context, value: ?t.Origin) Error!void { if (value) |v| try c.origin(v) else try c.step(); }
 fn parameterRef(c: *Context, value: member.ConstructorParameterRef) Error!void {
     const v = switch (c.program.tables.mode) { .common => |v| v, else => return error.WrongMode };
@@ -125,7 +125,7 @@ fn commonMembers(c: *Context, v: tables.CommonTables) Error!void {
 fn commonStorage(c: *Context, v: tables.CommonTables) Error!void {
     const n = c.counts(); try bound(c, v.storage.bindings.len, 65536); var prior: ?[]const u8 = null;
     for (v.storage.bindings) |row| { try c.row(@TypeOf(row)); try c.text(row.id, 4096, 1); if (prior) |p| if (std.mem.order(u8, p, row.id) != .lt) return error.InvalidOrder; prior = row.id;
-        try c.text(row.name, 4096, 1); _ = try c.ref(row.@"type", n.types); try c.carrier(row.carrier); try c.maybeRef(row.scope, n.scopes); try optionalOrigin(c, row.origin);
+        try c.text(row.name, 4096, 1); _ = try c.ref(row.@"type", n.types); try c.carrier(row.carrier); try c.require(row.carrier != .receiver and row.carrier != .initialization); try c.maybeRef(row.scope, n.scopes); try optionalOrigin(c, row.origin);
         try c.step(); switch (row.owner) { .param, .local, .receiver => |f| { _ = try c.ref(f, c.program.functions.len); try c.require(row.scope != null); },
             .global => |g| { _ = try c.ref(g, n.globals); try c.require(row.scope == null); }, .field => |f| { _ = try c.ref(f, n.fields); try c.require(row.scope == null); },
             .element => |e| { _ = try c.ref(e, n.types); try c.require(row.scope == null); } }
@@ -135,14 +135,20 @@ fn commonStorage(c: *Context, v: tables.CommonTables) Error!void {
         try numbers(c, row.carrier.field_offsets, 65536, p.byte_size); if (row.body) |body| { try c.row(@TypeOf(body)); try physical(c, body.byte_size, body.alignment, body.reference_count, 65536); try bound(c, body.fields.len, 65536);
             for (body.fields) |f| { try c.row(@TypeOf(f)); _ = try c.ref(f.field, n.fields); _ = try c.ref(f.binding, n.bindings); try c.require(f.offset <= body.byte_size and f.reference_offset <= body.reference_count); } }
     }
-    for (v.storage.arrays) |row| { try c.row(@TypeOf(row)); _ = try c.ref(row.@"type", n.types); try c.carrier(row.element_carrier); }
+    for (v.storage.arrays) |row| { try c.row(@TypeOf(row)); _ = try c.ref(row.@"type", n.types); try c.carrier(row.element_carrier); try c.require(row.element_carrier != .receiver and row.element_carrier != .initialization); }
     for (v.storage.environments) |row| { try c.row(@TypeOf(row)); _ = try c.ref(row.environment, n.environments); try physical(c, row.byte_size, row.alignment, row.reference_count, 65536);
         if (row.parent_offset) |offset| try c.require(offset <= row.byte_size); try numbers(c, row.slot_offsets, 65536, row.byte_size); }
     try c.require(v.storage.payload.byte_size == 16 and v.storage.payload.alignment == 8 and v.storage.payload.reference_count == 1);
     try bound(c, v.abis.len, 4096); try c.require(v.abis.len == c.program.functions.len); try uniqueField(c, v.abis, "function", c.program.functions.len);
     for (v.abis) |row| { try c.row(@TypeOf(row)); _ = try c.ref(row.function, c.program.functions.len); try refs(c, row.parameters, n.bindings, 64, .unique);
         try c.maybeRef(row.receiver, n.bindings); try c.maybeRef(row.lexical_environment, n.environments); try c.maybeRef(row.result, n.types); try bound(c, row.physical_parameters.len, 64);
-        for (row.physical_parameters) |carrier| try abiCarrier(c, carrier); if (row.result_carrier) |carrier| try abiCarrier(c, carrier); }
+        try c.maybeRef(row.construction, n.constructions);
+        if (row.receiver_frame) |ordinal| try c.require(ordinal < row.physical_parameters.len);
+        for (row.physical_parameters, 0..) |carrier, ordinal| {
+            try abiCarrier(c, carrier);
+            if (carrier == .receiver) try c.require(row.construction != null and row.receiver_frame != null and ordinal == row.receiver_frame.? and @intFromEnum(carrier.receiver) == @intFromEnum(row.construction.?));
+        }
+        if (row.result_carrier) |carrier| { try abiCarrier(c, carrier); try c.require(carrier != .receiver); } }
 }
 fn fieldLike(c: *Context, value: tables.FieldLike) Error!void { try c.step(); switch (value) { .field => |v| { _ = try c.ref(v, c.counts().fields); }, .length => |v| { const i = try c.ref(v, c.counts().types); const data = switch (c.program.tables.mode) { .common => |data| data, else => return error.WrongMode }; try c.require(data.types[i].kind == .array or data.types[i].kind == .readSpan); } } }
 fn commonViews(c: *Context, v: tables.CommonTables) Error!void {

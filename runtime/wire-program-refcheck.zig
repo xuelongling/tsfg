@@ -17,7 +17,6 @@ const identity_check = @import("wire-program-identity-check.zig");
 const module_contracts_check = @import("wire-program-module-contracts-check.zig");
 const reference_contracts_check = @import("wire-program-reference-contracts-check.zig");
 const construction_contracts_check = @import("wire-program-construction-contracts-check.zig");
-const construction_body_check = @import("wire-program-construction-body-check.zig");
 const fixed_publication_check = @import("wire-program-fixed-publication-check.zig");
 const fixed_targets_check = @import("wire-program-fixed-targets-check.zig");
 const kernel_request_check = @import("wire-program-kernel-request-check.zig");
@@ -37,6 +36,9 @@ const Context = context.Context;
 // records; their presence alone is no proof. The compiled-anchor check below
 // owns verification, before any material enters the one solve/final replay.
 pub fn check(allocator: std.mem.Allocator, program: *const model.Program, material: ?*const HostBundle) Error!usize {
+    // This overlay changes required Common fields and control meaning. Until
+    // Root adopts a complete newer exact format/hash, wire17 fails closed.
+    if (program.tables.mode == .common and model.format.version <= 17) return error.WrongMode;
     var c = Context{ .program = program, .allocator = allocator };
     try c.charge(12);
     model.requireFormat(program.envelope, program.target) catch return error.InvalidShape;
@@ -91,7 +93,6 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     actual = try targets_check.analyze(&c, material, &observers);
     try borrowing.finish();
     try effects.finish();
-    try construction_body_check.checkBodies(&c);
     return model.format.max_work - c.remaining;
 }
 
@@ -152,7 +153,7 @@ fn functionShape(c: *Context, f: *const model.Function, index: usize, string_uni
         try c.row(model.Register);
         try c.carrier(r.carrier);
         try c.maybeRef(r.view, c.counts().types);
-        if (std.meta.activeTag(r.carrier) == .cell or std.meta.activeTag(r.carrier) == .environment) try c.require(r.view == null);
+        if (r.carrier == .cell or r.carrier == .environment or r.carrier == .receiver or r.carrier == .initialization) try c.require(r.view == null);
     }
     // Definition-directory uniqueness is structural. Dominance, use-before-def
     // and actual capacity remain the independent SSA validator's obligations.
@@ -234,7 +235,8 @@ fn instructionShape(c: *Context, f: *const model.Function, owner: usize, op: *co
     }
     const ends = switch (code) {
         .@"return", .br, .cond_br, .domain_numeric_use, .eh_invoke, .eh_invoke_indirect,
-        .eh_route, .eh_raise, .eh_unreachable, .common_method_invoke => true,
+        .eh_route, .eh_raise, .eh_unreachable, .common_method_invoke,
+        .receiver_bind, .receiver_get, .receiver_result => true,
         else => false,
     };
     try c.require(terminal == ends);
@@ -248,7 +250,7 @@ fn instructionShape(c: *Context, f: *const model.Function, owner: usize, op: *co
             .domain_construct, .domain_super, .domain_initialize_fields, .domain_field_define,
             .domain_field_initialize, .domain_method_call, .domain_member_present, .function_call,
             .eh_project, .eh_pack, .eh_type_test, .eh_presence_widen, .eh_field_read,
-            .eh_function, .eh_publish => return error.WrongMode,
+            .eh_function, .eh_publish, .eh_construct, .eh_field_initialize => return error.WrongMode,
             else => {},
         }
     } else if (exception) {
@@ -287,6 +289,14 @@ fn instructionShape(c: *Context, f: *const model.Function, owner: usize, op: *co
         .domain_array_create, .common_typed_array_create, .domain_construct,
         .function_make, .function_call, .eh_function, .environment_alloc => try c.require(op.result != null),
         .authorized_host, .call, .domain_method_call => {}, // Descriptor-specific arity below.
+        .receiver_create => try arity(c, op, 0, true),
+        .receiver_child, .receiver_allocate => try arity(c, op, 1, true),
+        .receiver_bind => try arity(c, op, 2, false),
+        .receiver_get => try arity(c, op, 1, false),
+        .receiver_result => try c.require(op.result == null and (op.operands.len == 1 or op.operands.len == 2)),
+        .initialize_begin => try arity(c, op, 2, true),
+        .initialize_field => try arity(c, op, 3, true),
+        .initialize_end => try arity(c, op, 2, false),
     }
     switch (op.data) {
         .const_i32 => |bits| try c.require(bits <= std.math.maxInt(u32)),
@@ -481,6 +491,22 @@ fn instructionShape(c: *Context, f: *const model.Function, owner: usize, op: *co
         .common_typed_array_create => |v| {
             const index = try c.ref(v.actual_array_type, n.types); try c.carrier(v.element_carrier); try c.text(v.allocation, 4096, 1);
             try c.require(c.program.tables.mode.common.types[index].kind == .array);
+        },
+        .receiver_create => |v| {
+            _ = try c.ref(v.construction, n.constructions); _ = try c.ref(v.new_target, n.types);
+            try c.require(common and op.operator_anchor == null and op.target_anchor == null);
+        },
+        inline .receiver_child, .receiver_allocate, .initialize_begin, .initialize_end => |v| {
+            _ = try c.ref(v.construction, n.constructions);
+            try c.require(common and op.operator_anchor == null and op.target_anchor == null);
+        },
+        inline .receiver_bind, .receiver_get, .receiver_result => |v| {
+            _ = try c.ref(v.construction, n.constructions); try dualEdges(c, f, v.normal, v.language);
+            try c.require(common and op.operator_anchor == null and op.target_anchor == null and f.blocks[@intFromEnum(v.normal)].parameters.len == 1);
+        },
+        .initialize_field => |v| {
+            _ = try c.ref(v.construction, n.constructions); _ = try c.ref(v.field, n.fields);
+            try c.require(common and op.operator_anchor == null and op.target_anchor == null);
         },
         else => try c.step(), // Typed enums/bools/void have no additional directory edge.
     }

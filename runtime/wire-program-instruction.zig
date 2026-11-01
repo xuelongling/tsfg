@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Typed opcode records only. No dispatch, interpretation or packet decoding.
+// Breaking Common receiver candidate. Typed records only, no packet decoding.
 const t = @import("wire-program-types.zig");
 
 pub const EqualityKind = enum(u8) { equal = 0, not_equal = 1 };
@@ -104,6 +104,15 @@ pub const Opcode = enum(u8) {
     @"eh_equal" = 92,
     @"common_method_invoke" = 93,
     @"common_typed_array_create" = 94,
+    receiver_create = 95,
+    receiver_child = 96,
+    receiver_allocate = 97,
+    receiver_bind = 98,
+    receiver_get = 99,
+    receiver_result = 100,
+    initialize_begin = 101,
+    initialize_field = 102,
+    initialize_end = 103,
 };
 
 // No opaque kind payload is accepted. Exact prefix operands and Source anchors
@@ -205,6 +214,15 @@ pub const Data = union(Opcode) {
     @"eh_equal": struct { @"operator": EqualityKind },
     @"common_method_invoke": struct { @"receiver_view": t.TypeRef, @"member": t.MethodRef, @"dispatch": t.DispatchRef, @"normal": t.BlockRef, @"exceptional": t.BlockRef },
     @"common_typed_array_create": struct { actual_array_type: t.TypeRef, element_carrier: t.Carrier, allocation: []const u8 },
+    receiver_create: struct { construction: t.ConstructionIndex, new_target: t.TypeRef },
+    receiver_child: struct { construction: t.ConstructionIndex },
+    receiver_allocate: struct { construction: t.ConstructionIndex },
+    receiver_bind: struct { construction: t.ConstructionIndex, normal: t.BlockRef, language: t.BlockRef },
+    receiver_get: struct { construction: t.ConstructionIndex, normal: t.BlockRef, language: t.BlockRef },
+    receiver_result: struct { construction: t.ConstructionIndex, normal: t.BlockRef, language: t.BlockRef },
+    initialize_begin: struct { construction: t.ConstructionIndex },
+    initialize_field: struct { construction: t.ConstructionIndex, field: t.FieldRef },
+    initialize_end: struct { construction: t.ConstructionIndex },
 };
 
 pub const Instruction = struct {

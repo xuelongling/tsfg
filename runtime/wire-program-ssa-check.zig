@@ -9,6 +9,7 @@ const ins = model.instruction;
 const table = @import("wire-program-tables.zig");
 const storage = @import("wire-program-storage.zig");
 const context = @import("wire-program-refcheck-context.zig");
+const receiver_protocol = @import("wire-program-receiver-protocol-check.zig");
 const Context = context.Context;
 pub const Error = context.Error;
 const Bits = [4]u64;
@@ -23,13 +24,9 @@ fn ehCarrier(value: storage.ExceptionCarrier) t.Carrier {
 fn origin(a: *const ins.Instruction, b: *const ins.Instruction) bool { return std.meta.eql(a.source, b.source); }
 fn anchorsEmpty(op: *const ins.Instruction) bool { return op.operator_anchor == null and op.target_anchor == null; }
 
-const Definition = struct { block: usize, position: i32 };
+const Definition = receiver_protocol.Definition;
 const Use = struct { block: usize=0, position: usize=0, operand: usize=0, count: usize=0 };
-const Facts = struct {
-    successors: [2]usize=.{0,0}, count: usize=0,
-    predecessors: Bits=zero, predecessor_count: usize=0,
-    reachable: bool=false, condition: bool=false,
-};
+const Facts = receiver_protocol.Facts;
 const Predecessors = struct {
     bits: Bits, word: usize=0,
     fn next(self: *Predecessors, c: *Context) Error!?usize {
@@ -135,6 +132,7 @@ const Graph = struct {
                 .cond_br => |v| { edges.count=2; edges.successors=.{@intFromEnum(v.true_destination),@intFromEnum(v.false_destination)}; },
                 .domain_numeric_use => |v| { edges.count=1; edges.successors[0]=@intFromEnum(v.normal_successor); },
                 inline .eh_invoke,.eh_invoke_indirect,.common_method_invoke => |v| { edges.count=2; edges.successors=.{@intFromEnum(v.normal),@intFromEnum(v.exceptional)}; },
+                inline .receiver_bind,.receiver_get,.receiver_result => |v| { edges.count=2; edges.successors=.{@intFromEnum(v.normal),@intFromEnum(v.language)}; },
                 .eh_route => |v| { edges.count=1; edges.successors[0]=@intFromEnum(v.successor); },
                 else => {}, // All remaining typed opcodes have no CFG edges.
             }
@@ -721,6 +719,9 @@ const Graph = struct {
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
         try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.numeric(); try self.fuel();
+        // Borrow the paid definition/predecessor directory. The business proof
+        // adds no second dominance graph, Context, Source table or admission.
+        if(self.mode==.common)try receiver_protocol.check(self.c,self.function,.{.definitions=self.definitions,.facts=self.facts});
     }
 };
 

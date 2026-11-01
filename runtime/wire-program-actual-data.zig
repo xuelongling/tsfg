@@ -11,8 +11,14 @@ pub const Error = context.Error;
 pub const ContextId = enum(u32) { _ };
 pub const ObjectId = enum(u32) { _ };
 pub const CellId = enum(u32) { _ };
+pub const FrameId = enum(u32) { _ };
+pub const Cursor = struct { frame: FrameId, position: u16 };
 pub const Location = struct { function: t.FunctionRef, block: t.BlockRef, instruction: u16 };
 pub const Site = struct { context: ContextId, location: Location };
+pub const FrameInfo = struct {
+    site: Site, construction: t.ConstructionIndex, new_target: t.TypeRef,
+    parent: ?FrameId = null, weak: bool = false,
+};
 pub const Root = enum(u32) { _ };
 pub const ScopeRef = enum(u16) { _ };
 

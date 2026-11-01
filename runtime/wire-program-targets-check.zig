@@ -14,6 +14,7 @@ const Heap = facts.Heap;
 const relation = @import("wire-program-region-holding.zig");
 const region_data = @import("wire-program-actual-data.zig");
 const host_binding = @import("wire-program-host-binding-check.zig");
+const receiver_actual = @import("wire-program-receiver-actual.zig");
 
 pub const Relation = enum { exact_closed, known_covered, derived, unresolved, unobserved };
 pub const TargetObservation = struct {
@@ -38,8 +39,10 @@ pub const Invocation = struct {
     entry_relations: relation.Heap=.{},
     normal_relations: relation.Heap=.{}, language_relations: relation.Heap=.{},
     normal: bool=false, language: bool=false,
+    entry_frames: facts.FrameStore=.{}, normal_frames: facts.FrameStore=.{}, language_frames: facts.FrameStore=.{},
 };
 pub const Analysis = struct {
+    frames: std.ArrayListUnmanaged(region_data.FrameInfo)=.empty,
     // Passive facts. Neither construction nor a known-subset comparison is an
     // admission marker; unresolved inputs and unavailable region correlation
     // must be consumed explicitly by later effects/borrow clients.
@@ -56,7 +59,7 @@ pub const Analysis = struct {
     region_scopes: std.ArrayListUnmanaged(relation.Scope)=.empty,
 
     pub fn view(self: *const Analysis) facts.WorldView {
-        return .{.objects=self.objects.items,.cells=self.cells.items,.contexts=self.contexts.items,
+        return .{.frames=self.frames.items,.objects=self.objects.items,.cells=self.cells.items,.contexts=self.contexts.items,
             .region_nodes=self.region_nodes.items,.region_scopes=self.region_scopes.items};
     }
     pub fn deinit(self: *Analysis, allocator: std.mem.Allocator) void {
@@ -64,16 +67,19 @@ pub const Analysis = struct {
             for(item.arguments) |*value|value.deinit(allocator); allocator.free(item.arguments);
             item.entry.deinit(allocator); item.returned.deinit(allocator); item.thrown.deinit(allocator);
             item.normal_heap.deinit(allocator); item.language_heap.deinit(allocator);
+            receiver_actual.deinit(&item.entry_frames,allocator); receiver_actual.deinit(&item.normal_frames,allocator); receiver_actual.deinit(&item.language_frames,allocator);
             item.entry_relations.deinit(allocator); item.normal_relations.deinit(allocator); item.language_relations.deinit(allocator); allocator.destroy(item);
         }
         for(self.observations.items) |*row|row.known.deinit(allocator);
         for(self.creation_storage.items) |*sites|sites.deinit(allocator); self.creation_storage.deinit(allocator);
         self.objects.deinit(allocator); self.cells.deinit(allocator); self.invocations.deinit(allocator);
+        self.frames.deinit(allocator);
         self.contexts.deinit(allocator); self.observations.deinit(allocator);
         self.region_nodes.deinit(allocator); self.region_scopes.deinit(allocator); self.*=.{};
     }
 };
 const State = struct {
+    frames: facts.FrameStore=.{},
     values: []V,
     heap: Heap=.{},
     relations: relation.Heap=.{},
@@ -82,8 +88,9 @@ const State = struct {
     }
     fn deinit(self: *State, c: *Context) void {
         for(self.values) |*v|v.deinit(c.allocator); c.allocator.free(self.values); self.heap.deinit(c.allocator); self.relations.deinit(c.allocator);
+        receiver_actual.deinit(&self.frames,c.allocator);
     }
-    fn view(self: *const State) facts.StateView { return .{.values=.{.values=self.values},.heap=.{.heap=&self.heap,.relations=&self.relations},.relations=&self.relations}; }
+    fn view(self: *const State) facts.StateView { return .{.frames=&self.frames,.values=.{.values=self.values},.heap=.{.heap=&self.heap,.relations=&self.relations},.relations=&self.relations}; }
     fn read(self: *const State, r: t.RegisterRef) facts.Value { return self.values[@intFromEnum(r)].view(); }
     fn assign(self: *State, c: *Context, r: t.RegisterRef, value: facts.Value) Error!void {
         const replacement=try V.clone(c,value); const target=&self.values[@intFromEnum(r)];
@@ -92,11 +99,12 @@ const State = struct {
     fn clone(c: *Context, source: *const State) Error!State {
         var result=try State.init(c,source.values.len); errdefer result.deinit(c);
         for(source.values,0..) |value,i| { result.values[i]=try V.clone(c,value.view()); }
-        result.heap=try Heap.clone(c,source.heap.view()); result.relations=try relation.Heap.clone(c,&source.relations); return result;
+        result.heap=try Heap.clone(c,source.heap.view()); result.relations=try relation.Heap.clone(c,&source.relations); result.frames=try receiver_actual.clone(c,&source.frames); return result;
     }
     fn join(self: *State, c: *Context, incoming: *const State) Error!bool {
         var changed=try self.heap.join(c,incoming.heap.view());
         changed=(try self.relations.join(c,&incoming.relations)) or changed;
+        changed=(try receiver_actual.join(c,&self.frames,&incoming.frames)) or changed;
         for(self.values,incoming.values) |*a,b| { if(try a.join(c,b.view()))changed=true; } return changed;
     }
 };
@@ -113,6 +121,7 @@ const Engine = struct {
     };
     const CopyPair = struct { original: facts.ObjectId, copied: facts.ObjectId, parent: ?usize, field: ?t.FieldRef=null };
     const Activation = struct { function: t.FunctionRef, parent: ?usize, site: ?facts.Location, recursive: bool };
+    const FrameKey = struct { activation: usize, location: facts.Location, construction: t.ConstructionIndex, new_target: t.TypeRef, parent: ?facts.FrameId };
     const ObjectKey = struct {
         activation: usize, location: facts.Location, kind: facts.ObjectKind, @"type": ?t.TypeRef, environment: ?t.EnvironmentRef,
         copy_source: ?facts.ObjectId=null, copy_parent: ?facts.ObjectId=null, copy_field: ?t.FieldRef=null,
@@ -127,6 +136,7 @@ const Engine = struct {
     initial_globals: Heap=.{},
     activations: std.ArrayListUnmanaged(Activation)=.empty,
     object_keys: std.ArrayListUnmanaged(ObjectKey)=.empty,
+    frame_keys: std.ArrayListUnmanaged(FrameKey)=.empty,
     cell_activations: std.ArrayListUnmanaged(usize)=.empty,
     captured: std.AutoHashMapUnmanaged(struct { environment: t.EnvironmentRef, slot: t.EnvironmentSlotRef },V)=.{},
     primitives: std.StringHashMapUnmanaged(t.TypeRef)=.{},
@@ -139,6 +149,7 @@ const Engine = struct {
     fn deinit(self: *Engine) void {
         self.initial_globals.deinit(self.c.allocator); self.activations.deinit(self.c.allocator);
         self.object_keys.deinit(self.c.allocator); self.cell_activations.deinit(self.c.allocator);
+        self.frame_keys.deinit(self.c.allocator);
         var iterator=self.captured.valueIterator(); while(iterator.next()) |value|value.deinit(self.c.allocator); self.captured.deinit(self.c.allocator);
         self.primitives.deinit(self.c.allocator);
         self.region_keys.deinit(self.c.allocator); self.scope_keys.deinit(self.c.allocator);
@@ -354,6 +365,12 @@ const Engine = struct {
             try self.c.step(); if(!graph.live[to*graph.registers+index])continue;
             try demanded.append(self.c.allocator,try facts.relation(self.c,value.view())); try roots.append(self.c.allocator,value);
         }
+        var retained=try receiver_actual.retained(self.c,&state.frames,roots.items); defer retained.deinit(self.c.allocator);
+        if(!retained.view().bottom()) {
+            try self.c.charge(2+@as(usize,if(demanded.items.len==demanded.capacity)demanded.items.len else 0)+@as(usize,if(roots.items.len==roots.capacity)roots.items.len else 0));
+            try demanded.ensureUnusedCapacity(self.c.allocator,1); try roots.ensureUnusedCapacity(self.c.allocator,1);
+            demanded.appendAssumeCapacity(try facts.relation(self.c,retained.view())); roots.appendAssumeCapacity(retained);
+        }
         var reached_heap=try self.reachable(roots.items,state.heap.view()); defer reached_heap.deinit(self.c.allocator);
         var entries=reached_heap.view().iterator(); while(entries.next()) |entry| { try self.c.step(); try demanded.append(self.c.allocator,try facts.relation(self.c,entry.value)); }
         var all=state.heap.entries.iterator(); while(all.next()) |entry| {
@@ -366,6 +383,7 @@ const Engine = struct {
         try d.cut(demanded.items,globals.items,&no_registers,&state.relations);
         for(state.values) |*value|try value.region.age(self.c);
         var raw=state.heap.entries.valueIterator(); while(raw.next()) |value|try value.region.age(self.c);
+        var frames=state.frames.entries.valueIterator(); while(frames.next()) |frame|try frame.bound.region.age(self.c);
     }
     fn activationFor(self: *Engine, function: t.FunctionRef, parent: ?facts.Site) Error!usize {
         if(self.closureLegacy()) {
@@ -409,7 +427,7 @@ const Engine = struct {
         self.result.contexts.clearRetainingCapacity();
         for(self.result.invocations.items) |invocation| {
             try self.c.step(); try self.result.contexts.append(self.c.allocator,.{.function=invocation.function,
-                .arguments=.{.values=invocation.arguments},.entry=.{.heap=&invocation.entry,.relations=&invocation.entry_relations},.root=invocation.root,
+                .arguments=.{.values=invocation.arguments},.entry=.{.heap=&invocation.entry,.relations=&invocation.entry_relations},.root=invocation.root,.frames=&invocation.entry_frames,
                 .repeated=invocation.repeated,.unresolved=invocation.unresolved,.region_scope=invocation.region_scope});
         }
     }
@@ -478,12 +496,22 @@ const Engine = struct {
         }
         return result;
     }
-    fn contextFor(self: *Engine, function: t.FunctionRef, arguments: []const V, heap: facts.HeapView, parent: ?facts.Site, is_root: bool, repeated: bool, versions: ?*const relation.Heap, scope: ?relation.ScopeRef) Error!facts.ContextId {
+    fn contextFor(self: *Engine, function: t.FunctionRef, arguments: []const V, heap: facts.HeapView, parent: ?facts.Site, is_root: bool, repeated: bool, versions: ?*const relation.Heap, scope: ?relation.ScopeRef, frames: ?*const facts.FrameStore) Error!facts.ContextId {
         const activation=try self.activationFor(function,parent);
         const summarized=repeated or self.activations.items[activation].recursive;
-        var entry=try self.reachable(arguments,heap); defer entry.deinit(self.c.allocator);
+        var selected_frames: facts.FrameStore=.{}; defer receiver_actual.deinit(&selected_frames,self.c.allocator);
+        if(frames) |incoming|selected_frames=try receiver_actual.select(self.c,incoming,arguments);
+        var retained=try receiver_actual.retained(self.c,&selected_frames,arguments); defer retained.deinit(self.c.allocator);
+        var roots: std.ArrayListUnmanaged(V)=.empty; defer roots.deinit(self.c.allocator);
+        const has_frames=selected_frames.entries.count()!=0;
+        if(has_frames) {
+            try self.c.charge(arguments.len+1); try roots.ensureTotalCapacityPrecise(self.c.allocator,arguments.len+1);
+            roots.appendSliceAssumeCapacity(arguments); roots.appendAssumeCapacity(retained);
+        }
+        const retained_arguments=if(has_frames)roots.items else arguments;
+        var entry=try self.reachable(retained_arguments,heap); defer entry.deinit(self.c.allocator);
         var current: relation.Heap=.{}; defer current.deinit(self.c.allocator);
-        if(versions) |selected|current=try self.selectedReachable(arguments,selected);
+        if(versions) |selected|current=try self.selectedReachable(retained_arguments,selected);
         for(self.result.invocations.items,0..) |invocation,i| {
             if(self.closureLegacy() and invocation.function==function) {
                 try self.c.require(invocation.arguments.len==arguments.len);
@@ -508,14 +536,17 @@ const Engine = struct {
             try self.c.step(); if(invocation.function!=function or invocation.root!=is_root or invocation.repeated!=summarized or invocation.activation!=activation or invocation.arguments.len!=arguments.len or invocation.region_scope!=scope)continue;
             var same=true;
             for(invocation.arguments,arguments) |a,b| { if(!try self.dataEqual(a.view(),b.view())) { same=false; break; } }
-            if(same and try self.heapEqual(invocation.entry.view(),entry.view()) and try invocation.entry_relations.equal(self.c,&current)) {
+            if(same and try self.heapEqual(invocation.entry.view(),entry.view()) and try invocation.entry_relations.equal(self.c,&current) and
+                ((invocation.entry_frames.entries.count()==0 and !has_frames) or try receiver_actual.equal(self.c,&invocation.entry_frames,&selected_frames))) {
                 if(self.replay) {
                     for(invocation.arguments,arguments) |a,b|try self.provenanceSubset(a.view(),b.view());
                     var iterator=entry.view().iterator(); while(iterator.next()) |slot| { try self.c.step(); try self.provenanceSubset(invocation.entry.view().get(slot.slot).?,slot.value); }
+                    var controls=selected_frames.entries.iterator(); while(controls.next()) |row| { try self.c.step(); try self.provenanceSubset(invocation.entry_frames.entries.getPtr(row.key_ptr.*).?.bound.view(),row.value_ptr.bound.view()); }
                     return @enumFromInt(i);
                 }
                 for(invocation.arguments,arguments) |*a,b| { if(try a.join(self.c,b.view()))self.changed=true; }
                 if(try invocation.entry.join(self.c,entry.view()))self.changed=true;
+                if(try receiver_actual.join(self.c,&invocation.entry_frames,&selected_frames))self.changed=true;
                 return @enumFromInt(i);
             }
         }
@@ -526,10 +557,11 @@ const Engine = struct {
         var copied_count: usize=0; errdefer for(values[0..copied_count]) |*value|value.deinit(self.c.allocator);
         for(arguments,0..) |value,i| { values[i]=try V.clone(self.c,value.view()); copied_count+=1; }
         var unresolved=false; for(values) |value| { try self.c.step(); unresolved=unresolved or value.unknown or value.callable_unknown; }
-        invocation.*=.{.function=function,.parent=parent,.root=is_root,.repeated=summarized,.activation=activation,.arguments=values,.entry=entry,.unresolved=unresolved,.region_scope=scope,.entry_relations=current}; entry=.{}; current=.{};
+        invocation.*=.{.function=function,.parent=parent,.root=is_root,.repeated=summarized,.activation=activation,.arguments=values,.entry=entry,.unresolved=unresolved,.region_scope=scope,.entry_relations=current,.entry_frames=selected_frames}; entry=.{}; current=.{}; selected_frames=.{};
         self.result.unresolved=self.result.unresolved or unresolved;
         errdefer invocation.entry.deinit(self.c.allocator);
         errdefer invocation.entry_relations.deinit(self.c.allocator);
+        errdefer receiver_actual.deinit(&invocation.entry_frames,self.c.allocator);
         try self.result.invocations.append(self.c.allocator,invocation); self.changed=true; return @enumFromInt(self.result.invocations.items.len-1);
     }
     fn object(self: *Engine, at: facts.Site, kind: facts.ObjectKind, actual_type: ?t.TypeRef, environment: ?t.EnvironmentRef, weak: bool) Error!facts.ObjectId {
@@ -650,10 +682,17 @@ const Engine = struct {
             var roots: std.ArrayListUnmanaged(V)=.empty; defer roots.deinit(self.c.allocator);
             try self.c.charge(invocation.arguments.len+1); try roots.appendSlice(self.c.allocator,invocation.arguments);
             var extra=try V.clone(self.c,value); defer extra.deinit(self.c.allocator); try roots.append(self.c.allocator,extra);
+            var bound=try receiver_actual.retained(self.c,&state.frames,invocation.arguments); defer bound.deinit(self.c.allocator);
+            if(!bound.view().bottom()) {
+                try self.c.charge(1+@as(usize,if(roots.items.len==roots.capacity)roots.items.len else 0));
+                try roots.ensureUnusedCapacity(self.c.allocator,1); roots.appendAssumeCapacity(bound);
+            }
             var heap=try self.reachable(roots.items,state.heap.view()); defer heap.deinit(self.c.allocator);
             if(try (if(normal)&invocation.normal_heap else &invocation.language_heap).join(self.c,heap.view()))self.changed=true;
             var selected=try self.selectedReachable(roots.items,&state.relations); defer selected.deinit(self.c.allocator);
             if(try (if(normal)&invocation.normal_relations else &invocation.language_relations).join(self.c,&selected))self.changed=true;
+            var frames=try receiver_actual.select(self.c,&state.frames,invocation.arguments); defer receiver_actual.deinit(&frames,self.c.allocator);
+            if(try receiver_actual.join(self.c,if(normal)&invocation.normal_frames else &invocation.language_frames,&frames))self.changed=true;
         }
         if(self.emit)for(self.observers) |observer| { try self.c.step(); if(observer.completed) |f|try f(observer.client,self.c,self.result.view(),at,kind,value,.{.heap=&state.heap,.relations=&state.relations}); };
     }
@@ -682,15 +721,29 @@ const Engine = struct {
         };
         if(grew and !graph.queued[b]) { try self.c.step(); graph.queued[b]=true; try graph.work.append(self.c.allocator,target); }
     }
-    fn copyOrigins(self: *Engine, at: facts.Site, callee: facts.ContextId, passed: []const V, value: facts.Value) Error!V {
-        var result=try V.clone(self.c,value); errdefer result.deinit(self.c.allocator); result.effect_origins.clearRetainingCapacity();
+    fn remapOrigins(self: *Engine, at: facts.Site, callee: facts.ContextId, passed: []const V, frames: *const facts.FrameStore, value: facts.Value, from_binding: bool, result: *V) Error!void {
         const target=self.c.program.functions[@intFromEnum(self.info(callee).function)];
         for(value.effect_origins) |source| { try self.c.step();
             if(source.context==callee) switch(source.owner) {
                 .parameter => |reg| {
                     var found=false;
                     for(target.blocks[0].parameters,0..) |entry,i| { try self.c.step(); if(entry!=reg)continue;
-                        found=true; for(passed[i].effect_origins.items) |origin_value|_=try result.effectOrigin(self.c,origin_value); break;
+                        found=true;
+                        if(target.registers[@intFromEnum(reg)].carrier==.receiver) {
+                            // The frame argument intentionally has no language
+                            // owners. Translate logical-this through its saved
+                            // selected binding from THIS completion instead.
+                            var mapped=false;
+                            if(!from_binding) for(passed[i].frames.items) |id| {
+                                try self.c.step(); const selected=frames.entries.getPtr(id) orelse continue;
+                                mapped=true; try self.remapOrigins(at,callee,passed,frames,selected.bound.view(),true,result);
+                                if(selected.unresolved) { _=try result.effectOrigin(self.c,.{.context=at.context,.owner=.unknown}); _=self.unknown(at.context); }
+                            };
+                            // A nested frame-owner token without an independent
+                            // payload mapping is an explicit gap, never empty.
+                            if(!mapped) { _=try result.effectOrigin(self.c,.{.context=at.context,.owner=.unknown}); _=self.unknown(at.context); }
+                        } else for(passed[i].effect_origins.items) |origin_value|_=try result.effectOrigin(self.c,origin_value);
+                        break;
                     }
                     try self.c.require(found);
                 },
@@ -701,6 +754,10 @@ const Engine = struct {
         // Unknown actual bits are not necessarily unknown ownership: an
         // external argument still has its precise parameter token.
         if(value.unknown and value.effect_origins.len==0)_=try result.effectOrigin(self.c,.{.context=at.context,.owner=.unknown});
+    }
+    fn copyOrigins(self: *Engine, at: facts.Site, callee: facts.ContextId, passed: []const V, value: facts.Value, frames: *const facts.FrameStore) Error!V {
+        var result=try V.clone(self.c,value); errdefer result.deinit(self.c.allocator); result.effect_origins.clearRetainingCapacity();
+        try self.remapOrigins(at,callee,passed,frames,value,false,&result);
         return result;
     }
     fn overlay(self: *Engine, state: *State, heap: facts.HeapView) Error!void {
@@ -717,11 +774,16 @@ const Engine = struct {
         }
     }
     fn invoke(self: *Engine, graph: *Graph, at: facts.Site, target: t.FunctionRef, arguments: []const V, state: *State, normal: ?t.BlockRef, language: ?t.BlockRef, weak: bool, output: *V, complete: bool) Error!void {
+        if(self.c.program.tables.mode==.common and self.c.program.tables.mode.common.abis[self.abi(target)].construction!=null) {
+            // Keep current body actual identities for heap safety. They are
+            // NOT the missing fixed construction/newTarget caller upper.
+            _=self.unknown(at.context);
+        }
         const scope=try self.callScope(at,target,arguments,state,complete);
         try self.c.charge(arguments.len); const passed=try self.c.allocator.alloc(V,arguments.len); @memset(passed,.{});
         defer { for(passed) |*argument|argument.deinit(self.c.allocator); self.c.allocator.free(passed); }
         for(arguments,passed) |argument,*out| { out.*=try V.clone(self.c,argument.view()); if(self.c.program.tables.mode==.common and scope==null)try out.region.age(self.c); }
-        const callee=try self.contextFor(target,passed,state.heap.view(),at,false,weak,if(scope!=null)&state.relations else null,scope);
+        const callee=try self.contextFor(target,passed,state.heap.view(),at,false,weak,if(scope!=null)&state.relations else null,scope,&state.frames);
         const next=facts.Location{.function=at.location.function,.block=normal orelse at.location.block,.instruction=if(normal==null)at.location.instruction+1 else 0};
         try self.notifyCall(at,callee,next,if(language) |b| .{.function=at.location.function,.block=b,.instruction=0} else null);
         const called=self.info(callee);
@@ -729,23 +791,26 @@ const Engine = struct {
             if(called.normal) {
                 var after=try State.clone(self.c,state); defer after.deinit(self.c); try self.overlay(&after,called.normal_heap.view());
                 try after.relations.overlay(self.c,&called.normal_relations);
-                var value=try self.copyOrigins(at,callee,arguments,called.returned.view()); defer value.deinit(self.c.allocator);
+                try receiver_actual.overlay(self.c,&after.frames,&called.normal_frames);
+                var value=try self.copyOrigins(at,callee,arguments,called.returned.view(),&called.normal_frames); defer value.deinit(self.c.allocator);
                 const count=self.c.program.functions[@intFromEnum(at.location.function)].blocks[@intFromEnum(b)].parameters.len;
                 try self.edge(graph,at,b,&after,if(count==0)&.{} else @as([]const V, &.{value}));
             }
             if(called.language) {
                 var after=try State.clone(self.c,state); defer after.deinit(self.c); try self.overlay(&after,called.language_heap.view());
                 try after.relations.overlay(self.c,&called.language_relations);
-                var value=try self.copyOrigins(at,callee,arguments,called.thrown.view()); defer value.deinit(self.c.allocator);
+                try receiver_actual.overlay(self.c,&after.frames,&called.language_frames); try receiver_actual.abortInitializers(self.c,&after.frames);
+                var value=try self.copyOrigins(at,callee,arguments,called.thrown.view(),&called.language_frames); defer value.deinit(self.c.allocator);
                 try self.edge(graph,at,language.?,&after,&.{value});
             }
         } else {
             // The legacy closure contract is a context-insensitive language
             // may graph; its non-CPS calls do not prune the following block
             // according to a callee's current completion approximation.
-            var value=try self.copyOrigins(at,callee,arguments,called.returned.view()); defer value.deinit(self.c.allocator);
+            var value=try self.copyOrigins(at,callee,arguments,called.returned.view(),&called.normal_frames); defer value.deinit(self.c.allocator);
             _=try output.join(self.c,value.view()); try self.overlay(state,called.normal_heap.view());
             try state.relations.overlay(self.c,&called.normal_relations);
+            try receiver_actual.overlay(self.c,&state.frames,&called.normal_frames);
         }
     }
     fn havoc(self: *Engine, context: facts.ContextId, state: *State) Error!void {
@@ -1157,6 +1222,151 @@ const Engine = struct {
         }
         return out;
     }
+    fn constructorFrame(self: *Engine, at: facts.Site, construction: t.ConstructionIndex, new_target: t.TypeRef, parent: ?facts.FrameId, weak: bool) Error!facts.FrameId {
+        const key=FrameKey{.activation=self.info(at.context).activation,.location=at.location,.construction=construction,.new_target=new_target,.parent=parent};
+        for(self.frame_keys.items,0..) |old,i| {
+            try self.c.step(); if(!std.meta.eql(old,key))continue;
+            if(weak and !self.result.frames.items[i].weak) { try self.c.require(!self.replay); self.result.frames.items[i].weak=true; self.changed=true; }
+            return @enumFromInt(i);
+        }
+        try self.c.require(!self.replay and self.frame_keys.items.len<4096);
+        try self.c.charge(self.frame_keys.items.len+self.result.frames.items.len+2); try self.frame_keys.ensureUnusedCapacity(self.c.allocator,1); try self.result.frames.ensureUnusedCapacity(self.c.allocator,1);
+        const id: facts.FrameId=@enumFromInt(self.frame_keys.items.len); self.frame_keys.appendAssumeCapacity(key);
+        self.result.frames.appendAssumeCapacity(.{.site=at,.construction=construction,.new_target=new_target,.parent=parent,.weak=weak}); self.changed=true; return id;
+    }
+    fn selectedReceiverOrigin(self: *Engine, at: facts.Site, frame: t.RegisterRef, value: *V) Error!void {
+        const f=self.c.program.functions[@intFromEnum(at.location.function)]; const abi_row=self.c.program.tables.mode.common.abis[@intFromEnum(f.abi)];
+        if(abi_row.receiver_frame) |ordinal|if(f.blocks[0].parameters[ordinal]==frame) {
+            // An ownership token for the selected payload, never a frame's
+            // actual tag/object or an entry allocation fact.
+            try self.origin(value,at.context,.{.parameter=frame});
+        };
+    }
+    fn receiverFailure(self: *Engine, graph: *Graph, at: facts.Site, language: t.BlockRef, state: *const State) Error!void {
+        var after=try State.clone(self.c,state); defer after.deinit(self.c);
+        try receiver_actual.abortInitializers(self.c,&after.frames);
+        const payload=V{.unknown=true}; try self.edge(graph,at,language,&after,&.{payload});
+    }
+    fn receiverOperation(self: *Engine, graph: *Graph, at: facts.Site, state: *State, op: ins.Instruction, arguments: []const V, weak: bool, value: *V, continues: *bool) Error!void {
+        const common=self.c.program.tables.mode.common;
+        switch(op.data) {
+            .receiver_create => |v| {
+                const frame=try self.constructorFrame(at,v.construction,v.new_target,null,weak);
+                try receiver_actual.birth(self.c,&state.frames,frame,self.result.frames.items[@intFromEnum(frame)].weak); _=try value.frame(self.c,frame);
+            },
+            .receiver_child => |v| {
+                for(arguments[0].frames.items) |parent| {
+                    try self.c.step(); const parent_frame=self.result.frames.items[@intFromEnum(parent)];
+                    const frame=try self.constructorFrame(at,v.construction,parent_frame.new_target,parent,weak or parent_frame.weak or arguments[0].frames.items.len!=1);
+                    try receiver_actual.birth(self.c,&state.frames,frame,self.result.frames.items[@intFromEnum(frame)].weak); _=try value.frame(self.c,frame);
+                }
+                if(arguments[0].unknown or arguments[0].frames.items.len==0) { value.unknown=true; _=self.unknown(at.context); }
+            },
+            .receiver_allocate => {
+                for(arguments[0].frames.items) |frame| {
+                    try self.c.step(); const allocation_frame=self.result.frames.items[@intFromEnum(frame)];
+                    const kind=common.types[@intFromEnum(allocation_frame.new_target)].kind;
+                    try self.c.require(kind==.reference or kind==.value);
+                    var selected=try self.makeObject(at,if(kind==.value).value else .reference,allocation_frame.new_target,weak or allocation_frame.weak or arguments[0].frames.items.len!=1); defer selected.deinit(self.c.allocator);
+                    // Raw IDs can summarize repeated allocation families.
+                    // A new instance never inherits an old initialized field
+                    // merely because the analysis reuses that family ID.
+                    var old=state.heap.entries.iterator(); while(old.next()) |entry| {
+                        try self.c.step(); if(entry.key_ptr.*!=.field or entry.key_ptr.field.object!=selected.objects.items[0])continue;
+                        entry.value_ptr.deinit(self.c.allocator); entry.value_ptr.*=.{.unknown=true,.callable_unknown=true};
+                    }
+                    var current=try self.birth(at,selected.objects.items[0],&state.relations,null,null); defer current.deinit(self.c.allocator); try self.setRegion(&selected,current.view());
+                    _=try value.join(self.c,selected.view());
+                }
+                if(arguments[0].unknown or arguments[0].frames.items.len==0)_=try value.join(self.c,self.unknown(at.context));
+            },
+            inline .receiver_bind,.receiver_get,.receiver_result => |v| {
+                continues.*=false;
+                for(arguments[0].frames.items) |frame| {
+                    try self.c.step(); const selected_frame=self.result.frames.items[@intFromEnum(frame)];
+                    const saved=state.frames.entries.getPtr(frame) orelse { _=self.unknown(at.context); continue; };
+                    var selected: V=.{}; defer selected.deinit(self.c.allocator);
+                    var normal=false; var language=false; const binding=op.data!=.receiver_result;
+                    if(op.data==.receiver_bind) {
+                        normal=saved.unbound or saved.unresolved; language=!saved.bound.view().bottom() or saved.unresolved;
+                        if(normal)selected=try V.clone(self.c,arguments[1].view());
+                    } else if(op.data==.receiver_get) {
+                        normal=!saved.bound.view().bottom() or saved.unresolved; language=saved.unbound or saved.unresolved;
+                        if(normal)selected=try V.clone(self.c,saved.bound.view());
+                    } else {
+                        const owner=common.members.constructions[@intFromEnum(selected_frame.construction)].owner;
+                        const base_constructor=common.types[@intFromEnum(owner)].base==null;
+                        var fallback=arguments.len==1; var invalid=false;
+                        if(arguments.len==2) {
+                            const explicit=arguments[1].view(); selected=try receiver_actual.objectsOnly(self.c,self.result.view(),explicit);
+                            normal=!selected.view().bottom();
+                            for(explicit.tags) |tag| {
+                                const category=try receiver_actual.objectKind(self.c,tag);
+                                if(category==.object)continue;
+                                if(category==.pending) { _=self.unknown(at.context); normal=true; selected.unknown=true; }
+                                const is_undefined=common.types[@intFromEnum(tag)].kind==.@"undefined";
+                                fallback=fallback or base_constructor or is_undefined; invalid=invalid or (!base_constructor and !is_undefined);
+                            }
+                            // Unknown callable code does not turn a known
+                            // function-object tag into a possible primitive.
+                            if(explicit.unknown) { _=self.unknown(at.context); selected.unknown=true; normal=true; fallback=true; invalid=!base_constructor; }
+                        }
+                        if(fallback) {
+                            if(!saved.bound.view().bottom() or saved.unresolved) { _=try selected.join(self.c,saved.bound.view()); normal=true; }
+                            language=saved.unbound or saved.unresolved;
+                        }
+                        language=language or invalid;
+                    }
+                    if(saved.unresolved and normal) { selected.unknown=true; _=self.unknown(at.context); }
+                    if(normal) {
+                        var after=try State.clone(self.c,state); defer after.deinit(self.c);
+                        if(op.data==.receiver_bind)try receiver_actual.bind(self.c,&after.frames,frame,selected.view());
+                        if(binding)try self.selectedReceiverOrigin(at,op.operands[0],&selected);
+                        try self.edge(graph,at,v.normal,&after,&.{selected});
+                    }
+                    if(language)try self.receiverFailure(graph,at,v.language,state);
+                }
+                if(arguments[0].unknown or arguments[0].frames.items.len==0) {
+                    var unknown_receiver=try V.clone(self.c,self.unknown(at.context)); defer unknown_receiver.deinit(self.c.allocator);
+                    try self.edge(graph,at,v.normal,state,&.{unknown_receiver}); try self.receiverFailure(graph,at,v.language,state);
+                }
+            },
+            .initialize_begin => {
+                for(arguments[0].frames.items) |frame| {
+                    try self.c.step(); const token=facts.Cursor{.frame=frame,.position=0};
+                    try receiver_actual.advance(self.c,&state.frames,token,false); _=try value.cursor(self.c,token);
+                }
+                if(arguments[0].unknown or arguments[0].frames.items.len==0) { value.unknown=true; _=self.unknown(at.context); }
+            },
+            .initialize_field => |v| {
+                // Raw heap fields use semantic FieldRef keys, never guessed
+                // offsets. A replacement U needs the missing verified M12 route.
+                var logical_field_route=!arguments[1].unknown and arguments[1].objects.items.len!=0;
+                for(arguments[1].objects.items) |object_id| {
+                    try self.c.step(); const actual=self.result.objects.items[@intFromEnum(object_id)].@"type" orelse { logical_field_route=false; continue; };
+                    logical_field_route=logical_field_route and try self.extends(actual,common.members.fields[@intFromEnum(v.field)].owner);
+                }
+                // Fixed publication.storage.fields has not been admitted by
+                // Runtime. Body actual tags cannot stand in for its upper.
+                _=self.unknown(at.context);
+                if(logical_field_route) {
+                    try self.writeField(state,arguments[1].view(),v.field,arguments[2].view());
+                    for(arguments[1].objects.items) |object_id| {
+                        try self.c.step(); const member=try self.fieldFor(self.result.objects.items[@intFromEnum(object_id)].@"type".?,v.field);
+                        var selected: V=.{}; defer selected.deinit(self.c.allocator); _=try selected.object(self.c,object_id); try self.projectRegion(&selected,arguments[1].view());
+                        try self.currentStore(selected.view(),.{.field=member},arguments[2].view(),state,false);
+                    }
+                }
+                for(arguments[0].cursors.items) |token| {
+                    try self.c.step(); const next=facts.Cursor{.frame=token.frame,.position=token.position+1};
+                    try receiver_actual.advance(self.c,&state.frames,next,false); _=try value.cursor(self.c,next);
+                }
+                if(arguments[0].unknown or arguments[0].cursors.items.len==0) { value.unknown=true; _=self.unknown(at.context); }
+            },
+            .initialize_end => for(arguments[0].cursors.items) |token|try receiver_actual.advance(self.c,&state.frames,token,true),
+            else => return error.InvalidShape,
+        }
+    }
     fn operationRegion(self: *Engine, at: facts.Site, state: *State, op: ins.Instruction, arguments: []const V, value: *V) Error!void {
         if(self.c.program.tables.mode!=.common)return;
         switch(op.data) {
@@ -1441,11 +1651,12 @@ const Engine = struct {
                 if(truth&2!=0)try self.edge(graph,at,data.true_destination,state,arguments[1..1+data.true_count]);
                 if(truth&1!=0)try self.edge(graph,at,data.false_destination,state,arguments[1+data.true_count..]); continues=false;
             },
-            .eh_route => |data| { try self.edge(graph,at,data.successor,state,arguments); continues=false; },
+            .eh_route => |data| { if(data.completion==.@"throw")try receiver_actual.abortInitializers(self.c,&state.frames); try self.edge(graph,at,data.successor,state,arguments); continues=false; },
             .@"return" => { try self.completion(at,.normal,if(arguments.len==0).{} else arguments[0].view(),state); continues=false; },
-            .eh_raise => { try self.completion(at,.language,arguments[0].view(),state); continues=false; },
+            .eh_raise => { try receiver_actual.abortInitializers(self.c,&state.frames); try self.completion(at,.language,arguments[0].view(),state); continues=false; },
             .eh_unreachable => { continues=false; },
             .fuel,.eh_enter,.eh_publish => {},
+            .receiver_create,.receiver_child,.receiver_allocate,.receiver_bind,.receiver_get,.receiver_result,.initialize_begin,.initialize_field,.initialize_end => try self.receiverOperation(graph,at,state,op,arguments,weak,&value,&continues),
             // Calls/constructions are handled together below so every path
             // uses the same argument marshalling and completion projection.
             .@"call",.function_call,.domain_method_call,.eh_invoke,.eh_invoke_indirect,.common_method_invoke,.domain_construct,.domain_super,.domain_initialize_fields,.domain_field_define,.domain_field_initialize => try self.calls(graph,at,state,op,arguments,weak,&value,&continues),
@@ -1591,6 +1802,7 @@ const Engine = struct {
             .@"br" => |v| .{.blocks=.{v.destination,v.destination},.count=1},
             .@"cond_br" => |v| .{.blocks=.{v.true_destination,v.false_destination},.count=2},
             inline .eh_invoke,.eh_invoke_indirect,.common_method_invoke => |v| .{.blocks=.{v.normal,v.exceptional},.count=2},
+            inline .receiver_bind,.receiver_get,.receiver_result => |v| .{.blocks=.{v.normal,v.language},.count=2},
             .eh_route => |v| .{.blocks=.{v.successor,v.successor},.count=1},
             .domain_numeric_use => |v| .{.blocks=.{v.normal_successor,v.normal_successor},.count=1},
             else => .{},
@@ -1626,8 +1838,10 @@ const Engine = struct {
             var state=try State.init(self.c,function.registers.len); errdefer state.deinit(self.c);
             state.heap=try Heap.clone(self.c,invocation.entry.view()); try self.c.require(invocation.arguments.len==function.blocks[0].parameters.len);
             state.relations=try relation.Heap.clone(self.c,&invocation.entry_relations);
+            state.frames=try receiver_actual.clone(self.c,&invocation.entry_frames);
             for(function.blocks[0].parameters,invocation.arguments) |reg,argument| {
-                try state.assign(self.c,reg,argument.view()); try self.origin(&state.values[@intFromEnum(reg)],context,.{.parameter=reg});
+                try state.assign(self.c,reg,argument.view());
+                if(function.registers[@intFromEnum(reg)].carrier!=.receiver and function.registers[@intFromEnum(reg)].carrier!=.initialization)try self.origin(&state.values[@intFromEnum(reg)],context,.{.parameter=reg});
             }
             break :entry state;
         };
@@ -1670,7 +1884,7 @@ const Engine = struct {
                 },
             }
         }
-        const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false,null,null);
+        const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false,null,null,null);
         if(parameters.len!=0 and self.c.program.tables.mode==.common) { self.info(id).unresolved=true; self.result.unresolved=true; }
     }
     fn initialize(self: *Engine) Error!void {

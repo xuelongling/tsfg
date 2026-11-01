@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: MIT
 const t = @import("wire-program-types.zig");
 const member = @import("wire-program-members.zig");
+const origin = @import("wire-program-return-origin-model.zig");
+
+// Core4/schema14304 header admission remains the external owning reader's duty.
+// These typed records do not reinterpret the unchanged formal wire17 envelope.
+pub const FixedStorage = struct {
+    fields: []const struct { field_id: t.Hash, actual_types: []const t.Hash, unknown: bool },
+    results: []const struct { construction: t.Hash, new_target: t.Hash, actual_types: []const t.Hash, unknown: bool },
+};
+pub const Construction = struct { id: t.Hash, owner: t.Hash, base: ?t.Hash, kind: enum { explicit, @"implicit-base", @"implicit-derived" }, function_id: ?t.Hash };
+pub const FunctionConstruction = struct { id: t.Hash, owner: t.Hash, base: ?t.Hash, receiver_index: u16 };
 
 pub const RootKind = enum { application, @"host-callback", @"host-export", @"hot-function", kernel, @"module-initialization" };
 pub const ModuleBindingKind = enum { namespace, function, global, @"type" };
@@ -44,7 +54,10 @@ pub const ScopeShape = union(enum) {
     },
 };
 pub const StableScope = struct {
-    profile: enum { @"common-program-fixed-v2" },
+    profile: enum { @"common-program-fixed-v4" },
+    declaration_types: []const t.Hash,
+    constructions: []const Construction,
+    storage: FixedStorage,
     root_file: []const u8,
     modules: []const ScopeModule,
     roots: struct { roots: []const ScopeRoot, required_roots: []const ScopeRoot },
@@ -56,6 +69,7 @@ pub const StableScope = struct {
         decl_key: DeclarationKey,
         parameter_types: []const t.Hash,
         return_type: t.Hash,
+        construction: ?FunctionConstruction,
         lexical_parent: ?t.Hash,
         lexical_environment: ?t.Hash,
         activation_environment: ?t.Hash,
@@ -84,6 +98,7 @@ pub const EffectUpper = struct {
 pub const Publication = struct {
     format: struct { family: enum { @"tsfg.program-publication-candidate" }, version: u32 },
     mode: enum { fixed },
+    scope: StableScope,
     scope_digest: t.Hash,
     expected_digest: t.Hash,
     contracts: []const struct {
@@ -91,6 +106,7 @@ pub const Publication = struct {
         signature_hash: t.Hash,
         upper: EffectUpper,
         callables: struct { parameters: []const struct { index: u16, allowed: CodeTargets }, returns: ?CodeTargets, slot_writes: [0]void },
+        return_origins: ?origin.Graph,
         digest: t.Hash,
     },
 };

@@ -65,7 +65,7 @@ const Checker = struct {
             const target_abi = self.abiFor(target);
             // Hidden lexical environments are not logical parameters. A
             // method/constructor receiver cannot masquerade as a free code.
-            try self.c.require(target_abi.receiver == null and target_abi.parameters.len == expected.members.len);
+            try self.c.require(target_abi.receiver == null and target_abi.construction == null and target_abi.parameters.len == expected.members.len);
             const result_type = expected.element.?;
             if (target_abi.result) |result| {
                 try self.c.require(result == result_type);
@@ -92,7 +92,7 @@ const Checker = struct {
         try c.require(c.program.functions[@intFromEnum(function)].role != .module_initializer);
         // Effects index receiver first, but callable transfer records name
         // logical Source parameters only; neither vector includes hidden env.
-        try c.require(row.upper.parameters.len == abi.parameters.len + @as(usize, if (abi.receiver != null) 1 else 0));
+        try c.require(row.upper.parameters.len == abi.parameters.len + @as(usize, if (abi.receiver != null or abi.construction != null) 1 else 0));
         for (row.upper.globals.writes) |id| {
             try c.step();
             // A fixed Global upper names a conditional payload-owner root.

@@ -77,6 +77,8 @@ pub const CommonAbi = struct {
     signature: t.Hash,
     parameters: []const t.BindingRef,
     receiver: ?t.BindingRef,
+    construction: ?t.ConstructionIndex,
+    receiver_frame: ?u16,
     lexical_environment: ?t.EnvironmentRef,
     physical_parameters: []const t.Carrier,
     result: ?t.TypeRef,

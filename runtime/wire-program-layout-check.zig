@@ -125,6 +125,9 @@ const Common = struct {
             },
             .environment, .cell => .{ .bytes=8, .alignment=8, .roots=1 },
             .payload => .{ .bytes=16, .alignment=8, .roots=1 },
+            // Engineering candidate only; no offsets/GC scanning ABI is claimed.
+            .receiver => .{ .bytes=32, .alignment=8, .roots=1 },
+            .initialization => .{ .bytes=16, .alignment=8, .roots=1 },
         };
     }
     fn typeShape(self: *Common, id: usize, depth: usize) Error!Shape {
@@ -248,7 +251,18 @@ const Common = struct {
             if(abi.receiver) |ref| {
                 try c.charge(3); const id=@intFromEnum(ref); const binding=v.storage.bindings[id];
                 try c.require(binding.owner==.receiver and binding.owner.receiver==abi.function and !seen[id]); seen[id]=true;
-                try c.require(at<abi.physical_parameters.len); try carrierEqual(c,abi.physical_parameters[at],binding.carrier); at+=1;
+                try c.require(at<abi.physical_parameters.len);
+                if(abi.construction) |construction| {
+                    const row=v.members.constructions[@intFromEnum(construction)];
+                    try c.require(abi.receiver_frame != null and abi.receiver_frame.? == at and row.function != null and row.function.? == abi.function and c.program.functions[@intFromEnum(abi.function)].role == .construction_body and binding.@"type" == row.owner and abi.result == row.owner);
+                    try carrierEqual(c,abi.physical_parameters[at],.{.receiver=@enumFromInt(@intFromEnum(construction))});
+                } else {
+                    try c.require(abi.receiver_frame == null and c.program.functions[@intFromEnum(abi.function)].role != .construction_body);
+                    try carrierEqual(c,abi.physical_parameters[at],binding.carrier);
+                }
+                at+=1;
+            } else {
+                try c.require(abi.construction == null and abi.receiver_frame == null and c.program.functions[@intFromEnum(abi.function)].role != .construction_body);
             }
             for(abi.parameters) |ref| {
                 try c.charge(3); const id=@intFromEnum(ref); const binding=v.storage.bindings[id];

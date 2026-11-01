@@ -558,6 +558,7 @@ const UpperGraph = struct {
             try c.step(); break :original collector.upper(target) orelse return error.InvalidShape;
         } else try collector.consumeUpper(self.function, target);
         const target_abi = collector.common().abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)];
+        if(target_abi.construction!=null and !self.summarizing)collector.fixed_upper_origin_pending=true;
         if (target_abi.lexical_environment != null) {
             var supplied: effect_env.Set = .{}; defer supplied.deinit(c.allocator);
             try self.callEnvironments(target, op, state, &supplied);
@@ -566,6 +567,7 @@ const UpperGraph = struct {
         try c.require(offset <= op.operands.len);
         try c.require(if (prefix) full.parameters.len <= op.operands.len - offset else full.parameters.len == op.operands.len - offset);
         if (!self.summarizing) for (full.parameters, 0..) |access_mode, i| {
+            if(target_abi.construction!=null and i==0)continue; // The hidden frame is not an actual receiver object.
             try c.step(); const argument = &state.values[@intFromEnum(op.operands[offset + i])];
             if (access_mode.read) try self.mark(argument, .read);
             if (access_mode.write) try self.mark(argument, .write);
@@ -646,6 +648,7 @@ const UpperGraph = struct {
         }
         const count = abi.parameters.len + @as(usize, if (abi.receiver != null) 1 else 0);
         for (0..count) |i| {
+            if(abi.construction!=null and i==0)continue; // Selected this ownership starts at bind/get, never at frame entry.
             try c.step(); const id = if (abi.receiver != null and i == 0) abi.receiver.? else abi.parameters[i - @as(usize, if (abi.receiver != null) 1 else 0)];
             // Alias identity also matters for a callable/scalar later returned
             // or packed as a language payload. Access permissions remain
@@ -750,6 +753,17 @@ const UpperGraph = struct {
                         // lexical roots; private storage grants no 81 privilege.
                         if (self.privateField(op.operands[0], write.field)) |slot| try state.store(c, slot, &state.values[@intFromEnum(op.operands[1])]);
                     },
+                    .receiver_create,.receiver_child,.initialize_begin,.initialize_end => { result.nonowning=true; },
+                    .receiver_allocate => {
+                        _=try result.add(c,.local);
+                        if(!self.summarizing) { try collector.facet(self.function,.allocation); try collector.facet(self.function,.managed_reference); }
+                    },
+                    .initialize_field => {
+                        // Fixed field owner upper and replacement-slot projection
+                        // are not yet admitted; current-body actuals cannot fill them.
+                        if(!self.summarizing)collector.fixed_upper_origin_pending=true;
+                        try self.mark(&state.values[@intFromEnum(op.operands[1])],.write); result.nonowning=true;
+                    },
                     .domain_array_store, .domain_array_resize => { const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .write); try self.mark(receiver, .structural); },
                     .domain_view, .domain_refine, .domain_copy, .domain_read_span, .eh_assertion, .eh_presence_widen => try result.replace(c, &state.values[@intFromEnum(op.operands[0])]),
                     .eh_pack => { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (!self.summarizing) try collector.facet(self.function, .eh_control); },
@@ -811,6 +825,15 @@ const UpperGraph = struct {
                 }
                 if (op.result) |reg| try state.values[@intFromEnum(reg)].replace(c, &result);
                 switch (op.data) {
+                    inline .receiver_bind,.receiver_get,.receiver_result => |control| {
+                        // Explicit pending is safer than seeding a p0 object or
+                        // deriving caller owners from the present body result.
+                        if(!self.summarizing)collector.fixed_upper_origin_pending=true;
+                        var selected: Owners=.{}; defer selected.deinit(c.allocator); _=try selected.makeOpaque(c);
+                        var failure: Owners=.{}; defer failure.deinit(c.allocator); _=try failure.makeOpaque(c);
+                        try self.edge(entries,queued,&pending,control.normal,&state,&.{selected});
+                        try self.edge(entries,queued,&pending,control.language,&state,&.{failure});
+                    },
                     .eh_invoke, .eh_invoke_indirect, .common_method_invoke => {
                         var completions: UpperCompletions = .{}; var found = false;
                         var returned: Owners = .{}; defer returned.deinit(c.allocator);
@@ -1135,9 +1158,12 @@ pub const Collector = struct {
     fn consume(self: *Collector, site: facts.Site, state: facts.StateView, target: t.FunctionRef, offset: usize, prefix: bool) Error!void {
         const c = self.c; const full = try self.consumeUpper(site.location.function, target);
         const op = c.program.functions[@intFromEnum(site.location.function)].blocks[@intFromEnum(site.location.block)].instructions[site.location.instruction];
+        const constructor=self.common().abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)].construction!=null;
+        if(constructor)self.fixed_upper_origin_pending=true;
         try c.require(offset <= op.operands.len);
         try c.require(if (prefix) full.parameters.len <= op.operands.len - offset else full.parameters.len == op.operands.len - offset);
         for (full.parameters, 0..) |wanted, i| {
+            if(constructor and i==0)continue;
             try c.step(); const argument = state.values.reg(op.operands[offset + i]);
             if (wanted.read) try self.access(site, argument, .read);
             if (wanted.write) try self.access(site, argument, .write);
@@ -1187,6 +1213,9 @@ pub const Collector = struct {
             try c.step(); if (f.registers[@intFromEnum(r)].carrier != .cell and try self.managedValue(world, state.values.reg(r))) try self.facet(function, .managed_reference);
         };
         switch (op.data) {
+            .receiver_allocate => { try self.facet(function,.allocation); try self.facet(function,.managed_reference); },
+            .initialize_field => { self.fixed_upper_origin_pending=true; try self.access(site,state.values.reg(op.operands[1]),.write); },
+            .receiver_bind,.receiver_get,.receiver_result => self.fixed_upper_origin_pending=true,
             .global_load => |v| try self.global(function, v.global, .read),
             .global_store => |v| try self.global(function, v.global, .write),
             .environment_load => |v| try self.environment(site, state, v.slot, false, false),

@@ -13,6 +13,8 @@ pub const Error = context.Error;
 pub const ContextId = data.ContextId;
 pub const ObjectId = data.ObjectId;
 pub const CellId = data.CellId;
+pub const FrameId = data.FrameId;
+pub const Cursor = data.Cursor;
 pub const Location = data.Location;
 pub const Site = data.Site;
 pub const Callable = struct { code: t.FunctionRef, environment: ?ObjectId };
@@ -56,6 +58,8 @@ pub const Slot = union(enum) {
     global: t.GlobalRef,
 };
 pub const Value = struct {
+    // Internal control identities are neither actual language tags nor objects.
+    frames: []const FrameId=&.{}, cursors: []const Cursor=&.{},
     tags: []const t.TypeRef=&.{},
     objects: []const ObjectId=&.{},
     cells: []const CellId=&.{},
@@ -67,7 +71,7 @@ pub const Value = struct {
     unknown: bool=false,
     callable_unknown: bool=false,
     pub fn bottom(self: Value) bool {
-        return self.tags.len==0 and self.objects.len==0 and self.cells.len==0 and
+        return self.frames.len==0 and self.cursors.len==0 and self.tags.len==0 and self.objects.len==0 and self.cells.len==0 and
             self.callables.len==0 and !self.unknown and !self.callable_unknown;
     }
 };
@@ -87,6 +91,11 @@ pub fn relation(c: *Context, raw: Value) Error!data.Value {
 pub fn equal(c: *Context, a: Value, b: Value) Error!bool {
     try c.charge(5);
     if(a.truth!=b.truth or a.number!=b.number or a.unknown!=b.unknown or a.callable_unknown!=b.callable_unknown)return false;
+    if(a.frames.len!=0 or b.frames.len!=0 or a.cursors.len!=0 or b.cursors.len!=0) inline for(.{"frames","cursors"}) |name| {
+        const left=@field(a,name); const right=@field(b,name); try c.step();
+        if(left.len!=right.len)return false;
+        for(left,right) |x,y| { try c.step(); if(!std.meta.eql(x,y))return false; }
+    };
     inline for(.{"tags","objects","cells","callables","effect_origins"}) |name| {
         const left=@field(a,name); const right=@field(b,name); try c.step();
         if(left.len!=right.len)return false;
@@ -96,7 +105,9 @@ pub fn equal(c: *Context, a: Value, b: Value) Error!bool {
 }
 
 fn less(comptime T: type, a: T, b: T) bool {
-    if(T==Callable) {
+    if(T==Cursor) {
+        return if(a.frame!=b.frame) @intFromEnum(a.frame)<@intFromEnum(b.frame) else a.position<b.position;
+    } else if(T==Callable) {
         if(a.code!=b.code)return @intFromEnum(a.code)<@intFromEnum(b.code);
         if(a.environment==null)return b.environment!=null;
         return b.environment!=null and @intFromEnum(a.environment.?)<@intFromEnum(b.environment.?);
@@ -129,6 +140,8 @@ fn add(comptime T: type, c: *Context, into: *std.ArrayListUnmanaged(T), value: T
     try into.insert(c.allocator,at,value); return true;
 }
 pub const OwnedValue = struct {
+    frames: std.ArrayListUnmanaged(FrameId)=.empty,
+    cursors: std.ArrayListUnmanaged(Cursor)=.empty,
     tags: std.ArrayListUnmanaged(t.TypeRef)=.empty,
     objects: std.ArrayListUnmanaged(ObjectId)=.empty,
     cells: std.ArrayListUnmanaged(CellId)=.empty,
@@ -138,20 +151,24 @@ pub const OwnedValue = struct {
     truth: u2=0, number: ?i64=null, unknown: bool=false, callable_unknown: bool=false,
 
     pub fn view(self: *const OwnedValue) Value {
-        return .{.tags=self.tags.items,.objects=self.objects.items,.cells=self.cells.items,.callables=self.callables.items,
+        return .{.frames=self.frames.items,.cursors=self.cursors.items,.tags=self.tags.items,.objects=self.objects.items,.cells=self.cells.items,.callables=self.callables.items,
             .effect_origins=self.effect_origins.items,.region=self.region.view(),.truth=self.truth,.number=self.number,.unknown=self.unknown,.callable_unknown=self.callable_unknown};
     }
     pub fn deinit(self: *OwnedValue, allocator: std.mem.Allocator) void {
+        self.frames.deinit(allocator); self.cursors.deinit(allocator);
         self.tags.deinit(allocator); self.objects.deinit(allocator); self.cells.deinit(allocator); self.callables.deinit(allocator); self.effect_origins.deinit(allocator); self.region.deinit(allocator); self.*=.{};
     }
     pub fn tag(self: *OwnedValue, c: *Context, id: t.TypeRef) Error!bool { return add(t.TypeRef,c,&self.tags,id); }
+    pub fn frame(self: *OwnedValue, c: *Context, id: FrameId) Error!bool { return add(FrameId,c,&self.frames,id); }
+    pub fn cursor(self: *OwnedValue, c: *Context, token: Cursor) Error!bool { return add(Cursor,c,&self.cursors,token); }
     pub fn object(self: *OwnedValue, c: *Context, id: ObjectId) Error!bool { return add(ObjectId,c,&self.objects,id); }
     pub fn cell(self: *OwnedValue, c: *Context, id: CellId) Error!bool { return add(CellId,c,&self.cells,id); }
     pub fn callable(self: *OwnedValue, c: *Context, pair: Callable) Error!bool { return add(Callable,c,&self.callables,pair); }
     pub fn effectOrigin(self: *OwnedValue, c: *Context, origin: EffectOrigin) Error!bool { return add(EffectOrigin,c,&self.effect_origins,origin); }
     pub fn clone(c: *Context, value: Value) Error!OwnedValue {
-        try c.charge(value.tags.len+value.objects.len+value.cells.len+value.callables.len+value.effect_origins.len+1);
+        try c.charge(value.frames.len+value.cursors.len+value.tags.len+value.objects.len+value.cells.len+value.callables.len+value.effect_origins.len+1);
         var result: OwnedValue=.{}; errdefer result.deinit(c.allocator);
+        try result.frames.appendSlice(c.allocator,value.frames); try result.cursors.appendSlice(c.allocator,value.cursors);
         try result.tags.appendSlice(c.allocator,value.tags); try result.objects.appendSlice(c.allocator,value.objects);
         try result.cells.appendSlice(c.allocator,value.cells); try result.callables.appendSlice(c.allocator,value.callables);
         try result.effect_origins.appendSlice(c.allocator,value.effect_origins);
@@ -163,6 +180,8 @@ pub const OwnedValue = struct {
         try c.step(); const was_bottom=self.view().bottom(); var changed=false;
         if(!was_bottom and !self.region.known) { changed=try self.region.join(c,try relation(c,self.view())); }
         if(!incoming.bottom() or incoming.region.known) { changed=(try self.region.join(c,try relation(c,incoming))) or changed; }
+        for(incoming.frames) |id| { if(try self.frame(c,id))changed=true; }
+        for(incoming.cursors) |token| { if(try self.cursor(c,token))changed=true; }
         for(incoming.tags) |id| { if(try self.tag(c,id))changed=true; }
         for(incoming.objects) |id| { if(try self.object(c,id))changed=true; }
         for(incoming.cells) |id| { if(try self.cell(c,id))changed=true; }
@@ -224,8 +243,14 @@ pub const ValuesView = struct {
     pub fn get(self: ValuesView, index: usize) Value { return self.values[index].view(); }
     pub fn reg(self: ValuesView, ref: t.RegisterRef) Value { return self.get(@intFromEnum(ref)); }
 };
-pub const StateView = struct {values: ValuesView,heap: HeapView,relations:?*const data.Heap=null};
+pub const FrameState = struct {
+    unbound: bool=true, bound: OwnedValue=.{} , unresolved: bool=false,
+    initializing: bool=false, aborted: bool=false, prefix_min:u16=0, prefix_max:u16=0,
+};
+pub const FrameStore = struct { entries: std.AutoHashMapUnmanaged(FrameId,FrameState)=.{} };
+pub const StateView = struct {values: ValuesView,heap: HeapView,relations:?*const data.Heap=null,frames:?*const FrameStore=null};
 pub const ContextInfo = struct {
+    frames: ?*const FrameStore=null,
     function: t.FunctionRef,
     // SSA entry-block arguments: Common includes hidden env/receiver, legacy
     // has one value per logical domain parameter plus a closure hidden env,
@@ -241,6 +266,7 @@ pub const ContextInfo = struct {
     region_scope: ?data.ScopeRef=null,
 };
 pub const WorldView = struct {
+    frames: []const data.FrameInfo=&.{},
     objects: []const ObjectInfo,
     cells: []const CellInfo,
     contexts: []const ContextInfo,

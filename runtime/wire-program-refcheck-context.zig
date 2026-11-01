@@ -90,6 +90,10 @@ pub const Context = struct {
             .@"type" => |v| { _ = try self.ref(v, n.types); },
             .cell => |v| { _ = try self.ref(v, n.cells); },
             .payload => try self.step(),
+            .receiver, .initialization => |v| {
+                if (self.program.tables.mode != .common) return error.WrongMode;
+                _ = try self.ref(v, n.constructions);
+            },
         }
         // Legacy finite/closure carriers cannot silently become EH/Common cells.
         if (std.meta.activeTag(self.program.tables.mode) == .legacy and std.meta.activeTag(value) != .domain and std.meta.activeTag(value) != .environment)

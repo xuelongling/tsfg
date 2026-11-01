@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Candidate wire17 data declarations. This module does not activate Runtime12
+// Breaking Common receiver candidate; these declarations are NOT wire17.
+// This module does not activate Runtime12
 // and contains no byte decoder, verified execution handle or evaluator.
 const std = @import("std");
 
@@ -22,6 +23,8 @@ pub const BindingRef = enum(u32) { _ };
 pub const FieldRef = enum(u32) { _ };
 pub const MethodRef = enum(u32) { _ };
 pub const ConstructionRef = enum(u32) { _ };
+// New protocol payload/ABI encoding is u16; carrier directory refs remain u32.
+pub const ConstructionIndex = enum(u16) { _ };
 pub const CompatibilityRef = enum(u32) { _ };
 pub const DispatchRef = enum(u32) { _ };
 pub const StorageRef = enum(u32) { _ };
@@ -31,13 +34,15 @@ pub const Anchor = struct { start: u32, end: u32 };
 pub const Origin = struct { source: SourceRef, start: u32, end: u32 };
 pub const Layout = struct { byte_size: u32, alignment: u16, reference_count: u16 };
 pub const FieldLayout = struct { layout: Layout, field_offsets: []const u32 };
-pub const CarrierKind = enum(u16) { domain = 0, environment = 1, @"type" = 2, cell = 3, payload = 4 };
+pub const CarrierKind = enum(u16) { domain = 0, environment = 1, @"type" = 2, cell = 3, payload = 4, receiver = 5, initialization = 6 };
 pub const Carrier = union(CarrierKind) {
     domain: DomainRef,
     environment: EnvironmentRef,
     @"type": TypeRef,
     cell: CellRef,
     payload: void,
+    receiver: ConstructionRef,
+    initialization: ConstructionRef,
 };
 
 // The future formal decoder uses these at its untrusted integer boundary.

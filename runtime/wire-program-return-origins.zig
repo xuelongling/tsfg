@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Structural Graph4 simulation only. No parser, Program, Actual/SSA solver,
-// fixed-group admission, permission handle, or wire17/publication-v2 extension.
+// Structural Graph5 ordinary-data simulation only. Receiver protocols remain
+// Pending; no parser, Program, Actual/SSA solver, permission or wire activation.
 const std = @import("std");
 pub const model = @import("wire-program-return-origin-model.zig");
 const Graph = model.Graph;
@@ -114,6 +114,7 @@ const Engine = struct {
                     try self.budget.step();
                     if (state.controls[id]) continue;
                     const value = switch (control) {
+                        .receiver_completion => return error.InvalidGraph, // validateGraph keeps receiver protocols Pending.
                         .entry => true,
                         .join => |row| blk: {
                             for (row.inputs) |parent| {
@@ -303,6 +304,7 @@ const Engine = struct {
             .parameter => |row| return row.index == b.parameter.index,
             .global => |row| return self.budget.equal(row.id, b.global.id),
             .environment_input => |row| return self.budget.equal(row.layout, b.environment_input.layout),
+            .literal => |row| return row.category == b.literal.category,
             .unknown => return true, // Overall scan already leaves this pending.
             .local => |row| return try self.budget.equal(row.@"type", b.local.@"type") and try self.alpha(&state.locals, obligation.left, obligation.right),
             .environment_create => |row| {
@@ -358,6 +360,7 @@ const Engine = struct {
             },
             .copy => |row| { try self.pair(state, .node, row.value, b.copy.value); try self.heap(state, row.previous, b.copy.previous); },
             .call => |row| { if (row.completion != b.call.completion) return false; try self.pair(state, .call, row.call, b.call.call); },
+            .receiver_action => return false, // No receiver-state certificate is claimed.
             .join => return false,
         }
         return true;
