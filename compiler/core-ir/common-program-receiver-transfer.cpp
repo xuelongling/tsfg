@@ -46,7 +46,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     }
   }else if(name=="receiver_bind"||name=="receiver_get"||name=="receiver_result"){
     const auto action=name=="receiver_bind"?ReceiverAction::Bind:name=="receiver_get"?ReceiverAction::Get:ReceiverAction::Result;
-    auto result=receiverCompletion(state.frames,args[0].frames,action,args.size()>1?&args[1]:nullptr);
+    auto result=receiverCompletion(std::move(state.frames),args[0].frames,action,args.size()>1?&args[1]:nullptr);
     if(!e.message.empty())return false;if(result.pending)return reject(e,"core-ir-common-construction-open","receiver payload category remains unresolved (including ReadSpan)");
     if(conditional&&name=="receiver_result"&&result.normal){
       if(!step(args[0].frames.size()))return false;

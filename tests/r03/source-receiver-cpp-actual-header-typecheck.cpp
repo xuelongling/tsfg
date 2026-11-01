@@ -15,7 +15,7 @@ static_assert(std::is_same_v<decltype(std::declval<ActualContext>().normalFrames
 static_assert(std::is_same_v<decltype(std::declval<ActualContext>().languageFrames),ActualFrameWorld>);
 static_assert(std::is_same_v<ActualFrameWorld::mapped_type,ActualFrameBinding>);
 static_assert(std::is_same_v<decltype(std::declval<ActualCheck &>().copyFrames(std::declval<const ActualFrameWorld &>())),ActualFrameWorld>);
-static_assert(std::is_same_v<decltype(std::declval<ActualCheck &>().receiverCompletion(std::declval<const ActualFrameWorld &>(),
+static_assert(std::is_same_v<decltype(std::declval<ActualCheck &>().receiverCompletion(std::declval<ActualFrameWorld &&>(),
   std::declval<const Controls &>(),ReceiverAction::Get,nullptr)),ActualReceiverCompletion>);
 static_assert(std::is_same_v<decltype(std::declval<ActualCheck &>().retainedFrames(std::declval<const ActualFrameWorld &>())),std::vector<ActualValue>>);
 static_assert(std::is_same_v<decltype(std::declval<ActualCheck &>().abortInitializers(std::declval<ActualState &>())),bool>);

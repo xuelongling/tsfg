@@ -171,32 +171,55 @@ std::string ActualCheck::receiverCursor(const std::string &frame,size_t position
   if(!receiverText(frame)||!step(64))return {};const auto id="initialization:"+digest(canonical(Array{frame,int64_t(position)}));
   if(!receiverCursors.count(id)){if(!receiverText(frame)||!step())return {};receiverCursors.emplace(id,ActualCursorInfo{frame,position});}return id;
 }
-ActualReceiverCompletion ActualCheck::receiverCompletion(const ActualFrameWorld &world,const std::set<std::string> &ids,ReceiverAction action,const ActualValue *returned){
+ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&world,const std::set<std::string> &ids,ReceiverAction action,const ActualValue *returned){
   ActualReceiverCompletion out;Parts parts;
   if(action==ReceiverAction::Bind||returned)parts=split(*this,*returned);else parts.undefined=true;
   if(!e.message.empty())return out;out.pending=parts.pending;
   if(action==ReceiverAction::Bind&&!need((!parts.undefined&&!parts.primitive)||parts.pending,"completed Construct did not select an object"))return out;
-  const auto normal=[&](ActualFrameWorld next,const ActualValue &value){if(!e.message.empty())return;if(!out.normal){out.normal=true;out.normalFrames=std::move(next);out.selected=copy(value);}
-    else {joinFrames(out.normalFrames,next);merge(out.selected,value);}};
-  const auto language=[&](ActualFrameWorld next){if(!e.message.empty())return;if(!out.language){out.language=true;out.languageFrames=std::move(next);}else joinFrames(out.languageFrames,next);};
+  // Decide every alternative against the same immutable input before consuming
+  // it. These pointers borrow only that input, its separate ids, or local parts.
+  enum class Update {None,Bind,Bound,Unbound};
+  struct Arm {const std::string *id;const ActualValue *selected;Update update;bool normal;};
+  std::vector<Arm> arms;
+  const auto arm=[&](const std::string &id,const ActualValue *selected,Update update,bool normal){
+    if(!step()||(arms.size()==arms.capacity()&&!step(arms.size()+1)))return false;
+    arms.push_back(Arm{&id,selected,update,normal});return true;
+  };
   if(!step(ids.size()))return out;
   for(const auto &id:ids){if(!receiverText(id)||!need(world.count(id)&&receiverFrames.count(id),"receiver frame is absent from completion"))return {};
     const auto &before=world.at(id);const auto &info=receiverFrames.at(id);
     if(action==ReceiverAction::Bind){
       if(!data(parts.object))continue;
-      if(before.unbound){auto next=copyFrames(world);if(!e.message.empty())return {};auto &v=next.at(id);
-        if(v.weak){merge(v.bound,parts.object);v.prefixMin=0;v.pending|=parts.pending;}
-        else {v.bound=copy(parts.object);v.unbound=false;v.pending=parts.pending;v.initializing=false;v.aborted=false;v.prefixMin=v.prefixMax=0;}
-        normal(std::move(next),parts.object);}
-      if(data(before.bound)){auto next=copyFrames(world);if(!e.message.empty())return {};if(!before.weak)next.at(id).unbound=false;language(std::move(next));}
+      if(before.unbound&&!arm(id,&parts.object,Update::Bind,true))return {};
+      if(data(before.bound)&&!arm(id,nullptr,Update::Bound,false))return {};
     }else {
-      if(action==ReceiverAction::Result&&data(parts.object))normal(copyFrames(world),parts.object);
+      if(action==ReceiverAction::Result&&data(parts.object)&&!arm(id,&parts.object,Update::None,true))return {};
       const bool get=action==ReceiverAction::Get||parts.undefined||(parts.primitive&&!info.derived);
       if(get){
-        if(data(before.bound)){auto next=copyFrames(world);if(!e.message.empty())return {};if(!before.weak)next.at(id).unbound=false;normal(std::move(next),before.bound);out.pending|=before.pending||before.bound.unknown;}
-        if(before.unbound){auto next=copyFrames(world);if(!e.message.empty())return {};if(!before.weak){auto &v=next.at(id);v.bound={};v.initializing=false;v.prefixMin=v.prefixMax=0;}language(std::move(next));}}
-      if(action==ReceiverAction::Result&&parts.primitive&&info.derived)language(copyFrames(world));
+        if(data(before.bound)){if(!arm(id,&before.bound,Update::Bound,true))return {};out.pending|=before.pending||before.bound.unknown;}
+        if(before.unbound&&!arm(id,nullptr,Update::Unbound,false))return {};}
+      if(action==ReceiverAction::Result&&parts.primitive&&info.derived&&!arm(id,nullptr,Update::None,false))return {};
     }
+    if(!e.message.empty())return {};
+  }
+  for(size_t i=0;i<arms.size();++i){
+    if(!step())return {};const auto &a=arms[i];
+    // Get can select a bound Value inside world. Finish that read before its
+    // final move; Bind instead selects the independently owned local parts.
+    if(a.normal){if(!out.normal)out.selected=copy(*a.selected);else merge(out.selected,*a.selected);if(!e.message.empty())return {};}
+    ActualFrameWorld next;
+    if(i+1==arms.size()){if(!step())return {};next=std::move(world);}
+    else {next=copyFrames(world);if(!e.message.empty())return {};}
+    if(a.update!=Update::None){auto &v=next.at(*a.id);
+      if(a.update==Update::Bind){
+        if(v.weak){merge(v.bound,parts.object);v.prefixMin=0;v.pending|=parts.pending;}
+        else {v.bound=copy(parts.object);v.unbound=false;v.pending=parts.pending;v.initializing=false;v.aborted=false;v.prefixMin=v.prefixMax=0;}
+      }else if(!v.weak){if(a.update==Update::Bound)v.unbound=false;
+        else {v.bound={};v.initializing=false;v.prefixMin=v.prefixMax=0;}}
+    }
+    if(!e.message.empty())return {};
+    if(a.normal){if(!out.normal){out.normal=true;out.normalFrames=std::move(next);}else joinFrames(out.normalFrames,next);}
+    else {if(!out.language){out.language=true;out.languageFrames=std::move(next);}else joinFrames(out.languageFrames,next);}
     if(!e.message.empty())return {};
   }return out;
 }

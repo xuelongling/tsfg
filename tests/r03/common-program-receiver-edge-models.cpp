@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Birth increment of the fixed five-group receiver edge regression below.
+// Consumable terminator-input increment of the fixed nine-group regression.
 // Pure compiler abstract metadata: no loader, VM, bytecode or backend.
 #include "common-program-actual.h"
 #include "llvm/Support/raw_ostream.h"
@@ -57,10 +57,13 @@ bool transfer(const std::string &name,bool weak){
   if(name=="receiver_result")returned.tags.insert("U");
   std::vector<const ActualValue *> pointers{&frames};if(name!="receiver_get")pointers.push_back(&returned);
   ActualState normal,language;std::vector<ActualValue> selected,thrown;unsigned normalCount=0,languageCount=0;bool changed=false,continues=true;ActualValue unused;
+  auto sink=f.check.copyState(f.state);
+  if(!expect(f.error.message.empty(),"independent metered terminator input created"))return false;
   const auto edge=[&](uint16_t target,ActualState after,const std::vector<ActualValue> &values){
     if(target==1){++normalCount;normal=std::move(after);selected=values;}else if(target==2){++languageCount;language=std::move(after);thrown=values;}else return false;return true;
   };
-  if(!expect(f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{pointers},false,changed,edge,unused,continues)&&f.error.message.empty(),"real receiver transfer succeeds"))return false;
+  if(!expect(f.check.receiverInstruction(f.context,op,0,sink,ActualOperands{pointers},false,changed,edge,unused,continues)&&f.error.message.empty(),"real receiver transfer succeeds"))return false;
+  // The private terminator owns sink. Never inspect its consumed frame map.
   if(!expect(!continues&&normalCount==1&&languageCount==1&&selected.size()==1&&thrown.size()==1&&thrown[0].unknown,"both completion arms emitted once"))return false;
   if(!expect(same(input,f.state),"caller input remains fully unchanged"))return false;
   auto normalData=normal,languageData=language;normalData.frames=input.frames;languageData.frames=input.frames;
@@ -91,9 +94,53 @@ bool originalCopy(){Fixture f;const auto before=f.state;auto snapshot=f.check.co
   return expect(same(f.state,before),"original copyState still owns independently mutable storage");
 }
 bool budget(){Fixture f;const auto before=f.state;auto &op=f.function.blocks[0].operations[0];op.name="receiver_get";op.successors={1,2};
+  auto sink=f.check.copyState(f.state);if(!expect(f.error.message.empty(),"budget case starts with independent terminator input"))return false;
   ActualValue frames;frames.frames.insert(f.selected);std::vector<const ActualValue *> pointers{&frames};bool changed=false,continues=true;ActualValue out;size_t edges=0;f.program.remaining=0;
-  const bool ok=f.check.receiverInstruction(f.context,op,0,f.state,ActualOperands{pointers},false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue> &){++edges;return true;},out,continues);
+  const bool ok=f.check.receiverInstruction(f.context,op,0,sink,ActualOperands{pointers},false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue> &){++edges;return true;},out,continues);
   return expect(!ok&&f.error.code=="core-ir-common-budget"&&edges==0&&same(f.state,before),"budget exhaustion reports error, not a completed edge or language substitute");
+}
+bool singleton(){
+  for(const bool language:{false,true}){
+    Fixture f(false);f.state.frames.at(f.selected).unbound=false;const auto input=f.state;auto sink=f.check.copyState(f.state);
+    if(!expect(f.error.message.empty(),"singleton gets independent metered terminator input"))return false;
+    auto &op=f.function.blocks[0].operations[0];op.name=language?"receiver_bind":"receiver_get";op.successors={1,2};
+    ActualValue frames;frames.frames.insert(f.selected);auto replacement=payload("replacement");std::vector<const ActualValue *> pointers{&frames};if(language)pointers.push_back(&replacement);
+    size_t emitted=0;uint16_t target=0;ActualState completed;std::vector<ActualValue> values;bool changed=false,continues=true;ActualValue unused;
+    const auto edge=[&](uint16_t destination,ActualState after,const std::vector<ActualValue> &arguments){++emitted;target=destination;completed=std::move(after);values=arguments;return true;};
+    if(!expect(f.check.receiverInstruction(f.context,op,0,sink,ActualOperands{pointers},false,changed,edge,unused,continues)&&f.error.message.empty(),"singleton receiver completion succeeds"))return false;
+    // sink.frames is valid but unspecified after success; do not read it.
+    auto expected=input;if(language)for(const auto &id:{f.selected,f.parent}){auto &binding=expected.frames.at(id);binding.initializing=false;binding.aborted=true;}
+    if(!expect(emitted==1&&target==(language?2:1)&&!continues&&same(completed,expected)&&same(f.state,input),"one-arm completion preserves complete world/data and applies only its actual language abort"))return false;
+    if(!expect(values.size()==1&&(language?values[0].unknown:same(values[0],payload("old"))),"singleton payload is its selected bound value or language uncertainty"))return false;
+    completed.frames.clear();completed.values.clear();completed.heap.clear();completed.regions.clear();
+    if(!expect(same(f.state,input),"singleton completed-state mutation cannot affect original fixture"))return false;
+  }return true;
+}
+bool multipleReceivers(){
+  Fixture f;f.state.frames.at(f.parent).bound=payload("ancestor");f.check.objects.emplace("ancestor",ActualObject{"B",false});
+  // Selected is weak bound-or-unbound (normal + language). Its strong parent
+  // is bound-only (normal). Thus these actual FrameIDs admit three candidates.
+  const auto input=f.state;auto sink=f.check.copyState(f.state);
+  if(!expect(f.error.message.empty(),"three-arm case starts with independently owned metered input"))return false;
+  auto &op=f.function.blocks[0].operations[0];op.name="receiver_get";op.successors={1,2};
+  ActualValue frames;frames.frames={f.selected,f.parent};std::vector<const ActualValue *> pointers{&frames};
+  ActualState normal,language;std::vector<ActualValue> selected,thrown;size_t normalCount=0,languageCount=0;bool changed=false,continues=true;ActualValue unused;
+  const auto edge=[&](uint16_t target,ActualState after,const std::vector<ActualValue> &values){
+    if(target==1){++normalCount;normal=std::move(after);selected=values;}else if(target==2){++languageCount;language=std::move(after);thrown=values;}else return false;return true;
+  };
+  if(!expect(f.check.receiverInstruction(f.context,op,0,sink,ActualOperands{pointers},false,changed,edge,unused,continues)&&f.error.message.empty(),"multi-ID receiver transfer succeeds"))return false;
+  // Do not inspect sink.frames: the private terminator has consumed it.
+  auto expectedLanguage=input;for(const auto &id:{f.selected,f.parent}){auto &binding=expectedLanguage.frames.at(id);if(!binding.weak)binding.initializing=false;binding.aborted=true;}
+  auto expectedSelected=payload("old");expectedSelected.objects.insert("ancestor");expectedSelected.region.roots.insert("root:ancestor");
+  if(!expect(normalCount==1&&languageCount==1&&!continues&&selected.size()==1&&thrown.size()==1&&same(selected[0],expectedSelected)&&thrown[0].unknown,
+    "three candidates aggregate two distinct selected payloads and the real unbound language alternative"))return false;
+  if(!expect(same(normal,input)&&same(language,expectedLanguage)&&same(f.state,input),"three-arm materialization keeps complete per-Frame state, birth journals, data and only language abort"))return false;
+  const auto languageBefore=language;
+  normal.frames.at(f.selected).bound.region.roots.clear();normal.frames.at(f.parent).births.begin()->second.reference="normal-only";
+  normal.frames.at(f.unrelated).pending=true;normal.values.clear();normal.heap.clear();normal.regions.clear();
+  if(!expect(same(language,languageBefore)&&same(f.state,input),"multi-ID normal output mutation cannot affect language or original input"))return false;
+  const auto normalBefore=normal;language.frames.at(f.parent).bound.objects.clear();language.frames.at(f.selected).births.clear();language.values.clear();language.heap.clear();language.regions.clear();
+  return expect(same(normal,normalBefore)&&same(f.state,input),"multi-ID language output mutation cannot affect normal or original input");
 }
 ActualValue historical(){auto value=payload("old-instance");value.number=9007199254740993LL;value.truth=3;
   value.callables.emplace("old-code","old-environment");value.region.number=9007199254740995LL;return value;
@@ -157,6 +204,8 @@ int main(){unsigned passed=0;
   for(const auto &[name,weak]:std::vector<std::pair<std::string,bool>>{{"receiver_get",true},{"receiver_bind",false},{"receiver_result",true}}){if(!transfer(name,weak))return 1;llvm::errs()<<"PASS "<<name<<" independent complete edge worlds\n";++passed;}
   if(!originalCopy())return 1;++passed;llvm::errs()<<"PASS original copyState ownership\n";
   if(!budget())return 1;++passed;llvm::errs()<<"PASS budget failure does not publish completion\n";
+  if(!singleton())return 1;++passed;llvm::errs()<<"PASS consumable normal-only and language-only completion worlds\n";
+  if(!multipleReceivers())return 1;++passed;llvm::errs()<<"PASS three-candidate multi-ID completion selection and world isolation\n";
   if(!birthEmpty())return 1;++passed;llvm::errs()<<"PASS empty single-ancestor birth and pre-default history\n";
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";

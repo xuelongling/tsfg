@@ -167,7 +167,8 @@ struct ActualCheck {
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);
   std::string createFrame(ActualFrameWorld &,const std::string &,const std::string &,const std::string &,const std::string &,const std::string &,bool,const std::string &parent={});
   std::string receiverCursor(const std::string &,size_t);
-  ActualReceiverCompletion receiverCompletion(const ActualFrameWorld &,const std::set<std::string> &,ReceiverAction,const ActualValue *);
+  // Terminator-owned input: no caller may inspect this World after completion.
+  ActualReceiverCompletion receiverCompletion(ActualFrameWorld &&,const std::set<std::string> &,ReceiverAction,const ActualValue *);
   bool abortInitializers(ActualState &);
   bool receiverArguments(const Function &,ActualHeap &,ActualFrameWorld &,bool,bool &,std::vector<ActualValue> &,const std::string &,const std::string &);
   bool seedReceiverRoots(bool,bool &);
