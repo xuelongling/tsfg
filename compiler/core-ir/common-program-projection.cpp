@@ -203,6 +203,39 @@ bool SourceModel::projection(){
   return error.message.empty()&&need(mismatch.empty(),"complete owned HIR differs from independent Source transformation at "+mismatch);
 }
 bool verifySource(Program &p,Error &e){
-  SourceModel source(p,e);return source.directory()&&source.identities()&&source.sourceText()&&verifyCommonHostContext(p,e)&&source.projection();
+  SourceModel source(p,e);
+  if(!source.directory()||!source.identities()||!source.sourceText()||!verifyCommonHostContext(p,e)||!source.projection())return false;
+  // Export only the independently checked structural scope directory. The
+  // Builder owns no Source traversal and an absent declaration is not root.
+  decltype(p.bindingScopes) scopes;
+  for(const auto &[owner,fn]:source.functions){
+    if(!source.spend(3))return false;size_t ownerLookup=1;
+    for(auto count=source.scopeDeclarations.size();count;count>>=1){if(!source.spend())return false;ownerLookup+=2;}
+    if(!source.spend((owner.size()/8+1)*ownerLookup))return false;
+    const auto &declarations=source.scopeDeclarations.at(owner);
+    for(auto group:{"parameters","bindings"})for(const auto &binding:items(field(*fn,group))){
+      const auto id=field(binding,"id").getAsString().value();
+      if(!source.spend(id.size()/8+2))return false;auto key=id.str();
+      const Array *path=nullptr;
+      if(llvm::StringRef(group)!="parameters"){
+        size_t lookup=1;for(auto count=declarations.size();count;count>>=1){if(!source.spend())return false;lookup+=2;}
+        if(!source.spend((id.size()/8+1)*lookup))return false;
+        const auto declaration=declarations.find(key);
+        if(declaration==declarations.end())continue;
+        path=&declaration->second.path;
+      }
+      std::vector<std::string> owned;
+      if(path){
+        if(!source.spend(path->size()+1))return false;owned.reserve(path->size());
+        for(const auto &part:*path){const auto text=part.getAsString().value();if(!source.spend(text.size()/8+1))return false;owned.emplace_back(text.data(),text.size());}
+      }
+      size_t lookup=1;for(auto count=scopes.size();count;count>>=1){if(!source.spend())return false;lookup+=2;}
+      if(!source.spend((id.size()/8+1)*lookup+1))return false;
+      scopes.emplace(std::move(key),std::move(owned));
+    }
+  }
+  if(!source.spend(p.bindingScopes.size()+1))return false;
+  for(const auto &[binding,path]:p.bindingScopes)if(!source.spend(path.size()+1))return false;
+  p.bindingScopes=std::move(scopes);return true;
 }
 } // namespace tsfg::commonProgram
