@@ -365,8 +365,14 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!step(context.arguments.size()+args.size()))return false;std::vector<ActualValue> frameRoots;
     for(const auto &arg:context.arguments)frameRoots.push_back(copy(arg));if(!args.empty())frameRoots.push_back(copy(args[0]));
     auto selected=selectFrames(state.frames,frameRoots,state.heap);if(!e.message.empty())return false;
-    changed=joinFrames(normal?context.normalFrames:context.languageFrames,selected)||changed;
-    auto retained=retainedFrames(selected);if(!e.message.empty()||!step(frameRoots.size()+retained.size()))return false;
+    // The empty summary can own this complete projection; a nonempty summary
+    // must merge, while retained roots still come only from this return.
+    if(!step(5))return false;auto &frameSummary=normal?context.normalFrames:context.languageFrames;
+    const bool adopted=frameSummary.empty();
+    if(adopted){if(!step())return false;
+      if(!selected.empty()){if(!step(2))return false;changed=true;frameSummary=std::move(selected);}}
+    else changed=joinFrames(frameSummary,selected)||changed;
+    auto retained=retainedFrames(adopted?frameSummary:selected);if(!e.message.empty()||!step(frameRoots.size()+retained.size()))return false;
     std::vector<ActualValue> roots=std::move(frameRoots);roots.reserve(roots.size()+retained.size());
     for(auto &v:retained)roots.push_back(std::move(v));
     auto live=reachable(roots,state.heap);changed=mergeHeap(heap,std::move(live))||changed;continues=false;

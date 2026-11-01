@@ -320,5 +320,63 @@ bool frameRefMembership(){
   llvm::errs()<<"PASS refs-only fixed4000 nonmembership, full equality, duplicate nested refs and owned birth results\n";return true;
 }
 }
-int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories()||!frameRefMembership())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
+namespace {
+bool returnFrameAdoption(){
+  {Fixture f(false);auto binding=f.state.frames.at(f.selected);binding.births.clear();binding.bound=f.state.values.at(8);
+    binding.unbound=false;binding.weak=true;binding.pending=true;binding.initializing=true;binding.aborted=true;binding.prefixMin=1;binding.prefixMax=3;
+    binding.bound.unknown=true;binding.bound.callableTop=true;binding.bound.region.opaque=true;binding.bound.region.empty=true;
+    f.state.frames.clear();f.state.frames.emplace(f.selected,binding);f.state.values.clear();f.state.heap.clear();f.state.regions.clear();
+    f.check.receiverFrames.at(f.selected).parent.clear();f.check.receiverFrames.erase(f.parent);f.check.receiverFrames.erase(f.unrelated);
+    ActualValue control;control.frames={f.selected};f.context.arguments={control};f.context.normal=true;
+    auto &op=f.function.blocks[0].operations[0];op.name="func.return";const auto before=f.state;bool changed=false,continues=true;size_t edges=0;
+    if(!expect(f.selected.size()==80&&f.context.normalFrames.empty()&&f.state.frames.size()==1&&f.check.receiverFrames.size()==1,"fixed1000 actual return starts with one complete80B binding and stable completion flag"))return false;
+    f.program.remaining=1000;const bool ok=f.check.instruction(f.context,op,0,f.state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
+    if(!expect(ok&&f.error.message.empty()&&!continues&&changed&&edges==0&&same(f.state,before)&&
+        sameMap(f.context.normalFrames,before.frames,[](const auto &a,const auto &b){return same(a,b);})&&f.context.normalHeap.empty()&&same(f.context.returned,ActualValue{}),
+        "fixed1000 actual func.return preserves the complete selected World without a second journal/key clone"))return false;
+    const auto kept=f.context.normalFrames;f.state.frames.at(f.selected).bound.objects.clear();f.state.frames.at(f.selected).bound.region.roots.clear();
+    if(!expect(sameMap(f.context.normalFrames,kept,[](const auto &a,const auto &b){return same(a,b);}),"low-budget adopted summary owns its binding independently from input World"))return false;
+    const auto changedInput=f.state;f.context.normalFrames.begin()->second.bound.cells.clear();
+    if(!expect(same(f.state,changedInput),"adopted summary mutation cannot change input state"))return false;
+  }
+  for(const bool normal:{true,false})for(const bool populated:{false,true}){Fixture f(false);
+    auto returned=payload("returned");returned.truth=2;returned.number=17;returned.region.number=29;f.state.values.at(8)=returned;
+    f.state.frames.at(f.selected).unbound=false;f.state.frames.at(f.selected).pending=true;
+    f.state.heap.clear();f.state.heap.emplace("old/field/bound",payload("bound-child"));f.state.heap.emplace("historical-data/field/birth",payload("birth-child"));
+    f.state.heap.emplace("returned/field/value",payload("return-child"));f.state.heap.emplace("summary-only/field/secret",payload("excluded"));
+    ActualValue control;control.frames={f.selected};f.context.arguments={control};auto expectedState=f.state;
+    if(!normal){expectedState.frames.at(f.selected).initializing=false;expectedState.frames.at(f.selected).aborted=true;
+      expectedState.frames.at(f.parent).initializing=false;expectedState.frames.at(f.parent).aborted=true;}
+    auto wanted=expectedState.frames;wanted.erase(f.unrelated);auto &summary=normal?f.context.normalFrames:f.context.languageFrames;
+    if(populated){auto prior=wanted.at(f.selected);prior.weak=true;prior.bound.objects.insert("summary-only");prior.bound.region.roots.insert("root:summary-only");
+      prior.births.begin()->second.real.objects.insert("summary-only");prior.births.begin()->second.real.region.roots.insert("root:summary-only");
+      ActualFrameBinding old;old.unbound=false;old.pending=true;old.bound=payload("summary-only");summary.emplace(f.selected,prior);summary.emplace(f.unrelated,old);
+      wanted.insert_or_assign(f.selected,prior);wanted.emplace(f.unrelated,old);}
+    ActualHeap wantedHeap;wantedHeap.emplace("old/field/bound",payload("bound-child"));wantedHeap.emplace("historical-data/field/birth",payload("birth-child"));wantedHeap.emplace("returned/field/value",payload("return-child"));
+    auto &op=f.function.blocks[0].operations[0];op.name=normal?"func.return":"return_throw";op.operands={8};bool changed=false,continues=true;size_t edges=0;
+    f.program.remaining=500000;const bool ok=f.check.instruction(f.context,op,0,f.state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
+    const auto &heap=normal?f.context.normalHeap:f.context.languageHeap;const auto &value=normal?f.context.returned:f.context.thrown;
+    if(!expect(ok&&f.error.message.empty()&&!continues&&changed&&edges==0&&(normal?f.context.normal:f.context.language)&&
+        !(normal?f.context.language:f.context.normal)&&same(value,returned)&&same(f.state,expectedState)&&same(f.context.arguments[0],control)&&
+        sameMap(summary,wanted,[](const auto &a,const auto &b){return same(a,b);})&&sameMap(heap,wantedHeap,[](const auto &a,const auto &b){return same(a,b);})&&
+        !heap.count("summary-only/field/secret")&&(normal?f.context.languageFrames.empty():f.context.normalFrames.empty()),
+        "actual normal/language return preserves all World/history facets and the exact current retained heap, excluding accumulated-summary roots"))return false;
+    const auto kept=summary;f.state.frames.at(f.selected).births.begin()->second.reference="mutated-input";f.state.frames.at(f.selected).births.begin()->second.real.objects.clear();f.state.heap.clear();
+    if(!expect(sameMap(summary,kept,[](const auto &a,const auto &b){return same(a,b);}),"complete return-summary birth reference and payload copies survive input mutation"))return false;
+    const auto changedInput=f.state;summary.begin()->second.bound.objects.clear();summary.begin()->second.births.clear();
+    if(!expect(same(f.state,changedInput),"normal/language summary mutation cannot change current input journals"))return false;
+    const auto owned=summary;f.state.frames.clear();f.check.receiverFrames.clear();f.context.arguments.clear();
+    if(!expect(sameMap(summary,owned,[](const auto &a,const auto &b){return same(a,b);}),"return summary owns full keys and remaining payload after source World and FrameInfo destruction"))return false;
+  }
+  for(const bool normal:{true,false})for(const bool initiallyChanged:{false,true}){Fixture f(false);f.state.frames.clear();f.state.values.clear();f.state.heap.clear();f.state.regions.clear();
+    f.context.normal=normal;f.context.language=!normal;auto &op=f.function.blocks[0].operations[0];op.name=normal?"func.return":"return_throw";
+    const auto before=f.state;bool changed=initiallyChanged,continues=true;size_t edges=0;f.program.remaining=1000;
+    if(!expect(f.check.instruction(f.context,op,0,f.state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues)&&
+        f.error.message.empty()&&!continues&&changed==initiallyChanged&&edges==0&&same(f.state,before)&&f.context.normalFrames.empty()&&f.context.languageFrames.empty()&&
+        f.context.normalHeap.empty()&&f.context.languageHeap.empty(),"empty selected World with stable completion changes neither summary nor the incoming changed flag"))return false;
+  }
+  llvm::errs()<<"PASS actual return normal/language empty-summary adoption, nonempty union/current projection, ownership and fixed1000 cutoff\n";return true;
+}
+}
+int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories()||!frameRefMembership()||!returnFrameAdoption())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
   llvm::errs()<<"1 independent group passed; old11 results reused, complete Source820b remains independent\n";return 0;}
