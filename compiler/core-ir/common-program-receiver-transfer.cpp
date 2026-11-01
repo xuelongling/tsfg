@@ -56,9 +56,17 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
         if(!recordCapacity(constructionCapacity[key],result.selected))return false;
       }
     }
-    if(result.normal){auto after=copyStateWithFrames(state,std::move(result.normalFrames));if(!e.message.empty()||!step())return false;
+    // No receiver-terminator observer retains a store-node borrow. Preserve
+    // source.values for ActualOperands; only the last edge may consume stores.
+    const auto edgeState=[&](ActualFrameWorld &&frames,bool last){
+      if(last)return copyStateWithOwnedStores(state.values,std::move(state.heap),std::move(state.regions),std::move(frames));
+      auto heap=copyHeap(state.heap);if(!e.message.empty())return ActualState{};
+      auto regions=regionCopy(*this,state.regions);if(!e.message.empty())return ActualState{};
+      return copyStateWithOwnedStores(state.values,std::move(heap),std::move(regions),std::move(frames));
+    };
+    if(result.normal){auto after=edgeState(std::move(result.normalFrames),!result.language);if(!e.message.empty()||!step())return false;
       std::vector<ActualValue> values;values.push_back(copy(result.selected));if(!e.message.empty()||!edge(op.successors[0],std::move(after),values))return false;}
-    if(result.language){auto after=copyStateWithFrames(state,std::move(result.languageFrames));if(!e.message.empty()||!abortInitializers(after)||!step())return false;
+    if(result.language){auto after=edgeState(std::move(result.languageFrames),true);if(!e.message.empty()||!abortInitializers(after)||!step())return false;
       ActualValue thrown;thrown.unknown=true; // Universal language payload, not a selected receiver/object.
       if(!edge(op.successors[1],std::move(after),std::vector<ActualValue>{std::move(thrown)}))return false;}
     continues=false;

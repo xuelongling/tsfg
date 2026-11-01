@@ -145,7 +145,8 @@ struct ActualCheck {
   bool arrayReceiver(const ActualValue &);
   ActualHeap copyHeap(const ActualHeap &);
   // The caller transfers a complete private completion world; data is copied.
-  ActualState copyStateWithFrames(const ActualState &,ActualFrameWorld);
+  // Copies SSA nodes to keep borrowed operands live; consumes only owned planes.
+  ActualState copyStateWithOwnedStores(const std::map<uint16_t,ActualValue> &,ActualHeap &&,RegionHeap &&,ActualFrameWorld &&);
   ActualState copyState(const ActualState &);
   bool join(ActualState &,ActualState &&);
   ActualValue declared(const std::string &,ActualHeap &,const std::string &,std::set<std::string> = {});

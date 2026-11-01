@@ -94,14 +94,18 @@ bool ActualCheck::mergeHeap(ActualHeap &into,ActualHeap &&from){
     if(!e.message.empty())return false;
   }return changed;
 }
-ActualState ActualCheck::copyStateWithFrames(const ActualState &s,ActualFrameWorld frames){
-  ActualState out;if(!step(s.values.size()))return out;out.heap=copyHeap(s.heap);
-  out.regions=regionCopy(*this,s.regions);out.frames=std::move(frames);
-  for(const auto &[id,v]:s.values){out.values.emplace(id,copy(v));if(!e.message.empty())return {};}
+ActualState ActualCheck::copyStateWithOwnedStores(const std::map<uint16_t,ActualValue> &values,ActualHeap &&heap,RegionHeap &&regions,ActualFrameWorld &&frames){
+  ActualState out;if(!step(values.size()))return out;
+  for(const auto &[id,v]:values){auto owned=copy(v);if(!e.message.empty())return {};out.values.emplace(id,std::move(owned));}
+  if(!step(3))return {};
+  out.heap=std::move(heap);out.regions=std::move(regions);out.frames=std::move(frames);
   return out;
 }
 ActualState ActualCheck::copyState(const ActualState &s){
-  return copyStateWithFrames(s,copyFrames(s.frames));
+  auto frames=copyFrames(s.frames);if(!e.message.empty())return {};
+  auto heap=copyHeap(s.heap);if(!e.message.empty())return {};
+  auto regions=regionCopy(*this,s.regions);if(!e.message.empty())return {};
+  return copyStateWithOwnedStores(s.values,std::move(heap),std::move(regions),std::move(frames));
 }
 bool ActualCheck::join(ActualState &to,ActualState &&from){
   // The caller transfers a private edge state. Moving its heap/value payloads

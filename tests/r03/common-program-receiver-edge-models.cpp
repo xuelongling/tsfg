@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Consumable terminator-input increment of the fixed nine-group regression.
+// Last-edge heap/Region store consumption increment of the fixed11 regression.
 // Pure compiler abstract metadata: no loader, VM, bytecode or backend.
 #include "common-program-actual.h"
 #include "llvm/Support/raw_ostream.h"
@@ -142,6 +142,41 @@ bool multipleReceivers(){
   const auto normalBefore=normal;language.frames.at(f.parent).bound.objects.clear();language.frames.at(f.selected).births.clear();language.values.clear();language.heap.clear();language.regions.clear();
   return expect(same(normal,normalBefore)&&same(f.state,input),"multi-ID language output mutation cannot affect normal or original input");
 }
+bool operandsStayLive(){
+  Fixture f(false);const auto original=f.state;auto sink=f.check.copyState(f.state);
+  if(!expect(f.error.message.empty(),"operand-borrow case starts with metered independent sink"))return false;
+  ActualValue frame;frame.frames.insert(f.selected);sink.values.emplace(9,frame);sink.values.emplace(10,payload("replacement"));
+  const auto input=sink;const auto *frameNode=&sink.values.at(9),*dataNode=&sink.values.at(10);
+  std::vector<const ActualValue *> pointers{frameNode,dataNode};const ActualOperands operands{pointers};
+  auto &op=f.function.blocks[0].operations[0];op.name="receiver_bind";op.operands={9,10};op.successors={1,2};
+  size_t normal=0,language=0;bool changed=false,continues=true;ActualValue unused;
+  const auto edge=[&](uint16_t target,ActualState next,const std::vector<ActualValue> &values){
+    auto expected=input;auto &binding=expected.frames.at(f.selected);binding.unbound=false;
+    if(target==1){++normal;binding.bound=payload("replacement");binding.pending=false;binding.initializing=false;binding.aborted=false;binding.prefixMin=binding.prefixMax=0;
+      if(!expect(values.size()==1&&same(values[0],payload("replacement")),"borrowed data operand supplies the full normal selected value"))return false;
+    }else if(target==2){++language;for(const auto &id:{f.selected,f.parent}){auto &row=expected.frames.at(id);row.initializing=false;row.aborted=true;}
+      if(!expect(values.size()==1&&values[0].unknown,"duplicate binding supplies its language payload"))return false;
+    }else return expect(false,"receiver emits only owned completion targets");
+    if(!expect(same(next,expected),"edge owns complete independent values, heap, Regions, World and birth history"))return false;
+    // A real merge can discard this temporary. Destroy all next stores before
+    // checking source node ownership, and only then dereference borrowed args.
+    next=ActualState{};
+    const auto frameIt=sink.values.find(9),dataIt=sink.values.find(10);
+    if(!expect(frameIt!=sink.values.end()&&dataIt!=sink.values.end()&& &frameIt->second==frameNode&& &dataIt->second==dataNode,
+      "discarding an edge must not remove or relocate source SSA operand nodes"))return false;
+    if(!expect(sameMap(sink.values,input.values,[](const auto &a,const auto &b){return same(a,b);}),"all source SSA values remain complete after edge destruction"))return false;
+    if(!expect(same(operands[0],frame)&&same(operands[1],payload("replacement")),"ArrayRef operands remain safely readable after edge destruction"))return false;
+    return expect(same(f.state,original),"source fixture remains independent of owned sink and discarded edge");
+  };
+  if(!expect(f.check.receiverInstruction(f.context,op,0,sink,operands,false,changed,edge,unused,continues)&&f.error.message.empty(),"real receiver transfer preserves live SSA operand borrows"))return false;
+  // Only values remains a borrowing owner; never inspect consumed heap,
+  // regions or frames, and impose no moved-from-empty or rollback rule.
+  const auto frameIt=sink.values.find(9),dataIt=sink.values.find(10);
+  if(!expect(frameIt!=sink.values.end()&&dataIt!=sink.values.end()&& &frameIt->second==frameNode&& &dataIt->second==dataNode,
+    "source operand node addresses remain stable through terminator return"))return false;
+  return expect(normal==1&&language==1&&!continues&&sameMap(sink.values,input.values,[](const auto &a,const auto &b){return same(a,b);})&&same(f.state,original)&&
+    same(operands[0],frame)&&same(operands[1],payload("replacement")),"both discarded edges preserve the source values owner through terminator return");
+}
 ActualValue historical(){auto value=payload("old-instance");value.number=9007199254740993LL;value.truth=3;
   value.callables.emplace("old-code","old-environment");value.region.number=9007199254740995LL;return value;
 }
@@ -206,6 +241,7 @@ int main(){unsigned passed=0;
   if(!budget())return 1;++passed;llvm::errs()<<"PASS budget failure does not publish completion\n";
   if(!singleton())return 1;++passed;llvm::errs()<<"PASS consumable normal-only and language-only completion worlds\n";
   if(!multipleReceivers())return 1;++passed;llvm::errs()<<"PASS three-candidate multi-ID completion selection and world isolation\n";
+  if(!operandsStayLive())return 1;++passed;llvm::errs()<<"PASS real SSA operand borrows survive discarded completion edge stores\n";
   if(!birthEmpty())return 1;++passed;llvm::errs()<<"PASS empty single-ancestor birth and pre-default history\n";
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
