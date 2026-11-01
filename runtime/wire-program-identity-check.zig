@@ -8,6 +8,7 @@ const model = @import("wire-program-model.zig");
 const tables = @import("wire-program-tables.zig");
 const storage = @import("wire-program-storage.zig");
 const publication = @import("wire-program-publication.zig");
+const return_origin = @import("wire-program-return-origin-model.zig");
 const context = @import("wire-program-refcheck-context.zig");
 const t = model.types;
 const Context = context.Context;
@@ -91,6 +92,15 @@ const Json = struct {
             .union_type => |v| self.value(v), .element => |v| self.value(v),
             .nominal => |v| self.nominalShape(v),
         };
+        if (T == return_origin.Graph) {
+            try self.c.step();
+            return self.value(.{ .format=.{ .family="tsfg.return-origin-graph-candidate", .version=input.version },
+                .nodes=input.nodes, .heaps=input.heaps, .controls=input.controls, .calls=input.calls,
+                .normal=input.normal, .language=input.language, .exits=input.exits, .accesses=input.accesses });
+        }
+        if (T == return_origin.Value) return self.graphValue(input);
+        if (T == return_origin.Heap) return self.graphHeap(input);
+        if (T == return_origin.Control) return self.graphControl(input);
         switch (@typeInfo(T)) {
             .bool => try self.raw(if (input) "true" else "false"),
             .int, .comptime_int => { var buffer: [32]u8 = undefined; try self.raw(std.fmt.bufPrint(&buffer, "{d}", .{input}) catch unreachable); },
@@ -119,6 +129,53 @@ const Json = struct {
             },
             else => @compileError("unsupported owned canonical value"),
         }
+    }
+    // These are Graph5's owned DTO alternatives, not a generic union format.
+    // Emit the same exact records as the Node boundary, including null views.
+    fn graphValue(self: *Json, input: return_origin.Value) Error!void {
+        try self.c.step();
+        return switch (input) {
+            .literal => |v| self.value(.{ .kind="literal", .@"type"=v.@"type", .category=v.category }),
+            .receiver_input => self.value(.{ .kind="receiverInput", .@"type"=null }),
+            .receiver_frame => |v| self.value(.{ .kind="receiverFrame", .@"type"=null, .construction=v.construction, .new_target=v.new_target, .parent=v.parent, .site=v.site, .control=v.control }),
+            .receiver_value => |v| self.value(.{ .kind="receiverValue", .@"type"=v.@"type", .action=v.action }),
+            .parameter => |v| self.value(.{ .kind="parameter", .@"type"=v.@"type", .index=v.index }),
+            .global => |v| self.value(.{ .kind="global", .@"type"=v.@"type", .id=v.id }),
+            .capture => |v| self.value(.{ .kind="capture", .@"type"=v.@"type", .id=v.id, .layout=v.layout, .environment=v.environment, .heap=v.heap, .control=v.control }),
+            .environment_input => |v| self.value(.{ .kind="environmentInput", .@"type"=null, .layout=v.layout }),
+            .environment_create => |v| self.value(.{ .kind="environmentCreate", .@"type"=null, .layout=v.layout, .parent=v.parent, .site=v.site, .control=v.control }),
+            .environment_parent => |v| self.value(.{ .kind="environmentParent", .@"type"=null, .layout=v.layout, .bases=v.bases, .control=v.control }),
+            .environment_component => |v| self.value(.{ .kind="environmentComponent", .@"type"=null, .layout=v.layout, .function_id=v.function_id, .callee=v.callee, .control=v.control }),
+            .code => |v| self.value(.{ .kind="code", .@"type"=v.@"type", .function_id=v.function_id, .environment=v.environment, .control=v.control }),
+            .local => |v| self.value(.{ .kind="local", .@"type"=v.@"type" }),
+            .nonowning => |v| self.value(.{ .kind="nonowning", .@"type"=v.@"type" }),
+            .unknown => self.value(.{ .kind="unknown", .@"type"=null }),
+            .join => |v| self.value(.{ .kind="join", .@"type"=v.@"type", .inputs=v.inputs }),
+            .gate => |v| self.value(.{ .kind="gate", .@"type"=v.@"type", .inputs=v.inputs, .control=v.control }),
+            .projection => |v| self.value(.{ .kind="projection", .@"type"=v.@"type", .bases=v.bases, .selector=v.selector, .view=v.view, .heap=v.heap, .control=v.control }),
+            .copy => |v| self.value(.{ .kind="copy", .@"type"=v.@"type", .bases=v.bases, .site=v.site, .heap=v.heap, .control=v.control }),
+            .call => |v| self.value(.{ .kind="call", .@"type"=v.@"type", .call=v.call, .completion=v.completion }),
+        };
+    }
+    fn graphHeap(self: *Json, input: return_origin.Heap) Error!void {
+        try self.c.step();
+        return switch (input) {
+            .entry => self.value(.{ .kind="entry" }),
+            .join => |v| self.value(.{ .kind="join", .inputs=v.inputs }),
+            .store => |v| self.value(.{ .kind="store", .previous=v.previous, .bases=v.bases, .selector=v.selector, .view=v.view, .values=v.values, .control=v.control, .initialize=v.initialize }),
+            .copy => |v| self.value(.{ .kind="copy", .previous=v.previous, .value=v.value }),
+            .call => |v| self.value(.{ .kind="call", .call=v.call, .completion=v.completion }),
+            .receiver_action => |v| self.value(.{ .kind="receiverAction", .previous=v.previous, .control=v.control, .frames=v.frames, .action=v.action, .operands=v.operands, .completion=v.completion }),
+        };
+    }
+    fn graphControl(self: *Json, input: return_origin.Control) Error!void {
+        try self.c.step();
+        return switch (input) {
+            .entry => self.value(.{ .kind="entry" }),
+            .join => |v| self.value(.{ .kind="join", .inputs=v.inputs }),
+            .call => |v| self.value(.{ .kind="call", .call=v.call, .completion=v.completion }),
+            .receiver_completion => |v| self.value(.{ .kind="receiverCompletion", .action=v.action }),
+        };
     }
     fn nominalShape(self: *Json, v: anytype) Error!void {
         // Optional semantic-shape properties are absent, unlike nullable refs.
@@ -726,7 +783,7 @@ const Common = struct {
             try c.step(); try c.require(!(try contracts.getOrPut(c.allocator,row.function_id)).found_existing);
             contracts.getPtr(row.function_id).?.*=i;
             try equal(c,row.function_id,fixed.stable_scope.functions[i].function_id); try equal(c,row.signature_hash,fixed.stable_scope.functions[i].signature_hash);
-            try equal(c,row.digest,try digest(c,"tsfg.common-program.published-contract.v1",.{.function_id=row.function_id,.signature_hash=row.signature_hash,.upper=row.upper,.callables=row.callables}));
+            try equal(c,row.digest,try digest(c,"tsfg.common-program.published-contract.v1",.{.function_id=row.function_id,.signature_hash=row.signature_hash,.upper=row.upper,.callables=row.callables,.return_origins=row.return_origins}));
         }
         try equal(c,p.expected_digest,try digest(c,"tsfg.common-program.publication.v1",.{.scope_digest=p.scope_digest,.contracts=p.contracts}));
         try c.require(fixed.dependencies.len==c.program.functions.len);
