@@ -66,7 +66,7 @@ pub const Analysis = struct {
     region_nodes: std.ArrayListUnmanaged(relation.Node)=.empty,
     region_scopes: std.ArrayListUnmanaged(relation.Scope)=.empty,
 
-    pub const ReceiverEntry = struct { construction: t.ConstructionIndex, new_target: t.TypeRef };
+    pub const ReceiverEntry = struct { construction: t.ConstructionIndex, new_target: t.TypeRef, scalar_fields: []const t.FieldRef };
     fn strictReceiverCaller(c: *Context, ref: t.FunctionRef, target: t.FunctionRef, construction: t.ConstructionIndex) Error!bool {
         const v=&c.program.tables.mode.common; const f=&c.program.functions[@intFromEnum(ref)]; const abi=&v.abis[@intFromEnum(f.abi)];
         try c.charge(8);
@@ -92,7 +92,10 @@ pub const Analysis = struct {
     fn receiverIncoming(self:*const Analysis,c:*Context,target:t.FunctionRef,construction:t.ConstructionIndex,edge:facts.CallEdge) Error!bool {
         try c.charge(12);
         const invocation=self.invocations.items[@intFromEnum(edge.callee)]; const caller=self.invocations.items[@intFromEnum(edge.caller.context)];
-        if(invocation.function!=target or invocation.root or invocation.repeated or invocation.unresolved or invocation.actual_unresolved or invocation.arguments.len!=1 or invocation.entry_frames.entries.count()!=1 or invocation.parent==null)return false;
+        // Body/storage uncertainty must not overwrite an independently complete
+        // entrance. Arguments, entry frame state and every incoming creator are
+        // checked below; all original body unresolved flags remain unchanged.
+        if(invocation.function!=target or invocation.root or invocation.repeated or invocation.arguments.len!=1 or invocation.entry_frames.entries.count()!=1 or invocation.parent==null)return false;
         try c.row(facts.Site); if(!std.meta.eql(invocation.parent.?,edge.caller))return false;
         if(caller.function!=edge.caller.location.function or !caller.root or caller.parent!=null or caller.repeated or caller.actual_unresolved or caller.arguments.len!=0 or (caller.unresolved and !caller.receiver_upper_gap))return false;
         if(!invocation.receiver_lifetimes.final_replay_complete or !caller.receiver_lifetimes.final_replay_complete)return false;
@@ -129,7 +132,31 @@ pub const Analysis = struct {
         if(f.role!=.construction_body or abi.construction==null or abi.receiver_frame!=0 or abi.parameters.len!=0 or abi.argument_types.len!=0 or abi.lexical_environment!=null or abi.receiver!=null or f.blocks[0].parameters.len!=1)return null;
         const construction=abi.construction.?; const role=&v.members.constructions[@intFromEnum(construction)]; const owner=&v.types[@intFromEnum(role.owner)];
         try c.charge(7);
-        if(role.kind!=.explicit or role.function!=target or role.parameters.len!=0 or role.signature.parameters.len!=0 or role.initialization_fields.len!=0 or owner.kind!=.reference or owner.base!=null)return null;
+        if(role.kind!=.explicit or role.function!=target or role.parameters.len!=0 or role.signature.parameters.len!=0 or owner.kind!=.reference or owner.base!=null)return null;
+        for(role.initialization_fields) |field_ref| {
+            try c.charge(7); const field=&v.members.fields[@intFromEnum(field_ref)]; const binding=&v.storage.bindings[@intFromEnum(field.binding)];
+            if(field.owner!=role.owner or v.types[@intFromEnum(field.@"type")].kind!=.scalar or field.declared_type!=field.@"type" or
+                binding.@"type"!=field.@"type" or binding.carrier!=.@"type" or binding.carrier.@"type"!=field.@"type")return null;
+            // Independently prove ALL current writes of this field have a
+            // real native scalar payload. Other+view in Graph5 alone is not
+            // that proof: it also represents strings and asserted views.
+            var written=false;
+            for(f.blocks) |*block| { try c.step(); for(block.instructions) |*op| {
+                try c.step(); if(op.data!=.initialize_field or op.data.initialize_field.field!=field_ref)continue;
+                if(op.data.initialize_field.construction!=construction)return null;
+                written=true; const payload=op.operands[2]; const carrier=f.registers[@intFromEnum(payload)].carrier;
+                try c.charge(2); if(carrier!=.@"type" or carrier.@"type"!=field.@"type")return null;
+                var native=false;
+                definitions: for(f.blocks) |*definition_block| { try c.step(); for(definition_block.instructions) |*definition| {
+                    try c.step(); if(definition.result!=payload)continue;
+                    native=switch(definition.data){.const_i32,.const_integer,.const_bool,.const_float=>true,
+                        .domain_literal=>|row|row.actual_type==field.@"type" and v.types[@intFromEnum(row.actual_type)].kind==.scalar,else=>false};
+                    break :definitions;
+                } }
+                if(!native)return null;
+            } }
+            if(!written)return null;
+        }
         // Root policy independently distinguishes a lexical closure row from
         // an actual outside entry capable of providing this hidden Frame.
         if(try receiverOutside(c,target))return null;
@@ -165,7 +192,7 @@ pub const Analysis = struct {
             }
             if(!represented)return null;
         }
-        if(incoming==0)return null; try c.charge(3); return .{.construction=construction,.new_target=role.owner};
+        if(incoming==0)return null; try c.charge(4); return .{.construction=construction,.new_target=role.owner,.scalar_fields=role.initialization_fields};
     }
 
     pub fn view(self: *const Analysis) facts.WorldView {

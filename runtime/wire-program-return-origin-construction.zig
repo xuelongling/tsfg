@@ -9,12 +9,19 @@ const Error = model.Error;
 pub const Category = enum { object, @"undefined", other };
 // Borrowed original directory IDs derived from ALL final current entrances.
 // Only an actually proved unbound root with known newTarget is representable.
-pub const Entry = struct { function_id: model.Symbol, construction: model.Symbol, new_target: model.Symbol };
+pub const Entry = struct {
+    function_id: model.Symbol, construction: model.Symbol, new_target: model.Symbol,
+    // Original FieldIDs with BOTH a native storage join AND ALL current SSA
+    // store payloads independently proved native by the real exact-body
+    // consumer. Not a Graph view inference, values, tags or physical offsets.
+    scalar_fields: []const model.Symbol = &.{},
+};
 pub const Atom = struct {
     source: union(enum) { node: Ref, allocation: Ref, language_error: Ref },
     category: Category,
 };
-pub const Pending = enum { entry_state, fixed_call, data_protocol, heap_protocol, unknown_origin, parent_activation, frame_activation };
+pub const Pending = enum { entry_state, fixed_call, data_protocol, heap_protocol, unknown_origin, parent_activation, frame_activation, scalar_initialization };
+pub const Initialization = struct { store: Ref, base: Atom, value: Atom };
 pub const FrameSummary = struct {
     construction: ?model.Symbol = null, new_target: ?model.Symbol = null, parent: ?Ref = null,
     bound: []const Atom = &.{}, may_unbound: bool = false,
@@ -25,17 +32,44 @@ pub const Analysis = struct {
     normal: []const Atom = &.{}, language: []const Atom = &.{},
     normal_live: bool = false, language_live: bool = false,
     frames: []const FrameSummary = &.{},
+    // Actual live symbolic prefix stores, including language/nonterminating
+    // prefixes. StoreRef retains original selector/view/control/previous heap.
+    initializations: []const Initialization = &.{},
     pub fn deinit(self: *Analysis) void { self.arena.deinit(); }
 };
 const Atoms = std.ArrayListUnmanaged(Atom);
 const Refs = std.ArrayListUnmanaged(Ref);
+const Initializations = std.ArrayListUnmanaged(Initialization);
 const Fact = struct { atoms: Atoms = .empty, frames: Refs = .empty };
 const Binding = struct { unbound: bool = true, atoms: Atoms = .empty };
-const World = struct { live: bool = false, bindings: []Binding };
+const World = struct { live: bool = false, bindings: []Binding, initializations: Initializations = .empty };
 const Frame = struct { role: ?*const model.Construction = null, new_target: ?model.Symbol = null, parent: ?Ref = null };
+
+// Follow only literal provenance, independently of join/gate static views.
+// Bounded iterative closure: cycles without a literal seed prove nothing.
+fn nativeLiterals(a:std.mem.Allocator,directory:*const model.Directory,graph:*const model.Graph,roots:[]const Ref,budget:*Budget) Error!bool {
+    try budget.spend(graph.nodes.len*2+1);
+    const seen=try a.alloc(bool,graph.nodes.len); @memset(seen,false);
+    const pending=try a.alloc(Ref,graph.nodes.len); var count:usize=0; var cursor:usize=0; var literal=false;
+    for(roots) |id| { try budget.step(); if(!seen[id]) { seen[id]=true; pending[count]=id; count+=1; } }
+    while(cursor<count) : (cursor+=1) {
+        try budget.step(); switch(graph.nodes[pending[cursor]]) {
+            .literal=>|row|{
+                if(row.category!=.other or row.@"type"==null)return false;
+                const id=row.@"type".?; try budget.lookup(directory.types.len,id.len); var lo:usize=0; var hi=directory.types.len; var scalar=false;
+                while(lo<hi) { const mid=lo+(hi-lo)/2; switch(std.mem.order(u8,directory.types[mid].id,id)){.lt=>lo=mid+1,.gt=>hi=mid,.eq=>{scalar=directory.types[mid].kind==.scalar;break;}} }
+                if(!scalar)return false; literal=true;
+            },
+            inline .join,.gate=>|row|for(row.inputs) |id| { try budget.step(); if(!seen[id]) { seen[id]=true; pending[count]=id; count+=1; } },
+            else=>return false,
+        }
+    }
+    return literal;
+}
 const Engine = struct {
     allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget,
     values: []Fact, worlds: []World, controls: []bool, frames: []Frame, results: []Atoms,
+    input: ?Ref = null,
     changed: bool = false, pending: ?Pending = null,
     fn insert(self: *Engine, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!bool {
         for (into.items) |old| { try self.budget.step(); if (std.meta.eql(old, value)) return false; }
@@ -51,6 +85,9 @@ const Engine = struct {
     }
     fn refs(self: *Engine, into: *Refs, source: []const Ref) Error!void {
         for (source) |id| try self.add(Ref, into, id);
+    }
+    fn initializations(self:*Engine,into:*Initializations,source:[]const Initialization) Error!void {
+        for(source) |*row| { try self.budget.spend(3); try self.add(Initialization,into,row.*); }
     }
     fn construction(self: *Engine, id: model.Symbol) Error!*const model.Construction {
         for (self.directory.constructions) |*row| { try self.budget.step(); if (try self.budget.equal(row.id, id)) return row; }
@@ -68,6 +105,33 @@ const Engine = struct {
             if (target.unbound != next) { target.unbound = next; self.changed = true; }
             try self.atoms(&target.atoms, if (selected and replacement != null) replacement.? else source.atoms.items);
         }
+        try self.initializations(&into.initializations,from.initializations.items);
+    }
+    fn storeReady(self:*Engine,row:@FieldType(model.Heap,"store")) Error!bool {
+        const frame=self.input orelse return false; const before=&self.worlds[row.previous].bindings[frame];
+        if(before.unbound or before.atoms.items.len==0 or row.bases.len==0 or row.values.len==0)return false;
+        for(row.bases) |id| {
+            try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return false;
+            for(value.atoms.items) |atom| {
+                try self.budget.step(); if(atom.category!=.object or atom.source!=.allocation or atom.source.allocation!=frame)return false;
+                var bound=false; for(before.atoms.items) |old| { try self.budget.step(); if(std.meta.eql(old,atom)) { bound=true; break; } }
+                if(!bound)return false;
+            }
+        }
+        for(row.values) |id| {
+            try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return false;
+            for(value.atoms.items) |atom| { try self.budget.step(); if(atom.category!=.other or atom.source!=.node or self.graph.nodes[atom.source.node]!=.literal)return false; }
+        }
+        return true;
+    }
+    fn initialize(self:*Engine,index:Ref,row:@FieldType(model.Heap,"store")) Error!void {
+        if(!self.controls[row.control] or !self.worlds[row.previous].live or !try self.storeReady(row))return;
+        try self.merge(&self.worlds[index],&self.worlds[row.previous],null,null,null);
+        for(row.bases) |base| { try self.budget.step(); for(self.values[base].atoms.items) |object| {
+            try self.budget.step(); for(row.values) |value| { try self.budget.step(); for(self.values[value].atoms.items) |atom| {
+                try self.budget.spend(4); try self.add(Initialization,&self.worlds[index].initializations,.{.store=index,.base=object,.value=atom});
+            } }
+        } }
     }
     fn outcome(self: *Engine, index: Ref, source: *const World, frame: Ref, values: []const Atom, replacement: ?[]const Atom, unbound: ?bool) Error!void {
         try self.merge(&self.worlds[index], source, frame, replacement, unbound);
@@ -157,6 +221,7 @@ const Engine = struct {
                     .entry => if (!self.worlds[index].live) { self.worlds[index].live = true; self.changed = true; },
                     .join => |row| for (row.inputs) |input| try self.merge(&self.worlds[index], &self.worlds[input], null, null, null),
                     .receiver_action => |row| try self.action(index, row),
+                    .store => |row| try self.initialize(index,row),
                     else => unreachable,
                 }
             }
@@ -194,17 +259,31 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
             else => { result.pending = .data_protocol; return result; },
         }
     }
-    for (graph.heaps) |heap| { try budget.step(); switch (heap) { .entry, .join, .receiver_action => {}, else => { result.pending = .heap_protocol; return result; } } }
     const a = result.arena.allocator();
+    // The proved immutable entry is shared by every store and its frame seed.
+    const entry_function=if(input!=null)try model.findFunction(directory,entry.?.function_id,budget) else null;
+    for (graph.heaps) |heap| { try budget.step(); switch (heap) {
+        .entry, .join, .receiver_action => {},
+        .store=>|row|{
+            if(entry==null or input==null or !row.initialize) { result.pending=.scalar_initialization; return result; }
+            const function=entry_function.?;
+            try budget.text(row.selector.len);
+            if(function.construction==null or !try budget.equal(function.construction.?.owner,row.view) or !std.mem.startsWith(u8,row.selector,"field:")) { result.pending=.scalar_initialization; return result; }
+            var owned=false;
+            for(entry.?.scalar_fields) |id| { try budget.step(); if(try budget.equal(id,row.selector[6..])) { owned=true; break; } }
+            if(!owned or !try nativeLiterals(a,directory,graph,row.values,budget)) { result.pending=.scalar_initialization; return result; }
+        },
+        else => { result.pending = .heap_protocol; return result; },
+    } }
     try budget.spend(graph.nodes.len); const values = try a.alloc(Fact, graph.nodes.len); @memset(values, .{});
     try budget.spend(graph.nodes.len); const frames = try a.alloc(Frame, graph.nodes.len); @memset(frames, .{});
     try budget.spend(graph.controls.len); const controls = try a.alloc(bool, graph.controls.len); @memset(controls, false);
     try budget.spend(graph.heaps.len); const worlds = try a.alloc(World, graph.heaps.len);
     for (worlds) |*world| { try budget.spend(graph.nodes.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len) }; @memset(world.bindings, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
-    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results };
+    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input };
     if(input) |id| {
-        try budget.spend(3); const seed=entry.?; const function=try model.findFunction(directory,seed.function_id,budget);
+        try budget.spend(4); const seed=entry.?; const function=entry_function.?;
         const role=try engine.construction(seed.construction); try budget.spend(7);
         if(function.kind!=.construction_body or function.construction==null or role.kind!=.explicit or role.base!=null or
             !try budget.equal(function.construction.?.id,role.id) or !try budget.equal(seed.new_target,role.owner)) { result.pending=.entry_state; return result; }
@@ -213,6 +292,10 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
         frames[id]=.{.role=role,.new_target=seed.new_target,.parent=null};
     }
     try engine.run(); if (engine.pending) |reason| { result.pending = reason; return result; }
+    for(graph.heaps) |heap| if(heap==.store) {
+        try budget.step(); const row=heap.store; if(!controls[row.control])continue;
+        if(!worlds[row.previous].live or !try engine.storeReady(row)) { result.pending=.scalar_initialization; return result; }
+    };
     // A circular/uncomputed data equation is bottom, never a known-empty
     // payload. Only an actually absent operand vector denotes generated U.
     for (graph.heaps) |heap| if (heap == .receiver_action) {
@@ -246,5 +329,11 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
             row.bound = bound.items;
         } else if (graph.nodes[index] == .receiver_frame and controls[graph.nodes[index].receiver_frame.control]) { result.pending = .frame_activation; return result; }
     }
+    var writes:Initializations=.empty;
+    // Include every live prefix, not just normal returns or language exits.
+    // Histories are finite sets of original store/base/literal atoms; joins do
+    // not invent counts, generations, last-value or physical alias evidence.
+    for(worlds) |*world| { try budget.step(); if(world.live)try engine.initializations(&writes,world.initializations.items); }
+    result.initializations=writes.items;
     result.normal = normal.items; result.language = language.items; result.frames = summary; return result;
 }

@@ -600,13 +600,40 @@ const UpperGraph = struct {
             const observed=try actual.receiverEntry(c,target) orelse return self.noFixedBodyProof(full,returned,thrown);
             const common=&c.program.tables.mode.common;
             const role=&common.members.constructions[@intFromEnum(observed.construction)];
+            try c.charge(observed.scalar_fields.len+1);
+            const scalar_fields=try arena.allocator().alloc(origin_model.Symbol,observed.scalar_fields.len);
+            for(observed.scalar_fields,scalar_fields) |field_ref,*selected| {
+                try c.step(); const id=try publication_refs.symbol(c,arena.allocator(),common.members.fields[@intFromEnum(field_ref)].id);
+                budget.lookup(directory.fields.len,id.len) catch |err| return publication_refs.graphFailure(err); var lo:usize=0; var hi=directory.fields.len; var owned=false;
+                while(lo<hi) { const mid=lo+(hi-lo)/2; switch(std.mem.order(u8,directory.fields[mid],id)) {
+                    .lt=>lo=mid+1,.gt=>hi=mid,.eq=>{ try c.step(); selected.*=directory.fields[mid]; owned=true; break; },
+                } }
+                if(!owned)return self.noFixedBodyProof(full,returned,thrown);
+            }
+            // For a construction-body, model.protocol is construction_frame;
+            // the current receiver covered branch accepts ONLY full typed
+            // equation identity, never ordinary structural simulation. Thus
+            // every original store corresponds to this independent SSA body.
+            // ALL its field payloads were just proved native from real opcode
+            // + physical carrier, not Graph.Other or a retained static view.
             try c.row(construction_origins.Entry);
             entry=.{.function_id=function_id,.construction=try publication_refs.symbol(c,arena.allocator(),role.id),
-                .new_target=try publication_refs.symbol(c,arena.allocator(),common.types[@intFromEnum(observed.new_target)].id)};
+                .new_target=try publication_refs.symbol(c,arena.allocator(),common.types[@intFromEnum(observed.new_target)].id),.scalar_fields=scalar_fields};
         }
         var analysis = construction_origins.analyze(c.allocator, &directory, graph, &budget,entry) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
         if (analysis.pending != null) return self.noFixedBodyProof(full, returned, thrown);
+        for(analysis.initializations) |*write| {
+            try c.row(construction_origins.Initialization);
+            // Domain stores are restricted to the REAL allocated bound
+            // receiver. Consume all live prefix write owners, including stores
+            // preceding language completion/nontermination, through the same
+            // owner projection and permission transfer as other fixed facts.
+            if(write.base.category!=.object or write.base.source!=.allocation)return self.noFixedBodyProof(full,returned,thrown);
+            var origin:Owners=.{}; defer origin.deinit(c.allocator); _=try origin.add(c,.local);
+            var projected:Owners=.{}; defer projected.deinit(c.allocator);
+            try self.projectSummary(&origin,target,op,state,offset,&projected); try self.mark(&projected,.write);
+        }
         var normal: Owners = .{}; defer normal.deinit(c.allocator);
         var language: Owners = .{}; defer language.deinit(c.allocator);
         const outputs = [_][]const construction_origins.Atom{ analysis.normal, analysis.language };
