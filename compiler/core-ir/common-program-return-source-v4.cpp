@@ -592,11 +592,17 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
         auto created=environmentCreate(layout,parent,location);if(!save(created)||!text(layout)||!step())return false;environmentRefs.insert_or_assign(layout,std::move(created));facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");
       }else if(name=="env_parent"){
         if(!save(environmentParent(value(0),string(field(props,"layout")))))return false;
-      }else if(name=="env_init"||name=="env_store"){
-        write(value(0),"capture:"+string(field(props,"key")),value(1),"env:"+string(field(props,"layout")),name=="env_init");
-      }else if(name=="env_load"){
-        const auto binding=string(field(props,"binding"));if(!lookup(slots.size(),binding)||!need(slots.count(binding),"normalized environment load lacks an owned slot"))return false;
-        if(!save(capture(value(0),slots.at(binding))))return false;
+      }else if(name=="env_init"||name=="env_store"||name=="env_load"){
+        const auto binding=field(props,"binding").getAsString().value();if(!text(binding)||!lookup(slots.size(),binding))return false;
+        const auto selected=slots.find(binding.str());if(!need(selected!=slots.end(),"normalized environment operation lacks an owned slot"))return false;const auto &slot=selected->second;
+        // Complete validated CFG events independently retain the slot binding
+        // permission, even when no Source read/write flags are available.
+        if(name!="env_init"){
+          if(!text(slot.layout)||!text(activation))return false;
+          if(slot.layout!=activation)captureAccess(slot,name=="env_load",name=="env_store");
+        }
+        if(name=="env_load"){if(!save(capture(value(0),slot)))return false;}
+        else write(value(0),"capture:"+slot.key,value(1),"env:"+slot.layout,name=="env_init");
       }else if(name=="make_closure"){
         if(!resultType)return open("normalized closure has no Source view");std::optional<Refs> environment;if(!args.empty())environment=value(0);if(!save(code(string(field(props,"function_id")),environment,*resultType)))return false;
       }else if(name=="invoke"){
