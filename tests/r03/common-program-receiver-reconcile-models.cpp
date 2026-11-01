@@ -22,6 +22,8 @@ ActualValue payload(const std::string &object){ActualValue v;v.tags.insert("B");
 struct Fixture {
   Program program;Error error;ActualCheck check{program,error};Function function;ActualContext context;ActualState state;
   std::string parent,selected,unrelated,cursor,parentCursor;
+  std::map<std::pair<std::string,std::string>,const ActualFieldSlot *> slots;
+  const ActualFieldSlot *slot(const std::string &reference,const std::string &field)const{return slots.at({reference,field});}
   Fixture(bool weak=true){
     function.id="edge-model";function.blocks.resize(1);function.blocks[0].operations.resize(1);
     context.function=&function;context.activation="real-invocation";context.repeated=false;
@@ -29,6 +31,11 @@ struct Fixture {
     check.builtins.emplace("U",Object{{"kind","undefined"}});
     for(const auto &id:{"B","U"})check.types.emplace(id,&check.builtins.at(id));
     check.objects.emplace("old",ActualObject{"B",false});check.objects.emplace("replacement",ActualObject{"B",false});
+    for(const auto &id:{"F","G"}){check.builtins.emplace(std::string("field:")+id,Object{{"id",id},{"sourceBinding",std::string("binding:")+id},{"type","B"}});
+      check.fields.emplace(id,&check.builtins.at(std::string("field:")+id));}
+    for(const auto &reference:{"historical-object","different-object","reborn","shared","only","bottom","pending-only"})check.objects.emplace(reference,ActualObject{"B",false});
+    for(const auto &pair:std::vector<std::pair<std::string,std::string>>{{"historical-object","F"},{"different-object","G"},{"reborn","F"},{"reborn","G"},{"shared","F"},{"only","G"},{"bottom","F"},{"pending-only","G"}}){
+      const auto token=check.fieldSlot(check.objects.find(pair.first),check.fields.find(pair.second));if(!token)return;slots.emplace(pair,token);}
     parent=check.createFrame(state.frames,context.activation,"parent","B","ctor:B","B",false);
     selected=check.createFrame(state.frames,context.activation,"selected","B","ctor:B","B",weak,parent);
     unrelated=check.createFrame(state.frames,context.activation,"unrelated","B","ctor:B","B",false);
@@ -36,9 +43,9 @@ struct Fixture {
       auto &binding=state.frames.at(id);binding.bound=payload("old");binding.unbound=id==selected;binding.initializing=true;
       binding.prefixMin=1;binding.prefixMax=2;
       ActualBirth birth;birth.reference="historical-object";birth.pending=false;birth.real=payload("historical-data");
-      binding.births.emplace("historical-object/field/F",birth);
+      binding.births.emplace(slot("historical-object","F"),birth);
       birth.reference="different-object";birth.pending=true;birth.real.number=9007199254740993LL;
-      binding.births.emplace("different-object/field/G",birth);
+      binding.births.emplace(slot("different-object","G"),birth);
     }
     state.frames.at(unrelated).pending=true;
     cursor=check.receiverCursor(selected,1);parentCursor=check.receiverCursor(parent,1);
@@ -54,11 +61,11 @@ bool reconcile(){
     auto left=payload("left");left.truth=1;left.number=9007199254740993LL;left.region.number=9007199254740995LL;
     auto right=payload("right");right.truth=2;right.number=9007199254740993LL;right.region.number=9007199254740995LL;
     auto only=payload("only");only.truth=1;only.number=9007199254740993LL;only.region.number=9007199254740995LL;
-    f.state.frames.at(f.selected).births.emplace("shared/field/F",ActualBirth{"shared",left,false});
-    f.state.frames.at(f.parent).births.emplace("shared/field/F",ActualBirth{"shared",right,true});
-    f.state.frames.at(f.selected).births.emplace("only/field/G",ActualBirth{"only",only,false});
-    f.state.frames.at(f.parent).births.emplace("bottom/field/F",ActualBirth{"bottom",ActualValue{},false});
-    f.state.frames.at(f.unrelated).births.emplace("pending-only/field/G",ActualBirth{"pending-only",ActualValue{},true});
+    f.state.frames.at(f.selected).births.emplace(f.slot("shared","F"),ActualBirth{"shared",left,false});
+    f.state.frames.at(f.parent).births.emplace(f.slot("shared","F"),ActualBirth{"shared",right,true});
+    f.state.frames.at(f.selected).births.emplace(f.slot("only","G"),ActualBirth{"only",only,false});
+    f.state.frames.at(f.parent).births.emplace(f.slot("bottom","F"),ActualBirth{"bottom",ActualValue{},false});
+    f.state.frames.at(f.unrelated).births.emplace(f.slot("pending-only","G"),ActualBirth{"pending-only",ActualValue{},true});
     // Reconciliation must replace these stale slots, not join stale heap data.
     f.state.heap.emplace("shared/field/F",payload("stale-shared"));f.state.heap.emplace("only/field/G",payload("stale-only"));
     f.state.heap.emplace("bottom/field/F",payload("stale-bottom"));f.state.heap.emplace("pending-only/field/G",payload("stale-pending"));
@@ -78,9 +85,9 @@ bool reconcile(){
     "ancestor real payloads union, pending adds U, nonpending exact data/Bottom replace stale slots, unrelated heap remains exact"))return false;
   if(!expect(same(f.state,input)&&same(missing,missingBefore),"reconcile does not mutate any input Frame binding, reference, birth, flags or missing value"))return false;
   const auto output=heap;
-  f.state.frames.at(f.selected).births.at("shared/field/F").reference="changed-input-reference";
-  f.state.frames.at(f.parent).births.at("shared/field/F").real.objects.clear();
-  f.state.frames.at(f.selected).births.at("only/field/G").real.region.roots.clear();missing.tags.clear();
+  f.state.frames.at(f.selected).births.at(f.slot("shared","F")).reference="changed-input-reference";
+  f.state.frames.at(f.parent).births.at(f.slot("shared","F")).real.objects.clear();
+  f.state.frames.at(f.selected).births.at(f.slot("only","G")).real.region.roots.clear();missing.tags.clear();
   if(!expect(sameMap(heap,output,[](const auto &a,const auto &b){return same(a,b);}),"result does not borrow input World payloads or missing value"))return false;
   const auto changedInput=f.state;heap.at("shared/field/F").objects.clear();heap.at("only/field/G").region.roots.clear();heap.clear();
   if(!expect(same(f.state,changedInput),"result mutation does not affect input World or its heap"))return false;

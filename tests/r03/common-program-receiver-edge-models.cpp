@@ -23,6 +23,8 @@ ActualValue payload(const std::string &object){ActualValue v;v.tags.insert("B");
 struct Fixture {
   Program program;Error error;ActualCheck check{program,error};Function function;ActualContext context;ActualState state;
   std::string parent,selected,unrelated,cursor,parentCursor;
+  std::map<std::pair<std::string,std::string>,const ActualFieldSlot *> slots;
+  const ActualFieldSlot *slot(const std::string &reference,const std::string &field)const{return slots.at({reference,field});}
   Fixture(bool weak=true){
     function.id="edge-model";function.blocks.resize(1);function.blocks[0].operations.resize(1);
     context.function=&function;context.activation="real-invocation";context.repeated=false;
@@ -30,6 +32,11 @@ struct Fixture {
     check.builtins.emplace("U",Object{{"kind","undefined"}});
     for(const auto &id:{"B","U"})check.types.emplace(id,&check.builtins.at(id));
     check.objects.emplace("old",ActualObject{"B",false});check.objects.emplace("replacement",ActualObject{"B",false});
+    for(const auto &id:{"F","G"}){check.builtins.emplace(std::string("field:")+id,Object{{"id",id},{"sourceBinding",std::string("binding:")+id},{"type","B"}});
+      check.fields.emplace(id,&check.builtins.at(std::string("field:")+id));}
+    for(const auto &reference:{"historical-object","different-object","reborn","shared","only","bottom","pending-only"})check.objects.emplace(reference,ActualObject{"B",false});
+    for(const auto &pair:std::vector<std::pair<std::string,std::string>>{{"historical-object","F"},{"different-object","G"},{"reborn","F"},{"reborn","G"},{"shared","F"},{"only","G"},{"bottom","F"},{"pending-only","G"}}){
+      const auto token=check.fieldSlot(check.objects.find(pair.first),check.fields.find(pair.second));if(!token)return;slots.emplace(pair,token);}
     parent=check.createFrame(state.frames,context.activation,"parent","B","ctor:B","B",false);
     selected=check.createFrame(state.frames,context.activation,"selected","B","ctor:B","B",weak,parent);
     unrelated=check.createFrame(state.frames,context.activation,"unrelated","B","ctor:B","B",false);
@@ -37,9 +44,9 @@ struct Fixture {
       auto &binding=state.frames.at(id);binding.bound=payload("old");binding.unbound=id==selected;binding.initializing=true;
       binding.prefixMin=1;binding.prefixMax=2;
       ActualBirth birth;birth.reference="historical-object";birth.pending=false;birth.real=payload("historical-data");
-      binding.births.emplace("historical-object/field/F",birth);
+      binding.births.emplace(slot("historical-object","F"),birth);
       birth.reference="different-object";birth.pending=true;birth.real.number=9007199254740993LL;
-      binding.births.emplace("different-object/field/G",birth);
+      binding.births.emplace(slot("different-object","G"),birth);
     }
     state.frames.at(unrelated).pending=true;
     cursor=check.receiverCursor(selected,1);parentCursor=check.receiverCursor(parent,1);
@@ -185,27 +192,27 @@ bool birthEmpty(){
     Fixture f;auto &parent=f.state.frames.at(f.parent);parent.births.clear();parent.weak=repeated;
     f.state.heap.insert_or_assign("reborn/field/F",historical());const auto before=f.state;
     const auto frameCount=f.check.receiverFrames.size(),cursorCount=f.check.receiverCursors.size();
-    if(!expect(f.check.receiverBirth(f.state.frames,f.parent,"reborn",{"F","G"},f.state.heap,repeated)&&f.error.message.empty(),"single empty ancestor accepts complete birth snapshot"))return false;
+    if(!expect(f.check.receiverBirth(f.state.frames,f.parent,"reborn",{f.slot("reborn","F"),f.slot("reborn","G")},f.state.heap,repeated)&&f.error.message.empty(),"single empty ancestor accepts complete birth snapshot"))return false;
     const auto &births=parent.births;
-    if(!expect(births.size()==2&&births.at("reborn/field/F").reference=="reborn"&&births.at("reborn/field/F").pending&&
-      same(births.at("reborn/field/F").real,repeated?historical():ActualValue{})&&births.at("reborn/field/G").reference=="reborn"&&
-      births.at("reborn/field/G").pending&&same(births.at("reborn/field/G").real,ActualValue{}),"birth preserves exact historical data only for repeated existing slots; missing stays bottom"))return false;
+    if(!expect(births.size()==2&&births.at(f.slot("reborn","F")).reference=="reborn"&&births.at(f.slot("reborn","F")).pending&&
+      same(births.at(f.slot("reborn","F")).real,repeated?historical():ActualValue{})&&births.at(f.slot("reborn","G")).reference=="reborn"&&
+      births.at(f.slot("reborn","G")).pending&&same(births.at(f.slot("reborn","G")).real,ActualValue{}),"birth preserves exact historical data only for repeated existing slots; missing stays bottom"))return false;
     auto observed=f.state;observed.frames.at(f.parent).births=before.frames.at(f.parent).births;
     if(!expect(same(observed,before),"birth adds only its journal, preserving weak, bound, prefix, flags and unrelated rows"))return false;
     ActualValue undefined;undefined.tags.insert("U");f.state.heap.at("reborn/field/F")=undefined;
-    if(!expect(same(births.at("reborn/field/F").real,repeated?historical():ActualValue{}),"default installed after birth cannot overwrite pre-default snapshot"))return false;
+    if(!expect(same(births.at(f.slot("reborn","F")).real,repeated?historical():ActualValue{}),"default installed after birth cannot overwrite pre-default snapshot"))return false;
     if(!expect(f.check.receiverFrames.size()==frameCount&&f.check.receiverCursors.size()==cursorCount&&f.check.receiverCursor(f.selected,1)==f.cursor&&
       f.check.receiverFrames.at(f.selected).parent==f.parent&&f.check.receiverFrames.at(f.parent).newTarget=="B","birth snapshot does not alter physical frame or cursor identity"))return false;
   }return true;
 }
 bool birthAncestors(){Fixture f;f.state.frames.at(f.selected).births.clear();f.state.frames.at(f.parent).births.clear();
   f.state.heap.insert_or_assign("reborn/field/F",historical());const auto before=f.state;
-  if(!expect(f.check.receiverBirth(f.state.frames,f.selected,"reborn",{"F","G"},f.state.heap,true)&&f.error.message.empty(),"child birth reaches every ancestor"))return false;
+  if(!expect(f.check.receiverBirth(f.state.frames,f.selected,"reborn",{f.slot("reborn","F"),f.slot("reborn","G")},f.state.heap,true)&&f.error.message.empty(),"child birth reaches every ancestor"))return false;
   const auto &child=f.state.frames.at(f.selected).births,&parent=f.state.frames.at(f.parent).births;
-  if(!expect(child.size()==2&&sameMap(child,parent,[](const auto &a,const auto &b){return same(a,b);})&&same(child.at("reborn/field/F").real,historical())&&
+  if(!expect(child.size()==2&&sameMap(child,parent,[](const auto &a,const auto &b){return same(a,b);})&&same(child.at(f.slot("reborn","F")).real,historical())&&
     same(f.state.frames.at(f.unrelated),before.frames.at(f.unrelated)),"each ancestor owns the complete journal and unrelated frame is untouched"))return false;
   const auto parentBefore=f.state.frames.at(f.parent),unrelatedBefore=f.state.frames.at(f.unrelated);
-  auto &changed=f.state.frames.at(f.selected).births.at("reborn/field/F");changed.reference="child-only";changed.pending=false;
+  auto &changed=f.state.frames.at(f.selected).births.at(f.slot("reborn","F"));changed.reference="child-only";changed.pending=false;
   changed.real.region.roots.insert("child-only");changed.real.callables.clear();changed.real.number=7;
   if(!expect(same(f.state.frames.at(f.parent),parentBefore)&&same(f.state.frames.at(f.unrelated),unrelatedBefore)&&same(f.state.heap.at("reborn/field/F"),historical()),"child journal mutation cannot affect ancestor, unrelated frame or source heap"))return false;
   const auto childBefore=f.state.frames.at(f.selected);f.state.frames.at(f.parent).births.clear();
@@ -213,25 +220,25 @@ bool birthAncestors(){Fixture f;f.state.frames.at(f.selected).births.clear();f.s
 }
 bool birthNonempty(){Fixture f;f.state.heap.insert_or_assign("reborn/field/F",historical());
   ActualBirth collision;collision.reference="wrong-old-reference";collision.pending=false;collision.real=payload("wrong-old-data");
-  for(const auto &id:{f.selected,f.parent})f.state.frames.at(id).births.emplace("reborn/field/F",collision);
+  for(const auto &id:{f.selected,f.parent})f.state.frames.at(id).births.emplace(f.slot("reborn","F"),collision);
   const auto before=f.state;
-  if(!expect(f.check.receiverBirth(f.state.frames,f.selected,"reborn",{"F","G"},f.state.heap,true)&&f.error.message.empty(),"nonempty ancestor journals accept a new birth"))return false;
+  if(!expect(f.check.receiverBirth(f.state.frames,f.selected,"reborn",{f.slot("reborn","F"),f.slot("reborn","G")},f.state.heap,true)&&f.error.message.empty(),"nonempty ancestor journals accept a new birth"))return false;
   for(const auto &id:{f.selected,f.parent}){
     const auto &births=f.state.frames.at(id).births;
-    if(!expect(births.size()==4&&births.at("reborn/field/F").reference=="reborn"&&births.at("reborn/field/F").pending&&same(births.at("reborn/field/F").real,historical())&&
-      births.at("reborn/field/G").pending&&same(births.at("reborn/field/G").real,ActualValue{}),"colliding slot is replaced with current complete birth; absent historical slot stays bottom"))return false;
-    for(const auto &slot:{"historical-object/field/F","different-object/field/G"})if(!expect(same(births.at(slot),before.frames.at(id).births.at(slot)),"noncolliding old journal entries remain exact"))return false;
+    if(!expect(births.size()==4&&births.at(f.slot("reborn","F")).reference=="reborn"&&births.at(f.slot("reborn","F")).pending&&same(births.at(f.slot("reborn","F")).real,historical())&&
+      births.at(f.slot("reborn","G")).pending&&same(births.at(f.slot("reborn","G")).real,ActualValue{}),"colliding slot is replaced with current complete birth; absent historical slot stays bottom"))return false;
+    for(const auto slot:{f.slot("historical-object","F"),f.slot("different-object","G")})if(!expect(same(births.at(slot),before.frames.at(id).births.at(slot)),"noncolliding old journal entries remain exact"))return false;
   }
   auto observed=f.state;observed.frames.at(f.selected).births=before.frames.at(f.selected).births;observed.frames.at(f.parent).births=before.frames.at(f.parent).births;
   return expect(same(observed,before),"nonempty merge leaves all non-journal state and heap unchanged");
 }
 bool birthBudget(){Fixture measured;measured.state.frames.at(measured.selected).births.clear();measured.state.frames.at(measured.parent).births.clear();
   measured.state.heap.emplace("reborn/field/F",historical());const auto start=measured.program.remaining;
-  if(!expect(measured.check.receiverBirth(measured.state.frames,measured.selected,"reborn",{"F","G"},measured.state.heap,true)&&measured.error.message.empty(),"measured birth completes under ordinary budget"))return false;
+  if(!expect(measured.check.receiverBirth(measured.state.frames,measured.selected,"reborn",{measured.slot("reborn","F"),measured.slot("reborn","G")},measured.state.heap,true)&&measured.error.message.empty(),"measured birth completes under ordinary budget"))return false;
   const auto cost=start-measured.program.remaining;if(!expect(cost>1,"birth performs charged work"))return false;
   for(const size_t available:{size_t(0),size_t(1),cost/2,cost-1}){
     Fixture f;f.state.frames.at(f.selected).births.clear();f.state.frames.at(f.parent).births.clear();f.state.heap.emplace("reborn/field/F",historical());f.program.remaining=available;
-    if(!expect(!f.check.receiverBirth(f.state.frames,f.selected,"reborn",{"F","G"},f.state.heap,true)&&f.error.code=="core-ir-common-budget","birth cutoff must fail with budget error, never report a completed journal"))return false;
+    if(!expect(!f.check.receiverBirth(f.state.frames,f.selected,"reborn",{f.slot("reborn","F"),f.slot("reborn","G")},f.state.heap,true)&&f.error.code=="core-ir-common-budget","birth cutoff must fail with budget error, never report a completed journal"))return false;
   }return true; // A failed private check has no added rollback obligation.
 }
 }

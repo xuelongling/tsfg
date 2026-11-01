@@ -27,17 +27,18 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       const bool weak=state.frames.at(id).weak;auto old=objects.find(ref);
       if(old!=objects.end()&&!old->second.weak&&weak)weakChanged=true;
       const bool repeated=weak||(old!=objects.end()&&old->second.weak);
-      if(!step())return false;objects.insert_or_assign(ref,ActualObject{info.newTarget,repeated});
+      if(!step())return false;const auto object=objects.insert_or_assign(ref,ActualObject{info.newTarget,repeated}).first;
       ActualValue allocated;allocated.tags.insert(info.newTarget);allocated.objects.insert(ref);
       if(!conditional)allocated.region=regionAllocate(*this,context,ref,info.newTarget,state.regions);
       // Snapshot real historical data before adding this birth's defaults.
-      const auto fields=allFields(info.newTarget);if(!step(fields.size()))return false;std::vector<std::string> fieldIds;
-      for(const auto *row:fields){const auto fieldId=string(field(*row,"id"));if(!receiverText(fieldId))return false;fieldIds.push_back(fieldId);}
-      if(!receiverBirth(state.frames,id,ref,fieldIds,state.heap,repeated))return false;
+      const auto members=allFields(info.newTarget);if(!step(members.size()+1))return false;std::vector<const ActualFieldSlot *> fieldSlots;fieldSlots.reserve(members.size());
+      for(const auto *row:members){const auto fieldId=string(field(*row,"id"));if(!receiverText(fieldId))return false;
+        const auto slot=fieldSlot(object,fields.find(fieldId));if(!e.message.empty()||!step())return false;fieldSlots.push_back(slot);}
+      if(!receiverBirth(state.frames,id,ref,fieldSlots,state.heap,repeated))return false;
       // Virtual missing properties are data, never define/write observations.
-      for(const auto &fieldId:fieldIds){
-        if(!receiverText(ref)||!receiverText(fieldId))return false;
-        const auto slot=ref+"/field/"+fieldId;ActualValue missing;missing.tags.insert(digest(std::string("tsfg.type\0undefined",19)));
+      for(const auto token:fieldSlots){
+        if(!receiverText(*token->spelling))return false;
+        const auto &slot=*token->spelling;ActualValue missing;missing.tags.insert(digest(std::string("tsfg.type\0undefined",19)));
         if(!repeated||!state.heap.count(slot))state.heap.insert_or_assign(slot,std::move(missing));
         else merge(state.heap.at(slot),missing);
         if(!e.message.empty())return false;
@@ -77,18 +78,21 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       v.initializing=true;if(v.weak)v.prefixMin=0;else {v.aborted=false;v.prefixMin=v.prefixMax=0;}
       const auto cursor=receiverCursor(id,0);if(!e.message.empty())return false;value.cursors.insert(cursor);}
   }else if(name=="initialize_field"){
-    const auto fieldId=string(field(props,"field"));if(!need(fields.count(fieldId),"initializer field is not owned"))return false;
-    const auto raw=string(field(*fields.at(fieldId),"sourceBinding"));
+    const auto fieldId=string(field(props,"field"));if(!receiverText(fieldId))return false;
+    const auto member=fields.find(fieldId);if(!need(member!=fields.end(),"initializer field is not owned"))return false;
+    const auto raw=string(field(*member->second,"sourceBinding"));
     if(conditional&&!recordCapacity(storageCapacity[raw],args[2]))return false;
     seedStorage(fieldSeeds,raw,args[2],conditional,changed);
     if(!step(args[1].objects.size()))return false;
-    for(const auto &ref:args[1].objects){if(!need(objects.count(ref),"initializer selected receiver object missing"))return false;const auto &object=objects.at(ref);
+    for(const auto &ref:args[1].objects){if(!receiverText(ref))return false;const auto selected=objects.find(ref);
+      if(!need(selected!=objects.end(),"initializer selected receiver object missing"))return false;const auto &object=selected->second;
       bool direct=false;for(const auto *f:allFields(object.type)){if(!step())return false;direct|=string(field(*f,"id"))==fieldId;}
       // Keep logical contribution and prefix data without inventing a physical
       // U-to-D slot projection. Whole Core admission remains explicitly OPEN.
       receiverRouteOpen|=!direct;
-      if(!receiverText(ref)||!receiverText(fieldId))return false;const auto slot=ref+"/field/"+fieldId;
-      const bool strong=!object.weak&&args[1].objects.size()==1;if(!receiverWrite(state.frames,slot,args[2],strong&&!args[1].unknown&&!args[1].callableTop))return false;
+      const auto token=fieldSlot(selected,member);if(!e.message.empty())return false;const auto &slot=*token->spelling;
+      const bool strong=!object.weak&&args[1].objects.size()==1;if(!receiverWrite(state.frames,*token,args[2],strong&&!args[1].unknown&&!args[1].callableTop))return false;
+      if(!receiverText(slot))return false;
       if(strong||!state.heap.count(slot))state.heap.insert_or_assign(slot,copy(args[2]));else merge(state.heap.at(slot),args[2]);
       if(!conditional&&!regionStore(*this,regionValue(*this,args[1]),"/field/"+fieldId,regionValue(*this,args[2]),state.regions))return false;
     }

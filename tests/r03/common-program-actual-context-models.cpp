@@ -16,6 +16,7 @@ struct Input {
 };
 struct Fixture {
   Program program;Error error;Function function;ActualCheck check{program,error};Input input;
+  const ActualFieldSlot *birthSlot=nullptr,*otherSlot=nullptr;
   Fixture(){
     function.id="target";function.name="target";function.blocks.resize(1);function.blocks[0].parameters={0};
     check.functions.emplace(function.id,&function);program.fixedEffects.emplace(function.id,Effects{});
@@ -23,10 +24,14 @@ struct Fixture {
     check.types.emplace("B",&check.builtins.at("B"));
     check.receiverFrames.emplace("frame",ActualFrameInfo{"B","ctor:B","B","",false,{"F"}});
     check.objects.emplace("object:B",ActualObject{"B",false});
+    for(const auto &id:{"F","other"}){check.builtins.emplace(std::string("field:")+id,Object{{"id",id},{"sourceBinding",std::string("binding:")+id},{"type","i32"}});
+      check.fields.emplace(id,&check.builtins.at(std::string("field:")+id));}
+    birthSlot=check.fieldSlot(check.objects.find("object:B"),check.fields.find("F"));
+    otherSlot=check.fieldSlot(check.objects.find("object:B"),check.fields.find("other"));
     ActualValue arg;arg.frames.insert("frame");input.args.push_back(arg);
     ActualFrameBinding binding;binding.unbound=false;binding.bound.tags.insert("B");binding.bound.objects.insert("object:B");
     binding.bound.region.known=true;binding.bound.region.roots.insert("origin");
-    ActualBirth birth;birth.reference="object:B";birth.real.tags.insert("i32");binding.births.emplace("object:B/field/F",birth);
+    ActualBirth birth;birth.reference="object:B";birth.real.tags.insert("i32");binding.births.emplace(birthSlot,birth);
     input.frames.emplace("frame",binding);
     ActualValue payload;payload.tags.insert("i32");payload.number=1;input.heap.emplace("object:B/field/F",payload);
     input.heap.emplace("unreachable/field/F",payload);
@@ -67,7 +72,7 @@ bool hiddenRegionsAndBirths(){
     [](Input &v){v.frames.at("frame").aborted=true;},
     [](Input &v){v.frames.at("frame").prefixMin=1;},
     [](Input &v){v.frames.at("frame").prefixMax=1;},
-    [](Input &v){auto row=v.frames.at("frame").births.extract("object:B/field/F");row.key()="object:B/field/other";v.frames.at("frame").births.insert(std::move(row));},
+    [from=f.birthSlot,to=f.otherSlot](Input &v){auto row=v.frames.at("frame").births.extract(from);row.key()=to;v.frames.at("frame").births.insert(std::move(row));},
     [](Input &v){v.frames.at("frame").births.begin()->second.reference="other";},
     [](Input &v){v.frames.at("frame").births.begin()->second.pending=false;},
     [](Input &v){v.frames.at("frame").births.begin()->second.real.region.known=true;v.frames.at("frame").births.begin()->second.real.region.opaque=true;},

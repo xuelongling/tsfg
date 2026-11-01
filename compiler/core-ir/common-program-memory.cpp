@@ -174,7 +174,8 @@ bool ActualCheck::solve(bool conditional){
   if(!step(pendingContexts.size()+queuedContexts.size()))return false;
   scheduling=true;weakChanged=false;seedChanged=false;pendingContexts.clear();queuedContexts.clear();
   struct SchedulingGuard{ActualCheck &c;~SchedulingGuard(){c.scheduling=false;}} schedulingGuard{*this};
-  contextBuckets.clear();contexts.clear();objects.clear();receiverFrames.clear();receiverCursors.clear();receiverRouteOpen=false;
+  contextBuckets.clear();contexts.clear();fieldSlotAssociations.clear();fieldSlotArchive.clear();
+  objects.clear();receiverFrames.clear();receiverCursors.clear();receiverRouteOpen=false;
   regions.nodes.clear();regions.scopes.clear();
   if(conditional){
     registerCapacity.clear();resultCapacity.clear();storageCapacity.clear();constructionCapacity.clear();

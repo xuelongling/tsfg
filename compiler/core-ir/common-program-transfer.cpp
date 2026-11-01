@@ -167,7 +167,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     const bool transport=!conditional&&name=="field_store"&&holdingFieldTransport(*this,args[0],args[1]);if(!e.message.empty())return false;
     RegionValue projected;projected.known=true;
     for(const auto &ref:args[0].objects){
-      if(!step()||!need(objects.count(ref),"field receiver object missing"))return false;const auto &object=objects.at(ref);bool owned=false;
+      if(!step())return false;const auto receiver=objects.find(ref);
+      if(!need(receiver!=objects.end(),"field receiver object missing"))return false;const auto &object=receiver->second;bool owned=false;
       for(const auto *f:allFields(object.type)){if(!step())return false;if(string(field(*f,"id"))==fieldId){owned=true;break;}}
       auto selected=fieldId;
       if(!owned){
@@ -175,13 +176,19 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         auto projection=view==views.end()?p.referenceFields.end():p.referenceFields.find({object.type,view->second});
         if(projection!=p.referenceFields.end()){auto member=projection->second.find(fieldId);if(member!=projection->second.end()){selected=member->second;owned=true;}}
       }
-      if(!need(owned&&fields.count(selected),"actual field lacks an independently verified nominal member mapping")){e.path=fn.path;e.range=op.range;return false;}
-      const auto slot=ref+"/field/"+selected;auto stored=state.heap.find(slot);
+      const auto member=owned?fields.find(selected):fields.end();
+      if(!need(member!=fields.end(),"actual field lacks an independently verified nominal member mapping")){e.path=fn.path;e.range=op.range;return false;}
+      const ActualFieldSlot *token=nullptr;std::string localSlot;const std::string *slotText;
+      if(name=="field_store"&&!state.frames.empty()){
+        if(!receiverText(ref)||!receiverText(selected))return false;token=fieldSlot(receiver,member);if(!e.message.empty())return false;slotText=token->spelling;
+      }else{localSlot=ref+"/field/"+selected;slotText=&localSlot;}
+      const auto &slot=*slotText;auto stored=state.heap.find(slot);
       if(name=="field_load"){if(stored!=state.heap.end())merge(value,stored->second);else merge(value,literal(typeId("undefined")));
         if(!conditional){auto receiver=regionValue(*this,args[0]);for(auto it=receiver.roots.begin();it!=receiver.roots.end();)if(regions.nodes.at(*it).reference!=ref)it=receiver.roots.erase(it);else ++it;
           regionMerge(*this,projected,regionLoad(*this,receiver,"/field/"+selected,state.regions));}}
-      else{const bool strong=!object.weak&&args[0].objects.size()==1;if(!receiverWrite(state.frames,slot,args[1],strong&&!args[0].unknown&&!args[0].callableTop)||!put(slot,args[1],strong))return false;
-        const auto raw=string(field(*fields.at(selected),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);
+      else{const bool strong=!object.weak&&args[0].objects.size()==1;
+        if(token&&!receiverWrite(state.frames,*token,args[1],strong&&!args[0].unknown&&!args[0].callableTop))return false;if(!put(slot,args[1],strong))return false;
+        const auto raw=string(field(*member->second,"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);
         if(!conditional&&!regionStore(*this,regionValue(*this,args[0]),"/field/"+selected,regionValue(*this,args[1]),state.regions,!transport))return false;}
     }if(args[0].unknown)value.unknown=true;
     if(!conditional&&name=="field_load")value.region=std::move(projected);

@@ -45,10 +45,20 @@ struct ActualCursorInfo {std::string frame;size_t position=0;};
 // A birth default is not a real write or a permission. Keep prior instance
 // data separately so a definite definition consumes only its temporary default.
 struct ActualBirth {std::string reference;ActualValue real;bool pending=true;};
+// Analysis-only symbols. The archive owns each complete physical spelling;
+// tokens do not replace physical IDs or prove an allocation/permission.
+struct ActualFieldSlot {const void *owner=nullptr;size_t ordinal=0;const std::string *spelling=nullptr;};
+struct ActualFieldSlotLess {
+  bool operator()(const ActualFieldSlot *a,const ActualFieldSlot *b)const{
+    return a->owner==b->owner?a->ordinal<b->ordinal:std::less<const void *>{}(a->owner,b->owner);
+  }
+};
+using ActualBirthJournal=std::map<const ActualFieldSlot *,ActualBirth,ActualFieldSlotLess>;
+struct ActualFieldSlotAssociation {const std::string *reference,*field;const ActualFieldSlot *slot;};
 struct ActualFrameBinding {
   bool unbound=true,weak=false,pending=false,initializing=false,aborted=false;
   size_t prefixMin=0,prefixMax=0;ActualValue bound;
-  std::map<std::string,ActualBirth> births;
+  ActualBirthJournal births;
 };
 using ActualFrameWorld=std::map<std::string,ActualFrameBinding>;
 enum class ReceiverAction {Bind,Get,Result};
@@ -65,6 +75,8 @@ struct CapacityValue {
 };
 struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;ActualFrameWorld frames;};
 struct ActualObject {std::string type;bool weak=false;};
+using ActualObjectDirectory=std::map<std::string,ActualObject>;
+using ActualOwnedDirectory=std::map<std::string,const Json *>;
 // Owned interner identity is separate from root execution state, which is
 // refreshed from entry seeds. Never serialize these values to compare them.
 struct ActualContextIdentity {
@@ -90,7 +102,7 @@ struct ActualContext {
 struct ActualCheck {
   Program &p;Error &e;
   std::map<std::string,Json> builtins;
-  std::map<std::string,const Json *> types,domains,sourceFunctions,modules,globals,bindings,fields,physicalBindings,physicalFunctions;
+  ActualOwnedDirectory types,domains,sourceFunctions,modules,globals,bindings,fields,physicalBindings,physicalFunctions;
   std::map<std::string,const Function *> functions;
   // Owned analysis-only projections. Public p.functions, HIR, fixed contracts
   // and physical directory rows remain untouched and keep their original IDs.
@@ -108,7 +120,11 @@ struct ActualCheck {
   bool holdingSlotsReady=false;
   std::map<std::string,std::set<std::string>> environmentNeeds;
   bool environmentNeedsReady=false;
-  std::map<std::string,ActualObject> objects;
+  ActualObjectDirectory objects;
+  // Stable throughout a solve and its final Borrow replay. Destroy context
+  // Worlds before these symbols, and symbols before their directory keys.
+  std::map<std::string,ActualFieldSlot> fieldSlotArchive;
+  std::vector<ActualFieldSlotAssociation> fieldSlotAssociations;
   std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds;
   std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity,constructionCapacity;
   std::map<std::string,size_t> initializedArrays;
@@ -162,8 +178,11 @@ struct ActualCheck {
   bool overlayFrames(ActualFrameWorld &,const ActualFrameWorld &);
   ActualFrameWorld selectFrames(const ActualFrameWorld &,const std::vector<ActualValue> &,const ActualHeap &);
   std::vector<ActualValue> retainedFrames(const ActualFrameWorld &);
-  bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<std::string> &,const ActualHeap &,bool);
-  bool receiverWrite(ActualFrameWorld &,const std::string &,const ActualValue &,bool);
+  // Both iterators belong to this check's already owned directories. No
+  // execution value, heap node or temporary string may supply a symbol.
+  const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualOwnedDirectory::const_iterator);
+  bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
+  bool receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const std::set<std::string> &,const ActualValue &,const std::string &);
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);
   std::string createFrame(ActualFrameWorld &,const std::string &,const std::string &,const std::string &,const std::string &,const std::string &,bool,const std::string &parent={});

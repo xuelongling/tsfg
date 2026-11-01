@@ -31,6 +31,28 @@ Parts split(ActualCheck &c,const ActualValue &input){
 }
 }
 bool ActualCheck::receiverText(const std::string &s){return step(12*s.size()+8);}
+const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_iterator object,ActualOwnedDirectory::const_iterator field){
+  if(!step()||!need(object!=objects.end()&&field!=fields.end(),"physical field slot symbols are not owned"))return nullptr;
+  const auto *reference=&object->first,*member=&field->first;
+  // Registration order, rather than address rank, determines lookup work.
+  for(const auto &entry:fieldSlotAssociations){
+    if(!step(3))return nullptr;if(entry.reference!=reference)continue;
+    if(!step(3))return nullptr;if(entry.field==member)return entry.slot;
+  }
+  if(!step(reference->size()+member->size()+8))return nullptr;
+  auto spelling=*reference+"/field/"+*member;
+  if(!receiverText(spelling))return nullptr;auto found=fieldSlotArchive.find(spelling);
+  if(found==fieldSlotArchive.end()){
+    if(!receiverText(spelling)||!step(4))return nullptr;
+    found=fieldSlotArchive.emplace(std::move(spelling),ActualFieldSlot{this,fieldSlotArchive.size(),nullptr}).first;
+    found->second.spelling=&found->first;
+  }
+  if(fieldSlotAssociations.size()==fieldSlotAssociations.capacity()){
+    if(!step(fieldSlotAssociations.size()*3+1))return nullptr;
+    fieldSlotAssociations.reserve(fieldSlotAssociations.capacity()?fieldSlotAssociations.capacity()*2:1);
+  }
+  if(!step(3))return nullptr;fieldSlotAssociations.push_back({reference,member,&found->second});return &found->second;
+}
 ActualBirth ActualCheck::copyBirth(const ActualBirth &row){
   if(!receiverText(row.reference)||!step(3))return {};
   ActualBirth result;result.reference=row.reference;result.pending=row.pending;result.real=copy(row.real);return result;
@@ -39,7 +61,7 @@ ActualFrameBinding ActualCheck::copyFrame(const ActualFrameBinding &value){
   if(!step(value.births.size()+9))return {};ActualFrameBinding owned;
   owned.unbound=value.unbound;owned.weak=value.weak;owned.pending=value.pending;owned.initializing=value.initializing;owned.aborted=value.aborted;
   owned.prefixMin=value.prefixMin;owned.prefixMax=value.prefixMax;owned.bound=copy(value.bound);if(!e.message.empty())return {};
-  for(const auto &[slot,row]:value.births){if(!receiverText(slot))return {};auto copied=copyBirth(row);if(!e.message.empty())return {};
+  for(const auto &[slot,row]:value.births){if(!step())return {};auto copied=copyBirth(row);if(!e.message.empty())return {};
     owned.births.emplace(slot,std::move(copied));}return owned;
 }
 ActualFrameWorld ActualCheck::copyFrames(const ActualFrameWorld &world){
@@ -52,7 +74,7 @@ bool ActualCheck::joinFrames(ActualFrameWorld &into,const ActualFrameWorld &from
   for(const auto &[id,incoming]:from){if(!receiverText(id)||!step(8))return false;auto found=into.find(id);
     if(found==into.end()){auto owned=copyFrame(incoming);if(!e.message.empty())return false;into.emplace(id,std::move(owned));changed=true;continue;}
     auto &v=found->second;changed=merge(v.bound,incoming.bound)||changed;if(!step(incoming.births.size()))return false;
-    for(const auto &[slot,row]:incoming.births){if(!receiverText(slot))return false;auto old=v.births.find(slot);
+    for(const auto &[slot,row]:incoming.births){if(!step())return false;auto old=v.births.find(slot);
       if(old==v.births.end()){auto owned=copyBirth(row);if(!e.message.empty())return false;v.births.emplace(slot,std::move(owned));changed=true;}
       else {changed=merge(old->second.real,row.real)||changed;if(row.pending&&!old->second.pending){old->second.pending=true;changed=true;}}}
     const auto before=std::make_tuple(v.unbound,v.weak,v.pending,v.initializing,v.aborted,v.prefixMin,v.prefixMax);
@@ -104,14 +126,24 @@ std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &wor
   // The world is already selected. Preserve FrameId then slot order, including
   // journals carried by nested ordinary data arguments.
   for(const auto &[id,value]:world){if(!step())return {};if(data(value.bound))result.push_back(copy(value.bound));
-    if(!step(value.births.size()))return {};for(const auto &[slot,row]:value.births){result.push_back(copy(row.real));if(!e.message.empty())return {};}
+    if(!step(value.births.size()))return {};
+    std::vector<ActualBirthJournal::const_iterator> ordered;ordered.reserve(value.births.size());
+    for(auto row=value.births.begin();row!=value.births.end();++row){
+      if(!step())return {};ordered.push_back(row);size_t at=ordered.size()-1;
+      while(at){
+        const auto &left=*ordered[at-1]->first->spelling,&right=*ordered[at]->first->spelling;
+        if(!receiverText(left)||!receiverText(right))return {};if(left<right)break;
+        if(!step(3))return {};std::swap(ordered[at-1],ordered[at]);--at;
+      }
+    }
+    for(const auto row:ordered){result.push_back(copy(row->second.real));if(!e.message.empty())return {};}
     if(!e.message.empty())return {};}
   return result;
 }
-bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,const std::string &ref,const std::vector<std::string> &fields,const ActualHeap &heap,bool repeated){
-  if(!receiverText(ref)||!step(fields.size()))return false;std::map<std::string,ActualBirth> rows;
-  for(const auto &field:fields){if(!receiverText(field)||!step(ref.size()+field.size()+8))return false;const auto slot=ref+"/field/"+field;
-    ActualBirth row;row.reference=ref;const auto old=heap.find(slot);if(repeated&&old!=heap.end())row.real=copy(old->second);
+bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,const std::string &ref,const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
+  if(!receiverText(ref)||!step(fields.size()))return false;ActualBirthJournal rows;
+  for(const auto slot:fields){if(!step()||!receiverText(*slot->spelling))return false;
+    ActualBirth row;row.reference=ref;const auto old=heap.find(*slot->spelling);if(repeated&&old!=heap.end())row.real=copy(old->second);
     if(!e.message.empty())return false;rows.emplace(slot,std::move(row));}
   for(auto current=id;!current.empty();){
     if(!receiverText(current)||!need(world.count(current)&&receiverFrames.count(current),"birth frame is absent"))return false;
@@ -121,15 +153,15 @@ bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,co
     if(parent.empty()&&binding.births.empty()){
       if(!step())return false;binding.births=std::move(rows);break;
     }
-    if(!step(rows.size()))return false;for(const auto &[slot,row]:rows){if(!receiverText(slot))return false;auto owned=copyBirth(row);
+    if(!step(rows.size()))return false;for(const auto &[slot,row]:rows){if(!step())return false;auto owned=copyBirth(row);
       if(!e.message.empty())return false;binding.births.insert_or_assign(slot,std::move(owned));}
     current=parent;
   }
   return true;
 }
-bool ActualCheck::receiverWrite(ActualFrameWorld &world,const std::string &slot,const ActualValue &input,bool strong){
+bool ActualCheck::receiverWrite(ActualFrameWorld &world,const ActualFieldSlot &slot,const ActualValue &input,bool strong){
   if(!step(world.size()))return false;
-  for(auto &[id,value]:world){if(!receiverText(slot))return false;auto row=value.births.find(slot);if(row==value.births.end())continue;
+  for(auto &[id,value]:world){if(!step())return false;auto row=value.births.find(&slot);if(row==value.births.end())continue;
     if(strong){row->second.real=copy(input);row->second.pending=false;}else merge(row->second.real,input);
     if(!e.message.empty())return false;}
   return true;
@@ -139,22 +171,24 @@ bool ActualCheck::receiverDefine(ActualFrameWorld &world,const std::set<std::str
   const auto &id=*ids.begin(),&ref=*selected.objects.begin();
   if(!receiverText(id)||!receiverText(ref)||!receiverText(field)||!need(receiverCursors.count(id),"birth definition cursor is absent"))return false;
   const auto &frame=receiverCursors.at(id).frame;
-  if(!need(world.count(frame),"birth definition frame is absent")||!step(ref.size()+field.size()+8))return false;const auto slot=ref+"/field/"+field;
+  if(!need(world.count(frame),"birth definition frame is absent"))return false;
+  const auto slot=fieldSlot(objects.find(ref),fields.find(field));if(!e.message.empty())return false;
   if(!world.at(frame).births.count(slot))return true;if(!step(world.size()))return false;
-  for(auto &[frame,binding]:world){if(!receiverText(slot))return false;auto row=binding.births.find(slot);if(row!=binding.births.end())row->second.pending=false;}
+  for(auto &[frame,binding]:world){if(!step())return false;auto row=binding.births.find(slot);if(row!=binding.births.end())row->second.pending=false;}
   return true;
 }
 bool ActualCheck::receiverReconcile(const ActualFrameWorld &world,ActualHeap &heap,const ActualValue &missing){
   // Reconciliation observes data and absence; birth reference metadata is not
   // consumed here. Keep that identity in the original, unchanged World only.
   struct Row {ActualValue real;bool pending;};
-  if(!step(world.size()))return false;std::map<std::string,Row> rows;
+  if(!step(world.size()))return false;std::map<const ActualFieldSlot *,Row,ActualFieldSlotLess> rows;
   for(const auto &[id,value]:world){if(!step(value.births.size()))return false;
-    for(const auto &[slot,row]:value.births){if(!receiverText(slot))return false;auto old=rows.find(slot);
+    for(const auto &[slot,row]:value.births){if(!step())return false;auto old=rows.find(slot);
       if(old==rows.end()){if(!step(2))return false;auto real=copy(row.real);if(!e.message.empty())return false;rows.emplace(slot,Row{std::move(real),row.pending});}
       else {merge(old->second.real,row.real);old->second.pending|=row.pending;if(!e.message.empty())return false;}}}
   if(!step(rows.size()))return false;
-  for(auto &[slot,row]:rows){if(row.pending)merge(row.real,missing);if(!e.message.empty())return false;heap.insert_or_assign(slot,std::move(row.real));}
+  for(auto &[slot,row]:rows){if(row.pending)merge(row.real,missing);if(!e.message.empty()||!receiverText(*slot->spelling))return false;
+    heap.insert_or_assign(*slot->spelling,std::move(row.real));}
   return true;
 }
 std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &activation,const std::string &site,const std::string &owner,
