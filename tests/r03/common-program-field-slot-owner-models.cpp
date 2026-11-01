@@ -87,6 +87,32 @@ bool heapOwnership(){
   }
   llvm::errs()<<"PASS ActualHeap own-node defaults/alias/copy/move/reset/six-domain subcases\n";return true;
 }
+bool cursorOwnership(){
+  const std::string missing="initialization:sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  for(const unsigned mode:{0u,1u,2u,3u,4u}){Symbols f;ActualFrameWorld world;
+    const auto frame=f.check.createFrame(world,"metadata-owner","cursor-reset","T","ctor:T","T",false);
+    const auto id=f.check.receiverCursor(frame,0);const std::string copied=id;
+    if(!expect(!id.empty()&&id.size()==86&&frame.size()==80&&f.error.message.empty(),"owned cursor factory creates complete opaque identities"))return false;
+    if(mode==0){f.program.remaining=200;const auto first=f.check.cursorMetadata(copied);
+      if(!expect(first&&f.error.message.empty()&&first->frame==frame&&first->position==0&&first==&f.check.receiverCursors.at(id),"first full-spelling lookup returns the current owned node within177units"))return false;continue;}
+    if(mode==1){const auto before=f.check.cursorMetadata(copied);if(!expect(before&&f.error.message.empty(),"owned metadata obtained before independent map growth"))return false;
+      if(!expect(f.check.receiverCursor(frame,0)==id&&f.check.receiverCursors.size()==1,"same canonical factory call does not duplicate directory identity"))return false;
+      for(unsigned i=0;i<32;++i){const auto other=f.check.createFrame(world,"metadata-owner","grown-"+std::to_string(i),"T","ctor:T","T",false);if(f.check.receiverCursor(other,0).empty())return false;}
+      if(!expect(f.error.message.empty()&&before==&f.check.receiverCursors.at(id)&&before->frame==frame&&before->position==0,"owned node metadata remains stable across index growth"))return false;
+      Symbols other;ActualFrameWorld otherWorld;const auto otherFrame=other.check.createFrame(otherWorld,"metadata-owner","cursor-reset","T","ctor:T","T",false),otherId=other.check.receiverCursor(otherFrame,0);
+      const auto independent=other.check.cursorMetadata(otherId);if(!expect(independent&&other.error.message.empty()&&otherId==id&&independent!=before&&independent==&other.check.receiverCursors.at(otherId),"same canonical ID in two live owners keeps independent owned nodes"))return false;
+    }else if(mode==2){const auto size=f.check.receiverCursors.size();const auto absent=f.check.cursorMetadata(missing);
+      if(!expect(!absent&&f.error.message.empty()&&f.check.receiverCursors.size()==size,"fulltext directory miss grants no metadata and never registers unknown IDs"))return false;
+    }else if(mode==3){world.clear();if(!expect(f.check.solve(false)&&f.error.message.empty()&&f.check.contexts.empty()&&f.check.receiverFrames.empty()&&f.check.receiverCursors.empty(),"real empty-function solve resets cursor metadata after Worlds are destroyed"))return false;
+      if(!expect(!f.check.cursorMetadata(copied)&&f.error.message.empty(),"old copied string is missing after reset, not a dangling metadata authority"))return false;
+      const auto newFrame=f.check.createFrame(world,"metadata-owner","cursor-reset","T","ctor:T","T",false),newId=f.check.receiverCursor(newFrame,0);const auto current=f.check.cursorMetadata(newId);
+      if(!expect(current&&f.error.message.empty()&&newId==id&&current->frame==newFrame&&current->position==0&&current==&f.check.receiverCursors.at(newId),"reset recreates current canonical metadata without dereferencing old pointers or requiring fresh addresses"))return false;
+    }else {f.program.remaining=0;if(!expect(!f.check.cursorMetadata(copied)&&f.error.code=="core-ir-common-budget","metadata cutoff is a hard error, never an ordinary missing-value success"))return false;}
+  }
+  Symbols limited;limited.program.remaining=100;
+  if(!expect(!limited.check.cursorMetadata(missing)&&limited.error.code=="core-ir-common-budget"&&limited.check.receiverCursors.empty(),"uncached fulltext miss cutoff is an error, not successful absence"))return false;
+  llvm::errs()<<"PASS cursor metadata first-read/identity/growth/owner/reset/miss/budget subcases\n";return true;
+}
 bool cachedPairs(){
   Symbols f;const auto token=f.get("object","F");const std::string copiedReference="object";
   const auto match=f.check.existingFieldSlot(copiedReference,f.check.fields.find("F"));
@@ -147,7 +173,7 @@ bool ownedSlots(){
   Symbols badObject;if(!expect(!badObject.check.fieldSlot(badObject.check.objects.end(),badObject.check.fields.find("F"))&&badObject.error.code=="core-ir-common-actual","missing object directory entry is a hard ownership error"))return false;
   Symbols badField;if(!expect(!badField.check.fieldSlot(badField.check.objects.find("object"),badField.check.fields.end())&&badField.error.code=="core-ir-common-actual","missing field directory entry is a hard ownership error"))return false;
   Symbols limited;limited.program.remaining=0;
-  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership();
+  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership();
 }
 }
 int main(){if(!ownedSlots())return 1;llvm::errs()<<"PASS owned physical field-slot spelling, alias, identity, reset and errors\n";return 0;}

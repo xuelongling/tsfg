@@ -55,6 +55,53 @@ struct Fixture {
     state.regions["root:stored"].emplace("/field/F",all.region);state.regions.emplace("empty-node",std::map<std::string,RegionValue>{});
   }
 };
+bool indexedReconcile(){
+  // Opaque symbols from820b are projected into this pure owned-model fixture;
+  // this does not claim Source, packet or format admission.
+  const std::string owner="sha256:354199e42929c36a0b4b3be7a57e791d922bd965b6da4df341782f7a42eda44a",array="sha256:d3a500f4fcba98a50471c9325c44766c82ff99d4efa13bf7b520f24f95c4bc25";
+  const std::string scalar="sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",span="sha256:f6f1d2b8618d4c0f96657f7525437ee673355433c184eeb6d61b764e49b08788";
+  const std::string field="sha256:82967726dabe5bd3b0c895a09f78003562197949b38d174e2d4d362a0649b80d",second="sha256:e329b28282ed4c495cb1953cfed967c758d75e7a06f332ec3311ce3d06ead28b";
+  ActualValue missing;missing.tags={"sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b"};
+  for(const unsigned mode:{0u,1u,2u}){Fixture f(false);
+    for(auto &[id,row]:f.state.frames)row.births.clear();
+    f.check.builtins.emplace(scalar,Object{{"kind","scalar"},{"name","i32"}});f.check.types.emplace(scalar,&f.check.builtins.at(scalar));
+    for(const auto &[id,kind]:std::vector<std::pair<std::string,std::string>>{{array,"array"},{span,"readSpan"}}){f.check.builtins.emplace(id,Object{{"kind",kind},{"elementType",scalar}});f.check.types.emplace(id,&f.check.builtins.at(id));}
+    f.check.builtins.emplace(field,Object{{"id",field},{"index",0},{"sourceBinding","sha256:fdd2a38910508aa0c823962a7823d7073cfad2e9991ef1bfe1cee705024432c0"},{"type",array}});
+    f.check.builtins.emplace(second,Object{{"id",second},{"index",1},{"sourceBinding","sha256:abdc6acb2adf2a9d7434e54f9323566ceece7521f54c6dea451be919bc5066a1"},{"type",span}});
+    f.check.fields.emplace(field,&f.check.builtins.at(field));f.check.fields.emplace(second,&f.check.builtins.at(second));
+    f.check.builtins.emplace(owner,Object{{"kind","reference"},{"base",nullptr},{"construction",Object{{"initializationFields",Array{field,second}}}},{"fields",Array{*f.check.fields.at(field),*f.check.fields.at(second)}}});f.check.types.emplace(owner,&f.check.builtins.at(owner));
+    const auto frame=f.check.createFrame(f.state.frames,f.context.activation,"full-owned-fields",owner,"sha256:99baad877b257d7f392b0673cf5901335ae07e13bc7a551619c5ac06a546953c",owner,false);
+    ActualValue controls;controls.frames={frame};Operation allocate;allocate.name="receiver_allocate";std::vector<const ActualValue*> createArgs{&controls};ActualValue allocated;
+    bool changed=false,continues=true;size_t emitted=0;const auto noEdge=[&](uint16_t,ActualState,const std::vector<ActualValue>&){++emitted;return false;};
+    if(!expect(!frame.empty()&&f.check.receiverInstruction(f.context,allocate,0,f.state,ActualOperands{createArgs},true,changed,noEdge,allocated,continues)&&f.error.message.empty(),"actual creator registers full canonical field nodes"))return false;
+    const std::string reference="construction/"+frame+"/"+owner,key=reference+"/field/"+field,other=reference+"/field/"+second;
+    if(!expect(reference.size()==165&&key.size()==243&&other.size()==243,"model uses actual full canonical lengths, not token ordinals or short spellings"))return false;
+    Operation bind;bind.name="receiver_bind";bind.successors={1,2};std::vector<const ActualValue*> bindArgs{&controls,&allocated};ActualState normal;std::vector<ActualValue> selected;ActualValue unused;
+    if(!expect(f.check.receiverInstruction(f.context,bind,0,f.state,ActualOperands{bindArgs},true,changed,[&](uint16_t target,ActualState next,const std::vector<ActualValue>&values){if(target!=1)return false;++emitted;normal=std::move(next);selected=values;return true;},unused,continues)&&f.error.message.empty()&&emitted==1&&selected.size()==1,"full-key creator binds one actual normal arm"))return false;
+    f.state=std::move(normal);continues=true;Operation begin;begin.name="initialize_begin";std::vector<const ActualValue*> beginArgs{&controls,&selected[0]};ActualValue cursor;
+    if(!expect(f.check.receiverInstruction(f.context,begin,1,f.state,ActualOperands{beginArgs},true,changed,noEdge,cursor,continues)&&f.error.message.empty(),"owned full-key begin creates its real cursor"))return false;
+    ActualValue value;value.tags={array};value.objects={"array-left"};value.truth=1;value.number=9007199254740993LL;value.region.known=true;value.region.roots={"root:left"};value.region.number=9007199254740995LL;
+    f.check.objects.emplace("array-left",ActualObject{array,false});const auto source=value;Operation store;store.name="initialize_field";store.properties=Object{{"field",field}};std::vector<const ActualValue*> args{&cursor,&selected[0],&value};ActualValue advanced;
+    if(!expect(f.check.receiverInstruction(f.context,store,1,f.state,ActualOperands{args},true,changed,noEdge,advanced,continues)&&f.error.message.empty(),"real first initialize_field produces complete birth/prefix/cursor state"))return false;
+    const auto token=f.check.existingFieldSlot(reference,f.check.fields.find(field)).slot;if(!expect(token&&f.error.message.empty(),"full field token belongs to the current model"))return false;
+    const auto &own=f.state.frames.at(frame);const auto &birth=own.births.at(token);
+    if(!expect(own.prefixMin==1&&own.prefixMax==1&&own.initializing&&!own.unbound&&!birth.pending&&birth.reference==reference&&same(birth.real,source)&&advanced.cursors.size()==1&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1&&same(f.state.heap.at(key),source)&&same(f.state.heap.at(other),missing),"first field has exact literal real payload, original reference, ordered prefix and untouched U field"))return false;
+    auto wanted=source;
+    if(mode==1){f.check.objects.emplace("array-right",ActualObject{array,true});auto right=source;right.objects={"array-right"};right.truth=2;right.region.roots={"root:right"};f.state.frames.at(f.parent).weak=true;f.state.frames.at(f.parent).births.emplace(token,ActualBirth{"independent-ancestor-reference",right,true});
+      wanted.tags.insert(*missing.tags.begin());wanted.objects.insert("array-right");wanted.truth=3;wanted.number.reset();wanted.region.empty=true;wanted.region.number.reset();wanted.region.roots.insert("root:right");}
+    // After genuine first-field execution, only generic aliases stale these
+    // nodes; no intervening put-helper lookup warms the budgeted reconciliation.
+    f.state.heap.insert_or_assign(key,payload("stale-field"));f.state.heap.at(other)=payload("stale-pending");
+    const auto before=f.state;auto expected=before;expected.heap.at(key)=wanted;expected.heap.at(other)=missing;const auto missingBefore=missing;
+    f.program.remaining=mode==2?0:2000; // Index work fits; first243B receiverText alone costs2924.
+    const bool ok=f.check.receiverReconcile(f.state.frames,f.state.heap,missing);
+    if(mode==2){if(!expect(!ok&&f.error.code=="core-ir-common-budget","owned reconciliation cutoff fails without reporting success"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&same(f.state,expected)&&same(value,source)&&same(missing,missingBefore),"low-budget full-key reconciliation restores literal real/U union and preserves every World/SSA/Region plane"))return false;
+    f.state.frames.at(frame).births.at(token).real.objects.insert("changed-after-output");
+    if(!expect(same(f.state.heap.at(key),wanted),"output owns its moved complete value independently from the immutable World input"))return false;
+  }
+  llvm::errs()<<"PASS full-key ownedHeap reconciliation/shared-history U/World isolation/budget subcases\n";return true;
+}
 bool reconcile(){
   const auto prepare=[](Fixture &f){
     f.state.frames.at(f.selected).births.clear();f.state.frames.at(f.parent).births.clear();f.state.frames.at(f.unrelated).births.clear();
@@ -102,5 +149,5 @@ bool reconcile(){
   return true;
 }
 }
-int main(){if(!reconcile())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
+int main(){if(!reconcile()||!indexedReconcile())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
   llvm::errs()<<"1 independent group passed; old11 results reused, complete Source820b remains independent\n";return 0;}

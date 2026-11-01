@@ -242,7 +242,7 @@ bool birthBudget(){Fixture measured;measured.state.frames.at(measured.selected).
   }return true; // A failed private check has no added rollback obligation.
 }
 bool defaultNodeMove(){
-  for(const bool probe:{true,false}){ // Separate owned checks; never refill the tested operation.
+  for(const unsigned mode:{0u,1u,2u}){ // Separate owned checks; never refill the tested operation.
   Fixture f(false);(*f.check.builtins.at("B").getAsObject())["fields"]=Array{*f.check.fields.at("F"),*f.check.fields.at("G")};
   const auto fresh=f.check.createFrame(f.state.frames,f.context.activation,"heap-owner-root","B","ctor:B","B",false);
   if(!expect(!fresh.empty()&&f.error.message.empty(),"fresh strong initializer frame established"))return false;
@@ -261,7 +261,20 @@ bool defaultNodeMove(){
   // heap or inspect the consumed source Heap/Frame stores.
   ActualState next(std::move(normal));Operation begin;begin.name="initialize_begin";std::vector<const ActualValue*> beginArgs{&control,&bound[0]};ActualValue cursor;continues=true;
   if(!expect(f.check.receiverInstruction(f.context,begin,1,next,ActualOperands{beginArgs},true,changed,unexpected,cursor,continues)&&f.error.message.empty(),"single predecessor delivers its own indexed nodes to initializer begin"))return false;
-  if(probe){
+  if(mode==1){
+    const std::string expectedFrame="receiver:sha256:e7030788509fc4b2a79ecb29186b087ba5c34b148c0ae0f42b3e7bcad27bc046";
+    const std::string expectedCursor="initialization:sha256:c1a635332c79419841bb55c00e508d72653daa95eca59a0dc93a997a9ff26380";
+    // Pinned independent SHA256 of the fixed canonical factory inputs. No
+    // metadata query has occurred for this cursor, only its real begin factory.
+    if(!expect(fresh==expectedFrame&&cursor.cursors==std::set<std::string>{expectedCursor},"fresh begin preserves the complete canonical frame/cursor identities"))return false;
+    const auto before=next;const auto beforeCursor=cursor;const std::string copiedCursor=expectedCursor;
+    f.program.remaining=600; // Three registered rows fit527; old86B fulltext1040 cannot.
+    const auto metadata=f.check.cursorMetadata(copiedCursor);
+    if(!expect(metadata&&f.error.message.empty()&&metadata->frame==expectedFrame&&metadata->position==0&&same(next,before)&&same(cursor,beforeCursor),
+        "first unwarmed full-ID metadata lookup fits and preserves every input state plane"))return false;
+    continue;
+  }
+  if(mode==0){
     const auto token=f.check.existingFieldSlot(ref,f.check.fields.find("F")).slot;
     if(!expect(token&&f.error.message.empty(),"creator pair exists before any initializer field write"))return false;
     const auto before=next;const auto beforeCursor=cursor;
@@ -278,10 +291,18 @@ bool defaultNodeMove(){
   if(!expect(token&&f.error.message.empty(),"creator pair retains its current owned field token"))return false;
   const auto &world=next.frames.at(fresh);const auto &birth=world.births.at(token);
   if(!expect(token&&!f.check.receiverRouteOpen&&same(next.heap.at(key),replacement)&&same(next.heap.at(other),missing)&&world.prefixMin==1&&world.prefixMax==1&&world.initializing&&!world.aborted&&!world.unbound&&same(world.bound,expectedAllocated)&&
-      !birth.pending&&birth.reference==ref&&same(birth.real,replacement)&&advanced.cursors.size()==1&&f.check.receiverCursors.at(*advanced.cursors.begin()).frame==fresh&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1,
+      !birth.pending&&birth.reference==ref&&same(birth.real,replacement)&&advanced.cursors==std::set<std::string>{"initialization:sha256:d4213d9e38b5441d4408c4be325f087141964c7d8a2fb07ad8c020b4889f0dc6"}&&f.check.receiverCursors.at(*advanced.cursors.begin()).frame==fresh&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1,
       "moved field write retains exact World, birth reference, current payload, other U default and actual prefix"))return false;
   }
   llvm::errs()<<"PASS receiver_allocate -> bind -> single-predecessor move -> initialize_field own-node hit\n";return true;
+}
+bool cursorCallerErrors(){
+  for(const bool unknown:{true,false}){Fixture f(false);ActualValue controls;
+    controls.cursors={unknown?"initialization:sha256:0000000000000000000000000000000000000000000000000000000000000000":f.cursor};
+    Operation end;end.name="initialize_end";std::vector<const ActualValue*> args{&controls};ActualValue output;bool changed=false,continues=true;size_t edges=0;
+    if(!expect(!f.check.receiverInstruction(f.context,end,0,f.state,ActualOperands{args},false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return true;},output,continues)&&
+        f.error.code=="core-ir-common-actual"&&edges==0,"real end caller distinguishes unknown metadata from a known but incomplete prefix"))return false;
+  }return true;
 }
 bool initializerCache(){
   // All variants use the real initialize_field operation and existing fixture.
@@ -342,6 +363,6 @@ int main(){unsigned passed=0;
   if(!birthEmpty())return 1;++passed;llvm::errs()<<"PASS empty single-ancestor birth and pre-default history\n";
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
-  if(!birthBudget()||!initializerCache()||!defaultNodeMove())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
+  if(!birthBudget()||!initializerCache()||!defaultNodeMove()||!cursorCallerErrors())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
   llvm::errs()<<passed<<" groups passed; full Source820b/cold100k remains independent\n";return 0;
 }

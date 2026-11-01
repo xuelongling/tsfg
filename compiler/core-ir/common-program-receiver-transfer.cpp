@@ -78,6 +78,8 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     if(conditional&&!recordCapacity(storageCapacity[raw],args[2]))return false;
     seedStorage(fieldSeeds,raw,args[2],conditional,changed);
     if(!step(args[1].objects.size()))return false;
+    const bool definite=!args[1].unknown&&!args[1].callableTop&&args[1].objects.size()==1&&args[0].cursors.size()==1;
+    const ActualFieldSlot *definedSlot=nullptr;
     for(const auto &ref:args[1].objects){
       const auto existing=existingFieldSlot(ref,member);if(!e.message.empty())return false;
       auto selected=objects.end();const auto *object=existing.object;
@@ -88,24 +90,36 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       // U-to-D slot projection. Whole Core admission remains explicitly OPEN.
       receiverRouteOpen|=!direct;
       const auto token=existing.slot?existing.slot:fieldSlot(selected,member);if(!e.message.empty())return false;
+      if(definite){if(!step())return false;definedSlot=token;}
       const bool strong=!object->weak&&args[1].objects.size()==1;if(!receiverWrite(state.frames,*token,args[2],strong&&!args[1].unknown&&!args[1].callableTop))return false;
       if(!putField(state.heap,*token,args[2],strong))return false;
       if(!conditional&&!regionStore(*this,regionValue(*this,args[1]),"/field/"+fieldId,regionValue(*this,args[2]),state.regions))return false;
     }
-    if(!receiverDefine(state.frames,args[0].cursors,args[1],fieldId))return false;
+    const ActualCursorInfo *definedCursor=nullptr;
+    if(definite){definedCursor=cursorMetadata(*args[0].cursors.begin());
+      if(!e.message.empty()||!need(definedCursor,"birth definition cursor is absent"))return false;
+      if(!receiverDefine(state.frames,*definedCursor,*definedSlot))return false;}
     ActualValue missing;missing.tags.insert(digest(std::string("tsfg.type\0undefined",19)));
     if(!receiverReconcile(state.frames,state.heap,missing)||!step(args[0].cursors.size()))return false;
-    for(const auto &id:args[0].cursors){if(!receiverText(id)||!need(receiverCursors.count(id),"initializer cursor missing"))return false;
-      const auto current=receiverCursors.at(id);if(!need(receiverFrames.count(current.frame)&&state.frames.count(current.frame),"initializer cursor frame missing"))return false;
-      const auto &info=receiverFrames.at(current.frame);auto &v=state.frames.at(current.frame);
-      if(!need(v.initializing&&current.position<info.fields.size()&&info.fields[current.position]==fieldId,"initializer did not advance its ordered field prefix"))return false;
-      const auto next=current.position+1;if(v.weak)v.prefixMax=std::max(v.prefixMax,next);else v.prefixMin=v.prefixMax=next;
-      const auto cursor=receiverCursor(current.frame,next);if(!e.message.empty())return false;value.cursors.insert(cursor);}
+    for(const auto &id:args[0].cursors){const auto *current=definite?definedCursor:cursorMetadata(id);
+      if(!e.message.empty()||!need(current,"initializer cursor missing"))return false;
+      const auto frame=receiverFrames.find(current->frame);
+      if(!need(frame!=receiverFrames.end(),"initializer cursor frame missing"))return false;
+      const auto binding=state.frames.find(current->frame);
+      if(!need(binding!=state.frames.end(),"initializer cursor frame missing"))return false;
+      const auto &info=frame->second;auto &v=binding->second;
+      if(!need(v.initializing&&current->position<info.fields.size()&&info.fields[current->position]==fieldId,"initializer did not advance its ordered field prefix"))return false;
+      const auto next=current->position+1;if(v.weak)v.prefixMax=std::max(v.prefixMax,next);else v.prefixMin=v.prefixMax=next;
+      const auto cursor=receiverCursor(current->frame,next);if(!e.message.empty())return false;value.cursors.insert(cursor);}
   }else if(name=="initialize_end"){
     if(!step(args[0].cursors.size()))return false;
-    for(const auto &id:args[0].cursors){if(!receiverText(id)||!need(receiverCursors.count(id),"initializer end cursor missing"))return false;
-      const auto &current=receiverCursors.at(id);if(!need(receiverFrames.count(current.frame)&&state.frames.count(current.frame),"initializer end frame missing"))return false;
-      auto &v=state.frames.at(current.frame);if(!need(v.initializing&&current.position==receiverFrames.at(current.frame).fields.size(),"initializer ended an incomplete prefix"))return false;
+    for(const auto &id:args[0].cursors){const auto *current=cursorMetadata(id);
+      if(!e.message.empty()||!need(current,"initializer end cursor missing"))return false;
+      const auto frame=receiverFrames.find(current->frame);
+      if(!need(frame!=receiverFrames.end(),"initializer end frame missing"))return false;
+      const auto binding=state.frames.find(current->frame);
+      if(!need(binding!=state.frames.end(),"initializer end frame missing"))return false;
+      auto &v=binding->second;if(!need(v.initializing&&current->position==frame->second.fields.size(),"initializer ended an incomplete prefix"))return false;
       if(!v.weak)v.initializing=false;}
   }else return need(false,"unmodelled receiver operation");
   return e.message.empty();

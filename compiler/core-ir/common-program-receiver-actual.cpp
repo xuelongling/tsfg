@@ -31,6 +31,16 @@ Parts split(ActualCheck &c,const ActualValue &input){
 }
 }
 bool ActualCheck::receiverText(const std::string &s){return step(12*s.size()+8);}
+const ActualCursorInfo *ActualCheck::cursorMetadata(const std::string &id){
+  if(!step())return nullptr;
+  for(const auto *entry:receiverCursorIndex){
+    if(!step(2)||!step(entry->first.size()+id.size()+1))return nullptr;
+    if(entry->first!=id)continue;if(!step())return nullptr;return &entry->second;
+  }
+  // Index misses retain the original canonical directory and full-text fee.
+  if(!receiverText(id))return nullptr;const auto found=receiverCursors.find(id);
+  return found==receiverCursors.end()?nullptr:&found->second;
+}
 const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_iterator object,ActualOwnedDirectory::const_iterator field){
   if(!step()||!need(object!=objects.end()&&field!=fields.end(),"physical field slot symbols are not owned"))return nullptr;
   const auto *reference=&object->first,*member=&field->first;
@@ -118,8 +128,9 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
   std::set<std::string> selected;std::vector<std::string> pending;if(!step(values.size()))return {};
   for(const auto &value:values){if(!step(value.frames.size()+value.cursors.size()))return {};
     for(const auto &id:value.frames){if(!receiverText(id))return {};pending.push_back(id);}
-    for(const auto &id:value.cursors){if(!receiverText(id)||!need(receiverCursors.count(id),"unknown initializer cursor"))return {};
-      const auto &parent=receiverCursors.at(id).frame;if(!receiverText(parent))return {};pending.push_back(parent);}}
+    for(const auto &id:value.cursors){const auto *cursor=cursorMetadata(id);
+      if(!e.message.empty()||!need(cursor,"unknown initializer cursor"))return {};
+      const auto &parent=cursor->frame;if(!receiverText(parent))return {};pending.push_back(parent);}}
   for(size_t i=0;i<pending.size();++i){if(!receiverText(pending[i]))return {};const auto id=pending[i];if(!selected.insert(id).second)continue;
     if(!need(world.count(id)&&receiverFrames.count(id),"selected frame is absent from completion"))return {};
     const auto &parent=receiverFrames.at(id).parent;if(!parent.empty()){if(!receiverText(parent))return {};pending.push_back(parent);}}
@@ -194,15 +205,11 @@ bool ActualCheck::receiverWrite(ActualFrameWorld &world,const ActualFieldSlot &s
     if(!e.message.empty())return false;}
   return true;
 }
-bool ActualCheck::receiverDefine(ActualFrameWorld &world,const std::set<std::string> &ids,const ActualValue &selected,const std::string &field){
-  if(selected.unknown||selected.callableTop||selected.objects.size()!=1||ids.size()!=1)return true;
-  const auto &id=*ids.begin(),&ref=*selected.objects.begin();
-  if(!receiverText(id)||!receiverText(ref)||!receiverText(field)||!need(receiverCursors.count(id),"birth definition cursor is absent"))return false;
-  const auto &frame=receiverCursors.at(id).frame;
-  if(!need(world.count(frame),"birth definition frame is absent"))return false;
-  const auto slot=fieldSlot(objects.find(ref),fields.find(field));if(!e.message.empty())return false;
-  if(!world.at(frame).births.count(slot))return true;if(!step(world.size()))return false;
-  for(auto &[frame,binding]:world){if(!step())return false;auto row=binding.births.find(slot);if(row!=binding.births.end())row->second.pending=false;}
+bool ActualCheck::receiverDefine(ActualFrameWorld &world,const ActualCursorInfo &cursor,const ActualFieldSlot &slot){
+  const auto own=world.find(cursor.frame);
+  if(!need(own!=world.end(),"birth definition frame is absent"))return false;
+  if(!own->second.births.count(&slot))return true;if(!step(world.size()))return false;
+  for(auto &[frame,binding]:world){if(!step())return false;auto row=binding.births.find(&slot);if(row!=binding.births.end())row->second.pending=false;}
   return true;
 }
 bool ActualCheck::receiverReconcile(const ActualFrameWorld &world,ActualHeap &heap,const ActualValue &missing){
@@ -215,8 +222,8 @@ bool ActualCheck::receiverReconcile(const ActualFrameWorld &world,ActualHeap &he
       if(old==rows.end()){if(!step(2))return false;auto real=copy(row.real);if(!e.message.empty())return false;rows.emplace(slot,Row{std::move(real),row.pending});}
       else {merge(old->second.real,row.real);old->second.pending|=row.pending;if(!e.message.empty())return false;}}}
   if(!step(rows.size()))return false;
-  for(auto &[slot,row]:rows){if(row.pending)merge(row.real,missing);if(!e.message.empty()||!receiverText(*slot->spelling))return false;
-    heap.insert_or_assign(*slot->spelling,std::move(row.real));}
+  for(auto &[slot,row]:rows){if(row.pending)merge(row.real,missing);if(!e.message.empty())return false;
+    if(!putOwnedField(heap,*slot,std::move(row.real)))return false;}
   return true;
 }
 std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &activation,const std::string &site,const std::string &owner,
@@ -234,7 +241,12 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
 }
 std::string ActualCheck::receiverCursor(const std::string &frame,size_t position){
   if(!receiverText(frame)||!step(64))return {};const auto id="initialization:"+digest(canonical(Array{frame,int64_t(position)}));
-  if(!receiverCursors.count(id)){if(!receiverText(frame)||!step())return {};receiverCursors.emplace(id,ActualCursorInfo{frame,position});}return id;
+  if(!receiverCursors.count(id)){if(!receiverText(frame)||!step())return {};
+    const auto entry=receiverCursors.emplace(id,ActualCursorInfo{frame,position}).first;
+    if(receiverCursorIndex.size()==receiverCursorIndex.capacity()){
+      if(!step(receiverCursorIndex.size()+1))return {};receiverCursorIndex.reserve(std::max<size_t>(1,receiverCursorIndex.size()*2));}
+    if(!step())return {};receiverCursorIndex.push_back(&*entry);
+  }return id;
 }
 ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&world,const std::set<std::string> &ids,ReceiverAction action,const ActualValue *returned){
   ActualReceiverCompletion out;Parts parts;
@@ -291,7 +303,8 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
 bool ActualCheck::abortInitializers(ActualState &state){
   std::set<std::string> selected;if(!step(state.values.size()))return false;
   for(const auto &[reg,v]:state.values){if(!step(v.cursors.size()))return false;for(const auto &id:v.cursors){
-    if(!receiverText(id)||!need(receiverCursors.count(id),"initializer abandonment cursor missing"))return false;selected.insert(receiverCursors.at(id).frame);}}
+    const auto *cursor=cursorMetadata(id);if(!e.message.empty()||!need(cursor,"initializer abandonment cursor missing"))return false;
+    if(!receiverText(cursor->frame))return false;selected.insert(cursor->frame);}}
   for(const auto &id:selected){if(!step()||!need(state.frames.count(id),"initializer abandonment frame missing"))return false;auto &v=state.frames.at(id);
     if(v.initializing){if(!v.weak)v.initializing=false;v.aborted=true;}}return true;
 }

@@ -128,6 +128,11 @@ bool ActualCheck::putField(ActualHeap &heap,const ActualFieldSlot &slot,const Ac
   if(strong||target.inserted)*target.value=copy(value);else merge(*target.value,value);
   return e.message.empty();
 }
+bool ActualCheck::putOwnedField(ActualHeap &heap,const ActualFieldSlot &slot,ActualValue &&value){
+  const auto target=heap.fieldTarget(*this,*slot.spelling);
+  if(!target.value||!e.message.empty()||!step())return false;
+  *target.value=std::move(value);return true;
+}
 ActualHeap ActualCheck::copyHeap(const ActualHeap &from){
   ActualHeap out;if(!step(from.size()))return out;
   for(const auto &[id,v]:from){if(!step(id.size()/64+1))return {};out.emplace(id,copy(v));if(!e.message.empty())return {};}

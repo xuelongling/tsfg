@@ -181,6 +181,8 @@ struct ActualCheck {
   RegionDomain regions;
   std::map<std::string,ActualFrameInfo> receiverFrames;
   std::map<std::string,ActualCursorInfo> receiverCursors;
+  // Derived lookup only: immutable map nodes, never execution World values.
+  std::vector<const std::pair<const std::string,ActualCursorInfo> *> receiverCursorIndex;
   bool receiverRouteOpen=false;
   BorrowTrace *borrowTrace=nullptr;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-actual",message);}
@@ -200,6 +202,7 @@ struct ActualCheck {
   ActualHeap copyHeap(const ActualHeap &);
   bool defaultField(ActualHeap &,const ActualFieldSlot &,bool repeated);
   bool putField(ActualHeap &,const ActualFieldSlot &,const ActualValue &,bool strong);
+  bool putOwnedField(ActualHeap &,const ActualFieldSlot &,ActualValue &&);
   // The caller transfers a complete private completion world; data is copied.
   // Copies SSA nodes to keep borrowed operands live; consumes only owned planes.
   ActualState copyStateWithOwnedStores(const std::map<uint16_t,ActualValue> &,ActualHeap &&,RegionHeap &&,ActualFrameWorld &&);
@@ -224,10 +227,11 @@ struct ActualCheck {
   ActualFieldSlotMatch existingFieldSlot(const std::string &,ActualOwnedDirectory::const_iterator);
   bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
   bool receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
-  bool receiverDefine(ActualFrameWorld &,const std::set<std::string> &,const ActualValue &,const std::string &);
+  bool receiverDefine(ActualFrameWorld &,const ActualCursorInfo &,const ActualFieldSlot &);
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);
   std::string createFrame(ActualFrameWorld &,const std::string &,const std::string &,const std::string &,const std::string &,const std::string &,bool,const std::string &parent={});
   std::string receiverCursor(const std::string &,size_t);
+  const ActualCursorInfo *cursorMetadata(const std::string &);
   // Terminator-owned input: no caller may inspect this World after completion.
   ActualReceiverCompletion receiverCompletion(ActualFrameWorld &&,const std::set<std::string> &,ReceiverAction,const ActualValue *);
   bool abortInitializers(ActualState &);
