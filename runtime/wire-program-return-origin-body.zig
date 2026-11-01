@@ -346,6 +346,27 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     for (f.blocks[0].instructions) |op| {
         try c.step(); switch (op.data) {
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view, .@"return", .eh_unreachable => {},
+            .add, .sub, .mul, .div, .rem, .shl, .shr, .ushr, .@"and", .@"or", .xor, .neg, .@"not", .pos, .bool_not, .eq, .ne, .lt, .le, .gt, .ge => {
+                // These native operations produce an i32 (or native bool)
+                // on success, independently of the operands' Source views.
+                // Request aborts (zero divisor/invalid shift), like fuel, have
+                // neither normal nor language completion. This may projection
+                // conservatively retains the successful result, not an abort
+                // or language payload. No numeric evaluation is performed.
+                // Domain/assert/copy/convert operations are not this proof.
+                const input_code: u8 = if (op.data == .bool_not) 2 else 1;
+                for (op.operands) |reg| {
+                    try c.charge(4); const row = &f.registers[@intFromEnum(reg)];
+                    if (row.carrier != .@"type") { result.pending = .operation; return result; }
+                    const actual = &v.types[@intFromEnum(row.carrier.@"type")];
+                    if (actual.kind != .scalar or actual.native_code != input_code or row.view != row.carrier.@"type") { result.pending = .operation; return result; }
+                }
+                const boolean = switch (op.data) { .bool_not, .eq, .ne, .lt, .le, .gt, .ge => true, else => false };
+                try c.charge(4); const row = &f.registers[@intFromEnum(op.result.?)];
+                if (row.carrier != .@"type") { result.pending = .operation; return result; }
+                const actual = &v.types[@intFromEnum(row.carrier.@"type")];
+                if (actual.kind != .scalar or actual.native_code != @as(u8, if (boolean) 2 else 1) or row.view != row.carrier.@"type") { result.pending = .operation; return result; }
+            },
             else => { result.pending = .operation; return result; },
         }
     }
@@ -388,6 +409,17 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
                 if (from.view != into.view or !std.meta.eql(from.carrier, into.carrier)) { builder.pending = .view; break; }
                 _ = try builder.view(f, output) orelse break;
                 try c.step(); registers[@intFromEnum(output)] = registers[@intFromEnum(input)];
+            },
+            .add, .sub, .mul, .div, .rem, .shl, .shr, .ushr, .@"and", .@"or", .xor, .neg, .@"not", .pos, .bool_not, .eq, .ne, .lt, .le, .gt, .ge => {
+                for (op.operands) |reg| {
+                    try c.step(); if (registers[@intFromEnum(reg)] == null) { builder.pending = .operation; break; }
+                }
+                if (builder.pending != null) break;
+                const reg = op.result.?; const view = try builder.view(f, reg) orelse break;
+                // This is the independently defined successful scalar result,
+                // not a reclassification of an input by its static view. No
+                // external owner, heap write or language completion is added.
+                try builder.node(reg, .{ .literal = .{ .@"type" = view, .category = .other } });
             },
             .@"return" => {
                 normal_exit = true;
