@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Structural Graph5 ordinary-data simulation only. Receiver protocols remain
-// Pending; no parser, Program, Actual/SSA solver, permission or wire activation.
+// Structural Graph5 certificates only. Receiver equations have a finite exact
+// certificate; no entry-state, Actual/SSA, permission or wire activation proof.
 const std = @import("std");
 pub const model = @import("wire-program-return-origin-model.zig");
 const Graph = model.Graph;
@@ -14,6 +14,7 @@ const ValidatedContract = struct { function_id: Symbol, graph: ?*const Graph, pr
 pub const Pending = enum {
     graph_protocol, missing_return_graph, unknown_data_origin, missing_fixed_call,
     unmatched_completion, unmatched_live_call, no_structural_certificate,
+    receiver_no_exact_certificate,
 };
 // A sufficient structural certificate, never a Runtime permission or admission.
 pub const Inclusion = union(enum) { covered: void, pending: Pending };
@@ -29,6 +30,51 @@ const Certificate = struct {
     calls: std.AutoHashMapUnmanaged(Ref, Ref) = .empty,
 };
 const GraphState = struct { graph: *const Graph, controls: []bool };
+
+// Complete typed equations, not a digest, pointer identity or selected roots.
+// Recursion follows the finite DTO type depth; reference edges are compared as
+// ordinals, never recursively unfolded. Symbols and every outer edge are paid
+// before inspection. No allocation or second serialized graph is needed.
+fn exactEquation(comptime T: type, left: T, right: T, budget: *Budget) Error!bool {
+    try budget.step();
+    return switch (@typeInfo(T)) {
+        .void => true,
+        .int, .bool, .@"enum" => left == right,
+        .optional => |info| blk: {
+            if ((left == null) != (right == null)) break :blk false;
+            break :blk if (left) |value| try exactEquation(info.child, value, right.?, budget) else true;
+        },
+        .pointer => |info| blk: {
+            if (info.size != .slice) @compileError("Graph equations contain only borrowed slices");
+            if (info.child == u8) break :blk try budget.equal(left, right);
+            if (left.len != right.len) break :blk false;
+            try budget.spend(left.len);
+            for (left, right) |a, b| if (!try exactEquation(info.child, a, b, budget)) break :blk false;
+            break :blk true;
+        },
+        .@"struct" => |info| blk: {
+            try budget.spend(info.fields.len);
+            inline for (info.fields) |field| if (!try exactEquation(field.type, @field(left, field.name), @field(right, field.name), budget)) break :blk false;
+            break :blk true;
+        },
+        .@"union" => blk: {
+            if (std.meta.activeTag(left) != std.meta.activeTag(right)) break :blk false;
+            break :blk switch (left) {
+                inline else => |value, tag| try exactEquation(@TypeOf(value), value, @field(right, @tagName(tag)), budget),
+            };
+        },
+        else => @compileError("Unrepresented Graph equation field"),
+    };
+}
+
+fn explicitConstruction(directory: *const model.Directory, id: Symbol, budget: *Budget) Error!bool {
+    try budget.spend(directory.constructions.len);
+    for (directory.constructions) |row| {
+        try budget.step();
+        if (try budget.equal(row.id, id)) return row.kind == .explicit;
+    }
+    return error.InvalidReference; // The owning reader has already joined it.
+}
 
 const Engine = struct {
     allocator: std.mem.Allocator,
@@ -434,21 +480,54 @@ pub fn covered(allocator: std.mem.Allocator, directory: *const model.Directory, 
     try budget.spend(fixed.len + 1);
     const validated = try workspace.alloc(ValidatedContract, fixed.len);
     var protocol_pending = false;
+    var upper_validation: model.Validation = .valid;
     var selected = false;
     var upper: ?*const Graph = null;
     for (fixed, directory.functions, 0..) |row, function, index| {
         try budget.step();
         if (!try budget.equal(row.function_id, function.id)) return error.InvalidOrder;
-        const pending = if (row.graph) |graph| try model.validateGraph(allocator, directory, row.function_id, graph, budget) == .pending else false;
+        const validation: model.Validation = if (row.graph) |graph| try model.validateGraph(allocator, directory, row.function_id, graph, budget) else .valid;
+        const pending = validation == .pending;
         validated[index] = .{ .function_id = row.function_id, .graph = row.graph, .protocol_pending = pending };
         if (try budget.equal(row.function_id, function_id)) {
             selected = true; upper = row.graph; protocol_pending = pending;
+            upper_validation = validation;
         }
     }
     if (!selected) return error.InvalidReference;
-    if (try model.validateGraph(allocator, directory, function_id, body, budget) == .pending) protocol_pending = true;
-    if (protocol_pending) return .{ .pending = .graph_protocol };
+    const body_validation = try model.validateGraph(allocator, directory, function_id, body, budget);
+    if (body_validation == .pending) protocol_pending = true;
     const bound = upper orelse return .{ .pending = .missing_return_graph };
+    if (protocol_pending) {
+        // Only the unsupported semantic frame interpretation can be bypassed
+        // by a complete identity simulation. Activation/metadata/protocol
+        // failures remain Pending after ALL supplied graphs were validated.
+        if (upper_validation == .pending and upper_validation.pending != .construction_frame) return .{ .pending = .graph_protocol };
+        if (body_validation == .pending and body_validation.pending != .construction_frame) return .{ .pending = .graph_protocol };
+        const function = try model.findFunction(directory, function_id, budget);
+        if (!function.environment_metadata_complete or (function.kind != .source and function.kind != .method and function.kind != .construction_body)) return .{ .pending = .graph_protocol };
+        if (function.construction) |role| if (!try explicitConstruction(directory, role.id, budget)) return .{ .pending = .graph_protocol };
+        // The initial subset is call-free. Thus its complete fixed dependency
+        // closure is the selected graph, and no null/unknown callee or implicit
+        // activation is silently treated as the same invocation.
+        if (body.calls.len != 0 or bound.calls.len != 0) return .{ .pending = .graph_protocol };
+        for ([_]*const Graph{ body, bound }) |graph| {
+            try budget.spend(graph.nodes.len);
+            for (graph.nodes) |node| {
+                try budget.step();
+                if (node == .unknown) return .{ .pending = .unknown_data_origin };
+                if (node == .receiver_frame and !try explicitConstruction(directory, node.receiver_frame.construction, budget)) return .{ .pending = .graph_protocol };
+                // A constructor's frame Pending can precede (and therefore
+                // mask) a referenced Code/Env metadata Pending in the reader.
+                switch (node) {
+                    inline .code, .environment_component => |row| if (!(try model.findFunction(directory, row.function_id, budget)).environment_metadata_complete) return .{ .pending = .graph_protocol },
+                    else => {},
+                }
+            }
+        }
+        if (try exactEquation(Graph, body.*, bound.*, budget)) return .covered;
+        return .{ .pending = .receiver_no_exact_certificate };
+    }
     var engine: Engine = .{ .allocator = workspace, .budget = budget, .body = body, .upper = bound, .fixed = validated };
     return engine.run();
 }
