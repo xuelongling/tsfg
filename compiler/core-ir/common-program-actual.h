@@ -6,6 +6,8 @@
 #include "llvm/ADT/iterator.h"
 #include <deque>
 #include <optional>
+#include <memory>
+#include <unordered_map>
 namespace tsfg::commonProgram {
 class BorrowTrace;
 // Source/fixed verifier-only clients request no initializer certificate.
@@ -63,7 +65,15 @@ struct CapacityValue {
 };
 struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;ActualFrameWorld frames;};
 struct ActualObject {std::string type;bool weak=false;};
+// Owned interner identity is separate from root execution state, which is
+// refreshed from entry seeds. Never serialize these values to compare them.
+struct ActualContextIdentity {
+  std::string target,activation,region,newTarget;bool repeated=false;
+  std::vector<ActualValue> arguments,retained;
+  ActualHeap heap;RegionHeap regions;ActualFrameWorld frames;
+};
 struct ActualContext {
+  std::unique_ptr<const ActualContextIdentity> identity;
   std::string id;const Function *function=nullptr;std::vector<ActualValue> arguments;
   ActualHeap entry,normalHeap,languageHeap;ActualValue returned,thrown;
   bool normal=false,language=false,root=false,called=false,requestTrap=false;
@@ -107,6 +117,7 @@ struct ActualCheck {
   // replay. Cache only the single-execution predecessor fact, never SSA state.
   std::map<const Function *,std::vector<bool>> singleExecution;
   std::map<std::string,ActualContext> contexts;
+  std::unordered_map<std::string,std::vector<ActualContext *>> contextBuckets;
   std::deque<std::string> pendingContexts;std::set<std::string> queuedContexts;
   bool scheduling=false,weakChanged=false,seedChanged=false;
   std::set<std::string> repeatingFunctions,repeatingBlocks;
@@ -148,7 +159,6 @@ struct ActualCheck {
   bool overlayFrames(ActualFrameWorld &,const ActualFrameWorld &);
   ActualFrameWorld selectFrames(const ActualFrameWorld &,const std::vector<ActualValue> &,const ActualHeap &);
   std::vector<ActualValue> retainedFrames(const ActualFrameWorld &);
-  std::string frameKey(const ActualFrameWorld &);
   bool receiverBirth(ActualFrameWorld &,const std::string &,const std::string &,const std::vector<std::string> &,const ActualHeap &,bool);
   bool receiverWrite(ActualFrameWorld &,const std::string &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const std::set<std::string> &,const ActualValue &,const std::string &);

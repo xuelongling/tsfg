@@ -25,6 +25,7 @@
       "closure-verify.cpp",
       "closure.cpp",
       "common-program-abstract.cpp",
+      "common-program-actual-context.cpp",
       "common-program-array-targets.cpp",
       "common-program-bodies.cpp",
       "common-program-borrows.cpp",

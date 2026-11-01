@@ -108,15 +108,6 @@ std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &wor
     if(!e.message.empty())return {};}
   return result;
 }
-std::string ActualCheck::frameKey(const ActualFrameWorld &world){
-  if(!step(world.size()+16))return {};Array rows;
-  for(const auto &[id,v]:world){if(!receiverText(id)||!step(v.births.size()+16))return {};const auto bound=key(v.bound);
-    if(!e.message.empty()||!receiverText(bound))return {};Array births;
-    for(const auto &[slot,row]:v.births){if(!receiverText(slot)||!receiverText(row.reference))return {};const auto real=key(row.real);
-      if(!e.message.empty()||!receiverText(real))return {};births.push_back(Array{slot,row.reference,row.pending,real});}
-    rows.push_back(Array{id,v.unbound,v.weak,v.pending,v.initializing,v.aborted,int64_t(v.prefixMin),int64_t(v.prefixMax),bound,std::move(births)});}
-  return canonical(Json(std::move(rows)));
-}
 bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,const std::string &ref,const std::vector<std::string> &fields,const ActualHeap &heap,bool repeated){
   if(!receiverText(ref)||!step(fields.size()))return false;std::map<std::string,ActualBirth> rows;
   for(const auto &field:fields){if(!receiverText(field)||!step(ref.size()+field.size()+8))return false;const auto slot=ref+"/field/"+field;
