@@ -267,7 +267,13 @@ const Common = struct {
             for(abi.parameters) |ref| {
                 try c.charge(3); const id=@intFromEnum(ref); const binding=v.storage.bindings[id];
                 try c.require(binding.owner==.param and binding.owner.param==abi.function and !seen[id]); seen[id]=true;
-                try c.require(at<abi.physical_parameters.len); try carrierEqual(c,abi.physical_parameters[at],binding.carrier); at+=1;
+                // Incoming values precede defaults and need not have the
+                // binding's declared view or storage carrier. Layout checks
+                // the independent physical data slot, not Actual tag limits.
+                try c.require(at<abi.physical_parameters.len);
+                const physical=abi.physical_parameters[at];
+                try c.require(physical==.domain or physical==.@"type" or physical==.payload);
+                _=try self.carrier(physical,0); at+=1;
             }
             try c.require(at==abi.physical_parameters.len and (abi.result==null)==(abi.result_carrier==null));
             if(abi.result_carrier) |value| { _=try self.carrier(value,0); }

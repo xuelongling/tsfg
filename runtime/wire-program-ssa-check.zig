@@ -197,6 +197,11 @@ const Graph = struct {
                     }
                 }
                 for(parameters,v.abis[a].physical_parameters) |r,carrier| { try c.require(exact(self.carrierOf(r),carrier)); }
+                const abi=v.abis[a];
+                const hidden=@as(usize,if(abi.lexical_environment!=null)1 else 0)+@as(usize,if(abi.receiver!=null)1 else 0);
+                for(abi.argument_types,0..) |view,index| {
+                    try c.step(); try c.require(self.f.registers[@intFromEnum(parameters[hidden+index])].view==view);
+                }
             },
             .legacy => |v| {
                 var at: usize=0;

@@ -76,6 +76,9 @@ pub const CommonAbi = struct {
     function: t.FunctionRef,
     signature: t.Hash,
     parameters: []const t.BindingRef,
+    // Ordinary raw input views, before defaults; binding declarations and
+    // physical carriers remain independent. Hidden receiver/env are excluded.
+    argument_types: []const t.TypeRef,
     receiver: ?t.BindingRef,
     construction: ?t.ConstructionIndex,
     receiver_frame: ?u16,

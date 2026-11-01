@@ -704,6 +704,7 @@ const Common = struct {
             try c.step(); if(f.role==.module_initializer)continue; const abi=v.abis[i];
             if(abi.receiver) |b| try pending.append(c.allocator,@intFromEnum(v.storage.bindings[@intFromEnum(b)].@"type"));
             for(abi.parameters) |b| { try c.step(); try pending.append(c.allocator,@intFromEnum(v.storage.bindings[@intFromEnum(b)].@"type")); }
+            for(abi.argument_types) |argument| { try c.step(); try pending.append(c.allocator,@intFromEnum(argument)); }
             if(abi.result) |r| try pending.append(c.allocator,@intFromEnum(r)) else {
                 for(v.types,0..) |row,n| { try c.step(); if(row.kind==.@"void") { try pending.append(c.allocator,n); break; } }
             }

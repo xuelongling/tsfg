@@ -141,6 +141,7 @@ fn commonStorage(c: *Context, v: tables.CommonTables) Error!void {
     try c.require(v.storage.payload.byte_size == 16 and v.storage.payload.alignment == 8 and v.storage.payload.reference_count == 1);
     try bound(c, v.abis.len, 4096); try c.require(v.abis.len == c.program.functions.len); try uniqueField(c, v.abis, "function", c.program.functions.len);
     for (v.abis) |row| { try c.row(@TypeOf(row)); _ = try c.ref(row.function, c.program.functions.len); try refs(c, row.parameters, n.bindings, 64, .unique);
+        try refs(c, row.argument_types, n.types, 64, .any); try c.require(row.argument_types.len == row.parameters.len);
         try c.maybeRef(row.receiver, n.bindings); try c.maybeRef(row.lexical_environment, n.environments); try c.maybeRef(row.result, n.types); try bound(c, row.physical_parameters.len, 64);
         try c.maybeRef(row.construction, n.constructions);
         if (row.receiver_frame) |ordinal| try c.require(ordinal < row.physical_parameters.len);
