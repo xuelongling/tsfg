@@ -106,7 +106,7 @@ pub const Graph = struct {
     exits: Exits,
     accesses: []const Access,
 };
-pub const Pending = enum { construction_frame, environment_metadata, function_protocol };
+pub const Pending = enum { construction_frame, receiver_activation, environment_metadata, function_protocol };
 pub const Validation = union(enum) { valid: void, pending: Pending };
 
 fn require(condition: bool) Error!void { if (!condition) return error.InvalidGraph; }
@@ -397,7 +397,15 @@ fn typedCarriers(allocator: std.mem.Allocator, directory: *const Directory, curr
     try budget.spend(graph.heaps.len);
     for (graph.heaps) |heap| {
         try budget.step();
-        if (heap == .receiver_action) { try carriers.frame(heap.receiver_action.frames); try carriers.payload(heap.receiver_action.operands); }
+        if (heap == .receiver_action) {
+            const action = heap.receiver_action;
+            try carriers.frame(action.frames); try carriers.payload(action.operands);
+            if (action.action == .allocate) for (try carriers.collect(action.frames)) |id| {
+                try budget.step();
+                const construction = switch (graph.nodes[id]) { .receiver_input => current.construction.?.id, .receiver_frame => |row| row.construction, else => unreachable };
+                try require((try ownedConstruction(directory, construction, budget)).base == null);
+            };
+        }
         if (heap == .store) {
             const row = heap.store; try budget.text(row.selector.len);
             if (std.mem.startsWith(u8, row.selector, "capture:")) try carriers.environment(row.bases, row.view[4..]) else try carriers.payload(row.bases);
@@ -492,6 +500,43 @@ fn accessOrder(a: Access, b: Access, a_length: usize, b_length: usize, budget: *
         if (y == null) return false;
         if (x.? != y.?) return x.? < y.?;
     }
+}
+
+// A static creation site cannot represent a fresh bind-once frame when its
+// activation control depends on a cycle. Input-frame uses create no new frame.
+// All ranges and carrier roles have already been checked by validateGraph.
+fn receiverActivations(allocator: std.mem.Allocator, graph: *const Graph, budget: *Budget) Error!bool {
+    var creates = false;
+    for (graph.nodes) |node| { try budget.step(); if (node == .receiver_frame) { creates = true; break; } }
+    if (!creates) return true;
+    try budget.spend(graph.controls.len);
+    const marks = try allocator.alloc(u2, graph.controls.len); defer allocator.free(marks); @memset(marks, 0);
+    try budget.spend(graph.controls.len);
+    const next = try allocator.alloc(usize, graph.controls.len); defer allocator.free(next); @memset(next, 0);
+    try budget.spend(graph.controls.len);
+    const stack = try allocator.alloc(Ref, graph.controls.len); defer allocator.free(stack);
+    for (graph.nodes) |node| {
+        try budget.step(); if (node != .receiver_frame) continue;
+        const root = node.receiver_frame.control;
+        if (marks[root] == 2) continue;
+        marks[root] = 1; stack[0] = root; var count: usize = 1;
+        while (count != 0) {
+            try budget.step(); const id = stack[count - 1];
+            const control = graph.controls[id];
+            const length: usize = switch (control) { .entry => 0, .join => |row| row.inputs.len, .call, .receiver_completion => 1 };
+            if (next[id] == length) { marks[id] = 2; count -= 1; continue; }
+            const parent = switch (control) {
+                .entry => unreachable,
+                .join => |row| row.inputs[next[id]],
+                .call => |row| graph.calls[row.call].control,
+                .receiver_completion => |row| graph.heaps[row.action].receiver_action.control,
+            };
+            next[id] += 1;
+            if (marks[parent] == 1) return false;
+            if (marks[parent] == 0) { marks[parent] = 1; stack[count] = parent; count += 1; }
+        }
+    }
+    return true;
 }
 
 // validateDirectory must have checked this borrowed directory once at the owning
@@ -608,5 +653,6 @@ pub fn validateGraph(allocator: std.mem.Allocator, directory: *const Directory, 
         previous = access; previous_length = length;
     }
     try typedCarriers(allocator, directory, current, graph, budget);
+    if (!try receiverActivations(allocator, graph, budget)) return .{ .pending = .receiver_activation };
     return if (pending) |reason| .{ .pending = reason } else .valid;
 }
