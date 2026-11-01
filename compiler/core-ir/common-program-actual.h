@@ -8,6 +8,8 @@
 #include <optional>
 #include <memory>
 #include <unordered_map>
+#include <utility>
+#include <type_traits>
 namespace tsfg::commonProgram {
 class BorrowTrace;
 // Source/fixed verifier-only clients request no initializer certificate.
@@ -35,7 +37,39 @@ struct ActualOperands {
   auto begin()const{return llvm::make_pointee_range(values).begin();}
   auto end()const{return llvm::make_pointee_range(values).end();}
 };
-using ActualHeap=std::map<std::string,ActualValue>;
+// Canonical directory ownership includes its derived field-node access index.
+// Copies own independent nodes and start without an index. Moves carry both
+// stores; no index in the moved-from heap can refer to destination nodes.
+class ActualHeap {
+  using Directory=std::map<std::string,ActualValue>;
+public:
+  using iterator=Directory::iterator;using const_iterator=Directory::const_iterator;
+  ActualHeap()=default;
+  ActualHeap(const ActualHeap &other):entries_(other.entries_){}
+  ActualHeap(ActualHeap &&other)noexcept(std::is_nothrow_move_constructible_v<Directory>):entries_(std::move(other.entries_)),fields_(std::move(other.fields_)){other.fields_.clear();}
+  ActualHeap &operator=(ActualHeap &&other)noexcept(std::is_nothrow_move_assignable_v<Directory>){
+    if(this!=&other){fields_.clear();entries_=std::move(other.entries_);fields_=std::move(other.fields_);other.fields_.clear();}return *this;
+  }
+  iterator begin(){return entries_.begin();}const_iterator begin()const{return entries_.begin();}
+  iterator end(){return entries_.end();}const_iterator end()const{return entries_.end();}
+  size_t size()const{return entries_.size();}bool empty()const{return entries_.empty();}
+  iterator find(const std::string &key){return entries_.find(key);}const_iterator find(const std::string &key)const{return entries_.find(key);}
+  size_t count(const std::string &key)const{return entries_.count(key);}
+  iterator lower_bound(const std::string &key){return entries_.lower_bound(key);}const_iterator lower_bound(const std::string &key)const{return entries_.lower_bound(key);}
+  ActualValue &at(const std::string &key){return entries_.at(key);}const ActualValue &at(const std::string &key)const{return entries_.at(key);}
+  ActualValue &operator[](const std::string &key){return entries_[key];}ActualValue &operator[](std::string &&key){return entries_[std::move(key)];}
+  template<class... Args> auto emplace(Args&&... args){return entries_.emplace(std::forward<Args>(args)...);}
+  template<class Key,class Value> auto insert_or_assign(Key&& key,Value&& value){return entries_.insert_or_assign(std::forward<Key>(key),std::forward<Value>(value));}
+  void clear(){fields_.clear();entries_.clear();}
+private:
+  struct FieldNode {const std::string *key;ActualValue *value;};
+  struct FieldTarget {ActualValue *value=nullptr;bool inserted=false;};
+  Directory entries_;std::vector<FieldNode> fields_;
+  bool appendField(ActualCheck &,iterator);
+  bool rememberField(ActualCheck &,iterator);
+  FieldTarget fieldTarget(ActualCheck &,const std::string &);
+  friend struct ActualCheck;
+};
 // Compiler control identities never inhabit the ordinary tag/object domain.
 struct ActualFrameInfo {
   std::string owner,construction,newTarget,parent;bool derived=false;
@@ -164,6 +198,8 @@ struct ActualCheck {
   void seedStorage(std::map<std::string,ActualValue> &,const std::string &,const ActualValue &,bool,bool &);
   bool arrayReceiver(const ActualValue &);
   ActualHeap copyHeap(const ActualHeap &);
+  bool defaultField(ActualHeap &,const ActualFieldSlot &,bool repeated);
+  bool putField(ActualHeap &,const ActualFieldSlot &,const ActualValue &,bool strong);
   // The caller transfers a complete private completion world; data is copied.
   // Copies SSA nodes to keep borrowed operands live; consumes only owned planes.
   ActualState copyStateWithOwnedStores(const std::map<uint16_t,ActualValue> &,ActualHeap &&,RegionHeap &&,ActualFrameWorld &&);

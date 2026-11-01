@@ -15,6 +15,78 @@ struct Symbols {
   }
   const ActualFieldSlot *get(const std::string &reference,const std::string &field){return check.fieldSlot(check.objects.find(reference),check.fields.find(field));}
 };
+ActualValue heapPayload(){
+  ActualValue v;v.tags={"T"};v.objects={"payload-object"};v.cells={"payload-cell"};v.frames={"payload-frame"};v.cursors={"payload-cursor"};
+  v.callables={{"code","env"}};v.callableTop=true;v.unknown=true;v.truth=3;v.number=9007199254740993LL;
+  v.region.known=true;v.region.opaque=true;v.region.empty=true;v.region.roots={"root"};v.region.number=37;return v;
+}
+bool sameHeapValue(const ActualValue &a,const ActualValue &b){
+  return a.tags==b.tags&&a.objects==b.objects&&a.cells==b.cells&&a.frames==b.frames&&a.cursors==b.cursors&&a.callables==b.callables&&
+    a.callableTop==b.callableTop&&a.unknown==b.unknown&&a.truth==b.truth&&a.number==b.number&&a.region.roots==b.region.roots&&
+    a.region.known==b.region.known&&a.region.opaque==b.region.opaque&&a.region.empty==b.region.empty&&a.region.number==b.region.number;
+}
+bool heapOwnership(){
+  const std::string key="object/field/F",undefined="sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b";
+  {Symbols f;const auto token=f.get("object","F");ActualHeap heap;
+    if(!expect(token&&f.check.defaultField(heap,*token,false)&&f.error.message.empty(),"real defaultField creates and registers its owned missing node"))return false;
+    ActualValue missing;missing.tags={undefined};if(!expect(sameHeapValue(heap.at(key),missing),"default property is exactly U with no invented owner or relation"))return false;
+    // The index points at the canonical map node, not a snapshot of its value.
+    auto expected=heapPayload();heap.insert_or_assign(std::string(key),expected);heap.at(key).number=41;expected.number=41;
+    ActualValue extra;extra.tags={"extra"};extra.number=99;
+    if(!expect(f.check.putField(heap,*token,extra,false)&&f.error.message.empty(),"weak indexed field store uses the current generic-alias value"))return false;
+    expected.tags.insert("extra");expected.number.reset();expected.region.number.reset();
+    if(!expect(sameHeapValue(heap.at(key),expected),"weak merge preserves all payload planes and the original exact join semantics"))return false;
+    const auto full=heapPayload();f.program.remaining=64;
+    if(!expect(f.check.putField(heap,*token,full,true)&&f.error.message.empty()&&sameHeapValue(heap.at(key),full),"registered fourteen-byte field accepts full payload within hit budget; full-text fallback cannot fit"))return false;
+  }
+  for(const bool metered:{false,true})for(const bool low:{false,true}){
+    Symbols f;const auto token=f.get("object","F");ActualHeap source;if(!f.check.defaultField(source,*token,false))return false;
+    const auto oldValue=heapPayload();source.insert_or_assign(key,oldValue);
+    auto copied=metered?f.check.copyHeap(source):ActualHeap(source);
+    source.at(key).number=17;if(!expect(sameHeapValue(copied.at(key),oldValue),"heap clone owns independent complete mapped values"))return false;
+    source.clear();auto replacement=heapPayload();replacement.number=29;
+    if(low)f.program.remaining=64;
+    const bool ok=f.check.putField(copied,*token,replacement,true);
+    if(low){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&sameHeapValue(copied.at(key),oldValue),"copy constructor and metered copyHeap discard source node index; miss keeps hard fallback budget error"))return false;}
+    else if(!expect(ok&&f.error.message.empty()&&sameHeapValue(copied.at(key),replacement),"clone fallback writes destination-owned node safely after source destruction"))return false;
+  }
+  for(const bool assign:{false,true})for(const bool probeSource:{false,true}){
+    Symbols f;const auto token=f.get("object","F"),other=f.get("second","F");ActualHeap source;
+    if(!f.check.defaultField(source,*token,false))return false;source.at(key)=heapPayload();
+    // Both real owning move forms are used by ActualState edge delivery.
+    ActualHeap moved(std::move(source));ActualHeap destination;
+    if(assign){if(!f.check.defaultField(destination,*other,false))return false;destination=std::move(moved);}else destination=std::move(moved);
+    auto replacement=heapPayload();replacement.number=53;f.program.remaining=64;
+    auto &consumed=assign?moved:source;
+    if(probeSource){
+      if(!expect(!f.check.putField(consumed,*token,replacement,true)&&f.error.code=="core-ir-common-budget"&&sameHeapValue(destination.at(key),heapPayload()),"moved-from heap has no borrowed destination index or successful write authority"))return false;
+      consumed.clear(); // Valid but unspecified moved-from container, not an empty() assertion.
+    }else{
+      consumed.clear();consumed.emplace("global:reuse",ActualValue{});consumed.clear();
+      if(!expect(f.check.putField(destination,*token,replacement,true)&&f.error.message.empty()&&destination.size()==1&&sameHeapValue(destination.at(key),replacement),"move destination retains hit index and moved-from heap can be cleared/reused independently"))return false;
+    }
+  }
+  for(const bool replace:{false,true}){
+    Symbols f;const auto token=f.get("object","F");ActualHeap heap;if(!f.check.defaultField(heap,*token,false))return false;
+    if(replace)heap=ActualHeap{};else heap.clear();const auto full=heapPayload();heap.emplace(key,full);f.program.remaining=64;
+    if(!expect(!f.check.putField(heap,*token,ActualValue{},true)&&f.error.code=="core-ir-common-budget"&&sameHeapValue(heap.at(key),full),"clear or whole-owner replacement cannot reuse dangling field-node index"))return false;
+  }
+  {Symbols f;const auto token=f.get("object","F");ActualHeap heap;auto expected=heapPayload();heap.emplace(key,expected);
+    if(!expect(f.check.defaultField(heap,*token,true)&&f.error.message.empty(),"repeated default preserves real current alternatives"))return false;
+    expected.tags.insert(undefined);expected.number.reset();expected.region.number.reset();
+    if(!expect(sameHeapValue(heap.at(key),expected),"repeated U joins full old data without clipping identities or relation roots"))return false;
+  }
+  {Symbols f;const auto token=f.get("object","F");ActualHeap heap;if(!f.check.defaultField(heap,*token,false))return false;
+    const std::vector<std::pair<std::string,int>> inserted={{"span/start",11},{"env/slot/C",6},{"array/element/0",3},{"global:G",7},{"span/owner",10},{"activation/fn/cell/0",1},{"array/length",4},{"env/parent",5},{"span/length",9},{"array/element/*",2}};
+    for(const auto &[name,number]:inserted){ActualValue value;value.number=number;heap.emplace(name,value);}ActualValue field;field.number=8;heap.insert_or_assign(key,field);
+    const std::vector<std::pair<std::string,int>> expected={{"activation/fn/cell/0",1},{"array/element/*",2},{"array/element/0",3},{"array/length",4},{"env/parent",5},{"env/slot/C",6},{"global:G",7},{"object/field/F",8},{"span/length",9},{"span/owner",10},{"span/start",11}};
+    auto row=heap.begin();for(const auto &[name,number]:expected){if(!expect(row!=heap.end()&&row->first==name&&row->second.number==number,"six storage domains keep full canonical lexical order and literal values"))return false;++row;}
+    if(!expect(row==heap.end()&&heap.size()==11,"index adds no phantom storage rows"))return false;
+    auto array=heap.lower_bound("array/");for(const auto &name:{"array/element/*","array/element/0","array/length"}){if(!expect(array!=heap.end()&&array->first==name,"lower_bound prefix traversal retains wildcard and exact element distinctions"))return false;++array;}
+    if(!expect(array!=heap.end()&&array->first=="env/parent"&&heap.count("global:G")==1&&heap.find("span/owner")->second.number==10&&llvm::StringRef(heap.find("span/owner")->first).ends_with("/owner"),"prefix termination, global exact lookup and Span.owner suffix remain canonical"))return false;
+  }
+  llvm::errs()<<"PASS ActualHeap own-node defaults/alias/copy/move/reset/six-domain subcases\n";return true;
+}
 bool cachedPairs(){
   Symbols f;const auto token=f.get("object","F");const std::string copiedReference="object";
   const auto match=f.check.existingFieldSlot(copiedReference,f.check.fields.find("F"));
@@ -75,7 +147,7 @@ bool ownedSlots(){
   Symbols badObject;if(!expect(!badObject.check.fieldSlot(badObject.check.objects.end(),badObject.check.fields.find("F"))&&badObject.error.code=="core-ir-common-actual","missing object directory entry is a hard ownership error"))return false;
   Symbols badField;if(!expect(!badField.check.fieldSlot(badField.check.objects.find("object"),badField.check.fields.end())&&badField.error.code=="core-ir-common-actual","missing field directory entry is a hard ownership error"))return false;
   Symbols limited;limited.program.remaining=0;
-  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs();
+  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership();
 }
 }
 int main(){if(!ownedSlots())return 1;llvm::errs()<<"PASS owned physical field-slot spelling, alias, identity, reset and errors\n";return 0;}

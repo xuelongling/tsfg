@@ -241,6 +241,48 @@ bool birthBudget(){Fixture measured;measured.state.frames.at(measured.selected).
     if(!expect(!f.check.receiverBirth(f.state.frames,f.selected,"reborn",{f.slot("reborn","F"),f.slot("reborn","G")},f.state.heap,true)&&f.error.code=="core-ir-common-budget","birth cutoff must fail with budget error, never report a completed journal"))return false;
   }return true; // A failed private check has no added rollback obligation.
 }
+bool defaultNodeMove(){
+  for(const bool probe:{true,false}){ // Separate owned checks; never refill the tested operation.
+  Fixture f(false);(*f.check.builtins.at("B").getAsObject())["fields"]=Array{*f.check.fields.at("F"),*f.check.fields.at("G")};
+  const auto fresh=f.check.createFrame(f.state.frames,f.context.activation,"heap-owner-root","B","ctor:B","B",false);
+  if(!expect(!fresh.empty()&&f.error.message.empty(),"fresh strong initializer frame established"))return false;
+  ActualValue control;control.frames={fresh};std::vector<const ActualValue *> createArgs{&control};Operation allocate;allocate.name="receiver_allocate";
+  ActualValue allocated;bool changed=false,continues=true;size_t emitted=0;
+  const auto unexpected=[&](uint16_t,ActualState,const std::vector<ActualValue>&){++emitted;return false;};
+  if(!expect(f.check.receiverInstruction(f.context,allocate,0,f.state,ActualOperands{createArgs},true,changed,unexpected,allocated,continues)&&f.error.message.empty(),"actual receiver_allocate registers field defaults before the bind edge"))return false;
+  const std::string ref="construction/"+fresh+"/B",key=ref+"/field/F",other=ref+"/field/G";
+  ActualValue expectedAllocated;expectedAllocated.tags={"B"};expectedAllocated.objects={ref};
+  ActualValue missing;missing.tags={"sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b"};
+  if(!expect(same(allocated,expectedAllocated)&&same(f.state.heap.at(key),missing)&&same(f.state.heap.at(other),missing),"creator's canonical F/G nodes are exactly actual U"))return false;
+  Operation bind;bind.name="receiver_bind";bind.successors={1,2};std::vector<const ActualValue*> bindArgs{&control,&allocated};ActualState normal;std::vector<ActualValue> bound;ActualValue unused;size_t language=0;
+  const auto edge=[&](uint16_t target,ActualState after,const std::vector<ActualValue>&values){if(target==1){++emitted;normal=std::move(after);bound=values;}else ++language;return true;};
+  if(!expect(f.check.receiverInstruction(f.context,bind,0,f.state,ActualOperands{bindArgs},true,changed,edge,unused,continues)&&f.error.message.empty()&&emitted==1&&language==0&&!continues&&bound.size()==1&&same(bound[0],expectedAllocated),"fresh bind has only its real normal completion and moves its private stores"))return false;
+  // Model the same one-predecessor move delivery, never copy the destination
+  // heap or inspect the consumed source Heap/Frame stores.
+  ActualState next(std::move(normal));Operation begin;begin.name="initialize_begin";std::vector<const ActualValue*> beginArgs{&control,&bound[0]};ActualValue cursor;continues=true;
+  if(!expect(f.check.receiverInstruction(f.context,begin,1,next,ActualOperands{beginArgs},true,changed,unexpected,cursor,continues)&&f.error.message.empty(),"single predecessor delivers its own indexed nodes to initializer begin"))return false;
+  if(probe){
+    const auto token=f.check.existingFieldSlot(ref,f.check.fields.find("F")).slot;
+    if(!expect(token&&f.error.message.empty(),"creator pair exists before any initializer field write"))return false;
+    const auto before=next;const auto beforeCursor=cursor;
+    // This Heap has never executed initialize_field or putField. A lost
+    // creator index cannot be warmed by the full initializer instance below.
+    f.program.remaining=2*key.size()+64;
+    if(!expect(f.check.putField(next.heap,*token,missing,true)&&f.error.message.empty()&&same(next,before)&&same(cursor,beforeCursor)&&same(next.heap.at(key),missing)&&same(next.heap.at(other),missing),
+        "first indexed lookup after bind/move fits while fallback cannot; identical U preserves full logical state"))return false;
+    continue; // This limited-budget check ends here, with no budget restoration.
+  }
+  const auto replacement=payload("replacement");Operation store;store.name="initialize_field";store.properties=Object{{"field","F"}};std::vector<const ActualValue*> args{&cursor,&bound[0],&replacement};ActualValue advanced;
+  if(!expect(f.check.receiverInstruction(f.context,store,1,next,ActualOperands{args},true,changed,unexpected,advanced,continues)&&f.error.message.empty(),"real first initialize_field consumes the moved creator heap"))return false;
+  const auto token=f.check.existingFieldSlot(ref,f.check.fields.find("F")).slot;
+  if(!expect(token&&f.error.message.empty(),"creator pair retains its current owned field token"))return false;
+  const auto &world=next.frames.at(fresh);const auto &birth=world.births.at(token);
+  if(!expect(token&&!f.check.receiverRouteOpen&&same(next.heap.at(key),replacement)&&same(next.heap.at(other),missing)&&world.prefixMin==1&&world.prefixMax==1&&world.initializing&&!world.aborted&&!world.unbound&&same(world.bound,expectedAllocated)&&
+      !birth.pending&&birth.reference==ref&&same(birth.real,replacement)&&advanced.cursors.size()==1&&f.check.receiverCursors.at(*advanced.cursors.begin()).frame==fresh&&f.check.receiverCursors.at(*advanced.cursors.begin()).position==1,
+      "moved field write retains exact World, birth reference, current payload, other U default and actual prefix"))return false;
+  }
+  llvm::errs()<<"PASS receiver_allocate -> bind -> single-predecessor move -> initialize_field own-node hit\n";return true;
+}
 bool initializerCache(){
   // All variants use the real initialize_field operation and existing fixture.
   // A registered pair must still read the actual object's current type/weakness.
@@ -300,6 +342,6 @@ int main(){unsigned passed=0;
   if(!birthEmpty())return 1;++passed;llvm::errs()<<"PASS empty single-ancestor birth and pre-default history\n";
   if(!birthAncestors())return 1;++passed;llvm::errs()<<"PASS complete independent multi-ancestor birth journals\n";
   if(!birthNonempty())return 1;++passed;llvm::errs()<<"PASS nonempty birth collision replacement and old-entry preservation\n";
-  if(!birthBudget()||!initializerCache())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
+  if(!birthBudget()||!initializerCache()||!defaultNodeMove())return 1;++passed;llvm::errs()<<"PASS birth budget hard failures\n";
   llvm::errs()<<passed<<" groups passed; full Source820b/cold100k remains independent\n";return 0;
 }

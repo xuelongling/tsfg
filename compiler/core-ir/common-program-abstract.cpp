@@ -94,6 +94,40 @@ bool ActualCheck::recordCapacity(CapacityValue &to,const ActualValue &from){
   for(const auto &[code,environment]:from.callables)to.hasEnvironment|=!environment.empty();
   return need(to.tags.size()<=256,"conditional capacity tag limit exceeded");
 }
+bool ActualHeap::appendField(ActualCheck &c,iterator node){
+  if(fields_.size()==fields_.capacity()){
+    if(!c.step(fields_.size()*2+1))return false;fields_.reserve(fields_.capacity()?fields_.capacity()*2:1);
+  }
+  if(!c.step(2))return false;fields_.push_back({&node->first,&node->second});return true;
+}
+bool ActualHeap::rememberField(ActualCheck &c,iterator node){
+  for(const auto &entry:fields_){if(!c.step(3))return false;if(entry.key==&node->first)return true;}
+  return appendField(c,node);
+}
+ActualHeap::FieldTarget ActualHeap::fieldTarget(ActualCheck &c,const std::string &key){
+  if(!c.step())return {};
+  for(const auto &entry:fields_){
+    if(!c.step(3)||!c.step(entry.key->size()+key.size()+1))return {};
+    if(*entry.key!=key)continue;if(!c.step(2))return {};return {entry.value,false};
+  }
+  // Cache misses retain the original complete-key directory operation. The
+  // index never stores a SlotToken or a pointer into another heap's nodes.
+  if(!c.receiverText(key))return {};auto [node,inserted]=entries_.try_emplace(key);
+  if(!appendField(c,node)||!c.step(2))return {};return {&node->second,inserted};
+}
+bool ActualCheck::defaultField(ActualHeap &heap,const ActualFieldSlot &slot,bool repeated){
+  const auto &key=*slot.spelling;if(!receiverText(key))return false;
+  ActualValue missing;missing.tags.insert(digest(std::string("tsfg.type\0undefined",19)));
+  ActualHeap::iterator node;
+  if(!repeated)node=heap.entries_.insert_or_assign(key,std::move(missing)).first;
+  else {auto inserted=heap.entries_.try_emplace(key,std::move(missing));node=inserted.first;if(!inserted.second)merge(node->second,missing);}
+  if(!e.message.empty())return false;return heap.rememberField(*this,node);
+}
+bool ActualCheck::putField(ActualHeap &heap,const ActualFieldSlot &slot,const ActualValue &value,bool strong){
+  const auto target=heap.fieldTarget(*this,*slot.spelling);if(!target.value)return false;
+  if(strong||target.inserted)*target.value=copy(value);else merge(*target.value,value);
+  return e.message.empty();
+}
 ActualHeap ActualCheck::copyHeap(const ActualHeap &from){
   ActualHeap out;if(!step(from.size()))return out;
   for(const auto &[id,v]:from){if(!step(id.size()/64+1))return {};out.emplace(id,copy(v));if(!e.message.empty())return {};}

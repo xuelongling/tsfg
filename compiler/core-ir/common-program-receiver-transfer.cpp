@@ -36,13 +36,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
         const auto slot=fieldSlot(object,fields.find(fieldId));if(!e.message.empty()||!step())return false;fieldSlots.push_back(slot);}
       if(!receiverBirth(state.frames,id,ref,fieldSlots,state.heap,repeated))return false;
       // Virtual missing properties are data, never define/write observations.
-      for(const auto token:fieldSlots){
-        if(!receiverText(*token->spelling))return false;
-        const auto &slot=*token->spelling;ActualValue missing;missing.tags.insert(digest(std::string("tsfg.type\0undefined",19)));
-        if(!repeated||!state.heap.count(slot))state.heap.insert_or_assign(slot,std::move(missing));
-        else merge(state.heap.at(slot),missing);
-        if(!e.message.empty())return false;
-      }
+      for(const auto token:fieldSlots)if(!defaultField(state.heap,*token,repeated))return false;
       merge(value,allocated);if(!e.message.empty())return false;
     }
   }else if(name=="receiver_bind"||name=="receiver_get"||name=="receiver_result"){
@@ -93,10 +87,9 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       // Keep logical contribution and prefix data without inventing a physical
       // U-to-D slot projection. Whole Core admission remains explicitly OPEN.
       receiverRouteOpen|=!direct;
-      const auto token=existing.slot?existing.slot:fieldSlot(selected,member);if(!e.message.empty())return false;const auto &slot=*token->spelling;
+      const auto token=existing.slot?existing.slot:fieldSlot(selected,member);if(!e.message.empty())return false;
       const bool strong=!object->weak&&args[1].objects.size()==1;if(!receiverWrite(state.frames,*token,args[2],strong&&!args[1].unknown&&!args[1].callableTop))return false;
-      if(!receiverText(slot))return false;
-      if(strong||!state.heap.count(slot))state.heap.insert_or_assign(slot,copy(args[2]));else merge(state.heap.at(slot),args[2]);
+      if(!putField(state.heap,*token,args[2],strong))return false;
       if(!conditional&&!regionStore(*this,regionValue(*this,args[1]),"/field/"+fieldId,regionValue(*this,args[2]),state.regions))return false;
     }
     if(!receiverDefine(state.frames,args[0].cursors,args[1],fieldId))return false;
