@@ -3,6 +3,7 @@
 #include "common-program-retention.h"
 #include "common-program-borrows.h"
 #include "common-program-syntax.h"
+#include "common-program-plan.h"
 #include "finite-borrow-flow.h"
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -228,6 +229,7 @@ bool containedRange(const std::string &mode){
   bool oracle=escape==(filtered?none:evidence)&&use==(!filtered&&direct?evidence:none)&&closure==(!filtered&&(callable||envRoot||mode=="return-converge")?evidence:none);
   ActualContext external;external.id="external";external.root=true;external.function=&fn;external.arguments={state.values.at(0)};c.contexts.emplace(external.id,std::move(external));
   ActualContext context;context.id="observed";context.function=&fn;if(returning)context.arguments={state.values.at(3)};
+  if(!c.preparePublicBorrowContexts())return report("contained setup "+mode,false,e);
   BorrowTrace trace(c);if(!trace.begin(context,state))return report("contained setup "+mode,false,e);
   if(mode=="sparse")p.remaining=128;if(mode=="zero")p.remaining=0;
   bool traced=true,storeCovered=false;if(returning){traced=trace.after(context,fn.blocks[0].operations[0],0,state,true);const std::vector<const ActualValue *> resize{&state.values.at(3),&state.values.at(4)};
@@ -304,7 +306,10 @@ bool mergeLattice(const std::string &mode){
     // Encoding failure must not hide an internal lattice flag change.
     to.tags={std::string(1048577,'x')};from=to;from.unknown=true;expected=from;changed=true;legacyBug=true;
   }
-  const auto before=to;const bool legacyChanged=c.key(before)!=c.key(expected);
+  // The legacy contrast owns its meter; it cannot consume the merge cutoff.
+  Program legacyProgram;legacyProgram.remaining=64000000;Error legacyError;ActualCheck legacy{legacyProgram,legacyError};
+  const auto before=to;const bool legacyChanged=legacy.key(before)!=legacy.key(expected);
+  if(!legacyError.message.empty())return report("legacy merge diagnostic setup "+mode,false,legacyError);
   const bool actual=mode=="self"?c.merge(to,to):c.merge(to,from);
   if(denied){
     const auto error=e.code,message=e.message;Json events=nullptr;const bool noProof=!verifyCommonBorrows(c,&events)&&events.getAsNull()&&c.borrowTrace==nullptr;

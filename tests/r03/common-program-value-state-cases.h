@@ -78,7 +78,7 @@ bool capacityConsumer(const std::string &mode){
   return report("passive carrier/managed "+mode,accepted&&shape&&p.effects[fn.id].managedReference==managed&&p.effects[fn.id].escape==managed,e);
 }
 bool projectedFlows(const std::string &mode){
-  Program p;if(mode=="inner-low")p.remaining=450;Error e;ActualCheck c{p,e};const std::string boolean="B";
+  Program p;Error e;ActualCheck c{p,e};const std::string boolean="B";
   Json type=Object{{"id",boolean},{"kind","scalar"},{"name","bool"}},source=Object{{"id","projection"},{"ownerType",nullptr},{"lexicalEnvironment",nullptr},{"parameters",Array{Object{{"id","flag"},{"type",boolean}}}}};
   Function fn;fn.id="projection";fn.path="/projection-model.ts";fn.role="function";fn.range={0,1000};fn.resultCarrier=boolean;fn.carriers.push_back(boolean);
   const auto branch=[&](const std::string &name,std::vector<uint16_t> successors){auto op=instruction(name,noRegister,"",name=="cf.cond_br"?std::vector<uint16_t>{0}:std::vector<uint16_t>{});op.successors=std::move(successors);return op;};
@@ -99,6 +99,10 @@ bool projectedFlows(const std::string &mode){
   c.types.emplace(boolean,&type);c.sourceFunctions.emplace(fn.id,&source);c.functions.emplace(fn.id,&fn);
   ActualValue scalar;scalar.tags.insert(boolean);scalar.truth=3;scalar.region.known=true;scalar.region.empty=true;
   ActualContext context;context.id="projection-context";context.function=&fn;context.root=true;context.arguments.push_back(scalar);c.contexts.emplace(context.id,std::move(context));
+  if(!c.preparePublicBorrowContexts())return report("projected edge setup "+mode,false,e);
+  // Public-context eligibility is fixture setup; the original Trace budget
+  // begins once, before construction, and is never refilled during the Trace.
+  if(mode=="inner-low")p.remaining=450;
   const auto &entry=c.contexts.at("projection-context");ActualState state;state.values.emplace(0,scalar);BorrowTrace trace(c,true);
   bool setup=trace.begin(entry,state);
   for(size_t block=0;block<fn.blocks.size()&&setup;++block)for(size_t index=0;index<fn.blocks[block].operations.size()&&setup;++index){
@@ -136,9 +140,13 @@ bool controlJoins(const std::string &mode){
   else if(mode=="duplicate-edge")fn.blocks={{{0},{edge("cf.cond_br",{0},{1,1})}},{{},{instruction("func.return",noRegister,"",{0})}}};
   else fn.blocks={{{0},{edge("cf.br",{},{1})}},{{},{edge("route",{},{2})}},{{},{instruction("func.return",noRegister,"",{0})}}};
   ActualValue argument;argument.tags.insert(type);argument.truth=mode=="entry-backedge"||mode=="cycle"||mode=="linear"?2:3;
-  ActualContext context;context.id=fn.id;context.function=&fn;context.activation="control-activation";context.arguments.push_back(argument);
-  if(mode=="parallel-swap"){context.arguments[0].truth=2;argument.truth=1;context.arguments.push_back(argument);argument.truth=3;context.arguments.push_back(argument);}
-  bool changed=false;const auto expected=mode=="linear"?2:3;
+  const auto executionBudget=p.remaining;std::vector<ActualValue> arguments{argument};
+  if(mode=="parallel-swap"){arguments[0].truth=2;argument.truth=1;arguments.push_back(argument);argument.truth=3;arguments.push_back(argument);}
+  c.functions.emplace(fn.id,&fn);p.fixedEffects.emplace(fn.id,Effects{});bool initialized=false;
+  auto *owned=c.context(fn.id,arguments,ActualHeap{},false,initialized,"control-activation",true);
+  if(!owned)return report("control join "+mode,false,e);auto &context=*owned;
+  // Factory setup precedes the original execution budget, activated once only.
+  p.remaining=executionBudget;bool changed=false;const auto expected=mode=="linear"?2:3;
   if(!c.execute(context,true,changed))return report("control join "+mode,false,e);
   const auto first=c.key(context.returned);const bool summaries=context.normal&&context.returned.truth==expected&&(mode!="multiple-predecessors"||context.language&&context.thrown.truth==3);
   changed=false;const bool repeated=c.execute(context,true,changed)&&c.key(context.returned)==first;
@@ -171,22 +179,69 @@ bool cachedCalleeJoin(bool direct=false){
 bool valueBorrow(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};std::map<std::string,Json> types,sources;
   const auto i32=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32"),u32=digest(std::string("tsfg.type")+std::string(1,'\0')+"u32");
+  const auto undefined=digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined");const SourceAnchor at{40,50};
+  const Json origin=Object{{"source","/value-borrow-model.ts"},{"start",40},{"end",50}};
   types.emplace(i32,Object{{"id",i32},{"kind","scalar"},{"name","i32"}});types.emplace(u32,Object{{"id",u32},{"kind","scalar"},{"name","u32"}});
+  types.emplace(undefined,Object{{"id",undefined},{"kind","undefined"}});
   types.emplace("A",Object{{"id","A"},{"kind","array"},{"elementType",i32}});types.emplace("R",Object{{"id","R"},{"kind","readSpan"},{"elementType",i32}});
   types.emplace("F",Object{{"id","F"},{"kind","function"},{"parameters",Array{}},{"returnType",i32}});
-  Array members{Object{{"id","a"},{"name","a"},{"sourceBinding","a"},{"type","A"},{"readonly",false}}};
-  types.emplace("V",Object{{"id","V"},{"kind","value"},{"fields",std::move(members)}});
+  Array members{Object{{"id","a"},{"name","a"},{"sourceBinding","a"},{"type","A"},{"readonly",false},{"origin",origin},{"parameterBinding",nullptr},{"initializer",nullptr}}};
+  types.emplace("V",Object{{"id","V"},{"kind","value"},{"base",nullptr},{"fields",std::move(members)},
+    {"construction",Object{{"id","construction:V"},{"kind","implicit-base"},{"functionId",nullptr},{"parameters",Array{}},{"initializationFields",Array{"a"}},{"origin",origin}}}});
   Array slots{Object{{"binding","held"},{"key","held"},{"type","V"},{"kind","local"},{"writable",mode=="replaced"}},Object{{"binding","r"},{"key","r"},{"type","R"},{"kind","local"},{"writable",false}}};
   Json layout=Object{{"id","E"},{"parent",nullptr},{"slots",std::move(slots)}};
-  Function root;root.id="root";root.path="/value-borrow-model.ts";root.role="function";root.range={0,100};root.blocks.push_back({{}, {}});auto &body=root.blocks[0].operations;
-  body={instruction("env_alloc",0,"env:E",{},Object{{"layout","E"}}),instruction("constant",1,i32,{},Object{{"decimal","1"}}),instruction("constant",2,u32,{},Object{{"decimal","0"}}),instruction("constant",3,u32,{},Object{{"decimal","1"}}),instruction("array_create",4,"A",{1}),instruction("array_create",5,"A",{1}),instruction("readspan",6,"R",{4,2,3}),instruction("construct_value",7,"V"),instruction("field_store",noRegister,"",{7,4},Object{{"field","a"},{"initialize",true}}),instruction("value_copy",8,"V",{7},Object{{"type","V"}}),instruction("env_init",noRegister,"",{0,8},Object{{"layout","E"},{"binding","held"},{"key","held"}}),instruction("env_init",noRegister,"",{0,6},Object{{"layout","E"},{"binding","r"},{"key","r"}})};
-  if(mode=="replaced"){body.push_back(instruction("construct_value",9,"V"));body.push_back(instruction("field_store",noRegister,"",{9,5},Object{{"field","a"},{"initialize",true}}));body.push_back(instruction("value_copy",10,"V",{9},Object{{"type","V"}}));body.push_back(instruction("env_store",noRegister,"",{0,10},Object{{"layout","E"},{"binding","held"},{"key","held"}}));}
-  if(mode=="resized")body.push_back(instruction("array_resize",noRegister,"",{4,2}));
-  body.push_back(instruction("make_closure",11,"F",{0},Object{{"function_id","reader"},{"signature_hash","sig"},{"environment_layout","E"}}));body.push_back(instruction("func.return",noRegister,"",{11}));
-  Function reader;reader.id="reader";reader.path=root.path;reader.role="function";reader.range={20,30};reader.blocks.push_back({{0},{instruction("func.return")}});p.functions={std::move(root),std::move(reader)};
-  sources.emplace("root",Object{{"id","root"},{"lexicalParent",nullptr},{"lexicalEnvironment",nullptr},{"activationEnvironment","E"},{"ownerType",nullptr},{"parameters",Array{}}});sources.emplace("reader",Object{{"id","reader"},{"lexicalParent","root"},{"lexicalEnvironment","E"},{"activationEnvironment",nullptr},{"ownerType",nullptr},{"parameters",Array{}}});
-  for(const auto &[id,type]:types)c.types.emplace(id,&type);c.environments.emplace("E",&layout);const auto &member=items(field(types.at("V"),"fields"))[0];c.fields.emplace("a",&member);
-  for(const auto &fn:p.functions){c.functions.emplace(fn.id,&fn);c.sourceFunctions.emplace(fn.id,&sources.at(fn.id));p.fixedEffects[fn.id];}c.views["reader/0"]="env:E";
-  const bool accepted=c.callGraph()&&c.solve(false)&&verifyCommonBorrows(c),expected=mode=="held";
-  return report("actual copied value/borrow "+mode,expected?accepted:!accepted&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains(mode=="resized"?"active ReadSpan":"lifetime is unproved"),e);
+  sources.emplace("root",Object{{"id","root"},{"sourcePath","/value-borrow-model.ts"},{"range",Object{{"start",0},{"end",100}}},{"returnType","F"},
+    {"lexicalParent",nullptr},{"lexicalEnvironment",nullptr},{"activationEnvironment","E"},{"ownerType",nullptr},{"parameters",Array{}}});
+  sources.emplace("reader",Object{{"id","reader"},{"lexicalParent","root"},{"lexicalEnvironment","E"},{"activationEnvironment",nullptr},{"ownerType",nullptr},{"parameters",Array{}}});
+  for(const auto &[id,type]:types)c.types.emplace(id,&type);c.environments.emplace("E",&layout);
+  c.fields.emplace("a",&items(field(types.at("V"),"fields"))[0]);for(const auto &[id,source]:sources)c.sourceFunctions.emplace(id,&source);
+  // Use the same private constructor reconstruction as the owning compiler.
+  // It supplies solve's universal constructor roots without a made-up body.
+  Array rawTypes,rawFunctions;for(const auto &[id,type]:types)rawTypes.push_back(type);for(const auto &[id,source]:sources)rawFunctions.push_back(source);
+  p.hir=Object{{"types",std::move(rawTypes)},{"functions",std::move(rawFunctions)}};
+  if(!prepareInternalConstructors(p,e))return report("actual copied value/borrow "+mode,false,e);
+  for(const auto &[id,type]:p.internalTypes)c.types.emplace(id,&type);
+  for(const auto &[id,binding]:p.internalBindings)c.bindings.emplace(id,&binding);
+  for(const auto &[id,source]:p.internalOwners)c.sourceFunctions.emplace(id,&source);
+  if(!c.prepareImplicitReceiverPlans())return report("actual copied value/borrow "+mode,false,e);
+  SourcePlan plan(c,sources.at("root"));plan.function.role="function";plan.block();
+  plan.handlers.thrown=[&](SourcePlan::Reg value,SourceAnchor range){plan.emit("return_throw",{value},"",Object{},range);};
+  const auto env=plan.emit("env_alloc",{},"env:E",Object{{"layout","E"}},at),one=plan.emit("constant",{},i32,Object{{"decimal","1"}},at),
+    zero=plan.emit("constant",{},u32,Object{{"decimal","0"}},at),length=plan.emit("constant",{},u32,Object{{"decimal","1"}},at);
+  const auto a=plan.emit("array_create",{one},"A",Object{},at),b=plan.emit("array_create",{one},"A",Object{},at),span=plan.emit("readspan",{a,zero,length},"R",Object{},at);
+  const auto construct=[&](){const auto frame=plan.emit("receiver_create",{},"receiver:V",Object{{"owner","V"},{"new_target","V"},{"construction","construction:V"}},at);
+    return plan.construct(types.at("V"),frame,{},at);};
+  const auto held=construct();plan.emit("field_store",{held,a},"",Object{{"field","a"},{"initialize",true}},at);
+  const auto copied=plan.copy(held,"V",at);plan.emit("env_init",{env,copied},"",Object{{"layout","E"},{"binding","held"},{"key","held"}},at);
+  plan.emit("env_init",{env,span},"",Object{{"layout","E"},{"binding","r"},{"key","r"}},at);
+  if(mode=="replaced"){const auto replacement=construct();plan.emit("field_store",{replacement,b},"",Object{{"field","a"},{"initialize",true}},at);
+    const auto stored=plan.copy(replacement,"V",at);plan.emit("env_store",{env,stored},"",Object{{"layout","E"},{"binding","held"},{"key","held"}},at);}
+  if(mode=="resized")plan.emit("array_resize",{a,zero},"",Object{},at);
+  const auto closure=plan.emit("make_closure",{env},"F",Object{{"function_id","reader"},{"signature_hash","sig"},{"environment_layout","E"}},at);
+  plan.emit("func.return",{closure},"",Object{},at);
+  // constructionAction owns both continuations; drain its real throw tasks.
+  for(size_t i=0;i<plan.deferred.size()&&plan.ok();++i){if(!c.step())break;auto task=std::move(plan.deferred[i]);task();}
+  if(!plan.ok())return report("actual copied value/borrow "+mode,false,e);
+  Function reader;reader.id="reader";reader.path=plan.function.path;reader.role="function";reader.range={20,30};reader.blocks.push_back({{0},{instruction("func.return")}});
+  p.functions={std::move(plan.function),std::move(reader)};
+  for(const auto &fn:p.functions){c.functions.emplace(fn.id,&fn);p.fixedEffects[fn.id];
+    for(size_t i=0;i<fn.carriers.size();++i)c.views.emplace(fn.id+"/"+std::to_string(i),fn.carriers[i]);}c.views["reader/0"]="env:E";
+  // Count only the public root implementation, not its private entry model.
+  std::map<std::string,size_t> protocols;for(const auto &block:p.functions[0].blocks)for(const auto &op:block.operations)++protocols[op.name];
+  const auto count=mode=="replaced"?2u:1u;bool built=a==4&&b==5&&!protocols.count("construct_value");
+  for(const auto *name:{"receiver_create","receiver_allocate","receiver_bind","initialize_begin","initialize_field","initialize_end","receiver_result"})built&=protocols[name]==count;
+  const bool solved=built&&c.callGraph()&&c.solve(false);bool shape=false;
+  for(const auto &[id,context]:c.contexts)if(context.root&&context.function->id=="root"&&context.normal&&context.returned.callables.size()==1){
+    const auto &activation=context.returned.callables.begin()->second;const auto &heap=context.normalHeap;
+    const auto stored=heap.find(activation+"/slot/held"),borrow=heap.find(activation+"/slot/r");
+    if(stored==heap.end()||borrow==heap.end()||stored->second.objects.size()!=1||borrow->second.objects.size()!=1)continue;
+    const auto field=heap.find(*stored->second.objects.begin()+"/field/a"),owner=heap.find(*borrow->second.objects.begin()+"/owner");
+    if(field==heap.end()||owner==heap.end()||field->second.objects.size()!=1||owner->second.objects.size()!=1)continue;
+    const auto size=heap.find(*owner->second.objects.begin()+"/length");
+    const std::set<std::string> original{"entry/root/root/object/4"},replacement{"entry/root/root/object/5"};
+    shape=owner->second.objects==original&&field->second.objects==(mode=="replaced"?replacement:original)&&
+      size!=heap.end()&&size->second.number==std::optional<int64_t>(mode=="resized"?0:1);
+  }
+  const bool accepted=solved&&verifyCommonBorrows(c),expected=mode=="held";
+  return report("actual copied value/borrow "+mode,shape&&(expected?accepted:!accepted&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains(mode=="resized"?"active ReadSpan":"lifetime is unproved")),e);
 }
