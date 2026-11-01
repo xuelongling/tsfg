@@ -210,21 +210,24 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
   // reachable snapshot. Neither this set nor the selected views escape.
   if(!step(world.size()))return {};bool births=false;for(const auto &[id,value]:world)births|=!value.births.empty();
   if(births){auto reached=reachable(values,heap);if(!e.message.empty()||!step(values.size()+reached.size()+1))return {};
-    std::set<llvm::StringRef,std::less<>> refs;
+    // These refs have only a membership consumer. Sorting or deduplicating
+    // would compare complete object spellings without changing that answer.
+    std::vector<const std::string *> refs;
     const auto objectsIn=[&](const ActualValue &value){if(!step(value.objects.size()))return false;
-      for(const auto &ref:value.objects){const auto at=selectionLowerBound(*this,refs,ref);if(!at)return false;
-        if(*at!=refs.end()&&**at==ref)continue;
-        if(*at!=refs.end()&&!step(2*(ref.size()+(**at).size()+1)))return false;
-        if(*at!=refs.begin()){if(!step(refs.size()+1))return false;const auto previous=std::prev(*at);
-          if(!step(2*(previous->size()+ref.size()+1)))return false;}
-        if(!step(3))return false;refs.emplace_hint(*at,ref);
-      }return true;};
+      for(const auto &ref:value.objects)if(!append(refs,&ref))return false;return true;};
     for(const auto &value:values)if(!objectsIn(value))return {};
     for(const auto &[slot,value]:reached)if(!objectsIn(value))return {};
     if(!step(world.size()))return {};
     for(const auto &entry:world){if(!step(entry.second.births.size()))return {};
-      for(const auto &[slot,row]:entry.second.births){const auto at=selectionLowerBound(*this,refs,row.reference);if(!at)return {};
-        if(*at!=refs.end()&&**at==row.reference){bool fresh=false;if(!admit(entry.first,&entry,fresh))return {};break;}}}
+      for(const auto &[slot,row]:entry.second.births){if(!step())return {};bool matched=false;
+        for(size_t i=0;i<refs.size();++i){
+          // Visit/load and length rejection precede any byte comparison. Equal
+          // lengths still require the complete identity, including NUL bytes.
+          if(!step(3))return {};const auto &ref=*refs[i];if(ref.size()!=row.reference.size())continue;
+          if(!step(ref.size()+row.reference.size()+1))return {};
+          if(ref==row.reference){if(!step())return {};matched=true;break;}
+        }
+        if(matched){bool fresh=false;if(!admit(entry.first,&entry,fresh))return {};break;}}}
   }
   // Visit initial selections in full-key order. Resolve each row's metadata,
   // then its parent's World before appending that parent's deferred metadata.

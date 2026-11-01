@@ -277,5 +277,48 @@ bool frameSelectionDirectories(){
   llvm::errs()<<"PASS selector empty/singleton/tree hit/miss, NUL/prefix/high-byte identity\n";return true;
 }
 }
-int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
+namespace {
+bool frameRefMembership(){
+  const auto prepare=[](Fixture &f,const std::string &reference){
+    f.check.objects.emplace(reference,ActualObject{"B",false});const auto slot=f.check.fieldSlot(f.check.objects.find(reference),f.check.fields.find("F"));
+    if(!expect(slot&&f.error.message.empty(),"refs membership fixture owns its actual physical field slot before the independent cutoff"))return false;
+    auto binding=f.state.frames.at(f.selected);binding.births.clear();binding.births.emplace(slot,ActualBirth{reference,payload("birth-real"),false});
+    f.state.frames.clear();f.state.frames.emplace(f.selected,std::move(binding));f.check.receiverFrames.at(f.selected).parent.clear();
+    f.check.receiverFrames.erase(f.parent);f.check.receiverFrames.erase(f.unrelated);f.state.heap.clear();return true;
+  };
+  // Independent workload fixture, not a claim about unknown Source ref lengths.
+  // The no-hit result does not clone any long reference or birth payload.
+  {Fixture f(false);if(!prepare(f,"shared"))return false;ActualValue root;root.objects={std::string(2048,'a'),std::string(4096,'z')};
+    const std::vector<ActualValue> roots{root};const auto input=f.state;const auto before=root;f.program.remaining=4000;
+    const auto output=f.check.selectFrames(f.state.frames,roots,f.state.heap);
+    if(!expect(f.error.message.empty()&&output.empty()&&same(f.state,input)&&same(root,before)&&same(roots[0],before)&&
+        f.state.frames.size()==1&&f.check.receiverFrames.size()==1&&root.frames.empty()&&root.cursors.empty()&&f.state.heap.empty(),
+        "fixed4000 completes reachable and rejects two full long nonmember object refs without publishing a birth World"))return false;
+  }
+  struct Membership {std::string birth,query;bool hit;};const std::string longRef(2048,'a');
+  const std::vector<Membership> cases={{longRef,longRef,true},{longRef,longRef+"x",false},{longRef,std::string(2047,'a')+"z",false},
+    {std::string("a\0b",3),std::string("a\0b",3),true},{std::string("a\0b",3),"a",false},
+    {std::string("\x80\0\xff",3),std::string("\x80\0\xff",3),true},{std::string("\x80\0\xff",3),std::string("\x80\0\x7f",3),false}};
+  for(const auto &item:cases){Fixture f(false);if(!prepare(f,item.birth))return false;ActualValue root;root.objects={item.query};
+    // Identical candidates arrive from separate arguments and a genuinely
+    // reachable cyclic heap value; membership multiplicity cannot add rows.
+    std::vector<ActualValue> roots{root,root};f.state.heap.emplace(item.query+"/field/repeat",root);
+    const auto input=f.state;const auto beforeRoots=roots;const auto wanted=f.state.frames;f.program.remaining=500000;
+    auto output=f.check.selectFrames(f.state.frames,roots,f.state.heap);
+    if(!expect(f.error.message.empty()&&(item.hit?sameMap(output,wanted,[](const auto &a,const auto &b){return same(a,b);}):output.empty())&&
+        same(f.state,input)&&same(roots[0],beforeRoots[0])&&same(roots[1],beforeRoots[1]),
+        "full long/NUL/prefix/high-byte membership uses complete equality and duplicate refs preserve exact row identity"))return false;
+    if(!item.hit)continue;const auto kept=output;f.state.frames.at(f.selected).births.begin()->second.reference="changed-input";
+    f.state.frames.at(f.selected).births.begin()->second.real.objects.clear();roots[0].objects.clear();f.state.heap.clear();
+    if(!expect(sameMap(output,kept,[](const auto &a,const auto &b){return same(a,b);}),"member-selected birth references and payloads own independent copies after roots and heap mutation"))return false;
+    const auto changedInput=f.state;output.begin()->second.births.begin()->second.real.region.roots.clear();
+    if(!expect(same(f.state,changedInput),"member-selected output journal mutation cannot affect its source World"))return false;
+    f.state.frames.clear();f.check.receiverFrames.clear();
+    if(!expect(output.size()==1&&output.begin()->first==f.selected&&output.begin()->second.births.begin()->second.reference==item.birth,
+        "member-selected complete frame and birth identities survive source World and metadata destruction"))return false;
+  }
+  llvm::errs()<<"PASS refs-only fixed4000 nonmembership, full equality, duplicate nested refs and owned birth results\n";return true;
+}
+}
+int main(){if(!reconcile()||!indexedReconcile()||!frameSelection()||!frameSelectionClosure()||!frameSelectionErrors()||!frameSelectionDirectories()||!frameRefMembership())return 1;llvm::errs()<<"PASS receiverReconcile real union, pending/U, Bottom, ownership and budget\n";
   llvm::errs()<<"1 independent group passed; old11 results reused, complete Source820b remains independent\n";return 0;}
