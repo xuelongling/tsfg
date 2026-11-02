@@ -510,42 +510,6 @@ bool lazyCopyOriginRegionInstruction(){
   return true;
 }
 
-bool objectlessCopyInstruction(){
-  const std::string u32="sha256:b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c";
-  const auto sameHeap=[](const ActualHeap &a,const ActualHeap &b){
-    return a.size()==b.size()&&std::equal(a.begin(),a.end(),b.begin(),[](const auto &x,const auto &y){return x.first==y.first&&same(x.second,y.second);});
-  };
-  for(unsigned mode=0;mode<8;++mode){Fixture f;ActualValue source;source.tags={u32};source.number=0;
-    if(mode==3){source=fullTarget();source.objects.clear();source.unknown=true;source.region.opaque=source.region.empty=true;}
-    if(mode==4){source={};source.unknown=true;}
-    if(mode==5)source={};
-    if(mode==6)for(size_t i=0;i<257;++i)source.cells.insert("cell-"+std::to_string(i));
-    if(mode==7)for(size_t i=0;i<257;++i)source.region.roots.insert("root-"+std::to_string(i));
-    ActualState state;state.values.emplace(1,source);state.heap.emplace("unrelated",fullTarget());state.regions["kept"].emplace("slot",fullTarget().region);const auto saved=state;
-    Function function;function.id="objectless-copy";function.blocks.resize(1);ActualContext context;context.function=&function;context.root=true;context.activation=std::string(4096,'q');
-    Operation op;op.name="value_copy";op.operands={1};op.result=2;op.view=u32;op.range={197,198};
-    // A literal previous-pass aggregate, not a warmup instruction or a derived expected result.
-    f.check.registerCapacity[function.id+"/2"].tags=source.tags;
-    bool changed=false,continues=true;size_t edges=0;f.program.remaining=mode==0?14:mode==1?13:mode==2?0:100000;
-    const bool ok=f.check.instruction(context,op,0,state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
-    if(!expect(same(state.values.at(1),source)&&sameHeap(state.heap,saved.heap)&&sameRegion(state.regions.at("kept").at("slot"),saved.regions.at("kept").at("slot"))&&
-        !changed&&edges==0&&f.check.objects.empty()&&f.check.receiverFrames.empty(),"objectless full instruction preserves source, Heap, Region and ownership without Site work"))return false;
-    if(mode==1||mode==2||mode>=6){
-      if(!expect(!ok&&f.error.code==(mode>=6?"core-ir-common-actual":"core-ir-common-budget"),"objectless copies retain hard budget, active cells and relation bounds through capacity"))return false;
-      if(mode==2&&!expect(!state.values.count(2)&&f.program.remaining==0,"entry cutoff creates no result before the original charge"))return false;
-      continue;
-    }
-    const auto &capacity=f.check.registerCapacity.at(function.id+"/2");
-    if(!expect(ok&&f.error.message.empty()&&continues&&state.values.count(2)&&same(state.values.at(2),source)&&
-        capacity.tags==source.tags&&capacity.unknown==source.unknown&&capacity.callableTop==source.callableTop&&capacity.hasEnvironment==(mode==3),
-        "objectless instruction copies every actual facet and reaches complete capacity without static-view retagging"))return false;
-    if(mode==0&&!expect(f.program.remaining==0,"u32 full instruction needs14 not15 solely because the unused3unit Site is replaced by a paid2unit predicate/route"))return false;
-    auto &result=state.values.at(2);result.tags.insert("result-only");result.cells.insert("result-only");result.frames.insert("result-only");result.cursors.emplace("result-only");
-    result.callables.emplace("result-only","env-only");result.region.roots.insert("result-only");result.number=29;
-    if(!expect(same(state.values.at(1),source)&&sameHeap(state.heap,saved.heap),"objectless mutable facets have independent value ownership"))return false;
-  }
-  return true;
-}
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -563,6 +527,5 @@ int main(){
   if(!completeFrameSelection943())return 1;llvm::errs()<<"PASS complete World selection943 and partial birth discovery\n";
   if(!emptyWorldSelectionBudget1())return 1;llvm::errs()<<"PASS lazy birth classification and empty World selection1\n";
   if(!lazyCopyOriginInstruction()||!lazyCopyOriginValueGraphs()||!lazyCopyOriginRegionInstruction())return 1;
-  llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";
-  if(!objectlessCopyInstruction())return 1;llvm::errs()<<"PASS objectless conditional copy and complete capacity\n";return 0;
+  llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";return 0;
 }

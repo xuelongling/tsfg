@@ -38,19 +38,15 @@ const std::string *ActualCheck::resolveCopyOrigin(ActualCopyOrigin &origin){
   // The original root concatenation remains; only its move and variant tag are new.
   if(!step(2))return nullptr;return &origin.source.emplace<std::string>(text+"/root");
 }
-bool ActualCheck::copyValueFacets(const ActualValue &source,ActualValue &value){
+ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,ActualCopyOrigin &origin,bool weak,std::map<std::string,std::string> active){
   // Object identities are rebuilt below. Copy only the facets retained by
   // this result, paying the original copy weights for those actual copies.
   size_t cost=source.tags.size()+source.cells.size()+source.frames.size()+source.cursors.size()+source.callables.size()+regionWeight(source.region)+1;
   for(const auto *set:{&source.tags,&source.cells,&source.frames})for(const auto &id:*set)cost+=id.size()/64;
   cost+=4*source.cursors.size(); // Shared immutable cursor keys replace their old byte copies.
   for(const auto &[code,environment]:source.callables)cost+=(code.size()+environment.size())/64+1;
-  if(!step(cost))return false;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;value.frames=source.frames;value.cursors=source.cursors;
+  if(!step(cost))return {};ActualValue value;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;value.frames=source.frames;value.cursors=source.cursors;
   value.truth=source.truth;value.unknown=source.unknown;value.callableTop=source.callableTop;value.number=source.number;value.region=source.region;
-  return true;
-}
-ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,ActualCopyOrigin &origin,bool weak,std::map<std::string,std::string> active){
-  ActualValue value;if(!copyValueFacets(source,value))return {};
   // Distinct source instances of the same nominal value share this copy-site
   // identity. Decide multiplicity before the first field write, not after one
   // alternative has already overwritten another.
