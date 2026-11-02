@@ -245,3 +245,69 @@ bool valueBorrow(const std::string &mode){
   const bool accepted=solved&&verifyCommonBorrows(c),expected=mode=="held";
   return report("actual copied value/borrow "+mode,shape&&(expected?accepted:!accepted&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains(mode=="resized"?"active ReadSpan":"lifetime is unproved")),e);
 }
+
+// Synthetic typed unit premises ONLY: no Frontend/Source admission or execution.
+// The independently fixed capture upper stays in codePermission; this helper
+// derives its reader proof through the production reader/domain/normalizer.
+bool capturePermissionPremises(ActualCheck &c,const std::string &kind){
+  auto &p=c.p;auto &e=c.e;const Json range=Object{{"start",0},{"end",1}};
+  const auto typeRow=[](const std::string &id,const std::string &selected){
+    const auto label=canonical(Object{{"kind",selected},{"name","synthetic:"+id}});
+    return Json(Object{{"id",id},{"kind",selected},{"sourceType","synthetic:"+id},
+      {"semanticLabel",label},{"semanticShape",Object{{"label",label},{"kind",selected}}}});
+  };
+  std::map<std::string,Json> types;types.emplace("T",typeRow("T",kind));types.emplace("void",typeRow("void","void"));
+  auto &type=*types.at("T").getAsObject();auto &shape=*type.get("semanticShape")->getAsObject();
+  if(kind=="array"||kind=="readSpan"){
+    types.emplace("R",typeRow("R","reference"));type["elementType"]="R";shape["elementType"]=field(types.at("R"),"semanticLabel");
+  }
+  if(kind=="function"){type["parameters"]=Array{};type["returnType"]="void";shape["parameters"]=Array{};shape["returnType"]=field(types.at("void"),"semanticLabel");}
+  if(kind=="reference"||kind=="value"){
+    type["base"]=nullptr;type["fields"]=Array{};type["methods"]=Array{};shape["base"]=nullptr;shape["fields"]=Array{};shape["methods"]=Array{};
+  }
+  if(kind=="value")type["construction"]=Object{{"id","synthetic:T-construction"},{"kind","implicit-base"},{"functionId",nullptr},
+    {"implicitForward",nullptr},{"signature",Object{{"parameters",Array{}},{"returnType","T"}}},{"initializationFields",Array{}}};
+  const auto function=[&](const std::string &id,Json lexical,Json activation,Array parameters,Array captures,Array body){
+    return Json(Object{{"id",id},{"declKey","synthetic:"+id},{"kind","source"},{"access","private"},{"name",id},
+      {"sourceBinding","synthetic:"+id},{"sourcePath","/synthetic-capture-unit.ts"},{"range",range},{"signatureHash","synthetic:"+id},
+      {"ownerType",nullptr},{"receiverBinding",nullptr},{"lexicalParent",id=="reader"?Json("factory"):Json(nullptr)},
+      {"lexicalEnvironment",std::move(lexical)},{"activationEnvironment",std::move(activation)},{"parameters",std::move(parameters)},
+      {"bindings",Array{}},{"captures",std::move(captures)},{"returnType","void"},{"parameterInitialization",Object{{"steps",Array{}}}},{"body",std::move(body)}});
+  };
+  auto factory=function("factory",nullptr,Json("E"),Array{Object{{"id","factory/held"},{"type","T"},{"writable",true}}},Array{},Array{});
+  auto reader=function("reader",Json("E"),nullptr,Array{},Array{Object{{"binding","factory/held"},{"read",true},{"write",false}}},
+    Array{Object{{"kind","expression"},{"range",range},{"value",Object{{"kind","bindingReference"},{"binding","factory/held"},{"type","T"},{"range",range}}}},Object{{"kind","return"},{"range",range}}});
+  Json environment=Object{{"id","E"},{"owner","factory"},{"parent",nullptr},{"slots",Array{Object{{"key","held"},{"binding","factory/held"},{"type","T"},{"writable",true},{"kind","parameter"}}}}};
+  Array typeRows;for(auto &[id,row]:types)typeRows.push_back(std::move(row));
+  p.hir=Object{{"rootFile","/synthetic-capture-unit.ts"},{"types",std::move(typeRows)},{"functions",Array{std::move(factory),std::move(reader)}},
+    {"environments",Array{std::move(environment)}},{"globals",Array{}},{"hostImports",Array{}},{"hostContext",nullptr},{"modules",Array{}},
+    {"closure",Object{{"roots",Array{}},{"requiredRoots",Array{}}}},{"snapshot",Object{{"payload",Object{{"compatibilityWitnesses",Array{}},{"entryCompatibilityRoots",Array{}}}}}}};
+  for(const auto &row:items(field(p.hir,"types")))c.types.emplace(string(field(row,"id")),&row);
+  for(const auto &row:items(field(p.hir,"environments")))c.environments.emplace(string(field(row,"id")),&row);
+  for(const auto &row:items(field(p.hir,"functions")))c.sourceFunctions.emplace(string(field(row,"id")),&row);
+  Effects creator;creator.parameters.resize(1);creator.allocation=creator.managedReference=true;p.fixedEffects.emplace("factory",creator);
+  p.fixedEffects.at("reader").managedReference=true; // Its independently fixed lexical Env exists in every mode.
+  // Independent upper equations: a void reader may read its captured payload.
+  // Extra fixed write/structural permissions remain the original policy oracle.
+  Json fixed=Object{{"format",Object{{"family","tsfg.return-origin-graph-candidate"},{"version",5}}},
+    {"nodes",Array{Object{{"kind","environmentInput"},{"type",nullptr},{"layout","E"}},Object{{"kind","capture"},{"type","T"},{"id","held"},{"layout","E"},{"environment",Array{0}},{"heap",0},{"control",0}}}},
+    {"heaps",Array{Object{{"kind","entry"}}}},{"controls",Array{Object{{"kind","entry"}}}},{"calls",Array{}},{"normal",Array{}},{"language",Array{}},
+    {"exits",Object{{"normal",Array{Object{{"heap",0},{"control",0}}}},{"language",Array{}}}},
+    {"accesses",Array{Object{{"values",Array{1}},{"flag","read"},{"control",0}}}}};
+  Json scope=nullptr;if(!publicationScope(p,scope,e))return false;
+  Array results;if(kind=="value")results.push_back(Object{{"construction","synthetic:T-construction"},{"newTarget","T"},{"actualTypes",Array{"T"}},{"unknown",false}});
+  (*scope.getAsObject())["storage"]=Object{{"fields",Array{}},{"results",std::move(results)}};
+  p.publication=Object{{"scope",std::move(scope)},{"contracts",Array{Object{{"functionId","factory"},{"returnOrigins",nullptr}},Object{{"functionId","reader"},{"returnOrigins",std::move(fixed)}}}}};
+  if(!prepareReturnOriginContracts(p,e))return false;
+  if(kind=="value"){
+    // Independent empty-Value layout/capacity premises; the normal storage
+    // producer still checks the complete implicit-base shape before closing it.
+    p.layouts.emplace("T",Layout{});ActualValue constructed;constructed.tags={"T"};
+    if(!c.recordCapacity(c.constructionCapacity["synthetic:T-construction/T"],constructed)||!prepareReturnOriginStorage(c))return false;
+  }
+  Effects derived;const auto &ownedReader=*c.sourceFunctions.at("reader");
+  if(!deriveFixedReturnEffects(p,ownedReader,derived,e)||!finishReturnOriginProofs(p,e))return false;
+  if(!fixedReturnOriginAvailable(p,"reader")||!derived.captures.count("held")||!derived.captures.at("held").read)
+    return reject(e,"synthetic-capture-unit","normal producer did not verify the captured reader");
+  return e.message.empty();
+}

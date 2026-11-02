@@ -68,12 +68,12 @@ bool effectFreeFlow(const std::string &mode){
   }
   Error error;error.code="finite-borrow-flow";error.message=flow.error();return report("effect-free Flow public guard/oracle "+mode,passed,error);
 }
+bool capturePermissionPremises(ActualCheck &,const std::string &);
 bool codePermission(const std::string &kind,const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};Function f;f.id="reader";
-  Json type=Object{{"id","T"},{"kind",kind}},layout=Object{{"id","E"},{"parent",nullptr},{"slots",Array{Object{{"key","held"},{"type","T"},{"writable",true}}}}},
-    source=Object{{"lexicalParent","factory"},{"lexicalEnvironment","E"},{"activationEnvironment",nullptr}};
-  c.types.emplace("T",&type);c.environments.emplace("E",&layout);c.sourceFunctions.emplace(f.id,&source);c.sourceFunctions.emplace("factory",&source);c.functions.emplace(f.id,&f);c.regions.acyclic.insert(f.id);
   Effects upper;upper.captures["held"]={true,mode=="write",mode=="structural"};p.fixedEffects.emplace(f.id,upper);
+  if(!capturePermissionPremises(c,kind))return report("fixed value holding "+kind+"/"+mode,false,e);
+  c.functions.emplace(f.id,&f);c.regions.acyclic.insert(f.id);
   const bool accepted=holdingCall(c,f.id),expected=mode=="read"||(mode=="write"&&(kind=="scalar"||kind=="string"));
   return report("fixed value holding "+kind+"/"+mode,accepted==expected,e);
 }
