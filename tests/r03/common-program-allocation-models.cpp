@@ -36,10 +36,32 @@ bool factories(const std::string &mode){
   const bool closure=mode!="array"&&mode!="reference"&&mode!="value-copy";
   const auto type=closure?m.fn:mode=="reference"?m.reference:mode=="value-copy"?m.value:m.array;
   m.types.emplace(m.pair,Object{{"id",m.pair},{"kind","array"},{"elementType",type}});
+  if(mode=="reference"){
+    // Match SourcePlan::enterConstructor/initialize/constructorResult, not the old atomic opcode.
+    const auto constructor=type+"/constructor";const auto construction=type+"/construction";
+    auto &row=*m.types.at(type).getAsObject();row["construction"]=Object{{"id",construction},{"kind","explicit"},{"functionId",constructor},
+      {"parameters",Array{}},{"initializationFields",Array{type+"/n"}}};
+    auto &member=*row["fields"].getAsArray()->front().getAsObject();member["origin"]=Object{{"source","/actual-allocation.ts"},{"start",40},{"end",50}};
+    member["initializer"]=Object{{"kind","numericLiteral"},{"type",m.i32},{"token","1"},{"decimal","1"},{"range",Object{{"start",40},{"end",50}}}};
+    auto ctor=m.function(constructor,{0});ctor.resultCarrier=type;
+    ctor.blocks[0].operations={op("receiver_allocate",1,type,{0},Object{{"owner",type}}),
+      op("receiver_bind",noRegister,"",{0,1},Object{{"owner",type}},{1,2})};
+    ctor.blocks.push_back({{2},{op("initialize_begin",3,"initialization:"+type,{0,2},Object{{"owner",type}}),
+      op("constant",4,m.i32,{},Object{{"token","1"},{"decimal","1"}}),op("value_copy",5,m.i32,{4},Object{{"type",m.i32}}),
+      op("initialize_field",6,"initialization:"+type,{3,2,5},Object{{"owner",type},{"field",type+"/n"}}),
+      op("initialize_end",noRegister,"",{6,2},Object{{"owner",type}}),op("receiver_result",noRegister,"",{0},Object{{"owner",type}},{3,4})}});
+    ctor.blocks.push_back({{7},{op("return_throw",noRegister,"",{7})}});
+    ctor.blocks.push_back({{8},{op("func.return",noRegister,"",{8})}});ctor.blocks.push_back({{9},{op("return_throw",noRegister,"",{9})}});
+    m.p.functions.push_back(std::move(ctor));m.source(constructor);auto &source=*m.sources.at(constructor).getAsObject();
+    source["kind"]="construction-body";source["ownerType"]=type;source["receiverBinding"]=constructor+"/this";source["returnType"]=type;
+  }
   auto make=m.function("make");auto &body=make.blocks[0].operations;
   body={op("constant",0,m.i32,{},Object{{"decimal","1"}}),op("constant",1,m.u32,{},Object{{"decimal","0"}}),op("constant",2,m.u32,{},Object{{"decimal","1"}})};
   uint16_t returned=3;
-  if(closure||type==m.array)body.push_back(op("array_create",3,m.array,{0}));
+  if(mode=="reference"){
+    body.push_back(op("receiver_create",4,"receiver:"+type,{},Object{{"owner",type},{"new_target",type},{"construction",type+"/construction"}}));
+    body.push_back(op("invoke",noRegister,"",{4},Object{{"function_id",type+"/constructor"},{"signature_hash","sig"}},{1,2}));
+  }else if(closure||type==m.array)body.push_back(op("array_create",3,m.array,{0}));
   else{body.push_back(op(type==m.value?"construct_value":"allocate_reference",3,type));body.push_back(op("field_store",noRegister,"",{3,0},Object{{"field",type+"/n"}}));}
   if(closure){
     body.push_back(op("readspan",4,m.span,{3,1,2}));body.push_back(op("env_alloc",5,"env:L",{},Object{{"layout","L"}}));
@@ -48,6 +70,7 @@ bool factories(const std::string &mode){
     body.push_back(op("make_closure",6,m.fn,{5},Object{{"function_id","reader"},{"signature_hash","sig"},{"environment_layout","L"}}));returned=6;
   }else if(type==m.value){body.push_back(op("value_copy",4,type,{3}));returned=4;}
   if(recursive){body.push_back(op("invoke",noRegister,"",{},Object{{"function_id","make"}},{1,2}));make.blocks.push_back({{8},{op("func.return",noRegister,"",{returned})}});make.blocks.push_back({{9},{op("unreachable")}});}
+  else if(mode=="reference"){make.blocks.push_back({{3},{op("func.return",noRegister,"",{returned})}});make.blocks.push_back({{5},{op("return_throw",noRegister,"",{5})}});}
   else body.push_back(op("func.return",noRegister,"",{returned}));
   m.p.functions.push_back(std::move(make));m.source("make",false,closure);
   if(closure){auto reader=m.function("reader",{0});reader.blocks[0].operations={op("func.return")};m.p.functions.push_back(std::move(reader));m.source("reader",true);}
