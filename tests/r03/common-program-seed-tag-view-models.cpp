@@ -510,6 +510,75 @@ bool lazyCopyOriginRegionInstruction(){
   return true;
 }
 
+// Full instruction/capacity regressions, not a facet helper or warmed-up copy.
+bool deferredSiteInstructionBudgets(){
+  const std::string u32="sha256:b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c",array="sha256:"+std::string(64,'a');bool passed=true;
+  const auto sameHeap=[](const ActualHeap &a,const ActualHeap &b){
+    return a.size()==b.size()&&std::equal(a.begin(),a.end(),b.begin(),[](const auto &x,const auto &y){return x.first==y.first&&same(x.second,y.second);});
+  };
+  for(unsigned mode=0;mode<6;++mode){Fixture f;
+    f.check.builtins.emplace(array,Object{{"id",array},{"kind","array"},{"elementType",u32},{"fields",Array{}}});f.check.types.emplace(array,&f.check.builtins.at(array));
+    const auto ref=objectFor(f,"array-input",array);ActualValue scalar;scalar.tags={u32};scalar.number=0;ActualValue aggregate;aggregate.tags={array};aggregate.objects.insert(ref);
+    ActualState state;state.values.emplace(1,scalar);state.values.emplace(2,aggregate);state.heap.emplace("unrelated",fullTarget());state.regions["kept"].emplace("slot",fullTarget().region);const auto saved=state;
+    Function function;function.id="deferred-site";function.blocks.resize(1);ActualContext context;context.function=&function;context.root=true;context.repeated=false;context.activation=std::string(4096,'q');
+    // Literal previous-pass capacities, not producer-derived expected values.
+    f.check.registerCapacity[function.id+"/3"].tags={u32};f.check.registerCapacity[function.id+"/4"].tags={array};
+    const bool mixed=mode>=4,onlyArray=mode>=2&&!mixed,fail=mode%2;bool changed=false,continues=true;size_t edges=0;
+    f.program.remaining=mixed?(fail?32:33):onlyArray?(fail?19:20):(fail?12:13);
+    Operation op;op.name="value_copy";op.range={197,198};op.operands={uint16_t(onlyArray?2:1)};op.result=onlyArray?4:3;op.view=onlyArray?array:u32;
+    const auto edge=[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;};
+    bool ok=f.check.instruction(context,op,0,state,true,changed,edge,continues);
+    if(mixed&&ok){op.operands={2};op.result=4;op.view=array;ok=f.check.instruction(context,op,0,state,true,changed,edge,continues);}
+    if(!expect(same(state.values.at(1),scalar)&&same(state.values.at(2),aggregate)&&sameHeap(state.heap,saved.heap)&&
+        sameRegion(state.regions.at("kept").at("slot"),saved.regions.at("kept").at("slot"))&&!changed&&edges==0&&f.check.objects.size()==1,
+        "deferred Site copies preserve complete SSA/Heap/Region/ownership in scalar, nonempty array and mixed sequences"))passed=false;
+    if(fail){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0,"one unit below the full instruction/capacity cost remains a hard error"))passed=false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&continues&&f.program.remaining==0&&
+        (onlyArray||same(state.values.at(3),scalar))&&((!onlyArray&&!mixed)||same(state.values.at(4),aggregate)),
+        "complete scalar13/array20/mixed33 copies remove unused Site3, pay optional1 and have no nonempty route surcharge"))passed=false;
+    if(!expect((onlyArray||f.check.registerCapacity.at(function.id+"/3").tags==std::set<std::string>{u32})&&
+        ((!onlyArray&&!mixed)||f.check.registerCapacity.at(function.id+"/4").tags==std::set<std::string>{array}),"successful tight copies include their full capacity checks"))passed=false;
+  }
+  for(unsigned mode=0;mode<7;++mode){Fixture f;ActualValue source;
+    if(mode==0){source=fullTarget();source.objects.clear();source.unknown=true;source.region.opaque=source.region.empty=true;}
+    if(mode==1)source.unknown=true;
+    if(mode==3)for(size_t i=0;i<257;++i)source.cells.insert("cell-"+std::to_string(i));
+    if(mode==4)for(size_t i=0;i<257;++i)source.region.roots.insert("root-"+std::to_string(i));
+    ActualState state;state.values.emplace(1,source);state.heap.emplace("unrelated",fullTarget());const auto saved=state;
+    Function function;function.id="deferred-facets";function.blocks.resize(1);ActualContext context;context.function=&function;context.root=true;context.activation=std::string(4096,'q');
+    Operation op;op.name="value_copy";op.operands={1};op.result=2;op.view=u32;bool changed=false,continues=true;size_t edges=0;f.program.remaining=mode==5?0:mode==6?1:100000;
+    const bool ok=f.check.instruction(context,op,0,state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
+    if(!expect(same(state.values.at(1),source)&&sameHeap(state.heap,saved.heap)&&!changed&&edges==0&&f.check.objects.empty(),"all-facet and hard-error inputs remain unconsumed"))return false;
+    if(mode>=3){if(!expect(!ok&&f.error.code==(mode<5?"core-ir-common-actual":"core-ir-common-budget"),"original cells/relation bounds and entry budget remain hard errors"))return false;
+      if(mode>=5&&!expect(!state.values.count(2),"entry cutoff publishes no result"))return false;continue;}
+    const auto &capacity=f.check.registerCapacity.at(function.id+"/2");
+    if(!expect(ok&&f.error.message.empty()&&continues&&same(state.values.at(2),source)&&capacity.tags==source.tags&&capacity.unknown==source.unknown&&
+        capacity.callableTop==source.callableTop&&capacity.hasEnvironment==(mode==0),"all nonobject facets/unknown/Bottom reach capacity without static-view retagging"))return false;
+    auto &result=state.values.at(2);result.tags.insert("result-only");result.cells.insert("result-only");result.frames.insert("result-only");result.cursors.emplace("result-only");
+    result.callables.emplace("result-only","env-only");result.region.roots.insert("result-only");result.number=29;
+    if(!expect(same(state.values.at(1),source)&&sameHeap(state.heap,saved.heap),"copied nonobject planes own their mutable data independently"))return false;
+  }
+  // Supplement the complete-instruction cases with the two real origin entry
+  // modes: a genuine nominal clone keeps its exact target and supplied-origin
+  // fee, plus the new optional1 + checked borrow2 in Context mode.
+  size_t suppliedWork=0;
+  for(unsigned mode=0;mode<2;++mode){Fixture f;
+    f.check.builtins.emplace("V",Object{{"id","V"},{"kind","value"},{"base",nullptr},{"fields",Array{}}});f.check.types.emplace("V",&f.check.builtins.at("V"));
+    const auto ref=objectFor(f,"source","V");ActualValue source;source.tags={"V"};source.objects.insert(ref);source.truth=1;const auto savedSource=source;ActualState state;
+    Function function;function.id="F";function.blocks.resize(1);ActualContext context;context.function=&function;context.activation="A";context.repeated=false;
+    state.values.emplace(0,source);f.check.registerCapacity["F/1"].tags={"V"};ActualValue copied;f.program.remaining=100000;
+    if(mode==0){if(!f.check.step(3))return false;ActualCopyOrigin origin(context,1);copied=f.check.valueCopy(source,state,origin,false);}
+    else {Operation op;op.name="value_copy";op.operands={0};op.result=1;op.view="V";bool changed=false,continues=true;
+      if(!f.check.instruction(context,op,0,state,true,changed,[](uint16_t,ActualState,const std::vector<ActualValue>&){return false;},continues))return false;
+      copied=state.values.at(1);if(!expect(!changed&&continues&&f.check.registerCapacity.at("F/1").tags==std::set<std::string>{"V"},"nominal full instruction completes its unchanged capacity check"))return false;}
+    const std::string target="A/F/copy/1/root/V";auto expected=source;expected.objects={ActualObjectId(target)};
+    if(!expect(f.error.message.empty()&&same(copied,expected)&&same(source,savedSource)&&
+        f.check.objects.size()==2&&!f.check.objects.at(ActualObjectId(target)).weak&&state.heap.empty(),"both typed origin modes create the identical independent real nominal target"))return false;
+    const auto work=100000-f.program.remaining;if(mode==0)suppliedWork=work;
+    else if(!expect(work==suppliedWork+10,"nominal full instruction adds original operand2/capacity5 plus new optional1/checked-borrow2 to supplied-origin copy"))return false;
+  }
+  return passed;
+}
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -527,5 +596,6 @@ int main(){
   if(!completeFrameSelection943())return 1;llvm::errs()<<"PASS complete World selection943 and partial birth discovery\n";
   if(!emptyWorldSelectionBudget1())return 1;llvm::errs()<<"PASS lazy birth classification and empty World selection1\n";
   if(!lazyCopyOriginInstruction()||!lazyCopyOriginValueGraphs()||!lazyCopyOriginRegionInstruction())return 1;
-  llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";return 0;
+  llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";
+  if(!deferredSiteInstructionBudgets())return 1;llvm::errs()<<"PASS deferred Site scalar/array/mixed instruction budgets and complete facets\n";return 0;
 }

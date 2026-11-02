@@ -38,54 +38,80 @@ const std::string *ActualCheck::resolveCopyOrigin(ActualCopyOrigin &origin){
   // The original root concatenation remains; only its move and variant tag are new.
   if(!step(2))return nullptr;return &origin.source.emplace<std::string>(text+"/root");
 }
-ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,ActualCopyOrigin &origin,bool weak,std::map<std::string,std::string> active){
+namespace {
+// Two compile-time origin modes share every facet/object/field-copy operation.
+// Context/result stay borrowed until a nominal value active-miss needs a Site.
+template<class Origin,class... Result>
+ActualValue valueCopyKernel(ActualCheck &check,const ActualValue &source,ActualState &state,Origin &origin,bool weak,
+    std::map<std::string,std::string> &active,Result... result){
   // Object identities are rebuilt below. Copy only the facets retained by
   // this result, paying the original copy weights for those actual copies.
   size_t cost=source.tags.size()+source.cells.size()+source.frames.size()+source.cursors.size()+source.callables.size()+regionWeight(source.region)+1;
   for(const auto *set:{&source.tags,&source.cells,&source.frames})for(const auto &id:*set)cost+=id.size()/64;
   cost+=4*source.cursors.size(); // Shared immutable cursor keys replace their old byte copies.
   for(const auto &[code,environment]:source.callables)cost+=(code.size()+environment.size())/64+1;
-  if(!step(cost))return {};ActualValue value;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;value.frames=source.frames;value.cursors=source.cursors;
+  if(!check.step(cost))return {};ActualValue value;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;value.frames=source.frames;value.cursors=source.cursors;
   value.truth=source.truth;value.unknown=source.unknown;value.callableTop=source.callableTop;value.number=source.number;value.region=source.region;
   // Distinct source instances of the same nominal value share this copy-site
   // identity. Decide multiplicity before the first field write, not after one
   // alternative has already overwritten another.
-  if(!step(source.objects.size()))return {};std::map<std::string,size_t> alternatives;
+  if(!check.step(source.objects.size()))return {};std::map<std::string,size_t> alternatives;
   for(const auto &ref:source.objects){
-    if(!step()||!need(objects.count(ref),"copy source object is not independently owned"))return {};
-    const auto &object=objects.at(ref);if(llvm::StringRef(object.type).starts_with("env:"))continue;if(!need(types.count(object.type),"copy source type is not independently owned"))return {};
-    if(string(field(*types.at(object.type),"kind"))=="value")++alternatives[object.type];
+    if(!check.step()||!check.need(check.objects.count(ref),"copy source object is not independently owned"))return {};
+    const auto &object=check.objects.at(ref);if(llvm::StringRef(object.type).starts_with("env:"))continue;if(!check.need(check.types.count(object.type),"copy source type is not independently owned"))return {};
+    if(string(field(*check.types.at(object.type),"kind"))=="value")++alternatives[object.type];
   }
+  // Only the Context mode owns a deferred optional. Its initialized empty tag
+  // costs one unit; the provided-origin mode constructs neither an optional nor a Site.
+  constexpr bool deferredRoot=std::is_same_v<Origin,const ActualContext>;
+  static_assert(deferredRoot?sizeof...(Result)==1:std::is_same_v<Origin,ActualCopyOrigin>&&sizeof...(Result)==0);
+  if constexpr(deferredRoot){if(!check.step())return {};}
+  [[maybe_unused]] std::conditional_t<deferredRoot,std::optional<ActualCopyOrigin>,std::monostate> deferred;
   for(const auto &ref:source.objects){
-    if(!step()||!need(objects.count(ref),"copy source object is not independently owned"))return {};
-    const auto &object=objects.at(ref);
-    if(llvm::StringRef(object.type).starts_with("env:")||string(field(*types.at(object.type),"kind"))!="value"){if(!step(4))return {};value.objects.insert(ref);continue;}
+    if(!check.step()||!check.need(check.objects.count(ref),"copy source object is not independently owned"))return {};
+    const auto &object=check.objects.at(ref);
+    if(llvm::StringRef(object.type).starts_with("env:")||string(field(*check.types.at(object.type),"kind"))!="value"){if(!check.step(4))return {};value.objects.insert(ref);continue;}
     // Route the active miss and checked prefix borrow before naming a real value target.
-    if(!step(4))return {};const auto found=active.find(ref.text());const std::string *prefix=nullptr;
-    if(found==active.end()){prefix=resolveCopyOrigin(origin);if(!prefix)return {};}
+    if(!check.step(4))return {};const auto found=active.find(ref.text());const std::string *prefix=nullptr;
+    if(found==active.end()){
+      if constexpr(deferredRoot){
+        // Pay the optional tag check and checked borrow before using either arm.
+        if(!check.step(2))return {};
+        if(!deferred){if(!check.step(3))return {};deferred.emplace(origin,result...);}
+        prefix=check.resolveCopyOrigin(*deferred);
+      }else prefix=check.resolveCopyOrigin(origin);
+      if(!prefix)return {};
+    }
     const auto target=found==active.end()?*prefix+"/"+object.type:found->second;
-    if(found!=active.end()){if(!receiverText(target))return {};const auto existing=objects.find(target);
-      if(!need(existing!=objects.end(),"active value-copy object is not owned")||!step(4))return {};value.objects.insert(existing->first);continue;}auto old=objects.find(target);
-    const bool summarized=weak||object.weak||alternatives.at(object.type)>1||(old!=objects.end()&&old->second.weak);
-    if(old!=objects.end()&&!old->second.weak&&summarized)weakChanged=true;
-    if(!step(active.size()+1))return {};auto nested=active;nested.emplace(ref.text(),target);
-    if(old==objects.end()){if(!step(target.size()/64+1))return {};old=admitObject(old,std::string(target),ActualObject{object.type,summarized});}
-    else old->second={object.type,summarized};if(!e.message.empty()||!step(4))return {};value.objects.insert(old->first);
-    for(const auto *f:allFields(object.type)){
-      if(!step())return {};const auto id=string(field(*f,"id"));auto stored=state.heap.find(ref.text()+"/field/"+id);
+    if(found!=active.end()){if(!check.receiverText(target))return {};const auto existing=check.objects.find(target);
+      if(!check.need(existing!=check.objects.end(),"active value-copy object is not owned")||!check.step(4))return {};value.objects.insert(existing->first);continue;}auto old=check.objects.find(target);
+    const bool summarized=weak||object.weak||alternatives.at(object.type)>1||(old!=check.objects.end()&&old->second.weak);
+    if(old!=check.objects.end()&&!old->second.weak&&summarized)check.weakChanged=true;
+    if(!check.step(active.size()+1))return {};auto nested=active;nested.emplace(ref.text(),target);
+    if(old==check.objects.end()){if(!check.step(target.size()/64+1))return {};old=check.admitObject(old,std::string(target),ActualObject{object.type,summarized});}
+    else old->second={object.type,summarized};if(!check.e.message.empty()||!check.step(4))return {};value.objects.insert(old->first);
+    for(const auto *f:check.allFields(object.type)){
+      if(!check.step())return {};const auto id=string(field(*f,"id"));auto stored=state.heap.find(ref.text()+"/field/"+id);
       if(stored==state.heap.end())continue;const auto slot=target+"/field/"+id;std::optional<ActualValue> snapshot;
       // A summarized or same-copy-site field can alias a later write. Other
       // source fields remain stable while the recursive result is built.
-      if(summarized||stored->first==slot)snapshot.emplace(copy(stored->second));
+      if(summarized||stored->first==slot)snapshot.emplace(check.copy(stored->second));
       const auto &child=snapshot?*snapshot:stored->second;
-      if(!step(nested.size())||!e.message.empty())return {};
+      if(!check.step(nested.size())||!check.e.message.empty())return {};
       const auto childText=*prefix+"/"+id;
-      if(!step(2))return {};ActualCopyOrigin childOrigin(childText);
-      auto copied=valueCopy(child,state,childOrigin,summarized,nested);if(!e.message.empty())return {};
-      if(summarized&&state.heap.count(slot))merge(state.heap.at(slot),copied);else state.heap.insert_or_assign(slot,std::move(copied));
-      if(!e.message.empty())return {};
+      if(!check.step(2))return {};ActualCopyOrigin childOrigin(childText);
+      auto copied=check.valueCopy(child,state,childOrigin,summarized,nested);if(!check.e.message.empty())return {};
+      if(summarized&&state.heap.count(slot))check.merge(state.heap.at(slot),copied);else state.heap.insert_or_assign(slot,std::move(copied));
+      if(!check.e.message.empty())return {};
     }
   }return value;
+}
+} // namespace
+ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,ActualCopyOrigin &origin,bool weak,std::map<std::string,std::string> active){
+  return valueCopyKernel(*this,source,state,origin,weak,active);
+}
+ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,const ActualContext &context,uint16_t result,bool weak){
+  std::map<std::string,std::string> active;return valueCopyKernel(*this,source,state,context,weak,active,result);
 }
 bool ActualCheck::repeatedAllocation(const ActualContext &context,size_t block)const{
   return context.repeated||context.activation.empty()||repeatingFunctions.count(context.function->id)||

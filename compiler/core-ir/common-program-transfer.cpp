@@ -152,9 +152,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!conditional)regionEscape(*this,regionValue(*this,args[0]),state.regions);
   }else if(name=="assert"||name=="view"||name=="carrier_cast"||name=="pack")value=copy(args[0]);
   else if(name=="value_copy"){
-    if(!step(3))return false;ActualCopyOrigin origin(context,op.result);
-    if(conditional){value=valueCopy(args[0],state,origin,weak);if(!e.message.empty())return false;}
-    else {const auto text=resolveCopyOrigin(origin);if(!text)return false;
+    if(conditional){value=valueCopy(args[0],state,context,op.result,weak);if(!e.message.empty())return false;}
+    else {if(!step(3))return false;ActualCopyOrigin origin(context,op.result);
+      const auto text=resolveCopyOrigin(origin);if(!text)return false;
       value=valueCopy(args[0],state,origin,weak);
       value.region=regionCopyValue(*this,regionValue(*this,args[0]),*text,state.regions);}
   }

@@ -394,6 +394,7 @@ struct ActualCheck {
   ActualHeap reachable(const ActualRoots &,const ActualHeap &);
   const std::string *resolveCopyOrigin(ActualCopyOrigin &);
   ActualValue valueCopy(const ActualValue &,ActualState &,ActualCopyOrigin &,bool,std::map<std::string,std::string> = {});
+  ActualValue valueCopy(const ActualValue &,ActualState &,const ActualContext &,uint16_t,bool);
   bool repeatedAllocation(const ActualContext &,size_t)const;
   std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);
   ActualObjectId allocate(const ActualContext &,const Operation &,size_t,llvm::StringRef,const std::string &);
