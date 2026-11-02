@@ -94,9 +94,14 @@ ActualContext *contextInput(ActualCheck &check,const std::string &target,const I
   if(!check.step(4))return nullptr;auto entry=check.reachable({roots,{}},heap);
   // reachable retains every global: entry, including payloads reachable only
   // from globals. Their region relations remain part of the owned identity.
-  const auto required=roots.size()+entry.size();if(!check.step(required)||!check.prepayValueGrowth(roots,required))return nullptr;roots.reserve(required);
-  for(const auto &[id,v]:entry)roots.push_back(check.copy(v));if(!check.e.message.empty())return nullptr;
-  if(versions&&!check.step(4))return nullptr;auto current=versions?regionReachable(check,{roots,{}},*versions):RegionHeap{};if(!check.e.message.empty())return nullptr;
+  // Only Region reachability consumes an entry-Heap tail. Reuse its existing
+  // versions branch; the immutable identity takes the owned entry itself.
+  if(versions){
+    const auto required=roots.size()+entry.size();if(!check.step(required)||!check.prepayValueGrowth(roots,required))return nullptr;roots.reserve(required);
+    for(const auto &[id,v]:entry)roots.push_back(check.copy(v));if(!check.e.message.empty())return nullptr;
+    if(!check.step(4))return nullptr;
+  }
+  auto current=versions?regionReachable(check,{roots,{}},*versions):RegionHeap{};if(!check.e.message.empty())return nullptr;
   if(!check.step((target.size()+activation.size()+region.size()+newTarget.size())/64+5))return nullptr;
   const auto physical=root?(activation.empty()?"entry/"+target:activation):activation;
   auto upper=check.p.fixedEffects.find(target);const bool opaque=!check.analysisFunctions.count(target)&&(upper==check.p.fixedEffects.end()||upper->second.unknownHost);

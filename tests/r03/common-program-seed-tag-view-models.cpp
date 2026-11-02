@@ -902,7 +902,7 @@ bool conditionalInvokeBorrowedInputs(){
   };
   // Real factory + execute establish an existing summary before the measured
   // public instruction. This isolated graph is not the full Source901 payload.
-  for(const auto budget:{236,235,0,1,253}){
+  for(const auto budget:{227,226,0,1,236,235,253}){
     Fixture f;Function callee;callee.id="C";callee.blocks.resize(1);callee.blocks[0].parameters={0,1,2};
     Operation returned;returned.name="func.return";returned.operands={0};callee.blocks[0].operations.push_back(returned);
     f.check.functions.emplace("C",&callee);f.check.analysisFunctions.emplace("C",callee);f.program.fixedEffects.emplace("C",Effects{});
@@ -928,11 +928,11 @@ bool conditionalInvokeBorrowedInputs(){
         for(const auto &[reg,value]:original)edgeMatches&=after.values.count(reg)&&same(after.values.at(reg),value);
         after.values.at(0).unknown=true;continues=false;return edgeMatches;
       },continues);
-    if(budget<236){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&edges==0,
+    if(budget<227){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&edges==0,
         "one-less and zero/one budgets remain hard errors before an invoke edge"))return false;continue;}
-    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-236)&&edges==1&&edgeMatches&&!continues&&
+    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-227)&&edges==1&&edgeMatches&&!continues&&
         same(called->identity->arguments[0],actual[0])&&same(called->returned,actual[0])&&f.check.contexts.size()==1,
-        "fixed236 whole conditional invoke reuses its real summary, owns the edge and preserves immutable arguments"))return false;
+        "funded whole conditional invoke reuses its real summary, owns the edge and preserves immutable arguments"))return false;
   }
   for(unsigned mode=0;mode<6;++mode){
     const bool recursive=mode==2,empty=mode==4,conditional=mode!=5;Fixture f;
@@ -996,6 +996,48 @@ bool conditionalInvokeBorrowedInputs(){
   return true;
 }
 
+// The only Region root is carried by a global Heap value, not an argument or
+// retained Frame. The normal input still owns that complete payload in either mode.
+bool contextEntryRegionRoots(){
+  for(const bool withVersions:{false,true}){
+    Fixture f;Function function;function.id="C";function.resultCarrier="T";function.blocks.resize(1);
+    Operation loaded;loaded.name="global_load";loaded.result=0;loaded.view="T";loaded.properties=Object{{"global","g"}};
+    Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations={loaded,returned};
+    f.check.functions.emplace("C",&function);f.check.analysisFunctions.emplace("C",function);f.check.views.emplace("C/0","T");
+    Effects effects;effects.reads.insert("g");f.program.fixedEffects.emplace("C",std::move(effects));
+    f.check.builtins.emplace("T",Object{{"id","T"},{"kind","reference"},{"base",nullptr},{"fields",Array{}}});
+    f.check.types.emplace("T",&f.check.builtins.at("T"));
+    f.check.builtins.emplace("global",Object{{"id","g"},{"sourceBinding","g"},{"type","T"}});
+    f.check.globals.emplace("g",&f.check.builtins.at("global"));f.program.hir=Object{{"globals",Array{f.check.builtins.at("global")}}};
+    auto object=f.check.admitObject(f.check.objects.end(),"o",ActualObject{"T",false});if(object==f.check.objects.end())return false;
+    f.check.regions.acyclic.insert("C");f.check.regions.scopes.emplace("scope",RegionScope{"C","A",false,false});
+    ActualContext producer;producer.function=&function;producer.activation="A";producer.region="scope";RegionHeap versions;
+    const auto allocated=regionAllocate(f.check,producer,"o","T",versions);
+    if(!expect(f.error.message.empty()&&allocated.known&&!allocated.opaque&&allocated.roots.size()==1&&versions.size()==1,
+        "real allocation creates the sole current Region root before admission"))return false;
+    const auto root=*allocated.roots.begin();ActualValue global;global.tags={"T"};global.objects.insert(object->first);global.region=allocated;
+    ActualHeap input;input.emplace("global:g",global);std::vector<ActualValue> arguments;bool changed=false;
+    auto *called=f.check.context("C",arguments,input,false,changed,"called",false,withVersions?&versions:nullptr,withVersions?"scope":"");
+    if(!expect(called&&f.error.message.empty()&&called->identity->arguments.empty()&&called->identity->retained.empty()&&called->identity->frames.empty()&&
+        called->identity->heap.size()==1&&same(called->identity->heap.at("global:g"),global),
+        "zero-argument context still owns the complete global Heap value and every original facet"))return false;
+    if(withVersions){
+      if(!expect(called->identity->regions.size()==1&&called->identity->regions.count(root)&&called->identity->regions.at(root).empty()&&
+          called->entryRegions.size()==1&&called->entryRegions.count(root)&&called->entryRegions.at(root).empty(),
+          "nonnull versions follows the global-only root through the required entry tail"))return false;
+      RegionValue later;later.known=true;later.empty=true;versions.at(root).emplace("/outside",later);called->entryRegions.at(root).emplace("/entry",later);
+      if(!expect(called->identity->regions.at(root).empty()&&!called->entryRegions.at(root).count("/outside")&&!versions.at(root).count("/entry"),
+          "immutable Region identity, mutable entry and caller versions own independent maps"))return false;
+    }else if(!expect(called->identity->regions.empty()&&called->entryRegions.empty()&&f.check.execute(*called,true,changed)&&
+        f.error.message.empty()&&called->normal&&!called->language&&same(called->returned,global)&&same(called->normalHeap.at("global:g"),global),
+        "null versions complete global_load and return without dropping Heap data or inventing a Region input"))return false;
+    input.at("global:g").unknown=true;
+    if(!expect(same(called->identity->heap.at("global:g"),global)&&(!called->normal||same(called->normalHeap.at("global:g"),global)),
+        "caller Heap mutation cannot rewrite the owned context input or completed summary"))return false;
+  }
+  return true;
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -1020,5 +1062,6 @@ int main(){
   if(!immutableInitializationLayoutInstructions())return 1;llvm::errs()<<"PASS immutable initialization layout instructions, complete prefixes and owner lifetime\n";
   if(!typedCanonicalStringArrays())return 1;llvm::errs()<<"PASS typed canonical StringRef arrays and original JSON policy boundaries\n";
   if(!borrowedFrameKeyPartsInstructions())return 1;llvm::errs()<<"PASS borrowed canonical Frame-key parts and complete receiver_create436\n";
-  if(!conditionalInvokeBorrowedInputs())return 1;llvm::errs()<<"PASS conditional direct invoke236 and independent borrowed admission inputs\n";return 0;
+  if(!conditionalInvokeBorrowedInputs())return 1;llvm::errs()<<"PASS conditional direct invoke236 and independent borrowed admission inputs\n";
+  if(!contextEntryRegionRoots())return 1;llvm::errs()<<"PASS conditional context entry Heap tails and global-only Region roots\n";return 0;
 }
