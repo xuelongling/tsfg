@@ -44,11 +44,22 @@ struct ActualOperands {
   auto begin()const{return llvm::make_pointee_range(values).begin();}
   auto end()const{return llvm::make_pointee_range(values).end();}
 };
+// Full unsigned byte order, with bounded comparisons for one-byte queries.
+struct ActualHeapKeyLess {
+  using is_transparent=void;
+  bool operator()(llvm::StringRef a,llvm::StringRef b)const{
+    if(a.empty()||b.empty())return a.size()<b.size();
+    const auto first=static_cast<unsigned char>(a.front()),other=static_cast<unsigned char>(b.front());
+    if(first!=other)return first<other;
+    if(a.size()==1||b.size()==1)return a.size()<b.size();
+    return a.drop_front().compare(b.drop_front())<0;
+  }
+};
 // Canonical directory ownership includes its derived field-node access index.
 // Copies own independent nodes and start without an index. Moves carry both
 // stores; no index in the moved-from heap can refer to destination nodes.
 class ActualHeap {
-  using Directory=std::map<std::string,ActualValue>;
+  using Directory=std::map<std::string,ActualValue,ActualHeapKeyLess>;
 public:
   using iterator=Directory::iterator;using const_iterator=Directory::const_iterator;
   ActualHeap()=default;

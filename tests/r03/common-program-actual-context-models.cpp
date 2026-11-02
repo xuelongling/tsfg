@@ -146,6 +146,47 @@ bool calledSeedOwnership(){
         "immutable seed owns full keys and payload after input World and FrameInfo destruction"))return false;
   }return true;
 }
+bool defaultPrefixDirectory(){
+  const auto same=[](const ActualValue &a,const ActualValue &b){return std::tie(a.tags,a.objects,a.cells,a.frames,a.cursors,a.callables,a.truth,a.unknown,a.callableTop,a.number,a.region.roots,a.region.known,a.region.opaque,a.region.empty,a.region.number)==std::tie(b.tags,b.objects,b.cells,b.frames,b.cursors,b.callables,b.truth,b.unknown,b.callableTop,b.number,b.region.roots,b.region.known,b.region.opaque,b.region.empty,b.region.number);};
+  const std::string reference="construction/receiver:sha256:"+std::string(64,'a')+"/sha256:"+std::string(64,'b'),fieldId="sha256:"+std::string(64,'c');
+  const auto key=reference+"/field/"+fieldId;
+  const std::vector<std::string> originalKeys={"activation/"+std::string(140,'a')+"/cell/3","activation/"+std::string(140,'a')+"/cell/4","entry/object/4/element/0","entry/object/4/length","entry/span/13/length","entry/span/13/owner","entry/span/13/start"};
+  for(const bool repeated:{false,true})for(const size_t budget:{745u,2000u,64u,100000u}){Fixture f;
+    f.check.builtins.emplace("prefix-field",Object{{"id",fieldId},{"sourceBinding","prefix-binding"},{"type","B"}});f.check.fields.emplace(fieldId,&f.check.builtins.at("prefix-field"));
+    const auto object=f.check.objects.emplace(reference,ActualObject{"B",false}).first;const auto token=f.check.fieldSlot(object,f.check.fields.find(fieldId));
+    if(!expect(token&&token->owner==&f.check&&reference.size()==165&&fieldId.size()==71&&key.size()==243&&*token->spelling==key&&f.error.message.empty(),"default prefix fixture owns its complete symbols before the first Heap query"))return false;
+    ActualValue payload;payload.tags={"T"};payload.objects={"object"};payload.cells={"cell"};payload.frames={"control"};payload.cursors={"cursor"};payload.callables={{"code","env"}};
+    payload.truth=3;payload.unknown=payload.callableTop=true;payload.number=9007199254740993LL;payload.region.known=payload.region.opaque=payload.region.empty=true;payload.region.roots={"root"};payload.region.number=9007199254740995LL;
+    ActualHeap heap;for(const auto &stored:originalKeys)heap.emplace(stored,payload);const auto associations=f.check.fieldSlotAssociations.size(),archive=f.check.fieldSlotArchive.size();
+    if(budget==100000)heap.emplace(key,payload);const auto world=f.input.frames;
+    f.program.remaining=budget;const bool accepted=f.check.defaultField(heap,*token,repeated);
+    if(budget==64){if(!expect(!accepted&&f.error.code=="core-ir-common-budget"&&heap.size()==7&&heap.count(key)==0&&f.check.fieldSlotAssociations.size()==associations&&f.check.fieldSlotArchive.size()==archive,"prefix lookup cutoff remains a hard error without publishing a Heap row or association"))return false;}
+    else {
+      ActualValue missing;missing.tags={"sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b"};
+      if(budget==100000&&repeated){missing=payload;missing.tags.insert("sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b");missing.number.reset();missing.region.number.reset();}
+      if(!expect(accepted&&f.error.message.empty()&&heap.size()==8&&same(heap.at(key),missing)&&f.check.fieldSlotAssociations.size()==associations&&f.check.fieldSlotArchive.size()==archive,"fresh243-byte default fits fixed745 and2000 for both modes, retaining only literal undefined and no permission payload"))return false;
+      auto expected=originalKeys;expected.insert(expected.begin()+2,key);auto row=heap.begin();for(const auto &stored:expected){if(!expect(row!=heap.end()&&row->first==stored&&same(row->second,stored==key?missing:payload),"interior empty-bucket insertion retains every literal key, full payload and lexical order"))return false;++row;}
+      if(!expect(row==heap.end()&&&heap.find(key)->first!=token->spelling.get(),"Heap key independently owns full bytes instead of borrowing slot storage"))return false;
+      heap.at(key).objects={"mutated"};if(!expect(*token->spelling==key&&same(heap.at(originalKeys[0]),payload),"mutable default payload cannot alter immutable identity or another node"))return false;
+    }
+    for(const auto &stored:originalKeys)if(!expect(same(heap.at(stored),payload),"all pre-existing payload planes survive success or hard cutoff"))return false;
+    if(!expect(f.input.frames.size()==world.size(),"default data creation does not add or remove a World frame"))return false;
+    for(const auto &[id,prior]:world){const auto found=f.input.frames.find(id);if(!expect(found!=f.input.frames.end(),"default preserves every literal Frame ID"))return false;const auto &frame=found->second;
+      if(!expect(std::tie(frame.unbound,frame.weak,frame.pending,frame.initializing,frame.aborted,frame.prefixMin,frame.prefixMax)==std::tie(prior.unbound,prior.weak,prior.pending,prior.initializing,prior.aborted,prior.prefixMin,prior.prefixMax)&&same(frame.bound,prior.bound)&&frame.births.size()==prior.births.size(),"default data creation performs no define/write observation or World payload update"))return false;
+      for(const auto &[slot,old]:prior.births){const auto after=frame.births.find(slot);if(!expect(after!=frame.births.end()&&after->second.referenceText()==old.referenceText()&&after->second.pending==old.pending&&same(after->second.real,old.real),"birth references, real values and temporary defaults remain independent of Heap default creation"))return false;}
+    }
+  }
+  {Fixture f;const std::string fieldId="sha256:"+std::string(64,'c');f.check.builtins.emplace("same-prefix-field",Object{{"id",fieldId},{"sourceBinding","same-prefix-binding"},{"type","B"}});f.check.fields.emplace(fieldId,&f.check.builtins.at("same-prefix-field"));
+    const auto object=f.check.objects.emplace(reference,ActualObject{"B",false}).first;const auto token=f.check.fieldSlot(object,f.check.fields.find(fieldId));
+    ActualHeap heap;ActualValue old;old.number=17;const auto existing=key+std::string(256,'x');heap.emplace(existing,old);f.program.remaining=745;
+    if(!expect(token&&!f.check.defaultField(heap,*token,false)&&f.error.code=="core-ir-common-budget"&&heap.size()==1&&heap.at(existing).number==17&&heap.count(key)==0,"a nonempty same-byte bucket requires complete-key fallback and cannot claim a prefix miss"))return false;
+  }
+  const std::vector<std::string> ordered={"",std::string(1,'\0'),std::string("\0x",2),"a",std::string("a\0",2),std::string("a\0x",3),"aA","aa","b",std::string(1,char(0x7f)),std::string(1,char(0x80)),std::string({char(0x80),'x'}),std::string(1,char(0xff))};
+  ActualHeap heap;for(size_t i=ordered.size();i>0;--i){ActualValue value;value.number=int64_t(i-1);heap.emplace(ordered[i-1],value);}auto row=heap.begin();
+  for(size_t i=0;i<ordered.size();++i){if(!expect(row!=heap.end()&&row->first==ordered[i]&&row->second.number==std::optional<int64_t>(int64_t(i))&&heap.find(ordered[i])==row&&heap.lower_bound(ordered[i])==row,"generic Heap APIs preserve complete empty/NUL/prefix/unsigned-byte order and exact lookup"))return false;++row;}
+  if(!expect(row==heap.end()&&heap.size()==ordered.size(),"complete byte ordering creates no collapsed canonical alias"))return false;
+  llvm::errs()<<"PASS default Heap prefix empty-bucket/owning/byte-order/budget subcases\n";return true;
+}
 bool reuseAndOwnership(){
   Fixture f;bool changed=false;auto *first=f.intern(f.input,changed);
   if(!expect(first&&changed&&f.error.message.empty(),"first identity inserted"))return false;
@@ -159,7 +200,7 @@ bool reuseAndOwnership(){
   changed=false;if(!expect(f.intern(original,changed)==first&&!changed,"root execution refresh and caller mutation do not change immutable identity"))return false;
   if(!expect(!first->identity->frames.at("frame").bound.region.roots.count("later")&&
     !first->identity->heap.at("object:B/field/F").tags.count("later")&&!first->identity->regions.at("origin").count("later"),"snapshot owns all nested storage"))return false;
-  return calledSeedOwnership()&&birthReferenceCausal()&&birthReferenceOwnership();
+  return calledSeedOwnership()&&birthReferenceCausal()&&birthReferenceOwnership()&&defaultPrefixDirectory();
 }
 bool hiddenRegionsAndBirths(){
   Fixture f;bool changed=false;auto *base=f.intern(f.input,changed);if(!base)return false;

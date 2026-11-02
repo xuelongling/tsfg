@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
+#include <algorithm>
 namespace tsfg::commonProgram {
 namespace {
 size_t weight(const ActualValue &v,const std::set<std::string> &tags){
@@ -127,10 +128,33 @@ ActualHeap::FieldTarget ActualHeap::fieldTarget(ActualCheck &c,const std::shared
   if(!appendField(c,node,identity)||!c.step(2))return {};return {&node->second,inserted};
 }
 bool ActualCheck::defaultField(ActualHeap &heap,const ActualFieldSlot &slot,bool repeated){
-  const auto &key=*slot.spelling;if(!receiverText(key))return false;
+  if(!step(3))return false;const auto &key=*slot.spelling;auto hint=heap.entries_.end();bool vacant=false;
+  if(!step(2))return false;
+  if(!key.empty()){
+    if(!step(4))return false;const llvm::StringRef prefix(key.data(),1);const auto count=heap.entries_.size();size_t height=0;
+    for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
+    if(!step(2))return false;height=std::min(height,count);
+    // A one-byte query cannot reach the comparator's suffix path. Prepay
+    // bounded descriptors/guards/byte reads plus every possible tree visit.
+    if(!step(1+height+32*height))return false;hint=heap.entries_.lower_bound(prefix);
+    if(!step(3))return false;vacant=hint==heap.entries_.end();
+    if(!vacant){if(!step(6))return false;vacant=static_cast<unsigned char>(hint->first.front())>static_cast<unsigned char>(key.front());}
+  }
+  if(!step())return false;
+  if(vacant){
+    // An empty first-byte bucket proves the exact full-key lower bound. Both
+    // native hint predicates (including debug reverse) have distinct prefixes.
+    if(!step(3))return false;if(hint!=heap.entries_.end()&&!step(64))return false;
+    if(!step(3))return false;if(hint!=heap.entries_.begin()&&!step(heap.entries_.size()+1+64))return false;
+    // Key copy in 64-byte blocks; node4/value-move1; missing Value15,
+    // typename copy1/digest64/tag-node4/tag-move1. No mapped temporary copy.
+    if(!step(key.size()/64+1+90))return false;
+  }else if(!receiverText(key))return false;
   ActualValue missing;missing.tags.insert(digest(std::string("tsfg.type\0undefined",19)));
   ActualHeap::iterator node;
-  if(!repeated)node=heap.entries_.insert_or_assign(key,std::move(missing)).first;
+  if(!step(2))return false;
+  if(vacant)node=heap.entries_.try_emplace(hint,key,std::move(missing));
+  else if(!repeated)node=heap.entries_.insert_or_assign(key,std::move(missing)).first;
   else {auto inserted=heap.entries_.try_emplace(key,std::move(missing));node=inserted.first;if(!inserted.second)merge(node->second,missing);}
   if(!e.message.empty())return false;return heap.rememberField(*this,node,slot.spelling);
 }
