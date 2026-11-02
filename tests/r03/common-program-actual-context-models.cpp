@@ -338,7 +338,70 @@ bool budgetFailure(){
   return true;
 }
 }
+bool completionSingletonInstruction(){
+  const auto sameRegion=[](const RegionValue &a,const RegionValue &b){return std::tie(a.roots,a.known,a.opaque,a.empty,a.number)==std::tie(b.roots,b.known,b.opaque,b.empty,b.number);};
+  const auto sameValue=[&](const ActualValue &a,const ActualValue &b){return std::tie(a.tags,a.objects,a.cells,a.frames,a.cursors,a.callables,a.truth,a.unknown,a.callableTop,a.number)==std::tie(b.tags,b.objects,b.cells,b.frames,b.cursors,b.callables,b.truth,b.unknown,b.callableTop,b.number)&&sameRegion(a.region,b.region);};
+  const auto sameMap=[](const auto &a,const auto &b,const auto &equal){if(a.size()!=b.size())return false;auto x=a.begin(),y=b.begin();for(;x!=a.end();++x,++y)if(x->first!=y->first||!equal(x->second,y->second))return false;return true;};
+  const auto sameFrame=[&](const ActualFrameBinding &a,const ActualFrameBinding &b){return std::tie(a.unbound,a.weak,a.pending,a.initializing,a.aborted,a.prefixMin,a.prefixMax)==std::tie(b.unbound,b.weak,b.pending,b.initializing,b.aborted,b.prefixMin,b.prefixMax)&&sameValue(a.bound,b.bound)&&sameMap(a.births,b.births,[&](const ActualBirth &x,const ActualBirth &y){return x.referenceText()==y.referenceText()&&x.pending==y.pending&&sameValue(x.real,y.real);});};
+  const auto sameState=[&](const ActualState &a,const ActualState &b){return sameMap(a.values,b.values,sameValue)&&sameMap(a.heap,b.heap,sameValue)&&sameMap(a.frames,b.frames,sameFrame)&&sameMap(a.regions,b.regions,[&](const auto &x,const auto &y){return sameMap(x,y,sameRegion);});};
+  ActualValue rich;rich.tags={"T"};rich.objects={"object"};rich.cells={"cell"};rich.frames={"control"};rich.cursors={"cursor"};rich.callables={{"code","env"}};
+  rich.truth=3;rich.unknown=rich.callableTop=true;rich.number=9007199254740993LL;rich.region.known=rich.region.opaque=rich.region.empty=true;rich.region.roots={"root"};rich.region.number=9007199254740995LL;
+  // Independent construction of the measured shape, not a reconstruction of unrecorded actual facets.
+  // No lookup is warmed before the tested full instruction; its budget is assigned once after setup.
+  for(const unsigned mode:{0u,1u,2u,3u}){Fixture f;const bool weak=mode>=2,multiple=mode==3;
+    const std::string id="receiver:sha256:"+std::string(64,'a'),other="receiver:sha256:"+std::string(64,'b'),type="sha256:"+std::string(64,'c'),reference="construction/"+id+"/"+type;
+    const auto slots=birthFixture(f,reference);if(!expect(slots.first&&slots.second&&f.error.message.empty(),"instruction fixture has two real owned birth symbols before testing"))return false;
+    f.check.types.emplace(type,&f.check.builtins.at("B"));f.check.objects.at(reference).type=type;
+    auto metadata=f.check.receiverFrames.extract("frame");metadata.key()=id;metadata.mapped().newTarget=type;f.check.receiverFrames.insert(std::move(metadata));
+    if(mode<2||multiple)f.check.receiverFrames.emplace(other,f.check.receiverFrames.at(id));
+    auto world=f.input.frames.extract("frame");world.key()=id;auto &binding=world.mapped();binding.unbound=true;binding.weak=weak;binding.pending=binding.initializing=binding.aborted=true;binding.prefixMin=1;binding.prefixMax=2;
+    if(weak)binding.bound=rich;
+    for(const auto slot:{slots.first,slots.second}){ActualBirth birth;birth.reference=std::make_shared<const std::string>(reference);birth.pending=slot==slots.first;birth.real=rich;binding.births.emplace(slot,std::move(birth));}
+    f.input.frames.insert(std::move(world));if(multiple){auto row=f.input.frames.at(id);row.unbound=false;row.weak=false;f.input.frames.emplace(other,std::move(row));}
+    ActualState state;state.frames=f.input.frames;ActualValue control,returned;control.frames={id};returned.tags={type};returned.objects={reference};
+    state.values.emplace(0,control);for(uint16_t reg=1;reg<7;++reg){auto value=rich;if(weak)value.cursors.clear();state.values.emplace(reg,std::move(value));}state.values.emplace(7,returned);
+    for(unsigned i=0;i<9;++i)state.heap.emplace("heap/"+std::to_string(i),rich);
+    state.regions["owned-region"].emplace("slot",rich.region);state.regions.emplace("empty-region",std::map<std::string,RegionValue>{});
+    const auto input=state;ActualContext context;context.function=&f.function;context.root=false;context.repeated=false;context.activation="independent-bind-activation";
+    Operation op;op.name="receiver_bind";op.operands={0,7};op.successors={1,2};bool changed=false,continues=true;size_t normals=0,languages=0;ActualState normal,language;
+    const auto edge=[&](uint16_t target,ActualState next,const std::vector<ActualValue> &values){
+      auto expected=input;auto &row=expected.frames.at(id);
+      if(target==1){++normals;if(!expect(values.size()==1&&sameValue(values[0],returned),"normal instruction edge owns the complete selected object"))return false;
+        if(weak){row.bound.tags.insert(type);row.bound.objects.insert(reference);row.bound.number.reset();row.bound.region.number.reset();row.prefixMin=0;}
+        else {row.bound=returned;row.unbound=row.pending=row.initializing=row.aborted=false;row.prefixMin=row.prefixMax=0;}
+      }else if(target==2){++languages;ActualValue thrown;thrown.unknown=true;if(!expect(weak&&values.size()==1&&sameValue(values[0],thrown),"weak duplicate bind emits only its original language uncertainty"))return false;}
+      else return expect(false,"bind emits only its two declared completion targets");
+      if(!expect(sameState(next,expected),"full instruction preserves every SSA, Heap, Region, World flag and two-birth payload plane"))return false;
+      if(target==1)normal=std::move(next);else language=std::move(next);return true;
+    };
+    if(!expect(id.size()==80&&type.size()==71&&reference.size()==165&&state.values.size()==8&&state.heap.size()==9&&state.frames.size()==(multiple?2:1)&&f.check.receiverFrames.size()==(mode<2||multiple?2:1)&&f.check.borrowTrace==nullptr,
+        "fixed instruction shape is World1/global2/ids1/id80/Value8/Heap9 with no BorrowTrace in the1751 case"))return false;
+    f.program.remaining=mode==0?1751:mode==1?64:100000;
+    const bool ok=f.check.instruction(context,op,0,state,true,changed,edge,continues);
+    if(mode==1){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&normals==0&&languages==0,"fixed64 remains a hard full-instruction failure without an emitted edge"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&!continues&&normals==1&&languages==size_t(weak)&&!changed,"full receiver_bind through normal edgeState fits1751 or retains high-budget weak and fallback semantics"))return false;
+    if(!expect(sameMap(state.values,input.values,sameValue)&&f.check.receiverFrames.size()==(mode<2||multiple?2:1),"completion never consumes source SSA operands or creates Frame metadata"))return false;
+    const auto languageBefore=language;normal.values.at(1).objects.insert("normal-only");normal.heap.clear();normal.regions.clear();normal.frames.at(id).births.clear();
+    if(!expect(sameState(language,languageBefore)&&sameMap(state.values,input.values,sameValue)&&sameMap(f.input.frames,input.frames,sameFrame),"normal edge owns independent stores and cannot alter language or caller World/SSA payloads"))return false;
+  }
+  const std::vector<std::pair<std::string,std::string>> queries={{"",""},{"frame","frame"},{std::string("frame\0a",7),std::string("frame\0a",7)},
+    {std::string("frame\x80",6),std::string("frame\x80",6)},{std::string("frame\xff",6),std::string("frame\xff",6)},
+    {std::string("frame\0a",7),"frame"},{"frame",std::string("frame\0a",7)},{std::string("frame\x80",6),std::string("frame\xff",6)},{"","x"},{"x",""}};
+  for(const auto &[stored,query]:queries)for(const bool missingMetadata:{false,true}){Fixture f;
+    auto metadata=f.check.receiverFrames.extract("frame");metadata.key()=stored;f.check.receiverFrames.insert(std::move(metadata));
+    auto entry=f.input.frames.extract("frame");entry.key()=stored;entry.mapped().bound=rich;entry.mapped().unbound=false;f.input.frames.insert(std::move(entry));
+    const auto input=f.input.frames;const auto originalMetadata=f.check.receiverFrames.size();ActualValue control;control.frames={query};
+    if(stored==query&&!missingMetadata){const ActualFrameWorld &constant=f.input.frames;auto selected=f.check.selectFrames(constant,{control},ActualHeap{});
+      if(!expect(f.error.message.empty()&&sameMap(selected,input,sameFrame)&&sameMap(f.input.frames,input,sameFrame),"const selection lookup retains complete equal byte IDs and full independent World payload"))return false;}
+    if(missingMetadata)f.check.receiverFrames.clear();ActualFrameWorld owned=f.input.frames;
+    auto result=f.check.receiverCompletion(std::move(owned),control.frames,ReceiverAction::Get,nullptr);
+    if(stored!=query||missingMetadata){if(!expect(f.error.code=="core-ir-common-actual"&&!result.normal&&!result.language,"singleton prefix/NUL/high-byte misses and absent metadata retain hard Frame existence checks"))return false;}
+    else if(!expect(f.error.message.empty()&&result.normal&&!result.language&&result.pending&&sameValue(result.selected,rich)&&sameMap(result.normalFrames,input,sameFrame),"mutable completion uses full-byte equality and preserves all bound payload and World permissions"))return false;
+    if(!expect(sameMap(f.input.frames,input,sameFrame)&&f.check.receiverFrames.size()==(missingMetadata?0:originalMetadata),"lookup cannot invent metadata, Frame authority or mutate the caller's const World"))return false;
+  }
+  return true;
+}
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={{"same identity and owned root snapshot",reuseAndOwnership},{"hidden regions, frame phases, births and region heap",hiddenRegionsAndBirths},{"rootless facets and exact optional numbers",rootlessAndNumeric},{"physical activation separate from opaque context ID",physicalActivation},{"budget failure is an error, not inequality or success",budgetFailure}};
-  for(const auto &[name,run]:groups){if(!run())return 1;llvm::errs()<<"PASS "<<name<<'\n';}llvm::errs()<<"PASS 5 interner groups\n";return 0;
+  for(const auto &[name,run]:groups){if(!run())return 1;llvm::errs()<<"PASS "<<name<<'\n';}llvm::errs()<<"PASS 5 interner groups\n";if(!completionSingletonInstruction())return 1;llvm::errs()<<"PASS receiver bind whole-instruction1751 singleton/full-byte/weak/fallback/ownership cases\n";return 0;
 }

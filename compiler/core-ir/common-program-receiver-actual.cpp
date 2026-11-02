@@ -27,7 +27,7 @@ std::string ownedCursor(ActualCheck &c,std::shared_ptr<const std::string> &&fram
   }return id;
 }
 template<class Directory>
-auto selectionFrameLookup(ActualCheck &c,const Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
+auto selectionFrameLookup(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
   if(!c.step())return std::nullopt;if(directory.empty())return directory.end();
   if(directory.size()==1){const auto entry=directory.begin();
     // A single full equality determines hit/miss. No lower-bound predicate
@@ -400,9 +400,9 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
     arms.push_back(Arm{&id,selected,&binding,update,normal});return true;
   };
   if(!step(ids.size()))return out;
-  for(const auto &id:ids){const llvm::StringRef query(id);const auto binding=paidFrameLookup(*this,world,query);
+  for(const auto &id:ids){const auto binding=selectionFrameLookup(*this,world,id);
     if(!binding||!need(*binding!=world.end(),"receiver frame is absent from completion"))return {};
-    const auto frame=paidFrameLookup(*this,receiverFrames,query);
+    const auto frame=selectionFrameLookup(*this,receiverFrames,id);
     if(!frame||!need(*frame!=receiverFrames.end(),"receiver frame is absent from completion"))return {};
     auto &before=(*binding)->second;const auto &info=(*frame)->second;
     if(action==ReceiverAction::Bind){
@@ -429,7 +429,7 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
     else {next=copyFrames(world);if(!e.message.empty())return {};}
     if(a.update!=Update::None){ActualFrameBinding *binding;
       if(last){if(!step())return {};binding=a.binding;}
-      else {const auto found=paidFrameLookup(*this,next,llvm::StringRef(*a.id));
+      else {const auto found=selectionFrameLookup(*this,next,*a.id);
         if(!found||!need(*found!=next.end(),"receiver frame is absent from completion"))return {};binding=&(*found)->second;}
       // The standard allocator propagates on move-assignment: the final
       // destination owns the original nodes. A clone needs its own lookup.
