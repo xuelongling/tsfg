@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Normalized physical-activation controls; these are not Source proof packets.
 import {boolTypeId,i32TypeId} from '../../compiler/identity.mjs';
+import bytecodeSchema from '../../contracts/bytecode.schema.json' with {type:'json'};
+import {sha256} from '../../compiler/identity.mjs';
+import {readCommonProgramFacts,commonSourceFormat} from '../../compiler/common-program-facts.mjs';
+import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
+import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
+import {canonical} from '../../compiler/common-program-common.mjs';
+
 import {createCommonGraph} from '../../compiler/common-program-plan.mjs';
 import {ownedEnvironmentModel,ownedClosureChoiceModel} from './common-program-owned-environment-models.mjs';
 import {commonBorrowModel} from './common-program-borrow-models.mjs';
@@ -66,4 +73,52 @@ export function allocationRepeatedHolderModel(){
   const entry=p.graph.newBlock([boolTypeId]),done=p.graph.newBlock();p.entry=entry;body.terminated=false;
   p.graph.branch(entry,body,[],range);p.graph.conditional(body,{...entry.parameters[0]},body,done,range);
   p.graph.terminal(done,'func.return',[{name:returned.operands[0],type:p.returnType}],[],{},range);return value;
+}
+
+// Complete source input is independent of the C++ normalized fixture. Only a
+// real facts producer may fill its checked facts; this never fabricates a DTO.
+/** @param {string} declarations @param {boolean} [wrapped] */
+export function allocationFixedSourceInput(declarations,wrapped=false){
+  if(sha256(declarations)!=='sha256:0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e')
+    throw new TypeError('allocation fixed input requires minimal-arrays-v8');
+  const call=wrapped?'wrap':'make',content=[
+    'function make(): () => u32 {',
+    '  const a: i32[] = [1];',
+    '  const r: ReadSpan<i32> = readSpan(a, 0, 1);',
+    '  function reader(): u32 { a; r; return 0; }',
+    '  return reader;',
+    '}',
+    ...(wrapped?['','function wrap(): () => u32 { return make(); }']:[]),
+    '',
+    'export function root(): (() => u32)[] {',
+    '  const first: () => u32 = '+call+'();',
+    '  const second: () => u32 = '+call+'();',
+    '  return [first, second];',
+    '}',
+    ''].join('\n');
+  return {sourceRoot:'/src',rootFile:'/src/allocation.ts',files:[{path:'/src/allocation.ts',content,sha256:sha256(content).slice(7)},
+    {path:'/src/minimal-arrays-v8.d.ts',content:declarations,sha256:sha256(declarations).slice(7)}],hostImports:[],declarations:{version:'minimal-arrays-v8',paths:['/src/minimal-arrays-v8.d.ts']},
+    config:{strict:true,noEmit:true,allowJs:false},target:{...bytecodeSchema.target,pointerBits:'64'},
+    compilationClosure:{roots:[{kind:'application',name:'root',sourcePath:'/src/allocation.ts'},
+      {kind:'module-initialization',name:'$moduleInit',sourcePath:'/src/allocation.ts'}],requiredRoots:[]}};
+}
+/** @param {string} declarations @param {boolean} [wrapped] */
+export function allocationFixedFactsRequest(declarations,wrapped=false){
+  return {family:'tsfg.program-facts-request-candidate',version:commonSourceFormat.version,schemaHash:commonSourceFormat.schemaHash,
+    input:allocationFixedSourceInput(declarations,wrapped)};
+}
+/** @param {Uint8Array} factsBytes
+ * @param {boolean} wrapped
+ * @param {typeof import('../../compiler/common-program-core.mjs').commonProgramCore} writeCore */
+export function allocationFixedInputPair(factsBytes,wrapped,writeCore){
+  const facts=readCommonProgramFacts(factsBytes),p=facts.payload,
+    declaration=p.files.find(row=>row.path==='/src/minimal-arrays-v8.d.ts'),
+    expected=allocationFixedSourceInput(declaration?.content??'',wrapped);
+  if(p.rootFile!==expected.rootFile||p.sourceRoot!==expected.sourceRoot||p.files.length!==expected.files.length||
+    expected.files.some(row=>p.files.find(actual=>actual.path===row.path)?.content!==row.content)||
+    p.closure.requiredRoots.length!==0||canonical(p.closure.roots.map(({kind,name,sourcePath})=>({kind,name,sourcePath})))!==canonical(expected.compilationClosure.roots))
+    throw new TypeError('allocation fixed input must describe this complete source');
+  const hir=projectCommonProgram(facts),publication=createCommonProgramPublication(hir),request={targets:[]},
+    built=writeCore(hir,publication,request);
+  return {json:canonical({hir,publication,request,representation:built.representation})+'\n',core:built.text};
 }

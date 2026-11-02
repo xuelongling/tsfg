@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Normalized actual compiler models; no Source/Runtime execution credit.
 #include "common-program-borrows.h"
+#include "common-program-fixed-v3-model-fixture.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace tsfg::commonProgram;
 namespace {
@@ -31,7 +32,33 @@ struct Model {
     for(const auto &f:p.functions){c.functions.emplace(f.id,&f);c.sourceFunctions.emplace(f.id,&sources.at(f.id));p.fixedEffects[f.id].parameters.resize(f.id=="root"?f.blocks[0].parameters.size():0);}
   }
 };
+bool fixedFactories(const std::string &mode){
+  fixedV3Model::Fixture fixture;
+  if(!fixedV3Model::load(fixedV3Model::file("allocation-"+mode),fixture)){
+    llvm::errs()<<mode<<" fixed input: "<<fixture.error.code<<" "<<fixture.error.message<<"\n";return false;
+  }
+  auto &c=fixture.actual;const auto *make=fixedV3Model::function(fixture.program,"make"),*root=fixedV3Model::function(fixture.program,"root");
+  if(!make||!root)return false;const auto environment=c.environments.find(string(field(*make,"activationEnvironment")));
+  if(environment==c.environments.end())return false;std::map<std::string,std::string> slots;
+  for(const auto &binding:items(field(*make,"bindings")))for(const auto &slot:items(field(*environment->second,"slots")))
+    if(same(field(binding,"id"),field(slot,"binding")))slots.emplace(string(field(binding,"name")),string(field(slot,"key")));
+  if(!slots.count("a")||!slots.count("r"))return false;bool observed=false;
+  for(const auto &[id,context]:c.contexts)if(context.root&&context.function->id==string(field(*root,"id")))for(const auto &ref:context.returned.objects){
+    const auto one=context.normalHeap.find(ref.text()+"/element/0"),two=context.normalHeap.find(ref.text()+"/element/1");
+    if(one==context.normalHeap.end()||two==context.normalHeap.end())continue;
+    if(one->second.callables.size()!=1||two->second.callables.size()!=1)return false;
+    const auto a=one->second.callables.begin()->second,b=two->second.callables.begin()->second;if(a==b)return false;
+    const auto &va=context.normalHeap.at(a+"/slot/"+slots.at("a")),&vb=context.normalHeap.at(b+"/slot/"+slots.at("a")),
+      &sa=context.normalHeap.at(a+"/slot/"+slots.at("r")),&sb=context.normalHeap.at(b+"/slot/"+slots.at("r"));
+    if(va.objects.size()!=1||vb.objects.size()!=1||sa.objects.size()!=1||sb.objects.size()!=1||va.objects==vb.objects||sa.objects==sb.objects)return false;
+    for(const auto *value:{&vb,&sb})if(c.objects.at(ActualObjectId(*value->objects.begin())).weak)return false;
+    if(c.objects.at(ActualObjectId(b)).weak)return false;observed=true;
+  }
+  if(!observed)return false;const bool borrowed=verifyCommonBorrows(c);
+  if(!borrowed)llvm::errs()<<mode<<" borrow: "<<fixture.error.code<<" "<<fixture.error.message<<"\n";return borrowed;
+}
 bool factories(const std::string &mode){
+  if(mode=="closure"||mode=="wrapper")return fixedFactories(mode);
   Model m;const bool wrapper=llvm::StringRef(mode).contains("wrapper"),loop=llvm::StringRef(mode).contains("loop"),host=mode=="host",recursive=mode=="recursive";
   const bool closure=mode!="array"&&mode!="reference"&&mode!="value-copy";
   const auto type=closure?m.fn:mode=="reference"?m.reference:mode=="value-copy"?m.value:m.array;
@@ -206,6 +233,7 @@ bool prepayment(const std::string &mode){
 }
 }
 int main(int argc,char **argv){
+  if(!fixedV3Model::option(argc,argv))return 2;
   const std::vector<std::string> all={"closure","wrapper","array","reference","value-copy","loop","wrapper-loop","recursive","host","argument-independent","host-origin","unresolved","weak-monotone","zero-work",
     "full-top","full-host-target","entry-alias","weak-array-init","weak-env-store","weak-ref-store","weak-span-init","physical-exact","physical-managed-narrow","physical-escape-narrow","physical-missing",
     "site-prepay","existing-location-prepay","fallback-prepay"};

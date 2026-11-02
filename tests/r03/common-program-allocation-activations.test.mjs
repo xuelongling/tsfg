@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {canonical,sha256} from '../../compiler/identity.mjs';
 import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
-import {allocationActivationModel,allocationUncertainModel,allocationArgumentContextsModel} from './common-program-allocation-models.mjs';
+import {commonProgramCore} from '../../compiler/common-program-core.mjs';
+import {allocationActivationModel,allocationUncertainModel,allocationArgumentContextsModel,allocationFixedSourceInput,allocationFixedFactsRequest,allocationFixedInputPair} from './common-program-allocation-models.mjs';
 /** @param {unknown} error */
 const borrowPending=error=>error instanceof TypeError&&'code' in error&&error.code==='r03-common-program-borrow-pending';
 for(const wrapped of [false,true])test('normalized equal-argument acyclic activations retain distinct physical arrays: '+(wrapped?'wrapper':'direct'),()=>{
@@ -48,4 +51,22 @@ test('normalized distinct argument contexts do not grant distinct physical alloc
   assert.equal(observed.unknown,false);assert.deepEqual([...observed.tags],['unit:Array']);
   for(const ref of observed.refs){const object=flow.actual.objects.get(ref);assert.ok(object);
     assert.equal(object.type,'unit:Array');assert.equal(object.weak,false);}
+});
+
+for(const wrapped of [false,true])test('allocation fixed input owns the complete two-result source: '+(wrapped?'wrapper':'direct'),()=>{
+  const prior=JSON.parse(readFileSync(new URL('./testdata/common-program-fixed-v3-interop/actual-storage-nominal-partial.json',import.meta.url),'utf8')).hir.snapshot,
+    bytes=Buffer.from(canonical(prior)+'\n'),declaration=prior.payload.files.find(row=>row.path.endsWith('/minimal-arrays-v8.d.ts')).content,
+    input=allocationFixedSourceInput(declaration,wrapped),source=input.files.find(row=>row.path===input.rootFile).content,call=wrapped?'wrap':'make';
+  assert.equal(input.files.length,2);assert.equal(input.declarations.version,'minimal-arrays-v8');
+  assert.deepEqual(input.hostImports,[]);for(const file of input.files)assert.equal(file.sha256,sha256(file.content).slice(7));
+  const request=allocationFixedFactsRequest(declaration,wrapped);assert.equal(request.family,'tsfg.program-facts-request-candidate');
+  assert.equal(request.version,2);assert.deepEqual(request.input,input);
+  assert.deepEqual(input.compilationClosure,{roots:[{kind:'application',name:'root',sourcePath:input.rootFile},
+    {kind:'module-initialization',name:'$moduleInit',sourcePath:input.rootFile}],requiredRoots:[]});
+  assert.deepEqual(input.config,{strict:true,noEmit:true,allowJs:false});
+  assert.equal(source.split(' = '+call+'();').length-1,2,'equal-argument calls remain distinct source sites');
+  assert.match(source,/return \[first, second\];/);assert.match(source,/function reader\(\): u32 \{ a; r; return 0; \}/);
+  assert.equal(source.includes('function wrap()'),wrapped);
+  assert.throws(()=>allocationFixedSourceInput(declaration+'\n',wrapped),/minimal-arrays-v8/);
+  assert.throws(()=>allocationFixedInputPair(bytes,wrapped,commonProgramCore),/must describe this complete source/,'another valid owning graph cannot supply these contracts');
 });
