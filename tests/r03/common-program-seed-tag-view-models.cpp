@@ -181,7 +181,7 @@ bool wholeFieldInstruction835(){
   const std::string targetExpected="receiver:sha256:8dcb33e1703e1407bdf92de21ab27f7654fc63c624f19670e766c6aed2b450a7";
   const std::string olderExpected="receiver:sha256:6f3c96e741dd1cddbdd3702ba7902fa0419b322831063e0f619f3de4dcb83052";
   const std::string nextExpected="initialization:sha256:c092679f429ede308dd7918c3dc4000ed8cf834de3481cc448cd9c79e6630378";
-  for(unsigned mode=0;mode<17;++mode){Fixture f;const bool weak=mode==3,rich=mode==2;const bool shouldFail=mode==1||(mode>=4&&mode<=8)||mode==12||mode==15||mode==16;
+  for(unsigned mode=0;mode<17;++mode){const Array wrongOrder{first,first};Fixture f;const bool weak=mode==3,rich=mode==2;const bool shouldFail=mode==1||(mode>=4&&mode<=8)||mode==12||mode==15||mode==16;
     const Json firstRow=Object{{"id",first},{"type",payloadType},{"sourceBinding","binding:first"}},secondRow=Object{{"id",second},{"type",payloadType},{"sourceBinding","binding:second"}};
     f.check.builtins.emplace("owner",Object{{"id",type},{"kind","reference"},{"base",nullptr},{"fields",Array{firstRow,secondRow}},
       {"construction",Object{{"id","ctor:canonical"},{"initializationFields",Array{first,second}}}}});
@@ -226,7 +226,7 @@ bool wholeFieldInstruction835(){
     Operation op;op.name="initialize_field";op.operands={12,8,13};op.result=14;op.range.start=54;op.range.end=89;op.properties=Object{{"owner",type},{"field",second}};
     if(mode==4)state.frames.clear();if(mode==5)f.check.receiverFrames.clear();
     if(mode==6)state.frames.begin()->second.initializing=false;
-    if(mode==7)f.check.receiverFrames.find(target)->second.fields[1]=first;
+    if(mode==7)f.check.receiverFrames.find(target)->second.fields=ActualInitializationFields(wrongOrder);
     if(mode==8)op.properties=Object{{"owner",type},{"field",first}};
     if(mode==16)op.properties=Object{{"owner",type},{"field","missing-field"}};
     if(mode==14)state.frames.insert(*oldWorld.begin());
@@ -320,7 +320,7 @@ bool wholeResultInstruction1539(){
   }
   for(const auto &text:std::vector<std::string>{"",std::string("frame\0a",7),"frame",std::string("frame\x80",6),std::string("frame\xff",6)})for(const bool miss:{false,true}){Fixture f;ActualState state;
     f.check.builtins.emplace("B",Object{{"kind","reference"}});f.check.types.emplace("B",&f.check.builtins.at("B"));
-    f.check.receiverFrames.emplace(ActualFrameId(text),ActualFrameInfo{"B","ctor","B","",false,{}});ActualFrameBinding binding;binding.unbound=false;binding.bound.tags={"B"};state.frames.emplace(ActualFrameId(text),std::move(binding));
+    f.check.receiverFrames.emplace(ActualFrameId(text),ActualFrameInfo{"B","ctor","B","",false,ActualInitializationFields::empty()});ActualFrameBinding binding;binding.unbound=false;binding.bound.tags={"B"};state.frames.emplace(ActualFrameId(text),std::move(binding));
     ActualValue control;control.frames.insert(miss?text+"x":text);state.values.emplace(0,control);Function function;function.id="full-byte-result";function.blocks.resize(1);ActualContext context;context.function=&function;context.repeated=false;
     Operation op;op.name="receiver_result";op.operands={0};op.successors={1,2};bool changed=false,continues=true;size_t edges=0;f.program.remaining=100000;
     const bool ok=f.check.instruction(context,op,0,state,true,changed,[&](uint16_t target,ActualState next,const std::vector<ActualValue> &values){++edges;return expect(target==1&&next.frames.size()==1&&next.frames.begin()->first.text()==text&&values.size()==1&&values[0].tags==std::set<std::string>{"B"},"full-byte result selection uses directory text, never owner address, hash or prefix equality");},continues);
@@ -687,6 +687,72 @@ bool nonrootInputExecution3000(){
       same(current->inputArguments()[0],scalar)&&same(current->identity->heap.at(slot),scalar)&&args[0].number==23&&input.at(slot).number==23,
       "second complete nonroot execution and real Borrow entry preserve immutable input and caller state while mutable SSA/Heap widen summaries");
 }
+// This function uses only the pre-existing public instruction/data API. The
+// identical body is also the old-ABI control; no layout representation is read.
+bool immutableInitializationLayoutInstructions(){
+  ActualFrameId escaped("not-created");
+  for(unsigned mode=0;mode<7;++mode){
+    const bool weak=mode==4;
+    const std::string first=mode==5?std::string("F\0",2)+std::string(67,'a')+"\xc2\x80":"sha256:"+std::string(64,'a');
+    const std::string second=mode==5?std::string("F\0",2)+std::string(67,'a')+"\xc3\xbf":"sha256:"+std::string(64,'b');
+    Fixture f;Function function;function.id="F";function.name="layout";function.blocks.resize(4);
+    f.check.builtins.emplace("owner",Object{{"id","B"},{"kind","reference"},{"base",nullptr},
+      {"construction",Object{{"id","ctor"},{"initializationFields",Array{first,second}}}}});
+    f.check.builtins.emplace("payload",Object{{"id","i32"},{"kind","scalar"},{"name","i32"}});
+    for(const auto &id:{first,second}){const auto raw=id==first?"first":"second";
+      f.check.builtins.emplace(raw,Object{{"id",id},{"type","i32"},{"sourceBinding",raw}});f.check.fields.emplace(id,&f.check.builtins.at(raw));}
+    (*f.check.builtins.at("owner").getAsObject())["fields"]=Array{f.check.builtins.at("first"),f.check.builtins.at("second")};
+    f.check.types.emplace("B",&f.check.builtins.at("owner"));f.check.types.emplace("i32",&f.check.builtins.at("payload"));
+    const auto operation=[](const char *name,std::vector<uint16_t> operands,uint16_t result){Operation op;op.name=name;op.operands=std::move(operands);op.result=result;return op;};
+    const auto create=[&](uint16_t result){auto op=operation("receiver_create",{},result);op.properties=Object{{"owner","B"},{"new_target","B"}};return op;};
+    const auto field=[&](uint16_t cursor,uint16_t receiver,uint16_t result,const std::string &id){auto op=operation("initialize_field",{cursor,receiver,100},result);op.properties=Object{{"owner","B"},{"field",id}};return op;};
+    if(mode<3)function.blocks[0].operations={create(0),create(10)};
+    else {
+      auto bind=operation("receiver_bind",{0,1},noRegister);bind.successors={1,3};
+      function.blocks[0].operations={create(0),operation("receiver_allocate",{0},1),bind};
+      auto next=operation("receiver_bind",{10,11},noRegister);next.successors={2,3};
+      function.blocks[1].parameters={101};function.blocks[1].operations={operation("initialize_begin",{0,101},2),field(2,101,3,first),field(3,101,4,second),
+        operation("initialize_end",{4,101},noRegister),create(10),operation("receiver_allocate",{10},11),next};
+      function.blocks[2].parameters={111};function.blocks[2].operations={operation("initialize_begin",{10,111},12),field(12,111,13,first),field(13,111,14,second),operation("initialize_end",{14,111},noRegister)};
+    }
+    function.blocks[3].operations={operation("unreachable",{},noRegister)};
+    ActualContext context;context.function=&function;context.root=true;context.activation="A";context.repeated=weak;
+    ActualState state;ActualValue payload;payload.tags={"i32"};payload.number=7;payload.truth=2;state.values.emplace(100,payload);
+    f.program.remaining=mode==0?4000:mode==1?0:mode==2?1:100000;bool ok=true,changed=false;uint16_t block=0;size_t deliveries=0;
+    for(size_t visits=0;visits<4&&ok;++visits){bool delivered=false;uint16_t target=block;
+      for(const auto &op:function.blocks[block].operations){bool continues=true;
+        ok=f.check.instruction(context,op,block,state,true,changed,[&](uint16_t to,ActualState next,const std::vector<ActualValue> &arguments){
+          if(!f.check.step(arguments.size()+1)||!f.check.need(to<3&&arguments.size()==function.blocks[to].parameters.size(),"layout fixture normal edge arity differs"))return false;
+          for(size_t i=0;i<arguments.size();++i){next.values.insert_or_assign(function.blocks[to].parameters[i],f.check.copy(arguments[i]));if(!f.error.message.empty())return false;}
+          state=std::move(next);target=to;delivered=true;++deliveries;return true;},continues);
+        if(!ok||!continues)break;
+      }
+      if(!delivered)break;block=target;
+    }
+    if(mode==1||mode==2){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&f.check.receiverFrames.empty()&&!state.values.count(0),
+        "zero/one budget cannot publish an unpaid Frame or SSA result"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&f.check.receiverFrames.size()==2&&state.frames.size()==2&&state.values.count(0)&&state.values.count(10),
+        "two complete receiver_create instructions with same owner and distinct sites fit fixed4000 without metadata replicas"))return false;
+    const auto a=*state.values.at(0).frames.begin(),b=*state.values.at(10).frames.begin();
+    if(!expect(a!=b&&f.check.receiverFrames.find(a)->second.fields.size()==2&&f.check.receiverFrames.find(b)->second.fields[1]==second,
+        "independent Frame identities preserve the full immutable ordered layout"))return false;
+    if(mode==0)continue;
+    if(!expect(deliveries==2&&state.values.count(4)&&state.values.count(14),"both real bind edges and both complete initializer cursor chains are observed"))return false;
+    for(const auto &id:{a,b}){const auto &binding=state.frames.find(id)->second;const auto reference="construction/"+id+"/B";
+      if(!expect(binding.weak==weak&&binding.prefixMax==2&&(weak?(binding.prefixMin==0&&binding.initializing):(binding.prefixMin==2&&!binding.initializing)),
+          "complete initializer end preserves weak versus strong prefix permissions"))return false;
+      for(const auto &key:{first,second}){const auto value=state.heap.find(reference+"/field/"+key);
+        if(!expect(value!=state.heap.end()&&value->second.tags.count("i32")&&(weak||value->second.number==7),"two real stores retain full field identity and complete payload"))return false;}}
+    const auto original=state.frames;auto clone=state.frames;clone.begin()->second.bound.number=99;
+    if(!expect(!original.begin()->second.bound.number&&f.check.receiverFrames.find(a)->second.fields[0]==first,"mutating a cloned World cannot mutate its sibling or immutable layout"))return false;
+    if(mode==6){escaped=state.frames.begin()->first;f.check.types.clear();
+      if(!expect(f.check.solve(false)&&f.error.message.empty()&&f.check.receiverFrames.empty()&&original.begin()->first.text()==escaped.text(),"empty-function solve resets metadata while old owned World keys survive"))return false;
+      f.check.types.emplace("B",&f.check.builtins.at("owner"));ActualFrameWorld fresh;
+      const auto id=f.check.createFrame(fresh,"A","F/0/0","B","ctor","B",false);
+      if(!expect(!id.empty()&&f.error.message.empty()&&f.check.receiverFrames.find(id)->second.fields[1]==second,"fresh post-reset Frame borrows the still-live owner layout"))return false;}
+  }
+  return expect(llvm::StringRef(escaped.text()).starts_with("receiver:"),"owned Frame text survives Check and layout destruction without exporting a metadata borrow");
+}
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -707,5 +773,6 @@ int main(){
   llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";
   if(!deferredSiteInstructionBudgets())return 1;llvm::errs()<<"PASS deferred Site scalar/array/mixed instruction budgets and complete facets\n";
   if(!rootExecutionCopies())return 1;llvm::errs()<<"PASS complete root entry-copy elimination and refreshed execution summaries\n";
-  if(!nonrootInputExecution3000())return 1;llvm::errs()<<"PASS complete immutable called input3000 and independent execution/Borrow summaries\n";return 0;
+  if(!nonrootInputExecution3000())return 1;llvm::errs()<<"PASS complete immutable called input3000 and independent execution/Borrow summaries\n";
+  if(!immutableInitializationLayoutInstructions())return 1;llvm::errs()<<"PASS immutable initialization layout instructions, complete prefixes and owner lifetime\n";return 0;
 }

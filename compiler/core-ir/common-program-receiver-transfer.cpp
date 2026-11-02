@@ -171,7 +171,9 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       const auto binding=state.frames.find(*current->frame);
       if(!need(binding!=state.frames.end(),"initializer cursor frame missing"))return false;
       const auto &info=frame->second;auto &v=binding->second;
-      if(!need(v.initializing&&current->position<info.fields.size()&&info.fields[current->position]==fieldId,"initializer did not advance its ordered field prefix"))return false;
+      // The stored length needs no vector subtraction. Cover both JSON string
+      // classifications and the optional/view access before the typed read.
+      if(!step(6)||!need(v.initializing&&current->position<info.fields.size()&&info.fields[current->position]==fieldId,"initializer did not advance its ordered field prefix"))return false;
       const auto next=current->position+1;if(v.weak)v.prefixMax=std::max(v.prefixMax,next);else v.prefixMin=v.prefixMax=next;
       auto cursor=receiverCursor(*current,next);if(!e.message.empty()||!step(3))return false;value.cursors.insert(std::move(cursor));}
   }else if(name=="initialize_end"){

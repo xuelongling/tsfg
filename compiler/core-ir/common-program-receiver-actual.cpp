@@ -361,9 +361,11 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
   if(!step(128)||!need(types.count(owner)&&types.count(newTarget),"frame owner/newTarget is not owned"))return {};
   auto id="receiver:"+digest(canonical(Array{activation,site,owner,construction,newTarget,parent}));
   auto metadata=receiverFrames.find(id);if(metadata==receiverFrames.end()){const auto &type=*types.at(owner);const auto &ctor=field(type,"construction");ActualFrameInfo info;
-    if(!step(items(field(ctor,"initializationFields")).size()+8))return {};
+    // Keep the original eight metadata operations, then pay the two-word
+    // view acquisition/construction/assignment bound before borrowing it.
+    if(!step(8)||!step(6))return {};
     info.owner=owner;info.construction=construction;info.newTarget=newTarget;info.parent=parent;info.derived=!string(field(type,"base")).empty();
-    for(const auto &f:items(field(ctor,"initializationFields"))){const auto fieldId=string(f);if(!receiverText(fieldId))return {};info.fields.push_back(fieldId);}
+    info.fields=ActualInitializationFields(items(field(ctor,"initializationFields")));
     // Same adopt-and-publish boundary as fieldSlot: allocation/release8, buffer and node-owner moves4.
     if(!step(8)||!step(4))return {};metadata=receiverFrames.emplace(ActualFrameId(std::move(id)),std::move(info)).first;}
   const auto &key=metadata->first;auto old=world.find(key);

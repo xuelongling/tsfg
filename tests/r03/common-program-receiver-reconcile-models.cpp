@@ -160,8 +160,9 @@ bool frameSelection(){
   // Literal full-length identity and fixed completion budget from the actual
   // return-transfer failure. This is a selector fixture, not Source admission.
   const std::string id="receiver:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-  Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;
-  ActualFrameInfo info;info.owner="B";info.construction="ctor";info.newTarget="B";info.fields={"F"};info.derived=true;
+  const Array initialization{"F"};Program program;Error error;ActualCheck check{program,error};ActualFrameWorld world;ActualHeap heap;
+  ActualFrameInfo info;info.owner="B";info.construction="ctor";info.newTarget="B";
+  info.fields=ActualInitializationFields(initialization);info.derived=true;
   check.receiverFrames.emplace(ActualFrameId(id),info);ActualFrameBinding binding;
   binding.unbound=false;binding.weak=true;binding.pending=true;binding.initializing=true;binding.aborted=true;binding.prefixMin=1;binding.prefixMax=3;
   binding.bound=payload("old");binding.bound.cells={"cell"};binding.bound.callables={{"code","env"}};binding.bound.truth=3;
@@ -181,8 +182,9 @@ bool frameSelection(){
   if(!expect(sameMap(world,changedInput,[](const auto &a,const auto &b){return same(a,b);}),"output mutation cannot change the independent input World"))return false;
   world.clear();roots.clear();
   if(!expect(selected.size()==1&&selected.begin()->first.text()==id&&selected.begin()->second.bound.objects==ActualObjectSet{ActualObjectId("old")},"output owns its complete frame key and payload after source World and roots are destroyed"))return false;
-  for(const size_t available:{size_t(0),size_t(128)}){Program limitedProgram;Error limitedError;ActualCheck limited{limitedProgram,limitedError};
-    limited.receiverFrames.emplace(ActualFrameId(id),info);limitedProgram.remaining=available;const auto result=limited.selectFrames(original,{root},heap);
+  for(const size_t available:{size_t(0),size_t(128)}){const Array limitedInitialization{"F"};Program limitedProgram;Error limitedError;ActualCheck limited{limitedProgram,limitedError};
+    auto limitedInfo=info;limitedInfo.fields=ActualInitializationFields(limitedInitialization);
+    limited.receiverFrames.emplace(ActualFrameId(id),std::move(limitedInfo));limitedProgram.remaining=available;const auto result=limited.selectFrames(original,{root},heap);
     if(!expect(result.empty()&&limitedError.code=="core-ir-common-budget"&&sameMap(original,ActualFrameWorld{{ActualFrameId(id),binding}},[](const auto &a,const auto &b){return same(a,b);}),"coarse hard cutoff is an error and never a successful partial selection"))return false;
   }
   llvm::errs()<<"PASS fixed468 literal80B frame selection, complete binding, ownership and hard cutoffs\n";return true;

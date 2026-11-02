@@ -162,9 +162,21 @@ struct ActualFrameIdLess {
   bool operator()(llvm::StringRef a,const ActualFrameId &b)const{return a.compare(b.view())<0;}
 };
 
+// A read-only view of an owner/type's already checked string sequence. Its
+// immutable storage must outlive every borrowing FrameInfo; Worlds do not own it.
+class ActualInitializationFields {
+  llvm::ArrayRef<Json> fields_;
+  ActualInitializationFields()=default;
+public:
+  static ActualInitializationFields empty(){return ActualInitializationFields();}
+  explicit ActualInitializationFields(const Array &checked):fields_(checked.data(),checked.size()){}
+  ActualInitializationFields(const Array &&)=delete;
+  size_t size()const{return fields_.size();}
+  llvm::StringRef operator[](size_t index)const{return fields_[index].getAsString().value();}
+};
 struct ActualFrameInfo {
   std::string owner,construction,newTarget,parent;bool derived=false;
-  std::vector<std::string> fields;
+  ActualInitializationFields fields=ActualInitializationFields::empty();
 };
 using ActualFrameDirectory=std::map<ActualFrameId,ActualFrameInfo,ActualFrameIdLess>;
 // Cursor rows retain immutable frame bytes independently of any check/map.

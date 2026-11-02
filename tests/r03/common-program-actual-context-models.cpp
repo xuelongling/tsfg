@@ -16,14 +16,15 @@ struct Input {
   ActualFrameWorld frames;
 };
 struct Fixture {
-  Program program;Error error;Function function;ActualCheck check{program,error};Input input;
+  Program program;Error error;Function function;const Array oneField{"F"},twoFields{"F","other"};
+  ActualCheck check{program,error};Input input;
   const ActualFieldSlot *birthSlot=nullptr,*otherSlot=nullptr;
   Fixture(){
     function.id="target";function.name="target";function.blocks.resize(1);function.blocks[0].parameters={0};
     check.functions.emplace(function.id,&function);program.fixedEffects.emplace(function.id,Effects{});
     check.builtins.emplace("B",Object{{"kind","reference"},{"base",nullptr},{"construction",Object{{"initializationFields",Array{"F"}}}}});
     check.types.emplace("B",&check.builtins.at("B"));
-    check.receiverFrames.emplace("frame",ActualFrameInfo{"B","ctor:B","B","",false,{"F"}});
+    check.receiverFrames.emplace("frame",ActualFrameInfo{"B","ctor:B","B","",false,ActualInitializationFields(oneField)});
     check.objects.emplace("object:B",ActualObject{"B",false});
     for(const auto &id:{"F","other"}){check.builtins.emplace(std::string("field:")+id,Object{{"id",id},{"sourceBinding",std::string("binding:")+id},{"type","i32"}});
       check.fields.emplace(id,&check.builtins.at(std::string("field:")+id));}
@@ -46,7 +47,7 @@ struct Fixture {
 };
 auto birthFixture(Fixture &f,const std::string &reference){
   auto &type=*f.check.builtins.at("B").getAsObject();type["fields"]=Array{*f.check.fields.at("F"),*f.check.fields.at("other")};
-  (*type["construction"].getAsObject())["initializationFields"]=Array{"F","other"};f.check.receiverFrames.find("frame")->second.fields={"F","other"};
+  (*type["construction"].getAsObject())["initializationFields"]=Array{"F","other"};f.check.receiverFrames.find("frame")->second.fields=ActualInitializationFields(f.twoFields);
   f.check.objects.emplace(reference,ActualObject{"B",false});const auto object=f.check.objects.find(reference);
   const auto first=f.check.fieldSlot(object,f.check.fields.find("F")),second=f.check.fieldSlot(object,f.check.fields.find("other"));
   f.input.heap.clear();f.input.regions.clear();auto &frame=f.input.frames.find("frame")->second;frame.births.clear();frame.bound={};frame.unbound=true;
@@ -94,7 +95,7 @@ bool birthReferenceOwnership(){
     if(!expect(base&&f.intern(right,changed)==base&&!changed&&f.error.message.empty(),"null/default and independently owned empty references compare as the original empty text"))return false;
   }
   {Fixture f;const std::string text(165,'p');const auto slots=birthFixture(f,text);
-    f.check.receiverFrames.find("frame")->second.parent="parent";f.check.receiverFrames.emplace("parent",ActualFrameInfo{"B","ctor:B","B","",false,{"F","other"}});
+    f.check.receiverFrames.find("frame")->second.parent="parent";f.check.receiverFrames.emplace("parent",ActualFrameInfo{"B","ctor:B","B","",false,ActualInitializationFields(f.twoFields)});
     auto &child=f.input.frames.find("frame")->second;child.unbound=false;child.weak=true;child.pending=true;child.initializing=true;child.aborted=true;child.prefixMin=2;child.prefixMax=4;
     f.input.frames.emplace("parent",child);ActualValue real;real.tags={"T"};real.objects={ActualObjectId("data")};real.cells={"cell"};real.frames={"control"};real.cursors={ActualCursorId("cursor")};real.callables={{"code","env"}};
     real.truth=3;real.unknown=true;real.callableTop=true;real.number=9007199254740993LL;real.region.known=true;real.region.opaque=true;real.region.empty=true;real.region.number=9007199254740995LL;real.region.roots={"region"};
