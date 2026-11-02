@@ -115,7 +115,7 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   if(!step(reference->size()+member->size()+8))return nullptr;
   auto spelling=*reference+"/field/"+*member;
   if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
-  bool append=false,present=false;auto previous=fieldSlotArchive.end();
+  bool previousKnown=false,present=false;auto previous=fieldSlotArchive.end();
   if(!empty){
     if(!step(2))return nullptr;const llvm::StringRef query(spelling);
     // One complete order supplies both strict-head and equal-head results.
@@ -125,14 +125,23 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
     if(order<=0){if(!step(2))return nullptr;found=first;present=order==0;}
     else {
       if(!step())return nullptr;
-      if(fieldSlotArchive.size()==1){if(!step(2))return nullptr;append=true;previous=first;}
+      if(fieldSlotArchive.size()==1){if(!step(2))return nullptr;previousKnown=true;previous=first;}
       else {
+        // Preserve the strict-tail route before proving an interior interval.
         if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(fieldSlotArchive.end());
-        if(!step(previous->first.size()+query.size()+1))return nullptr;append=previous->first<query;
-        // Middle/equal-nonhead cases retain the complete canonical search.
-        if(!append){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(query);
-          if(found!=fieldSlotArchive.end()){
-            if(!step(found->first.size()+query.size()+1))return nullptr;present=found->first==query;}}
+        if(!step(previous->first.size()+query.size()+1))return nullptr;previousKnown=previous->first<query;
+        if(!previousKnown){
+          // first < query is already proved; compare its complete successor.
+          if(!step(fieldSlotArchive.size()+2))return nullptr;const auto next=std::next(first);
+          if(!step(query.size()+next->first.size()+1))return nullptr;const auto nextOrder=query.compare(next->first);
+          if(!step())return nullptr;
+          if(nextOrder<=0){if(!step(4))return nullptr;found=next;previous=first;previousKnown=nextOrder<0;present=nextOrder==0;}
+          else {
+            if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(query);
+            if(found!=fieldSlotArchive.end()){
+              if(!step(found->first.size()+query.size()+1))return nullptr;present=found->first==query;}
+          }
+        }
       }
     }
   }
@@ -142,7 +151,7 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
     // predicate. Pay that bounded work before node growth, not another search.
     if(found!=fieldSlotArchive.end()&&!step(2*(spelling.size()+found->first.size()+1)))return nullptr;
     if(found!=fieldSlotArchive.begin()){
-      if(!append){if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(found);}
+      if(!previousKnown){if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(found);}
       if(!step(2*(previous->first.size()+spelling.size()+1)))return nullptr;
     }
     if(!step(4)||!step(8))return nullptr;

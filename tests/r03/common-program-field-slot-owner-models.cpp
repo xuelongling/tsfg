@@ -149,7 +149,7 @@ bool archiveTail(){
   const std::string small="sha256:"+std::string(64,'0'),firstId="sha256:"+std::string(64,'1');
   const std::string middle="sha256:"+std::string(64,'2'),lastId="sha256:"+std::string(64,'3');
   const auto firstKey=reference+"/field/"+firstId,lastKey=reference+"/field/"+lastId;
-  for(const unsigned mode:{0u,1u,2u,3u,4u,5u,6u,7u}){
+  for(const unsigned mode:{0u,1u,2u,3u,4u,5u,6u,7u,8u,9u,10u}){
     Symbols f;f.check.objects.emplace(reference,ActualObject{"T",false});
     for(const auto &id:{small,firstId,middle,lastId}){
       f.check.builtins.emplace("tail:"+id,Object{{"id",id},{"sourceBinding","tail-binding:"+id},{"type","T"}});
@@ -169,20 +169,21 @@ bool archiveTail(){
       auto row=f.check.fieldSlotArchive.begin();if(!expect(row->first==firstKey&&&row->second==first,"literal first canonical row remains owned and unchanged"))return false;
       ++row;if(!expect(row!=f.check.fieldSlotArchive.end()&&row->first==lastKey&&&row->second==tail&&++row==f.check.fieldSlotArchive.end(),"strict-tail insertion keeps exactly the literal full lexical sequence"))return false;continue;
     }
-    const auto last=f.get(reference,lastId);if(!expect(last&&f.error.message.empty(),"independent full-budget non-tail fixture owns its two endpoint rows"))return false;
-    if(mode==1||mode==7){
+    const auto last=mode>=9?nullptr:f.get(reference,lastId);if(!expect((last||mode>=9)&&f.error.message.empty(),"independent full-budget fixture owns exactly the intended endpoint rows"))return false;
+    if(mode==1||mode==7||mode>=9){
       const auto compound=lastId+"/field/"+firstId,aliasReference=reference+"/field/"+lastId,aliasKey=lastKey+"/field/"+firstId;
       f.check.builtins.emplace("tail-alias",Object{{"id",compound},{"sourceBinding","tail-alias-binding"},{"type","T"}});
       f.check.fields.emplace(compound,&f.check.builtins.at("tail-alias"));f.check.objects.emplace(aliasReference,ActualObject{"T",false});
       const auto alias=f.get(reference,compound);if(!expect(alias&&f.error.message.empty()&&*alias->spelling==aliasKey&&f.check.fieldSlotArchive.rbegin()->first==aliasKey,"independent component pair creates the complete lexical tail alias"))return false;
-      if(mode==7)f.program.remaining=3000;const auto same=f.get(aliasReference,firstId);
-      if(mode==7){if(!expect(!same&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==3&&f.check.fieldSlotAssociations.size()==3,
-          "equal tail requires canonical fallback; 321-byte full search cannot fit3000 and cannot publish another association"))return false;continue;}
-      if(!expect(same==alias&&same->owner==&f.check&&same->ordinal==2&&*same->spelling==aliasKey&&
-          f.check.fieldSlotArchive.size()==3&&f.check.fieldSlotAssociations.size()==4&&&f.check.objects.at(reference)!=&f.check.objects.at(aliasReference),"equal complete spelling reuses one symbol while retaining both distinct owned component pairs"))return false;continue;
+      if(mode==7||mode>=9)f.program.remaining=mode==10?1300:3000;const auto same=f.get(aliasReference,firstId);
+      if(mode==7||mode==10){if(!expect(!same&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==(mode==10?2u:3u)&&f.check.fieldSlotAssociations.size()==(mode==10?2u:3u),
+          "full canonical alias cutoff is a hard error and cannot publish another row or association"))return false;continue;}
+      if(!expect(same==alias&&same->owner==&f.check&&same->ordinal==(mode>=9?1u:2u)&&*same->spelling==aliasKey&&
+          f.check.fieldSlotArchive.size()==(mode>=9?2u:3u)&&f.check.fieldSlotAssociations.size()==(mode>=9?3u:4u)&&&f.check.objects.at(reference)!=&f.check.objects.at(aliasReference),"equal complete spelling reuses one symbol while retaining both distinct owned component pairs"))return false;
+      if(mode==9){auto row=f.check.fieldSlotArchive.begin();if(!expect(row->first==firstKey&&&row->second==first&&++row!=f.check.fieldSlotArchive.end()&&row->first==aliasKey&&&row->second==alias&&++row==f.check.fieldSlotArchive.end(),"fresh two-row successor alias preserves the literal full sequence and endpoint nodes"))return false;}continue;
     }
     const bool before=mode==3||mode==5,limited=mode==4;const auto &id=before?small:middle;const auto key=reference+"/field/"+id;
-    if(limited||mode==5)f.program.remaining=2000;const auto inserted=f.get(reference,id);
+    if(limited||mode==5)f.program.remaining=2000;if(mode==8)f.program.remaining=4000;const auto inserted=f.get(reference,id);
     if(limited){if(!expect(!inserted&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==2&&f.check.fieldSlotAssociations.size()==2&&
           f.check.fieldSlotArchive.count(key)==0,"non-tail low-budget full-search fallback reports hard error and grants no new row or association"))return false;continue;}
     if(!expect(inserted&&f.error.message.empty()&&inserted->owner==&f.check&&inserted->ordinal==2&&*inserted->spelling==key&&
@@ -191,7 +192,7 @@ bool archiveTail(){
     auto row=f.check.fieldSlotArchive.begin();for(const auto &spelling:expected){if(!expect(row!=f.check.fieldSlotArchive.end()&&row->first==spelling&&row->second.owner==&f.check,"fallback rows follow the independently specified complete lexical sequence"))return false;++row;}
     if(!expect(row==f.check.fieldSlotArchive.end()&&&f.check.fieldSlotArchive.at(firstKey)==first&&&f.check.fieldSlotArchive.at(lastKey)==last,"non-tail insertion preserves endpoint node identities and adds no phantom row"))return false;
   }
-  llvm::errs()<<"PASS field-slot archive fresh full-size tail/equal/alias/interior/fallback/cutoff subcases\n";return true;
+  llvm::errs()<<"PASS field-slot archive fresh full-size tail/equal/alias/interior/fallback/cutoff/adjacent subcases\n";return true;
 }
 bool cursorFactoryOwnership(){
   static_assert(sizeof(size_t)==8,"cursor identity pins target the qualified Windows64 model");
