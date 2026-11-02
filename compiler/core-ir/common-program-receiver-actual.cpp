@@ -240,7 +240,13 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
     if(fresh&&!row->info->parent.empty()&&!append(pending,&row->info->parent))return {};}
   // Heap-derived refs borrow only values and this block's independently owned
   // reachable snapshot. Neither this set nor the selected views escape.
-  if(!step(world.size()))return {};bool births=false;for(const auto &[id,value]:world)births|=!value.births.empty();
+  // Every selected full key is a member of this unchanged World. Equal sizes prove full coverage.
+  // Birth reachability can only discover more World members; it cannot enlarge a complete selection.
+  if(!step(4))return {};bool births=false; // Two size reads, the numeric comparison and its branch.
+  if(selected.size()!=world.size()){
+    if(!step(world.size()))return {};
+    for(const auto &[id,value]:world)births|=!value.births.empty();
+  }
   if(births){if(!step(4))return {};auto reached=reachable({values,{}},heap);if(!e.message.empty()||!step(values.size()+reached.size()+1))return {};
     // These refs have only a membership consumer. Sorting or deduplicating
     // would compare complete object spellings without changing that answer.

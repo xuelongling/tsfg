@@ -328,6 +328,70 @@ bool wholeResultInstruction1539(){
   return true;
 }
 
+bool completeFrameSelection943(){
+  const auto sameMap=[](const auto &a,const auto &b,const auto &equal){if(a.size()!=b.size())return false;auto x=a.begin(),y=b.begin();for(;x!=a.end();++x,++y)if(x->first!=y->first||!equal(x->second,y->second))return false;return true;};
+  const auto sameFrame=[&](const ActualFrameBinding &a,const ActualFrameBinding &b){return a.unbound==b.unbound&&a.weak==b.weak&&a.pending==b.pending&&a.initializing==b.initializing&&a.aborted==b.aborted&&a.prefixMin==b.prefixMin&&a.prefixMax==b.prefixMax&&same(a.bound,b.bound)&&sameMap(a.births,b.births,[&](const ActualBirth &x,const ActualBirth &y){return x.referenceText()==y.referenceText()&&x.pending==y.pending&&same(x.real,y.real);});};
+  const std::string type="sha256:"+std::string(64,'c'),arrayType="sha256:"+std::string(64,'a'),spanType="sha256:"+std::string(64,'b'),construction="sha256:"+std::string(64,'e');
+  const std::string first="sha256:82967726dabe5bd3b0c895a09f78003562197949b38d174e2d4d362a0649b80d",second="sha256:e329b28282ed4c495cb1953cfed967c758d75e7a06f332ec3311ce3d06ead28b";
+  std::optional<size_t> completeRemaining;
+  // Independent construction of the observed callee boundary, not a replay of unrecorded Source Heap/Value facets.
+  for(unsigned mode=0;mode<12;++mode){Fixture f;const bool partial=mode==2||mode==3||mode==8||mode==9||mode==10;
+    const bool direct=mode==2||mode==8||mode==9,fail=mode==1||(mode>=4&&mode<=9);
+    const Json firstRow=Object{{"id",first},{"type",arrayType}},secondRow=Object{{"id",second},{"type",spanType}};
+    f.check.builtins.emplace("owner",Object{{"id",type},{"kind","reference"},{"base",nullptr},{"fields",Array{firstRow,secondRow}},
+      {"construction",Object{{"id",construction},{"initializationFields",Array{first,second}}}}});
+    f.check.builtins.emplace("array",Object{{"id",arrayType},{"kind","array"},{"elementType","i32"}});f.check.builtins.emplace("span",Object{{"id",spanType},{"kind","readSpan"},{"elementType","i32"}});
+    f.check.builtins.emplace("first",firstRow);f.check.builtins.emplace("second",secondRow);
+    f.check.types.emplace(type,&f.check.builtins.at("owner"));f.check.types.emplace(arrayType,&f.check.builtins.at("array"));f.check.types.emplace(spanType,&f.check.builtins.at("span"));
+    f.check.fields.emplace(first,&f.check.builtins.at("first"));f.check.fields.emplace(second,&f.check.builtins.at("second"));
+    ActualFrameWorld olderWorld,world;const auto older=f.check.createFrame(olderWorld,"receiver-result-fixture","older",type,construction,type,false,"");
+    const auto target=f.check.createFrame(world,"receiver-result-fixture","target",type,construction,type,false,"");
+    const auto reference="construction/"+target+"/"+type,otherReference="construction/"+older+"/"+type;
+    const auto object=objectFor(f,reference,type),otherObject=objectFor(f,otherReference,type),array=objectFor(f,"array:"+std::string(152,'a'),arrayType),span=objectFor(f,"span:"+std::string(152,'s'),spanType);
+    const auto a=f.check.fieldSlot(f.check.objects.find(object),f.check.fields.find(first)),b=f.check.fieldSlot(f.check.objects.find(object),f.check.fields.find(second));
+    const auto otherA=f.check.fieldSlot(f.check.objects.find(otherObject),f.check.fields.find(first)),otherB=f.check.fieldSlot(f.check.objects.find(otherObject),f.check.fields.find(second));if(!a||!b||!otherA||!otherB)return false;
+    ActualValue arrayValue;arrayValue.tags={arrayType};arrayValue.objects.insert(array);ActualValue spanValue;spanValue.tags={spanType};spanValue.objects.insert(span);
+    ActualValue bound;bound.tags={type};bound.objects.insert(object);auto otherBound=bound;otherBound.objects.clear();otherBound.objects.insert(otherObject);
+    auto &binding=world.begin()->second;binding.unbound=false;binding.bound=bound;binding.prefixMin=binding.prefixMax=2;
+    const auto owner=std::make_shared<const std::string>(reference);for(const auto token:{a,b}){ActualBirth birth;birth.reference=owner;birth.pending=false;birth.real=token==a?arrayValue:spanValue;binding.births.emplace(token,std::move(birth));}
+    const ActualCursorInfo oldStart{olderWorld.begin()->first.owner(),0},start{world.begin()->first.owner(),0};for(size_t i=0;i<3;++i)if(f.check.receiverCursor(oldStart,i).empty()||f.check.receiverCursor(start,i).empty())return false;
+    ActualValue control;control.frames.insert(target);std::vector<ActualValue> roots{control,arrayValue,spanValue,direct?otherBound:bound};
+    ActualValue scalar;scalar.tags={"i32"};scalar.number=17;ActualHeap heap;
+    heap.emplace(array.text()+"/element/0",scalar);heap.emplace(span.text()+"/owner",arrayValue);heap.emplace(reference+"/field/"+first,arrayValue);heap.emplace(reference+"/field/"+second,spanValue);
+    for(unsigned i=0;i<5;++i)heap.emplace("outside/"+std::to_string(i),scalar);
+    if(partial){auto &other=olderWorld.begin()->second;other.unbound=other.weak=other.pending=other.initializing=other.aborted=true;other.prefixMax=1;other.bound=otherBound;
+      const auto otherOwner=std::make_shared<const std::string>(otherReference);for(const auto token:{otherA,otherB}){ActualBirth birth;birth.reference=otherOwner;birth.pending=token==otherB;birth.real=fullTarget();other.births.emplace(token,std::move(birth));}world.insert(*olderWorld.begin());}
+    if(mode==3)heap.insert_or_assign(reference+"/field/"+second,otherBound);
+    if(mode==4)world.clear();if(mode==5)f.check.receiverFrames.erase(f.check.receiverFrames.find(target));
+    if(mode==6)roots[0].cursors.emplace("missing-initializer-cursor");
+    if(mode==7)f.check.receiverFrames.find(target)->second.parent="missing-root-parent";
+    if(mode==8)f.check.receiverFrames.find(older)->second.parent="missing-birth-parent";
+    if(mode==9||mode==10)f.check.receiverFrames.erase(f.check.receiverFrames.find(older));
+    if(mode==11)heap.emplace("global:unconsumed",fullTarget());
+    if(!expect(target.size()==80&&reference.size()==165&&array.size()==158&&span.size()==157&&f.error.message.empty()&&f.check.receiverCursorIndex.size()==6,
+        "selection setup keeps complete80-byte Frame,165-byte birth and actual158/157-byte root spellings without selecting or scanning them"))return false;
+    if(mode==0&&!expect(world.size()==1&&f.check.receiverFrames.size()==2&&roots.size()==4&&heap.size()==9&&world.begin()->second.births.size()==2,
+        "fixed943 selection starts from the measured World1/global2/roots4/Heap9/two-birth boundary"))return false;
+    const auto before=world;const auto beforeHeap=heap;const auto beforeRoots=roots;f.program.remaining=mode==0||mode==11?943:mode==1?64:100000;
+    auto selected=f.check.selectFrames(world,roots,heap);
+    if(fail){if(!expect(!f.error.message.empty()&&selected.empty()&&f.error.code==(mode==1?"core-ir-common-budget":"core-ir-common-actual"),
+        "cursor, World, global metadata and both root/birth ancestry guards retain their required failure stages"))return false;continue;}
+    const bool includesOther=mode==2||mode==3;
+    if(!expect(f.error.message.empty()&&selected.size()==size_t(includesOther?2:1)&&selected.find(target)!=selected.end()&&(selected.find(older)!=selected.end())==includesOther,
+        "complete943 selection succeeds while partial direct and heap-indirect refs still discover the missing Frame")){
+      llvm::errs()<<" mode="<<mode<<" remaining="<<f.program.remaining<<" error="<<f.error.message<<'\n';return false;}
+    if(mode==0)completeRemaining=f.program.remaining;
+    if(mode==11&&!expect(completeRemaining&&f.program.remaining==*completeRemaining,"changing an unconsumed Heap does no discovery/copy work once every World Frame is proved selected"))return false;
+    for(const auto &[id,row]:selected){const auto source=before.find(id);if(!expect(source!=before.end()&&sameFrame(row,source->second)&&id.owner()==source->first.owner(),
+        "selection retains full immutable key ownership and independently copies every mutable bound/birth/weak/prefix payload"))return false;}
+    if(!expect(sameMap(world,before,sameFrame)&&sameMap(heap,beforeHeap,same)&&roots.size()==beforeRoots.size(),"selection does not consume its const World, Heap or roots"))return false;
+    for(size_t i=0;i<roots.size();++i)if(!expect(same(roots[i],beforeRoots[i]),"all original root facets remain unchanged"))return false;
+    selected.begin()->second.bound.objects.emplace("selected-only");selected.begin()->second.births.clear();selected.begin()->second.prefixMin=29;
+    if(!expect(sameMap(world,before,sameFrame)&&sameMap(heap,beforeHeap,same),"mutating a returned Binding and birth journal cannot change the caller's ownership or payloads"))return false;
+  }
+  return true;
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -341,5 +405,6 @@ int main(){
   llvm::errs()<<"6 seed-projection groups passed; complete Source820b remains independent\n";
   if(!canonicalIdentityLifetimes()||!wholeFieldInstruction835())return 1;
   llvm::errs()<<"PASS canonical Object/Cursor owning identities and complete835 field instruction\n";
-  if(!wholeResultInstruction1539())return 1;llvm::errs()<<"PASS complete receiver_result1539 typed full-key capacity and edge cases\n";return 0;
+  if(!wholeResultInstruction1539())return 1;llvm::errs()<<"PASS complete receiver_result1539 typed full-key capacity and edge cases\n";
+  if(!completeFrameSelection943())return 1;llvm::errs()<<"PASS complete World selection943 and partial birth discovery\n";return 0;
 }
