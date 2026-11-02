@@ -6,7 +6,8 @@ namespace tsfg::commonProgram {
 namespace {
 size_t weight(const ActualValue &v,const std::set<std::string> &tags){
   size_t cost=tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+regionWeight(v.region)+1;
-  for(const auto *set:{&tags,&v.objects,&v.cells,&v.frames,&v.cursors})for(const auto &id:*set)cost+=id.size()/64;
+  for(const auto *set:{&tags,&v.cells,&v.frames})for(const auto &id:*set)cost+=id.size()/64;
+  cost+=4*(v.objects.size()+v.cursors.size()); // Retain/release owned symbols instead of copying their text.
   for(const auto &[code,environment]:v.callables)cost+=(code.size()+environment.size())/64+1;
   return cost;
 }
@@ -53,7 +54,8 @@ std::string ActualCheck::key(const ActualValue &v){
   if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+v.region.roots.size()+256))return {};
   Array tags,refs,cells,pairs,frames,cursors;
   const auto ids=[&](const std::set<std::string> &from,Array &to){for(const auto &id:from){if(!step(12*id.size()+8))return false;to.push_back(id);}return true;};
-  if(!ids(v.tags,tags)||!ids(v.objects,refs)||!ids(v.cells,cells)||!ids(v.frames,frames)||!ids(v.cursors,cursors))return {};
+  const auto symbols=[&](const auto &from,Array &to){for(const auto &id:from){if(!step(12*id.size()+8))return false;to.push_back(id.view());}return true;};
+  if(!ids(v.tags,tags)||!symbols(v.objects,refs)||!ids(v.cells,cells)||!ids(v.frames,frames)||!symbols(v.cursors,cursors))return {};
   for(const auto &[code,environment]:v.callables){if(!step(12*(code.size()+environment.size())+16))return {};pairs.push_back(Array{code,environment});}
   for(const auto &id:v.region.roots)if(!step(12*id.size()+8))return {};
   return canonical(Object{{"tags",std::move(tags)},{"refs",std::move(refs)},{"cells",std::move(cells)},
@@ -237,9 +239,12 @@ ActualValue ActualCheck::declared(const std::string &id,ActualHeap &heap,const s
   ActualValue out;if(!step())return out;
   if(llvm::StringRef(id).starts_with("env:")){
     const auto layout=id.substr(4);if(!need(environments.count(layout),"entry environment layout not owned"))return {};
-    out.tags.insert(id);const auto ref=origin+"/"+id;out.objects.insert(ref);if(active.count(ref))return out;
-    if(!step(active.size()+1))return {};active.insert(ref);if(objects.count(ref)&&!objects.at(ref).weak)weakChanged=true;
-    objects[ref]={id,true};const auto &environment=*environments.at(layout);
+    out.tags.insert(id);const auto ref=origin+"/"+id;
+    if(active.count(ref)){if(!receiverText(ref))return {};const auto existing=objects.find(ref);
+      if(!need(existing!=objects.end(),"active declared environment is not owned")||!step(4))return {};out.objects.insert(existing->first);return out;}
+    if(!step(active.size()+1))return {};active.insert(ref);auto object=objects.find(ref);if(object!=objects.end()&&!object->second.weak)weakChanged=true;
+    if(object==objects.end()){if(!step(ref.size()/64+1))return {};object=admitObject(object,std::string(ref),ActualObject{id,true});}
+    else object->second={id,true};if(!e.message.empty()||!step(4))return {};out.objects.insert(object->first);const auto &environment=*environments.at(layout);
     const auto parent=string(field(environment,"parent"));if(!parent.empty()){
       if(!step(active.size()+1))return {};heap[ref+"/parent"]=declared("env:"+parent,heap,origin,active);
     }
@@ -255,9 +260,12 @@ ActualValue ActualCheck::declared(const std::string &id,ActualHeap &heap,const s
   }
   out.tags.insert(id);if(kind=="function"){out.callableTop=true;return out;}if(kind=="scalar"&&string(field(t,"name"))=="bool")out.truth=3;
   if(kind!="reference"&&kind!="value"&&kind!="array"&&kind!="readSpan")return out;
-  const auto ref=origin+"/"+id;out.objects.insert(ref);
-  if(active.count(ref))return out;if(!step(active.size()+1))return {};active.insert(ref);
-  if(objects.count(ref)&&!objects.at(ref).weak)weakChanged=true;objects[ref]={id,true};
+  const auto ref=origin+"/"+id;
+  if(active.count(ref)){if(!receiverText(ref))return {};const auto existing=objects.find(ref);
+    if(!need(existing!=objects.end(),"active declared object is not owned")||!step(4))return {};out.objects.insert(existing->first);return out;}
+  if(!step(active.size()+1))return {};active.insert(ref);auto object=objects.find(ref);if(object!=objects.end()&&!object->second.weak)weakChanged=true;
+  if(object==objects.end()){if(!step(ref.size()/64+1))return {};object=admitObject(object,std::string(ref),ActualObject{id,true});}
+  else object->second={id,true};if(!e.message.empty()||!step(4))return {};out.objects.insert(object->first);
   if(kind=="reference"||kind=="value")for(const auto *f:allFields(id)){
     const auto slot=ref+"/field/"+string(field(*f,"id"));if(heap.count(slot))continue;
     if(!step(active.size()+1))return {};auto child=declared(string(field(*f,"type")),heap,origin,active);
@@ -367,7 +375,7 @@ ActualValue ActualCheck::entryValue(const Function &fn,size_t index,ActualHeap &
     for(const auto &code:bound.functions){
       if(!step()||!need(sourceFunctions.count(code),"fixed callable entry target missing"))return {};const auto layout=string(field(*sourceFunctions.at(code),"lexicalEnvironment"));
       if(layout.empty())out.callables.emplace(code,"");
-      else{auto env=declared("env:"+layout,heap,origin+"/callable/"+code);for(const auto &ref:env.objects){if(!step())return {};out.callables.emplace(code,ref);}}
+      else{auto env=declared("env:"+layout,heap,origin+"/callable/"+code);for(const auto &ref:env.objects){if(!step())return {};out.callables.emplace(code,ref.text());}}
     }return out;
   }
   return role?entryDeclared(type,type,heap,origin,{},*role,upper,changed):declared(type,heap,origin);

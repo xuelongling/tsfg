@@ -133,8 +133,8 @@ bool calleeRetention(){
 }
 bool definitionBudget(){
   Model m;auto root=fn("root");root.blocks[0].operations={op("readspan",0,m.span)};m.p.functions={std::move(root)};m.bind({{"root",{}}});
-  ActualContext context;context.id="C";context.function=&m.p.functions[0];ActualState state;state.values[0].objects.insert("S");m.c.objects["S"]={m.span,false};
-  for(size_t i=0;i<8;++i){const auto ref="A"+std::to_string(i);m.c.objects[ref]={m.array,false};state.heap["S/owner"].objects.insert(ref);}
+  ActualContext context;context.id="C";context.function=&m.p.functions[0];ActualState state;state.values[0].objects.emplace("S");m.c.objects[ActualObjectId("S")]={m.span,false};
+  for(size_t i=0;i<8;++i){const auto ref="A"+std::to_string(i);m.c.objects[ActualObjectId(ref)]={m.array,false};state.heap["S/owner"].objects.emplace(ref);}
   BorrowTrace trace(m.c);if(!trace.begin(context,state))return false;m.p.remaining=28;
   return !trace.after(context,context.function->blocks[0].operations[0],0,state,false)&&m.e.code=="core-ir-common-budget";
 }
@@ -148,7 +148,9 @@ size_t emptyCallWork(size_t count){
   Model m;auto root=fn("root"),callee=fn("callee");root.blocks[0].operations={op("invoke",noRegister,"",{},Object{{"function_id","callee"}},{1,2})};
   root.blocks.push_back({{}, {op("func.return")}});root.blocks.push_back({{}, {op("unreachable")}});callee.blocks[0].operations={op("unreachable")};
   m.p.functions={std::move(root),std::move(callee)};m.bind({{"root",{}},{"callee",{}}});
-  ActualContext caller;caller.id="C";caller.function=&m.p.functions[0];ActualContext child;child.id="D";child.function=&m.p.functions[1];m.c.contexts.emplace(caller.id,caller);m.c.contexts.emplace(child.id,child);
+  ActualContext caller;caller.id="C";caller.function=&m.p.functions[0];ActualContext child;child.id="D";child.function=&m.p.functions[1];
+  auto &storedCaller=m.c.contexts.try_emplace(caller.id).first->second;storedCaller.id=caller.id;storedCaller.function=caller.function;
+  auto &storedChild=m.c.contexts.try_emplace(child.id).first->second;storedChild.id=child.id;storedChild.function=child.function;
   BorrowTrace trace(m.c);for(size_t i=0;i<count;++i)if(!trace.call(caller,caller.function->blocks[0].operations[0],0,child))return 0;
   const auto before=m.p.remaining;if(!trace.solve())return 0;return before-m.p.remaining;
 }
@@ -173,7 +175,7 @@ bool inlineOwnerJoin(unsigned mode){
   // Establish the actual merged storage prerequisite before checking borrow
   // lifetime; this is not a forged Source packet or a postulated may-set.
   if(m.c.contexts.size()!=1)return false;const auto &context=m.c.contexts.begin()->second;
-  if(context.returned.objects.size()!=1)return false;const auto ref=*context.returned.objects.begin();
+  if(context.returned.objects.size()!=1)return false;const auto ref=context.returned.objects.begin()->text();
   const auto stored=context.normalHeap.find(ref+"/field/owner");if(stored==context.normalHeap.end()||stored->second.objects.size()!=(mode==0?2:1))return false;
   if(mode==3&&(!stored->second.tags.count(absence)||stored->second.tags.size()!=2))return false;
   const bool accepted=verifyCommonBorrows(m.c);return mode==1?accepted:!accepted&&m.e.code=="core-ir-common-borrow"&&llvm::StringRef(m.e.message).contains("lifetime is unproved");

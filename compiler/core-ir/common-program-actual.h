@@ -18,8 +18,54 @@ class BorrowTrace;
 bool verifyCallableTargets(Program &,Error &,std::map<std::string,size_t> &initializedArrays);
 // Actual values never inherit tags from a view or a carrier capacity. Separate
 // roots identify language values, mutable local cells and abstract heap objects.
+// Owning analysis identities retain text across resets, never a live node or permission.
+// Only a successfully admitted ordered-directory key can share its current-universe proof.
+struct ActualSymbolUniverse {};
+template<class> class ActualSymbolId;
+class ActualSymbolText {
+  struct Admission {private: Admission(){}friend struct ActualCheck;};
+  const std::string text_;const std::shared_ptr<const ActualSymbolUniverse> universe_;bool admitted_=false;
+  template<class> friend class ActualSymbolId;friend struct ActualCheck;
+public:
+  explicit ActualSymbolText(const std::string &text):text_(text){}
+  explicit ActualSymbolText(std::string &&text):text_(std::move(text)){}
+  ActualSymbolText(Admission,std::string &&text,const std::shared_ptr<const ActualSymbolUniverse> &universe):text_(std::move(text)),universe_(universe){}
+};
+template<class Domain> class ActualSymbolId {
+  std::shared_ptr<const ActualSymbolText> symbol_;
+  explicit ActualSymbolId(std::shared_ptr<const ActualSymbolText> symbol):symbol_(std::move(symbol)){}
+  friend struct ActualCheck;
+public:
+  ActualSymbolId()=default;
+  explicit ActualSymbolId(const std::string &text):symbol_(std::make_shared<const ActualSymbolText>(text)){}
+  explicit ActualSymbolId(std::string &&text):symbol_(std::make_shared<const ActualSymbolText>(std::move(text))){}
+  const std::string &text()const{static const std::string empty;return symbol_?symbol_->text_:empty;}
+  llvm::StringRef view()const{return text();}size_t size()const{return text().size();}bool empty()const{return text().empty();}
+  // Caller prepays20 for presence/admission/current-universe classification, result and owner comparison.
+  std::optional<bool> canonicalRelation(const ActualSymbolId &other,const std::shared_ptr<const ActualSymbolUniverse> &current)const{
+    if(!current||!symbol_||!other.symbol_||!symbol_->admitted_||!other.symbol_->admitted_||
+      symbol_->universe_!=current||other.symbol_->universe_!=current)return std::nullopt;
+    return symbol_==other.symbol_;
+  }
+  friend bool operator==(const ActualSymbolId &a,const ActualSymbolId &b){return a.view()==b.view();}
+  friend bool operator!=(const ActualSymbolId &a,const ActualSymbolId &b){return !(a==b);}
+  friend bool operator==(const ActualSymbolId &a,llvm::StringRef b){return a.view()==b;}
+  friend bool operator!=(const ActualSymbolId &a,llvm::StringRef b){return !(a==b);}
+  friend bool operator==(llvm::StringRef a,const ActualSymbolId &b){return a==b.view();}
+  friend bool operator!=(llvm::StringRef a,const ActualSymbolId &b){return !(a==b);}
+};
+template<class Domain> struct ActualSymbolIdLess {
+  using is_transparent=void;using Id=ActualSymbolId<Domain>;
+  bool operator()(const Id &a,const Id &b)const{return a.view().compare(b.view())<0;}
+  bool operator()(const Id &a,llvm::StringRef b)const{return a.view().compare(b)<0;}
+  bool operator()(llvm::StringRef a,const Id &b)const{return a.compare(b.view())<0;}
+};
+struct ActualObjectDomain;struct ActualCursorDomain;
+using ActualObjectId=ActualSymbolId<ActualObjectDomain>;using ActualCursorId=ActualSymbolId<ActualCursorDomain>;
+using ActualObjectIdLess=ActualSymbolIdLess<ActualObjectDomain>;using ActualCursorIdLess=ActualSymbolIdLess<ActualCursorDomain>;
+using ActualObjectSet=std::set<ActualObjectId,ActualObjectIdLess>;using ActualCursorSet=std::set<ActualCursorId,ActualCursorIdLess>;
 struct ActualValue {
-  std::set<std::string> tags,objects,cells,frames,cursors;
+  std::set<std::string> tags,cells,frames;ActualObjectSet objects;ActualCursorSet cursors;
   // A callable is a concrete code/environment pair, never a code-only target.
   std::set<std::pair<std::string,std::string>> callables;
   uint8_t truth=0;bool unknown=false,callableTop=false;std::optional<int64_t> number;
@@ -122,6 +168,7 @@ struct ActualFrameInfo {
 // Cursor rows retain immutable frame bytes independently of any check/map.
 // A default or moved-from row is not admitted metadata; factories publish owners.
 struct ActualCursorInfo {std::shared_ptr<const std::string> frame;size_t position=0;};
+using ActualCursorDirectory=std::map<ActualCursorId,ActualCursorInfo,ActualCursorIdLess>;
 struct ActualReceiverWrite {bool success=false,matched=false;};
 // A birth default is not a real write or a permission. Keep prior instance
 // data separately so a definite definition consumes only its temporary default.
@@ -143,7 +190,7 @@ using ActualBirthJournal=std::map<const ActualFieldSlot *,ActualBirth,ActualFiel
 struct ActualObject;
 // Directory map nodes survive insert_or_assign. These views expire when the
 // association universe is cleared, before the owned object directory itself.
-struct ActualFieldSlotAssociation {const std::string *reference,*field;const ActualFieldSlot *slot;const ActualObject *object;};
+struct ActualFieldSlotAssociation {const ActualObjectId *reference;const std::string *field;const ActualFieldSlot *slot;const ActualObject *object;};
 struct ActualFieldSlotMatch {const ActualObject *object=nullptr;const ActualFieldSlot *slot=nullptr;};
 struct ActualFrameBinding {
   bool unbound=true,weak=false,pending=false,initializing=false,aborted=false;
@@ -174,7 +221,7 @@ struct ActualConstructionKeyLess {
 };
 struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;ActualFrameWorld frames;};
 struct ActualObject {std::string type;bool weak=false;};
-using ActualObjectDirectory=std::map<std::string,ActualObject>;
+using ActualObjectDirectory=std::map<ActualObjectId,ActualObject,ActualObjectIdLess>;
 using ActualOwnedDirectory=std::map<std::string,const Json *>;
 // Only field lookup borrows an operation JSON key; directory keys stay owned.
 using ActualFieldDirectory=std::map<std::string,const Json *,std::less<>>;
@@ -223,6 +270,8 @@ struct ActualCheck {
   std::map<std::string,std::set<std::string>> environmentNeeds;
   bool environmentNeedsReady=false;
   ActualObjectDirectory objects;
+  // Monotone object/cursor directories share one solve epoch; end it before their borrowed nodes are cleared.
+  std::shared_ptr<const ActualSymbolUniverse> symbolUniverse;
   // Stable throughout a solve and its final Borrow replay. Destroy context
   // Worlds before these symbols, and symbols before their directory keys.
   // Every view borrows its mapped Slot's immutable spelling. That mapped
@@ -247,9 +296,9 @@ struct ActualCheck {
   std::set<const Operation *> unresolvedCalls;
   RegionDomain regions;
   std::map<ActualFrameId,ActualFrameInfo,ActualFrameIdLess> receiverFrames;
-  std::map<std::string,ActualCursorInfo> receiverCursors;
+  ActualCursorDirectory receiverCursors;
   // Derived lookup only: immutable map nodes, never execution World values.
-  std::vector<const std::pair<const std::string,ActualCursorInfo> *> receiverCursorIndex;
+  std::vector<const ActualCursorDirectory::value_type *> receiverCursorIndex;
   bool receiverRouteOpen=false;
   BorrowTrace *borrowTrace=nullptr;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-actual",message);}
@@ -275,6 +324,7 @@ struct ActualCheck {
   ActualState copyStateWithOwnedStores(const std::map<uint16_t,ActualValue> &,ActualHeap &&,RegionHeap &&,ActualFrameWorld &&);
   ActualState copyState(const ActualState &);
   bool join(ActualState &,ActualState &&);
+  bool prepayValueGrowth(const std::vector<ActualValue> &,size_t required);
   ActualValue declared(const std::string &,ActualHeap &,const std::string &,std::set<std::string> = {});
   ActualValue entryDeclared(const std::string &,const std::string &,ActualHeap &,const std::string &,std::set<std::string>,const Program::EntryRole &,bool,bool &);
   ActualValue entryValue(const Function &,size_t,ActualHeap &,bool,bool &);
@@ -292,15 +342,19 @@ struct ActualCheck {
   // Both iterators belong to this check's already owned directories. No
   // execution value, heap node or temporary string may supply a symbol.
   const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualFieldDirectory::const_iterator);
-  ActualFieldSlotMatch existingFieldSlot(const std::string &,ActualFieldDirectory::const_iterator);
+  ActualFieldSlotMatch existingFieldSlot(const ActualObjectId &,ActualFieldDirectory::const_iterator);
   bool receiverBirth(ActualFrameWorld &,const std::string &,std::string &&,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
   ActualReceiverWrite receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const ActualCursorInfo &,const ActualFieldSlot &);
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);
   std::string createFrame(ActualFrameWorld &,const std::string &,const std::string &,const std::string &,const std::string &,const std::string &,bool,const std::string &parent={});
-  std::string receiverCursor(const std::string &,size_t);
-  std::string receiverCursor(const ActualCursorInfo &,size_t);
-  const ActualCursorInfo *cursorMetadata(const std::string &);
+  // Mutable pending owners cannot become canonical before ordered insertion succeeds; duplicate insertion returns the actual stored key.
+  std::shared_ptr<ActualSymbolText> pendingSymbolText(std::string &&);
+  ActualObjectDirectory::iterator admitObject(ActualObjectDirectory::iterator,std::string &&,ActualObject);
+  ActualCursorId ownedCursor(std::shared_ptr<const std::string> &&,size_t);
+  ActualCursorId receiverCursor(const std::string &,size_t);
+  ActualCursorId receiverCursor(const ActualCursorInfo &,size_t);
+  const ActualCursorInfo *cursorMetadata(const ActualCursorId &);
   // Terminator-owned input: no caller may inspect this World after completion.
   ActualReceiverCompletion receiverCompletion(ActualFrameWorld &&,const std::set<std::string> &,ReceiverAction,const ActualValue *);
   bool abortInitializers(ActualState &);
@@ -320,7 +374,7 @@ struct ActualCheck {
   ActualValue valueCopy(const ActualValue &,ActualState &,const std::string &,bool,std::map<std::string,std::string> = {});
   bool repeatedAllocation(const ActualContext &,size_t)const;
   std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);
-  std::string allocate(const ActualContext &,const Operation &,size_t,llvm::StringRef,const std::string &);
+  ActualObjectId allocate(const ActualContext &,const Operation &,size_t,llvm::StringRef,const std::string &);
   std::string callActivation(const ActualContext &,const Operation &,size_t,const std::string &,bool &);
   ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &,const std::string &activation={},bool repeated=true,const RegionHeap *versions=nullptr,const std::string &region={},const ActualFrameWorld *frames=nullptr,const std::string &newTarget={});
   bool execute(ActualContext &,bool,bool &);

@@ -180,9 +180,18 @@ void regionHardEscape(ActualCheck &c,const ActualValue &value,const ActualHeap &
   // invalidates return obligations only; it restores no current roots/heap.
   if(!c.step())return;std::vector<const ActualValue *> pending{&value};std::set<std::string> seen;
   for(size_t i=0;i<pending.size();++i){const auto &v=*pending[i];if(!c.step(v.objects.size()+v.cells.size()+v.callables.size()+1))return;
-    for(const auto *refs:{&v.objects,&v.cells})for(const auto &ref:*refs)if(!c.step(ref.size()/64+1))return;
+    for(const auto &ref:v.objects)if(!c.step(ref.size()/64+1))return;for(const auto &ref:v.cells)if(!c.step(ref.size()/64+1))return;
     for(const auto &[code,env]:v.callables)if(!c.step(env.size()/64+1))return;
-    std::set<std::string> refs=v.objects;refs.insert(v.cells.begin(),v.cells.end());for(const auto &[code,env]:v.callables)if(!env.empty())refs.insert(env);
+    std::set<std::string> refs;
+    for(const auto &ref:v.objects){
+      if(!c.step(1))return;
+      if(!refs.empty()){
+        if(!c.step(refs.size()+1))return;const auto previous=std::prev(refs.end());
+        if(!c.step(2*(previous->size()+ref.size()+1)))return;
+      }
+      refs.emplace_hint(refs.end(),ref.text());
+    }
+    refs.insert(v.cells.begin(),v.cells.end());for(const auto &[code,env]:v.callables)if(!env.empty())refs.insert(env);
     for(const auto &ref:refs){if(!c.step(2*(ref.size()/64+1)))return;if(!seen.insert(ref).second)continue;const auto prefix=ref+"/";
       for(const auto &[id,node]:c.regions.nodes){if(!c.step((node.reference.size()+ref.size())/64+1))return;if(node.reference==ref){auto scope=c.regions.scopes.find(node.region);if(scope!=c.regions.scopes.end()){scope->second.blocked=true;scope->second.hard=true;}}}
       if(!c.step(ref.size()/64+1))return;auto exact=heap.find(ref);

@@ -2,12 +2,12 @@
 // Private case definitions included once inside the value-capture model TU namespace.
 bool ownedJoin(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};ActualState target,source;ActualValue value,old;
-  value.tags={"T"};value.objects={"object"};value.cells={"cell"};value.callables={{"code","environment"}};value.truth=2;value.unknown=true;value.callableTop=true;value.number=7;
+  value.tags={"T"};value.objects={ActualObjectId("object")};value.cells={"cell"};value.callables={{"code","environment"}};value.truth=2;value.unknown=true;value.callableTop=true;value.number=7;
   value.region.known=true;value.region.opaque=true;value.region.empty=true;value.region.number=7;value.region.roots={"version"};
-  old.tags={"Old"};old.objects={"old"};old.cells={"old-cell"};old.callables={{"old-code","old-env"}};old.truth=1;old.number=7;old.region.known=true;old.region.number=7;old.region.roots={"old-version"};
+  old.tags={"Old"};old.objects={ActualObjectId("old")};old.cells={"old-cell"};old.callables={{"old-code","old-env"}};old.truth=1;old.number=7;old.region.known=true;old.region.number=7;old.region.roots={"old-version"};
   if(mode=="heap-low"||mode=="ssa-low"||mode=="existing-low"||mode=="bound256"){
     const size_t count=mode=="bound256"?256:20;value.tags.clear();value.objects.clear();value.cells.clear();value.callables.clear();value.region.roots.clear();
-    for(size_t i=0;i<count;++i){const auto id=std::to_string(i)+std::string(mode=="bound256"?0:128,'x');value.tags.insert("T/"+id);value.objects.insert("O/"+id);value.cells.insert("C/"+id);value.callables.emplace("F/"+id,"E/"+id);value.region.roots.insert("R/"+id);}
+    for(size_t i=0;i<count;++i){const auto id=std::to_string(i)+std::string(mode=="bound256"?0:128,'x');value.tags.insert("T/"+id);value.objects.emplace("O/"+id);value.cells.insert("C/"+id);value.callables.emplace("F/"+id,"E/"+id);value.region.roots.insert("R/"+id);}
   }
   target.heap.emplace("kept",mode=="shared-ref"?value:old);target.values.emplace(0,old);
   const bool heapOnly=mode=="heap-missing"||mode=="heap-low"||mode=="existing-low"||mode=="existing-257"||mode=="zero-heap"||mode=="live-snapshot";
@@ -16,17 +16,17 @@ bool ownedJoin(const std::string &mode){
   auto expected=target;if(!ssaOnly)expected.heap.emplace("new",value);if(!heapOnly)expected.values.emplace(1,value);
   if(mode=="mixed"){
     source.heap.emplace("kept",value);source.values.emplace(0,value);auto joined=value;
-    joined.tags.insert("Old");joined.objects.insert("old");joined.cells.insert("old-cell");joined.callables.emplace("old-code","old-env");joined.truth=3;joined.region.roots.insert("old-version");
+    joined.tags.insert("Old");joined.objects.emplace("old");joined.cells.insert("old-cell");joined.callables.emplace("old-code","old-env");joined.truth=3;joined.region.roots.insert("old-version");
     expected.heap.at("kept")=joined;expected.values.at(0)=joined;
     target.regions["node"]["old"]=old.region;source.regions["node"]["incoming"]=value.region;
     expected.regions=target.regions;expected.regions["node"]["old"].opaque=true;expected.regions["node"]["incoming"]=value.region;expected.regions["node"]["incoming"].opaque=true;
   }
   if(mode=="existing-low"||mode=="existing-257"){
-    source.heap.clear();source.heap.emplace("kept",value);if(mode=="existing-257")for(size_t i=0;i<257;++i)source.heap.at("kept").objects.insert(std::to_string(i));
+    source.heap.clear();source.heap.emplace("kept",value);if(mode=="existing-257")for(size_t i=0;i<257;++i)source.heap.at("kept").objects.emplace(std::to_string(i));
   }
   const auto witness=value;const auto sourceRegions=regionKey(source.regions);ActualHeap live;
   if(mode=="live-snapshot"){
-    source.heap.clear();source.heap.emplace("r/field/child",value);ActualValue root;root.objects={"r"};live=c.reachable({{root},{}},source.heap);
+    source.heap.clear();source.heap.emplace("r/field/child",value);ActualValue root;root.objects={ActualObjectId("r")};live=c.reachable({{root},{}},source.heap);
     expected=ActualState(target);expected.heap.emplace("r/field/child",value);
   }
   if(mode=="heap-low"||mode=="existing-low")p.remaining=4;if(mode=="ssa-low")p.remaining=3;if(mode=="zero-heap"||mode=="zero-ssa")p.remaining=0;
@@ -45,7 +45,7 @@ bool ownedJoin(const std::string &mode){
 bool capacityAdmission(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};ActualValue input;input.tags={"T"};CapacityValue observed;
   if(mode=="unused-257"){
-    for(size_t i=0;i<257;++i){const auto suffix=std::to_string(i);input.objects={"object/"+suffix};input.cells={"cell/"+suffix};input.callables={{"code/"+suffix,"environment/"+suffix}};input.region.known=true;input.region.roots={"version/"+suffix};
+    for(size_t i=0;i<257;++i){const auto suffix=std::to_string(i);input.objects={ActualObjectId("object/"+suffix)};input.cells={"cell/"+suffix};input.callables={{"code/"+suffix,"environment/"+suffix}};input.region.known=true;input.region.roots={"version/"+suffix};
       if(!c.recordCapacity(c.registerCapacity["r"],input)||!c.recordCapacity(c.storageCapacity["s"],input)||!c.recordCapacity(c.resultCapacity["f"],input))return report("passive capacity admits257 unused identities",false,e);
     }
     bool same=true;for(const auto *value:{&c.registerCapacity.at("r"),&c.storageCapacity.at("s"),&c.resultCapacity.at("f")})same&=value->tags==std::set<std::string>{"T"}&&!value->unknown&&!value->callableTop&&value->hasEnvironment;
@@ -57,7 +57,7 @@ bool capacityAdmission(const std::string &mode){
   }
   if(mode=="tags")input.tags.clear();
   for(size_t i=0;i<257;++i){const auto id=std::to_string(i);
-    if(mode=="tags")input.tags.insert(id);else if(mode=="objects")input.objects.insert(id);else if(mode=="cells")input.cells.insert(id);else if(mode=="targets")input.callables.emplace(id,"");else{input.region.known=true;input.region.roots.insert(id);}
+    if(mode=="tags")input.tags.insert(id);else if(mode=="objects")input.objects.emplace(id);else if(mode=="cells")input.cells.insert(id);else if(mode=="targets")input.callables.emplace(id,"");else{input.region.known=true;input.region.roots.insert(id);}
   }
   return report("active capacity input257 "+mode,!c.recordCapacity(observed,input)&&e.code=="core-ir-common-actual"&&observed.tags.empty());
 }
@@ -235,10 +235,10 @@ bool valueBorrow(const std::string &mode){
     const auto &activation=context.returned.callables.begin()->second;const auto &heap=context.normalHeap;
     const auto stored=heap.find(activation+"/slot/held"),borrow=heap.find(activation+"/slot/r");
     if(stored==heap.end()||borrow==heap.end()||stored->second.objects.size()!=1||borrow->second.objects.size()!=1)continue;
-    const auto field=heap.find(*stored->second.objects.begin()+"/field/a"),owner=heap.find(*borrow->second.objects.begin()+"/owner");
+    const auto field=heap.find(stored->second.objects.begin()->text()+"/field/a"),owner=heap.find(borrow->second.objects.begin()->text()+"/owner");
     if(field==heap.end()||owner==heap.end()||field->second.objects.size()!=1||owner->second.objects.size()!=1)continue;
-    const auto size=heap.find(*owner->second.objects.begin()+"/length");
-    const std::set<std::string> original{"entry/root/root/object/4"},replacement{"entry/root/root/object/5"};
+    const auto size=heap.find(owner->second.objects.begin()->text()+"/length");
+    const ActualObjectSet original{ActualObjectId("entry/root/root/object/4")},replacement{ActualObjectId("entry/root/root/object/5")};
     shape=owner->second.objects==original&&field->second.objects==(mode=="replaced"?replacement:original)&&
       size!=heap.end()&&size->second.number==std::optional<int64_t>(mode=="resized"?0:1);
   }

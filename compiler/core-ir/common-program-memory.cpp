@@ -14,7 +14,7 @@ ActualHeap ActualCheck::reachable(const ActualRoots &values,const ActualHeap &he
     // cannot invalidate the current value or any queued child.
     const auto &current=*pending[index];
     std::set<std::string> roots;if(!step(current.objects.size()+current.callables.size()))return {};
-    roots.insert(current.objects.begin(),current.objects.end());for(const auto &[code,environment]:current.callables)if(!environment.empty())roots.insert(environment);
+    for(const auto &ref:current.objects)roots.insert(ref.text());for(const auto &[code,environment]:current.callables)if(!environment.empty())roots.insert(environment);
     for(const auto &ref:roots){
     if(!step()||!e.message.empty())return {};if(!visited.insert(ref).second)continue;
     if(!step((ref.size()+1)/64+1))return {};const auto prefix=ref+"/";
@@ -30,7 +30,8 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
   // Object identities are rebuilt below. Copy only the facets retained by
   // this result, paying the original copy weights for those actual copies.
   size_t cost=source.tags.size()+source.cells.size()+source.frames.size()+source.cursors.size()+source.callables.size()+regionWeight(source.region)+1;
-  for(const auto *set:{&source.tags,&source.cells,&source.frames,&source.cursors})for(const auto &id:*set)cost+=id.size()/64;
+  for(const auto *set:{&source.tags,&source.cells,&source.frames})for(const auto &id:*set)cost+=id.size()/64;
+  cost+=4*source.cursors.size(); // Shared immutable cursor keys replace their old byte copies.
   for(const auto &[code,environment]:source.callables)cost+=(code.size()+environment.size())/64+1;
   if(!step(cost))return {};ActualValue value;value.tags=source.tags;value.cells=source.cells;value.callables=source.callables;value.frames=source.frames;value.cursors=source.cursors;
   value.truth=source.truth;value.unknown=source.unknown;value.callableTop=source.callableTop;value.number=source.number;value.region=source.region;
@@ -46,14 +47,17 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
   for(const auto &ref:source.objects){
     if(!step()||!need(objects.count(ref),"copy source object is not independently owned"))return {};
     const auto &object=objects.at(ref);
-    if(llvm::StringRef(object.type).starts_with("env:")||string(field(*types.at(object.type),"kind"))!="value"){value.objects.insert(ref);continue;}
-    const auto found=active.find(ref);const auto target=found==active.end()?origin+"/"+object.type:found->second;value.objects.insert(target);
-    if(found!=active.end())continue;const auto old=objects.find(target);
+    if(llvm::StringRef(object.type).starts_with("env:")||string(field(*types.at(object.type),"kind"))!="value"){if(!step(4))return {};value.objects.insert(ref);continue;}
+    const auto found=active.find(ref.text());const auto target=found==active.end()?origin+"/"+object.type:found->second;
+    if(found!=active.end()){if(!receiverText(target))return {};const auto existing=objects.find(target);
+      if(!need(existing!=objects.end(),"active value-copy object is not owned")||!step(4))return {};value.objects.insert(existing->first);continue;}auto old=objects.find(target);
     const bool summarized=weak||object.weak||alternatives.at(object.type)>1||(old!=objects.end()&&old->second.weak);
     if(old!=objects.end()&&!old->second.weak&&summarized)weakChanged=true;
-    if(!step(active.size()+1))return {};auto nested=active;nested.emplace(ref,target);objects[target]={object.type,summarized};
+    if(!step(active.size()+1))return {};auto nested=active;nested.emplace(ref.text(),target);
+    if(old==objects.end()){if(!step(target.size()/64+1))return {};old=admitObject(old,std::string(target),ActualObject{object.type,summarized});}
+    else old->second={object.type,summarized};if(!e.message.empty()||!step(4))return {};value.objects.insert(old->first);
     for(const auto *f:allFields(object.type)){
-      if(!step())return {};const auto id=string(field(*f,"id"));auto stored=state.heap.find(ref+"/field/"+id);
+      if(!step())return {};const auto id=string(field(*f,"id"));auto stored=state.heap.find(ref.text()+"/field/"+id);
       if(stored==state.heap.end())continue;const auto slot=target+"/field/"+id;std::optional<ActualValue> snapshot;
       // A summarized or same-copy-site field can alias a later write. Other
       // source fields remain stable while the recursive result is built.
@@ -75,13 +79,13 @@ std::string ActualCheck::allocationSite(const ActualContext &context,llvm::Strin
   if(!step((context.activation.size()+fn.size()+kind.size())/64+3))return {};
   return (context.activation.empty()?"unresolved/"+fn:context.activation)+"/"+fn+"/"+kind.str()+"/"+std::to_string(result);
 }
-std::string ActualCheck::allocate(const ActualContext &context,const Operation &op,size_t block,llvm::StringRef kind,const std::string &type){
+ActualObjectId ActualCheck::allocate(const ActualContext &context,const Operation &op,size_t block,llvm::StringRef kind,const std::string &type){
   auto ref=allocationSite(context,kind,op.result);if(!e.message.empty()||!step())return {};
   auto found=objects.find(ref);const bool weak=repeatedAllocation(context,block);
-  if(found==objects.end())objects.emplace(ref,ActualObject{type,weak});
+  if(found==objects.end())found=admitObject(found,std::move(ref),ActualObject{type,weak});
   else{if(!need(found->second.type==type,"allocation site changed its actual type"))return {};
     if(!found->second.weak&&weak)weakChanged=true;found->second.weak|=weak;}
-  return ref;
+  if(!e.message.empty()||!step(4))return {};return found->first;
 }
 std::string ActualCheck::callActivation(const ActualContext &context,const Operation &op,size_t block,const std::string &target,bool &repeated){
   if(!step(context.function->id.size()/64+1))return {};
@@ -173,7 +177,8 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   }return e.message.empty();
 }
 bool ActualCheck::solve(bool conditional){
-  if(!step(pendingContexts.size()+queuedContexts.size()+(!receiverCursorIndex.empty()?1:0)))return false;
+  if(!step(pendingContexts.size()+queuedContexts.size()+(!receiverCursorIndex.empty()?1:0)+(symbolUniverse?4:0)))return false;
+  symbolUniverse.reset(); // End proof before clearing any context, association or canonical node.
   scheduling=true;weakChanged=false;seedChanged=false;pendingContexts.clear();queuedContexts.clear();
   struct SchedulingGuard{ActualCheck &c;~SchedulingGuard(){c.scheduling=false;}} schedulingGuard{*this};
   contextBuckets.clear();contexts.clear();fieldSlotAssociations.clear();fieldSlotArchive.clear();
@@ -195,7 +200,8 @@ bool ActualCheck::solve(bool conditional){
     if(sourceFunctions.count(id)&&string(field(*sourceFunctions.at(id),"kind"))=="construction-body")continue;
     ActualHeap heap;
     for(const auto &[gid,g]:globals){auto value=declared(string(field(*g,"type")),heap,"global-entry/"+gid);heap.emplace("global:"+gid,std::move(value));}
-    std::vector<ActualValue> args;for(size_t i=0;i<fn->blocks[0].parameters.size();++i)args.push_back(entryValue(*fn,i,heap,conditional,changed));
+    std::vector<ActualValue> args;args.reserve(fn->blocks[0].parameters.size());
+    for(size_t i=0;i<fn->blocks[0].parameters.size();++i)args.push_back(entryValue(*fn,i,heap,conditional,changed));
     if(!context(id,args,heap,true,changed))return false;
   }
   if(!seedReceiverRoots(conditional,changed))return false;

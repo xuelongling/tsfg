@@ -81,7 +81,7 @@ bool factory(const std::string &kind,bool language,bool loop){
   return false;
 }
 ActualValue value(const std::string &tag,const std::string &ref={}){
-  ActualValue out;out.tags.insert(tag);if(!ref.empty())out.objects.insert(ref);return out;
+  ActualValue out;out.tags.insert(tag);if(!ref.empty())out.objects.emplace(ref);return out;
 }
 bool copyModel(const std::string &mode){
   Model m;const std::string type="model:Value",fieldId="model:n",target="copy/"+type;
@@ -90,7 +90,7 @@ bool copyModel(const std::string &mode){
   auto source=value(type,"a");
   if(mode=="fan-in"){
     m.check.objects.emplace("b",ActualObject{type,false});state.heap["a/field/"+fieldId]=value(m.absence);
-    state.heap.emplace("b/field/"+fieldId,value(m.i32));source.objects.insert("b");
+    state.heap.emplace("b/field/"+fieldId,value(m.i32));source.objects.emplace("b");
   }else{
     m.check.objects.emplace(target,ActualObject{type,mode=="target-weak"});state.heap.emplace(target+"/field/"+fieldId,value(m.absence));
   }
@@ -99,9 +99,9 @@ bool copyModel(const std::string &mode){
     return copied.tags.empty()&&m.error.code=="core-ir-common-budget"&&state.heap.at(target+"/field/"+fieldId).tags==std::set<std::string>{m.absence};
   }
   const auto copied=m.check.valueCopy(source,state,"copy",false);
-  if(!m.error.message.empty()||copied.objects!=std::set<std::string>{target})return false;
+  if(!m.error.message.empty()||copied.objects!=ActualObjectSet{ActualObjectId(target)})return false;
   const auto expected=mode=="strong"?std::set<std::string>{m.i32}:std::set<std::string>{m.i32,m.absence};
-  return state.heap.at(target+"/field/"+fieldId).tags==expected&&m.check.objects.at(target).weak==(mode!="strong");
+  return state.heap.at(target+"/field/"+fieldId).tags==expected&&m.check.objects.at(ActualObjectId(target)).weak==(mode!="strong");
 }
 bool strongCall(){
   Model m;const std::string type="model:Single",fieldId="model:Single/n";

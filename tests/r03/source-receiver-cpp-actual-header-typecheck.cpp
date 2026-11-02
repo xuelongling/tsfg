@@ -8,7 +8,7 @@ namespace SourceReceiverActualHeaderTypecheck {
 using namespace tsfg::commonProgram;
 using Controls=std::set<std::string>;
 static_assert(std::is_same_v<decltype(std::declval<ActualValue>().frames),Controls>);
-static_assert(std::is_same_v<decltype(std::declval<ActualValue>().cursors),Controls>);
+static_assert(std::is_same_v<decltype(std::declval<ActualValue>().cursors),ActualCursorSet>);
 static_assert(std::is_same_v<decltype(std::declval<ActualState>().frames),ActualFrameWorld>);
 static_assert(std::is_same_v<decltype(std::declval<ActualContextIdentity>().frames),ActualFrameWorld>);
 static_assert(std::is_const_v<std::remove_reference_t<decltype(*std::declval<ActualContext>().identity)>>);

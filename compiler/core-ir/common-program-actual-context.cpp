@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
+#include <type_traits>
 namespace tsfg::commonProgram {
 namespace {
 bool textSame(ActualCheck &c,const std::string &a,const std::string &b){
   return c.step((a.size()+b.size())/64+1)&&a==b;
 }
-bool idsSame(ActualCheck &c,const std::set<std::string> &a,const std::set<std::string> &b){
+template<class Domain> bool textSame(ActualCheck &c,const ActualSymbolId<Domain> &a,const ActualSymbolId<Domain> &b){return textSame(c,a.text(),b.text());}
+template<class Id,class Less> bool idsSame(ActualCheck &c,const std::set<Id,Less> &a,const std::set<Id,Less> &b){
   if(!c.step(a.size()+b.size()+1)||a.size()!=b.size())return false;
   auto right=b.begin();for(const auto &left:a)if(!textSame(c,left,*right++))return false;return true;
 }
@@ -48,6 +50,30 @@ bool identitySame(ActualCheck &c,const ActualContextIdentity &a,const ActualCont
     if(!textSame(c,slot,otherSlot)||!valueSame(c,value,other))return false;}return true;
 }
 }
+std::shared_ptr<ActualSymbolText> ActualCheck::pendingSymbolText(std::string &&text){
+  if(!symbolUniverse){if(!step(12))return {};symbolUniverse=std::make_shared<const ActualSymbolUniverse>();}
+  // Allocation/release8, buffer adopt2, epoch retain4, pending/key retain4,
+  // two owner moves4, and publication/admission controls2. No key is admitted yet.
+  if(!step(24))return {};
+  return std::make_shared<ActualSymbolText>(ActualSymbolText::Admission{},std::move(text),symbolUniverse);
+}
+ActualObjectDirectory::iterator ActualCheck::admitObject(ActualObjectDirectory::iterator found,std::string &&reference,ActualObject value){
+  // The caller supplies its actual complete lookup result; existing rows keep their key and live state.
+  if(found!=objects.end())return found;auto pending=pendingSymbolText(std::move(reference));if(!pending)return objects.end();
+  const auto inserted=objects.emplace(ActualObjectId(pending),std::move(value));
+  // A hypothetical duplicate still returns the real directory key, never this unadmitted candidate.
+  pending->admitted_=inserted.second;return inserted.first;
+}
+bool ActualCheck::prepayValueGrowth(const std::vector<ActualValue> &values,size_t required){
+  // Classification is paid before the first Error/target/capacity read in either move mode.
+  if(!step(6)||!e.message.empty())return false;
+  if constexpr(!std::is_nothrow_move_constructible_v<ActualValue>){
+    // Existing Value bytes/nodes keep their original payers; these are the new shared-owner copies.
+    if(required>values.capacity())for(const auto &old:values)
+      if(!step(3+4*(old.objects.size()+old.cursors.size())))return false;
+  }
+  return true;
+}
 ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,
   const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region,const ActualFrameWorld *frameWorld,const std::string &newTarget){
   if(!step(args.size()+1)||!need(functions.count(target)&&functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
@@ -60,7 +86,7 @@ ActualContext *ActualCheck::context(const std::string &target,const std::vector<
   if(!step(4))return nullptr;auto entry=reachable({roots,{}},heap);
   // reachable retains every global: entry, including payloads reachable only
   // from globals. Their region relations remain part of the owned identity.
-  if(!step(roots.size()+entry.size()))return nullptr;roots.reserve(roots.size()+entry.size());
+  const auto required=roots.size()+entry.size();if(!step(required)||!prepayValueGrowth(roots,required))return nullptr;roots.reserve(required);
   for(const auto &[id,v]:entry)roots.push_back(copy(v));if(!e.message.empty())return nullptr;
   if(versions&&!step(4))return nullptr;auto current=versions?regionReachable(*this,{roots,{}},*versions):RegionHeap{};if(!e.message.empty())return nullptr;
   if(!step((target.size()+activation.size()+region.size()+newTarget.size())/64+5))return nullptr;
@@ -95,7 +121,8 @@ ActualContext *ActualCheck::context(const std::string &target,const std::vector<
   c.activation=physical;c.region=region;c.constructionNewTarget=newTarget;
   // Execution owns independent paid copies. Root entry refresh never mutates
   // the immutable identity later compared by this invocation interner.
-  if(!step(incoming.arguments.size()))return nullptr;for(const auto &v:incoming.arguments)c.arguments.push_back(copy(v));
+  if(!step(incoming.arguments.size()))return nullptr;c.arguments.reserve(incoming.arguments.size());
+  for(const auto &v:incoming.arguments)c.arguments.push_back(copy(v));
   c.entry=copyHeap(incoming.heap);
   c.entryRegions=regionCopy(*this,incoming.regions);
   if(!e.message.empty()||!step(id.size()/64+3))return nullptr;

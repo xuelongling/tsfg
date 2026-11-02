@@ -16,7 +16,7 @@ struct Symbols {
   const ActualFieldSlot *get(const std::string &reference,const std::string &field){return check.fieldSlot(check.objects.find(reference),check.fields.find(field));}
 };
 ActualValue heapPayload(){
-  ActualValue v;v.tags={"T"};v.objects={"payload-object"};v.cells={"payload-cell"};v.frames={"payload-frame"};v.cursors={"payload-cursor"};
+  ActualValue v;v.tags={"T"};v.objects={ActualObjectId("payload-object")};v.cells={"payload-cell"};v.frames={"payload-frame"};v.cursors={ActualCursorId("payload-cursor")};
   v.callables={{"code","env"}};v.callableTop=true;v.unknown=true;v.truth=3;v.number=9007199254740993LL;
   v.region.known=true;v.region.opaque=true;v.region.empty=true;v.region.roots={"root"};v.region.number=37;return v;
 }
@@ -91,44 +91,44 @@ bool cursorOwnership(){
   const std::string missing="initialization:sha256:0000000000000000000000000000000000000000000000000000000000000000";
   for(const unsigned mode:{0u,1u,2u,3u,4u}){Symbols f;ActualFrameWorld world;
     const auto frame=f.check.createFrame(world,"metadata-owner","cursor-reset","T","ctor:T","T",false);
-    const auto id=f.check.receiverCursor(frame,0);const std::string copied=id;
+    const auto id=f.check.receiverCursor(frame,0);const std::string copied=id.text();
     if(!expect(!id.empty()&&id.size()==86&&frame.size()==80&&f.error.message.empty(),"owned cursor factory creates complete opaque identities"))return false;
-    if(mode==0){f.program.remaining=200;const auto first=f.check.cursorMetadata(copied);
-      if(!expect(first&&f.error.message.empty()&&first->frame&&*first->frame==frame&&first->position==0&&first==&f.check.receiverCursors.at(id),"first full-spelling lookup returns the current owned node within177units"))return false;continue;}
-    if(mode==1){const auto before=f.check.cursorMetadata(copied);if(!expect(before&&f.error.message.empty(),"owned metadata obtained before independent map growth"))return false;
+    if(mode==0){f.program.remaining=200;const auto first=f.check.cursorMetadata(ActualCursorId(copied));
+      if(!expect(first&&f.error.message.empty()&&first->frame&&*first->frame==frame&&first->position==0&&first==&f.check.receiverCursors.at(ActualCursorId(id)),"first full-spelling lookup returns the current owned node within177units"))return false;continue;}
+    if(mode==1){const auto before=f.check.cursorMetadata(ActualCursorId(copied));if(!expect(before&&f.error.message.empty(),"owned metadata obtained before independent map growth"))return false;
       if(!expect(f.check.receiverCursor(frame,0)==id&&f.check.receiverCursors.size()==1,"same canonical factory call does not duplicate directory identity"))return false;
       for(unsigned i=0;i<32;++i){const auto other=f.check.createFrame(world,"metadata-owner","grown-"+std::to_string(i),"T","ctor:T","T",false);if(f.check.receiverCursor(other,0).empty())return false;}
-      if(!expect(f.error.message.empty()&&before==&f.check.receiverCursors.at(id)&&before->frame&&*before->frame==frame&&before->position==0,"owned node metadata remains stable across index growth"))return false;
-      Symbols other;ActualFrameWorld otherWorld;const auto otherFrame=other.check.createFrame(otherWorld,"metadata-owner","cursor-reset","T","ctor:T","T",false),otherId=other.check.receiverCursor(otherFrame,0);
-      const auto independent=other.check.cursorMetadata(otherId);if(!expect(independent&&other.error.message.empty()&&otherId==id&&independent!=before&&independent==&other.check.receiverCursors.at(otherId),"same canonical ID in two live owners keeps independent owned nodes"))return false;
-    }else if(mode==2){const auto size=f.check.receiverCursors.size();const auto absent=f.check.cursorMetadata(missing);
+      if(!expect(f.error.message.empty()&&before==&f.check.receiverCursors.at(ActualCursorId(id))&&before->frame&&*before->frame==frame&&before->position==0,"owned node metadata remains stable across index growth"))return false;
+      Symbols other;ActualFrameWorld otherWorld;const auto otherFrame=other.check.createFrame(otherWorld,"metadata-owner","cursor-reset","T","ctor:T","T",false);const auto otherId=other.check.receiverCursor(otherFrame,0);
+      const auto independent=other.check.cursorMetadata(ActualCursorId(otherId));if(!expect(independent&&other.error.message.empty()&&otherId==id&&independent!=before&&independent==&other.check.receiverCursors.at(ActualCursorId(otherId)),"same canonical ID in two live owners keeps independent owned nodes"))return false;
+    }else if(mode==2){const auto size=f.check.receiverCursors.size();const auto absent=f.check.cursorMetadata(ActualCursorId(missing));
       if(!expect(!absent&&f.error.message.empty()&&f.check.receiverCursors.size()==size,"fulltext directory miss grants no metadata and never registers unknown IDs"))return false;
     }else if(mode==3){world.clear();if(!expect(f.check.solve(false)&&f.error.message.empty()&&f.check.contexts.empty()&&f.check.receiverFrames.empty()&&f.check.receiverCursors.empty(),"real empty-function solve resets cursor metadata after Worlds are destroyed"))return false;
-      if(!expect(!f.check.cursorMetadata(copied)&&f.error.message.empty(),"old copied string is missing after reset, not a dangling metadata authority"))return false;
-      const auto newFrame=f.check.createFrame(world,"metadata-owner","cursor-reset","T","ctor:T","T",false),newId=f.check.receiverCursor(newFrame,0);const auto current=f.check.cursorMetadata(newId);
-      if(!expect(current&&f.error.message.empty()&&newId==id&&current->frame&&*current->frame==newFrame&&current->position==0&&current==&f.check.receiverCursors.at(newId),"reset recreates current canonical metadata without dereferencing old pointers or requiring fresh addresses"))return false;
-    }else {f.program.remaining=0;if(!expect(!f.check.cursorMetadata(copied)&&f.error.code=="core-ir-common-budget","metadata cutoff is a hard error, never an ordinary missing-value success"))return false;}
+      if(!expect(!f.check.cursorMetadata(ActualCursorId(copied))&&f.error.message.empty(),"old copied string is missing after reset, not a dangling metadata authority"))return false;
+      const auto newFrame=f.check.createFrame(world,"metadata-owner","cursor-reset","T","ctor:T","T",false);const auto newId=f.check.receiverCursor(newFrame,0);const auto current=f.check.cursorMetadata(ActualCursorId(newId));
+      if(!expect(current&&f.error.message.empty()&&newId==id&&current->frame&&*current->frame==newFrame&&current->position==0&&current==&f.check.receiverCursors.at(ActualCursorId(newId)),"reset recreates current canonical metadata without dereferencing old pointers or requiring fresh addresses"))return false;
+    }else {f.program.remaining=0;if(!expect(!f.check.cursorMetadata(ActualCursorId(copied))&&f.error.code=="core-ir-common-budget","metadata cutoff is a hard error, never an ordinary missing-value success"))return false;}
   }
   Symbols limited;limited.program.remaining=100;
-  if(!expect(!limited.check.cursorMetadata(missing)&&limited.error.code=="core-ir-common-budget"&&limited.check.receiverCursors.empty(),"uncached fulltext miss cutoff is an error, not successful absence"))return false;
+  if(!expect(!limited.check.cursorMetadata(ActualCursorId(missing))&&limited.error.code=="core-ir-common-budget"&&limited.check.receiverCursors.empty(),"uncached fulltext miss cutoff is an error, not successful absence"))return false;
   llvm::errs()<<"PASS cursor metadata first-read/identity/growth/owner/reset/miss/budget subcases\n";return true;
 }
 bool cachedPairs(){
   Symbols f;const auto token=f.get("object","F");const std::string copiedReference="object";
-  const auto match=f.check.existingFieldSlot(copiedReference,f.check.fields.find("F"));
-  if(!expect(token&&match.slot==token&&match.object==&f.check.objects.at("object")&&f.error.message.empty(),"cache accepts full copied reference content, not string storage identity"))return false;
+  const auto match=f.check.existingFieldSlot(ActualObjectId(copiedReference),f.check.fields.find("F"));
+  if(!expect(token&&match.slot==token&&match.object==&f.check.objects.at(ActualObjectId("object"))&&f.error.message.empty(),"cache accepts full copied reference content, not string storage identity"))return false;
   const auto associations=f.check.fieldSlotAssociations.size(),archive=f.check.fieldSlotArchive.size();
-  const auto missing=f.check.existingFieldSlot("obj",f.check.fields.find("F"));
-  const auto missingPair=f.check.existingFieldSlot(copiedReference,f.check.fields.find("G"));
+  const auto missing=f.check.existingFieldSlot(ActualObjectId("obj"),f.check.fields.find("F"));
+  const auto missingPair=f.check.existingFieldSlot(ActualObjectId(copiedReference),f.check.fields.find("G"));
   if(!expect(!missing.object&&!missing.slot&&!missingPair.object&&!missingPair.slot&&f.error.message.empty()&&
       f.check.fieldSlotAssociations.size()==associations&&f.check.fieldSlotArchive.size()==archive,"unknown complete reference or unregistered pair misses without registration"))return false;
   const auto alias=f.get("object","F/field/G"),sameSpelling=f.get("object/field/F","G");
-  const auto left=f.check.existingFieldSlot("object",f.check.fields.find("F/field/G")),right=f.check.existingFieldSlot("object/field/F",f.check.fields.find("G"));
-  if(!expect(alias==sameSpelling&&left.slot==right.slot&&left.object==&f.check.objects.at("object")&&right.object==&f.check.objects.at("object/field/F")&&left.object!=right.object,
+  const auto left=f.check.existingFieldSlot(ActualObjectId("object"),f.check.fields.find("F/field/G")),right=f.check.existingFieldSlot(ActualObjectId("object/field/F"),f.check.fields.find("G"));
+  if(!expect(alias==sameSpelling&&left.slot==right.slot&&left.object==&f.check.objects.at(ActualObjectId("object"))&&right.object==&f.check.objects.at(ActualObjectId("object/field/F"))&&left.object!=right.object,
       "canonical slot alias does not conflate distinct owned pair objects"))return false;
   f.check.builtins.emplace("S",Object{{"kind","reference"},{"base",nullptr},{"construction",nullptr}});f.check.types.emplace("S",&f.check.builtins.at("S"));
-  f.check.objects.insert_or_assign("object",ActualObject{"S",true});
-  if(!expect(match.object->type=="S"&&match.object->weak&&f.check.existingFieldSlot(copiedReference,f.check.fields.find("F")).object==match.object,
+  f.check.objects.insert_or_assign(ActualObjectId("object"),ActualObject{"S",true});
+  if(!expect(match.object->type=="S"&&match.object->weak&&f.check.existingFieldSlot(ActualObjectId(copiedReference),f.check.fields.find("F")).object==match.object,
       "cached owned map node exposes current insert_or_assign type and weakness"))return false;
   const auto priorCapacity=f.check.fieldSlotAssociations.capacity();
   for(size_t i=0;i<40;++i){const auto ref="grown-object-"+std::to_string(i);f.check.objects.emplace(ref,ActualObject{"T",false});if(!f.get(ref,"F"))return false;}
@@ -136,11 +136,11 @@ bool cachedPairs(){
       "copy-returned match remains valid across association vector growth"))return false;
   // No old match/token is dereferenced after this actual owner reset.
   if(!expect(f.check.solve(false)&&f.error.message.empty()&&f.check.contexts.empty()&&f.check.fieldSlotAssociations.empty()&&f.check.fieldSlotArchive.empty()&&f.check.objects.empty(),"solve destroys old association universe before object nodes"))return false;
-  f.check.objects.emplace("object",ActualObject{"T",false});const auto fresh=f.get("object","F");const auto freshMatch=f.check.existingFieldSlot("object",f.check.fields.find("F"));
-  if(!expect(fresh&&freshMatch.slot==fresh&&freshMatch.object==&f.check.objects.at("object")&&freshMatch.object->type=="T"&&!freshMatch.object->weak,"new universe has its own current canonical association without address freshness claim"))return false;
-  Symbols invalid;const auto bad=invalid.check.existingFieldSlot("object",invalid.check.fields.end());
+  f.check.objects.emplace("object",ActualObject{"T",false});const auto fresh=f.get("object","F");const auto freshMatch=f.check.existingFieldSlot(ActualObjectId("object"),f.check.fields.find("F"));
+  if(!expect(fresh&&freshMatch.slot==fresh&&freshMatch.object==&f.check.objects.at(ActualObjectId("object"))&&freshMatch.object->type=="T"&&!freshMatch.object->weak,"new universe has its own current canonical association without address freshness claim"))return false;
+  Symbols invalid;const auto bad=invalid.check.existingFieldSlot(ActualObjectId("object"),invalid.check.fields.end());
   if(!expect(!bad.object&&!bad.slot&&invalid.error.code=="core-ir-common-actual","unknown member/end iterator is hard error, not cache miss authority"))return false;
-  Symbols limited;limited.get("object","F");limited.program.remaining=0;const auto failed=limited.check.existingFieldSlot("object",limited.check.fields.find("F"));
+  Symbols limited;limited.get("object","F");limited.program.remaining=0;const auto failed=limited.check.existingFieldSlot(ActualObjectId("object"),limited.check.fields.find("F"));
   if(!expect(!failed.object&&!failed.slot&&limited.error.code=="core-ir-common-budget","cache lookup cutoff returns hard budget error, never a successful match"))return false;
   llvm::errs()<<"PASS existingFieldSlot owned pair/copy/growth/live-mapping/reset/error subcases\n";return true;
 }
@@ -179,7 +179,7 @@ bool archiveTail(){
       if(mode==7||mode==10){if(!expect(!same&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==(mode==10?2u:3u)&&f.check.fieldSlotAssociations.size()==(mode==10?2u:3u),
           "full canonical alias cutoff is a hard error and cannot publish another row or association"))return false;continue;}
       if(!expect(same==alias&&same->owner==&f.check&&same->ordinal==(mode>=9?1u:2u)&&*same->spelling==aliasKey&&
-          f.check.fieldSlotArchive.size()==(mode>=9?2u:3u)&&f.check.fieldSlotAssociations.size()==(mode>=9?3u:4u)&&&f.check.objects.at(reference)!=&f.check.objects.at(aliasReference),"equal complete spelling reuses one symbol while retaining both distinct owned component pairs"))return false;
+          f.check.fieldSlotArchive.size()==(mode>=9?2u:3u)&&f.check.fieldSlotAssociations.size()==(mode>=9?3u:4u)&&&f.check.objects.at(ActualObjectId(reference))!=&f.check.objects.at(ActualObjectId(aliasReference)),"equal complete spelling reuses one symbol while retaining both distinct owned component pairs"))return false;
       if(mode==9){auto row=f.check.fieldSlotArchive.begin();if(!expect(row->first==firstKey&&&row->second==first&&++row!=f.check.fieldSlotArchive.end()&&row->first==aliasKey&&&row->second==alias&&++row==f.check.fieldSlotArchive.end(),"fresh two-row successor alias preserves the literal full sequence and endpoint nodes"))return false;}continue;
     }
     const bool before=mode==3||mode==5,limited=mode==4;const auto &id=before?small:middle;const auto key=reference+"/field/"+id;
@@ -209,31 +209,31 @@ bool cursorFactoryOwnership(){
   // Expected bytes/hashes are fixed independently, never obtained from factory.
   for(const auto &row:cases){Symbols f;std::string id;
     if(!expect(canonical(Array{row.frame,int64_t(row.position)})==row.bytes,"original owning-JSON bytes keep escaping, NUL, UTF8 and int64/binary64 semantics"))return false;
-    {std::string input=row.frame;id=f.check.receiverCursor(input,row.position);
+    {std::string input=row.frame;id=f.check.receiverCursor(input,row.position).text();
       if(!expect(f.error.message.empty()&&id==row.id&&input==row.frame,"cursor factory keeps pinned opaque identity without consuming its input frame"))return false;
       input.assign("overwritten after factory");
-      if(!expect(*f.check.receiverCursors.at(id).frame==row.frame,"metadata does not retain the caller's mutable frame storage"))return false;}
-    const auto *metadata=&f.check.receiverCursors.at(id);
+      if(!expect(*f.check.receiverCursors.at(ActualCursorId(id)).frame==row.frame,"metadata does not retain the caller's mutable frame storage"))return false;}
+    const auto *metadata=&f.check.receiverCursors.at(ActualCursorId(id));
     if(!expect(metadata->frame&&*metadata->frame==row.frame&&metadata->position==row.position&&f.check.receiverCursorIndex.size()==1,
         "mapped metadata owns the complete original frame after caller storage is destroyed"))return false;
     std::string copied=row.frame;const auto again=f.check.receiverCursor(copied,row.position);
     if(!expect(f.error.message.empty()&&again==row.id&&copied==row.frame&&f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&
-        &f.check.receiverCursors.at(id)==metadata,"repeated copied-frame hit leaves one current owned node and one index entry"))return false;
+        &f.check.receiverCursors.at(ActualCursorId(id))==metadata,"repeated copied-frame hit leaves one current owned node and one index entry"))return false;
     Symbols other;const auto independent=other.check.receiverCursor(row.frame,row.position);
-    if(!expect(other.error.message.empty()&&independent==row.id&&&other.check.receiverCursors.at(independent)!=metadata&&
-        *other.check.receiverCursors.at(independent).frame==row.frame,"same opaque cursor in two live owners has independently owned metadata"))return false;
+    if(!expect(other.error.message.empty()&&independent==row.id&&&other.check.receiverCursors.at(ActualCursorId(independent))!=metadata&&
+        *other.check.receiverCursors.at(ActualCursorId(independent)).frame==row.frame,"same opaque cursor in two live owners has independently owned metadata"))return false;
   }
   {Symbols f;const size_t exact=9007199254740992ULL,adjacent=9007199254740993ULL;
     const auto first=f.check.receiverCursor(normal,exact),alias=f.check.receiverCursor(normal,adjacent);
     if(!expect(f.error.message.empty()&&first=="initialization:sha256:015b309aa6aaee95fdb4bdb9ac232b4919d7c7d41e8a8517dbbf5f4f5c974114"&&alias==first&&
-        f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&f.check.receiverCursors.at(first).position==exact&&
-        *f.check.receiverCursors.at(first).frame==normal,"original JCS binary64 position aliases retain the first metadata and do not grow the index"))return false;}
+        f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&f.check.receiverCursors.at(ActualCursorId(first)).position==exact&&
+        *f.check.receiverCursors.at(ActualCursorId(first)).frame==normal,"original JCS binary64 position aliases retain the first metadata and do not grow the index"))return false;}
   {Symbols f;f.program.remaining=942;const auto failed=f.check.receiverCursor(normal,1);
     if(!expect(failed.empty()&&f.error.code=="core-ir-common-budget"&&f.check.receiverCursors.empty()&&f.check.receiverCursorIndex.empty(),
         "true first 968-unit frame gate still fails942 before publishing any cursor metadata"))return false;}
   {Symbols f;std::string input=normal;f.program.remaining=1200;const auto first=f.check.receiverCursor(input,0);
     if(!expect(f.error.message.empty()&&first=="initialization:sha256:c3e39d4cc946446d6344b7e048b6610996c54eefc3393cf3d6edb91c1935f6f6"&&input==normal&&
-        f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&*f.check.receiverCursors.at(first).frame==normal&&f.check.receiverCursors.at(first).position==0,
+        f.check.receiverCursors.size()==1&&f.check.receiverCursorIndex.size()==1&&*f.check.receiverCursors.at(ActualCursorId(first)).frame==normal&&f.check.receiverCursors.at(ActualCursorId(first)).position==0,
         "fresh first cursor miss fits1200 after one owned-frame move; old2003 duplicate-copy path cannot fit"))return false;}
   llvm::errs()<<"PASS cursor factory canonical/owned-input/alias/first-gate/copy-budget subcases\n";return true;
 }
@@ -261,10 +261,10 @@ bool birthCoveredStores(){
     ActualState state;const auto parent=f.check.createFrame(state.frames,context.activation,"parent","T","ctor:T","T",false);
     const auto frame=f.check.createFrame(state.frames,context.activation,"child","T","ctor:T","T",false,parent);
     if(!expect(!parent.empty()&&!frame.empty()&&f.error.message.empty(),"owned parent and selected frame established"))return false;
-    ActualValue receiver;receiver.tags={"T"};receiver.objects={reference};receiver.region.known=true;receiver.region.roots={"root:receiver"};
-    ActualValue oldValue;oldValue.tags={"T"};oldValue.objects={"old-data"};oldValue.truth=1;oldValue.number=9007199254740993LL;
+    ActualValue receiver;receiver.tags={"T"};receiver.objects={ActualObjectId(reference)};receiver.region.known=true;receiver.region.roots={"root:receiver"};
+    ActualValue oldValue;oldValue.tags={"T"};oldValue.objects={ActualObjectId("old-data")};oldValue.truth=1;oldValue.number=9007199254740993LL;
     oldValue.region.known=true;oldValue.region.roots={"root:old"};oldValue.region.number=37;
-    ActualValue incoming;incoming.tags={"T"};incoming.objects={"new-data"};incoming.truth=2;incoming.number=9007199254740994LL;
+    ActualValue incoming;incoming.tags={"T"};incoming.objects={ActualObjectId("new-data")};incoming.truth=2;incoming.number=9007199254740994LL;
     incoming.region.known=true;incoming.region.roots={"root:new"};incoming.region.number=41;if(mode==8)incoming=ActualValue{};
     for(const auto &id:{parent,frame}){auto &binding=state.frames.find(id)->second;binding.bound=receiver;binding.unbound=false;binding.initializing=true;}
     if(mode!=1){state.frames.find(frame)->second.births.emplace(token,ActualBirth{std::make_shared<const std::string>("wrong-selected-reference"),oldValue,true});
@@ -272,12 +272,12 @@ bool birthCoveredStores(){
     state.frames.find(parent)->second.births.emplace(other,ActualBirth{std::make_shared<const std::string>("unrelated-original-reference"),oldValue,true});
     if(!expect(f.check.defaultField(state.heap,*token,false)&&f.check.defaultField(state.heap,*other,false)&&f.error.message.empty(),"original default nodes registered"))return false;
     state.heap.insert_or_assign(key,oldValue);state.heap.insert_or_assign("second/field/G",oldValue);state.heap.emplace("global:untouched",heapPayload());
-    if(mode==2){f.check.objects.at(reference).weak=true;auto &full=state.heap.at(key);full.tags.clear();for(unsigned i=0;i<256;++i)full.tags.insert("old-tag:"+std::to_string(i));}
+    if(mode==2){f.check.objects.at(ActualObjectId(reference)).weak=true;auto &full=state.heap.at(key);full.tags.clear();for(unsigned i=0;i<256;++i)full.tags.insert("old-tag:"+std::to_string(i));}
     if(mode==5){auto clone=f.check.copyHeap(state.heap);if(!expect(f.error.message.empty(),"independent clone discards source index"))return false;state.heap=std::move(clone);}
     if(mode==6){f.check.regions.nodes.emplace("root:receiver",RegionNode{"region",reference,"T"});f.check.regions.nodes.emplace("root:new",RegionNode{"region","new-data","T"});
       state.regions["root:receiver"].emplace("/field/"+fieldId,oldValue.region);}
     const auto bound=receiver;if(mode==3)receiver.unknown=true;if(mode==4)receiver.callableTop=true;
-    ActualValue controls;controls.cursors={f.check.receiverCursor(frame,0)};if(!expect(f.error.message.empty(),"initial selected cursor established"))return false;
+    ActualValue controls;controls.cursors={ActualCursorId(f.check.receiverCursor(frame,0))};if(!expect(f.error.message.empty(),"initial selected cursor established"))return false;
     const auto input=state;const auto receiverBefore=receiver,incomingBefore=incoming,controlsBefore=controls;auto expected=state;
     Operation op;op.name=ordinary?"field_store":"initialize_field";op.properties=Object{{"field",fieldId}};bool changed=false,continues=true;ActualValue output;size_t edges=0;
     const auto edge=[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;};
@@ -287,7 +287,7 @@ bool birthCoveredStores(){
     if(mode==2||mode==10){if(!expect(!ok&&f.error.code==(mode==2?"core-ir-common-actual":"core-ir-common-budget")&&edges==0&&output.cursors.empty(),
         "weak257 merge or hard budget failure cannot publish a completed initializer or fallback"))return false;continue;}
     if(!expect(ok&&f.error.message.empty()&&edges==0&&continues,"real covered initializer or ordinary store completes"))return false;
-    ActualValue real=incoming;if(uncertain){real=oldValue;real.objects={"old-data","new-data"};real.truth=3;real.number.reset();real.region.roots={"root:old","root:new"};real.region.number.reset();}
+    ActualValue real=incoming;if(uncertain){real=oldValue;real.objects={ActualObjectId("old-data"),ActualObjectId("new-data")};real.truth=3;real.number.reset();real.region.roots={"root:old","root:new"};real.region.number.reset();}
     ActualValue selected=real;if(uncertain){selected.tags.insert(undefined);selected.region.empty=true;}
     if(mode!=1)for(const auto &id:{parent,frame}){expected.frames.find(id)->second.births.at(token).real=real;expected.frames.find(id)->second.births.at(token).pending=uncertain;}
     if(!ordinary)expected.frames.find(frame)->second.prefixMin=expected.frames.find(frame)->second.prefixMax=1;
@@ -306,11 +306,11 @@ bool birthCoveredStores(){
           "false-phase RegionStore still records the actual current relation before tail reconciliation"))return false;}
     else if(!expect(state.regions.empty(),"no relation plane is invented in other cases"))return false;
     if(ordinary){if(!expect(output.cursors.empty()&&state.frames.find(frame)->second.prefixMax==0&&sameHeapValue(state.heap.at(key),incoming),"ordinary matched-birth field_store still writes Heap immediately without initializer reconciliation"))return false;}
-    else if(!expect(output.cursors.size()==1&&*f.check.receiverCursors.at(*output.cursors.begin()).frame==frame&&f.check.receiverCursors.at(*output.cursors.begin()).position==1,
+    else if(!expect(output.cursors.size()==1&&*f.check.receiverCursors.at(ActualCursorId(*output.cursors.begin())).frame==frame&&f.check.receiverCursors.at(ActualCursorId(*output.cursors.begin())).position==1,
         "normal initializer advances its original selected frame to the next cursor"))return false;
     std::vector<std::string> ordered;for(const auto &[slot,value]:state.heap)ordered.push_back(slot);
     if(!expect(ordered==std::vector<std::string>{"global:untouched",key,"second/field/G"},"full canonical Heap lexicographic order is preserved"))return false;
-    state.heap.at(key).objects.insert("output-only");state.frames.find(parent)->second.births.clear();
+    state.heap.at(key).objects.emplace("output-only");state.frames.find(parent)->second.births.clear();
     if(!expect(sameHeapValue(input.heap.at(key),oldValue)&&input.frames.find(parent)->second.births.size()==(mode==1?1:2)&&sameHeapValue(incoming,incomingBefore),
         "successful mutable outputs do not alias the independent input snapshot or SSA payload"))return false;
   }
@@ -392,19 +392,19 @@ bool sharedCursorFrames(){
   };
   for(const auto &row:rows){Symbols f;std::string input=row.frame;const auto zero=f.check.receiverCursor(input,0);
     if(!expect(f.error.message.empty()&&zero==row.ids[0]&&input==row.frame,"first factory creates the pinned complete frame identity without consuming input"))return false;
-    const auto *first=&f.check.receiverCursors.at(zero);const auto owner=first->frame;input.assign("mutated outside the factory");
+    const auto *first=&f.check.receiverCursors.at(ActualCursorId(zero));const auto owner=first->frame;input.assign("mutated outside the factory");
     if(!expect(owner&&*owner==row.frame,"SSO and long frame bytes are owned independently from mutable caller storage"))return false;
     f.program.remaining=200;const auto one=f.check.receiverCursor(*first,1);
-    if(!expect(f.error.message.empty()&&one==row.ids[1]&&f.check.receiverCursors.at(one).frame==owner&&*owner==row.frame,
+    if(!expect(f.error.message.empty()&&one==row.ids[1]&&f.check.receiverCursors.at(ActualCursorId(one)).frame==owner&&*owner==row.frame,
         "first unwarmed next-position factory reuses its real predecessor owner within200"))return false;
-    f.program.remaining=200;const auto two=f.check.receiverCursor(f.check.receiverCursors.at(one),2);
-    if(!expect(f.error.message.empty()&&two==row.ids[2]&&f.check.receiverCursors.at(two).frame==owner&&f.check.receiverCursors.size()==3&&f.check.receiverCursorIndex.size()==3,
+    f.program.remaining=200;const auto two=f.check.receiverCursor(f.check.receiverCursors.at(ActualCursorId(one)),2);
+    if(!expect(f.error.message.empty()&&two==row.ids[2]&&f.check.receiverCursors.at(ActualCursorId(two)).frame==owner&&f.check.receiverCursors.size()==3&&f.check.receiverCursorIndex.size()==3,
         "0-to-1-to-2 cursors share exactly one immutable string and keep all canonical positions"))return false;
     f.program.remaining=2000;const auto alias=f.check.receiverCursor(std::string(row.frame),0);
-    if(!expect(f.error.message.empty()&&alias==zero&&&f.check.receiverCursors.at(alias)==first&&first->frame==owner&&f.check.receiverCursors.size()==3&&f.check.receiverCursorIndex.size()==3,
+    if(!expect(f.error.message.empty()&&alias==zero&&&f.check.receiverCursors.at(ActualCursorId(alias))==first&&first->frame==owner&&f.check.receiverCursors.size()==3&&f.check.receiverCursorIndex.size()==3,
         "same canonical bare-input hit cannot rebind an existing row to its new temporary owner"))return false;
     Symbols other;const auto independent=other.check.receiverCursor(row.frame,0);
-    if(!expect(other.error.message.empty()&&independent==zero&&other.check.receiverCursors.at(independent).frame!=owner&&*other.check.receiverCursors.at(independent).frame==row.frame,
+    if(!expect(other.error.message.empty()&&independent==zero&&other.check.receiverCursors.at(ActualCursorId(independent)).frame!=owner&&*other.check.receiverCursors.at(ActualCursorId(independent)).frame==row.frame,
         "two live independent checkers own separate complete same-text frame strings"))return false;
   }
   {Symbols limited;limited.program.remaining=200;const auto absent=limited.check.receiverCursor(normal,0);
@@ -412,7 +412,7 @@ bool sharedCursorFrames(){
         "first bare80 frame has no unearned shared owner and fails200 before publishing metadata"))return false;}
   for(const bool reset:{false,true}){auto prior=std::make_unique<Symbols>();const auto id=prior->check.receiverCursor(normal,0);
     if(!expect(prior->error.message.empty()&&!id.empty(),"real cursor metadata established before the lifetime boundary"))return false;
-    ActualCursorInfo snapshot=prior->check.receiverCursors.at(id);std::weak_ptr<const std::string> lifetime=snapshot.frame;
+    ActualCursorInfo snapshot=prior->check.receiverCursors.at(ActualCursorId(id));std::weak_ptr<const std::string> lifetime=snapshot.frame;
     if(reset){if(!expect(prior->check.solve(false)&&prior->error.message.empty()&&prior->check.receiverCursors.empty()&&prior->check.receiverCursorIndex.empty(),
           "real solve clears derived cursor references before metadata owners"))return false;}else prior.reset();
     if(!expect(!lifetime.expired()&&snapshot.frame&&*snapshot.frame==normal&&snapshot.position==0,
@@ -464,12 +464,12 @@ bool ownedSlots(){
   if(!expect(first==again&&field&&object&&first!=field&&first!=object&&field!=object,"same pair reuses and distinct full spellings remain distinct"))return false;
   const auto alias=f.get("object","F/field/G"),aliasPair=f.get("object/field/F","G");
   if(!expect(alias&&alias==aliasPair&&*alias->spelling=="object/field/F/field/G"&&f.check.fieldSlotArchive.size()==4,"two owned component pairs with identical canonical spelling use one symbol"))return false;
-  f.check.objects.at("object").weak=true;
+  f.check.objects.at(ActualObjectId("object")).weak=true;
   if(!expect(f.get("object","F")==first&&*first->spelling=="object/field/F","mutable execution weakness does not alter directory symbol identity"))return false;
   Symbols other;const auto foreign=other.get("object","F");ActualFieldSlotLess less;
   if(!expect(foreign&&foreign->ordinal==first->ordinal&&foreign->owner!=first->owner&&foreign!=first&&less(first,foreign)!=less(foreign,first),"equal ordinals/spellings in live different owners are never the same symbol"))return false;
-  ActualValue oldValue;oldValue.tags.insert("T");oldValue.objects.insert("old-data");
-  ActualValue replacement;replacement.tags.insert("T");replacement.objects.insert("new-data");replacement.number=9007199254740993LL;
+  ActualValue oldValue;oldValue.tags.insert("T");oldValue.objects.emplace("old-data");
+  ActualValue replacement;replacement.tags.insert("T");replacement.objects.emplace("new-data");replacement.number=9007199254740993LL;
   ActualFrameWorld world;world[ActualFrameId("frame")].births.emplace(alias,ActualBirth{std::make_shared<const std::string>("original-reference"),oldValue,true});
   world[ActualFrameId("ancestor")].births.emplace(aliasPair,ActualBirth{std::make_shared<const std::string>("ancestor-reference"),oldValue,true});
   world.find("frame")->second.births.emplace(first,ActualBirth{std::make_shared<const std::string>("unrelated-reference"),oldValue,true});

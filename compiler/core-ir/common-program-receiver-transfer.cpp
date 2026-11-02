@@ -41,8 +41,10 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       const bool weak=binding->second.weak;auto old=objects.find(ref);
       if(old!=objects.end()&&!old->second.weak&&weak)weakChanged=true;
       const bool repeated=weak||(old!=objects.end()&&old->second.weak);
-      if(!step())return false;const auto object=objects.insert_or_assign(ref,ActualObject{info.newTarget,repeated}).first;
-      ActualValue allocated;allocated.tags.insert(info.newTarget);allocated.objects.insert(ref);
+      if(!step())return false;auto object=old;
+      if(object==objects.end()){if(!step(ref.size()/64+1))return false;object=admitObject(object,std::string(ref),ActualObject{info.newTarget,repeated});}
+      else object->second={info.newTarget,repeated};if(!e.message.empty()||!step(4))return false;
+      ActualValue allocated;allocated.tags.insert(info.newTarget);allocated.objects.insert(object->first);
       if(!conditional)allocated.region=regionAllocate(*this,context,ref,info.newTarget,state.regions);
       // Snapshot real historical data before adding this birth's defaults.
       const auto members=allFields(info.newTarget);if(!step(members.size()+1))return false;std::vector<const ActualFieldSlot *> fieldSlots;fieldSlots.reserve(members.size());
@@ -118,7 +120,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       v.initializing=true;if(v.weak)v.prefixMin=0;else {v.aborted=false;v.prefixMin=v.prefixMax=0;}
       // The full-byte World lookup established this key; retain immutable text, never a borrowed World node or its permissions.
       if(!step(4))return false;const ActualCursorInfo first{(*found)->first.owner(),0};
-      const auto cursor=receiverCursor(first,0);if(!e.message.empty())return false;value.cursors.insert(cursor);}
+      auto cursor=receiverCursor(first,0);if(!e.message.empty()||!step(3))return false;value.cursors.insert(std::move(cursor));}
   }else if(name=="initialize_field"){
     const auto query=field(props,"field").getAsString().value_or(llvm::StringRef{});
     const auto count=fields.size();size_t height=0;
@@ -139,7 +141,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     for(const auto &ref:args[1].objects){
       const auto existing=existingFieldSlot(ref,member);if(!e.message.empty())return false;
       auto selected=objects.end();const auto *object=existing.object;
-      if(!object){if(!receiverText(ref))return false;selected=objects.find(ref);
+      if(!object){if(!receiverText(ref.text()))return false;selected=objects.find(ref);
         if(!need(selected!=objects.end(),"initializer selected receiver object missing"))return false;object=&selected->second;}
       bool direct=false;for(const auto *f:allFields(object->type)){if(!step())return false;direct|=string(field(*f,"id"))==fieldId;}
       // Keep logical contribution and prefix data without inventing a physical
@@ -170,7 +172,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       const auto &info=frame->second;auto &v=binding->second;
       if(!need(v.initializing&&current->position<info.fields.size()&&info.fields[current->position]==fieldId,"initializer did not advance its ordered field prefix"))return false;
       const auto next=current->position+1;if(v.weak)v.prefixMax=std::max(v.prefixMax,next);else v.prefixMin=v.prefixMax=next;
-      const auto cursor=receiverCursor(*current,next);if(!e.message.empty())return false;value.cursors.insert(cursor);}
+      auto cursor=receiverCursor(*current,next);if(!e.message.empty()||!step(3))return false;value.cursors.insert(std::move(cursor));}
   }else if(name=="initialize_end"){
     if(!step(args[0].cursors.size()))return false;
     for(const auto &id:args[0].cursors){const auto *current=cursorMetadata(id);

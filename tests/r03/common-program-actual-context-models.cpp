@@ -30,7 +30,7 @@ struct Fixture {
     birthSlot=check.fieldSlot(check.objects.find("object:B"),check.fields.find("F"));
     otherSlot=check.fieldSlot(check.objects.find("object:B"),check.fields.find("other"));
     ActualValue arg;arg.frames.insert("frame");input.args.push_back(arg);
-    ActualFrameBinding binding;binding.unbound=false;binding.bound.tags.insert("B");binding.bound.objects.insert("object:B");
+    ActualFrameBinding binding;binding.unbound=false;binding.bound.tags.insert("B");binding.bound.objects.emplace("object:B");
     binding.bound.region.known=true;binding.bound.region.roots.insert("origin");
     ActualBirth birth;birth.reference=std::make_shared<const std::string>("object:B");birth.real.tags.insert("i32");binding.births.emplace(birthSlot,birth);
     input.frames.emplace("frame",binding);
@@ -96,7 +96,7 @@ bool birthReferenceOwnership(){
   {Fixture f;const std::string text(165,'p');const auto slots=birthFixture(f,text);
     f.check.receiverFrames.find("frame")->second.parent="parent";f.check.receiverFrames.emplace("parent",ActualFrameInfo{"B","ctor:B","B","",false,{"F","other"}});
     auto &child=f.input.frames.find("frame")->second;child.unbound=false;child.weak=true;child.pending=true;child.initializing=true;child.aborted=true;child.prefixMin=2;child.prefixMax=4;
-    f.input.frames.emplace("parent",child);ActualValue real;real.tags={"T"};real.objects={"data"};real.cells={"cell"};real.frames={"control"};real.cursors={"cursor"};real.callables={{"code","env"}};
+    f.input.frames.emplace("parent",child);ActualValue real;real.tags={"T"};real.objects={ActualObjectId("data")};real.cells={"cell"};real.frames={"control"};real.cursors={ActualCursorId("cursor")};real.callables={{"code","env"}};
     real.truth=3;real.unknown=true;real.callableTop=true;real.number=9007199254740993LL;real.region.known=true;real.region.opaque=true;real.region.empty=true;real.region.number=9007199254740995LL;real.region.roots={"region"};
     f.input.heap.emplace(text+"/field/F",real);f.input.heap.emplace(text+"/field/other",real);std::string owned=text;
     if(!expect(f.check.receiverBirth(f.input.frames,"frame",std::move(owned),{slots.first,slots.second},f.input.heap,true)&&f.error.message.empty(),"multi-ancestor repeated birth takes its entire pre-default real snapshot"))return false;
@@ -107,7 +107,7 @@ bool birthReferenceOwnership(){
         child.births.at(slots.first).referenceText()==text&&child.births.at(slots.first).reference==parent.births.at(slots.second).reference&&
         !child.unbound&&child.weak&&child.pending&&child.initializing&&child.aborted&&child.prefixMin==2&&child.prefixMax==4,
         "full flags/exact numbers/all Value and Region facets accompany the immutable reference through ancestors"))return false;
-    child.births.at(slots.first).real.objects.insert("child-only");child.births.at(slots.first).pending=false;copied.at(f.input.frames.find("parent")->first).births.at(slots.second).real.region.roots.insert("copy-only");f.input.heap.clear();
+    child.births.at(slots.first).real.objects.emplace("child-only");child.births.at(slots.first).pending=false;copied.at(f.input.frames.find("parent")->first).births.at(slots.second).real.region.roots.insert("copy-only");f.input.heap.clear();
     if(!expect(fullSame(parent.births.at(slots.first).real,real)&&parent.births.at(slots.first).pending&&
         fullSame(copied.at(f.input.frames.find("frame")->first).births.at(slots.first).real,real)&&copied.at(f.input.frames.find("frame")->first).births.at(slots.first).pending&&
         !parent.births.at(slots.second).real.region.roots.count("copy-only"),"only immutable reference bytes share; real payload/history/pending and copied Worlds mutate independently"))return false;
@@ -135,7 +135,7 @@ bool calledSeedOwnership(){
     entry->normalFrames.find(frame)->second.bound.region.roots.insert("output-mutation");f.input.frames.find(frame)->second.bound.region.roots.insert("input-mutation");
     const auto &seed=entry->identity->frames.find(frame)->second;const auto &normal=entry->normalFrames.find(frame)->second;
     if(!expect(!seed.unbound&&!seed.weak&&!seed.pending&&!seed.initializing&&!seed.aborted&&seed.prefixMin==0&&seed.prefixMax==0&&
-        seed.bound.tags==std::set<std::string>{"B"}&&seed.bound.objects==std::set<std::string>{"object:B"}&&seed.bound.region.roots==std::set<std::string>{"origin"}&&
+        seed.bound.tags==std::set<std::string>{"B"}&&seed.bound.objects==ActualObjectSet{ActualObjectId("object:B")}&&seed.bound.region.roots==std::set<std::string>{"origin"}&&
         seed.births.size()==1&&seed.births.at(f.birthSlot).referenceText()=="object:B"&&seed.births.at(f.birthSlot).pending&&
         seed.births.at(f.birthSlot).real.tags==std::set<std::string>{"i32"}&&!normal.bound.region.roots.count("input-mutation")&&
         !f.input.frames.find(frame)->second.bound.region.roots.count("output-mutation"),"execution/output/caller mutations retain full independent seed flags, payload, region and birth history"))return false;
@@ -155,7 +155,7 @@ bool defaultPrefixDirectory(){
     f.check.builtins.emplace("prefix-field",Object{{"id",fieldId},{"sourceBinding","prefix-binding"},{"type","B"}});f.check.fields.emplace(fieldId,&f.check.builtins.at("prefix-field"));
     const auto object=f.check.objects.emplace(reference,ActualObject{"B",false}).first;const auto token=f.check.fieldSlot(object,f.check.fields.find(fieldId));
     if(!expect(token&&token->owner==&f.check&&reference.size()==165&&fieldId.size()==71&&key.size()==243&&*token->spelling==key&&f.error.message.empty(),"default prefix fixture owns its complete symbols before the first Heap query"))return false;
-    ActualValue payload;payload.tags={"T"};payload.objects={"object"};payload.cells={"cell"};payload.frames={"control"};payload.cursors={"cursor"};payload.callables={{"code","env"}};
+    ActualValue payload;payload.tags={"T"};payload.objects={ActualObjectId("object")};payload.cells={"cell"};payload.frames={"control"};payload.cursors={ActualCursorId("cursor")};payload.callables={{"code","env"}};
     payload.truth=3;payload.unknown=payload.callableTop=true;payload.number=9007199254740993LL;payload.region.known=payload.region.opaque=payload.region.empty=true;payload.region.roots={"root"};payload.region.number=9007199254740995LL;
     ActualHeap heap;for(const auto &stored:originalKeys)heap.emplace(stored,payload);const auto associations=f.check.fieldSlotAssociations.size(),archive=f.check.fieldSlotArchive.size();
     if(budget==100000)heap.emplace(key,payload);const auto world=f.input.frames;
@@ -167,7 +167,7 @@ bool defaultPrefixDirectory(){
       if(!expect(accepted&&f.error.message.empty()&&heap.size()==8&&same(heap.at(key),missing)&&f.check.fieldSlotAssociations.size()==associations&&f.check.fieldSlotArchive.size()==archive,"fresh243-byte default fits fixed745 and2000 for both modes, retaining only literal undefined and no permission payload"))return false;
       auto expected=originalKeys;expected.insert(expected.begin()+2,key);auto row=heap.begin();for(const auto &stored:expected){if(!expect(row!=heap.end()&&row->first==stored&&same(row->second,stored==key?missing:payload),"interior empty-bucket insertion retains every literal key, full payload and lexical order"))return false;++row;}
       if(!expect(row==heap.end()&&&heap.find(key)->first!=token->spelling.get(),"Heap key independently owns full bytes instead of borrowing slot storage"))return false;
-      heap.at(key).objects={"mutated"};if(!expect(*token->spelling==key&&same(heap.at(originalKeys[0]),payload),"mutable default payload cannot alter immutable identity or another node"))return false;
+      heap.at(key).objects={ActualObjectId("mutated")};if(!expect(*token->spelling==key&&same(heap.at(originalKeys[0]),payload),"mutable default payload cannot alter immutable identity or another node"))return false;
     }
     for(const auto &stored:originalKeys)if(!expect(same(heap.at(stored),payload),"all pre-existing payload planes survive success or hard cutoff"))return false;
     if(!expect(f.input.frames.size()==world.size(),"default data creation does not add or remove a World frame"))return false;
@@ -193,7 +193,7 @@ bool defaultSingletonDirectory(){
     auto owned=f.check.builtins.emplace("singleton:"+id,Object{{"id",id},{"sourceBinding","singleton-binding:"+id},{"type","B"}}).first;
     f.check.fields.emplace(id,&owned->second);auto object=f.check.objects.emplace(reference,ActualObject{"B",false}).first;
     return f.check.fieldSlot(object,f.check.fields.find(id));};
-  ActualValue payload;payload.tags={"T"};payload.objects={"object"};payload.cells={"cell"};payload.frames={"control"};payload.cursors={"cursor"};payload.callables={{"code","env"}};
+  ActualValue payload;payload.tags={"T"};payload.objects={ActualObjectId("object")};payload.cells={"cell"};payload.frames={"control"};payload.cursors={ActualCursorId("cursor")};payload.callables={{"code","env"}};
   payload.truth=3;payload.unknown=payload.callableTop=true;payload.number=9007199254740993LL;payload.region.known=payload.region.opaque=payload.region.empty=true;payload.region.roots={"root"};payload.region.number=9007199254740995LL;
   ActualValue missing;missing.tags={"sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b"};
   const std::string reference="construction/receiver:sha256:"+std::string(64,'a')+"/sha256:"+std::string(64,'b'),leftId="sha256:"+std::string(64,'c'),rightId="sha256:"+std::string(64,'d');
@@ -344,21 +344,21 @@ bool completionSingletonInstruction(){
   const auto sameMap=[](const auto &a,const auto &b,const auto &equal){if(a.size()!=b.size())return false;auto x=a.begin(),y=b.begin();for(;x!=a.end();++x,++y)if(x->first!=y->first||!equal(x->second,y->second))return false;return true;};
   const auto sameFrame=[&](const ActualFrameBinding &a,const ActualFrameBinding &b){return std::tie(a.unbound,a.weak,a.pending,a.initializing,a.aborted,a.prefixMin,a.prefixMax)==std::tie(b.unbound,b.weak,b.pending,b.initializing,b.aborted,b.prefixMin,b.prefixMax)&&sameValue(a.bound,b.bound)&&sameMap(a.births,b.births,[&](const ActualBirth &x,const ActualBirth &y){return x.referenceText()==y.referenceText()&&x.pending==y.pending&&sameValue(x.real,y.real);});};
   const auto sameState=[&](const ActualState &a,const ActualState &b){return sameMap(a.values,b.values,sameValue)&&sameMap(a.heap,b.heap,sameValue)&&sameMap(a.frames,b.frames,sameFrame)&&sameMap(a.regions,b.regions,[&](const auto &x,const auto &y){return sameMap(x,y,sameRegion);});};
-  ActualValue rich;rich.tags={"T"};rich.objects={"object"};rich.cells={"cell"};rich.frames={"control"};rich.cursors={"cursor"};rich.callables={{"code","env"}};
+  ActualValue rich;rich.tags={"T"};rich.objects={ActualObjectId("object")};rich.cells={"cell"};rich.frames={"control"};rich.cursors={ActualCursorId("cursor")};rich.callables={{"code","env"}};
   rich.truth=3;rich.unknown=rich.callableTop=true;rich.number=9007199254740993LL;rich.region.known=rich.region.opaque=rich.region.empty=true;rich.region.roots={"root"};rich.region.number=9007199254740995LL;
   // Independent construction of the measured shape, not a reconstruction of unrecorded actual facets.
   // No lookup is warmed before the tested full instruction; its budget is assigned once after setup.
   for(const unsigned mode:{0u,1u,2u,3u}){Fixture f;const bool weak=mode>=2,multiple=mode==3;
     const std::string id="receiver:sha256:"+std::string(64,'a'),other="receiver:sha256:"+std::string(64,'b'),type="sha256:"+std::string(64,'c'),reference="construction/"+id+"/"+type;
     const auto slots=birthFixture(f,reference);if(!expect(slots.first&&slots.second&&f.error.message.empty(),"instruction fixture has two real owned birth symbols before testing"))return false;
-    f.check.types.emplace(type,&f.check.builtins.at("B"));f.check.objects.at(reference).type=type;
+    f.check.types.emplace(type,&f.check.builtins.at("B"));f.check.objects.at(ActualObjectId(reference)).type=type;
     auto metadata=f.check.receiverFrames.extract(f.check.receiverFrames.find("frame"));metadata.key()=ActualFrameId(id);metadata.mapped().newTarget=type;f.check.receiverFrames.insert(std::move(metadata));
     if(mode<2||multiple)f.check.receiverFrames.emplace(other,f.check.receiverFrames.find(id)->second);
     auto world=f.input.frames.extract(f.input.frames.find("frame"));world.key()=ActualFrameId(id);auto &binding=world.mapped();binding.unbound=true;binding.weak=weak;binding.pending=binding.initializing=binding.aborted=true;binding.prefixMin=1;binding.prefixMax=2;
     if(weak)binding.bound=rich;
     for(const auto slot:{slots.first,slots.second}){ActualBirth birth;birth.reference=std::make_shared<const std::string>(reference);birth.pending=slot==slots.first;birth.real=rich;binding.births.emplace(slot,std::move(birth));}
     f.input.frames.insert(std::move(world));if(multiple){auto row=f.input.frames.find(id)->second;row.unbound=false;row.weak=false;f.input.frames.emplace(other,std::move(row));}
-    ActualState state;state.frames=f.input.frames;ActualValue control,returned;control.frames={id};returned.tags={type};returned.objects={reference};
+    ActualState state;state.frames=f.input.frames;ActualValue control,returned;control.frames={id};returned.tags={type};returned.objects={ActualObjectId(reference)};
     state.values.emplace(0,control);for(uint16_t reg=1;reg<7;++reg){auto value=rich;if(weak)value.cursors.clear();state.values.emplace(reg,std::move(value));}state.values.emplace(7,returned);
     for(unsigned i=0;i<9;++i)state.heap.emplace("heap/"+std::to_string(i),rich);
     state.regions["owned-region"].emplace("slot",rich.region);state.regions.emplace("empty-region",std::map<std::string,RegionValue>{});
@@ -367,7 +367,7 @@ bool completionSingletonInstruction(){
     const auto edge=[&](uint16_t target,ActualState next,const std::vector<ActualValue> &values){
       auto expected=input;auto &row=expected.frames.find(id)->second;
       if(target==1){++normals;if(!expect(values.size()==1&&sameValue(values[0],returned),"normal instruction edge owns the complete selected object"))return false;
-        if(weak){row.bound.tags.insert(type);row.bound.objects.insert(reference);row.bound.number.reset();row.bound.region.number.reset();row.prefixMin=0;}
+        if(weak){row.bound.tags.insert(type);row.bound.objects.emplace(reference);row.bound.number.reset();row.bound.region.number.reset();row.prefixMin=0;}
         else {row.bound=returned;row.unbound=row.pending=row.initializing=row.aborted=false;row.prefixMin=row.prefixMax=0;}
       }else if(target==2){++languages;ActualValue thrown;thrown.unknown=true;if(!expect(weak&&values.size()==1&&sameValue(values[0],thrown),"weak duplicate bind emits only its original language uncertainty"))return false;}
       else return expect(false,"bind emits only its two declared completion targets");
@@ -381,7 +381,7 @@ bool completionSingletonInstruction(){
     if(mode==1){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&normals==0&&languages==0,"fixed64 remains a hard full-instruction failure without an emitted edge"))return false;continue;}
     if(!expect(ok&&f.error.message.empty()&&!continues&&normals==1&&languages==size_t(weak)&&!changed,"full receiver_bind through normal edgeState fits1751 or retains high-budget weak and fallback semantics"))return false;
     if(!expect(sameMap(state.values,input.values,sameValue)&&f.check.receiverFrames.size()==(mode<2||multiple?2:1),"completion never consumes source SSA operands or creates Frame metadata"))return false;
-    const auto languageBefore=language;normal.values.at(1).objects.insert("normal-only");normal.heap.clear();normal.regions.clear();normal.frames.find(id)->second.births.clear();
+    const auto languageBefore=language;normal.values.at(1).objects.emplace("normal-only");normal.heap.clear();normal.regions.clear();normal.frames.find(id)->second.births.clear();
     if(!expect(sameState(language,languageBefore)&&sameMap(state.values,input.values,sameValue)&&sameMap(f.input.frames,input.frames,sameFrame),"normal edge owns independent stores and cannot alter language or caller World/SSA payloads"))return false;
   }
   const std::vector<std::pair<std::string,std::string>> queries={{"",""},{"frame","frame"},{std::string("frame\0a",7),std::string("frame\0a",7)},
@@ -411,16 +411,16 @@ bool frameOwnerBeginInstruction(){
     auto frame=f.input.frames.find(id);auto metadata=f.check.receiverFrames.find(id);
     if(!expect(frame!=f.input.frames.end()&&metadata!=f.check.receiverFrames.end()&&frame->first.owner()==metadata->first.owner(),"global and World primary keys share one immutable owner"))return false;
     ActualFrameWorld unrelated;const auto other=f.check.createFrame(unrelated,"frame-owner-causal","other-frame","B","ctor:B",type,false);
-    const auto prior=f.check.receiverCursor(other,0);const auto *previous=f.check.cursorMetadata(prior);if(!previous)return false;
+    const auto prior=f.check.receiverCursor(other,0);const auto *previous=f.check.cursorMetadata(ActualCursorId(prior));if(!previous)return false;
     f.check.receiverCursor(*previous,1);f.check.receiverCursor(*previous,2);
     if(!expect(f.error.message.empty()&&f.check.receiverCursors.size()==3&&f.check.receiverCursorIndex.size()==3,"only another Frame's three cursors exist before the cold tested Frame"))return false;
     const std::string reference="construction/"+id+"/"+type;f.check.objects.emplace(reference,ActualObject{type,false});
     const auto object=f.check.objects.find(reference);const auto first=f.check.fieldSlot(object,f.check.fields.find("F")),second=f.check.fieldSlot(object,f.check.fields.find("other"));if(!first||!second)return false;
-    ActualValue bound;bound.tags={type};bound.objects={reference};bound.truth=3;bound.number=9007199254740993LL;bound.region.known=true;bound.region.roots={"bound-root"};bound.region.number=9007199254740995LL;
+    ActualValue bound;bound.tags={type};bound.objects={ActualObjectId(reference)};bound.truth=3;bound.number=9007199254740993LL;bound.region.known=true;bound.region.roots={"bound-root"};bound.region.number=9007199254740995LL;
     auto &binding=frame->second;binding.unbound=false;binding.bound=bound;binding.pending=true;binding.aborted=true;binding.prefixMin=1;binding.prefixMax=2;
     for(const auto slot:{first,second})binding.births.emplace(slot,ActualBirth{std::make_shared<const std::string>(reference),bound,slot==first});
     ActualState state;state.frames=f.input.frames;ActualValue control;control.frames={id};state.values.emplace(0,control);state.values.emplace(8,bound);
-    for(uint16_t reg=1;reg<8;++reg){auto full=bound;full.cells={"cell"};full.frames={id};full.cursors={prior};full.callables={{"code","env"}};full.unknown=full.callableTop=true;state.values.emplace(reg,std::move(full));}
+    for(uint16_t reg=1;reg<8;++reg){auto full=bound;full.cells={"cell"};full.frames={id};full.cursors={ActualCursorId(prior)};full.callables={{"code","env"}};full.unknown=full.callableTop=true;state.values.emplace(reg,std::move(full));}
     state.heap.emplace("retained-data",bound);state.regions["bound-root"].emplace("field",bound.region);const auto input=state;
     ActualContext context;context.function=&f.function;context.root=false;context.repeated=false;context.activation="same-physical-call";
     Operation op;op.name="initialize_begin";op.operands={0,8};op.result=10;bool changed=false,continues=true;size_t edges=0;
@@ -428,9 +428,9 @@ bool frameOwnerBeginInstruction(){
     const bool ok=f.check.instruction(context,op,0,state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
     if(mode==1){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&edges==0&&state.values.count(10)==0&&f.check.receiverCursors.size()==3,"64 remains a hard error before cursor/result publication"))return false;continue;}
     if(!expect(ok&&f.error.message.empty()&&continues&&!changed&&edges==0&&state.values.size()==10,"complete cold begin instruction fits424, remains nonterminating and records its actual result"))return false;
-    ActualValue expected;expected.cursors={"initialization:sha256:05d4a2b42e4b9d74dcfb23412a1b181cdf8f31c7794df33e9c607d703fb1c910"};
+    ActualValue expected;expected.cursors={ActualCursorId("initialization:sha256:05d4a2b42e4b9d74dcfb23412a1b181cdf8f31c7794df33e9c607d703fb1c910")};
     if(!expect(same(state.values.at(10),expected)&&f.check.registerCapacity.size()==1&&f.check.registerCapacity.at(f.function.id+"/10").tags.empty(),"v10 contains only the independently pinned canonical cursor and real conditional capacity is recorded"))return false;
-    const auto &row=f.check.receiverCursors.at(*expected.cursors.begin());
+    const auto &row=f.check.receiverCursors.at(ActualCursorId(*expected.cursors.begin()));
     if(!expect(row.frame==frame->first.owner()&&row.position==0&&*row.frame==id&&f.check.receiverCursors.size()==4,"cold cursor retains the full primary Frame owner without borrowing a map node or allocating another Frame text"))return false;
     for(const auto &[reg,value]:input.values)if(!expect(same(state.values.at(reg),value),"begin leaves every original SSA facet unchanged"))return false;
     const auto &after=state.frames.find(id)->second;

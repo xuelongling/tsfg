@@ -159,7 +159,7 @@ struct Model {
     if(!c.callGraph()||!c.solve(false)){llvm::errs()<<mode<<": setup "<<e.code<<" "<<e.message<<"\n";return false;}
     if(mode=="recursive"&&(!c.cyclicFunctions.count("make")||c.contexts.size()>16))return false;
     bool weak=false;for(const auto &[ref,obj]:c.objects)if(obj.weak)weak=true;if(!weak)return false;
-    if(closed)for(const auto &[id,node]:c.regions.nodes)if(!c.objects.at(node.reference).weak)return false;
+    if(closed)for(const auto &[id,node]:c.regions.nodes)if(!c.objects.at(ActualObjectId(node.reference)).weak)return false;
     if(mode=="field-full-global"||mode=="array-full-global"){
       bool erased=false;for(const auto &[id,ctx]:c.contexts)if(ctx.function->id=="reader"&&ctx.called&&!ctx.arguments.empty())erased|=ctx.arguments[0].region.roots.empty()&&ctx.arguments[0].region.opaque;
       if(!erased)return false;for(const auto &[id,scope]:c.regions.scopes)if(scope.hard)return false;
@@ -220,7 +220,7 @@ bool unclosed(){
   Model m;auto caller=m.function("caller"),callee=m.function("recur");caller.blocks={{{},{op("invoke",noRegister,"",{0},Object{{"function_id","recur"}},{1,2})}},{{1},{op("func.return")}},{{2},{op("unreachable")}}};callee.blocks={{{0},{op("func.return",noRegister,"",{0})}}};
   m.p.functions={std::move(caller),std::move(callee)};m.source("caller");m.source("recur");for(const auto &fn:m.p.functions){m.c.functions.emplace(fn.id,&fn);m.c.sourceFunctions.emplace(fn.id,&m.sources.at(fn.id));m.p.fixedEffects[fn.id].parameters.resize(fn.id=="recur"?1:0);}
   m.c.cyclicFunctions.insert("recur");m.c.regions.scopes.emplace("R",RegionScope{"caller","entry/caller",false});m.c.regions.acyclic.insert("caller");ActualContext context;context.function=&m.p.functions[0];context.activation="entry/caller";context.region="R";ActualState state;
-  auto relation=regionAllocate(m.c,context,"A",m.a,state.regions);ActualValue arg;arg.tags.insert(m.a);arg.objects.insert("A");arg.region=relation;m.c.objects.emplace("A",ActualObject{m.a,true});state.values.emplace(0,arg);
+  auto relation=regionAllocate(m.c,context,"A",m.a,state.regions);ActualValue arg;arg.tags.insert(m.a);arg.objects.emplace("A");arg.region=relation;m.c.objects.emplace("A",ActualObject{m.a,true});state.values.emplace(0,arg);
   bool changed=false,continues=true;const auto edge=[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return true;};
   if(!m.c.instruction(context,m.p.functions[0].blocks[0].operations[0],0,state,false,changed,edge,continues)||m.c.contexts.size()!=1)return false;
   const auto &child=m.c.contexts.begin()->second;
@@ -252,7 +252,7 @@ bool irreducible(){
   return m.c.repeatingBlocks.count("irreducible/1")&&m.c.repeatingBlocks.count("irreducible/2")&&!m.c.regions.acyclic.count("irreducible")&&m.c.regions.cuts.at("irreducible").empty();
 }
 bool untracked(){
-  Model m;ActualValue to;to.tags.insert(m.a);to.objects.insert("A");const auto old=to;
+  Model m;ActualValue to;to.tags.insert(m.a);to.objects.emplace("A");const auto old=to;
   if(m.c.merge(to,old)||to.region.known||!m.c.regions.nodes.empty())return false;
   to.region.known=true;to.region.roots.insert("current/A");m.c.merge(to,old);
   return m.e.message.empty()&&to.region.opaque&&to.region.roots.count("current/A")&&to.objects==old.objects;
@@ -264,9 +264,9 @@ bool declaredWeakPromotion(){
   for(const auto &[id,t]:m.types)m.c.types.emplace(id,&t);auto fn=m.function("0");ActualContext context;
   context.function=&fn;context.activation="entry/0";context.repeated=false;
   const auto ref=m.c.allocate(context,op("array_create",1,type),0,"array",type);
-  if(!m.e.message.empty()||ref!="entry/0/0/array/1"||m.c.objects.at(ref).weak||m.c.weakChanged)return false;
+  if(!m.e.message.empty()||ref!="entry/0/0/array/1"||m.c.objects.at(ActualObjectId(ref)).weak||m.c.weakChanged)return false;
   ActualHeap heap;auto value=m.c.declared(type,heap,"entry/0/0");
-  if(!m.e.message.empty()||!value.objects.count(ref)||!m.c.objects.at(ref).weak||!m.c.weakChanged)return false;
+  if(!m.e.message.empty()||!value.objects.count(ref)||!m.c.objects.at(ActualObjectId(ref)).weak||!m.c.weakChanged)return false;
   m.c.weakChanged=false;m.c.declared(type,heap,"entry/0/0");return m.e.message.empty()&&!m.c.weakChanged;
 }
 bool trapFactGrowth(){
@@ -291,7 +291,7 @@ bool fieldValueShape(bool array=false){
   m.layout=Object{{"id","L"},{"parent",nullptr},{"slots",Array{}}};m.c.environments.emplace("L",&m.layout);
   m.p.fixedEffects["bad"].reads.insert("g");m.p.callableReturns["make"].functions.insert("reader");if(!m.c.callGraph())return false;
   m.c.objects.emplace("Box",ActualObject{receivers,false});m.c.objects.emplace("E",ActualObject{"env:L",true});
-  ActualValue receiver;receiver.tags.insert(receivers);receiver.objects.insert("Box");ActualValue value;value.tags.insert(m.f);value.callables.emplace("reader","E");
+  ActualValue receiver;receiver.tags.insert(receivers);receiver.objects.emplace("Box");ActualValue value;value.tags.insert(m.f);value.callables.emplace("reader","E");
   const auto transport=[&](const ActualValue &r,const ActualValue &v){return array?holdingArrayTransport(m.c,r,v):holdingFieldTransport(m.c,r,v);};
   if(!transport(receiver,value))return false;
   if(array)for(size_t alternative=0;alternative<5;++alternative){auto changed=m.c.copy(receiver);
@@ -300,7 +300,7 @@ bool fieldValueShape(bool array=false){
     if(transport(changed,value))return false;}
   for(size_t alternative=0;alternative<7;++alternative){auto changed=m.c.copy(value);
     if(alternative==0)changed.unknown=true;else if(alternative==1)changed.callableTop=true;else if(alternative==2)changed.cells.insert("cell");
-    else if(alternative==3)changed.objects.insert("E");else if(alternative==4)changed.tags.insert(m.u32);
+    else if(alternative==3)changed.objects.emplace("E");else if(alternative==4)changed.tags.insert(m.u32);
     else if(alternative==5)changed.callables.emplace("pure","");else changed.callables.emplace("reader","");
     if(transport(receiver,changed))return false;
   }
@@ -318,8 +318,8 @@ bool rawHardProjection(const std::string &mode){
   for(const auto &[id,t]:m.types){m.c.types.emplace(id,&t);for(const auto &f:items(field(t,"fields")))m.c.fields.emplace(string(field(f,"id")),&f);}
   auto fn=m.function("raw");auto event=mode=="raw-hard-projection"?op("global_store",noRegister,"",{1},Object{{"global","published"}}):op("field_store",noRegister,"",{2,1},Object{{"field","owner"}});
   fn.blocks={{{},{op("field_load",1,m.a,{0},Object{{"field","owner"}}),std::move(event)}}};m.p.functions.push_back(std::move(fn));
-  ActualContext context;context.id="raw";context.function=&m.p.functions[0];ActualState state;state.values[0].tags.insert(box);state.values[0].objects.insert("Box");
-  m.c.objects.emplace("Box",ActualObject{box,false});m.c.objects.emplace("A",ActualObject{m.a,true});ActualValue owner;owner.tags.insert(m.a);owner.objects.insert("A");state.heap.emplace("Box/field/owner",owner);
+  ActualContext context;context.id="raw";context.function=&m.p.functions[0];ActualState state;state.values[0].tags.insert(box);state.values[0].objects.emplace("Box");
+  m.c.objects.emplace("Box",ActualObject{box,false});m.c.objects.emplace("A",ActualObject{m.a,true});ActualValue owner;owner.tags.insert(m.a);owner.objects.emplace("A");state.heap.emplace("Box/field/owner",owner);
   for(const auto &scope:{"old","other-context","unrelated"})m.c.regions.scopes.emplace(scope,RegionScope{"make",scope,false});
   m.c.regions.nodes.emplace("a-old",RegionNode{"old","A",m.a});m.c.regions.nodes.emplace("a-other",RegionNode{"other-context","A",m.a});m.c.regions.nodes.emplace("other",RegionNode{"unrelated","B",m.a});
   bool changed=false,continues=true;const auto edge=[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return true;};
@@ -327,13 +327,13 @@ bool rawHardProjection(const std::string &mode){
   if(!state.values.at(1).region.roots.empty()||!state.values.at(1).region.opaque)return false;
   if(mode=="raw-unknown-field")state.values[2].unknown=true;
   if(mode=="raw-opaque-field"){
-    m.c.objects.emplace("CurrentBox",ActualObject{box,false});state.values[2].tags.insert(box);state.values[2].objects.insert("CurrentBox");
+    m.c.objects.emplace("CurrentBox",ActualObject{box,false});state.values[2].tags.insert(box);state.values[2].objects.emplace("CurrentBox");
     state.values[2].region.known=true;state.values[2].region.roots.insert("box-current");m.c.regions.nodes.emplace("box-current",RegionNode{"unrelated","CurrentBox",box});
   }
   for(const auto &[id,scope]:m.c.regions.scopes)if(scope.hard)return false;
   const auto &observed=context.function->blocks[0].operations[1];std::vector<ActualValue> args;args.reserve(observed.operands.size());std::vector<const ActualValue *> operands;
   if(!m.c.step(2*observed.operands.size()))return false;for(auto reg:observed.operands){auto value=state.values.find(reg);args.push_back(value==state.values.end()?ActualValue{}:m.c.copy(value->second));operands.push_back(&args.back());}
-  BorrowTrace trace(m.c);if(!trace.before(context,observed,0,state,ActualOperands{operands}))return false;
+  bool storeCovered=false;BorrowTrace trace(m.c);if(!trace.before(context,observed,0,state,ActualOperands{operands},storeCovered))return false;
   return m.e.message.empty()&&m.c.regions.scopes.at("old").hard&&m.c.regions.scopes.at("other-context").hard&&!m.c.regions.scopes.at("unrelated").hard&&state.values.at(1).region.roots.empty();
 }
 bool nestedArrayExposure(const std::string &mode){
@@ -466,7 +466,7 @@ bool quota(const std::string &mode){
     m.c.regions.live["quota"][1].clear();ActualState state;for(uint16_t i=0;i<128;++i)state.values.emplace(i,ActualValue{});m.p.remaining=1;
     return !regionEdge(m.c,context,0,1,state)&&m.e.code=="core-ir-common-budget"&&state.values.size()==128;
   }
-  ActualState state;ActualValue roots;for(size_t i=0;i<128;++i)roots.objects.insert("unknown/"+std::to_string(i));state.values.emplace(7,std::move(roots));m.p.remaining=8;
+  ActualState state;ActualValue roots;for(size_t i=0;i<128;++i)roots.objects.emplace("unknown/"+std::to_string(i));state.values.emplace(7,std::move(roots));m.p.remaining=8;
   return !regionEdge(m.c,context,0,1,state)&&m.e.code=="core-ir-common-budget"&&state.values.at(7).objects.size()==128&&state.regions.empty();
 }
 }

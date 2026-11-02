@@ -80,12 +80,12 @@ bool runCommonM12ActualModels(ActualCheck &check){
     if(c.root&&(name=="compatibilityEntry"||name=="relationRoundtrip")){
       if(c.arguments.size()!=1||c.arguments[0].tags!=xy)return false;
       for(const auto &ref:c.arguments[0].objects){
-        if(!check.objects.count(ref)||!check.objects.at(ref).weak)return false;const auto type=check.objects.at(ref).type;bool found=false;
+        if(!check.objects.count(ref)||!check.objects.at(ActualObjectId(ref)).weak)return false;const auto type=check.objects.at(ActualObjectId(ref)).type;bool found=false;
         for(const auto *f:check.allFields(type))if(string(field(*f,"name"))=="next"){
-          found=true;auto stored=c.entry.find(ref+"/field/"+string(field(*f,"id")));if(stored==c.entry.end()||stored->second.objects.empty())return false;
+          found=true;auto stored=c.entry.find(ref.text()+"/field/"+string(field(*f,"id")));if(stored==c.entry.end()||stored->second.objects.empty())return false;
           for(const auto &array:stored->second.objects){
-            auto elements=c.entry.find(array+"/element/*");if(elements==c.entry.end()||elements->second.tags!=xy)return false;
-            const auto backing=check.objects.at(array).type;auto capacity=check.storageCapacity.find("element:"+backing);
+            auto elements=c.entry.find(array.text()+"/element/*");if(elements==c.entry.end()||elements->second.tags!=xy)return false;
+            const auto backing=check.objects.at(ActualObjectId(array)).type;auto capacity=check.storageCapacity.find("element:"+backing);
             if(capacity==check.storageCapacity.end()||capacity->second.tags!=xy)return false;
           }
         }if(!found)return false;
@@ -125,12 +125,12 @@ bool runCommonEntryRoleModels(){
     Object{{"id","U"},{"kind","undefined"}},Object{{"id","UY"},{"kind","union"},{"members",Array{"AY","U"}}}};
   for(const auto &t:items(catalogue))c.types.emplace(string(field(t,"id")),&t);Program::EntryRole role;role.candidates["Y"].insert("X");
   ActualHeap heap;bool changed=false;const auto value=c.entryDeclared("AX","UY",heap,"role",{},role,true,changed);
-  bool unionPassed=e.message.empty()&&value.tags==std::set<std::string>{"AX","U"}&&value.objects==std::set<std::string>{"role/AX"}&&
+  bool unionPassed=e.message.empty()&&value.tags==std::set<std::string>{"AX","U"}&&value.objects==ActualObjectSet{ActualObjectId("role/AX")}&&
     c.elementSeeds["element:AX"].tags==std::set<std::string>{"X","Y"}&&!c.elementSeeds.count("element:AY");
   Json sourceUnion=Object{{"id","UX"},{"kind","union"},{"members",Array{"AX","U"}}};c.types.emplace("UX",&sourceUnion);
   Program second;Error error;ActualCheck other{second,error};other.types=c.types;ActualHeap unionHeap;bool progress=false;
   const auto unionValue=other.entryDeclared("UX","UY",unionHeap,"union-role",{},role,true,progress);
-  unionPassed=unionPassed&&error.message.empty()&&unionValue.tags==std::set<std::string>{"AX","U"}&&unionValue.objects==std::set<std::string>{"union-role/AX"}&&
+  unionPassed=unionPassed&&error.message.empty()&&unionValue.tags==std::set<std::string>{"AX","U"}&&unionValue.objects==ActualObjectSet{ActualObjectId("union-role/AX")}&&
     other.elementSeeds["element:AX"].tags==std::set<std::string>{"X","Y"}&&!other.elementSeeds.count("element:AY");
   llvm::outs()<<"entry-union retains actual Array backing "<<(unionPassed?"PASS":"FAIL")<<"\n";
   Program methods;Error methodError;ActualCheck m{methods,methodError};
@@ -138,7 +138,7 @@ bool runCommonEntryRoleModels(){
   Json bm=Object{{"id","B.m"},{"kind","method"},{"ownerType","B"}},dm=Object{{"id","D.m"},{"kind","method"},{"ownerType","D"},{"overrideTarget","B.m"}};
   m.types={{"B",&base},{"D",&derived}};m.sourceFunctions={{"B.m",&bm},{"D.m",&dm}};
   Function caller,target;caller.id="caller";caller.path="/src/model.ts";caller.blocks.resize(2);target.id="B.m";target.blocks.resize(1);target.blocks[0].parameters={0};m.functions.emplace(target.id,&target);
-  ActualContext context;context.id="model";context.function=&caller;ActualState state;state.values[0].tags.insert("D");state.values[0].objects.insert("instance");m.objects["instance"]={"D",false};
+  ActualContext context;context.id="model";context.function=&caller;ActualState state;state.values[0].tags.insert("D");state.values[0].objects.emplace("instance");m.objects[ActualObjectId("instance")]={"D",false};
   Operation op;op.name="invoke";op.operands={0};op.successors={0,1};op.range={10,20};op.properties=Object{{"function_id","B.m"}};bool continues=true;
   const bool accepted=m.instruction(context,op,0,state,false,changed,[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return true;},continues);
   const bool methodPassed=!accepted&&methodError.code=="core-ir-common-actual"&&methodError.path=="/src/model.ts"&&methodError.range.start==10&&methodError.range.end==20;

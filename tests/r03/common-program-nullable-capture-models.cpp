@@ -117,7 +117,7 @@ bool scalarUnionActual(){
     if(mode=="different-key")(*f.blocks[3].operations[0].properties.getAsObject())["key"]="other";
     if(mode=="cycle")f.blocks.push_back({{},{{"cf.br","",Object{},{0,1},noRegister,{}, {4}}}});
     c.functions.emplace(f.id,&f);ActualContext context;context.function=&f;ActualState state;
-    state.values[0].tags={"env:env"};state.values[0].objects={"object"};state.values[5]=state.values[0];
+    state.values[0].tags={"env:env"};state.values[0].objects={ActualObjectId("object")};state.values[5]=state.values[0];
     state.values[1].tags={boolean,i32};state.values[1].truth=2;state.values[1].unknown=mode=="unknown";if(mode=="bottom")state.values[1]=ActualValue{};
     state.values[2].tags={boolean};state.values[2].truth=2;state.heap["object/slot/held"]=state.values[1];state.heap["object/slot/other"]=state.values[1];
     bool changed=false,continues=true,accepted=prepareRegions(c);const auto edge=[](uint16_t,ActualState,const std::vector<ActualValue>&){return true;};

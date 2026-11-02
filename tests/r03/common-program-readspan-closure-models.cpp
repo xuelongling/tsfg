@@ -109,11 +109,11 @@ bool parameter(bool late){
 bool multipleEnvironments(){
   Fixture f;auto root=function("root");root.blocks[0].operations={op("env_store",noRegister,"",{0,1},Object{{"layout","L"},{"binding","borrow"},{"key","k"}})};
   f.program.functions={std::move(root)};f.bind("last-use");ActualContext context;context.function=&f.program.functions[0];ActualState state;
-  state.values[0].objects={"E1","E2"};state.values[1].objects={"S2"};state.heap["E1/slot/k"].objects={"S1"};state.heap["E2/slot/k"].objects={"S2"};
-  f.check.objects["E1"]={"env:L",false};f.check.objects["E2"]={"env:L",false};f.check.objects["S1"]={f.span,false};f.check.objects["S2"]={f.span,false};
+  state.values[0].objects={ActualObjectId("E1"),ActualObjectId("E2")};state.values[1].objects={ActualObjectId("S2")};state.heap["E1/slot/k"].objects={ActualObjectId("S1")};state.heap["E2/slot/k"].objects={ActualObjectId("S2")};
+  f.check.objects[ActualObjectId("E1")]={"env:L",false};f.check.objects[ActualObjectId("E2")]={"env:L",false};f.check.objects[ActualObjectId("S1")]={f.span,false};f.check.objects[ActualObjectId("S2")]={f.span,false};
   bool changed=false,continues=true;const auto edge=[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return false;};
   return f.check.instruction(context,context.function->blocks[0].operations[0],0,state,false,changed,edge,continues)&&
-    state.heap.at("E1/slot/k").objects==std::set<std::string>{"S1","S2"}&&state.heap.at("E2/slot/k").objects==std::set<std::string>{"S2"};
+    state.heap.at("E1/slot/k").objects==ActualObjectSet{ActualObjectId("S1"),ActualObjectId("S2")}&&state.heap.at("E2/slot/k").objects==ActualObjectSet{ActualObjectId("S2")};
 }
 // Unit checks of the original lexical role/declaration gate, not complete
 // Source acceptance. Full token/Symbol/range reconstruction remains mandatory.

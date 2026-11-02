@@ -70,7 +70,7 @@ bool holdingReferenceWrites(ActualCheck &c,const ActualValue &value,const Actual
       if(holdingCall(c,code,true,&writes)&&writes)return true;
       if(!visit(environment))return false;
     }
-    for(const auto &ref:current.objects)if(!visit(ref))return false;
+    for(const auto &ref:current.objects)if(!visit(ref.text()))return false;
   }return false;
 }
 bool holdingReturnTargets(ActualCheck &c,const ActualContext &context,const ActualValue &value){
@@ -79,7 +79,7 @@ bool holdingReturnTargets(ActualCheck &c,const ActualContext &context,const Actu
   std::set<std::string> actual;
   for(const auto &[code,env]:value.callables){if(!c.step(code.size()/64+1)||!holdingCall(c,code,true))return false;
     const auto layout=string(field(*c.sourceFunctions.at(code),"lexicalEnvironment"));
-    if(layout.empty()||env.empty()||!c.objects.count(env)||c.objects.at(env).type!="env:"+layout)return false;actual.insert(code);
+    if(layout.empty()||env.empty()||!c.objects.count(env)||c.objects.find(env)->second.type!="env:"+layout)return false;actual.insert(code);
   }
   if(!c.step(actual.size()+bound->second.functions.size()))return false;
   return actual==bound->second.functions&&!actual.empty()&&c.e.message.empty();
@@ -91,7 +91,7 @@ static bool holdingStoredClosure(ActualCheck &c,const ActualValue &value){
     if(!c.step((code.size()+env.size())/64+1)||!holdingCall(c,code,true)||env.empty()||!c.objects.count(env))return false;
     auto layout=field(*c.sourceFunctions.at(code),"lexicalEnvironment").getAsString();
     if(!layout||layout->empty()||!c.step(layout->size()/64+1))return false;
-    auto type=llvm::StringRef(c.objects.at(env).type);if(!type.consume_front("env:")||type!=*layout)return false;
+    auto type=llvm::StringRef(c.objects.find(env)->second.type);if(!type.consume_front("env:")||type!=*layout)return false;
   }return c.e.message.empty();
 }
 bool holdingFieldTransport(ActualCheck &c,const ActualValue &receiver,const ActualValue &value){
@@ -115,7 +115,7 @@ bool holdingStoredAggregate(ActualCheck &c,const ActualValue &value,const Actual
     if(!c.step())return false;const auto &current=*pending[i];
     if(current.unknown||current.callableTop||!current.cells.empty()||!current.callables.empty())return false;
     for(const auto &ref:current.objects){
-      if(!c.step())return false;if(!selected.insert(ref).second)continue;
+      if(!c.step())return false;if(!selected.insert(ref.text()).second)continue;
       if(!c.need(selected.size()<=4096,"stable stored graph exceeds bound"))return false;auto found=c.objects.find(ref);
       if(found==c.objects.end()||found->second.weak||!c.types.count(found->second.type))return false;
       const auto &type=*c.types.at(found->second.type);const auto kind=string(field(type,"kind"));std::vector<std::string> required;
@@ -126,13 +126,13 @@ bool holdingStoredAggregate(ActualCheck &c,const ActualValue &value,const Actual
           for(const auto &member:items(field(layer,"fields"))){
             // A later field_store must not replace a descriptor after transfer.
             if(!c.step()||field(member,"readonly").getAsBoolean()!=true)return false;
-            required.push_back(ref+"/field/"+string(field(member,"id")));
+            required.push_back(ref.text()+"/field/"+string(field(member,"id")));
           }id=string(field(layer,"base"));
         }
       }else if(kind=="array"||kind=="readSpan"){
         const auto element=string(field(type,"elementType"));
         if(!c.step()||!c.types.count(element)||string(field(*c.types.at(element),"kind"))!="scalar")return false;
-        if(kind=="readSpan")required={ref+"/owner",ref+"/start",ref+"/length"};else required={ref+"/length"};
+        if(kind=="readSpan")required={ref.text()+"/owner",ref.text()+"/start",ref.text()+"/length"};else required={ref.text()+"/length"};
       }else return false;
       for(const auto &slot:required){
         if(!c.step())return false;auto stored=heap.find(slot);
@@ -141,7 +141,7 @@ bool holdingStoredAggregate(ActualCheck &c,const ActualValue &value,const Actual
       }
       // Keep the whole selected current graph, including descriptor owner links.
       // ReturnOwnership independently removes nonowning edges from its proof.
-      const auto prefix=ref+"/";
+      const auto prefix=ref.text()+"/";
       for(auto edge=heap.lower_bound(prefix);edge!=heap.end()&&llvm::StringRef(edge->first).starts_with(prefix);++edge){
         if(!c.step())return false;pending.push_back(&edge->second);
       }
@@ -157,7 +157,14 @@ ReturnOwnership::Value ReturnOwnership::value(const ActualValue &v){
     const auto k=string(field(*check.types.at(tag),"kind"));
     if(k!="array"&&k!="reference"&&k!="value"&&k!="function")out.complete=false;
   }
-  out.alternatives=v.objects;
+  for(const auto &ref:v.objects){
+    if(!check.step(1))return {};
+    if(!out.alternatives.empty()){
+      if(!check.step(out.alternatives.size()+1))return {};const auto previous=std::prev(out.alternatives.end());
+      if(!check.step(2*(previous->size()+ref.size()+1)))return {};
+    }
+    out.alternatives.emplace_hint(out.alternatives.end(),ref.text());
+  }
   for(const auto &[code,environment]:v.callables){if(environment.empty())out.empty=true;else out.alternatives.insert(environment);}
   out.empty|=out.alternatives.empty();return out;
 }
@@ -167,7 +174,7 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const Actua
   for(size_t index=0;index<pending.size();++index){
     if(!check.step())return;const auto ref=pending[index];if(nodes.count(ref))continue;
     if(!check.need(check.objects.count(ref),"return storage lacks actual object authority"))return;
-    const auto &object=check.objects.at(ref);const auto environment=llvm::StringRef(object.type).starts_with("env:");
+    const auto &object=check.objects.find(ref)->second;const auto environment=llvm::StringRef(object.type).starts_with("env:");
     const auto kind=environment?"environment":check.types.count(object.type)?string(field(*check.types.at(object.type),"kind")):std::string();
     auto &node=nodes[ref];node.kind=kind;node.weak=object.weak;std::set<std::string> nonOwning;
     if(stableProjection&&environment){

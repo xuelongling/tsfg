@@ -159,10 +159,10 @@ bool effects(){
 bool owningBoundary(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};Json array=Object{{"id","A"},{"kind","array"}},absence=Object{{"id","U"},{"kind","undefined"}},
     callable=Object{{"id","F"},{"kind","function"}};c.types={{"A",&array},{"U",&absence},{"F",&callable}};
-  c.objects={{"E1",{"env:L",mode=="weak-environment"}},{"E2",{"env:L",false}},{"A",{"A",false}},{"B",{"A",false}}};
-  ActualValue root,owner;root.tags={"F"};root.callables={{"reader","E1"}};owner.tags={"A"};owner.objects={"A"};ActualHeap heap{{"E1/slot/owner",owner}};
+  c.objects={{ActualObjectId("E1"),{"env:L",mode=="weak-environment"}},{ActualObjectId("E2"),{"env:L",false}},{ActualObjectId("A"),{"A",false}},{ActualObjectId("B"),{"A",false}}};
+  ActualValue root,owner;root.tags={"F"};root.callables={{"reader","E1"}};owner.tags={"A"};owner.objects={ActualObjectId("A")};ActualHeap heap;heap.emplace("E1/slot/owner",owner);
   if(mode=="alternative-environments"||mode=="same-owner-environments"){
-    root.callables.emplace("reader","E2");if(mode=="alternative-environments")owner.objects={"B"};heap["E2/slot/owner"]=owner;
+    root.callables.emplace("reader","E2");if(mode=="alternative-environments")owner.objects={ActualObjectId("B")};heap["E2/slot/owner"]=owner;
   }
   if(mode=="owner-or-undefined")heap["E1/slot/owner"].tags.insert("U");
   if(mode=="zero-work")p.remaining=0;

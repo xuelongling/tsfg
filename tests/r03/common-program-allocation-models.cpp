@@ -66,17 +66,17 @@ bool factories(const std::string &mode){
     return m.c.cyclicFunctions.count("make")&&weak&&count<=2;}
   bool observed=false;
   for(const auto &[id,c]:m.c.contexts)if(c.root&&c.function->id=="root")for(const auto &ref:c.returned.objects){
-    const auto one=c.normalHeap.find(ref+"/element/0"),two=c.normalHeap.find(ref+"/element/1");if(one==c.normalHeap.end()||two==c.normalHeap.end())continue;
+    const auto one=c.normalHeap.find(ref.text()+"/element/0"),two=c.normalHeap.find(ref.text()+"/element/1");if(one==c.normalHeap.end()||two==c.normalHeap.end())continue;
     if(closure){
       if(one->second.callables.size()!=1||two->second.callables.size()!=1)return false;
       const auto a=one->second.callables.begin()->second,b=two->second.callables.begin()->second;if(a==b)return false;
       const auto &va=c.normalHeap.at(a+"/slot/a"),&vb=c.normalHeap.at(b+"/slot/a"),&sa=c.normalHeap.at(a+"/slot/r"),&sb=c.normalHeap.at(b+"/slot/r");
       if(va.objects.size()!=1||vb.objects.size()!=1||sa.objects.size()!=1||sb.objects.size()!=1||va.objects==vb.objects||sa.objects==sb.objects)return false;
-      const bool repeated=loop||host;for(const auto &value:{&vb,&sb})if(m.c.objects.at(*value->objects.begin()).weak!=repeated)return false;
-      if(m.c.objects.at(b).weak!=repeated)return false;
+      const bool repeated=loop||host;for(const auto &value:{&vb,&sb})if(m.c.objects.at(ActualObjectId(*value->objects.begin())).weak!=repeated)return false;
+      if(m.c.objects.at(ActualObjectId(b)).weak!=repeated)return false;
     }else{
       if(one->second.objects.size()!=1||two->second.objects.size()!=1||one->second.objects==two->second.objects)return false;
-      for(const auto &v:{&one->second,&two->second})if(m.c.objects.at(*v->objects.begin()).weak)return false;
+      for(const auto &v:{&one->second,&two->second})if(m.c.objects.at(ActualObjectId(*v->objects.begin())).weak)return false;
     }observed=true;
   }
   if(!observed)return false;const bool borrowed=verifyCommonBorrows(m.c);
@@ -102,9 +102,9 @@ bool provenance(const std::string &mode){
   if(!a||!b)return false;const auto &allocation=m.p.functions[1].blocks[0].operations[0];
   const auto ar=m.c.allocate(*a,allocation,0,"object",m.array),br=m.c.allocate(*b,allocation,0,"object",m.array);
   if(a->id==b->id||a->activation!=b->activation||ar!=br)return false;
-  if(mode=="host-origin"||mode=="unresolved"||mode=="full-top"||mode=="full-host-target")return m.c.objects.at(ar).weak;
-  if(mode=="weak-monotone"){a->repeated=true;m.c.allocate(*a,allocation,0,"object",m.array);b->repeated=false;m.c.allocate(*b,allocation,0,"object",m.array);return m.c.objects.at(ar).weak;}
-  return !m.c.objects.at(ar).weak;
+  if(mode=="host-origin"||mode=="unresolved"||mode=="full-top"||mode=="full-host-target")return m.c.objects.at(ActualObjectId(ar)).weak;
+  if(mode=="weak-monotone"){a->repeated=true;m.c.allocate(*a,allocation,0,"object",m.array);b->repeated=false;m.c.allocate(*b,allocation,0,"object",m.array);return m.c.objects.at(ActualObjectId(ar)).weak;}
+  return !m.c.objects.at(ActualObjectId(ar)).weak;
 }
 bool entryAlias(){
   Model m;auto root=m.function("root",{0,1});root.blocks[0].operations={op("constant",2,m.u32,{},Object{{"decimal","0"}}),op("constant",3,m.u32,{},Object{{"decimal","1"}}),
@@ -118,27 +118,27 @@ bool weakInitialization(const std::string &kind){
   auto f=m.function("root");f.blocks[0].operations={op("func.return")};m.p.functions.push_back(std::move(f));m.source("root");m.bind();bool changed=false;
   auto *context=m.c.context("root",{},{},false,changed,"controlled-repeated",true);if(!context)return false;ActualState state;
   for(const auto ref:{"S1","S2"})m.c.objects.emplace(ref,ActualObject{m.span,false});for(const auto ref:{"A1","A2"})m.c.objects.emplace(ref,ActualObject{m.array,false});
-  state.values[10].tags={m.span};state.values[10].objects={"S1"};state.values[11].tags={m.span};state.values[11].objects={"S2"};state.values[12].tags={m.array};state.values[12].objects={"A1"};state.values[13].tags={m.array};state.values[13].objects={"A2"};
+  state.values[10].tags={m.span};state.values[10].objects={ActualObjectId("S1")};state.values[11].tags={m.span};state.values[11].objects={ActualObjectId("S2")};state.values[12].tags={m.array};state.values[12].objects={ActualObjectId("A1")};state.values[13].tags={m.array};state.values[13].objects={ActualObjectId("A2")};
   const auto execute=[&](const Operation &o){bool continues=true;return m.c.instruction(*context,o,0,state,false,changed,[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return false;},continues);};
   std::string slot;
   // Existing summary metadata is authoritative even when a later transfer's
   // local multiplicity flag is narrower. It must never reinitialize strongly.
   if(kind=="weak-array-init"){
     if(!execute(op("array_create",0,m.pair,{10})))return false;context->repeated=false;
-    if(!execute(op("array_create",0,m.pair,{11})))return false;slot=*state.values.at(0).objects.begin()+"/element/0";
+    if(!execute(op("array_create",0,m.pair,{11})))return false;slot=state.values.at(0).objects.begin()->text()+"/element/0";
   }else if(kind=="weak-env-store"){
     if(!execute(op("env_alloc",0,"env:L",{},Object{{"layout","L"}})))return false;context->repeated=false;
     if(!execute(op("env_init",noRegister,"",{0,10},Object{{"layout","L"},{"key","r"},{"binding","r"}}))||
-      !execute(op("env_init",noRegister,"",{0,11},Object{{"layout","L"},{"key","r"},{"binding","r"}})))return false;slot=*state.values.at(0).objects.begin()+"/slot/r";
+      !execute(op("env_init",noRegister,"",{0,11},Object{{"layout","L"},{"key","r"},{"binding","r"}})))return false;slot=state.values.at(0).objects.begin()->text()+"/slot/r";
   }else if(kind=="weak-ref-store"){
     if(!execute(op("allocate_reference",0,m.reference)))return false;context->repeated=false;
-    if(!execute(op("field_store",noRegister,"",{0,10},Object{{"field",m.reference+"/n"}}))||!execute(op("field_store",noRegister,"",{0,11},Object{{"field",m.reference+"/n"}})))return false;slot=*state.values.at(0).objects.begin()+"/field/"+m.reference+"/n";
+    if(!execute(op("field_store",noRegister,"",{0,10},Object{{"field",m.reference+"/n"}}))||!execute(op("field_store",noRegister,"",{0,11},Object{{"field",m.reference+"/n"}})))return false;slot=state.values.at(0).objects.begin()->text()+"/field/"+m.reference+"/n";
   }else{
     state.values[14].tags={m.u32};state.values[14].number=0;state.values[15].tags={m.u32};state.values[15].number=1;
     if(!execute(op("readspan",0,m.span,{12,14,15})))return false;context->repeated=false;
-    if(!execute(op("readspan",0,m.span,{13,14,15})))return false;slot=*state.values.at(0).objects.begin()+"/owner";
+    if(!execute(op("readspan",0,m.span,{13,14,15})))return false;slot=state.values.at(0).objects.begin()->text()+"/owner";
   }
-  return m.e.message.empty()&&m.c.objects.at(*state.values.at(0).objects.begin()).weak&&state.heap.at(slot).objects.size()==2;
+  return m.e.message.empty()&&m.c.objects.at(ActualObjectId(*state.values.at(0).objects.begin())).weak&&state.heap.at(slot).objects.size()==2;
 }
 bool physicalContract(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};Function f;f.id="F";f.path="/actual-physical-contract.ts";f.range={10,20};f.carriers={"R"};

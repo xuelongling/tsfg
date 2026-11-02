@@ -4,18 +4,6 @@
 #include <tuple>
 namespace tsfg::commonProgram {
 namespace {
-std::string ownedCursor(ActualCheck &c,std::shared_ptr<const std::string> &&frame,size_t position){
-  const auto id="initialization:"+digest(canonical(Array{llvm::StringRef(*frame),int64_t(position)}));
-  if(!c.receiverCursors.count(id)){
-    // Key copy and node are unchanged; each of two shared-owner moves writes
-    // both pointer words, without copying the immutable frame bytes.
-    if(!c.step(id.size()/64+6))return {};
-    const auto entry=c.receiverCursors.emplace(id,ActualCursorInfo{std::move(frame),position}).first;
-    if(c.receiverCursorIndex.size()==c.receiverCursorIndex.capacity()){
-      if(!c.step(c.receiverCursorIndex.size()+1))return {};c.receiverCursorIndex.reserve(std::max<size_t>(1,c.receiverCursorIndex.size()*2));}
-    if(!c.step())return {};c.receiverCursorIndex.push_back(&*entry);
-  }return id;
-}
 template<class Directory>
 auto selectionLowerBound(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
   const auto count=directory.size();size_t height=0;
@@ -67,33 +55,50 @@ Parts split(ActualCheck &c,const ActualValue &input){
   for(const auto &tag:input.tags){const auto kind=category(tag);if(kind==1)out.undefined=true;else if(kind==2)out.primitive=true;
     else {out.object.tags.insert(tag);out.pending|=kind==3;callable|=c.types.count(tag)&&string(field(*c.types.at(tag),"kind"))=="function";}}
   for(const auto &ref:input.objects){if(!c.step())return {};const auto found=c.objects.find(ref);
-    if(callable&&!input.callables.empty()){out.object.objects.insert(ref);continue;}
-    const auto kind=found==c.objects.end()?3:category(found->second.type);if(kind==0||kind==3){out.object.objects.insert(ref);out.pending|=kind==3;}}
+    if(callable&&!input.callables.empty()){if(!c.step(4))return {};out.object.objects.insert(ref);continue;}
+    const auto kind=found==c.objects.end()?3:category(found->second.type);if(kind==0||kind==3){if(!c.step(4))return {};out.object.objects.insert(ref);out.pending|=kind==3;}}
   if(callable||input.unknown){if(!c.step(input.callables.size()))return {};out.object.callables=input.callables;}
   out.primitive|=out.pending;return out;
 }
 }
+ActualCursorId ActualCheck::ownedCursor(std::shared_ptr<const std::string> &&frame,size_t position){
+  auto id="initialization:"+digest(canonical(Array{llvm::StringRef(*frame),int64_t(position)}));
+  auto entry=receiverCursors.find(id);
+  if(entry==receiverCursors.end()){
+    auto pending=pendingSymbolText(std::move(id));if(!pending)return {};
+    if(!step(pending->text_.size()/64+6))return {};
+    const auto inserted=receiverCursors.emplace(ActualCursorId(pending),ActualCursorInfo{std::move(frame),position});
+    pending->admitted_=inserted.second;entry=inserted.first;
+    if(inserted.second){
+      if(receiverCursorIndex.size()==receiverCursorIndex.capacity()){
+        if(!step(receiverCursorIndex.size()+1))return {};receiverCursorIndex.reserve(std::max<size_t>(1,receiverCursorIndex.size()*2));}
+      if(!step())return {};receiverCursorIndex.push_back(&*entry);
+    }
+  }
+  if(!step(4))return {};return entry->first;
+}
 bool ActualCheck::receiverText(const std::string &s){return step(12*s.size()+8);}
-const ActualCursorInfo *ActualCheck::cursorMetadata(const std::string &id){
+const ActualCursorInfo *ActualCheck::cursorMetadata(const ActualCursorId &id){
   if(!step())return nullptr;
   for(const auto *entry:receiverCursorIndex){
-    if(!step(2)||!step(entry->first.size()+id.size()+1))return nullptr;
-    if(entry->first!=id)continue;if(!step())return nullptr;return &entry->second;
+    if(!step(2)||!step(20))return nullptr;const auto same=entry->first.canonicalRelation(id,symbolUniverse);
+    if(same){if(!*same)continue;}else{if(!step(entry->first.size()+id.size()+1))return nullptr;if(entry->first!=id)continue;}
+    if(!step())return nullptr;return &entry->second;
   }
   // Index misses retain the original canonical directory and full-text fee.
-  if(!receiverText(id))return nullptr;const auto found=receiverCursors.find(id);
+  if(!receiverText(id.text()))return nullptr;const auto found=receiverCursors.find(id);
   return found==receiverCursors.end()?nullptr:&found->second;
 }
 const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_iterator object,ActualFieldDirectory::const_iterator field){
   if(!step()||!need(object!=objects.end()&&field!=fields.end(),"physical field slot symbols are not owned"))return nullptr;
-  const auto *reference=&object->first,*member=&field->first;
+  const auto *reference=&object->first;const auto *member=&field->first;
   // Registration order, rather than address rank, determines lookup work.
   for(const auto &entry:fieldSlotAssociations){
     if(!step(3))return nullptr;if(entry.reference!=reference)continue;
     if(!step(3))return nullptr;if(entry.field==member)return entry.slot;
   }
   if(!step(reference->size()+member->size()+8))return nullptr;
-  auto spelling=*reference+"/field/"+*member;
+  auto spelling=reference->text()+"/field/"+*member;
   if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
   bool previousKnown=false,present=false;auto previous=fieldSlotArchive.end();
   if(!empty){
@@ -145,15 +150,15 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   }
   if(!step(4))return nullptr;fieldSlotAssociations.push_back({reference,member,&found->second,&object->second});return &found->second;
 }
-ActualFieldSlotMatch ActualCheck::existingFieldSlot(const std::string &reference,ActualFieldDirectory::const_iterator field){
+ActualFieldSlotMatch ActualCheck::existingFieldSlot(const ActualObjectId &reference,ActualFieldDirectory::const_iterator field){
   if(!step()||!need(field!=fields.end(),"physical field lookup member is not owned"))return {};
   const auto *member=&field->first;
   // Only a complete canonical-reference equality reuses this pair's live
   // directory node. Returning pointer values cannot borrow vector storage.
   for(const auto &entry:fieldSlotAssociations){
     if(!step(3))return {};if(entry.field!=member)continue;
-    if(!step(entry.reference->size()+reference.size()+1))return {};
-    if(*entry.reference!=reference)continue;
+    if(!step(20))return {};const auto same=entry.reference->canonicalRelation(reference,symbolUniverse);
+    if(same){if(!*same)continue;}else{if(!step(entry.reference->size()+reference.size()+1))return {};if(*entry.reference!=reference)continue;}
     if(!step(2))return {};return {entry.object,entry.slot};
   }
   return {};
@@ -241,7 +246,7 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
     // would compare complete object spellings without changing that answer.
     std::vector<const std::string *> refs;
     const auto objectsIn=[&](const ActualValue &value){if(!step(value.objects.size()))return false;
-      for(const auto &ref:value.objects)if(!append(refs,&ref))return false;return true;};
+      for(const auto &ref:value.objects)if(!append(refs,&ref.text()))return false;return true;};
     for(const auto &value:values)if(!objectsIn(value))return {};
     for(const auto &[slot,value]:reached)if(!objectsIn(value))return {};
     if(!step(world.size()))return {};
@@ -283,7 +288,8 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
 }
 std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &world){
   if(!step(world.size()))return {};std::vector<ActualValue> result;result.reserve(world.size());
-  if(!step(2)||!visitRetainedFrames(*this,world,[&](const ActualValue &value){result.push_back(copy(value));return true;}))return {};
+  if(!step(2)||!visitRetainedFrames(*this,world,[&](const ActualValue &value){auto owned=copy(value);
+    if(!prepayValueGrowth(result,result.size()+1))return false;result.push_back(std::move(owned));return true;}))return {};
   return result;
 }
 std::vector<const ActualValue *> ActualCheck::retainedFrameRoots(const ActualFrameWorld &world){
@@ -362,16 +368,16 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
   // Returning the current string API still copies full bytes, even though its SSA consumer can move that result.
   if(!step(key.size()/64+1))return {};return key.text();
 }
-std::string ActualCheck::receiverCursor(const std::string &frame,size_t position){
+ActualCursorId ActualCheck::receiverCursor(const std::string &frame,size_t position){
   // The bare-string boundary owns its first copy, allocation and final release.
   if(!receiverText(frame)||!step(64)||!step(8))return {};
   auto owned=std::make_shared<const std::string>(frame);
-  return ownedCursor(*this,std::move(owned),position);
+  return ownedCursor(std::move(owned),position);
 }
-std::string ActualCheck::receiverCursor(const ActualCursorInfo &previous,size_t position){
+ActualCursorId ActualCheck::receiverCursor(const ActualCursorInfo &previous,size_t position){
   if(!need(bool(previous.frame),"initializer cursor frame owner is absent")||!step(64)||!step(4))return {};
   // Copy both owner words and prepay the retain/release before sharing them.
-  auto owned=previous.frame;return ownedCursor(*this,std::move(owned),position);
+  auto owned=previous.frame;return ownedCursor(std::move(owned),position);
 }
 ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&world,const std::set<std::string> &ids,ReceiverAction action,const ActualValue *returned){
   ActualReceiverCompletion out;Parts parts;
@@ -446,7 +452,9 @@ bool ActualCheck::abortInitializers(ActualState &state){
 }
 bool ActualCheck::receiverArguments(const Function &fn,ActualHeap &heap,ActualFrameWorld &world,bool conditional,bool &changed,
   std::vector<ActualValue> &args,const std::string &newTarget,const std::string &activation){
-  if(!step(fn.blocks[0].parameters.size()))return false;const Json *source=sourceFunctions.count(fn.id)?sourceFunctions.at(fn.id):nullptr;
+  if(!step(fn.blocks[0].parameters.size()))return false;const auto required=args.size()+fn.blocks[0].parameters.size();
+  if(!prepayValueGrowth(args,required))return false;args.reserve(required);
+  const Json *source=sourceFunctions.count(fn.id)?sourceFunctions.at(fn.id):nullptr;
   const bool constructor=source&&string(field(*source,"kind"))=="construction-body";const size_t hidden=source&&!field(*source,"lexicalEnvironment").getAsNull();
   for(size_t i=0;i<fn.blocks[0].parameters.size();++i){
     if(constructor&&i==hidden){const auto owner=string(field(*source,"ownerType"));if(!need(types.count(owner)&&!newTarget.empty(),"constructor root has no dynamic newTarget"))return false;

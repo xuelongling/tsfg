@@ -47,16 +47,16 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   if(llvm::StringRef(name).starts_with("receiver_")||llvm::StringRef(name).starts_with("initialize_")){
     if(!receiverInstruction(context,op,block,state,args,conditional,changed,edge,value,continues))return false;
   }else if(name=="env_alloc"){
-    const auto layout=string(field(props,"layout")),ref=allocate(context,op,block,"environment","env:"+layout);if(!e.message.empty())return false;
+    const auto layout=string(field(props,"layout"));const auto ref=allocate(context,op,block,"environment","env:"+layout);if(!e.message.empty())return false;
     if(!need(environments.count(layout),"actual activation layout missing"))return false;
-    value=literal("env:"+layout);value.objects.insert(ref);
-    if(!conditional)value.region=regionAllocate(*this,context,ref,"env:"+layout,state.regions);
-    if(!args.empty()&&!put(ref+"/parent",args[0],!objects.at(ref).weak))return false;
+    value=literal("env:"+layout);if(!step(4))return false;value.objects.insert(ref);
+    if(!conditional)value.region=regionAllocate(*this,context,ref.text(),"env:"+layout,state.regions);
+    if(!args.empty()&&!put(ref.text()+"/parent",args[0],!objects.at(ref).weak))return false;
     if(!conditional&&!args.empty()&&!regionStore(*this,regionValue(*this,value),"/parent",regionValue(*this,args[0]),state.regions))return false;
   }else if(name=="env_parent"){
     for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref),"actual environment parent owner missing"))return false;
-      auto stored=state.heap.find(ref+"/parent");if(!need(stored!=state.heap.end(),"actual environment parent is uninitialized"))return false;
+      auto stored=state.heap.find(ref.text()+"/parent");if(!need(stored!=state.heap.end(),"actual environment parent is uninitialized"))return false;
       merge(value,stored->second);
     }
     if(!conditional)value.region=regionLoad(*this,regionValue(*this,args[0]),"/parent",state.regions);
@@ -111,7 +111,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       if(!conditional)value.region=regionLoad(*this,regionValue(*this,args[0]),"/slot/"+key,state.regions);
     }else for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref)&&objects.at(ref).type=="env:"+layout,"actual environment cell owner differs"))return false;
-      const auto slot=ref+"/slot/"+key;
+      const auto slot=ref.text()+"/slot/"+key;
       if(!put(slot,args[1],!objects.at(ref).weak&&args[0].objects.size()==1))return false;
     }
     if(!conditional&&name!="env_load"&&!regionStore(*this,regionValue(*this,args[0]),"/slot/"+key,regionValue(*this,args[1]),state.regions))return false;
@@ -121,7 +121,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(layout.empty())value.callables.emplace(code,"");
     else for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref)&&objects.at(ref).type=="env:"+layout,"actual closure activation differs"))return false;
-      value.callables.emplace(code,ref);
+      value.callables.emplace(code,ref.text());
     }
     if(!conditional){if(layout.empty()){value.region.known=true;value.region.empty=true;}else value.region=regionValue(*this,args[0]);}
   }else if(name=="constant"){
@@ -154,11 +154,11 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   else if(name=="value_copy"){const auto origin=allocationSite(context,"copy",op.result);if(!e.message.empty())return false;value=valueCopy(args[0],state,origin+"/root",weak);
     if(!conditional)value.region=regionCopyValue(*this,regionValue(*this,args[0]),origin+"/root",state.regions);}
   else if(name=="array_create"){
-    value=literal(op.view);const auto ref=allocate(context,op,block,"object",op.view);if(!e.message.empty())return false;value.objects.insert(ref);
-    if(!conditional)value.region=regionAllocate(*this,context,ref,op.view,state.regions);
+    value=literal(op.view);const auto ref=allocate(context,op,block,"object",op.view);if(!e.message.empty()||!step(4))return false;value.objects.insert(ref);
+    if(!conditional)value.region=regionAllocate(*this,context,ref.text(),op.view,state.regions);
     if(name=="array_create"){
-      for(size_t i=0;i<args.size();++i){put(ref+"/element/"+std::to_string(i),args[i],!objects.at(ref).weak);seed(elementSeeds,"element:"+op.view,args[i]);}
-      auto length=literal(typeId("u32"));length.number=args.size();put(ref+"/length",length,!objects.at(ref).weak);
+      for(size_t i=0;i<args.size();++i){put(ref.text()+"/element/"+std::to_string(i),args[i],!objects.at(ref).weak);seed(elementSeeds,"element:"+op.view,args[i]);}
+      auto length=literal(typeId("u32"));length.number=args.size();put(ref.text()+"/length",length,!objects.at(ref).weak);
       if(!conditional){for(size_t i=0;i<args.size();++i)if(!regionStore(*this,regionValue(*this,value),"/element/"+std::to_string(i),regionValue(*this,args[i]),state.regions,!holdingArrayTransport(*this,value,args[i])))return false;
         if(!regionStore(*this,regionValue(*this,value),"/length",regionValue(*this,length),state.regions))return false;}
     }
@@ -180,11 +180,11 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       if(!need(member!=fields.end(),"actual field lacks an independently verified nominal member mapping")){e.path=fn.path;e.range=op.range;return false;}
       const ActualFieldSlot *token=nullptr;std::string localSlot;const std::string *slotText;
       if(name=="field_store"&&!state.frames.empty()){
-        if(!receiverText(ref)||!receiverText(selected))return false;token=fieldSlot(receiver,member);if(!e.message.empty())return false;slotText=token->spelling.get();
-      }else{localSlot=ref+"/field/"+selected;slotText=&localSlot;}
+        if(!receiverText(ref.text())||!receiverText(selected))return false;token=fieldSlot(receiver,member);if(!e.message.empty())return false;slotText=token->spelling.get();
+      }else{localSlot=ref.text()+"/field/"+selected;slotText=&localSlot;}
       const auto &slot=*slotText;auto stored=state.heap.find(slot);
       if(name=="field_load"){if(stored!=state.heap.end())merge(value,stored->second);else merge(value,literal(typeId("undefined")));
-        if(!conditional){auto receiver=regionValue(*this,args[0]);for(auto it=receiver.roots.begin();it!=receiver.roots.end();)if(regions.nodes.at(*it).reference!=ref)it=receiver.roots.erase(it);else ++it;
+        if(!conditional){auto receiver=regionValue(*this,args[0]);for(auto it=receiver.roots.begin();it!=receiver.roots.end();)if(regions.nodes.at(*it).reference!=ref.text())it=receiver.roots.erase(it);else ++it;
           regionMerge(*this,projected,regionLoad(*this,receiver,"/field/"+selected,state.regions));}}
       else{const bool strong=!object.weak&&args[0].objects.size()==1;
         if(token){const auto written=receiverWrite(state.frames,*token,args[1],strong&&!args[0].unknown&&!args[0].callableTop);
@@ -196,9 +196,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!conditional&&name=="field_load")value.region=std::move(projected);
     if(!conditional&&name=="field_store"&&regionValue(*this,args[0]).opaque)regionEscape(*this,regionValue(*this,args[1]),state.regions,!transport);
   }else if(name=="readspan"){
-    value=literal(op.view);const auto ref=allocate(context,op,block,"span",op.view);if(!e.message.empty())return false;value.objects.insert(ref);
-    if(!conditional)value.region=regionAllocate(*this,context,ref,op.view,state.regions);
-    put(ref+"/owner",args[0],!objects.at(ref).weak);put(ref+"/start",args[1],!objects.at(ref).weak);put(ref+"/length",args[2],!objects.at(ref).weak);
+    value=literal(op.view);const auto ref=allocate(context,op,block,"span",op.view);if(!e.message.empty()||!step(4))return false;value.objects.insert(ref);
+    if(!conditional)value.region=regionAllocate(*this,context,ref.text(),op.view,state.regions);
+    put(ref.text()+"/owner",args[0],!objects.at(ref).weak);put(ref.text()+"/start",args[1],!objects.at(ref).weak);put(ref.text()+"/length",args[2],!objects.at(ref).weak);
     if(!conditional&&!regionStore(*this,regionValue(*this,value),"/owner",regionValue(*this,args[0]),state.regions))return false;
   }else if(name=="array_length"||name=="readspan_length")value=literal(op.view);
   else if(name=="array_read"||name=="array_store"||name=="array_resize"){
@@ -214,18 +214,18 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     }
     ActualValue owners;
     for(const auto &ref:args[0].objects){
-      if(!step()||!need(objects.count(ref),"array owner object missing"))return false;
-      if(string(field(*types.at(objects.at(ref).type),"kind"))=="readSpan"){
-        auto stored=state.heap.find(ref+"/owner");if(stored!=state.heap.end())merge(owners,stored->second);
-      }else owners.objects.insert(ref);
+      if(!step())return false;const auto object=objects.find(ref);if(!need(object!=objects.end(),"array owner object missing"))return false;
+      if(string(field(*types.at(object->second.type),"kind"))=="readSpan"){
+        auto stored=state.heap.find(ref.text()+"/owner");if(stored!=state.heap.end())merge(owners,stored->second);
+      }else {if(!step(4))return false;owners.objects.insert(object->first);}
     }
     for(const auto &ref:owners.objects){
       if(!step()||!need(objects.count(ref),"array backing object missing"))return false;const auto &object=objects.at(ref);const auto index=args[1].number;
-      if(name=="array_resize"){put(ref+"/length",args[1],!object.weak);continue;}
+      if(name=="array_resize"){put(ref.text()+"/length",args[1],!object.weak);continue;}
       if(name=="array_store"){
-        put(ref+"/element/"+(index?std::to_string(*index):"*"),args[2],!object.weak&&owners.objects.size()==1&&index.has_value());seed(elementSeeds,"element:"+object.type,args[2]);continue;
+        put(ref.text()+"/element/"+(index?std::to_string(*index):"*"),args[2],!object.weak&&owners.objects.size()==1&&index.has_value());seed(elementSeeds,"element:"+object.type,args[2]);continue;
       }
-      for(const auto &[slot,stored]:state.heap){if(!step())return false;if(llvm::StringRef(slot).starts_with(ref+"/element/"))merge(value,stored);}
+      for(const auto &[slot,stored]:state.heap){if(!step())return false;if(llvm::StringRef(slot).starts_with(ref.text()+"/element/"))merge(value,stored);}
       const auto bound=initializedArrays.find(object.type);
       const bool initialized=actualArray&&!args[1].unknown&&index&&*index>=0&&bound!=initializedArrays.end()&&uint64_t(*index)<bound->second;
       if(!step())return false;if(!initialized)value.tags.insert(typeId("undefined"));
@@ -271,7 +271,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       auto current=regionCopy(*this,versions);for(auto &[id,slots]:current){if(!step())return false;after.regions.insert_or_assign(id,std::move(slots));}
       // Each completion owns its merged state; the edge consumes it without
       // cloning it again. Callers whose input remains live pass an explicit paid copy.
-      return edge(target,std::move(after),fn.blocks[target].parameters.empty()?std::vector<ActualValue>{}:std::vector<ActualValue>{copy(v)});
+      std::vector<ActualValue> values;if(!fn.blocks[target].parameters.empty()){values.reserve(1);values.push_back(copy(v));}
+      return edge(target,std::move(after),values);
     };
 
     const auto invoke=[&](const std::string &target,std::vector<ActualValue> actual){
@@ -301,10 +302,11 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       for(const auto &[code,environment]:args[0].callables){
         if(!step()||!need(sourceFunctions.count(code)&&(upper.top||upper.functions.count(code)),"indirect pair target exceeds fixed authority"))return false;
         if(!need(same(field(*sourceFunctions.at(code),"signatureHash"),field(props,"signature_hash")),"actual indirect code signature differs"))return false;
-        const auto &source=*sourceFunctions.at(code);const auto layout=string(field(source,"lexicalEnvironment"));std::vector<ActualValue> selected;
+        const auto &source=*sourceFunctions.at(code);const auto layout=string(field(source,"lexicalEnvironment"));std::vector<ActualValue> selected;selected.reserve(args.size());
         if(!layout.empty()){
-          if(!need(!environment.empty()&&objects.count(environment)&&objects.at(environment).type=="env:"+layout,"indirect pair carries a foreign/missing activation"))return false;
-          ActualValue env;env.tags.insert("env:"+layout);env.objects.insert(environment);selected.push_back(std::move(env));
+          const auto object=environment.empty()?objects.end():objects.find(environment);
+          if(!need(object!=objects.end()&&object->second.type=="env:"+layout,"indirect pair carries a foreign/missing activation")||!step(4))return false;
+          ActualValue env;env.tags.insert("env:"+layout);env.objects.insert(object->first);selected.push_back(std::move(env));
           if(!conditional){auto version=regionValue(*this,args[0]);for(auto it=version.roots.begin();it!=version.roots.end();)if(regions.nodes.at(*it).reference!=environment)it=version.roots.erase(it);else ++it;selected.back().region=std::move(version);}
         }else if(!need(environment.empty(),"environment-free code acquired an activation"))return false;
         for(size_t i=1;i<args.size();++i){if(!step())return false;selected.push_back(copy(args[i]));}
@@ -317,9 +319,10 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         if(!need(arm,"actual method receiver has no independently verified dispatch arm")){e.path=fn.path;e.range=op.range;return false;}
         const auto target=string(field(*arm,"target"));if(!need(functions.count(target),"actual method implementation missing"))return false;
         const auto count=functions.at(target)->blocks[0].parameters.size();if(!need(count>0&&count<=args.size(),"method target requires missing actual arguments"))return false;
-        if(!step(count))return false;std::vector<ActualValue> selected;for(size_t i=0;i<count;++i)selected.push_back(copy(args[i]));
+        if(!step(count))return false;std::vector<ActualValue> selected;selected.reserve(count);for(size_t i=0;i<count;++i)selected.push_back(copy(args[i]));
         selected[0].tags={tag};selected[0].objects.clear();selected[0].cells.clear();
-        for(const auto &ref:args[0].objects){if(!step(ref.size()/64+1)||!need(objects.count(ref),"method receiver object missing"))return false;if(objects.at(ref).type==tag)selected[0].objects.insert(ref);}
+        for(const auto &ref:args[0].objects){if(!step(ref.size()/64+1))return false;const auto object=objects.find(ref);
+          if(!need(object!=objects.end(),"method receiver object missing"))return false;if(object->second.type==tag){if(!step(4))return false;selected[0].objects.insert(object->first);}}
         if(!need(!selected[0].objects.empty(),"method receiver tag has no matching actual object"))return false;
         if(!invoke(target,std::move(selected)))return false;
       }
@@ -362,7 +365,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     const bool initial=!completed;
     if(!completed){completed=true;changed=true;}if(!args.empty())changed=merge(returned,args[0])||changed;
     if(!normal&&!abortInitializers(state))return false;
-    if(!step(context.arguments.size()+args.size()))return false;std::vector<ActualValue> frameRoots;
+    if(!step(context.arguments.size()+args.size()))return false;std::vector<ActualValue> frameRoots;frameRoots.reserve(context.arguments.size()+(args.empty()?0:1));
     for(const auto &arg:context.arguments)frameRoots.push_back(copy(arg));if(!args.empty())frameRoots.push_back(copy(args[0]));
     auto selected=selectFrames(state.frames,frameRoots,state.heap);if(!e.message.empty())return false;
     // The empty summary can own this complete projection; a nonempty summary

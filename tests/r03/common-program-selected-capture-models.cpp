@@ -59,26 +59,26 @@ bool selected(const std::string &mode){
 bool slot(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};Json layout=Object{{"id","L"},{"parent",nullptr},{"slots",Array{Object{{"key","a"}}}}},
     child=Object{{"id","M"},{"parent","L"},{"slots",Array{}}};c.environments={{"L",&layout},{"M",&child}};
-  c.objects={{"EA",{"env:L",true}},{"EB",{"env:L",true}},{"MB",{"env:M",false}}};ActualValue selected,a,b,parent;
-  selected.tags={"env:L"};selected.objects={"EB"};a.tags={"Array"};a.objects={"A"};b.tags={"Array"};b.objects={"B"};parent.tags={"env:L"};parent.objects={"EB"};
-  ActualHeap heap{{"EA/slot/a",a},{"EB/slot/a",b},{"MB/parent",parent}};std::string start="L";
-  if(mode=="slot-parent"){selected.tags={"env:M"};selected.objects={"MB"};start="M";}
-  if(mode=="slot-alternatives"||mode=="slot-partial")selected.objects.insert(mode=="slot-partial"?"missing":"EA");
+  c.objects={{ActualObjectId("EA"),{"env:L",true}},{ActualObjectId("EB"),{"env:L",true}},{ActualObjectId("MB"),{"env:M",false}}};ActualValue selected,a,b,parent;
+  selected.tags={"env:L"};selected.objects={ActualObjectId("EB")};a.tags={"Array"};a.objects={ActualObjectId("A")};b.tags={"Array"};b.objects={ActualObjectId("B")};parent.tags={"env:L"};parent.objects={ActualObjectId("EB")};
+  ActualHeap heap;heap.emplace("EA/slot/a",a);heap.emplace("EB/slot/a",b);heap.emplace("MB/parent",parent);std::string start="L";
+  if(mode=="slot-parent"){selected.tags={"env:M"};selected.objects={ActualObjectId("MB")};start="M";}
+  if(mode=="slot-alternatives"||mode=="slot-partial")selected.objects.emplace(mode=="slot-partial"?"missing":"EA");
   if(mode=="slot-stored-unknown")heap["EB/slot/a"].unknown=true;
-  if(mode=="slot-missing")heap.erase("EB/slot/a");
+  if(mode=="slot-missing"){ActualHeap filtered;for(const auto &[key,value]:heap)if(key!="EB/slot/a")filtered.emplace(key,value);heap=std::move(filtered);}
   if(mode=="slot-budget")p.remaining=0;
   bool complete=false;const auto result=c.environmentSlot(selected,start,"L","a",heap,complete);
   if(mode=="slot-budget")return e.code=="core-ir-common-budget";
   if(!e.message.empty())return false;
-  if(mode=="slot-partial")return !complete&&!result.unknown&&result.objects==std::set<std::string>{"B"};
-  if(mode=="slot-alternatives")return complete&&!result.unknown&&result.objects==std::set<std::string>{"A","B"};
+  if(mode=="slot-partial")return !complete&&!result.unknown&&result.objects==ActualObjectSet{ActualObjectId("B")};
+  if(mode=="slot-alternatives")return complete&&!result.unknown&&result.objects==ActualObjectSet{ActualObjectId("A"),ActualObjectId("B")};
   if(mode=="slot-stored-unknown"||mode=="slot-missing"){
     auto fn=function("load");fn.blocks[0].operations={op("env_load",1,"Array",{0},Object{{"layout","L"},{"key","a"},{"binding","owner"}})};
-    ActualContext context;context.function=&fn;ActualState state;state.values[0]=selected;state.heap=heap;bool changed=false,continues=true;
+    ActualContext context;context.function=&fn;ActualState state;state.values[0]=selected;state.heap=ActualHeap(heap);bool changed=false,continues=true;
     const bool accepted=c.instruction(context,fn.blocks[0].operations[0],0,state,false,changed,[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return false;},continues);
-    return mode=="slot-missing"?!accepted&&!complete&&e.code=="core-ir-common-actual":accepted&&complete&&state.values.at(1).unknown&&state.values.at(1).objects==std::set<std::string>{"B"};
+    return mode=="slot-missing"?!accepted&&!complete&&e.code=="core-ir-common-actual":accepted&&complete&&state.values.at(1).unknown&&state.values.at(1).objects==ActualObjectSet{ActualObjectId("B")};
   }
-  return complete&&!result.unknown&&result.objects==std::set<std::string>{"B"};
+  return complete&&!result.unknown&&result.objects==ActualObjectSet{ActualObjectId("B")};
 }
 bool emptyLayoutBudget(){
   Program p;Error e;ActualCheck c{p,e};Json row=Object{{"id","empty"},{"parent",nullptr},{"slots",Array{}}};c.environments.emplace("empty",&row);p.remaining=0;

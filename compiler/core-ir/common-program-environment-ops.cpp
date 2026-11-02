@@ -23,7 +23,7 @@ ActualValue ActualCheck::environmentSlot(const ActualValue &selected,const std::
     for(const auto &ref:current.objects){
       if(!step())return {};auto object=objects.find(ref);
       if(object==objects.end()||object->second.type!="env:"+expected){addressComplete=false;continue;}
-      const auto slot=ref+(last?"/slot/"+key:"/parent");auto stored=heap.find(slot);
+      const auto slot=ref.text()+(last?"/slot/"+key:"/parent");auto stored=heap.find(slot);
       if(stored==heap.end()){addressComplete=false;continue;}merge(next,stored->second);
     }
     // A weak object can still have precise current alternatives. Keep those

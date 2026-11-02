@@ -112,7 +112,7 @@ bool localStoreObservation(bool opaque){
   c.regions.scopes.emplace("owned",RegionScope{fn.id,"one"});c.regions.scopes.emplace("destination",RegionScope{fn.id,"one"});
   ActualState state;const auto object=[&](const std::string &id,const std::string &type,const std::string &scope){
     c.objects.emplace(id,ActualObject{type,false});c.regions.nodes.emplace("version/"+id,RegionNode{scope,id,type});
-    ActualValue value;value.tags.insert(type);value.objects.insert(id);value.region.known=true;value.region.roots.insert("version/"+id);return value;
+    ActualValue value;value.tags.insert(type);value.objects.emplace(id);value.region.known=true;value.region.roots.insert("version/"+id);return value;
   };
   state.values.emplace(0,object("destination","V","destination"));state.values.emplace(1,object("v0","V","owned"));
   for(size_t i=0;i<32;++i){const auto id="v"+std::to_string(i),next=i==31?"span":"v"+std::to_string(i+1);state.heap.emplace(id+(i==31?"/field/span":"/field/next"),object(next,i==31?"S":"V","owned"));}
@@ -132,18 +132,18 @@ bool reachableRange(const std::string &mode){
   const std::string nul("n\0x",3),bytes{char(0x80),char(0xff)},tail(1,char(0xff));
   const auto payload=[](){ActualValue v;v.tags={"T"};v.cells={"cell"};v.callables={{"code",""}};v.truth=3;v.number=7;v.unknown=true;v.callableTop=true;v.region.known=true;v.region.roots={"version"};return v;};
   for(const auto &key:std::vector<std::string>{"global:g","g/value","/zero","exact","r/a","r/a/child","r/b","r0/near","r.near","q/back",nul,nul+"/field",bytes,bytes+"/field",tail+"/field"})heap.emplace(key,payload());
-  heap.at("global:g").objects={"g"};heap.at("r/a").objects={"q"};heap.at("q/back").objects={"r"};
+  heap.at("global:g").objects={ActualObjectId("g")};heap.at("r/a").objects={ActualObjectId("q")};heap.at("q/back").objects={ActualObjectId("r")};
   std::set<std::string> hand{"global:g","g/value"};
   if(mode=="empty-heap"){heap.clear();hand.clear();}
-  else if(mode=="empty-ref"){root.objects={""};hand.insert("/zero");}
-  else if(mode=="missing")root.objects={"missing"};
-  else if(mode=="exact-excluded")root.objects={"exact"};
-  else if(mode=="overlap"){root.objects={"r","r/a"};hand.insert({"r/a","r/a/child","r/b","q/back"});}
-  else if(mode=="nul"){root.objects={nul};hand.insert(nul+"/field");}
-  else if(mode=="bytes"){root.objects={bytes};hand.insert(bytes+"/field");}
-  else if(mode=="tail"){root.objects={tail};hand.insert(tail+"/field");}
+  else if(mode=="empty-ref"){root.objects={ActualObjectId("")};hand.insert("/zero");}
+  else if(mode=="missing")root.objects={ActualObjectId("missing")};
+  else if(mode=="exact-excluded")root.objects={ActualObjectId("exact")};
+  else if(mode=="overlap"){root.objects={ActualObjectId("r"),ActualObjectId("r/a")};hand.insert({"r/a","r/a/child","r/b","q/back"});}
+  else if(mode=="nul"){root.objects={ActualObjectId(nul)};hand.insert(nul+"/field");}
+  else if(mode=="bytes"){root.objects={ActualObjectId(bytes)};hand.insert(bytes+"/field");}
+  else if(mode=="tail"){root.objects={ActualObjectId(tail)};hand.insert(tail+"/field");}
   else if(mode=="sparse"){
-    heap.clear();for(size_t i=0;i<512;++i)heap.emplace("unrelated/"+std::to_string(i),payload());heap.emplace("r/only",payload());root.objects={"r"};hand={"r/only"};p.remaining=600;
+    heap.clear();for(size_t i=0;i<512;++i)heap.emplace("unrelated/"+std::to_string(i),payload());heap.emplace("r/only",payload());root.objects={ActualObjectId("r")};hand={"r/only"};p.remaining=600;
   }else if(mode=="zero")p.remaining=0;
   const std::vector<ActualValue> roots{root};const auto actual=c.reachable({roots,{}},heap);
   if(mode=="zero")return report("reachable zero balance remains rejected",e.code=="core-ir-common-budget"&&p.remaining==0&&actual.empty());
@@ -151,7 +151,7 @@ bool reachableRange(const std::string &mode){
   // It uses no ordered search or production projection helper.
   ActualHeap expected;std::vector<const ActualValue *> pending{&roots[0]};std::set<std::string> visited;
   for(const auto &[key,value]:heap)if(key.compare(0,7,"global:")==0){expected.emplace(key,value);pending.push_back(&value);}
-  for(size_t i=0;i<pending.size();++i){auto refs=pending[i]->objects;for(const auto &[code,environment]:pending[i]->callables)if(!environment.empty())refs.insert(environment);
+  for(size_t i=0;i<pending.size();++i){std::set<std::string> refs;for(const auto &ref:pending[i]->objects)refs.insert(ref.text());for(const auto &[code,environment]:pending[i]->callables)if(!environment.empty())refs.insert(environment);
     for(const auto &ref:refs)if(visited.insert(ref).second){const auto prefix=ref+"/";for(const auto &[key,value]:heap)if(key.compare(0,prefix.size(),prefix)==0&&expected.emplace(key,value).second)pending.push_back(&value);}
   }
   std::set<std::string> oracleKeys,actualKeys;for(const auto &[key,value]:expected)oracleKeys.insert(key);bool same=e.message.empty()&&actual.size()==expected.size();
@@ -164,26 +164,26 @@ bool hardEscapeRange(const std::string &mode){
   const std::vector<std::pair<std::string,std::string>> aliases{{"r-new","r"},{"r-aged","r"},{"exact","exact"},{"cell","cell"},{"env","env"},{"leaf","leaf"},{"near","near"},{"global","global:root"},{"gchild","gchild"},{"nul",nul},{"tail",tail},{"unmatched","unmatched"}};
   for(size_t i=0;i<aliases.size();++i){const auto &[scope,ref]=aliases[i];c.regions.scopes.emplace(scope,RegionScope{"function","one"});c.regions.nodes.emplace("version/"+std::to_string(i),RegionNode{scope,ref,"T"});}
   c.regions.scopes.emplace("prehard",RegionScope{"function","one",true,true});c.regions.scopes.emplace("blocked",RegionScope{"function","one",true,false});
-  heap["r"].objects={"exact"};heap["r!near"].objects={"near"};heap["r/child"].cells={"cell"};heap["r/child"].callables={{"code","env"}};
-  heap["r/child/field"].objects={"leaf"};heap["cell"].objects={"r"};heap["cell/field"].objects={"leaf"};heap["env/parent"].objects={"leaf"};
-  heap["global:root"].objects={"gchild"};heap["global:unrelated"].objects={"unmatched"};
-  heap[nul].objects={"exact"};heap[nul+"!near"].objects={"near"};heap[nul+"/slot"].objects={"leaf"};
-  heap[tail].objects={"exact"};heap[tail+"/slot"].objects={"leaf"};
+  heap["r"].objects={ActualObjectId("exact")};heap["r!near"].objects={ActualObjectId("near")};heap["r/child"].cells={"cell"};heap["r/child"].callables={{"code","env"}};
+  heap["r/child/field"].objects={ActualObjectId("leaf")};heap["cell"].objects={ActualObjectId("r")};heap["cell/field"].objects={ActualObjectId("leaf")};heap["env/parent"].objects={ActualObjectId("leaf")};
+  heap["global:root"].objects={ActualObjectId("gchild")};heap["global:unrelated"].objects={ActualObjectId("unmatched")};
+  heap[nul].objects={ActualObjectId("exact")};heap[nul+"!near"].objects={ActualObjectId("near")};heap[nul+"/slot"].objects={ActualObjectId("leaf")};
+  heap[tail].objects={ActualObjectId("exact")};heap[tail+"/slot"].objects={ActualObjectId("leaf")};
   std::set<std::string> hand{"prehard"};
-  if(mode=="mixed"){root.objects={"r","r/child"};hand.insert({"r-new","r-aged","exact","cell","env","leaf"});}
-  else if(mode=="global"){root.objects={"global:root"};hand.insert({"global","gchild"});}
-  else if(mode=="nul"){root.objects={nul};hand.insert({"nul","exact","leaf"});}
-  else if(mode=="bytes-tail"){root.objects={tail};hand.insert({"tail","exact","leaf"});}
-  else if(mode=="missing")root.objects={"missing"};
-  else if(mode=="no-scope"){root.objects={"orphan"};c.regions.nodes.emplace("unbound-version",RegionNode{"no-such-scope","orphan","T"});heap["orphan/field"]=ActualValue{};}
-  else if(mode=="sparse"){root.objects={"r"};heap.clear();for(size_t i=0;i<512;++i)heap.emplace("unrelated/"+std::to_string(i),ActualValue{});heap.emplace("r/only",ActualValue{});hand.insert({"r-new","r-aged"});p.remaining=128;}
-  else if(mode=="zero"){root.objects={"r"};p.remaining=0;}
+  if(mode=="mixed"){root.objects={ActualObjectId("r"),ActualObjectId("r/child")};hand.insert({"r-new","r-aged","exact","cell","env","leaf"});}
+  else if(mode=="global"){root.objects={ActualObjectId("global:root")};hand.insert({"global","gchild"});}
+  else if(mode=="nul"){root.objects={ActualObjectId(nul)};hand.insert({"nul","exact","leaf"});}
+  else if(mode=="bytes-tail"){root.objects={ActualObjectId(tail)};hand.insert({"tail","exact","leaf"});}
+  else if(mode=="missing")root.objects={ActualObjectId("missing")};
+  else if(mode=="no-scope"){root.objects={ActualObjectId("orphan")};c.regions.nodes.emplace("unbound-version",RegionNode{"no-such-scope","orphan","T"});heap["orphan/field"]=ActualValue{};}
+  else if(mode=="sparse"){root.objects={ActualObjectId("r")};heap.clear();for(size_t i=0;i<512;++i)heap.emplace("unrelated/"+std::to_string(i),ActualValue{});heap.emplace("r/only",ActualValue{});hand.insert({"r-new","r-aged"});p.remaining=128;}
+  else if(mode=="zero"){root.objects={ActualObjectId("r")};p.remaining=0;}
   const auto original=c.regions.scopes;regionHardEscape(c,root,heap);
   if(mode=="zero"){bool untouched=c.regions.scopes.size()==original.size();for(const auto &[id,scope]:original){const auto &after=c.regions.scopes.at(id);untouched&=after.blocked==scope.blocked&&after.hard==scope.hard;}return report("hard escape zero balance remains rejected",untouched&&e.code=="core-ir-common-budget"&&p.remaining==0);}
   // Independent original exhaustive walker, with a separate hand-listed set
   // of hard scopes. Node keys deliberately differ from raw references.
   auto expected=original;std::vector<const ActualValue *> pending{&root};std::set<std::string> seen;
-  for(size_t i=0;i<pending.size();++i){auto refs=pending[i]->objects;refs.insert(pending[i]->cells.begin(),pending[i]->cells.end());for(const auto &[code,environment]:pending[i]->callables)if(!environment.empty())refs.insert(environment);
+  for(size_t i=0;i<pending.size();++i){std::set<std::string> refs;for(const auto &ref:pending[i]->objects)refs.insert(ref.text());refs.insert(pending[i]->cells.begin(),pending[i]->cells.end());for(const auto &[code,environment]:pending[i]->callables)if(!environment.empty())refs.insert(environment);
     for(const auto &ref:refs)if(seen.insert(ref).second){for(const auto &[key,node]:c.regions.nodes)if(node.reference==ref){auto scope=expected.find(node.region);if(scope!=expected.end()){scope->second.blocked=true;scope->second.hard=true;}}
       const auto prefix=ref+"/";for(const auto &[key,value]:heap)if(key==ref||key.compare(0,prefix.size(),prefix)==0)pending.push_back(&value);
     }
@@ -199,7 +199,7 @@ bool containedRange(const std::string &mode){
   std::map<std::string,Json> types;for(const auto &[id,kind]:std::map<std::string,std::string>{{"V","reference"},{"S","readSpan"},{"A","array"},{"F","function"}}){types.emplace(id,Object{{"id",id},{"kind",kind}});c.types.emplace(id,&types.at(id));}
   for(const std::string id:{"S","A"})(*types.at(id).getAsObject())["elementType"]="I";
   for(const auto &[id,type]:std::map<std::string,std::string>{{"D","V"},{"R","V"},{"X","V"},{"E","env:L"},{"P","env:L"},{"S","S"},{"A","A"}})c.objects.emplace(id,ActualObject{type,false});
-  ActualState state;const auto object=[](const std::string &ref,const std::string &tag){ActualValue v;v.objects={ref};v.tags={tag};v.region.known=true;v.region.roots={"version/"+ref};return v;};
+  ActualState state;const auto object=[](const std::string &ref,const std::string &tag){ActualValue v;v.objects={ActualObjectId(ref)};v.tags={tag};v.region.known=true;v.region.roots={"version/"+ref};return v;};
   state.values.emplace(0,object("D","V"));state.values.emplace(1,object("E","env:L"));state.values.emplace(2,object("S","S"));state.values.emplace(3,object("A","A"));state.values[4].number=0;
   state.heap["S/owner"]=state.values.at(3);state.heap["E"]=state.values.at(2);state.heap["E!near"]=state.values.at(2);state.heap["E/junk"]=state.values.at(2);
   const bool omitEnvironment=mode=="env-exact"||mode=="env-junk"||mode=="return-env-exact"||mode=="return-env-junk";
@@ -209,18 +209,18 @@ bool containedRange(const std::string &mode){
   state.heap["cell"]=state.values.at(2);state.heap["R/field/x"]=object("X","V");state.heap["X/field/span"]=state.values.at(2);state.heap["X/field/cycle"]=object("R","V");
   if(mode=="cells"||mode=="return-cell"){state.values.at(1)=ActualValue{};state.values.at(1).cells={"cell"};state.values.at(1).region.known=true;state.values.at(1).region.empty=true;}
   if(mode=="callable"||mode=="return-env-slot"||mode=="return-env-parent"||mode=="return-env-exact"||mode=="return-env-junk"){state.values.at(1)=ActualValue{};state.values.at(1).tags={"F"};state.values.at(1).callables={{"code","E"}};state.values.at(1).region.known=true;state.values.at(1).region.roots={"version/E"};}
-  if(mode=="overlap"||mode=="return-use"){state.values.at(1)=object("R","V");state.values.at(1).objects.insert("X");}
+  if(mode=="overlap"||mode=="return-use"){state.values.at(1)=object("R","V");state.values.at(1).objects.emplace("X");}
   if(mode=="return-converge"){state.values.at(1)=object("R","V");state.heap["R/field/a-env"]=object("E","env:L");state.heap["R/field/z-direct"]=object("X","V");state.heap["E/slot/held"]=object("X","V");}
   if(mode=="nul"){const std::string ref("N\0r",3);c.objects.emplace(ref,ActualObject{"V",false});state.values.at(1)=object(ref,"V");state.heap[ref]=state.values.at(2);state.heap[ref+"!near"]=state.values.at(2);state.heap[ref+"/field"]=state.values.at(2);}
   if(mode=="sparse"){state.values.at(1)=object("R","V");state.heap.clear();for(size_t i=0;i<512;++i)state.heap.emplace("unrelated/"+std::to_string(i),ActualValue{});state.heap.emplace("R/field/scalar",ActualValue{});}
   // Three independent exhaustive projections, not production search/helpers.
   const auto scan=[&](int scanMode){std::map<std::string,std::set<std::string>> out;std::vector<std::pair<std::string,bool>> pending;std::set<std::pair<std::string,bool>> visited;
-    for(const auto &ref:state.values.at(1).objects)pending.emplace_back(ref,false);for(const auto &cell:state.values.at(1).cells)pending.emplace_back(cell,false);if(scanMode)for(const auto &[code,env]:state.values.at(1).callables)if(!env.empty())pending.emplace_back(env,true);
+    for(const auto &ref:state.values.at(1).objects)pending.emplace_back(ref.text(),false);for(const auto &cell:state.values.at(1).cells)pending.emplace_back(cell,false);if(scanMode)for(const auto &[code,env]:state.values.at(1).callables)if(!env.empty())pending.emplace_back(env,true);
     while(!pending.empty()){auto [ref,captured]=pending.back();pending.pop_back();if(!visited.emplace(ref,captured).second)continue;auto found=c.objects.find(ref);const bool env=found!=c.objects.end()&&llvm::StringRef(found->second.type).starts_with("env:");
-      if(found!=c.objects.end()&&found->second.type=="S"){if(scanMode!=2||captured)out.emplace(ref,state.heap.at(ref+"/owner").objects);continue;}
+      if(found!=c.objects.end()&&found->second.type=="S"){if(scanMode!=2||captured){std::set<std::string> owners;for(const auto &owner:state.heap.at(ref+"/owner").objects)owners.insert(owner.text());out.emplace(ref,std::move(owners));}continue;}
       if(env&&!scanMode)continue;captured|=env;const auto prefix=ref+"/";
       for(const auto &[key,value]:state.heap)if(key==ref||key.compare(0,prefix.size(),prefix)==0){if(env&&key.compare(0,(ref+"/slot/").size(),ref+"/slot/")!=0&&key!=ref+"/parent")continue;
-        for(const auto &next:value.objects)pending.emplace_back(next,captured);for(const auto &cell:value.cells)pending.emplace_back(cell,captured);if(scanMode)for(const auto &[code,next]:value.callables)if(!next.empty())pending.emplace_back(next,true);
+        for(const auto &next:value.objects)pending.emplace_back(next.text(),captured);for(const auto &cell:value.cells)pending.emplace_back(cell,captured);if(scanMode)for(const auto &[code,next]:value.callables)if(!next.empty())pending.emplace_back(next,true);
       }
     }return out;};
   const auto use=scan(0),escape=scan(1),closure=scan(2);const bool filtered=mode=="env-exact"||mode=="env-junk"||mode=="return-env-exact"||mode=="return-env-junk"||mode=="sparse";
@@ -245,7 +245,7 @@ bool containedRange(const std::string &mode){
 }
 bool resultStorage(bool conditional){
   Program p;Error e;ActualCheck c{p,e};Function fn;fn.id="result-facets";ActualContext context;context.function=&fn;
-  ActualValue source;source.tags={"T"};source.objects={"object"};source.cells={"cell"};source.callables={{"code","environment"}};
+  ActualValue source;source.tags={"T"};source.objects={ActualObjectId("object")};source.cells={"cell"};source.callables={{"code","environment"}};
   source.truth=3;source.unknown=true;source.callableTop=true;source.number=7;source.region.known=true;source.region.opaque=true;source.region.empty=true;source.region.number=7;source.region.roots={"version"};
   ActualState state;state.values.emplace(0,source);const auto expected=c.key(source);bool changed=false,continues=true;
   const auto edge=[](uint16_t,ActualState,const std::vector<ActualValue> &){return true;};
@@ -270,9 +270,9 @@ bool mergeLattice(const std::string &mode){
   if(mode=="bottom"){from.tags={"I"};from.number=7;from.truth=2;expected=from;changed=true;}
   else if(mode=="bottom-metadata"){to.truth=1;to.number=9;to.region.roots={"hidden"};from.number=7;from.truth=2;expected=to;expected.truth=3;expected.number=7;changed=true;}
   else if(mode=="sets"){
-    to.tags={"A"};to.objects={"oa"};to.cells={"ca"};to.callables={{"a","ea"}};to.truth=1;
-    from.tags={"B"};from.objects={"ob"};from.cells={"cb"};from.callables={{"b","eb"}};from.truth=2;
-    expected.tags={"A","B"};expected.objects={"oa","ob"};expected.cells={"ca","cb"};expected.callables={{"a","ea"},{"b","eb"}};expected.truth=3;changed=true;
+    to.tags={"A"};to.objects={ActualObjectId("oa")};to.cells={"ca"};to.callables={{"a","ea"}};to.truth=1;
+    from.tags={"B"};from.objects={ActualObjectId("ob")};from.cells={"cb"};from.callables={{"b","eb"}};from.truth=2;
+    expected.tags={"A","B"};expected.objects={ActualObjectId("oa"),ActualObjectId("ob")};expected.cells={"ca","cb"};expected.callables={{"a","ea"},{"b","eb"}};expected.truth=3;changed=true;
   }else if(mode=="flags"){to.tags={"I"};to.truth=1;from.tags={"I"};from.truth=2;from.unknown=true;from.callableTop=true;expected=from;expected.truth=3;changed=true;}
   else if(mode=="unicode"){to.tags={"\xc3\xa9"};from.tags={"\xf0\x9f\x8c\xb2"};expected.tags={"\xc3\xa9","\xf0\x9f\x8c\xb2"};changed=true;}
   else if(mode=="number-min"||mode=="number-max"){from.number=mode=="number-min"?minimum:maximum;expected=from;changed=true;}
@@ -292,13 +292,13 @@ bool mergeLattice(const std::string &mode){
     if(mode=="region-empty"){from.region.empty=true;expected.region.empty=true;changed=true;}
     if(mode=="region-number-conflict"){from.region.number=9;expected.region.number.reset();changed=true;}
   }else if(mode=="self"){
-    to.tags={"I"};to.objects={"o"};to.cells={"c"};to.callables={{"f","e"}};to.truth=3;to.unknown=true;to.callableTop=true;to.number=minimum;
+    to.tags={"I"};to.objects={ActualObjectId("o")};to.cells={"c"};to.callables={{"f","e"}};to.truth=3;to.unknown=true;to.callableTop=true;to.number=minimum;
     to.region.known=true;to.region.opaque=true;to.region.empty=true;to.region.roots={"r"};to.region.number=maximum;expected=to;
   }else if(mode=="bound256"||mode=="sparse-budget"){
-    for(size_t i=0;i<256;++i){const auto id=std::to_string(i);to.tags.insert("T"+id);to.objects.insert("O"+id);to.cells.insert("C"+id);to.callables.emplace("F"+id,"");}
+    for(size_t i=0;i<256;++i){const auto id=std::to_string(i);to.tags.insert("T"+id);to.objects.emplace("O"+id);to.cells.insert("C"+id);to.callables.emplace("F"+id,"");}
     from.tags={"T0"};expected=to;if(mode=="sparse-budget")p.remaining=32;
   }else if(llvm::StringRef(mode).starts_with("limit-")){
-    for(size_t i=0;i<257;++i){const auto id=std::to_string(i);if(mode=="limit-tags")from.tags.insert(id);else if(mode=="limit-objects")from.objects.insert(id);else if(mode=="limit-cells")from.cells.insert(id);else if(mode=="limit-targets")from.callables.emplace(id,"");else{from.region.known=true;from.region.roots.insert(id);}}
+    for(size_t i=0;i<257;++i){const auto id=std::to_string(i);if(mode=="limit-tags")from.tags.insert(id);else if(mode=="limit-objects")from.objects.emplace(id);else if(mode=="limit-cells")from.cells.insert(id);else if(mode=="limit-targets")from.callables.emplace(id,"");else{from.region.known=true;from.region.roots.insert(id);}}
     denied=true;
   }else if(mode=="zero"){to.tags={"old"};from.tags={"new"};expected=to;p.remaining=0;denied=true;}
   else if(mode=="encoding-boundary"){
@@ -343,7 +343,7 @@ bool ownershipUniverse(const std::string &mode){
   if(mode=="sparse-budget")for(size_t i=0;i<32;++i){const auto id="v"+std::to_string(i);graph.emplace(id,Node{"value"});graph.at("z").fields.push_back(Value{{id}});}
   std::map<std::string,Json> types;for(const std::string kind:{"array","readSpan","value","reference","scalar"})types.emplace(kind,Object{{"id",kind},{"kind",kind}});
   for(const auto &[id,type]:types)c.types.emplace(id,&type);
-  const auto actual=[&](const Value &v){ActualValue result;result.objects=v.alternatives;result.unknown=v.opaque;
+  const auto actual=[&](const Value &v){ActualValue result;for(const auto &ref:v.alternatives)result.objects.emplace(ref);result.unknown=v.opaque;
     for(const auto &ref:v.alternatives){const auto &kind=graph.at(ref).kind;result.tags.insert(kind=="environment"?"env:E":kind);}
     if(!v.complete&&!v.opaque&&std::none_of(v.alternatives.begin(),v.alternatives.end(),[&](const auto &ref){return graph.at(ref).kind=="readSpan";}))result.tags.insert("scalar");return result;};
   ActualHeap heap;for(const auto &[id,node]:graph){c.objects.emplace(id,ActualObject{node.kind=="environment"?"env:E":node.kind,node.weak});

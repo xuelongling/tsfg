@@ -57,16 +57,16 @@ bool aggregate(const std::string &mode){
 bool projected(const std::string &mode){
   Program p;Error e;ActualCheck c{p,e};Json array=Object{{"kind","array"}},span=Object{{"kind","readSpan"}},holder=Object{{"kind","reference"}},callable=Object{{"kind","function"}};
   c.types={{"A",&array},{"S",&span},{"H",&holder},{"F",&callable}};
-  c.objects={{"H",{"H",mode=="graph-weak-prefix"}},{"E1",{"env:L",mode=="graph-weak-environment"}},{"E2",{"env:L",false}},{"A",{"A",false}},{"B",{"A",false}},{"S1",{"S",false}},{"S2",{"S",false}}};
-  ActualValue root,functions,first,second,a,b;root.objects={"H"};functions.tags={"F"};functions.callables={{"f","E1"},{"g","E2"}};
-  first.tags={"S"};first.objects={"S1"};second.tags={"S"};second.objects={mode=="graph-bad-sibling"?"S1":"S2"};a.tags={"A"};a.objects={"A"};b.tags={"A"};b.objects={"B"};
-  ActualHeap heap{{"H/field/fn",functions},{"E1/slot/r",first},{"E2/slot/r",second},{"E1/slot/a",a},{"E2/slot/a",b}};
+  c.objects={{ActualObjectId("H"),{"H",mode=="graph-weak-prefix"}},{ActualObjectId("E1"),{"env:L",mode=="graph-weak-environment"}},{ActualObjectId("E2"),{"env:L",false}},{ActualObjectId("A"),{"A",false}},{ActualObjectId("B"),{"A",false}},{ActualObjectId("S1"),{"S",false}},{ActualObjectId("S2"),{"S",false}}};
+  ActualValue root,functions,first,second,a,b;root.objects={ActualObjectId("H")};functions.tags={"F"};functions.callables={{"f","E1"},{"g","E2"}};
+  first.tags={"S"};first.objects={ActualObjectId("S1")};second.tags={"S"};second.objects={ActualObjectId(mode=="graph-bad-sibling"?"S1":"S2")};a.tags={"A"};a.objects={ActualObjectId("A")};b.tags={"A"};b.objects={ActualObjectId("B")};
+  ActualHeap heap;heap.emplace("H/field/fn",functions);heap.emplace("E1/slot/r",first);heap.emplace("E2/slot/r",second);heap.emplace("E1/slot/a",a);heap.emplace("E2/slot/a",b);
   if(mode=="graph-shared-environment")heap["H/field/fn"].callables={{"f","E1"},{"g","E1"}};
   if(mode=="graph-opaque")heap["H/field/fn"].unknown=true;
   if(mode=="graph-independent-span"){heap["H/field/r"]=first;heap["H/field/fn"].callables={{"f","E1"},{"pure",""}};}
   if(mode=="graph-cycle")heap["H/field/back"]=root;
-  if(mode=="graph-coexisting"){heap.erase("E1/slot/a");heap["H/field/a"]=a;}
-  if(mode=="graph-nested"){c.objects.emplace("N",ActualObject{"H",false});ActualValue child;child.objects={"N"};heap["H/field/child"]=child;heap["N/field/fn"]=functions;heap.erase("H/field/fn");}
+  if(mode=="graph-coexisting"){ActualHeap filtered;for(const auto &[key,value]:heap)if(key!="E1/slot/a")filtered.emplace(key,value);heap=std::move(filtered);heap["H/field/a"]=a;}
+  if(mode=="graph-nested"){c.objects.emplace("N",ActualObject{"H",false});ActualValue child;child.objects={ActualObjectId("N")};heap["H/field/child"]=child;heap["N/field/fn"]=functions;ActualHeap filtered;for(const auto &[key,value]:heap)if(key!="H/field/fn")filtered.emplace(key,value);heap=std::move(filtered);}
   if(mode=="graph-zero-work")p.remaining=0;
   ReturnOwnership graph(c,root,heap);if(mode=="graph-solve-budget")p.remaining=20;
   const auto owned=graph.solve([&](const std::string &ref){return mode!="graph-unclosed-environment"||ref!="E1";},"S1");
