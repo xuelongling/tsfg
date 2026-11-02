@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { invoke } from "./build-entry-invocation.mjs";
+import { readRuntimeClosureIdentity, verifyRuntimeClosure } from "../../eng/build-tool-closure.mjs";
 import { startArtifactServer, fixtureDigest, dataDescriptorZip, fixtureTreeDigest } from "./build-entry-fixtures.mjs";
 
 test("prefetch atomically publishes and reuses a content-verified minimal closure", async () => {
@@ -142,6 +143,15 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
       "fixture-zig\n",
     );
     assert.equal(JSON.parse(await readFile(path.join(closurePath, "ready.json"), "utf8")).status, "ready");
+    const metadata = await readRuntimeClosureIdentity(lockPath, cachePath, "test-x86_64");
+    assert.equal(metadata.lockDigest, firstReport.result.lockDigest);
+    assert.equal(metadata.lockPath, path.resolve(lockPath));
+    assert.equal(metadata.cachePath, path.resolve(cachePath));
+    assert.equal(metadata.closurePath, closurePath);
+    assert.equal(metadata.platform, "test-x86_64");
+    assert.deepEqual(metadata.lock, lock);
+    assert.deepEqual(metadata.selections.map(({ id }) => id), ["node", "pnpm", "zig"]);
+    assert.deepEqual(await verifyRuntimeClosure(lockPath, cachePath, "test-x86_64", { nativeControls: false }), metadata);
     const archiveCacheRoot = path.join(
       cachePath,
       "archives",
@@ -177,6 +187,8 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
     assert.equal(await readFile(reportPath, "utf8"), firstReportBytes);
 
     await writeFile(path.join(closurePath, "unexpected-object"), "poison\n");
+    await assert.rejects(() => verifyRuntimeClosure(lockPath, cachePath, "test-x86_64", { nativeControls: false }),
+      /unexpected cached closure object/);
     const unexpectedObject = await invoke(arguments_);
     assert.equal(unexpectedObject.status, 11);
     assert.match(unexpectedObject.stderr, /unexpected cached closure object/);
@@ -221,6 +233,10 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
       path.join(closurePath, "node", "bin", "node"),
       "corrupt-node\n",
     );
+    // Metadata admission does not attest bytes; execution still hashes and rejects this changed tool.
+    assert.deepEqual(await readRuntimeClosureIdentity(lockPath, cachePath, "test-x86_64"), metadata);
+    await assert.rejects(() => verifyRuntimeClosure(lockPath, cachePath, "test-x86_64", { nativeControls: false }),
+      /unpacked tree digest mismatch/);
     const corrupted = await invoke(arguments_);
     assert.equal(corrupted.status, 11);
     assert.match(corrupted.stderr, /unpacked tree digest mismatch/);

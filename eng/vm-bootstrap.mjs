@@ -2,7 +2,7 @@
 // The normal factory supplies these fixed production controls, never request
 // fields. This module owns bootstrap selection, admission and one-shot state.
 export async function prepareVmBootstrapWithControls(request, controls) {
-  const {ConfigurationError,VmBuildError,isGoDestinationOnE,validateSmokeOptions,verifyRuntimeClosure,
+  const {ConfigurationError,VmBuildError,isGoDestinationOnE,validateSmokeOptions,readRuntimeClosureIdentity,verifyRuntimeClosure,
     windowsToolchain,inspectProductWorkspace,executeVmTarget,canonicalize,digest,createBuildIdentity}=controls;
   const fields = ["lockPath", "cachePath", "productRoot", "output", "unqualifiedHostCounterReceipt", "currentSourceCounter"];
   if (!request || typeof request !== "object" || Array.isArray(request)
@@ -37,21 +37,21 @@ export async function prepareVmBootstrapWithControls(request, controls) {
     ["--profile", "debug"], ["--out", output], ["--workspace", productRoot], ["--dev", ""],
   ]);
   validateSmokeOptions(options, "build");
-  const runtime = await verifyRuntimeClosure(lockPath, cachePath, "windows-x86_64-msvc", { nativeControls: false });
-  const tools = windowsToolchain(runtime);
+  const preparedRuntime = await readRuntimeClosureIdentity(lockPath, cachePath, "windows-x86_64-msvc");
   const workspaceState = inspectProductWorkspace(options, true, "build");
   let spent = false;
   return Object.freeze({
-    qualification: "unqualified Runtime bootstrap only",
+    qualification: "unqualified Runtime bootstrap only; tool bytes unverified until execute",
     async execute(beforeBuild) {
       if (spent) throw new VmBuildError("VM bootstrap execution already consumed", "vm-bootstrap-spent");
       spent = true;
       if (typeof beforeBuild !== "function")
         throw new VmBuildError("VM bootstrap requires a fresh pre-build admission hook", "vm-bootstrap-admission");
-      const current = await verifyRuntimeClosure(lockPath, runtime.cachePath,
+      const runtime = await verifyRuntimeClosure(lockPath, preparedRuntime.cachePath,
         "windows-x86_64-msvc", { nativeControls: false });
-      if (current.lockDigest !== runtime.lockDigest)
+      if (runtime.lockDigest !== preparedRuntime.lockDigest)
         throw new VmBuildError("Tool closure changed before VM bootstrap", "vm-tool-integrity");
+      const tools = windowsToolchain(runtime);
       await beforeBuild();
       return executeVmTarget({ options, runtime, tools, productRoot: workspaceState.root, workspaceState,
         serialize: canonicalize, sha256: digest, unqualifiedHostCounterReceipt: coldReceipt, currentSourceCounter,

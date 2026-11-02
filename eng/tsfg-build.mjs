@@ -17,15 +17,15 @@ import { parseBuildOptions, parseOptions, parseReportPath, validateMlirConfigura
 import { inspectProductWorkspace } from "./build-product.mjs";
 import { fail, succeed } from "./build-report.mjs";
 import { isSourceDestinationOnE } from "./build-source-control.mjs";
-import { prefetch, verifyRuntimeClosure } from "./build-tool-closure.mjs";
+import { prefetch, readRuntimeClosureIdentity, verifyRuntimeClosure } from "./build-tool-closure.mjs";
 import { windowsToolchain } from "./build-toolchain.mjs";
 import { verifyWorkspace } from "./build-workspace.mjs";
 
-// Internal bootstrap seam: retain the normal verified runtime/workspace/BIS
-// producers. This creates no positive host witness and adds no CLI selector.
+// Internal bootstrap seam: preparation fixes metadata; execution retains the
+// normal tool/workspace/BIS producers, with no positive host witness or CLI selector.
 export async function prepareVmBootstrap(request) {
   return prepareVmBootstrapWithControls(request,{ConfigurationError,VmBuildError,isGoDestinationOnE:isSourceDestinationOnE,validateSmokeOptions,
-    verifyRuntimeClosure,windowsToolchain,inspectProductWorkspace,executeVmTarget,canonicalize,digest,createBuildIdentity});
+    readRuntimeClosureIdentity,verifyRuntimeClosure,windowsToolchain,inspectProductWorkspace,executeVmTarget,canonicalize,digest,createBuildIdentity});
 }
 
 async function runCommandLine() {

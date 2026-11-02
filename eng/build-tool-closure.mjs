@@ -399,7 +399,8 @@ export async function prefetch(options) {
   };
 }
 
-export async function verifyRuntimeClosure(lockPath, cachePath, platform, { nativeControls = true } = {}) {
+// Metadata admission only; cached tool bytes remain unverified until execution.
+export async function readRuntimeClosureIdentity(lockPath, cachePath, platform) {
   const lock = JSON.parse(await readFile(path.resolve(lockPath), "utf8"));
   if (lock.schemaVersion !== "1" || typeof lock.tools !== "object") {
     throw new Error("unsupported toolchain lock schema");
@@ -423,7 +424,6 @@ export async function verifyRuntimeClosure(lockPath, cachePath, platform, { nati
   if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
     throw new Error("active closure escapes the toolchain cache");
   }
-  await verifyCachedClosure(closurePath, selections, lockDigest, platform);
   const runtime = {
     cachePath: absoluteCache,
     closurePath,
@@ -433,6 +433,12 @@ export async function verifyRuntimeClosure(lockPath, cachePath, platform, { nati
     selections,
     lockPath: path.resolve(lockPath),
   };
+  return runtime;
+}
+
+export async function verifyRuntimeClosure(lockPath, cachePath, platform, { nativeControls = true } = {}) {
+  const runtime = await readRuntimeClosureIdentity(lockPath, cachePath, platform);
+  await verifyCachedClosure(runtime.closurePath, runtime.selections, runtime.lockDigest, platform);
   if (platform === "windows-x86_64-msvc" && nativeControls) {
     await verifyWindowsSandboxControl(runtime);
     await verifyWindowsPublicationControl(runtime);
