@@ -36,7 +36,7 @@ bool factories(const std::string &mode){
   const bool closure=mode!="array"&&mode!="reference"&&mode!="value-copy";
   const auto type=closure?m.fn:mode=="reference"?m.reference:mode=="value-copy"?m.value:m.array;
   m.types.emplace(m.pair,Object{{"id",m.pair},{"kind","array"},{"elementType",type}});
-  if(mode=="reference"){
+  if(mode=="reference"||mode=="value-copy"){
     // Match SourcePlan::enterConstructor/initialize/constructorResult, not the old atomic opcode.
     const auto constructor=type+"/constructor";const auto construction=type+"/construction";
     auto &row=*m.types.at(type).getAsObject();row["construction"]=Object{{"id",construction},{"kind","explicit"},{"functionId",constructor},
@@ -58,20 +58,23 @@ bool factories(const std::string &mode){
   auto make=m.function("make");auto &body=make.blocks[0].operations;
   body={op("constant",0,m.i32,{},Object{{"decimal","1"}}),op("constant",1,m.u32,{},Object{{"decimal","0"}}),op("constant",2,m.u32,{},Object{{"decimal","1"}})};
   uint16_t returned=3;
-  if(mode=="reference"){
-    body.push_back(op("receiver_create",4,"receiver:"+type,{},Object{{"owner",type},{"new_target",type},{"construction",type+"/construction"}}));
-    body.push_back(op("invoke",noRegister,"",{4},Object{{"function_id",type+"/constructor"},{"signature_hash","sig"}},{1,2}));
+  if(mode=="reference"||mode=="value-copy"){
+    const uint16_t frame=mode=="reference"?4:5;
+    body.push_back(op("receiver_create",frame,"receiver:"+type,{},Object{{"owner",type},{"new_target",type},{"construction",type+"/construction"}}));
+    body.push_back(op("invoke",noRegister,"",{frame},Object{{"function_id",type+"/constructor"},{"signature_hash","sig"}},{1,2}));
   }else if(closure||type==m.array)body.push_back(op("array_create",3,m.array,{0}));
-  else{body.push_back(op(type==m.value?"construct_value":"allocate_reference",3,type));body.push_back(op("field_store",noRegister,"",{3,0},Object{{"field",type+"/n"}}));}
   if(closure){
     body.push_back(op("readspan",4,m.span,{3,1,2}));body.push_back(op("env_alloc",5,"env:L",{},Object{{"layout","L"}}));
     body.push_back(op("env_init",noRegister,"",{5,3},Object{{"layout","L"},{"binding","a"},{"key","a"}}));
     body.push_back(op("env_init",noRegister,"",{5,4},Object{{"layout","L"},{"binding","r"},{"key","r"}}));
     body.push_back(op("make_closure",6,m.fn,{5},Object{{"function_id","reader"},{"signature_hash","sig"},{"environment_layout","L"}}));returned=6;
-  }else if(type==m.value){body.push_back(op("value_copy",4,type,{3}));returned=4;}
+  }else if(type==m.value)returned=4;
   if(recursive){body.push_back(op("invoke",noRegister,"",{},Object{{"function_id","make"}},{1,2}));make.blocks.push_back({{8},{op("func.return",noRegister,"",{returned})}});make.blocks.push_back({{9},{op("unreachable")}});}
   else if(mode=="reference"){make.blocks.push_back({{3},{op("func.return",noRegister,"",{returned})}});make.blocks.push_back({{5},{op("return_throw",noRegister,"",{5})}});}
-  else body.push_back(op("func.return",noRegister,"",{returned}));
+  else if(mode=="value-copy"){
+    make.blocks.push_back({{3},{op("value_copy",4,type,{3},Object{{"type",type}}),op("func.return",noRegister,"",{returned})}});
+    make.blocks.push_back({{6},{op("return_throw",noRegister,"",{6})}});
+  }else body.push_back(op("func.return",noRegister,"",{returned}));
   m.p.functions.push_back(std::move(make));m.source("make",false,closure);
   if(closure){auto reader=m.function("reader",{0});reader.blocks[0].operations={op("func.return")};m.p.functions.push_back(std::move(reader));m.source("reader",true);}
   if(wrapper){auto wrap=m.function("wrap");wrap.blocks={{{},{op("invoke",noRegister,"",{},Object{{"function_id","make"}},{1,2})}},{{10},{op("func.return",noRegister,"",{10})}},{{11},{op("unreachable")}}};m.p.functions.push_back(std::move(wrap));m.source("wrap");}
@@ -138,7 +141,17 @@ bool entryAlias(){
 }
 bool weakInitialization(const std::string &kind){
   Model m;m.types.emplace(m.pair,Object{{"id",m.pair},{"kind","array"},{"elementType",m.span}});
-  auto f=m.function("root");f.blocks[0].operations={op("func.return")};m.p.functions.push_back(std::move(f));m.source("root");m.bind();bool changed=false;
+  auto f=m.function("root");
+  if(kind=="weak-ref-store"){
+    auto &reference=*m.types.at(m.reference).getAsObject();
+    reference["construction"]=Object{{"id",m.reference+"/construction"},{"kind","implicit-base"},{"functionId",nullptr},
+      {"parameters",Array{}},{"initializationFields",Array{m.reference+"/n"}}};
+    (*reference["fields"].getAsArray()->front().getAsObject())["type"]=m.span;
+    // Owned operations give receiver_create its genuine site; no temporary-op pointer arithmetic.
+    f.blocks[0].operations={op("receiver_create",20,"receiver:"+m.reference,{},Object{{"owner",m.reference},{"new_target",m.reference},{"construction",m.reference+"/construction"}}),
+      op("receiver_allocate",0,m.reference,{20},Object{{"owner",m.reference}}),op("func.return")};
+  }else f.blocks[0].operations={op("func.return")};
+  m.p.functions.push_back(std::move(f));m.source("root");m.bind();bool changed=false;
   auto *context=m.c.context("root",{},{},false,changed,"controlled-repeated",true);if(!context)return false;ActualState state;
   for(const auto ref:{"S1","S2"})m.c.objects.emplace(ref,ActualObject{m.span,false});for(const auto ref:{"A1","A2"})m.c.objects.emplace(ref,ActualObject{m.array,false});
   state.values[10].tags={m.span};state.values[10].objects={ActualObjectId("S1")};state.values[11].tags={m.span};state.values[11].objects={ActualObjectId("S2")};state.values[12].tags={m.array};state.values[12].objects={ActualObjectId("A1")};state.values[13].tags={m.array};state.values[13].objects={ActualObjectId("A2")};
@@ -154,7 +167,8 @@ bool weakInitialization(const std::string &kind){
     if(!execute(op("env_init",noRegister,"",{0,10},Object{{"layout","L"},{"key","r"},{"binding","r"}}))||
       !execute(op("env_init",noRegister,"",{0,11},Object{{"layout","L"},{"key","r"},{"binding","r"}})))return false;slot=state.values.at(0).objects.begin()->text()+"/slot/r";
   }else if(kind=="weak-ref-store"){
-    if(!execute(op("allocate_reference",0,m.reference)))return false;context->repeated=false;
+    const auto &owned=m.p.functions[0].blocks[0].operations;
+    if(!execute(owned[0])||!execute(owned[1]))return false;context->repeated=false;
     if(!execute(op("field_store",noRegister,"",{0,10},Object{{"field",m.reference+"/n"}}))||!execute(op("field_store",noRegister,"",{0,11},Object{{"field",m.reference+"/n"}})))return false;slot=state.values.at(0).objects.begin()->text()+"/field/"+m.reference+"/n";
   }else{
     state.values[14].tags={m.u32};state.values[14].number=0;state.values[15].tags={m.u32};state.values[15].number=1;
