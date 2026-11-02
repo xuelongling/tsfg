@@ -90,6 +90,31 @@ private:
   friend struct ActualCheck;
 };
 // Compiler control identities never inhabit the ordinary tag/object domain.
+// Primary immutable Frame identity; maps and cursors share this owner, never a map-node borrow.
+// Factories prepay allocation/copy or retain work before constructing a key. Moved-from keys are not admitted.
+class ActualFrameId {
+  std::shared_ptr<const std::string> text_;
+public:
+  explicit ActualFrameId(const std::string &text):text_(std::make_shared<const std::string>(text)){}
+  explicit ActualFrameId(std::string &&text):text_(std::make_shared<const std::string>(std::move(text))){}
+  const std::string &text()const{return *text_;}
+  llvm::StringRef view()const{return *text_;}
+  size_t size()const{return text_->size();}
+  const std::shared_ptr<const std::string> &owner()const{return text_;}
+  friend bool operator==(const ActualFrameId &a,const ActualFrameId &b){return a.text()==b.text();}
+  friend bool operator!=(const ActualFrameId &a,const ActualFrameId &b){return !(a==b);}
+  friend bool operator==(const ActualFrameId &a,llvm::StringRef b){return a.view()==b;}
+  friend bool operator!=(const ActualFrameId &a,llvm::StringRef b){return !(a==b);}
+  friend bool operator==(llvm::StringRef a,const ActualFrameId &b){return a==b.view();}
+  friend bool operator!=(llvm::StringRef a,const ActualFrameId &b){return !(a==b);}
+};
+struct ActualFrameIdLess {
+  using is_transparent=void;
+  bool operator()(const ActualFrameId &a,const ActualFrameId &b)const{return a.view().compare(b.view())<0;}
+  bool operator()(const ActualFrameId &a,llvm::StringRef b)const{return a.view().compare(b)<0;}
+  bool operator()(llvm::StringRef a,const ActualFrameId &b)const{return a.compare(b.view())<0;}
+};
+
 struct ActualFrameInfo {
   std::string owner,construction,newTarget,parent;bool derived=false;
   std::vector<std::string> fields;
@@ -125,7 +150,7 @@ struct ActualFrameBinding {
   size_t prefixMin=0,prefixMax=0;ActualValue bound;
   ActualBirthJournal births;
 };
-using ActualFrameWorld=std::map<std::string,ActualFrameBinding,std::less<>>;
+using ActualFrameWorld=std::map<ActualFrameId,ActualFrameBinding,ActualFrameIdLess>;
 enum class ReceiverAction {Bind,Get,Result};
 struct ActualReceiverCompletion {
   bool normal=false,language=false,pending=false;
@@ -221,7 +246,7 @@ struct ActualCheck {
   std::map<const Operation *,std::string> callSites;
   std::set<const Operation *> unresolvedCalls;
   RegionDomain regions;
-  std::map<std::string,ActualFrameInfo,std::less<>> receiverFrames;
+  std::map<ActualFrameId,ActualFrameInfo,ActualFrameIdLess> receiverFrames;
   std::map<std::string,ActualCursorInfo> receiverCursors;
   // Derived lookup only: immutable map nodes, never execution World values.
   std::vector<const std::pair<const std::string,ActualCursorInfo> *> receiverCursorIndex;
@@ -303,4 +328,24 @@ struct ActualCheck {
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
     const std::function<bool(uint16_t,ActualState,const std::vector<ActualValue> &)> &,bool &);
 };
+template<class Directory>
+auto paidFrameLookup(ActualCheck &c,Directory &directory,llvm::StringRef query)->std::optional<decltype(directory.begin())>{
+  const auto count=directory.size();size_t height=0;
+  for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return std::nullopt;height+=2;}
+  height=std::min(height,count);
+  // Heterogeneous find reads at most query.size() bytes on each side per
+  // predicate, without the same-type debug reverse comparison.
+  if(!c.step(1+height+(count?height+1:0)*(2*query.size()+1)))return std::nullopt;
+  return directory.find(query);
+}
+template<class Directory>
+auto selectionFrameLookup(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
+  if(!c.step())return std::nullopt;if(directory.empty())return directory.end();
+  if(directory.size()==1){const auto entry=directory.begin();
+    // A single full equality determines hit/miss. No lower-bound predicate
+    // followed by the opposite duplicate predicate reads the same bytes again.
+    if(!c.step(query.size()+entry->first.size()+2))return std::nullopt;
+    return entry->first==query?entry:directory.end();
+  }return paidFrameLookup(c,directory,llvm::StringRef(query));
+}
 } // namespace tsfg::commonProgram

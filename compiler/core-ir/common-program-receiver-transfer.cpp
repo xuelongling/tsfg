@@ -25,19 +25,20 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     if(!receiverText(context.function->id)||!step(64))return false;
     const auto site=context.function->id+"/"+std::to_string(block)+"/"+std::to_string(&op-context.function->blocks[block].operations.data());
     if(name=="receiver_create"){
-      const auto id=createFrame(state.frames,context.activation,site,owner,construction,string(field(props,"new_target")),repeated);
-      if(!e.message.empty())return false;value.frames.insert(id);
+      auto id=createFrame(state.frames,context.activation,site,owner,construction,string(field(props,"new_target")),repeated);
+      if(!e.message.empty())return false;value.frames.insert(std::move(id));
     }else {if(!step(args[0].frames.size()))return false;for(const auto &parent:args[0].frames){
-      if(!receiverText(parent)||!need(receiverFrames.count(parent)&&state.frames.count(parent),"child receiver parent missing"))return false;
-      const auto &info=receiverFrames.at(parent);const auto id=createFrame(state.frames,context.activation,site,owner,construction,info.newTarget,
-        repeated||state.frames.at(parent).weak,parent);if(!e.message.empty())return false;value.frames.insert(id);}}
+      if(!receiverText(parent))return false;const auto metadata=receiverFrames.find(parent);const auto binding=metadata==receiverFrames.end()?state.frames.end():state.frames.find(parent);
+      if(!need(metadata!=receiverFrames.end()&&binding!=state.frames.end(),"child receiver parent missing"))return false;
+      const auto &info=metadata->second;auto id=createFrame(state.frames,context.activation,site,owner,construction,info.newTarget,
+        repeated||binding->second.weak,parent);if(!e.message.empty())return false;value.frames.insert(std::move(id));}}
   }else if(name=="receiver_allocate"){
     if(!step(args[0].frames.size()))return false;
     for(const auto &id:args[0].frames){
-      if(!receiverText(id)||!need(receiverFrames.count(id)&&state.frames.count(id),"allocation frame missing"))return false;
-      const auto &info=receiverFrames.at(id);if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
+      if(!receiverText(id))return false;const auto metadata=receiverFrames.find(id);const auto binding=metadata==receiverFrames.end()?state.frames.end():state.frames.find(id);
+      if(!need(metadata!=receiverFrames.end()&&binding!=state.frames.end(),"allocation frame missing"))return false;const auto &info=metadata->second;if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
       if(!receiverText(info.newTarget))return false;auto ref="construction/"+id+"/"+info.newTarget;
-      const bool weak=state.frames.at(id).weak;auto old=objects.find(ref);
+      const bool weak=binding->second.weak;auto old=objects.find(ref);
       if(old!=objects.end()&&!old->second.weak&&weak)weakChanged=true;
       const bool repeated=weak||(old!=objects.end()&&old->second.weak);
       if(!step())return false;const auto object=objects.insert_or_assign(ref,ActualObject{info.newTarget,repeated}).first;
@@ -64,8 +65,8 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     if(!e.message.empty())return false;if(result.pending)return reject(e,"core-ir-common-construction-open","receiver payload category remains unresolved (including ReadSpan)");
     if(conditional&&name=="receiver_result"&&result.normal){
       if(!step(args[0].frames.size()))return false;
-      for(const auto &id:args[0].frames){if(!receiverText(id)||!need(receiverFrames.count(id),"construction result frame is missing"))return false;
-        const auto &info=receiverFrames.at(id);if(!step(5))return false;
+      for(const auto &id:args[0].frames){if(!receiverText(id))return false;const auto metadata=receiverFrames.find(id);if(!need(metadata!=receiverFrames.end(),"construction result frame is missing"))return false;
+        const auto &info=metadata->second;if(!step(5))return false;
         const ActualConstructionKeyView query{info.construction,info.newTarget};
         const auto bytes=query.construction.size()+1+query.newTarget.size();
         const auto count=constructionCapacity.size();size_t height=0;
@@ -111,10 +112,13 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     continues=false;
   }else if(name=="initialize_begin"){
     if(!step(args[0].frames.size()))return false;
-    for(const auto &id:args[0].frames){if(!receiverText(id)||!need(state.frames.count(id),"initializer frame missing"))return false;auto &v=state.frames.at(id);
+    for(const auto &id:args[0].frames){const auto found=selectionFrameLookup(*this,state.frames,id);
+      if(!found||!need(*found!=state.frames.end(),"initializer frame missing"))return false;auto &v=(*found)->second;
       if(!need(v.bound.unknown||v.bound.callableTop||!v.bound.tags.empty()||!v.bound.objects.empty()||!v.bound.callables.empty(),"initializer has no selected bound this"))return false;
       v.initializing=true;if(v.weak)v.prefixMin=0;else {v.aborted=false;v.prefixMin=v.prefixMax=0;}
-      const auto cursor=receiverCursor(id,0);if(!e.message.empty())return false;value.cursors.insert(cursor);}
+      // The full-byte World lookup established this key; retain immutable text, never a borrowed World node or its permissions.
+      if(!step(4))return false;const ActualCursorInfo first{(*found)->first.owner(),0};
+      const auto cursor=receiverCursor(first,0);if(!e.message.empty())return false;value.cursors.insert(cursor);}
   }else if(name=="initialize_field"){
     const auto query=field(props,"field").getAsString().value_or(llvm::StringRef{});
     const auto count=fields.size();size_t height=0;

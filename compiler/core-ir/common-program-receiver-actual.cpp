@@ -4,16 +4,6 @@
 #include <tuple>
 namespace tsfg::commonProgram {
 namespace {
-template<class Directory>
-auto paidFrameLookup(ActualCheck &c,Directory &directory,llvm::StringRef query)->std::optional<decltype(directory.begin())>{
-  const auto count=directory.size();size_t height=0;
-  for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return std::nullopt;height+=2;}
-  height=std::min(height,count);
-  // Heterogeneous find reads at most query.size() bytes on each side per
-  // predicate, without the same-type debug reverse comparison.
-  if(!c.step(1+height+(count?height+1:0)*(2*query.size()+1)))return std::nullopt;
-  return directory.find(query);
-}
 std::string ownedCursor(ActualCheck &c,std::shared_ptr<const std::string> &&frame,size_t position){
   const auto id="initialization:"+digest(canonical(Array{llvm::StringRef(*frame),int64_t(position)}));
   if(!c.receiverCursors.count(id)){
@@ -25,16 +15,6 @@ std::string ownedCursor(ActualCheck &c,std::shared_ptr<const std::string> &&fram
       if(!c.step(c.receiverCursorIndex.size()+1))return {};c.receiverCursorIndex.reserve(std::max<size_t>(1,c.receiverCursorIndex.size()*2));}
     if(!c.step())return {};c.receiverCursorIndex.push_back(&*entry);
   }return id;
-}
-template<class Directory>
-auto selectionFrameLookup(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
-  if(!c.step())return std::nullopt;if(directory.empty())return directory.end();
-  if(directory.size()==1){const auto entry=directory.begin();
-    // A single full equality determines hit/miss. No lower-bound predicate
-    // followed by the opposite duplicate predicate reads the same bytes again.
-    if(!c.step(query.size()+entry->first.size()+2))return std::nullopt;
-    return entry->first==query?entry:directory.end();
-  }return paidFrameLookup(c,directory,llvm::StringRef(query));
 }
 template<class Directory>
 auto selectionLowerBound(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
@@ -192,13 +172,18 @@ ActualFrameBinding ActualCheck::copyFrame(const ActualFrameBinding &value){
 }
 ActualFrameWorld ActualCheck::copyFrames(const ActualFrameWorld &world){
   ActualFrameWorld result;if(!step(world.size()))return result;
-  for(const auto &[id,value]:world){if(!receiverText(id))return {};auto owned=copyFrame(value);if(!e.message.empty())return {};
-    result.emplace(id,std::move(owned));}return result;
+  for(const auto &[id,value]:world){
+    // Source key order proves an end hint; prepay the native predecessor and both debug predicate directions.
+    if(!step())return {};if(!result.empty()){if(!step(result.size()+1))return {};const auto previous=std::prev(result.end());
+      if(!step(2*(previous->first.size()+id.size()+1)))return {};}
+    // Shared immutable key retain/release4, new node1 and owned Binding move1; no Frame bytes are copied.
+    if(!step(6))return {};auto owned=copyFrame(value);if(!e.message.empty())return {};
+    result.emplace_hint(result.end(),id,std::move(owned));}return result;
 }
 bool ActualCheck::joinFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
   if(&into==&from)return false;if(!step(from.size()))return false;bool changed=false;
-  for(const auto &[id,incoming]:from){if(!receiverText(id)||!step(8))return false;auto found=into.find(id);
-    if(found==into.end()){auto owned=copyFrame(incoming);if(!e.message.empty())return false;into.emplace(id,std::move(owned));changed=true;continue;}
+  for(const auto &[id,incoming]:from){if(!receiverText(id.text())||!step(8))return false;auto found=into.find(id);
+    if(found==into.end()){auto owned=copyFrame(incoming);if(!e.message.empty()||!step(4))return false;into.emplace(id,std::move(owned));changed=true;continue;}
     auto &v=found->second;changed=merge(v.bound,incoming.bound)||changed;if(!step(incoming.births.size()))return false;
     for(const auto &[slot,row]:incoming.births){if(!step())return false;auto old=v.births.find(slot);
       if(old==v.births.end()){auto owned=copyBirth(row);if(!e.message.empty())return false;v.births.emplace(slot,std::move(owned));changed=true;}
@@ -211,7 +196,7 @@ bool ActualCheck::joinFrames(ActualFrameWorld &into,const ActualFrameWorld &from
 }
 bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
   if(&into==&from)return true;auto owned=copyFrames(from);if(!e.message.empty()||!step(owned.size()))return false;
-  for(auto &[id,value]:owned)into.insert_or_assign(id,std::move(value));return true;
+  for(auto &[id,value]:owned){if(!receiverText(id.text())||!step(4))return false;into.insert_or_assign(id,std::move(value));}return true;
 }
 ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const std::vector<ActualValue> &values,const ActualHeap &heap){
   using Entry=ActualFrameWorld::value_type;
@@ -236,7 +221,7 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
       if(!step(2*(previous->first.size()+id.size()+1)))return nullptr;}
     // View construction/copy4, two selected pointers constructed/moved4, node1;
     // then one fresh flag and one returned pointer. No owned ID is created.
-    if(!step(11))return nullptr;const auto inserted=selected.try_emplace(*at,llvm::StringRef(row->first),Selection{row,info});
+    if(!step(11))return nullptr;const auto inserted=selected.try_emplace(*at,row->first.view(),Selection{row,info});
     fresh=true;return &inserted->second;
   };
   // Collect all roots/cursors first, retaining the original error-stage order.
@@ -270,14 +255,14 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
           if(!step(ref.size()+reference.size()+1)||!step(2))return {};
           if(llvm::StringRef(ref)==reference){if(!step())return {};matched=true;break;}
         }
-        if(matched){bool fresh=false;if(!admit(entry.first,&entry,fresh))return {};break;}}}
+        if(matched){bool fresh=false;if(!admit(entry.first.text(),&entry,fresh))return {};break;}}}
   }
   // Visit initial selections in full-key order. Resolve each row's metadata,
   // then its parent's World before appending that parent's deferred metadata.
   if(!step(selected.size()+1))return {};pending.clear();std::vector<Selection *> ancestry;
   for(auto &[id,row]:selected)if(!append(ancestry,&row))return {};
   for(size_t i=0;i<ancestry.size();++i){if(!step())return {};auto &row=*ancestry[i];
-    if(!row.info){const auto frame=selectionFrameLookup(*this,receiverFrames,row.row->first);
+    if(!row.info){const auto frame=selectionFrameLookup(*this,receiverFrames,row.row->first.text());
       if(!frame||!need(*frame!=receiverFrames.end(),"selected birth frame is absent")||!step())return {};row.info=&(*frame)->second;}
     const auto &parent=row.info->parent;if(parent.empty())continue;
     const auto found=selectionFrameLookup(*this,world,parent);
@@ -286,13 +271,13 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
     if(fresh&&!append(ancestry,next))return {};}
   ActualFrameWorld result;if(!step(selected.size()))return {};
   for(const auto &[id,row]:selected){
-    // Independent complete output key: existing copyHeap key-copy units, node,
-    // and owned binding move. All payload/history copying remains copyFrame.
+    // The primary immutable key is shared: retain/release4, node1 and Binding move1.
+    // Every mutable Binding and historical payload still goes through copyFrame.
     // Full-key order proves a strict end hint. Pay its last-neighbour compare
     // and debug reverse before the independent key/binding are constructed.
     if(!result.empty()){if(!step(result.size()+1))return {};const auto previous=std::prev(result.end());
       if(!step(2*(previous->first.size()+id.size()+1)))return {};}
-    if(!step(id.size()/64+3))return {};auto next=copyFrame(row.row->second);if(!e.message.empty())return {};
+    if(!step(6))return {};auto next=copyFrame(row.row->second);if(!e.message.empty())return {};
     result.emplace_hint(result.end(),row.row->first,std::move(next));
   }return result;
 }
@@ -318,8 +303,8 @@ bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,st
     if(repeated){if(!receiverText(*slot->spelling))return false;const auto old=heap.find(*slot->spelling);if(old!=heap.end())row.real=copy(old->second);}
     if(!e.message.empty())return false;rows.emplace(slot,std::move(row));}
   for(auto current=id;!current.empty();){
-    if(!receiverText(current)||!need(world.count(current)&&receiverFrames.count(current),"birth frame is absent"))return false;
-    auto &binding=world.at(current);const auto &parent=receiverFrames.at(current).parent;
+    if(!receiverText(current))return false;const auto row=world.find(current);const auto frame=row==world.end()?receiverFrames.end():receiverFrames.find(current);
+    if(!need(row!=world.end()&&frame!=receiverFrames.end(),"birth frame is absent"))return false;auto &binding=row->second;const auto &parent=frame->second.parent;
     // Earlier ancestors require independent journals. The final empty one
     // can take this complete pre-default snapshot without another deep copy.
     if(parent.empty()&&binding.births.empty()){
@@ -364,14 +349,18 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
   const std::string &construction,const std::string &newTarget,bool repeated,const std::string &parent){
   for(const auto *s:{&activation,&site,&owner,&construction,&newTarget,&parent})if(!receiverText(*s))return {};
   if(!step(128)||!need(types.count(owner)&&types.count(newTarget),"frame owner/newTarget is not owned"))return {};
-  const auto id="receiver:"+digest(canonical(Array{activation,site,owner,construction,newTarget,parent}));
-  if(!receiverFrames.count(id)){const auto &type=*types.at(owner);const auto &ctor=field(type,"construction");ActualFrameInfo info;
+  auto id="receiver:"+digest(canonical(Array{activation,site,owner,construction,newTarget,parent}));
+  auto metadata=receiverFrames.find(id);if(metadata==receiverFrames.end()){const auto &type=*types.at(owner);const auto &ctor=field(type,"construction");ActualFrameInfo info;
     if(!step(items(field(ctor,"initializationFields")).size()+8))return {};
     info.owner=owner;info.construction=construction;info.newTarget=newTarget;info.parent=parent;info.derived=!string(field(type,"base")).empty();
     for(const auto &f:items(field(ctor,"initializationFields"))){const auto fieldId=string(f);if(!receiverText(fieldId))return {};info.fields.push_back(fieldId);}
-    receiverFrames.emplace(id,std::move(info));}
-  auto old=world.find(id);if(old!=world.end()&&repeated){old->second.weak=true;old->second.unbound=true;old->second.prefixMin=0;}
-  else {if(!step(8))return {};ActualFrameBinding value;value.weak=repeated;world.insert_or_assign(id,std::move(value));}return id;
+    // Same adopt-and-publish boundary as fieldSlot: allocation/release8, buffer and node-owner moves4.
+    if(!step(8)||!step(4))return {};metadata=receiverFrames.emplace(ActualFrameId(std::move(id)),std::move(info)).first;}
+  const auto &key=metadata->first;auto old=world.find(key);
+  if(old!=world.end()&&repeated){old->second.weak=true;old->second.unbound=true;old->second.prefixMin=0;}
+  else {if(!step(8)||!step(4))return {};ActualFrameBinding value;value.weak=repeated;world.insert_or_assign(key,std::move(value));}
+  // Returning the current string API still copies full bytes, even though its SSA consumer can move that result.
+  if(!step(key.size()/64+1))return {};return key.text();
 }
 std::string ActualCheck::receiverCursor(const std::string &frame,size_t position){
   // The bare-string boundary owns its first copy, allocation and final release.
@@ -452,7 +441,7 @@ bool ActualCheck::abortInitializers(ActualState &state){
   for(const auto &[reg,v]:state.values){if(!step(v.cursors.size()))return false;for(const auto &id:v.cursors){
     const auto *cursor=cursorMetadata(id);if(!e.message.empty()||!need(cursor,"initializer abandonment cursor missing"))return false;
     if(!receiverText(*cursor->frame))return false;selected.insert(*cursor->frame);}}
-  for(const auto &id:selected){if(!step()||!need(state.frames.count(id),"initializer abandonment frame missing"))return false;auto &v=state.frames.at(id);
+  for(const auto &id:selected){if(!step())return false;const auto row=state.frames.find(id);if(!need(row!=state.frames.end(),"initializer abandonment frame missing"))return false;auto &v=row->second;
     if(v.initializing){if(!v.weak)v.initializing=false;v.aborted=true;}}return true;
 }
 bool ActualCheck::receiverArguments(const Function &fn,ActualHeap &heap,ActualFrameWorld &world,bool conditional,bool &changed,
@@ -461,8 +450,8 @@ bool ActualCheck::receiverArguments(const Function &fn,ActualHeap &heap,ActualFr
   const bool constructor=source&&string(field(*source,"kind"))=="construction-body";const size_t hidden=source&&!field(*source,"lexicalEnvironment").getAsNull();
   for(size_t i=0;i<fn.blocks[0].parameters.size();++i){
     if(constructor&&i==hidden){const auto owner=string(field(*source,"ownerType"));if(!need(types.count(owner)&&!newTarget.empty(),"constructor root has no dynamic newTarget"))return false;
-      ActualValue value;const auto id=createFrame(world,activation,"constructor-root",owner,string(field(field(*types.at(owner),"construction"),"id")),newTarget,false);
-      if(!e.message.empty())return false;value.frames.insert(id);args.push_back(std::move(value));}
+      ActualValue value;auto id=createFrame(world,activation,"constructor-root",owner,string(field(field(*types.at(owner),"construction"),"id")),newTarget,false);
+      if(!e.message.empty())return false;value.frames.insert(std::move(id));args.push_back(std::move(value));}
     else args.push_back(entryValue(fn,i,heap,conditional,changed));if(!e.message.empty())return false;
   }return true;
 }

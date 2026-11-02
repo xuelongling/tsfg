@@ -22,7 +22,7 @@ bool valueSame(ActualCheck &c,const ActualValue &a,const ActualValue &b){
 bool framesSame(ActualCheck &c,const ActualFrameWorld &a,const ActualFrameWorld &b){
   if(!c.step(a.size()+b.size()+1)||a.size()!=b.size())return false;
   auto right=b.begin();for(const auto &[id,v]:a){const auto &[otherId,w]=*right++;
-    if(!textSame(c,id,otherId)||!c.step(8)||v.unbound!=w.unbound||v.weak!=w.weak||v.pending!=w.pending||v.initializing!=w.initializing||v.aborted!=w.aborted||v.prefixMin!=w.prefixMin||v.prefixMax!=w.prefixMax||!valueSame(c,v.bound,w.bound))return false;
+    if(!textSame(c,id.text(),otherId.text())||!c.step(8)||v.unbound!=w.unbound||v.weak!=w.weak||v.pending!=w.pending||v.initializing!=w.initializing||v.aborted!=w.aborted||v.prefixMin!=w.prefixMin||v.prefixMax!=w.prefixMax||!valueSame(c,v.bound,w.bound))return false;
     if(!c.step(v.births.size()+w.births.size()+1)||v.births.size()!=w.births.size())return false;
     auto birth=w.births.begin();for(const auto &[slot,row]:v.births){const auto &[otherSlot,other]=*birth++;
       if(!c.step()||slot!=otherSlot||!c.step(6))return false;
