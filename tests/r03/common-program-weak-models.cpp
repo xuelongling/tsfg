@@ -95,10 +95,12 @@ bool copyModel(const std::string &mode){
     m.check.objects.emplace(target,ActualObject{type,mode=="target-weak"});state.heap.emplace(target+"/field/"+fieldId,value(m.absence));
   }
   if(mode=="budget"){
-    m.program.remaining=0;auto copied=m.check.valueCopy(source,state,"copy",false);
+    const std::string text="copy";if(!m.check.step(2))return false;ActualCopyOrigin origin(text);
+    m.program.remaining=0;auto copied=m.check.valueCopy(source,state,origin,false);
     return copied.tags.empty()&&m.error.code=="core-ir-common-budget"&&state.heap.at(target+"/field/"+fieldId).tags==std::set<std::string>{m.absence};
   }
-  const auto copied=m.check.valueCopy(source,state,"copy",false);
+  const std::string text="copy";if(!m.check.step(2))return false;ActualCopyOrigin origin(text);
+  const auto copied=m.check.valueCopy(source,state,origin,false);
   if(!m.error.message.empty()||copied.objects!=ActualObjectSet{ActualObjectId(target)})return false;
   const auto expected=mode=="strong"?std::set<std::string>{m.i32}:std::set<std::string>{m.i32,m.absence};
   return state.heap.at(target+"/field/"+fieldId).tags==expected&&m.check.objects.at(ActualObjectId(target)).weak==(mode!="strong");

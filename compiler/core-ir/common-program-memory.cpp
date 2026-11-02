@@ -26,7 +26,19 @@ ActualHeap ActualCheck::reachable(const ActualRoots &values,const ActualHeap &he
     }
   }return out;
 }
-ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,const std::string &origin,bool weak,std::map<std::string,std::string> active){
+const std::string *ActualCheck::resolveCopyOrigin(ActualCopyOrigin &origin){
+  // Each variant classification pays its discriminant read and route first.
+  if(!step(2))return nullptr;
+  if(const auto text=std::get_if<const std::string *>(&origin.source))return *text;
+  if(!step(2))return nullptr;
+  if(const auto text=std::get_if<std::string>(&origin.source))return text;
+  // Checked Site access, then its borrowed context and result words.
+  if(!step(4))return nullptr;const auto &site=std::get<ActualCopyOrigin::Site>(origin.source);
+  auto text=allocationSite(*site.context,"copy",site.result);if(!e.message.empty())return nullptr;
+  // The original root concatenation remains; only its move and variant tag are new.
+  if(!step(2))return nullptr;return &origin.source.emplace<std::string>(text+"/root");
+}
+ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,ActualCopyOrigin &origin,bool weak,std::map<std::string,std::string> active){
   // Object identities are rebuilt below. Copy only the facets retained by
   // this result, paying the original copy weights for those actual copies.
   size_t cost=source.tags.size()+source.cells.size()+source.frames.size()+source.cursors.size()+source.callables.size()+regionWeight(source.region)+1;
@@ -48,7 +60,10 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
     if(!step()||!need(objects.count(ref),"copy source object is not independently owned"))return {};
     const auto &object=objects.at(ref);
     if(llvm::StringRef(object.type).starts_with("env:")||string(field(*types.at(object.type),"kind"))!="value"){if(!step(4))return {};value.objects.insert(ref);continue;}
-    const auto found=active.find(ref.text());const auto target=found==active.end()?origin+"/"+object.type:found->second;
+    // Route the active miss and checked prefix borrow before naming a real value target.
+    if(!step(4))return {};const auto found=active.find(ref.text());const std::string *prefix=nullptr;
+    if(found==active.end()){prefix=resolveCopyOrigin(origin);if(!prefix)return {};}
+    const auto target=found==active.end()?*prefix+"/"+object.type:found->second;
     if(found!=active.end()){if(!receiverText(target))return {};const auto existing=objects.find(target);
       if(!need(existing!=objects.end(),"active value-copy object is not owned")||!step(4))return {};value.objects.insert(existing->first);continue;}auto old=objects.find(target);
     const bool summarized=weak||object.weak||alternatives.at(object.type)>1||(old!=objects.end()&&old->second.weak);
@@ -64,7 +79,9 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
       if(summarized||stored->first==slot)snapshot.emplace(copy(stored->second));
       const auto &child=snapshot?*snapshot:stored->second;
       if(!step(nested.size())||!e.message.empty())return {};
-      auto copied=valueCopy(child,state,origin+"/"+id,summarized,nested);if(!e.message.empty())return {};
+      const auto childText=*prefix+"/"+id;
+      if(!step(2))return {};ActualCopyOrigin childOrigin(childText);
+      auto copied=valueCopy(child,state,childOrigin,summarized,nested);if(!e.message.empty())return {};
       if(summarized&&state.heap.count(slot))merge(state.heap.at(slot),copied);else state.heap.insert_or_assign(slot,std::move(copied));
       if(!e.message.empty())return {};
     }

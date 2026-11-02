@@ -413,6 +413,103 @@ bool emptyWorldSelectionBudget1(){
   return true;
 }
 
+bool lazyCopyOriginInstruction(){
+  const auto sameHeap=[](const ActualHeap &a,const ActualHeap &b){
+    return a.size()==b.size()&&std::equal(a.begin(),a.end(),b.begin(),[](const auto &x,const auto &y){return x.first==y.first&&same(x.second,y.second);});
+  };
+  for(unsigned mode=0;mode<9;++mode){Fixture f;const std::string type=mode==4?"env:copy-origin":"sha256:"+std::string(64,'a');
+    f.check.builtins.emplace("owner",Object{{"id",type},{"kind",mode==3?"reference":"array"},{"elementType","i32"},{"fields",Array{}}});
+    f.check.types.emplace(type,&f.check.builtins.at("owner"));const auto ref=objectFor(f,"copy-input",mode==7?"missing-type":type);
+    ActualValue source;if(mode==5)source=fullTarget();source.tags={mode==2?"i32":type};source.objects.clear();
+    if(mode!=2)source.objects.insert(ref);else {source.number=17;source.truth=2;}
+    if(mode==6){source.objects.clear();source.objects.emplace("missing-object");}
+    ActualState state;state.values.emplace(1,source);state.heap.emplace("unrelated",fullTarget());
+    state.regions["kept"].emplace("slot",source.region);const auto saved=state;
+    Function function;function.id="sha256:"+std::string(64,'b');function.name="copy";function.blocks.resize(1);
+    ActualContext context;context.function=&function;context.root=true;context.repeated=false;context.activation=std::string(4096,'q');
+    Operation op;op.name="value_copy";op.operands={1};op.result=2;op.view=mode==2?"i32":type;
+    bool changed=false,continues=true;size_t edges=0;f.program.remaining=mode==1?1:mode==0||mode==2||mode==8?64:100000;
+    const bool ok=f.check.instruction(context,op,0,state,mode!=8,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
+    if(mode==1||mode>=6){if(!expect(!ok&&!f.error.message.empty()&&edges==0&&state.values.count(2)==0&&
+        f.error.code==(mode==6||mode==7?"core-ir-common-actual":"core-ir-common-budget"),
+        "copy keeps hard budget/object/type errors and still materializes the original site for an unconditional Region path"))return false;continue;}
+    const auto capacity=f.check.registerCapacity.find(function.id+"/2");
+    if(!expect(ok&&f.error.message.empty()&&continues&&!changed&&edges==0&&state.values.count(2)&&same(state.values.at(2),source)&&
+        same(state.values.at(1),source)&&capacity!=f.check.registerCapacity.end()&&capacity->second.tags==source.tags&&f.check.objects.size()==1,
+        "complete conditional scalar, array, reference, environment and rich copies retain all facets without an unused long-activation site"))return false;
+    if(!expect(sameHeap(state.heap,saved.heap)&&sameRegion(state.regions.at("kept").at("slot"),saved.regions.at("kept").at("slot")),
+        "conditional copies do not consume unrelated Heap or execute Region copying"))return false;
+    auto &result=state.values.at(2);result.tags.emplace("result-only");result.objects.emplace("result-only");result.cells.emplace("result-only");
+    result.frames.emplace("result-only");result.cursors.emplace("result-only");result.callables.emplace("result-only","result-only");result.region.roots.emplace("result-only");
+    if(!expect(same(state.values.at(1),source)&&sameHeap(state.heap,saved.heap),"copied mutable facets and closures are independent from their source and Heap"))return false;
+  }
+  return true;
+}
+
+bool lazyCopyOriginValueGraphs(){
+  const std::string target="A/F/copy/1/root/V",childTarget="A/F/copy/1/root/child/C";
+  for(unsigned mode=0;mode<5;++mode){Fixture f;
+    const Json n=Object{{"id","n"},{"type","i32"}},child=Object{{"id","child"},{"type","C"}},self=Object{{"id","self"},{"type","V"}},leaf=Object{{"id","leaf"},{"type","i32"}};
+    f.check.builtins.emplace("V",Object{{"id","V"},{"kind","value"},{"base",nullptr},{"fields",Array{n,child,self}}});
+    f.check.builtins.emplace("C",Object{{"id","C"},{"kind","value"},{"base",nullptr},{"fields",Array{leaf}}});
+    f.check.types.emplace("V",&f.check.builtins.at("V"));f.check.types.emplace("C",&f.check.builtins.at("C"));
+    const auto ref=objectFor(f,"source","V",mode==1),nested=objectFor(f,"child-source","C");
+    ActualValue source;source.tags={"V"};source.objects.insert(ref);source.truth=1;
+    ActualValue nestedValue;nestedValue.tags={"C"};nestedValue.objects.insert(nested);ActualValue scalar;scalar.tags={"i32"};scalar.number=17;
+    ActualValue absence;absence.tags={"undefined"};ActualState state;state.heap.emplace("source/field/n",scalar);
+    state.heap.emplace("source/field/child",nestedValue);state.heap.emplace("source/field/self",source);state.heap.emplace("child-source/field/leaf",scalar);
+    if(mode==2){const auto other=objectFor(f,"other","V");ActualValue alternative=source;alternative.objects.clear();alternative.objects.insert(other);source.objects.insert(other);
+      state.heap.emplace("other/field/n",absence);state.heap.emplace("other/field/child",nestedValue);state.heap.emplace("other/field/self",alternative);}
+    if(mode==1||mode==3||mode==4){objectFor(f,target,"V",mode==3);state.heap.emplace(target+"/field/n",absence);}
+    state.values.emplace(0,source);const auto savedSource=source;Function function;function.id="F";function.name="value-copy";function.blocks.resize(1);
+    ActualContext context;context.function=&function;context.root=true;context.repeated=false;context.activation="A";
+    Operation op;op.name="value_copy";op.operands={0};op.result=1;op.view="V";bool changed=false,continues=true;size_t edges=0;f.program.remaining=100000;
+    const bool ok=f.check.instruction(context,op,0,state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
+    const bool weak=mode==1||mode==2||mode==3;
+    if(!expect(ok&&f.error.message.empty()&&continues&&!changed&&edges==0&&state.values.count(1)&&state.values.at(1).objects==ActualObjectSet{ActualObjectId(target)}&&
+        state.values.at(1).tags==std::set<std::string>{"V"}&&f.check.objects.at(ActualObjectId(target)).weak==weak&&f.check.objects.at(ActualObjectId(childTarget)).weak==weak&&
+        f.check.objects.size()==size_t(mode==2?5:4),"true value targets preserve full site/root names, recursive field names, active-cycle reuse and weak/fan-in multiplicity"))return false;
+    const auto expected=weak?std::set<std::string>{"i32","undefined"}:std::set<std::string>{"i32"};
+    if(!expect(state.heap.at(target+"/field/n").tags==expected&&state.heap.at(childTarget+"/field/leaf").number==17&&
+        state.heap.at(target+"/field/child").objects==ActualObjectSet{ActualObjectId(childTarget)}&&state.heap.at(target+"/field/self").objects==ActualObjectSet{ActualObjectId(target)},
+        "strong overwrites, weak alternatives and self references retain their independent deep payload semantics"))return false;
+    const auto capacity=f.check.registerCapacity.find("F/1");
+    if(!expect(capacity!=f.check.registerCapacity.end()&&capacity->second.tags==std::set<std::string>{"V"}&&same(state.values.at(0),savedSource)&&
+        same(state.heap.at("source/field/n"),scalar)&&same(state.heap.at("source/field/child"),nestedValue)&&state.heap.at("source/field/self").objects==ActualObjectSet{ref},
+        "value copying reaches capacity without consuming the original SSA or source graph"))return false;
+    state.heap.at(childTarget+"/field/leaf").number=29;
+    if(!expect(state.heap.at("child-source/field/leaf").number==17,"mutating a recursively copied field does not mutate its original object"))return false;
+  }
+  return true;
+}
+
+bool lazyCopyOriginRegionInstruction(){
+  const std::string target="A/F/copy/1/root/V",version="current/sha256:f213652c43c8501b0276cf561a8b5a9fff1c3423fccce85969213e2dc89a2e4d";
+  for(unsigned mode=0;mode<2;++mode){Fixture f;const Json n=Object{{"id","n"},{"type","i32"}};
+    f.check.builtins.emplace("V",Object{{"id","V"},{"kind","value"},{"base",nullptr},{"fields",Array{n}}});f.check.types.emplace("V",&f.check.builtins.at("V"));
+    const auto ref=objectFor(f,"source","V");ActualValue source;source.tags={"V"};source.objects.insert(ref);source.region.known=true;source.region.roots={"old"};
+    ActualValue scalar;scalar.tags={"i32"};scalar.number=17;scalar.region.known=scalar.region.empty=true;scalar.region.number=17;
+    ActualState state;state.values.emplace(0,source);state.heap.emplace("source/field/n",scalar);state.regions["old"].emplace("/field/n",scalar.region);
+    if(mode==0)f.check.regions.nodes.emplace("old",RegionNode{"R","source","V"});f.check.regions.scopes.emplace("R",RegionScope{"F","A",false,false});
+    Function function;function.id="F";function.name="region-copy";function.blocks.resize(1);ActualContext context;context.function=&function;context.root=true;context.activation="A";context.region="R";context.repeated=false;
+    Operation op;op.name="value_copy";op.operands={0};op.result=1;op.view="V";bool changed=false,continues=true;size_t edges=0;f.program.remaining=100000;
+    const bool ok=f.check.instruction(context,op,0,state,false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
+    if(mode==1){if(!expect(!ok&&f.error.code=="core-ir-common-actual"&&f.error.message=="current copy origin missing"&&edges==0,
+        "unconditional copying still rejects an unproved current Region origin"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&continues&&!changed&&edges==0&&state.values.count(1)&&state.values.at(1).objects==ActualObjectSet{ActualObjectId(target)}&&
+        state.values.at(1).region.known&&state.values.at(1).region.roots==std::set<std::string>{version}&&f.check.regions.nodes.count(version)&&
+        f.check.regions.nodes.at(version).reference==target&&f.check.regions.nodes.at(version).type=="V"&&f.check.regions.nodes.at(version).region=="R"&&
+        state.regions.at(version).at("/field/n").number==17&&state.heap.at(target+"/field/n").number==17,
+        "unconditional copy uses the same original full site/root prefix for value identities and current Region versions"))return false;
+    if(!expect(same(state.values.at(0),source)&&same(state.heap.at("source/field/n"),scalar)&&sameRegion(state.regions.at("old").at("/field/n"),scalar.region)&&
+        f.check.regions.nodes.at("old").reference=="source"&&!f.check.regions.scopes.at("R").blocked&&!f.check.regions.scopes.at("R").hard,
+        "Region copying preserves source payloads, old version ownership and scope permissions"))return false;
+    state.regions.at(version).at("/field/n").number=29;
+    if(!expect(state.regions.at("old").at("/field/n").number==17,"copied Region field payloads own an independent relation"))return false;
+  }
+  return true;
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -428,5 +525,7 @@ int main(){
   llvm::errs()<<"PASS canonical Object/Cursor owning identities and complete835 field instruction\n";
   if(!wholeResultInstruction1539())return 1;llvm::errs()<<"PASS complete receiver_result1539 typed full-key capacity and edge cases\n";
   if(!completeFrameSelection943())return 1;llvm::errs()<<"PASS complete World selection943 and partial birth discovery\n";
-  if(!emptyWorldSelectionBudget1())return 1;llvm::errs()<<"PASS lazy birth classification and empty World selection1\n";return 0;
+  if(!emptyWorldSelectionBudget1())return 1;llvm::errs()<<"PASS lazy birth classification and empty World selection1\n";
+  if(!lazyCopyOriginInstruction()||!lazyCopyOriginValueGraphs()||!lazyCopyOriginRegionInstruction())return 1;
+  llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";return 0;
 }

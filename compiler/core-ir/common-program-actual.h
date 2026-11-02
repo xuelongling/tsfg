@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <utility>
 #include <type_traits>
+#include <variant>
 namespace tsfg::commonProgram {
 class BorrowTrace;
 // Source/fixed verifier-only clients request no initializer certificate.
@@ -248,6 +249,22 @@ struct ActualContext {
   ActualFrameWorld normalFrames,languageFrames;
   std::string constructionNewTarget;
 };
+// A copy origin is either a borrowed explicit prefix or a root site whose
+// text is owned here only after a value-object target or Region needs it.
+// Prepaid metadata: variant lifetime1 plus a prefix borrow1 or the two site words.
+// Borrows last for the synchronous copy; no object node or permission is held.
+class ActualCopyOrigin {
+  friend struct ActualCheck;
+  struct Site {const ActualContext *context;uint16_t result;
+    Site(const ActualContext &context,uint16_t result):context(&context),result(result){}};
+  std::variant<const std::string *,Site,std::string> source;
+public:
+  explicit ActualCopyOrigin(const std::string &text):source(&text){}
+  ActualCopyOrigin(const ActualContext &context,uint16_t result):source(std::in_place_type<Site>,context,result){}
+  ActualCopyOrigin(std::string &&)=delete;
+  ActualCopyOrigin(const ActualCopyOrigin &)=delete;
+  ActualCopyOrigin &operator=(const ActualCopyOrigin &)=delete;
+};
 // This state is rebuilt from matched public instructions and independently
 // Source-lowered private plans. No Node context, producer allocation summary,
 // representation row or asserted proof fills these maps.
@@ -375,7 +392,8 @@ struct ActualCheck {
   std::string joinCarriers(const std::vector<std::string> &);
   bool methodAbi(const Function &,const Operation &,std::vector<std::string> &,std::string &);
   ActualHeap reachable(const ActualRoots &,const ActualHeap &);
-  ActualValue valueCopy(const ActualValue &,ActualState &,const std::string &,bool,std::map<std::string,std::string> = {});
+  const std::string *resolveCopyOrigin(ActualCopyOrigin &);
+  ActualValue valueCopy(const ActualValue &,ActualState &,ActualCopyOrigin &,bool,std::map<std::string,std::string> = {});
   bool repeatedAllocation(const ActualContext &,size_t)const;
   std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);
   ActualObjectId allocate(const ActualContext &,const Operation &,size_t,llvm::StringRef,const std::string &);

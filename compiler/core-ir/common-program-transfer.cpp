@@ -151,8 +151,13 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     const auto id=string(field(props,"global")),raw=string(field(*globals.at(id),"sourceBinding"));put("global:"+id,args[0]);observe(raw,args[0]);seed(globalSeeds,raw,args[0]);
     if(!conditional)regionEscape(*this,regionValue(*this,args[0]),state.regions);
   }else if(name=="assert"||name=="view"||name=="carrier_cast"||name=="pack")value=copy(args[0]);
-  else if(name=="value_copy"){const auto origin=allocationSite(context,"copy",op.result);if(!e.message.empty())return false;value=valueCopy(args[0],state,origin+"/root",weak);
-    if(!conditional)value.region=regionCopyValue(*this,regionValue(*this,args[0]),origin+"/root",state.regions);}
+  else if(name=="value_copy"){
+    if(!step(3))return false;ActualCopyOrigin origin(context,op.result);
+    if(conditional){value=valueCopy(args[0],state,origin,weak);if(!e.message.empty())return false;}
+    else {const auto text=resolveCopyOrigin(origin);if(!text)return false;
+      value=valueCopy(args[0],state,origin,weak);
+      value.region=regionCopyValue(*this,regionValue(*this,args[0]),*text,state.regions);}
+  }
   else if(name=="array_create"){
     value=literal(op.view);const auto ref=allocate(context,op,block,"object",op.view);if(!e.message.empty()||!step(4))return false;value.objects.insert(ref);
     if(!conditional)value.region=regionAllocate(*this,context,ref.text(),op.view,state.regions);
