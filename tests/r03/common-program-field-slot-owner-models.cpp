@@ -181,8 +181,8 @@ bool archiveTail(){
       if(!expect(same==alias&&same->owner==&f.check&&same->ordinal==2&&*same->spelling==aliasKey&&
           f.check.fieldSlotArchive.size()==3&&f.check.fieldSlotAssociations.size()==4&&&f.check.objects.at(reference)!=&f.check.objects.at(aliasReference),"equal complete spelling reuses one symbol while retaining both distinct owned component pairs"))return false;continue;
     }
-    const bool before=mode==3||mode==5,limited=mode==4||mode==5;const auto &id=before?small:middle;const auto key=reference+"/field/"+id;
-    if(limited)f.program.remaining=2000;const auto inserted=f.get(reference,id);
+    const bool before=mode==3||mode==5,limited=mode==4;const auto &id=before?small:middle;const auto key=reference+"/field/"+id;
+    if(limited||mode==5)f.program.remaining=2000;const auto inserted=f.get(reference,id);
     if(limited){if(!expect(!inserted&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==2&&f.check.fieldSlotAssociations.size()==2&&
           f.check.fieldSlotArchive.count(key)==0,"non-tail low-budget full-search fallback reports hard error and grants no new row or association"))return false;continue;}
     if(!expect(inserted&&f.error.message.empty()&&inserted->owner==&f.check&&inserted->ordinal==2&&*inserted->spelling==key&&
@@ -438,6 +438,24 @@ bool constructionKeyOrder(){
   if(!expect(row==f.check.constructionCapacity.end(),"canonical directory has no phantom pair-key rows"))return false;
   llvm::errs()<<"PASS capacity virtual-flat alias, NUL, empty, prefix, unsigned-order and whole-flat reader subcases\n";return true;
 }
+bool archiveHeadBytes(){
+  for(const auto &reference:std::vector<std::string>{"",std::string("a\0",2),std::string(1,char(0x80)),std::string(1,char(0xff))}){
+    const auto key=reference+"/field/F";std::shared_ptr<const std::string> retained;
+    {Symbols f;f.check.objects.emplace(reference,ActualObject{"T",false});const auto last=f.get(reference,"G"),head=f.get(reference,"F");
+      if(!expect(last&&head&&f.error.message.empty()&&head->ordinal==1&&*head->spelling==key&&
+          f.check.fieldSlotArchive.begin()->first==llvm::StringRef(key)&&&f.check.fieldSlotArchive.begin()->second==head,
+          "strict head owns the complete empty/NUL/unsigned-byte canonical key and preserves registration ordinal"))return false;
+      retained=head->spelling;}
+    if(!expect(retained&&*retained==key,"head owner survives temporary query destruction and checker destruction, including SSO"))return false;
+    Symbols alias;alias.check.objects.emplace(reference,ActualObject{"T",false});const auto compound=alias.get(reference,"F/field/G");
+    if(!expect(compound&&alias.error.message.empty(),"singleton alias fixture owns its initial canonical row"))return false;const auto identity=compound->spelling;
+    const auto otherReference=reference+"/field/F";alias.check.objects.emplace(otherReference,ActualObject{"T",false});const auto same=alias.get(otherReference,"G");
+    if(!expect(same==compound&&alias.error.message.empty()&&same->owner==&alias.check&&same->spelling==identity&&*same->spelling==reference+"/field/F/field/G"&&
+        alias.check.fieldSlotArchive.size()==1&&alias.check.fieldSlotAssociations.size()==2,
+        "singleton three-way equal compares the full canonical alias instead of replacing its immutable owner"))return false;
+  }
+  llvm::errs()<<"PASS strict-head SSO, full-byte canonical alias and independent owner lifetime subcases\n";return true;
+}
 bool ownedSlots(){
   Symbols f;const auto first=f.get("object","F");
   if(!expect(first&&f.error.message.empty()&&first->owner==&f.check&&*first->spelling=="object/field/F","owned pair preserves its complete physical spelling"))return false;
@@ -467,7 +485,7 @@ bool ownedSlots(){
   Symbols badObject;if(!expect(!badObject.check.fieldSlot(badObject.check.objects.end(),badObject.check.fields.find("F"))&&badObject.error.code=="core-ir-common-actual","missing object directory entry is a hard ownership error"))return false;
   Symbols badField;if(!expect(!badField.check.fieldSlot(badField.check.objects.find("object"),badField.check.fields.end())&&badField.error.code=="core-ir-common-actual","missing field directory entry is a hard ownership error"))return false;
   Symbols limited;limited.program.remaining=0;
-  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership()&&birthCoveredStores()&&heapKeyIdentity()&&sharedCursorFrames()&&constructionKeyOrder();
+  return expect(!limited.get("object","F")&&limited.error.code=="core-ir-common-budget","symbol registration budget exhaustion returns no successful token")&&cachedPairs()&&heapOwnership()&&cursorOwnership()&&archiveTail()&&cursorFactoryOwnership()&&birthCoveredStores()&&heapKeyIdentity()&&sharedCursorFrames()&&constructionKeyOrder()&&archiveHeadBytes();
 }
 }
 int main(){if(!ownedSlots())return 1;llvm::errs()<<"PASS owned physical field-slot spelling, alias, identity, reset and errors\n";return 0;}

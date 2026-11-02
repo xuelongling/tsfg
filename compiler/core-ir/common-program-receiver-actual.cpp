@@ -115,17 +115,26 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   if(!step(reference->size()+member->size()+8))return nullptr;
   auto spelling=*reference+"/field/"+*member;
   if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
-  bool append=false;auto previous=fieldSlotArchive.end();
+  bool append=false,present=false;auto previous=fieldSlotArchive.end();
   if(!empty){
-    if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(fieldSlotArchive.end());
-    if(!step(previous->first.size()+spelling.size()+1))return nullptr;append=previous->first<spelling;
-    // A paid strict upper-edge proof already supplies a unique end hint.
-    // Equal/earlier spellings still use the complete canonical lookup below.
-    if(!append){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(spelling);}
-  }
-  bool present=false;
-  if(found!=fieldSlotArchive.end()){
-    if(!step(found->first.size()+spelling.size()+1))return nullptr;present=found->first==spelling;
+    if(!step(2))return nullptr;const llvm::StringRef query(spelling);
+    // One complete order supplies both strict-head and equal-head results.
+    // A singleton also supplies its strict-tail proof, without a second read.
+    if(!step(3))return nullptr;const auto first=fieldSlotArchive.begin();
+    if(!step(query.size()+first->first.size()+1))return nullptr;const auto order=query.compare(first->first);
+    if(order<=0){if(!step(2))return nullptr;found=first;present=order==0;}
+    else {
+      if(!step())return nullptr;
+      if(fieldSlotArchive.size()==1){if(!step(2))return nullptr;append=true;previous=first;}
+      else {
+        if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(fieldSlotArchive.end());
+        if(!step(previous->first.size()+query.size()+1))return nullptr;append=previous->first<query;
+        // Middle/equal-nonhead cases retain the complete canonical search.
+        if(!append){if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(query);
+          if(found!=fieldSlotArchive.end()){
+            if(!step(found->first.size()+query.size()+1))return nullptr;present=found->first==query;}}
+      }
+    }
   }
   if(!present){
     // A strict lower-bound miss supplies the insertion hint. Its two local
