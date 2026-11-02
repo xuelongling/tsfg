@@ -152,11 +152,21 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!conditional)regionEscape(*this,regionValue(*this,args[0]),state.regions);
   }else if(name=="assert"||name=="view"||name=="carrier_cast"||name=="pack")value=copy(args[0]);
   else if(name=="value_copy"){
-    if(!step(3))return false;ActualCopyOrigin origin(context,op.result);
-    if(conditional){value=valueCopy(args[0],state,origin,weak);if(!e.message.empty())return false;}
-    else {const auto text=resolveCopyOrigin(origin);if(!text)return false;
+    if(conditional){
+      // Pay the actual empty-object predicate and route before using either path.
+      if(!step(2))return false;
+      if(args[0].objects.empty()){
+        if(!copyValueFacets(args[0],value))return false;
+      }else{
+        if(!step(3))return false;ActualCopyOrigin origin(context,op.result);
+        value=valueCopy(args[0],state,origin,weak);if(!e.message.empty())return false;
+      }
+    }else{
+      if(!step(3))return false;ActualCopyOrigin origin(context,op.result);
+      const auto text=resolveCopyOrigin(origin);if(!text)return false;
       value=valueCopy(args[0],state,origin,weak);
-      value.region=regionCopyValue(*this,regionValue(*this,args[0]),*text,state.regions);}
+      value.region=regionCopyValue(*this,regionValue(*this,args[0]),*text,state.regions);
+    }
   }
   else if(name=="array_create"){
     value=literal(op.view);const auto ref=allocate(context,op,block,"object",op.view);if(!e.message.empty()||!step(4))return false;value.objects.insert(ref);

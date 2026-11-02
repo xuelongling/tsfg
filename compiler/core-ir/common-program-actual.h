@@ -393,6 +393,7 @@ struct ActualCheck {
   bool methodAbi(const Function &,const Operation &,std::vector<std::string> &,std::string &);
   ActualHeap reachable(const ActualRoots &,const ActualHeap &);
   const std::string *resolveCopyOrigin(ActualCopyOrigin &);
+  bool copyValueFacets(const ActualValue &,ActualValue &);
   ActualValue valueCopy(const ActualValue &,ActualState &,ActualCopyOrigin &,bool,std::map<std::string,std::string> = {});
   bool repeatedAllocation(const ActualContext &,size_t)const;
   std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);
