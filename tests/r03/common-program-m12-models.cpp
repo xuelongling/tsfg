@@ -78,13 +78,13 @@ bool runCommonM12ActualModels(ActualCheck &check){
   for(const auto &[id,c]:check.contexts){
     if(!check.sourceFunctions.count(c.function->id))continue;const auto name=string(field(*check.sourceFunctions.at(c.function->id),"name"));
     if(c.root&&(name=="compatibilityEntry"||name=="relationRoundtrip")){
-      if(c.arguments.size()!=1||c.arguments[0].tags!=xy)return false;
-      for(const auto &ref:c.arguments[0].objects){
+      if(c.inputArguments().size()!=1||c.inputArguments()[0].tags!=xy)return false;
+      for(const auto &ref:c.inputArguments()[0].objects){
         if(!check.objects.count(ref)||!check.objects.at(ActualObjectId(ref)).weak)return false;const auto type=check.objects.at(ActualObjectId(ref)).type;bool found=false;
         for(const auto *f:check.allFields(type))if(string(field(*f,"name"))=="next"){
-          found=true;auto stored=c.entry.find(ref.text()+"/field/"+string(field(*f,"id")));if(stored==c.entry.end()||stored->second.objects.empty())return false;
+          found=true;auto stored=c.rootEntry.find(ref.text()+"/field/"+string(field(*f,"id")));if(stored==c.rootEntry.end()||stored->second.objects.empty())return false;
           for(const auto &array:stored->second.objects){
-            auto elements=c.entry.find(array.text()+"/element/*");if(elements==c.entry.end()||elements->second.tags!=xy)return false;
+            auto elements=c.rootEntry.find(array.text()+"/element/*");if(elements==c.rootEntry.end()||elements->second.tags!=xy)return false;
             const auto backing=check.objects.at(ActualObjectId(array)).type;auto capacity=check.storageCapacity.find("element:"+backing);
             if(capacity==check.storageCapacity.end()||capacity->second.tags!=xy)return false;
           }
@@ -93,7 +93,7 @@ bool runCommonM12ActualModels(ActualCheck &check){
       entryY|=name=="compatibilityEntry";entryX|=name=="relationRoundtrip";
     }
     if(name=="convert"&&c.called&&c.normal){
-      if(c.arguments.size()!=1||c.returned.tags!=c.arguments[0].tags||c.returned.objects!=c.arguments[0].objects)return false;roundtrip=true;
+      if(c.inputArguments().size()!=1||c.returned.tags!=c.inputArguments()[0].tags||c.returned.objects!=c.inputArguments()[0].objects)return false;roundtrip=true;
     }
     if(name=="derivedEntry"&&c.root){if(!c.normal||c.language||c.requestTrap)return false;forward=true;}
   }

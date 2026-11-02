@@ -161,7 +161,7 @@ struct Model {
     bool weak=false;for(const auto &[ref,obj]:c.objects)if(obj.weak)weak=true;if(!weak)return false;
     if(closed)for(const auto &[id,node]:c.regions.nodes)if(!c.objects.at(ActualObjectId(node.reference)).weak)return false;
     if(mode=="field-full-global"||mode=="array-full-global"){
-      bool erased=false;for(const auto &[id,ctx]:c.contexts)if(ctx.function->id=="reader"&&ctx.called&&!ctx.arguments.empty())erased|=ctx.arguments[0].region.roots.empty()&&ctx.arguments[0].region.opaque;
+      bool erased=false;for(const auto &[id,ctx]:c.contexts)if(ctx.function->id=="reader"&&ctx.called&&!ctx.inputArguments().empty())erased|=ctx.inputArguments()[0].region.roots.empty()&&ctx.inputArguments()[0].region.opaque;
       if(!erased)return false;for(const auto &[id,scope]:c.regions.scopes)if(scope.hard)return false;
     }
     const bool accepted=verifyCommonBorrows(c),expected=mode=="scalar-array"||mode=="scalar-old-saved"||mode=="array-held"||mode=="array-old-saved"||mode=="field-held"||mode=="field-old-saved"||mode=="held"||mode=="exit-dead"||mode=="caught"||mode=="exit-dead-phi"||mode=="exit-dead-route"||mode=="readonly-local-cell"||mode=="readonly-old-saved"||mode=="readonly-exit-phi";
@@ -224,7 +224,7 @@ bool unclosed(){
   bool changed=false,continues=true;const auto edge=[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return true;};
   if(!m.c.instruction(context,m.p.functions[0].blocks[0].operations[0],0,state,false,changed,edge,continues)||m.c.contexts.size()!=1)return false;
   const auto &child=m.c.contexts.begin()->second;
-  return child.arguments[0].region.opaque&&child.arguments[0].region.roots.empty()&&child.entryRegions.empty()&&child.region.empty()&&m.c.regions.scopes.at("R").blocked;
+  return child.inputArguments()[0].region.opaque&&child.inputArguments()[0].region.roots.empty()&&child.entryRegions.empty()&&child.region.empty()&&m.c.regions.scopes.at("R").blocked;
 }
 bool elementHolding(const std::string &mode){
   Model m;const std::string nested="region:Arrays";m.types.emplace(nested,Object{{"kind","array"},{"elementType",m.a}});for(const auto &[id,t]:m.types)m.c.types.emplace(id,&t);

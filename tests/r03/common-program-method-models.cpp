@@ -71,14 +71,14 @@ bool runCommonMethodActualModels(ActualCheck &c){
   for(const auto &[key,context]:c.contexts){
     const auto id=context.function->id;if(!c.sourceFunctions.count(id))continue;const auto &fn=*c.sourceFunctions.at(id);const auto name=string(field(fn,"name"));
     if(string(field(fn,"kind"))=="method"&&context.called){
-      relevant=true;if(context.arguments.empty()||context.arguments[0].tags.empty())return false;
+      relevant=true;if(context.inputArguments().empty()||context.inputArguments()[0].tags.empty())return false;
       const auto owner=ownerName(c,id);
-      for(const auto &tag:context.arguments[0].tags){const auto actual=typeName(c,tag);
+      for(const auto &tag:context.inputArguments()[0].tags){const auto actual=typeName(c,tag);
         const auto expected=actual=="Derived"?"Derived":actual=="Inherited"||actual=="Middle"?"Middle":actual;
         if(owner!=expected)return false;
       }
       if(owner=="Derived"&&(!context.language||context.normal))return false;
-      if(owner=="Fewer"){fewer=true;if(context.arguments.size()!=1||!context.normal||context.returned.number!=1)return false;}
+      if(owner=="Fewer"){fewer=true;if(context.inputArguments().size()!=1||!context.normal||context.returned.number!=1)return false;}
     }
     if(name=="concreteDerived"&&context.root){derived=true;if(!context.normal||context.language||context.returned.number!=1)return false;}
     if(name=="inheritedEntry"&&context.root){inherited=true;if(!context.normal||context.language)return false;}

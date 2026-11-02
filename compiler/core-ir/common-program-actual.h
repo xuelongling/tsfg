@@ -239,8 +239,8 @@ struct ActualContextIdentity {
 };
 struct ActualContext {
   std::unique_ptr<const ActualContextIdentity> identity;
-  std::string id;const Function *function=nullptr;std::vector<ActualValue> arguments;
-  ActualHeap entry,normalHeap,languageHeap;ActualValue returned,thrown;
+  std::string id;const Function *function=nullptr;std::vector<ActualValue> rootArguments;
+  ActualHeap rootEntry,normalHeap,languageHeap;ActualValue returned,thrown;
   bool normal=false,language=false,root=false,called=false,requestTrap=false;
   // Physical invocation provenance excludes arguments and abstract heap state.
   std::string activation;bool repeated=true;
@@ -248,6 +248,11 @@ struct ActualContext {
   std::set<std::string> callers;
   ActualFrameWorld normalFrames,languageFrames;
   std::string constructionNewTarget;
+  // Root input refreshes each execution; called input is owned only by identity.
+  // Mixed model consumers prepay route2 + const-reference borrow1 once before binding.
+  // Admitted called contexts have a nonnull identity; no raw/default fallback exists.
+  // The returned borrow is immediate and must not survive the next solve reset.
+  const std::vector<ActualValue> &inputArguments()const{return root?rootArguments:identity->arguments;}
 };
 // A copy origin is either a borrowed explicit prefix or a root site whose
 // text is owned here only after a value-object target or Region needs it.

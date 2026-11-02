@@ -118,6 +118,9 @@ bool localStoreObservation(bool opaque){
   for(size_t i=0;i<32;++i){const auto id="v"+std::to_string(i),next=i==31?"span":"v"+std::to_string(i+1);state.heap.emplace(id+(i==31?"/field/span":"/field/next"),object(next,i==31?"S":"V","owned"));}
   state.heap.emplace("span/owner",object("array","A","owned"));state.values.at(1).region.opaque=opaque;
   ActualContext context;context.id="local-store-context";context.function=&fn;
+  auto input=std::make_unique<ActualContextIdentity>();input->target=fn.id;input->activation=context.activation;
+  input->region=context.region;input->newTarget=context.constructionNewTarget;input->repeated=context.repeated;
+  context.identity=std::move(input);
   BorrowTrace trace(c);if(!trace.begin(context,state))return report("local store observation setup",false,e);
   // The local transport has no external lifetime obligation. A small balance
   // must cover its real checks without walking an unused nested Span graph.
@@ -227,8 +230,9 @@ bool containedRange(const std::string &mode){
   const std::map<std::string,std::set<std::string>> evidence{{"S",{"A"}}},none;
   const bool callable=!state.values.at(1).callables.empty(),envRoot=state.values.at(1).objects.count("E"),direct=mode=="overlap"||mode=="return-use"||mode=="nul"||mode=="cells"||mode=="return-cell"||mode=="return-converge";
   bool oracle=escape==(filtered?none:evidence)&&use==(!filtered&&direct?evidence:none)&&closure==(!filtered&&(callable||envRoot||mode=="return-converge")?evidence:none);
-  ActualContext external;external.id="external";external.root=true;external.function=&fn;external.arguments={state.values.at(0)};c.contexts.emplace(external.id,std::move(external));
-  ActualContext context;context.id="observed";context.function=&fn;if(returning)context.arguments={state.values.at(3)};
+  ActualContext external;external.id="external";external.root=true;external.function=&fn;external.rootArguments={state.values.at(0)};c.contexts.emplace(external.id,std::move(external));
+  ActualContext context;context.id="observed";context.function=&fn;auto invocation=std::make_unique<ActualContextIdentity>();invocation->target=fn.id;invocation->activation=context.activation;
+  if(returning)invocation->arguments={state.values.at(3)};context.identity=std::move(invocation);
   if(!c.preparePublicBorrowContexts())return report("contained setup "+mode,false,e);
   BorrowTrace trace(c);if(!trace.begin(context,state))return report("contained setup "+mode,false,e);
   if(mode=="sparse")p.remaining=128;if(mode=="zero")p.remaining=0;

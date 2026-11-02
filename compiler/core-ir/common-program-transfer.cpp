@@ -370,8 +370,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     const bool initial=!completed;
     if(!completed){completed=true;changed=true;}if(!args.empty())changed=merge(returned,args[0])||changed;
     if(!normal&&!abortInitializers(state))return false;
-    if(!step(context.arguments.size()+args.size()))return false;std::vector<ActualValue> frameRoots;frameRoots.reserve(context.arguments.size()+(args.empty()?0:1));
-    for(const auto &arg:context.arguments)frameRoots.push_back(copy(arg));if(!args.empty())frameRoots.push_back(copy(args[0]));
+    if(!step(3))return false;const auto &arguments=context.inputArguments();
+    if(!step(arguments.size()+args.size()))return false;std::vector<ActualValue> frameRoots;frameRoots.reserve(arguments.size()+(args.empty()?0:1));
+    for(const auto &arg:arguments)frameRoots.push_back(copy(arg));if(!args.empty())frameRoots.push_back(copy(args[0]));
     auto selected=selectFrames(state.frames,frameRoots,state.heap);if(!e.message.empty())return false;
     // The empty summary can own this complete projection; a nonempty summary
     // must merge, while retained roots still come only from this return.

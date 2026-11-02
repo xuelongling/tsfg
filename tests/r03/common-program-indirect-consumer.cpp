@@ -73,8 +73,8 @@ bool activations(ActualCheck &actual){
       if(!hasSlot)return false;
     }
     if(c.function->id==bump){
-      if(c.root)return false;if(c.called){++bumps;if(c.arguments.empty()||c.arguments[0].objects.size()!=1)return false;
-        calledEnvironments.insert(c.arguments[0].objects.begin()->text());}
+      if(c.root)return false;if(c.called){++bumps;if(c.inputArguments().empty()||c.inputArguments()[0].objects.size()!=1)return false;
+        calledEnvironments.insert(c.inputArguments()[0].objects.begin()->text());}
     }
   }
   if(factories<2||environments.size()<2||bumps<3)return false;
@@ -171,7 +171,7 @@ bool activationModels(){
     bool changed=false;auto *entry=actual.context("F",{env,scalar},heap,false,changed,"entry/F");if(!entry)return false;
     Operation op;op.name="invoke";op.operands={0,1};op.successors={1,2};op.properties=Object{{"function_id","F"}};op.range={10,20};
     const auto invoke=[&](ActualContext &current,const Operation &call){
-      ActualState state;state.heap=actual.copyHeap(current.entry);state.values.emplace(0,actual.copy(current.arguments[0]));state.values.emplace(1,actual.copy(current.arguments[1]));
+      ActualState state;state.heap=actual.copyHeap(current.identity->heap);state.values.emplace(0,actual.copy(current.inputArguments()[0]));state.values.emplace(1,actual.copy(current.inputArguments()[1]));
       bool continues=true,completed=false;const bool accepted=actual.instruction(current,call,0,state,false,changed,
         [&](uint16_t,const ActualState &,const std::vector<ActualValue> &){completed=true;return true;},continues);
       return accepted&&!completed&&!continues;

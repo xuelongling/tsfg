@@ -65,8 +65,8 @@ void BorrowTrace::Impl::proofEntry(const ActualContext &context,const ActualHeap
       if(!field(*fn->second,"ownerType").getAsNull())bindings.push_back(string(field(*fn->second,"receiverBinding")));
       for(const auto &parameter:items(field(*fn->second,"parameters")))bindings.push_back(string(field(parameter,"id")));
     }
-    if(!proofNeed(bindings.size()==context.arguments.size(),"root argument lacks an original parameter binding"))return;
-    for(size_t i=0;i<context.arguments.size();++i)seed(context.arguments[i],heap,Object{{"kind","parameter"},{"functionId",context.function->id},
+    if(!proofNeed(bindings.size()==context.rootArguments.size(),"root argument lacks an original parameter binding"))return;
+    for(size_t i=0;i<context.rootArguments.size();++i)seed(context.rootArguments[i],heap,Object{{"kind","parameter"},{"functionId",context.function->id},
       {"binding",bindings[i]},{"index",int64_t(i)},{"site",nullptr},{"activation",nullptr}});
     for(const auto &[slot,value]:heap)if(llvm::StringRef(slot).starts_with("global:"))seed(value,heap,Object{{"kind","global"},{"functionId",nullptr},
       {"binding",slot.substr(7)},{"index",nullptr},{"site",nullptr},{"activation",nullptr}});

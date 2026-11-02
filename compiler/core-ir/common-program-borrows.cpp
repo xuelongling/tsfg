@@ -13,8 +13,8 @@ BorrowTrace::Impl::Impl(ActualCheck &check,bool project):c(check),flow(check.p.r
     // allocation is never classified by a spelling prefix of its identity.
     for(const auto &[id,context]:c.contexts){
       if(!step())return;if(!context.root||!c.publicBorrowContexts.count(id))continue;
-      for(const auto &value:context.arguments){entryObjects(value);if(!c.e.message.empty())return;}
-      for(const auto &[slot,value]:context.entry){if(!step())return;entryObjects(value);if(!c.e.message.empty())return;}
+      for(const auto &value:context.rootArguments){entryObjects(value);if(!c.e.message.empty())return;}
+      for(const auto &[slot,value]:context.rootEntry){if(!step())return;entryObjects(value);if(!c.e.message.empty())return;}
     }
     for(const auto &[id,layout]:c.environments){
       if(!step())return;for(const auto &slot:items(field(*layout,"slots"))){
@@ -130,8 +130,9 @@ void BorrowTrace::Impl::define(Id at,const std::string &span,const Evidence &own
     else merge(found->second.owner,owner);
   }
 bool BorrowTrace::Impl::constructorReceiver(const ActualContext &context,const ActualValue &value){
-    if(context.function->role!="construction-body"||context.arguments.empty())return false;
-    for(const auto &ref:value.objects)if(!step()||!context.arguments[0].objects.count(ref))return false;
+    if(context.function->role!="construction-body")return false;
+    if(!step(3))return false;const auto &arguments=context.inputArguments();if(arguments.empty())return false;
+    for(const auto &ref:value.objects)if(!step()||!arguments[0].objects.count(ref))return false;
     return !value.objects.empty();
   }
 bool BorrowTrace::Impl::coveredArrayStore(const ActualContext &context,Id at,const ActualValue &destination,const ActualValue &value,const ActualState &state){
@@ -139,7 +140,8 @@ bool BorrowTrace::Impl::coveredArrayStore(const ActualContext &context,Id at,con
     if(spans.empty()||!c.arrayReceiver(destination))return false;
     StableStore stored;stored.point=at;stored.context=context.id;stored.spans=spans;
     std::set<std::string> entryArrays;
-    for(const auto &input:context.arguments){
+    if(!step(3))return false;const auto &arguments=context.inputArguments();
+    for(const auto &input:arguments){
       if(!step())return false;if(!c.arrayReceiver(input))continue;
       if(!step(input.objects.size()))return false;for(const auto &ref:input.objects)entryArrays.emplace_hint(entryArrays.end(),ref.text());
     }
@@ -248,12 +250,13 @@ bool BorrowTrace::begin(const ActualContext &context,const ActualState &state){
   auto &b=*impl;const auto at=b.entry(context);if(at==Flow::none)return false;
   if(b.project)b.proofEntry(context,state.heap);
   auto &incoming=b.incomingOwners[context.id];
-  for(const auto &value:context.arguments){
+  if(!b.step(3))return false;const auto &arguments=context.inputArguments();
+  for(const auto &value:arguments){
     const auto owned=b.owningArrays(value,state.heap);if(!b.step(owned.size()))return false;incoming.insert(owned.begin(),owned.end());
     for(const auto &[span,owner]:b.contained(value,state.heap,true,Impl::Scan::Escape)){if(!b.step(owner.alternatives.size()))return false;incoming.insert(owner.alternatives.begin(),owner.alternatives.end());}
   }
   if(context.root){
-    for(const auto &value:context.arguments)for(const auto &[span,owner]:b.contained(value,state.heap,true,Impl::Scan::Escape))b.define(at,span,owner);
+    for(const auto &value:arguments)for(const auto &[span,owner]:b.contained(value,state.heap,true,Impl::Scan::Escape))b.define(at,span,owner);
     for(const auto &[slot,value]:state.heap){if(!b.step())return false;if(llvm::StringRef(slot).starts_with("global:"))for(const auto &[span,owner]:b.contained(value,state.heap,true,Impl::Scan::Escape))b.define(at,span,owner); }
   }
   return b.addEdge(at,b.point(context,0,0))&&b.c.e.message.empty();

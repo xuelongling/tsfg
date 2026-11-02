@@ -613,10 +613,10 @@ bool rootExecutionCopies(){
         current->identity->frames.size()==originalWorld.size()&&same(args[0],originalArgs[0])&&same(input.at(slot),original.at(slot)),
         "root identity and caller storage remain complete and independent"))return false;
     changed=false;if(!expect(f.check.execute(*current,true,changed)&&f.error.message.empty()&&current->normal&&!current->language&&
-        current->arguments.size()==1&&same(current->entry.at(slot),scalar)&&same(current->normalHeap.at(slot),scalar),
+        current->rootArguments.size()==1&&same(current->rootEntry.at(slot),scalar)&&same(current->normalHeap.at(slot),scalar),
         "full root context and execution complete within the declared budget without an unconsumed entry copy"))return false;
     if(mode==2){const auto frame=*originalArgs[0].frames.begin();
-      if(!expect(current->arguments[0].frames==std::set<std::string>{frame}&&current->returned.tags==std::set<std::string>{"B"}&&
+      if(!expect(current->rootArguments[0].frames==std::set<std::string>{frame}&&current->returned.tags==std::set<std::string>{"B"}&&
           current->returned.objects.size()==1&&current->normalFrames.size()==1&&!current->normalFrames.find(frame)->second.unbound&&
           current->identity->frames.find(frame)->second.unbound,
           "receiver root completes allocation/bind/initialization/result while immutable entry World stays unbound"))return false;
@@ -625,31 +625,34 @@ bool rootExecutionCopies(){
     // Refresh real mutable entry seeds on the second complete execution. Old
     // invocation identity and the caller's entry data remain the first input.
     ActualValue seed;seed.tags={"T"};seed.unknown=true;f.check.globalSeeds.emplace("g",seed);
-    current->arguments[0]=fullTarget();current->entry.at(slot)=fullTarget();f.program.remaining=100000;changed=false;
-    if(!expect(f.check.execute(*current,true,changed)&&f.error.message.empty()&&current->entry.at(slot).tags==std::set<std::string>{"S","T"}&&
-        current->entry.at(slot).unknown&&current->normalHeap.at(slot).tags==std::set<std::string>{"S","T"}&&current->normalHeap.at(slot).unknown&&
+    current->rootArguments[0]=fullTarget();current->rootEntry.at(slot)=fullTarget();f.program.remaining=100000;changed=false;
+    if(!expect(f.check.execute(*current,true,changed)&&f.error.message.empty()&&current->rootEntry.at(slot).tags==std::set<std::string>{"S","T"}&&
+        current->rootEntry.at(slot).unknown&&current->normalHeap.at(slot).tags==std::set<std::string>{"S","T"}&&current->normalHeap.at(slot).unknown&&
         same(current->identity->arguments[0],originalArgs[0])&&same(current->identity->heap.at(slot),scalar)&&same(args[0],originalArgs[0])&&same(input.at(slot),scalar),
         "each regular and receiver root execution rebuilds current seeds without mutating invocation identity"))return false;
-    if(mode==2){if(!expect(current->arguments[0].frames==originalArgs[0].frames&&current->returned.tags==std::set<std::string>{"B"},
+    if(mode==2){if(!expect(current->rootArguments[0].frames==originalArgs[0].frames&&current->returned.tags==std::set<std::string>{"B"},
         "receiver root refresh discards poisoned execution parameters before using the current Frame binding"))return false;continue;}
     BorrowTrace trace(f.check);f.check.borrowTrace=&trace;changed=false;
     const bool observed=f.check.execute(*current,false,changed);f.check.borrowTrace=nullptr;
-    if(!expect(observed&&trace.solve()&&f.error.message.empty()&&same(current->arguments[0],scalar)&&same(current->returned,scalar)&&
-        current->entry.at(slot).unknown&&same(current->identity->arguments[0],originalArgs[0]),
+    if(!expect(observed&&trace.solve()&&f.error.message.empty()&&same(current->rootArguments[0],scalar)&&same(current->returned,scalar)&&
+        current->rootEntry.at(slot).unknown&&same(current->identity->arguments[0],originalArgs[0]),
         "real BorrowTrace entry and complete nonconditional root execution consume refreshed values and preserve summaries"))return false;
   }
   {Fixture f;Function function;function.id="C";function.blocks.resize(1);function.blocks[0].parameters={0};Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);
     f.check.functions.emplace("C",&function);f.program.fixedEffects.emplace("C",Effects{});ActualValue value;value.tags={"S"};value.number=17;std::vector<ActualValue> args{value};ActualHeap input;input.emplace("global:g",value);bool changed=false;
-    auto *called=f.check.context("C",args,input,false,changed,"called");if(!expect(called&&f.error.message.empty(),"called context retains its immediately usable execution copies"))return false;
+    auto *called=f.check.context("C",args,input,false,changed,"called");if(!expect(called&&f.error.message.empty(),"called context retains its immediately usable immutable entry inputs"))return false;
     args[0].number=23;input.at("global:g").number=23;
-    if(!expect(called->arguments[0].number==17&&called->entry.at("global:g").number==17&&called->identity->arguments[0].number==17,
-        "nonroot execution data and immutable identity remain independent of caller mutation"))return false;
+    if(!expect(called->inputArguments()[0].number==17&&called->identity->heap.at("global:g").number==17&&called->identity->arguments[0].number==17,
+        "nonroot immutable entry remains independent of caller mutation"))return false;
     changed=false;if(!expect(f.check.execute(*called,true,changed)&&f.error.message.empty()&&called->normal&&called->returned.number==17&&
         called->normalHeap.at("global:g").number==17&&called->identity->heap.at("global:g").number==17,
-        "complete called execution still starts from its original independent argument and Heap copies"))return false;
-    called->arguments[0].number=29;called->entry.at("global:g").number=29;
-    if(!expect(called->identity->arguments[0].number==17&&called->identity->heap.at("global:g").number==17&&args[0].number==23&&input.at("global:g").number==23,
-        "mutating nonroot execution storage cannot rewrite identity or caller data"))return false;
+        "complete called execution builds real independent SSA and Heap copies from immutable input"))return false;
+    Operation replacement;replacement.name="constant";replacement.result=0;replacement.view="S";replacement.properties=Object{{"decimal","29"}};
+    Operation store;store.name="global_store";store.operands={0};store.properties=Object{{"global","g"}};function.blocks[0].operations={replacement,store,returned};
+    f.check.builtins.emplace("global",Object{{"id","g"},{"type","S"},{"sourceBinding","g"}});f.check.globals.emplace("g",&f.check.builtins.at("global"));
+    changed=false;if(!expect(f.check.execute(*called,true,changed)&&f.error.message.empty()&&changed&&!called->returned.number&&
+        !called->normalHeap.at("global:g").number&&called->inputArguments()[0].number==17&&called->identity->heap.at("global:g").number==17&&args[0].number==23&&input.at("global:g").number==23,
+        "mutating actual nonroot SSA and Heap execution copies cannot rewrite immutable entry or caller data"))return false;
   }
   for(unsigned mode=0;mode<3;++mode){Fixture f;Function function;function.id="R";function.blocks.resize(1);function.blocks[0].parameters={0};Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);
     f.check.functions.emplace("R",&function);f.program.fixedEffects.emplace("R",Effects{});f.check.views.emplace("R/0","missing");ActualValue input;input.tags={"S"};bool changed=false;
@@ -660,6 +663,29 @@ bool rootExecutionCopies(){
         "deferred root execution still rejects an unowned declared entry type before returning a summary"))return false;
   }
   return true;
+}
+// The same whole called input is run twice; only its actual SSA/Heap state
+// can be overwritten. This independent scalar case is not the full Source graph.
+bool nonrootInputExecution3000(){
+  Fixture f;Function function;function.id="N";function.name="called-input";function.blocks.resize(1);function.blocks[0].parameters={0};
+  Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);
+  f.check.functions.emplace("N",&function);f.program.fixedEffects.emplace("N",Effects{});f.check.views.emplace("N/0","S");
+  f.check.builtins.emplace("S",Object{{"id","S"},{"kind","scalar"},{"name","i32"}});f.check.types.emplace("S",&f.check.builtins.at("S"));
+  const std::string global(65536,'g'),slot="global:"+global;
+  f.check.builtins.emplace("global",Object{{"id",global},{"type","S"},{"sourceBinding","g"}});f.check.globals.emplace(global,&f.check.builtins.at("global"));
+  ActualValue scalar;scalar.tags={"S"};scalar.number=17;std::vector<ActualValue> args{scalar};ActualHeap input;input.emplace(slot,scalar);
+  f.program.remaining=3000;bool changed=false;auto *current=f.check.context("N",args,input,false,changed,"A");
+  if(!expect(current&&f.error.message.empty()&&f.check.execute(*current,true,changed)&&f.error.message.empty()&&current->normal&&!current->language&&
+      same(current->returned,scalar)&&same(current->normalHeap.at(slot),scalar)&&same(current->identity->arguments[0],scalar)&&same(current->identity->heap.at(slot),scalar),
+      "fixed3000 complete called context and execution publish full return and Heap summaries without an entry replica"))return false;
+  args[0].number=23;input.at(slot).number=23;
+  Operation replacement;replacement.name="constant";replacement.result=0;replacement.view="S";replacement.properties=Object{{"decimal","29"}};
+  Operation store;store.name="global_store";store.operands={0};store.properties=Object{{"global",global}};function.blocks[0].operations={replacement,store,returned};
+  f.program.remaining=100000;BorrowTrace trace(f.check);f.check.borrowTrace=&trace;changed=false;
+  const bool observed=f.check.execute(*current,false,changed);f.check.borrowTrace=nullptr;
+  return expect(observed&&trace.solve()&&f.error.message.empty()&&changed&&!current->returned.number&&!current->normalHeap.at(slot).number&&
+      same(current->inputArguments()[0],scalar)&&same(current->identity->heap.at(slot),scalar)&&args[0].number==23&&input.at(slot).number==23,
+      "second complete nonroot execution and real Borrow entry preserve immutable input and caller state while mutable SSA/Heap widen summaries");
 }
 }
 int main(){
@@ -680,5 +706,6 @@ int main(){
   if(!lazyCopyOriginInstruction()||!lazyCopyOriginValueGraphs()||!lazyCopyOriginRegionInstruction())return 1;
   llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";
   if(!deferredSiteInstructionBudgets())return 1;llvm::errs()<<"PASS deferred Site scalar/array/mixed instruction budgets and complete facets\n";
-  if(!rootExecutionCopies())return 1;llvm::errs()<<"PASS complete root entry-copy elimination and refreshed execution summaries\n";return 0;
+  if(!rootExecutionCopies())return 1;llvm::errs()<<"PASS complete root entry-copy elimination and refreshed execution summaries\n";
+  if(!nonrootInputExecution3000())return 1;llvm::errs()<<"PASS complete immutable called input3000 and independent execution/Borrow summaries\n";return 0;
 }

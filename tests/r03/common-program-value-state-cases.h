@@ -98,7 +98,7 @@ bool projectedFlows(const std::string &mode){
   for(size_t block=0;block<fn.blocks.size();++block)for(size_t index=0;index<fn.blocks[block].operations.size();++index)fn.blocks[block].operations[index].range={uint32_t(block*100+index*2),uint32_t(block*100+index*2+1)};
   c.types.emplace(boolean,&type);c.sourceFunctions.emplace(fn.id,&source);c.functions.emplace(fn.id,&fn);
   ActualValue scalar;scalar.tags.insert(boolean);scalar.truth=3;scalar.region.known=true;scalar.region.empty=true;
-  ActualContext context;context.id="projection-context";context.function=&fn;context.root=true;context.arguments.push_back(scalar);c.contexts.emplace(context.id,std::move(context));
+  ActualContext context;context.id="projection-context";context.function=&fn;context.root=true;context.rootArguments.push_back(scalar);c.contexts.emplace(context.id,std::move(context));
   if(!c.preparePublicBorrowContexts())return report("projected edge setup "+mode,false,e);
   // Public-context eligibility is fixture setup; the original Trace budget
   // begins once, before construction, and is never refilled during the Trace.
@@ -172,7 +172,7 @@ bool cachedCalleeJoin(bool direct=false){
     target->normal=true;target->returned.tags={boolean};target->returned.truth=id=="left"?1:2;target->normalHeap=ActualHeap(heap);
     if(direct){target->language=true;target->thrown.tags={boolean};target->thrown.truth=2;target->languageHeap=ActualHeap(heap);}cached.push_back(target);}
   const auto count=c.contexts.size();changed=false;const bool accepted=c.execute(*entry,true,changed);
-  bool intact=c.contexts.size()==count;for(const auto *target:cached)intact&=target->entry.count("global:g");
+  bool intact=c.contexts.size()==count;for(const auto *target:cached)intact&=target->identity->heap.count("global:g");
   const bool completions=direct?entry->returned.truth==1&&entry->language&&entry->thrown.tags==callee.tags&&entry->thrown.callables==callee.callables:entry->returned.truth==3;
   return report(direct?"direct normal/language retain caller value":"cached callees join before continuation",accepted&&entry->normal&&completions&&intact&&e.message.empty(),e);
 }

@@ -178,24 +178,25 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   // returning. Its unique static successor edge can never arrive again in
   // this execute's queue. Keep join snapshots for every other block.
   ActualState entry;
-  if(!context.root)entry.heap=copyHeap(context.entry);
+  if(!context.root){if(!step())return false;entry.heap=copyHeap(context.identity->heap);}
   entry.regions=regionCopy(*this,context.entryRegions);
   // Called activations copy the immutable identity World directly; a second
   // context-owned seed cache would duplicate exactly the same full snapshot.
   if(!context.root){if(!step())return false;entry.frames=copyFrames(context.identity->frames);}
   if(context.root){
-    entry.heap.clear();context.arguments.clear();
+    entry.heap.clear();context.rootArguments.clear();
     for(const auto &[id,g]:globals){
       const auto raw=string(field(*g,"sourceBinding"));auto value=declared(string(field(*g,"type")),entry.heap,"global-entry/"+id);
       if(globalSeeds.count(raw)){value.unknown|=globalSeeds.at(raw).unknown;
         for(const auto &tag:globalSeeds.at(raw).tags){auto alternative=declared(tag,entry.heap,"global-entry/"+id);merge(value,alternative);}}
       entry.heap.emplace("global:"+id,std::move(value));
     }
-    if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.arguments,context.constructionNewTarget,context.activation))return false;
+    if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.rootArguments,context.constructionNewTarget,context.activation))return false;
     // Roots rebuild the local World; immutable identity owns their input.
-    context.entry=copyHeap(entry.heap);
+    context.rootEntry=copyHeap(entry.heap);
   }
-  for(size_t i=0;i<context.arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(context.arguments[i]));
+  if(!step(3))return false;const auto &arguments=context.inputArguments();
+  for(size_t i=0;i<arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(arguments[i]));
   if(borrowTrace&&!borrowTrace->begin(context,entry))return false;
   std::map<uint16_t,ActualState> states;states.emplace(0,std::move(entry));std::vector<uint16_t> queue{0};std::set<uint16_t> queued{0};
   const Operation *observed=nullptr;size_t observedBlock=0;

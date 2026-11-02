@@ -258,7 +258,7 @@ bool reuseAndOwnership(){
   const auto original=f.input;
   f.input.frames.find("frame")->second.bound.region.roots.insert("later");f.input.heap.at("object:B/field/F").tags.insert("later");
   f.input.regions.at("origin").emplace("later",RegionValue{});
-  first->arguments.clear();first->entry.clear();first->entryRegions.clear();
+  first->rootArguments.clear();first->rootEntry.clear();first->entryRegions.clear();
   changed=false;if(!expect(f.intern(original,changed)==first&&!changed,"root execution refresh and caller mutation do not change immutable identity"))return false;
   if(!expect(!first->identity->frames.find("frame")->second.bound.region.roots.count("later")&&
     !first->identity->heap.at("object:B/field/F").tags.count("later")&&!first->identity->regions.at("origin").count("later"),"snapshot owns all nested storage"))return false;
