@@ -2,6 +2,7 @@
 // Direct compiler metadata seed projection. No Source/ABI, parser, Runtime,
 // loader, VM, Guest, native backend, or independently claimed type provenance.
 #include "common-program-actual.h"
+#include "common-program-borrows.h"
 #include <algorithm>
 #include "llvm/Support/raw_ostream.h"
 using namespace tsfg::commonProgram;
@@ -579,6 +580,87 @@ bool deferredSiteInstructionBudgets(){
   }
   return passed;
 }
+// Complete interner-to-execution regressions. The tight case is an independent
+// scalar/global model, not a reproduction of the Source packet's full facets.
+bool rootExecutionCopies(){
+  for(unsigned mode=0;mode<3;++mode){
+    Fixture f;Function function;function.id="R";function.name="root-copy";function.blocks.resize(mode==2?4:1);
+    function.blocks[0].parameters={0};f.check.functions.emplace("R",&function);f.program.fixedEffects.emplace("R",Effects{});
+    for(const auto *id:{"S","T"}){f.check.builtins.emplace(id,Object{{"id",id},{"kind","scalar"},{"name","i32"}});f.check.types.emplace(id,&f.check.builtins.at(id));}
+    const std::string global=mode==0?std::string(65536,'g'):"g",slot="global:"+global;
+    f.check.builtins.emplace("global",Object{{"id",global},{"sourceBinding","g"},{"type","S"}});f.check.globals.emplace(global,&f.check.builtins.at("global"));
+    ActualValue scalar;scalar.tags={"S"};std::vector<ActualValue> args{scalar};ActualHeap input;input.emplace(slot,scalar);ActualFrameWorld world;bool changed=false;
+    if(mode==2){
+      f.check.builtins.emplace("B",Object{{"id","B"},{"kind","reference"},{"base",nullptr},{"fields",Array{}},
+        {"construction",Object{{"id","C"},{"functionId","R"},{"initializationFields",Array{}}}}});f.check.types.emplace("B",&f.check.builtins.at("B"));
+      f.check.builtins.emplace("source",Object{{"kind","construction-body"},{"ownerType","B"},{"lexicalEnvironment",nullptr},{"parameters",Array{}}});
+      f.check.sourceFunctions.emplace("R",&f.check.builtins.at("source"));args.clear();
+      if(!f.check.receiverArguments(function,input,world,true,changed,args,"B","A"))return false;
+      Operation allocate;allocate.name="receiver_allocate";allocate.operands={0};allocate.result=1;allocate.view="B";
+      Operation bind;bind.name="receiver_bind";bind.operands={0,1};bind.successors={1,2};function.blocks[0].operations={allocate,bind};
+      function.blocks[1].parameters={2};Operation begin;begin.name="initialize_begin";begin.operands={0,2};begin.result=3;begin.view="initialization:B";begin.properties=Object{{"owner","B"}};
+      Operation end;end.name="initialize_end";end.operands={3,2};end.properties=Object{{"owner","B"}};
+      Operation result;result.name="receiver_result";result.operands={0};result.successors={3,2};function.blocks[1].operations={begin,end,result};
+      function.blocks[2].parameters={4};Operation thrown;thrown.name="return_throw";thrown.operands={4};function.blocks[2].operations.push_back(thrown);
+      function.blocks[3].parameters={5};Operation returned;returned.name="func.return";returned.operands={5};function.blocks[3].operations.push_back(returned);
+    }else{f.check.views.emplace("R/0","S");Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);}
+    const auto originalArgs=args;const auto original=ActualHeap(input);const auto originalWorld=world;
+    f.program.remaining=mode==0?3000:100000;changed=false;
+    auto *current=f.check.context("R",args,input,true,changed,"A",false,nullptr,"",mode==2?&world:nullptr,mode==2?"B":"");
+    if(!expect(current&&changed&&f.error.message.empty(),"root context retains its complete immutable identity before execution"))return false;
+    if(!expect(current->identity->arguments.size()==originalArgs.size()&&same(current->identity->arguments[0],originalArgs[0])&&
+        current->identity->heap.size()==original.size()&&same(current->identity->heap.at(slot),original.at(slot))&&
+        current->identity->frames.size()==originalWorld.size()&&same(args[0],originalArgs[0])&&same(input.at(slot),original.at(slot)),
+        "root identity and caller storage remain complete and independent"))return false;
+    changed=false;if(!expect(f.check.execute(*current,true,changed)&&f.error.message.empty()&&current->normal&&!current->language&&
+        current->arguments.size()==1&&same(current->entry.at(slot),scalar)&&same(current->normalHeap.at(slot),scalar),
+        "full root context and execution complete within the declared budget without an unconsumed entry copy"))return false;
+    if(mode==2){const auto frame=*originalArgs[0].frames.begin();
+      if(!expect(current->arguments[0].frames==std::set<std::string>{frame}&&current->returned.tags==std::set<std::string>{"B"}&&
+          current->returned.objects.size()==1&&current->normalFrames.size()==1&&!current->normalFrames.find(frame)->second.unbound&&
+          current->identity->frames.find(frame)->second.unbound,
+          "receiver root completes allocation/bind/initialization/result while immutable entry World stays unbound"))return false;
+    }else if(!expect(same(current->returned,scalar),"regular root publishes its independently rebuilt parameter in the return summary"))return false;
+    if(mode==0)continue;
+    // Refresh real mutable entry seeds on the second complete execution. Old
+    // invocation identity and the caller's entry data remain the first input.
+    ActualValue seed;seed.tags={"T"};seed.unknown=true;f.check.globalSeeds.emplace("g",seed);
+    current->arguments[0]=fullTarget();current->entry.at(slot)=fullTarget();f.program.remaining=100000;changed=false;
+    if(!expect(f.check.execute(*current,true,changed)&&f.error.message.empty()&&current->entry.at(slot).tags==std::set<std::string>{"S","T"}&&
+        current->entry.at(slot).unknown&&current->normalHeap.at(slot).tags==std::set<std::string>{"S","T"}&&current->normalHeap.at(slot).unknown&&
+        same(current->identity->arguments[0],originalArgs[0])&&same(current->identity->heap.at(slot),scalar)&&same(args[0],originalArgs[0])&&same(input.at(slot),scalar),
+        "each regular and receiver root execution rebuilds current seeds without mutating invocation identity"))return false;
+    if(mode==2){if(!expect(current->arguments[0].frames==originalArgs[0].frames&&current->returned.tags==std::set<std::string>{"B"},
+        "receiver root refresh discards poisoned execution parameters before using the current Frame binding"))return false;continue;}
+    BorrowTrace trace(f.check);f.check.borrowTrace=&trace;changed=false;
+    const bool observed=f.check.execute(*current,false,changed);f.check.borrowTrace=nullptr;
+    if(!expect(observed&&trace.solve()&&f.error.message.empty()&&same(current->arguments[0],scalar)&&same(current->returned,scalar)&&
+        current->entry.at(slot).unknown&&same(current->identity->arguments[0],originalArgs[0]),
+        "real BorrowTrace entry and complete nonconditional root execution consume refreshed values and preserve summaries"))return false;
+  }
+  {Fixture f;Function function;function.id="C";function.blocks.resize(1);function.blocks[0].parameters={0};Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);
+    f.check.functions.emplace("C",&function);f.program.fixedEffects.emplace("C",Effects{});ActualValue value;value.tags={"S"};value.number=17;std::vector<ActualValue> args{value};ActualHeap input;input.emplace("global:g",value);bool changed=false;
+    auto *called=f.check.context("C",args,input,false,changed,"called");if(!expect(called&&f.error.message.empty(),"called context retains its immediately usable execution copies"))return false;
+    args[0].number=23;input.at("global:g").number=23;
+    if(!expect(called->arguments[0].number==17&&called->entry.at("global:g").number==17&&called->identity->arguments[0].number==17,
+        "nonroot execution data and immutable identity remain independent of caller mutation"))return false;
+    changed=false;if(!expect(f.check.execute(*called,true,changed)&&f.error.message.empty()&&called->normal&&called->returned.number==17&&
+        called->normalHeap.at("global:g").number==17&&called->identity->heap.at("global:g").number==17,
+        "complete called execution still starts from its original independent argument and Heap copies"))return false;
+    called->arguments[0].number=29;called->entry.at("global:g").number=29;
+    if(!expect(called->identity->arguments[0].number==17&&called->identity->heap.at("global:g").number==17&&args[0].number==23&&input.at("global:g").number==23,
+        "mutating nonroot execution storage cannot rewrite identity or caller data"))return false;
+  }
+  for(unsigned mode=0;mode<3;++mode){Fixture f;Function function;function.id="R";function.blocks.resize(1);function.blocks[0].parameters={0};Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);
+    f.check.functions.emplace("R",&function);f.program.fixedEffects.emplace("R",Effects{});f.check.views.emplace("R/0","missing");ActualValue input;input.tags={"S"};bool changed=false;
+    std::vector<ActualValue> args;if(mode!=0)args.push_back(input);if(mode==1)f.program.remaining=0;
+    auto *current=f.check.context("R",args,ActualHeap{},true,changed,"A");
+    if(mode<2){if(!expect(!current&&f.error.code==(mode==0?"core-ir-common-actual":"core-ir-common-budget"),"root arity and exhausted interner budget remain hard errors"))return false;}
+    else if(!expect(current&&!f.check.execute(*current,true,changed)&&f.error.code=="core-ir-common-actual"&&!current->normal,
+        "deferred root execution still rejects an unowned declared entry type before returning a summary"))return false;
+  }
+  return true;
+}
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -597,5 +679,6 @@ int main(){
   if(!emptyWorldSelectionBudget1())return 1;llvm::errs()<<"PASS lazy birth classification and empty World selection1\n";
   if(!lazyCopyOriginInstruction()||!lazyCopyOriginValueGraphs()||!lazyCopyOriginRegionInstruction())return 1;
   llvm::errs()<<"PASS lazy copy origin and complete value_copy instruction\n";
-  if(!deferredSiteInstructionBudgets())return 1;llvm::errs()<<"PASS deferred Site scalar/array/mixed instruction budgets and complete facets\n";return 0;
+  if(!deferredSiteInstructionBudgets())return 1;llvm::errs()<<"PASS deferred Site scalar/array/mixed instruction budgets and complete facets\n";
+  if(!rootExecutionCopies())return 1;llvm::errs()<<"PASS complete root entry-copy elimination and refreshed execution summaries\n";return 0;
 }

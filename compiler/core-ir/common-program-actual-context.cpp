@@ -119,11 +119,15 @@ ActualContext *ActualCheck::context(const std::string &target,const std::vector<
   ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.repeated=repeated;
   if(!step((physical.size()+region.size()+newTarget.size())/64+4))return nullptr;
   c.activation=physical;c.region=region;c.constructionNewTarget=newTarget;
-  // Execution owns independent paid copies. Root entry refresh never mutates
-  // the immutable identity later compared by this invocation interner.
-  if(!step(incoming.arguments.size()))return nullptr;c.arguments.reserve(incoming.arguments.size());
-  for(const auto &v:incoming.arguments)c.arguments.push_back(copy(v));
-  c.entry=copyHeap(incoming.heap);
+  // Root execution rebuilds these values before reading them. Its immutable
+  // input identity remains independently owned below; called contexts need
+  // separate mutable execution copies immediately. Read and route root first.
+  if(!step(2))return nullptr;
+  if(!root){
+    if(!step(incoming.arguments.size()))return nullptr;c.arguments.reserve(incoming.arguments.size());
+    for(const auto &v:incoming.arguments)c.arguments.push_back(copy(v));
+    c.entry=copyHeap(incoming.heap);
+  }
   c.entryRegions=regionCopy(*this,incoming.regions);
   if(!e.message.empty()||!step(id.size()/64+3))return nullptr;
   c.identity=std::make_unique<const ActualContextIdentity>(std::move(incoming));
