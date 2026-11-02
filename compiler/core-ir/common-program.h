@@ -193,6 +193,7 @@ struct Program {
 struct Error {std::string code,message,path;SourceAnchor range;};
 bool reject(Error &,llvm::StringRef,llvm::StringRef);
 std::string canonical(const Json &);
+std::string canonicalStrings(llvm::ArrayRef<llvm::StringRef>);
 std::string digest(llvm::StringRef);
 bool exact(const Json &,llvm::ArrayRef<llvm::StringRef>);
 bool readJson(llvm::StringRef,Json &,Program &,Error &);

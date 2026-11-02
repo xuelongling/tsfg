@@ -3,6 +3,7 @@
 // loader, VM, Guest, native backend, or independently claimed type provenance.
 #include "common-program-actual.h"
 #include "common-program-borrows.h"
+#include "array-owner-json-policy.h"
 #include <algorithm>
 #include "llvm/Support/raw_ostream.h"
 using namespace tsfg::commonProgram;
@@ -753,9 +754,85 @@ bool immutableInitializationLayoutInstructions(){
   }
   return expect(llvm::StringRef(escaped.text()).starts_with("receiver:"),"owned Frame text survives Check and layout destruction without exporting a metadata borrow");
 }
+bool typedCanonicalStringArrays(){
+  namespace codec=tsfg::arrays::ownerproof;
+  std::string escaped="quote\"slash\\";
+  for(char byte:{'\b','\f','\n','\r','\t','\0'})escaped.push_back(byte);
+  const std::string unicode="x\xc2\x80\xc3\xbf\xe2\x82\xac\xf0\x9f\x98\x80";
+  const std::vector<std::vector<std::string>> rows{{},{""},{"A","S","B","ctor","B",""},{escaped},
+    {unicode,escaped,"B"+unicode,"ctor","B"+unicode,""}};
+  for(const auto &parts:rows){
+    Array owned;std::vector<llvm::StringRef> borrowed;
+    for(const auto &part:parts){owned.push_back(Json(part));borrowed.emplace_back(part);}
+    const Json value(std::move(owned));const llvm::ArrayRef<llvm::StringRef> view(borrowed);
+    std::string reference;const auto status=codec::encodeCanonical(value,reference);
+    if(!expect(status&&status.counts.bytes+1==reference.size()&&status.counts.tokens==parts.size()+2&&
+        status.counts.members==0&&status.counts.depth==1&&reference.back()=='\n',
+        "owning JSON independently counts array nodes, closing token, bytes and depth"))return false;
+    if(parts.empty()&&!expect(reference=="[]\n","empty string array retains its literal canonical bytes"))return false;
+    if(parts.size()==1&&parts[0].empty()&&!expect(reference=="[\"\"]\n","one empty string retains its literal canonical bytes"))return false;
+    if(parts.size()==6&&parts[0]=="A"&&!expect(reference=="[\"A\",\"S\",\"B\",\"ctor\",\"B\",\"\"]\n",
+        "equal owner/newTarget retain both ordered canonical positions"))return false;
+    const auto compare=[&](const codec::JsonPolicy &policy,codec::JsonMode mode){
+      const std::string sentinel="unchanged-output";std::string owning=sentinel,typed=sentinel;
+      const auto expected=codec::encodeCanonical(value,owning,policy,mode);
+      const auto actual=codec::encodeCanonical(view,typed,policy,mode);
+      if(!expect(actual.error==expected.error&&actual.counts.bytes==expected.counts.bytes&&
+          actual.counts.tokens==expected.counts.tokens&&actual.counts.members==expected.counts.members&&
+          actual.counts.depth==expected.counts.depth&&typed==owning,
+          "typed and owning JSON preserve every policy error/count/output state"))return false;
+      return expect(actual||typed==sentinel,"failed canonical encoding preserves the caller's output sentinel");
+    };
+    size_t longest=0;for(const auto &part:parts)longest=std::max(longest,part.size());
+    for(const auto mode:{codec::JsonMode::Output,codec::JsonMode::Envelope}){
+      if(!compare(codec::JsonPolicy{},mode))return false;
+      for(size_t limit=0;limit<=status.counts.bytes+1;++limit){
+        auto policy=codec::JsonPolicy{};policy.bytes=limit;if(!compare(policy,mode))return false;}
+      for(size_t limit=0;limit<=longest+1;++limit){
+        auto policy=codec::JsonPolicy{};policy.stringBytes=limit;if(!compare(policy,mode))return false;}
+      for(size_t limit=0;limit<=status.counts.tokens+1;++limit){
+        auto policy=codec::JsonPolicy{};policy.tokens=limit;if(!compare(policy,mode))return false;}
+      for(unsigned limit:{0u,1u,2u}){
+        auto policy=codec::JsonPolicy{};policy.depth=limit;if(!compare(policy,mode))return false;}
+      for(size_t limit:{size_t(0),size_t(1)}){
+        auto policy=codec::JsonPolicy{};policy.members=limit;if(!compare(policy,mode))return false;}
+    }
+    std::string typed;const auto typedStatus=codec::encodeCanonical(view,typed);
+    if(!expect(typedStatus&&typed==reference&&canonicalStrings(view)==canonical(value)&&
+        canonicalStrings(view)==reference.substr(0,reference.size()-1),
+        "default typed policy and commonProgram wrapper preserve bytes and remove exactly the terminal LF"))return false;
+  }
+  // The generic path still handles mixed values, property order and coreText.
+  const Json mixed(Object{{"z",Array{nullptr,false,1.25,Array{"x"}}},{"a",""}});
+  std::string encoded;
+  if(!expect(codec::encodeCanonical(mixed,encoded)&&encoded=="{\"a\":\"\",\"z\":[null,false,1.25,[\"x\"]]}\n",
+      "shared array traversal preserves generic mixed JSON, numbers and object ordering"))return false;
+  const Json envelope(Object{{"coreText","123456789"}});auto policy=codec::JsonPolicy{};policy.stringBytes=8;
+  encoded="sentinel";const auto plain=codec::encodeCanonical(envelope,encoded,policy,codec::JsonMode::Output);
+  if(!expect(plain.error==codec::JsonError::Limit&&encoded=="sentinel",
+      "generic output mode retains its original string limit and unchanged failure output"))return false;
+  if(!expect(codec::encodeCanonical(envelope,encoded,policy,codec::JsonMode::Envelope)&&encoded=="{\"coreText\":\"123456789\"}\n",
+      "generic envelope mode alone retains the root coreText exception"))return false;
+  std::string durable,trimmed;
+  {
+    const std::vector<std::string> temporary{"temporary","site"};std::vector<llvm::StringRef> views;
+    for(const auto &part:temporary)views.emplace_back(part);
+    if(!expect(codec::encodeCanonical(llvm::ArrayRef<llvm::StringRef>(views),durable)&&!durable.empty(),
+        "typed entry synchronously consumes temporary borrowed views"))return false;
+    trimmed=canonicalStrings(views);
+  }
+  if(!expect(durable=="[\"temporary\",\"site\"]\n"&&trimmed=="[\"temporary\",\"site\"]",
+      "both canonical results own their complete output after all input views expire"))return false;
+  const std::string oversized(codec::jsonStringLimit+1,'x');const llvm::StringRef longView[]={oversized};
+  const Json longValue(Array{oversized});
+  // Raw invalid UTF8 is outside the same admitted-string precondition as Value(StringRef).
+  return expect(canonicalStrings(longView).empty()&&canonical(longValue).empty(),
+      "both commonProgram wrappers retain empty-on-policy-failure semantics");
+}
+
 // Exercise the public instruction budget separately from high-budget key identity cases.
 bool borrowedFrameKeyPartsInstructions(){
-  for(const auto budget:{436,435,0,1}){
+  for(const auto budget:{424,423,0,1,436,435}){
     Fixture f;Function function;function.id="F";function.blocks.resize(1);
     f.check.builtins.emplace("owner",Object{{"id","B"},{"kind","reference"},{"base",nullptr},
       {"construction",Object{{"id","ctor"},{"initializationFields",Array{}}}}});
@@ -766,11 +843,11 @@ bool borrowedFrameKeyPartsInstructions(){
     f.program.remaining=budget;
     const bool ok=f.check.instruction(context,function.blocks[0].operations[0],0,state,true,changed,
       [](uint16_t,ActualState,const std::vector<ActualValue> &){return false;},continues);
-    if(budget!=436){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0,
+    if(budget<424){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0,
         "one-less and zero/one fuel remain hard errors for complete receiver_create"))return false;continue;}
-    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==0&&continues&&state.values.count(0)&&
+    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-424)&&continues&&state.values.count(0)&&
         state.values.at(0).frames.size()==1&&state.frames.size()==1&&f.check.receiverFrames.size()==1&&f.check.registerCapacity.count("F/0"),
-        "complete receiver_create publishes its owned Frame, World, SSA and capacity at fixed436"))return false;
+        "complete receiver_create costs424 and retains funded436/435 with12/11 remaining"))return false;
     const auto &id=*state.values.at(0).frames.begin();const auto &binding=state.frames.find(id)->second;
     if(!expect(!binding.weak&&binding.unbound&&!binding.pending&&!binding.initializing&&!binding.aborted&&binding.prefixMin==0&&binding.prefixMax==0&&f.check.receiverFrames.find(id)->second.fields.size()==0,
         "budget success retains fresh strong/unbound Frame permissions and the checked empty layout"))return false;
@@ -841,5 +918,6 @@ int main(){
   if(!rootExecutionCopies())return 1;llvm::errs()<<"PASS complete root entry-copy elimination and refreshed execution summaries\n";
   if(!nonrootInputExecution3000())return 1;llvm::errs()<<"PASS complete immutable called input3000 and independent execution/Borrow summaries\n";
   if(!immutableInitializationLayoutInstructions())return 1;llvm::errs()<<"PASS immutable initialization layout instructions, complete prefixes and owner lifetime\n";
+  if(!typedCanonicalStringArrays())return 1;llvm::errs()<<"PASS typed canonical StringRef arrays and original JSON policy boundaries\n";
   if(!borrowedFrameKeyPartsInstructions())return 1;llvm::errs()<<"PASS borrowed canonical Frame-key parts and complete receiver_create436\n";return 0;
 }

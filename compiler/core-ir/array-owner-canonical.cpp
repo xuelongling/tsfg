@@ -134,6 +134,17 @@ class Canonical {
     return emit("\"");
   }
   bool token(size_t amount=1) { return charge(status.counts.tokens,amount,policy.tokens); }
+  bool container(unsigned depth) {
+    if (depth >= policy.depth) return fail(JsonError::Limit);
+    status.counts.depth=std::max(status.counts.depth,depth+1); return true;
+  }
+  template<class Child> bool sequence(size_t size,Child child) {
+    if (!emit("[")) return false;
+    for (size_t i=0;i<size;++i) {
+      if ((i && !emit(",")) || !child(i)) return false;
+    }
+    return token() && emit("]");
+  }
   bool walk(const Json &value, unsigned depth, bool coreText=false) {
     if (!token()) return false;
     if (value.getAsNull()) return emit("null");
@@ -143,15 +154,9 @@ class Canonical {
       return jsondetail::numberText(*number,text) ? emit(text) : fail(JsonError::Input);
     }
     if (auto text=value.getAsString()) return quote(*text,coreText ? policy.bytes : policy.stringBytes);
-    if (depth >= policy.depth) return fail(JsonError::Limit);
-    status.counts.depth=std::max(status.counts.depth,depth+1);
-    if (auto array=value.getAsArray()) {
-      if (!emit("[")) return false;
-      for (size_t i=0;i<array->size();++i) {
-        if ((i && !emit(",")) || !walk((*array)[i],depth+1)) return false;
-      }
-      return token() && emit("]");
-    }
+    if (!container(depth)) return false;
+    if (auto array=value.getAsArray())
+      return sequence(array->size(),[&](size_t i) { return walk((*array)[i],depth+1); });
     const auto *object=value.getAsObject();
     if (!object) return fail(JsonError::Input);
     if (!emit("{")) return false;
@@ -178,16 +183,17 @@ class Canonical {
 public:
   Canonical(JsonMode mode,const JsonPolicy &policy,std::string *output=nullptr) : mode(mode),policy(policy),output(output) {}
   JsonStatus run(const Json &value) { walk(value,0); return status; }
+  JsonStatus run(llvm::ArrayRef<llvm::StringRef> values) {
+    if (token() && container(0))
+      sequence(values.size(),[&](size_t i) { return token() && quote(values[i],policy.stringBytes); });
+    return status;
+  }
 };
 bool equalCounts(const JsonCounts &a,const JsonCounts &b) {
   return a.bytes==b.bytes && a.tokens==b.tokens && a.members==b.members && a.depth==b.depth;
 }
-} // namespace
-JsonStatus measureCanonical(const Json &value,JsonMode mode) { return Canonical(mode,JsonPolicy{}).run(value); }
-JsonStatus encodeCanonical(const Json &value,std::string &output,JsonMode mode) {
-  return encodeCanonical(value,output,JsonPolicy{},mode);
-}
-JsonStatus encodeCanonical(const Json &value,std::string &output,const JsonPolicy &policy,JsonMode mode) {
+template<class Input>
+JsonStatus encodeMeasured(const Input &value,std::string &output,const JsonPolicy &policy,JsonMode mode) {
   const auto measured=Canonical(mode,policy).run(value);
   if (!measured) return measured;
   std::string encoded; encoded.reserve(measured.counts.bytes+1);
@@ -195,5 +201,16 @@ JsonStatus encodeCanonical(const Json &value,std::string &output,const JsonPolic
   if (!written) return written;
   if (!equalCounts(measured.counts,written.counts)) { written.error=JsonError::Input; return written; }
   encoded+='\n'; output=std::move(encoded); return written;
+}
+} // namespace
+JsonStatus measureCanonical(const Json &value,JsonMode mode) { return Canonical(mode,JsonPolicy{}).run(value); }
+JsonStatus encodeCanonical(const Json &value,std::string &output,JsonMode mode) {
+  return encodeCanonical(value,output,JsonPolicy{},mode);
+}
+JsonStatus encodeCanonical(const Json &value,std::string &output,const JsonPolicy &policy,JsonMode mode) {
+  return encodeMeasured(value,output,policy,mode);
+}
+JsonStatus encodeCanonical(llvm::ArrayRef<llvm::StringRef> value,std::string &output,const JsonPolicy &policy,JsonMode mode) {
+  return encodeMeasured(value,output,policy,mode);
 }
 } // namespace tsfg::arrays::ownerproof

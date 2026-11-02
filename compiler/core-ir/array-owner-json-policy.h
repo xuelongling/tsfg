@@ -12,4 +12,8 @@ struct JsonPolicy {
 };
 JsonStatus parseCanonical(llvm::StringRef raw,Json &admitted,const JsonPolicy &);
 JsonStatus encodeCanonical(const Json &,std::string &,const JsonPolicy &,JsonMode mode=JsonMode::Output);
+// Synchronous borrowed array of already admitted UTF8 strings, with the same
+// policy/count/output boundary as Json. This is not a raw-string admission API.
+JsonStatus encodeCanonical(llvm::ArrayRef<llvm::StringRef>,std::string &,
+                           const JsonPolicy &policy=JsonPolicy{},JsonMode mode=JsonMode::Output);
 } // namespace tsfg::arrays::ownerproof

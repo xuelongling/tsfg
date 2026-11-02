@@ -357,11 +357,13 @@ bool ActualCheck::receiverReconcile(const ActualFrameWorld &world,ActualHeap &he
 }
 std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &activation,const std::string &site,const std::string &owner,
   const std::string &construction,const std::string &newTarget,bool repeated,const std::string &parent){
-  // Each view borrows a live input through this synchronous canonical/hash call.
-  // Only its former owned byte copy is removed; keep all other primitive work.
-  for(const auto *s:{&activation,&site,&owner,&construction,&newTarget,&parent})if(!step(11*s->size()+8))return {};
+  // These admitted UTF8 views stay live through synchronous canonical/hash.
+  // Remove only the unused LLVM Value prevalidation walk; both policy walks,
+  // output/hash and the existing per-part metadata work remain paid.
+  for(const auto *s:{&activation,&site,&owner,&construction,&newTarget,&parent})if(!step(10*s->size()+8))return {};
   if(!step(128)||!need(types.count(owner)&&types.count(newTarget),"frame owner/newTarget is not owned"))return {};
-  auto id="receiver:"+digest(canonical(Array{llvm::StringRef(activation),llvm::StringRef(site),llvm::StringRef(owner),llvm::StringRef(construction),llvm::StringRef(newTarget),llvm::StringRef(parent)}));
+  const llvm::StringRef parts[]={activation,site,owner,construction,newTarget,parent};
+  auto id="receiver:"+digest(canonicalStrings(parts));
   auto metadata=receiverFrames.find(id);if(metadata==receiverFrames.end()){const auto &type=*types.at(owner);const auto &ctor=field(type,"construction");ActualFrameInfo info;
     // Keep the original eight metadata operations, then pay the two-word
     // view acquisition/construction/assignment bound before borrowing it.
