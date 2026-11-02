@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
+#include <type_traits>
 #include "common-program-borrows.h"
 #include "common-program-retention.h"
 #include <cstdlib>
@@ -23,7 +24,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   if(!step(op.operands.size()+1))return false;const auto &fn=*context.function;const auto &name=op.name;const auto &props=op.properties;
   // Calls carry owned arguments beyond completion, and br/route can overwrite
   // source registers while assigning target parameters in parallel.
-  const bool snapshot=name=="invoke"||name=="invoke_method"||name=="invoke_indirect"||name=="cf.br"||name=="route";
+  const bool direct=name=="invoke"; // Reuse the original first name comparison.
+  if(direct&&!step(4))return false; // Conditional read, snapshot route and later dispatch controls.
+  const bool snapshot=direct?!conditional:name=="invoke_method"||name=="invoke_indirect"||name=="cf.br"||name=="route";
   if(snapshot&&!step(op.operands.size()))return false;
   std::vector<ActualValue> owned;owned.reserve(snapshot?op.operands.size():0);
   std::vector<const ActualValue *> operands;operands.reserve(op.operands.size());const ActualValue missing;
@@ -277,15 +280,22 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       // Each completion owns its merged state; the edge consumes it without
       // cloning it again. Callers whose input remains live pass an explicit paid copy.
       std::vector<ActualValue> values;if(!fn.blocks[target].parameters.empty()){values.reserve(1);values.push_back(copy(v));}
+      if(!e.message.empty())return false;
       return edge(target,std::move(after),values);
     };
 
-    const auto invoke=[&](const std::string &target,std::vector<ActualValue> actual){
+    const auto invoke=[&](const std::string &target,auto actual){
       bool repeated=false;const auto activation=callActivation(context,op,block,target,repeated);if(!e.message.empty())return false;
-      const auto active=conditional?std::string():regionCall(*this,context,op,block,target,actual);if(!e.message.empty())return false;
-      if(!conditional&&active.empty())for(auto &arg:actual){if(!step(regionWeight(arg.region)))return false;
-        if(!arg.region.roots.empty()){arg.region.roots.clear();arg.region.known=true;arg.region.opaque=true;}}
-      auto *call=this->context(target,actual,state.heap,false,changed,activation,repeated,conditional?nullptr:&state.regions,active,&state.frames);if(!call)return false;
+      ActualContext *call;
+      if constexpr(std::is_same_v<decltype(actual),ActualOperands>){
+        call=conditionalContext(*this,target,actual,state.heap,changed,activation,repeated,state.frames);
+      }else{
+        const auto active=conditional?std::string():regionCall(*this,context,op,block,target,actual);if(!e.message.empty())return false;
+        if(!conditional&&active.empty())for(auto &arg:actual){if(!step(regionWeight(arg.region)))return false;
+          if(!arg.region.roots.empty()){arg.region.roots.clear();arg.region.known=true;arg.region.opaque=true;}}
+        call=this->context(target,actual,state.heap,false,changed,activation,repeated,conditional?nullptr:&state.regions,active,&state.frames);
+      }
+      if(!call)return false;
       if(scheduling){if(!step(context.id.size()/64+1))return false;call->callers.insert(context.id);}
       if(borrowTrace&&!borrowTrace->call(context,op,block,*call))return false;
       if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap,call->normalRegions,call->normalFrames,false,
@@ -293,7 +303,11 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap,call->languageRegions,call->languageFrames,true,
         name=="invoke"?std::move(state):copyState(state)))return false;return true;
     };
-    if(name=="invoke"){if(!invoke(string(field(props,"function_id")),std::move(owned)))return false;}
+    if(name=="invoke"){
+      if(conditional){if(!step(6))return false; // Two-word view route/copy and borrowed admission bindings.
+        if(!invoke(string(field(props,"function_id")),args))return false;
+      }else if(!invoke(string(field(props,"function_id")),std::move(owned)))return false;
+    }
     else if(name=="invoke_indirect"){
       const auto site=fn.id+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);
       if(!need(!args.empty()&&p.callableSites.count(site),"indirect actual site has no fixed authority"))return false;

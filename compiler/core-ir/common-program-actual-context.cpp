@@ -74,26 +74,34 @@ bool ActualCheck::prepayValueGrowth(const std::vector<ActualValue> &values,size_
   }
   return true;
 }
-ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,
+namespace {
+template<class Input>
+ActualFrameWorld selectedFrameInputs(ActualCheck &check,const ActualFrameWorld &world,const Input &values,const ActualHeap &heap){
+  if constexpr(std::is_same_v<Input,ActualOperands>)return selectOperandFrames(check,world,values,heap);
+  else return check.selectFrames(world,values,heap);
+}
+template<class Input>
+ActualContext *contextInput(ActualCheck &check,const std::string &target,const Input &args,const ActualHeap &heap,bool root,bool &changed,
   const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region,const ActualFrameWorld *frameWorld,const std::string &newTarget){
-  if(!step(args.size()+1)||!need(functions.count(target)&&functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
-  auto selected=frameWorld?selectFrames(*frameWorld,args,heap):ActualFrameWorld{};if(!e.message.empty())return nullptr;
-  auto retained=retainedFrames(selected);const auto retainedCount=retained.size();
-  if(!step(args.size()+retainedCount+1)||!e.message.empty())return nullptr;
+  if(!check.step(args.size()+1)||!check.need(check.functions.count(target)&&check.functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
+  auto selected=frameWorld?selectedFrameInputs(check,*frameWorld,args,heap):ActualFrameWorld{};if(!check.e.message.empty())return nullptr;
+  auto retained=check.retainedFrames(selected);const auto retainedCount=retained.size();
+  if(!check.step(args.size()+retainedCount+1)||!check.e.message.empty())return nullptr;
   std::vector<ActualValue> roots;roots.reserve(args.size()+retainedCount);
-  for(const auto &v:args)roots.push_back(copy(v));for(auto &v:retained)roots.push_back(std::move(v));
-  if(!e.message.empty())return nullptr;
-  if(!step(4))return nullptr;auto entry=reachable({roots,{}},heap);
+  if constexpr(std::is_same_v<Input,ActualOperands>)if(!check.step(args.size()))return nullptr; // Additional pointer load per borrowed row.
+  for(const auto &v:args)roots.push_back(check.copy(v));for(auto &v:retained)roots.push_back(std::move(v));
+  if(!check.e.message.empty())return nullptr;
+  if(!check.step(4))return nullptr;auto entry=check.reachable({roots,{}},heap);
   // reachable retains every global: entry, including payloads reachable only
   // from globals. Their region relations remain part of the owned identity.
-  const auto required=roots.size()+entry.size();if(!step(required)||!prepayValueGrowth(roots,required))return nullptr;roots.reserve(required);
-  for(const auto &[id,v]:entry)roots.push_back(copy(v));if(!e.message.empty())return nullptr;
-  if(versions&&!step(4))return nullptr;auto current=versions?regionReachable(*this,{roots,{}},*versions):RegionHeap{};if(!e.message.empty())return nullptr;
-  if(!step((target.size()+activation.size()+region.size()+newTarget.size())/64+5))return nullptr;
+  const auto required=roots.size()+entry.size();if(!check.step(required)||!check.prepayValueGrowth(roots,required))return nullptr;roots.reserve(required);
+  for(const auto &[id,v]:entry)roots.push_back(check.copy(v));if(!check.e.message.empty())return nullptr;
+  if(versions&&!check.step(4))return nullptr;auto current=versions?regionReachable(check,{roots,{}},*versions):RegionHeap{};if(!check.e.message.empty())return nullptr;
+  if(!check.step((target.size()+activation.size()+region.size()+newTarget.size())/64+5))return nullptr;
   const auto physical=root?(activation.empty()?"entry/"+target:activation):activation;
-  auto upper=p.fixedEffects.find(target);const bool opaque=!analysisFunctions.count(target)&&(upper==p.fixedEffects.end()||upper->second.unknownHost);
-  repeated|=physical.empty()||cyclicFunctions.count(target)||opaque;if(root)repeated=cyclicFunctions.count(target)||opaque;
-  if(!step((target.size()+physical.size()+region.size()+newTarget.size())/64+8+args.size()+retainedCount))return nullptr;
+  auto upper=check.p.fixedEffects.find(target);const bool opaque=!check.analysisFunctions.count(target)&&(upper==check.p.fixedEffects.end()||upper->second.unknownHost);
+  repeated|=physical.empty()||check.cyclicFunctions.count(target)||opaque;if(root)repeated=check.cyclicFunctions.count(target)||opaque;
+  if(!check.step((target.size()+physical.size()+region.size()+newTarget.size())/64+8+args.size()+retainedCount))return nullptr;
   ActualContextIdentity incoming;incoming.target=target;incoming.activation=physical;incoming.region=region;incoming.newTarget=newTarget;incoming.repeated=repeated;
   incoming.arguments.reserve(args.size());incoming.retained.reserve(retainedCount);
   for(size_t i=0;i<args.size();++i)incoming.arguments.push_back(std::move(roots[i]));
@@ -102,32 +110,41 @@ ActualContext *ActualCheck::context(const std::string &target,const std::vector<
   // Cheap scalar partition only. Full owned typed equality decides reuse;
   // no mutable execution value, observed view or hash is an authority.
   const size_t bytes=target.size()+physical.size()+region.size()+newTarget.size()+128;
-  if(!step(bytes/64+8))return nullptr;std::string bucket;bucket.reserve(bytes);
+  if(!check.step(bytes/64+8))return nullptr;std::string bucket;bucket.reserve(bytes);
   for(const auto *part:{&target,&physical,&region,&newTarget}){bucket+=std::to_string(part->size());bucket+=':';bucket+=*part;bucket+='|';}
-  bucket+=repeated?'1':'0';if(!step(bucket.size()/64+1))return nullptr;
-  auto candidates=contextBuckets.find(bucket);
-  if(candidates!=contextBuckets.end()){
-    if(!step(candidates->second.size()))return nullptr;
+  bucket+=repeated?'1':'0';if(!check.step(bucket.size()/64+1))return nullptr;
+  auto candidates=check.contextBuckets.find(bucket);
+  if(candidates!=check.contextBuckets.end()){
+    if(!check.step(candidates->second.size()))return nullptr;
     for(auto *candidate:candidates->second){
-      const bool same=identitySame(*this,*candidate->identity,incoming);if(!e.message.empty())return nullptr;
+      const bool same=identitySame(check,*candidate->identity,incoming);if(!check.e.message.empty())return nullptr;
       if(same){candidate->called|=!root;return candidate;}
     }
   }
-  if(!need(contexts.size()<4096,"actual call-context bound exceeded")||!step(target.size()/64+4))return nullptr;
-  const auto id=target+"/context:"+std::to_string(contexts.size());
-  if(!step(id.size()/64+1))return nullptr;
-  ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.repeated=repeated;
-  if(!step((physical.size()+region.size()+newTarget.size())/64+4))return nullptr;
+  if(!check.need(check.contexts.size()<4096,"actual call-context bound exceeded")||!check.step(target.size()/64+4))return nullptr;
+  const auto id=target+"/context:"+std::to_string(check.contexts.size());
+  if(!check.step(id.size()/64+1))return nullptr;
+  ActualContext c;c.id=id;c.function=check.functions.at(target);c.root=root;c.called=!root;c.repeated=repeated;
+  if(!check.step((physical.size()+region.size()+newTarget.size())/64+4))return nullptr;
   c.activation=physical;c.region=region;c.constructionNewTarget=newTarget;
   // Immutable identity is the sole called input. Roots rebuild their mutable
   // execution input on entry; neither mode needs an admission-time replica.
-  c.entryRegions=regionCopy(*this,incoming.regions);
-  if(!e.message.empty()||!step(id.size()/64+3))return nullptr;
+  c.entryRegions=regionCopy(check,incoming.regions);
+  if(!check.e.message.empty()||!check.step(id.size()/64+3))return nullptr;
   c.identity=std::make_unique<const ActualContextIdentity>(std::move(incoming));
-  auto inserted=contexts.emplace(id,std::move(c));auto *owned=&inserted.first->second;
-  if(candidates==contextBuckets.end()){
-    if(!step(bucket.size()/64+3))return nullptr;contextBuckets.emplace(std::move(bucket),std::vector<ActualContext *>{owned});
-  }else{if(!step(candidates->second.size()+1))return nullptr;candidates->second.push_back(owned);}
-  changed=true;if(!schedule(id))return nullptr;return owned;
+  auto inserted=check.contexts.emplace(id,std::move(c));auto *owned=&inserted.first->second;
+  if(candidates==check.contextBuckets.end()){
+    if(!check.step(bucket.size()/64+3))return nullptr;check.contextBuckets.emplace(std::move(bucket),std::vector<ActualContext *>{owned});
+  }else{if(!check.step(candidates->second.size()+1))return nullptr;candidates->second.push_back(owned);}
+  changed=true;if(!check.schedule(id))return nullptr;return owned;
+}
+}
+ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,
+  const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region,const ActualFrameWorld *frameWorld,const std::string &newTarget){
+  return contextInput(*this,target,args,heap,root,changed,activation,repeated,versions,region,frameWorld,newTarget);
+}
+ActualContext *conditionalContext(ActualCheck &check,const std::string &target,const ActualOperands &args,const ActualHeap &heap,
+  bool &changed,const std::string &activation,bool repeated,const ActualFrameWorld &frames){
+  return contextInput(check,target,args,heap,false,changed,activation,repeated,nullptr,{},&frames,{});
 }
 } // namespace tsfg::commonProgram

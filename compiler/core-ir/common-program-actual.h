@@ -79,9 +79,10 @@ struct ActualRoots {
   size_t size()const{return values.size()+retained.size();}
   const ActualValue &operator[](size_t i)const{return i<values.size()?values[i]:*retained[i-values.size()];}
 };
-// Read-only operands live only for the current instruction. Call/branch
-// boundaries point into an independent paid snapshot; other instructions
-// point into stable SSA map nodes. Consumers must not retain this view.
+// Read-only operands live only for the current instruction. Branch and owned-call
+// boundaries use paid snapshots. Conditional direct calls borrow stable SSA only
+// through synchronous admission, which owns the published immutable identity.
+// No consumer may retain this view.
 struct ActualOperands {
   llvm::ArrayRef<const ActualValue *> values;
   size_t size()const{return values.size();}
@@ -422,6 +423,11 @@ struct ActualCheck {
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
     const std::function<bool(uint16_t,ActualState,const std::vector<ActualValue> &)> &,bool &);
 };
+// Synchronous conditional-call input. No Value, SSA, Heap or World borrow escapes;
+// the caller pays its descriptor route before admission copies immutable identity roots.
+ActualContext *conditionalContext(ActualCheck &,const std::string &,const ActualOperands &,const ActualHeap &,
+  bool &changed,const std::string &activation,bool repeated,const ActualFrameWorld &);
+ActualFrameWorld selectOperandFrames(ActualCheck &,const ActualFrameWorld &,const ActualOperands &,const ActualHeap &);
 template<class Directory>
 auto paidFrameLookup(ActualCheck &c,Directory &directory,llvm::StringRef query)->std::optional<decltype(directory.begin())>{
   const auto count=directory.size();size_t height=0;

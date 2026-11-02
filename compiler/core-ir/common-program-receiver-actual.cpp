@@ -2,6 +2,7 @@
 #include "common-program-actual.h"
 #include <algorithm>
 #include <tuple>
+#include <type_traits>
 namespace tsfg::commonProgram {
 namespace {
 template<class Directory>
@@ -203,92 +204,106 @@ bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &f
   if(&into==&from)return true;auto owned=copyFrames(from);if(!e.message.empty()||!step(owned.size()))return false;
   for(auto &[id,value]:owned){if(!receiverText(id.text())||!step(4))return false;into.insert_or_assign(id,std::move(value));}return true;
 }
-ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const std::vector<ActualValue> &values,const ActualHeap &heap){
+namespace {
+template<class Input>
+ActualFrameWorld selectedInputFrames(ActualCheck &check,const ActualFrameWorld &world,const Input &values,const ActualHeap &heap){
   using Entry=ActualFrameWorld::value_type;
   struct Selection {const Entry *row;const ActualFrameInfo *info;};
   std::map<llvm::StringRef,Selection,std::less<>> selected;std::vector<const std::string *> pending;
   const auto append=[&](auto &queue,auto pointer){
     if(queue.size()==queue.capacity()){
-      if(!step(queue.size()+1))return false;queue.reserve(std::max<size_t>(1,queue.size()*2));}
-    if(!step())return false;queue.push_back(pointer);return true;
+      if(!check.step(queue.size()+1))return false;queue.reserve(std::max<size_t>(1,queue.size()*2));}
+    if(!check.step())return false;queue.push_back(pointer);return true;
   };
   const auto admit=[&](const std::string &id,const Entry *known,bool &fresh)->Selection *{
-    if(!step())return nullptr;fresh=false;const auto at=selectionLowerBound(*this,selected,id);if(!at)return nullptr;
-    if(*at!=selected.end()&&(*at)->first==id){if(!step())return nullptr;return &(*at)->second;}
+    if(!check.step())return nullptr;fresh=false;const auto at=selectionLowerBound(check,selected,id);if(!at)return nullptr;
+    if(*at!=selected.end()&&(*at)->first==id){if(!check.step())return nullptr;return &(*at)->second;}
     const Entry *row=known;
-    if(!row){const auto found=selectionFrameLookup(*this,world,id);
-      if(!found||!need(*found!=world.end(),"selected frame is absent from completion"))return nullptr;row=&**found;}
+    if(!row){const auto found=selectionFrameLookup(check,world,id);
+      if(!found||!check.need(*found!=world.end(),"selected frame is absent from completion"))return nullptr;row=&**found;}
     const ActualFrameInfo *info=nullptr;
-    if(!known){const auto frame=selectionFrameLookup(*this,receiverFrames,id);
-      if(!frame||!need(*frame!=receiverFrames.end(),"selected frame is absent from completion"))return nullptr;info=&(*frame)->second;}
-    if(*at!=selected.end()&&!step(2*(id.size()+(*at)->first.size()+1)))return nullptr;
-    if(*at!=selected.begin()){if(!step(selected.size()+1))return nullptr;const auto previous=std::prev(*at);
-      if(!step(2*(previous->first.size()+id.size()+1)))return nullptr;}
+    if(!known){const auto frame=selectionFrameLookup(check,check.receiverFrames,id);
+      if(!frame||!check.need(*frame!=check.receiverFrames.end(),"selected frame is absent from completion"))return nullptr;info=&(*frame)->second;}
+    if(*at!=selected.end()&&!check.step(2*(id.size()+(*at)->first.size()+1)))return nullptr;
+    if(*at!=selected.begin()){if(!check.step(selected.size()+1))return nullptr;const auto previous=std::prev(*at);
+      if(!check.step(2*(previous->first.size()+id.size()+1)))return nullptr;}
     // View construction/copy4, two selected pointers constructed/moved4, node1;
     // then one fresh flag and one returned pointer. No owned ID is created.
-    if(!step(11))return nullptr;const auto inserted=selected.try_emplace(*at,row->first.view(),Selection{row,info});
+    if(!check.step(11))return nullptr;const auto inserted=selected.try_emplace(*at,row->first.view(),Selection{row,info});
     fresh=true;return &inserted->second;
   };
   // Collect all roots/cursors first, retaining the original error-stage order.
-  if(!step(values.size()))return {};
-  for(const auto &value:values){if(!step(value.frames.size()+value.cursors.size()))return {};
+  if(!check.step(values.size()))return {};
+  if constexpr(std::is_same_v<Input,ActualOperands>)if(!check.step(values.size()))return {}; // Borrowed pointer rows.
+  for(const auto &value:values){if(!check.step(value.frames.size()+value.cursors.size()))return {};
     for(const auto &id:value.frames)if(!append(pending,&id))return {};
-    for(const auto &id:value.cursors){const auto *cursor=cursorMetadata(id);
-      if(!e.message.empty()||!need(cursor,"unknown initializer cursor"))return {};if(!append(pending,cursor->frame.get()))return {};}}
-  for(size_t i=0;i<pending.size();++i){if(!step())return {};bool fresh=false;
+    for(const auto &id:value.cursors){const auto *cursor=check.cursorMetadata(id);
+      if(!check.e.message.empty()||!check.need(cursor,"unknown initializer cursor"))return {};if(!append(pending,cursor->frame.get()))return {};}}
+  for(size_t i=0;i<pending.size();++i){if(!check.step())return {};bool fresh=false;
     const auto row=admit(*pending[i],nullptr,fresh);if(!row)return {};
     if(fresh&&!row->info->parent.empty()&&!append(pending,&row->info->parent))return {};}
   // Heap-derived refs borrow only values and this block's independently owned
   // reachable snapshot. Neither this set nor the selected views escape.
-  if(!step(world.size()))return {};bool births=false;
+  if(!check.step(world.size()))return {};bool births=false;
   for(const auto &[id,value]:world)births|=!value.births.empty();
   // Every selected full key is a member of this unchanged World. Equal sizes prove full coverage.
   // Classify coverage only when birth discovery could actually add a World member.
-  if(births){if(!step(4))return {};births=selected.size()!=world.size();} // Two size reads, comparison and its branch.
-  if(births){if(!step(4))return {};auto reached=reachable({values,{}},heap);if(!e.message.empty()||!step(values.size()+reached.size()+1))return {};
+  if(births){if(!check.step(4))return {};births=selected.size()!=world.size();} // Two size reads, comparison and its branch.
+  if(births){if(!check.step(4))return {};const auto roots=[&]{
+      if constexpr(std::is_same_v<Input,ActualOperands>)return ActualRoots{{},values.values};
+      else return ActualRoots{values,{}};
+    }();auto reached=check.reachable(roots,heap);if(!check.e.message.empty()||!check.step(values.size()+reached.size()+1))return {};
     // These refs have only a membership consumer. Sorting or deduplicating
     // would compare complete object spellings without changing that answer.
     std::vector<const std::string *> refs;
-    const auto objectsIn=[&](const ActualValue &value){if(!step(value.objects.size()))return false;
+    const auto objectsIn=[&](const ActualValue &value){if(!check.step(value.objects.size()))return false;
       for(const auto &ref:value.objects)if(!append(refs,&ref.text()))return false;return true;};
+    if constexpr(std::is_same_v<Input,ActualOperands>)if(!check.step(values.size()))return {};
     for(const auto &value:values)if(!objectsIn(value))return {};
     for(const auto &[slot,value]:reached)if(!objectsIn(value))return {};
-    if(!step(world.size()))return {};
-    for(const auto &entry:world){if(!step(entry.second.births.size()))return {};
-      for(const auto &[slot,row]:entry.second.births){if(!step())return {};bool matched=false;
-        if(!step(3))return {};const auto reference=row.referenceText();
+    if(!check.step(world.size()))return {};
+    for(const auto &entry:world){if(!check.step(entry.second.births.size()))return {};
+      for(const auto &[slot,row]:entry.second.births){if(!check.step())return {};bool matched=false;
+        if(!check.step(3))return {};const auto reference=row.referenceText();
         for(size_t i=0;i<refs.size();++i){
           // Visit/load and length rejection precede any byte comparison. Equal
           // lengths still require the complete identity, including NUL bytes.
-          if(!step(3))return {};const auto &ref=*refs[i];if(ref.size()!=reference.size())continue;
-          if(!step(ref.size()+reference.size()+1)||!step(2))return {};
-          if(llvm::StringRef(ref)==reference){if(!step())return {};matched=true;break;}
+          if(!check.step(3))return {};const auto &ref=*refs[i];if(ref.size()!=reference.size())continue;
+          if(!check.step(ref.size()+reference.size()+1)||!check.step(2))return {};
+          if(llvm::StringRef(ref)==reference){if(!check.step())return {};matched=true;break;}
         }
         if(matched){bool fresh=false;if(!admit(entry.first.text(),&entry,fresh))return {};break;}}}
   }
   // Visit initial selections in full-key order. Resolve each row's metadata,
   // then its parent's World before appending that parent's deferred metadata.
-  if(!step(selected.size()+1))return {};pending.clear();std::vector<Selection *> ancestry;
+  if(!check.step(selected.size()+1))return {};pending.clear();std::vector<Selection *> ancestry;
   for(auto &[id,row]:selected)if(!append(ancestry,&row))return {};
-  for(size_t i=0;i<ancestry.size();++i){if(!step())return {};auto &row=*ancestry[i];
-    if(!row.info){const auto frame=selectionFrameLookup(*this,receiverFrames,row.row->first.text());
-      if(!frame||!need(*frame!=receiverFrames.end(),"selected birth frame is absent")||!step())return {};row.info=&(*frame)->second;}
+  for(size_t i=0;i<ancestry.size();++i){if(!check.step())return {};auto &row=*ancestry[i];
+    if(!row.info){const auto frame=selectionFrameLookup(check,check.receiverFrames,row.row->first.text());
+      if(!frame||!check.need(*frame!=check.receiverFrames.end(),"selected birth frame is absent")||!check.step())return {};row.info=&(*frame)->second;}
     const auto &parent=row.info->parent;if(parent.empty())continue;
-    const auto found=selectionFrameLookup(*this,world,parent);
-    if(!found||!need(*found!=world.end(),"selected birth parent is absent"))return {};bool fresh=false;
+    const auto found=selectionFrameLookup(check,world,parent);
+    if(!found||!check.need(*found!=world.end(),"selected birth parent is absent"))return {};bool fresh=false;
     const auto next=admit(parent,&**found,fresh);if(!next)return {};
     if(fresh&&!append(ancestry,next))return {};}
-  ActualFrameWorld result;if(!step(selected.size()))return {};
+  ActualFrameWorld result;if(!check.step(selected.size()))return {};
   for(const auto &[id,row]:selected){
     // The primary immutable key is shared: retain/release4, node1 and Binding move1.
     // Every mutable Binding and historical payload still goes through copyFrame.
     // Full-key order proves a strict end hint. Pay its last-neighbour compare
     // and debug reverse before the independent key/binding are constructed.
-    if(!result.empty()){if(!step(result.size()+1))return {};const auto previous=std::prev(result.end());
-      if(!step(2*(previous->first.size()+id.size()+1)))return {};}
-    if(!step(6))return {};auto next=copyFrame(row.row->second);if(!e.message.empty())return {};
+    if(!result.empty()){if(!check.step(result.size()+1))return {};const auto previous=std::prev(result.end());
+      if(!check.step(2*(previous->first.size()+id.size()+1)))return {};}
+    if(!check.step(6))return {};auto next=check.copyFrame(row.row->second);if(!check.e.message.empty())return {};
     result.emplace_hint(result.end(),row.row->first,std::move(next));
   }return result;
+}
+}
+ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const std::vector<ActualValue> &values,const ActualHeap &heap){
+  return selectedInputFrames(*this,world,values,heap);
+}
+ActualFrameWorld selectOperandFrames(ActualCheck &check,const ActualFrameWorld &world,const ActualOperands &values,const ActualHeap &heap){
+  return selectedInputFrames(check,world,values,heap);
 }
 std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &world){
   if(!step(world.size()))return {};std::vector<ActualValue> result;result.reserve(world.size());

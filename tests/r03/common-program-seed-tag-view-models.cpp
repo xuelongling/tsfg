@@ -896,6 +896,106 @@ bool borrowedFrameKeyPartsInstructions(){
   return expect(durable.text()==expected&&retained.find(durable)!=retained.end(),"owned Frame and World keys survive the complete Check lifetime");
 }
 
+bool conditionalInvokeBorrowedInputs(){
+  const auto sameHeap=[](const ActualHeap &a,const ActualHeap &b){
+    return a.size()==b.size()&&std::equal(a.begin(),a.end(),b.begin(),[](const auto &x,const auto &y){return x.first==y.first&&same(x.second,y.second);});
+  };
+  // Real factory + execute establish an existing summary before the measured
+  // public instruction. This isolated graph is not the full Source901 payload.
+  for(const auto budget:{236,235,0,1,253}){
+    Fixture f;Function callee;callee.id="C";callee.blocks.resize(1);callee.blocks[0].parameters={0,1,2};
+    Operation returned;returned.name="func.return";returned.operands={0};callee.blocks[0].operations.push_back(returned);
+    f.check.functions.emplace("C",&callee);f.check.analysisFunctions.emplace("C",callee);f.program.fixedEffects.emplace("C",Effects{});
+    f.check.builtins.emplace("T",Object{{"id","T"},{"kind","reference"},{"base",nullptr},{"fields",Array{}}});f.check.types.emplace("T",&f.check.builtins.at("T"));
+    Function caller;caller.id="P";caller.blocks.resize(3);caller.blocks[0].parameters={0,1,2};caller.blocks[1].parameters={3};caller.blocks[2].parameters={4};
+    Operation normal;normal.name="func.return";normal.operands={3};caller.blocks[1].operations.push_back(normal);
+    Operation thrown;thrown.name="return_throw";thrown.operands={4};caller.blocks[2].operations.push_back(thrown);
+    Operation invoke;invoke.name="invoke";invoke.operands={0,1,2};invoke.successors={1,2};invoke.properties=Object{{"function_id","C"}};
+    caller.blocks[0].operations.push_back(std::move(invoke));const auto &op=caller.blocks[0].operations[0];f.check.callSites.emplace(&op,"L");
+    ActualContext parent;parent.id="P/context:source";parent.function=&caller;parent.root=true;parent.repeated=false;parent.activation="A";
+    ActualState state;std::vector<ActualValue> actual;
+    for(unsigned i=0;i<3;++i){auto object=f.check.admitObject(f.check.objects.end(),"o"+std::to_string(i),ActualObject{"T",false});
+      if(object==f.check.objects.end())return false;ActualValue value;value.tags={"T"};value.objects.insert(object->first);actual.push_back(value);state.values.emplace(i,value);}
+    parent.rootArguments=actual;bool repeated=false,changed=false;
+    const auto activation=f.check.callActivation(parent,op,0,"C",repeated);
+    auto *called=f.check.context("C",actual,state.heap,false,changed,activation,repeated,nullptr,"",&state.frames);
+    if(!expect(called&&f.check.execute(*called,true,changed)&&called->normal&&!called->language&&f.error.message.empty()&&same(called->returned,actual[0]),
+        "real called execution establishes the independent normal summary used by whole invoke"))return false;
+    const auto original=state.values;unsigned edges=0;bool edgeMatches=false,continues=true;f.program.remaining=budget;changed=false;
+    const bool ok=f.check.instruction(parent,op,0,state,true,changed,
+      [&](uint16_t to,ActualState after,const std::vector<ActualValue> &values){
+        ++edges;edgeMatches=to==1&&values.size()==1&&same(values[0],actual[0])&&after.values.size()==original.size();
+        for(const auto &[reg,value]:original)edgeMatches&=after.values.count(reg)&&same(after.values.at(reg),value);
+        after.values.at(0).unknown=true;continues=false;return edgeMatches;
+      },continues);
+    if(budget<236){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&edges==0,
+        "one-less and zero/one budgets remain hard errors before an invoke edge"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-236)&&edges==1&&edgeMatches&&!continues&&
+        same(called->identity->arguments[0],actual[0])&&same(called->returned,actual[0])&&f.check.contexts.size()==1,
+        "fixed236 whole conditional invoke reuses its real summary, owns the edge and preserves immutable arguments"))return false;
+  }
+  for(unsigned mode=0;mode<6;++mode){
+    const bool recursive=mode==2,empty=mode==4,conditional=mode!=5;Fixture f;
+    Function callee;callee.id="C";callee.blocks.resize(1);
+    const unsigned count=empty?0:3;for(unsigned i=0;i<count;++i)callee.blocks[0].parameters.push_back(i);
+    Operation returned;returned.name="func.return";if(count)returned.operands={0};callee.blocks[0].operations.push_back(returned);
+    Function caller;caller.id=recursive?"C":"P";caller.blocks.resize(3);caller.blocks[1].parameters={3};caller.blocks[2].parameters={4};
+    for(unsigned i=0;i<count;++i)caller.blocks[0].parameters.push_back(i);
+    Operation normal;normal.name="func.return";normal.operands={3};caller.blocks[1].operations.push_back(normal);
+    Operation thrown;thrown.name="return_throw";thrown.operands={4};caller.blocks[2].operations.push_back(thrown);
+    Operation invoke;invoke.name="invoke";for(unsigned i=0;i<count;++i)invoke.operands.push_back(i);
+    invoke.successors={1,2};invoke.properties=Object{{"function_id","C"}};caller.blocks[0].operations.push_back(std::move(invoke));
+    f.check.functions.emplace("C",recursive?&caller:&callee);f.check.analysisFunctions.emplace("C",recursive?caller:callee);f.program.fixedEffects.emplace("C",Effects{});
+    f.check.builtins.emplace("T",Object{{"id","T"},{"kind","reference"},{"base",nullptr},{"fields",Array{}},
+      {"construction",Object{{"id","ctor"},{"initializationFields",Array{}}}}});f.check.types.emplace("T",&f.check.builtins.at("T"));
+    f.check.builtins.emplace("S",Object{{"id","S"},{"kind","scalar"},{"name","i32"}});f.check.types.emplace("S",&f.check.builtins.at("S"));
+    const auto &op=caller.blocks[0].operations[0];f.check.callSites.emplace(&op,"L");ActualState state;std::vector<ActualValue> actual;
+    for(unsigned i=0;i<count;++i){auto object=f.check.admitObject(f.check.objects.end(),"o"+std::to_string(i),ActualObject{"T",false});
+      if(object==f.check.objects.end())return false;ActualValue value;value.tags={"T"};value.objects.insert(object->first);value.number=17+i;actual.push_back(value);}
+    ActualValue global;global.tags={"S"};global.number=17;state.heap.emplace("global:g",global);
+    if(mode==1){
+      const auto frame=f.check.createFrame(state.frames,"A","setup","T","ctor","T",false);
+      const auto cursor=f.check.receiverCursor(frame,0);if(frame.empty()||!f.error.message.empty())return false;
+      auto &binding=state.frames.find(frame)->second;binding.pending=true;binding.weak=true;
+      actual[0].frames.insert(frame);actual[0].cursors.insert(cursor);actual[0].cells={"cell"};actual[0].callables={{"C","env"}};
+      actual[0].callableTop=true;actual[0].truth=3;actual[0].region.known=true;actual[0].region.roots={"R"};
+    }
+    if(mode==3)actual[0].unknown=true;
+    if(!conditional){actual[0].region.known=true;actual[0].region.roots={"R"};
+      f.check.regions.nodes.emplace("R",RegionNode{"scope","o0","T"});f.check.regions.scopes.emplace("scope",RegionScope{"P","A"});}
+    for(unsigned i=0;i<count;++i)state.values.emplace(i,actual[i]);
+    ActualContext local;local.id="P/context:source";local.function=&caller;local.root=true;local.repeated=false;local.activation="A";local.rootArguments=actual;
+    ActualContext *parent=&local;bool changed=false;
+    if(recursive){f.check.cyclicFunctions.insert("C");parent=f.check.context("C",actual,state.heap,false,changed,"recursive/C",true,nullptr,"",&state.frames);
+      if(!expect(parent&&f.error.message.empty(),"recursive caller owns its real immutable identity before synchronous admission"))return false;}
+    const auto originalValues=state.values;const auto originalHeap=ActualHeap(state.heap);const auto originalWorld=state.frames;const auto beforeContexts=f.check.contexts.size();
+    unsigned edges=0;bool continues=true;f.program.remaining=100000;changed=false;
+    if(!expect(f.check.instruction(*parent,op,0,state,conditional,changed,
+        [&](uint16_t,ActualState,const std::vector<ActualValue> &){++edges;return false;},continues)&&
+        f.error.message.empty()&&edges==0&&state.values.size()==originalValues.size()&&sameHeap(state.heap,originalHeap),
+        "fresh or recursive pending call admission preserves caller SSA/Heap and does not invent a completion"))return false;
+    for(const auto &[reg,value]:originalValues)if(!expect(same(state.values.at(reg),value),"synchronous admission cannot mutate a borrowed SSA value"))return false;
+    if(!expect(f.check.contexts.size()==beforeContexts+(recursive?0:1),"recursive admission reuses its identity while fresh input creates exactly one context"))return false;
+    ActualContext *child=recursive?parent:&f.check.contexts.begin()->second;
+    if(!expect(child->identity&&child->identity->arguments.size()==actual.size()&&child->identity->frames.size()==originalWorld.size()&&
+        sameHeap(child->identity->heap,originalHeap)&&!child->normal&&!child->language,
+        "pending child owns complete immutable arguments, reachable Heap and World without publishing a result"))return false;
+    for(size_t i=0;i<actual.size();++i){auto expected=actual[i];if(!conditional&&!expected.region.roots.empty()){
+        expected.region.roots.clear();expected.region.known=true;expected.region.opaque=true;}
+      if(!expect(same(child->identity->arguments[i],expected),"typed admission preserves all facets and the original owned-region normalization"))return false;}
+    if(mode==1){const auto &saved=child->identity->frames.begin()->second;state.frames.begin()->second.pending=false;
+      if(!expect(saved.pending&&saved.weak,"pending/weak World bindings are independent owned snapshots"))return false;}
+    if(!conditional&&!expect(f.check.regions.scopes.at("scope").blocked&&state.values.at(0).region.roots==std::set<std::string>{"R"}&&
+        child->identity->arguments[0].region.roots.empty()&&child->identity->arguments[0].region.opaque,
+        "nonconditional call still escapes and normalizes its owned arguments without rewriting source SSA"))return false;
+    if(count){state.values.at(0).unknown=!actual[0].unknown;
+      if(!expect(child->identity->arguments[0].unknown==actual[0].unknown,"later source mutation cannot rewrite admitted immutable arguments"))return false;}
+    state.heap.at("global:g").number=99;
+    if(!expect(child->identity->heap.at("global:g").number==17,"later caller Heap mutation cannot rewrite the owned child input"))return false;
+  }
+  return true;
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -919,5 +1019,6 @@ int main(){
   if(!nonrootInputExecution3000())return 1;llvm::errs()<<"PASS complete immutable called input3000 and independent execution/Borrow summaries\n";
   if(!immutableInitializationLayoutInstructions())return 1;llvm::errs()<<"PASS immutable initialization layout instructions, complete prefixes and owner lifetime\n";
   if(!typedCanonicalStringArrays())return 1;llvm::errs()<<"PASS typed canonical StringRef arrays and original JSON policy boundaries\n";
-  if(!borrowedFrameKeyPartsInstructions())return 1;llvm::errs()<<"PASS borrowed canonical Frame-key parts and complete receiver_create436\n";return 0;
+  if(!borrowedFrameKeyPartsInstructions())return 1;llvm::errs()<<"PASS borrowed canonical Frame-key parts and complete receiver_create436\n";
+  if(!conditionalInvokeBorrowedInputs())return 1;llvm::errs()<<"PASS conditional direct invoke236 and independent borrowed admission inputs\n";return 0;
 }
