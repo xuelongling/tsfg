@@ -425,13 +425,14 @@ bool constructionCapacityResults(){
   for(const auto &[key,value]:f.check.constructionCapacity)actual.push_back(key);
   if(!expect(actual==ordered&&f.check.constructionCapacity.find(std::string("a//b"))->second.tags==std::set<std::string>{"B"},"flat reader and lexical bytes survive query destruction, FrameInfo mutation and false-phase clear"))return false;
   for(const bool existing:{false,true}){Fixture limited(false);limited.program.remaining=4000000;limited.state.frames.clear();
-    const auto frame=limited.check.createFrame(limited.state.frames,limited.context.activation,"long-capacity","B",std::string(131072,'q'),"B",false);limited.state.frames.find(frame)->second.bound=payload("old");limited.state.frames.find(frame)->second.unbound=false;
+    std::string construction(131072,'q');construction+=construction;
+    const auto frame=limited.check.createFrame(limited.state.frames,limited.context.activation,"long-capacity","B",construction,"B",false);limited.state.frames.find(frame)->second.bound=payload("old");limited.state.frames.find(frame)->second.unbound=false;
     if(!expect(!frame.empty()&&limited.error.message.empty(),"long actual frame fixture is fully established before the independent budget cutoff"))return false;
-    if(existing){CapacityValue prior;prior.tags={"prior"};prior.unknown=true;prior.hasEnvironment=true;limited.check.constructionCapacity.emplace(std::string(131072,'q')+"/B",prior);}
+    if(existing){CapacityValue prior;prior.tags={"prior"};prior.unknown=true;prior.hasEnvironment=true;limited.check.constructionCapacity.emplace(construction+"/B",prior);}
     auto &limitedOp=limited.function.blocks[0].operations[0];limitedOp.name="receiver_result";limitedOp.successors={1,2};ActualValue control,out;control.frames={frame};std::vector<const ActualValue*> args{&control};bool changed=false,continues=true;size_t edges=0;
     limited.program.remaining=4000;const bool ok=limited.check.receiverInstruction(limited.context,limitedOp,0,limited.state,ActualOperands{args},true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return true;},out,continues);
     if(!expect(!ok&&limited.error.code=="core-ir-common-budget"&&edges==0&&limited.check.constructionCapacity.size()==size_t(existing),"query comparison or first miss key-copy cutoff is a hard budget error before publishing a capacity row or edge"))return false;
-    if(existing){const auto &prior=limited.check.constructionCapacity.at(std::string(131072,'q')+"/B");if(!expect(prior.tags==std::set<std::string>{"prior"}&&prior.unknown&&!prior.callableTop&&prior.hasEnvironment,"lookup-budget failure leaves the existing full-query owned capacity facets intact"))return false;}
+    if(existing){const auto &prior=limited.check.constructionCapacity.at(construction+"/B");if(!expect(prior.tags==std::set<std::string>{"prior"}&&prior.unknown&&!prior.callableTop&&prior.hasEnvironment,"lookup-budget failure leaves the existing full-query owned capacity facets intact"))return false;}
   }
   llvm::errs()<<"PASS real conditional Result capacity-key hit, miss, ownership, false-phase and hard-budget subcases\n";return true;
 }

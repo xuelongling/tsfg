@@ -66,9 +66,10 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     auto result=receiverCompletion(std::move(state.frames),args[0].frames,action,args.size()>1?&args[1]:nullptr);
     if(!e.message.empty())return false;if(result.pending)return reject(e,"core-ir-common-construction-open","receiver payload category remains unresolved (including ReadSpan)");
     if(conditional&&name=="receiver_result"&&result.normal){
-      if(!step(args[0].frames.size()))return false;
-      for(const auto &id:args[0].frames){if(!receiverText(id))return false;const auto metadata=receiverFrames.find(id);if(!need(metadata!=receiverFrames.end(),"construction result frame is missing"))return false;
-        const auto &info=metadata->second;if(!step(5))return false;
+      if(!step(result.validatedFrames.size()))return false;
+      // Completion already paid full-byte World/global queries for every ID, in original order.
+      for(const auto *frame:result.validatedFrames){
+        const auto &info=frame->second;if(!step(5))return false;
         const ActualConstructionKeyView query{info.construction,info.newTarget};
         const auto bytes=query.construction.size()+1+query.newTarget.size();
         const auto count=constructionCapacity.size();size_t height=0;

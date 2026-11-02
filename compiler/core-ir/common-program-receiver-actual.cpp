@@ -400,6 +400,12 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
     const auto frame=selectionFrameLookup(*this,receiverFrames,id);
     if(!frame||!need(*frame!=receiverFrames.end(),"receiver frame is absent from completion"))return {};
     auto &before=(*binding)->second;const auto &info=(*frame)->second;
+    if(!step())return {};if(action==ReceiverAction::Result){
+      if(!step())return {};if(out.validatedFrames.empty()){
+        // One exact-size pointer buffer: allocation/release8 and returned vector control moves3.
+        if(!step(11))return {};out.validatedFrames.reserve(ids.size());}
+      // Visit/store2; the reserved buffer never copies existing rows on growth.
+      if(!step(2))return {};out.validatedFrames.push_back(&**frame);}
     if(action==ReceiverAction::Bind){
       if(!data(parts.object))continue;
       if(before.unbound&&!arm(id,before,&parts.object,Update::Bind,true))return {};

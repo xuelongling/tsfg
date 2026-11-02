@@ -250,6 +250,84 @@ bool wholeFieldInstruction835(){
   return true;
 }
 
+bool wholeResultInstruction1539(){
+  const auto sameMap=[](const auto &a,const auto &b,const auto &equal){if(a.size()!=b.size())return false;auto x=a.begin(),y=b.begin();for(;x!=a.end();++x,++y)if(x->first!=y->first||!equal(x->second,y->second))return false;return true;};
+  const auto sameFrame=[&](const ActualFrameBinding &a,const ActualFrameBinding &b){return a.unbound==b.unbound&&a.weak==b.weak&&a.pending==b.pending&&a.initializing==b.initializing&&a.aborted==b.aborted&&a.prefixMin==b.prefixMin&&a.prefixMax==b.prefixMax&&same(a.bound,b.bound)&&sameMap(a.births,b.births,[&](const ActualBirth &x,const ActualBirth &y){return x.referenceText()==y.referenceText()&&x.pending==y.pending&&same(x.real,y.real);});};
+  const auto sameState=[&](const ActualState &a,const ActualState &b){return sameMap(a.values,b.values,same)&&sameMap(a.heap,b.heap,same)&&sameMap(a.frames,b.frames,sameFrame)&&sameMap(a.regions,b.regions,[&](const auto &x,const auto &y){return sameMap(x,y,sameRegion);});};
+  const std::string type="sha256:"+std::string(64,'c'),payloadType="sha256:"+std::string(64,'d'),construction="sha256:"+std::string(64,'e');
+  const std::string first="sha256:82967726dabe5bd3b0c895a09f78003562197949b38d174e2d4d362a0649b80d",second="sha256:e329b28282ed4c495cb1953cfed967c758d75e7a06f332ec3311ce3d06ead28b";
+  const std::string targetExpected="receiver:sha256:aed318a007326ff52637f7a3d72f7e6ee730f03a919daa4a309499a97096535e",olderExpected="receiver:sha256:9bf00aca9852c8201aaac46d861ed0d771c8521131e1852ad4b877ea33a34b47";
+  // Independent construction of the observed counts, not a reconstruction of unrecorded SSA facets.
+  // Normal edge delivery uses the same full-instruction boundary as the existing1751 bind regression.
+  for(unsigned mode=0;mode<11;++mode){Fixture f;const bool rich=mode==2,weak=mode==3,multiple=mode==6;const bool fail=mode==1||mode==4||mode==5||mode==8;
+    const Json firstRow=Object{{"id",first},{"type",payloadType}},secondRow=Object{{"id",second},{"type",payloadType}};
+    f.check.builtins.emplace("owner",Object{{"id",type},{"kind","reference"},{"base",nullptr},{"fields",Array{firstRow,secondRow}},
+      {"construction",Object{{"id",construction},{"initializationFields",Array{first,second}}}}});
+    f.check.builtins.emplace("payload",Object{{"id",payloadType},{"kind","readSpan"},{"elementType","i32"}});
+    f.check.builtins.emplace("first",firstRow);f.check.builtins.emplace("second",secondRow);f.check.types.emplace(type,&f.check.builtins.at("owner"));f.check.types.emplace(payloadType,&f.check.builtins.at("payload"));
+    f.check.fields.emplace(first,&f.check.builtins.at("first"));f.check.fields.emplace(second,&f.check.builtins.at("second"));
+    ActualFrameWorld oldWorld;ActualState state;const auto older=f.check.createFrame(oldWorld,"receiver-result-fixture","older",type,construction,type,false,"");
+    const auto target=f.check.createFrame(state.frames,"receiver-result-fixture","target",type,construction,type,weak,"");
+    if(!expect(target==targetExpected&&older==olderExpected&&target.size()==80&&f.error.message.empty(),"result setup independently pins both complete80-byte Frame keys"))return false;
+    const auto ref="construction/"+target+"/"+type;const auto object=objectFor(f,ref,type,weak),payloadObject=objectFor(f,"payload/result",payloadType);
+    const auto a=f.check.fieldSlot(f.check.objects.find(object),f.check.fields.find(first)),b=f.check.fieldSlot(f.check.objects.find(object),f.check.fields.find(second));if(!a||!b)return false;
+    ActualValue bound;bound.tags={type};bound.objects.insert(object);ActualValue payload;payload.tags={payloadType};payload.objects.insert(payloadObject);
+    if(rich){bound.truth=3;bound.number=9007199254740993LL;bound.region.known=true;bound.region.roots={"bound-root"};bound.region.number=9007199254740995LL;payload=fullTarget();}
+    auto &binding=state.frames.begin()->second;binding.unbound=false;binding.weak=weak;binding.bound=bound;binding.prefixMin=weak?0:2;binding.prefixMax=2;binding.aborted=weak;
+    const auto birthOwner=std::make_shared<const std::string>(ref);for(const auto slot:{a,b}){ActualBirth birth;birth.reference=birthOwner;birth.real=payload;birth.pending=false;binding.births.emplace(slot,std::move(birth));}
+    const ActualCursorInfo oldStart{oldWorld.begin()->first.owner(),0},start{state.frames.begin()->first.owner(),0};for(size_t i=0;i<3;++i)if(f.check.receiverCursor(oldStart,i).empty())return false;
+    std::vector<ActualCursorId> cursors;for(size_t i=0;i<3;++i)cursors.push_back(f.check.receiverCursor(start,i));
+    if(!expect(f.error.message.empty()&&f.check.receiverCursorIndex.size()==6,"completed initializer setup has the actual six cursor entries without querying completion or capacity"))return false;
+    ActualValue control;control.frames={target};state.values.emplace(0,control);state.values.emplace(1,payload);state.values.emplace(2,payload);
+    for(uint16_t reg:{3,4}){ActualValue cell;cell.cells.insert("cell/"+std::to_string(reg));state.values.emplace(reg,std::move(cell));}
+    for(uint16_t reg:{5,6,11,13})state.values.emplace(reg,payload);state.values.emplace(7,bound);state.values.emplace(8,bound);
+    for(size_t i=0;i<3;++i){ActualValue cursor;cursor.cursors.insert(cursors[i]);state.values.emplace(uint16_t(10+2*i),std::move(cursor));}
+    for(unsigned i=0;i<9;++i)state.heap.emplace("kept/"+std::to_string(i),payload);state.regions["kept-region"].emplace("kept",payload.region);
+    CapacityValue prior;prior.tags.insert(type);const auto capacityKey=construction+"/"+type;f.check.constructionCapacity.emplace(capacityKey,std::move(prior));
+    if(mode==4)state.frames.clear();if(mode==5)f.check.receiverFrames.erase(f.check.receiverFrames.find(target));
+    if(multiple){state.frames.insert(*oldWorld.begin());state.values.at(0).frames.insert(older);f.check.receiverFrames.find(older)->second.construction="other-construction";}
+    if(mode==7)f.check.constructionCapacity.clear();if(mode==8)state.values.at(0).frames={target+"x"};
+    if(mode==9){auto local=state.frames.extract(state.frames.begin());local.key()=ActualFrameId(target);state.frames.insert(std::move(local));
+      if(!expect(state.frames.begin()->first.owner()!=f.check.receiverFrames.find(target)->first.owner(),"equal full Frame text can have independent primary owners"))return false;}
+    ActualValue returned;if(mode==10){returned.tags={type};returned.objects.insert(objectFor(f,"explicit-result/"+type,type));state.values.emplace(15,returned);}
+    const auto saved=state;Function function;function.id="sha256:211a4933189574c12ffe1408fe5a13f8b0900627365ba7993aab42bf5a976d4d";function.name="constructor";function.blocks.resize(1);
+    ActualContext context;context.function=&function;context.root=false;context.repeated=false;context.activation="receiver-result-fixture";
+    Operation op;op.name="receiver_result";op.operands={0};op.successors={3,4};if(mode==10)op.operands.push_back(15);
+    bool changed=false,continues=true;size_t normals=0,languages=0;ActualState normal,language;const auto &selected=mode==10?returned:bound;
+    const auto edge=[&](uint16_t targetBlock,ActualState next,const std::vector<ActualValue> &values){auto expected=saved;
+      if(targetBlock==3){++normals;if(!expect(values.size()==1&&same(values[0],selected),"normal result edge transfers every selected payload plane"))return false;}
+      else if(targetBlock==4){++languages;ActualValue thrown;thrown.unknown=true;if(!expect(multiple&&values.size()==1&&same(values[0],thrown),"only the original unbound alternate emits universal language uncertainty"))return false;
+        auto &other=expected.frames.find(older)->second;other.bound={};other.initializing=false;other.prefixMin=other.prefixMax=0;}
+      else return expect(false,"result emits only its declared normal/language successors");
+      if(!expect(sameState(next,expected),"result edge preserves every SSA Value, all9 Heap rows, Region and independent World/birth/weak/prefix data"))return false;
+      if(targetBlock==3)normal=std::move(next);else language=std::move(next);return true;};
+    if(mode==0&&!expect(state.values.size()==14&&state.heap.size()==9&&state.frames.size()==1&&f.check.receiverFrames.size()==2&&f.check.receiverCursorIndex.size()==6&&f.check.constructionCapacity.size()==1&&f.check.borrowTrace==nullptr,
+        "fixed1539 scope has the actual World1/global2/ids1/id80/Value14/Heap9/cursor6/capacity1 counts"))return false;
+    f.program.remaining=mode==0?1539:mode==1?64:100000; // Assigned once after independent setup; no current completion or capacity query was warmed.
+    const bool ok=f.check.instruction(context,op,0,state,true,changed,edge,continues);
+    if(fail){if(!expect(!ok&&!f.error.message.empty()&&normals==0&&languages==0,"budget, missing World/global and full-key prefix misses remain hard failures without an edge"))return false;
+      if(mode==1&&!expect(f.error.code=="core-ir-common-budget"&&f.program.remaining==0,"64 remains a hard prepaid budget failure"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&!continues&&!changed&&normals==1&&languages==size_t(multiple),"whole receiver_result reaches capacity and edgeState at1539 with separate high-budget semantic cases")){
+      llvm::errs()<<" mode="<<mode<<" remaining="<<f.program.remaining<<" error="<<f.error.message<<'\n';return false;}
+    const auto capacity=f.check.constructionCapacity.find(capacityKey);
+    if(!expect(capacity!=f.check.constructionCapacity.end()&&capacity->second.tags==selected.tags&&capacity->second.unknown==selected.unknown&&capacity->second.callableTop==selected.callableTop&&sameMap(state.values,saved.values,same),
+        "real construction capacity observes selected tags while original SSA operands remain independently owned"))return false;
+    if(multiple&&!expect(f.check.constructionCapacity.size()==2&&f.check.constructionCapacity.at("other-construction/"+type).tags==bound.tags,"capacity still visits every validated input ID, including the language-only alternate"))return false;
+    const auto languageBefore=language;normal.values.at(1).objects.emplace("normal-only");normal.heap.clear();normal.regions.clear();normal.frames.begin()->second.births.clear();
+    if(!expect(sameState(language,languageBefore)&&sameMap(state.values,saved.values,same)&&f.check.receiverFrames.size()==2,"mutating one delivered edge cannot alter another edge, source operands or global Frame metadata"))return false;
+  }
+  for(const auto &text:std::vector<std::string>{"",std::string("frame\0a",7),"frame",std::string("frame\x80",6),std::string("frame\xff",6)})for(const bool miss:{false,true}){Fixture f;ActualState state;
+    f.check.builtins.emplace("B",Object{{"kind","reference"}});f.check.types.emplace("B",&f.check.builtins.at("B"));
+    f.check.receiverFrames.emplace(ActualFrameId(text),ActualFrameInfo{"B","ctor","B","",false,{}});ActualFrameBinding binding;binding.unbound=false;binding.bound.tags={"B"};state.frames.emplace(ActualFrameId(text),std::move(binding));
+    ActualValue control;control.frames.insert(miss?text+"x":text);state.values.emplace(0,control);Function function;function.id="full-byte-result";function.blocks.resize(1);ActualContext context;context.function=&function;context.repeated=false;
+    Operation op;op.name="receiver_result";op.operands={0};op.successors={1,2};bool changed=false,continues=true;size_t edges=0;f.program.remaining=100000;
+    const bool ok=f.check.instruction(context,op,0,state,true,changed,[&](uint16_t target,ActualState next,const std::vector<ActualValue> &values){++edges;return expect(target==1&&next.frames.size()==1&&next.frames.begin()->first.text()==text&&values.size()==1&&values[0].tags==std::set<std::string>{"B"},"full-byte result selection uses directory text, never owner address, hash or prefix equality");},continues);
+    if(!expect(miss?!ok&&f.error.code=="core-ir-common-actual"&&edges==0:ok&&f.error.message.empty()&&!continues&&edges==1&&f.check.constructionCapacity.at("ctor/B").tags==std::set<std::string>{"B"},
+        "empty/NUL/high-byte equal owners and distinct prefixes keep full-key World/global checks and valid-domain capacity semantics"))return false;
+  }
+  return true;
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -262,5 +340,6 @@ int main(){
   for(const auto &[name,test]:groups){if(!test())return 1;llvm::errs()<<"PASS "<<name<<'\n';}
   llvm::errs()<<"6 seed-projection groups passed; complete Source820b remains independent\n";
   if(!canonicalIdentityLifetimes()||!wholeFieldInstruction835())return 1;
-  llvm::errs()<<"PASS canonical Object/Cursor owning identities and complete835 field instruction\n";return 0;
+  llvm::errs()<<"PASS canonical Object/Cursor owning identities and complete835 field instruction\n";
+  if(!wholeResultInstruction1539())return 1;llvm::errs()<<"PASS complete receiver_result1539 typed full-key capacity and edge cases\n";return 0;
 }

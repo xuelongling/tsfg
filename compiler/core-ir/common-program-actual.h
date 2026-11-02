@@ -165,6 +165,7 @@ struct ActualFrameInfo {
   std::string owner,construction,newTarget,parent;bool derived=false;
   std::vector<std::string> fields;
 };
+using ActualFrameDirectory=std::map<ActualFrameId,ActualFrameInfo,ActualFrameIdLess>;
 // Cursor rows retain immutable frame bytes independently of any check/map.
 // A default or moved-from row is not admitted metadata; factories publish owners.
 struct ActualCursorInfo {std::shared_ptr<const std::string> frame;size_t position=0;};
@@ -202,6 +203,9 @@ enum class ReceiverAction {Bind,Get,Result};
 struct ActualReceiverCompletion {
   bool normal=false,language=false,pending=false;
   ActualFrameWorld normalFrames,languageFrames;ActualValue selected;
+  // Immediate full-key query results borrow global directory nodes, never World permissions.
+  // Consume within this instruction, before the directory can be cleared or the Check destroyed.
+  std::vector<const ActualFrameDirectory::value_type *> validatedFrames;
 };
 // Passive ABI/layout observations, not actual values or target/owner facts.
 // Do not collect unused identities across contexts. Active SSA values, heaps,
@@ -295,7 +299,7 @@ struct ActualCheck {
   std::map<const Operation *,std::string> callSites;
   std::set<const Operation *> unresolvedCalls;
   RegionDomain regions;
-  std::map<ActualFrameId,ActualFrameInfo,ActualFrameIdLess> receiverFrames;
+  ActualFrameDirectory receiverFrames;
   ActualCursorDirectory receiverCursors;
   // Derived lookup only: immutable map nodes, never execution World values.
   std::vector<const ActualCursorDirectory::value_type *> receiverCursorIndex;
