@@ -753,6 +753,72 @@ bool immutableInitializationLayoutInstructions(){
   }
   return expect(llvm::StringRef(escaped.text()).starts_with("receiver:"),"owned Frame text survives Check and layout destruction without exporting a metadata borrow");
 }
+// Exercise the public instruction budget separately from high-budget key identity cases.
+bool borrowedFrameKeyPartsInstructions(){
+  for(const auto budget:{436,435,0,1}){
+    Fixture f;Function function;function.id="F";function.blocks.resize(1);
+    f.check.builtins.emplace("owner",Object{{"id","B"},{"kind","reference"},{"base",nullptr},
+      {"construction",Object{{"id","ctor"},{"initializationFields",Array{}}}}});
+    f.check.types.emplace("B",&f.check.builtins.at("owner"));
+    Operation op;op.name="receiver_create";op.result=0;op.properties=Object{{"owner","B"},{"new_target","B"}};
+    function.blocks[0].operations.push_back(std::move(op));ActualContext context;
+    context.function=&function;context.root=true;context.repeated=false;context.activation="A";ActualState state;bool changed=false,continues=true;
+    f.program.remaining=budget;
+    const bool ok=f.check.instruction(context,function.blocks[0].operations[0],0,state,true,changed,
+      [](uint16_t,ActualState,const std::vector<ActualValue> &){return false;},continues);
+    if(budget!=436){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0,
+        "one-less and zero/one fuel remain hard errors for complete receiver_create"))return false;continue;}
+    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==0&&continues&&state.values.count(0)&&
+        state.values.at(0).frames.size()==1&&state.frames.size()==1&&f.check.receiverFrames.size()==1&&f.check.registerCapacity.count("F/0"),
+        "complete receiver_create publishes its owned Frame, World, SSA and capacity at fixed436"))return false;
+    const auto &id=*state.values.at(0).frames.begin();const auto &binding=state.frames.find(id)->second;
+    if(!expect(!binding.weak&&binding.unbound&&!binding.pending&&!binding.initializing&&!binding.aborted&&binding.prefixMin==0&&binding.prefixMax==0&&f.check.receiverFrames.find(id)->second.fields.size()==0,
+        "budget success retains fresh strong/unbound Frame permissions and the checked empty layout"))return false;
+  }
+  std::string escaped="quote\"slash\\control";for(char byte:{'\b','\f','\n','\r','\t','\0'})escaped.push_back(byte);escaped+='x';
+  const std::string utf8="x\xc2\x80\xc3\xbf";
+  const std::vector<std::vector<std::string>> rows{{"","","B","","B",""},{"A","S","B","ctor","B",""},
+    {escaped,escaped,"B"+escaped,escaped,"T"+escaped,escaped},{utf8,utf8,"B"+utf8,utf8,"T"+utf8,utf8},
+    {"A","S","B","ctor","T",""},{"A","S","T","ctor","B",""}};
+  std::string forward,reverse;
+  for(size_t row=0;row<rows.size();++row){
+    Fixture f;const auto &parts=rows[row];
+    f.check.builtins.emplace("owner",Object{{"id",parts[2]},{"kind","reference"},{"base",nullptr},
+      {"construction",Object{{"id",parts[3]},{"initializationFields",Array{}}}}});
+    f.check.builtins.emplace("target",Object{{"id",parts[4]},{"kind","reference"},{"base",nullptr},
+      {"construction",Object{{"id",parts[3]},{"initializationFields",Array{}}}}});
+    f.check.types.emplace(parts[2],&f.check.builtins.at("owner"));f.check.types.emplace(parts[4],&f.check.builtins.at("target"));
+    // std::string elements deliberately retain the old owning JSON construction as an independent oracle.
+    const auto expected="receiver:"+digest(canonical(Array{parts[0],parts[1],parts[2],parts[3],parts[4],parts[5]}));
+    ActualFrameWorld world;f.program.remaining=100000;
+    const auto id=f.check.createFrame(world,parts[0],parts[1],parts[2],parts[3],parts[4],false,parts[5]);
+    if(!expect(!id.empty()&&f.error.message.empty()&&id==expected&&world.size()==1&&world.find(id)!=world.end()&&
+        f.check.receiverFrames.find(id)->second.owner==parts[2]&&f.check.receiverFrames.find(id)->second.newTarget==parts[4],
+        "borrowed parts retain exact old canonical bytes, escaping, UTF8/NUL, order and owner/newTarget identities"))return false;
+    if(parts[2]==parts[4]){const auto collapsed="receiver:"+digest(canonical(Array{parts[0],parts[1],parts[2],parts[3],parts[5]}));
+      if(!expect(id!=collapsed,"equal owner/newTarget still occupy two independent canonical positions"))return false;}
+    if(row==4)forward=id;if(row==5)reverse=id;
+  }
+  if(!expect(forward!=reverse,"swapping distinct owned owner/newTarget identities changes the full Frame key"))return false;
+  ActualFrameWorld retained;ActualFrameId durable("not-created");std::string expected;
+  {
+    Fixture f;f.check.builtins.emplace("owner",Object{{"id","B"},{"kind","reference"},{"base",nullptr},
+      {"construction",Object{{"id","ctor"},{"initializationFields",Array{}}}}});
+    f.check.types.emplace("B",&f.check.builtins.at("owner"));f.program.remaining=100000;
+    {
+      std::string activation="temporary-activation",site="temporary-site";
+      expected="receiver:"+digest(canonical(Array{activation,site,std::string("B"),std::string("ctor"),std::string("B"),std::string()}));
+      const auto id=f.check.createFrame(retained,activation,site,std::string("B"),std::string("ctor"),std::string("B"),false,std::string());
+      if(!expect(id==expected&&f.error.message.empty(),"temporary arguments remain live through synchronous canonical hashing"))return false;
+      durable=retained.begin()->first;
+    }
+    const auto &metadata=f.check.receiverFrames.find(durable)->second;
+    if(!expect(durable.text()==expected&&metadata.owner=="B"&&metadata.construction=="ctor"&&metadata.newTarget=="B"&&metadata.parent.empty(),
+        "published Frame metadata and World keys own bytes after all borrowed arguments are destroyed"))return false;
+  }
+  return expect(durable.text()==expected&&retained.find(durable)!=retained.end(),"owned Frame and World keys survive the complete Check lifetime");
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -774,5 +840,6 @@ int main(){
   if(!deferredSiteInstructionBudgets())return 1;llvm::errs()<<"PASS deferred Site scalar/array/mixed instruction budgets and complete facets\n";
   if(!rootExecutionCopies())return 1;llvm::errs()<<"PASS complete root entry-copy elimination and refreshed execution summaries\n";
   if(!nonrootInputExecution3000())return 1;llvm::errs()<<"PASS complete immutable called input3000 and independent execution/Borrow summaries\n";
-  if(!immutableInitializationLayoutInstructions())return 1;llvm::errs()<<"PASS immutable initialization layout instructions, complete prefixes and owner lifetime\n";return 0;
+  if(!immutableInitializationLayoutInstructions())return 1;llvm::errs()<<"PASS immutable initialization layout instructions, complete prefixes and owner lifetime\n";
+  if(!borrowedFrameKeyPartsInstructions())return 1;llvm::errs()<<"PASS borrowed canonical Frame-key parts and complete receiver_create436\n";return 0;
 }
