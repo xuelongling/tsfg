@@ -2,6 +2,7 @@
 // Direct compiler metadata seed projection. No Source/ABI, parser, Runtime,
 // loader, VM, Guest, native backend, or independently claimed type provenance.
 #include "common-program-actual.h"
+#include <algorithm>
 #include "llvm/Support/raw_ostream.h"
 using namespace tsfg::commonProgram;
 namespace {
@@ -392,6 +393,26 @@ bool completeFrameSelection943(){
   return true;
 }
 
+bool emptyWorldSelectionBudget1(){
+  for(unsigned mode=0;mode<4;++mode){
+    Fixture f;ActualFrameWorld world;ActualHeap heap;std::vector<ActualValue> roots;
+    if(mode==1)heap.emplace("global:unconsumed",fullTarget());
+    if(mode>=2){roots.emplace_back();if(mode==2)roots.back().frames.emplace("missing-world-frame");
+      else roots.back().cursors.emplace("missing-initializer-cursor");}
+    const auto beforeHeap=heap;const auto beforeRoots=roots;f.program.remaining=mode<2?1:100000;
+    const auto selected=f.check.selectFrames(world,roots,heap);
+    if(mode<2){if(!expect(f.error.message.empty()&&selected.empty()&&f.program.remaining==0,
+        "empty World and roots require only the original final empty-selection visit, including with unconsumed Heap data"))return false;}
+    else if(!expect(selected.empty()&&f.error.code=="core-ir-common-actual"&&
+        f.error.message==(mode==2?"selected frame is absent from completion":"unknown initializer cursor"),
+        "root and cursor admission errors precede lazy birth classification even for an empty World"))return false;
+    if(!expect(world.empty()&&heap.size()==beforeHeap.size()&&std::equal(heap.begin(),heap.end(),beforeHeap.begin(),[](const auto &a,const auto &b){return a.first==b.first&&same(a.second,b.second);})&&roots.size()==beforeRoots.size(),
+        "empty selection does not consume or validate unrelated Heap data and roots"))return false;
+    for(size_t i=0;i<roots.size();++i)if(!expect(same(roots[i],beforeRoots[i]),"empty-selection roots remain unchanged"))return false;
+  }
+  return true;
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -406,5 +427,6 @@ int main(){
   if(!canonicalIdentityLifetimes()||!wholeFieldInstruction835())return 1;
   llvm::errs()<<"PASS canonical Object/Cursor owning identities and complete835 field instruction\n";
   if(!wholeResultInstruction1539())return 1;llvm::errs()<<"PASS complete receiver_result1539 typed full-key capacity and edge cases\n";
-  if(!completeFrameSelection943())return 1;llvm::errs()<<"PASS complete World selection943 and partial birth discovery\n";return 0;
+  if(!completeFrameSelection943())return 1;llvm::errs()<<"PASS complete World selection943 and partial birth discovery\n";
+  if(!emptyWorldSelectionBudget1())return 1;llvm::errs()<<"PASS lazy birth classification and empty World selection1\n";return 0;
 }
