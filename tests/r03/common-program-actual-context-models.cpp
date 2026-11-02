@@ -187,6 +187,68 @@ bool defaultPrefixDirectory(){
   if(!expect(row==heap.end()&&heap.size()==ordered.size(),"complete byte ordering creates no collapsed canonical alias"))return false;
   llvm::errs()<<"PASS default Heap prefix empty-bucket/owning/byte-order/budget subcases\n";return true;
 }
+bool defaultSingletonDirectory(){
+  const auto same=[](const ActualValue &a,const ActualValue &b){return std::tie(a.tags,a.objects,a.cells,a.frames,a.cursors,a.callables,a.truth,a.unknown,a.callableTop,a.number,a.region.roots,a.region.known,a.region.opaque,a.region.empty,a.region.number)==std::tie(b.tags,b.objects,b.cells,b.frames,b.cursors,b.callables,b.truth,b.unknown,b.callableTop,b.number,b.region.roots,b.region.known,b.region.opaque,b.region.empty,b.region.number);};
+  const auto tokenFor=[](Fixture &f,const std::string &reference,const std::string &id){
+    auto owned=f.check.builtins.emplace("singleton:"+id,Object{{"id",id},{"sourceBinding","singleton-binding:"+id},{"type","B"}}).first;
+    f.check.fields.emplace(id,&owned->second);auto object=f.check.objects.emplace(reference,ActualObject{"B",false}).first;
+    return f.check.fieldSlot(object,f.check.fields.find(id));};
+  ActualValue payload;payload.tags={"T"};payload.objects={"object"};payload.cells={"cell"};payload.frames={"control"};payload.cursors={"cursor"};payload.callables={{"code","env"}};
+  payload.truth=3;payload.unknown=payload.callableTop=true;payload.number=9007199254740993LL;payload.region.known=payload.region.opaque=payload.region.empty=true;payload.region.roots={"root"};payload.region.number=9007199254740995LL;
+  ActualValue missing;missing.tags={"sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b"};
+  const std::string reference="construction/receiver:sha256:"+std::string(64,'a')+"/sha256:"+std::string(64,'b'),leftId="sha256:"+std::string(64,'c'),rightId="sha256:"+std::string(64,'d');
+  const auto left=reference+"/field/"+leftId,right=reference+"/field/"+rightId;
+  const std::vector<std::string> originalKeys={"activation/"+std::string(140,'a')+"/cell/3","activation/"+std::string(140,'a')+"/cell/4","entry/object/4/element/0","entry/object/4/length","entry/span/13/length","entry/span/13/owner","entry/span/13/start"};
+  for(const bool repeated:{false,true})for(const bool reverse:{false,true})for(const bool secondBudget:{false,true}){Fixture f;
+    const auto low=tokenFor(f,reference,leftId),high=tokenFor(f,reference,rightId);const auto first=reverse?high:low,second=reverse?low:high;
+    if(!expect(low&&high&&left.size()==243&&right.size()==243&&*low->spelling==left&&*high->spelling==right&&f.error.message.empty(),"singleton fixture owns two distinct full243B symbols before either Heap query"))return false;
+    ActualHeap heap;for(const auto &key:originalKeys)heap.emplace(key,payload);auto world=f.input.frames;const auto associations=f.check.fieldSlotAssociations.size(),archive=f.check.fieldSlotArchive.size();
+    if(secondBudget){
+      // Explicit predecessor setup queries only first, never the pending second.
+      if(!expect(f.check.defaultField(heap,*first,repeated)&&heap.size()==8&&heap.count(*second->spelling)==0&&f.error.message.empty(),"second-only fixture has exactly one preceding construction default and no pending-query prewarm"))return false;
+      f.program.remaining=2620;
+    }else {f.program.remaining=3088;if(!expect(f.check.defaultField(heap,*first,repeated)&&f.error.message.empty(),"whole-pair fixed3088 includes the actual first default call"))return false;}
+    if(!expect(f.check.defaultField(heap,*second,repeated)&&f.error.message.empty()&&heap.size()==9&&same(heap.at(left),missing)&&same(heap.at(right),missing),"two fresh243B defaults fit fixed3088, or explicit second-only2620, in both modes and lexical directions"))return false;
+    auto expected=originalKeys;expected.insert(expected.begin()+2,{left,right});auto row=heap.begin();
+    for(const auto &key:expected){if(!expect(row!=heap.end()&&row->first==key&&same(row->second,key==left||key==right?missing:payload),"singleton insertion preserves every complete literal key, full Value/Region payload and lexical order"))return false;++row;}
+    if(!expect(row==heap.end()&&&heap.find(left)->first!=low->spelling.get()&&&heap.find(right)->first!=high->spelling.get()&&f.check.fieldSlotAssociations.size()==associations&&f.check.fieldSlotArchive.size()==archive,"singleton hints do not borrow key ownership or publish another field association"))return false;
+    for(const auto &[id,prior]:world){const auto &after=f.input.frames.at(id);
+      if(!expect(std::tie(after.unbound,after.weak,after.pending,after.initializing,after.aborted,after.prefixMin,after.prefixMax)==std::tie(prior.unbound,prior.weak,prior.pending,prior.initializing,prior.aborted,prior.prefixMin,prior.prefixMax)&&same(after.bound,prior.bound)&&after.births.size()==prior.births.size(),"singleton defaults remain data without World permission or bound-payload changes"))return false;
+      for(const auto &[slot,old]:prior.births){const auto &birth=after.births.at(slot);if(!expect(birth.referenceText()==old.referenceText()&&birth.pending==old.pending&&same(birth.real,old.real),"singleton defaults preserve birth reference, real value and pending history"))return false;}}
+    if(!repeated&&!reverse&&!secondBudget){
+      auto kept=std::move(heap);world.clear();f.input.frames.clear();f.check.fieldSlotAssociations.clear();f.check.fieldSlotArchive.clear();
+      if(!expect(kept.size()==9&&same(kept.at(left),missing)&&same(kept.at(right),missing),"Heap independently owns singleton keys and indexed identities after symbol archive reset"))return false;
+      kept.clear();for(const auto &key:originalKeys)kept.emplace(key,payload);f.program.remaining=100000;
+      const auto resetLeft=tokenFor(f,reference,leftId),resetRight=tokenFor(f,reference,rightId);f.program.remaining=3088;
+      if(!expect(resetLeft&&resetRight&&f.check.defaultField(kept,*resetLeft,false)&&f.check.defaultField(kept,*resetRight,false)&&f.error.message.empty()&&kept.size()==9&&same(kept.at(left),missing)&&same(kept.at(right),missing),"cleared Heap and rebuilt symbols perform fresh singleton insertion without stale index state"))return false;
+    }
+  }
+  for(const bool repeated:{false,true}){Fixture f;const auto first=tokenFor(f,reference,leftId),second=tokenFor(f,reference,rightId);ActualHeap heap;for(const auto &key:originalKeys)heap.emplace(key,payload);
+    if(!expect(first&&second&&f.check.defaultField(heap,*first,repeated)&&f.error.message.empty(),"hard-cutoff predecessor setup succeeds independently"))return false;f.program.remaining=64;
+    if(!expect(!f.check.defaultField(heap,*second,repeated)&&f.error.code=="core-ir-common-budget"&&heap.size()==8&&heap.count(right)==0&&same(heap.at(left),missing),"singleton prepayment cutoff remains a hard error before a second key is published"))return false;
+    for(const auto &key:originalKeys)if(!expect(same(heap.at(key),payload),"singleton hard failure preserves all original payload facets"))return false;
+  }
+  for(const bool repeated:{false,true}){Fixture f;const auto slot=tokenFor(f,reference,leftId);ActualHeap heap;heap.emplace(left,payload);
+    if(!expect(slot&&f.check.defaultField(heap,*slot,repeated)&&f.error.message.empty(),"complete equal singleton key retains original strong-overwrite/repeated-merge fallback"))return false;
+    auto expected=repeated?payload:missing;if(repeated){expected.tags.insert(*missing.tags.begin());expected.number.reset();expected.region.number.reset();}
+    if(!expect(heap.size()==1&&same(heap.at(left),expected),"equal-key fallback preserves every Value and Region plane"))return false;
+    Fixture alias;const auto aliasSlot=tokenFor(alias,reference,leftId);if(!expect(aliasSlot&&aliasSlot->spelling!=slot->spelling&&f.check.defaultField(heap,*aliasSlot,repeated)&&f.error.message.empty()&&heap.size()==1&&same(heap.at(left),expected),"independent owners with equal complete text retain one node and unchanged default semantics"))return false;
+    alias.input.frames.clear();alias.check.fieldSlotAssociations.clear();alias.check.fieldSlotArchive.clear();if(!expect(same(heap.at(left),expected),"retargeted field identity owns its bytes after the independent alias archive is cleared"))return false;
+  }
+  for(const size_t budget:{2620u,100000u}){Fixture f;const auto query=tokenFor(f,reference,"sha256:"+std::string(64,'e'));ActualHeap heap;for(const auto &key:originalKeys)heap.emplace(key,payload);heap.emplace(left,payload);heap.emplace(right,payload);f.program.remaining=budget;
+    const auto key=*query->spelling;const bool accepted=f.check.defaultField(heap,*query,false);
+    if(budget==2620){if(!expect(!accepted&&f.error.code=="core-ir-common-budget"&&heap.size()==9&&heap.count(key)==0,"two-key byte bucket retains full-directory fallback and its hard work cutoff"))return false;}
+    else if(!expect(accepted&&f.error.message.empty()&&heap.size()==10&&same(heap.at(key),missing),"two-key bucket fallback retains ordinary high-budget semantics"))return false;
+    if(!expect(same(heap.at(left),payload)&&same(heap.at(right),payload),"multiple-byte-bucket fallback cannot collapse distinct complete keys"))return false;
+  }
+  const std::vector<std::string> references={"",std::string("\0owner",6),std::string({char(0x80),'o'}),std::string({char(0xff),'o'})};
+  for(const auto &ref:references)for(const bool before:{false,true}){Fixture f;const auto slot=tokenFor(f,ref,"F");const auto key=*slot->spelling;
+    const auto existing=before?key+std::string("\0tail",5):key.substr(0,1);ActualHeap heap;heap.emplace("",payload);heap.emplace(existing,payload);
+    if(!expect(slot&&f.check.defaultField(heap,*slot,false)&&f.error.message.empty()&&heap.size()==3&&same(heap.at(key),missing)&&same(heap.at(existing),payload)&&same(heap.at(""),payload),"singleton full-key comparison handles empty stored key, one-byte prefix, NUL and unsigned-byte order in both directions"))return false;
+    auto row=heap.begin();++row;if(!expect(row->first==(before?key:existing),"singleton hint resolves full byte order without a prefix or NUL alias"))return false;
+  }
+  llvm::errs()<<"PASS default Heap singleton-prefix/two-field/ownership/full-byte/budget subcases\n";return true;
+}
 bool reuseAndOwnership(){
   Fixture f;bool changed=false;auto *first=f.intern(f.input,changed);
   if(!expect(first&&changed&&f.error.message.empty(),"first identity inserted"))return false;
@@ -200,7 +262,7 @@ bool reuseAndOwnership(){
   changed=false;if(!expect(f.intern(original,changed)==first&&!changed,"root execution refresh and caller mutation do not change immutable identity"))return false;
   if(!expect(!first->identity->frames.at("frame").bound.region.roots.count("later")&&
     !first->identity->heap.at("object:B/field/F").tags.count("later")&&!first->identity->regions.at("origin").count("later"),"snapshot owns all nested storage"))return false;
-  return calledSeedOwnership()&&birthReferenceCausal()&&birthReferenceOwnership()&&defaultPrefixDirectory();
+  return calledSeedOwnership()&&birthReferenceCausal()&&birthReferenceOwnership()&&defaultPrefixDirectory()&&defaultSingletonDirectory();
 }
 bool hiddenRegionsAndBirths(){
   Fixture f;bool changed=false;auto *base=f.intern(f.input,changed);if(!base)return false;

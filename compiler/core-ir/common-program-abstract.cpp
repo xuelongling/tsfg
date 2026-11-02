@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
 #include <algorithm>
+#include <iterator>
 namespace tsfg::commonProgram {
 namespace {
 size_t weight(const ActualValue &v,const std::set<std::string> &tags){
@@ -129,6 +130,7 @@ ActualHeap::FieldTarget ActualHeap::fieldTarget(ActualCheck &c,const std::shared
 }
 bool ActualCheck::defaultField(ActualHeap &heap,const ActualFieldSlot &slot,bool repeated){
   if(!step(3))return false;const auto &key=*slot.spelling;auto hint=heap.entries_.end();bool vacant=false;
+  if(!step(2))return false;size_t upperCost=64,lowerCost=64;
   if(!step(2))return false;
   if(!key.empty()){
     if(!step(4))return false;const llvm::StringRef prefix(key.data(),1);const auto count=heap.entries_.size();size_t height=0;
@@ -138,14 +140,32 @@ bool ActualCheck::defaultField(ActualHeap &heap,const ActualFieldSlot &slot,bool
     // bounded descriptors/guards/byte reads plus every possible tree visit.
     if(!step(1+height+32*height))return false;hint=heap.entries_.lower_bound(prefix);
     if(!step(3))return false;vacant=hint==heap.entries_.end();
-    if(!vacant){if(!step(6))return false;vacant=static_cast<unsigned char>(hint->first.front())>static_cast<unsigned char>(key.front());}
+    if(!vacant){
+      if(!step(6))return false;vacant=static_cast<unsigned char>(hint->first.front())>static_cast<unsigned char>(key.front());
+      if(!step())return false;
+      if(!vacant){
+        // The complete successor proves a singleton first-byte interval without
+        // another full-key tree search. Native iterator navigation is prepaid.
+        if(!step(count+2))return false;const auto next=std::next(hint);
+        if(!step(3))return false;bool single=next==heap.entries_.end();
+        if(!single){if(!step(6))return false;single=static_cast<unsigned char>(next->first.front())>static_cast<unsigned char>(key.front());}
+        if(!step())return false;
+        if(single){
+          if(!step(key.size()+hint->first.size()+3))return false;const auto order=llvm::StringRef(key).compare(hint->first);
+          // Prepay routing and both native comparisons of the same-byte
+          // neighbour, including Debug reverse; the opposite side stays64.
+          if(!step(12))return false;const auto full=2*(key.size()+hint->first.size()+1);
+          if(order<0)upperCost+=full;else if(order>0){lowerCost+=full;hint=next;}vacant=order!=0;
+        }
+      }
+    }
   }
   if(!step())return false;
   if(vacant){
-    // An empty first-byte bucket proves the exact full-key lower bound. Both
-    // native hint predicates (including debug reverse) have distinct prefixes.
-    if(!step(3))return false;if(hint!=heap.entries_.end()&&!step(64))return false;
-    if(!step(3))return false;if(hint!=heap.entries_.begin()&&!step(heap.entries_.size()+1+64))return false;
+    // An empty bucket or strict singleton comparison proves the full-key hint.
+    // Keep both native predicates and any complete same-byte neighbour work.
+    if(!step(3))return false;if(hint!=heap.entries_.end()&&!step(upperCost))return false;
+    if(!step(3))return false;if(hint!=heap.entries_.begin()&&!step(heap.entries_.size()+1+lowerCost))return false;
     // Key copy in 64-byte blocks; node4/value-move1; missing Value15,
     // typename copy1/digest64/tag-node4/tag-move1. No mapped temporary copy.
     if(!step(key.size()/64+1+90))return false;
