@@ -15,6 +15,7 @@ const relation = @import("wire-program-region-holding.zig");
 const region_data = @import("wire-program-actual-data.zig");
 const host_binding = @import("wire-program-host-binding-check.zig");
 const receiver_actual = @import("wire-program-receiver-actual.zig");
+const entry_contracts = @import("wire-program-reference-contracts-check.zig");
 
 pub const Relation = enum { exact_closed, known_covered, derived, unresolved, unobserved };
 pub const TargetObservation = struct {
@@ -289,6 +290,7 @@ const Engine = struct {
     const ObjectKey = struct {
         activation: usize, location: facts.Location, kind: facts.ObjectKind, @"type": ?t.TypeRef, environment: ?t.EnvironmentRef,
         copy_source: ?facts.ObjectId=null, copy_parent: ?facts.ObjectId=null, copy_field: ?t.FieldRef=null,
+        entry_parameter: ?t.RegisterRef=null,
     };
     c: *Context,
     host_material: ?*const host_binding.Bundle,
@@ -298,6 +300,7 @@ const Engine = struct {
     emit: bool=false,
     changed: bool=false,
     initial_globals: Heap=.{},
+    entry_roles: ?entry_contracts.EntryRoles=null,
     activations: std.ArrayListUnmanaged(Activation)=.empty,
     object_keys: std.ArrayListUnmanaged(ObjectKey)=.empty,
     frame_keys: std.ArrayListUnmanaged(FrameKey)=.empty,
@@ -311,6 +314,7 @@ const Engine = struct {
     transport_readers: std.AutoHashMapUnmanaged(t.FunctionRef,bool)=.{},
 
     fn deinit(self: *Engine) void {
+        if(self.entry_roles) |*roles|roles.deinit();
         self.initial_globals.deinit(self.c.allocator); self.activations.deinit(self.c.allocator);
         self.object_keys.deinit(self.c.allocator); self.cell_activations.deinit(self.c.allocator);
         self.frame_keys.deinit(self.c.allocator);
@@ -735,15 +739,27 @@ const Engine = struct {
     }
     fn objectKey(self: *Engine, at: facts.Site, key: ObjectKey, weak: bool) Error!facts.ObjectId {
         for(self.object_keys.items,0..) |prior,i| {
-            try self.c.step(); if(!std.meta.eql(prior,key))continue; const row=&self.result.objects.items[i];
-            var found=false; for(self.result.creation_storage.items[i].items) |site| { try self.c.step(); if(std.meta.eql(site,at)) { found=true; break; } }
-            if(!found) { if(self.replay)return error.InvalidShape; try self.result.creation_storage.items[i].append(self.c.allocator,at); row.creations=self.result.creation_storage.items[i].items; }
+            try self.c.charge(2); if(!std.meta.eql(prior,key))continue; const row=&self.result.objects.items[i];
+            if(key.entry_parameter==null) {
+                var found=false; for(self.result.creation_storage.items[i].items) |site| { try self.c.step(); if(std.meta.eql(site,at)) { found=true; break; } }
+                if(!found) { if(self.replay)return error.InvalidShape; try self.result.creation_storage.items[i].append(self.c.allocator,at); row.creations=self.result.creation_storage.items[i].items; }
+            }
             if(weak and !row.weak) { if(self.replay)return error.InvalidShape; row.weak=true; self.changed=true; } return @enumFromInt(i);
         }
         if(self.replay)return error.InvalidShape;
-        var sites: std.ArrayListUnmanaged(facts.Site)=.empty; errdefer sites.deinit(self.c.allocator); try sites.append(self.c.allocator,at);
+        var sites: std.ArrayListUnmanaged(facts.Site)=.empty; errdefer sites.deinit(self.c.allocator);
+        if(key.entry_parameter==null)try sites.append(self.c.allocator,at);
+        if(key.entry_parameter!=null) {
+            // External entry families own three new directory records. Pay
+            // their publication and each real growth copy before allocation.
+            try self.c.charge(3 +
+                @as(usize,if(self.object_keys.items.len==self.object_keys.capacity) self.object_keys.items.len else 0) +
+                @as(usize,if(self.result.creation_storage.items.len==self.result.creation_storage.capacity) self.result.creation_storage.items.len else 0) +
+                @as(usize,if(self.result.objects.items.len==self.result.objects.capacity) self.result.objects.items.len else 0));
+        }
         try self.object_keys.ensureUnusedCapacity(self.c.allocator,1); try self.result.creation_storage.ensureUnusedCapacity(self.c.allocator,1);
-        try self.result.objects.append(self.c.allocator,.{.origin=.{.allocation=at},.kind=key.kind,.@"type"=key.@"type",.environment=key.environment,.weak=weak});
+        const object_origin: facts.ObjectOrigin=if(key.entry_parameter) |parameter| .{.entry=.{.context=at.context,.parameter=parameter}} else .{.allocation=at};
+        try self.result.objects.append(self.c.allocator,.{.origin=object_origin,.kind=key.kind,.@"type"=key.@"type",.environment=key.environment,.weak=weak});
         self.object_keys.appendAssumeCapacity(key); self.result.creation_storage.appendAssumeCapacity(sites); self.result.objects.items[self.result.objects.items.len-1].creations=sites.items;
         self.changed=true; return @enumFromInt(self.result.objects.items.len-1);
     }
@@ -770,9 +786,9 @@ const Engine = struct {
     }
     fn abi(self: *Engine, function: t.FunctionRef) usize { return @intFromEnum(self.c.program.functions[@intFromEnum(function)].abi); }
     fn declared(self: *Engine, id: t.TypeRef) Error!V {
-        // Only the legacy/EH typed-entry contracts promise declared values.
-        // Common has actual-storage semantics instead; its missing callers
-        // are handled by unknown(), not this recipe or a carrier maximum.
+        // This declared-value recipe belongs only to legacy/EH. Common keeps
+        // actual storage semantics: its explicit exported Array roles use the
+        // separate entry boundary; missing roles never use a carrier maximum.
         try self.c.step(); var result: V=.{}; errdefer result.deinit(self.c.allocator);
         switch(self.c.program.tables.mode) {
             .common => return error.WrongMode,
@@ -2065,11 +2081,22 @@ const Engine = struct {
             }
         }
     }
+    fn entryArray(self: *Engine, at: facts.Site, activation: usize, parameter: t.RegisterRef, heap: *Heap) Error!V {
+        // The validated exported-input role promises an Array category, not its
+        // actual storage tag, length, elements, uniqueness or a fresh birth.
+        const id=try self.objectKey(at,.{.activation=activation,.location=at.location,.kind=.array,.@"type"=null,.environment=null,.entry_parameter=parameter},true);
+        var result: V=.{}; errdefer result.deinit(self.c.allocator); _=try result.object(self.c,id);
+        try self.setRegion(&result,try facts.relation(self.c,result.view()));
+        const contents=V{.unknown=true,.callable_unknown=true,.region=.{.known=true,.unresolved=true}};
+        _=try heap.put(self.c,.{.element=.{.object=id,.index=null}},contents.view(),true);
+        return result;
+    }
     fn seedRoot(self: *Engine, target: t.FunctionRef, new_target: ?t.TypeRef) Error!void {
         const function=self.c.program.functions[@intFromEnum(target)]; const parameters=function.blocks[0].parameters;
         try self.c.charge(parameters.len+1); const arguments=try self.c.allocator.alloc(V,parameters.len); @memset(arguments,.{});
         defer { for(arguments) |*argument|argument.deinit(self.c.allocator); self.c.allocator.free(arguments); }
         var frames: facts.FrameStore=.{}; defer receiver_actual.deinit(&frames,self.c.allocator);
+        var entry_heap: ?Heap=null; defer if(entry_heap) |*heap|heap.deinit(self.c.allocator);
         var receiver: ?struct { frame: facts.FrameId, ordinal: u16 }=null;
         if(new_target) |actual| {
             const abi_row=self.c.program.tables.mode.common.abis[self.abi(target)];
@@ -2085,7 +2112,7 @@ const Engine = struct {
         }
         for(arguments,0..) |*argument,index| {
             switch(self.c.program.tables.mode) {
-                .common => {
+                .common => |v| {
                     if(receiver) |selected| {
                         if(index==selected.ordinal) {
                             _=try argument.frame(self.c,selected.frame);
@@ -2095,6 +2122,22 @@ const Engine = struct {
                             continue;
                         }
                     }
+                    const abi_row=v.abis[self.abi(target)];
+                    const hidden=@as(usize,if(abi_row.lexical_environment!=null)1 else 0)+@as(usize,if(abi_row.receiver!=null)1 else 0);
+                    if(index>=hidden) {
+                        const binding=abi_row.parameters[index-hidden];
+                        if(self.entry_roles.?.parameters[@intFromEnum(binding)]) |role| {
+                            if(v.types[@intFromEnum(role.logical_type)].kind==.array) {
+                                if(entry_heap==null) { entry_heap=try Heap.clone(self.c,self.initial_globals.view()); }
+                                const at=facts.Site{.context=@enumFromInt(self.result.invocations.items.len),.location=.{.function=target,.block=@enumFromInt(0),.instruction=0}};
+                                const activation=try self.activationFor(target,null,new_target);
+                                argument.*=try self.entryArray(at,activation,parameters[index],&entry_heap.?);
+                                continue;
+                            }
+                        }
+                    }
+                    // Uncovered entries and all internal transports retain the
+                    // actual-storage unknown; a Source view is not a conversion.
                     argument.*=.{.unknown=true,.callable_unknown=true};
                 },
                 .exception => |v| {
@@ -2107,7 +2150,11 @@ const Engine = struct {
                 },
             }
         }
-        const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false,null,null,if(receiver!=null)&frames else null,new_target);
+        const id=try self.contextFor(target,arguments,if(entry_heap) |*heap|heap.view() else self.initial_globals.view(),null,true,false,null,null,if(receiver!=null)&frames else null,new_target);
+        for(arguments) |argument|for(argument.objects.items) |object_id| {
+            try self.c.charge(2); const object_info=&self.result.objects.items[@intFromEnum(object_id)];
+            if(object_info.origin==.entry)object_info.origin.entry.context=id;
+        };
         if(receiver) |selected| {
             // contextFor now owns the selected FrameStore. Its entry Site is a
             // representative of this root, never an instruction-birth proof.
@@ -2125,6 +2172,7 @@ const Engine = struct {
         }
         switch(self.c.program.tables.mode) {
             .common => |v| {
+                self.entry_roles=try entry_contracts.projectEntries(self.c);
                 for(v.modules.globals,0..) |_,i| { try self.c.step(); _=try self.initial_globals.put(self.c,.{.global=@enumFromInt(i)},.{.unknown=true,.callable_unknown=true},true); }
                 for(self.c.program.functions,0..) |function,i| {
                     try self.c.step(); const ref: t.FunctionRef=@enumFromInt(i); var is_root=function.role==.module_initializer;

@@ -12,8 +12,11 @@ pub const Projection = struct {
     // Node storage is owned here; type symbols borrow Directory, which must
     // outlive this projection (the real consumer's arena encloses both).
     arena: std.heap.ArenaAllocator, pending: ?Pending = null, graph: ?origin.Graph = null,
+    // Effect-only control projection: original block and receiver action joins.
+    block_controls: []const origin.Ref = &.{}, receiver_actions: []const ReceiverControl = &.{},
     pub fn deinit(self: *Projection) void { self.arena.deinit(); }
 };
+pub const ReceiverControl = struct { block: usize, instruction: usize, normal: origin.Ref, language: origin.Ref, normal_control: origin.Ref, language_control: origin.Ref };
 const Builder = struct {
     c: *context.Context, allocator: std.mem.Allocator, directory: *const origin.Directory, budget: *origin.Budget,
     nodes: std.ArrayListUnmanaged(origin.Value) = .empty, registers: []?origin.Ref,
@@ -45,7 +48,8 @@ const RefList = std.ArrayListUnmanaged(origin.Ref);
 const Flow = struct { heap: origin.Ref, control: origin.Ref };
 const CFG = struct {
     const FieldAddress = struct { id: origin.Symbol, view: origin.Symbol };
-    b: *Builder, f: *const wire.Function,
+    b: *Builder, f: *const wire.Function, control_only: bool = false,
+    receiver_actions: std.ArrayListUnmanaged(ReceiverControl) = .empty,
     heaps: std.ArrayListUnmanaged(origin.Heap) = .empty, controls: std.ArrayListUnmanaged(origin.Control) = .empty,
     values: []RefList, incoming_heaps: []RefList, incoming_controls: []RefList,
     blocks: []Flow, normal: RefList = .empty, language: RefList = .empty,
@@ -74,6 +78,11 @@ const CFG = struct {
     fn finish(self: *CFG, result: *Projection) context.Error!void {
         for (self.b.registers, self.values) |id, incoming| { try self.b.c.step(); if (id) |node_id| self.b.nodes.items[node_id].join.inputs = incoming.items; }
         for (self.blocks, self.incoming_heaps, self.incoming_controls) |flow, heaps, controls| { try self.b.c.charge(3); self.heaps.items[flow.heap].join.inputs = heaps.items; self.controls.items[flow.control].join.inputs = controls.items; }
+        if (self.control_only) {
+            try self.b.c.charge(self.blocks.len); const block_controls = try self.b.allocator.alloc(origin.Ref, self.blocks.len);
+            for (self.blocks, block_controls) |flow, *control_id| { try self.b.c.step(); control_id.* = flow.control; }
+            try self.b.c.charge(2); result.block_controls = block_controls; result.receiver_actions = self.receiver_actions.items;
+        }
         try self.b.c.row(origin.Graph); result.graph = .{ .nodes = self.b.nodes.items, .heaps = self.heaps.items, .controls = self.controls.items, .calls = &.{}, .normal = self.normal.items, .language = self.language.items, .exits = .{ .normal = self.normal_exits.items, .language = self.language_exits.items }, .accesses = self.accesses.items };
     }
     fn insert(self: *CFG, into: *RefList, id: origin.Ref) context.Error!void {
@@ -232,8 +241,10 @@ const CFG = struct {
     fn construction(self: *CFG, index: t.ConstructionIndex) context.Error!?origin.Symbol {
         const v = &self.b.c.program.tables.mode.common; const current = &v.members.constructions[@intFromEnum(index)];
         if (current.kind != .explicit) { self.b.pending = .implicit_protocol; return null; }
-        for (current.initialization_fields) |field| { try self.b.c.step(); _ = try self.scalarField(field) orelse return null; }
-        if (current.parameters.len != 0 or current.signature.parameters.len != 0) { self.b.pending = .raw_input; return null; }
+        if (!self.control_only) {
+            for (current.initialization_fields) |field| { try self.b.c.step(); _ = try self.scalarField(field) orelse return null; }
+            if (current.parameters.len != 0 or current.signature.parameters.len != 0) { self.b.pending = .raw_input; return null; }
+        }
         const id = try refs.symbol(self.b.c, self.b.allocator, current.id);
         const owner = try self.b.typeSymbol(current.owner) orelse return null;
         const base = if (v.types[@intFromEnum(current.owner)].base) |ref| try self.b.typeSymbol(ref) else null;
@@ -260,18 +271,24 @@ const CFG = struct {
     }
 };
 
-fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const origin.Directory, budget: *origin.Budget, result: *Projection) context.Error!void {
+fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const origin.Directory, budget: *origin.Budget, result: *Projection, control_only: bool) context.Error!void {
     const v = &c.program.tables.mode.common; const f = &c.program.functions[@intFromEnum(function)]; const abi = &v.abis[@intFromEnum(f.abi)];
-    if (abi.parameters.len != 0 or abi.argument_types.len != 0 or abi.lexical_environment != null or abi.construction == null or abi.receiver_frame == null) { result.pending = .entry_protocol; return; }
+    if ((!control_only and (abi.parameters.len != 0 or abi.argument_types.len != 0)) or abi.lexical_environment != null or abi.construction == null or abi.receiver_frame == null) { result.pending = .entry_protocol; return; }
     // Every block/op has already passed the same Context's SSA AND receiver
     // protocol checker. These checks only bound this projection's semantics.
-    for (f.registers) |*reg| { try c.step(); switch (reg.carrier) { .domain, .@"type", .payload, .receiver, .initialization => {}, else => { result.pending = .entry_protocol; return; } } }
+    for (f.registers) |*reg| { try c.step(); switch (reg.carrier) { .domain, .@"type", .payload, .receiver, .initialization => {}, .cell => if (!control_only) { result.pending = .entry_protocol; return; }, else => { result.pending = .entry_protocol; return; } } }
     for (f.blocks) |*block| for (block.instructions) |*op| {
-        try c.step(); switch (op.data) {
+        try c.step();
+        // Parent binding propagation requires the full call/activation domain.
+        // This control subset never narrows a child-frame protocol.
+        if (control_only and op.data == .receiver_child) { result.pending = .implicit_protocol; return; }
+        switch (op.data) {
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
             .receiver_create, .receiver_child, .receiver_allocate, .receiver_bind, .receiver_get, .receiver_result, .initialize_begin, .initialize_end,
             .br, .@"return", .eh_raise, .eh_unreachable => {},
+            .eh_cell, .eh_load, .eh_store, .cond_br, .eh_route, .domain_refine, .eh_assertion, .eh_pack, .eh_carrier, .eh_presence_widen, .domain_copy => if (!control_only) { result.pending = .operation; return; },
             .initialize_field => {
+                if (control_only) continue;
                 const payload = op.operands[2]; const carrier = f.registers[@intFromEnum(payload)].carrier;
                 try c.charge(2);
                 if (carrier != .@"type" or v.types[@intFromEnum(carrier.@"type")].kind != .scalar) { result.pending = .receiver_fields; return; }
@@ -299,7 +316,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     const a = result.arena.allocator();
     try c.charge(f.registers.len); const registers = try a.alloc(?origin.Ref, f.registers.len); @memset(registers, null);
     var b = Builder{ .c = c, .allocator = a, .directory = directory, .budget = budget, .registers = registers };
-    var cfg = try CFG.init(&b, f);
+    var cfg = try CFG.init(&b, f); cfg.control_only = control_only;
     _ = try cfg.construction(abi.construction.?);
     if (b.pending) |reason| { result.pending = reason; return; }
     const root = &v.members.constructions[@intFromEnum(abi.construction.?)];
@@ -309,6 +326,13 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     const input = try b.value(.receiver_input);
     const frame_register = f.blocks[0].parameters[abi.receiver_frame.?];
     try cfg.insert(&cfg.values[@intFromEnum(frame_register)], input);
+    if (control_only) for (abi.parameters, 0..) |_, index| {
+        try c.step(); const reg = f.blocks[0].parameters[index + 1];
+        // Actual data categories remain arbitrary: neither raw nor static Type
+        // is an entry conversion or an actual-tag proof. Control frames cannot
+        // be stored in a language Cell under the prerequisite SSA protocol.
+        const unknown = try b.value(.unknown); try cfg.insert(&cfg.values[@intFromEnum(reg)], unknown);
+    };
     const function_id = try refs.symbol(c, a, f.id);
     for (f.blocks, 0..) |*block, block_index| {
         try c.row(Flow); var flow = cfg.blocks[block_index];
@@ -324,7 +348,19 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                     };
                     const value = try b.value(.{ .literal = .{ .@"type" = view, .category = category } }); try cfg.define(reg, value, flow.control);
                 },
+                .eh_cell, .eh_store => {},
+                .eh_load => { const unknown = try b.value(.unknown); try cfg.define(op.result.?, unknown, flow.control); },
+                .domain_copy => |row| {
+                    const view = try b.typeSymbol(row.static_view) orelse break;
+                    // Only successful Data categories cross this effect-only
+                    // copy equation. It has a distinct symbolic source, grants
+                    // no fresh/holding identity and publishes no heap copy.
+                    const copied = try b.value(.{ .copy = .{ .@"type" = view, .bases = try cfg.one(cfg.registerRef(op.operands[0])), .site = try cfg.site(function_id, op, block_index, ordinal), .heap = flow.heap, .control = flow.control } });
+                    try cfg.define(op.result.?, copied, flow.control);
+                },
+                .domain_refine, .eh_assertion, .eh_pack, .eh_carrier, .eh_presence_widen => try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control),
                 .domain_view => {
+                    if (control_only) { try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control); continue; }
                     const from = &f.registers[@intFromEnum(op.operands[0])]; const into = &f.registers[@intFromEnum(op.result.?)];
                     if (from.view != into.view or !std.meta.eql(from.carrier, into.carrier) or from.carrier == .initialization) { b.pending = .view; break; }
                     try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control);
@@ -356,10 +392,19 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                     const normal = try cfg.action(flow, name, cfg.registerRef(op.operands[0]), operands, .normal, view);
                     const language = try cfg.action(flow, name, cfg.registerRef(op.operands[0]), operands, .language, null);
                     try cfg.connect(row.normal, normal.flow, try cfg.one(normal.value)); try cfg.connect(row.language, language.flow, try cfg.one(language.value));
+                    if (control_only) {
+                        try c.row(ReceiverControl);
+                        if (cfg.receiver_actions.items.len == cfg.receiver_actions.capacity) try c.charge(cfg.receiver_actions.items.len + 1);
+                        try cfg.receiver_actions.append(a, .{ .block = block_index, .instruction = ordinal, .normal = normal.flow.heap, .language = language.flow.heap, .normal_control = normal.flow.control, .language_control = language.flow.control });
+                    }
                 },
                 inline .initialize_begin, .initialize_end => |row| { _ = try cfg.construction(row.construction) orelse break; },
                 .initialize_field => |row| {
                     _ = try cfg.construction(row.construction) orelse break;
+                    // This projection establishes control only. Language data
+                    // stores do not bind a receiver frame; owner/field duties
+                    // remain with the complete UpperGraph and Borrow checks.
+                    if (control_only) continue;
                     // The linear checker proves operand1 is the bound data
                     // for operand0's exact cursor frame/binding/position.
                     // No cursor or Frame is ever inserted into the heap.
@@ -368,6 +413,11 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                 .br => |row| {
                     try cfg.branch(row.destination, flow, op.operands);
                 },
+                .cond_br => |row| {
+                    try cfg.branch(row.true_destination, flow, op.operands[1 .. 1 + row.true_count]);
+                    try cfg.branch(row.false_destination, flow, op.operands[1 + row.true_count ..]);
+                },
+                .eh_route => |row| try cfg.branch(row.successor, flow, op.operands),
                 .@"return", .eh_raise => {
                     const refs_into = if (op.data == .eh_raise) &cfg.language else &cfg.normal;
                     for (op.operands) |reg| { try c.step(); try cfg.insert(refs_into, cfg.registerRef(reg)); }
@@ -391,7 +441,7 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     if (c.program.tables.mode != .common) { result.pending = .mode; return result; }
     const f = &c.program.functions[@intFromEnum(function)]; const v = &c.program.tables.mode.common;
     const abi = &v.abis[@intFromEnum(f.abi)];
-    if (f.role == .construction_body) { try receiverBody(c, function, directory, budget, &result); return result; }
+    if (f.role == .construction_body) { try receiverBody(c, function, directory, budget, &result, false); return result; }
     if (f.role != .ordinary or abi.receiver != null or abi.construction != null or abi.receiver_frame != null or abi.lexical_environment != null) { result.pending = .entry_protocol; return result; }
     for (f.registers) |*reg| { try c.step(); switch (reg.carrier) { .domain, .@"type", .payload => {}, else => { result.pending = .entry_protocol; return result; } } }
     for (abi.parameters, abi.argument_types, 0..) |binding, incoming, index| {
@@ -586,4 +636,13 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     if (builder.pending) |reason| { result.pending = reason; return result; }
     try cfg.finish(&result);
     return result;
+}
+
+// Complete current constructor control projection, separate from return-origin
+// certificates and their stronger heap/data admission. All calls are unsupported
+// here: complete fixed-callee mayThrow remains in the independent UpperGraph.
+pub fn projectReceiverControls(c: *context.Context, function: t.FunctionRef, directory: *const origin.Directory, budget: *origin.Budget) context.Error!Projection {
+    var result = Projection{ .arena = std.heap.ArenaAllocator.init(c.allocator) }; errdefer result.deinit();
+    if (c.program.tables.mode != .common or c.program.functions[@intFromEnum(function)].role != .construction_body) { result.pending = .entry_protocol; return result; }
+    try receiverBody(c, function, directory, budget, &result, true); return result;
 }

@@ -35,6 +35,8 @@ pub const Analysis = struct {
     // Actual live symbolic prefix stores, including language/nonterminating
     // prefixes. StoreRef retains original selector/view/control/previous heap.
     initializations: []const Initialization = &.{},
+    // Control-only results borrow this arena; they confer no heap/field proof.
+    controls: []const bool = &.{}, action_results: []const []const Atom = &.{},
     pub fn deinit(self: *Analysis) void { self.arena.deinit(); }
 };
 const Atoms = std.ArrayListUnmanaged(Atom);
@@ -70,7 +72,7 @@ const Engine = struct {
     allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget,
     values: []Fact, worlds: []World, controls: []bool, frames: []Frame, results: []Atoms,
     input: ?Ref = null,
-    changed: bool = false, pending: ?Pending = null,
+    changed: bool = false, pending: ?Pending = null, control_only: bool = false,
     fn insert(self: *Engine, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!bool {
         for (into.items) |old| { try self.budget.step(); if (std.meta.eql(old, value)) return false; }
         try self.budget.step();
@@ -187,6 +189,9 @@ const Engine = struct {
                     .literal => |row| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = if (row.category == .@"undefined") .@"undefined" else .other }),
                     .local => try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = .object }),
                     .code => |row| if (self.controls[row.control]) { try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = .object }); },
+                    .unknown => if (self.control_only) {
+                        inline for (std.meta.tags(Category)) |category| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
+                    },
                     .parameter, .global, .nonowning => inline for (std.meta.tags(Category)) |category| {
                         try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
                     },
@@ -194,6 +199,20 @@ const Engine = struct {
                         if (@hasField(@TypeOf(row), "control")) if (!self.controls[row.control]) continue;
                         try self.budget.spend(row.inputs.len);
                         for (row.inputs) |input| { try self.atoms(&into.atoms, self.values[input].atoms.items); try self.refs(&into.frames, self.values[input].frames.items); }
+                    },
+                    .copy => |row| {
+                        if (!self.controls[row.control]) continue;
+                        for (row.bases) |base| {
+                            try self.budget.step();
+                            const value = &self.values[base];
+                            if (value.frames.items.len != 0) { self.pending = .data_protocol; continue; }
+                            for (value.atoms.items) |atom| {
+                                try self.budget.step();
+                                // Preserve category without turning a copy into
+                                // an allocation, retained actual tag or alias.
+                                try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = atom.category });
+                            }
+                        }
                     },
                     .receiver_frame => |row| {
                         if (!self.controls[row.control]) continue;
@@ -245,15 +264,16 @@ const Engine = struct {
 // Optional entry carries only original IDs for an independently proved unbound
 // root. It must belong to this graph's owning function and completed same-
 // Context actual analysis. No raw payload, Source/FDI or permission is accepted.
-pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry) Error!Analysis {
+fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_function: ?model.Symbol) Error!Analysis {
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
     if (!try model.receiverActivations(allocator, graph, budget)) { result.pending = .frame_activation; return result; }
     if (graph.calls.len != 0) { result.pending = .fixed_call; return result; }
     var input: ?Ref = null;
     for (graph.nodes,0..) |node,index| {
         try budget.step(); switch (node) {
-            .receiver_input => { if(entry==null or input!=null) { result.pending = .entry_state; return result; } input=index; },
-            .unknown => { result.pending = .unknown_origin; return result; },
+            .receiver_input => { if((entry==null and formal_function==null) or input!=null) { result.pending = .entry_state; return result; } input=index; },
+            .unknown => if (formal_function==null) { result.pending = .unknown_origin; return result; },
+            .copy => if (formal_function==null) { result.pending = .data_protocol; return result; },
             .literal, .local, .parameter, .global, .nonowning, .join, .gate, .receiver_frame, .receiver_value => {},
             .code => |row| if (row.environment != null) { result.pending = .data_protocol; return result; },
             else => { result.pending = .data_protocol; return result; },
@@ -261,7 +281,7 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
     }
     const a = result.arena.allocator();
     // The proved immutable entry is shared by every store and its frame seed.
-    const entry_function=if(input!=null)try model.findFunction(directory,entry.?.function_id,budget) else null;
+    const entry_function=if(input!=null)try model.findFunction(directory,formal_function orelse entry.?.function_id,budget) else null;
     for (graph.heaps) |heap| { try budget.step(); switch (heap) {
         .entry, .join, .receiver_action => {},
         .store=>|row|{
@@ -281,8 +301,18 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
     try budget.spend(graph.heaps.len); const worlds = try a.alloc(World, graph.heaps.len);
     for (worlds) |*world| { try budget.spend(graph.nodes.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len) }; @memset(world.bindings, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
-    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input };
+    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null };
     if(input) |id| {
+      if (formal_function != null) {
+        // The admitted construction-body interface owns an initially unbound
+        // formal control frame. Ordinary Data inputs remain arbitrary, and this
+        // seed is never an actual entrance, allocation or initialization proof.
+        try budget.spend(5); const function = entry_function.?;
+        if (function.kind != .construction_body or function.construction == null) { result.pending = .entry_state; return result; }
+        const role = try engine.construction(function.construction.?.id);
+        if (role.kind != .explicit or role.base != null or role.function_id == null or !try budget.equal(role.function_id.?, function.id)) { result.pending = .entry_state; return result; }
+        try budget.spend(4); frames[id] = .{ .role = role, .new_target = role.owner, .parent = null };
+    } else {
         try budget.spend(4); const seed=entry.?; const function=entry_function.?;
         const role=try engine.construction(seed.construction); try budget.spend(7);
         if(function.kind!=.construction_body or function.construction==null or role.kind!=.explicit or role.base!=null or
@@ -290,6 +320,7 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
         // Every heap entry starts from this observed unbound state. No frame
         // data/category is invented and no bound entry payload is supported.
         frames[id]=.{.role=role,.new_target=seed.new_target,.parent=null};
+      }
     }
     try engine.run(); if (engine.pending) |reason| { result.pending = reason; return result; }
     for(graph.heaps) |heap| if(heap==.store) {
@@ -335,5 +366,24 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
     // not invent counts, generations, last-value or physical alias evidence.
     for(worlds) |*world| { try budget.step(); if(world.live)try engine.initializations(&writes,world.initializations.items); }
     result.initializations=writes.items;
-    result.normal = normal.items; result.language = language.items; result.frames = summary; return result;
+    result.normal = normal.items; result.language = language.items; result.frames = summary;
+    if (formal_function != null) {
+        try budget.spend(results.len); const action_results = try a.alloc([]const Atom, results.len);
+        for (results, action_results) |value, *into| { try budget.step(); into.* = value.items; }
+        try budget.spend(2); result.controls = controls; result.action_results = action_results;
+    }
+    return result;
+}
+
+// Original immutable certificate interpretation retains its stronger entry and
+// native-field requirements. The effect-only boundary below does not relax it.
+pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, entry, null);
+}
+
+// The graph is the complete current normalized constructor control projection,
+// not its fixed own-return certificate. Unsupported calls and data/heap forms
+// retain Pending; callers must keep complete callee uppers independently.
+pub fn analyzeControls(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, function_id: model.Symbol) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, null, function_id);
 }

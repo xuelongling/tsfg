@@ -754,6 +754,24 @@ const UpperGraph = struct {
         const collector = self.collector; const c = collector.c; const v = collector.common();
         const function = c.program.functions[@intFromEnum(self.function)]; const abi = v.abis[@intFromEnum(function.abi)];
         const summary = &collector.aliases[@intFromEnum(self.function)];
+        // A constructor's receiver language gates need the complete current
+        // body's formal control protocol, never its own-return certificate or
+        // narrower actual replay. Unsupported bodies keep the original flow.
+        var control_arena = std.heap.ArenaAllocator.init(c.allocator); defer control_arena.deinit();
+        var control_body: ?body_origins.Projection = null; defer if (control_body) |*body| body.deinit();
+        var control_analysis: ?construction_origins.Analysis = null; defer if (control_analysis) |*analysis| analysis.deinit();
+        var controlled = false;
+        if (abi.construction != null) {
+            const fixed = &v.authority.fixed_publication;
+            const directory = try publication_refs.returnOriginDirectory(c, control_arena.allocator(), fixed.*);
+            var budget: origin_model.Budget = .{ .context = c, .charge = publication_refs.graphCharge };
+            control_body = try body_origins.projectReceiverControls(c, self.function, &directory, &budget);
+            if (control_body.?.pending == null) {
+                const function_id = try publication_refs.symbol(c, control_arena.allocator(), function.id);
+                control_analysis = construction_origins.analyzeControls(c.allocator, &directory, &control_body.?.graph.?, &budget, function_id) catch |err| return publication_refs.graphFailure(err);
+                controlled = control_analysis.?.pending == null;
+            }
+        }
         self.lexical_cells = summary.lexical_cells;
         try c.charge(function.blocks.len * 2 + 1);
         const entries = try c.allocator.alloc(?UpperState, function.blocks.len); @memset(entries, null);
@@ -805,6 +823,7 @@ const UpperGraph = struct {
         var cursor: usize = 0;
         while (cursor < pending.items.len) : (cursor += 1) {
             try c.step(); const b = @intFromEnum(pending.items[cursor]); queued[b] = false;
+            if (controlled) { try c.step(); if (!control_analysis.?.controls[control_body.?.block_controls[b]]) continue; }
             var state = try UpperState.clone(c, &entries[b].?); defer state.deinit(c);
             for (function.blocks[b].instructions, 0..) |op, index| {
                 try c.charge(op.operands.len + 1); var result: Owners = .{}; defer result.deinit(c.allocator);
@@ -948,13 +967,36 @@ const UpperGraph = struct {
                 if (op.result) |reg| try state.values[@intFromEnum(reg)].replace(c, &result);
                 switch (op.data) {
                     inline .receiver_bind,.receiver_get,.receiver_result => |control| {
-                        // Explicit pending is safer than seeding a p0 object or
-                        // deriving caller owners from the present body result.
+                        // The control proof is deliberately separate from fixed
+                        // owner/field/return coverage. Keep that existing gap.
                         if(!self.summarizing)collector.fixed_upper_origin_pending=true;
-                        var selected: Owners=.{}; defer selected.deinit(c.allocator); _=try selected.makeOpaque(c);
-                        var failure: Owners=.{}; defer failure.deinit(c.allocator); _=try failure.makeOpaque(c);
-                        try self.edge(entries,queued,&pending,control.normal,&state,&.{selected});
-                        try self.edge(entries,queued,&pending,control.language,&state,&.{failure});
+                        var selected: Owners=.{}; defer selected.deinit(c.allocator);
+                        var failure: Owners=.{}; defer failure.deinit(c.allocator);
+                        if (controlled) {
+                            var action: ?body_origins.ReceiverControl = null;
+                            for (control_body.?.receiver_actions) |row| {
+                                try c.charge(2); if (row.block == b and row.instruction == index) { action = row; break; }
+                            }
+                            const row = action orelse return error.InvalidShape;
+                            const atoms = [_][]const construction_origins.Atom{ control_analysis.?.action_results[row.normal], control_analysis.?.action_results[row.language] };
+                            const owners = [_]*Owners{ &selected, &failure };
+                            for (atoms, owners) |values, into| for (values) |atom| {
+                                try c.step(); switch (atom.source) {
+                                    .allocation, .language_error => { _ = try into.add(c, .local); },
+                                    .node => |id| switch (control_body.?.graph.?.nodes[id]) {
+                                        .local => { _ = try into.add(c, .local); },
+                                        else => { _ = try into.makeOpaque(c); },
+                                    },
+                                }
+                            };
+                            try c.charge(2);
+                            if (control_analysis.?.controls[row.normal_control]) try self.edge(entries,queued,&pending,control.normal,&state,&.{selected});
+                            if (control_analysis.?.controls[row.language_control]) try self.edge(entries,queued,&pending,control.language,&state,&.{failure});
+                        } else {
+                            _=try selected.makeOpaque(c); _=try failure.makeOpaque(c);
+                            try self.edge(entries,queued,&pending,control.normal,&state,&.{selected});
+                            try self.edge(entries,queued,&pending,control.language,&state,&.{failure});
+                        }
                     },
                     .eh_invoke, .eh_invoke_indirect, .common_method_invoke => {
                         var completions: UpperCompletions = .{}; var found = false;

@@ -160,3 +160,111 @@ test "undefined string object unknown and mixed payloads remain unavailable" {
     fixture = .{}; fixture.nodes[7] = .{ .join = .{ .@"type" = "i32", .inputs = &.{ 3, 4 } } }; fixture.heaps[3].store.values = &.{7};
     try expectPending(&fixture, proved_entry, .scalar_initialization);
 }
+
+const ControlFixture = struct {
+    nodes: [8]model.Value = .{
+        .receiver_input,
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 1 } },
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 2 } },
+        .{ .literal = .{ .@"type" = "undefined", .category = .@"undefined" } },
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 4 } },
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 3 } },
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 5 } },
+        .{ .join = .{ .@"type" = "Box", .inputs = &.{5, 6} } },
+    },
+    heaps: [6]model.Heap = .{
+        .entry,
+        .{ .receiver_action = .{ .previous = 0, .control = 0, .frames = &.{0}, .action = .allocate, .operands = &.{}, .completion = .normal } },
+        .{ .receiver_action = .{ .previous = 1, .control = 1, .frames = &.{0}, .action = .bind, .operands = &.{1}, .completion = .normal } },
+        .{ .receiver_action = .{ .previous = 1, .control = 1, .frames = &.{0}, .action = .bind, .operands = &.{1}, .completion = .language } },
+        .{ .receiver_action = .{ .previous = 2, .control = 2, .frames = &.{0}, .action = .result, .operands = &.{3}, .completion = .normal } },
+        .{ .receiver_action = .{ .previous = 2, .control = 2, .frames = &.{0}, .action = .result, .operands = &.{3}, .completion = .language } },
+    },
+    controls: [6]model.Control = .{ .entry,
+        .{ .receiver_completion = .{ .action = 1 } }, .{ .receiver_completion = .{ .action = 2 } },
+        .{ .receiver_completion = .{ .action = 3 } }, .{ .receiver_completion = .{ .action = 4 } },
+        .{ .receiver_completion = .{ .action = 5 } } },
+    fn graph(self: *const ControlFixture) model.Graph {
+        return .{ .nodes = &self.nodes, .heaps = &self.heaps, .controls = &self.controls, .calls = &.{},
+            .normal = &.{4}, .language = &.{7},
+            .exits = .{ .normal = &.{.{ .heap = 4, .control = 4 }}, .language = &.{ .{ .heap = 3, .control = 3 }, .{ .heap = 5, .control = 5 } } },
+            .accesses = &.{} };
+    }
+};
+fn checkControls(fixture: *const ControlFixture, normal: bool, language: bool) !void {
+    const graph = fixture.graph(); var meter: Meter = .{}; var budget = meter.budget();
+    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
+    try std.testing.expectEqual(normal, result.normal_live);
+    try std.testing.expectEqual(language, result.language_live);
+    try std.testing.expectEqual(@as(usize, 0), result.initializations.len);
+    try std.testing.expectEqual(@as(usize, 6), result.controls.len);
+    try std.testing.expectEqual(@as(usize, 6), result.action_results.len);
+}
+test "formal allocation bind and undefined result do not invent a language edge" {
+    const fixture: ControlFixture = .{}; try checkControls(&fixture, true, false);
+}
+test "formal get before binding retains its language edge" {
+    var fixture: ControlFixture = .{};
+    fixture.heaps[2].receiver_action.action = .get; fixture.heaps[2].receiver_action.operands = &.{};
+    fixture.heaps[3].receiver_action.action = .get; fixture.heaps[3].receiver_action.operands = &.{};
+    try checkControls(&fixture, false, true);
+}
+test "formal double binding retains its language edge" {
+    var fixture: ControlFixture = .{};
+    fixture.heaps[4].receiver_action.action = .bind; fixture.heaps[4].receiver_action.operands = &.{1};
+    fixture.heaps[5].receiver_action.action = .bind; fixture.heaps[5].receiver_action.operands = &.{1};
+    try checkControls(&fixture, false, true);
+}
+test "formal unbound undefined result retains its language edge" {
+    var fixture: ControlFixture = .{};
+    fixture.heaps[2].receiver_action.action = .result; fixture.heaps[2].receiver_action.operands = &.{3};
+    fixture.heaps[3].receiver_action.action = .result; fixture.heaps[3].receiver_action.operands = &.{3};
+    try checkControls(&fixture, false, true);
+}
+test "formal unknown result retains both object and nonobject completions" {
+    const nodes = [_]model.Value{ .receiver_input, .unknown,
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 1 } },
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 2 } } };
+    const heaps = [_]model.Heap{ .entry,
+        .{ .receiver_action = .{ .previous = 0, .control = 0, .frames = &.{0}, .action = .result, .operands = &.{1}, .completion = .normal } },
+        .{ .receiver_action = .{ .previous = 0, .control = 0, .frames = &.{0}, .action = .result, .operands = &.{1}, .completion = .language } } };
+    const controls = [_]model.Control{ .entry, .{ .receiver_completion = .{ .action = 1 } }, .{ .receiver_completion = .{ .action = 2 } } };
+    const graph = model.Graph{ .nodes = &nodes, .heaps = &heaps, .controls = &controls, .calls = &.{}, .normal = &.{2}, .language = &.{3},
+        .exits = .{ .normal = &.{.{ .heap = 1, .control = 1 }}, .language = &.{.{ .heap = 2, .control = 2 }} }, .accesses = &.{} };
+    var meter: Meter = .{}; var budget = meter.budget();
+    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
+    try std.testing.expect(result.normal_live and result.language_live);
+    try std.testing.expect(result.controls[1] and result.controls[2]);
+    try std.testing.expectEqual(@as(usize, 1), result.normal.len);
+    try std.testing.expectEqual(domain.Category.object, result.normal[0].category);
+    try std.testing.expectEqual(@as(usize, 0), result.initializations.len);
+}
+
+test "formal copies preserve categories without allocation or alias provenance" {
+    var nodes = [_]model.Value{ .receiver_input, .unknown,
+        .{ .copy = .{ .@"type" = "Box", .bases = &.{1}, .site = "copy", .heap = 0, .control = 0 } },
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 1 } },
+        .{ .receiver_value = .{ .@"type" = "Box", .action = 2 } } };
+    const heaps = [_]model.Heap{ .entry,
+        .{ .receiver_action = .{ .previous = 0, .control = 0, .frames = &.{0}, .action = .result, .operands = &.{2}, .completion = .normal } },
+        .{ .receiver_action = .{ .previous = 0, .control = 0, .frames = &.{0}, .action = .result, .operands = &.{2}, .completion = .language } } };
+    const controls = [_]model.Control{ .entry, .{ .receiver_completion = .{ .action = 1 } }, .{ .receiver_completion = .{ .action = 2 } } };
+    const graph = model.Graph{ .nodes = &nodes, .heaps = &heaps, .controls = &controls, .calls = &.{}, .normal = &.{3}, .language = &.{4},
+        .exits = .{ .normal = &.{.{ .heap = 1, .control = 1 }}, .language = &.{.{ .heap = 2, .control = 2 }} }, .accesses = &.{} };
+    var meter: Meter = .{}; var budget = meter.budget();
+    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
+    try std.testing.expect(result.normal_live and result.language_live);
+    try std.testing.expectEqual(@as(usize, 1), result.normal.len);
+    try std.testing.expectEqual(domain.Category.object, result.normal[0].category);
+    try std.testing.expect(result.normal[0].source == .node);
+    try std.testing.expectEqual(@as(usize, 2), result.normal[0].source.node);
+    try std.testing.expectEqual(@as(usize, 0), result.initializations.len);
+    // A known copied object still cannot pass the stronger original certificate boundary.
+    nodes[1] = .{ .local = .{ .@"type" = "Box" } };
+    var certificate_meter: Meter = .{}; var certificate_budget = certificate_meter.budget();
+    var certificate = try domain.analyze(std.testing.allocator, &directory, &graph, &certificate_budget, proved_entry); defer certificate.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, .data_protocol), certificate.pending);
+}

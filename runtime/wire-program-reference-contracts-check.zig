@@ -505,3 +505,132 @@ pub fn checkCompatibility(c: *Context) Error!void {
     try checker.inheritProjections();
     try checker.dispatches();
 }
+
+// A typed exported-input role is separate from physical carrier capacity. This
+// projection consumes the original parameter selector and its complete logical
+// candidate set once. It grants no actual tag, allocation, lifetime or noalias.
+pub const EntryRole = struct { logical_type: t.TypeRef };
+pub const EntryRoles = struct {
+    allocator: std.mem.Allocator,
+    parameters: []?EntryRole,
+    pub fn deinit(self: *EntryRoles) void { self.allocator.free(self.parameters); }
+};
+fn entryPush(c: *Context, pending: *std.ArrayListUnmanaged(t.TypeRef), id: t.TypeRef) Error!void {
+    try c.charge(1+@as(usize,if(pending.items.len==pending.capacity)pending.items.len else 0));
+    try pending.append(c.allocator,id);
+}
+fn entryPair(c: *Context, pairs: *PairSet, pair: Pair) Error!void {
+    try c.step(); if(pairs.contains(pair))return;
+    if(pairs.available==0) {
+        const previous=pairs.capacity(); const next=@max(@as(usize,8),@as(usize,previous)*2);
+        try c.charge(previous+next+pairs.count()+1); try pairs.ensureUnusedCapacity(c.allocator,1);
+    }
+    pairs.putAssumeCapacityNoClobber(pair,{});
+}
+pub fn projectEntries(c: *Context) Error!EntryRoles {
+    const v=switch(c.program.tables.mode) { .common => |value|value, else=>return error.WrongMode };
+    try c.charge(v.storage.bindings.len*2+v.types.len);
+    const parameters=try c.allocator.alloc(?EntryRole,v.storage.bindings.len); errdefer c.allocator.free(parameters); @memset(parameters,null);
+    const expected=try c.allocator.alloc(bool,v.storage.bindings.len); defer c.allocator.free(expected); @memset(expected,false);
+    const seen=try c.allocator.alloc(bool,v.types.len); defer c.allocator.free(seen);
+    // Export aliases share the one real function/parameter occurrence.
+    for(v.modules.modules) |module| {
+        try c.step(); if(module.source!=c.program.root_source)continue;
+        for(module.exports) |item| {
+            try c.step(); if(item.kind!=.function)continue;
+            var selected: ?t.FunctionRef=null;
+            for(c.program.functions,0..) |function,index| {
+                try c.charge(5); if(std.mem.eql(u8,&function.id,&item.target)) { selected=@enumFromInt(index); break; }
+            }
+            const function=selected orelse return error.InvalidReference;
+            for(v.abis[@intFromEnum(c.program.functions[@intFromEnum(function)].abi)].parameters) |binding| { try c.step(); expected[@intFromEnum(binding)]=true; }
+        }
+    }
+    var pending: std.ArrayListUnmanaged(t.TypeRef)=.empty; defer pending.deinit(c.allocator);
+    var overrides: std.ArrayListUnmanaged(t.Hash)=.empty; defer overrides.deinit(c.allocator);
+    for(v.views.entries) |row| {
+        try c.row(@TypeOf(row));
+        const index=@intFromEnum(row.parameter); const binding=v.storage.bindings[index];
+        const function=c.program.functions[@intFromEnum(row.function)]; const abi=v.abis[@intFromEnum(function.abi)];
+        try c.require(expected[index] and parameters[index]==null and binding.owner==.param and binding.owner.param==row.function);
+        try c.charge(abi.parameters.len); const ordinal=std.mem.indexOfScalar(t.BindingRef,abi.parameters,row.parameter) orelse return error.InvalidShape;
+        const origin=binding.origin orelse return error.InvalidOrigin;
+        try c.require(origin.source==function.source and origin.start>=function.declaration.start and origin.end<=function.declaration.end);
+        // Raw input views precede defaults; the logical declaration cannot
+        // replace them. The target consumer may conservatively omit that role.
+        const raw=abi.argument_types[ordinal];
+        expected[index]=false;
+        try c.charge(seen.len); @memset(seen,false); pending.clearRetainingCapacity(); try entryPush(c,&pending,binding.@"type");
+        var cursor: usize=0;
+        while(cursor<pending.items.len) : (cursor+=1) {
+            try c.step(); const id=pending.items[cursor]; const at=@intFromEnum(id); if(seen[at])continue; seen[at]=true;
+            const value=v.types[at];
+            if(value.kind==.array or value.kind==.readSpan or value.kind==.function)try entryPush(c,&pending,value.element.?);
+            if(value.kind==.@"union" or value.kind==.function)for(value.members) |member| { try c.step(); try entryPush(c,&pending,member); };
+            if(value.kind!=.reference and value.kind!=.value)continue;
+            overrides.clearRetainingCapacity(); var ancestor: ?t.TypeRef=id;
+            while(ancestor) |owner| {
+                try c.step();
+                for(v.members.fields) |field| { try c.step(); if(field.owner==owner)try entryPush(c,&pending,field.@"type"); }
+                for(v.members.methods) |method| {
+                    try c.step(); if(method.owner!=owner)continue;
+                    var hidden=false;
+                    for(overrides.items) |old| { try c.charge(5); if(std.mem.eql(u8,&old,&method.id)) { hidden=true; break; } }
+                    if(!hidden) {
+                        const method_abi=v.abis[@intFromEnum(c.program.functions[@intFromEnum(method.function)].abi)];
+                        for(method_abi.parameters) |parameter| { try c.step(); try entryPush(c,&pending,v.storage.bindings[@intFromEnum(parameter)].@"type"); }
+                        if(method_abi.result) |result|try entryPush(c,&pending,result);
+                    }
+                    // Even a hidden intermediate override suppresses its own
+                    // ancestor, matching the effective-method payload closure.
+                    if(method.override) |old| {
+                        try c.charge(1+@as(usize,if(overrides.items.len==overrides.capacity)overrides.items.len else 0));
+                        try overrides.append(c.allocator,old);
+                    }
+                }
+                ancestor=v.types[@intFromEnum(owner)].base;
+            }
+        }
+        var selected: PairSet=.{}; defer selected.deinit(c.allocator);
+        var available: PairSet=.{}; defer available.deinit(c.allocator);
+        var candidates: PairSet=.{}; defer candidates.deinit(c.allocator);
+        var expected_candidates: PairSet=.{}; defer expected_candidates.deinit(c.allocator);
+        // Nominal ancestry is declaration authority, not a selected structural
+        // proof. Every nominal alternative appears in both complete sets.
+        for(v.types,0..) |target,target_index| {
+            try c.step(); if(!seen[target_index] or target.kind!=.reference)continue;
+            for(v.types,0..) |actual,actual_index| {
+                try c.step(); if(actual.kind!=.reference)continue;
+                var ancestor: ?t.TypeRef=@enumFromInt(actual_index);
+                while(ancestor) |owner| {
+                    try c.step(); if(@intFromEnum(owner)==target_index) {
+                        const pair=Pair{.source=@enumFromInt(actual_index),.target=@enumFromInt(target_index)};
+                        try entryPair(c,&candidates,pair); try entryPair(c,&expected_candidates,pair); break;
+                    }
+                    ancestor=v.types[@intFromEnum(owner)].base;
+                }
+            }
+        }
+        for(row.roots) |ref| {
+            try c.step(); const proof=v.views.compatibility[@intFromEnum(ref)];
+            try c.charge(4); try c.require(std.meta.eql(proof.origin,origin));
+            try c.require(proof.source_type!=proof.target_type and v.types[@intFromEnum(proof.source_type)].kind==.reference and
+                seen[@intFromEnum(proof.target_type)] and v.types[@intFromEnum(proof.target_type)].kind==.reference);
+            const pair=Pair{.source=proof.source_type,.target=proof.target_type}; try entryPair(c,&selected,pair); try entryPair(c,&candidates,pair);
+        }
+        // All same-occurrence candidate proofs must be consumed as entry roots;
+        // removing a root while retaining its proof is not a smaller valid role.
+        for(v.views.compatibility) |proof| {
+            try c.charge(5); if(!std.meta.eql(proof.origin,origin))continue;
+            if(proof.source_type==proof.target_type or v.types[@intFromEnum(proof.source_type)].kind!=.reference or
+                !seen[@intFromEnum(proof.target_type)] or v.types[@intFromEnum(proof.target_type)].kind!=.reference)continue;
+            const pair=Pair{.source=proof.source_type,.target=proof.target_type}; try entryPair(c,&available,pair); try entryPair(c,&expected_candidates,pair);
+        }
+        try c.require(selected.count()==available.count() and candidates.count()==expected_candidates.count());
+        var selected_it=selected.keyIterator(); while(selected_it.next()) |pair| { try c.step(); try c.require(available.contains(pair.*)); }
+        var candidates_it=candidates.keyIterator(); while(candidates_it.next()) |pair| { try c.step(); try c.require(expected_candidates.contains(pair.*)); }
+        parameters[index]=if(raw==binding.@"type") .{.logical_type=raw} else null;
+    }
+    for(expected) |missing| { try c.step(); try c.require(!missing); }
+    return .{.allocator=c.allocator,.parameters=parameters};
+}
