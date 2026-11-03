@@ -140,7 +140,7 @@ const Fixture = struct {
     }
 };
 
-fn typedInput(c: *context.Context, budget: *origin.Budget) !void {
+fn typedInput(c: *context.Context, budget: *origin.Budget, interpretation: *const origin.Directory) !void {
     // The fixture owns all finite references. Exercise the actual carrier and
     // origin boundaries, complete layout/SSA, and exact whole SourcePlan map.
     for (c.program.functions) |f| {
@@ -149,7 +149,7 @@ fn typedInput(c: *context.Context, budget: *origin.Budget) !void {
         for (f.blocks) |block| for (block.instructions) |op| try c.origin(op.source);
     }
     try layout.check(c); try ssa.check(c); try correspondence.check(c);
-    try origin.validateDirectory(c.allocator, &directory, budget);
+    try origin.validateDirectory(c.allocator, interpretation, budget);
 }
 
 // This finite structural oracle accepts only the original parameter through
@@ -171,7 +171,7 @@ fn copiesFromOriginal(graph: *const origin.Graph, value: origin.Ref, depth: usiz
 test "ordinary reference aliases keep private views, both copies and complete branch returns" {
     var fixture: Fixture = undefined; fixture.init();
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
-    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget);
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &directory);
     const before = c.remaining;
     var projected = try body.project(&c, @enumFromInt(0), &directory, &budget); defer projected.deinit();
     try std.testing.expectEqual(@as(?body.Pending, null), projected.pending);
@@ -200,7 +200,7 @@ test "ordinary reference aliases keep private views, both copies and complete br
 test "ordinary view rejects a different owned physical reference after typed prerequisites" {
     var fixture: Fixture = undefined; fixture.init(); fixture.registers[3].carrier = .{ .@"type" = other };
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
-    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget);
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &directory);
     var projected = try body.project(&c, @enumFromInt(0), &directory, &budget); defer projected.deinit();
     try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
 }
@@ -217,7 +217,122 @@ test "ordinary alias does not waive the required copy type archive" {
     fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.registers[5].view = void_type;
     fixture.operations[4].view = void_text; fixture.operations[4].properties = &private_copy_properties; fixture.carriers[5] = void_text;
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
-    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget);
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &directory);
     var projected = try body.project(&c, @enumFromInt(0), &directory, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+const integer_text = "sha256:4444444444444444444444444444444444444444444444444444444444444444";
+const Scalar = enum { boolean, integer };
+const Concrete = std.meta.Child(@TypeOf(@as(storage.CommonStorage, undefined).concrete));
+const ScalarFixture = struct {
+    fixture: Fixture,
+    concrete: [4]Concrete,
+    argument_types: [2]t.TypeRef,
+    physical_parameters: [2]t.Carrier,
+    parameter_types: [2]origin.Symbol,
+    type_rows: [3]origin.TypeRow,
+    function_rows: [1]origin.FunctionRow,
+    interpretation: origin.Directory,
+    copy_properties: [1]t.JsonMember,
+    view_properties: [1]t.JsonMember,
+    data_type: t.TypeRef,
+    data_text: []const u8,
+
+    fn init(self: *ScalarFixture, kind: Scalar) void {
+        self.fixture.init();
+        // Reuse the finite ordinary fixture, not a constructor/Source receipt.
+        // The formerly unused fourth owned type is i32 for these scalar cases.
+        self.fixture.types[3].kind = .scalar; self.fixture.types[3].name = "i32"; self.fixture.types[3].native_code = 1;
+        for (0..4) |index| self.concrete[index] = self.fixture.program.tables.mode.common.storage.concrete[index];
+        self.concrete[3] = .{ .@"type" = other, .carrier = .{ .layout = .{ .byte_size = 4, .alignment = 4, .reference_count = 0 }, .field_offsets = &.{} }, .body = null };
+        self.fixture.program.tables.mode.common.storage.concrete = &self.concrete;
+        self.data_type = if (kind == .boolean) boolean else other;
+        self.data_text = if (kind == .boolean) boolean_text else integer_text;
+        const carrier: t.Carrier = .{ .@"type" = self.data_type };
+        self.fixture.bindings[0].@"type" = self.data_type; self.fixture.bindings[0].carrier = carrier;
+        self.argument_types = .{ self.data_type, boolean }; self.physical_parameters = .{ carrier, boolean_carrier };
+        self.fixture.abis[0].argument_types = &self.argument_types; self.fixture.abis[0].physical_parameters = &self.physical_parameters;
+        self.fixture.abis[0].result = self.data_type; self.fixture.abis[0].result_carrier = carrier;
+        for ([_]usize{ 0, 2, 3, 4, 5 }) |index| {
+            self.fixture.registers[index].carrier = carrier;
+            self.fixture.registers[index].view = if (index == 3 or index == 4) void_type else self.data_type;
+            self.fixture.carriers[index] = if (index == 3 or index == 4) void_text else self.data_text;
+        }
+        self.copy_properties = .{.{ .key = "type", .value = .{ .string = self.data_text } }};
+        self.view_properties = .{.{ .key = "target", .value = .{ .string = self.data_text } }};
+        for ([_]usize{ 1, 4 }) |index| {
+            self.fixture.instructions[index].data = .{ .domain_copy = .{ .static_view = self.data_type } };
+            self.fixture.operations[index].view = self.data_text; self.fixture.operations[index].properties = &self.copy_properties;
+        }
+        self.type_rows = .{ directory.types[0], directory.types[1], .{ .id = integer_text, .kind = .scalar } };
+        self.parameter_types = .{ self.data_text, boolean_text }; self.function_rows = .{directory.functions[0]};
+        self.function_rows[0].parameter_types = &self.parameter_types; self.function_rows[0].return_type = self.data_text;
+        self.interpretation = directory; self.interpretation.types = &self.type_rows; self.interpretation.functions = &self.function_rows;
+    }
+};
+
+fn scalarAliases(kind: Scalar) !void {
+    var scalar: ScalarFixture = undefined; scalar.init(kind);
+    var c = context.Context{ .program = &scalar.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &scalar.interpretation);
+    const before = c.remaining;
+    var projected = try body.project(&c, @enumFromInt(0), &scalar.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projected.pending);
+    const graph = &projected.graph.?;
+    try std.testing.expect((try origin.validateGraph(c.allocator, &scalar.interpretation, function_text, graph, &budget)) == .valid);
+    // Both scalar inputs have the same physical type in the bool case. The
+    // independent oracle must still reach parameter0, never the branch flag.
+    var paths: u3 = 0;
+    for (graph.normal) |value| { const count = try copiesFromOriginal(graph, value, 0); try std.testing.expect(count == 1 or count == 2); paths |= @as(u3, 1) << @as(u2, @intCast(count)); }
+    try std.testing.expectEqual(@as(u3, 6), paths);
+    try std.testing.expectEqual(@as(usize, 2), graph.normal.len); try std.testing.expectEqual(@as(usize, 2), graph.exits.normal.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.language.len); try std.testing.expectEqual(@as(usize, 0), graph.exits.language.len);
+    var copies: usize = 0; var copy_heaps: usize = 0; var untyped: usize = 0;
+    for (graph.nodes, 0..) |node, index| {
+        if (node == .join and node.join.@"type" == null) untyped += 1;
+        if (node != .copy) continue;
+        copies += 1; try std.testing.expectEqualStrings(scalar.data_text, node.copy.@"type");
+        var owners: usize = 0;
+        for (graph.heaps) |heap| if (heap == .copy and heap.copy.value == index) { owners += 1; try std.testing.expectEqual(node.copy.heap, heap.copy.previous); };
+        try std.testing.expectEqual(@as(usize, 1), owners);
+    }
+    for (graph.heaps) |heap| { if (heap == .copy) copy_heaps += 1; }
+    try std.testing.expectEqual(@as(usize, 2), copies); try std.testing.expectEqual(copies, copy_heaps);
+    try std.testing.expectEqual(@as(usize, 2), untyped);
+    try std.testing.expect(before < wire.format.max_work and c.remaining < before and c.remaining > 0);
+}
+
+test "ordinary bool views keep original Data and both copy heaps without numeric evaluation" {
+    try scalarAliases(.boolean);
+}
+
+test "ordinary i32 views keep original Data and both copy heaps without numeric evaluation" {
+    try scalarAliases(.integer);
+}
+
+test "ordinary scalar aliases reject a different owned scalar carrier" {
+    for ([_]Scalar{ .boolean, .integer }) |kind| {
+        var scalar: ScalarFixture = undefined; scalar.init(kind);
+        scalar.fixture.registers[3].carrier = .{ .@"type" = if (kind == .boolean) other else boolean };
+        var c = context.Context{ .program = &scalar.fixture.program, .allocator = std.testing.allocator };
+        var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &scalar.interpretation);
+        var projected = try body.project(&c, @enumFromInt(0), &scalar.interpretation, &budget); defer projected.deinit();
+        try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+    }
+}
+
+test "ordinary scalar views keep the required copy archive strict" {
+    var scalar: ScalarFixture = undefined; scalar.init(.boolean);
+    for (2..4) |index| {
+        scalar.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = boolean } };
+        scalar.fixture.operations[index].view = boolean_text; scalar.fixture.operations[index].properties = &scalar.view_properties;
+        scalar.fixture.registers[index + 1].view = boolean; scalar.fixture.carriers[index + 1] = boolean_text;
+    }
+    scalar.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; scalar.fixture.registers[5].view = void_type;
+    scalar.fixture.operations[4].view = void_text; scalar.fixture.operations[4].properties = &private_copy_properties; scalar.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &scalar.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &scalar.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &scalar.interpretation, &budget); defer projected.deinit();
     try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
 }

@@ -560,15 +560,15 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
             .domain_view => {
                 const input = op.operands[0]; const output = op.result.?;
                 const from = &f.registers[@intFromEnum(input)]; const into = &f.registers[@intFromEnum(output)];
-                // A pure view keeps the original ordinary reference Data.
+                // A pure view keeps original ordinary reference/scalar Data.
                 // Its optional static annotation need not be in the public
                 // archive; ABI, copy and field type uses remain mandatory.
-                try c.charge(4);
-                const reference_alias = from.carrier == .@"type" and into.carrier == .@"type" and
+                try c.charge(5);
+                const data_alias = from.carrier == .@"type" and into.carrier == .@"type" and
                     from.carrier.@"type" == into.carrier.@"type" and
-                    v.types[@intFromEnum(from.carrier.@"type")].kind == .reference;
-                if ((!reference_alias and from.view != into.view) or !std.meta.eql(from.carrier, into.carrier)) { builder.pending = .view; break; }
-                if (!reference_alias) _ = try builder.view(f, output) orelse break;
+                    (v.types[@intFromEnum(from.carrier.@"type")].kind == .reference or v.types[@intFromEnum(from.carrier.@"type")].kind == .scalar);
+                if ((!data_alias and from.view != into.view) or !std.meta.eql(from.carrier, into.carrier)) { builder.pending = .view; break; }
+                if (!data_alias) _ = try builder.view(f, output) orelse break;
                 try cfg.define(output, cfg.registerRef(input), flow.control);
             },
             .eh_pack => {
