@@ -547,6 +547,63 @@ ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out
   return deriveProjectedEffects(p,fn,raw,out,e,diagnostics,witnesses);
 }
 
+DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,const V4::Graph &current,const V4::Graph &fixed,Error &e){
+  using Status=DirectThrowPotential;const V4::Charge charge=[&](size_t n){return work(p,e,n);};V4::Detail::Meter meter(charge);
+  const auto pending=[&]{return meter.good&&e.message.empty()?Status::Pending:Status::Invalid;};
+  if(!meter.spend(p.functions.size()+6)||!meter.text(cfg.role.size()))return Status::Invalid;
+  bool owned=false;for(const auto &fn:p.functions)owned|=&fn==&cfg;
+  if(!owned||cfg.role!="source"||cfg.blocks.empty()||current.calls.size()!=1||fixed.calls.size()!=1)return pending();
+  const auto &call=current.calls[0],&bound=fixed.calls[0];
+  if(!meter.equal(call.functionId,bound.functionId)||!meter.equal(call.site,bound.site))return pending();
+  if(!meter.lookup(p.fixedEffects.size(),call.functionId.size())||!meter.spend(2))return Status::Invalid;const auto permission=p.fixedEffects.find(call.functionId);
+  if(permission==p.fixedEffects.end()||!permission->second.mayThrow)return pending();
+  if(!meter.lookup(p.sourceBlocks.size(),cfg.id.size())||!meter.lookup(p.sourceRegisters.size(),cfg.id.size())||!meter.lookup(p.registerViews.size(),cfg.id.size()))return Status::Invalid;
+  const auto blocks=p.sourceBlocks.find(cfg.id),registers=p.sourceRegisters.find(cfg.id);const auto views=p.registerViews.find(cfg.id);
+  if(blocks==p.sourceBlocks.end()||registers==p.sourceRegisters.end()||views==p.registerViews.end()||blocks->second.size()!=cfg.blocks.size()||
+    registers->second.size()!=cfg.carriers.size()||views->second.size()!=cfg.carriers.size())return pending();
+  // Complete Source correspondence is owned by these directories, not inferred
+  // from a call signature. Inspect the actual entire CFG for interception.
+  const Operation *invocation=nullptr;size_t incoming=0;
+  for(size_t b=0;b<cfg.blocks.size();++b)for(const auto &op:cfg.blocks[b].operations){
+    if(!meter.spend(op.successors.size()+2)||!meter.text(op.name.size()))return Status::Invalid;
+    if(op.name=="enter_handler"||op.name=="catch_bind"||op.name=="finally_enter"||op.name=="route"||op.name=="pack"||op.name=="unpack"||op.name=="invoke_method"||op.name=="invoke_indirect")return pending();
+    if(op.name=="invoke"){if(invocation||b!=0||&op!=&cfg.blocks[0].operations.back())return pending();invocation=&op;}
+  }
+  if(!invocation||invocation->successors.size()!=2||invocation->successors[0]==invocation->successors[1])return pending();
+  if(!meter.spend(4))return Status::Invalid;const auto target=field(invocation->properties,"function_id").getAsString().value_or("");
+  if(!meter.equal(target,call.functionId)||!meter.text(call.site.size()+cfg.id.size()))return pending();
+  llvm::StringRef site(call.site);if(!site.consume_front(cfg.id)||!site.consume_front("/bb")||!site.consume_back("/0")||site.empty())return pending();
+  uint64_t sourceBlock=0;if((site.size()>1&&site.front()=='0')||site.getAsInteger(10,sourceBlock)||sourceBlock!=blocks->second[0]||sourceBlock==noRegister)return pending();
+  const auto language=invocation->successors[1];if(language>=cfg.blocks.size())return pending();const auto &exit=cfg.blocks[language];
+  if(!meter.spend(exit.parameters.size()+exit.operations.size()+3)||exit.parameters.size()!=1||exit.operations.size()!=1)return pending();
+  const auto &returned=exit.operations[0];
+  if(!meter.text(returned.name.size())||!meter.spend(returned.operands.size()+returned.successors.size()+3))return Status::Invalid;
+  if(returned.name!="return_throw"||returned.result!=noRegister||!returned.successors.empty()||returned.operands.size()!=1||returned.operands[0]!=exit.parameters[0])return pending();
+  for(const auto &block:cfg.blocks)for(const auto &op:block.operations){if(!meter.spend(op.successors.size()+1))return Status::Invalid;
+    for(auto successor:op.successors)if(successor==language)++incoming;}
+  if(incoming!=1)return pending();
+  const auto direct=[&](const V4::Graph &graph){
+    if(!meter.spend(7)||graph.version!=5||graph.calls[0].control!=0||graph.controls.empty()||graph.controls[0].kind!=V4::ControlKind::Entry||
+      graph.language.size()!=1||graph.exits.language.size()!=1)return false;
+    auto value=graph.language[0];size_t steps=0;
+    while(true){if(!meter.spend(5))return false;const auto &node=graph.nodes[value];if(node.kind!=V4::ValueKind::Join)break;
+      if(++steps>graph.nodes.size()||node.type||node.inputs.size()!=1)return false;value=node.inputs[0];}
+    if(!meter.spend(4))return false;const auto &payload=graph.nodes[value];
+    if(payload.kind!=V4::ValueKind::Call||payload.call!=0||payload.completion!=V4::Completion::Language||payload.type)return false;
+    auto control=graph.exits.language[0].control;steps=0;
+    while(true){if(!meter.spend(4))return false;const auto &row=graph.controls[control];if(row.kind!=V4::ControlKind::Join)break;
+      if(++steps>graph.controls.size()||row.inputs.size()!=1)return false;control=row.inputs[0];}
+    if(!meter.spend(3))return false;const auto &completion=graph.controls[control];
+    if(completion.kind!=V4::ControlKind::Call||completion.call!=0||completion.completion!=V4::Completion::Language)return false;
+    auto heap=graph.exits.language[0].heap;steps=0;
+    while(true){if(!meter.spend(4))return false;const auto &row=graph.heaps[heap];if(row.kind!=V4::HeapKind::Join)break;
+      if(++steps>graph.heaps.size()||row.inputs.size()!=1)return false;heap=row.inputs[0];}
+    if(!meter.spend(3))return false;const auto &world=graph.heaps[heap];
+    return world.kind==V4::HeapKind::Call&&world.call==0&&world.completion==V4::Completion::Language;
+  };
+  if(!direct(current)||!direct(fixed))return pending();return Status::Forwarded;
+}
+
 ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses){
   using Status=ProjectedReturnEffects;
   if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return Status::Invalid;
@@ -558,13 +615,21 @@ ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Js
   if(parsed.status==V4::ReadStatus::Open){p.returnOriginPending.insert(id);return Status::Open;}
   if(!need(parsed.status==V4::ReadStatus::Typed,e,parsed.reason?parsed.reason:"current body graph rejected"))return Status::Invalid;
   // Data completion reachability cannot narrow the full fixed mayThrow
-  // permission. Until that independent potential is routed through Source
-  // catch/finally, even a data graph with no language edge grants no proof.
-  // This intentionally also leaves caught potential throws pending.
+  // permission. Only a separately checked, unintercepted whole normalized
+  // language route may forward it. Caught/finally/other cases remain Pending.
+  bool fullThrowPotential=false;
   for(const auto &call:parsed.graph.calls){
     if(!work(p,e,call.functionId.size()/8+2))return Status::Invalid;const auto upper=p.fixedEffects.find(call.functionId);
     if(!need(upper!=p.fixedEffects.end(),e,"body call lacks complete fixed throw permission"))return Status::Invalid;
-    if(upper->second.mayThrow){p.returnOriginPending.insert(id);return Status::Open;}
+    if(upper->second.mayThrow){
+      const Function *cfg=nullptr;
+      for(const auto &candidate:p.functions){if(!work(p,e,(candidate.id.size()+id.size())/8+2))return Status::Invalid;if(candidate.id==id)cfg=&candidate;}
+      if(!cfg||out.ehControl||bound==state.graphs.end()){p.returnOriginPending.insert(id);return Status::Open;}
+      const auto forwarded=projectDirectThrowPotential(p,*cfg,parsed.graph,bound->second,e);
+      if(forwarded==DirectThrowPotential::Invalid)return Status::Invalid;
+      if(forwarded!=DirectThrowPotential::Forwarded){p.returnOriginPending.insert(id);return Status::Open;}
+      fullThrowPotential=true;
+    }
   }
   auto protocol=state.bodyDirectories.protocol(id,charge);if(!need(protocol.status==Scope::BuildStatus::Ready,e,"body protocol unavailable"))return Status::Invalid;
   Domain::Callbacks callbacks;callbacks.rootProtocol=std::move(protocol.protocol);callbacks.environments=&state.fixedDirectories.interpretation().environments;callbacks.constructions=&state.fixedDirectories.interpretation().constructions;
@@ -626,7 +691,7 @@ ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Js
   for(const auto &facet:result.summary.facets){if(!work(p,e,facet.size()/8+1))return Status::Invalid;
     if(facet=="allocation")out.allocation=true;else if(facet=="managedReference")out.managedReference=true;else if(facet=="ehControl")out.ehControl=true;else if(facet=="await")out.await=true;else if(facet=="lock")out.lock=true;else if(facet=="escape")out.escape=true;else if(facet=="unknownHost")out.unknownHost=true;
   }
-  out.mayThrow=result.summary.language;
+  out.mayThrow=fullThrowPotential||result.summary.language;
   if(!text(p,field(fn,"returnType"),e))return Status::Invalid;
   const auto returned=state.shapes.find(string(field(fn,"returnType")));
   if(returned!=state.shapes.end()&&returned->second.kind==V4::TypeKind::Function)for(auto ref:parsed.graph.normal)if(ref<result.summary.holdsEnvironment.size()&&(result.summary.holdsEnvironment[ref]||!result.summary.owners[ref].empty()))out.managedReference=out.escape=true;

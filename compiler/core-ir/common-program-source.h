@@ -2,6 +2,7 @@
 #pragma once
 #include "common-program.h"
 #include <functional>
+namespace CommonReturnOriginV4 {struct Graph;}
 namespace tsfg::commonProgram {
 using exception::field;using exception::items;using exception::string;
 inline constexpr llvm::StringLiteral sourceSchema="sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78";
@@ -77,6 +78,14 @@ bool deriveReturnOriginBody(Program &,const Json &,Json &,Effects &,Error &,Effe
 // Complete effects do not imply a return/holding certificate. A cold caller
 // must independently admit a physical void result before using EffectsComplete.
 enum class ProjectedReturnEffects { Invalid, Open, EffectsComplete, ReturnCertificateComplete };
+// A narrow exception-potential projection, not a return/holding certificate.
+// Inputs are independently typed current/fixed Graph5 and the Program-owned,
+// Source-corresponded CFG. Only an unintercepted direct language payload route
+// is supported; the complete fixed callee permission, never data liveness,
+// supplies the potential. The caller must still run Domain and full inclusion.
+enum class DirectThrowPotential {Invalid,Pending,Forwarded};
+DirectThrowPotential projectDirectThrowPotential(Program &,const Function &checkedCFG,
+  const CommonReturnOriginV4::Graph &current,const CommonReturnOriginV4::Graph &fixed,Error &);
 ProjectedReturnEffects deriveProjectedEffects(Program &,const Json &ownedFunction,const Json &currentBody,Effects &direct,Error &,EffectDiagnostics *,const std::vector<ReturnOriginAccessWitness> &);
 // Warm effects-only completion requires a trusted normalized physical-void CFG.
 ProjectedReturnEffects deriveOwnedEffects(Program &,const Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr);

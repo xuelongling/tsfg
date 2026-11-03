@@ -2,6 +2,7 @@
 // Direct Source-owned Graph5 metadata regression. No bytecode writer/loader,
 // Runtime State, executeStep, VM, Guest, numerical machine code or backend.
 #include "common-program-actual.h"
+#include "common-program-plan.h"
 #include "common-program-return-origin-domain-v4.h"
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -90,7 +91,82 @@ bool literalCopyCompletion(){
   llvm::errs()<<"PASS normalized literal copy preserves type/input and both receiver-completion controls\nPASS production Domain preserves normal/language literal liveness\nPASS non-normalized Source-only graph remains exact\n";return true;
 }
 }
+namespace {
+bool directThrowPotential(){
+  namespace V4=CommonReturnOriginV4;namespace Domain=CommonReturnOriginDomainV4;
+  for(const std::string mode:{"direct","swallow","changed-payload","handler","finally","multiple-predecessors","cycle","missing-source","budget"}){
+    Program p;Error e;const auto i32=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32");const auto payload="payload:"+schema.str();
+    const std::string caller="throw-caller",callee="throw-callee";const Json range=Object{{"start",10},{"end",20}};
+    const auto source=[&](const std::string &id){return Json(Object{{"id",id},{"name",id},{"kind","source"},{"signatureHash","sig"},{"sourcePath","/throw-model.ts"},
+      {"range",Object{{"start",1},{"end",100}}},{"nameRange",range},{"ownerType",nullptr},{"receiverBinding",nullptr},{"returnType",i32},
+      {"lexicalParent",nullptr},{"lexicalEnvironment",nullptr},{"activationEnvironment",nullptr},{"parameters",Array{}},{"bindings",Array{}},{"captures",Array{}},{"body",Array{}}});};
+    p.hir=Object{{"functions",Array{source(caller),source(callee)}},{"types",Array{Object{{"id",i32},{"name","i32"},{"kind","scalar"}}}},
+      {"modules",Array{}},{"globals",Array{}},{"environments",Array{}}};
+    p.representation=Object{{"functions",Array{Object{{"id",caller},{"parameters",Array{}},{"result",i32}},Object{{"id",callee},{"parameters",Array{}},{"result",i32}}}}};
+    const auto operation=[](std::string name,uint16_t result,std::string view,std::vector<uint16_t> args,Object props={},std::vector<uint16_t> targets={}){
+      Operation op;op.name=std::move(name);op.result=result;op.view=std::move(view);op.operands=std::move(args);op.properties=std::move(props);op.successors=std::move(targets);op.range={10,20};return op;};
+    const auto function=[&](const std::string &id){Function fn;fn.id=id;fn.name=id;fn.signature="sig";fn.path="/throw-model.ts";fn.role="source";fn.range={1,100};fn.resultCarrier=i32;return fn;};
+    auto callFn=function(caller);callFn.carriers={i32,payload};
+    callFn.blocks={{{},{operation("invoke",noRegister,"void",{},Object{{"function_id",callee},{"signature_hash","sig"}},{1,2})}},
+      {{0},{operation("func.return",noRegister,"void",{0})}},{{1},{operation("return_throw",noRegister,"void",{1})}}};
+    if(mode=="swallow")callFn.blocks[2].operations={operation("unreachable",noRegister,"void",{})};
+    if(mode=="changed-payload"){
+      callFn.carriers.push_back(i32);callFn.carriers.push_back(payload);
+      callFn.blocks[2].operations={operation("constant",2,i32,{},Object{{"token","9"},{"decimal","9"}}),operation("pack",3,payload,{2}),operation("return_throw",noRegister,"void",{3})};
+    }
+    if(mode=="handler"||mode=="finally")callFn.blocks[2].operations.insert(callFn.blocks[2].operations.begin(),operation(mode=="handler"?"enter_handler":"finally_enter",noRegister,"void",{}));
+    auto calleeFn=function(callee);calleeFn.carriers={i32};calleeFn.blocks={{{},{operation("constant",0,i32,{},Object{{"token","5"},{"decimal","5"}}),operation("func.return",noRegister,"void",{0})}}};
+    p.functions.push_back(std::move(callFn));p.functions.push_back(std::move(calleeFn));p.layouts.emplace(i32,Layout{4,4,0,{}});p.layouts.emplace(payload,Layout{8,8,1,{}});
+    // The immutable permission deliberately permits more than the literal-only
+    // callee's data completion. That difference must not erase its potential.
+    p.fixedEffects[callee].mayThrow=true;ActualCheck check{p,e};
+    if(!check.catalogs()||!check.graph())return failure("legal direct-throw normalized model",e);
+    for(const auto &fn:p.functions){std::map<std::pair<size_t,size_t>,std::string> paths;std::vector<size_t> incoming(fn.blocks.size());
+      for(size_t b=0;b<fn.blocks.size();++b)for(size_t n=0;n<fn.blocks[b].operations.size();++n){paths.emplace(std::pair{b,n},fn.path);for(auto to:fn.blocks[b].operations[n].successors)++incoming[to];}
+      if(!matchSourceCorrespondence(check,fn,paths,incoming,fn))return failure("complete owned model Source/SSA correspondence",e);
+      p.registerViews.emplace(fn.id,fn.carriers);
+    }
+    Json raw=nullptr,calleeRaw=nullptr;Effects direct,calleeDirect;const auto &owned=items(field(p.hir,"functions"));
+    if(!projectNormalizedReturnOriginBody(p,owned[0],p.functions[0],raw,direct,e)||!projectNormalizedReturnOriginBody(p,owned[1],p.functions[1],calleeRaw,calleeDirect,e))return failure("current normalized direct-throw projection",e);
+    V4::Directory directory;directory.functionId=caller;directory.types.emplace(i32,V4::TypeRow{V4::TypeKind::Scalar});
+    V4::FunctionRow row;row.kind=V4::FunctionKind::Source;row.returnType=i32;row.environmentMetadataComplete=true;
+    directory.functions.emplace(caller,row);directory.functions.emplace(callee,row);const V4::Charge charge=[&](size_t n){return p.charge(n);};
+    if(mode=="multiple-predecessors"||mode=="cycle"){
+      const auto control=size_t(*field(items(field(field(raw,"exits"),"language"))[0],"control").getAsInteger());
+      auto &join=(*raw.getAsObject()->getArray("controls"))[control];const auto &inputs=items(field(join,"inputs"));
+      if(!expect(field(join,"kind").getAsString()=="join"&&inputs.size()==1,"negative raw control starts from the genuine language join"))return false;
+      (*join.getAsObject())["inputs"]=mode=="cycle"?Json(Array{int64_t(control)}):Json(Array{0,inputs[0]});
+    }
+    auto current=V4::read(raw,directory,charge);
+    const Json boundRaw=Object{{"format",Object{{"family","tsfg.return-origin-graph-candidate"},{"version",5}}},
+      {"nodes",Array{Object{{"kind","call"},{"type",i32},{"call",0},{"completion","normal"}},Object{{"kind","call"},{"type",nullptr},{"call",0},{"completion","language"}}}},
+      {"heaps",Array{Object{{"kind","entry"}},Object{{"kind","call"},{"call",0},{"completion","normal"}},Object{{"kind","call"},{"call",0},{"completion","language"}}}},
+      {"controls",Array{Object{{"kind","entry"}},Object{{"kind","call"},{"call",0},{"completion","normal"}},Object{{"kind","call"},{"call",0},{"completion","language"}}}},
+      {"calls",Array{Object{{"functionId",callee},{"arguments",Array{}},{"environment",nullptr},{"callee",nullptr},{"receiver",nullptr},{"heap",0},{"control",0},{"site",caller+"/bb0/0"}}}},
+      {"normal",Array{0}},{"language",Array{1}},{"exits",Object{{"normal",Array{Object{{"heap",1},{"control",1}}}},{"language",Array{Object{{"heap",2},{"control",2}}}}}},{"accesses",Array{}}};
+    auto bound=V4::read(boundRaw,directory,charge);directory.functionId=callee;auto calleeGraph=V4::read(calleeRaw,directory,charge);
+    if(!expect(current.status==V4::ReadStatus::Typed&&bound.status==V4::ReadStatus::Typed&&calleeGraph.status==V4::ReadStatus::Typed,"current/fixed/callee model graphs pass independent production typed readers"))return false;
+    if(mode=="missing-source")p.sourceBlocks.erase(caller);if(mode=="budget")p.remaining=0;
+    const auto potential=projectDirectThrowPotential(p,p.functions[0],current.graph,bound.graph,e);
+    if(mode=="budget"){
+      if(!expect(potential==DirectThrowPotential::Invalid&&e.code=="core-ir-common-budget"&&p.fixedEffects.at(callee).mayThrow,"exhausted shared work is a hard error and never reduces fixed permission"))return false;continue;
+    }
+    if(mode!="direct"){
+      if(!expect(potential==DirectThrowPotential::Pending&&e.message.empty()&&p.fixedEffects.at(callee).mayThrow,"intercepted/changed/missing/ambiguous/cyclic routes remain Pending with full permission intact"))return false;continue;
+    }
+    if(!expect(potential==DirectThrowPotential::Forwarded&&e.message.empty(),"whole checked invoke-language to original payload return_throw proves independent full potential"))return false;
+    Domain::PublishedEffects permission;permission.facets={"mayThrow"};Domain::Protocol protocol;protocol.kind=Domain::ProtocolKind::Ordinary;protocol.complete=true;
+    Domain::FixedFunctions functions;functions.emplace(callee,Domain::FixedFunction{&calleeGraph.graph,&permission,protocol});Domain::Callbacks callbacks;callbacks.rootProtocol=protocol;
+    const Domain::ActualShape scalar{V4::TypeKind::Scalar,false,{}};callbacks.actualType=[&](llvm::StringRef type,const V4::Charge &paid)->const Domain::ActualShape *{return paid(type.size()/8+1)&&type==i32?&scalar:nullptr;};
+    auto data=Domain::solve(current.graph,functions,callbacks,charge);
+    if(!expect(data.status==Domain::Status::Solved&&data.summary.normal&&!data.summary.language&&p.fixedEffects.at(callee).mayThrow&&potential==DirectThrowPotential::Forwarded,
+        "data language completion can be false while independently forwarded complete permission stays true"))return false;
+  }
+  llvm::errs()<<"PASS direct normalized language route forwards complete fixed mayThrow potential\nPASS intercepted/changed/ambiguous/cyclic/missing routes remain Pending and shared budget errors stay hard\nPASS potential remains independent of narrower data Domain language completion\n";return true;
+}
+}
 int main(int argc,char **argv){
+  if(argc==2&&llvm::StringRef(argv[1])=="--direct-throw-potential")return directThrowPotential()?0:1;
   if(argc==2&&llvm::StringRef(argv[1])=="--literal-copy")return literalCopyCompletion()?0:1;
   if(argc!=4){llvm::errs()<<"Usage: projection-test <original820b.core4.mlir> <originalpub4.json> <new-raw-graph-diagnostic.json>\n";return 2;}
   auto coreInput=llvm::MemoryBuffer::getFile(argv[1]),fixedInput=llvm::MemoryBuffer::getFile(argv[2]);
