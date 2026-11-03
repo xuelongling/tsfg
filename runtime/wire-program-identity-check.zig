@@ -18,6 +18,46 @@ const Raw = struct { bytes: []const u8 };
 const Hex = struct { value: t.Hash };
 const none = std.math.maxInt(usize);
 
+// Source3's accepted constructorParameters rule adds top-level undefined to
+// every default's incoming type. A closed incoming domain without it therefore
+// needs no initializer expression. This is a declaration fact, never an Actual
+// argument restriction: as/Cell/Heap transport may still carry actual undefined.
+fn requiredParameterDomain(c: *Context, types: []const tables.CommonType, id: t.TypeRef, depth: usize) Error!bool {
+    try c.step();
+    // Reuse the semantic-label boundary's existing depth bound. A cyclic or
+    // otherwise unclosed union supplies no parameter-step proof.
+    if (depth > 128) return false;
+    const row = types[@intFromEnum(id)];
+    return switch (row.kind) {
+        .@"undefined", .unknown, .@"void" => false,
+        .@"union" => blk: {
+            if (row.members.len == 0) break :blk false;
+            for (row.members) |member| {
+                try c.step();
+                if (!try requiredParameterDomain(c, types, member, depth + 1)) break :blk false;
+            }
+            break :blk true;
+        },
+        // Only top-level union alternatives belong to the parameter domain;
+        // an Array element, field or function result is not that parameter.
+        else => true,
+    };
+}
+
+// A narrow typed declaration boundary, also used by its pure metadata tests.
+// References and complete Source3 identities are owned by the enclosing check;
+// ABI/binding/ordinal/origin and parameter-property joins remain independently
+// mandatory in layout/construction checks. No signature is an admission token.
+pub fn requiredConstructorArguments(c: *Context, types: []const tables.CommonType, declared: []const t.TypeRef, incoming: []const t.TypeRef, minimum: usize) Error!bool {
+    try c.charge(3);
+    if (minimum != declared.len or incoming.len != declared.len) return false;
+    for (declared, incoming) |parameter, argument| {
+        try c.charge(2);
+        if (parameter != argument or !try requiredParameterDomain(c, types, argument, 0)) return false;
+    }
+    return true;
+}
+
 const LabelKey = struct { index: usize, units: []u16, count: usize };
 fn lessLabel(_: void, a: LabelKey, b: LabelKey) bool { return std.mem.order(u16, a.units[0..a.count], b.units[0..b.count]) == .lt; }
 // Both current and archived semantic identities use Source's UTF16 label order.
@@ -711,12 +751,32 @@ const Common = struct {
         }
         const scope=v.authority.fixed_publication.stable_scope; self.scope_types=try indexes(c,scope.types,"id");
         for(v.types,0..) |_,i| try self.shape(i,void_index);
-        // Declaration identities now include both existing Source3 fields.
-        // They still do not supply independently admitted parameter steps;
-        // retain the separate no-authority result for that missing evidence.
+        // Source3 required identifier parameters have only the already joined
+        // raw-to-binding transport. Defaults and unclosed domains still lack
+        // independent step evidence; inherited forwarding remains Pending.
+        // All complete TypeIDs and fixed/current scopes are checked below
+        // before this local missing-evidence result can be returned.
         for(scope.types) |row| { try c.step(); if(row.shape==.nominal and row.shape.nominal.construction.argument_signature!=null) {
-            if(self.fdi_pending==null) { try c.charge(v.types.len); self.fdi_pending=try c.allocator.alloc(bool,v.types.len); @memset(self.fdi_pending.?,false); }
-            for(v.types,0..) |current,i| { try c.step(); if(std.mem.eql(u8,&row.id,&current.id))self.fdi_pending.?[i]=true; }
+            const inputs=row.shape.nominal.construction.argument_signature.?;
+            for(v.types,0..) |current,i| { try c.step(); if(!std.mem.eql(u8,&row.id,&current.id))continue;
+                try c.charge(4);
+                if(current.kind!=.reference and current.kind!=.value)return error.InvalidShape;
+                const ctor=v.members.constructions[self.ctors[i]]; var direct=false;
+                switch(ctor.kind) {
+                    .@"implicit-base" => { try c.charge(2); direct=inputs.minimum_argument_count==0 and inputs.argument_types.len==0; },
+                    .explicit => {
+                        try c.charge(3);
+                        const function=ctor.function orelse return error.InvalidShape;
+                        const abi=v.abis[@intFromEnum(c.program.functions[@intFromEnum(function)].abi)];
+                        direct=try requiredConstructorArguments(c,v.types,ctor.signature.parameters,abi.argument_types,inputs.minimum_argument_count);
+                    },
+                    .@"implicit-derived" => {},
+                }
+                if(!direct) {
+                    if(self.fdi_pending==null) { try c.charge(v.types.len); self.fdi_pending=try c.allocator.alloc(bool,v.types.len); @memset(self.fdi_pending.?,false); }
+                    self.fdi_pending.?[i]=true;
+                }
+            }
         } }
         for(v.types,0..) |row,i| {
             try c.step();
