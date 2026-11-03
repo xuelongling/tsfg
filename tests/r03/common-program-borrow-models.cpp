@@ -2,6 +2,7 @@
 // Synthetic normalized actual graphs. These tests exercise the production
 // actual executor and borrow adapter, not Source acceptance or VM execution.
 #include "common-program-borrows.h"
+#include "common-program-source.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace tsfg::commonProgram;
 namespace {
@@ -38,6 +39,57 @@ struct Model {
     }
     for(const auto &[id,g]:globalRows)c.globals.emplace(id,&g);
   }
+  // Synthetic declaration/permission premises only, not Source admission.
+  // The callee's independent void graph passes the normal owning fixed-group
+  // reader; its real normalized body must then obtain a complete certificate.
+  // The entry graph stays absent and receives no return-origin authority.
+  bool admitDirectCallee(bool structural){
+    const Json range=Object{{"start",40},{"end",50}};
+    const auto typeRow=[](const std::string &id,const std::string &name,const std::string &kind){
+      const auto label=canonical(Object{{"kind",kind},{"name",name}});
+      return Json(Object{{"id",id},{"name",name},{"kind",kind},{"semanticLabel",label},
+        {"semanticShape",Object{{"label",label},{"kind",kind}}}});
+    };
+    std::map<std::string,Json> types;
+    types.emplace(i32,typeRow(i32,"i32","scalar"));types.emplace(u32,typeRow(u32,"u32","scalar"));types.emplace("void",typeRow("void","void","void"));
+    const auto arrayLabel=canonical(Object{{"kind","array"},{"element",field(types.at(i32),"semanticLabel")}});
+    types.emplace(array,Object{{"id",array},{"kind","array"},{"elementType",i32},{"semanticLabel",arrayLabel},
+      {"semanticShape",Object{{"label",arrayLabel},{"kind","array"},{"elementType",field(types.at(i32),"semanticLabel")}}}});
+    Array typeRows,functions;
+    for(auto &[id,row]:types)typeRows.push_back(std::move(row));
+    for(auto &[id,row]:source){
+      auto &owned=*row.getAsObject();owned["kind"]="source";owned["declKey"]="synthetic:"+id;owned["access"]="private";
+      owned["name"]=id;owned["sourceBinding"]="synthetic:"+id;owned["sourcePath"]="/synthetic-common-borrow.ts";
+      owned["range"]=Object{{"start",0},{"end",100}};owned["nameRange"]=range;owned["bindings"]=Array{};
+      owned["returnType"]="void";owned["parameterInitialization"]=Object{{"steps",Array{}}};
+      owned["body"]=Array{Object{{"kind","return"},{"range",range}}};functions.push_back(row);
+    }
+    p.hir=Object{{"rootFile","/synthetic-common-borrow.ts"},{"types",std::move(typeRows)},{"functions",std::move(functions)},
+      {"environments",Array{}},{"globals",Array{}},{"hostImports",Array{}},{"hostContext",nullptr},{"modules",Array{}},
+      {"closure",Object{{"roots",Array{}},{"requiredRoots",Array{}}}},
+      {"snapshot",Object{{"payload",Object{{"compatibilityWitnesses",Array{}},{"entryCompatibilityRoots",Array{}}}}}}};
+    auto &upper=p.fixedEffects.at("callee");upper.managedReference=true;upper.parameters[0].write=structural;
+    Array accesses;
+    if(structural){accesses.push_back(Object{{"values",Array{0}},{"flag","structural"},{"control",0}});
+      accesses.push_back(Object{{"values",Array{0}},{"flag","write"},{"control",0}});}
+    const Json fixed=Object{{"format",Object{{"family","tsfg.return-origin-graph-candidate"},{"version",5}}},
+      {"nodes",Array{Object{{"kind","parameter"},{"type",array},{"index",0}}}},
+      {"heaps",Array{Object{{"kind","entry"}}}},{"controls",Array{Object{{"kind","entry"}}}},{"calls",Array{}},
+      {"normal",Array{}},{"language",Array{}},{"exits",Object{{"normal",Array{Object{{"heap",0},{"control",0}}}},{"language",Array{}}}},
+      {"accesses",std::move(accesses)}};
+    Json scope=nullptr;if(!publicationScope(p,scope,e))return false;
+    (*scope.getAsObject())["storage"]=Object{{"fields",Array{}},{"results",Array{}}};
+    p.publication=Object{{"scope",std::move(scope)},{"contracts",Array{Object{{"functionId","callee"},{"returnOrigins",fixed}},Object{{"functionId","entry"},{"returnOrigins",nullptr}}}}};
+    if(!prepareReturnOriginContracts(p,e))return false;
+    const auto &callee=p.functions[1];std::vector<uint16_t> registers;
+    for(size_t reg=0;reg<callee.carriers.size();++reg){c.views.emplace(callee.id+"/"+std::to_string(reg),callee.carriers[reg]);registers.push_back(uint16_t(reg));}
+    p.registerViews.emplace(callee.id,callee.carriers);p.sourceRegisters.emplace(callee.id,std::move(registers));
+    Json body=nullptr;Effects derived;
+    if(!projectNormalizedReturnOriginBody(p,source.at("callee"),callee,body,derived,e)||
+      deriveProjectedEffects(p,source.at("callee"),body,derived,e,nullptr,{})!=ProjectedReturnEffects::ReturnCertificateComplete||
+      !finishReturnOriginProofs(p,e))return false;
+    return fixedReturnOriginAvailable(p,"callee")&&!fixedReturnOriginAvailable(p,"entry");
+  }
   bool verify(){return c.solve(false)&&verifyCommonBorrows(c);}
   bool rejected(llvm::StringRef message){return !verify()&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains(message)&&e.path=="/synthetic-common-borrow.ts"&&e.range.start==40&&e.range.end==50;}
   std::vector<Operation> local(){return {
@@ -48,9 +100,11 @@ bool direct(bool structural,bool actualMutation){
   Model m;auto entry=fn("entry"),callee=fn("callee",{0});entry.blocks[0].operations=m.local();
   entry.blocks[0].operations.push_back(op("invoke",noRegister,"",{3},Object{{"function_id","callee"}},{1,2}));
   entry.blocks.push_back({{}, {op("readspan_length",5,m.u32,{4}),op("func.return")}});entry.blocks.push_back({{6},{op("unreachable")}});
-  if(actualMutation)callee.blocks[0].operations={op("constant",1,m.u32,{},Object{{"decimal","0"}}),op("array_resize",noRegister,"",{0,1})};
+  callee.carriers={m.array};callee.resultCarrier="void";callee.role="source";callee.signature="signature";
+  if(actualMutation){callee.carriers.push_back(m.u32);callee.blocks[0].operations={op("constant",1,m.u32,{},Object{{"decimal","0"}}),op("array_resize",noRegister,"",{0,1})};}
   callee.blocks[0].operations.push_back(op("func.return"));m.p.functions={std::move(entry),std::move(callee)};m.bind({{"entry",{}},{"callee",{m.array}}});
   m.p.fixedEffects["callee"].parameters[0].structural=structural;
+  if(!m.admitDirectCallee(structural)||!m.c.callGraph())return false;
   return structural?m.rejected("active ReadSpan"):m.verify();
 }
 bool dispatch(bool indirect,bool top){
@@ -201,6 +255,7 @@ int main(int argc,char **argv){
   test("fixed direct upper is not narrowed by a pure current callee",direct(true,false));
   test("direct nonstructural ordinary call remains legal",direct(false,false));
   test("actual callee structural effect crosses normal completion",direct(true,true));
+  if(argc==2&&llvm::StringRef(argv[1])=="--direct-contracts")return ok?0:1;
   test("all method fixed arms contribute structural permission",dispatch(false,false));
   test("all indirect fixed targets contribute structural permission",dispatch(true,false));
   test("TOP indirect effect leaves owner proof pending",dispatch(true,true));
