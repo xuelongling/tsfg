@@ -566,6 +566,8 @@ const Common = struct {
     c:*Context, v:*const tables.CommonTables,
     labels:[]?[]u8, shapes:[]?[]u8, states:[]u2,
     fields:[]std.ArrayListUnmanaged(usize), edges:[]std.ArrayListUnmanaged(usize), ctors:[]usize,
+    scope_types:std.AutoHashMapUnmanaged(t.Hash,usize)=.empty,
+    label_types:std.StringHashMapUnmanaged(usize)=.empty,
     fdi_pending: ?[]bool = null,
     fn init(c:*Context,v:*const tables.CommonTables) Error!Common {
         const n=v.types.len; try c.charge(n*6);
@@ -583,6 +585,7 @@ const Common = struct {
         for(self.fields) |*p| p.deinit(self.c.allocator); for(self.edges) |*p| p.deinit(self.c.allocator);
         self.c.allocator.free(self.labels); self.c.allocator.free(self.shapes); self.c.allocator.free(self.states);
         self.c.allocator.free(self.fields); self.c.allocator.free(self.edges); self.c.allocator.free(self.ctors);
+        self.scope_types.deinit(self.c.allocator); self.label_types.deinit(self.c.allocator);
         if(self.fdi_pending) |pending| self.c.allocator.free(pending);
     }
     fn sortLabels(self:*Common,type_indexes:[]const usize) Error![]usize { return sortLabelIndexes(self.c,type_indexes,self.labels); }
@@ -619,7 +622,44 @@ const Common = struct {
         if(row.base) |base| { try out.raw("\"base\":"); try out.value(try self.add(index,@intFromEnum(base))); try out.raw(","); }
         if(row.kind==.reference or row.kind==.value) {
             try c.require(self.ctors[index]!=none); const ctor=v.members.constructions[self.ctors[index]];
-            try out.raw("\"construction\":{\"access\":"); try out.value(ctor.access); try out.raw(",\"parameters\":[");
+            const scope=v.authority.fixed_publication.stable_scope;
+            const archived=scope.types[self.scope_types.get(row.id) orelse return error.InvalidShape];
+            try c.require(archived.shape==.nominal); const declaration=archived.shape.nominal;
+            try textEqual(c,@tagName(row.kind),@tagName(declaration.kind));
+            try textEqual(c,self.labels[index].?,archived.label); try textEqual(c,self.labels[index].?,declaration.label);
+            try c.require(ctor.access==declaration.construction.access and ctor.signature.parameters.len==declaration.construction.parameters.len);
+            for(ctor.signature.parameters,declaration.construction.parameters) |parameter,label_text| {
+                try c.step(); try textEqual(c,self.labels[@intFromEnum(parameter)].?,label_text);
+            }
+            try textEqual(c,self.labels[index].?,declaration.construction.return_type);
+            try out.raw("\"construction\":{\"access\":"); try out.value(ctor.access);
+            if(declaration.construction.argument_signature) |inputs| {
+                // These are the fixed declaration's exact incoming labels,
+                // joined to owned current Types/ABI, never Actual-flow seeds.
+                if(ctor.function) |function| {
+                    const abi=v.abis[@intFromEnum(c.program.functions[@intFromEnum(function)].abi)];
+                    try c.require(abi.argument_types.len==inputs.argument_types.len);
+                    for(abi.argument_types,inputs.argument_types) |incoming,label_text| {
+                        try c.step(); try textEqual(c,self.labels[@intFromEnum(incoming)].?,label_text);
+                    }
+                } else if(ctor.kind==.@"implicit-base") {
+                    try c.require(inputs.minimum_argument_count==0 and inputs.argument_types.len==0);
+                } else {
+                    const base=v.types[@intFromEnum(row.base orelse return error.InvalidShape)];
+                    const parent=scope.types[self.scope_types.get(base.id) orelse return error.InvalidShape];
+                    try c.require(parent.shape==.nominal);
+                    const inherited=parent.shape.nominal.construction.argument_signature orelse return error.InvalidShape;
+                    try c.require(inputs.minimum_argument_count==inherited.minimum_argument_count and inputs.argument_types.len==inherited.argument_types.len);
+                    for(inputs.argument_types,inherited.argument_types) |actual,expected| { try c.step(); try textEqual(c,actual,expected); }
+                }
+                try out.raw(",\"argumentTypes\":[");
+                for(inputs.argument_types,0..) |label_text,i| {
+                    try c.charge(1+label_text.len/64); const owned=self.label_types.get(label_text) orelse return error.InvalidReference;
+                    if(i!=0)try out.raw(","); try out.value(try self.add(index,owned));
+                }
+                try out.raw("],\"minimumArgumentCount\":"); try out.value(inputs.minimum_argument_count);
+            }
+            try out.raw(",\"parameters\":[");
             for(ctor.signature.parameters,0..) |p,i| { if(i!=0)try out.raw(","); try out.value(try self.add(index,@intFromEnum(p))); }
             try out.raw("],\"returnType\":"); try out.value(self.labels[index].?); try out.raw("},");
         }
@@ -663,13 +703,17 @@ const Common = struct {
             std.mem.sort(usize,fs.items,v.members.fields,struct{fn less(rows:[]const @import("wire-program-members.zig").CommonField,a:usize,b:usize)bool{return rows[a].ordinal<rows[b].ordinal;}}.less);
         }
         for(v.members.constructions,0..) |ctor,i| { try c.step(); const owner=@intFromEnum(ctor.owner); try c.require(self.ctors[owner]==none); self.ctors[owner]=i; }
-        var labels=std.StringHashMapUnmanaged(void){}; defer labels.deinit(c.allocator); var void_index:usize=none;
-        for(v.types,0..) |row,i| { try c.step(); const text=try self.label(i,0); try c.charge(1+text.len/64); try c.require(!(try labels.getOrPut(c.allocator,text)).found_existing); if(row.kind==.@"void")void_index=i; }
+        var void_index:usize=none;
+        for(v.types,0..) |row,i| {
+            try c.step(); const text=try self.label(i,0); try c.charge(1+text.len/64);
+            const found=try self.label_types.getOrPut(c.allocator,text); try c.require(!found.found_existing); found.value_ptr.*=i;
+            if(row.kind==.@"void")void_index=i;
+        }
+        const scope=v.authority.fixed_publication.stable_scope; self.scope_types=try indexes(c,scope.types,"id");
         for(v.types,0..) |_,i| try self.shape(i,void_index);
-        // The original shape can retain FDI metadata, but the current cold
-        // catalogue has no independently admitted parameter steps. Preserve
-        // every other check and defer only that unavailable identity evidence.
-        const scope=v.authority.fixed_publication.stable_scope;
+        // Declaration identities now include both existing Source3 fields.
+        // They still do not supply independently admitted parameter steps;
+        // retain the separate no-authority result for that missing evidence.
         for(scope.types) |row| { try c.step(); if(row.shape==.nominal and row.shape.nominal.construction.argument_signature!=null) {
             if(self.fdi_pending==null) { try c.charge(v.types.len); self.fdi_pending=try c.allocator.alloc(bool,v.types.len); @memset(self.fdi_pending.?,false); }
             for(v.types,0..) |current,i| { try c.step(); if(std.mem.eql(u8,&row.id,&current.id))self.fdi_pending.?[i]=true; }
@@ -691,7 +735,8 @@ const Common = struct {
                 const sorted=try self.sortLabels(graph.items); defer c.allocator.free(sorted);
                 var out=Json{.c=c}; defer out.deinit(); try out.raw("{\"graph\":[");
                 for(sorted,0..) |n,at| { if(at!=0)try out.raw(","); try out.raw(self.shapes[n].?); } try out.raw("],\"root\":"); try out.value(self.labels[i].?); try out.raw("}");
-                if(unavailable) { self.fdi_pending.?[i]=true; } else try equal(c,row.id,try parts(c,&.{"tsfg.common-program.type.v1\x00",out.bytes.items}));
+                if(unavailable)self.fdi_pending.?[i]=true;
+                try equal(c,row.id,try parts(c,&.{"tsfg.common-program.type.v1\x00",out.bytes.items}));
             }
             if(row.nominal_key) |key| {
                 try equal(c,row.runtime_key.?,try runtimeClass(c,key));
@@ -817,12 +862,7 @@ const Common = struct {
         for(scope.types) |row| {
             try c.step(); if(type_ids.get(row.id)) |i| {
                 try textEqual(c,self.labels[i].?,row.label);
-                if(row.shape==.nominal and row.shape.nominal.construction.argument_signature!=null) {
-                    // Compare all independently owned declaration components;
-                    // never fill current FDI data from an ABI or archive claim.
-                    try c.row(@TypeOf(row.shape.nominal)); var declaration=row.shape; declaration.nominal.construction.argument_signature=null;
-                    try sameValue(c,Raw{.bytes=self.shapes[i].?},declaration);
-                } else try sameValue(c,Raw{.bytes=self.shapes[i].?},row.shape);
+                try sameValue(c,Raw{.bytes=self.shapes[i].?},row.shape);
             } else try c.require(row.shape!=.nominal);
         }
         try self.scopeDirectories();

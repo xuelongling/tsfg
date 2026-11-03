@@ -82,7 +82,33 @@ bool CommonTableVerifier::label(uint32_t id,unsigned depth){
   if(!canonical(Json(std::move(out)),labels[id]))return false;labelState[id]=2;return true;
 }
 bool CommonTableVerifier::semanticTypes(){
-  std::set<std::string> uniqueLabels;for(uint32_t i=0;i<types->size();++i)if(!label(i)||!uniqueLabels.insert(labels[i]).second)return reject("Common duplicate semantic Type label");
+  std::map<std::string,uint32_t> labelTypes;
+  for(uint32_t i=0;i<types->size();++i){
+    if(!label(i)||!charge(labels[i].size()/8+1)||!labelTypes.emplace(labels[i],i).second)return reject("Common duplicate semantic Type label");
+  }
+  // The existing fixed archive carries Source3's declaration signature. Its
+  // labels are not Actual/ABI-capacity seeds or evidence for parameter steps.
+  // Match the current nominal and independently rebuild its basic signature
+  // before using the two additional declaration fields in its semantic hash.
+  const auto *authority=program.table(Table::Authority).getAsObject();
+  const auto *fixed=authority?authority->getObject("fixedPublication"):nullptr;
+  const auto *scope=fixed?fixed->getObject("stableScope"):nullptr;
+  const auto *scopeTypes=scope?scope->getArray("types"):nullptr;
+  if(!scopeTypes||scopeTypes->size()>4096)return reject("Common fixed declaration Type inventory");
+  std::vector<const Object *> declarations(types->size(),nullptr);std::string previous;
+  for(const auto &value:*scopeTypes){
+    const auto *row=value.getAsObject();
+    if(!charge()||!shape(row,{"id","label","shape"})||!identity(row->get("id"))||!textValue(row->get("label"),1048576)||
+      (!previous.empty()&&previous>=*row->getString("id")))return reject("Common fixed declaration Type identity/order");
+    previous=row->getString("id")->str();const auto current=typeIds.find(previous);if(current==typeIds.end())continue;
+    const auto &type=*(*types)[current->second].getAsObject();const auto kind=type.getString("kind");if(kind!="reference"&&kind!="value")continue;
+    const auto *given=row->getObject("shape");const auto *signature=given?given->getObject("construction"):nullptr;
+    const bool inputs=signature&&signature->get("minimumArgumentCount");
+    if(!given||given->getString("kind")!=kind||given->getString("label")!=labels[current->second]||row->getString("label")!=labels[current->second]||
+      !(inputs?shape(signature,{"access","parameters","returnType","minimumArgumentCount","argumentTypes"}):shape(signature,{"access","parameters","returnType"})))
+      return reject("Common fixed nominal declaration signature");
+    declarations[current->second]=signature;
+  }
   uint32_t voidType=UINT32_MAX;for(uint32_t i=0;i<types->size();++i){if(!charge())return false;if((*types)[i].getAsObject()->getString("kind")=="void")voidType=i;}
   std::vector<std::vector<uint32_t>> dependencies(types->size());
   for(uint32_t i=0;i<types->size();++i){if(!charge())return false;const auto &r=*(*types)[i].getAsObject();const auto kind=*r.getString("kind");Object s{{"label",labels[i]},{"kind",kind.str()}};
@@ -103,7 +129,40 @@ bool CommonTableVerifier::semanticTypes(){
       }if(r.get("methods")->kind()!=Json::Null)s["methods"]=std::move(ms);
       const auto c=typeConstruction[i];if(c==UINT32_MAX)return reject("Common nominal construction inventory");const auto &ctor=*(*constructions)[c].getAsObject();Array ps;
       for(const auto &p:*ctor.getObject("signature")->getArray("parameters")){if(!charge())return false;ps.push_back(add(uint32_t(*p.getAsInteger())));}
-      s["construction"]=Object{{"access",ctor.getString("access")->str()},{"parameters",std::move(ps)},{"returnType",labels[i]}};
+      Json construction=Object{{"access",ctor.getString("access")->str()},{"parameters",std::move(ps)},{"returnType",labels[i]}};
+      const auto *declaration=declarations[i];if(!declaration)return reject("Common nominal lacks its fixed declaration signature");
+      std::string basic,given;
+      if(!canonical(construction,basic)||!canonical(Object{{"access",*declaration->get("access")},{"parameters",*declaration->get("parameters")},
+        {"returnType",*declaration->get("returnType")}},given))return false;
+      if(basic!=given)return reject("Common current/fixed construction signature differs");
+      if(declaration->get("minimumArgumentCount")){
+        uint64_t minimum;const auto *arguments=declaration->getArray("argumentTypes");
+        if(!unsignedField(declaration,"minimumArgumentCount",64,minimum)||!arguments||arguments->size()!=ctor.getObject("signature")->getArray("parameters")->size()||
+          minimum>arguments->size())return reject("Common construction argument signature bounds");
+        Array incoming;for(const auto &argument:*arguments){
+          if(!charge()||!textValue(&argument,1048576))return reject("Common construction incoming semantic label");
+          const auto text=*argument.getAsString();if(!charge(text.size()/8+1))return false;const auto owned=labelTypes.find(text.str());
+          if(owned==labelTypes.end())return reject("Common construction incoming label has no current Type");incoming.push_back(add(owned->second));
+        }
+        if(const auto fn=ctor.getInteger("function")){
+          const auto &abi=*(*abis)[size_t(*fn)].getAsObject();const auto &raw=*abi.getArray("argumentTypes");
+          if(raw.size()!=incoming.size())return reject("Common constructor incoming ABI signature arity");
+          for(size_t n=0;n<raw.size();++n)if(!charge()||incoming[n].getAsString()!=labels[uint32_t(*raw[n].getAsInteger())])
+            return reject("Common constructor incoming ABI signature differs");
+        }else if(ctor.getString("kind")=="implicit-base"){
+          if(minimum||!incoming.empty())return reject("Common implicit base incoming signature");
+        }else{
+          if(r.get("base")->kind()==Json::Null)return reject("Common implicit derived signature lacks a base");
+          const auto *parent=declarations[index(r,"base")];std::string inherited;
+          if(!parent||!parent->get("minimumArgumentCount")||!parent->get("argumentTypes")||
+            !canonical(Object{{"minimumArgumentCount",*parent->get("minimumArgumentCount")},{"argumentTypes",*parent->get("argumentTypes")}},inherited))
+            return reject("Common implicit derived incoming signature lacks its base declaration");
+          if(!canonical(Object{{"minimumArgumentCount",int64_t(minimum)},{"argumentTypes",Json(Array(incoming))}},given))return false;
+          if(given!=inherited)return reject("Common implicit derived incoming signature differs from its base");
+        }
+        auto &signature=*construction.getAsObject();signature["minimumArgumentCount"]=int64_t(minimum);signature["argumentTypes"]=std::move(incoming);
+      }
+      s["construction"]=std::move(construction);
       const auto &key=*r.getObject("nominalKey");Array files;for(const auto &source:*sources){if(!charge())return false;const auto &f=*source.getAsObject();files.push_back(Object{{"path",f.getString("path")->str()},{"sha256",f.getString("hash")->substr(7).str()}});}
       if(!hash("tsfg.array-facts.runtime-class.v8",Object{{"files",std::move(files)},{"nominalKey",Object{{"sourcePath",(*sources)[index(key,"source")].getAsObject()->getString("path")->str()},
         {"declarationPath",Array(*key.getArray("declarationPath"))},{"category",key.getString("category")->str()}}}},*r.getString("runtimeKey")))return false;
