@@ -204,11 +204,17 @@ pub const Heap = struct {
     }
     pub fn view(self: *const Heap) HeapView { return .{.heap=self}; }
     pub fn put(self: *Heap, c: *Context, slot: Slot, value: Value, strong: bool) Error!bool {
-        try c.step(); const found=try self.entries.getOrPut(c.allocator,slot);
-        if(!found.found_existing) { found.value_ptr.*=.{}; found.value_ptr.*=try OwnedValue.clone(c,value); return true; }
-        if(!strong)return found.value_ptr.join(c,value);
-        if(try equal(c,found.value_ptr.view(),value))return false;
-        const replacement=try OwnedValue.clone(c,value);
+        try c.step();
+        // Store the effective relation once. Synthetic heap values do not pass
+        // through operationRegion; cloning and joining them must preserve the
+        // same context key rather than materialize a different representation.
+        var incoming=value;
+        if(!incoming.bottom() and !incoming.region.known)incoming.region=try relation(c,incoming);
+        const found=try self.entries.getOrPut(c.allocator,slot);
+        if(!found.found_existing) { found.value_ptr.*=.{}; found.value_ptr.*=try OwnedValue.clone(c,incoming); return true; }
+        if(!strong)return found.value_ptr.join(c,incoming);
+        if(try equal(c,found.value_ptr.view(),incoming))return false;
+        const replacement=try OwnedValue.clone(c,incoming);
         found.value_ptr.deinit(c.allocator); found.value_ptr.*=replacement; return true;
     }
     pub fn clone(c: *Context, source: HeapView) Error!Heap {

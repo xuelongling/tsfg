@@ -1507,10 +1507,16 @@ const Engine = struct {
                     }
                     if(saved.unresolved and normal) { selected.unknown=true; _=self.unknown(at.context); }
                     if(normal) {
-                        var after=try State.clone(self.c,state); defer after.deinit(self.c);
-                        if(op.data==.receiver_bind)try receiver_actual.bind(self.c,&after.frames,frame,selected.view());
-                        if(binding)try self.selectedReceiverOrigin(at,op.operands[0],&selected);
-                        try self.edge(graph,at,v.normal,&after,&.{selected});
+                        if(op.data==.receiver_bind) {
+                            var after=try State.clone(self.c,state); defer after.deinit(self.c);
+                            try receiver_actual.bind(self.c,&after.frames,frame,selected.view());
+                            try self.selectedReceiverOrigin(at,op.operands[0],&selected);
+                            try self.edge(graph,at,v.normal,&after,&.{selected});
+                        } else {
+                            // Only bind changes fork-local frames; edge owns its copy.
+                            if(binding)try self.selectedReceiverOrigin(at,op.operands[0],&selected);
+                            try self.edge(graph,at,v.normal,state,&.{selected});
+                        }
                     }
                     if(language)try self.receiverFailure(graph,at,v.language,state);
                 }
