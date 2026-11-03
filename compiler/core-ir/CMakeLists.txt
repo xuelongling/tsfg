@@ -3,8 +3,12 @@ cmake_minimum_required(VERSION 3.20)
 project(tsfg-core-ir LANGUAGES C CXX)
 
 set(TSFG_CORE_BUILD_ROLE "native" CACHE STRING "Core command build responsibility")
-if(NOT TSFG_CORE_BUILD_ROLE STREQUAL "native" AND NOT TSFG_CORE_BUILD_ROLE STREQUAL "static")
-  message(FATAL_ERROR "Core build role must be native or static")
+if(NOT TSFG_CORE_BUILD_ROLE STREQUAL "native" AND NOT TSFG_CORE_BUILD_ROLE STREQUAL "static" AND
+   NOT TSFG_CORE_BUILD_ROLE STREQUAL "metadata-models")
+  message(FATAL_ERROR "Core build role must be native, static or metadata-models")
+endif()
+if(TSFG_CORE_BUILD_ROLE STREQUAL "metadata-models" AND NOT TSFG_VERIFIED_SOURCE_SDK)
+  message(FATAL_ERROR "Metadata models require the independently qualified locked LLVM/MLIR SDK")
 endif()
 if(TSFG_CORE_BUILD_ROLE STREQUAL "static" AND
    (LLVM_TARGETS_TO_BUILD OR LLVM_EXPERIMENTAL_TARGETS_TO_BUILD OR TSFG_VERIFIED_SOURCE_SDK))
@@ -96,7 +100,13 @@ function(read_tsfg_core_sources role output)
   set(${output} "${_tsfg_sources}" PARENT_SCOPE)
 endfunction()
 read_tsfg_core_sources(common _tsfg_core_common)
-read_tsfg_core_sources(${TSFG_CORE_BUILD_ROLE} _tsfg_core_entry)
+if(TSFG_CORE_BUILD_ROLE STREQUAL "metadata-models")
+  # This host test supplies its own main. Neither production command entry nor
+  # any source from the native responsibility belongs to this target.
+  set(_tsfg_core_entry "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/r03/common-program-constructor-projection-models.cpp")
+else()
+  read_tsfg_core_sources(${TSFG_CORE_BUILD_ROLE} _tsfg_core_entry)
+endif()
 set(_tsfg_core_libraries
   MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
   MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect
@@ -105,8 +115,22 @@ set(_tsfg_core_libraries
   MLIRTargetLLVMIRExport MLIRBuiltinToLLVMIRTranslation
   MLIRLLVMToLLVMIRTranslation LLVMAsmParser LLVMCore)
 add_library(tsfg-core-common OBJECT ${_tsfg_core_common})
+target_include_directories(tsfg-core-common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(tsfg-core-common PUBLIC ${_tsfg_core_libraries})
-if(TSFG_CORE_BUILD_ROLE STREQUAL "static")
+if(TSFG_CORE_BUILD_ROLE STREQUAL "metadata-models")
+  # A separate metadata-only test responsibility, not a production Core command
+  # role or SDK admission path. Its invoker must qualify the SDK/toolchain and
+  # current catalog + test source before supplying this executable to Node.
+  function(add_tsfg_metadata_models)
+    set(USE_SHARED "")
+    set(LLVM_LINK_COMPONENTS Support)
+    add_llvm_executable(tsfg-common-metadata-models PARTIAL_SOURCES_INTENDED
+      DISABLE_LLVM_LINK_LLVM_DYLIB ${_tsfg_core_entry})
+    target_include_directories(tsfg-common-metadata-models PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(tsfg-common-metadata-models PRIVATE tsfg-core-common)
+  endfunction()
+  add_tsfg_metadata_models()
+elseif(TSFG_CORE_BUILD_ROLE STREQUAL "static")
   # The static role has no native adapter in its source or link graph.
   function(add_tsfg_static_core_tool)
     set(USE_SHARED "")
