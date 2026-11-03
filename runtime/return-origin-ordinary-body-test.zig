@@ -274,6 +274,10 @@ const ScalarFixture = struct {
 
 fn scalarAliases(kind: Scalar) !void {
     var scalar: ScalarFixture = undefined; scalar.init(kind);
+    try dataAliases(&scalar);
+}
+
+fn dataAliases(scalar: *ScalarFixture) !void {
     var c = context.Context{ .program = &scalar.fixture.program, .allocator = std.testing.allocator };
     var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &scalar.interpretation);
     const before = c.remaining;
@@ -334,5 +338,50 @@ test "ordinary scalar views keep the required copy archive strict" {
     var c = context.Context{ .program = &scalar.fixture.program, .allocator = std.testing.allocator };
     var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &scalar.interpretation);
     var projected = try body.project(&c, @enumFromInt(0), &scalar.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+fn stringFixture(fixture: *ScalarFixture) void {
+    // Reuse the complete owned fourth-slot ABI/SourcePlan fixture. Its opaque
+    // test identifier has no scalar meaning or claimed Source type digest.
+    fixture.init(.integer);
+    fixture.fixture.types[3].kind = .string; fixture.fixture.types[3].name = "String"; fixture.fixture.types[3].native_code = 0;
+    fixture.concrete[3].carrier.layout = .{ .byte_size = 8, .alignment = 8, .reference_count = 1 };
+    fixture.type_rows[2].kind = .string;
+    // body remains null and field_offsets remain empty. No constructor row,
+    // String operation, encoding or actual heap representation is introduced.
+}
+
+test "ordinary String views preserve parameter Data, both copies and full normal returns" {
+    var fixture: ScalarFixture = undefined; stringFixture(&fixture);
+    try std.testing.expect(fixture.fixture.types[3].kind == .string);
+    try std.testing.expectEqual(@as(u32, 8), fixture.concrete[3].carrier.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 8), fixture.concrete[3].carrier.layout.alignment);
+    try std.testing.expectEqual(@as(u16, 1), fixture.concrete[3].carrier.layout.reference_count);
+    try std.testing.expect(fixture.concrete[3].body == null and fixture.concrete[3].carrier.field_offsets.len == 0);
+    try dataAliases(&fixture);
+}
+
+test "ordinary String alias rejects a different owned physical carrier" {
+    var fixture: ScalarFixture = undefined; stringFixture(&fixture);
+    fixture.fixture.registers[3].carrier = boolean_carrier;
+    var c = context.Context{ .program = &fixture.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "ordinary String view keeps the required copy archive strict" {
+    var fixture: ScalarFixture = undefined; stringFixture(&fixture);
+    for (2..4) |index| {
+        fixture.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data_type } };
+        fixture.fixture.operations[index].view = fixture.data_text; fixture.fixture.operations[index].properties = &fixture.view_properties;
+        fixture.fixture.registers[index + 1].view = fixture.data_type; fixture.fixture.carriers[index + 1] = fixture.data_text;
+    }
+    fixture.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.fixture.registers[5].view = void_type;
+    fixture.fixture.operations[4].view = void_text; fixture.fixture.operations[4].properties = &private_copy_properties; fixture.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &fixture.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
     try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
 }
