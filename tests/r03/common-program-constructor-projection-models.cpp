@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
-// Direct Source-owned Graph5 metadata regression. No bytecode writer/loader,
-// Runtime State, executeStep, VM, Guest, numerical machine code or backend.
+// Source-owned Graph5 and cold metadata regressions. The cold-root mode uses
+// the production data normalizer/encoder; no Runtime, VM or machine backend.
+#include "bytecode-common.h"
+#include "bytecode-common-cold.h"
+#include "bytecode-common-packet.h"
 #include "common-program-actual.h"
 #include "common-program-plan.h"
 #include "common-program-return-origin-domain-v4.h"
@@ -8,10 +11,13 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <array>
 using namespace tsfg::commonProgram;
 namespace {
 bool expect(bool value,llvm::StringRef message){if(!value)llvm::errs()<<"FAIL "<<message<<'\n';return value;}
@@ -164,8 +170,121 @@ bool directThrowPotential(){
   }
   llvm::errs()<<"PASS direct normalized language route forwards complete fixed mayThrow potential\nPASS intercepted/changed/ambiguous/cyclic/missing routes remain Pending and shared budget errors stay hard\nPASS potential remains independent of narrower data Domain language completion\n";return true;
 }
+bool implicitColdRoot(const char *corePath,const char *packetPath){
+  namespace Wire=tsfg::wire;
+  auto core=llvm::MemoryBuffer::getFile(corePath),packet=llvm::MemoryBuffer::getFile(packetPath);
+  if(!expect(bool(core)&&bool(packet),"complete frozen Core and independent actual packet required"))return false;
+  if(!expect(digest((*core)->getBuffer())=="sha256:5cd0cdc9b331b137a94a4b21b77b7f84b077d4589bc3277e8474aac1fe451844"&&
+      digest((*packet)->getBuffer())=="sha256:cee5be1dee41599fa8e52bf0f9bcdb94963bcf534d3ff8ccd3f60d712eaa8e8f",
+      "this bounded regression uses the actual one-inline Source3 fixture and its retained packet"))return false;
+  mlir::DialectRegistry registry;tsfg::registerCoreDialect(registry);registerDialect(registry);
+  registry.insert<mlir::func::FuncDialect,mlir::cf::ControlFlowDialect>();mlir::MLIRContext context(registry);context.disableMultithreading();
+  auto module=mlir::parseSourceString<mlir::ModuleOp>((*core)->getBuffer(),&context);
+  if(!expect(bool(module)&&mlir::succeeded(mlir::verify(*module)),"actual Core parses and verifies through the owning dialect"))return false;
+  Wire::Program baseline;Wire::Error wireError;tsfg::bytecode::Bytes encoded;
+  if(!Wire::normalizeCommon(*module,baseline,wireError)||!Wire::encodeCommon(baseline,encoded,wireError)){
+    llvm::errs()<<"FAIL owning normalize/encode: "<<wireError.message<<'\n';return false;
+  }
+  const auto original=(*packet)->getBuffer();
+  if(!expect(encoded.size()==original.size()&&std::equal(encoded.begin(),encoded.end(),original.begin(),
+      [](uint8_t a,char b){return a==static_cast<uint8_t>(b);}),"complete production packet is byte exact"))return false;
+  size_t inlineCount=0;for(const auto &fn:baseline.functions)for(const auto &block:fn.blocks)for(const auto &op:block.instructions)inlineCount+=op.opcode==97;
+  if(!expect(inlineCount==1,"fixture covers one physical Base inline, not two alpha-equivalent instances"))return false;
+  llvm::errs()<<"PASS real Source3 fixture normalize/encode matches complete retained packet\n";
+
+  enum class Mutation {Owner,Field,View,Site,ExternalSSA,MissingPrefix};
+  struct Negative {const char *name;Mutation mutation;const char *gate;};
+  const std::array<Negative,6> negatives={{
+    {"wrong-owner",Mutation::Owner,"actual instruction differs from complete Source lowering"},
+    {"wrong-field",Mutation::Field,"Common initializer field owner/reference"},
+    {"wrong-logical-view",Mutation::View,"Common sourcePlan raw/semantic original static view differs"},
+    {"wrong-source-site",Mutation::Site,"actual instruction differs from complete Source lowering"},
+    {"external-ssa",Mutation::ExternalSSA,"actual operand changed Source evaluation/storage identity"},
+    {"missing-field-prefix",Mutation::MissingPrefix,"Common undefined actual register"}
+  }};
+  for(const auto &test:negatives){
+    Wire::Program changed=baseline;bool selected=false;
+    if(test.mutation==Mutation::Field||test.mutation==Mutation::MissingPrefix){
+      const auto count=changed.table(Wire::Table::Members).getAsObject()->getArray("fields")->size();
+      for(auto &fn:changed.functions){if(selected)break;for(auto &block:fn.blocks){if(selected)break;
+        for(auto op=block.instructions.begin();op!=block.instructions.end();++op){if(op->opcode!=102)continue;
+          if(test.mutation==Mutation::MissingPrefix)block.instructions.erase(op);
+          else{if(!expect(op->payload.size()==6,"actual initializer payload is construction16/field32"))return false;
+            for(size_t n=0;n<4;++n)op->payload[2+n]=uint8_t(count>>(8*n));}
+          selected=true;break;
+        }
+      }}
+    }else{
+      auto &abis=*changed.table(Wire::Table::Abis).getAsArray();
+      for(auto &abi:abis){if(selected)break;auto &plan=*abi.getAsObject()->getObject("sourcePlan");
+        auto &blocks=*plan.getArray("blocks");
+        for(auto &block:blocks){if(selected)break;for(auto &raw:*block.getAsObject()->getArray("operations")){
+          auto &op=*raw.getAsObject();if(op.getString("name")!="initialize_field")continue;
+          if(test.mutation==Mutation::Owner)(*op.getObject("properties"))["owner"]="synthetic:wrong-owner";
+          else if(test.mutation==Mutation::Site){auto &site=*op.getObject("source");site["start"]=*site.getInteger("start")+1;}
+          else if(test.mutation==Mutation::View){const auto reg=uint16_t(*op.getInteger("result"));(*plan.getArray("carriers"))[reg]="synthetic:wrong-view";}
+          else{const auto &entry=*blocks[0].getAsObject()->getArray("parameters");
+            if(!expect(entry.size()==2,"real Derived entry retains its external bool parameter"))return false;
+            (*op.getArray("operands"))[2]=entry[1];}
+          selected=true;break;
+        }}
+      }
+    }
+    if(!expect(selected,"negative selector must exist in the actual baseline; no absent-case coverage"))return false;
+    Wire::Error rejection;const bool accepted=Wire::verifyCommonProgram(changed,rejection);
+    if(!expect(!accepted&&rejection.message==test.gate,"mutated owned input must reject at its exact actual cold prerequisite")){
+      llvm::errs()<<test.name<<" accepted="<<accepted<<" actual="<<rejection.message<<" expected="<<test.gate<<'\n';return false;
+    }
+    llvm::errs()<<"PASS cold prerequisite "<<test.name<<": "<<rejection.message<<'\n';
+  }
+
+  // Replay every real cold prerequisite on the unchanged owned baseline. Only
+  // the remaining work at actual() entry varies; no Source map or proof is set.
+  // Three Program directories survive this API. The other three directories
+  // belong to its private ActualCheck and are not claimed as dynamic coverage.
+  size_t enteredBudget=0,probes=0;
+  const auto probe=[&](size_t budget,bool requireComplete)->std::optional<bool>{
+    size_t remaining=programWorkLimit;Wire::Error failure;Wire::CommonTableVerifier tables{baseline,failure,remaining};
+    if(!Wire::verifyCommonTables(tables)){llvm::errs()<<"FAIL baseline tables: "<<failure.message<<'\n';return std::nullopt;}
+    Wire::CommonCold cold{tables};cold.model.sourcePath=baseline.sourcePath;cold.model.sourceLength=baseline.sourceLength;
+    cold.model.sourceHash="sha256:"+tsfg::bytecode::hex(baseline.sourceHash);cold.model.inputIdentity="sha256:"+tsfg::bytecode::hex(baseline.input);
+    if(!cold.publicationBoundary()||!cold.metadata()||!cold.interfaces()||!cold.modules()||!cold.entries()||!cold.publication()||
+        !cold.graphs()||!cold.graphStructure()||!cold.construction()||!cold.targets()){
+      llvm::errs()<<"FAIL baseline cold prerequisite: "<<failure.message<<'\n';return std::nullopt;
+    }
+    std::string owner,id;size_t eligible=0;
+    for(const auto &ctor:*tables.constructions)if(field(ctor,"kind").getAsString()=="implicit-base"&&field(ctor,"function").getAsNull()&&items(field(ctor,"parameters")).empty()){
+      const auto &type=(*tables.types)[size_t(*field(ctor,"owner").getAsInteger())];if(!field(type,"base").getAsNull())continue;
+      ++eligible;owner=string(field(type,"id"));id="analysis-construction:"+string(field(ctor,"id"));
+    }
+    if(!expect(eligible==1&&cold.containsReceiverProtocol&&cold.model.internalOwners.empty()&&cold.model.internalTargets.empty()&&
+        !cold.model.operationSources.count(id),"one eligible implicit Base starts with no installed private root"))return std::nullopt;
+    tables.remaining=std::min(remaining,budget);if(requireComplete)enteredBudget=tables.remaining;
+    const bool accepted=cold.actual();++probes;
+    const bool hasOwner=cold.model.internalOwners.count(id),hasTarget=cold.model.internalTargets.count(owner),hasSources=cold.model.operationSources.count(id);
+    if(!expect(hasOwner==hasTarget&&hasOwner==hasSources,"all observable private-root directories are present together or absent together"))return std::nullopt;
+    if(hasOwner&&!expect(cold.model.internalTargets.at(owner)==id&&field(cold.model.internalOwners.at(id),"analysisOnly").getAsBoolean()==true&&
+        field(cold.model.internalOwners.at(id),"ownerType").getAsString()==owner&&!cold.model.operationSources.at(id).empty(),"installed directories retain their owned Base/root/source join"))return std::nullopt;
+    if(requireComplete){if(!expect(accepted&&hasOwner&&failure.message.empty(),"full remaining work completes the real cold actual API with its implicit root")){
+        llvm::errs()<<"actual="<<failure.message<<'\n';return std::nullopt;}}
+    else if(!accepted&&!expect(cold.failure.code=="core-ir-common-budget"||llvm::StringRef(failure.message).contains("budget"),"reduced work must fail as budget, not another semantic result")){
+      llvm::errs()<<"actual="<<failure.message<<'\n';return std::nullopt;
+    }
+    return hasOwner;
+  };
+  const auto full=probe(programWorkLimit,true),zero=probe(0,false);
+  if(!full||!zero||!expect(*full&&!*zero&&enteredBudget>0,"budget endpoints bracket root installation"))return false;
+  size_t absent=0,present=enteredBudget;
+  while(present-absent>1){const auto middle=absent+(present-absent)/2;const auto installed=probe(middle,false);if(!installed)return false;
+    if(*installed)present=middle;else absent=middle;
+  }
+  llvm::errs()<<"PASS one-inline implicit root and three observable directories are atomic across "<<probes<<" budget probes; lastAbsent="<<absent<<" firstPresent="<<present<<'\n';
+  llvm::errs()<<"UNTESTED two-inline alpha agreement/disagreement and three private ActualCheck directories; no formal Frontend or Runtime qualification\n";
+  return true;
+}
 }
 int main(int argc,char **argv){
+  if(argc==4&&llvm::StringRef(argv[1])=="--implicit-cold-root")return implicitColdRoot(argv[2],argv[3])?0:1;
   if(argc==2&&llvm::StringRef(argv[1])=="--direct-throw-potential")return directThrowPotential()?0:1;
   if(argc==2&&llvm::StringRef(argv[1])=="--literal-copy")return literalCopyCompletion()?0:1;
   if(argc!=4){llvm::errs()<<"Usage: projection-test <original820b.core4.mlir> <originalpub4.json> <new-raw-graph-diagnostic.json>\n";return 2;}
