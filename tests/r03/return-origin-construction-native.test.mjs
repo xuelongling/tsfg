@@ -15,3 +15,7 @@ test('pure checked receiver Body APIs preserve return and effect prefixes and Pe
 test('checked Source3 Body preserves actual receiver data behind an unarchived SSA view', async () => {
   await nativeUnit({ source: 'runtime/return-origin-source3-body-view-test.zig', prefix: 'r03-return-origin-source3-body-view-', expectedPasses: 1 });
 });
+
+test('pure child-frame construction Domain retains universal targets and proves inactive completion roots', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-child-construction-test.zig', prefix: 'r03-return-origin-child-construction-', expectedPasses: 15 });
+});

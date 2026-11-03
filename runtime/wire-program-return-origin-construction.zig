@@ -23,6 +23,8 @@ pub const Atom = struct {
 pub const Pending = enum { entry_state, fixed_call, data_protocol, heap_protocol, unknown_origin, parent_activation, frame_activation, scalar_initialization };
 pub const Initialization = struct { store: Ref, base: Atom, value: Atom };
 pub const FrameSummary = struct {
+    // A formal receiver's null new_target is a universal compatible-target
+    // parameter, not an owner/leaf choice or a known Actual allocation type.
     construction: ?model.Symbol = null, new_target: ?model.Symbol = null, parent: ?Ref = null,
     bound: []const Atom = &.{}, may_unbound: bool = false,
 };
@@ -46,6 +48,11 @@ const Fact = struct { atoms: Atoms = .empty, frames: Refs = .empty };
 const Binding = struct { unbound: bool = true, atoms: Atoms = .empty };
 const World = struct { live: bool = false, bindings: []Binding, initializations: Initializations = .empty };
 const Frame = struct { role: ?*const model.Construction = null, new_target: ?model.Symbol = null, parent: ?Ref = null };
+
+fn construction(directory: *const model.Directory, id: model.Symbol, budget: *Budget) Error!*const model.Construction {
+    for (directory.constructions) |*row| { try budget.step(); if (try budget.equal(row.id, id)) return row; }
+    return error.InvalidReference;
+}
 
 // Follow only literal provenance, independently of join/gate static views.
 // Bounded iterative closure: cycles without a literal seed prove nothing.
@@ -91,10 +98,6 @@ const Engine = struct {
     fn initializations(self:*Engine,into:*Initializations,source:[]const Initialization) Error!void {
         for(source) |*row| { try self.budget.spend(3); try self.add(Initialization,into,row.*); }
     }
-    fn construction(self: *Engine, id: model.Symbol) Error!*const model.Construction {
-        for (self.directory.constructions) |*row| { try self.budget.step(); if (try self.budget.equal(row.id, id)) return row; }
-        return error.InvalidReference;
-    }
     fn merge(self: *Engine, into: *World, from: *const World, frame: ?Ref, replacement: ?[]const Atom, unbound: ?bool) Error!void {
         try self.budget.step();
         if (!from.live) return;
@@ -110,12 +113,17 @@ const Engine = struct {
         try self.initializations(&into.initializations,from.initializations.items);
     }
     fn storeReady(self:*Engine,row:@FieldType(model.Heap,"store")) Error!bool {
-        const frame=self.input orelse return false; const before=&self.worlds[row.previous].bindings[frame];
-        if(before.unbound or before.atoms.items.len==0 or row.bases.len==0 or row.values.len==0)return false;
+        if(self.input==null or row.bases.len==0 or row.values.len==0)return false;
         for(row.bases) |id| {
             try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return false;
             for(value.atoms.items) |atom| {
-                try self.budget.step(); if(atom.category!=.object or atom.source!=.allocation or atom.source.allocation!=frame)return false;
+                try self.budget.step(); if(atom.category!=.object or atom.source!=.allocation)return false;
+                try self.budget.spend(4); const frame=atom.source.allocation;
+                const role=self.frames[frame].role orelse return false;
+                if(frame!=self.input.? and self.frames[frame].parent==null)return false;
+                if(!try self.budget.equal(row.view,role.owner))return false;
+                const before=&self.worlds[row.previous].bindings[frame];
+                if(before.unbound or before.atoms.items.len==0)return false;
                 var bound=false; for(before.atoms.items) |old| { try self.budget.step(); if(std.meta.eql(old,atom)) { bound=true; break; } }
                 if(!bound)return false;
             }
@@ -138,6 +146,54 @@ const Engine = struct {
     fn outcome(self: *Engine, index: Ref, source: *const World, frame: Ref, values: []const Atom, replacement: ?[]const Atom, unbound: ?bool) Error!void {
         try self.merge(&self.worlds[index], source, frame, replacement, unbound);
         try self.atoms(&self.results[index], values);
+    }
+    // Empty Data is not normally an absence proof. Only a finite, nonempty
+    // wrapper DAG whose every leaf is a resolved impossible receiver completion
+    // explains an inactive root. No roots, controls or prefixes are removed.
+    fn inactiveReceiverRoot(self: *Engine, root: Ref) Error!bool {
+        const length = self.graph.nodes.len;
+        try self.budget.spend(3 * length);
+        const marks = try self.allocator.alloc(u2, length); @memset(marks, 0);
+        const next = try self.allocator.alloc(usize, length); @memset(next, 0);
+        const stack = try self.allocator.alloc(Ref, length);
+        try self.budget.spend(3); marks[root] = 1; stack[0] = root; var count: usize = 1;
+        while (count != 0) {
+            try self.budget.step(); const id = stack[count - 1];
+            const inputs: []const Ref = switch (self.graph.nodes[id]) {
+                .receiver_value => |row| {
+                    // validateGraph already owns the receiver_action/carrier
+                    // join. Readiness below uses computed formal facts, not a
+                    // declaration, selected Actual entrance or upper bound.
+                    try self.budget.spend(4);
+                    const receiver_action_row = self.graph.heaps[row.action].receiver_action;
+                    if (self.worlds[row.action].live or !self.controls[receiver_action_row.control] or !self.worlds[receiver_action_row.previous].live) return false;
+                    try self.budget.spend(receiver_action_row.frames.len);
+                    for (receiver_action_row.frames) |operand| {
+                        const selected = self.values[operand].frames.items;
+                        if (selected.len == 0) return false;
+                        try self.budget.spend(selected.len);
+                        for (selected) |frame| if (self.frames[frame].role == null) return false;
+                    }
+                    // All active receiver operands were checked after Engine
+                    // closure. This resolved action has no possible completion.
+                    try self.budget.spend(2); marks[id] = 2; count -= 1; continue;
+                },
+                inline .join, .gate => |row| row.inputs,
+                .copy => |row| row.bases,
+                else => return false,
+            };
+            if (inputs.len == 0) return false;
+            if (next[id] == inputs.len) {
+                try self.budget.spend(2); marks[id] = 2; count -= 1; continue;
+            }
+            try self.budget.spend(2); const input = inputs[next[id]]; next[id] += 1;
+            switch (marks[input]) {
+                1 => return false, // A circular/uncomputed equation stays Need.
+                2 => {},
+                else => { try self.budget.spend(2); marks[input] = 1; stack[count] = input; count += 1; },
+            }
+        }
+        return true;
     }
     fn action(self: *Engine, index: Ref, row: @FieldType(model.Heap, "receiver_action")) Error!void {
         if (!self.controls[row.control] or !self.worlds[row.previous].live) return;
@@ -233,8 +289,16 @@ const Engine = struct {
                             parent = choices.items[0]; if (self.frames[parent.?].role == null) continue;
                         }
                         if (self.frames[index].role == null) {
+                            const role = try construction(self.directory, row.construction, self.budget);
+                            if (parent != null) {
+                                // Model's owning typed-carrier boundary already
+                                // proved the direct-base relation. Limit this
+                                // interpreter's new capability to implicit Base.
+                                try self.budget.step();
+                                if (role.kind != .implicit_base) { self.pending = .parent_activation; continue; }
+                            }
                             try self.budget.spend(4);
-                            self.frames[index] = .{ .role = try self.construction(row.construction), .new_target = if (parent) |id| self.frames[id].new_target else row.new_target, .parent = parent };
+                            self.frames[index] = .{ .role = role, .new_target = if (parent) |id| self.frames[id].new_target else row.new_target, .parent = parent };
                         }
                         try self.add(Ref, &into.frames, index);
                     },
@@ -313,7 +377,18 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
             if((entry==null and !effect_origins) or input==null or !row.initialize) { result.pending=.scalar_initialization; return result; }
             const function=entry_function.?;
             try budget.text(row.selector.len);
-            if(function.construction==null or !try budget.equal(function.construction.?.owner,row.view) or !std.mem.startsWith(u8,row.selector,"field:")) { result.pending=.scalar_initialization; return result; }
+            if(function.construction==null or !std.mem.startsWith(u8,row.selector,"field:")) { result.pending=.scalar_initialization; return result; }
+            // The owning Body boundary already joined the original FieldID to
+            // this construction's exact token/prefix. Here an implicit child
+            // owner is only a candidate; every live base must still prove its
+            // own bound allocation in storeReady, in the store's input World.
+            var owner=try budget.equal(function.construction.?.owner,row.view);
+            if(!owner and effect_origins) for(graph.nodes) |node| {
+                try budget.step(); if(node!=.receiver_frame or node.receiver_frame.parent==null)continue;
+                const role=try construction(directory,node.receiver_frame.construction,budget);
+                if(role.kind==.implicit_base and try budget.equal(role.owner,row.view)) { owner=true; break; }
+            };
+            if(!owner) { result.pending=.scalar_initialization; return result; }
             if (effect_origins) {
                 var owned = false;
                 for (directory.fields) |id| { try budget.step(); if (try budget.equal(id, row.selector[6..])) { owned = true; break; } }
@@ -340,12 +415,17 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
         // seed is never an actual entrance, allocation or initialization proof.
         try budget.spend(5); const function = entry_function.?;
         if (function.kind != .construction_body or function.construction == null) { result.pending = .entry_state; return result; }
-        const role = try engine.construction(function.construction.?.id);
-        if (role.kind != .explicit or role.base != null or role.function_id == null or !try budget.equal(role.function_id.?, function.id)) { result.pending = .entry_state; return result; }
-        try budget.spend(4); frames[id] = .{ .role = role, .new_target = role.owner, .parent = null };
+        const role = try construction(directory,function.construction.?.id,budget);
+        if (role.kind != .explicit or role.function_id == null or !try budget.equal(role.function_id.?, function.id)) { result.pending = .entry_state; return result; }
+        // No transfer reads new_target: only the construction role, binding
+        // state and arbitrary Data categories affect these equations. A null
+        // formal target is therefore parametric over ALL compatible nominal
+        // descendants; children inherit that same unknown parameter. It is
+        // never replaced by the owner's class or used as an Actual type tag.
+        try budget.spend(4); frames[id] = .{ .role = role, .new_target = null, .parent = null };
     } else {
         try budget.spend(4); const seed=entry.?; const function=entry_function.?;
-        const role=try engine.construction(seed.construction); try budget.spend(7);
+        const role=try construction(directory,seed.construction,budget); try budget.spend(7);
         if(function.kind!=.construction_body or function.construction==null or role.kind!=.explicit or role.base!=null or
             !try budget.equal(function.construction.?.id,role.id) or !try budget.equal(seed.new_target,role.owner)) { result.pending=.entry_state; return result; }
         // Every heap entry starts from this observed unbound state. No frame
@@ -354,6 +434,20 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
       }
     }
     try engine.run(); if (engine.pending) |reason| { result.pending = reason; return result; }
+    if (formal_function != null and input != null) {
+        try budget.step(); const root = input.?;
+        if (frames[root].role.?.base != null) {
+            // Only the newly supported resolved direct implicit-Base child
+            // protocol opens a derived formal entry. A result-only derived
+            // graph still lacks this capability, even if it returns Object.
+            var child = false;
+            for (frames) |frame| {
+                try budget.spend(2);
+                if (frame.parent == root and frame.role != null and frame.role.?.kind == .implicit_base) { child = true; break; }
+            }
+            if (!child) { result.pending = .entry_state; return result; }
+        }
+    }
     for(graph.heaps) |heap| if(heap==.store) {
         try budget.step(); const row=heap.store; if(!controls[row.control])continue;
         if(!worlds[row.previous].live or !try engine.storeReady(row)) { result.pending=.scalar_initialization; return result; }
@@ -388,14 +482,30 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
         try budget.step(); if (controls[exit.control] and !worlds[exit.heap].live) { result.pending = .heap_protocol; return result; }
         result.language_live = result.language_live or (controls[exit.control] and worlds[exit.heap].live);
     }
-    if (result.normal_live) for (graph.normal) |id| {
-        try budget.step(); if (values[id].atoms.items.len == 0) { result.pending = .unknown_origin; return result; }
-        try engine.atoms(&normal, values[id].atoms.items);
-    };
-    if (result.language_live) for (graph.language) |id| {
-        try budget.step(); if (values[id].atoms.items.len == 0) { result.pending = .unknown_origin; return result; }
-        try engine.atoms(&language, values[id].atoms.items);
-    };
+    if (result.normal_live) {
+        for (graph.normal) |id| {
+            try budget.step();
+            if (values[id].atoms.items.len == 0) {
+                if (try engine.inactiveReceiverRoot(id)) continue;
+                result.pending = .unknown_origin; return result;
+            }
+            try engine.atoms(&normal, values[id].atoms.items);
+        }
+        try budget.step();
+        if (graph.normal.len != 0 and normal.items.len == 0) { result.pending = .unknown_origin; return result; }
+    }
+    if (result.language_live) {
+        for (graph.language) |id| {
+            try budget.step();
+            if (values[id].atoms.items.len == 0) {
+                if (try engine.inactiveReceiverRoot(id)) continue;
+                result.pending = .unknown_origin; return result;
+            }
+            try engine.atoms(&language, values[id].atoms.items);
+        }
+        try budget.step();
+        if (graph.language.len != 0 and language.items.len == 0) { result.pending = .unknown_origin; return result; }
+    }
     try budget.spend(graph.nodes.len); const summary = try a.alloc(FrameSummary, graph.nodes.len); @memset(summary, .{});
     for (frames, summary, 0..) |frame, *row, index| {
         try budget.step(); if (frame.role) |role| {
