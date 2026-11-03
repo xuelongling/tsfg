@@ -2,6 +2,27 @@
 const t = @import("wire-program-types.zig");
 const storage = @import("wire-program-storage.zig");
 
+// Required Common18 alpha-identity witness, not original Source/HIR or proof.
+// The owning JSON boundary resolves source paths into this Source directory and
+// validates internal definitions/edges. Physical correspondence remains separate.
+pub const SourcePlanOperation = struct {
+    name: []const u8,
+    view: []const u8,
+    properties: []const t.JsonMember,
+    result: ?t.RegisterRef,
+    operands: []const t.RegisterRef,
+    successors: []const t.BlockRef,
+    source: t.Origin,
+};
+pub const SourcePlanBlock = struct {
+    parameters: []const t.RegisterRef,
+    operations: []const SourcePlanOperation,
+};
+pub const SourcePlan = struct {
+    carriers: []const []const u8,
+    blocks: []const SourcePlanBlock,
+};
+
 pub const SlotKind = enum { parameter, local };
 pub const LegacyClosures = struct {
     functions: []const struct {

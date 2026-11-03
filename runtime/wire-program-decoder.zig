@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Prospective Common-only formal18 owning reader. NOT registered or executed.
+// Prospective private Common18 owning reader. NOT registered or executed.
 // Returns owned UNVERIFIED data: no Context, VerifiedModule or authority token.
 const std=@import("std");
 const model=@import("wire-program-model.zig");
@@ -141,6 +141,8 @@ pub fn readOwned(allocator:std.mem.Allocator,borrowed:[]const u8,remaining:*usiz
     const authority=try decoder.object(raw[8]);
     const fixed=try decoder.get(authority,"fixedPublication");if(fixed!=.object)return error.UnsupportedMode;
     const sources=try decoder.convert([]const tables.Source,raw[0]);
+    if(sources.len==0 or sources.len>128)return error.InvalidRecord;
+    decoder.sources=sources;
     // One complete Common table family. No independently selectable unions or
     // omitted tables, no fallbacks to a legacy schema or empty typed records.
     const common=tables.CommonTables{.types=try decoder.convert(@FieldType(tables.CommonTables,"types"),raw[1]),
@@ -152,6 +154,15 @@ pub fn readOwned(allocator:std.mem.Allocator,borrowed:[]const u8,remaining:*usiz
     const count=try reader.int(u16);if(count==0 or count>4096)return error.InvalidRecord;
     const functions=try decoder.alloc(model.Function,count);for(functions)|*fn_row|fn_row.*=try reader.function();
     if(reader.at!=encoded.len)return error.InvalidRecord;
+    // Required sourcePlan belongs to this actual function's one ABI directory
+    // row. This exact join is data correspondence, not Source/SSA/VM admission.
+    try meter.spend(1+common.abis.len);
+    if(common.abis.len!=functions.len)return error.InvalidReference;
+    for(common.abis,functions,0..)|abi,fn_row,index|{
+        try meter.spend(3);try meter.bytes(64);
+        if(@intFromEnum(abi.function)!=index or @intFromEnum(fn_row.abi)!=index)return error.InvalidReference;
+        if(!std.mem.eql(u8,&abi.signature,&fn_row.signature))return error.InvalidRecord;
+    }
     return .{.arena=arena,.encoded=encoded,.program=.{.envelope=envelope,.target=target,.input_identity=input,.source_hash=source_hash,.source_path=source_path,.source_length=source_length,
         .root_source=root_source,.tables=.{.sources=sources,.mode=.{.common=common}},.functions=functions}};
 }

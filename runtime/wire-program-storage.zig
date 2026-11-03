@@ -86,6 +86,7 @@ pub const CommonAbi = struct {
     physical_parameters: []const t.Carrier,
     result: ?t.TypeRef,
     result_carrier: ?t.Carrier,
+    source_plan: @import("wire-program-control.zig").SourcePlan,
 };
 
 pub const LegacyStorage = struct {

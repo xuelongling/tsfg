@@ -6,6 +6,7 @@ const tables = @import("wire-program-tables.zig");
 const storage = @import("wire-program-storage.zig");
 const publication = @import("wire-program-publication.zig");
 const origin = @import("wire-program-return-origin-model.zig");
+const control = @import("wire-program-control.zig");
 const t = model.types;
 pub const Error = std.mem.Allocator.Error || error{ InvalidJson, InvalidShape, InvalidOrder, WorkLimit, DepthLimit, UnsupportedMode };
 pub const Meter = struct {
@@ -16,14 +17,17 @@ pub const Meter = struct {
     }
     pub fn bytes(self: *Meter, count: usize) Error!void { try self.spend(1 + count / 64); }
 };
-pub const Member = struct { key: []const u8, value: Node };
-pub const Node = union(enum) { null, boolean: bool, integer: u64, string: []const u8, array: []const Node, object: []const Member };
+pub const Member = t.JsonMember;
+pub const Node = t.JsonValue;
 
-// The protocol has fixed ASCII object keys; unknown keys are rejected by the
-// typed conversion. Canonical ordering here is therefore also JCS UTF16 order.
+// Protocol records have fixed keys rejected by typed conversion. Open operation
+// properties retain the complete canonical JSON grammar and UTF16 key order.
 pub const Decoder = struct {
     allocator: std.mem.Allocator,
     meter: *Meter,
+    // Borrowed from this decoder's owning arena after table0 is converted.
+    // Plan paths become typed references; this is not original Source proof.
+    sources: []const tables.Source = &.{},
     fn reserve(self: *Decoder, comptime T: type, list: *std.ArrayListUnmanaged(T)) Error!void {
         if (list.items.len < list.capacity) return;
         const capacity = @max(@as(usize, 8), list.capacity * 2);
@@ -55,7 +59,7 @@ pub const Decoder = struct {
         while (low < high) {
             const mid = low + (high - low) / 2;
             try self.meter.bytes(name.len + rows[mid].key.len);
-            switch (std.mem.order(u8, rows[mid].key, name)) { .lt => low = mid + 1, .gt => high = mid, .eq => return rows[mid].value }
+            switch (keyOrder(rows[mid].key, name)) { .lt => low = mid + 1, .gt => high = mid, .eq => return rows[mid].value }
         }
         return null;
     }
@@ -84,6 +88,7 @@ pub const Decoder = struct {
     }
     pub fn convert(self: *Decoder, comptime T: type, node: Node) Error!T {
         try self.meter.spend(1);
+        if (T == control.SourcePlan) return self.sourcePlan(node);
         if (T == t.Hash) {
             const hash_text = try self.text(node); try self.meter.bytes(hash_text.len); try self.meter.bytes(hash_text.len);
             if (hash_text.len != 71 or !std.mem.startsWith(u8, hash_text, "sha256:")) return error.InvalidShape;
@@ -186,6 +191,109 @@ pub const Decoder = struct {
             else => @compileError("unmapped formal DTO kind"),
         }
     }
+    fn boundedText(self: *Decoder, node: Node, minimum: usize) Error![]const u8 {
+        const value = try self.text(node);
+        try self.meter.bytes(value.len);
+        if (value.len < minimum or value.len > 4096 or std.mem.indexOfScalar(u8, value, 0) != null or
+            !std.unicode.utf8ValidateSlice(value)) return error.InvalidShape;
+        return value;
+    }
+    fn array(self: *Decoder, node: Node, maximum: usize) Error![]const Node {
+        try self.meter.spend(1);
+        const rows = switch (node) { .array => |v| v, else => return error.InvalidShape };
+        if (rows.len > maximum) return error.InvalidShape;
+        return rows;
+    }
+    // This is the sole untrusted sourcePlan boundary. It owns syntax, internal
+    // references and Source-directory joins, never logical/physical matching.
+    // Arbitrary properties remain owned JSON syntax for that later checker.
+    fn sourcePlan(self: *Decoder, node: Node) Error!control.SourcePlan {
+        const plan = try self.object(node);
+        try self.shape(plan, &.{ "carriers", "blocks" });
+        const carrier_rows = try self.array(try self.get(plan, "carriers"), 4096);
+        const block_rows = try self.array(try self.get(plan, "blocks"), 256);
+        if (block_rows.len == 0 or self.sources.len == 0 or self.sources.len > 128) return error.InvalidShape;
+        const carriers = try self.alloc([]const u8, carrier_rows.len);
+        for (carrier_rows, 0..) |row, i| carriers[i] = try self.boundedText(row, 1);
+        const blocks = try self.alloc(control.SourcePlanBlock, block_rows.len);
+        const defined = try self.alloc(bool, carriers.len);
+        const used = try self.alloc(bool, carriers.len);
+        const incoming = try self.alloc(usize, blocks.len);
+        @memset(defined, false); @memset(used, false); @memset(incoming, 0);
+        var operation_count: usize = 0;
+        for (block_rows, 0..) |block_node, b| {
+            const block = try self.object(block_node);
+            try self.shape(block, &.{ "parameters", "operations" });
+            const parameter_rows = try self.array(try self.get(block, "parameters"), 4096);
+            const operation_rows = try self.array(try self.get(block, "operations"), 8192 - operation_count);
+            operation_count += operation_rows.len;
+            const parameters = try self.alloc(t.RegisterRef, parameter_rows.len);
+            for (parameter_rows, 0..) |row, i| {
+                const parameter = try self.convert(t.RegisterRef, row);
+                const index = @intFromEnum(parameter);
+                if (index >= carriers.len or defined[index]) return error.InvalidShape;
+                defined[index] = true; parameters[i] = parameter;
+            }
+            const operations = try self.alloc(control.SourcePlanOperation, operation_rows.len);
+            for (operation_rows, 0..) |operation_node, n| {
+                const row = try self.object(operation_node);
+                try self.shape(row, &.{ "name", "view", "properties", "result", "operands", "successors", "source" });
+                const name = try self.boundedText(try self.get(row, "name"), 1);
+                const view = try self.boundedText(try self.get(row, "view"), 0);
+                const properties = try self.object(try self.get(row, "properties"));
+                const result = try self.convert(?t.RegisterRef, try self.get(row, "result"));
+                if (result) |ref| {
+                    const index = @intFromEnum(ref);
+                    if (index >= carriers.len or defined[index]) return error.InvalidShape;
+                    defined[index] = true;
+                }
+                const operand_rows = try self.array(try self.get(row, "operands"), 4096);
+                const operands = try self.alloc(t.RegisterRef, operand_rows.len);
+                for (operand_rows, 0..) |operand, i| {
+                    const ref = try self.convert(t.RegisterRef, operand);
+                    const index = @intFromEnum(ref);
+                    if (index >= carriers.len) return error.InvalidShape;
+                    used[index] = true; operands[i] = ref;
+                }
+                const successor_rows = try self.array(try self.get(row, "successors"), 256);
+                const successors = try self.alloc(t.BlockRef, successor_rows.len);
+                for (successor_rows, 0..) |successor, i| {
+                    const ref = try self.convert(t.BlockRef, successor);
+                    const index = @intFromEnum(ref);
+                    if (index >= blocks.len or n + 1 != operation_rows.len) return error.InvalidShape;
+                    incoming[index] += 1; successors[i] = ref;
+                }
+                if ((try self.equal(name, "invoke") or try self.equal(name, "invoke_method") or
+                    try self.equal(name, "invoke_indirect")) and successors.len != 2) return error.InvalidShape;
+                const source = try self.object(try self.get(row, "source"));
+                try self.shape(source, &.{ "path", "start", "end" });
+                const path = try self.boundedText(try self.get(source, "path"), 1);
+                const start = try self.number(u32, try self.get(source, "start"));
+                const end = try self.number(u32, try self.get(source, "end"));
+                if (start > end) return error.InvalidShape;
+                var source_ref: ?t.SourceRef = null;
+                for (self.sources, 0..) |entry, i| {
+                    if (!try self.equal(path, entry.path)) continue;
+                    if (source_ref != null or end > entry.length) return error.InvalidShape;
+                    source_ref = @enumFromInt(i);
+                }
+                operations[n] = .{ .name = name, .view = view, .properties = properties, .result = result,
+                    .operands = operands, .successors = successors,
+                    .source = .{ .source = source_ref orelse return error.InvalidShape, .start = start, .end = end } };
+            }
+            blocks[b] = .{ .parameters = parameters, .operations = operations };
+        }
+        try self.meter.spend(defined.len + blocks.len);
+        if (blocks[0].operations.len == 0) return error.InvalidShape;
+        for (defined) |present| if (!present) return error.InvalidShape;
+        for (blocks, 0..) |block, b| {
+            if (block.operations.len != 0) continue;
+            if (b == 0 or incoming[b] != 0) return error.InvalidShape;
+            try self.meter.spend(block.parameters.len);
+            for (block.parameters) |parameter| if (used[@intFromEnum(parameter)]) return error.InvalidShape;
+        }
+        return .{ .carriers = carriers, .blocks = blocks };
+    }
     fn equal(self:*Decoder,a:[]const u8,b:[]const u8)Error!bool{try self.meter.bytes(a.len+b.len);return std.mem.eql(u8,a,b);}
     fn scopeShape(self:*Decoder,node:Node)Error!publication.ScopeShape{
         const rows=try self.object(node);const kind=try self.text(try self.get(rows,"kind"));
@@ -209,6 +317,32 @@ pub const Decoder = struct {
 };
 fn camel(comptime input:[]const u8)[]const u8{
     return comptime blk:{var result:[]const u8="";var upper=false;for(input)|ch|{if(ch=='_'){upper=true;continue;}result=result++[1]u8{if(upper)std.ascii.toUpper(ch)else ch};upper=false;}break :blk result;};
+}
+
+const KeyUnits = struct {
+    bytes: []const u8, at: usize = 0, pending: ?u16 = null,
+    fn next(self: *KeyUnits) ?u16 {
+        if (self.pending) |unit| { self.pending = null; return unit; }
+        if (self.at == self.bytes.len) return null;
+        // parse() already validated UTF8; canonical escapes decode only ASCII.
+        const count = std.unicode.utf8ByteSequenceLength(self.bytes[self.at]) catch unreachable;
+        const point = std.unicode.utf8Decode(self.bytes[self.at..][0..count]) catch unreachable;
+        self.at += count;
+        if (point <= 0xffff) return @intCast(point);
+        const value = point - 0x10000;
+        self.pending = @intCast(0xdc00 + (value & 1023));
+        return @intCast(0xd800 + (value >> 10));
+    }
+};
+fn keyOrder(a: []const u8, b: []const u8) std.math.Order {
+    var left = KeyUnits{ .bytes = a }; var right = KeyUnits{ .bytes = b };
+    while (true) {
+        const l = left.next(); const r = right.next();
+        if (l == null) return if (r == null) .eq else .lt;
+        if (r == null) return .gt;
+        if (l.? < r.?) return .lt;
+        if (l.? > r.?) return .gt;
+    }
 }
 
 const Parser=struct{
@@ -236,6 +370,84 @@ const Parser=struct{
         }
         return out.items;
     }
+    fn number(self: *Parser) Error!Node {
+        const start = self.at;
+        const negative = self.bytes[self.at] == '-';
+        if (negative) self.at += 1;
+        if (self.at == self.bytes.len) return error.InvalidJson;
+        if (self.bytes[self.at] == '0') self.at += 1 else {
+            if (self.bytes[self.at] < '1' or self.bytes[self.at] > '9') return error.InvalidJson;
+            while (self.at < self.bytes.len and std.ascii.isDigit(self.bytes[self.at])) self.at += 1;
+        }
+        var plain = !negative;
+        if (self.at < self.bytes.len and self.bytes[self.at] == '.') {
+            plain = false; self.at += 1;
+            const first = self.at;
+            while (self.at < self.bytes.len and std.ascii.isDigit(self.bytes[self.at])) self.at += 1;
+            if (first == self.at) return error.InvalidJson;
+        }
+        if (self.at < self.bytes.len and (self.bytes[self.at] == 'e' or self.bytes[self.at] == 'E')) {
+            plain = false; self.at += 1;
+            if (self.at < self.bytes.len and (self.bytes[self.at] == '+' or self.bytes[self.at] == '-')) self.at += 1;
+            const first = self.at;
+            while (self.at < self.bytes.len and std.ascii.isDigit(self.bytes[self.at])) self.at += 1;
+            if (first == self.at) return error.InvalidJson;
+        }
+        const token = self.bytes[start..self.at];
+        // Token traversal was prepaid by parse(); conversion, normalization and
+        // the owned copy below spend this same meter before scanning/copying.
+        try self.decoder.meter.bytes(token.len);
+        if (plain) {
+            const integer = std.fmt.parseInt(u64, token, 10) catch null;
+            if (integer) |decoded_integer| if (decoded_integer <= 9007199254740991) return .{ .integer = decoded_integer };
+        }
+        try self.decoder.meter.bytes(token.len);
+        const parsed_number = std.fmt.parseFloat(f64, token) catch return error.InvalidJson;
+        if (!std.math.isFinite(parsed_number)) return error.InvalidJson;
+        var output: [64]u8 = undefined; var length: usize = 0;
+        if (parsed_number == 0) { output[0] = '0'; length = 1; } else {
+            // Same shortest IEEEbinary64 + ECMAScript layout as the Common
+            // canonical writer. The typed result keeps its text, not a float.
+            var scientific_buffer: [64]u8 = undefined;
+            try self.decoder.meter.bytes(scientific_buffer.len);
+            const scientific = std.fmt.bufPrint(&scientific_buffer, "{e}", .{parsed_number}) catch return error.InvalidJson;
+            try self.decoder.meter.bytes(scientific.len);
+            const e = std.mem.indexOfScalar(u8, scientific, 'e') orelse return error.InvalidJson;
+            var digits: [24]u8 = undefined; var count: usize = 0;
+            const offset: usize = if (scientific[0] == '-') 1 else 0;
+            try self.decoder.meter.bytes(e - offset);
+            for (scientific[offset..e]) |ch| if (ch != '.') { digits[count] = ch; count += 1; };
+            try self.decoder.meter.bytes(scientific.len - e - 1);
+            const exponent = std.fmt.parseInt(i16, scientific[e + 1..], 10) catch return error.InvalidJson;
+            const k = exponent + 1;
+            try self.decoder.meter.bytes(output.len);
+            if (offset == 1) { output[0] = '-'; length = 1; }
+            if (k > 0 and k <= 21) {
+                const whole: usize = @intCast(k);
+                const first = @min(whole, count);
+                @memcpy(output[length..][0..first], digits[0..first]); length += first;
+                if (whole >= count) { @memset(output[length..][0..whole - count], '0'); length += whole - count; }
+                else { output[length] = '.'; length += 1; @memcpy(output[length..][0..count - whole], digits[whole..count]); length += count - whole; }
+            } else if (k <= 0 and k > -6) {
+                const zeros: usize = @intCast(-k);
+                @memcpy(output[length..][0..2], "0."); length += 2;
+                @memset(output[length..][0..zeros], '0'); length += zeros;
+                @memcpy(output[length..][0..count], digits[0..count]); length += count;
+            } else {
+                output[length] = digits[0]; length += 1;
+                if (count > 1) { output[length] = '.'; length += 1; @memcpy(output[length..][0..count - 1], digits[1..count]); length += count - 1; }
+                output[length] = 'e'; length += 1;
+                if (exponent >= 0) { output[length] = '+'; length += 1; }
+                const suffix = std.fmt.bufPrint(output[length..], "{d}", .{exponent}) catch return error.InvalidJson;
+                length += suffix.len;
+            }
+        }
+        try self.decoder.meter.bytes(token.len + length);
+        if (!std.mem.eql(u8, token, output[0..length])) return error.InvalidJson;
+        try self.decoder.meter.bytes(token.len);
+        try self.decoder.meter.bytes(token.len);
+        return .{ .number = .{ .canonical = try self.decoder.allocator.dupe(u8, token) } };
+    }
     fn value(self:*Parser,depth:usize)Error!Node{
         try self.decoder.meter.spend(1);if(depth>32)return error.DepthLimit;if(self.at==self.bytes.len)return error.InvalidJson;
         const first=self.bytes[self.at];
@@ -244,14 +456,7 @@ const Parser=struct{
             for(text)|ch|if(try self.take()!=ch)return error.InvalidJson;
             return switch(index){0=>.null,1=>.{.boolean=true},2=>.{.boolean=false},else=>unreachable};
         };
-        if(first>='0' and first<='9'){
-            var number:u64=0;var count:usize=0;
-            while(self.at<self.bytes.len and self.bytes[self.at]>='0' and self.bytes[self.at]<='9'){
-                const digit=try self.take();if(count>0 and first=='0')return error.InvalidJson;
-                if(number>(9007199254740991-@as(u64,digit-'0'))/10)return error.InvalidJson;number=number*10+digit-'0';count+=1;
-            }
-            return .{.integer=number};
-        }
+        if(first=='-' or first>='0' and first<='9')return self.number();
         if(first=='['){
             _=try self.take();var out:std.ArrayListUnmanaged(Node)=.empty;
             if(self.at<self.bytes.len and self.bytes[self.at]==']'){_=try self.take();return .{.array=out.items};}
@@ -262,8 +467,8 @@ const Parser=struct{
             _=try self.take();var out:std.ArrayListUnmanaged(Member)=.empty;
             if(self.at<self.bytes.len and self.bytes[self.at]=='}'){_=try self.take();return .{.object=out.items};}
             while(true){
-                const key=try self.string();try self.decoder.meter.bytes(key.len);for(key)|ch|if(ch<32 or ch>=128)return error.InvalidJson;
-                if(out.items.len>0){const old=out.items[out.items.len-1].key;try self.decoder.meter.bytes(old.len+key.len);if(std.mem.order(u8,old,key)!=.lt)return error.InvalidOrder;}
+                const key=try self.string();
+                if(out.items.len>0){const old=out.items[out.items.len-1].key;try self.decoder.meter.bytes(old.len+key.len);if(keyOrder(old,key)!=.lt)return error.InvalidOrder;}
                 if(try self.take()!=':')return error.InvalidJson;
                 try self.decoder.reserve(Member,&out);out.appendAssumeCapacity(.{.key=key,.value=try self.value(depth+1)});
                 const separator=try self.take();if(separator=='}')break;if(separator!=',')return error.InvalidJson;

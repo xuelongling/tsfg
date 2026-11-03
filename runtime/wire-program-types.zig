@@ -32,6 +32,14 @@ pub const ResourceRef = enum(u32) { _ };
 
 pub const Anchor = struct { start: u32, end: u32 };
 pub const Origin = struct { source: SourceRef, start: u32, end: u32 };
+// Owned canonical JSON syntax for open operation properties. This data grants
+// no opcode meaning, Source admission, actual facts or lifetime authority.
+pub const JsonMember = struct { key: []const u8, value: JsonValue };
+pub const JsonNumber = struct { canonical: []const u8 };
+pub const JsonValue = union(enum) {
+    null, boolean: bool, integer: u64, number: JsonNumber, string: []const u8,
+    array: []const JsonValue, object: []const JsonMember,
+};
 pub const Layout = struct { byte_size: u32, alignment: u16, reference_count: u16 };
 pub const FieldLayout = struct { layout: Layout, field_offsets: []const u32 };
 pub const CarrierKind = enum(u16) { domain = 0, environment = 1, @"type" = 2, cell = 3, payload = 4, receiver = 5, initialization = 6 };

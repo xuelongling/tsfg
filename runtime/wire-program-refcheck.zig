@@ -13,6 +13,7 @@ const context = @import("wire-program-refcheck-context.zig");
 const table_refs = @import("wire-program-table-refs.zig");
 const layout_check = @import("wire-program-layout-check.zig");
 const ssa_check = @import("wire-program-ssa-check.zig");
+const source_correspondence_check = @import("wire-program-source-correspondence.zig");
 const identity_check = @import("wire-program-identity-check.zig");
 const module_contracts_check = @import("wire-program-module-contracts-check.zig");
 const reference_contracts_check = @import("wire-program-reference-contracts-check.zig");
@@ -74,6 +75,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     }
     try layout_check.check(&c);
     try ssa_check.check(&c);
+    try source_correspondence_check.check(&c);
     try identity_check.check(&c);
     try module_contracts_check.checkModules(&c);
     try construction_contracts_check.checkConstructions(&c);
@@ -253,7 +255,7 @@ fn instructionShape(c: *Context, f: *const model.Function, owner: usize, op: *co
             .domain_construct, .domain_super, .domain_initialize_fields, .domain_field_define,
             .domain_field_initialize, .domain_method_call, .domain_member_present, .function_call,
             .eh_project, .eh_pack, .eh_type_test, .eh_presence_widen, .eh_field_read,
-            .eh_function, .eh_publish, .eh_construct, .eh_field_initialize => return error.WrongMode,
+            .eh_function, .eh_publish => return error.WrongMode,
             else => {},
         }
     } else if (exception) {
@@ -436,11 +438,45 @@ fn instructionShape(c: *Context, f: *const model.Function, owner: usize, op: *co
         .eh_project => |v| { _ = try c.ref(v.binding, n.cells); _ = try c.ref(v.target_type, n.types); },
         .eh_pack => |v| { _ = try c.ref(v.payload_type, n.types); },
         .eh_construct => |v| {
-            _ = try c.ref(v.owner, n.types); const target = try c.ref(v.constructor, n.constructions);
+            const nominal = try c.ref(v.owner, n.types); const target = try c.ref(v.constructor, n.constructions);
             const actual = switch (c.program.tables.mode) { .common => |rows| rows.members.constructions[target].owner, .exception => |rows| rows.members.constructions[target].owner, .legacy => return error.WrongMode };
             try c.require(actual == v.owner);
+            if (common) {
+                const kind = c.program.tables.mode.common.types[nominal].kind;
+                const output = f.registers[@intFromEnum(op.result.?)];
+                const view = output.view orelse if (output.carrier == .@"type") output.carrier.@"type" else return error.InvalidShape;
+                try c.require((kind == .reference or kind == .value) and view == v.owner);
+            }
         },
-        .eh_field_initialize => |v| { _ = try c.ref(v.field, n.fields); },
+        .eh_field_initialize => |v| {
+            const field = try c.ref(v.field, n.fields);
+            if (common) {
+                const rows = c.program.tables.mode.common;
+                const receiver = f.registers[@intFromEnum(op.operands[0])];
+                const view = receiver.view orelse if (receiver.carrier == .@"type") receiver.carrier.@"type" else return error.InvalidShape;
+                const kind = rows.types[@intFromEnum(view)].kind;
+                const member = rows.members.fields[field];
+                // This joins the actual store operand to its typed storage
+                // ABI. It does not establish initialization rights or order.
+                if (kind == .value) try c.require(view == member.owner) else {
+                    try c.require(kind == .reference);
+                    // Layout has not checked inheritance cycles yet. This
+                    // one member-owner lookup follows at most this directory's
+                    // length and spends the same caller-owned work allowance.
+                    var current: ?t.TypeRef = view;
+                    var traversed: usize = 0;
+                    var found = false;
+                    while (current != null and traversed < rows.types.len) : (traversed += 1) {
+                        try c.step();
+                        if (current.? == member.owner) { found = true; break; }
+                        current = rows.types[@intFromEnum(current.?)].base;
+                    }
+                    try c.require(found);
+                }
+                try c.require(std.meta.eql(f.registers[@intFromEnum(op.operands[1])].carrier,
+                    rows.storage.bindings[@intFromEnum(member.binding)].carrier));
+            }
+        },
         .eh_field_read => |path| { try c.require(path.len > 0 and path.len <= 32); for (path) |r| { _ = try c.ref(r, n.fields); } },
         .eh_function => |v| {
             const target = try c.ref(v.function, c.program.functions.len);

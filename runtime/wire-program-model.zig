@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Prospective formal18 data, not an activated Runtime contract or VM handle.
+// Prospective private Common18 data, not an activated Runtime contract or VM handle.
 // The formal candidate decoder owns every slice in arena before publishing this
 // value. Type construction alone proves no schema, effects, SSA or lifetime.
 const std = @import("std");
@@ -11,10 +11,12 @@ pub const format = struct {
     pub const magic = "TSFGTBC0".*;
     pub const version: u32 = 18;
     pub const capability: u32 = 1018;
-    pub const schema_hash_hex = "b0b2c6c9b37155f3241725cc733014436df182f1966ab767d76e44ee2b39d951";
-    pub const schema_hash: types.Hash = .{ 0xb0, 0xb2, 0xc6, 0xc9, 0xb3, 0x71, 0x55, 0xf3, 0x24, 0x17, 0x25, 0xcc, 0x73, 0x30, 0x14, 0x43, 0x6d, 0xf1, 0x82, 0xf1, 0x96, 0x6a, 0xb7, 0x67, 0xd7, 0x6e, 0x44, 0xee, 0x2b, 0x39, 0xd9, 0x51 };
+    pub const schema_hash_hex = "cd560f1da0e1d809fb2ffa907baf7a27b86e3ccecb8323e0e46ce1570a8a1b65";
+    pub const schema_hash: types.Hash = .{ 0xcd, 0x56, 0x0f, 0x1d, 0xa0, 0xe1, 0xd8, 0x09, 0xfb, 0x2f, 0xfa, 0x90, 0x7b, 0xaf, 0x7a, 0x27, 0xb8, 0x6e, 0x3c, 0xce, 0xcb, 0x83, 0x23, 0xe0, 0xe4, 0x6c, 0xe1, 0x57, 0x0a, 0x8a, 0x1b, 0x65 };
     pub const max_bytes: usize = 8388608;
-    pub const max_work: usize = 100000;
+    // One trusted private Common cold allowance, shared by decoding and all
+    // typed checks. This never changes or restores a Source/warm allowance.
+    pub const max_work: usize = 4000000;
     pub const table_count: u8 = 11;
     pub const target = "windows-x86_64-msvc";
     pub const triple = "x86_64-pc-windows-msvc";

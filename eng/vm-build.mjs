@@ -164,7 +164,7 @@ runtimeSources.push(...['array-element','managed-array','managed-handles','manag
   'typed-reference-views','managed-reference-view','typed-field-backing','finite-backing-domain','typed-backing-value','typed-array-backing']
   .map(name => `runtime/${name}.zig`));
 
-// Exact passive wire17 Counter-material import closure. The active wire12
+// Exact passive Common18 Counter-material import closure. The active wire12
 // request root is unchanged; source staging alone does not establish that Zig
 // analyzed these function bodies or that any checker/Host call was executed.
 runtimeSources.push(...['wire-program-checked-reader','wire-program-control','wire-program-decoder','wire-program-host-artifact-check','wire-program-host-binding-check',
@@ -177,7 +177,7 @@ runtimeSources.push(...['wire-program-checked-reader','wire-program-control','wi
 // Staging is not proof of lazy body analysis, linking or Runtime admission.
 runtimeSources.push(...['wire-program-actual-data','wire-program-actual-facts','wire-program-borrow-check',
   'wire-program-effects-check','wire-program-effect-environments','wire-program-identity-check','wire-program-layout-check','wire-program-publication-refs',
-  'wire-program-refcheck','wire-program-region-holding','wire-program-ssa-check','wire-program-table-refs',
+  'wire-program-refcheck','wire-program-region-holding','wire-program-source-correspondence','wire-program-ssa-check','wire-program-table-refs',
   'wire-program-targets-check','wire-program-fixed-publication-check','wire-program-kernel-request-check','wire-program-dependencies-check','wire-program-reference-contracts-check','wire-program-fixed-callable-domain','wire-program-fixed-targets-check','wire-program-effective-dependencies-check','wire-program-construction-contracts-check','wire-program-construction-body-check','wire-program-module-contracts-check','wire-program-return-origin-body','wire-program-return-origin-construction','wire-program-return-origin-model','wire-program-return-origins','wire-program-receiver-protocol-check','wire-program-receiver-actual','wire-program-storage-bounds'].map(name => `runtime/${name}.zig`));
 
 /** Actual production copy boundary, also exercised without starting the VM. */
