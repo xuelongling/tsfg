@@ -67,9 +67,9 @@ test('real method callers consume every target fixed upper including global, Arr
   const broad=structuredClone(publication);broad.contracts.find(c=>c.functionId===method(hir,'Base').id).upper.facets.allocation=true;
   assert.throws(()=>analyzeCommonProgram(hir,rehash(broad)),/** @param {any} e */e=>e.code==='r03-common-program-contract');
 });
-test('real complete method Core uses private version 3 and retains all ordinary functions',async()=>{
+test('real complete method Core uses private version 5 and retains all ordinary functions',async()=>{
   const {hir,context,publication}=await program('dispatch'),request={targets:hir.closure.roots.filter(root=>root.kind==='kernel').map(root=>root.target).sort()},text=lowerHir(hir,context,{publication,request});
-  assert.equal((text.match(/func\.func @/g)??[]).length,18);assert.match(text,/version = 3 : i32/);
+  assert.equal((text.match(/func\.func @/g)??[]).length,18);assert.match(text,/version = 5 : i32/);
   assert.equal((text.match(/"tsfg_program\.invoke_method"/g)??[]).length,2);assert.match(text,/"tsfg_program\.catch_bind"/);
 });
 test('real structural fewer-parameter method keeps both argument effects and drops only the static void projection',async()=>{

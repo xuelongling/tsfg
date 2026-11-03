@@ -33,17 +33,17 @@ for(const name of ['common-indirect-valid','common-indirect-broad-valid','common
 
 test('actual Source2 physical pair and factory activations',()=>{
   const hir=projectCommonProgram(facts('common-indirect-valid')),physical=commonProgramPhysical(hir),factory=hir.functions.find(fn=>fn.name==='factory'),bump=hir.functions.find(fn=>fn.name==='bump');
-  assert.equal(physical.plans.length,12);assert.equal(physical.carriers.layout(hir.types.find(t=>t.kind==='function').id).byteSize,40);
+  assert.equal(physical.plans.length,14);assert.equal(physical.corePlans.length,12);assert.deepEqual(physical.plans.filter(plan=>physical.construction.privateIds.has(plan.owner.id)).map(plan=>[plan.owner.kind,plan.owner.name]),[['construction-body','$implicitConstruction'],['construction-body','$implicitConstruction']]);assert.equal(physical.carriers.layout(hir.types.find(t=>t.kind==='function').id).byteSize,40);
   const allocations=[...physical.values.actual.objects].filter(([,o])=>o.type==='env:'+factory.activationEnvironment);assert(allocations.length>=3);
   const bumpContexts=[...physical.values.actual.contexts.values()].filter(c=>c.plan.owner.id===bump.id);
   const factories=[...physical.values.actual.contexts.values()].filter(c=>c.plan.owner.id===factory.id&&!c.root);assert.equal(factories.length,2);assert.equal(new Set(factories.flatMap(c=>[...c.returned.pairs.values()].map(pair=>pair.environment))).size,2);
   assert(bumpContexts.length>=3);const environments=new Set(bumpContexts.flatMap(c=>[...c.args[0].refs]));assert(environments.size>=2);
 });
 
-test('actual Source2 fixed upper singleton kernels and complete Core4',()=>{
+test('actual Source2 fixed upper singleton kernels and complete Core5',()=>{
   const hir=projectCommonProgram(facts('common-indirect-valid')),publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
-  assert.equal(publication.format.version,2);verifyCommonKernelGroup(hir,publication,request);
-  const core=emitCommonProgramCore(hir,publication,request);assert.match(core,/version = 4 : i32/);assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_alloc/);assert.match(core,/tsfg_program.make_closure/);
+  assert.equal(publication.format.version,4);verifyCommonKernelGroup(hir,publication,request);
+  const core=emitCommonProgramCore(hir,publication,request);assert.match(core,/version = 5 : i32/);assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_alloc/);assert.match(core,/tsfg_program.make_closure/);
   assert.equal((core.match(/func.func @/g)??[]).length,12);
 });
 test('actual Source2 broad apply keeps full Published upper conflict',()=>{
@@ -57,7 +57,7 @@ test('real Source2 public build/read/lower boundary and fixed transfers',()=>{
  assert.deepEqual(validateFrontendSnapshot(first),first);const built=buildHir(first,context);assert.equal(built.status,'ok',JSON.stringify(built));assert.deepEqual(built.hir,hir);assert.deepEqual(readHir(Buffer.from(printHir(hir,context)),context),hir);
  const publication=createCommonProgramPublication(hir),upper=createCommonProgramPublication(broad),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
  assert.equal(publication.scopeDigest,upper.scopeDigest);assert.throws(()=>verifyCommonKernelGroup(broad,publication,request),/** @param {any} e */e=>e.code==='r03-common-program-callable-contract');
- assert.throws(()=>verifyCommonKernelGroup(hir,upper,request),/** @param {any} e */e=>e.code==='r03-common-program-kernel-conflict');
+ assert.throws(()=>verifyCommonKernelGroup(hir,upper,request),/** @param {any} e */e=>e.code==='r03-common-program-return-origin-contract');
  assert.match(lowerHir(hir,context,{publication,request}),/tsfg_program.invoke_indirect/);
 });
 
@@ -67,7 +67,7 @@ test('actual shadow Program captures direct outer Symbol while retaining inner b
  const raw=facts('common-indirect-shadow-valid'),hir=projectCommonProgram(raw),factory=hir.functions.find(fn=>fn.name==='factory'),bump=hir.functions.find(fn=>fn.name==='bump');
  const outer=factory.body.find(row=>row.kind==='letDeclaration').binding,inner=factory.body.find(row=>row.kind==='block').body[0].binding;
  assert.notEqual(outer,inner);assert.equal(bump.captures[0].binding,outer);assert.equal(hir.environments[0].slots[0].binding,outer);
- const physical=commonProgramPhysical(hir);assert.equal(physical.plans.length,12);
+ const physical=commonProgramPhysical(hir);assert.equal(physical.plans.length,14);assert.equal(physical.corePlans.length,12);assert.deepEqual(physical.plans.filter(plan=>physical.construction.privateIds.has(plan.owner.id)).map(plan=>[plan.owner.kind,plan.owner.name]),[['construction-body','$implicitConstruction'],['construction-body','$implicitConstruction']]);
  const changed=structuredClone(raw),wrong=changed.payload.functions.find(fn=>fn.name==='factory').bindings.filter(b=>b.name==='n').find(b=>b.id!==outer),nested=changed.payload.functions.find(fn=>fn.name==='bump');
  nested.captures[0].binding=wrong.id;for(const row of nested.body){const visit=value=>{if(!value||typeof value!=='object')return;for(const [key,child]of Object.entries(value)){if(key==='binding'&&child===outer)value[key]=wrong.id;else if(child&&typeof child==='object')visit(child);}};visit(row);}
  assert.throws(()=>verifyCommonProgramFacts(rehashFacts(changed)),/** @param {any} e */e=>['r03-common-program-binding','r03-common-program-capture'].includes(e.code));

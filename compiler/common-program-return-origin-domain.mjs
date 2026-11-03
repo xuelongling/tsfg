@@ -364,8 +364,22 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
             check(matched,'return-origin-environment-open','selected Code/environment pair is unresolved');}
         }
       }
-      // A fixed allowed target cannot disappear merely because the selected
-      // current payload graph has no corresponding Env source. Keep it OPEN.
+      // A fixed function's formal Code may be supplied as one exact Fn by its
+      // caller. Exclude only that proven noncapturing data alternative; inherit
+      // still carries the complete fixed upper, including every permission.
+      if(context.targets[index].size===0&&context.id!==null&&call.callee!==null&&fixed.get(call.functionId).protocol.lexicalEnvironment===null){
+        const codes=resolved(context,call.callee),pending=[...call.callee],seen=new Set();let formal=codes.size>0,parameter=false;
+        for(const id of codes){spend();const node=locations[id].node;formal &&= node.kind==='code'&&node.functionId!==call.functionId;}
+        while(formal&&pending.length){spend();const id=pending.pop();if(seen.has(id))continue;seen.add(id);const node=graph.nodes[id];
+          if(node.kind==='parameter')parameter=true;
+          else if(node.kind==='join'||node.kind==='gate'){formal &&= node.inputs.length>0;for(const input of node.inputs){spend();pending.push(input);}}
+          else if(node.kind==='copy'){formal &&= node.bases.length>0;for(const base of node.bases){spend();pending.push(base);}}
+          else formal=false;
+        }
+        if(formal&&parameter)continue;
+      }
+      // Local Code production, unknown ownership, and unresolved capturing
+      // pairs cannot narrow a fixed capability merely to the observed payload.
       check(context.targets[index].size>0,'return-origin-environment-open','permitted Code/environment pair is unresolved');
       for(const target of context.targets[index]){const called=contexts[target];potentialLanguage ||= Boolean(called.upper?.facets.mayThrow&&!called.languageLive);for(const access of called.upper?.captures??[]){spend();if(!access.read&&!access.write&&!access.structural)continue;
         const {selected,sources}=captureSources(called,access.slot);check(sources.length>0,'return-origin-environment-open','fixed capture has no matching saved environment in its complete call closure');

@@ -7,6 +7,7 @@ import {commonReturnOriginSource} from '../../compiler/common-program-return-ori
 const commonEffects=(hir,spend,physical=null,storage=null,kinds=null,rows=null)=>commonReturnOriginSource(hir,spend,physical,storage,kinds,rows===null?null:new Map([...rows].map(([id,row])=>{const {returnOrigins,...upper}=row.upper;return [id,{...row,upper,returnOrigins}];})));
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {solveReturnOriginContexts} from '../../compiler/common-program-return-origin-domain.mjs';
+import {commonReturnOrigins} from '../../compiler/common-program-return-origins.mjs';
 import {commonReturnOriginDirectories} from '../../compiler/common-program-return-origin-directories.mjs';
 import {readCommonReturnOriginGraph} from '../../compiler/common-program-return-origin-graph.mjs';
 import {commonReturnOriginsInclusion} from '../../compiler/common-program-return-origin-inclusion.mjs';
@@ -391,4 +392,43 @@ test('a full capture permission with no saved owner in the fixed call closure re
   input.records.set(ForeignRead,{upper:upper(childGraph,[],[{slot:ForeignSlot,read:true,write:false,structural:false}]),callables:noTransfer()});
   input.records.get(Read).upper.captures.push({slot:ForeignSlot,read:true,write:false,structural:false});
   assert.throws(()=>extract(input),{code:'r03-common-program-return-origin-environment-open'});
+});
+
+
+test('snapshot retains structural heap Bottom under independent live completion control',()=>{
+  const owner=fn('snapshot-bottom',[],'void',[]),hir=hirRows([owner]);hir.environments=[];
+  const spend=commonMeter(1000000),graph=commonReturnOrigins(spend,callbacks({hir})),entry=graph.checkpoint(),bottom=graph.mergeStates([],'pending-data');
+  graph.restore({heap:bottom.heap,control:entry.control});
+  const archived=graph.snapshot(new Set(),new Set());
+  assert.equal(archived.exits.normal.length,1);assert.ok(Number.isInteger(archived.exits.normal[0].heap));
+  assert.equal(archived.heaps[archived.exits.normal[0].heap].kind,'join');
+  assert.equal(commonReturnOriginDirectories(hir,spend).read(owner.id,archived).status,'typed','a structurally complete Bottom equation remains a graph, not an undefined reference');
+});
+
+test('a supplied formal Code alias selects data without narrowing its complete fixed write permission',()=>{
+  const Callback='fixture:Callback',Apply='callbackApply',A='callbackA',Bfn='callbackB';
+  const caller=fn(Caller,[{id:'entry/p',type:B}],B,[]),apply=fn(Apply,[{id:'apply/f',type:Callback},{id:'apply/p',type:B}],B,[]),
+    a=fn(A,[{id:'a/p',type:B}],B,[]),b=fn(Bfn,[{id:'b/p',type:B}],B,[]),hir=hirRows([caller,apply,a,b]);hir.environments=[];
+  hir.types.push({id:Callback,kind:'function',parameters:[B],returnType:B});
+  /** @type {import('../../compiler/common-program-return-origin-graph.mjs').Graph} */
+  const target={...emptyGraph(),nodes:[{kind:'parameter',type:B,index:0}],normal:[0]};
+  /** @type {import('../../compiler/common-program-return-origin-graph.mjs').Graph} */
+  const applied={...emptyGraph(),nodes:[{kind:'parameter',type:Callback,index:0},{kind:'parameter',type:B,index:1},
+    {kind:'copy',type:Callback,bases:[0],heap:0,control:0,site:'formal-copy'},
+    {kind:'call',type:B,call:0,completion:'normal'},{kind:'call',type:B,call:1,completion:'normal'}],
+    heaps:[{kind:'entry'},{kind:'copy',previous:0,value:2},{kind:'call',call:0,completion:'normal'},{kind:'call',call:1,completion:'normal'},{kind:'join',inputs:[2,3]}],
+    controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'},{kind:'call',call:1,completion:'normal'},{kind:'join',inputs:[1,2]}],
+    calls:[A,Bfn].map(functionId=>({functionId,arguments:[[1]],environment:null,callee:[2],receiver:null,heap:1,control:0,site:'same-formal-call'})),
+    normal:[3,4],exits:{normal:[{heap:4,control:3}],language:[]}};
+  /** @type {import('../../compiler/common-program-return-origin-graph.mjs').Graph} */
+  const root={...emptyGraph(),nodes:[{kind:'code',type:Callback,functionId:A,environment:null,control:0},{kind:'parameter',type:B,index:0},
+    {kind:'call',type:B,call:0,completion:'normal'}],heaps:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],
+    controls:[{kind:'entry'},{kind:'call',call:0,completion:'normal'}],
+    calls:[{functionId:Apply,arguments:[[0],[1]],environment:null,callee:null,receiver:null,heap:0,control:0,site:'exact-supplied-A'}],
+    normal:[2],exits:{normal:[{heap:1,control:1}],language:[]}};
+  const fixedApply=upper(applied,[Callback,B]),fixedB=upper(target,[B]);fixedApply.parameters[1].write=true;fixedB.parameters[0].write=true;
+  const records=new Map([[Apply,{graph:applied,upper:fixedApply,protocol:none}],[A,{graph:target,upper:upper(target,[B]),protocol:none}],[Bfn,{graph:target,upper:fixedB,protocol:none}]]),
+    ordinary=callbacks({hir}),spend=commonMeter(1000000),solved=solveReturnOriginContexts(root,records,{...ordinary,actualType:id=>({kind:id===Callback?'function':id===B?'reference':'scalar',fields:[]})},spend);
+  assert.equal(solved.normal,true);assert.deepEqual([...solved.owners(new Set(root.normal))],['p:0']);
+  assert.deepEqual([...solved.effects.get('write')],['p:0'],'the unselected B branch cannot erase the fixed Apply write permission');
 });

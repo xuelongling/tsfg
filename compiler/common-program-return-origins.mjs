@@ -105,9 +105,11 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
       if(row.kind==='join'&&row.inputs.length===1)aliases[kind].set(id,row.inputs[0]);}}
     spend(nodes.length);for(let id=0;id<nodes.length;id++){const row=nodes[id];
       if((row.kind==='join'||row.kind==='gate'&&resolve('controls',row.control)===0)&&row.inputs.length===1&&row.type===nodes[row.inputs[0]].type)aliases.nodes.set(id,row.inputs[0]);}
-    const push=(kind,ids)=>{spend(ids.length??ids.size);for(const id of ids)if(reachable(kind,id))pending.push({kind,id:resolve(kind,id)});};
-    push('nodes',normal);push('nodes',language);for(const completion of ['normal','language'])for(const selected of exits[completion]){spend();if(solution.live(selected.control)){push('heaps',[selected.heap]);push('controls',[selected.control]);}}
-    for(const row of accesses.values()){spend();if(solution.live(row.control)){push('nodes',row.values);push('controls',[row.control]);}}for(let id=0;id<calls.length;id++){spend();push('calls',[id]);}
+    // Observation selects roots; their complete structural dependencies must
+    // survive even when the data equation is not ready at the fixed point.
+    const push=(kind,ids,roots=false)=>{spend(ids.length??ids.size);for(const id of ids)if(!roots||reachable(kind,id))pending.push({kind,id:resolve(kind,id)});};
+    push('nodes',normal,true);push('nodes',language,true);for(const completion of ['normal','language'])for(const selected of exits[completion]){spend();if(solution.live(selected.control)){push('heaps',[selected.heap]);push('controls',[selected.control]);}}
+    for(const row of accesses.values()){spend();if(solution.live(row.control)){push('nodes',row.values);push('controls',[row.control]);}}for(let id=0;id<calls.length;id++){spend();push('calls',[id],true);}
     const directories={nodes,heaps,controls,calls};
     while(pending.length){spend();const {kind,id}=pending.pop();if(seen[kind].has(id))continue;seen[kind].add(id);const row=directories[kind][id];
       if(kind==='nodes'){
@@ -133,8 +135,8 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
       }else{push('heaps',[row.heap]);push('controls',[row.control]);for(const argument of row.arguments)push('nodes',argument);if(row.environment!==null)push('nodes',row.environment);if(row.callee!==null)push('nodes',row.callee);if(row.receiver!==null)push('nodes',row.receiver);}
     }
     const ids={},maps={};for(const kind of ['nodes','heaps','controls','calls']){ids[kind]=ordered(seen[kind]);spend(ids[kind].length*2);maps[kind]=new Map(ids[kind].map((id,index)=>[id,index]));}
-    for(const kind of ['nodes','heaps','controls'])for(const id of aliases[kind].keys()){spend();maps[kind].set(id,maps[kind].get(resolve(kind,id)));}
-    const refs=(kind,values)=>{spend((values.size??values.length)*3+1);return ordered(new Set([...values].filter(id=>reachable(kind,id)).map(id=>maps[kind].get(id))));};
+    for(const kind of ['nodes','heaps','controls'])for(const id of aliases[kind].keys()){spend();const target=resolve(kind,id);if(seen[kind].has(target))maps[kind].set(id,maps[kind].get(target));}
+    const refs=(kind,values)=>{spend((values.size??values.length)*3+1);return ordered(new Set([...values].filter(id=>maps[kind].has(id)).map(id=>maps[kind].get(id))));};
     const valueRows=ids.nodes.map(id=>{spend();const row=nodes[id];if(row.kind==='join')return {...row,inputs:refs('nodes',row.inputs)};
       if(row.kind==='gate')return {...row,inputs:refs('nodes',row.inputs),control:maps.controls.get(row.control)};
       if(row.kind==='projection'||row.kind==='copy')return {...row,bases:refs('nodes',row.bases),heap:maps.heaps.get(row.heap),control:maps.controls.get(row.control)};
