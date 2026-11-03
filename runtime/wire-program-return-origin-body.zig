@@ -30,7 +30,7 @@ const Builder = struct {
         if (self.nodes.items.len == self.nodes.capacity) try self.c.charge(self.nodes.items.len + 1);
         const id = self.nodes.items.len; try self.nodes.append(self.allocator, row); return id;
     }
-    fn typeSymbol(self: *Builder, ref: t.TypeRef) context.Error!?origin.Symbol {
+    fn findTypeSymbol(self: *Builder, ref: t.TypeRef) context.Error!?origin.Symbol {
         const row = &self.c.program.tables.mode.common.types[@intFromEnum(ref)];
         const id = try refs.symbol(self.c, self.allocator, row.id);
         self.budget.lookup(self.directory.types.len, id.len) catch |err| return refs.graphFailure(err);
@@ -39,7 +39,12 @@ const Builder = struct {
             const mid = lo + (hi - lo) / 2;
             switch (std.mem.order(u8, self.directory.types[mid].id, id)) { .eq => return self.directory.types[mid].id, .lt => lo = mid + 1, .gt => hi = mid }
         }
-        self.pending = .archive_type; return null;
+        return null;
+    }
+    fn typeSymbol(self: *Builder, ref: t.TypeRef) context.Error!?origin.Symbol {
+        const found = try self.findTypeSymbol(ref);
+        if (found == null) self.pending = .archive_type;
+        return found;
     }
     fn view(self: *Builder, f: *const wire.Function, reg: t.RegisterRef) context.Error!?origin.Symbol {
         const ref = f.registers[@intFromEnum(reg)].view orelse { self.pending = .view; return null; };
@@ -72,7 +77,10 @@ const CFG = struct {
         // definitions/edges; phi and loop backedges only extend these joins.
         for (self.f.registers, 0..) |*reg, index| {
             try self.b.c.step(); if (reg.carrier == .initialization) continue;
-            const view = if (reg.carrier != .receiver and reg.view != null) try self.b.typeSymbol(reg.view.?) else null;
+            // SSA aliases keep actual inputs even when a private static view
+            // is absent from the public archive. This optional join annotation
+            // grants no Data/category fact; semantic type uses remain strict.
+            const view = if (reg.carrier != .receiver and reg.view != null) try self.b.findTypeSymbol(reg.view.?) else null;
             if (self.b.pending != null) return;
             self.b.registers[index] = try self.b.value(.{ .join = .{ .@"type" = view, .inputs = &.{} } });
         }
@@ -229,7 +237,17 @@ const CFG = struct {
     }
     fn construction(self: *CFG, index: t.ConstructionIndex) context.Error!?origin.Symbol {
         const v = &self.b.c.program.tables.mode.common; const current = &v.members.constructions[@intFromEnum(index)];
-        if (current.kind != .explicit) { self.b.pending = .implicit_protocol; return null; }
+        const implicit_base = current.kind == .@"implicit-base";
+        if (current.kind != .explicit and !implicit_base) { self.b.pending = .implicit_protocol; return null; }
+        // These are existing checked declaration facts, not an invented body.
+        // Only the empty implicit-base signature is covered by this projection;
+        // every real inline operation/field/token remains in the current graph.
+        if (implicit_base) {
+            try self.b.c.charge(4);
+            if (current.function != null or v.types[@intFromEnum(current.owner)].base != null or current.parameters.len != 0 or current.signature.parameters.len != 0) {
+                self.b.pending = .implicit_protocol; return null;
+            }
+        }
         const id = try refs.symbol(self.b.c, self.b.allocator, current.id);
         const owner = try self.b.typeSymbol(current.owner) orelse return null;
         const base = if (v.types[@intFromEnum(current.owner)].base) |ref| try self.b.typeSymbol(ref) else null;
@@ -245,9 +263,9 @@ const CFG = struct {
                     const same_owner = self.b.budget.equal(owner, row.owner) catch |err| return refs.graphFailure(err);
                     var same_base = (base == null) == (row.base == null);
                     if (same_base and base != null) same_base = self.b.budget.equal(base.?, row.base.?) catch |err| return refs.graphFailure(err);
-                    var same_function = function != null and row.function_id != null;
-                    if (same_function) same_function = self.b.budget.equal(function.?, row.function_id.?) catch |err| return refs.graphFailure(err);
-                    if (row.kind != .explicit or !same_owner or !same_base or !same_function) break;
+                    var same_function = if (implicit_base) function == null and row.function_id == null else function != null and row.function_id != null;
+                    if (same_function and function != null) same_function = self.b.budget.equal(function.?, row.function_id.?) catch |err| return refs.graphFailure(err);
+                    if ((implicit_base and row.kind != .implicit_base) or (!implicit_base and row.kind != .explicit) or !same_owner or !same_base or !same_function) break;
                     return id;
                 },
             }
@@ -272,9 +290,13 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     };
     for (f.blocks) |*block| for (block.instructions) |*op| {
         try c.step();
-        // Parent binding propagation requires the full call/activation domain.
-        // This control subset never narrows a child-frame protocol.
-        if (op.data == .receiver_child) { result.pending = .implicit_protocol; return; }
+        // A checked implicit-base child stays a separate frame and allocation.
+        // Its parent/newTarget edge, both completions, initialization prefix and
+        // later explicit parent bind are all projected below without shortening.
+        // Other delegated constructor bodies still require a call-aware domain.
+        if (op.data == .receiver_child and v.members.constructions[@intFromEnum(op.data.receiver_child.construction)].kind != .@"implicit-base") {
+            result.pending = .implicit_protocol; return;
+        }
         switch (op.data) {
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
             .receiver_create, .receiver_child, .receiver_allocate, .receiver_bind, .receiver_get, .receiver_result, .initialize_begin, .initialize_end,

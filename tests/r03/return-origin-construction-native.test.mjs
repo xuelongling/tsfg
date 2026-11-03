@@ -10,3 +10,8 @@ test('pure symbolic construction Domain preserves initialization and formal rece
 test('pure checked receiver Body APIs preserve return and effect prefixes and Pending boundaries', async () => {
   await nativeUnit({ source: 'runtime/return-origin-body-test.zig', prefix: 'r03-return-origin-body-', expectedPasses: 3 });
 });
+
+// Captured metadata covers Body projection; it grants no Domain or VM admission.
+test('checked Source3 Body preserves actual receiver data behind an unarchived SSA view', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-source3-body-view-test.zig', prefix: 'r03-return-origin-source3-body-view-', expectedPasses: 1 });
+});
