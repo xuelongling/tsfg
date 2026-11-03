@@ -101,11 +101,32 @@ export function requireCommonCoreConstructionPlans(program){
 }
 
 export function commonPublicCoreRepresentation(program,carriers){
-  const record=carriers.record(),{publicFunctions,publicBindings}=program.construction;
-  program.model.spend(record.bindings.length+record.functions.length);
+  const record=carriers.record(),{publicFunctions,publicBindings}=program.construction,{spend}=program.model;
+  spend(record.bindings.length+record.functions.length+record.domains.length);
   const bindings=record.bindings.filter(row=>publicBindings.has(row.id)),functions=record.functions.filter(row=>publicFunctions.has(row.id));
   check(bindings.length===publicBindings.size&&functions.length===publicFunctions.size,'identity','public Core storage/function inventory is incomplete');
-  return {domains:record.domains,bindings,functions,internalConstructors:commonInternalConstructionDirectory(program,carriers)};
+  const internalConstructors=commonInternalConstructionDirectory(program,carriers),used=new Set(),helpers=new Set();
+  const use=id=>{spend();if(carriers.domains.has(id))used.add(id);};
+  for(const row of bindings)use(row.carrier);
+  for(const row of functions){for(const id of row.parameters)use(id);use(row.result);}
+  for(const row of internalConstructors){
+    spend();helpers.add(row.id);for(const id of row.parameters)use(id);use(row.result);
+    for(const binding of row.bindings)use(binding.carrier);
+  }
+  // The one solver also analyzes nonserialized constructor root plans. Their
+  // domains remain available to analysis, but only emitted storage, ABI, SSA
+  // and call adapters own declarations in the public Core representation.
+  for(const plan of program.plans){
+    spend();if(!publicFunctions.has(plan.owner.id)&&!helpers.has(plan.owner.id))continue;
+    for(const id of carriers.registers.get(plan.owner.id).values())use(id);
+    for(const block of plan.graph.blocks){
+      spend();for(const op of block.instructions){
+        spend();const abi=carriers.methods.get(op);if(!abi)continue;
+        for(const id of abi.parameters)use(id);use(abi.result);
+      }
+    }
+  }
+  return {domains:record.domains.filter(row=>used.has(row.id)),bindings,functions,internalConstructors};
 }
 
 // Both solver passes retain the same complete-coverage gate. Neither a real
