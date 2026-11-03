@@ -633,13 +633,13 @@ test "Array element carrier and unique storage mapping remain owning layout prer
 }
 
 const f64_text = "sha256:8888888888888888888888888888888888888888888888888888888888888888";
-const ReadSpanFixture = struct {
+const LocalFixture = struct {
     data: ScalarFixture,
     types: [5]tables.CommonType,
     concrete: [5]Concrete,
     type_rows: [4]origin.TypeRow,
 
-    fn init(self: *ReadSpanFixture) void {
+    fn init(self: *LocalFixture) void {
         self.data.init(.integer);
         for (0..4) |index| { self.types[index] = self.data.fixture.types[index]; self.concrete[index] = self.data.concrete[index]; }
         const element: t.TypeRef = @enumFromInt(4);
@@ -659,6 +659,17 @@ const ReadSpanFixture = struct {
         // There is no Array storage mapping, descriptor, owner, epoch, scope
         // lifetime, holding or checked-borrow fact in this metadata fixture.
     }
+
+    fn initFunction(self: *LocalFixture) void {
+        self.init();
+        self.types[3].kind = .function; self.types[3].name = "(bool) => bool";
+        self.types[3].element = boolean; self.types[3].members = &.{boolean};
+        self.concrete[3].carrier.layout = .{ .byte_size = 40, .alignment = 8, .reference_count = 1 };
+        self.type_rows[2].kind = .function;
+        // No Code/ENV pair is supplied. Local function ENV completeness says
+        // nothing about the argument's ENV or any loaded target/permission.
+        // The fourth-slot test ID is opaque, not a Source signature digest.
+    }
 };
 
 fn boolParameterOnly(graph: *const origin.Graph, value: origin.Ref, depth: usize) bool {
@@ -672,7 +683,7 @@ fn boolParameterOnly(graph: *const origin.Graph, value: origin.Ref, depth: usize
 }
 
 test "ReadSpan local identity projects opaque Data while only an independent bool returns" {
-    var fixture: ReadSpanFixture = undefined; fixture.init();
+    var fixture: LocalFixture = undefined; fixture.init();
     try std.testing.expect(fixture.types[3].kind == .readSpan and fixture.types[3].element == @as(t.TypeRef, @enumFromInt(4)));
     try std.testing.expect(fixture.types[4].kind == .scalar and fixture.types[4].native_code == 13);
     try std.testing.expectEqual(@as(u32, 16), fixture.concrete[3].carrier.layout.byte_size);
@@ -680,6 +691,10 @@ test "ReadSpan local identity projects opaque Data while only an independent boo
     try std.testing.expectEqual(@as(u16, 1), fixture.concrete[3].carrier.layout.reference_count);
     try std.testing.expect(fixture.concrete[3].body == null and fixture.concrete[3].carrier.field_offsets.len == 0);
     try std.testing.expectEqual(@as(usize, 0), fixture.data.fixture.program.tables.mode.common.storage.arrays.len);
+    try localAliases(&fixture);
+}
+
+fn localAliases(fixture: *LocalFixture) !void {
     var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
     var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
     const before = c.remaining;
@@ -713,12 +728,12 @@ test "ReadSpan local identity projects opaque Data while only an independent boo
     try std.testing.expectEqual(@as(usize, 2), copies); try std.testing.expectEqual(copies, copy_heaps);
     try std.testing.expectEqual(@as(usize, 2), private_joins); try std.testing.expectEqual(@as(u3, 6), paths);
     try std.testing.expect(before < wire.format.max_work and c.remaining < before and c.remaining > 0);
-    // This proves only the Body equations above. It does not run actual replay,
-    // Borrow.finish, holding/escape checks or create a NoEscape/Source receipt.
+    // Only Body equations are proved, not actual replay, Borrow.finish,
+    // holding/escape, Code+ENV/loaded-target/permission or NoEscape/Source.
 }
 
 test "ReadSpan local view rejects a different owned TypeRef with the same descriptor layout" {
-    var fixture: ReadSpanFixture = undefined; fixture.init();
+    var fixture: LocalFixture = undefined; fixture.init();
     var types: [6]tables.CommonType = undefined; var concrete: [6]Concrete = undefined;
     for (0..5) |index| { types[index] = fixture.types[index]; concrete[index] = fixture.concrete[index]; }
     const different: t.TypeRef = @enumFromInt(5);
@@ -734,7 +749,54 @@ test "ReadSpan local view rejects a different owned TypeRef with the same descri
 }
 
 test "ReadSpan local view keeps the required copy archive strict" {
-    var fixture: ReadSpanFixture = undefined; fixture.init();
+    var fixture: LocalFixture = undefined; fixture.init();
+    for (2..4) |index| {
+        fixture.data.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data.data_type } };
+        fixture.data.fixture.operations[index].view = fixture.data.data_text; fixture.data.fixture.operations[index].properties = &fixture.data.view_properties;
+        fixture.data.fixture.registers[index + 1].view = fixture.data.data_type; fixture.data.fixture.carriers[index + 1] = fixture.data.data_text;
+    }
+    fixture.data.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.data.fixture.registers[5].view = void_type;
+    fixture.data.fixture.operations[4].view = void_text; fixture.data.fixture.operations[4].properties = &private_copy_properties; fixture.data.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "incoming function local identity keeps opaque parameter Data without constructing Code or ENV" {
+    var fixture: LocalFixture = undefined; fixture.initFunction();
+    try std.testing.expect(fixture.types[3].kind == .function and fixture.types[3].element == boolean);
+    try std.testing.expectEqualSlices(t.TypeRef, &.{boolean}, fixture.types[3].members);
+    try std.testing.expectEqual(@as(u32, 40), fixture.concrete[3].carrier.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 8), fixture.concrete[3].carrier.layout.alignment);
+    try std.testing.expectEqual(@as(u16, 1), fixture.concrete[3].carrier.layout.reference_count);
+    try std.testing.expect(fixture.concrete[3].body == null and fixture.concrete[3].carrier.field_offsets.len == 0);
+    try std.testing.expectEqual(@as(usize, 0), fixture.data.fixture.program.tables.mode.common.closures.environments.len);
+    try std.testing.expectEqual(@as(usize, 0), fixture.data.fixture.program.tables.mode.common.closures.functions.len);
+    // These are this local function's metadata; they do not prove that the
+    // opaque incoming callable has no ENV or authorize a call or retention.
+    try std.testing.expect(fixture.data.function_rows[0].environment_metadata_complete and fixture.data.function_rows[0].lexical_environment == null);
+    try localAliases(&fixture);
+}
+
+test "incoming function local view rejects a different signature TypeRef with the same physical layout" {
+    var fixture: LocalFixture = undefined; fixture.initFunction();
+    var types: [6]tables.CommonType = undefined; var concrete: [6]Concrete = undefined;
+    for (0..5) |index| { types[index] = fixture.types[index]; concrete[index] = fixture.concrete[index]; }
+    const different: t.TypeRef = @enumFromInt(5);
+    types[5] = types[3]; types[5].id = @splat(0x99); types[5].name = "() => bool"; types[5].members = &.{};
+    concrete[5] = concrete[3]; concrete[5].@"type" = different;
+    fixture.data.fixture.program.tables.mode.common.types = &types; fixture.data.fixture.program.tables.mode.common.storage.concrete = &concrete;
+    fixture.data.fixture.registers[3].carrier = .{ .@"type" = different };
+    try std.testing.expectEqualDeep(concrete[3].carrier.layout, concrete[5].carrier.layout);
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "incoming function local view keeps the required copy archive strict" {
+    var fixture: LocalFixture = undefined; fixture.initFunction();
     for (2..4) |index| {
         fixture.data.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data.data_type } };
         fixture.data.fixture.operations[index].view = fixture.data.data_text; fixture.data.fixture.operations[index].properties = &fixture.data.view_properties;

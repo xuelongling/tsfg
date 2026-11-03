@@ -560,13 +560,13 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
             .domain_view => {
                 const input = op.operands[0]; const output = op.result.?;
                 const from = &f.registers[@intFromEnum(input)]; const into = &f.registers[@intFromEnum(output)];
-                // A pure view keeps ordinary typed Data, including a borrowed Span.
+                // A pure view keeps typed Data; Span/Code/ENV proofs remain separate.
                 // Its optional static annotation need not be in the public
                 // archive; ABI, copy and field type uses remain mandatory.
-                try c.charge(11);
+                try c.charge(12);
                 const data_alias = from.carrier == .@"type" and into.carrier == .@"type" and
                     from.carrier.@"type" == into.carrier.@"type" and
-                    (v.types[@intFromEnum(from.carrier.@"type")].kind == .reference or v.types[@intFromEnum(from.carrier.@"type")].kind == .scalar or v.types[@intFromEnum(from.carrier.@"type")].kind == .string or v.types[@intFromEnum(from.carrier.@"type")].kind == .@"undefined" or v.types[@intFromEnum(from.carrier.@"type")].kind == .@"null" or v.types[@intFromEnum(from.carrier.@"type")].kind == .value or v.types[@intFromEnum(from.carrier.@"type")].kind == .array or v.types[@intFromEnum(from.carrier.@"type")].kind == .readSpan);
+                    (v.types[@intFromEnum(from.carrier.@"type")].kind == .reference or v.types[@intFromEnum(from.carrier.@"type")].kind == .scalar or v.types[@intFromEnum(from.carrier.@"type")].kind == .string or v.types[@intFromEnum(from.carrier.@"type")].kind == .@"undefined" or v.types[@intFromEnum(from.carrier.@"type")].kind == .@"null" or v.types[@intFromEnum(from.carrier.@"type")].kind == .value or v.types[@intFromEnum(from.carrier.@"type")].kind == .array or v.types[@intFromEnum(from.carrier.@"type")].kind == .readSpan or v.types[@intFromEnum(from.carrier.@"type")].kind == .function);
                 if ((!data_alias and from.view != into.view) or !std.meta.eql(from.carrier, into.carrier)) { builder.pending = .view; break; }
                 if (!data_alias) _ = try builder.view(f, output) orelse break;
                 try cfg.define(output, cfg.registerRef(input), flow.control);
