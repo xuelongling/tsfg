@@ -385,7 +385,17 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                 .domain_view => {
                     if (mode != .certificate) { try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control); continue; }
                     const from = &f.registers[@intFromEnum(op.operands[0])]; const into = &f.registers[@intFromEnum(op.result.?)];
-                    if (from.view != into.view or !std.meta.eql(from.carrier, into.carrier) or from.carrier == .initialization) { b.pending = .view; break; }
+                    var view_supported = from.view == into.view;
+                    if (!view_supported) {
+                        // A pure view does not convert the original Data. Only
+                        // this same owned reference carrier has an alias proof;
+                        // no frame, token, Cell, Env or new category is inferred.
+                        try c.charge(4);
+                        view_supported = from.carrier == .@"type" and into.carrier == .@"type" and
+                            from.carrier.@"type" == into.carrier.@"type" and
+                            v.types[@intFromEnum(from.carrier.@"type")].kind == .reference;
+                    }
+                    if (!view_supported or !std.meta.eql(from.carrier, into.carrier) or from.carrier == .initialization) { b.pending = .view; break; }
                     try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control);
                 },
                 inline .receiver_create, .receiver_child => |row| {

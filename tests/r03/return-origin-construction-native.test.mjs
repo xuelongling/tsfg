@@ -19,3 +19,7 @@ test('checked Source3 Body preserves actual receiver data behind an unarchived S
 test('pure child-frame construction Domain retains universal targets and proves inactive completion roots', async () => {
   await nativeUnit({ source: 'runtime/return-origin-child-construction-test.zig', prefix: 'r03-return-origin-child-construction-', expectedPasses: 15 });
 });
+
+test('checked reference Data aliases preserve complete certificate copy and rejection boundaries', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-certificate-view-test.zig', prefix: 'r03-return-origin-certificate-view-', expectedPasses: 6 });
+});
