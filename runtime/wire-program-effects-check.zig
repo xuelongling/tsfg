@@ -594,33 +594,18 @@ const UpperGraph = struct {
         // The immutable complete fixed contract vector is solely the upper.
         const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
         if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
-        var entry: ?construction_origins.Entry = null;
-        if(receiver) {
-            const actual=collector.final_actual orelse return self.noFixedBodyProof(full,returned,thrown);
-            const observed=try actual.receiverEntry(c,target) orelse return self.noFixedBodyProof(full,returned,thrown);
-            const common=&c.program.tables.mode.common;
-            const role=&common.members.constructions[@intFromEnum(observed.construction)];
-            try c.charge(observed.scalar_fields.len+1);
-            const scalar_fields=try arena.allocator().alloc(origin_model.Symbol,observed.scalar_fields.len);
-            for(observed.scalar_fields,scalar_fields) |field_ref,*selected| {
-                try c.step(); const id=try publication_refs.symbol(c,arena.allocator(),common.members.fields[@intFromEnum(field_ref)].id);
-                budget.lookup(directory.fields.len,id.len) catch |err| return publication_refs.graphFailure(err); var lo:usize=0; var hi=directory.fields.len; var owned=false;
-                while(lo<hi) { const mid=lo+(hi-lo)/2; switch(std.mem.order(u8,directory.fields[mid],id)) {
-                    .lt=>lo=mid+1,.gt=>hi=mid,.eq=>{ try c.step(); selected.*=directory.fields[mid]; owned=true; break; },
-                } }
-                if(!owned)return self.noFixedBodyProof(full,returned,thrown);
-            }
-            // For a construction-body, model.protocol is construction_frame;
-            // the current receiver covered branch accepts ONLY full typed
-            // equation identity, never ordinary structural simulation. Thus
-            // every original store corresponds to this independent SSA body.
-            // ALL its field payloads were just proved native from real opcode
-            // + physical carrier, not Graph.Other or a retained static view.
-            try c.row(construction_origins.Entry);
-            entry=.{.function_id=function_id,.construction=try publication_refs.symbol(c,arena.allocator(),role.id),
-                .new_target=try publication_refs.symbol(c,arena.allocator(),common.types[@intFromEnum(observed.new_target)].id),.scalar_fields=scalar_fields};
+        // Receiver return interpretation is owned by the independently checked
+        // construction-frame protocol. It is not selected actual entrances or
+        // the cached effect proof. Complete current-body inclusion above stays
+        // mandatory before any immutable fixed return value is consumed.
+        if (receiver) {
+            try c.charge(2); const target_function = c.program.functions[@intFromEnum(target)];
+            if (target_function.role != .construction_body or collector.common().abis[@intFromEnum(target_function.abi)].construction == null) return self.noFixedBodyProof(full, returned, thrown);
         }
-        var analysis = construction_origins.analyze(c.allocator, &directory, graph, &budget,entry) catch |err| return publication_refs.graphFailure(err);
+        var analysis = if (receiver)
+            construction_origins.analyzeReturns(c.allocator, &directory, graph, &budget, function_id) catch |err| return publication_refs.graphFailure(err)
+        else
+            construction_origins.analyze(c.allocator, &directory, graph, &budget, null) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
         if (analysis.pending != null) return self.noFixedBodyProof(full, returned, thrown);
         for(analysis.initializations) |*write| {
@@ -675,7 +660,7 @@ const UpperGraph = struct {
             try c.step(); break :original collector.upper(target) orelse return error.InvalidShape;
         } else try collector.consumeUpper(self.function, target);
         const target_abi = collector.common().abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)];
-        if(target_abi.construction!=null and !self.summarizing)collector.fixed_upper_origin_pending=true;
+        if(target_abi.construction!=null and !self.summarizing and (try collector.receiverProof(target))==null)collector.fixed_upper_origin_pending=true;
         if (target_abi.lexical_environment != null) {
             var supplied: effect_env.Set = .{}; defer supplied.deinit(c.allocator);
             try self.callEnvironments(target, op, state, &supplied);
@@ -760,8 +745,10 @@ const UpperGraph = struct {
         var control_arena = std.heap.ArenaAllocator.init(c.allocator); defer control_arena.deinit();
         var control_body: ?body_origins.Projection = null; defer if (control_body) |*body| body.deinit();
         var control_analysis: ?construction_origins.Analysis = null; defer if (control_analysis) |*analysis| analysis.deinit();
-        var controlled = false;
-        if (abi.construction != null) {
+        const effect_proof = try collector.receiverProof(self.function);
+        var receiver_flow: ?body_origins.ReceiverFlow = null;
+        if (effect_proof) |proof| { try c.row(body_origins.ReceiverFlow); try c.row(origin_model.Graph); receiver_flow = proof.flow; }
+        if (receiver_flow == null and abi.construction != null) {
             const fixed = &v.authority.fixed_publication;
             const directory = try publication_refs.returnOriginDirectory(c, control_arena.allocator(), fixed.*);
             var budget: origin_model.Budget = .{ .context = c, .charge = publication_refs.graphCharge };
@@ -769,9 +756,13 @@ const UpperGraph = struct {
             if (control_body.?.pending == null) {
                 const function_id = try publication_refs.symbol(c, control_arena.allocator(), function.id);
                 control_analysis = construction_origins.analyzeControls(c.allocator, &directory, &control_body.?.graph.?, &budget, function_id) catch |err| return publication_refs.graphFailure(err);
-                controlled = control_analysis.?.pending == null;
+                if (control_analysis.?.pending == null) {
+                    try c.row(body_origins.ReceiverFlow); try c.row(origin_model.Graph);
+                    receiver_flow = .{ .graph = control_body.?.graph.?, .block_controls = control_body.?.block_controls, .receiver_actions = control_body.?.receiver_actions, .controls = control_analysis.?.controls, .action_results = control_analysis.?.action_results };
+                }
             }
         }
+        const controlled = receiver_flow != null;
         self.lexical_cells = summary.lexical_cells;
         try c.charge(function.blocks.len * 2 + 1);
         const entries = try c.allocator.alloc(?UpperState, function.blocks.len); @memset(entries, null);
@@ -823,7 +814,7 @@ const UpperGraph = struct {
         var cursor: usize = 0;
         while (cursor < pending.items.len) : (cursor += 1) {
             try c.step(); const b = @intFromEnum(pending.items[cursor]); queued[b] = false;
-            if (controlled) { try c.step(); if (!control_analysis.?.controls[control_body.?.block_controls[b]]) continue; }
+            if (controlled) { try c.step(); if (!receiver_flow.?.controls[receiver_flow.?.block_controls[b]]) continue; }
             var state = try UpperState.clone(c, &entries[b].?); defer state.deinit(c);
             for (function.blocks[b].instructions, 0..) |op, index| {
                 try c.charge(op.operands.len + 1); var result: Owners = .{}; defer result.deinit(c.allocator);
@@ -900,9 +891,9 @@ const UpperGraph = struct {
                         if(!self.summarizing) { try collector.facet(self.function,.allocation); try collector.facet(self.function,.managed_reference); }
                     },
                     .initialize_field => {
-                        // Fixed field owner upper and replacement-slot projection
-                        // are not yet admitted; current-body actuals cannot fill them.
-                        if(!self.summarizing)collector.fixed_upper_origin_pending=true;
+                        // Consume the same complete prefix-field evidence as
+                        // the actual observer, then retain the lexical access.
+                        if(!self.summarizing and !try collector.receiverField(self.function,b,index))collector.fixed_upper_origin_pending=true;
                         try self.mark(&state.values[@intFromEnum(op.operands[1])],.write); result.nonowning=true;
                     },
                     .domain_array_store, .domain_array_resize => { const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .write); try self.mark(receiver, .structural); },
@@ -967,31 +958,32 @@ const UpperGraph = struct {
                 if (op.result) |reg| try state.values[@intFromEnum(reg)].replace(c, &result);
                 switch (op.data) {
                     inline .receiver_bind,.receiver_get,.receiver_result => |control| {
-                        // The control proof is deliberately separate from fixed
-                        // owner/field/return coverage. Keep that existing gap.
-                        if(!self.summarizing)collector.fixed_upper_origin_pending=true;
+                        // Control alone never closes owner/field coverage. Only
+                        // the complete shared current-body proof closes this duty.
+                        if(!self.summarizing and effect_proof==null)collector.fixed_upper_origin_pending=true;
                         var selected: Owners=.{}; defer selected.deinit(c.allocator);
                         var failure: Owners=.{}; defer failure.deinit(c.allocator);
                         if (controlled) {
                             var action: ?body_origins.ReceiverControl = null;
-                            for (control_body.?.receiver_actions) |row| {
+                            for (receiver_flow.?.receiver_actions) |row| {
                                 try c.charge(2); if (row.block == b and row.instruction == index) { action = row; break; }
                             }
                             const row = action orelse return error.InvalidShape;
-                            const atoms = [_][]const construction_origins.Atom{ control_analysis.?.action_results[row.normal], control_analysis.?.action_results[row.language] };
+                            const atoms = [_][]const construction_origins.Atom{ receiver_flow.?.action_results[row.normal], receiver_flow.?.action_results[row.language] };
                             const owners = [_]*Owners{ &selected, &failure };
                             for (atoms, owners) |values, into| for (values) |atom| {
                                 try c.step(); switch (atom.source) {
                                     .allocation, .language_error => { _ = try into.add(c, .local); },
-                                    .node => |id| switch (control_body.?.graph.?.nodes[id]) {
+                                    .node => |id| switch (receiver_flow.?.graph.nodes[id]) {
                                         .local => { _ = try into.add(c, .local); },
+                                        .parameter => |parameter| { _ = try into.add(c, .{ .parameter = parameter.index }); },
                                         else => { _ = try into.makeOpaque(c); },
                                     },
                                 }
                             };
                             try c.charge(2);
-                            if (control_analysis.?.controls[row.normal_control]) try self.edge(entries,queued,&pending,control.normal,&state,&.{selected});
-                            if (control_analysis.?.controls[row.language_control]) try self.edge(entries,queued,&pending,control.language,&state,&.{failure});
+                            if (receiver_flow.?.controls[row.normal_control]) try self.edge(entries,queued,&pending,control.normal,&state,&.{selected});
+                            if (receiver_flow.?.controls[row.language_control]) try self.edge(entries,queued,&pending,control.language,&state,&.{failure});
                         } else {
                             _=try selected.makeOpaque(c); _=try failure.makeOpaque(c);
                             try self.edge(entries,queued,&pending,control.normal,&state,&.{selected});
@@ -1082,6 +1074,7 @@ pub const Collector = struct {
     captures: []?Capture,
     managed: []Managed,
     aliases: []AliasSummary,
+    receiver_effects: []?*body_origins.ReceiverEffects,
     unresolved: bool = false,
     fixed_upper_origin_pending: bool = false,
     // Borrowed only during finish, after actual fixed point AND replay checks.
@@ -1094,7 +1087,7 @@ pub const Collector = struct {
     pub fn init(c: *Context, material: ?*const host_binding.Bundle) Error!Collector {
         if (c.program.tables.mode != .common) return error.WrongMode;
         const v = c.program.tables.mode.common;
-        try c.charge(2 * c.program.functions.len + 2 * v.types.len + v.storage.bindings.len);
+        try c.charge(3 * c.program.functions.len + 2 * v.types.len + v.storage.bindings.len);
         const contracts = try c.allocator.alloc(?usize, c.program.functions.len);
         errdefer c.allocator.free(contracts);
         const concrete = try c.allocator.alloc(?usize, v.types.len);
@@ -1105,6 +1098,8 @@ pub const Collector = struct {
         errdefer c.allocator.free(managed);
         const aliases = try c.allocator.alloc(AliasSummary, c.program.functions.len);
         errdefer c.allocator.free(aliases); @memset(aliases, .{});
+        const receiver_effects = try c.allocator.alloc(?*body_origins.ReceiverEffects, c.program.functions.len);
+        errdefer c.allocator.free(receiver_effects); @memset(receiver_effects, null);
         @memset(contracts, null); @memset(concrete, null);
         @memset(captures, null); @memset(managed, .empty);
         var ids: std.AutoHashMapUnmanaged(t.Hash, usize) = .empty;
@@ -1128,7 +1123,7 @@ pub const Collector = struct {
             try c.require(captures[b] == null);
             captures[b] = .{ .environment = @enumFromInt(e), .slot = @enumFromInt(s) };
         };
-        var result = Collector{ .c = c, .host_material = material, .contracts = contracts, .concrete = concrete, .captures = captures, .managed = managed, .aliases = aliases };
+        var result = Collector{ .c = c, .host_material = material, .contracts = contracts, .concrete = concrete, .captures = captures, .managed = managed, .aliases = aliases, .receiver_effects = receiver_effects };
         // An unreachable Host instruction still requires its original metadata
         // dependency. Its runtime effect permission follows actual replay.
         for (c.program.functions, 0..) |f, i| for (f.blocks) |block| for (block.instructions) |op| {
@@ -1137,9 +1132,37 @@ pub const Collector = struct {
         return result;
     }
     pub fn deinit(self: *Collector) void {
+        for (self.receiver_effects) |entry| if (entry) |owned| { owned.deinit(); self.c.allocator.destroy(owned); };
+        self.c.allocator.free(self.receiver_effects);
         self.c.allocator.free(self.contracts); self.c.allocator.free(self.concrete);
         self.c.allocator.free(self.captures); self.c.allocator.free(self.managed);
         for (self.aliases) |*summary| summary.deinit(self.c.allocator); self.c.allocator.free(self.aliases);
+    }
+    // One owned complete current-body proof is shared by actual replay and the
+    // independent complete-upper owner flow. A cached Pending stays Pending.
+    fn receiverProof(self: *Collector, function: t.FunctionRef) Error!?*const body_origins.ReceiverEffectProof {
+        const c = self.c; const index = @intFromEnum(function); try c.charge(3);
+        const f = c.program.functions[index];
+        if (self.common().abis[@intFromEnum(f.abi)].construction == null) return null;
+        const owned = self.receiver_effects[index] orelse blk: {
+            try c.charge(2); const entry = try c.allocator.create(body_origins.ReceiverEffects); errdefer c.allocator.destroy(entry);
+            entry.* = try body_origins.coverReceiverEffects(c, function);
+            self.receiver_effects[index] = entry; break :blk entry;
+        };
+        if (owned.proof) |*proof| return proof;
+        return null;
+    }
+    fn receiverField(self: *Collector, function: t.FunctionRef, block: usize, instruction: usize) Error!bool {
+        const proof = try self.receiverProof(function) orelse return false;
+        for (proof.fields) |field| {
+            try self.c.charge(2); if (field.block != block or field.instruction != instruction) continue;
+            // The owning kernel requires these live prefix stores to target the
+            // real bound allocation. This is lexical Local, no holding/alias
+            // authority; the existing access/mark still checks each observation.
+            for (proof.initializations) |write| { try self.c.step(); if (write.store == field.store) return true; }
+            return false;
+        }
+        return false;
     }
     fn common(self: *const Collector) tables.CommonTables { return self.c.program.tables.mode.common; }
     fn upper(self: *Collector, function: t.FunctionRef) ?*const publication.EffectUpper {
@@ -1325,7 +1348,7 @@ pub const Collector = struct {
         const c = self.c; const full = try self.consumeUpper(site.location.function, target);
         const op = c.program.functions[@intFromEnum(site.location.function)].blocks[@intFromEnum(site.location.block)].instructions[site.location.instruction];
         const constructor=self.common().abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)].construction!=null;
-        if(constructor)self.fixed_upper_origin_pending=true;
+        if(constructor and (try self.receiverProof(target))==null)self.fixed_upper_origin_pending=true;
         try c.require(offset <= op.operands.len);
         try c.require(if (prefix) full.parameters.len <= op.operands.len - offset else full.parameters.len == op.operands.len - offset);
         for (full.parameters, 0..) |wanted, i| {
@@ -1380,8 +1403,8 @@ pub const Collector = struct {
         };
         switch (op.data) {
             .receiver_allocate => { try self.facet(function,.allocation); try self.facet(function,.managed_reference); },
-            .initialize_field => { self.fixed_upper_origin_pending=true; try self.access(site,state.values.reg(op.operands[1]),.write); },
-            .receiver_bind,.receiver_get,.receiver_result => self.fixed_upper_origin_pending=true,
+            .initialize_field => { if(!try self.receiverField(function,@intFromEnum(site.location.block),site.location.instruction))self.fixed_upper_origin_pending=true; try self.access(site,state.values.reg(op.operands[1]),.write); },
+            .receiver_bind,.receiver_get,.receiver_result => if((try self.receiverProof(function))==null) { self.fixed_upper_origin_pending=true; },
             .global_load => |v| try self.global(function, v.global, .read),
             .global_store => |v| try self.global(function, v.global, .write),
             .environment_load => |v| try self.environment(site, state, v.slot, false, false),

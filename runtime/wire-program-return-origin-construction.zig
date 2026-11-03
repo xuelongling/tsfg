@@ -72,7 +72,7 @@ const Engine = struct {
     allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget,
     values: []Fact, worlds: []World, controls: []bool, frames: []Frame, results: []Atoms,
     input: ?Ref = null,
-    changed: bool = false, pending: ?Pending = null, control_only: bool = false,
+    changed: bool = false, pending: ?Pending = null, control_only: bool = false, effect_origins: bool = false,
     fn insert(self: *Engine, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!bool {
         for (into.items) |old| { try self.budget.step(); if (std.meta.eql(old, value)) return false; }
         try self.budget.step();
@@ -122,7 +122,7 @@ const Engine = struct {
         }
         for(row.values) |id| {
             try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return false;
-            for(value.atoms.items) |atom| { try self.budget.step(); if(atom.category!=.other or atom.source!=.node or self.graph.nodes[atom.source.node]!=.literal)return false; }
+            if (!self.effect_origins) for(value.atoms.items) |atom| { try self.budget.step(); if(atom.category!=.other or atom.source!=.node or self.graph.nodes[atom.source.node]!=.literal)return false; };
         }
         return true;
     }
@@ -208,9 +208,16 @@ const Engine = struct {
                             if (value.frames.items.len != 0) { self.pending = .data_protocol; continue; }
                             for (value.atoms.items) |atom| {
                                 try self.budget.step();
-                                // Preserve category without turning a copy into
-                                // an allocation, retained actual tag or alias.
-                                try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = atom.category });
+                                if (self.effect_origins) {
+                                    // Conditional lexical may-owner roots, as in
+                                    // Graph5 copied(Parameter/EntryProjection).
+                                    // This is not actual identity or a clone/hold
+                                    // proof. Actual local Value shapes stay Open.
+                                    try self.add(Atom, &into.atoms, atom);
+                                } else {
+                                    // Control-only copies establish categories.
+                                    try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = atom.category });
+                                }
                             }
                         }
                     },
@@ -241,6 +248,12 @@ const Engine = struct {
                     .join => |row| for (row.inputs) |input| try self.merge(&self.worlds[index], &self.worlds[input], null, null, null),
                     .receiver_action => |row| try self.action(index, row),
                     .store => |row| try self.initialize(index,row),
+                    .copy => |row| {
+                        // A typed Data copy cannot mutate receiver controls.
+                        // Keep its complete heap edge and prefix history; this
+                        // domain makes no copied physical Value/holding proof.
+                        try self.merge(&self.worlds[index], &self.worlds[row.previous], null, null, null);
+                    },
                     else => unreachable,
                 }
             }
@@ -264,7 +277,7 @@ const Engine = struct {
 // Optional entry carries only original IDs for an independently proved unbound
 // root. It must belong to this graph's owning function and completed same-
 // Context actual analysis. No raw payload, Source/FDI or permission is accepted.
-fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_function: ?model.Symbol) Error!Analysis {
+fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_function: ?model.Symbol, effect_origins: bool, return_origins: bool) Error!Analysis {
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
     if (!try model.receiverActivations(allocator, graph, budget)) { result.pending = .frame_activation; return result; }
     if (graph.calls.len != 0) { result.pending = .fixed_call; return result; }
@@ -272,23 +285,41 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     for (graph.nodes,0..) |node,index| {
         try budget.step(); switch (node) {
             .receiver_input => { if((entry==null and formal_function==null) or input!=null) { result.pending = .entry_state; return result; } input=index; },
-            .unknown => if (formal_function==null) { result.pending = .unknown_origin; return result; },
+            .unknown => if (formal_function==null or effect_origins) { result.pending = .unknown_origin; return result; },
             .copy => if (formal_function==null) { result.pending = .data_protocol; return result; },
-            .literal, .local, .parameter, .global, .nonowning, .join, .gate, .receiver_frame, .receiver_value => {},
+            .local => |row| if (effect_origins) {
+                // Only a Local carries an independently admitted actual tag.
+                // This small domain has no complete physical Value field map.
+                var known = false;
+                for (directory.types) |actual| {
+                    try budget.step(); if (!try budget.equal(actual.id, row.@"type")) continue;
+                    known = actual.kind != .value and actual.kind != .unknown and actual.kind != .union_type and actual.kind != .future; break;
+                }
+                if (!known) { result.pending = .data_protocol; return result; }
+            },
+            .literal, .parameter, .global, .nonowning, .join, .gate, .receiver_frame, .receiver_value => {},
             .code => |row| if (row.environment != null) { result.pending = .data_protocol; return result; },
             else => { result.pending = .data_protocol; return result; },
         }
     }
+    if (return_origins and input == null) { result.pending = .entry_state; return result; }
     const a = result.arena.allocator();
     // The proved immutable entry is shared by every store and its frame seed.
     const entry_function=if(input!=null)try model.findFunction(directory,formal_function orelse entry.?.function_id,budget) else null;
     for (graph.heaps) |heap| { try budget.step(); switch (heap) {
         .entry, .join, .receiver_action => {},
+        .copy => if (!return_origins) { result.pending = .heap_protocol; return result; },
         .store=>|row|{
-            if(entry==null or input==null or !row.initialize) { result.pending=.scalar_initialization; return result; }
+            if((entry==null and !effect_origins) or input==null or !row.initialize) { result.pending=.scalar_initialization; return result; }
             const function=entry_function.?;
             try budget.text(row.selector.len);
             if(function.construction==null or !try budget.equal(function.construction.?.owner,row.view) or !std.mem.startsWith(u8,row.selector,"field:")) { result.pending=.scalar_initialization; return result; }
+            if (effect_origins) {
+                var owned = false;
+                for (directory.fields) |id| { try budget.step(); if (try budget.equal(id, row.selector[6..])) { owned = true; break; } }
+                if (!owned) { result.pending = .scalar_initialization; return result; }
+                continue;
+            }
             var owned=false;
             for(entry.?.scalar_fields) |id| { try budget.step(); if(try budget.equal(id,row.selector[6..])) { owned=true; break; } }
             if(!owned or !try nativeLiterals(a,directory,graph,row.values,budget)) { result.pending=.scalar_initialization; return result; }
@@ -301,7 +332,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     try budget.spend(graph.heaps.len); const worlds = try a.alloc(World, graph.heaps.len);
     for (worlds) |*world| { try budget.spend(graph.nodes.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len) }; @memset(world.bindings, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
-    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null };
+    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins };
     if(input) |id| {
       if (formal_function != null) {
         // The admitted construction-body interface owns an initially unbound
@@ -326,6 +357,20 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     for(graph.heaps) |heap| if(heap==.store) {
         try budget.step(); const row=heap.store; if(!controls[row.control])continue;
         if(!worlds[row.previous].live or !try engine.storeReady(row)) { result.pending=.scalar_initialization; return result; }
+    };
+    if (return_origins) for (graph.heaps) |heap| {
+        try budget.step(); if (heap != .copy) continue;
+        const row = heap.copy; const operation = graph.nodes[row.value].copy;
+        if (!controls[operation.control] or !worlds[row.previous].live) continue;
+        // An ignored copy result still needs an established Data input before
+        // its normal heap can witness completion. Frame-valued copies already
+        // set Engine.pending=data_protocol in the shared value transfer.
+        try budget.step();
+        if (values[row.value].atoms.items.len == 0) { result.pending = .unknown_origin; return result; }
+        try budget.spend(operation.bases.len);
+        for (operation.bases) |base| {
+            try budget.step(); if (values[base].atoms.items.len == 0) { result.pending = .unknown_origin; return result; }
+        }
     };
     // A circular/uncomputed data equation is bottom, never a known-empty
     // payload. Only an actually absent operand vector denotes generated U.
@@ -378,12 +423,27 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
 // Original immutable certificate interpretation retains its stronger entry and
 // native-field requirements. The effect-only boundary below does not relax it.
 pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, entry, null);
+    return analyzeImpl(allocator, directory, graph, budget, entry, null, false, false);
 }
 
 // The graph is the complete current normalized constructor control projection,
 // not its fixed own-return certificate. Unsupported calls and data/heap forms
 // retain Pending; callers must keep complete callee uppers independently.
 pub fn analyzeControls(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, function_id: model.Symbol) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, function_id);
+    return analyzeImpl(allocator, directory, graph, budget, null, function_id, false, false);
+}
+
+// Effect-only lexical owner flow through all current live-prefix field stores.
+// Formal roots retain arbitrary categories and conditional owners across copy;
+// no actual allocation, identity, freshness, holding or return proof is made.
+pub fn analyzeEffects(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, function_id: model.Symbol) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, null, function_id, true, false);
+}
+
+// Pure interpretation of an independently typed construction-frame return
+// graph. The caller must separately prove the complete current-body graph is
+// included in the immutable fixed graph. No effect-proof object, selected actual
+// entrance, allocation authority, physical Value clone or holding is accepted.
+pub fn analyzeReturns(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, function_id: model.Symbol) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, null, function_id, true, true);
 }

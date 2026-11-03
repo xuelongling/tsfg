@@ -3,5 +3,10 @@ import test from 'node:test';
 import { nativeUnit } from './native-unit.mjs';
 
 test('pure symbolic construction Domain preserves initialization and formal receiver-control completions', async () => {
-  await nativeUnit({ source: 'runtime/return-origin-construction-test.zig', prefix: 'r03-return-origin-construction-', expectedPasses: 14 });
+  await nativeUnit({ source: 'runtime/return-origin-construction-test.zig', prefix: 'r03-return-origin-construction-', expectedPasses: 30 });
+});
+
+// Separate Body APIs: these checks do not grant full-refcheck or admission coverage.
+test('pure checked receiver Body APIs preserve return and effect prefixes and Pending boundaries', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-body-test.zig', prefix: 'r03-return-origin-body-', expectedPasses: 3 });
 });
