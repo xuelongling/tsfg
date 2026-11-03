@@ -9,3 +9,7 @@ test('pure symbolic receiver certificates compare complete equations and preserv
 test('pure structural receiver certificates preserve frames, complete joins and controlled gates', async () => {
   await nativeUnit({ source: 'runtime/wire-program-return-origin-frame-certificate-test.zig', prefix: 'r03-return-origin-frame-certificate-', expectedPasses: 11 });
 });
+
+test('fixed symbolic heap certificates distinguish stores from initialization', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-initialize-certificate-test.zig', prefix: 'r03-return-origin-initialize-certificate-', expectedPasses: 2 });
+});

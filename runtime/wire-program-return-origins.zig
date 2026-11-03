@@ -402,6 +402,7 @@ const Engine = struct {
             .entry => {},
             .store => |row| {
                 const other = b.store;
+                if (row.initialize != other.initialize) return false;
                 if (!try self.budget.equal(row.selector, other.selector) or !try self.budget.equal(row.view, other.view)) return false;
                 try self.values(state, row.bases, other.bases); try self.values(state, row.values, other.values); try self.heap(state, row.previous, other.previous);
             },
