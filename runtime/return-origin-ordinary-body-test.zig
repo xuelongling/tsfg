@@ -631,3 +631,119 @@ test "Array element carrier and unique storage mapping remain owning layout prer
         try std.testing.expectError(error.InvalidShape, typedInput(&c, &budget, &fixture.data.interpretation));
     }
 }
+
+const f64_text = "sha256:8888888888888888888888888888888888888888888888888888888888888888";
+const ReadSpanFixture = struct {
+    data: ScalarFixture,
+    types: [5]tables.CommonType,
+    concrete: [5]Concrete,
+    type_rows: [4]origin.TypeRow,
+
+    fn init(self: *ReadSpanFixture) void {
+        self.data.init(.integer);
+        for (0..4) |index| { self.types[index] = self.data.fixture.types[index]; self.concrete[index] = self.data.concrete[index]; }
+        const element: t.TypeRef = @enumFromInt(4);
+        self.types[3].kind = .readSpan; self.types[3].name = "ReadSpan<f64>"; self.types[3].native_code = 0; self.types[3].element = element;
+        self.concrete[3].carrier.layout = .{ .byte_size = 16, .alignment = 8, .reference_count = 1 };
+        self.types[4] = self.types[1]; self.types[4].id = @splat(0x88); self.types[4].name = "f64"; self.types[4].native_code = 13;
+        self.concrete[4] = .{ .@"type" = element, .carrier = .{ .layout = .{ .byte_size = 8, .alignment = 8, .reference_count = 0 }, .field_offsets = &.{} }, .body = null };
+        self.data.fixture.program.tables.mode.common.types = &self.types;
+        self.data.fixture.program.tables.mode.common.storage.concrete = &self.concrete;
+        self.type_rows = .{ directory.types[0], directory.types[1], .{ .id = integer_text, .kind = .read_span }, .{ .id = f64_text, .kind = .scalar } };
+        self.data.interpretation.types = &self.type_rows;
+        self.data.function_rows[0].return_type = boolean_text;
+        self.data.fixture.abis[0].result = boolean; self.data.fixture.abis[0].result_carrier = boolean_carrier;
+        for (6..8) |index| { self.data.fixture.instructions[index].operands = &.{r1}; self.data.fixture.operations[index].operands = &.{r1}; }
+        // The required Span parameter and its local aliases never become a
+        // return/store/call/capture operand. Only the independent bool returns.
+        // There is no Array storage mapping, descriptor, owner, epoch, scope
+        // lifetime, holding or checked-borrow fact in this metadata fixture.
+    }
+};
+
+fn boolParameterOnly(graph: *const origin.Graph, value: origin.Ref, depth: usize) bool {
+    if (depth >= graph.nodes.len) return false;
+    const node = graph.nodes[value];
+    if (node == .parameter) return node.parameter.index == 1 and std.mem.eql(u8, node.parameter.@"type", boolean_text);
+    const inputs = switch (node) { .join => |row| row.inputs, .gate => |row| row.inputs, else => return false };
+    if (inputs.len == 0) return false;
+    for (inputs) |input| if (!boolParameterOnly(graph, input, depth + 1)) return false;
+    return true;
+}
+
+test "ReadSpan local identity projects opaque Data while only an independent bool returns" {
+    var fixture: ReadSpanFixture = undefined; fixture.init();
+    try std.testing.expect(fixture.types[3].kind == .readSpan and fixture.types[3].element == @as(t.TypeRef, @enumFromInt(4)));
+    try std.testing.expect(fixture.types[4].kind == .scalar and fixture.types[4].native_code == 13);
+    try std.testing.expectEqual(@as(u32, 16), fixture.concrete[3].carrier.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 8), fixture.concrete[3].carrier.layout.alignment);
+    try std.testing.expectEqual(@as(u16, 1), fixture.concrete[3].carrier.layout.reference_count);
+    try std.testing.expect(fixture.concrete[3].body == null and fixture.concrete[3].carrier.field_offsets.len == 0);
+    try std.testing.expectEqual(@as(usize, 0), fixture.data.fixture.program.tables.mode.common.storage.arrays.len);
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    const before = c.remaining;
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projected.pending);
+    const graph = &projected.graph.?;
+    try std.testing.expect((try origin.validateGraph(c.allocator, &fixture.data.interpretation, function_text, graph, &budget)) == .valid);
+    try std.testing.expectEqual(@as(usize, 1), graph.normal.len); try std.testing.expect(boolParameterOnly(graph, graph.normal[0], 0));
+    try std.testing.expectEqual(@as(usize, 2), graph.exits.normal.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.language.len); try std.testing.expectEqual(@as(usize, 0), graph.exits.language.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.calls.len); try std.testing.expectEqual(@as(usize, 0), graph.accesses.len);
+    var copies: usize = 0; var copy_heaps: usize = 0; var private_joins: usize = 0; var paths: u3 = 0;
+    for (graph.nodes, 0..) |node, index| switch (node) {
+        .parameter => {},
+        .join => |row| if (row.@"type" == null) {
+            private_joins += 1; try std.testing.expectEqual(@as(usize, 1), try copiesFromOriginal(graph, index, 0));
+        },
+        .gate => {},
+        .copy => |row| {
+            copies += 1; try std.testing.expectEqualStrings(integer_text, row.@"type");
+            const count = try copiesFromOriginal(graph, index, 0); try std.testing.expect(count == 1 or count == 2);
+            paths |= @as(u3, 1) << @as(u2, @intCast(count));
+            var owners: usize = 0;
+            for (graph.heaps) |heap| if (heap == .copy and heap.copy.value == index) { owners += 1; try std.testing.expectEqual(row.heap, heap.copy.previous); };
+            try std.testing.expectEqual(@as(usize, 1), owners);
+        },
+        else => return error.TestUnexpectedDescriptorOrOwner,
+    };
+    for (graph.heaps) |heap| switch (heap) { .entry, .join => {}, .copy => copy_heaps += 1, else => return error.TestUnexpectedHeapFact };
+    for (graph.controls) |flow| switch (flow) { .entry, .join => {}, else => return error.TestUnexpectedBorrowControl };
+    try std.testing.expectEqual(@as(usize, 2), copies); try std.testing.expectEqual(copies, copy_heaps);
+    try std.testing.expectEqual(@as(usize, 2), private_joins); try std.testing.expectEqual(@as(u3, 6), paths);
+    try std.testing.expect(before < wire.format.max_work and c.remaining < before and c.remaining > 0);
+    // This proves only the Body equations above. It does not run actual replay,
+    // Borrow.finish, holding/escape checks or create a NoEscape/Source receipt.
+}
+
+test "ReadSpan local view rejects a different owned TypeRef with the same descriptor layout" {
+    var fixture: ReadSpanFixture = undefined; fixture.init();
+    var types: [6]tables.CommonType = undefined; var concrete: [6]Concrete = undefined;
+    for (0..5) |index| { types[index] = fixture.types[index]; concrete[index] = fixture.concrete[index]; }
+    const different: t.TypeRef = @enumFromInt(5);
+    types[5] = types[3]; types[5].id = @splat(0x99); types[5].name = "ReadSpan<bool>"; types[5].element = boolean;
+    concrete[5] = concrete[3]; concrete[5].@"type" = different;
+    fixture.data.fixture.program.tables.mode.common.types = &types; fixture.data.fixture.program.tables.mode.common.storage.concrete = &concrete;
+    fixture.data.fixture.registers[3].carrier = .{ .@"type" = different };
+    try std.testing.expectEqualDeep(concrete[3].carrier.layout, concrete[5].carrier.layout);
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "ReadSpan local view keeps the required copy archive strict" {
+    var fixture: ReadSpanFixture = undefined; fixture.init();
+    for (2..4) |index| {
+        fixture.data.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data.data_type } };
+        fixture.data.fixture.operations[index].view = fixture.data.data_text; fixture.data.fixture.operations[index].properties = &fixture.data.view_properties;
+        fixture.data.fixture.registers[index + 1].view = fixture.data.data_type; fixture.data.fixture.carriers[index + 1] = fixture.data.data_text;
+    }
+    fixture.data.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.data.fixture.registers[5].view = void_type;
+    fixture.data.fixture.operations[4].view = void_text; fixture.data.fixture.operations[4].properties = &private_copy_properties; fixture.data.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
