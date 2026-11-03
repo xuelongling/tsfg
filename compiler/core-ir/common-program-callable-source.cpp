@@ -35,8 +35,16 @@ bool SourceModel::scopeDirectory(){
               same(field(row,"annotationRange"),field(binding,"annotationRange")),"var original value declaration anchor differs"))return false;
           }else if(!need(declarations.count(key)&&string(field(*declarations.at(key).row,"kind"))=="varDeclaration","var redeclaration changed lexical binding"))return false;
         }
-        const auto descend=[&](const Json &children,llvm::StringRef label,bool again,bool allowed){
+        const auto descend=[&](const Json &children,llvm::StringRef label,bool again,bool allowed,const Json *binding=nullptr){
           Array childPath(path);childPath.push_back(label.str()+":"+std::to_string(index));
+          if(binding&&!binding->getAsNull()){
+            const auto key=field(*binding,"id").getAsString().value();size_t lookup=1;
+            for(auto count=declarations.size();count;count>>=1){if(!spend())return false;lookup+=2;}
+            if(!spend((key.size()/8+1)*lookup+childPath.size()+2*layers.size()+2))return false;
+            for(const auto &part:childPath)if(!spend(part.getAsString()->size()/8+1))return false;
+            auto bindingLayers=layers;bindingLayers.push_back(&items(children));
+            if(!need(declarations.emplace(key.str(),ScopeDeclaration{binding,Array(childPath),std::move(bindingLayers),again,allowed}).second,"duplicate original scoped declaration"))return false;
+          }
           return walk(items(children),std::move(childPath),layers,again,allowed);
         };
         if(kind=="block"&&!descend(field(row,"body"),"block",repeated,eligible))return false;
@@ -44,7 +52,7 @@ bool SourceModel::scopeDirectory(){
         if(kind=="while"&&!descend(field(row,"body"),"while",true,false))return false;
         if(kind=="try"){
           if(!descend(field(field(row,"tryBlock"),"body"),"try",repeated,false))return false;
-          if(row.getAsObject()->get("catchClause")&&!descend(field(field(field(row,"catchClause"),"block"),"body"),"catch",repeated,false))return false;
+          if(row.getAsObject()->get("catchClause")&&!descend(field(field(field(row,"catchClause"),"block"),"body"),"catch",repeated,false,&field(field(row,"catchClause"),"binding")))return false;
           if(row.getAsObject()->get("finallyBlock")&&!descend(field(field(row,"finallyBlock"),"body"),"finally",repeated,false))return false;
         }
         ++index;
