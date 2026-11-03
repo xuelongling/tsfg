@@ -2,6 +2,6 @@
 import test from 'node:test';
 import { nativeUnit } from './native-unit.mjs';
 
-test('ordinary Body reference, scalar, String, absence and Value aliases preserve actual data, copy heaps and strict rejection boundaries', async () => {
-  await nativeUnit({ source: 'runtime/return-origin-ordinary-body-test.zig', prefix: 'r03-return-origin-ordinary-body-', expectedPasses: 20 });
+test('ordinary Body reference, scalar, String, absence, Value and Array aliases preserve actual data, copy heaps and strict rejection boundaries', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-ordinary-body-test.zig', prefix: 'r03-return-origin-ordinary-body-', expectedPasses: 24 });
 });

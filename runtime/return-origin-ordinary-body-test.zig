@@ -560,3 +560,74 @@ test "nonempty Value field offsets remain an owning layout prerequisite" {
     // never be reported as a Value-view rejection or a successful certificate.
     try std.testing.expectError(error.InvalidShape, typedInput(&c, &budget, &fixture.data.interpretation));
 }
+
+const ArrayFixture = struct {
+    data: ScalarFixture,
+    bindings: [3]storage.CommonBinding,
+
+    fn init(self: *ArrayFixture) void {
+        self.data.init(.integer);
+        self.data.fixture.types[3].kind = .array; self.data.fixture.types[3].name = "Array<bool>";
+        self.data.fixture.types[3].native_code = 0; self.data.fixture.types[3].element = boolean;
+        self.data.concrete[3].carrier.layout = .{ .byte_size = 8, .alignment = 8, .reference_count = 1 };
+        self.bindings[0] = self.data.fixture.bindings[0]; self.bindings[1] = self.data.fixture.bindings[1];
+        self.bindings[2] = .{ .id = "ordinary-array-bool-element", .owner = .{ .element = other }, .name = "element",
+            .@"type" = boolean, .writable = true, .origin = declaration, .carrier = boolean_carrier, .scope = null, .declaration_kind = null };
+        self.data.fixture.program.tables.mode.common.storage.bindings = &self.bindings;
+        self.data.fixture.program.tables.mode.common.storage.arrays = &.{.{ .@"type" = other, .element_carrier = boolean_carrier }};
+        self.data.type_rows[2].kind = .array;
+        // The borrowed parameter's whole Data is transported. This fixture has
+        // no allocation, element access, resize, span conversion or new fact
+        // about an Array's actual owner, backing shape, capacity or epoch.
+    }
+};
+
+test "ordinary managed Array views retain original parameter Data and both explicit copy heaps" {
+    var fixture: ArrayFixture = undefined; fixture.init();
+    try std.testing.expect(fixture.data.fixture.types[3].kind == .array and fixture.data.fixture.types[3].element == boolean);
+    try std.testing.expectEqual(@as(u32, 8), fixture.data.concrete[3].carrier.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 8), fixture.data.concrete[3].carrier.layout.alignment);
+    try std.testing.expectEqual(@as(u16, 1), fixture.data.concrete[3].carrier.layout.reference_count);
+    try std.testing.expect(fixture.data.concrete[3].body == null and fixture.data.concrete[3].carrier.field_offsets.len == 0);
+    try dataAliases(&fixture.data);
+}
+
+test "ordinary Array view rejects a reference carrier despite the same physical layout" {
+    var fixture: ArrayFixture = undefined; fixture.init();
+    fixture.data.fixture.registers[3].carrier = reference_carrier;
+    try std.testing.expectEqualDeep(fixture.data.concrete[3].carrier.layout, fixture.data.concrete[0].carrier.layout);
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "ordinary Array view keeps the required copy archive strict" {
+    var fixture: ArrayFixture = undefined; fixture.init();
+    for (2..4) |index| {
+        fixture.data.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data.data_type } };
+        fixture.data.fixture.operations[index].view = fixture.data.data_text; fixture.data.fixture.operations[index].properties = &fixture.data.view_properties;
+        fixture.data.fixture.registers[index + 1].view = fixture.data.data_type; fixture.data.fixture.carriers[index + 1] = fixture.data.data_text;
+    }
+    fixture.data.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.data.fixture.registers[5].view = void_type;
+    fixture.data.fixture.operations[4].view = void_text; fixture.data.fixture.operations[4].properties = &private_copy_properties; fixture.data.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "Array element carrier and unique storage mapping remain owning layout prerequisites" {
+    for (0..2) |variant| {
+        var fixture: ArrayFixture = undefined; fixture.init();
+        fixture.data.fixture.program.tables.mode.common.storage.arrays = if (variant == 0)
+            &.{.{ .@"type" = other, .element_carrier = reference_carrier }}
+        else
+            &.{ .{ .@"type" = other, .element_carrier = boolean_carrier }, .{ .@"type" = other, .element_carrier = boolean_carrier } };
+        var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+        var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge };
+        // The complete real layout boundary rejects these DTOs before Body.
+        // Neither rejection is reported as an alias proof or a behavior RED.
+        try std.testing.expectError(error.InvalidShape, typedInput(&c, &budget, &fixture.data.interpretation));
+    }
+}
