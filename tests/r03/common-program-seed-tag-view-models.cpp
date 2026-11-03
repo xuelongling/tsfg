@@ -606,9 +606,9 @@ bool rootExecutionCopies(){
       function.blocks[3].parameters={5};Operation returned;returned.name="func.return";returned.operands={5};function.blocks[3].operations.push_back(returned);
     }else{f.check.views.emplace("R/0","S");Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);}
     const auto originalArgs=args;const auto original=ActualHeap(input);const auto originalWorld=world;
-    f.program.remaining=mode==0?3000:100000;changed=false;
-    auto *current=f.check.context("R",args,input,true,changed,"A",false,nullptr,"",mode==2?&world:nullptr,mode==2?"B":"");
-    if(!expect(current&&changed&&f.error.message.empty(),"root context retains its complete immutable identity before execution"))return false;
+    f.program.remaining=mode==0?3000:100000;
+    auto *current=f.check.context("R",args,input,true,"A",false,nullptr,"",mode==2?&world:nullptr,mode==2?"B":"");
+    if(!expect(current&&current->identity&&f.check.contexts.size()==1&&f.error.message.empty(),"root context retains its complete immutable identity before execution"))return false;
     if(!expect(current->identity->arguments.size()==originalArgs.size()&&same(current->identity->arguments[0],originalArgs[0])&&
         current->identity->heap.size()==original.size()&&same(current->identity->heap.at(slot),original.at(slot))&&
         current->identity->frames.size()==originalWorld.size()&&same(args[0],originalArgs[0])&&same(input.at(slot),original.at(slot)),
@@ -641,7 +641,7 @@ bool rootExecutionCopies(){
   }
   {Fixture f;Function function;function.id="C";function.blocks.resize(1);function.blocks[0].parameters={0};Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);
     f.check.functions.emplace("C",&function);f.program.fixedEffects.emplace("C",Effects{});ActualValue value;value.tags={"S"};value.number=17;std::vector<ActualValue> args{value};ActualHeap input;input.emplace("global:g",value);bool changed=false;
-    auto *called=f.check.context("C",args,input,false,changed,"called");if(!expect(called&&f.error.message.empty(),"called context retains its immediately usable immutable entry inputs"))return false;
+    auto *called=f.check.context("C",args,input,false,"called");if(!expect(called&&f.error.message.empty(),"called context retains its immediately usable immutable entry inputs"))return false;
     args[0].number=23;input.at("global:g").number=23;
     if(!expect(called->inputArguments()[0].number==17&&called->identity->heap.at("global:g").number==17&&called->identity->arguments[0].number==17,
         "nonroot immutable entry remains independent of caller mutation"))return false;
@@ -658,7 +658,7 @@ bool rootExecutionCopies(){
   for(unsigned mode=0;mode<3;++mode){Fixture f;Function function;function.id="R";function.blocks.resize(1);function.blocks[0].parameters={0};Operation returned;returned.name="func.return";returned.operands={0};function.blocks[0].operations.push_back(returned);
     f.check.functions.emplace("R",&function);f.program.fixedEffects.emplace("R",Effects{});f.check.views.emplace("R/0","missing");ActualValue input;input.tags={"S"};bool changed=false;
     std::vector<ActualValue> args;if(mode!=0)args.push_back(input);if(mode==1)f.program.remaining=0;
-    auto *current=f.check.context("R",args,ActualHeap{},true,changed,"A");
+    auto *current=f.check.context("R",args,ActualHeap{},true,"A");
     if(mode<2){if(!expect(!current&&f.error.code==(mode==0?"core-ir-common-actual":"core-ir-common-budget"),"root arity and exhausted interner budget remain hard errors"))return false;}
     else if(!expect(current&&!f.check.execute(*current,true,changed)&&f.error.code=="core-ir-common-actual"&&!current->normal,
         "deferred root execution still rejects an unowned declared entry type before returning a summary"))return false;
@@ -675,7 +675,7 @@ bool nonrootInputExecution3000(){
   const std::string global(65536,'g'),slot="global:"+global;
   f.check.builtins.emplace("global",Object{{"id",global},{"type","S"},{"sourceBinding","g"}});f.check.globals.emplace(global,&f.check.builtins.at("global"));
   ActualValue scalar;scalar.tags={"S"};scalar.number=17;std::vector<ActualValue> args{scalar};ActualHeap input;input.emplace(slot,scalar);
-  f.program.remaining=3000;bool changed=false;auto *current=f.check.context("N",args,input,false,changed,"A");
+  f.program.remaining=3000;bool changed=false;auto *current=f.check.context("N",args,input,false,"A");
   if(!expect(current&&f.error.message.empty()&&f.check.execute(*current,true,changed)&&f.error.message.empty()&&current->normal&&!current->language&&
       same(current->returned,scalar)&&same(current->normalHeap.at(slot),scalar)&&same(current->identity->arguments[0],scalar)&&same(current->identity->heap.at(slot),scalar),
       "fixed3000 complete called context and execution publish full return and Heap summaries without an entry replica"))return false;
@@ -918,7 +918,7 @@ bool conditionalInvokeBorrowedInputs(){
       if(object==f.check.objects.end())return false;ActualValue value;value.tags={"T"};value.objects.insert(object->first);actual.push_back(value);state.values.emplace(i,value);}
     parent.rootArguments=actual;bool repeated=false,changed=false;
     const auto activation=f.check.callActivation(parent,op,0,"C",repeated);
-    auto *called=f.check.context("C",actual,state.heap,false,changed,activation,repeated,nullptr,"",&state.frames);
+    auto *called=f.check.context("C",actual,state.heap,false,activation,repeated,nullptr,"",&state.frames);
     if(!expect(called&&f.check.execute(*called,true,changed)&&called->normal&&!called->language&&f.error.message.empty()&&same(called->returned,actual[0]),
         "real called execution establishes the independent normal summary used by whole invoke"))return false;
     const auto original=state.values;unsigned edges=0;bool edgeMatches=false,continues=true;f.program.remaining=budget;changed=false;
@@ -966,7 +966,7 @@ bool conditionalInvokeBorrowedInputs(){
     for(unsigned i=0;i<count;++i)state.values.emplace(i,actual[i]);
     ActualContext local;local.id="P/context:source";local.function=&caller;local.root=true;local.repeated=false;local.activation="A";local.rootArguments=actual;
     ActualContext *parent=&local;bool changed=false;
-    if(recursive){f.check.cyclicFunctions.insert("C");parent=f.check.context("C",actual,state.heap,false,changed,"recursive/C",true,nullptr,"",&state.frames);
+    if(recursive){f.check.cyclicFunctions.insert("C");parent=f.check.context("C",actual,state.heap,false,"recursive/C",true,nullptr,"",&state.frames);
       if(!expect(parent&&f.error.message.empty(),"recursive caller owns its real immutable identity before synchronous admission"))return false;}
     const auto originalValues=state.values;const auto originalHeap=ActualHeap(state.heap);const auto originalWorld=state.frames;const auto beforeContexts=f.check.contexts.size();
     unsigned edges=0;bool continues=true;f.program.remaining=100000;changed=false;
@@ -1017,7 +1017,7 @@ bool contextEntryRegionRoots(){
         "real allocation creates the sole current Region root before admission"))return false;
     const auto root=*allocated.roots.begin();ActualValue global;global.tags={"T"};global.objects.insert(object->first);global.region=allocated;
     ActualHeap input;input.emplace("global:g",global);std::vector<ActualValue> arguments;bool changed=false;
-    auto *called=f.check.context("C",arguments,input,false,changed,"called",false,withVersions?&versions:nullptr,withVersions?"scope":"");
+    auto *called=f.check.context("C",arguments,input,false,"called",false,withVersions?&versions:nullptr,withVersions?"scope":"");
     if(!expect(called&&f.error.message.empty()&&called->identity->arguments.empty()&&called->identity->retained.empty()&&called->identity->frames.empty()&&
         called->identity->heap.size()==1&&same(called->identity->heap.at("global:g"),global),
         "zero-argument context still owns the complete global Heap value and every original facet"))return false;
@@ -1038,6 +1038,71 @@ bool contextEntryRegionRoots(){
   return true;
 }
 
+// Discovery is local progress; only completed summaries may invalidate callers.
+bool calleeDiscoverySummaryPropagation(){
+  for(const std::string mode:{"normal","language","heap"}){Fixture f;
+    const auto scalar=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32");
+    f.check.builtins.emplace("scalar",Object{{"id",scalar},{"kind","scalar"},{"name","i32"}});f.check.types.emplace(scalar,&f.check.builtins.at("scalar"));
+    f.check.builtins.emplace("global",Object{{"id","g"},{"sourceBinding","g"},{"type",scalar}});f.check.globals.emplace("g",&f.check.builtins.at("global"));
+    for(const auto &[id,target]:std::vector<std::pair<std::string,std::string>>{{"caller","middle"},{"middle","leaf"}}){
+      Function function;function.id=id;function.name=id;function.path="/callee-summary-model.ts";function.role="function";function.range={0,100};
+      function.carriers={scalar,scalar};function.resultCarrier=scalar;
+      Operation call;call.name="invoke";call.properties=Object{{"function_id",target},{"signature_hash","sig"}};call.successors={1,2};call.range={10,20};
+      Operation returned;returned.name="func.return";returned.operands={0};Operation thrown;thrown.name="return_throw";thrown.operands={1};
+      function.blocks={{{},{call}},{{0},{returned}},{{1},{thrown}}};f.program.functions.push_back(std::move(function));
+    }
+    Function leaf;leaf.id="leaf";leaf.name="leaf";leaf.path="/callee-summary-model.ts";leaf.role="function";leaf.range={0,100};leaf.carriers={scalar};leaf.resultCarrier=scalar;
+    Operation value;value.name="constant";value.result=0;value.view=scalar;value.properties=Object{{"decimal",mode=="language"?"23":"17"}};
+    Operation done;done.name=mode=="language"?"return_throw":"func.return";done.operands={0};leaf.blocks={{{},{value,done}}};
+    if(mode=="heap"){Operation stored=value;stored.properties=Object{{"decimal","29"}};leaf.carriers.push_back(scalar);value.result=1;done.operands={1};
+      Operation store;store.name="global_store";store.operands={0};store.properties=Object{{"global","g"}};
+      leaf.blocks[0].operations={stored,store,value,done};}
+    f.program.functions.push_back(std::move(leaf));
+    for(const auto &function:f.program.functions){
+      const Json parent=function.id=="caller"?Json(nullptr):Json(function.id=="middle"?"caller":"middle");
+      f.check.builtins.emplace("source:"+function.id,Object{{"id",function.id},{"kind","source"},{"ownerType",nullptr},{"lexicalParent",parent},
+        {"lexicalEnvironment",nullptr},{"activationEnvironment",nullptr},{"signatureHash","sig"},{"parameters",Array{}}});
+      f.check.functions.emplace(function.id,&function);f.check.sourceFunctions.emplace(function.id,&f.check.builtins.at("source:"+function.id));
+      f.program.fixedEffects.emplace(function.id,Effects{});for(uint16_t reg=0;reg<function.carriers.size();++reg)f.check.views.emplace(function.id+"/"+std::to_string(reg),scalar);
+    }
+    if(!f.check.callGraph())return false;
+    const auto lookup=[&](const std::string &id)->ActualContext *{auto found=std::find_if(f.check.contexts.begin(),f.check.contexts.end(),[&](const auto &row){return row.second.function->id==id;});
+      return found==f.check.contexts.end()?nullptr:&found->second;};
+    bool heapWidened=false;
+    const auto complete=[&](const ActualContext &context){
+      if(mode=="language")return context.language&&!context.normal&&context.thrown.number==23;
+      if(!context.normal||context.language||context.returned.number!=17)return false;
+      if(mode!="heap")return true;const auto stored=context.normalHeap.find("global:g");
+      return stored!=context.normalHeap.end()&&(heapWidened?!stored->second.number:stored->second.number==29);
+    };
+    ActualValue initial;initial.tags={scalar};ActualHeap input;input.emplace("global:g",initial);
+    auto *caller=f.check.context("caller",{},input,false,"entry/caller",false);if(!caller)return false;
+    f.check.scheduling=true;bool changed=false;
+    if(!expect(f.check.execute(*caller,true,changed)&&!changed&&!caller->normal&&!caller->language&&f.error.message.empty(),
+        "discovering middle does not report an unavailable caller completion as summary growth"))return false;
+    auto *middle=lookup("middle");if(!expect(middle&&middle->callers.count(caller->id)&&f.check.queuedContexts.count(middle->id),"discovered middle retains its real caller and queued work"))return false;
+    changed=false;if(!expect(f.check.execute(*middle,true,changed)&&!changed&&!middle->normal&&!middle->language&&middle->normalHeap.empty()&&middle->languageHeap.empty()&&f.error.message.empty(),
+        "discovering pending leaf cannot invalidate the three-level caller through a nonexistent summary"))return false;
+    auto *called=lookup("leaf");if(!expect(called&&called->callers.count(middle->id)&&f.check.queuedContexts.count(called->id)&&!called->normal&&!called->language&&called->normalHeap.empty()&&called->languageHeap.empty(),
+        "new leaf remains scheduled with no invented normal language or Heap completion"))return false;
+    for(auto *context:{called,middle,caller}){changed=false;
+      if(!expect(f.check.execute(*context,true,changed)&&changed&&complete(*context)&&f.error.message.empty(),"real leaf completion and side effects grow summaries through middle to caller"))return false;}
+    if(mode=="heap"){
+      // Widen only the Heap summary after normal completion and return data already exist.
+      (*f.program.functions[2].blocks[0].operations[0].properties.getAsObject())["decimal"]="31";heapWidened=true;
+      for(auto *context:{called,middle,caller}){changed=false;
+        if(!expect(f.check.execute(*context,true,changed)&&changed&&complete(*context)&&f.error.message.empty(),"Heap-only summary growth still propagates after unchanged normal completion and return value"))return false;}
+      (*f.program.functions[2].blocks[0].operations[0].properties.getAsObject())["decimal"]="29";heapWidened=false;
+    }
+    // The production worklist must independently deliver the same completion;
+    // lexical children have no root seed that could bypass their actual caller.
+    f.check.scheduling=false;if(!f.check.solve(true))return false;
+    const auto *root=lookup("caller"),*solvedMiddle=lookup("middle"),*solvedLeaf=lookup("leaf");
+    if(!expect(root&&root->root&&complete(*root)&&solvedMiddle&&!solvedMiddle->root&&complete(*solvedMiddle)&&solvedLeaf&&!solvedLeaf->root&&complete(*solvedLeaf)&&
+        f.check.pendingContexts.empty()&&f.check.queuedContexts.empty()&&f.error.message.empty(),"production solve notifies both caller levels for real normal language and Heap summaries"))return false;
+  }return true;
+}
+
 // Scalar partitions are complete byte keys; equal buckets still compare every payload.
 bool bucketScalarPartitions(){
   Fixture f;Function callee;callee.id="C";callee.resultCarrier="S";callee.blocks.resize(1);callee.blocks[0].parameters={0};
@@ -1049,36 +1114,36 @@ bool bucketScalarPartitions(){
   for(const auto *id:{"T","U"}){f.check.builtins.emplace(id,Object{{"id",id},{"kind","reference"},{"base",nullptr},{"fields",Array{}}});f.check.types.emplace(id,&f.check.builtins.at(id));}
   f.check.regions.scopes.emplace("scope0",RegionScope{"C","A"});f.check.regions.scopes.emplace("scope1",RegionScope{"C","A"});
   ActualValue scalar;scalar.tags={"S"};scalar.number=17;std::vector<ActualValue> arguments{scalar};ActualHeap input;input.emplace("global:g",scalar);ActualFrameWorld world;bool changed=false;
-  auto *base=f.check.context("C",arguments,input,false,changed,"A",false,nullptr,"scope0",&world,"T");
-  if(!expect(base&&changed&&f.error.message.empty()&&f.check.execute(*base,true,changed)&&base->normal&&!base->language&&same(base->returned,scalar),
+  auto *base=f.check.context("C",arguments,input,false,"A",false,nullptr,"scope0",&world,"T");
+  if(!expect(base&&base->identity&&f.check.contexts.size()==1&&f.error.message.empty()&&f.check.execute(*base,true,changed)&&changed&&base->normal&&!base->language&&same(base->returned,scalar),
       "complete called execution establishes an independently owned scalar-partition summary"))return false;
   arguments[0].number=99;input.at("global:g").number=99;
   if(!expect(same(base->identity->arguments[0],scalar)&&same(base->identity->heap.at("global:g"),scalar)&&same(base->normalHeap.at("global:g"),scalar),
       "caller argument and Heap mutation cannot alter the immutable identity or completed summary"))return false;
-  arguments[0]=scalar;input.at("global:g")=scalar;changed=false;
-  if(!expect(f.check.context("C",arguments,input,false,changed,"A",false,nullptr,"scope0",&world,"T")==base&&!changed&&f.error.message.empty(),
+  arguments[0]=scalar;input.at("global:g")=scalar;
+  if(!expect(f.check.context("C",arguments,input,false,"A",false,nullptr,"scope0",&world,"T")==base&&f.check.contexts.size()==1&&f.error.message.empty(),
       "the same complete scalar partition and payload genuinely reuse the published context"))return false;
   std::set<ActualContext *> seen{base};
   for(unsigned mode=0;mode<5;++mode){
     const std::string target=mode==0?"D":"C",activation=mode==1?"B":"A",region=mode==2?"scope1":"scope0",newTarget=mode==3?"U":"T";const bool repeated=mode==4;
-    changed=false;auto *next=f.check.context(target,arguments,input,false,changed,activation,repeated,nullptr,region,&world,newTarget);
-    if(!expect(next&&changed&&f.error.message.empty()&&seen.insert(next).second&&same(next->identity->arguments[0],scalar),
+    const auto count=f.check.contexts.size();auto *next=f.check.context(target,arguments,input,false,activation,repeated,nullptr,region,&world,newTarget);
+    if(!expect(next&&f.check.contexts.size()==count+1&&f.error.message.empty()&&seen.insert(next).second&&same(next->identity->arguments[0],scalar),
         "each target, activation, Region, newTarget or repeated distinction admits a separate context"))return false;
-    changed=false;if(!expect(f.check.context(target,arguments,input,false,changed,activation,repeated,nullptr,region,&world,newTarget)==next&&!changed&&f.error.message.empty(),
+    if(!expect(f.check.context(target,arguments,input,false,activation,repeated,nullptr,region,&world,newTarget)==next&&f.check.contexts.size()==count+1&&f.error.message.empty(),
         "each separate scalar partition reuses its own complete immutable payload"))return false;
   }
   for(const auto &activation:{std::string("A\0x",3),std::string("A\0y",3),std::string("A|1:C")}){
-    changed=false;auto *next=f.check.context("C",arguments,input,false,changed,activation,false,nullptr,"scope0",&world,"T");
-    if(!expect(next&&changed&&seen.insert(next).second&&next->identity->activation==activation&&f.error.message.empty(),
+    const auto count=f.check.contexts.size();auto *next=f.check.context("C",arguments,input,false,activation,false,nullptr,"scope0",&world,"T");
+    if(!expect(next&&f.check.contexts.size()==count+1&&seen.insert(next).second&&next->identity->activation==activation&&f.error.message.empty(),
         "complete activation bytes including NUL and delimiters cannot alias another scalar partition"))return false;
   }
-  auto different=arguments;different[0].number=23;changed=false;
-  auto *argument=f.check.context("C",different,input,false,changed,"A",false,nullptr,"scope0",&world,"T");
-  if(!expect(argument&&argument!=base&&changed&&argument->identity->arguments[0].number==23&&f.error.message.empty(),
+  auto different=arguments;different[0].number=23;const auto beforeArgument=f.check.contexts.size();
+  auto *argument=f.check.context("C",different,input,false,"A",false,nullptr,"scope0",&world,"T");
+  if(!expect(argument&&argument!=base&&f.check.contexts.size()==beforeArgument+1&&argument->identity->arguments[0].number==23&&f.error.message.empty(),
       "equal scalar partitions still distinguish actual argument payloads"))return false;
-  input.at("global:g").number=23;changed=false;
-  auto *heap=f.check.context("C",arguments,input,false,changed,"A",false,nullptr,"scope0",&world,"T");
-  return expect(heap&&heap!=base&&heap!=argument&&changed&&heap->identity->heap.at("global:g").number==23&&same(heap->identity->arguments[0],scalar)&&
+  input.at("global:g").number=23;const auto beforeHeap=f.check.contexts.size();
+  auto *heap=f.check.context("C",arguments,input,false,"A",false,nullptr,"scope0",&world,"T");
+  return expect(heap&&heap!=base&&heap!=argument&&f.check.contexts.size()==beforeHeap+1&&heap->identity->heap.at("global:g").number==23&&same(heap->identity->arguments[0],scalar)&&
       f.error.message.empty()&&same(base->returned,scalar)&&same(base->identity->heap.at("global:g"),scalar),
       "equal scalar partitions still distinguish global Heap payloads without rewriting an earlier summary");
 }
@@ -1109,5 +1174,6 @@ int main(){
   if(!borrowedFrameKeyPartsInstructions())return 1;llvm::errs()<<"PASS borrowed canonical Frame-key parts and complete receiver_create436\n";
   if(!conditionalInvokeBorrowedInputs())return 1;llvm::errs()<<"PASS conditional direct invoke236 and independent borrowed admission inputs\n";
   if(!contextEntryRegionRoots())return 1;llvm::errs()<<"PASS conditional context entry Heap tails and global-only Region roots\n";
+  if(!calleeDiscoverySummaryPropagation())return 1;llvm::errs()<<"PASS pending callee discovery and three-level normal/language/Heap summary propagation\n";
   if(!bucketScalarPartitions())return 1;llvm::errs()<<"PASS complete scalar partitions and owned context payload reuse\n";return 0;
 }

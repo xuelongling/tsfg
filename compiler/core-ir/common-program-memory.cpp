@@ -246,7 +246,7 @@ bool ActualCheck::solve(bool conditional){
     for(const auto &[gid,g]:globals){auto value=declared(string(field(*g,"type")),heap,"global-entry/"+gid);heap.emplace("global:"+gid,std::move(value));}
     std::vector<ActualValue> args;args.reserve(fn->blocks[0].parameters.size());
     for(size_t i=0;i<fn->blocks[0].parameters.size();++i)args.push_back(entryValue(*fn,i,heap,conditional,changed));
-    if(!context(id,args,heap,true,changed))return false;
+    if(!context(id,args,heap,true))return false;
   }
   if(!seedReceiverRoots(conditional,changed))return false;
   if(conditional){

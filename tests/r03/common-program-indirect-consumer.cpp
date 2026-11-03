@@ -168,7 +168,7 @@ bool activationModels(){
     actual.repeatingFunctions.insert("F");if(recursive)actual.cyclicFunctions.insert("F");
     ActualValue env,scalar;env.tags.insert("env:L");env.objects.emplace("E");scalar.tags.insert("i32");
     actual.objects.emplace("E",ActualObject{"env:L",true});ActualHeap heap;heap.emplace("E/slot/k",scalar);
-    bool changed=false;auto *entry=actual.context("F",{env,scalar},heap,false,changed,"entry/F");if(!entry)return false;
+    bool changed=false;auto *entry=actual.context("F",{env,scalar},heap,false,"entry/F");if(!entry)return false;
     Operation op;op.name="invoke";op.operands={0,1};op.successors={1,2};op.properties=Object{{"function_id","F"}};op.range={10,20};
     const auto invoke=[&](ActualContext &current,const Operation &call){
       ActualState state;state.heap=actual.copyHeap(current.identity->heap);state.values.emplace(0,actual.copy(current.inputArguments()[0]));state.values.emplace(1,actual.copy(current.inputArguments()[1]));

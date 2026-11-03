@@ -142,8 +142,8 @@ bool controlJoins(const std::string &mode){
   ActualValue argument;argument.tags.insert(type);argument.truth=mode=="entry-backedge"||mode=="cycle"||mode=="linear"?2:3;
   const auto executionBudget=p.remaining;std::vector<ActualValue> arguments{argument};
   if(mode=="parallel-swap"){arguments[0].truth=2;argument.truth=1;arguments.push_back(argument);argument.truth=3;arguments.push_back(argument);}
-  c.functions.emplace(fn.id,&fn);p.fixedEffects.emplace(fn.id,Effects{});bool initialized=false;
-  auto *owned=c.context(fn.id,arguments,ActualHeap{},false,initialized,"control-activation",true);
+  c.functions.emplace(fn.id,&fn);p.fixedEffects.emplace(fn.id,Effects{});
+  auto *owned=c.context(fn.id,arguments,ActualHeap{},false,"control-activation",true);
   if(!owned)return report("control join "+mode,false,e);auto &context=*owned;
   // Factory setup precedes the original execution budget, activated once only.
   p.remaining=executionBudget;bool changed=false;const auto expected=mode=="linear"?2:3;
@@ -166,9 +166,9 @@ bool cachedCalleeJoin(bool direct=false){
     c.functions.emplace(fn.id,&fn);c.sourceFunctions.emplace(fn.id,&sources.at(fn.id));p.fixedEffects[fn.id].parameters.resize(fn.blocks[0].parameters.size());}
   p.callableSites["caller/40:50"].functions={"left","right"};if(!c.callGraph())return report("cached callees join before continuation",false,e);
   ActualValue callee;callee.tags={"F"};callee.callables={{"left",""},{"right",""}};ActualValue anchor;anchor.tags={boolean};anchor.truth=2;ActualHeap heap;heap.emplace("global:g",anchor);
-  bool changed=false;auto *entry=c.context("caller",{callee},heap,false,changed,"caller-activation");if(!entry)return false;
+  bool changed=false;auto *entry=c.context("caller",{callee},heap,false,"caller-activation");if(!entry)return false;
   std::vector<ActualContext *> cached;const auto &op=p.functions[0].blocks[0].operations[0];const auto targets=direct?std::vector<std::string>{"left"}:std::vector<std::string>{"left","right"};
-  for(const auto &id:targets){bool repeated=false;const auto activation=c.callActivation(*entry,op,0,id,repeated);auto *target=c.context(id,{},heap,false,changed,activation,repeated);if(!target)return false;
+  for(const auto &id:targets){bool repeated=false;const auto activation=c.callActivation(*entry,op,0,id,repeated);auto *target=c.context(id,{},heap,false,activation,repeated);if(!target)return false;
     target->normal=true;target->returned.tags={boolean};target->returned.truth=id=="left"?1:2;target->normalHeap=ActualHeap(heap);
     if(direct){target->language=true;target->thrown.tags={boolean};target->thrown.truth=2;target->languageHeap=ActualHeap(heap);}cached.push_back(target);}
   const auto count=c.contexts.size();changed=false;const bool accepted=c.execute(*entry,true,changed);

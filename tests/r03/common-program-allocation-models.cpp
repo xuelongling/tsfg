@@ -146,12 +146,12 @@ bool provenance(const std::string &mode){
   if(mode=="full-top"||mode=="full-host-target"){auto &upper=m.p.callableSites["root/40:50"];upper.functions.insert("make");upper.top=mode=="full-top";if(mode=="full-host-target"){upper.functions.insert("host");m.p.fixedEffects["host"].unknownHost=true;}}
   if(mode=="zero-work"){m.p.remaining=0;return !m.c.callGraph()&&m.e.code=="core-ir-common-budget";}
   if(mode=="host-origin")m.p.fixedEffects["make"].unknownHost=true;
-  if(!m.c.callGraph())return false;bool changed=false;
-  auto *entry=m.c.context("root",{},{},true,changed);if(!entry)return false;
+  if(!m.c.callGraph())return false;
+  auto *entry=m.c.context("root",{},{},true);if(!entry)return false;
   bool repeated=false;const auto activation=m.c.callActivation(*entry,m.p.functions[0].blocks[0].operations[0],0,"make",repeated);
   ActualValue one,two;one.tags={m.i32};one.number=1;two.tags={m.i32};two.number=2;
   m.p.functions[1].blocks[0].parameters={9};
-  auto *a=m.c.context("make",{one},{},false,changed,mode=="unresolved"?"":activation,repeated),*b=m.c.context("make",{two},{},false,changed,mode=="unresolved"?"":activation,repeated);
+  auto *a=m.c.context("make",{one},{},false,mode=="unresolved"?"":activation,repeated),*b=m.c.context("make",{two},{},false,mode=="unresolved"?"":activation,repeated);
   if(!a||!b)return false;const auto &allocation=m.p.functions[1].blocks[0].operations[0];
   const auto ar=m.c.allocate(*a,allocation,0,"object",m.array),br=m.c.allocate(*b,allocation,0,"object",m.array);
   if(a->id==b->id||a->activation!=b->activation||ar!=br)return false;
@@ -179,7 +179,7 @@ bool weakInitialization(const std::string &kind){
       op("receiver_allocate",0,m.reference,{20},Object{{"owner",m.reference}}),op("func.return")};
   }else f.blocks[0].operations={op("func.return")};
   m.p.functions.push_back(std::move(f));m.source("root");m.bind();bool changed=false;
-  auto *context=m.c.context("root",{},{},false,changed,"controlled-repeated",true);if(!context)return false;ActualState state;
+  auto *context=m.c.context("root",{},{},false,"controlled-repeated",true);if(!context)return false;ActualState state;
   for(const auto ref:{"S1","S2"})m.c.objects.emplace(ref,ActualObject{m.span,false});for(const auto ref:{"A1","A2"})m.c.objects.emplace(ref,ActualObject{m.array,false});
   state.values[10].tags={m.span};state.values[10].objects={ActualObjectId("S1")};state.values[11].tags={m.span};state.values[11].objects={ActualObjectId("S2")};state.values[12].tags={m.array};state.values[12].objects={ActualObjectId("A1")};state.values[13].tags={m.array};state.values[13].objects={ActualObjectId("A2")};
   const auto execute=[&](const Operation &o){bool continues=true;return m.c.instruction(*context,o,0,state,false,changed,[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return false;},continues);};
@@ -224,7 +224,7 @@ bool prepayment(const std::string &mode){
     // the owned site identity: the map must still be unpublished on failure.
     m.p.remaining=6;return !m.c.callGraph()&&m.e.code=="core-ir-common-budget"&&m.c.callSites.empty();
   }
-  if(!m.c.callGraph())return false;bool changed=false;auto *context=m.c.context(id,{},{},true,changed);if(!context)return false;
+  if(!m.c.callGraph())return false;auto *context=m.c.context(id,{},{},true);if(!context)return false;
   const auto &owned=m.p.functions[0].blocks[0].operations[0];auto unregistered=owned;const Operation *selected=&owned;
   if(mode=="existing-location-prepay"){m.c.callSites[&owned]=std::string(4096,'S');m.p.remaining=4;}
   else{selected=&unregistered;m.p.remaining=id.size()/64+2;}

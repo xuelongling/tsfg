@@ -41,8 +41,8 @@ struct Fixture {
     input.regions.emplace("child",std::map<std::string,RegionValue>{});
     input.regions.emplace("unreachable",std::map<std::string,RegionValue>{});
   }
-  ActualContext *intern(const Input &value,bool &changed,const std::string &activation="entry/activation",const std::string &newTarget="B"){
-    return check.context(function.id,value.args,value.heap,true,changed,activation,false,&value.regions,"scope",&value.frames,newTarget);
+  ActualContext *intern(const Input &value,const std::string &activation="entry/activation",const std::string &newTarget="B"){
+    return check.context(function.id,value.args,value.heap,true,activation,false,&value.regions,"scope",&value.frames,newTarget);
   }
 };
 auto birthFixture(Fixture &f,const std::string &reference){
@@ -87,12 +87,12 @@ bool birthReferenceOwnership(){
     left.frames.find("frame")->second.births.at(f.birthSlot).reference=std::make_shared<const std::string>(text);
     other.input.frames.find("frame")->second.births.at(other.birthSlot).reference=std::make_shared<const std::string>(text);
     right.frames.find("frame")->second.births.at(f.birthSlot).reference=other.input.frames.find("frame")->second.births.at(other.birthSlot).reference;
-    bool changed=false;auto *base=f.intern(left,changed);changed=false;
+    auto *base=f.intern(left);const auto contexts=f.check.contexts.size();
     if(!expect(base&&left.frames.find("frame")->second.births.at(f.birthSlot).reference!=right.frames.find("frame")->second.births.at(f.birthSlot).reference&&
-        f.intern(right,changed)==base&&!changed&&f.error.message.empty(),"different live owners with complete equal NUL text preserve one semantic context identity"))return false;
-    left.frames.find("frame")->second.births.at(f.birthSlot).reference.reset();changed=false;base=f.intern(left,changed);
-    right=Input(left);right.frames.find("frame")->second.births.at(f.birthSlot).reference=std::make_shared<const std::string>();changed=false;
-    if(!expect(base&&f.intern(right,changed)==base&&!changed&&f.error.message.empty(),"null/default and independently owned empty references compare as the original empty text"))return false;
+        f.intern(right)==base&&f.check.contexts.size()==contexts&&f.error.message.empty(),"different live owners with complete equal NUL text preserve one semantic context identity"))return false;
+    left.frames.find("frame")->second.births.at(f.birthSlot).reference.reset();base=f.intern(left);const auto emptyContexts=f.check.contexts.size();
+    right=Input(left);right.frames.find("frame")->second.births.at(f.birthSlot).reference=std::make_shared<const std::string>();
+    if(!expect(base&&f.intern(right)==base&&f.check.contexts.size()==emptyContexts&&f.error.message.empty(),"null/default and independently owned empty references compare as the original empty text"))return false;
   }
   {Fixture f;const std::string text(165,'p');const auto slots=birthFixture(f,text);
     f.check.receiverFrames.find("frame")->second.parent="parent";f.check.receiverFrames.emplace("parent",ActualFrameInfo{"B","ctor:B","B","",false,ActualInitializationFields(f.twoFields)});
@@ -126,8 +126,8 @@ bool calledSeedOwnership(){
       binding.bound=ActualValue{};binding.bound.tags={"B"};binding.bound.number=17;binding.bound.region.known=true;binding.bound.region.number=13;}
     Operation done;done.name="func.return";f.function.blocks[0].operations.push_back(std::move(done));
     const auto expected=f.input;bool changed=false;if(limited)f.program.remaining=1000;
-    auto *entry=f.check.context(f.function.id,f.input.args,f.input.heap,false,changed,"entry/activation",false,&f.input.regions,"scope",&f.input.frames,"B");
-    if(!expect(entry&&entry->identity&&changed&&f.error.message.empty(),"fixed1000 nonroot context publishes its sole immutable Frame seed without an extra full World cache"))return false;
+    auto *entry=f.check.context(f.function.id,f.input.args,f.input.heap,false,"entry/activation",false,&f.input.regions,"scope",&f.input.frames,"B");
+    if(!expect(entry&&entry->identity&&f.check.contexts.size()==1&&f.error.message.empty(),"fixed1000 nonroot context publishes its sole immutable Frame seed without an extra full World cache"))return false;
     if(!expect(entry->identity->frames.size()==1&&entry->identity->frames.count(frame)&&entry->identity->frames.find(frame)->second.bound.number==
         expected.frames.find(frame)->second.bound.number,"factory identity owns the literal full80B seed and optional number"))return false;
     if(limited)continue;
@@ -140,8 +140,8 @@ bool calledSeedOwnership(){
         seed.births.size()==1&&seed.births.at(f.birthSlot).referenceText()=="object:B"&&seed.births.at(f.birthSlot).pending&&
         seed.births.at(f.birthSlot).real.tags==std::set<std::string>{"i32"}&&!normal.bound.region.roots.count("input-mutation")&&
         !f.input.frames.find(frame)->second.bound.region.roots.count("output-mutation"),"execution/output/caller mutations retain full independent seed flags, payload, region and birth history"))return false;
-    changed=false;if(!expect(f.check.context(f.function.id,expected.args,expected.heap,false,changed,"entry/activation",false,&expected.regions,"scope",&expected.frames,"B")==entry&&
-        !changed&&f.error.message.empty(),"execution does not alter the immutable full-context interner identity"))return false;
+    if(!expect(f.check.context(f.function.id,expected.args,expected.heap,false,"entry/activation",false,&expected.regions,"scope",&expected.frames,"B")==entry&&
+        f.check.contexts.size()==1&&f.error.message.empty(),"execution does not alter the immutable full-context interner identity"))return false;
     f.check.receiverFrames.clear();f.input.frames.clear();
     if(!expect(entry->identity->frames.begin()->first==frame&&entry->identity->frames.find(frame)->second.bound.region.roots==std::set<std::string>{"origin"},
         "immutable seed owns full keys and payload after input World and FrameInfo destruction"))return false;
@@ -251,22 +251,22 @@ bool defaultSingletonDirectory(){
   llvm::errs()<<"PASS default Heap singleton-prefix/two-field/ownership/full-byte/budget subcases\n";return true;
 }
 bool reuseAndOwnership(){
-  Fixture f;bool changed=false;auto *first=f.intern(f.input,changed);
-  if(!expect(first&&changed&&f.error.message.empty(),"first identity inserted"))return false;
-  changed=false;if(!expect(f.intern(f.input,changed)==first&&!changed,"identical complete entry reuses context"))return false;
+  Fixture f;auto *first=f.intern(f.input);
+  if(!expect(first&&first->identity&&f.check.contexts.size()==1&&f.error.message.empty(),"first identity inserted"))return false;
+  if(!expect(f.intern(f.input)==first&&f.check.contexts.size()==1,"identical complete entry reuses context"))return false;
   if(!expect(first->identity->heap.count("object:B/field/F")==1&&first->identity->heap.count("unreachable/field/F")==0&&
     first->identity->regions.count("child")==1&&first->identity->regions.count("unreachable")==0,"owned reachable heap and empty region node retained"))return false;
   const auto original=f.input;
   f.input.frames.find("frame")->second.bound.region.roots.insert("later");f.input.heap.at("object:B/field/F").tags.insert("later");
   f.input.regions.at("origin").emplace("later",RegionValue{});
   first->rootArguments.clear();first->rootEntry.clear();first->entryRegions.clear();
-  changed=false;if(!expect(f.intern(original,changed)==first&&!changed,"root execution refresh and caller mutation do not change immutable identity"))return false;
+  if(!expect(f.intern(original)==first&&f.check.contexts.size()==1,"root execution refresh and caller mutation do not change immutable identity"))return false;
   if(!expect(!first->identity->frames.find("frame")->second.bound.region.roots.count("later")&&
     !first->identity->heap.at("object:B/field/F").tags.count("later")&&!first->identity->regions.at("origin").count("later"),"snapshot owns all nested storage"))return false;
   return calledSeedOwnership()&&birthReferenceCausal()&&birthReferenceOwnership()&&defaultPrefixDirectory()&&defaultSingletonDirectory();
 }
 bool hiddenRegionsAndBirths(){
-  Fixture f;bool changed=false;auto *base=f.intern(f.input,changed);if(!base)return false;
+  Fixture f;auto *base=f.intern(f.input);if(!base)return false;
   const std::vector<std::function<void(Input &)>> mutations={
     [](Input &v){v.frames.find("frame")->second.bound.region.opaque=true;},
     [](Input &v){v.frames.find("frame")->second.bound.region.empty=true;},
@@ -287,9 +287,9 @@ bool hiddenRegionsAndBirths(){
     [](Input &v){v.regions.at("origin").at("slot").opaque=true;},
     [](Input &v){v.heap.at("object:B/field/F").number=2;}
   };
-  size_t index=0;for(const auto &mutate:mutations){auto other=f.input;mutate(other);changed=false;auto *next=f.intern(other,changed);
-    if(!next||next==base||!changed||!f.error.message.empty()){llvm::errs()<<"FAIL hidden mutation "<<index<<'\n';return false;}
-    changed=false;if(!expect(f.intern(other,changed)==next&&!changed,"changed identity itself reuses"))return false;++index;}
+  size_t index=0;for(const auto &mutate:mutations){auto other=f.input;mutate(other);const auto count=f.check.contexts.size();auto *next=f.intern(other);
+    if(!next||next==base||f.check.contexts.size()!=count+1||!f.error.message.empty()){llvm::errs()<<"FAIL hidden mutation "<<index<<'\n';return false;}
+    if(!expect(f.intern(other)==next&&f.check.contexts.size()==count+1,"changed identity itself reuses"))return false;++index;}
   return true;
 }
 bool rootlessAndNumeric(){
@@ -303,15 +303,15 @@ bool rootlessAndNumeric(){
     [](ActualValue &v){v.callables.emplace("code","env");},[](ActualValue &v){v.callableTop=true;},
     [](ActualValue &v){v.unknown=true;},[](ActualValue &v){v.cells.insert("cell");},[](ActualValue &v){v.truth=3;}
   };
-  for(const auto &mutate:variants){auto nextInput=input;mutate(nextInput.args[0]);bool changed=false;auto *next=f.intern(nextInput,changed);
-    if(!expect(next&&changed&&f.error.message.empty(),"rootless complete identity inserted"))return false;
+  for(const auto &mutate:variants){auto nextInput=input;mutate(nextInput.args[0]);const auto count=f.check.contexts.size();auto *next=f.intern(nextInput);
+    if(!expect(next&&next->identity&&f.check.contexts.size()==count+1&&f.error.message.empty(),"rootless complete identity inserted"))return false;
     for(auto *prior:seen)if(!expect(prior!=next,"rootless optional and exact int64 distinctions remain separate"))return false;
     if(!expect(next->identity->arguments[0].number==nextInput.args[0].number&&next->identity->arguments[0].region.number==nextInput.args[0].region.number,"optional numbers copied exactly"))return false;
     seen.push_back(next);}
   return true;
 }
 bool physicalActivation(){
-  Fixture f;bool changed=false;auto *one=f.intern(f.input,changed);auto different=f.input;different.args[0].number=1;auto *two=f.intern(different,changed);
+  Fixture f;auto *one=f.intern(f.input);auto different=f.input;different.args[0].number=1;auto *two=f.intern(different);
   if(!expect(one&&two&&one!=two&&one->id!=two->id&&one->activation==two->activation,"opaque context IDs separate abstract inputs, not physical activation"))return false;
   const auto site=f.check.allocationSite(*one,"object",7),other=f.check.allocationSite(*two,"object",7);
   if(!expect(!site.empty()&&site==other,"allocation identity is independent of opaque context ID"))return false;
@@ -323,17 +323,17 @@ bool physicalActivation(){
   return expect(!a.empty()&&a==b&&repeatOne==repeatTwo&&!frameOne.empty()&&frameOne==frameTwo&&f.error.message.empty(),"call and receiver Frame physical identities do not depend on interner ordinal");
 }
 bool budgetFailure(){
-  Fixture measure;auto before=measure.program.remaining;bool changed=false;if(!measure.intern(measure.input,changed))return false;
-  const auto creationCost=before-measure.program.remaining;before=measure.program.remaining;changed=false;
-  if(!measure.intern(measure.input,changed)||changed)return false;const auto reuseCost=before-measure.program.remaining;
-  for(size_t available=0;available<reuseCost;++available){Fixture f;changed=false;auto *original=f.intern(f.input,changed);if(!original)return false;
-    f.program.remaining=available;changed=false;auto *result=f.intern(f.input,changed);
-    if(result||f.error.code!="core-ir-common-budget"||f.check.contexts.size()!=1||changed){
-      llvm::errs()<<"FAIL equality budget available="<<available<<" reuseCost="<<reuseCost<<" contexts="<<f.check.contexts.size()<<" changed="<<changed<<" error="<<f.error.code<<'\n';return false;}}
+  Fixture measure;auto before=measure.program.remaining;auto *measured=measure.intern(measure.input);if(!measured)return false;
+  const auto creationCost=before-measure.program.remaining;before=measure.program.remaining;
+  if(measure.intern(measure.input)!=measured||measure.check.contexts.size()!=1)return false;const auto reuseCost=before-measure.program.remaining;
+  for(size_t available=0;available<reuseCost;++available){Fixture f;auto *original=f.intern(f.input);if(!original)return false;
+    f.program.remaining=available;auto *result=f.intern(f.input);
+    if(result||f.error.code!="core-ir-common-budget"||f.check.contexts.size()!=1||&f.check.contexts.begin()->second!=original){
+      llvm::errs()<<"FAIL equality budget available="<<available<<" reuseCost="<<reuseCost<<" contexts="<<f.check.contexts.size()<<" error="<<f.error.code<<'\n';return false;}}
   // A failing check is discarded. Late bucket/schedule failure may leave
   // private state; the contract is an error and no successful context result,
   // not transactional rollback of a check that has already failed.
-  for(size_t available=0;available<creationCost;++available){Fixture f;f.program.remaining=available;changed=false;auto *result=f.intern(f.input,changed);
+  for(size_t available=0;available<creationCost;++available){Fixture f;f.program.remaining=available;auto *result=f.intern(f.input);
     if(result||f.error.code!="core-ir-common-budget"){
       llvm::errs()<<"FAIL creation budget available="<<available<<" creationCost="<<creationCost<<" error="<<f.error.code<<'\n';return false;}}
   return true;

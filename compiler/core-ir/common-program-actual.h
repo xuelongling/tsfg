@@ -417,7 +417,7 @@ struct ActualCheck {
   std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);
   ActualObjectId allocate(const ActualContext &,const Operation &,size_t,llvm::StringRef,const std::string &);
   std::string callActivation(const ActualContext &,const Operation &,size_t,const std::string &,bool &);
-  ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &,const std::string &activation={},bool repeated=true,const RegionHeap *versions=nullptr,const std::string &region={},const ActualFrameWorld *frames=nullptr,const std::string &newTarget={});
+  ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,const std::string &activation={},bool repeated=true,const RegionHeap *versions=nullptr,const std::string &region={},const ActualFrameWorld *frames=nullptr,const std::string &newTarget={});
   bool execute(ActualContext &,bool,bool &);
   bool schedule(const std::string &);
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
@@ -426,7 +426,7 @@ struct ActualCheck {
 // Synchronous conditional-call input. No Value, SSA, Heap or World borrow escapes;
 // the caller pays its descriptor route before admission copies immutable identity roots.
 ActualContext *conditionalContext(ActualCheck &,const std::string &,const ActualOperands &,const ActualHeap &,
-  bool &changed,const std::string &activation,bool repeated,const ActualFrameWorld &);
+  const std::string &activation,bool repeated,const ActualFrameWorld &);
 ActualFrameWorld selectOperandFrames(ActualCheck &,const ActualFrameWorld &,const ActualOperands &,const ActualHeap &);
 template<class Directory>
 auto paidFrameLookup(ActualCheck &c,Directory &directory,llvm::StringRef query)->std::optional<decltype(directory.begin())>{

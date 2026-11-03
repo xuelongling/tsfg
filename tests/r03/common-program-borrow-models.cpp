@@ -133,7 +133,7 @@ bool calleeRetention(){
 }
 bool definitionBudget(){
   Model m;auto root=fn("root");root.blocks[0].operations={op("readspan",0,m.span)};m.p.functions={std::move(root)};m.bind({{"root",{}}});
-  bool changed=false;auto *context=m.c.context("root",{},ActualHeap{},false,changed,"C");if(!context)return false;
+  auto *context=m.c.context("root",{},ActualHeap{},false,"C");if(!context)return false;
   ActualState state;state.values[0].objects.emplace("S");m.c.objects[ActualObjectId("S")]={m.span,false};
   for(size_t i=0;i<8;++i){const auto ref="A"+std::to_string(i);m.c.objects[ActualObjectId(ref)]={m.array,false};state.heap["S/owner"].objects.emplace(ref);}
   BorrowTrace trace(m.c);if(!trace.begin(*context,state))return false;m.p.remaining=28;

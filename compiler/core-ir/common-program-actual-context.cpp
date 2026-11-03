@@ -82,7 +82,7 @@ ActualFrameWorld selectedFrameInputs(ActualCheck &check,const ActualFrameWorld &
   else return check.selectFrames(world,values,heap);
 }
 template<class Input>
-ActualContext *contextInput(ActualCheck &check,const std::string &target,const Input &args,const ActualHeap &heap,bool root,bool &changed,
+ActualContext *contextInput(ActualCheck &check,const std::string &target,const Input &args,const ActualHeap &heap,bool root,
   const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region,const ActualFrameWorld *frameWorld,const std::string &newTarget){
   if(!check.step(args.size()+1)||!check.need(check.functions.count(target)&&check.functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
   auto selected=frameWorld?selectedFrameInputs(check,*frameWorld,args,heap):ActualFrameWorld{};if(!check.e.message.empty())return nullptr;
@@ -142,15 +142,16 @@ ActualContext *contextInput(ActualCheck &check,const std::string &target,const I
   if(candidates==check.contextBuckets.end()){
     if(!check.step(bucket.size()/64+3))return nullptr;check.contextBuckets.emplace(std::move(bucket),std::vector<ActualContext *>{owned});
   }else{if(!check.step(candidates->second.size()+1))return nullptr;candidates->second.push_back(owned);}
-  changed=true;if(!check.schedule(id))return nullptr;return owned;
+  // New callee work is queued independently of the current caller's summary.
+  if(!check.schedule(id))return nullptr;return owned;
 }
 }
-ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,
+ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,
   const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region,const ActualFrameWorld *frameWorld,const std::string &newTarget){
-  return contextInput(*this,target,args,heap,root,changed,activation,repeated,versions,region,frameWorld,newTarget);
+  return contextInput(*this,target,args,heap,root,activation,repeated,versions,region,frameWorld,newTarget);
 }
 ActualContext *conditionalContext(ActualCheck &check,const std::string &target,const ActualOperands &args,const ActualHeap &heap,
-  bool &changed,const std::string &activation,bool repeated,const ActualFrameWorld &frames){
-  return contextInput(check,target,args,heap,false,changed,activation,repeated,nullptr,{},&frames,{});
+  const std::string &activation,bool repeated,const ActualFrameWorld &frames){
+  return contextInput(check,target,args,heap,false,activation,repeated,nullptr,{},&frames,{});
 }
 } // namespace tsfg::commonProgram

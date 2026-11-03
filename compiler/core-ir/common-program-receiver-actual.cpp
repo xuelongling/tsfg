@@ -504,7 +504,7 @@ bool ActualCheck::seedReceiverRoots(bool conditional,bool &changed){
       const auto &fn=*functions.at(function);if(!receiverText(function)||!receiverText(target))return false;const auto activation="entry/"+function+"/"+target;
       ActualHeap heap;for(const auto &[id,g]:globals){if(!receiverText(id))return false;heap.emplace("global:"+id,declared(string(field(*g,"type")),heap,"global-entry/"+id));}
       ActualFrameWorld frames;std::vector<ActualValue> args;if(!receiverArguments(fn,heap,frames,conditional,changed,args,target,activation))return false;
-      if(!context(function,args,heap,true,changed,activation,false,nullptr,"",&frames,target))return false;
+      if(!context(function,args,heap,true,activation,false,nullptr,"",&frames,target))return false;
       const auto base=string(field(*owner,"base"));if(base.empty())break;if(!need(types.count(base),"constructor ancestor is not owned"))return false;owner=types.at(base);
     }
   }return e.message.empty();

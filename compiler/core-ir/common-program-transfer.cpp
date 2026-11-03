@@ -288,12 +288,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       bool repeated=false;const auto activation=callActivation(context,op,block,target,repeated);if(!e.message.empty())return false;
       ActualContext *call;
       if constexpr(std::is_same_v<decltype(actual),ActualOperands>){
-        call=conditionalContext(*this,target,actual,state.heap,changed,activation,repeated,state.frames);
+        call=conditionalContext(*this,target,actual,state.heap,activation,repeated,state.frames);
       }else{
         const auto active=conditional?std::string():regionCall(*this,context,op,block,target,actual);if(!e.message.empty())return false;
         if(!conditional&&active.empty())for(auto &arg:actual){if(!step(regionWeight(arg.region)))return false;
           if(!arg.region.roots.empty()){arg.region.roots.clear();arg.region.known=true;arg.region.opaque=true;}}
-        call=this->context(target,actual,state.heap,false,changed,activation,repeated,conditional?nullptr:&state.regions,active,&state.frames);
+        call=this->context(target,actual,state.heap,false,activation,repeated,conditional?nullptr:&state.regions,active,&state.frames);
       }
       if(!call)return false;
       if(scheduling){if(!step(context.id.size()/64+1))return false;call->callers.insert(context.id);}
