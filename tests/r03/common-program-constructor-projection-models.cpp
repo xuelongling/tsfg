@@ -59,21 +59,37 @@ bool literalCopyCompletion(){
   directory.constructions.emplace(construction,V4::Construction{construction,base,"implicit-base",std::nullopt,std::nullopt});
   const V4::Charge charge=[&](size_t count){return program.charge(count);};auto parsed=V4::read(raw,directory,charge);
   if(!expect(parsed.status==V4::ReadStatus::Typed,"normalized completion graph passes the production typed reader"))return false;
-  const auto &graph=parsed.graph;std::optional<size_t> normalGate,languageGate;
-  for(size_t n=0;n<graph.nodes.size();++n){const auto &node=graph.nodes[n];if(node.kind!=V4::ValueKind::Gate||node.type!=i32)continue;
-    if(!expect(node.inputs.size()==1&&graph.nodes[node.inputs[0]].kind==V4::ValueKind::Literal&&graph.nodes[node.inputs[0]].type==i32,
-        "copy gate retains the literal input and exact logical type"))return false;
+  // A real value_copy keeps Data.copy and Heap.copy even for literal bits.
+  // A gate alone retained completion but lost the original copy/site/heap.
+  const auto &graph=parsed.graph;std::optional<size_t> normalCopy,languageCopy;size_t copyCount=0,heapCopyCount=0;
+  for(size_t n=0;n<graph.nodes.size();++n){const auto &node=graph.nodes[n];if(node.kind!=V4::ValueKind::Copy)continue;++copyCount;
+    if(!expect(node.type==i32&&node.bases.size()==1&&graph.nodes[node.bases[0]].kind==V4::ValueKind::Literal&&
+        graph.nodes[node.bases[0]].type==i32&&graph.nodes[node.bases[0]].category==V4::Category::Other,
+        "literal copy retains its exact typed original input and category"))return false;
     auto control=node.control;size_t steps=0;
     while(graph.controls[control].kind==V4::ControlKind::Join){const auto &join=graph.controls[control];
       if(!expect(++steps<=graph.controls.size()&&join.inputs.size()==1,"copy completion has a closed single-predecessor control chain"))return false;control=join.inputs[0];}
     const auto &completion=graph.controls[control];
-    if(!expect(completion.kind==V4::ControlKind::ReceiverCompletion,"literal copy is gated by receiver completion, not entry control"))return false;
+    if(!expect(completion.kind==V4::ControlKind::ReceiverCompletion,"literal copy is controlled by receiver completion, not entry control"))return false;
     const auto &action=graph.heaps[completion.action];
-    if(!expect(action.kind==V4::HeapKind::ReceiverAction&&action.action==V4::ReceiverAction::Bind,"copy control comes from the actual bind operation"))return false;
-    auto &slot=action.completion==V4::Completion::Normal?normalGate:languageGate;
-    if(!expect(!slot,"each genuine completion has one literal-copy gate"))return false;slot=n;
+    if(!expect(action.kind==V4::HeapKind::ReceiverAction&&action.action==V4::ReceiverAction::Bind,
+        "copy keeps the real bind completion"))return false;
+    auto inputHeap=node.heap;size_t heapSteps=0;
+    while(graph.heaps[inputHeap].kind==V4::HeapKind::Join){const auto &join=graph.heaps[inputHeap];
+      if(!expect(++heapSteps<=graph.heaps.size()&&join.inputs.size()==1,"copy input Heap has a closed single-predecessor chain"))return false;inputHeap=join.inputs[0];}
+    if(!expect(inputHeap==completion.action,"copy input Heap preserves the original bind completion predecessor"))return false;
+    const auto expectedSite=id+(action.completion==V4::Completion::Normal?"/%v5":"/%v8");
+    if(!expect(node.site==expectedSite,"literal copy keeps independently matched normalized SSA site identity"))return false;
+    size_t ownedHeaps=0;
+    for(const auto &heap:graph.heaps)if(heap.kind==V4::HeapKind::Copy&&heap.value==n){++ownedHeaps;
+      if(!expect(heap.previous==node.heap,"Heap.copy keeps the Data.copy input Heap predecessor"))return false;}
+    if(!expect(ownedHeaps==1,"each original literal copy has exactly one retained Heap.copy"))return false;
+    auto &slot=action.completion==V4::Completion::Normal?normalCopy:languageCopy;
+    if(!expect(!slot,"each genuine completion has one literal-copy equation"))return false;slot=n;
   }
-  if(!expect(normalGate&&languageGate&&graph.normal==std::vector<V4::Ref>{*normalGate},"normal return consumes its gated copy; language copy stays on its own completion"))return false;
+  for(const auto &heap:graph.heaps)heapCopyCount+=heap.kind==V4::HeapKind::Copy;
+  if(!expect(copyCount==2&&heapCopyCount==2&&normalCopy&&languageCopy&&graph.normal==std::vector<V4::Ref>{*normalCopy},
+      "both original copy/heap prefixes remain; normal return consumes its copy and language keeps its own"))return false;
   Domain::Callbacks callbacks;callbacks.rootProtocol.kind=Domain::ProtocolKind::Ordinary;callbacks.rootProtocol.complete=true;
   callbacks.environments=&directory.environments;callbacks.constructions=&directory.constructions;
   const Domain::ActualShape scalar{V4::TypeKind::Scalar,false,{}},reference{V4::TypeKind::Reference,false,{}};
@@ -81,8 +97,8 @@ bool literalCopyCompletion(){
     if(!paid(type.size()/8+1))return nullptr;if(type==i32)return &scalar;if(type==base)return &reference;return nullptr;};
   const Domain::FixedFunctions fixed;auto solved=Domain::solve(graph,fixed,callbacks,charge);
   if(!expect(solved.status==Domain::Status::Solved&&solved.summary.normal&&!solved.summary.language&&
-      solved.summary.live[graph.nodes[*normalGate].control]&&!solved.summary.live[graph.nodes[*languageGate].control]&&
-      solved.summary.populated[*normalGate]&&!solved.summary.populated[*languageGate],
+      solved.summary.live[graph.nodes[*normalCopy].control]&&!solved.summary.live[graph.nodes[*languageCopy].control]&&
+      solved.summary.populated[*normalCopy]&&!solved.summary.populated[*languageCopy],
       "production Domain keeps the fresh bind's normal literal live and its unreachable language literal dead"))return false;
   Json sourceRaw=nullptr;Effects sourceEffects;
   if(!expect(program.constructorReturnCFGs.empty(),"Source-only control uses no normalized dispatch handle"))return false;

@@ -45,7 +45,7 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
   const environmentComponent=(callee,functionId,layout)=>new Set([node({kind:'environmentComponent',type:null,layout,functionId,callee:ordered(callee),control:state.control})]);
   const capture=(environment,layout,id,type)=>new Set([node({kind:'capture',type,id,layout,environment:ordered(environment),...state})]);
   const code=(functionId,environment,type)=>new Set([node({kind:'code',type,functionId,environment:environment===null?null:ordered(environment),control:state.control})]);
-  const copy=(bases,type,site)=>{spend(bases.size+1);if(bases.size&&[...bases].every(id=>nodes[id].kind==='literal'))return gate(bases,type);
+  const copy=(bases,type,site)=>{spend(bases.size+1);
     const id=node({kind:'copy',type,bases:ordered(bases),...state,site});
     state={heap:append(heaps,{kind:'copy',previous:state.heap,value:id}),control:state.control};return new Set([id]);};
   const access=(values,flag)=>{check(flags.includes(flag),'return-origins');spend(values.size+1);const row={values:ordered(values),flag,control:state.control};const encoded=key(row);
