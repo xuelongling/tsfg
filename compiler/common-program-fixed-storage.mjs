@@ -5,6 +5,7 @@
 // it then checks the actual carrier directory and reconstructs every byte.
 import {commonCheck as check,commonRecord as record} from './common-program-common.mjs';
 import {scalarName} from './identity.mjs';
+import {commonNativeCatchBindings} from './common-program-native-language.mjs';
 
 const scalarWidths={bool:1,i8:1,u8:1,i16:2,u16:2,i32:4,u32:4,f32:4,i64:8,u64:8,isize:8,usize:8,f64:8};
 const scalarCodes={i32:1,bool:2,i8:3,i16:4,i64:5,u8:6,u16:7,u32:8,u64:9,isize:10,usize:11,f32:12,f64:13};
@@ -46,6 +47,7 @@ export function commonFixedStorageIsolation(hir,spend) {
       return native.has(types.get(type)?.kind)||catches.has(value.binding);}
     return ['numericLiteral','booleanLiteral','nullLiteral','undefinedLiteral'].includes(value.kind)&&native.has(types.get(value.type)?.kind);
   };
+  const nativeCatches=commonNativeCatchBindings(hir,spend,nativePayload);
   const body=(initial,signature)=>{const rows=[],pending=[initial],writes=new Set();
     while(pending.length){spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
       if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}rows.push(row);
@@ -60,7 +62,7 @@ export function commonFixedStorageIsolation(hir,spend) {
     // this proof from the currently observed exception set.
     const catches=new Set();spend(rows.length);
     for(const row of rows)if(row.kind==='try'&&row.catchClause?.binding){spend();const caught=row.catchClause.binding.id,protectedRows=row.tryBlock.body;
-      if(!writes.has(caught)&&protectedRows.length===1&&protectedRows[0].kind==='throw'&&nativePayload(protectedRows[0].value,new Set()))catches.add(caught);}
+      if(!writes.has(caught)&&(nativeCatches.has(caught)||protectedRows.length===1&&protectedRows[0].kind==='throw'&&nativePayload(protectedRows[0].value,new Set())))catches.add(caught);}
     spend(rows.length);
     for(const row of rows)if(['as','parentheses','nonNull'].includes(row.kind)){spend();const target=types.get(row.type),from=types.get(row.expression.type);
       if(!target||!from){uncertain=true;continue;}
