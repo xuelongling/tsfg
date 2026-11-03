@@ -385,3 +385,46 @@ test "ordinary String view keeps the required copy archive strict" {
     var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
     try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
 }
+
+fn undefinedFixture(fixture: *ScalarFixture) void {
+    // This is an owned undefined Data slot, not a literal inferred from its
+    // private view. The same parameter/ABI/copy identities remain independent.
+    fixture.init(.integer);
+    fixture.fixture.types[3].kind = .@"undefined"; fixture.fixture.types[3].name = "undefined"; fixture.fixture.types[3].native_code = 0;
+    fixture.concrete[3].carrier.layout = .{ .byte_size = 0, .alignment = 1, .reference_count = 0 };
+    fixture.type_rows[2].kind = .@"undefined";
+}
+
+test "ordinary undefined views keep original parameter Data without numeric consumption" {
+    var fixture: ScalarFixture = undefined; undefinedFixture(&fixture);
+    try std.testing.expect(fixture.fixture.types[3].kind == .@"undefined");
+    try std.testing.expectEqual(@as(u32, 0), fixture.concrete[3].carrier.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 1), fixture.concrete[3].carrier.layout.alignment);
+    try std.testing.expectEqual(@as(u16, 0), fixture.concrete[3].carrier.layout.reference_count);
+    try std.testing.expect(fixture.concrete[3].body == null and fixture.concrete[3].carrier.field_offsets.len == 0);
+    try dataAliases(&fixture);
+}
+
+test "ordinary undefined view rejects a different owned physical carrier" {
+    var fixture: ScalarFixture = undefined; undefinedFixture(&fixture);
+    fixture.fixture.registers[3].carrier = boolean_carrier;
+    var c = context.Context{ .program = &fixture.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "ordinary undefined view keeps the required copy archive strict" {
+    var fixture: ScalarFixture = undefined; undefinedFixture(&fixture);
+    for (2..4) |index| {
+        fixture.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data_type } };
+        fixture.fixture.operations[index].view = fixture.data_text; fixture.fixture.operations[index].properties = &fixture.view_properties;
+        fixture.fixture.registers[index + 1].view = fixture.data_type; fixture.fixture.carriers[index + 1] = fixture.data_text;
+    }
+    fixture.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.fixture.registers[5].view = void_type;
+    fixture.fixture.operations[4].view = void_text; fixture.fixture.operations[4].properties = &private_copy_properties; fixture.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &fixture.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
