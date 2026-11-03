@@ -481,3 +481,82 @@ test "ordinary null view keeps the required copy archive strict" {
     var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
     try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
 }
+
+const field_text = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const Field = std.meta.Child(@TypeOf(@as(tables.CommonTables, undefined).members.fields));
+const ValueFixture = struct {
+    data: ScalarFixture,
+    bindings: [3]storage.CommonBinding,
+    fields: [1]Field,
+    constructions: [2]origin.Construction,
+
+    fn init(self: *ValueFixture) void {
+        self.data.init(.integer);
+        self.data.fixture.types[3].kind = .value; self.data.fixture.types[3].name = "FlagValue"; self.data.fixture.types[3].native_code = 0;
+        self.bindings[0] = self.data.fixture.bindings[0]; self.bindings[1] = self.data.fixture.bindings[1];
+        self.bindings[2] = .{ .id = "ordinary-value-flag-field", .owner = .{ .field = @enumFromInt(0) }, .name = "flag",
+            .@"type" = boolean, .writable = true, .origin = declaration, .carrier = boolean_carrier, .scope = null, .declaration_kind = null };
+        self.fields = .{.{ .id = @splat(0xaa), .owner = other, .ordinal = 0, .name = "flag", .@"type" = boolean,
+            .declared_type = boolean, .readonly = false, .optional = false, .access = .public, .origin = declaration, .binding = @enumFromInt(2) }};
+        self.data.fixture.program.tables.mode.common.storage.bindings = &self.bindings;
+        self.data.fixture.program.tables.mode.common.members.fields = &self.fields;
+        self.data.concrete[3] = .{ .@"type" = other,
+            .carrier = .{ .layout = .{ .byte_size = 1, .alignment = 1, .reference_count = 0 }, .field_offsets = &.{0} },
+            .body = .{ .byte_size = 1, .alignment = 1, .reference_count = 0,
+                .fields = &.{.{ .field = @enumFromInt(0), .binding = @enumFromInt(2), .offset = 0, .reference_offset = 0 }} } };
+        self.data.type_rows[2].kind = .value;
+        self.constructions = .{ directory.constructions[0], .{ .id = "ordinary-value-fixture-construction", .owner = self.data.data_text,
+            .base = null, .kind = .implicit_base, .function_id = null } };
+        self.data.interpretation.constructions = &self.constructions; self.data.interpretation.fields = &.{field_text};
+        // This is a nonempty by-value payload with actual field/binding/offset
+        // metadata. The archive's required declaration row adds no constructor
+        // ABI, receiver frame, reference-alias permission or initialization.
+    }
+};
+
+test "ordinary nonempty Value views preserve both explicit copies and original parameter Data" {
+    var fixture: ValueFixture = undefined; fixture.init();
+    try std.testing.expect(fixture.data.fixture.types[3].kind == .value);
+    try std.testing.expectEqual(@as(usize, 1), fixture.fields.len);
+    try std.testing.expectEqual(fixture.bindings[2].@"type", fixture.fields[0].@"type");
+    try std.testing.expectEqual(@as(u32, 1), fixture.data.concrete[3].carrier.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 1), fixture.data.concrete[3].carrier.layout.alignment);
+    try std.testing.expectEqual(@as(u16, 0), fixture.data.concrete[3].carrier.layout.reference_count);
+    try std.testing.expectEqual(@as(usize, 1), fixture.data.concrete[3].body.?.fields.len);
+    try dataAliases(&fixture.data);
+}
+
+test "ordinary Value view rejects a scalar carrier despite the same physical layout" {
+    var fixture: ValueFixture = undefined; fixture.init();
+    fixture.data.fixture.registers[3].carrier = boolean_carrier;
+    try std.testing.expectEqualDeep(fixture.data.concrete[3].carrier.layout, fixture.data.concrete[1].carrier.layout);
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "ordinary Value view keeps the required copy archive strict" {
+    var fixture: ValueFixture = undefined; fixture.init();
+    for (2..4) |index| {
+        fixture.data.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data.data_type } };
+        fixture.data.fixture.operations[index].view = fixture.data.data_text; fixture.data.fixture.operations[index].properties = &fixture.data.view_properties;
+        fixture.data.fixture.registers[index + 1].view = fixture.data.data_type; fixture.data.fixture.carriers[index + 1] = fixture.data.data_text;
+    }
+    fixture.data.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.data.fixture.registers[5].view = void_type;
+    fixture.data.fixture.operations[4].view = void_text; fixture.data.fixture.operations[4].properties = &private_copy_properties; fixture.data.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.data.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.data.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "nonempty Value field offsets remain an owning layout prerequisite" {
+    var fixture: ValueFixture = undefined; fixture.init();
+    fixture.data.concrete[3].carrier.field_offsets = &.{1};
+    var c = context.Context{ .program = &fixture.data.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge };
+    // Failure is at the real layout boundary, before Body projection. It must
+    // never be reported as a Value-view rejection or a successful certificate.
+    try std.testing.expectError(error.InvalidShape, typedInput(&c, &budget, &fixture.data.interpretation));
+}
