@@ -62,7 +62,7 @@ function canonicalWriterJson(value,spend,encoded,quote=null) {
   spend(chunks.length+length);return chunks.join('');
 }
 // Typed marker serialization only: callers retain complete admission ownership.
-// Private profile4 is a draft; the inherited outer exchange header does not
+// Private profile5 is a draft; the inherited outer exchange header does not
 // authorize receiver operations in the existing formal wire.
 /** @param {{append:(...parts:string[])=>void,quote:(value:string)=>string}} text
  * @param {{representation:string,publication:WriterJson,request:WriterJson,proof:WriterJson}} parts
@@ -96,7 +96,7 @@ function writeCommonProgramMarker(text,parts,spend,hir,encoded) {
  * @param {(amount:number)=>void} spend */
 export function appendCommonProgramMarker(text,parts,spend){spend(2);writeCommonProgramMarker(text,parts,spend,{kind:'raw',text:parts.hir},new Map());}
 // The complete owned artifact and actual SSA graph use the current registered
-// exchange header; profile4 is unadopted and no formal-wire authority follows.
+// exchange header; profile5 is unadopted and no formal-wire authority follows.
 export function commonProgramCore(input,publication,request,options={borrowProof:false}) {
   const proof=verifyCommonKernelGroup(input,publication,request),records=new Map(publication.contracts.map(row=>[row.functionId,row])),
     planned=commonProgramPlan(input,records),plans=requireCommonCoreConstructionPlans(planned),program=commonConstructionPhysical(planned,records,options),{model,carriers}=program;

@@ -5,16 +5,17 @@ import descriptor from '../../contracts/common-program-core-development.json' wi
 import {commonCoreSchema,commonCoreFormat} from '../../compiler/common-program-plan.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 
-test('private4 has its declared finite work profile and a new schema',()=>{
- assert.equal(commonCoreFormat.version,4);assert.equal(descriptor.version,4);assert.equal(descriptor.limits.work,2000000);
- assert.equal(commonCoreSchema,'sha256:14304b288b87bc8b32c11319d650abd4dcfe7ae578038eb9add9314a3efb4df8');assert.notEqual(commonCoreSchema,'sha256:6f14a7569cce9d098fa892d9d0809bf0b11e55e7459070ef94aa90fb0392a498');assert.notEqual(commonCoreSchema,'sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9');assert.notEqual(commonCoreSchema,'sha256:928348225e0dcf59c8dbe9a53b8db8e2ce66afef86fe66e66fb77d8c353aa039');assert.notEqual(commonCoreSchema,'sha256:8e6bcef004a94baae52bbf83df50adb1d0f8c0f88ad20d0cb7bbf3ceb357499b');assert.notEqual(commonCoreSchema,'sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769');assert.notEqual(commonCoreSchema,'sha256:ab0fd37a7d73e935d1df3b9a068fbb0daac2ff66734bfce10411f4795a0d7bcb');
- assert.deepEqual(descriptor.limits,{blocksPerFunction:256,bytes:8388608,depth:128,functions:4096,globals:4096,instructionsPerFunction:8192,jsonTokens:200000,members:65536,parameters:64,registersPerFunction:4096,sources:128,stringBytes:1048576,types:4096,work:2000000});
+test('private5 has its declared finite work profile and a new schema',()=>{
+ assert.equal(commonCoreFormat.version,5);assert.equal(descriptor.version,5);assert.equal(descriptor.limits.work,4000000);
+ assert.equal(commonCoreSchema,'sha256:db46cd091d08f951a4a1564e8cf24702dca6137fe0585bbfe256c522e6ee3332');assert.notEqual(commonCoreSchema,'sha256:14304b288b87bc8b32c11319d650abd4dcfe7ae578038eb9add9314a3efb4df8');assert.notEqual(commonCoreSchema,'sha256:6f14a7569cce9d098fa892d9d0809bf0b11e55e7459070ef94aa90fb0392a498');assert.notEqual(commonCoreSchema,'sha256:17aca193ae46b3ac5321d6247e7d3a1e629a643e04db8e86994f359f5f8b42a9');assert.notEqual(commonCoreSchema,'sha256:928348225e0dcf59c8dbe9a53b8db8e2ce66afef86fe66e66fb77d8c353aa039');assert.notEqual(commonCoreSchema,'sha256:8e6bcef004a94baae52bbf83df50adb1d0f8c0f88ad20d0cb7bbf3ceb357499b');assert.notEqual(commonCoreSchema,'sha256:03862e52f6bea76ec2825ef02156b8f9e50c18218439d843eacf827aebd92769');assert.notEqual(commonCoreSchema,'sha256:ab0fd37a7d73e935d1df3b9a068fbb0daac2ff66734bfce10411f4795a0d7bcb');
+ assert.deepEqual(descriptor.limits,{blocksPerFunction:256,bytes:8388608,depth:128,functions:4096,globals:4096,instructionsPerFunction:8192,jsonTokens:200000,members:65536,parameters:64,registersPerFunction:4096,sources:128,stringBytes:1048576,types:4096,work:4000000});
 });
-test('private4 work is accepted through its exact declared bound then rejected',()=>{
+test('private5 work is accepted through its exact declared bound then rejected',()=>{
  const spend=commonMeter(descriptor.limits.work);spend(descriptor.limits.work);assert.throws(()=>spend(1),{code:'r03-common-program-limit'});
  assert.throws(()=>commonMeter(descriptor.limits.work+1),{code:'r03-common-program-limit'});
 });
 test('old explicit work and default publication budgets are unchanged',()=>{
  const old=commonMeter(1000000);old(1000000);assert.throws(()=>old(1),{code:'r03-common-program-limit'});
+ const oldProfile=commonMeter(2000000);oldProfile(2000000);assert.throws(()=>oldProfile(1),{code:'r03-common-program-limit'});
  const normal=commonMeter();normal(100000);assert.throws(()=>normal(1),{code:'r03-common-program-limit'});
 });

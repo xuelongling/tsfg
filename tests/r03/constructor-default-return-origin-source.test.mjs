@@ -30,5 +30,5 @@ test('original Source3 constructor defaults publish both completion heaps throug
   assert.ok(called.length);assert.ok(called.every(context=>context.language&&!context.normal),'the existing actual solver retains the real default throw');
   const cold=JSON.parse(common.canonical({hir,publication,request:{targets:[]}})),product=coreApi.commonProgramCore(cold.hir,cold.publication,cold.request);
   assert.match(product.text,/tsfg_program.initialize_field/);assert.match(product.text,/tsfg_program.receiver_child/);
-  assert.equal(product.text.match(/, schema = "([^"]+)"/)[1],'sha256:14304b288b87bc8b32c11319d650abd4dcfe7ae578038eb9add9314a3efb4df8');
+  assert.equal(product.text.match(/, schema = "([^"]+)"/)[1],'sha256:db46cd091d08f951a4a1564e8cf24702dca6137fe0585bbfe256c522e6ee3332');
 });

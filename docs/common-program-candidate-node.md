@@ -123,7 +123,7 @@ remain known while that reference body has no physical field route.
 
 Node metadata admission and publication identity retain their existing 100,000
 work allowance. Source, graph and body-effect analysis share the existing
-cumulative physical allowance of 2,000,000, both at first publication and when
+cumulative private Core5 physical allowance of 4,000,000, both at first publication and when
 consuming a supplied publication. An inline, context or phase does not start a
 fresh budget. Per-operation fees remain charged.
 Old or mixed publication/graph formats and mismatched private Core identities
@@ -134,7 +134,7 @@ Source facts use the private v2 or v3 family with the matching Source descriptor
 owned HIR uses its separate matching v2 or v3 descriptor. The v3 Source and HIR
 formats retain ordered constructor parameter initialization and actual omitted
 arguments. Existing v2 packets retain their original identities. Static Core
-carries the existing `tsfg.core-program-development` v4 marker and exact private
+carries the `tsfg.core-program-development` v5 marker and exact private
 0.12 header. The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
 
 The formal Frontend/HIR/bytecode registries, Source lock and admission remain unchanged by this private candidate. Candidate metadata never derives its private header from that registry. Shared MLIR string escaping has its own module so the budgeted printer does not import the scalar emitter and its formal registry.

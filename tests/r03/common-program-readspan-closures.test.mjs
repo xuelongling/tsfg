@@ -37,7 +37,9 @@ function assertPrivate4ConstructionTransition(name,functions){
   const expected=constructionOracle.ordinary,prior=constructionOracle.cases.find(row=>row.name===name),
     start=functions.indexOf('  func.func @"program_'+expected.functionId.slice(7)+'"');assert.ok(start>=0);
   const next=functions.indexOf('  func.func ',start+1),end=next<0?functions.length:next,body=functions.slice(start,end);
-  assert.equal(commonCoreSchema,constructionOracle.schema);
+  // The private4 body oracle stays frozen; private5 changes its profile/schema only.
+  assert.equal(commonCoreSchema,'sha256:db46cd091d08f951a4a1564e8cf24702dca6137fe0585bbfe256c522e6ee3332');
+  assert.notEqual(commonCoreSchema,constructionOracle.schema);
   assert.equal(body.split('\n')[0],expected.header,'ordinary signature, public role and declaration anchor stay byte-exact');
   assert.deepEqual(body.split('\n').filter(line=>/^\s+cf\./.test(line)).map(line=>line.replaceAll(/%v\d+/g,'%value').replaceAll(/\^bb\d+/g,'^block')),
     expected.unchangedBranches,'existing ordinary control edges and payload types only renumber their SSA/block names');

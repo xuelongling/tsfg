@@ -234,17 +234,23 @@ new summary, trap, weak or context facts. Scheduling preserves the context
 limits and physical allocation provenance. The work allowance belongs to the
 versioned development profile below.
 
-Private Core3 retains its original 1,000,000-work profile. The first adopted
-private Core4 development profile provides 2,000,000 finite compiler work units
-for receiver and construction analysis. This is a version decision for the
-unreleased, same-repository development format, not a change to language Fuel
-or request execution. It preserves every operation fee and all other limits,
-including context, text, JSON and allocation bounds. Node meters and the shared
-C++ Program default/clamp use the same allowance; scheduling never resets it.
-The descriptor status, schema hash, marker and C++ reader advance together.
-The reader accepts only the exact version/hash pair; Core3 and earlier draft
-Core4 hashes receive no compatibility path. Old one-million-work failures stay
-failed. Constructor-body borrow proof and Runtime execution remain OPEN.
+Private Core3 retains its original 1,000,000-work profile, and private Core4
+retains its historical 2,000,000-work descriptor and failed inputs. Private
+Core5 selects 4,000,000 finite compiler work units to provide additional analysis
+space for the complete real Source compilation chain. This is an engineering
+allowance for the unreleased, same-repository development format, not a bound
+derived from one trace or a promise that every valid Program succeeds.
+
+Every operation fee, language Fuel and request-execution rule remains unchanged,
+as do context, text, JSON, allocation and all other limits. Node metadata
+admission and publication keep their separate 100,000 default. Analysis and
+writer meters use the new declared allowance independently; neither resets the
+other. The C++ Program default/clamp uses that same finite allowance, and
+scheduling never refills it. The descriptor version, status, canonical schema,
+marker and exact C++ reader advance together. Old or mixed version/hash pairs
+receive no compatibility path. Old one-million- and two-million-work failures
+stay failed; a new-profile failure also remains a failure without partial output.
+Constructor-body borrow proof and Runtime execution remain OPEN.
 
 Node borrow liveness uses dirty rounds in the original point order. A changed
 successor schedules only its predecessors, with earlier/self predecessors in the

@@ -6,10 +6,10 @@ import {readFileSync} from 'node:fs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
-for(const fixture of ['common-string-capture/local-const','common-value-capture/copy-scalar'])test('complete context work stays within the private4 finite physical profile: '+fixture,()=>{
+for(const fixture of ['common-string-capture/local-const','common-value-capture/copy-scalar'])test('complete context work stays within the private5 finite physical profile: '+fixture,()=>{
   const hir=projectCommonProgram(readCommonProgramFacts(readFileSync(new URL('./testdata/'+fixture+'.json',import.meta.url)))),
     physical=commonProgramPhysical(hir);
-  assert.equal(physical.model.limits.work,2000000);
+  assert.equal(physical.model.limits.work,4000000);
   assert.notEqual(physical.values.capacity.contexts,physical.values.actual.contexts);assert.notEqual(physical.values.capacity.objects,physical.values.actual.objects);assert.notEqual(physical.values.capacity.regions.nodes,physical.values.actual.regions.nodes);
   for(const solved of [physical.values.capacity,physical.values.actual]){
     assert.ok(solved.contexts.size>0);
