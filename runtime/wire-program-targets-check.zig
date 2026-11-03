@@ -284,8 +284,8 @@ const Engine = struct {
         }
     };
     const CopyPair = struct { original: facts.ObjectId, copied: facts.ObjectId, parent: ?usize, field: ?t.FieldRef=null };
-    const Activation = struct { function: t.FunctionRef, parent: ?usize, site: ?facts.Location, recursive: bool };
-    const FrameKey = struct { activation: usize, location: facts.Location, construction: t.ConstructionIndex, new_target: t.TypeRef, parent: ?facts.FrameId };
+    const Activation = struct { function: t.FunctionRef, parent: ?usize, site: ?facts.Location, recursive: bool, root_target: ?t.TypeRef=null };
+    const FrameKey = struct { activation: usize, location: ?facts.Location, construction: t.ConstructionIndex, new_target: t.TypeRef, parent: ?facts.FrameId };
     const ObjectKey = struct {
         activation: usize, location: facts.Location, kind: facts.ObjectKind, @"type": ?t.TypeRef, environment: ?t.EnvironmentRef,
         copy_source: ?facts.ObjectId=null, copy_parent: ?facts.ObjectId=null, copy_field: ?t.FieldRef=null,
@@ -549,7 +549,7 @@ const Engine = struct {
         var raw=state.heap.entries.valueIterator(); while(raw.next()) |value|try value.region.age(self.c);
         var frames=state.frames.entries.valueIterator(); while(frames.next()) |frame|try frame.bound.region.age(self.c);
     }
-    fn activationFor(self: *Engine, function: t.FunctionRef, parent: ?facts.Site) Error!usize {
+    fn activationFor(self: *Engine, function: t.FunctionRef, parent: ?facts.Site, root_target: ?t.TypeRef) Error!usize {
         if(self.closureLegacy()) {
             for(self.activations.items,0..) |row,i| { try self.c.step(); if(row.function==function)return i; }
             if(self.replay)return error.InvalidShape;
@@ -562,11 +562,11 @@ const Engine = struct {
         }
         const owner: ?usize=if(!recursive and parent!=null)self.info(parent.?.context).activation else null;
         const site: ?facts.Location=if(!recursive and parent!=null)parent.?.location else null;
-        for(self.activations.items,0..) |row,i| { try self.c.step();
-            if(row.function==function and row.parent==owner and row.recursive==recursive and std.meta.eql(row.site,site))return i;
+        for(self.activations.items,0..) |row,i| { try self.c.charge(2);
+            if(row.function==function and row.parent==owner and row.recursive==recursive and std.meta.eql(row.site,site) and row.root_target==root_target)return i;
         }
         if(self.replay)return error.InvalidShape;
-        try self.activations.append(self.c.allocator,.{.function=function,.parent=owner,.site=site,.recursive=recursive}); return self.activations.items.len-1;
+        try self.activations.append(self.c.allocator,.{.function=function,.parent=owner,.site=site,.recursive=recursive,.root_target=root_target}); return self.activations.items.len-1;
     }
 
     fn typeKind(self: *Engine, id: t.TypeRef) []const u8 {
@@ -661,8 +661,8 @@ const Engine = struct {
         }
         return result;
     }
-    fn contextFor(self: *Engine, function: t.FunctionRef, arguments: []const V, heap: facts.HeapView, parent: ?facts.Site, is_root: bool, repeated: bool, versions: ?*const relation.Heap, scope: ?relation.ScopeRef, frames: ?*const facts.FrameStore) Error!facts.ContextId {
-        const activation=try self.activationFor(function,parent);
+    fn contextFor(self: *Engine, function: t.FunctionRef, arguments: []const V, heap: facts.HeapView, parent: ?facts.Site, is_root: bool, repeated: bool, versions: ?*const relation.Heap, scope: ?relation.ScopeRef, frames: ?*const facts.FrameStore, root_target: ?t.TypeRef) Error!facts.ContextId {
+        const activation=try self.activationFor(function,parent,root_target);
         const summarized=repeated or self.activations.items[activation].recursive;
         var selected_frames: facts.FrameStore=.{}; defer receiver_actual.deinit(&selected_frames,self.c.allocator);
         if(frames) |incoming|selected_frames=try receiver_actual.select(self.c,incoming,arguments);
@@ -960,7 +960,7 @@ const Engine = struct {
         try self.c.charge(arguments.len); const passed=try self.c.allocator.alloc(V,arguments.len); @memset(passed,.{});
         defer { for(passed) |*argument|argument.deinit(self.c.allocator); self.c.allocator.free(passed); }
         for(arguments,passed) |argument,*out| { out.*=try V.clone(self.c,argument.view()); if(self.c.program.tables.mode==.common and scope==null)try out.region.age(self.c); }
-        const callee=try self.contextFor(target,passed,state.heap.view(),at,false,weak,if(scope!=null)&state.relations else null,scope,&state.frames);
+        const callee=try self.contextFor(target,passed,state.heap.view(),at,false,weak,if(scope!=null)&state.relations else null,scope,&state.frames,null);
         const next=facts.Location{.function=at.location.function,.block=normal orelse at.location.block,.instruction=if(normal==null)at.location.instruction+1 else 0};
         if(self.replay and self.c.program.tables.mode==.common and self.c.program.tables.mode.common.abis[self.abi(target)].construction!=null) {
             try self.c.row(facts.CallEdge);
@@ -1412,15 +1412,18 @@ const Engine = struct {
     }
     fn constructorFrame(self: *Engine, at: facts.Site, construction: t.ConstructionIndex, new_target: t.TypeRef, parent: ?facts.FrameId, weak: bool) Error!facts.FrameId {
         const key=FrameKey{.activation=self.info(at.context).activation,.location=at.location,.construction=construction,.new_target=new_target,.parent=parent};
+        return self.internFrame(key,at,weak);
+    }
+    fn internFrame(self: *Engine, key: FrameKey, at: facts.Site, weak: bool) Error!facts.FrameId {
         for(self.frame_keys.items,0..) |old,i| {
-            try self.c.step(); if(!std.meta.eql(old,key))continue;
+            try self.c.charge(2); if(!std.meta.eql(old,key))continue;
             if(weak and !self.result.frames.items[i].weak) { try self.c.require(!self.replay); self.result.frames.items[i].weak=true; self.changed=true; }
             return @enumFromInt(i);
         }
         try self.c.require(!self.replay and self.frame_keys.items.len<4096);
         try self.c.charge(self.frame_keys.items.len+self.result.frames.items.len+2); try self.frame_keys.ensureUnusedCapacity(self.c.allocator,1); try self.result.frames.ensureUnusedCapacity(self.c.allocator,1);
         const id: facts.FrameId=@enumFromInt(self.frame_keys.items.len); self.frame_keys.appendAssumeCapacity(key);
-        self.result.frames.appendAssumeCapacity(.{.site=at,.construction=construction,.new_target=new_target,.parent=parent,.weak=weak}); self.changed=true; return id;
+        self.result.frames.appendAssumeCapacity(.{.site=at,.construction=key.construction,.new_target=key.new_target,.parent=key.parent,.weak=weak}); self.changed=true; return id;
     }
     fn selectedReceiverOrigin(self: *Engine, at: facts.Site, frame: t.RegisterRef, value: *V) Error!void {
         const f=self.c.program.functions[@intFromEnum(at.location.function)]; const abi_row=self.c.program.tables.mode.common.abis[@intFromEnum(f.abi)];
@@ -2062,13 +2065,38 @@ const Engine = struct {
             }
         }
     }
-    fn seedRoot(self: *Engine, target: t.FunctionRef) Error!void {
+    fn seedRoot(self: *Engine, target: t.FunctionRef, new_target: ?t.TypeRef) Error!void {
         const function=self.c.program.functions[@intFromEnum(target)]; const parameters=function.blocks[0].parameters;
         try self.c.charge(parameters.len+1); const arguments=try self.c.allocator.alloc(V,parameters.len); @memset(arguments,.{});
         defer { for(arguments) |*argument|argument.deinit(self.c.allocator); self.c.allocator.free(arguments); }
+        var frames: facts.FrameStore=.{}; defer receiver_actual.deinit(&frames,self.c.allocator);
+        var receiver: ?struct { frame: facts.FrameId, ordinal: u16 }=null;
+        if(new_target) |actual| {
+            const abi_row=self.c.program.tables.mode.common.abis[self.abi(target)];
+            const construction: t.ConstructionIndex=@enumFromInt(@intFromEnum(abi_row.construction.?));
+            const activation=try self.activationFor(target,null,actual);
+            // A root owns an internal unbound control frame, not an arbitrary
+            // language argument or a proved receiver allocation. Null location
+            // distinguishes this entry birth from every receiver_create opcode.
+            const at=facts.Site{.context=@enumFromInt(self.result.invocations.items.len),.location=.{.function=target,.block=@enumFromInt(0),.instruction=0}};
+            const frame=try self.internFrame(.{.activation=activation,.location=null,.construction=construction,.new_target=actual,.parent=null},at,false);
+            try receiver_actual.birth(self.c,&frames,frame,false);
+            receiver=.{.frame=frame,.ordinal=abi_row.receiver_frame.?};
+        }
         for(arguments,0..) |*argument,index| {
             switch(self.c.program.tables.mode) {
-                .common => { argument.*=.{.unknown=true,.callable_unknown=true}; },
+                .common => {
+                    if(receiver) |selected| {
+                        if(index==selected.ordinal) {
+                            _=try argument.frame(self.c,selected.frame);
+                            // Match the same raw-to-relation boundary used by
+                            // receiver_create results; no allocation root arises.
+                            try self.setRegion(argument,try facts.relation(self.c,argument.view()));
+                            continue;
+                        }
+                    }
+                    argument.*=.{.unknown=true,.callable_unknown=true};
+                },
                 .exception => |v| {
                     const frame=v.storage.frames[@intFromEnum(v.abis[self.abi(target)].frame)];
                     argument.*=try self.declared(frame.slots[index].@"type");
@@ -2079,8 +2107,14 @@ const Engine = struct {
                 },
             }
         }
-        const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false,null,null,null);
-        if(parameters.len!=0 and self.c.program.tables.mode==.common) { self.info(id).actual_unresolved=true; self.info(id).unresolved=true; self.result.unresolved=true; }
+        const id=try self.contextFor(target,arguments,self.initial_globals.view(),null,true,false,null,null,if(receiver!=null)&frames else null,new_target);
+        if(receiver) |selected| {
+            // contextFor now owns the selected FrameStore. Its entry Site is a
+            // representative of this root, never an instruction-birth proof.
+            try self.c.charge(2); self.result.frames.items[@intFromEnum(selected.frame)].site.context=id;
+        }
+        // contextFor derives unresolved from the actual argument facets. A
+        // known control frame does not erase unknown ordinary data parameters.
     }
     fn initialize(self: *Engine) Error!void {
         switch(self.c.program.tables.mode) {
@@ -2095,21 +2129,32 @@ const Engine = struct {
                 for(self.c.program.functions,0..) |function,i| {
                     try self.c.step(); const ref: t.FunctionRef=@enumFromInt(i); var is_root=function.role==.module_initializer;
                     for(v.closures.functions) |row| { try self.c.step(); if(row.function==ref) { is_root=row.parent==null; break; } }
-                    if(function.role==.construction_body)is_root=try receiverOutside(self.c,ref);
-                    if(is_root)try self.seedRoot(ref);
+                    if(function.role==.construction_body) {
+                        if(!try receiverOutside(self.c,ref))continue;
+                        const construction=v.members.constructions[@intFromEnum(v.abis[self.abi(ref)].construction.?)];
+                        // The same body can be entered for its own nominal type
+                        // or any derived dynamic newTarget. This also includes
+                        // explicit ancestors of implicit-derived constructors;
+                        // only already owned Runtime bodies are analyzed here.
+                        for(v.types,0..) |row,type_index| {
+                            try self.c.step(); if(row.kind!=.reference and row.kind!=.value)continue;
+                            const actual: t.TypeRef=@enumFromInt(type_index);
+                            if(try self.extends(actual,construction.owner))try self.seedRoot(ref,actual);
+                        }
+                    } else if(is_root)try self.seedRoot(ref,null);
                 }
                 // Global initial values are missing external actual facts as
                 // well. A declared type or capacity is not their actual seed.
                 if(v.modules.globals.len!=0)self.result.unresolved=true;
             },
-            .exception => |v| for(self.c.program.functions,0..) |function,i| { try self.c.step(); if(function.role==.module_initializer or v.exceptions.functions[i].parent==null)try self.seedRoot(@enumFromInt(i)); },
+            .exception => |v| for(self.c.program.functions,0..) |function,i| { try self.c.step(); if(function.role==.module_initializer or v.exceptions.functions[i].parent==null)try self.seedRoot(@enumFromInt(i),null); },
             .legacy => |v| {
                 for(v.modules.globals,0..) |_,i| { try self.c.step(); _=try self.initial_globals.put(self.c,.{.global=@enumFromInt(i)},.{.unknown=true},true); }
                 if(self.closureLegacy()) {
-                    for(v.closures.functions) |row| { try self.c.step(); if(row.parent==null)try self.seedRoot(row.function); }
+                    for(v.closures.functions) |row| { try self.c.step(); if(row.parent==null)try self.seedRoot(row.function,null); }
                 } else {
-                    for(v.modules.initialization) |function| { try self.c.step(); try self.seedRoot(function); }
-                    for(v.modules.roots) |row| { try self.c.step(); try self.seedRoot(row.function); }
+                    for(v.modules.initialization) |function| { try self.c.step(); try self.seedRoot(function,null); }
+                    for(v.modules.roots) |row| { try self.c.step(); try self.seedRoot(row.function,null); }
                 }
             },
         }
