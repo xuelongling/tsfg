@@ -8,6 +8,7 @@ const Ref = model.Ref;
 const Error = model.Error;
 const Budget = model.Budget;
 const Symbol = model.Symbol;
+const receiver_domain = @import("wire-program-return-origin-construction.zig");
 
 pub const FixedContract = struct { function_id: Symbol, graph: ?*const Graph };
 const ValidatedContract = struct { function_id: Symbol, graph: ?*const Graph, protocol_pending: bool };
@@ -468,6 +469,284 @@ const Engine = struct {
     }
 };
 
+
+// A strict finite equation correspondence for the checked call-free receiver
+// protocol. The existing construction Engine supplies formal completion facts;
+// this object only pairs original Ref/site names and checks every core row.
+const ReceiverCertificate = struct {
+    const Kind = enum { value, heap, control };
+    const View = union(enum) { id: Ref, dead: void, pending: void };
+    const Pair = struct { kind: Kind, left: Ref, right: Ref };
+    const Site = struct { left: Symbol, right: Symbol };
+    allocator: std.mem.Allocator, budget: *Budget,
+    graphs: [2]*const Graph, analyses: [2]*const receiver_domain.Analysis,
+    maps: [2][3][]?Ref,
+    pending: std.ArrayListUnmanaged(Pair) = .empty,
+    sites: std.ArrayListUnmanaged(Site) = .empty,
+
+    fn init(allocator: std.mem.Allocator, budget: *Budget, body_graph: *const Graph, upper_graph: *const Graph, body_analysis: *const receiver_domain.Analysis, upper_analysis: *const receiver_domain.Analysis) Error!ReceiverCertificate {
+        var result = ReceiverCertificate{ .allocator = allocator, .budget = budget, .graphs = .{ body_graph, upper_graph }, .analyses = .{ body_analysis, upper_analysis }, .maps = undefined };
+        for (result.graphs, 0..) |graph, side| {
+            const sizes = [_]usize{ graph.nodes.len, graph.heaps.len, graph.controls.len };
+            for (sizes, 0..) |size, kind| {
+                try budget.spend(size + 1);
+                result.maps[side][kind] = try allocator.alloc(?Ref, size);
+                @memset(result.maps[side][kind], null);
+            }
+        }
+        return result;
+    }
+    fn append(self: *ReceiverCertificate, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!void {
+        try self.budget.step();
+        if (into.items.len == into.capacity) try self.budget.spend(into.items.len + 1);
+        try into.append(self.allocator, value);
+    }
+    fn controlView(self: *ReceiverCertificate, side: usize, start: Ref) Error!View {
+        const graph = self.graphs[side]; var id = start;
+        if (!self.analyses[side].controls[id]) return .dead;
+        for (0..graph.controls.len + 1) |_| {
+            try self.budget.step(); switch (graph.controls[id]) {
+                .join => |row| { if (row.inputs.len != 1) return .pending; id = row.inputs[0]; },
+                .entry, .receiver_completion => return .{ .id = id },
+                else => return .pending,
+            }
+        }
+        return .pending; // No seed may be invented for a cyclic wrapper.
+    }
+    fn valueView(self: *ReceiverCertificate, side: usize, start: Ref) Error!View {
+        const graph = self.graphs[side]; var id = start; var terminal = false;
+        for (0..graph.nodes.len + 1) |_| {
+            try self.budget.step(); switch (graph.nodes[id]) {
+                .join => |row| { if (row.inputs.len == 0) return .dead; if (row.inputs.len != 1) return .pending; id = row.inputs[0]; },
+                .gate => |row| {
+                    const predicate = try self.controlView(side, row.control);
+                    if (predicate == .dead) return .dead;
+                    if (predicate == .pending or row.inputs.len != 1) return .pending;
+                    id = row.inputs[0];
+                },
+                .receiver_value => |row| { if (self.analyses[side].action_results[row.action].len == 0) return .dead; terminal = true; break; },
+                .copy => |row| { if (try self.controlView(side, row.control) != .id) return .pending; terminal = true; break; },
+                .receiver_input, .parameter, .literal, .nonowning => { terminal = true; break; },
+                else => return .pending,
+            }
+        }
+        if (!terminal) return .pending;
+        const core = graph.nodes[id]; var cursor = start;
+        // A may-live control is never a universal predicate. An erased gate
+        // must be entry, or exactly the intrinsic predicate of its input copy
+        // or receiver action; all other controlled equations remain Pending.
+        for (0..graph.nodes.len + 1) |_| {
+            try self.budget.step(); if (cursor == id) return .{ .id = id };
+            switch (graph.nodes[cursor]) {
+                .join => |row| cursor = row.inputs[0],
+                .gate => |row| {
+                    const predicate = (try self.controlView(side, row.control)).id;
+                    if (graph.controls[predicate] != .entry) {
+                        const same = switch (core) {
+                            .copy => |copy_row| blk: { const intrinsic = try self.controlView(side, copy_row.control); break :blk intrinsic == .id and intrinsic.id == predicate; },
+                            .receiver_value => |value_row| graph.controls[predicate] == .receiver_completion and graph.controls[predicate].receiver_completion.action == value_row.action,
+                            else => false,
+                        };
+                        if (!same) return .pending;
+                    }
+                    cursor = row.inputs[0];
+                },
+                else => return .pending,
+            }
+        }
+        return .pending;
+    }
+    fn heapView(self: *ReceiverCertificate, side: usize, start: Ref) Error!View {
+        const graph = self.graphs[side]; var id = start;
+        for (0..graph.heaps.len + 1) |_| {
+            try self.budget.step(); switch (graph.heaps[id]) {
+                .join => |row| { if (row.inputs.len == 0) return .dead; if (row.inputs.len != 1) return .pending; id = row.inputs[0]; },
+                .receiver_action => { if (self.analyses[side].action_results[id].len == 0) return .dead; return .{ .id = id }; },
+                .store => |row| { if (try self.controlView(side, row.control) != .id) return .pending; return .{ .id = id }; },
+                .copy => |row| { if (graph.nodes[row.value] != .copy) return .pending; if (try self.controlView(side, graph.nodes[row.value].copy.control) != .id) return .pending; return .{ .id = id }; },
+                .entry => return .{ .id = id },
+                else => return .pending,
+            }
+        }
+        return .pending;
+    }
+    fn view(self: *ReceiverCertificate, side: usize, kind: Kind, id: Ref) Error!View {
+        return switch (kind) { .value => self.valueView(side, id), .heap => self.heapView(side, id), .control => self.controlView(side, id) };
+    }
+    fn pair(self: *ReceiverCertificate, kind: Kind, left: Ref, right: Ref) Error!bool {
+        const a = try self.view(0, kind, left); const b = try self.view(1, kind, right);
+        if (a == .pending or b == .pending) return false;
+        if (a == .dead or b == .dead) return a == .dead and b == .dead;
+        const left_map = self.maps[0][@intFromEnum(kind)]; const right_map = self.maps[1][@intFromEnum(kind)];
+        try self.budget.spend(2);
+        if (left_map[a.id]) |old| return old == b.id and right_map[b.id] != null and right_map[b.id].? == a.id;
+        if (right_map[b.id] != null) return false;
+        left_map[a.id] = b.id; right_map[b.id] = a.id;
+        try self.append(Pair, &self.pending, .{ .kind = kind, .left = a.id, .right = b.id }); return true;
+    }
+    fn values(self: *ReceiverCertificate, left: []const Ref, right: []const Ref) Error!bool {
+        var normalized: [2][]Ref = undefined; var counts = [_]usize{ 0, 0 };
+        for ([_][]const Ref{ left, right }, 0..) |source, side| {
+            try self.budget.spend(source.len + 1); normalized[side] = try self.allocator.alloc(Ref, source.len);
+            for (source) |id| {
+                try self.budget.step(); const resolved = try self.valueView(side, id);
+                if (resolved == .pending) return false;
+                if (resolved == .id) { normalized[side][counts[side]] = resolved.id; counts[side] += 1; }
+            }
+        }
+        if (counts[0] != counts[1]) return false;
+        for (normalized[0][0..counts[0]], normalized[1][0..counts[1]]) |a, b| if (!try self.pair(.value, a, b)) return false;
+        return true;
+    }
+    fn site(self: *ReceiverCertificate, left: Symbol, right: Symbol) Error!bool {
+        // Site spelling is a local name. Both directions must preserve its
+        // identity class across the entire owned function, including copies
+        // whose result is discarded; no fresh/alias claim comes from a name.
+        for (self.sites.items) |row| {
+            try self.budget.step(); const same_left = try self.budget.equal(row.left, left); const same_right = try self.budget.equal(row.right, right);
+            if (same_left or same_right) return same_left and same_right;
+        }
+        try self.budget.text(left.len); try self.budget.text(right.len);
+        try self.append(Site, &self.sites, .{ .left = left, .right = right }); return true;
+    }
+    fn scalar(self: *ReceiverCertificate, kind: Kind, left: Ref, right: Ref) Error!bool {
+        try self.budget.step(); const a = self.graphs[0]; const b = self.graphs[1];
+        return switch (kind) {
+            .control => switch (a.controls[left]) { .entry => b.controls[right] == .entry, .receiver_completion => b.controls[right] == .receiver_completion, else => false },
+            .value => blk: {
+                const x = a.nodes[left]; const y = b.nodes[right];
+                if (std.meta.activeTag(x) != std.meta.activeTag(y)) break :blk false;
+                break :blk switch (x) {
+                    .receiver_input, .parameter, .literal, .nonowning => try exactEquation(model.Value, x, y, self.budget),
+                    .copy => |row| try exactEquation(?Symbol, row.@"type", y.copy.@"type", self.budget),
+                    .receiver_value => |row| try exactEquation(?Symbol, row.@"type", y.receiver_value.@"type", self.budget),
+                    else => false,
+                };
+            },
+            .heap => blk: {
+                const x = a.heaps[left]; const y = b.heaps[right];
+                if (std.meta.activeTag(x) != std.meta.activeTag(y)) break :blk false;
+                break :blk switch (x) {
+                    .entry, .copy => true,
+                    .store => |row| row.initialize == y.store.initialize and try self.budget.equal(row.selector, y.store.selector) and try self.budget.equal(row.view, y.store.view),
+                    .receiver_action => |row| row.action == y.receiver_action.action and row.completion == y.receiver_action.completion,
+                    else => false,
+                };
+            },
+        };
+    }
+    fn match(self: *ReceiverCertificate, obligation: Pair) Error!bool {
+        if (!try self.scalar(obligation.kind, obligation.left, obligation.right)) return false;
+        const a = self.graphs[0]; const b = self.graphs[1];
+        switch (obligation.kind) {
+            .value => switch (a.nodes[obligation.left]) {
+                .receiver_input, .parameter, .literal, .nonowning => {},
+                .receiver_value => |row| { if (!try self.pair(.heap, row.action, b.nodes[obligation.right].receiver_value.action)) return false; },
+                .copy => |row| {
+                    const other = b.nodes[obligation.right].copy;
+                    if (!try self.site(row.site, other.site) or !try self.values(row.bases, other.bases) or !try self.pair(.heap, row.heap, other.heap) or !try self.pair(.control, row.control, other.control)) return false;
+                },
+                else => return false,
+            },
+            .heap => switch (a.heaps[obligation.left]) {
+                .entry => {},
+                .copy => |row| { const other = b.heaps[obligation.right].copy; if (!try self.pair(.heap, row.previous, other.previous) or !try self.pair(.value, row.value, other.value)) return false; },
+                .store => |row| {
+                    const other = b.heaps[obligation.right].store;
+                    if (!try self.pair(.heap, row.previous, other.previous) or !try self.pair(.control, row.control, other.control) or !try self.values(row.bases, other.bases) or !try self.values(row.values, other.values)) return false;
+                },
+                .receiver_action => |row| {
+                    const other = b.heaps[obligation.right].receiver_action;
+                    if (!try self.pair(.heap, row.previous, other.previous) or !try self.pair(.control, row.control, other.control) or !try self.values(row.frames, other.frames) or !try self.values(row.operands, other.operands)) return false;
+                },
+                else => return false,
+            },
+            .control => switch (a.controls[obligation.left]) {
+                .entry => {},
+                .receiver_completion => |row| { if (!try self.pair(.heap, row.action, b.controls[obligation.right].receiver_completion.action)) return false; },
+                else => return false,
+            },
+        }
+        return true;
+    }
+    fn drain(self: *ReceiverCertificate) Error!bool {
+        while (self.pending.pop()) |obligation| { try self.budget.step(); if (!try self.match(obligation)) return false; }
+        return true;
+    }
+    fn exits(self: *ReceiverCertificate, completion: model.Completion) Error!bool {
+        var selected: [2][]model.Exit = undefined; var counts = [_]usize{ 0, 0 };
+        for (self.graphs, 0..) |graph, side| {
+            const source = if (completion == .normal) graph.exits.normal else graph.exits.language;
+            try self.budget.spend(source.len + 1); selected[side] = try self.allocator.alloc(model.Exit, source.len);
+            for (source) |row| { try self.budget.step(); if (self.analyses[side].controls[row.control]) { selected[side][counts[side]] = row; counts[side] += 1; } }
+        }
+        if (counts[0] != counts[1]) return false;
+        for (selected[0][0..counts[0]], selected[1][0..counts[1]]) |a, b| if (!try self.pair(.heap, a.heap, b.heap) or !try self.pair(.control, a.control, b.control)) return false;
+        return self.values(if (completion == .normal) self.graphs[0].normal else self.graphs[0].language, if (completion == .normal) self.graphs[1].normal else self.graphs[1].language);
+    }
+    fn accesses(self: *ReceiverCertificate) Error!bool {
+        var selected: [2][]model.Access = undefined; var counts = [_]usize{ 0, 0 };
+        for (self.graphs, 0..) |graph, side| {
+            try self.budget.spend(graph.accesses.len + 1); selected[side] = try self.allocator.alloc(model.Access, graph.accesses.len);
+            for (graph.accesses) |row| { try self.budget.step(); if (self.analyses[side].controls[row.control]) { selected[side][counts[side]] = row; counts[side] += 1; } }
+        }
+        if (counts[0] != counts[1]) return false;
+        for (selected[0][0..counts[0]], selected[1][0..counts[1]]) |a, b| if (a.flag != b.flag or !try self.pair(.control, a.control, b.control) or !try self.values(a.values, b.values)) return false;
+        return true;
+    }
+    fn run(self: *ReceiverCertificate) Error!bool {
+        if (!try self.exits(.normal) or !try self.exits(.language) or !try self.accesses() or !try self.drain()) return false;
+        // Match all remaining core equations as well, including live prefixes
+        // with no exit or an ignored result. Only a unique structural anchor
+        // may extend the bijection; ambiguous alternatives remain Pending.
+        while (true) {
+            var remaining = false; var progress = false;
+            for ([_]Kind{ .heap, .value, .control }) |kind| {
+                const left_map = self.maps[0][@intFromEnum(kind)]; const right_map = self.maps[1][@intFromEnum(kind)];
+                for (left_map, 0..) |mapped, left| {
+                    try self.budget.step(); const resolved = try self.view(0, kind, left);
+                    if (resolved == .pending) return false;
+                    if (resolved != .id or resolved.id != left or mapped != null) continue;
+                    remaining = true; var candidate: ?Ref = null; var ambiguous = false;
+                    for (right_map, 0..) |paired, right| {
+                        try self.budget.step(); if (paired != null) continue;
+                        const other = try self.view(1, kind, right);
+                        if (other == .pending) return false;
+                        if (other != .id or other.id != right or !try self.scalar(kind, left, right)) continue;
+                        if (candidate != null) { ambiguous = true; break; }
+                        candidate = right;
+                    }
+                    if (candidate == null) return false;
+                    if (ambiguous) continue;
+                    if (!try self.pair(kind, left, candidate.?) or !try self.drain()) return false;
+                    progress = true;
+                }
+            }
+            if (!remaining) break;
+            if (!progress) return false;
+        }
+        // The reverse pass prevents an extra upper row/name from hiding a
+        // missing current-body equation, Heap.copy or control/exit obligation.
+        for ([_]Kind{ .heap, .value, .control }) |kind| for (self.maps[1][@intFromEnum(kind)], 0..) |mapped, id| {
+            try self.budget.step(); const resolved = try self.view(1, kind, id);
+            if (resolved == .pending) return false;
+            if (resolved == .id and resolved.id == id and mapped == null) return false;
+        };
+        return true;
+    }
+};
+
+fn receiverCovered(allocator: std.mem.Allocator, directory: *const model.Directory, function_id: Symbol, body_graph: *const Graph, upper_graph: *const Graph, budget: *Budget) Error!bool {
+    // Same formal explicit-base protocol/Engine as return interpretation. No
+    // selected actual state or effect proof enters this complete certificate.
+    var body_analysis = try receiver_domain.analyzeReturns(allocator, directory, body_graph, budget, function_id); defer body_analysis.deinit();
+    if (body_analysis.pending != null) return false;
+    var upper_analysis = try receiver_domain.analyzeReturns(allocator, directory, upper_graph, budget, function_id); defer upper_analysis.deinit();
+    if (upper_analysis.pending != null) return false;
+    var certificate = try ReceiverCertificate.init(allocator, budget, body_graph, upper_graph, &body_analysis, &upper_analysis);
+    return certificate.run();
+}
+
 // This boundary checks graph ownership and complete fixed-directory membership.
 // The enclosing publication reader must separately admit scope/schema/group
 // identity. Every function is bound to its immutable signature and optional
@@ -526,6 +805,7 @@ pub fn covered(allocator: std.mem.Allocator, directory: *const model.Directory, 
             }
         }
         if (try exactEquation(Graph, body.*, bound.*, budget)) return .covered;
+        if (try receiverCovered(workspace, directory, function_id, body, bound, budget)) return .covered;
         return .{ .pending = .receiver_no_exact_certificate };
     }
     var engine: Engine = .{ .allocator = workspace, .budget = budget, .body = body, .upper = bound, .fixed = validated };
