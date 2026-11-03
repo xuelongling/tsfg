@@ -41,7 +41,8 @@ bool regionsSame(ActualCheck &c,const RegionHeap &a,const RegionHeap &b){
   }return true;
 }
 bool identitySame(ActualCheck &c,const ActualContextIdentity &a,const ActualContextIdentity &b){
-  if(!textSame(c,a.target,b.target)||!textSame(c,a.activation,b.activation)||!textSame(c,a.region,b.region)||!textSame(c,a.newTarget,b.newTarget)||!c.step()||a.repeated!=b.repeated)return false;
+  // The sole caller already matched the complete length-prefixed scalar bucket.
+  // Target, activation, region, newTarget and repeated are therefore equal.
   if(!c.step(a.arguments.size()+b.arguments.size()+a.retained.size()+b.retained.size()+a.heap.size()+b.heap.size()+3)||a.arguments.size()!=b.arguments.size()||a.retained.size()!=b.retained.size()||a.heap.size()!=b.heap.size())return false;
   for(size_t i=0;i<a.arguments.size();++i)if(!valueSame(c,a.arguments[i],b.arguments[i]))return false;
   for(size_t i=0;i<a.retained.size();++i)if(!valueSame(c,a.retained[i],b.retained[i]))return false;

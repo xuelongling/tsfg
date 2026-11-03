@@ -902,7 +902,7 @@ bool conditionalInvokeBorrowedInputs(){
   };
   // Real factory + execute establish an existing summary before the measured
   // public instruction. This isolated graph is not the full Source901 payload.
-  for(const auto budget:{227,226,0,1,236,235,253}){
+  for(const auto budget:{220,219,0,1,227,226,236,235,253}){
     Fixture f;Function callee;callee.id="C";callee.blocks.resize(1);callee.blocks[0].parameters={0,1,2};
     Operation returned;returned.name="func.return";returned.operands={0};callee.blocks[0].operations.push_back(returned);
     f.check.functions.emplace("C",&callee);f.check.analysisFunctions.emplace("C",callee);f.program.fixedEffects.emplace("C",Effects{});
@@ -928,9 +928,9 @@ bool conditionalInvokeBorrowedInputs(){
         for(const auto &[reg,value]:original)edgeMatches&=after.values.count(reg)&&same(after.values.at(reg),value);
         after.values.at(0).unknown=true;continues=false;return edgeMatches;
       },continues);
-    if(budget<227){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&edges==0,
+    if(budget<220){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&edges==0,
         "one-less and zero/one budgets remain hard errors before an invoke edge"))return false;continue;}
-    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-227)&&edges==1&&edgeMatches&&!continues&&
+    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-220)&&edges==1&&edgeMatches&&!continues&&
         same(called->identity->arguments[0],actual[0])&&same(called->returned,actual[0])&&f.check.contexts.size()==1,
         "funded whole conditional invoke reuses its real summary, owns the edge and preserves immutable arguments"))return false;
   }
@@ -1038,6 +1038,51 @@ bool contextEntryRegionRoots(){
   return true;
 }
 
+// Scalar partitions are complete byte keys; equal buckets still compare every payload.
+bool bucketScalarPartitions(){
+  Fixture f;Function callee;callee.id="C";callee.resultCarrier="S";callee.blocks.resize(1);callee.blocks[0].parameters={0};
+  Operation returned;returned.name="func.return";returned.operands={0};callee.blocks[0].operations.push_back(returned);
+  Function other=callee;other.id="D";
+  for(auto *function:{&callee,&other}){f.check.functions.emplace(function->id,function);f.check.analysisFunctions.emplace(function->id,*function);
+    f.program.fixedEffects.emplace(function->id,Effects{});f.check.views.emplace(function->id+"/0","S");}
+  f.check.builtins.emplace("S",Object{{"id","S"},{"kind","scalar"},{"name","i32"}});f.check.types.emplace("S",&f.check.builtins.at("S"));
+  for(const auto *id:{"T","U"}){f.check.builtins.emplace(id,Object{{"id",id},{"kind","reference"},{"base",nullptr},{"fields",Array{}}});f.check.types.emplace(id,&f.check.builtins.at(id));}
+  f.check.regions.scopes.emplace("scope0",RegionScope{"C","A"});f.check.regions.scopes.emplace("scope1",RegionScope{"C","A"});
+  ActualValue scalar;scalar.tags={"S"};scalar.number=17;std::vector<ActualValue> arguments{scalar};ActualHeap input;input.emplace("global:g",scalar);ActualFrameWorld world;bool changed=false;
+  auto *base=f.check.context("C",arguments,input,false,changed,"A",false,nullptr,"scope0",&world,"T");
+  if(!expect(base&&changed&&f.error.message.empty()&&f.check.execute(*base,true,changed)&&base->normal&&!base->language&&same(base->returned,scalar),
+      "complete called execution establishes an independently owned scalar-partition summary"))return false;
+  arguments[0].number=99;input.at("global:g").number=99;
+  if(!expect(same(base->identity->arguments[0],scalar)&&same(base->identity->heap.at("global:g"),scalar)&&same(base->normalHeap.at("global:g"),scalar),
+      "caller argument and Heap mutation cannot alter the immutable identity or completed summary"))return false;
+  arguments[0]=scalar;input.at("global:g")=scalar;changed=false;
+  if(!expect(f.check.context("C",arguments,input,false,changed,"A",false,nullptr,"scope0",&world,"T")==base&&!changed&&f.error.message.empty(),
+      "the same complete scalar partition and payload genuinely reuse the published context"))return false;
+  std::set<ActualContext *> seen{base};
+  for(unsigned mode=0;mode<5;++mode){
+    const std::string target=mode==0?"D":"C",activation=mode==1?"B":"A",region=mode==2?"scope1":"scope0",newTarget=mode==3?"U":"T";const bool repeated=mode==4;
+    changed=false;auto *next=f.check.context(target,arguments,input,false,changed,activation,repeated,nullptr,region,&world,newTarget);
+    if(!expect(next&&changed&&f.error.message.empty()&&seen.insert(next).second&&same(next->identity->arguments[0],scalar),
+        "each target, activation, Region, newTarget or repeated distinction admits a separate context"))return false;
+    changed=false;if(!expect(f.check.context(target,arguments,input,false,changed,activation,repeated,nullptr,region,&world,newTarget)==next&&!changed&&f.error.message.empty(),
+        "each separate scalar partition reuses its own complete immutable payload"))return false;
+  }
+  for(const auto &activation:{std::string("A\0x",3),std::string("A\0y",3),std::string("A|1:C")}){
+    changed=false;auto *next=f.check.context("C",arguments,input,false,changed,activation,false,nullptr,"scope0",&world,"T");
+    if(!expect(next&&changed&&seen.insert(next).second&&next->identity->activation==activation&&f.error.message.empty(),
+        "complete activation bytes including NUL and delimiters cannot alias another scalar partition"))return false;
+  }
+  auto different=arguments;different[0].number=23;changed=false;
+  auto *argument=f.check.context("C",different,input,false,changed,"A",false,nullptr,"scope0",&world,"T");
+  if(!expect(argument&&argument!=base&&changed&&argument->identity->arguments[0].number==23&&f.error.message.empty(),
+      "equal scalar partitions still distinguish actual argument payloads"))return false;
+  input.at("global:g").number=23;changed=false;
+  auto *heap=f.check.context("C",arguments,input,false,changed,"A",false,nullptr,"scope0",&world,"T");
+  return expect(heap&&heap!=base&&heap!=argument&&changed&&heap->identity->heap.at("global:g").number==23&&same(heap->identity->arguments[0],scalar)&&
+      f.error.message.empty()&&same(base->returned,scalar)&&same(base->identity->heap.at("global:g"),scalar),
+      "equal scalar partitions still distinguish global Heap payloads without rewriting an earlier summary");
+}
+
 }
 int main(){
   const std::pair<const char *,bool(*)()> groups[]={
@@ -1063,5 +1108,6 @@ int main(){
   if(!typedCanonicalStringArrays())return 1;llvm::errs()<<"PASS typed canonical StringRef arrays and original JSON policy boundaries\n";
   if(!borrowedFrameKeyPartsInstructions())return 1;llvm::errs()<<"PASS borrowed canonical Frame-key parts and complete receiver_create436\n";
   if(!conditionalInvokeBorrowedInputs())return 1;llvm::errs()<<"PASS conditional direct invoke236 and independent borrowed admission inputs\n";
-  if(!contextEntryRegionRoots())return 1;llvm::errs()<<"PASS conditional context entry Heap tails and global-only Region roots\n";return 0;
+  if(!contextEntryRegionRoots())return 1;llvm::errs()<<"PASS conditional context entry Heap tails and global-only Region roots\n";
+  if(!bucketScalarPartitions())return 1;llvm::errs()<<"PASS complete scalar partitions and owned context payload reuse\n";return 0;
 }
