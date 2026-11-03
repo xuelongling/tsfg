@@ -428,3 +428,56 @@ test "ordinary undefined view keeps the required copy archive strict" {
     var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
     try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
 }
+
+fn nullFixture(fixture: *ScalarFixture) void {
+    // Pure null transport has the same empty physical size as undefined, but
+    // retains its own TypeRef. No literal/category or numeric use is inferred.
+    fixture.init(.integer);
+    fixture.fixture.types[3].kind = .@"null"; fixture.fixture.types[3].name = "null"; fixture.fixture.types[3].native_code = 0;
+    fixture.concrete[3].carrier.layout = .{ .byte_size = 0, .alignment = 1, .reference_count = 0 };
+    fixture.type_rows[2].kind = .@"null";
+}
+
+test "ordinary null views keep original parameter Data without a numeric decision" {
+    var fixture: ScalarFixture = undefined; nullFixture(&fixture);
+    try std.testing.expect(fixture.fixture.types[3].kind == .@"null");
+    try std.testing.expectEqual(@as(u32, 0), fixture.concrete[3].carrier.layout.byte_size);
+    try std.testing.expectEqual(@as(u16, 1), fixture.concrete[3].carrier.layout.alignment);
+    try std.testing.expectEqual(@as(u16, 0), fixture.concrete[3].carrier.layout.reference_count);
+    try std.testing.expect(fixture.concrete[3].body == null and fixture.concrete[3].carrier.field_offsets.len == 0);
+    try dataAliases(&fixture);
+}
+
+test "ordinary null view rejects an undefined carrier despite the same empty layout" {
+    var fixture: ScalarFixture = undefined; nullFixture(&fixture);
+    var types: [5]tables.CommonType = undefined;
+    var concrete: [5]Concrete = undefined;
+    for (0..4) |index| { types[index] = fixture.fixture.types[index]; concrete[index] = fixture.concrete[index]; }
+    const undefined_type: t.TypeRef = @enumFromInt(4);
+    types[4] = types[3]; types[4].id = @splat(0x88); types[4].kind = .@"undefined"; types[4].name = "undefined";
+    concrete[4] = concrete[3]; concrete[4].@"type" = undefined_type;
+    fixture.fixture.program.tables.mode.common.types = &types;
+    fixture.fixture.program.tables.mode.common.storage.concrete = &concrete;
+    fixture.fixture.registers[3].carrier = .{ .@"type" = undefined_type };
+    try std.testing.expectEqualDeep(concrete[3].carrier.layout, concrete[4].carrier.layout);
+    try std.testing.expect(!std.meta.eql(fixture.fixture.registers[2].carrier, fixture.fixture.registers[3].carrier));
+    var c = context.Context{ .program = &fixture.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.view, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
+
+test "ordinary null view keeps the required copy archive strict" {
+    var fixture: ScalarFixture = undefined; nullFixture(&fixture);
+    for (2..4) |index| {
+        fixture.fixture.instructions[index].data = .{ .domain_view = .{ .static_view = fixture.data_type } };
+        fixture.fixture.operations[index].view = fixture.data_text; fixture.fixture.operations[index].properties = &fixture.view_properties;
+        fixture.fixture.registers[index + 1].view = fixture.data_type; fixture.fixture.carriers[index + 1] = fixture.data_text;
+    }
+    fixture.fixture.instructions[4].data = .{ .domain_copy = .{ .static_view = void_type } }; fixture.fixture.registers[5].view = void_type;
+    fixture.fixture.operations[4].view = void_text; fixture.fixture.operations[4].properties = &private_copy_properties; fixture.fixture.carriers[5] = void_text;
+    var c = context.Context{ .program = &fixture.fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &fixture.interpretation);
+    var projected = try body.project(&c, @enumFromInt(0), &fixture.interpretation, &budget); defer projected.deinit();
+    try std.testing.expectEqual(body.Pending.archive_type, projected.pending.?); try std.testing.expect(projected.graph == null);
+}
