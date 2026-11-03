@@ -306,7 +306,7 @@ bool capturePermissionPremises(ActualCheck &c,const std::string &kind){
     if(!c.recordCapacity(c.constructionCapacity["synthetic:T-construction/T"],constructed)||!prepareReturnOriginStorage(c))return false;
   }
   Effects derived;const auto &ownedReader=*c.sourceFunctions.at("reader");
-  if(!deriveFixedReturnEffects(p,ownedReader,derived,e)||!finishReturnOriginProofs(p,e))return false;
+  if(deriveOwnedEffects(p,ownedReader,derived,e)==ProjectedReturnEffects::Invalid||!finishReturnOriginProofs(p,e))return false;
   if(!fixedReturnOriginAvailable(p,"reader")||!derived.captures.count("held")||!derived.captures.at("held").read)
     return reject(e,"synthetic-capture-unit","normal producer did not verify the captured reader");
   return e.message.empty();

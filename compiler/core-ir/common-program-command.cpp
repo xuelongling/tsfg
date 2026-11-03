@@ -2,6 +2,8 @@
 #include "common-program-command.h"
 #include "common-program.h"
 #include "common-program-borrows.h"
+#include "bytecode-common.h"
+#include "bytecode-common-packet.h"
 #include "component-layout.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/Program.h"
@@ -56,10 +58,17 @@ int readCoreInput(std::string &bytes) {
 }
 int runCoreModule(mlir::ModuleOp module, llvm::StringRef command) {
   if (mlir::failed(mlir::verify(module))) return 3;
-  if (command != "--component-layouts" && command != "--borrow-proof" && mlir::failed(verify(module))) return 3;
+  if (command != "--component-layouts" && command != "--borrow-proof" && command != "--emit-bytecode" && mlir::failed(verify(module))) return 3;
   if (command == "--emit-bytecode") {
-    llvm::errs() << "[r04-core-program-unsupported] complete common development Core has no selected wire/native encoding\n";
-    return 3;
+    wire::Program program; wire::Error error; bytecode::Bytes packet;
+    if (!wire::normalizeCommon(module,program,error) || !wire::encodeCommon(program,packet,error)) {
+      llvm::errs()<<"[r04-core-invalid] "<<error.message<<'\n'; return 3;
+    }
+    if (llvm::sys::ChangeStdoutToBinary()) return 2;
+    llvm::outs().write(reinterpret_cast<const char *>(packet.data()),packet.size());
+    llvm::outs().flush();
+    if (llvm::outs().has_error()) { llvm::outs().clear_error(); return 2; }
+    return 0;
   }
   Output output;
   if (command == "--component-layouts" || command == "--borrow-proof") {

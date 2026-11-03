@@ -46,7 +46,7 @@ bool moduleAttributes(mlir::ModuleOp module){
 }
 bool metadata(mlir::ModuleOp module,Program &p,Error &error){
   coreHeader::Identity header;
-  if(!coreHeader::read(module,header)||header.sourcePath.contains(':')||!moduleAttributes(module))return reject(error,"core-ir-common-header","ordinary header or mixed representation differs");
+  if(!coreHeader::read(module,header,coreHeader::Exchange::CommonDevelopment)||header.sourcePath.contains(':')||!moduleAttributes(module))return reject(error,"core-ir-common-header","ordinary header or mixed representation differs");
   const auto attr=module->getAttrOfType<mlir::DictionaryAttr>(marker);
   if(!attr||attr.size()!=10)return reject(error,"core-ir-common-metadata","complete common manifest required");
   const auto text=[&](llvm::StringRef key){auto value=attr.getAs<mlir::StringAttr>(key);return value?value.getValue():llvm::StringRef();};
@@ -80,6 +80,8 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
   out=std::move(p);return true;
 }
 static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
+  if(!p.charge(p.sourcePlans.size()))return reject(error,"core-ir-common-budget","logical witness release exceeded");
+  for(const auto &[id,plan]:p.sourcePlans)if(!returnOriginMetadataCost(p,plan,error))return false;p.sourcePlans.clear();
   if(!p.charge(p.constructorReturnCFGs.size()))return reject(error,"core-ir-common-budget","constructor CFG witness release exceeded");p.constructorReturnCFGs.clear();
   if(!p.charge(p.internalTypes.size()+p.internalOwners.size()+p.internalBindings.size()+p.internalTargets.size()+p.internalCycleTypes.size()+p.internalDeclarations.size()+p.internalEffects.size()))return reject(error,"core-ir-common-budget","internal constructor metadata release exceeded");
   p.internalTypes.clear();p.internalOwners.clear();p.internalBindings.clear();p.internalTargets.clear();p.internalCycleTypes.clear();p.internalDeclarations.clear();p.internalEffects.clear();p.internalMetadataReady=false;

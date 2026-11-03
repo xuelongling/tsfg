@@ -4,7 +4,8 @@
 #include <functional>
 namespace tsfg::commonProgram {
 // This private graph is derived from the independently validated owned Source.
-// It is never read from a producer plan or included in the Core contract.
+// Its Source AST stays private. Only a matched typed logical graph may be
+// normalized as a correspondence witness, without Source or lifetime authority.
 struct SourcePlan {
   using Reg=uint16_t;
   struct Completion {
@@ -53,5 +54,8 @@ struct SourcePlan {
 };
 SourceAnchor sourceAnchor(const Json &);
 bool sourceNumeric(const Function &,const Operation &);
+// Neither the shared matcher nor an untrusted witness may replace static views.
+bool matchSourceCorrespondence(ActualCheck &,const Function &,
+  const std::map<std::pair<size_t,size_t>,std::string> &,const std::vector<size_t> &,const Function &);
 bool matchSourcePlan(ActualCheck &,const SourcePlan &,const Function &);
 } // namespace tsfg::commonProgram

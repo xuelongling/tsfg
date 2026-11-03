@@ -335,10 +335,10 @@ bool deriveScalarEffects(Program &p,const Json &fn,Effects &out,Error &e){
   Derive derive{p,fn,p.fixedEffects,out,e};return derive.run();
 }
 bool deriveEffects(Program &p,const Json &fn,Effects &out,Error &e){
-  return deriveFixedReturnEffects(p,fn,out,e);
+  return deriveOwnedEffects(p,fn,out,e)!=ProjectedReturnEffects::Invalid;
 }
 bool deriveEffectDiagnostics(Program &p,const Json &fn,Effects &out,Error &e,EffectDiagnostics &diagnostics){
-  return deriveFixedReturnEffects(p,fn,out,e,&diagnostics);
+  return deriveOwnedEffects(p,fn,out,e,&diagnostics)!=ProjectedReturnEffects::Invalid;
 }
 Json writeEffects(const Effects &e){
   Array hostReads,hostWrites;for(const auto &id:e.hostReads)hostReads.push_back(id);for(const auto &id:e.hostWrites)hostWrites.push_back(id);

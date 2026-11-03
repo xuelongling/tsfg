@@ -14,6 +14,7 @@ bool inputPath(llvm::StringRef path){
     llvm::all_of(part,[](char c){return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'||c=='-'||c=='.';});});
 }
 }
+llvm::StringRef commonHostSemanticProfile(){return profileText;}
 bool verifyCommonHostDeclarations(SourceModel &m){
   std::set<std::string> paths;
   for(const auto &path:items(field(field(m.payload,"declarations"),"paths")))paths.insert(string(path));

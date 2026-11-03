@@ -81,7 +81,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   if (common || query) {
     const auto command = llvm::StringRef(argv[2]);
     if (command != "--canonicalize" && command != "--optimize" &&
-        !(common && (command == "--component-layouts" || command == "--borrow-proof")) &&
+        !(common && (command == "--component-layouts" || command == "--borrow-proof" || command == "--emit-bytecode")) &&
         !(query && (command == "--effects" || command == "--cpu-batch" ||
           command == "--cpu-llvm" || command == "--llvm-ir" ||
           command == "--canonicalize-llvm-ir" || command == "--tmeta" ||

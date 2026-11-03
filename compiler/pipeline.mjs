@@ -22,6 +22,7 @@ import {verifyCoreIrInputs} from "../eng/core-ir-inputs.mjs";
 import {runtimeSources} from "../eng/vm-build.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 import {verifyProducedPacket} from './producer-packet.mjs';
+import {verifyCommonProducedPacket} from './common-program-packet.mjs';
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -157,10 +158,10 @@ async function compileSnapshot(snapshot, options) {
 async function produceBytecode(hir, options, lower = value => lowerFormalHir(value, options.factsContext, options.callPublicationContext)) {
   try {
     const core = await verifiedConsumer(options.core, "core");
-    const lowered = lower(hir), prefix = isCommonProgramContext(options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate' ? ['--common-program'] : [];
+    const lowered = lower(hir), common = isCommonProgramContext(options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate', prefix = common ? ['--common-program'] : [];
     const canonicalCore = consume(core, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered).toString("utf8");
     const bytecode = consume(core, [...prefix, "--emit-bytecode"], canonicalCore);
-    verifyProducedPacket(bytecode);
+    (common ? verifyCommonProducedPacket : verifyProducedPacket)(bytecode);
     return { status: "ok", hir, core: canonicalCore, bytecode };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };

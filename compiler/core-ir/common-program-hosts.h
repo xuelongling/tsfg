@@ -4,4 +4,5 @@
 namespace tsfg::commonProgram {
 bool verifyCommonHostDeclarations(SourceModel &);
 bool verifyCommonHostContext(Program &,Error &);
+llvm::StringRef commonHostSemanticProfile();
 } // namespace tsfg::commonProgram

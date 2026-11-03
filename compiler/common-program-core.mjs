@@ -6,7 +6,7 @@ import {printCommonFunction} from './common-program-print.mjs';
 import {verifyCommonKernelGroup} from './common-program-analysis.mjs';
 import {commonCheck as check,commonBudget,commonMeter,sha256,own} from './common-program-common.mjs';
 import {commonTextBudget} from './common-program-budget.mjs';
-import {coreExchangeFormat} from './core-ssa-emitter.mjs';
+import {commonProgramExchangeFormat as coreExchangeFormat} from './common-program-packet.mjs';
 import {commonCoreFormat,commonCoreSchema} from './common-program-plan.mjs';
 /** @typedef {{[key:string]:WriterJson}} WriterJsonObject */
 /** @typedef {Array<WriterJson>} WriterJsonArray */

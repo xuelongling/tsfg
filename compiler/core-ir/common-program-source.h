@@ -71,11 +71,15 @@ bool deriveReturnOriginBody(Program &,const Json &,Json &,Effects &,Error &,Effe
 // Consumes equations derived from the complete independently owned current
 // body, with all semantic views/physical Value capabilities admitted. The raw
 // input is not the Published graph, and direct effects/witnesses must also be
-// independently derived. Reads the owned fixed group through its typed reader,
-// inclusion and Domain; unavailable proofs stay Pending. Does not admit Source
-// or replace the caller's physical-effect union/final fixed-upper containment.
-bool deriveProjectedReturnEffects(Program &,const Json &ownedFunction,const Json &currentBody,Effects &direct,Error &,EffectDiagnostics *,const std::vector<ReturnOriginAccessWitness> &);
-bool deriveFixedReturnEffects(Program &,const Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr);
+// independently derived. The typed body and Domain are always checked; supplied
+// return graphs additionally require normalization/inclusion. Open proofs remain
+// Pending; physical-effect union and final fixed-upper containment stay external.
+// Complete effects do not imply a return/holding certificate. A cold caller
+// must independently admit a physical void result before using EffectsComplete.
+enum class ProjectedReturnEffects { Invalid, Open, EffectsComplete, ReturnCertificateComplete };
+ProjectedReturnEffects deriveProjectedEffects(Program &,const Json &ownedFunction,const Json &currentBody,Effects &direct,Error &,EffectDiagnostics *,const std::vector<ReturnOriginAccessWitness> &);
+// Warm effects-only completion requires a trusted normalized physical-void CFG.
+ProjectedReturnEffects deriveOwnedEffects(Program &,const Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr);
 bool fixedReturnOriginAvailable(const Program &,const std::string &);
 bool scalarReturnOriginProof(Program &,const std::string &,Error &);
 bool deriveScalarEffects(Program &,const Json &,Effects &,Error &);

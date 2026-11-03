@@ -485,64 +485,88 @@ bool scalarReturnOriginProof(Program &p,const std::string &root,Error &e){
   }
   return true;
 }
-bool deriveFixedReturnEffects(Program &p,const Json &fn,Effects &out,Error &e,EffectDiagnostics *diagnostics){
-  if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return false;auto &state=*p.returnOriginContracts;const auto id=string(field(fn,"id"));auto bound=state.graphs.find(id);
-  if(bound==state.graphs.end()){p.returnOriginPending.insert(id);return true;}
+ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out,Error &e,EffectDiagnostics *diagnostics){
+  using Status=ProjectedReturnEffects;
+  if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return Status::Invalid;auto &state=*p.returnOriginContracts;const auto id=string(field(fn,"id"));auto bound=state.graphs.find(id);
+  const Function *physical=nullptr;
+  if(bound==state.graphs.end()){
+    // Only ActualCheck can create this handle, after complete graph/Source
+    // matching. Its void return ABI has already checked every normal return.
+    const auto lookup=[&](size_t count){size_t depth=1;for(auto n=count;n;n>>=1){if(!work(p,e))return false;depth+=2;}return work(p,e,depth*(id.size()/8+1));};
+    if(!lookup(p.constructorReturnCFGs.size()))return Status::Invalid;const auto qualified=p.constructorReturnCFGs.find(id);
+    if(qualified==p.constructorReturnCFGs.end()){p.returnOriginPending.insert(id);return Status::Open;}
+    const auto &actual=qualified->second.get();
+    if(!work(p,e,actual.resultCarrier.size()/8+actual.role.size()/8+6))return Status::Invalid;
+    if(actual.resultCarrier!="void"||actual.role=="construction-body"||actual.role=="module-initializer"){
+      p.returnOriginPending.insert(id);return Status::Open;
+    }
+    // Existing normalized projection consumes ordinary Parameter roots at the
+    // declared view. Raw FDI/view differences stay Open, not cast into formals.
+    if(!lookup(p.registerViews.size()))return Status::Invalid;const auto &views=p.registerViews.at(id);
+    const auto &entry=actual.blocks[0].parameters;size_t argument=!field(fn,"lexicalEnvironment").getAsNull();
+    const auto sameInput=[&](llvm::StringRef formal){if(!work(p,e,3))return false;const auto &raw=views[entry[argument++]];return work(p,e,raw.size()/8+formal.size()/8)&&raw==formal;};
+    bool same=true;if(!field(fn,"ownerType").getAsNull())same=sameInput(field(fn,"ownerType").getAsString().value());
+    for(const auto &binding:items(field(fn,"parameters"))){if(!work(p,e))return Status::Invalid;same&=sameInput(field(binding,"type").getAsString().value());}
+    if(!e.message.empty())return Status::Invalid;if(!same){p.returnOriginPending.insert(id);return Status::Open;}
+    physical=&actual;
+  }
   // The physical capability belongs to each complete actual Value body, not
   // to the mere presence of a partial program-wide storage projection. Match
   // the Source availability premise for signature, capture and body views.
-  if(!work(p,e,3))return false;
+  if(!work(p,e,3))return Status::Invalid;
   std::vector<const Json *> views{&field(fn,"returnType")},pending{&field(fn,"body"),&field(fn,"parameterInitialization")};
-  if(!field(fn,"ownerType").getAsNull()){if(!work(p,e))return false;views.push_back(&field(fn,"ownerType"));}
-  for(const auto name:{"parameters","bindings"})for(const auto &row:items(field(fn,name))){if(!work(p,e,2))return false;views.push_back(&field(row,"type"));}
+  if(!field(fn,"ownerType").getAsNull()){if(!work(p,e))return Status::Invalid;views.push_back(&field(fn,"ownerType"));}
+  for(const auto name:{"parameters","bindings"})for(const auto &row:items(field(fn,name))){if(!work(p,e,2))return Status::Invalid;views.push_back(&field(row,"type"));}
   std::set<std::string> captured;
-  for(const auto &row:items(field(fn,"captures"))){if(!returnOriginMetadataCost(p,row,e)||!work(p,e))return false;captured.insert(string(field(row,"binding")));}
+  for(const auto &row:items(field(fn,"captures"))){if(!returnOriginMetadataCost(p,row,e)||!work(p,e))return Status::Invalid;captured.insert(string(field(row,"binding")));}
   if(!captured.empty())for(const auto &layout:items(field(p.hir,"environments")))for(const auto &slot:items(field(layout,"slots"))){
-    if(!text(p,field(slot,"binding"),e)||!work(p,e,2))return false;const auto binding=string(field(slot,"binding"));
-    if(captured.count(binding)){if(!work(p,e))return false;views.push_back(&field(slot,"type"));}
+    if(!text(p,field(slot,"binding"),e)||!work(p,e,2))return Status::Invalid;const auto binding=string(field(slot,"binding"));
+    if(captured.count(binding)){if(!work(p,e))return Status::Invalid;views.push_back(&field(slot,"type"));}
   }
   while(!pending.empty()){
-    if(!work(p,e))return false;const auto *row=pending.back();pending.pop_back();
-    if(const auto *array=row->getAsArray()){if(!work(p,e,array->size()))return false;for(const auto &child:*array)pending.push_back(&child);continue;}
+    if(!work(p,e))return Status::Invalid;const auto *row=pending.back();pending.pop_back();
+    if(const auto *array=row->getAsArray()){if(!work(p,e,array->size()))return Status::Invalid;for(const auto &child:*array)pending.push_back(&child);continue;}
     if(const auto *object=row->getAsObject()){
-      for(auto key:{"type","argumentType"})if(const auto *type=object->get(key);type&&type->getAsString()){if(!work(p,e))return false;views.push_back(type);}
-      for(const auto &entry:*object){if(!work(p,e,llvm::StringRef(entry.first).size()/8+1))return false;
-        if(entry.second.getAsObject()||entry.second.getAsArray()){if(!work(p,e))return false;pending.push_back(&entry.second);}}
+      for(auto key:{"type","argumentType"})if(const auto *type=object->get(key);type&&type->getAsString()){if(!work(p,e))return Status::Invalid;views.push_back(type);}
+      for(const auto &entry:*object){if(!work(p,e,llvm::StringRef(entry.first).size()/8+1))return Status::Invalid;
+        if(entry.second.getAsObject()||entry.second.getAsArray()){if(!work(p,e))return Status::Invalid;pending.push_back(&entry.second);}}
     }
   }
-  if(!work(p,e,id.size()/8+1))return false;const bool constructor=p.constructorReturnCFGs.count(id);
-  for(const auto *view:views){if(!text(p,*view,e)||!work(p,e,2))return false;const auto type=string(*view);if(type=="void")continue;
-    const auto found=state.shapes.find(type);if(!need(found!=state.shapes.end(),e,"Source view is outside the admitted type directory"))return false;
+  if(!work(p,e,id.size()/8+1))return Status::Invalid;const bool constructor=physical||p.constructorReturnCFGs.count(id);
+  for(const auto *view:views){if(!text(p,*view,e)||!work(p,e,2))return Status::Invalid;const auto type=string(*view);if(type=="void")continue;
+    const auto found=state.shapes.find(type);if(!need(found!=state.shapes.end(),e,"Source view is outside the admitted type directory"))return Status::Invalid;
     const auto &shape=found->second;if(((shape.kind==V4::TypeKind::Unknown||shape.kind==V4::TypeKind::Union)&&!constructor)||(shape.kind==V4::TypeKind::Value&&!shape.completePhysicalFields)){
-      if(!work(p,e))return false;p.returnOriginPending.insert(id);return true;}
+      if(!work(p,e))return Status::Invalid;p.returnOriginPending.insert(id);return Status::Open;}
   }
   Json raw=nullptr;std::vector<ReturnOriginAccessWitness> witnesses;
-  if(!deriveReturnOriginBody(p,fn,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr)){
-    if(e.code!="core-ir-common-return-origin-open")return false;p.returnOriginPending.insert(id);e=Error{};return true;
+  const bool body=physical?projectNormalizedReturnOriginBody(p,fn,*physical,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr):
+    deriveReturnOriginBody(p,fn,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr);
+  if(!body){
+    if(e.code!="core-ir-common-return-origin-open")return Status::Invalid;p.returnOriginPending.insert(id);e=Error{};return Status::Open;
   }
-  return deriveProjectedReturnEffects(p,fn,raw,out,e,diagnostics,witnesses);
+  return deriveProjectedEffects(p,fn,raw,out,e,diagnostics,witnesses);
 }
 
-bool deriveProjectedReturnEffects(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses){
-  if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return false;
+ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses){
+  using Status=ProjectedReturnEffects;
+  if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return Status::Invalid;
   auto &state=*p.returnOriginContracts;
-  if(!text(p,field(fn,"id"),e))return false;const auto id=string(field(fn,"id"));
+  if(!text(p,field(fn,"id"),e))return Status::Invalid;const auto id=string(field(fn,"id"));
   size_t lookup=1;for(auto count=state.graphs.size();count;count>>=1)lookup+=2;
-  if(!work(p,e,lookup*(id.size()/8+1)))return false;const auto bound=state.graphs.find(id);
-  if(bound==state.graphs.end()){if(!work(p,e,id.size()/8+1))return false;p.returnOriginPending.insert(id);return true;}
+  if(!work(p,e,lookup*(id.size()/8+1)))return Status::Invalid;const auto bound=state.graphs.find(id);
   const auto charge=[&](size_t n){return work(p,e,n);};auto parsed=state.bodyDirectories.read(id,raw,charge);
-  if(parsed.status==V4::ReadStatus::Open){p.returnOriginPending.insert(id);return true;}
-  if(!need(parsed.status==V4::ReadStatus::Typed,e,parsed.reason?parsed.reason:"current body graph rejected"))return false;
+  if(parsed.status==V4::ReadStatus::Open){p.returnOriginPending.insert(id);return Status::Open;}
+  if(!need(parsed.status==V4::ReadStatus::Typed,e,parsed.reason?parsed.reason:"current body graph rejected"))return Status::Invalid;
   // Data completion reachability cannot narrow the full fixed mayThrow
   // permission. Until that independent potential is routed through Source
   // catch/finally, even a data graph with no language edge grants no proof.
   // This intentionally also leaves caught potential throws pending.
   for(const auto &call:parsed.graph.calls){
-    if(!work(p,e,call.functionId.size()/8+2))return false;const auto upper=p.fixedEffects.find(call.functionId);
-    if(!need(upper!=p.fixedEffects.end(),e,"body call lacks complete fixed throw permission"))return false;
-    if(upper->second.mayThrow){p.returnOriginPending.insert(id);return true;}
+    if(!work(p,e,call.functionId.size()/8+2))return Status::Invalid;const auto upper=p.fixedEffects.find(call.functionId);
+    if(!need(upper!=p.fixedEffects.end(),e,"body call lacks complete fixed throw permission"))return Status::Invalid;
+    if(upper->second.mayThrow){p.returnOriginPending.insert(id);return Status::Open;}
   }
-  auto protocol=state.bodyDirectories.protocol(id,charge);if(!need(protocol.status==Scope::BuildStatus::Ready,e,"body protocol unavailable"))return false;
+  auto protocol=state.bodyDirectories.protocol(id,charge);if(!need(protocol.status==Scope::BuildStatus::Ready,e,"body protocol unavailable"))return Status::Invalid;
   Domain::Callbacks callbacks;callbacks.rootProtocol=std::move(protocol.protocol);callbacks.environments=&state.fixedDirectories.interpretation().environments;callbacks.constructions=&state.fixedDirectories.interpretation().constructions;
   callbacks.actualType=[&](llvm::StringRef type,const V4::Charge &paid)->const Domain::ActualShape *{
     V4::Detail::Meter meter(paid);std::string key;if(!meter.lookup(state.shapes.size(),type.size())||!meter.copy(key,type))return nullptr;const auto found=state.shapes.find(key);if(found==state.shapes.end()||(found->second.kind==V4::TypeKind::Value&&!found->second.completePhysicalFields))return nullptr;return &found->second;
@@ -571,19 +595,22 @@ bool deriveProjectedReturnEffects(Program &p,const Json &fn,const Json &raw,Effe
     routeOpen=true;return std::nullopt;
   };
   auto result=Domain::solve(parsed.graph,state.fixed,callbacks,charge);
-  if(routeOpen){p.returnOriginPending.insert(id);return e.message.empty();}
-  if(result.status==Domain::Status::BudgetError)return false;if(result.status!=Domain::Status::Solved){p.returnOriginPending.insert(id);return true;}
-  // Normalize only from the independently solved body. The complete fixed
-  // archive and exact receiver certificate remain separate obligations.
-  auto normalized=CommonReturnOriginNormalizeV5::normalize(parsed.graph,result.summary,charge);
-  if(normalized.status==CommonReturnOriginNormalizeV5::Status::BudgetError)return false;
-  if(normalized.status!=CommonReturnOriginNormalizeV5::Status::Normalized){p.returnOriginPending.insert(id);return true;}
-  const auto included=V4::covered(normalized.graph,bound->second,state.graphBounds,charge);
-  if(included.status==V4::InclusionStatus::BudgetError)return false;
-  if(included.status!=V4::InclusionStatus::Covered){p.returnOriginPending.insert(id);return true;}
+  if(routeOpen){p.returnOriginPending.insert(id);return e.message.empty()?Status::Open:Status::Invalid;}
+  if(result.status==Domain::Status::BudgetError)return Status::Invalid;if(result.status!=Domain::Status::Solved){p.returnOriginPending.insert(id);return Status::Open;}
+  // A supplied return graph is never optional. Only that certificate path
+  // normalizes and proves inclusion against the independently admitted bound.
+  if(bound!=state.graphs.end()){
+    auto normalized=CommonReturnOriginNormalizeV5::normalize(parsed.graph,result.summary,charge);
+    if(normalized.status==CommonReturnOriginNormalizeV5::Status::BudgetError)return Status::Invalid;
+    if(normalized.status!=CommonReturnOriginNormalizeV5::Status::Normalized){p.returnOriginPending.insert(id);return Status::Open;}
+    const auto included=V4::covered(normalized.graph,bound->second,state.graphBounds,charge);
+    if(included.status==V4::InclusionStatus::BudgetError)return Status::Invalid;
+    if(included.status!=V4::InclusionStatus::Covered){p.returnOriginPending.insert(id);return Status::Open;}
+  }
+  bool effectsOpen=false;
   const auto mark=[&](const std::string &owner,unsigned flag,const Json *origin){
     if(!work(p,e,owner.size()/8+1))return false;const auto selected=llvm::StringRef(owner);
-    if(selected.starts_with("unknown:")){p.returnOriginPending.insert(id);return true;}
+    if(selected.starts_with("unknown:")){p.returnOriginPending.insert(id);effectsOpen=true;return true;}
     if(selected.starts_with("g:")){(flag?out.writes:out.reads).insert(owner.substr(2));}
     else if(selected.starts_with("h:")){(flag?out.hostWrites:out.hostReads).insert(owner.substr(2));}
     else if(selected.starts_with("c:")){auto &v=out.captures[owner.substr(2)];if(flag==0)v.read=true;else if(flag==1)v.write=true;else v.structural=true;}
@@ -593,16 +620,23 @@ bool deriveProjectedReturnEffects(Program &p,const Json &fn,const Json &raw,Effe
       if(!returnOriginMetadataCost(p,reason,e)||!returnOriginMetadataCost(p,*origin,e))return false;diagnostics->local.try_emplace(canonical(reason),*origin);
     }return true;
   };
-  for(unsigned flag=0;flag<3;++flag)for(const auto &owner:result.summary.effects[flag])if(!mark(owner,flag,nullptr))return false;
-  for(const auto &witness:witnesses)for(auto ref:witness.values){if(!need(ref<result.summary.owners.size(),e,"access witness lacks body node"))return false;for(const auto &owner:result.summary.owners[ref])if(!mark(owner,witness.flag,&witness.origin))return false;}
-  for(const auto &target:result.summary.calls){if(!work(p,e,target.size()/8+1))return false;out.calls.insert(target);}
-  for(const auto &facet:result.summary.facets){if(!work(p,e,facet.size()/8+1))return false;
+  for(unsigned flag=0;flag<3;++flag)for(const auto &owner:result.summary.effects[flag])if(!mark(owner,flag,nullptr))return Status::Invalid;
+  for(const auto &witness:witnesses)for(auto ref:witness.values){if(!need(ref<result.summary.owners.size(),e,"access witness lacks body node"))return Status::Invalid;for(const auto &owner:result.summary.owners[ref])if(!mark(owner,witness.flag,&witness.origin))return Status::Invalid;}
+  for(const auto &target:result.summary.calls){if(!work(p,e,target.size()/8+1))return Status::Invalid;out.calls.insert(target);}
+  for(const auto &facet:result.summary.facets){if(!work(p,e,facet.size()/8+1))return Status::Invalid;
     if(facet=="allocation")out.allocation=true;else if(facet=="managedReference")out.managedReference=true;else if(facet=="ehControl")out.ehControl=true;else if(facet=="await")out.await=true;else if(facet=="lock")out.lock=true;else if(facet=="escape")out.escape=true;else if(facet=="unknownHost")out.unknownHost=true;
   }
   out.mayThrow=result.summary.language;
-  if(!text(p,field(fn,"returnType"),e))return false;
+  if(!text(p,field(fn,"returnType"),e))return Status::Invalid;
   const auto returned=state.shapes.find(string(field(fn,"returnType")));
   if(returned!=state.shapes.end()&&returned->second.kind==V4::TypeKind::Function)for(auto ref:parsed.graph.normal)if(ref<result.summary.holdsEnvironment.size()&&(result.summary.holdsEnvironment[ref]||!result.summary.owners[ref].empty()))out.managedReference=out.escape=true;
-  if(!p.returnOriginPending.count(id))p.returnOriginVerified.insert(id);return e.message.empty();
+  if(!e.message.empty())return Status::Invalid;
+  if(effectsOpen)return Status::Open;
+  if(bound==state.graphs.end()){
+    if(!work(p,e,id.size()/8+1))return Status::Invalid;
+    p.returnOriginPending.insert(id);return Status::EffectsComplete;
+  }
+  if(!p.returnOriginPending.count(id)){p.returnOriginVerified.insert(id);return Status::ReturnCertificateComplete;}
+  return Status::Open;
 }
 } // namespace tsfg::commonProgram

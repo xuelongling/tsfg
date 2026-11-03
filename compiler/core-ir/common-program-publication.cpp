@@ -204,13 +204,14 @@ bool verifyPublication(Program &p,Error &e){
   if(!p.returnOriginContracts)return reject(e,"core-ir-common-publication","fixed group must be admitted before body proof");
   const auto &functions=items(field(p.hir,"functions"));
   for(const auto &fn:functions){Effects effective;const auto id=string(field(fn,"id"));
-    if(!deriveEffects(p,fn,effective,e))return false;
+    const auto derived=deriveOwnedEffects(p,fn,effective,e);if(derived==ProjectedReturnEffects::Invalid)return false;
     // Actual storage and callee ABI obligations may be wider than a Source
     // assertion's view. They only add requirements to this fixed contract.
     auto physical=p.effects.find(id);if(physical!=p.effects.end()){
       effective.managedReference|=physical->second.managedReference;effective.escape|=physical->second.escape;
     }
-    if(!p.returnOriginPending.count(id)&&!covers(p,p.fixedEffects.at(id),effective,e))return false;p.effects.insert_or_assign(id,std::move(effective));
+    const bool complete=derived==ProjectedReturnEffects::EffectsComplete||derived==ProjectedReturnEffects::ReturnCertificateComplete;
+    if(complete&&!covers(p,p.fixedEffects.at(id),effective,e))return false;p.effects.insert_or_assign(id,std::move(effective));
   }
   if(!finishReturnOriginProofs(p,e))return false;
   // Only after all supplied graph proofs and their dependencies are settled

@@ -82,7 +82,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
     return value ? value.getValue() : llvm::StringRef();
   };
   coreHeader::Identity header;
-  if (!coreHeader::read(module, header, emptyReference)) return reject();
+  if (!coreHeader::read(module, header, emptyReference ? coreHeader::Exchange::EmptyReference : coreHeader::Exchange::Registered)) return reject();
   const bool moduleMode = bool(module->getAttr("tsfg_core.sources"));
   std::vector<llvm::StringRef> moduleAttributes = {"tsfg_core.version", "tsfg_core.input_identity",
       "tsfg_core.source_hash", "tsfg_core.source_path",

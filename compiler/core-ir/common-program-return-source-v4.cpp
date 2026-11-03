@@ -567,6 +567,30 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
         if(!save(value(0)))return false;
       }else if(name=="value_copy"){
         if(!resultType)return open("normalized copy Source view is unavailable");if(!save(copied(value(0),*resultType,range,"",operation.result)))return false;
+      }else if(name=="array_create"){
+        if(!resultType)return open("normalized Array allocation has no original result view");
+        Refs elements;for(auto argument:args)add(elements,get(argument));
+        facet("allocation",nullptr,"array_create");facet("managedReference",nullptr,"array_create");
+        // The admitted creation opcode owns this independently checked allocation
+        // identity. Formal views and a ReadSpan owner do not create Local roots.
+        const auto &allocation=field(props,"allocation");auto created=root("local",*resultType,{},0,&allocation);
+        write(created,"element",elements,*resultType,true);if(!save(created))return false;
+      }else if(name=="readspan"){
+        // A span carries its original owner equation; lifetime/holding authority
+        // still comes from the complete actual and borrow checks.
+        if(!save(value(0)))return false;
+      }else if(name=="array_read"){
+        if(!resultType)return open("normalized Array read has no original result view");
+        if(!step())return false;const auto &receiverType=views->second[args[0]];
+        const auto base=value(0);mark(base,"read");if(!save(projection(base,"element",*resultType,receiverType)))return false;
+      }else if(name=="array_length"||name=="readspan_length"){
+        if(!resultType)return open("normalized length has no original result view");
+        const auto base=value(0);mark(base,"read");if(!save(nonowning(*resultType)))return false;
+      }else if(name=="array_store"){
+        if(!step())return false;const auto &receiverType=views->second[args[0]];
+        const auto base=value(0),stored=value(2);write(base,"element",stored,receiverType);mark(base,"structural");
+      }else if(name=="array_resize"){
+        const auto base=value(0);mark(base,"write");mark(base,"structural");
       }else if(name=="global_store"){
         return open("normalized global store payload has no return-origin projection");
       }else if(name=="global_load"){

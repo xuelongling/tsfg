@@ -169,6 +169,9 @@ struct Program {
   std::map<std::string,std::vector<std::string>> registerViews;
   // Actual SSA identities joined to the independently matched Source plan.
   std::map<std::string,std::vector<uint16_t>> sourceRegisters,sourceBlocks;
+  // Logical graph witnesses are saved only after complete owned Source matching.
+  // Cold consumers independently admit and match them; labels grant no authority.
+  std::map<std::string,Json> sourcePlans;
   std::map<std::string,Layout> layouts;
   // Independently reconstructed reference payload tuples, separate from handles.
   std::map<std::string,Layout> referenceBodyLayouts;
