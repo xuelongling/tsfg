@@ -93,7 +93,13 @@ struct ReturnSource {
     if(!text(functionId)||!step(2))return {};return functionId+"/%v"+std::to_string(found->second[reg]);
   }
   Refs copied(const Refs &bases,const std::string &type,const Json &range,const std::string &role,std::optional<uint16_t> normalizedRegister=std::nullopt){
-    bool literals=true;for(auto base:bases){if(!step())return {};literals&=string(field(nodes[base],"kind"))=="literal";}if(literals)return copyRefs(bases);
+    bool literals=true;for(auto base:bases){if(!step())return {};literals&=string(field(nodes[base],"kind"))=="literal";}
+    // The normalized copy occurs only on this completion, even for a literal.
+    // Keep that equation, as in the owning graph producer; it is not a new root.
+    if(literals){
+      if(normalizedRegister&&!bases.empty()){if(!text(type))return {};return gate(bases,type);}
+      return copyRefs(bases);
+    }
     const auto location=normalizedRegister?registerSite(*normalizedRegister):site(functionId,range,role);if(!step(bases.size()+9)||!text(type)||!text(location))return {};
     const auto value=node(Object{{"kind","copy"},{"type",type},{"bases",refs(bases)},{"heap",int64_t(state.heap)},{"control",int64_t(state.control)},{"site",location}});
     state.heap=append(heaps,Object{{"kind","copy"},{"previous",int64_t(state.heap)},{"value",int64_t(value)}});return {value};
