@@ -290,8 +290,18 @@ const Engine = struct {
         for (self.frames.items, 0..) |frame, index| {
             try self.budget.step(); if (frame.graph != graph or frame.scope_graph != scope_graph or frame.scope_call != scope_call or frame.receiver != receiver or !std.meta.eql(frame.receiver_import, receiver_import) or frame.arguments.len != arguments.len or !try self.sameSet(frame.environment.items, environment.items)) continue;
             var same = true; for (frame.arguments, arguments) |a, b| { try self.budget.step(); if (!try self.sameSet(a.items, b.items)) { same = false; break; } }
-            if (!same or !try self.sameHeap(frame.input.items, input)) continue;
-            if (source) |entry| { var found = false; for (frame.sources.items) |old| { try self.budget.step(); if (std.meta.eql(old, entry)) { found = true; break; } } if (!found) try self.append(Source, &frame.sources, entry); }
+            if (!same) continue;
+            try self.budget.step(); var same_source = false;
+            if (source) |entry| for (frame.sources.items) |old| { try self.budget.step(); if (std.meta.eql(old, entry)) { same_source = true; break; } };
+            // An original constructor CallFact and its exact caller Source
+            // denote one abstract input World. Later native/content facts at
+            // that same heap point must grow the existing equation, rather
+            // than freeze an incomplete extra activation. All arguments,
+            // ENV, graph, receiver/import and original call identities were
+            // matched above; other Sources and ordinary calls keep snapshots.
+            if (receiver_import != null and same_source) { try self.mergeHeap(&frame.input, input); return index; }
+            if (!try self.sameHeap(frame.input.items, input)) continue;
+            if (source) |entry| if (!same_source) { try self.append(Source, &frame.sources, entry); };
             return index;
         }
         try self.budget.step(); const frame = try self.a.create(Frame);
@@ -368,8 +378,50 @@ const Engine = struct {
             return try self.location(.{ .kind = .root, .owner = .local, .scope = index, .node = source, .key = "receiver-language-error" });
         }
     }
+    // Resolve original scoped atoms through this caller's existing target tree.
+    // Reused for result flow and the complete proven Ref Data argument Set.
+    fn scopedLocations(self: *Engine, index: usize, source: @FieldType(@FieldType(construction.Atom, "source"), "scoped_allocation"), out: *Set) E!bool {
+        var work: Set = .empty; try self.add(&work, index); var cursor: usize = 0; var found = false;
+        while (cursor < work.items.len) : (cursor += 1) {
+            try self.budget.step(); const candidate_index = work.items[cursor]; const candidate = self.frames.items[candidate_index];
+            if (candidate.receiver == source.analysis) {
+                const location_id = try self.receiverLocation(candidate_index, source.frame, true) orelse return false;
+                try self.add(out, location_id); found = true;
+            }
+            for (candidate.targets) |targets| {
+                try self.budget.step();
+                for (targets.items) |target| {
+                    // Monotone frame indices keep every new descendant ahead
+                    // of the paid cursor even when the set grows during solve.
+                    try self.add(&work, target);
+                }
+            }
+        }
+        return found;
+    }
+    // Construction supplies the final original atom set, never an admission
+    // boolean. Resolve it identically during solve and stable validation.
+    fn receiverArgument(self: *Engine, index: usize, atoms: []const construction.Atom) E!?Set {
+        var proved: Set = .empty; try self.budget.step();
+        for (atoms) |atom| {
+            try self.budget.step(); if (atom.category != .object) { self.pending = .receiver_protocol; return null; }
+            switch (atom.source) {
+                .allocation => |source| { const location_id = try self.receiverLocation(index, source, true) orelse return null; try self.add(&proved, location_id); },
+                .scoped_allocation => |source| {
+                    if (source.completion != .normal) { self.pending = .receiver_protocol; return null; }
+                    if (!try self.scopedLocations(index, source, &proved)) return null;
+                },
+                else => { self.pending = .receiver_protocol; return null; },
+            }
+        }
+        for (proved.items) |id| {
+            try self.budget.step(); const value = self.locations.items[id];
+            if (value.kind != .root or value.owner != .local or value.type_id == null or (try self.typeRow(value.type_id.?)).kind != .reference) { self.pending = .receiver_protocol; return null; }
+        }
+        return proved;
+    }
     fn processCalls(self: *Engine, index: usize, frame: *Frame) E!void {
-        for (frame.graph.calls, 0..) |call, ordinal| {
+        calls: for (frame.graph.calls, 0..) |call, ordinal| {
             try self.budget.step(); if (!frame.controls[call.control] or !frame.heap_ready[call.heap]) continue;
             var ready_arguments = true;
             for (call.arguments) |argument| { try self.budget.step(); if (!try self.readyRefs(frame, argument)) ready_arguments = false; }
@@ -412,9 +464,27 @@ const Engine = struct {
                     if (kind != .scalar and kind != .reference) { self.pending = .receiver_protocol; return; }
                     arguments[parameter_index] = try self.resolved(frame, refs_argument);
                     if (arguments[parameter_index].items.len == 0) { self.pending = .receiver_protocol; return; }
+                    if (kind == .reference) {
+                        if (fact.arguments.len != protocol.parameter_types.len) { self.pending = .receiver_protocol; return; }
+                        const proved = try self.receiverArgument(index, fact.arguments[parameter_index]) orelse {
+                            if (self.pending != null) return;
+                            continue :calls;
+                        };
+                        // No actual type is retagged to the static parameter.
+                        // Every original computed location must be in the paid
+                        // final Construction proof, with no extra alternatives.
+                        // A join can be ready before all original alternatives
+                        // arrive. Defer this call in the same Engine until its
+                        // full proven Set is present; final validation still
+                        // rejects any unresolved original argument/continuation.
+                        if (!try self.sameSet(proved.items, arguments[parameter_index].items)) continue :calls;
+                    }
                     for (arguments[parameter_index].items) |location_id| {
                         try self.budget.step(); const value = self.locations.items[location_id];
-                        if (value.kind != .root or value.type_id == null or !try self.budget.equal(value.type_id.?, expected)) { self.pending = .receiver_protocol; return; }
+                        if (value.kind != .root or value.type_id == null) { self.pending = .receiver_protocol; return; }
+                        if (kind == .scalar) {
+                            if (!try self.budget.equal(value.type_id.?, expected)) { self.pending = .receiver_protocol; return; }
+                        } else if ((try self.typeRow(value.type_id.?)).kind != .reference) { self.pending = .receiver_protocol; return; }
                     }
                 }
                 const target = try self.ensure(graph, call.function_id, frame.graph, ordinal, arguments, .empty, frame.heaps[call.heap].items, .{ .frame = index, .heap = call.heap }, fact.analysis, .{ .caller = index, .fact = fact });
@@ -489,23 +559,7 @@ const Engine = struct {
                             defined = defined and frame.ready[source];
                         },
                         .scoped_allocation => |source| {
-                            var work: Set = .empty; try self.add(&work, index); var cursor: usize = 0; var found = false;
-                            while (cursor < work.items.len) : (cursor += 1) {
-                                try self.budget.step(); const candidate_index = work.items[cursor]; const candidate = self.frames.items[candidate_index];
-                                if (candidate.receiver == source.analysis) {
-                                    const location_id = try self.receiverLocation(candidate_index, source.frame, true) orelse return;
-                                    try self.add(out, location_id); found = true;
-                                }
-                                for (candidate.targets) |targets| {
-                                    try self.budget.step();
-                                    for (targets.items) |target| {
-                                        // Frame indices are allocated monotonically. A set kept
-                                        // sorted by add cannot move a new descendant behind cursor.
-                                        try self.add(&work, target);
-                                    }
-                                }
-                            }
-                            defined = defined and found;
+                            defined = (try self.scopedLocations(index, source, out)) and defined;
                         },
                         .allocation => |source| {
                             // A formal newTarget is universally quantified.
@@ -842,9 +896,30 @@ const Engine = struct {
                 }
                 if (self.pending != null) return;
             }
-            for (graph.calls, frame.targets) |call, targets| {
+            for (graph.calls, frame.targets, 0..) |call, targets, ordinal| {
                 try self.budget.step(); if (!frame.controls[call.control]) continue;
                 if (targets.items.len == 0) { self.pending = .environment_protocol; return; }
+                if (call.receiver != null) {
+                    const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return; };
+                    var selected: ?*const construction.CallFact = null;
+                    for (receiver.calls) |*fact| {
+                        try self.budget.step(); if (fact.call != ordinal) continue;
+                        if (selected != null) { self.pending = .receiver_protocol; return; } selected = fact;
+                    }
+                    const fact = selected orelse { self.pending = .receiver_protocol; return; };
+                    const protocol = try m.findFunction(self.directory, call.function_id, self.budget);
+                    if (fact.arguments.len != protocol.parameter_types.len) { self.pending = .receiver_protocol; return; }
+                    // A target created before a late join is not a final Data
+                    // proof. Recheck every original Ref argument in the final
+                    // caller namespace even when an earlier target exists.
+                    try self.budget.step();
+                    for (call.arguments, 1..) |refs, parameter| {
+                        try self.budget.step(); if ((try self.typeRow(protocol.parameter_types[parameter])).kind != .reference) continue;
+                        const proved = try self.receiverArgument(index, fact.arguments[parameter]) orelse { self.pending = .receiver_protocol; return; };
+                        const actual = try self.resolved(frame, refs);
+                        if (!try self.sameSet(proved.items, actual.items)) { self.pending = .receiver_protocol; return; }
+                    }
+                }
                 const upper = (try self.contract(call.function_id)).?;
                 for (targets.items) |target| {
                     try self.budget.step();

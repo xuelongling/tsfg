@@ -20,7 +20,7 @@ pub const Entry = struct {
 pub const Atom = struct {
     // A foreign birth retains its owning analysis namespace, never a bare Ref
     // borrowed as a caller node. Child analyses are stable parent-arena objects.
-    source: union(enum) { node: Ref, allocation: Ref, language_error: Ref, scoped_allocation: struct { analysis: *const Analysis, frame: Ref } },
+    source: union(enum) { node: Ref, allocation: Ref, language_error: Ref, scoped_allocation: struct { analysis: *const Analysis, frame: Ref, completion: model.Completion } },
     category: Category,
 };
 pub const Pending = enum { entry_state, fixed_call, fixed_contract, fixed_completion, fixed_origin, call_entry, data_protocol, heap_protocol, unknown_origin, parent_activation, frame_activation, scalar_initialization };
@@ -32,13 +32,16 @@ pub const FixedFunction = struct { function_id: model.Symbol, contract: *const P
 pub const FormalInput = struct { function_id: model.Symbol, fixed: []const FixedFunction = &.{} };
 pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{}, missing_fields: ?[]const model.Symbol = null };
 pub const InputExits = struct { input: Ref, normal: ExitBinding = .{}, language: ExitBinding = .{} };
-pub const CallFact = struct { caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis };
+pub const CallFact = struct { caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis, arguments: []const []const Atom };
 pub const Initialization = struct { store: Ref, base: Atom, value: Atom };
 pub const FrameSummary = struct {
     // A formal receiver's null new_target is a universal compatible-target
     // parameter, not an owner/leaf choice or a known Actual allocation type.
     construction: ?model.Symbol = null, new_target: ?model.Symbol = null, parent: ?Ref = null,
     bound: []const Atom = &.{}, may_unbound: bool = false,
+    // Per-completion MUST facts over ALL final live exits. The prefix MAY
+    // summary above is deliberately insufficient for a managed Data argument.
+    normal: ExitBinding = .{}, language: ExitBinding = .{},
 };
 pub const Analysis = struct {
     arena: std.heap.ArenaAllocator,
@@ -213,7 +216,29 @@ const Engine = struct {
             try self.budget.step(); const value = self.values[id];
             if (value.frames.items.len != 0 or value.atoms.items.len == 0) return false;
             for (value.atoms.items) |atom| {
-                try self.budget.step(); if (atom.category != .object or atom.source != .allocation) return false;
+                try self.budget.step(); if (atom.category != .object) return false;
+                if (atom.source == .scoped_allocation) {
+                    const source = atom.source.scoped_allocation;
+                    // This bounded extension supports original normal births
+                    // only. Equal analysis/frame numbers in a language result
+                    // cannot borrow normal MUST initialization.
+                    try self.budget.step();
+                    if (source.completion != .normal or source.analysis.pending != null or source.frame >= source.analysis.frames.len) return false;
+                    const frame = source.analysis.frames[source.frame];
+                    const role = try construction(self.directory, frame.construction orelse return false, self.budget);
+                    if (role.kind != .explicit or role.base != null or frame.parent != null or frame.new_target == null or
+                        !try self.budget.equal(frame.new_target.?, role.owner)) return false;
+                    const fixed = try self.fixedFunction(role.function_id orelse return false) orelse return false;
+                    _ = fixed.initialization_fields orelse return false;
+                    var reference = false;
+                    for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, frame.new_target.?)) { reference = row.kind == .reference; break; } }
+                    if (!reference or !frame.normal.live or frame.normal.unbound or frame.normal.missing_fields == null or frame.normal.missing_fields.?.len != 0) return false;
+                    var bound = false;
+                    for (frame.normal.atoms) |old| { try self.budget.step(); if (old.category == .object and old.source == .allocation and old.source.allocation == source.frame) bound = true; }
+                    if (!bound) return false;
+                    found = true; continue;
+                }
+                if (atom.source != .allocation) return false;
                 const frame = atom.source.allocation; const role = self.frames[frame].role orelse return false;
                 if (role.base != null or self.frames[frame].parent != null or self.frames[frame].new_target == null or
                     !try self.budget.equal(self.frames[frame].new_target.?, expected) or !try self.budget.equal(role.owner, expected)) return false;
@@ -303,14 +328,14 @@ const Engine = struct {
         if (fixed.contract.upper.facets.may_throw and !analysis.language_live) { self.pending = .fixed_completion; return null; }
         const exits = analysis.input_exits orelse { self.pending = .call_entry; return null; };
         if (self.calls.items.len == self.calls.capacity) try self.budget.spend(self.calls.items.len + 1);
-        try self.budget.step(); try self.calls.append(self.allocator, .{ .caller_graph = self.graph, .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis });
+        try self.budget.step(); try self.calls.append(self.allocator, .{ .caller_graph = self.graph, .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis, .arguments = arguments });
         return &self.calls.items[self.calls.items.len - 1];
     }
     fn imported(self: *Engine, fact: *const CallFact, completion: model.Completion, values: []const Atom, into: *Atoms) Error!bool {
         var error_site: ?Ref = null;
         for (values) |atom| {
             try self.budget.step(); const value: Atom = switch (atom.source) {
-                .allocation => |source| if (source == fact.input) .{ .source = .{ .allocation = fact.receiver }, .category = atom.category } else .{ .source = .{ .scoped_allocation = .{ .analysis = fact.analysis, .frame = source } }, .category = atom.category },
+                .allocation => |source| if (source == fact.input) .{ .source = .{ .allocation = fact.receiver }, .category = atom.category } else .{ .source = .{ .scoped_allocation = .{ .analysis = fact.analysis, .frame = source, .completion = completion } }, .category = atom.category },
                 .scoped_allocation => atom,
                 .language_error => blk: {
                     // A generated callee error remains local to this original
@@ -797,13 +822,24 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
         if (!controls[row.control] or !worlds[row.previous].live) continue;
         for (row.operands) |id| { try budget.step(); if (values[id].atoms.items.len == 0) { result.pending = .unknown_origin; return result; } }
     };
-    for (graph.calls) |call| {
+    for (graph.calls, 0..) |call, call_ordinal| {
         try budget.step(); if (!controls[call.control] or !worlds[call.heap].live) continue;
         const function = try model.findFunction(directory, call.function_id, budget);
         for (call.arguments, 1..) |argument, parameter_index| {
             const expected = function.parameter_types[parameter_index]; var reference = false;
             for (directory.types) |type_row| { try budget.step(); if (try budget.equal(type_row.id, expected)) { reference = type_row.kind == .reference; break; } }
             if (reference and !try engine.referenceArgument(argument, expected, call.heap)) { result.pending = .data_protocol; return result; }
+        }
+        for (engine.calls.items) |*fact| {
+            try budget.step(); if (fact.call != call_ordinal) continue;
+            try budget.spend(function.parameter_types.len);
+            const final_arguments = try a.alloc([]const Atom, function.parameter_types.len); @memset(final_arguments, &.{});
+            for (call.arguments, 1..) |argument, parameter| {
+                try budget.step(); var originals: Atoms = .empty;
+                for (argument) |id| { try budget.step(); for (values[id].atoms.items) |atom| { _ = try engine.insert(Atom, &originals, atom); } }
+                final_arguments[parameter] = originals.items;
+            }
+            fact.arguments = final_arguments;
         }
         const receiver = call.receiver orelse { result.pending = .fixed_call; return result; };
         var resolved = false;
@@ -850,6 +886,37 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
             var bound: Atoms = .empty;
             for (worlds) |world| { try budget.step(); if (!world.live) continue; row.may_unbound = row.may_unbound or world.bindings[index].unbound; try engine.atoms(&bound, world.bindings[index].atoms.items); }
             row.bound = bound.items;
+            // The role's own inventory is authoritative, including known-empty
+            // versus UNKNOWN. Never substitute the containing function's input0.
+            var inventory: ?[]const model.Symbol = null;
+            if (formal_input) |formal| if (role.function_id) |function_id| for (formal.fixed) |fixed| {
+                try budget.step(); if (try budget.equal(fixed.function_id, function_id)) { inventory = fixed.initialization_fields; break; }
+            };
+            inline for (.{ model.Completion.normal, model.Completion.language }) |completion| {
+                try budget.step();
+                const source = if (completion == .normal) graph.exits.normal else graph.exits.language;
+                const into = if (completion == .normal) &row.normal else &row.language;
+                var exit_atoms: Atoms = .empty;
+                for (source) |exit| {
+                    try budget.step(); if (!controls[exit.control] or !worlds[exit.heap].live) continue;
+                    into.live = true; into.unbound = into.unbound or worlds[exit.heap].bindings[index].unbound;
+                    try engine.atoms(&exit_atoms, worlds[exit.heap].bindings[index].atoms.items);
+                }
+                into.atoms = exit_atoms.items;
+                if (inventory) |fields| {
+                    var missing: std.ArrayListUnmanaged(model.Symbol) = .empty;
+                    try budget.step();
+                    for (fields) |field| {
+                        try budget.step(); var absent = false;
+                        for (engine.obligations, 0..) |obligation, ordinal| {
+                            try budget.step(); if (obligation.frame != index or !try budget.equal(obligation.field, field)) continue;
+                            for (source) |exit| { try budget.step(); if (controls[exit.control] and worlds[exit.heap].live) absent = absent or worlds[exit.heap].missing[ordinal]; }
+                        }
+                        if (absent) { if (missing.items.len == missing.capacity) try budget.spend(missing.items.len + 1); try budget.step(); try missing.append(a, field); }
+                    }
+                    into.missing_fields = missing.items;
+                }
+            }
         } else if (graph.nodes[index] == .receiver_frame and controls[graph.nodes[index].receiver_frame.control]) { result.pending = .frame_activation; return result; }
     }
     var writes:Initializations=.empty;
@@ -859,34 +926,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     for(worlds) |*world| { try budget.step(); if(world.live)try engine.initializations(&writes,world.initializations.items); }
     result.initializations=writes.items;
     result.normal = normal.items; result.language = language.items; result.frames = summary;
-    if (input) |id| {
-        var exits = InputExits{ .input = id };
-        inline for (.{ model.Completion.normal, model.Completion.language }) |completion| {
-            const source = if (completion == .normal) graph.exits.normal else graph.exits.language;
-            const into = if (completion == .normal) &exits.normal else &exits.language;
-            var bound: Atoms = .empty;
-            for (source) |exit| {
-                try budget.step(); if (!controls[exit.control] or !worlds[exit.heap].live) continue;
-                into.live = true; into.unbound = into.unbound or worlds[exit.heap].bindings[id].unbound;
-                try engine.atoms(&bound, worlds[exit.heap].bindings[id].atoms.items);
-            }
-            into.atoms = bound.items;
-            if (formal_input) |formal| for (formal.fixed) |fixed| {
-                try budget.step(); if (!try budget.equal(fixed.function_id, formal.function_id)) continue;
-                if (fixed.initialization_fields) |_| {
-                    var missing: std.ArrayListUnmanaged(model.Symbol) = .empty;
-                    for (engine.obligations, 0..) |obligation, ordinal| {
-                        try budget.step(); if (obligation.frame != id) continue;
-                        var absent = false; for (source) |exit| { try budget.step(); if (controls[exit.control] and worlds[exit.heap].live) absent = absent or worlds[exit.heap].missing[ordinal]; }
-                        if (absent) { if (missing.items.len == missing.capacity) try budget.spend(missing.items.len + 1); try budget.step(); try missing.append(a, obligation.field); }
-                    }
-                    into.missing_fields = missing.items;
-                }
-                break;
-            };
-        }
-        result.input_exits = exits;
-    }
+    if (input) |id| { try budget.step(); result.input_exits = .{ .input = id, .normal = summary[id].normal, .language = summary[id].language }; }
     if (formal_function != null) {
         try budget.spend(results.len); const action_results = try a.alloc([]const Atom, results.len);
         for (results, action_results) |value, *into| { try budget.step(); into.* = value.items; }

@@ -61,3 +61,11 @@ test('typed nested fixed constructors retain the original C birth and content', 
 test('nested constructor closure controls keep callsites completions and MUST separate', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-nested-fixed-negative-test.zig', prefix: 'r03-constructor-nested-fixed-negative-', expectedPasses: 6 });
 });
+
+test('typed scoped constructor Ref arguments retain the actual C birth through B', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-scoped-ref-test.zig', prefix: 'r03-constructor-scoped-ref-', expectedPasses: 1 });
+});
+
+test('scoped constructor Ref controls retain initialization completion and late aliases', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-scoped-ref-negative-test.zig', prefix: 'r03-constructor-scoped-ref-negative-', expectedPasses: 5 });
+});
