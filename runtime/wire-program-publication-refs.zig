@@ -264,6 +264,18 @@ pub fn returnOriginConstructorInput(c: *Context, allocator: std.mem.Allocator, v
         // Pair the two typed immutable directories once at this new boundary.
         try c.charge(2); try c.require(std.mem.eql(u8, &contract.function_id, &scope_function.function_id) and std.mem.eql(u8, &contract.signature_hash, &scope_function.signature_hash));
         into.* = .{ .function_id = try symbol(c, allocator, contract.function_id), .contract = contract, .declaration = scope_function };
+        // Construction-contracts already joined this complete ordered inventory
+        // to ALL own fields, including parameter properties. Preserve original
+        // typed FieldIDs; no identity hash or initialization proof is invented.
+        if (scope_function.construction) |declared| {
+            const common = c.program.tables.mode.common;
+            for (common.members.constructions) |row| {
+                try c.step(); if (!std.mem.eql(u8, &row.id, &declared.id)) continue;
+                try c.charge(row.initialization_fields.len); const fields = try allocator.alloc(origin.Symbol, row.initialization_fields.len);
+                for (row.initialization_fields, fields) |field, *id| { try c.step(); id.* = try symbol(c, allocator, common.members.fields[@intFromEnum(field)].id); }
+                into.initialization_fields = fields; break;
+            }
+        }
     }
     return .{ .function_id = function_id, .fixed = fixed };
 }

@@ -383,7 +383,7 @@ const Engine = struct {
                 const role = protocol.construction orelse { self.pending = .receiver_protocol; return; };
                 const refs = call.receiver orelse { self.pending = .receiver_protocol; return; };
                 // The borrowed construction analysis has already interpreted
-                // this supported scalar-Data/no-ENV, standalone fixed leaf. Keep
+                // this supported proved-Data/no-ENV, standalone fixed leaf. Keep
                 // its original graph and facts in this same ordinary Engine.
                 if (frame.receiver_import != null or call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
                 var selected: ?*const construction.CallFact = null;
@@ -406,7 +406,8 @@ const Engine = struct {
                 try self.add(&arguments[0], receiver_location);
                 for (call.arguments, 1..) |refs_argument, parameter_index| {
                     const expected = protocol.parameter_types[parameter_index];
-                    if ((try self.typeRow(expected)).kind != .scalar) { self.pending = .receiver_protocol; return; }
+                    const kind = (try self.typeRow(expected)).kind;
+                    if (kind != .scalar and kind != .reference) { self.pending = .receiver_protocol; return; }
                     arguments[parameter_index] = try self.resolved(frame, refs_argument);
                     if (arguments[parameter_index].items.len == 0) { self.pending = .receiver_protocol; return; }
                     for (arguments[parameter_index].items) |location_id| {

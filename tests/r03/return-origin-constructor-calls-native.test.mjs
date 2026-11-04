@@ -45,3 +45,11 @@ test('ordered scalar constructor arguments retain each original caller input', a
 test('each scalar constructor argument keeps its typed and complete effect boundary', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-multi-scalar-negative-test.zig', prefix: 'r03-constructor-multi-scalar-negative-', expectedPasses: 3 });
 });
+
+test('initialized Ref constructor arguments keep their original objects and contents', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-initialized-ref-test.zig', prefix: 'r03-constructor-initialized-ref-', expectedPasses: 1 });
+});
+
+test('Ref constructor arguments require complete initialization and stable caller facts', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-initialized-ref-negative-test.zig', prefix: 'r03-constructor-initialized-ref-negative-', expectedPasses: 5 });
+});

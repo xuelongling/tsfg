@@ -26,9 +26,9 @@ pub const PublicationContract = @typeInfo(@FieldType(publication.Publication, "c
 pub const ScopeFunction = @typeInfo(@FieldType(publication.StableScope, "functions")).pointer.child;
 // Borrow the complete already-owned immutable rows. No narrowed graph-only
 // upper, verification marker or selected actual state is accepted here.
-pub const FixedFunction = struct { function_id: model.Symbol, contract: *const PublicationContract, declaration: *const ScopeFunction };
+pub const FixedFunction = struct { function_id: model.Symbol, contract: *const PublicationContract, declaration: *const ScopeFunction, initialization_fields: ?[]const model.Symbol = null };
 pub const FormalInput = struct { function_id: model.Symbol, fixed: []const FixedFunction = &.{} };
-pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{} };
+pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{}, missing_fields: ?[]const model.Symbol = null };
 pub const InputExits = struct { input: Ref, normal: ExitBinding = .{}, language: ExitBinding = .{} };
 pub const CallFact = struct { caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis };
 pub const Initialization = struct { store: Ref, base: Atom, value: Atom };
@@ -65,7 +65,9 @@ const Refs = std.ArrayListUnmanaged(Ref);
 const Initializations = std.ArrayListUnmanaged(Initialization);
 const Fact = struct { atoms: Atoms = .empty, frames: Refs = .empty };
 const Binding = struct { unbound: bool = true, atoms: Atoms = .empty };
-const World = struct { live: bool = false, bindings: []Binding, initializations: Initializations = .empty };
+const Obligation = struct { frame: Ref, field: model.Symbol };
+const Completed = struct { frame: Ref, fields: []const model.Symbol };
+const World = struct { live: bool = false, bindings: []Binding, missing: []bool, initializations: Initializations = .empty };
 const Frame = struct { role: ?*const model.Construction = null, new_target: ?model.Symbol = null, parent: ?Ref = null };
 
 fn construction(directory: *const model.Directory, id: model.Symbol, budget: *Budget) Error!*const model.Construction {
@@ -97,7 +99,10 @@ fn nativeLiterals(a:std.mem.Allocator,directory:*const model.Directory,graph:*co
 const Engine = struct {
     allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget,
     values: []Fact, worlds: []World, controls: []bool, frames: []Frame, results: []Atoms,
-    input: ?Ref = null,
+    // Only callFact can supply these paid category snapshots after proving
+    // original caller refs. Public formal entry points cannot narrow Data.
+    arguments: []const []const Atom = &.{},
+    input: ?Ref = null, obligations: []const Obligation = &.{},
     changed: bool = false, pending: ?Pending = null, control_only: bool = false, effect_origins: bool = false,
     formal_environments: bool = false, formal_input: ?FormalInput = null,
     calls: std.ArrayListUnmanaged(CallFact) = .empty, call_results: [][2]Atoms = &.{}, call_live: [][2]bool = &.{},
@@ -119,7 +124,7 @@ const Engine = struct {
     fn initializations(self:*Engine,into:*Initializations,source:[]const Initialization) Error!void {
         for(source) |*row| { try self.budget.spend(3); try self.add(Initialization,into,row.*); }
     }
-    fn merge(self: *Engine, into: *World, from: *const World, frame: ?Ref, replacement: ?[]const Atom, unbound: ?bool) Error!void {
+    fn merge(self: *Engine, into: *World, from: *const World, frame: ?Ref, replacement: ?[]const Atom, unbound: ?bool, completed: ?Completed) Error!void {
         try self.budget.step();
         if (!from.live) return;
         const first = !into.live;
@@ -130,6 +135,15 @@ const Engine = struct {
             const next = if (first) absent else target.unbound or absent;
             if (target.unbound != next) { target.unbound = next; self.changed = true; }
             try self.atoms(&target.atoms, if (selected and replacement != null) replacement.? else source.atoms.items);
+        }
+        // MAY missing fields are the complement of MUST initialized fields.
+        // Every live predecessor contributes, including late loop/join edges.
+        for (self.obligations, from.missing, into.missing) |obligation, absent, *target| {
+            try self.budget.step(); var cleared = false;
+            if (completed) |proof| if (proof.frame == obligation.frame) {
+                for (proof.fields) |field| { try self.budget.step(); if (try self.budget.equal(field, obligation.field)) { cleared = true; break; } }
+            };
+            if (absent and !cleared and !target.*) { target.* = true; self.changed = true; }
         }
         try self.initializations(&into.initializations,from.initializations.items);
     }
@@ -157,7 +171,15 @@ const Engine = struct {
     }
     fn initialize(self:*Engine,index:Ref,row:@FieldType(model.Heap,"store")) Error!void {
         if(!self.controls[row.control] or !self.worlds[row.previous].live or !try self.storeReady(row))return;
-        try self.merge(&self.worlds[index],&self.worlds[row.previous],null,null,null);
+        // A store through alternative receiver allocations is not a MUST write
+        // to any single one of them, even when each alternative is bound.
+        var selected: ?Ref = null; var single = true;
+        for (row.bases) |base| { try self.budget.step(); for (self.values[base].atoms.items) |atom| {
+            try self.budget.step(); const frame = atom.source.allocation;
+            if (selected) |old| { if (old != frame) single = false; } else selected = frame;
+        } }
+        const fields = [_]model.Symbol{row.selector[6..]};
+        try self.merge(&self.worlds[index],&self.worlds[row.previous],null,null,null,if (single and selected != null) .{ .frame = selected.?, .fields = &fields } else null);
         for(row.bases) |base| { try self.budget.step(); for(self.values[base].atoms.items) |object| {
             try self.budget.step(); for(row.values) |value| { try self.budget.step(); for(self.values[value].atoms.items) |atom| {
                 try self.budget.spend(4); try self.add(Initialization,&self.worlds[index].initializations,.{.store=index,.base=object,.value=atom});
@@ -165,7 +187,7 @@ const Engine = struct {
         } }
     }
     fn outcome(self: *Engine, index: Ref, source: *const World, frame: Ref, values: []const Atom, replacement: ?[]const Atom, unbound: ?bool) Error!void {
-        try self.merge(&self.worlds[index], source, frame, replacement, unbound);
+        try self.merge(&self.worlds[index], source, frame, replacement, unbound, null);
         try self.atoms(&self.results[index], values);
     }
     fn fixedFunction(self: *Engine, id: model.Symbol) Error!?*const FixedFunction {
@@ -178,6 +200,33 @@ const Engine = struct {
             if (try self.budget.equal(row.function_id, id)) selected = row;
         }
         return selected;
+    }
+    // Only the original caller state can prove that managed Data already
+    // denotes an initialized, bound allocation. A declared Ref view alone
+    // grants no category, object tag, receiver binding or field proof.
+    fn referenceArgument(self: *Engine, argument: []const Ref, expected: model.Symbol, heap: Ref) Error!bool {
+        var found = false;
+        for (argument) |id| {
+            try self.budget.step(); const value = self.values[id];
+            if (value.frames.items.len != 0 or value.atoms.items.len == 0) return false;
+            for (value.atoms.items) |atom| {
+                try self.budget.step(); if (atom.category != .object or atom.source != .allocation) return false;
+                const frame = atom.source.allocation; const role = self.frames[frame].role orelse return false;
+                if (role.base != null or self.frames[frame].parent != null or self.frames[frame].new_target == null or
+                    !try self.budget.equal(self.frames[frame].new_target.?, expected) or !try self.budget.equal(role.owner, expected)) return false;
+                const fixed = try self.fixedFunction(role.function_id orelse return false) orelse return false;
+                _ = fixed.initialization_fields orelse return false;
+                const before = self.worlds[heap].bindings[frame];
+                if (before.unbound or before.atoms.items.len == 0) return false;
+                var bound = false; for (before.atoms.items) |old| { try self.budget.step(); if (std.meta.eql(old, atom)) bound = true; }
+                if (!bound) return false;
+                for (self.obligations, self.worlds[heap].missing) |obligation, missing| {
+                    try self.budget.step(); if (obligation.frame == frame and missing) return false;
+                }
+                found = true;
+            }
+        }
+        return found;
     }
     fn callFact(self: *Engine, ordinal: Ref, frame: Ref) Error!?*const CallFact {
         for (self.calls.items) |*fact| { try self.budget.step(); if (fact.call == ordinal and fact.receiver == frame) return fact; }
@@ -193,12 +242,23 @@ const Engine = struct {
         for (fixed.contract.upper.parameters, 0..) |parameter, index| {
             try self.budget.step(); if (parameter.index != index) { self.pending = .fixed_contract; return null; }
         }
+        try self.budget.spend(function.parameter_types.len);
+        const arguments = try self.allocator.alloc([]const Atom, function.parameter_types.len); @memset(arguments, &.{});
         for (call.arguments, 1..) |argument, parameter_index| {
-            const expected = function.parameter_types[parameter_index]; var scalar = false;
-            for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, expected)) { scalar = row.kind == .scalar; break; } }
-            if (!scalar or argument.len == 0) { self.pending = .data_protocol; return null; }
+            const expected = function.parameter_types[parameter_index]; var scalar = false; var reference = false;
+            for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, expected)) { scalar = row.kind == .scalar; reference = row.kind == .reference; break; } }
+            if ((!scalar and !reference) or argument.len == 0) { self.pending = .data_protocol; return null; }
+            if (reference) {
+                // Uncomputed inputs defer this call within the same Engine.
+                // The final stable caller state is checked again below; an
+                // early cached child never licenses a later missing path.
+                if (!try self.referenceArgument(argument, expected, call.heap)) return null;
+                var origins: Atoms = .empty;
+                for (argument) |id| { try self.budget.step(); for (self.values[id].atoms.items) |atom| { _ = try self.insert(Atom, &origins, atom); } }
+                arguments[parameter_index] = origins.items;
+            }
             // A typed wrapper is not evidence that its leaves have this type.
-            // Retain the original scalar inputs; the owner equations transport
+            // Retain the original Data inputs; the owner equations transport
             // their relationships into each ordered parameter, separately from input0.
             try self.budget.spend(2 * self.graph.nodes.len);
             const seen = try self.allocator.alloc(bool, self.graph.nodes.len); @memset(seen, false);
@@ -206,12 +266,13 @@ const Engine = struct {
             for (argument) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } }
             while (cursor < count) : (cursor += 1) {
                 try self.budget.step(); const node = self.graph.nodes[work[cursor]];
-                const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate => |row| row.@"type", else => null };
+                const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate, .receiver_value, .call => |row| row.@"type", else => null };
                 if (type_id == null or !try self.budget.equal(type_id.?, expected)) { self.pending = .data_protocol; return null; }
                 switch (node) {
                     inline .join, .gate => |row| { if (row.inputs.len == 0) { self.pending = .data_protocol; return null; } for (row.inputs) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } } },
-                    .literal => |row| { if (row.category != .other) { self.pending = .data_protocol; return null; } leaf = true; },
-                    .parameter, .nonowning => leaf = true,
+                    .receiver_value, .call => { if (!reference) { self.pending = .data_protocol; return null; } leaf = true; },
+                    .literal => |row| { if (reference or row.category != .other) { self.pending = .data_protocol; return null; } leaf = true; },
+                    .parameter, .nonowning => { if (reference) { self.pending = .data_protocol; return null; } leaf = true; },
                     else => unreachable,
                 }
             }
@@ -219,13 +280,13 @@ const Engine = struct {
         }
         if (self.frames[frame].role == null or self.frames[frame].parent != null or !try self.budget.equal(self.frames[frame].role.?.id, role.id)) { self.pending = .call_entry; return null; }
         const graph = if (fixed.contract.return_origins) |*value| value else { self.pending = .fixed_call; return null; };
-        // This fixed standalone leaf transports ordered scalar Data inputs,
+        // This fixed standalone leaf transports ordered proved Data inputs,
         // with no ENV or additional receiver-frame namespace. Unsupported dependencies are never solved
         // with a callee's current body, selected target or fresh default seed.
         if (graph.calls.len != 0) { self.pending = .fixed_call; return null; }
         for (graph.nodes) |node| { try self.budget.step(); if (node == .receiver_frame) { self.pending = .fixed_call; return null; } }
         try self.budget.spend(1); const analysis = try self.allocator.create(Analysis);
-        analysis.* = try analyzeImpl(self.allocator, self.directory, graph, self.budget, null, .{ .function_id = function.id }, true, true);
+        analysis.* = try analyzeImpl(self.allocator, self.directory, graph, self.budget, null, .{ .function_id = function.id, .fixed = self.formal_input.?.fixed }, arguments, true, true);
         if (analysis.pending) |reason| { self.pending = reason; analysis.deinit(); return null; }
         if (fixed.contract.upper.facets.may_throw and !analysis.language_live) { self.pending = .fixed_completion; analysis.deinit(); return null; }
         const exits = analysis.input_exits orelse { self.pending = .call_entry; analysis.deinit(); return null; };
@@ -248,7 +309,18 @@ const Engine = struct {
                     const site = error_site orelse { self.pending = .fixed_origin; return false; };
                     break :blk .{ .source = .{ .language_error = site }, .category = atom.category };
                 },
-                .node => { self.pending = .fixed_origin; return false; },
+                .node => |source| {
+                    // A callee parameter keeps its own node identity. Follow
+                    // its original caller refs only at this import boundary.
+                    const node = fact.graph.nodes[source];
+                    if (node != .parameter or node.parameter.index == 0) { self.pending = .fixed_origin; return false; }
+                    const parameter = node.parameter.index;
+                    if (parameter > self.graph.calls[fact.call].arguments.len) { self.pending = .fixed_origin; return false; }
+                    for (self.graph.calls[fact.call].arguments[parameter - 1]) |id| {
+                        try self.budget.step(); for (self.values[id].atoms.items) |origin| { _ = try self.insert(Atom, into, origin); }
+                    }
+                    continue;
+                },
             };
             // Temporary mapped equations do not advance the fixed point.
             // Only their merge into persistent caller facts may set changed.
@@ -274,7 +346,15 @@ const Engine = struct {
         var returned: Atoms = .empty;
         if (!try self.imported(fact, row.completion, if (row.completion == .normal) fact.analysis.normal else fact.analysis.language, &returned)) return;
         try self.atoms(&self.call_results[row.call][@intFromEnum(row.completion)], returned.items);
-        try self.merge(&self.worlds[heap_index], &self.worlds[call.heap], frame, replacement.items, binding.unbound);
+        var completed: std.ArrayListUnmanaged(model.Symbol) = .empty;
+        if (binding.missing_fields) |missing| {
+            const inventory = fact.fixed.initialization_fields orelse { self.pending = .data_protocol; return; };
+            for (inventory) |field| {
+                try self.budget.step(); var absent = false; for (missing) |id| { try self.budget.step(); if (try self.budget.equal(field, id)) { absent = true; break; } }
+                if (!absent) { if (completed.items.len == completed.capacity) try self.budget.spend(completed.items.len + 1); try self.budget.step(); try completed.append(self.allocator, field); }
+            }
+        }
+        try self.merge(&self.worlds[heap_index], &self.worlds[call.heap], frame, replacement.items, binding.unbound, .{ .frame = frame, .fields = completed.items });
         const live = &self.call_live[row.call][@intFromEnum(row.completion)]; if (!live.*) { live.* = true; self.changed = true; }
     }
     // Empty Data is not normally an absence proof. Only a finite, nonempty
@@ -385,7 +465,13 @@ const Engine = struct {
                     .unknown => if (self.control_only) {
                         inline for (std.meta.tags(Category)) |category| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
                     },
-                    .parameter, .global, .nonowning => inline for (std.meta.tags(Category)) |category| {
+                    .parameter => |row| {
+                        const arguments = self.arguments;
+                        if (row.index < arguments.len and arguments[row.index].len != 0) {
+                            for (arguments[row.index]) |origin| { try self.budget.step(); try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = origin.category }); }
+                        } else inline for (std.meta.tags(Category)) |category| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
+                    },
+                    .global, .nonowning => inline for (std.meta.tags(Category)) |category| {
                         try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
                     },
                     inline .join, .gate => |row| {
@@ -445,22 +531,22 @@ const Engine = struct {
             }
             for (self.graph.heaps, 0..) |heap, index| {
                 try self.budget.step(); switch (heap) {
-                    .entry => if (!self.worlds[index].live) { self.worlds[index].live = true; self.changed = true; },
-                    .join => |row| for (row.inputs) |input| try self.merge(&self.worlds[index], &self.worlds[input], null, null, null),
+                    .entry => if (!self.worlds[index].live) { try self.budget.spend(self.obligations.len); self.worlds[index].live = true; @memset(self.worlds[index].missing, true); self.changed = true; },
+                    .join => |row| for (row.inputs) |input| try self.merge(&self.worlds[index], &self.worlds[input], null, null, null, null),
                     .receiver_action => |row| try self.action(index, row),
                     .call => |row| try self.fixedCall(index, row),
                     .store => |row| {
                         if (self.formal_environments and std.mem.startsWith(u8, row.selector, "capture:")) {
                             // The typed carrier boundary owns this ENV address.
                             // It cannot bind or initialize a receiver field.
-                            if (self.controls[row.control]) try self.merge(&self.worlds[index], &self.worlds[row.previous], null, null, null);
+                            if (self.controls[row.control]) try self.merge(&self.worlds[index], &self.worlds[row.previous], null, null, null, null);
                         } else try self.initialize(index,row);
                     },
                     .copy => |row| {
                         // A typed Data copy cannot mutate receiver controls.
                         // Keep its complete heap edge and prefix history; this
                         // domain makes no copied physical Value/holding proof.
-                        try self.merge(&self.worlds[index], &self.worlds[row.previous], null, null, null);
+                        try self.merge(&self.worlds[index], &self.worlds[row.previous], null, null, null, null);
                     },
                 }
             }
@@ -484,7 +570,7 @@ const Engine = struct {
 // Optional entry carries only original IDs for an independently proved unbound
 // root. It must belong to this graph's owning function and completed same-
 // Context actual analysis. No raw payload, Source/FDI or permission is accepted.
-fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_input: ?FormalInput, effect_origins: bool, return_origins: bool) Error!Analysis {
+fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_input: ?FormalInput, arguments: []const []const Atom, effect_origins: bool, return_origins: bool) Error!Analysis {
     const formal_function = if (formal_input) |input| input.function_id else null;
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
     if (!try model.receiverActivations(allocator, graph, budget)) { result.pending = .frame_activation; return result; }
@@ -550,10 +636,25 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     try budget.spend(graph.nodes.len); const values = try a.alloc(Fact, graph.nodes.len); @memset(values, .{});
     try budget.spend(graph.nodes.len); const frames = try a.alloc(Frame, graph.nodes.len); @memset(frames, .{});
     try budget.spend(graph.controls.len); const controls = try a.alloc(bool, graph.controls.len); @memset(controls, false);
+    // Build obligations from the original typed construction inventory once.
+    // null inventory remains UNKNOWN; an explicit empty inventory is meaningful.
+    var obligations: std.ArrayListUnmanaged(Obligation) = .empty;
+    if (formal_input) |formal| for (graph.nodes, 0..) |node, frame| {
+        try budget.step(); const role_id: ?model.Symbol = switch (node) { .receiver_input => entry_function.?.construction.?.id, .receiver_frame => |row| row.construction, else => null };
+        const role = try construction(directory, role_id orelse continue, budget);
+        const function_id = role.function_id orelse continue;
+        for (formal.fixed) |fixed| { try budget.step(); if (!try budget.equal(fixed.function_id, function_id)) continue;
+            if (fixed.initialization_fields) |fields| for (fields) |field| {
+                try budget.step(); if (obligations.items.len == obligations.capacity) try budget.spend(obligations.items.len + 1);
+                try obligations.append(a, .{ .frame = frame, .field = field });
+            };
+            break;
+        }
+    };
     try budget.spend(graph.heaps.len); const worlds = try a.alloc(World, graph.heaps.len);
-    for (worlds) |*world| { try budget.spend(graph.nodes.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len) }; @memset(world.bindings, .{}); }
+    for (worlds) |*world| { try budget.spend(graph.nodes.len + obligations.items.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len), .missing = try a.alloc(bool, obligations.items.len) }; @memset(world.bindings, .{}); @memset(world.missing, false); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
-    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null, .formal_input = formal_input };
+    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null, .formal_input = formal_input, .arguments = arguments, .obligations = obligations.items };
     try budget.spend(2 * graph.calls.len);
     engine.call_results = try a.alloc([2]Atoms, graph.calls.len); @memset(engine.call_results, .{ .empty, .empty });
     engine.call_live = try a.alloc([2]bool, graph.calls.len); @memset(engine.call_live, .{ false, false });
@@ -634,6 +735,12 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     };
     for (graph.calls) |call| {
         try budget.step(); if (!controls[call.control] or !worlds[call.heap].live) continue;
+        const function = try model.findFunction(directory, call.function_id, budget);
+        for (call.arguments, 1..) |argument, parameter_index| {
+            const expected = function.parameter_types[parameter_index]; var reference = false;
+            for (directory.types) |type_row| { try budget.step(); if (try budget.equal(type_row.id, expected)) { reference = type_row.kind == .reference; break; } }
+            if (reference and !try engine.referenceArgument(argument, expected, call.heap)) { result.pending = .data_protocol; return result; }
+        }
         const receiver = call.receiver orelse { result.pending = .fixed_call; return result; };
         var resolved = false;
         for (receiver) |id| { try budget.step(); resolved = resolved or values[id].frames.items.len != 0; }
@@ -700,6 +807,19 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
                 try engine.atoms(&bound, worlds[exit.heap].bindings[id].atoms.items);
             }
             into.atoms = bound.items;
+            if (formal_input) |formal| for (formal.fixed) |fixed| {
+                try budget.step(); if (!try budget.equal(fixed.function_id, formal.function_id)) continue;
+                if (fixed.initialization_fields) |_| {
+                    var missing: std.ArrayListUnmanaged(model.Symbol) = .empty;
+                    for (engine.obligations, 0..) |obligation, ordinal| {
+                        try budget.step(); if (obligation.frame != id) continue;
+                        var absent = false; for (source) |exit| { try budget.step(); if (controls[exit.control] and worlds[exit.heap].live) absent = absent or worlds[exit.heap].missing[ordinal]; }
+                        if (absent) { if (missing.items.len == missing.capacity) try budget.spend(missing.items.len + 1); try budget.step(); try missing.append(a, obligation.field); }
+                    }
+                    into.missing_fields = missing.items;
+                }
+                break;
+            };
         }
         result.input_exits = exits;
     }
@@ -716,21 +836,21 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
 // Original immutable certificate interpretation retains its stronger entry and
 // native-field requirements. The effect-only boundary below does not relax it.
 pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, entry, null, false, false);
+    return analyzeImpl(allocator, directory, graph, budget, entry, null, &.{}, false, false);
 }
 
 // The graph is the complete current normalized constructor control projection,
 // not its fixed own-return certificate. Unsupported calls and data/heap forms
 // retain Pending; callers must keep complete callee uppers independently.
 pub fn analyzeControls(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, input, false, false);
+    return analyzeImpl(allocator, directory, graph, budget, null, input, &.{}, false, false);
 }
 
 // Effect-only lexical owner flow through all current live-prefix field stores.
 // Formal roots retain arbitrary categories and conditional owners across copy;
 // no actual allocation, identity, freshness, holding or return proof is made.
 pub fn analyzeEffects(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, input, true, false);
+    return analyzeImpl(allocator, directory, graph, budget, null, input, &.{}, true, false);
 }
 
 // Pure interpretation of an independently typed construction-frame return
@@ -738,5 +858,5 @@ pub fn analyzeEffects(allocator: std.mem.Allocator, directory: *const model.Dire
 // included in the immutable fixed graph. No effect-proof object, selected actual
 // entrance, allocation authority, physical Value clone or holding is accepted.
 pub fn analyzeReturns(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, input, true, true);
+    return analyzeImpl(allocator, directory, graph, budget, null, input, &.{}, true, true);
 }
