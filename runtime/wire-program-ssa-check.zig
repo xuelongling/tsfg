@@ -489,6 +489,38 @@ const Graph = struct {
             if(code==.eh_invoke or code==.eh_invoke_indirect)for(fact.successors[0..fact.count]) |next|try c.require(self.facts[next].predecessor_count==1);
         };
     }
+    const EnvironmentIdentity=union(enum) { allocation: t.EnvironmentRef, source: t.RegisterRef, unknown };
+    // One identity-preserving step, shared by creation authority and state.
+    // General joins remain the initializer provenance closure's responsibility.
+    fn environmentIdentity(self: *Graph, receiver: t.RegisterRef) Error!EnvironmentIdentity {
+        const c=self.c;
+        try c.charge(2); const definition=self.definitions[@intFromEnum(receiver)];
+        if(definition.position>=0) {
+            const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
+            switch(producer.data) {
+                .environment_alloc => |v| return .{.allocation=v.environment},
+                .domain_view,.domain_copy,.eh_carrier,.eh_assertion => {
+                    try c.charge(3); const source=producer.operands[0];
+                    if(!exact(self.carrierOf(receiver),self.carrierOf(source)))return .unknown;
+                    return .{.source=source};
+                },
+                else => return .unknown,
+            }
+        }
+        try c.step();
+        if(definition.block==0 or self.facts[definition.block].predecessor_count!=1)return .unknown;
+        try c.step(); var predecessors=Predecessors{.bits=self.facts[definition.block].predecessors};
+        const pred=(try predecessors.next(c)) orelse return .unknown;
+        try c.charge(2); const block=self.f.blocks[pred];
+        const branch_op=block.instructions[block.instructions.len-1];
+        if(branch_op.data!=.br)return .unknown;
+        try c.step();
+        for(self.f.blocks[definition.block].parameters,0..) |parameter,n| {
+            try c.step(); if(parameter!=receiver)continue;
+            try c.step(); return .{.source=branch_op.operands[n]};
+        }
+        return .unknown;
+    }
     fn environmentInitializers(self: *Graph) Error!void {
         if(self.mode!=.common or !self.has_environment_init)return;
         const c=self.c;
@@ -521,23 +553,18 @@ const Graph = struct {
         while(cursor<size) : (cursor+=1) {
             try c.step(); const receiver=pending[cursor]; const index=@intFromEnum(receiver);
             try c.require(exact(self.carrierOf(receiver),.{.environment=layout}));
-            const definition=self.definitions[index];
-            if(definition.position>=0) {
-                const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
-                switch(producer.data) {
-                    .environment_alloc => |allocation| { try c.require(allocation.environment==layout); born[index]=true; },
-                    // These existing Common operations retain the complete
-                    // input Env instance; domain_copy copies value objects,
-                    // but explicitly retains environments by identity.
-                    .domain_view,.domain_copy,.eh_carrier,.eh_assertion => {
-                        const source=producer.operands[0]; const source_index=@intFromEnum(source);
-                        try c.step(); try followers[source_index].append(c.allocator,receiver);
-                        if(!seen[source_index]) { seen[source_index]=true; pending[size]=source; size+=1; }
-                    },
-                    else => return error.InvalidShape,
-                }
-                continue;
+            switch(try self.environmentIdentity(receiver)) {
+                .allocation => |allocation| { try c.require(allocation==layout); born[index]=true; continue; },
+                .source => |source| {
+                    const source_index=@intFromEnum(source);
+                    try c.step(); try followers[source_index].append(c.allocator,receiver);
+                    if(!seen[source_index]) { seen[source_index]=true; pending[size]=source; size+=1; }
+                    continue;
+                },
+                .unknown => {},
             }
+            try c.step(); const definition=self.definitions[index];
+            try c.require(definition.position<0);
             // Block arguments preserve complete Env values through the exact
             // branch/route operand vectors already checked by operations().
             try c.require(definition.block!=0);
@@ -586,6 +613,12 @@ const Graph = struct {
     fn environmentDirectCellState(self: *Graph) Error!void {
         if(self.mode!=.common or !self.has_environment_access)return;
         const c=self.c;
+        // Cache only receivers used by cell operations. A transparent chain
+        // has one source at every step, including single-predecessor br
+        // arguments. Other joins/producers retain their existing treatment.
+        try c.charge(self.f.registers.len);
+        const allocations=try c.allocator.alloc(?t.RegisterRef,self.f.registers.len);
+        defer c.allocator.free(allocations); @memset(allocations,null);
         const Pair=struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
         var pairs: std.AutoHashMapUnmanaged(Pair,void)=.{}; defer pairs.deinit(c.allocator);
         for(self.f.blocks) |block| for(block.instructions) |op| {
@@ -593,28 +626,35 @@ const Graph = struct {
                 inline .environment_init,.environment_load,.environment_store => |v| v.slot,
                 else => continue,
             };
-            const receiver=op.operands[0];
-            try c.charge(2); const definition=self.definitions[@intFromEnum(receiver)];
-            if(definition.position<0)continue;
-            const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
-            if(producer.data!=.environment_alloc)continue;
+            const receiver=op.operands[0]; const index=@intFromEnum(receiver);
+            try c.step();
+            if(allocations[index]==null) {
+                var current=receiver; var remaining=self.f.registers.len;
+                while(remaining!=0) : (remaining-=1) {
+                    switch(try self.environmentIdentity(current)) {
+                        .allocation => { try c.step(); allocations[index]=current; break; },
+                        .source => |source| current=source,
+                        .unknown => break,
+                    }
+                }
+            }
+            try c.step(); const allocation=allocations[index] orelse continue;
             try c.row(Pair);
             const capacity=@as(usize,pairs.capacity()); const used=@as(usize,pairs.count());
             // This insert-only default-load map grows before lookup. Prepay
             // old buckets, new metadata and each retained pair's rehash/copy.
             if(used==capacity*std.hash_map.default_max_load_percentage/100)
                 try c.charge(capacity+@max(8,2*capacity)+3*used);
-            _=try pairs.getOrPut(c.allocator,.{.receiver=receiver,.slot=slot});
+            _=try pairs.getOrPut(c.allocator,.{.receiver=allocation,.slot=slot});
         };
         try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
         var iterator=pairs.keyIterator();
         while(true) {
             try c.step(); const pair=(iterator.next() orelse break).*;
             const count=self.f.blocks.len;
-            // Only the original SSA result is tracked. Its unique definition
-            // can replace its instance only when that allocation executes again.
-            // Alias/phi receivers retain their existing provenance rules; this
-            // pass supplies no cross-register or interprocedural cell-state proof.
+            // The unique original result resets this instance only when its
+            // allocation executes again. Proven transparent receivers share
+            // that cell; phi and interprocedural state remain separate.
             try c.charge(4*count);
             var last: [256]u2=undefined; @memset(last[0..count],0);
             var incoming: [256]u2=undefined; @memset(incoming[0..count],0);
@@ -624,7 +664,10 @@ const Graph = struct {
             for(self.f.blocks,0..) |block,b| for(block.instructions) |op| {
                 try c.step();
                 if(op.data==.environment_alloc and op.result.?==pair.receiver)last[b]=1
-                else if(op.data==.environment_init and op.operands[0]==pair.receiver and op.data.environment_init.slot==pair.slot)last[b]=2;
+                else if(op.data==.environment_init) {
+                    try c.step();
+                    if(allocations[@intFromEnum(op.operands[0])]==pair.receiver and op.data.environment_init.slot==pair.slot)last[b]=2;
+                }
             };
             // Possible states: bottom=0, Uninitialized=1, Initialized=2.
             // A block's last ordered reset/init determines its transfer. Union
@@ -653,7 +696,8 @@ const Graph = struct {
                     switch(op.data) {
                         .environment_alloc => if(op.result.?==pair.receiver) { state=1; },
                         inline .environment_init,.environment_load,.environment_store => |v| {
-                            if(op.operands[0]!=pair.receiver or v.slot!=pair.slot)continue;
+                            try c.step();
+                            if(allocations[@intFromEnum(op.operands[0])]!=pair.receiver or v.slot!=pair.slot)continue;
                             if(op.data==.environment_init) { try c.require(state==1); state=2; }
                             else try c.require(state==2);
                         },
