@@ -750,16 +750,51 @@ const Graph = struct {
             }
         }
     }
+    fn directGlobalBody(self: *Graph, target: t.FunctionRef) Error![]const ins.Instruction {
+        // The opcode's exact FunctionRef owns the call target. Only a simple
+        // same-module ordinary body is covered here, never a potential fixed
+        // upper, a display-name match or a transitive/conditional observation.
+        const c=self.c; try c.charge(5); const function=c.program.functions[@intFromEnum(target)];
+        if(function.role!=.ordinary or function.source!=self.f.source or function.blocks.len!=1)return &.{};
+        const body=function.blocks[0].instructions;
+        if(body[body.len-1].data!=.@"return")return &.{};
+        for(body) |op| {
+            try c.step(); switch(op.data) {
+                .fuel,.const_i32,.const_bool,.global_load,.@"return"=>{},
+                .global_store=>|v| if(v.initialize)return &.{},
+                else=>return &.{},
+            }
+        }
+        return body;
+    }
     fn globalInitialization(self: *Graph) Error!void {
         if(self.mode!=.common or self.f.role!=.module_initializer)return;
-        const c=self.c; const globals=c.program.tables.mode.common.modules.globals;
+        const c=self.c; const modules=c.program.tables.mode.common.modules; const globals=modules.globals;
         // GlobalRef identifies one program cell. Permission/defining-module
         // ownership remains the independent module-contracts obligation.
         try c.charge(globals.len);
         const used=try c.allocator.alloc(bool,globals.len); defer c.allocator.free(used); @memset(used,false);
+        var own_globals: []const t.GlobalRef=&.{};
+        for(modules.modules) |module| {
+            try c.step(); if(@intFromEnum(module.initializer)==self.function and module.source==self.f.source) { own_globals=module.globals; break; }
+        }
         for(self.f.blocks) |block| for(block.instructions) |op| {
-            try c.step(); const ref=switch(op.data) { inline .global_load,.global_store=>|v|v.global, else=>continue };
-            const index=@intFromEnum(ref); if(globals[index].source==self.f.source)used[index]=true;
+            try c.step(); switch(op.data) {
+                inline .global_load,.global_store=>|v| {
+                    const index=@intFromEnum(v.global); if(globals[index].source==self.f.source)used[index]=true;
+                },
+                .eh_invoke=>|v| if(own_globals.len!=0) {
+                    for(try self.directGlobalBody(v.callee)) |callee_op| {
+                        try c.step(); const ref=switch(callee_op.data) { inline .global_load,.global_store=>|access|access.global, else=>continue };
+                        for(own_globals) |owned| {
+                            try c.step(); if(owned==ref) {
+                                try c.step(); const index=@intFromEnum(ref); if(globals[index].source==self.f.source)used[index]=true; break;
+                            }
+                        }
+                    }
+                },
+                else=>{},
+            }
         };
         for(used,0..) |needed,index| {
             try c.step(); if(!needed)continue;
@@ -801,15 +836,21 @@ const Graph = struct {
                             if(v.initialize) { try c.require(state==1); state=2; } else try c.require(state==2);
                         },
                         .global_load=>|v| if(v.global==ref) { try c.require(state==2); },
+                        .eh_invoke=>|v| if(own_globals.len!=0) {
+                            for(try self.directGlobalBody(v.callee)) |callee_op| {
+                                try c.step(); const observed=switch(callee_op.data) { inline .global_load,.global_store=>|access|access.global, else=>continue };
+                                if(observed==ref)try c.require(state==2);
+                            }
+                        },
                         else=>{},
                     }
                 }
             }
         }
-        // Explicit cell operations in this initializer only. Callee/global
-        // observations, other module entries and Env instance state require
-        // their own interprocedural/activation proof; no completion receipt or
-        // initialization guarantee is inferred for them here.
+        // Covered direct bodies cannot initialize a Global and add no state
+        // mutation. Other callee shapes/targets/modules and Env instance state
+        // retain their separate proof obligations; no completion receipt or
+        // general interprocedural initialization guarantee is inferred here.
     }
     fn fuel(self: *Graph) Error!void {
         const c=self.c; var entries: usize=0;
