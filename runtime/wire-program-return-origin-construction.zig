@@ -72,7 +72,10 @@ const Fact = struct { atoms: Atoms = .empty, frames: Refs = .empty };
 const Binding = struct { unbound: bool = true, atoms: Atoms = .empty };
 const Obligation = struct { frame: Ref, field: model.Symbol };
 const Completed = struct { frame: Ref, fields: []const model.Symbol };
-const World = struct { live: bool = false, bindings: []Binding, missing: []bool, initializations: Initializations = .empty };
+// Separate from bind-once control state: every actual possible local birth
+// must be ready. Empty facts prove absence only for a fresh local namespace.
+const Birth = struct { ready: bool = false, unready: bool = false, repeated: bool = false };
+const World = struct { live: bool = false, bindings: []Binding, missing: []bool, births: []Birth, initializations: Initializations = .empty };
 const Frame = struct { role: ?*const model.Construction = null, new_target: ?model.Symbol = null, parent: ?Ref = null };
 
 fn construction(directory: *const model.Directory, id: model.Symbol, budget: *Budget) Error!*const model.Construction {
@@ -134,6 +137,14 @@ const Engine = struct {
     fn initializations(self:*Engine,into:*Initializations,source:[]const Initialization) Error!void {
         for(source) |*row| { try self.budget.spend(3); try self.add(Initialization,into,row.*); }
     }
+    fn birth(self: *Engine, world: *World, frame: Ref, ready: bool, prior: Birth) Error!void {
+        try self.budget.spend(3);
+        const fact = if (ready) &world.births[frame].ready else &world.births[frame].unready;
+        if (!fact.*) { fact.* = true; self.changed = true; }
+        if ((prior.ready or prior.unready) and !world.births[frame].repeated) {
+            world.births[frame].repeated = true; self.changed = true;
+        }
+    }
     fn merge(self: *Engine, into: *World, from: *const World, frame: ?Ref, replacement: ?[]const Atom, unbound: ?bool, completed: ?Completed) Error!void {
         try self.budget.step();
         if (!from.live) return;
@@ -145,6 +156,11 @@ const Engine = struct {
             const next = if (first) absent else target.unbound or absent;
             if (target.unbound != next) { target.unbound = next; self.changed = true; }
             try self.atoms(&target.atoms, if (selected and replacement != null) replacement.? else source.atoms.items);
+            try self.budget.spend(3);
+            const born = from.births[index]; const target_birth = &into.births[index];
+            if (born.ready and !target_birth.ready) { target_birth.ready = true; self.changed = true; }
+            if (born.unready and !target_birth.unready) { target_birth.unready = true; self.changed = true; }
+            if (born.repeated and !target_birth.repeated) { target_birth.repeated = true; self.changed = true; }
         }
         // MAY missing fields are the complement of MUST initialized fields.
         // Every live predecessor contributes, including late loop/join edges.
@@ -214,13 +230,80 @@ const Engine = struct {
     // Only the original caller state can prove that managed Data already
     // denotes an initialized, bound allocation. A declared Ref view alone
     // grants no category, object tag, receiver binding or field proof.
+    // This is one finite proof over the full current original argument Set,
+    // not independent per-member absence. Every incoming heap history must
+    // reach a complete member birth before entry. Tables live only this call.
+    fn referenceCoverage(self: *Engine, original_refs: []const Ref, heap: Ref) Error!bool {
+        try self.budget.spend(self.graph.nodes.len + 3 * self.graph.heaps.len);
+        const members = try self.allocator.alloc(bool, self.graph.nodes.len); @memset(members, false);
+        const marks = try self.allocator.alloc(u2, self.graph.heaps.len); @memset(marks, 0);
+        const next = try self.allocator.alloc(usize, self.graph.heaps.len); @memset(next, 0);
+        const stack = try self.allocator.alloc(Ref, self.graph.heaps.len);
+        // The ordinary proof above owns categories, self atoms and inventories.
+        // Snapshot identities without borrowing any growable values slice into
+        // the traversal. Mixed/foreign namespaces need their own exact mapping.
+        for (original_refs) |id| {
+            try self.budget.step();
+            for (self.values[id].atoms.items) |atom| {
+                try self.budget.spend(2);
+                if (atom.source != .allocation or self.graph.nodes[atom.source.allocation] != .receiver_frame) return false;
+                members[atom.source.allocation] = true;
+            }
+        }
+        try self.budget.spend(2); marks[heap] = 1; stack[0] = heap; var count: usize = 1;
+        while (count != 0) {
+            try self.budget.step(); const current = stack[count - 1];
+            // An uncomputed predecessor is not proved dead. Early callers defer
+            // normally; stable finish rechecks the same original refs and heap.
+            if (!self.worlds[current].live) return false;
+            const row = self.graph.heaps[current]; var covered = false;
+            if (row == .call) {
+                const call = self.graph.calls[row.call.call];
+                for (self.calls.items) |*fact| {
+                    try self.budget.step();
+                    if (fact.call != row.call.call or !members[fact.receiver]) continue;
+                    try self.budget.spend(5);
+                    if (fact.caller_graph != self.graph or fact.fixed.contract.return_origins == null or
+                        fact.graph != &fact.fixed.contract.return_origins.? or fact.analysis.pending != null or
+                        !try self.budget.equal(fact.fixed.function_id, call.function_id)) return false;
+                    const exits = fact.analysis.input_exits orelse return false;
+                    if (exits.input != fact.input) return false;
+                    const binding = if (row.call.completion == .normal) exits.normal else exits.language;
+                    if (!binding.live or binding.unbound or fact.fixed.initialization_fields == null or
+                        binding.missing_fields == null or binding.missing_fields.?.len != 0) continue;
+                    for (binding.atoms) |atom| {
+                        try self.budget.step();
+                        if (atom.category == .object and atom.source == .allocation and atom.source.allocation == fact.input) covered = true;
+                    }
+                }
+            }
+            if (covered) { try self.budget.spend(2); marks[current] = 2; count -= 1; continue; }
+            const length: usize = switch (row) { .entry => return false, .join => |join| join.inputs.len, else => 1 };
+            if (length == 0) return false;
+            if (next[current] == length) { try self.budget.spend(2); marks[current] = 2; count -= 1; continue; }
+            try self.budget.spend(2);
+            const parent = switch (row) {
+                .entry => unreachable,
+                .join => |join| join.inputs[next[current]],
+                inline .store, .copy, .receiver_action => |operation| operation.previous,
+                .call => |completion| self.graph.calls[completion.call].heap,
+            };
+            next[current] += 1;
+            switch (marks[parent]) {
+                1 => return false, // A gray heap cycle is not an availability proof.
+                2 => {}, // Reuse only a completed proof in THIS temporary table.
+                else => { try self.budget.spend(3); marks[parent] = 1; stack[count] = parent; count += 1; },
+            }
+        }
+        return true;
+    }
     fn referenceArgument(self: *Engine, argument: []const Ref, expected: model.Symbol, heap: Ref) Error!bool {
         const Probe = struct { engine: *Engine, refs: []const Ref, expected: model.Symbol, heap: Ref };
         var work: std.ArrayListUnmanaged(Probe) = .empty;
         try self.budget.spend(1); try work.append(self.allocator, .{ .engine = self, .refs = argument, .expected = expected, .heap = heap });
         var cursor: usize = 0; var found = false;
         while (cursor < work.items.len) : (cursor += 1) {
-          try self.budget.step(); const probe = work.items[cursor]; const current = probe.engine;
+          try self.budget.step(); const probe = work.items[cursor]; const current = probe.engine; var conditional = false;
           for (probe.refs) |id| {
             try self.budget.step(); const value = current.values[id];
             if (value.frames.items.len != 0 or value.atoms.items.len == 0) return false;
@@ -270,15 +353,30 @@ const Engine = struct {
                 const fixed = try current.fixedFunction(role.function_id orelse return false) orelse return false;
                 _ = fixed.initialization_fields orelse return false;
                 const before = current.worlds[probe.heap].bindings[frame];
-                if (before.unbound or before.atoms.items.len == 0) return false;
+                if (before.atoms.items.len == 0) return false;
                 var bound = false; for (before.atoms.items) |old| { try self.budget.step(); if (std.meta.eql(old, atom)) bound = true; }
                 if (!bound) return false;
+                // A repeated birth at one static frame cannot inherit an
+                // older object's MUST facts. First direct births retain the
+                // ordinary proof, including a known-empty bind-once object.
+                try self.budget.spend(3); const born = current.worlds[probe.heap].births[frame];
+                const local = current.graph.nodes[frame] == .receiver_frame;
+                if (local and born.repeated) return false;
+                var incomplete = before.unbound;
                 for (current.obligations, current.worlds[probe.heap].missing) |obligation, missing| {
-                    try self.budget.step(); if (obligation.frame == frame and missing) return false;
+                    try self.budget.step(); if (obligation.frame == frame and missing) incomplete = true;
+                }
+                if (incomplete) {
+                    // Only this original fresh local allocation namespace can
+                    // exclude an unborn predecessor. Parameters, input0 and
+                    // scoped/foreign births retain their original MUST proof.
+                    if (!local or !born.ready or born.unready or born.repeated) return false;
+                    conditional = true;
                 }
                 found = true;
             }
         }
+          if (conditional and !try current.referenceCoverage(probe.refs, probe.heap)) return false;
         }
         return found;
     }
@@ -431,7 +529,23 @@ const Engine = struct {
                 if (!absent) { if (completed.items.len == completed.capacity) try self.budget.spend(completed.items.len + 1); try self.budget.step(); try completed.append(self.allocator, field); }
             }
         }
+        // Snapshot the original input BEFORE transfer. Reading the output
+        // would mistake this same fixed-point event for a second birth.
+        try self.budget.spend(3); const prior = self.worlds[call.heap].births[frame];
         try self.merge(&self.worlds[heap_index], &self.worlds[call.heap], frame, replacement.items, binding.unbound, .{ .frame = frame, .fields = completed.items });
+        // The original completed child's ordinary per-completion MUST facts
+        // certify its own input allocation. Never derive ready from this
+        // caller's conditional supplement or from a merely declared Ref view.
+        var own = false;
+        for (binding.atoms) |atom| {
+            try self.budget.step();
+            if (atom.category == .object and atom.source == .allocation and atom.source.allocation == fact.input) own = true;
+        }
+        const ready = own and !binding.unbound and fact.fixed.initialization_fields != null and
+            binding.missing_fields != null and binding.missing_fields.?.len == 0;
+        // This runs only for an actual live resolved completion. A paused
+        // Demand/bottom is not an unknown birth. Earlier bad births persist.
+        try self.birth(&self.worlds[heap_index], frame, ready, prior);
         const live = &self.call_live[row.call][@intFromEnum(row.completion)]; if (!live.*) { live.* = true; self.changed = true; }
     }
     // Empty Data is not normally an absence proof. Only a finite, nonempty
@@ -521,7 +635,11 @@ const Engine = struct {
             switch (row.action) {
                 .allocate => if (normal) {
                     const value = [_]Atom{.{ .source = .{ .allocation = id }, .category = .object }};
+                    try self.budget.spend(3); const prior = source.births[id];
                     try self.outcome(index, source, id, &value, null, null);
+                    // Every direct allocation is fresh; a later constructor
+                    // cannot retroactively initialize this older instance.
+                    try self.birth(&self.worlds[index], id, false, prior);
                 },
                 .bind => {
                     if (normal and before.unbound and selected.items.len != 0) try self.outcome(index, source, id, selected.items, selected.items, false);
@@ -769,7 +887,7 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
         }
     };
     try budget.spend(graph.heaps.len); const worlds = try a.alloc(World, graph.heaps.len);
-    for (worlds) |*world| { try budget.spend(graph.nodes.len + obligations.items.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len), .missing = try a.alloc(bool, obligations.items.len) }; @memset(world.bindings, .{}); @memset(world.missing, false); }
+    for (worlds) |*world| { try budget.spend(4 * graph.nodes.len + obligations.items.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len), .missing = try a.alloc(bool, obligations.items.len), .births = try a.alloc(Birth, graph.nodes.len) }; @memset(world.bindings, .{}); @memset(world.missing, false); @memset(world.births, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
     try budget.spend(1); const engine = try a.create(Engine);
     engine.* = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null, .formal_input = formal_input, .arguments = arguments, .parameter_sources = sources, .obligations = obligations.items };

@@ -745,13 +745,46 @@ const Engine = struct {
         }
         return false;
     }
+    // Prove a canonical fresh local receiver allocation without manufacturing
+    // a Location while validating content. Equal numeric refs in another
+    // analysis/frame, input0 and arbitrary local/parameter roots do not qualify.
+    fn localReceiverAllocation(self: *Engine, original_index: usize, original_source: R, base: R) E!bool {
+        try self.budget.spend(9); const wanted = self.locations.items[base];
+        if (wanted.kind != .root or wanted.owner != .local or wanted.type_id == null or wanted.key == null or
+            wanted.input != null or wanted.source != null or wanted.layout != null or wanted.function_id != null or
+            wanted.environment != null or wanted.view != null or !try self.budget.equal(wanted.key.?, "receiver-allocation")) return false;
+        var index = original_index; var source = original_source;
+        while (true) {
+            try self.budget.spend(4); const frame = self.frames.items[index];
+            const receiver = frame.receiver orelse return false;
+            if (source >= receiver.frames.len or source >= frame.graph.nodes.len) return false;
+            if (frame.receiver_import) |entry| if (source == entry.fact.input) {
+                try self.budget.spend(4);
+                if (entry.fact.analysis != receiver or entry.fact.graph != frame.graph or entry.fact.caller_graph != self.frames.items[entry.caller].graph) return false;
+                index = entry.caller; source = entry.fact.receiver; continue;
+            };
+            const node = frame.graph.nodes[source];
+            if (node != .receiver_frame or node.receiver_frame.parent != null or receiver.frames[source].parent != null or
+                receiver.frames[source].new_target == null or receiver.frames[source].construction == null or
+                wanted.scope != index or wanted.node != source or !try self.sameOptional(wanted.type_id, receiver.frames[source].new_target)) return false;
+            for (self.directory.constructions) |role| {
+                try self.budget.step();
+                if (try self.budget.equal(role.id, receiver.frames[source].construction.?))
+                    return role.kind == .explicit and role.base == null and try self.budget.equal(role.owner, receiver.frames[source].new_target.?);
+            }
+            return false;
+        }
+    }
     fn initialized(self: *Engine, start: Source, base: R, selector: S, view: S) E!bool {
         const Task = struct { source: Source, base: R };
         var work: std.ArrayListUnmanaged(Task) = .empty; var seen: std.ArrayListUnmanaged(Task) = .empty;
+        try self.budget.spend(2); var before_birth = false; var revisited = false;
         try self.append(Task, &work, .{ .source = start, .base = base }); var cursor: usize = 0; var defined = false;
         while (cursor < work.items.len) : (cursor += 1) {
             const current = work.items[cursor]; var visited = false;
-            for (seen.items) |old| { try self.budget.step(); if (std.meta.eql(old, current)) { visited = true; break; } } if (visited) continue; try self.append(Task, &seen, current);
+            for (seen.items) |old| { try self.budget.step(); if (std.meta.eql(old, current)) { visited = true; break; } }
+            // Deduplication alone cannot prove a cyclic equation precedes birth.
+            if (visited) { revisited = true; continue; } try self.append(Task, &seen, current);
             const frame = self.frames.items[current.source.frame]; const node = self.locations.items[current.base];
             switch (frame.graph.heaps[current.source.heap]) {
                 .entry => {
@@ -765,7 +798,13 @@ const Engine = struct {
                         for (frame.sources.items) |source| try self.append(Task, &work, .{ .source = source, .base = current.base });
                         continue;
                     }
-                    if (node.scope == current.source.frame) return false;
+                    if (node.scope == current.source.frame) {
+                        if (!try self.localReceiverAllocation(current.source.frame, node.node, current.base)) return false;
+                        // Every uninitialized real birth below is a hard stop.
+                        // Reaching this exact fresh namespace's entry therefore
+                        // excludes only a predecessor before its object exists.
+                        before_birth = true; continue;
+                    }
                     // A callee-local ENV does not exist on an alternative
                     // target's branch before its own activation. That absence
                     // is not an uninitialized instance of the same ENV. A
@@ -809,11 +848,22 @@ const Engine = struct {
                 },
                 .receiver_action => |row| {
                     const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return false; };
-                    if (receiver.heap_live[current.source.heap]) try self.append(Task, &work, .{ .source = .{ .frame = current.source.frame, .heap = row.previous }, .base = current.base });
+                    if (receiver.heap_live[current.source.heap]) {
+                        if (row.action == .allocate and row.completion == .normal) {
+                            for (receiver.action_results[current.source.heap]) |atom| {
+                                try self.budget.step();
+                                if (atom.category == .object and atom.source == .allocation and
+                                    try self.localReceiverAllocation(current.source.frame, atom.source.allocation, current.base)) return false;
+                            }
+                        }
+                        try self.append(Task, &work, .{ .source = .{ .frame = current.source.frame, .heap = row.previous }, .base = current.base });
+                    }
                 },
             }
         }
-        return defined;
+        // A repeated equation may hide a heap/alias cycle. Keep that case
+        // unknown when this proof would otherwise depend on birth absence.
+        return defined and (!before_birth or !revisited);
     }
     fn completeCapture(self: *Engine, source: Source, bases: []const R, layout: S, key: S) E!void {
         const environments = try self.selectEnvironments(bases, layout);

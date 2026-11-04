@@ -517,7 +517,7 @@ const ReceiverCertificate = struct {
         const graph = self.graphs[side]; var id = start; var terminal = false;
         for (0..graph.nodes.len + 1) |_| {
             try self.budget.step(); switch (graph.nodes[id]) {
-                .join => |row| { if (row.inputs.len == 0) return .dead; if (row.inputs.len != 1) return .pending; id = row.inputs[0]; },
+                .join => |row| { if (row.inputs.len == 0) return .dead; if (row.inputs.len != 1) { terminal = true; break; } id = row.inputs[0]; },
                 .gate => |row| {
                     const predicate = try self.controlView(side, row.control);
                     if (predicate == .dead) return .dead;
@@ -633,7 +633,7 @@ const ReceiverCertificate = struct {
                     .capture => |row| try self.budget.equal(row.@"type", y.capture.@"type") and try self.budget.equal(row.id, y.capture.id) and try self.budget.equal(row.layout, y.capture.layout),
                     .code => |row| try self.budget.equal(row.@"type", y.code.@"type") and try self.budget.equal(row.function_id, y.code.function_id) and (row.environment == null) == (y.code.environment == null),
                     .projection => |row| try self.budget.equal(row.@"type", y.projection.@"type") and try self.budget.equal(row.selector, y.projection.selector) and try self.budget.equal(row.view, y.projection.view),
-                    inline .copy, .gate => |row, tag| try exactEquation(?Symbol, row.@"type", @field(y, @tagName(tag)).@"type", self.budget),
+                    inline .copy, .gate, .join => |row, tag| try exactEquation(?Symbol, row.@"type", @field(y, @tagName(tag)).@"type", self.budget),
                     .receiver_value => |row| try exactEquation(?Symbol, row.@"type", y.receiver_value.@"type", self.budget),
                     .call => |row| row.completion == y.call.completion and try exactEquation(?Symbol, row.@"type", y.call.@"type", self.budget),
                     // The reader joined this immutable construction ID to its
@@ -685,6 +685,18 @@ const ReceiverCertificate = struct {
                 .projection => |row| {
                     const other = b.nodes[obligation.right].projection;
                     if (!try self.values(row.bases, other.bases) or !try self.pair(.heap, row.heap, other.heap) or !try self.pair(.control, row.control, other.control)) return false;
+                },
+                .join => |row| {
+                    const other = b.nodes[obligation.right].join;
+                    if (row.inputs.len != other.inputs.len) return false;
+                    // A phi is a core equation. Keep every incoming identity,
+                    // including its control gate; no dead input is erased.
+                    try self.budget.spend(row.inputs.len);
+                    for (row.inputs, other.inputs) |left, right| {
+                        try self.budget.step();
+                        if (try self.valueView(0, left) != .id or try self.valueView(1, right) != .id) return false;
+                        if (!try self.pair(.value, left, right)) return false;
+                    }
                 },
                 .gate => |row| {
                     const other = b.nodes[obligation.right].gate;
