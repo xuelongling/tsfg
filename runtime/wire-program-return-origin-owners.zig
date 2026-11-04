@@ -383,9 +383,9 @@ const Engine = struct {
                 const role = protocol.construction orelse { self.pending = .receiver_protocol; return; };
                 const refs = call.receiver orelse { self.pending = .receiver_protocol; return; };
                 // The borrowed construction analysis has already interpreted
-                // this supported no-Data/no-ENV, standalone fixed leaf. Keep
+                // this supported scalar-Data/no-ENV, standalone fixed leaf. Keep
                 // its original graph and facts in this same ordinary Engine.
-                if (frame.receiver_import != null or call.arguments.len != 0 or call.environment != null or call.callee != null or protocol.parameter_types.len != 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
+                if (frame.receiver_import != null or call.arguments.len > 1 or call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
                 var selected: ?*const construction.CallFact = null;
                 for (receiver.calls) |*fact| {
                     try self.budget.step(); if (fact.call != ordinal) continue;
@@ -394,13 +394,26 @@ const Engine = struct {
                 const fact = selected orelse { self.pending = .receiver_protocol; return; };
                 if (fact.caller_graph != frame.graph or fact.fixed.contract.return_origins == null or fact.graph != &fact.fixed.contract.return_origins.? or fact.graph != graph or !try self.budget.equal(fact.fixed.function_id, call.function_id) or fact.receiver >= frame.graph.nodes.len or fact.input >= graph.nodes.len or graph.nodes[fact.input] != .receiver_input or graph.calls.len != 0 or fact.analysis.calls.len != 0 or !try self.receiverFacts(graph, fact.analysis) or !try self.receiverRefs(frame, refs, fact.receiver)) { self.pending = .receiver_protocol; return; }
                 const upper = fact.fixed.contract.upper;
-                if (fixed.parameters.len != 1 or fixed.captures.len != 0 or upper.parameters.len != 1 or upper.parameters[0].index != 0 or upper.captures.len != 0 or fixed.may_throw != upper.facets.may_throw or fixed.parameters[0].read != upper.parameters[0].read or fixed.parameters[0].write != upper.parameters[0].write or fixed.parameters[0].structural != upper.parameters[0].structural) { self.pending = .receiver_protocol; return; }
+                if (fixed.parameters.len != protocol.parameter_types.len or fixed.captures.len != 0 or upper.parameters.len != fixed.parameters.len or upper.captures.len != 0 or fixed.may_throw != upper.facets.may_throw) { self.pending = .receiver_protocol; return; }
+                for (fixed.parameters, upper.parameters, 0..) |flags, parameter, parameter_index| {
+                    try self.budget.step(); if (parameter.index != parameter_index or flags.read != parameter.read or flags.write != parameter.write or flags.structural != parameter.structural) { self.pending = .receiver_protocol; return; }
+                }
                 const caller_frame = frame.graph.nodes[fact.receiver].receiver_frame;
                 if (caller_frame.parent != null or caller_frame.new_target == null or !try self.budget.equal(caller_frame.construction, role.id) or fact.analysis.input_exits == null or fact.analysis.input_exits.?.input != fact.input) { self.pending = .receiver_protocol; return; }
                 if (receiver.frames[fact.receiver].construction == null or !try self.budget.equal(receiver.frames[fact.receiver].construction.?, role.id) or !try self.sameOptional(receiver.frames[fact.receiver].new_target, caller_frame.new_target) or receiver.frames[fact.receiver].parent != null or fact.analysis.frames[fact.input].construction == null or !try self.budget.equal(fact.analysis.frames[fact.input].construction.?, role.id) or fact.analysis.frames[fact.input].new_target != null or fact.analysis.frames[fact.input].parent != null) { self.pending = .receiver_protocol; return; }
-                const arguments = try self.allocate(Set, 1); arguments[0] = .empty;
+                const arguments = try self.allocate(Set, protocol.parameter_types.len); @memset(arguments, .empty);
                 const receiver_location = try self.receiverLocation(index, fact.receiver, true) orelse return;
                 try self.add(&arguments[0], receiver_location);
+                for (call.arguments, 1..) |refs_argument, parameter_index| {
+                    const expected = protocol.parameter_types[parameter_index];
+                    if ((try self.typeRow(expected)).kind != .scalar) { self.pending = .receiver_protocol; return; }
+                    arguments[parameter_index] = try self.resolved(frame, refs_argument);
+                    if (arguments[parameter_index].items.len == 0) { self.pending = .receiver_protocol; return; }
+                    for (arguments[parameter_index].items) |location_id| {
+                        try self.budget.step(); const value = self.locations.items[location_id];
+                        if (value.kind != .root or value.type_id == null or !try self.budget.equal(value.type_id.?, expected)) { self.pending = .receiver_protocol; return; }
+                    }
+                }
                 const target = try self.ensure(graph, call.function_id, frame.graph, ordinal, arguments, .empty, frame.heaps[call.heap].items, .{ .frame = index, .heap = call.heap }, fact.analysis, .{ .caller = index, .fact = fact });
                 try self.add(&frame.targets[ordinal], target); continue;
             }

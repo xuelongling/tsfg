@@ -25,3 +25,15 @@ test('fixed constructor owner payloads retain original frames and initialized co
 test('constructor owner imports keep full permissions, separate completions, and pending boundaries', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-call-owners-negative-test.zig', prefix: 'r03-constructor-call-owners-negative-', expectedPasses: 5 });
 });
+
+test('typed scalar constructor arguments retain their original initialized payload', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-scalar-argument-test.zig', prefix: 'r03-constructor-scalar-argument-', expectedPasses: 1 });
+});
+
+test('scalar constructor arguments retain caller input identity', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-scalar-formal-test.zig', prefix: 'r03-constructor-scalar-formal-', expectedPasses: 1 });
+});
+
+test('scalar constructor arguments respect typed boundaries and full effect permissions', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-scalar-negative-test.zig', prefix: 'r03-constructor-scalar-negative-', expectedPasses: 4 });
+});
