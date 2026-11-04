@@ -7,5 +7,5 @@ test('fixed lexical ENV return owners preserve saved heaps full uppers and paire
 });
 
 test('fixed capture transfer preserves caller permissions and pending aggregate contents', async () => {
-  await nativeUnit({ source: 'runtime/wire-program-effects-check.zig', prefix: 'r03-fixed-capture-effects-', expectedPasses: 8 });
+  await nativeUnit({ source: 'runtime/wire-program-effects-check.zig', prefix: 'r03-fixed-capture-effects-', expectedPasses: 9 });
 });

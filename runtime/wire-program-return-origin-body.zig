@@ -193,15 +193,19 @@ const CFG = struct {
         if (!found.environment_metadata_complete) { self.b.pending = .archive_function; return null; }
         return found;
     }
-    fn invoke(self: *CFG, target: t.FunctionRef, op: *const wire.instruction.Instruction, flow: Flow, function_id: origin.Symbol, block: usize, ordinal: usize, indirect: bool) context.Error!void {
+    fn invoke(self: *CFG, target: t.FunctionRef, op: *const wire.instruction.Instruction, flow: Flow, function_id: origin.Symbol, block: usize, ordinal: usize, mode: enum { direct, indirect, method }) context.Error!void {
+        const indirect = mode == .indirect; const method = mode == .method;
         const row = try self.functionRow(target) orelse return;
         const abi = self.b.c.program.tables.mode.common.abis[@intFromEnum(self.b.c.program.functions[@intFromEnum(target)].abi)];
         if (abi.receiver_frame != null or abi.construction != null) { self.b.pending = .entry_protocol; return; }
+        // Dynamic method operands carry receiver Data and evaluated arguments,
+        // with no hidden ENV transport. Keep that unsupported entrance pending.
+        if (method and (row.kind != .method or abi.receiver == null or row.lexical_environment != null or abi.lexical_environment != null)) { self.b.pending = .entry_protocol; return; }
         const hidden: usize = if (indirect or abi.lexical_environment != null) 1 else 0;
-        if (op.operands.len < hidden or op.operands.len - hidden != row.parameter_types.len) { self.b.pending = .raw_input; return; }
+        if (op.operands.len < hidden + row.parameter_types.len or (!method and op.operands.len - hidden != row.parameter_types.len)) { self.b.pending = .raw_input; return; }
         try self.b.c.charge(row.parameter_types.len + 1);
         const arguments = try self.b.allocator.alloc([]const origin.Ref, row.parameter_types.len);
-        for (op.operands[hidden..], arguments) |reg, *into| { try self.b.c.step(); into.* = try self.one(self.registerRef(reg)); }
+        for (op.operands[hidden..][0..row.parameter_types.len], arguments) |reg, *into| { try self.b.c.step(); into.* = try self.one(self.registerRef(reg)); }
         const callee = if (indirect) try self.one(self.registerRef(op.operands[0])) else null;
         var environment_refs: ?[]const origin.Ref = null;
         if (row.lexical_environment) |layout| {
@@ -210,8 +214,8 @@ const CFG = struct {
         const id = self.calls.items.len; try self.b.c.row(origin.Call);
         if (self.calls.items.len == self.calls.capacity) try self.b.c.charge(self.calls.items.len + 1);
         try self.calls.append(self.b.allocator, .{ .function_id = row.id, .arguments = arguments, .environment = environment_refs, .callee = callee, .receiver = null, .heap = flow.heap, .control = flow.control, .site = try self.site(function_id, op, block, ordinal) });
-        const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, else => unreachable };
-        const language = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, else => unreachable };
+        const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, .common_method_invoke => |call| call.normal, else => unreachable };
+        const language = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, .common_method_invoke => |call| call.exceptional, else => unreachable };
         inline for (.{ origin.Completion.normal, origin.Completion.language }) |completion| {
             const value = try self.b.value(.{ .call = .{ .@"type" = if (completion == .normal) row.return_type else null, .call = id, .completion = completion } });
             const next = Flow{ .heap = try self.heap(.{ .call = .{ .call = id, .completion = completion } }), .control = try self.control(.{ .call = .{ .call = id, .completion = completion } }) };
@@ -588,12 +592,17 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     const f = &c.program.functions[@intFromEnum(function)]; const v = &c.program.tables.mode.common;
     const abi = &v.abis[@intFromEnum(f.abi)];
     if (f.role == .construction_body) { try receiverBody(c, function, directory, budget, &result, .certificate); return result; }
-    if (f.role != .ordinary or abi.receiver != null or abi.construction != null or abi.receiver_frame != null) { result.pending = .entry_protocol; return result; }
+    if (f.role != .ordinary or abi.construction != null or abi.receiver_frame != null) { result.pending = .entry_protocol; return result; }
     const hidden: usize = if (abi.lexical_environment != null) 1 else 0;
+    const receiver: usize = if (abi.receiver != null) 1 else 0;
+    if (abi.receiver) |binding| {
+        try c.step(); const declared = v.storage.bindings[@intFromEnum(binding)].@"type";
+        if (f.registers[@intFromEnum(f.blocks[0].parameters[hidden])].view != declared) { result.pending = .raw_input; return result; }
+    }
     for (f.registers) |*reg| { try c.step(); switch (reg.carrier) { .domain, .@"type", .payload, .environment => {}, else => { result.pending = .entry_protocol; return result; } } }
     for (abi.parameters, abi.argument_types, 0..) |binding, incoming, index| {
         try c.step(); const declared = v.storage.bindings[@intFromEnum(binding)].@"type";
-        if (incoming != declared or f.registers[@intFromEnum(f.blocks[0].parameters[hidden + index])].view != declared) { result.pending = .raw_input; return result; }
+        if (incoming != declared or f.registers[@intFromEnum(f.blocks[0].parameters[hidden + receiver + index])].view != declared) { result.pending = .raw_input; return result; }
     }
     // This complete-op preflight does not omit dead definitions, side effects,
     // calls, handlers or terminators. Unsupported semantics make the WHOLE body
@@ -605,7 +614,7 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
             .global_load, .domain_field_read, .domain_field_store, .domain_array_read, .domain_array_store, .domain_array_length, .domain_array_resize,
             .common_typed_array_create, .domain_array_create, .domain_copy,
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store,
-            .function_make, .eh_invoke, .eh_invoke_indirect, .eh_route => {},
+            .function_make, .eh_invoke, .eh_invoke_indirect, .common_method_invoke, .eh_route => {},
             .global_store => { result.pending = .global_payload; return result; },
             .domain_read_span => { result.pending = .span_transfer; return result; },
             .add, .sub, .mul, .div, .rem, .shl, .shr, .ushr, .@"and", .@"or", .xor, .neg, .@"not", .pos, .bool_not, .eq, .ne, .lt, .le, .gt, .ge => {
@@ -643,10 +652,17 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
             try cfg.insert(&cfg.values[@intFromEnum(f.blocks[0].parameters[0])], input);
         }
     }
+    if (abi.receiver) |binding| {
+        const id = try builder.typeSymbol(v.storage.bindings[@intFromEnum(binding)].@"type");
+        if (id) |view| {
+            const input = try builder.value(.{ .parameter = .{ .@"type" = view, .index = 0 } });
+            try cfg.insert(&cfg.values[@intFromEnum(f.blocks[0].parameters[hidden])], input);
+        }
+    }
     for (abi.parameters, 0..) |binding, index| {
-        try c.step(); const reg = f.blocks[0].parameters[hidden + index];
+        try c.step(); const reg = f.blocks[0].parameters[hidden + receiver + index];
         const id = try builder.typeSymbol(v.storage.bindings[@intFromEnum(binding)].@"type") orelse break;
-        const input = try builder.value(.{ .parameter = .{ .@"type" = id, .index = index } });
+        const input = try builder.value(.{ .parameter = .{ .@"type" = id, .index = receiver + index } });
         try cfg.insert(&cfg.values[@intFromEnum(reg)], input);
     }
     if (builder.pending) |reason| { result.pending = reason; return result; }
@@ -657,12 +673,21 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
         try c.step(); switch (op.data) {
             .fuel => {}, // Request fuel control is not a Graph5 language exit.
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => flow = try cfg.lexical(op, flow, function_id, block_index, ordinal),
-            .eh_invoke => |call| try cfg.invoke(call.callee, op, flow, function_id, block_index, ordinal, false),
+            .eh_invoke => |call| try cfg.invoke(call.callee, op, flow, function_id, block_index, ordinal, .direct),
+            .common_method_invoke => |call| {
+                const arms = v.views.dispatch[@intFromEnum(call.dispatch)].method.arms;
+                if (arms.len == 0) { builder.pending = .fixed_targets; break; }
+                for (arms) |arm| {
+                    try c.step(); const target = arm.target orelse { builder.pending = .fixed_targets; break; };
+                    try cfg.invoke(target, op, flow, function_id, block_index, ordinal, .method);
+                    if (builder.pending != null) break;
+                }
+            },
             .eh_invoke_indirect => {
                 var found = false;
                 for (v.closures.calls) |call| {
                     try c.step(); if (call.function != function or @intFromEnum(call.block) != block_index or call.instruction != ordinal) continue;
-                    for (call.targets) |target| { try c.step(); found = true; try cfg.invoke(target, op, flow, function_id, block_index, ordinal, true); }
+                    for (call.targets) |target| { try c.step(); found = true; try cfg.invoke(target, op, flow, function_id, block_index, ordinal, .indirect); }
                 }
                 if (!found) builder.pending = .fixed_targets;
             },

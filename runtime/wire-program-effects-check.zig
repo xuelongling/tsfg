@@ -2248,3 +2248,327 @@ test "receiver shared owner exporter preserves saved parent slots and the callab
         @field(fixture.parameter[0], flag) = true;
     }
 }
+
+// The method adapter uses a self-contained literal metadata DTO, not a test
+// module import or Source packet. No canonical identity or Actual admission is
+// claimed. Layout/SSA/SourcePlan/Directory and the real fixed adapter are tested.
+const MethodAdapterDTO = struct {
+    const wire = model;
+    const storage = @import("wire-program-storage.zig");
+    const control = @import("wire-program-control.zig");
+    const context = @import("wire-program-refcheck-context.zig");
+    const origin = origin_model;
+    const refs = publication_refs;
+    const layout = @import("wire-program-layout-check.zig");
+    const ssa = @import("wire-program-ssa-check.zig");
+    const correspondence = @import("wire-program-source-correspondence.zig");
+    const ins = wire.instruction;
+    const a_type: t.TypeRef = @enumFromInt(0);
+    const b_type: t.TypeRef = @enumFromInt(1);
+    const a_text = "sha256:" ++ "11" ** 32;
+    const b_text = "sha256:" ++ "22" ** 32;
+    const caller_text = "sha256:" ++ "44" ** 32;
+    const method_a_text = "sha256:" ++ "55" ** 32;
+    const method_b_text = "sha256:" ++ "66" ** 32;
+    const method_a_id = "sha256:" ++ "aa" ** 32;
+    const method_b_id = "sha256:" ++ "bb" ** 32;
+    const domain_text = "sha256:" ++ "cc" ** 32;
+    const signature_a = "sha256:" ++ "dd" ** 32;
+    const signature_b = "sha256:" ++ "ee" ** 32;
+    const environment_text = "sha256:" ++ "77" ** 32;
+    const payload_text = "payload:sha256:db46cd091d08f951a4a1564e8cf24702dca6137fe0585bbfe256c522e6ee3332";
+    const ac: t.Carrier = .{ .@"type" = a_type };
+    const bc: t.Carrier = .{ .@"type" = b_type };
+    const dc: t.Carrier = .{ .domain = @enumFromInt(0) };
+    const ec: t.Carrier = .{ .environment = @enumFromInt(0) };
+    const r0: t.RegisterRef = @enumFromInt(0);
+    const r1: t.RegisterRef = @enumFromInt(1);
+    const r2: t.RegisterRef = @enumFromInt(2);
+    const r3: t.RegisterRef = @enumFromInt(3);
+    const declaration: t.Origin = .{ .source = @enumFromInt(0), .start = 0, .end = 80 };
+    const operation: t.Origin = .{ .source = @enumFromInt(0), .start = 10, .end = 20 };
+    const fuel_properties = [_]t.JsonMember{.{ .key = "event", .value = .{ .integer = 1 } }};
+    const view_properties = [_]t.JsonMember{.{ .key = "target", .value = .{ .string = a_text } }};
+    const invoke_properties = [_]t.JsonMember{
+        .{ .key = "function_id", .value = .{ .string = method_a_text } },
+        .{ .key = "signature_hash", .value = .{ .string = signature_a } },
+        .{ .key = "dispatch", .value = .{ .array = &.{
+            .{ .object = &.{ .{ .key = "receiver_type", .value = .{ .string = a_text } }, .{ .key = "target", .value = .{ .string = method_a_text } }, .{ .key = "signature_hash", .value = .{ .string = signature_a } } } },
+            .{ .object = &.{ .{ .key = "receiver_type", .value = .{ .string = b_text } }, .{ .key = "target", .value = .{ .string = method_b_text } }, .{ .key = "signature_hash", .value = .{ .string = signature_b } } } },
+        } } },
+    };
+
+    // These entry vectors are module-owned constants. Runtime variant selection
+    // chooses a persistent slice; no pointer targets an init-stack array.
+    const method_a_parameters_env = [_]t.RegisterRef{ r2, r0, r1 };
+    const method_a_parameters_plain = [_]t.RegisterRef{ r0, r1 };
+    const method_a_physical_env = [_]t.Carrier{ ec, ac, ac };
+    const method_a_physical_plain = [_]t.Carrier{ ac, ac };
+    const method_a_semantic_env = [_][]const u8{ a_text, a_text, "env:" ++ environment_text };
+    const method_a_semantic_plain = [_][]const u8{ a_text, a_text };
+    const caller_registers = [_]wire.Register{
+                    .{ .carrier = dc, .view = a_type }, .{ .carrier = ac, .view = a_type }, .{ .carrier = dc, .view = a_type }, .{ .carrier = .payload, .view = null },
+                };
+    const method_b_registers = [_]wire.Register{ .{ .carrier = bc, .view = b_type }, .{ .carrier = bc, .view = a_type } };
+    const method_b_instructions = [_]ins.Instruction{
+                .{ .source = declaration, .result = null, .operands = &.{}, .data = .{ .fuel = .{ .event = .entry } } },
+                .{ .source = operation, .result = r1, .operands = &.{r0}, .data = .{ .domain_view = .{ .static_view = a_type } } },
+                .{ .source = operation, .result = null, .operands = &.{r1}, .data = .@"return" },
+            };
+    const method_b_blocks = [_]wire.Block{.{ .parameters = &.{r0}, .instructions = &method_b_instructions }};
+    const method_b_operations = [_]control.SourcePlanOperation{
+                .{ .name = "fuel", .view = "void", .properties = &fuel_properties, .result = null, .operands = &.{}, .successors = &.{}, .source = declaration },
+                .{ .name = "view", .view = a_text, .properties = &view_properties, .result = r1, .operands = &.{r0}, .successors = &.{}, .source = operation },
+                .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r1}, .successors = &.{}, .source = operation },
+            };
+    const method_b_plan = [_]control.SourcePlanBlock{.{ .parameters = &.{r0}, .operations = &method_b_operations }};
+
+    const ClosureFunction = @typeInfo(@FieldType(control.CommonClosures, "functions")).pointer.child;
+
+    const Fixture = struct {
+        program: wire.Program,
+        sources: [1]tables.Source,
+        types: [2]tables.CommonType,
+        bindings: [5]storage.CommonBinding,
+        abis: [3]storage.CommonAbi,
+        functions: [3]wire.Function,
+        caller_instructions: [4]ins.Instruction,
+        caller_operations: [4]control.SourcePlanOperation,
+        caller_blocks: [3]wire.Block,
+        caller_plan: [3]control.SourcePlanBlock,
+        method_a_registers: [3]wire.Register,
+        method_a_instructions: [2]ins.Instruction,
+        method_a_operations: [2]control.SourcePlanOperation,
+        method_a_blocks: [1]wire.Block,
+        method_a_plan: [1]control.SourcePlanBlock,
+        closure_functions: [3]ClosureFunction,
+
+        fn init(self: *Fixture, hidden_environment: bool) void {
+            self.sources = .{.{ .hash = @splat(0x88), .path = "method-body-literal-dto.ts", .length = 80 }};
+            const base: tables.CommonType = .{ .id = @splat(0x11), .kind = .reference, .name = "A", .native_code = 0,
+                .base = null, .element = null, .members = &.{}, .methods = &.{@enumFromInt(0)}, .nominal_key = null, .runtime_key = null };
+            self.types = .{ base, base }; self.types[1].id = @splat(0x22); self.types[1].name = "B";
+            self.types[1].base = a_type; self.types[1].methods = &.{@enumFromInt(1)};
+            self.bindings = .{
+                .{ .id = "caller-receiver", .owner = .{ .param = @enumFromInt(0) }, .name = "receiver", .@"type" = a_type, .writable = false, .origin = declaration, .carrier = dc, .scope = @enumFromInt(0), .declaration_kind = .parameter },
+                .{ .id = "caller-argument", .owner = .{ .param = @enumFromInt(0) }, .name = "argument", .@"type" = a_type, .writable = false, .origin = declaration, .carrier = ac, .scope = @enumFromInt(0), .declaration_kind = .parameter },
+                .{ .id = "method-a-receiver", .owner = .{ .receiver = @enumFromInt(1) }, .name = "this", .@"type" = a_type, .writable = false, .origin = declaration, .carrier = ac, .scope = @enumFromInt(1), .declaration_kind = null },
+                .{ .id = "method-a-argument", .owner = .{ .param = @enumFromInt(1) }, .name = "argument", .@"type" = a_type, .writable = false, .origin = declaration, .carrier = ac, .scope = @enumFromInt(1), .declaration_kind = .parameter },
+                .{ .id = "method-b-receiver", .owner = .{ .receiver = @enumFromInt(2) }, .name = "this", .@"type" = b_type, .writable = false, .origin = declaration, .carrier = bc, .scope = @enumFromInt(2), .declaration_kind = null },
+            };
+            self.caller_instructions = .{
+                .{ .source = declaration, .result = null, .operands = &.{}, .data = .{ .fuel = .{ .event = .entry } } },
+                .{ .source = operation, .result = null, .operands = &.{ r0, r1 }, .data = .{ .common_method_invoke = .{ .receiver_view = a_type, .member = @enumFromInt(0), .dispatch = @enumFromInt(0), .normal = @enumFromInt(1), .exceptional = @enumFromInt(2) } } },
+                .{ .source = operation, .result = null, .operands = &.{r2}, .data = .@"return" },
+                .{ .source = operation, .result = null, .operands = &.{r3}, .data = .eh_raise },
+            };
+            self.caller_operations = .{
+                .{ .name = "fuel", .view = "void", .properties = &fuel_properties, .result = null, .operands = &.{}, .successors = &.{}, .source = declaration },
+                .{ .name = "invoke_method", .view = "void", .properties = &invoke_properties, .result = null, .operands = &.{ r0, r1 }, .successors = &.{ @enumFromInt(1), @enumFromInt(2) }, .source = operation },
+                .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r2}, .successors = &.{}, .source = operation },
+                .{ .name = "return_throw", .view = "void", .properties = &.{}, .result = null, .operands = &.{r3}, .successors = &.{}, .source = operation },
+            };
+            self.caller_blocks = .{ .{ .parameters = &.{ r0, r1 }, .instructions = self.caller_instructions[0..2] }, .{ .parameters = &.{r2}, .instructions = self.caller_instructions[2..3] }, .{ .parameters = &.{r3}, .instructions = self.caller_instructions[3..4] } };
+            self.caller_plan = .{ .{ .parameters = &.{ r0, r1 }, .operations = self.caller_operations[0..2] }, .{ .parameters = &.{r2}, .operations = self.caller_operations[2..3] }, .{ .parameters = &.{r3}, .operations = self.caller_operations[3..4] } };
+            const prototype: storage.CommonAbi = .{ .kind = .common, .function = @enumFromInt(0), .signature = @splat(0xdd),
+                .parameters = &.{ @enumFromInt(0), @enumFromInt(1) }, .argument_types = &.{ a_type, a_type }, .receiver = null, .construction = null, .receiver_frame = null,
+                .lexical_environment = null, .physical_parameters = &.{ dc, ac }, .result = a_type, .result_carrier = dc,
+                .source_plan = .{ .carriers = &.{ a_text, a_text, a_text, payload_text }, .blocks = &self.caller_plan } };
+            self.abis = .{ prototype, prototype, prototype };
+            const function: wire.Function = .{ .id = @splat(0x44), .signature = @splat(0xdd), .abi = @enumFromInt(0), .source = @enumFromInt(0), .role = .ordinary,
+                .declaration = .{ .start = 0, .end = 80 }, .name = "methodCaller", .registers = &caller_registers, .blocks = &self.caller_blocks };
+            self.functions = .{ function, function, function };
+            self.method_a_registers = .{ .{ .carrier = ac, .view = a_type }, .{ .carrier = ac, .view = a_type }, .{ .carrier = ec, .view = null } };
+            self.functions[1].id = @splat(0x55); self.functions[1].abi = @enumFromInt(1); self.functions[1].name = "methodA";
+            self.functions[1].registers = self.method_a_registers[0..if (hidden_environment) 3 else 2];
+            self.method_a_instructions = .{
+                .{ .source = declaration, .result = null, .operands = &.{}, .data = .{ .fuel = .{ .event = .entry } } },
+                .{ .source = operation, .result = null, .operands = &.{r1}, .data = .@"return" },
+            };
+            self.method_a_blocks = .{.{ .parameters = if (hidden_environment) &method_a_parameters_env else &method_a_parameters_plain, .instructions = &self.method_a_instructions }};
+            self.functions[1].blocks = &self.method_a_blocks;
+            self.abis[1].function = @enumFromInt(1); self.abis[1].parameters = &.{@enumFromInt(3)}; self.abis[1].argument_types = &.{a_type}; self.abis[1].receiver = @enumFromInt(2);
+            self.abis[1].lexical_environment = if (hidden_environment) @enumFromInt(0) else null; self.abis[1].physical_parameters = if (hidden_environment) &method_a_physical_env else &method_a_physical_plain;
+            self.abis[1].result_carrier = ac;
+            self.method_a_operations = .{
+                .{ .name = "fuel", .view = "void", .properties = &fuel_properties, .result = null, .operands = &.{}, .successors = &.{}, .source = declaration },
+                .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r1}, .successors = &.{}, .source = operation },
+            };
+            self.method_a_plan = .{.{ .parameters = if (hidden_environment) &method_a_parameters_env else &method_a_parameters_plain, .operations = &self.method_a_operations }};
+            self.abis[1].source_plan = .{ .carriers = if (hidden_environment) &method_a_semantic_env else &method_a_semantic_plain, .blocks = &self.method_a_plan };
+            self.functions[2].id = @splat(0x66); self.functions[2].signature = @splat(0xee); self.functions[2].abi = @enumFromInt(2); self.functions[2].name = "methodB";
+            self.functions[2].registers = &method_b_registers;
+            self.functions[2].blocks = &method_b_blocks;
+            self.abis[2].function = @enumFromInt(2); self.abis[2].signature = @splat(0xee); self.abis[2].parameters = &.{}; self.abis[2].argument_types = &.{}; self.abis[2].receiver = @enumFromInt(4);
+            self.abis[2].physical_parameters = &.{bc}; self.abis[2].result_carrier = bc;
+            self.abis[2].source_plan = .{ .carriers = &.{ b_text, a_text }, .blocks = &method_b_plan };
+            if (hidden_environment) {
+                // Keep the method's independent ENV entrance legal without
+                // pretending the dynamic dispatch transports any hidden ENV.
+                self.functions[0].registers = self.functions[0].registers[0..2];
+                self.caller_instructions[1] = .{ .source = operation, .result = null, .operands = &.{r0}, .data = .@"return" };
+                self.caller_operations[1] = .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r0}, .successors = &.{}, .source = operation };
+                self.functions[0].blocks = self.caller_blocks[0..1]; self.abis[0].source_plan.carriers = &.{ a_text, a_text }; self.abis[0].source_plan.blocks = self.caller_plan[0..1];
+            }
+            var common = std.mem.zeroes(tables.CommonTables); common.types = &self.types; common.abis = &self.abis; common.storage.bindings = &self.bindings;
+            common.domains = &.{.{ .id = @splat(0xcc), .actual_types = &.{ a_type, b_type }, .representation = .reference, .byte_size = 8, .alignment = 8, .reference_count = 1, .tag_bytes = 0 }};
+            common.storage.payload = .{ .byte_size = 16, .alignment = 8, .reference_count = 1 };
+            common.storage.concrete = &.{
+                .{ .@"type" = a_type, .carrier = .{ .layout = .{ .byte_size = 8, .alignment = 8, .reference_count = 1 }, .field_offsets = &.{} }, .body = .{ .byte_size = 0, .alignment = 1, .reference_count = 0, .fields = &.{} } },
+                .{ .@"type" = b_type, .carrier = .{ .layout = .{ .byte_size = 8, .alignment = 8, .reference_count = 1 }, .field_offsets = &.{} }, .body = .{ .byte_size = 0, .alignment = 1, .reference_count = 0, .fields = &.{} } },
+            };
+            common.members.methods = &.{
+                .{ .id = @splat(0xaa), .owner = a_type, .function = @enumFromInt(1), .name = "choose", .signature = @splat(0xdd), .override = null, .access = .public },
+                .{ .id = @splat(0xbb), .owner = b_type, .function = @enumFromInt(2), .name = "choose", .signature = @splat(0xee), .override = @as(t.Hash, @splat(0xaa)), .access = .public },
+            };
+            common.views.dispatch = &.{.{ .method = .{ .view = a_type, .member = @enumFromInt(0), .arms = &.{
+                .{ .actual = a_type, .target = @enumFromInt(1), .abi = @enumFromInt(1) }, .{ .actual = b_type, .target = @enumFromInt(2), .abi = @enumFromInt(2) },
+            } } }};
+            common.exceptions.scopes = &.{ .{ .owner = @enumFromInt(0), .path = &.{"function"} }, .{ .owner = @enumFromInt(1), .path = &.{"function"} }, .{ .owner = @enumFromInt(2), .path = &.{"function"} } };
+            common.exceptions.bindings = &.{ .{ .binding = @enumFromInt(0), .scope = @enumFromInt(0) }, .{ .binding = @enumFromInt(1), .scope = @enumFromInt(0) }, .{ .binding = @enumFromInt(2), .scope = @enumFromInt(1) }, .{ .binding = @enumFromInt(3), .scope = @enumFromInt(1) }, .{ .binding = @enumFromInt(4), .scope = @enumFromInt(2) } };
+            common.exceptions.functions = &.{ .{ .function = @enumFromInt(0), .handlers = &.{} }, .{ .function = @enumFromInt(1), .handlers = &.{} }, .{ .function = @enumFromInt(2), .handlers = &.{} } };
+            self.closure_functions = .{
+                .{ .function = @enumFromInt(0), .parent = null, .lexical_environment = null, .activation_environment = if (hidden_environment) @enumFromInt(0) else null, .captures = &.{} },
+                .{ .function = @enumFromInt(1), .parent = if (hidden_environment) @enumFromInt(0) else null, .lexical_environment = if (hidden_environment) @enumFromInt(0) else null, .activation_environment = null, .captures = &.{} },
+                .{ .function = @enumFromInt(2), .parent = null, .lexical_environment = null, .activation_environment = null, .captures = &.{} },
+            };
+            common.closures.functions = &self.closure_functions;
+            if (hidden_environment) {
+                common.closures.environments = &.{.{ .id = @splat(0x77), .owner = @enumFromInt(0), .parent = null, .slots = &.{} }};
+                common.storage.environments = &.{.{ .environment = @enumFromInt(0), .byte_size = 0, .alignment = 1, .reference_count = 0, .parent_offset = null, .slot_offsets = &.{} }};
+            }
+            self.program = .{ .envelope = std.mem.zeroes(wire.Envelope), .target = std.mem.zeroes(wire.Target), .input_identity = @splat(0), .source_hash = @splat(0), .source_path = "", .source_length = 0, .root_source = @enumFromInt(0), .tables = .{ .sources = &self.sources, .mode = .{ .common = common } }, .functions = &self.functions };
+        }
+    };
+
+
+    fn typedInput(c: *context.Context, budget: *origin.Budget, interpretation: *const origin.Directory) !void {
+        for (c.program.functions) |f| {
+            try c.anchor(f.declaration, f.source);
+            for (f.registers) |reg| { try c.carrier(reg.carrier); try c.maybeRef(reg.view, c.counts().types); }
+            for (f.blocks) |block| for (block.instructions) |op| try c.origin(op.source);
+        }
+        try layout.check(c); try ssa.check(c); try correspondence.check(c); try origin.validateDirectory(c.allocator, interpretation, budget);
+    }
+
+
+};
+
+test "method adapter consumes every fixed arm prefix and saved receiver through both completions" {
+    var fixture: MethodAdapterDTO.Fixture = undefined; fixture.init(false);
+    const a_id: t.Hash = @splat(0x11); const b_id: t.Hash = @splat(0x22);
+    const constructor_a: t.Hash = @splat(0x31); const constructor_b: t.Hash = @splat(0x32);
+    fixture.program.tables.mode.common.members.constructions = &.{
+        .{ .id = constructor_a, .owner = @enumFromInt(0), .function = null, .kind = .@"implicit-base", .origin = MethodAdapterDTO.declaration,
+            .parameters = &.{}, .signature = .{ .parameters = &.{}, .return_type = @enumFromInt(0) }, .source_signature = .{ .id = constructor_a, .origin = MethodAdapterDTO.declaration },
+            .implicit_forward = null, .initialization_phase = .@"before-body", .initialization_fields = &.{}, .access = .public },
+        .{ .id = constructor_b, .owner = @enumFromInt(1), .function = null, .kind = .@"implicit-derived", .origin = MethodAdapterDTO.declaration,
+            .parameters = &.{}, .signature = .{ .parameters = &.{}, .return_type = @enumFromInt(1) }, .source_signature = .{ .id = constructor_b, .origin = MethodAdapterDTO.declaration },
+            .implicit_forward = .{ .target = @enumFromInt(0), .origin = MethodAdapterDTO.declaration, .base_signature = .{ .parameters = &.{}, .@"return" = @enumFromInt(0) }, .parameters = &.{} },
+            .initialization_phase = .@"after-successful-super", .initialization_fields = &.{}, .access = .public },
+    };
+    const ScopeFunction = std.meta.Child(@FieldType(publication.StableScope, "functions"));
+    var scope_functions: [3]ScopeFunction = undefined;
+    for (&scope_functions, 0..) |*row, index| row.* = .{
+        .function_id = fixture.functions[index].id, .signature_hash = fixture.functions[index].signature,
+        .kind = if (index == 0) .source else .method,
+        .decl_key = .{ .kind = if (index == 0) .function else .method, .name = if (index == 0) "methodCaller" else "choose", .path = if (index == 0) &.{} else if (index == 1) &.{"A"} else &.{"B"}, .source_path = fixture.sources[0].path },
+        .parameter_types = if (index < 2) &.{ a_id, a_id } else &.{b_id}, .return_type = a_id,
+        .construction = null, .lexical_parent = null, .lexical_environment = null, .activation_environment = null, .captures = &.{}, .access = .public,
+    };
+    var scope = std.mem.zeroes(publication.StableScope); scope.root_file = fixture.sources[0].path;
+    scope.functions = &scope_functions;
+    scope.types = &.{
+        .{ .id = a_id, .label = "A", .shape = .{ .nominal = .{ .kind = .reference, .label = "A", .base = null,
+            .construction = .{ .access = .public, .parameters = &.{}, .return_type = "A", .argument_signature = null }, .fields = &.{},
+            .methods = &.{.{ .access = .public, .name = "choose", .parameters = &.{"A"}, .return_type = "A" }} } } },
+        .{ .id = b_id, .label = "B", .shape = .{ .nominal = .{ .kind = .reference, .label = "B", .base = "A",
+            .construction = .{ .access = .public, .parameters = &.{}, .return_type = "B", .argument_signature = null }, .fields = &.{},
+            .methods = &.{.{ .access = .public, .name = "choose", .parameters = &.{}, .return_type = "A" }} } } },
+    };
+    scope.constructions = &.{
+        .{ .id = constructor_a, .owner = a_id, .base = null, .kind = .@"implicit-base", .function_id = null },
+        .{ .id = constructor_b, .owner = b_id, .base = a_id, .kind = .@"implicit-derived", .function_id = null },
+    };
+    const a_graph = origin_model.Graph{
+        .nodes = &.{ .{ .parameter = .{ .@"type" = MethodAdapterDTO.a_text, .index = 0 } }, .{ .parameter = .{ .@"type" = MethodAdapterDTO.a_text, .index = 1 } } },
+        .heaps = &.{.entry}, .controls = &.{.entry}, .calls = &.{}, .normal = &.{1}, .language = &.{1},
+        .exits = .{ .normal = &.{.{ .heap = 0, .control = 0 }}, .language = &.{.{ .heap = 0, .control = 0 }} }, .accesses = &.{},
+    };
+    const b_graph = origin_model.Graph{
+        .nodes = &.{.{ .parameter = .{ .@"type" = MethodAdapterDTO.b_text, .index = 0 } }},
+        .heaps = &.{.entry}, .controls = &.{.entry}, .calls = &.{}, .normal = &.{0}, .language = &.{0},
+        .exits = .{ .normal = &.{.{ .heap = 0, .control = 0 }}, .language = &.{.{ .heap = 0, .control = 0 }} }, .accesses = &.{},
+    };
+    const ContractRow = CaptureAdapterFixture.ContractRow;
+    var contracts: [3]ContractRow = undefined;
+    for (&contracts, 0..) |*row, index| {
+        row.* = std.mem.zeroes(ContractRow); row.function_id = fixture.functions[index].id; row.signature_hash = fixture.functions[index].signature;
+        row.digest = @splat(@as(u8, @intCast((index + 1) * 0x11))); row.upper.facets.may_throw = true;
+        // Every DTO function has managed inputs and a managed normal return.
+        row.upper.facets.managed_reference = true; row.upper.facets.escape = true;
+    }
+    var permissions: [2]CaptureAdapterFixture.ParameterRow = .{
+        .{ .index = 0, .read = false, .write = true, .structural = true },
+        .{ .index = 1, .read = true, .write = false, .structural = false },
+    };
+    contracts[0].upper.parameters = &permissions;
+    contracts[1].return_origins = a_graph; contracts[1].upper.parameters = &.{
+        .{ .index = 0, .read = false, .write = true, .structural = false },
+        .{ .index = 1, .read = true, .write = false, .structural = false },
+    };
+    contracts[2].return_origins = b_graph; contracts[2].upper.parameters = &.{.{ .index = 0, .read = false, .write = false, .structural = true }};
+    const fixed = &fixture.program.tables.mode.common.authority.fixed_publication;
+    fixed.stable_scope = scope; fixed.publication.scope = scope; fixed.publication.contracts = &contracts;
+    fixed.dependencies = &.{
+        .{ .function_id = @splat(0x44), .callees = &.{ .{ .function_id = @splat(0x55), .digest = @splat(0x22) }, .{ .function_id = @splat(0x66), .digest = @splat(0x33) } }, .hosts = &.{} },
+        .{ .function_id = @splat(0x55), .callees = &.{}, .hosts = &.{} }, .{ .function_id = @splat(0x66), .callees = &.{}, .hosts = &.{} },
+    };
+    var c = Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    var budget = origin_model.Budget{ .context = &c, .charge = publication_refs.graphCharge };
+    var arena = std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit();
+    const directory = try publication_refs.returnOriginDirectory(&c, arena.allocator(), fixed.*);
+    try MethodAdapterDTO.typedInput(&c, &budget, &directory);
+    try std.testing.expect((try origin_model.validateGraph(c.allocator, &directory, MethodAdapterDTO.method_a_text, &a_graph, &budget)) == .valid);
+    try std.testing.expect((try origin_model.validateGraph(c.allocator, &directory, MethodAdapterDTO.method_b_text, &b_graph, &budget)) == .valid);
+    var collector = try Collector.init(&c, null); defer collector.deinit();
+    var graph = UpperGraph{ .collector = &collector, .function = @enumFromInt(0) };
+    // Run the real complete-dispatch loop and both caller continuations.
+    // The current method bodies do not write/throw; their COMPLETE fixed
+    // permissions and exceptional relationships must still be consumed.
+    try graph.run(); try std.testing.expect(!collector.fixed_upper_origin_pending);
+    inline for (.{ .{ @as(usize, 0), "write" }, .{ @as(usize, 0), "structural" }, .{ @as(usize, 1), "read" } }) |missing| {
+        @field(permissions[missing[0]], missing[1]) = false;
+        try std.testing.expectError(error.InvalidShape, graph.run());
+        @field(permissions[missing[0]], missing[1]) = true;
+    }
+    contracts[0].upper.facets.may_throw = false;
+    try std.testing.expectError(error.InvalidShape, graph.run()); contracts[0].upper.facets.may_throw = true;
+    contracts[2].digest = @splat(0xee);
+    try std.testing.expectError(error.InvalidShape, graph.run()); contracts[2].digest = @splat(0x33);
+    var incoming = try UpperState.init(&c, fixture.functions[0].registers.len); defer incoming.deinit(&c);
+    _ = try incoming.values[0].add(&c, .{ .parameter = 0 }); _ = try incoming.values[1].add(&c, .{ .parameter = 1 });
+    const op = fixture.caller_instructions[1];
+    var alternatives: ?UpperState = null; defer if (alternatives) |*state| state.deinit(&c);
+    var returned: Owners = .{}; defer returned.deinit(c.allocator);
+    var thrown: Owners = .{}; defer thrown.deinit(c.allocator); var completions: UpperCompletions = .{};
+    try graph.consumeAlternative(@enumFromInt(1), op, &incoming, &alternatives, 0, true, &returned, &thrown, &completions);
+    try graph.consumeAlternative(@enumFromInt(2), op, &incoming, &alternatives, 0, true, &returned, &thrown, &completions);
+    try std.testing.expect(completions.language and !collector.fixed_upper_origin_pending);
+    for ([_]*const Owners{ &returned, &thrown }) |output| {
+        try std.testing.expectEqual(@as(usize, 2), output.items.items.len);
+        var receiver = false; var argument = false;
+        for (output.items.items) |owner| {
+            try std.testing.expect(owner == .parameter);
+            receiver = receiver or owner.parameter == 0; argument = argument or owner.parameter == 1;
+        }
+        try std.testing.expect(receiver and argument);
+    }
+    // A missing fixed relationship is not replaced by the current method's
+    // body even though that body trivially returns its receiver.
+    contracts[2].return_origins = null;
+    var unavailable: Owners = .{}; defer unavailable.deinit(c.allocator);
+    var unavailable_throw: Owners = .{}; defer unavailable_throw.deinit(c.allocator);
+    try graph.consumeAlternative(@enumFromInt(2), op, &incoming, &alternatives, 0, true, &unavailable, &unavailable_throw, &completions);
+    try graph.mark(&unavailable, .write); try std.testing.expect(collector.fixed_upper_origin_pending);
+}
