@@ -53,3 +53,11 @@ test('initialized Ref constructor arguments keep their original objects and cont
 test('Ref constructor arguments require complete initialization and stable caller facts', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-initialized-ref-negative-test.zig', prefix: 'r03-constructor-initialized-ref-negative-', expectedPasses: 5 });
 });
+
+test('typed nested fixed constructors retain the original C birth and content', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-nested-fixed-test.zig', prefix: 'r03-constructor-nested-fixed-', expectedPasses: 1 });
+});
+
+test('nested constructor closure controls keep callsites completions and MUST separate', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-nested-fixed-negative-test.zig', prefix: 'r03-constructor-nested-fixed-negative-', expectedPasses: 6 });
+});

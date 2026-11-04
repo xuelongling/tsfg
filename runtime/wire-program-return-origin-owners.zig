@@ -342,29 +342,31 @@ const Engine = struct {
         }
         return found;
     }
-    fn receiverLocation(self: *Engine, index: usize, source: R, allocation: bool) E!?R {
-        const frame = self.frames.items[index];
-        const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return null; };
-        if (frame.receiver_import) |entry| {
+    fn receiverLocation(self: *Engine, original_index: usize, original_source: R, allocation: bool) E!?R {
+        var index = original_index; var source = original_source;
+        while (true) {
+            try self.budget.step(); const frame = self.frames.items[index];
+            const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return null; };
+            if (frame.receiver_import) |entry| {
+                if (allocation) {
+                    if (source == entry.fact.input) { index = entry.caller; source = entry.fact.receiver; continue; }
+                    // Every other source belongs to this callee's original
+                    // frame namespace, including newly constructed children.
+                } else {
+                    const caller = self.frames.items[entry.caller]; var site: ?R = null;
+                    for (caller.graph.heaps, 0..) |heap, ordinal| {
+                        try self.budget.step(); if (heap == .call and heap.call.call == entry.fact.call and heap.call.completion == .language) { site = ordinal; break; }
+                    }
+                    source = site orelse { self.pending = .receiver_protocol; return null; }; index = entry.caller; continue;
+                }
+            }
             if (allocation) {
-                if (source != entry.fact.input) { self.pending = .receiver_protocol; return null; }
-                return self.receiverLocation(entry.caller, entry.fact.receiver, true);
+                if (source >= receiver.frames.len) { self.pending = .receiver_protocol; return null; }
+                return try self.location(.{ .kind = .root, .owner = .local, .type_id = receiver.frames[source].new_target, .scope = index, .node = source, .key = "receiver-allocation" });
             }
-            // Match construction's import of a generated callee error to the
-            // original caller language completion, never a callee HeapRef.
-            const caller = self.frames.items[entry.caller];
-            for (caller.graph.heaps, 0..) |heap, ordinal| {
-                try self.budget.step();
-                if (heap == .call and heap.call.call == entry.fact.call and heap.call.completion == .language) return self.receiverLocation(entry.caller, ordinal, false);
-            }
-            self.pending = .receiver_protocol; return null;
+            if (source >= frame.graph.heaps.len) { self.pending = .receiver_protocol; return null; }
+            return try self.location(.{ .kind = .root, .owner = .local, .scope = index, .node = source, .key = "receiver-language-error" });
         }
-        if (allocation) {
-            if (source >= receiver.frames.len) { self.pending = .receiver_protocol; return null; }
-            return try self.location(.{ .kind = .root, .owner = .local, .type_id = receiver.frames[source].new_target, .scope = index, .node = source, .key = "receiver-allocation" });
-        }
-        if (source >= frame.graph.heaps.len) { self.pending = .receiver_protocol; return null; }
-        return try self.location(.{ .kind = .root, .owner = .local, .scope = index, .node = source, .key = "receiver-language-error" });
     }
     fn processCalls(self: *Engine, index: usize, frame: *Frame) E!void {
         for (frame.graph.calls, 0..) |call, ordinal| {
@@ -383,16 +385,16 @@ const Engine = struct {
                 const role = protocol.construction orelse { self.pending = .receiver_protocol; return; };
                 const refs = call.receiver orelse { self.pending = .receiver_protocol; return; };
                 // The borrowed construction analysis has already interpreted
-                // this supported proved-Data/no-ENV, standalone fixed leaf. Keep
+                // this supported proved-Data/no-ENV fixed call tree. Keep
                 // its original graph and facts in this same ordinary Engine.
-                if (frame.receiver_import != null or call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
+                if (call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
                 var selected: ?*const construction.CallFact = null;
                 for (receiver.calls) |*fact| {
                     try self.budget.step(); if (fact.call != ordinal) continue;
                     if (selected != null) { self.pending = .receiver_protocol; return; } selected = fact;
                 }
                 const fact = selected orelse { self.pending = .receiver_protocol; return; };
-                if (fact.caller_graph != frame.graph or fact.fixed.contract.return_origins == null or fact.graph != &fact.fixed.contract.return_origins.? or fact.graph != graph or !try self.budget.equal(fact.fixed.function_id, call.function_id) or fact.receiver >= frame.graph.nodes.len or fact.input >= graph.nodes.len or graph.nodes[fact.input] != .receiver_input or graph.calls.len != 0 or fact.analysis.calls.len != 0 or !try self.receiverFacts(graph, fact.analysis) or !try self.receiverRefs(frame, refs, fact.receiver)) { self.pending = .receiver_protocol; return; }
+                if (fact.caller_graph != frame.graph or fact.fixed.contract.return_origins == null or fact.graph != &fact.fixed.contract.return_origins.? or fact.graph != graph or !try self.budget.equal(fact.fixed.function_id, call.function_id) or fact.receiver >= frame.graph.nodes.len or fact.input >= graph.nodes.len or graph.nodes[fact.input] != .receiver_input or !try self.receiverFacts(graph, fact.analysis) or !try self.receiverRefs(frame, refs, fact.receiver)) { self.pending = .receiver_protocol; return; }
                 const upper = fact.fixed.contract.upper;
                 if (fixed.parameters.len != protocol.parameter_types.len or fixed.captures.len != 0 or upper.parameters.len != fixed.parameters.len or upper.captures.len != 0 or fixed.may_throw != upper.facets.may_throw) { self.pending = .receiver_protocol; return; }
                 for (fixed.parameters, upper.parameters, 0..) |flags, parameter, parameter_index| {
@@ -485,6 +487,25 @@ const Engine = struct {
                             if (source >= frame.values.len) { self.pending = .receiver_protocol; return; }
                             try self.merge(out, frame.values[source].items);
                             defined = defined and frame.ready[source];
+                        },
+                        .scoped_allocation => |source| {
+                            var work: Set = .empty; try self.add(&work, index); var cursor: usize = 0; var found = false;
+                            while (cursor < work.items.len) : (cursor += 1) {
+                                try self.budget.step(); const candidate_index = work.items[cursor]; const candidate = self.frames.items[candidate_index];
+                                if (candidate.receiver == source.analysis) {
+                                    const location_id = try self.receiverLocation(candidate_index, source.frame, true) orelse return;
+                                    try self.add(out, location_id); found = true;
+                                }
+                                for (candidate.targets) |targets| {
+                                    try self.budget.step();
+                                    for (targets.items) |target| {
+                                        // Frame indices are allocated monotonically. A set kept
+                                        // sorted by add cannot move a new descendant behind cursor.
+                                        try self.add(&work, target);
+                                    }
+                                }
+                            }
+                            defined = defined and found;
                         },
                         .allocation => |source| {
                             // A formal newTarget is universally quantified.

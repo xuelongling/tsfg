@@ -1732,7 +1732,7 @@ const UpperGraph = struct {
                             const owners = [_]*Owners{ &selected, &failure };
                             for (atoms, owners) |values, into| for (values) |atom| {
                                 try c.step(); switch (atom.source) {
-                                    .allocation, .language_error => { _ = try into.add(c, .local); into.payloads.unknown = true; },
+                                    .allocation, .scoped_allocation, .language_error => { _ = try into.add(c, .local); into.payloads.unknown = true; },
                                     .node => |id| switch (receiver_flow.?.graph.nodes[id]) {
                                         .local => { _ = try into.add(c, .local); },
                                         .parameter => |parameter| { _ = try into.add(c, .{ .parameter = parameter.index }); },
