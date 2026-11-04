@@ -408,7 +408,6 @@ const Engine = struct {
             switch (atom.source) {
                 .allocation => |source| { const location_id = try self.receiverLocation(index, source, true) orelse return null; try self.add(&proved, location_id); },
                 .scoped_allocation => |source| {
-                    if (source.completion != .normal) { self.pending = .receiver_protocol; return null; }
                     if (!try self.scopedLocations(index, source, &proved)) return null;
                 },
                 else => { self.pending = .receiver_protocol; return null; },

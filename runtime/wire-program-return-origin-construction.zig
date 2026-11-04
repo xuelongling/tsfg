@@ -219,12 +219,13 @@ const Engine = struct {
                 try self.budget.step(); if (atom.category != .object) return false;
                 if (atom.source == .scoped_allocation) {
                     const source = atom.source.scoped_allocation;
-                    // This bounded extension supports original normal births
-                    // only. Equal analysis/frame numbers in a language result
-                    // cannot borrow normal MUST initialization.
+                    // A foreign birth uses its original Analysis/frame and
+                    // its own completion's MUST initialization. Equal frame
+                    // numbers never let another completion license this one.
                     try self.budget.step();
-                    if (source.completion != .normal or source.analysis.pending != null or source.frame >= source.analysis.frames.len) return false;
+                    if (source.analysis.pending != null or source.frame >= source.analysis.frames.len) return false;
                     const frame = source.analysis.frames[source.frame];
+                    const exit = if (source.completion == .normal) frame.normal else frame.language;
                     const role = try construction(self.directory, frame.construction orelse return false, self.budget);
                     if (role.kind != .explicit or role.base != null or frame.parent != null or frame.new_target == null or
                         !try self.budget.equal(frame.new_target.?, role.owner)) return false;
@@ -232,9 +233,9 @@ const Engine = struct {
                     _ = fixed.initialization_fields orelse return false;
                     var reference = false;
                     for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, frame.new_target.?)) { reference = row.kind == .reference; break; } }
-                    if (!reference or !frame.normal.live or frame.normal.unbound or frame.normal.missing_fields == null or frame.normal.missing_fields.?.len != 0) return false;
+                    if (!reference or !exit.live or exit.unbound or exit.missing_fields == null or exit.missing_fields.?.len != 0) return false;
                     var bound = false;
-                    for (frame.normal.atoms) |old| { try self.budget.step(); if (old.category == .object and old.source == .allocation and old.source.allocation == source.frame) bound = true; }
+                    for (exit.atoms) |old| { try self.budget.step(); if (old.category == .object and old.source == .allocation and old.source.allocation == source.frame) bound = true; }
                     if (!bound) return false;
                     found = true; continue;
                 }
@@ -291,11 +292,24 @@ const Engine = struct {
             try self.budget.spend(2 * self.graph.nodes.len);
             const seen = try self.allocator.alloc(bool, self.graph.nodes.len); @memset(seen, false);
             const work = try self.allocator.alloc(Ref, self.graph.nodes.len); var count: usize = 0; var cursor: usize = 0; var leaf = false;
-            for (argument) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } }
+            for (argument) |id| {
+                try self.budget.step(); const node = self.graph.nodes[id];
+                const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate, .receiver_value, .call => |row| row.@"type", else => null };
+                // A Ref catch has an explicit static view at the argument
+                // boundary. An untyped payload is never that boundary.
+                if (type_id == null or !try self.budget.equal(type_id.?, expected)) { self.pending = .data_protocol; return null; }
+                if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; }
+            }
             while (cursor < count) : (cursor += 1) {
                 try self.budget.step(); const node = self.graph.nodes[work[cursor]];
                 const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate, .receiver_value, .call => |row| row.@"type", else => null };
-                if (type_id == null or !try self.budget.equal(type_id.?, expected)) { self.pending = .data_protocol; return null; }
+                // Graph's language-call result MUST be null-typed. A typed
+                // catch view may retain that original payload through null
+                // joins/gates. referenceArgument above has already proved
+                // every actual atom is a complete original object; this does
+                // not turn a view annotation into an actual-type proof.
+                const language_payload = reference and type_id == null and switch (node) { .join, .gate => true, .call => |row| row.completion == .language, else => false };
+                if (!language_payload and (type_id == null or !try self.budget.equal(type_id.?, expected))) { self.pending = .data_protocol; return null; }
                 switch (node) {
                     inline .join, .gate => |row| { if (row.inputs.len == 0) { self.pending = .data_protocol; return null; } for (row.inputs) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } } },
                     .receiver_value, .call => { if (!reference) { self.pending = .data_protocol; return null; } leaf = true; },
@@ -396,8 +410,8 @@ const Engine = struct {
         const live = &self.call_live[row.call][@intFromEnum(row.completion)]; if (!live.*) { live.* = true; self.changed = true; }
     }
     // Empty Data is not normally an absence proof. Only a finite, nonempty
-    // wrapper DAG whose every leaf is a resolved impossible receiver completion
-    // explains an inactive root. No roots, controls or prefixes are removed.
+    // wrapper DAG whose every leaf is a resolved impossible receiver or fixed
+    // call completion explains an inactive root. No roots or prefixes are removed.
     fn inactiveReceiverRoot(self: *Engine, root: Ref) Error!bool {
         const length = self.graph.nodes.len;
         try self.budget.spend(3 * length);
@@ -408,6 +422,25 @@ const Engine = struct {
         while (count != 0) {
             try self.budget.step(); const id = stack[count - 1];
             const inputs: []const Ref = switch (self.graph.nodes[id]) {
+                .call => |row| {
+                    // An empty call value alone is not absence. Only an active
+                    // original call with complete, successful original facts
+                    // can prove that this exact completion has no live exit.
+                    try self.budget.spend(6); const call = self.graph.calls[row.call];
+                    if (!self.controls[call.control] or !self.worlds[call.heap].live or self.call_live[row.call][@intFromEnum(row.completion)]) return false;
+                    var found = false;
+                    for (self.calls.items) |fact| {
+                        try self.budget.step(); if (fact.call != row.call) continue;
+                        try self.budget.spend(5);
+                        if (fact.caller_graph != self.graph or fact.analysis.pending != null) return false;
+                        const exits = fact.analysis.input_exits orelse return false;
+                        const completion = if (row.completion == .normal) exits.normal else exits.language;
+                        if (completion.live) return false;
+                        found = true;
+                    }
+                    if (!found) return false;
+                    try self.budget.spend(2); marks[id] = 2; count -= 1; continue;
+                },
                 .receiver_value => |row| {
                     // validateGraph already owns the receiver_action/carrier
                     // join. Readiness below uses computed formal facts, not a

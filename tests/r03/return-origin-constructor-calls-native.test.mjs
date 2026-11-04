@@ -69,3 +69,11 @@ test('typed scoped constructor Ref arguments retain the actual C birth through B
 test('scoped constructor Ref controls retain initialization completion and late aliases', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-scoped-ref-negative-test.zig', prefix: 'r03-constructor-scoped-ref-negative-', expectedPasses: 5 });
 });
+
+test('typed language constructor Ref arguments retain original C through catch as B', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-language-ref-test.zig', prefix: 'r03-constructor-language-ref-', expectedPasses: 1 });
+});
+
+test('language constructor Ref controls keep completions types and original aliases', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-language-ref-negative-test.zig', prefix: 'r03-constructor-language-ref-negative-', expectedPasses: 7 });
+});
