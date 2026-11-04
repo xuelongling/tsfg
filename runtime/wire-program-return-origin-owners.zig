@@ -523,7 +523,12 @@ const Engine = struct {
             switch (frame.graph.heaps[current.heap]) {
                 .entry => {
                     if (node.scope == current.frame) return false;
-                    if (frame.sources.items.len == 0) return false;
+                    // A callee-local ENV does not exist on an alternative
+                    // target's branch before its own activation. That absence
+                    // is not an uninitialized instance of the same ENV. A
+                    // path through the owning frame's entry still fails, and
+                    // a walk with no actual initializing path stays false.
+                    if (frame.sources.items.len == 0) continue;
                     for (frame.sources.items) |source| try self.append(Source, &work, source);
                 },
                 .join => |row| for (row.inputs) |parent| { const source = Source{ .frame = current.frame, .heap = parent }; if (try self.possibleHeap(source)) try self.append(Source, &work, source); },
