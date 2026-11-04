@@ -32,6 +32,45 @@ const Facet = enum { allocation, managed_reference, eh_control, may_throw, @"awa
 const Capture = struct { environment: t.EnvironmentRef, slot: t.EnvironmentSlotRef };
 const Managed = enum { empty, active, no, yes };
 
+// Names in the fixed owner/content equations. They are not runtime objects or
+// allocation generations; rebirth makes every prior reference unknown.
+const PayloadOrigin = struct {
+    type_id: t.TypeRef,
+    source: union(enum) { birth: t.RegisterRef, fixed: effect_env.Fixed },
+};
+fn payloadKeyWork(c: *Context, key: PayloadOrigin) Error!void {
+    try c.row(PayloadOrigin);
+    if (key.source == .fixed) { try c.row(effect_env.Fixed); try c.row(effect_env.Invocation); }
+}
+const PayloadSet = struct {
+    unknown: bool = false,
+    items: std.ArrayListUnmanaged(PayloadOrigin) = .empty,
+    fn deinit(self: *PayloadSet, allocator: std.mem.Allocator) void { self.items.deinit(allocator); self.* = .{}; }
+    fn add(self: *PayloadSet, c: *Context, key: PayloadOrigin) Error!bool {
+        for (self.items.items) |old| { try payloadKeyWork(c, key); if (std.meta.eql(old, key)) return false; }
+        try payloadKeyWork(c, key); if (self.items.items.len == self.items.capacity) try c.charge(self.items.items.len + 1);
+        try self.items.append(c.allocator, key); return true;
+    }
+    fn clone(c: *Context, source: *const PayloadSet) Error!PayloadSet {
+        try c.charge(source.items.items.len + 1); var result = PayloadSet{ .unknown = source.unknown }; errdefer result.deinit(c.allocator);
+        for (source.items.items) |key| try payloadKeyWork(c, key);
+        try result.items.appendSlice(c.allocator, source.items.items); return result;
+    }
+    fn join(self: *PayloadSet, c: *Context, source: *const PayloadSet) Error!bool {
+        try c.step(); var changed = source.unknown and !self.unknown; self.unknown = self.unknown or source.unknown;
+        for (source.items.items) |key| changed = (try self.add(c, key)) or changed;
+        return changed;
+    }
+    fn age(self: *PayloadSet, c: *Context, birth: ?t.RegisterRef, invocation: ?effect_env.Invocation) Error!void {
+        var index: usize = 0;
+        while (index < self.items.items.len) {
+            const key = self.items.items[index]; try payloadKeyWork(c, key);
+            const old = if (birth) |reg| key.source == .birth and key.source.birth == reg else key.source == .fixed and std.meta.eql(key.source.fixed.invocation, invocation.?);
+            if (old) { _ = self.items.swapRemove(index); self.unknown = true; } else index += 1;
+        }
+    }
+};
+
 // The normalized fixed graph has a different domain from actual replay: only
 // lexical effect roots cross its CFG. Fresh locals have no external root;
 // unknown call/exception results retain an explicit unresolved root. They are
@@ -45,31 +84,58 @@ const Owners = struct {
     nonowning: bool = false,
     items: std.ArrayListUnmanaged(Owner) = .empty,
     environments: effect_env.Value = .{},
-    fn known(self: *const Owners) bool { return self.nonowning or self.items.items.len != 0; }
-    fn deinit(self: *Owners, allocator: std.mem.Allocator) void { self.items.deinit(allocator); self.environments.deinit(allocator); self.* = .{}; }
+    payloads: PayloadSet = .{},
+    fn known(self: *const Owners) bool { return self.nonowning or self.items.items.len != 0 or self.payloads.items.items.len != 0; }
+    fn deinit(self: *Owners, allocator: std.mem.Allocator) void { self.items.deinit(allocator); self.environments.deinit(allocator); self.payloads.deinit(allocator); self.* = .{}; }
     fn add(self: *Owners, c: *Context, owner: Owner) Error!bool {
         // A lexical permission root says nothing about its value's code/env.
         for (self.items.items) |old| { try c.step(); if (std.meta.eql(old, owner)) return false; }
         try c.step(); try self.items.append(c.allocator, owner); return true;
     }
     fn makeOpaque(self: *Owners, c: *Context) Error!bool {
-        const changed = !self.environments.callable_unknown or !self.environments.direct.unknown;
+        const changed = !self.environments.callable_unknown or !self.environments.direct.unknown or !self.payloads.unknown;
         self.environments.callable_unknown = true; self.environments.direct.unknown = true;
+        self.payloads.unknown = true;
         return (try self.add(c, .unresolved)) or changed;
     }
     fn clone(c: *Context, source: *const Owners) Error!Owners {
         try c.charge(source.items.items.len + 1); var result = Owners{ .nonowning = source.nonowning };
-        errdefer result.deinit(c.allocator); result.environments = try effect_env.Value.clone(c, &source.environments);
+        errdefer result.deinit(c.allocator); result.environments = try effect_env.Value.clone(c, &source.environments); result.payloads = try PayloadSet.clone(c, &source.payloads);
         try result.items.appendSlice(c.allocator, source.items.items); return result;
     }
     fn join(self: *Owners, c: *Context, incoming: *const Owners) Error!bool {
         try c.step(); var changed = try self.environments.join(c, &incoming.environments);
+        changed = (try self.payloads.join(c, &incoming.payloads)) or changed;
         changed = (incoming.nonowning and !self.nonowning) or changed; self.nonowning = self.nonowning or incoming.nonowning;
         for (incoming.items.items) |owner| changed = (try self.add(c, owner)) or changed;
         return changed;
     }
     fn replace(self: *Owners, c: *Context, source: *const Owners) Error!void {
         const replacement = try Owners.clone(c, source); self.deinit(c.allocator); self.* = replacement;
+    }
+};
+
+const PayloadRecord = struct {
+    // null is unknown/uninitialized. A present, empty Owners is the genuinely
+    // empty Array element cell, never a scalar or an empty-payload proof.
+    slots: []?Owners,
+    fn init(c: *Context, count: usize) Error!PayloadRecord {
+        try c.charge(count + 1); const slots = try c.allocator.alloc(?Owners, count); @memset(slots, null); return .{ .slots = slots };
+    }
+    fn deinit(self: *PayloadRecord, c: *Context) void { for (self.slots) |*slot| if (slot.*) |*value| value.deinit(c.allocator); c.allocator.free(self.slots); }
+    fn clone(c: *Context, source: *const PayloadRecord) Error!PayloadRecord {
+        var result = try PayloadRecord.init(c, source.slots.len); errdefer result.deinit(c);
+        for (source.slots, result.slots) |*slot, *into| { try c.step(); if (slot.*) |*value| into.* = try Owners.clone(c, value); }
+        return result;
+    }
+    fn join(self: *PayloadRecord, c: *Context, source: *const PayloadRecord) Error!bool {
+        try c.require(self.slots.len == source.slots.len); var changed = false;
+        for (self.slots, source.slots) |*slot, *incoming| {
+            try c.step(); if (slot.*) |*value| {
+                if (incoming.*) |*other| changed = (try value.join(c, other)) or changed else { value.deinit(c.allocator); slot.* = null; changed = true; }
+            }
+        }
+        return changed;
     }
 };
 
@@ -95,7 +161,10 @@ const AliasSummary = struct {
 };
 const AliasLink = struct { from: usize, to: usize };
 const AliasVisit = struct { function: usize, next: usize = 0 };
-const UpperCompletions = struct { language: bool = false };
+const UpperCompletions = struct {
+    normal: bool = true, language: bool = false, language_state: ?UpperState = null,
+    fn deinit(self: *UpperCompletions, c: *Context) void { if (self.language_state) |*state| state.deinit(c); self.language_state = null; }
+};
 // A logical Cell has no receiver; a private field uses its original SSA
 // allocation handle. A closed same-block Cell protocol can share that key.
 // Neither key is an ObjectID or dynamic version: storage is still lexical.
@@ -104,6 +173,7 @@ const UpperState = struct {
     values: []Owners,
     slots: std.AutoHashMapUnmanaged(OwnerSlot, Owners) = .empty,
     parents: std.AutoHashMapUnmanaged(effect_env.Origin, effect_env.Set) = .empty,
+    payloads: std.AutoHashMapUnmanaged(PayloadOrigin, PayloadRecord) = .empty,
     fn init(c: *Context, registers: usize) Error!UpperState {
         try c.charge(registers + 1);
         const values = try c.allocator.alloc(Owners, registers); errdefer c.allocator.free(values); @memset(values, .{});
@@ -113,6 +183,7 @@ const UpperState = struct {
         for (self.values) |*value| value.deinit(c.allocator); c.allocator.free(self.values);
         var entries = self.slots.valueIterator(); while (entries.next()) |value| value.deinit(c.allocator); self.slots.deinit(c.allocator);
         var parents = self.parents.valueIterator(); while (parents.next()) |value| value.deinit(c.allocator); self.parents.deinit(c.allocator);
+        var payloads = self.payloads.valueIterator(); while (payloads.next()) |value| value.deinit(c); self.payloads.deinit(c.allocator);
     }
     fn clone(c: *Context, source: *const UpperState) Error!UpperState {
         var result = try UpperState.init(c, source.values.len); errdefer result.deinit(c);
@@ -124,6 +195,10 @@ const UpperState = struct {
         var parents = source.parents.iterator(); while (parents.next()) |entry| {
             try c.step(); var copy = try effect_env.Set.clone(c, entry.value_ptr); errdefer copy.deinit(c.allocator);
             try result.parents.put(c.allocator, entry.key_ptr.*, copy);
+        }
+        try c.charge(source.payloads.capacity() + 1); var payloads = source.payloads.iterator(); while (payloads.next()) |entry| {
+            try payloadKeyWork(c, entry.key_ptr.*); var copy = try PayloadRecord.clone(c, entry.value_ptr); errdefer copy.deinit(c);
+            try result.putPayload(c, entry.key_ptr.*, copy);
         }
         return result;
     }
@@ -158,7 +233,47 @@ const UpperState = struct {
             if (!destination.found_existing) { destination.value_ptr.* = .{ .unknown = entry.key_ptr.source != .fixed }; changed = true; }
             changed = (try destination.value_ptr.join(c, entry.value_ptr)) or changed;
         }
+        try c.charge(source.payloads.capacity() + 1); var payloads = source.payloads.iterator(); while (payloads.next()) |entry| {
+            try payloadKeyWork(c, entry.key_ptr.*);
+            if (self.payloads.getPtr(entry.key_ptr.*)) |old| changed = (try old.join(c, entry.value_ptr)) or changed else {
+                var copy = try PayloadRecord.clone(c, entry.value_ptr); errdefer copy.deinit(c);
+                try self.putPayload(c, entry.key_ptr.*, copy); changed = true;
+            }
+        }
         return changed;
+    }
+    fn putPayload(self: *UpperState, c: *Context, key: PayloadOrigin, value: PayloadRecord) Error!void {
+        try payloadKeyWork(c, key);
+        if (self.payloads.getPtr(key)) |old| { old.deinit(c); old.* = value; return; }
+        try c.charge(self.payloads.capacity() + 4 * (self.payloads.count() + 1) + 1);
+        try self.payloads.ensureUnusedCapacity(c.allocator, 1);
+        self.payloads.putAssumeCapacity(key, value);
+    }
+    fn agePayloads(self: *UpperState, c: *Context, birth_site: ?t.RegisterRef, invocation: ?effect_env.Invocation) Error!void {
+        for (self.values) |*value| { try c.step(); try value.payloads.age(c, birth_site, invocation); }
+        try c.charge(self.slots.capacity() + 1); var selected = self.slots.valueIterator(); while (selected.next()) |value| { try c.step(); try value.payloads.age(c, birth_site, invocation); }
+        var remove: std.ArrayListUnmanaged(PayloadOrigin) = .empty; defer remove.deinit(c.allocator);
+        try c.charge(self.payloads.capacity() + 1); var entries = self.payloads.iterator(); while (entries.next()) |entry| {
+            const key = entry.key_ptr.*; try payloadKeyWork(c, key);
+            const old = if (birth_site) |reg| key.source == .birth and key.source.birth == reg else key.source == .fixed and std.meta.eql(key.source.fixed.invocation, invocation.?);
+            if (old) {
+                if (remove.items.len == remove.capacity) try c.charge(remove.items.len + 1);
+                try remove.append(c.allocator, key);
+            }
+            for (entry.value_ptr.slots) |*slot| {
+                try c.step(); if (slot.*) |*value| {
+                    try value.payloads.age(c, birth_site, invocation);
+                    if (birth_site) |reg| try value.environments.age(c, reg) else try value.environments.ageFixed(c, invocation.?);
+                }
+            }
+        }
+        for (remove.items) |key| { try payloadKeyWork(c, key); var old = self.payloads.fetchRemove(key).?.value; old.deinit(c); }
+    }
+    fn birthPayload(self: *UpperState, c: *Context, reg: t.RegisterRef, type_id: t.TypeRef, count: usize) Error!PayloadOrigin {
+        try self.agePayloads(c, reg, null);
+        const key = PayloadOrigin{ .type_id = type_id, .source = .{ .birth = reg } };
+        var record = try PayloadRecord.init(c, count); errdefer record.deinit(c);
+        try self.putPayload(c, key, record); return key;
     }
     fn store(self: *UpperState, c: *Context, slot: OwnerSlot, value: *const Owners) Error!void {
         try c.step(); const destination = try self.slots.getOrPut(c.allocator, slot);
@@ -166,6 +281,7 @@ const UpperState = struct {
         try destination.value_ptr.replace(c, value);
     }
     fn birth(self: *UpperState, c: *Context, handle: t.RegisterRef, layout: t.EnvironmentRef, parent: *const effect_env.Set) Error!void {
+        try self.agePayloads(c, handle, null);
         // A static SSA definition is not an instance ID. Age every old value,
         // callable association and selected relation before reusing its key.
         for (self.values) |*value| { try c.step(); try value.environments.age(c, handle); }
@@ -182,6 +298,7 @@ const UpperState = struct {
         try copy.age(c, handle); try self.parents.put(c.allocator, origin, copy);
     }
     fn fixedBirth(self: *UpperState, c: *Context, invocation: effect_env.Invocation) Error!void {
+        try self.agePayloads(c, null, invocation);
         for (self.values) |*value| { try c.step(); try value.environments.ageFixed(c, invocation); }
         var remove: std.ArrayListUnmanaged(OwnerSlot) = .empty; defer remove.deinit(c.allocator);
         var entries = self.slots.iterator(); while (entries.next()) |entry| {
@@ -220,6 +337,11 @@ const UpperState = struct {
         }
         var parents = self.parents.valueIterator(); while (parents.next()) |value| { try c.step(); value.unknown = true; }
     }
+    fn dirtyPayloads(self: *UpperState, c: *Context) Error!void {
+        try c.charge(self.payloads.capacity() + 1); var records = self.payloads.valueIterator(); while (records.next()) |record| {
+            try c.step(); for (record.slots) |*slot| { try c.step(); if (slot.*) |*value| value.deinit(c.allocator); slot.* = null; }
+        }
+    }
 };
 
 // Equivalent seam to C++ GraphEffects, not a second actual interpreter. Every
@@ -228,11 +350,154 @@ const UpperState = struct {
 // Rebind one immutable Graph5 result into the existing lexical OWNER domain.
 // Only enum directory references and copied owner/parent/slot sets escape the
 // temporary Analysis. No Actual object, callee register or arena pointer does.
+const InputBinding = struct { value: Owners, payload: ?PayloadOrigin = null, environment: ?effect_env.Origin = null };
+const PayloadInputs = struct {
+    g: *UpperGraph, saved: *const UpperState, a: std.mem.Allocator, invocation: effect_env.Invocation,
+    locations: std.ArrayListUnmanaged(fixed_owners.Location) = .empty,
+    bindings: std.ArrayListUnmanaged(InputBinding) = .empty,
+    data: std.AutoHashMapUnmanaged(PayloadOrigin, usize) = .empty,
+    envs: std.AutoHashMapUnmanaged(effect_env.Origin, usize) = .empty,
+    data_work: std.ArrayListUnmanaged(PayloadOrigin) = .empty,
+    env_work: std.ArrayListUnmanaged(effect_env.Origin) = .empty,
+    heap: std.ArrayListUnmanaged(fixed_owners.InitialAddress) = .empty,
+    parents: std.ArrayListUnmanaged(fixed_owners.Environment) = .empty,
+    initial: fixed_owners.Initial = .{ .locations = &.{}, .arguments = &.{}, .environment = &.{}, .heap = &.{}, .parents = &.{} },
+    unavailable: bool = false,
+    fn deinit(self: *PayloadInputs) void { for (self.bindings.items) |*entry| entry.value.deinit(self.g.collector.c.allocator); }
+    fn append(self: *PayloadInputs, comptime T: type, list: *std.ArrayListUnmanaged(T), item: T) Error!void {
+        const c = self.g.collector.c; try c.step(); if (list.items.len == list.capacity) try c.charge(list.items.len + 1);
+        try list.append(self.a, item);
+    }
+    fn node(self: *PayloadInputs, row: fixed_owners.Location, source_value: *const Owners, payload_origin: ?PayloadOrigin, env_origin: ?effect_env.Origin) Error!usize {
+        const c = self.g.collector.c; var copy = try Owners.clone(c, source_value); errdefer copy.deinit(c.allocator);
+        try copy.payloads.age(c, null, self.invocation); try copy.environments.ageFixed(c, self.invocation);
+        const id = self.locations.items.len;
+        try self.append(fixed_owners.Location, &self.locations, row);
+        try self.append(InputBinding, &self.bindings, .{ .value = copy, .payload = payload_origin, .environment = env_origin });
+        return id;
+    }
+    fn symbol(self: *PayloadInputs, hash: t.Hash) Error!origin_model.Symbol { return publication_refs.symbol(self.g.collector.c, self.a, hash); }
+    fn payload(self: *PayloadInputs, key: PayloadOrigin) Error!?usize {
+        const c = self.g.collector.c; try payloadKeyWork(c, key);
+        if (key.source == .fixed and std.meta.eql(key.source.fixed.invocation, self.invocation)) return null;
+        if (self.data.get(key)) |id| return id;
+        if (!self.saved.payloads.contains(key)) return null;
+        const id = try self.node(.{ .kind = .payload, .owner = .local, .type_id = try self.symbol(self.g.collector.common().types[@intFromEnum(key.type_id)].id) }, &.{}, key, null);
+        try c.charge(self.data.capacity() + 4 * (self.data.count() + 1) + 1); try self.data.ensureUnusedCapacity(self.a, 1); self.data.putAssumeCapacity(key, id);
+        try self.append(PayloadOrigin, &self.data_work, key); return id;
+    }
+    fn environment(self: *PayloadInputs, key: effect_env.Origin) Error!?usize {
+        const c = self.g.collector.c; try c.row(effect_env.Origin);
+        if (key.source == .fixed and std.meta.eql(key.source.fixed.invocation, self.invocation)) return null;
+        if (self.envs.get(key)) |id| return id;
+        const id = try self.node(.{ .kind = if (key.source == .input) .environment_input else .environment_local, .owner = if (key.source == .input) .nonowning else .local,
+            .layout = try self.symbol(self.g.collector.common().closures.environments[@intFromEnum(key.layout)].id) }, &.{}, null, key);
+        try c.charge(self.envs.capacity() + 4 * (self.envs.count() + 1) + 1); try self.envs.ensureUnusedCapacity(self.a, 1); self.envs.putAssumeCapacity(key, id);
+        try self.append(effect_env.Origin, &self.env_work, key); return id;
+    }
+    fn value(self: *PayloadInputs, source: *const Owners, empty: bool) Error![]const usize {
+        const c = self.g.collector.c; const v = self.g.collector.common(); var value_copy = try Owners.clone(c, source); defer value_copy.deinit(c.allocator);
+        try value_copy.payloads.age(c, null, self.invocation); try value_copy.environments.ageFixed(c, self.invocation);
+        var refs: std.ArrayListUnmanaged(usize) = .empty;
+        for (value_copy.payloads.items.items) |key| {
+            try payloadKeyWork(c, key);
+            if (try self.payload(key)) |id| try self.append(usize, &refs, id) else value_copy.payloads.unknown = true;
+        }
+        var paired = false; try c.charge(value_copy.environments.callables.capacity() + 1); var callables = value_copy.environments.callables.iterator();
+        while (callables.next()) |entry| {
+            try c.step(); const target = entry.key_ptr.*; const abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)];
+            if (entry.value_ptr.unknown) value_copy.environments.callable_unknown = true;
+            if (abi.lexical_environment == null) {
+                if (entry.value_ptr.items.items.len != 0) { value_copy.environments.callable_unknown = true; continue; }
+                const id = self.locations.items.len;
+                _ = try self.node(.{ .kind = .code, .owner = .{ .input = id }, .function_id = try self.symbol(c.program.functions[@intFromEnum(target)].id) }, &value_copy, null, null);
+                try self.append(usize, &refs, id); paired = true;
+            } else for (entry.value_ptr.items.items) |origin| {
+                try c.row(effect_env.Origin);
+                if (try self.environment(origin)) |env| {
+                    const id = self.locations.items.len;
+                    _ = try self.node(.{ .kind = .code, .owner = .{ .input = id }, .function_id = try self.symbol(c.program.functions[@intFromEnum(target)].id), .environment = env }, &value_copy, null, null);
+                    try self.append(usize, &refs, id); paired = true;
+                } else value_copy.environments.callable_unknown = true;
+            }
+            if (abi.lexical_environment != null and entry.value_ptr.items.items.len == 0) value_copy.environments.callable_unknown = true;
+        }
+        var labeled = false;
+        for (value_copy.items.items) |root| { try c.step(); if (root != .local) labeled = true; }
+        const unknown = value_copy.payloads.unknown or value_copy.environments.callable_unknown or value_copy.environments.direct.unknown;
+        if (unknown or (labeled and !paired) or (value_copy.nonowning and !paired) or (refs.items.len == 0 and (!empty or value_copy.known()))) {
+            if (!value_copy.known()) _ = try value_copy.makeOpaque(c);
+            const id = self.locations.items.len; _ = try self.node(.{ .kind = .root, .owner = .{ .input = id } }, &value_copy, null, null);
+            try self.append(usize, &refs, id);
+        }
+        return refs.items;
+    }
+    fn build(self: *PayloadInputs, target: t.FunctionRef, op: model.instruction.Instruction, offset: usize, count: usize) Error!void {
+        const c = self.g.collector.c; const v = self.g.collector.common(); const abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)];
+        try c.require(offset <= op.operands.len and count <= op.operands.len - offset);
+        try c.charge(count + 1); const arguments = try self.a.alloc([]const usize, count);
+        for (arguments, 0..) |*into, index| {
+            try c.step(); into.* = if (abi.construction != null and index == 0) &.{} else try self.value(&self.saved.values[@intFromEnum(op.operands[offset + index])], false);
+        }
+        var environments: std.ArrayListUnmanaged(usize) = .empty;
+        if (abi.lexical_environment != null) {
+            var supplied: effect_env.Set = .{}; defer supplied.deinit(c.allocator); try self.g.callEnvironments(target, op, self.saved, &supplied);
+            if (supplied.unknown or supplied.items.items.len == 0) self.unavailable = true;
+            for (supplied.items.items) |origin| { try c.row(effect_env.Origin); if (try self.environment(origin)) |id| try self.append(usize, &environments, id) else self.unavailable = true; }
+        }
+        var data_cursor: usize = 0; var env_cursor: usize = 0;
+        while (data_cursor < self.data_work.items.len or env_cursor < self.env_work.items.len) {
+            if (data_cursor < self.data_work.items.len) {
+                const key = self.data_work.items[data_cursor]; data_cursor += 1; try payloadKeyWork(c, key);
+                const base = self.data.get(key).?; const record = self.saved.payloads.getPtr(key).?;
+                const slots = try self.g.payloadCount(key.type_id) orelse { self.unavailable = true; continue; };
+                if (slots != record.slots.len) { self.unavailable = true; continue; }
+                for (record.slots, 0..) |*slot, index| {
+                    try c.step(); const contents = if (slot.*) |*value_ptr| value_ptr else continue;
+                    const array = v.types[@intFromEnum(key.type_id)].kind == .array;
+                    var selector: origin_model.Symbol = "element";
+                    if (!array) {
+                        const concrete = self.g.collector.concrete[@intFromEnum(key.type_id)].?; const field = v.storage.concrete[concrete].body.?.fields[index].field;
+                        const id = try self.symbol(v.members.fields[@intFromEnum(field)].id); try c.charge(id.len + 7); selector = try std.mem.concat(self.a, u8, &.{ "field:", id });
+                    }
+                    const refs = try self.value(contents, array);
+                    try self.append(fixed_owners.InitialAddress, &self.heap, .{ .base = base, .selector = selector, .view = try self.symbol(v.types[@intFromEnum(key.type_id)].id), .values = refs });
+                }
+            }
+            if (env_cursor < self.env_work.items.len) {
+                const origin = self.env_work.items[env_cursor]; env_cursor += 1; try c.row(effect_env.Origin);
+                const base = self.envs.get(origin).?; const row = v.closures.environments[@intFromEnum(origin.layout)];
+                var parents: std.ArrayListUnmanaged(usize) = .empty;
+                if (row.parent != null) {
+                    var selected: effect_env.Set = .{}; defer selected.deinit(c.allocator); _ = try selected.add(c, origin);
+                    var parent_set: effect_env.Set = .{}; defer parent_set.deinit(c.allocator); try self.g.parentEnvironments(self.saved, &selected, &parent_set);
+                    if (parent_set.unknown or parent_set.items.items.len == 0) self.unavailable = true;
+                    for (parent_set.items.items) |parent| { try c.row(effect_env.Origin); if (try self.environment(parent)) |id| try self.append(usize, &parents, id) else self.unavailable = true; }
+                }
+                try self.append(fixed_owners.Environment, &self.parents, .{ .location = base, .parents = parents.items });
+                for (row.slots, 0..) |slot, index| {
+                    try c.step(); var value_copy: Owners = .{}; defer value_copy.deinit(c.allocator);
+                    if (origin.source == .input) _ = try value_copy.add(c, .{ .capture = .{ .environment = origin.layout, .slot = @enumFromInt(index) } });
+                    if (self.saved.slots.getPtr(.{ .binding = slot.binding, .environment = origin })) |stored| _ = try value_copy.join(c, stored) else if (origin.source != .input) continue else {
+                        value_copy.environments.callable_unknown = true; value_copy.environments.direct.unknown = true;
+                    }
+                    const key = try self.symbol(slot.key); try c.charge(key.len + 9); const selector = try std.mem.concat(self.a, u8, &.{ "capture:", key });
+                    const layout = try self.symbol(row.id); try c.charge(layout.len + 5); const view = try std.mem.concat(self.a, u8, &.{ "env:", layout });
+                    try self.append(fixed_owners.InitialAddress, &self.heap, .{ .base = base, .selector = selector, .view = view, .values = try self.value(&value_copy, false) });
+                }
+            }
+        }
+        self.initial = .{ .locations = self.locations.items, .arguments = arguments, .environment = environments.items, .heap = self.heap.items, .parents = self.parents.items };
+    }
+};
+
 const FixedExport = struct {
     g: *UpperGraph, analysis: *const fixed_owners.Analysis, target: t.FunctionRef,
     op: model.instruction.Instruction, offset: usize, saved: *const UpperState,
     destination: *UpperState, invocation: effect_env.Invocation,
     allocator: std.mem.Allocator, environments: []effect_env.Set,
+    inputs: ?*const PayloadInputs = null, payloads: []?PayloadOrigin = &.{},
+    completion: origin_model.Completion = .normal,
     fn directoryRef(self: *FixedExport, comptime Ref: type, rows: anytype, id: origin_model.Symbol) Error!Ref {
         const c = self.g.collector.c;
         for (rows, 0..) |row, index| {
@@ -259,23 +524,37 @@ const FixedExport = struct {
             .parameter => |index| { try c.require(self.offset <= self.op.operands.len and index < self.op.operands.len - self.offset); _ = try result.join(c, &self.saved.values[@intFromEnum(self.op.operands[self.offset + index])]); },
             .global => |id| { const ref = try self.directoryRef(t.GlobalRef, self.g.collector.common().modules.globals, id); _ = try result.add(c, .{ .global = ref }); },
             .capture => |key| try self.g.projectCapture(self.target, self.op, self.saved, try self.captureRef(key), &result),
-            .input => {
-                // analyze/analyzeReceiver do not import private inputs. Until
-                // that adapter is installed, no symbolic input is a proof.
-                self.g.collector.fixed_upper_origin_pending = true;
-                _ = try result.makeOpaque(c);
+            .input => |id| {
+                const input = self.inputs orelse return error.InvalidShape; try c.require(id < input.bindings.items.len);
+                const source_value = &input.bindings.items[id].value;
+                result.nonowning = source_value.nonowning; try c.charge(source_value.items.items.len);
+                for (source_value.items.items) |owner| _ = try result.add(c, owner);
+                result.payloads.unknown = source_value.payloads.unknown;
+                result.environments.callable_unknown = source_value.environments.callable_unknown;
+                result.environments.direct.unknown = source_value.environments.direct.unknown;
             },
         }
         return result;
     }
     fn exportValue(self: *FixedExport, id: usize) Error!Owners {
+        if (self.payloads.len == 0 and (self.analysis.normal_payloads.len != 0 or self.analysis.language_payloads.len != 0)) {
+            if (!try self.initialize()) { var missing: Owners = .{}; errdefer missing.deinit(self.g.collector.c.allocator); _ = try missing.makeOpaque(self.g.collector.c); return missing; }
+        }
         const c = self.g.collector.c; try c.step(); const node = self.analysis.locations[id];
         var result = try self.root(node.owner); errdefer result.deinit(c.allocator);
-        if (node.owner == .local and node.kind != .code and node.kind != .environment_local) {
-            // Ordinary aggregate contents are not yet persisted in UpperState.
-            // A local Array/Value/Reference may contain p/G/Code+ENV; exporting
-            // only Local would silently erase that relation before a later
-            // full-parameter write. Keep that capability explicitly opaque.
+        if (id < self.payloads.len and self.payloads[id] != null) {
+            _ = try result.payloads.add(c, self.payloads[id].?);
+        } else if (node.kind == .projection and node.owner == .input and node.key != null and node.view != null) {
+            const input = self.inputs orelse return error.InvalidShape;
+            const source_value = &input.bindings.items[node.owner.input].value;
+            const view = try self.directoryRef(t.TypeRef, self.g.collector.common().types, node.view.?);
+            var field: ?t.FieldRef = null;
+            try c.charge(node.key.?.len / 8 + 1);
+            if (std.mem.startsWith(u8, node.key.?, "field:")) field = try self.directoryRef(t.FieldRef, self.g.collector.common().members.fields, node.key.?[6..]);
+            var selected: Owners = .{}; defer selected.deinit(c.allocator);
+            try self.g.selectPayload(self.saved, source_value, view, field, &selected);
+            _ = try result.join(c, &selected);
+        } else if (node.owner == .local and node.kind != .code and node.kind != .environment_local) {
             const type_ref = if (node.type_id) |type_id| try self.directoryRef(t.TypeRef, self.g.collector.common().types, type_id) else null;
             if (type_ref == null) _ = try result.makeOpaque(c) else switch (self.g.collector.common().types[@intFromEnum(type_ref.?)].kind) {
                 .reference, .value, .array, .readSpan, .function, .unknown, .@"union" => _ = try result.makeOpaque(c),
@@ -286,7 +565,7 @@ const FixedExport = struct {
         // parameter roots retain the supplied complete code/env associations.
         const direct_capture = node.kind == .projection and node.owner == .capture and node.source != null and
             (self.analysis.locations[node.source.?].kind == .environment_input or self.analysis.locations[node.source.?].kind == .environment_component);
-        if ((node.kind == .projection or node.kind == .copied) and !direct_capture) {
+        if ((node.kind == .projection or node.kind == .copied) and !direct_capture and !(id < self.payloads.len and self.payloads[id] != null) and node.owner != .input) {
             result.environments.deinit(c.allocator); result.environments = .{ .callable_unknown = true, .direct = .{ .unknown = true } };
         }
         if (node.kind == .code) {
@@ -308,8 +587,33 @@ const FixedExport = struct {
     }
     fn initialize(self: *FixedExport) Error!bool {
         const c = self.g.collector.c; const v = self.g.collector.common();
+        try c.charge(self.analysis.locations.len + 1); self.payloads = try self.allocator.alloc(?PayloadOrigin, self.analysis.locations.len); @memset(self.payloads, null);
+        for (self.analysis.locations, 0..) |node, index| {
+            try c.step(); if (node.input) |input| {
+                const inputs = self.inputs orelse return false; try c.require(input < inputs.bindings.items.len);
+                self.payloads[index] = inputs.bindings.items[input].payload;
+                if (inputs.bindings.items[input].environment) |origin| _ = try self.environments[index].add(c, origin);
+            }
+        }
+        const completions = [_][]const fixed_owners.Payload{ if (self.completion == .normal) self.analysis.normal_payloads else self.analysis.language_payloads };
+        for (completions) |rows| for (rows) |payload| {
+            try c.step(); const actual = try self.directoryRef(t.TypeRef, v.types, payload.type_id);
+            if (self.payloads[payload.location] == null) self.payloads[payload.location] = .{ .type_id = actual, .source = .{ .fixed = .{ .invocation = self.invocation, .location = payload.location } } };
+        };
+        // Install identities before their slots: cycles and Code+ENV/data
+        // references use this one namespace, independently of traversal order.
+        try c.charge(self.analysis.locations.len + 1); const installed = try self.allocator.alloc(bool, self.analysis.locations.len); @memset(installed, false);
+        for (completions) |rows| for (rows) |payload| {
+            try c.step(); if (installed[payload.location]) continue; installed[payload.location] = true;
+            const key = self.payloads[payload.location].?;
+            const count = try self.g.payloadCount(key.type_id) orelse return false;
+            if (count != payload.slots.len) return false;
+            var record = try PayloadRecord.init(c, count); var owned = true; defer if (owned) record.deinit(c);
+            try self.destination.putPayload(c, key, record); owned = false;
+        };
         for (self.analysis.locations, 0..) |node, index| {
             try c.step(); if (node.layout == null) continue;
+            if (node.input != null and self.environments[index].items.items.len != 0) continue;
             const layout = try self.directoryRef(t.EnvironmentRef, v.closures.environments, node.layout.?);
             switch (node.kind) {
                 .environment_local => _ = try self.environments[index].add(c, .{ .layout = layout, .source = .{ .fixed = .{ .invocation = self.invocation, .location = index } } }),
@@ -331,7 +635,17 @@ const FixedExport = struct {
             try self.environments[index].ageFixed(c, self.invocation);
         }
         for (self.environments) |*set| { try c.step(); if (set.unknown) return false; }
-        const heaps = [_][]const fixed_owners.Address{ self.analysis.normal_heap, self.analysis.language_heap };
+        for (completions) |rows| for (rows) |payload| {
+            try c.step(); const key = self.payloads[payload.location].?;
+            for (payload.slots, 0..) |slot, ordinal| {
+                try c.step(); const physical = slot.physical orelse ordinal;
+                var value: Owners = .{}; defer value.deinit(c.allocator);
+                for (slot.values) |id| { try c.step(); var child = try self.exportValue(id); defer child.deinit(c.allocator); _ = try value.join(c, &child); }
+                try payloadKeyWork(c, key); const record = self.destination.payloads.getPtr(key).?; try c.require(physical < record.slots.len);
+                if (record.slots[physical]) |*old| _ = try old.join(c, &value) else record.slots[physical] = try Owners.clone(c, &value);
+            }
+        };
+        const heaps = [_][]const fixed_owners.Address{ if (self.completion == .normal) self.analysis.normal_heap else self.analysis.language_heap };
         // Reserve all possible new records before the publication loops. This
         // pays allocation/rehash work for existing map capacity and prospective
         // entries once, rather than hiding a growing map behind a unit lookup.
@@ -387,6 +701,145 @@ const UpperGraph = struct {
     summarizing: bool = false,
     changed: bool = false,
     block: t.BlockRef = @enumFromInt(0), instruction: u16 = 0,
+    fn payloadCount(self: *UpperGraph, actual: t.TypeRef) Error!?usize {
+        const c = self.collector.c; const v = self.collector.common(); try c.step();
+        return switch (v.types[@intFromEnum(actual)].kind) {
+            .array => 1,
+            .reference, .value => if (self.collector.concrete[@intFromEnum(actual)]) |index| if (v.storage.concrete[index].body) |body| body.fields.len else null else null,
+            else => null,
+        };
+    }
+    fn payloadSlot(self: *UpperGraph, actual: t.TypeRef, view: t.TypeRef, field: ?t.FieldRef) Error!?usize {
+        const c = self.collector.c; const v = self.collector.common(); try c.step();
+        if (field == null) return if (v.types[@intFromEnum(actual)].kind == .array and (v.types[@intFromEnum(view)].kind == .array or actual == view)) 0 else null;
+        const concrete = self.collector.concrete[@intFromEnum(actual)] orelse return null; const body = v.storage.concrete[concrete].body orelse return null;
+        var selected: ?t.FieldRef = if (actual == view) field else null;
+        if (actual != view) for (v.views.compatibility) |compatibility| {
+            try c.step(); if (compatibility.source_type != actual or compatibility.target_type != view) continue;
+            for (compatibility.fields) |mapping| {
+                try c.step(); if (mapping.target == .field and mapping.target.field == field.? and mapping.actual != null and mapping.actual.? == .field) selected = mapping.actual.?.field;
+            }
+        };
+        const physical_field = selected orelse return null;
+        for (body.fields, 0..) |physical, index| { try c.step(); if (physical.field == physical_field) return index; }
+        return null;
+    }
+    fn selectPayload(self: *UpperGraph, state: *const UpperState, source: *const Owners, view: t.TypeRef, field: ?t.FieldRef, into: *Owners) Error!void {
+        const c = self.collector.c; try c.step(); var missing = source.payloads.unknown or source.payloads.items.items.len == 0;
+        for (source.payloads.items.items) |key| {
+            try payloadKeyWork(c, key);
+            const index = try self.payloadSlot(key.type_id, view, field) orelse { missing = true; continue; };
+            const record = state.payloads.getPtr(key) orelse { missing = true; continue; };
+            if (index >= record.slots.len) { missing = true; continue; }
+            if (record.slots[index]) |*value| { if (value.known()) _ = try into.join(c, value) else missing = true; } else missing = true;
+        }
+        if (into.known()) for (source.items.items) |root| { try c.step(); if (root != .local) _ = try into.add(c, root); };
+        if (missing or !into.known()) _ = try into.makeOpaque(c);
+    }
+    fn storePayload(self: *UpperGraph, state: *UpperState, receiver: *const Owners, view: t.TypeRef, field: ?t.FieldRef, value: *const Owners, initialize: bool) Error!void {
+        const c = self.collector.c; try c.step();
+        if (receiver.payloads.unknown or receiver.payloads.items.items.len == 0) { try state.dirtyPayloads(c); return; }
+        var copy = try Owners.clone(c, value); defer copy.deinit(c.allocator);
+        for (receiver.payloads.items.items) |key| {
+            try payloadKeyWork(c, key); const index = try self.payloadSlot(key.type_id, view, field) orelse { try state.dirtyPayloads(c); return; };
+            const record = state.payloads.getPtr(key) orelse { try state.dirtyPayloads(c); return; };
+            if (index >= record.slots.len) { try state.dirtyPayloads(c); return; }
+            // A May store can add aliases to an established cell. Only a
+            // unique explicit initialization can establish missing contents.
+            if (record.slots[index]) |*old| _ = try old.join(c, &copy) else if (initialize and receiver.payloads.items.items.len == 1) record.slots[index] = try Owners.clone(c, &copy);
+        }
+    }
+    fn copyPayload(self: *UpperGraph, state: *UpperState, reg: t.RegisterRef, source: *const Owners, into: *Owners) Error!void {
+        const c = self.collector.c;
+        // This is the caller transfer of already exported physical records.
+        // The fixed graph's equations/initialization remain in owners.Engine.
+        var saved = try UpperState.clone(c, state); defer saved.deinit(c);
+        var input = try Owners.clone(c, source); defer input.deinit(c.allocator);
+        try state.agePayloads(c, reg, null);
+        const Pair = struct { source: PayloadOrigin, target: PayloadOrigin };
+        var work: std.ArrayListUnmanaged(Pair) = .empty; defer work.deinit(c.allocator);
+        var seen: PayloadSet = .{}; defer seen.deinit(c.allocator);
+        const Transfer = struct {
+            fn value(g: *UpperGraph, snapshot: *const UpperState, birth: t.RegisterRef, original: *const Owners, output: *Owners, pending: *std.ArrayListUnmanaged(Pair)) Error!void {
+                const ctx = g.collector.c; output.* = try Owners.clone(ctx, original);
+                output.payloads.deinit(ctx.allocator); output.payloads = .{ .unknown = original.payloads.unknown };
+                for (original.payloads.items.items) |key| {
+                    try payloadKeyWork(ctx, key);
+                    if (g.collector.common().types[@intFromEnum(key.type_id)].kind != .value) { _ = try output.payloads.add(ctx, key); continue; }
+                    _ = try g.payloadCount(key.type_id) orelse { output.payloads.unknown = true; continue; };
+                    try payloadKeyWork(ctx, key); if (!snapshot.payloads.contains(key)) { output.payloads.unknown = true; continue; }
+                    const target = PayloadOrigin{ .type_id = key.type_id, .source = .{ .birth = birth } };
+                    _ = try output.payloads.add(ctx, target);
+                    if (pending.items.len == pending.capacity) try ctx.charge(pending.items.len + 1); try ctx.step();
+                    try pending.append(ctx.allocator, .{ .source = key, .target = target });
+                }
+            }
+        };
+        var result: Owners = .{}; defer result.deinit(c.allocator); try Transfer.value(self, &saved, reg, &input, &result, &work);
+        var cursor: usize = 0;
+        while (cursor < work.items.len) : (cursor += 1) {
+            try c.step(); const pair = work.items[cursor]; if (!try seen.add(c, pair.source)) continue;
+            try payloadKeyWork(c, pair.source); const original = saved.payloads.getPtr(pair.source).?;
+            const count = try self.payloadCount(pair.target.type_id) orelse return error.InvalidShape; try c.require(count == original.slots.len);
+            var record = try PayloadRecord.init(c, count); var owned = true; defer if (owned) record.deinit(c);
+            for (original.slots, record.slots) |*slot, *dest| {
+                try c.step(); if (slot.*) |*value| {
+                    if (!value.known() and !self.summarizing) self.collector.fixed_upper_origin_pending = true;
+                    var mapped: Owners = .{}; errdefer mapped.deinit(c.allocator); try Transfer.value(self, &saved, reg, value, &mapped, &work); dest.* = mapped;
+                } else if (!self.summarizing) self.collector.fixed_upper_origin_pending = true;
+            }
+            try payloadKeyWork(c, pair.target);
+            if (state.payloads.getPtr(pair.target)) |old| _ = try old.join(c, &record) else { try state.putPayload(c, pair.target, record); owned = false; }
+        }
+        try into.replace(c, &result);
+    }
+    fn markContents(self: *UpperGraph, state: *const UpperState, source: *const Owners, mode: Access) Error!void {
+        const c = self.collector.c; var work: std.ArrayListUnmanaged(*const Owners) = .empty; defer work.deinit(c.allocator);
+        var data_seen: PayloadSet = .{}; defer data_seen.deinit(c.allocator); var env_seen: effect_env.Set = .{}; defer env_seen.deinit(c.allocator);
+        try c.charge(1); try work.append(c.allocator, source); var cursor: usize = 0;
+        while (cursor < work.items.len) : (cursor += 1) {
+            try c.step(); const value = work.items[cursor]; try self.mark(value, mode);
+            if (value.payloads.unknown and !self.summarizing) self.collector.fixed_upper_origin_pending = true;
+            for (value.payloads.items.items) |key| {
+                if (!try data_seen.add(c, key)) continue;
+                try payloadKeyWork(c, key); const record = state.payloads.getPtr(key) orelse { if (!self.summarizing) self.collector.fixed_upper_origin_pending = true; continue; };
+                for (record.slots) |*slot| {
+                    try c.step(); if (slot.*) |*child| {
+                        if (!child.known() and self.collector.common().types[@intFromEnum(key.type_id)].kind == .array) continue;
+                        if (work.items.len == work.capacity) try c.charge(work.items.len + 1); try c.step(); try work.append(c.allocator, child);
+                    } else if (!self.summarizing) self.collector.fixed_upper_origin_pending = true;
+                }
+            }
+            var selected: effect_env.Set = .{}; defer selected.deinit(c.allocator);
+            _ = try selected.join(c, &value.environments.direct);
+            try c.charge(value.environments.callables.capacity() + 1); var pairs = value.environments.callables.valueIterator(); while (pairs.next()) |env| { try c.step(); _ = try selected.join(c, env); }
+            // An unknown callable does not change a known external permission
+            // label. Dependent invocation still checks every target's pair.
+            var env_work: std.ArrayListUnmanaged(effect_env.Origin) = .empty; defer env_work.deinit(c.allocator);
+            try c.charge(selected.items.items.len + 1); try env_work.appendSlice(c.allocator, selected.items.items);
+            var env_cursor: usize = 0;
+            while (env_cursor < env_work.items.len) : (env_cursor += 1) {
+                const origin = env_work.items[env_cursor]; if (!try env_seen.add(c, origin)) continue;
+                const layout = self.collector.common().closures.environments[@intFromEnum(origin.layout)];
+                if (layout.parent != null) {
+                    var one: effect_env.Set = .{}; defer one.deinit(c.allocator); _ = try one.add(c, origin);
+                    var parent: effect_env.Set = .{}; defer parent.deinit(c.allocator); try self.parentEnvironments(state, &one, &parent);
+                    if (parent.unknown and !self.summarizing) self.collector.fixed_upper_origin_pending = true;
+                    for (parent.items.items) |p| {
+                        try c.row(effect_env.Origin); if (env_work.items.len == env_work.capacity) try c.charge(env_work.items.len + 1);
+                        try env_work.append(c.allocator, p);
+                    }
+                }
+                for (layout.slots, 0..) |slot, index| {
+                    try c.step();
+                    if (origin.source == .input and !self.summarizing) try self.collector.capture(self.function, origin.layout, @enumFromInt(index), mode);
+                    if (state.slots.getPtr(.{ .binding = slot.binding, .environment = origin })) |child| {
+                        if (work.items.len == work.capacity) try c.charge(work.items.len + 1); try c.step(); try work.append(c.allocator, child);
+                    } else if (origin.source != .input and !self.summarizing) self.collector.fixed_upper_origin_pending = true;
+                }
+            }
+        }
+    }
     fn proveLexicalCells(self: *UpperGraph) Error!bool {
         const c = self.collector.c; const v = self.collector.common(); const function = c.program.functions[@intFromEnum(self.function)];
         var created: std.AutoHashMapUnmanaged(t.BindingRef, struct { cell: t.CellRef, handle: t.RegisterRef }) = .empty; defer created.deinit(c.allocator);
@@ -687,9 +1140,9 @@ const UpperGraph = struct {
             const slot = selected orelse return error.InvalidReference;
             var projected: Owners = .{}; defer projected.deinit(c.allocator);
             try self.projectCapture(target, op, saved, slot, &projected);
-            if (capture.read) try self.mark(&projected, .read);
-            if (capture.write) try self.mark(&projected, .write);
-            if (capture.structural) try self.mark(&projected, .structural);
+            if (capture.read) try self.markContents(saved, &projected, .read);
+            if (capture.write) try self.markContents(saved, &projected, .write);
+            if (capture.structural) try self.markContents(saved, &projected, .structural);
         }
     }
     fn environment(self: *UpperGraph, state: *UpperState, roots: *const effect_env.Set, selected: Capture, loaded: *Owners, incoming: ?*const Owners, initialize: bool) Error!void {
@@ -726,7 +1179,7 @@ const UpperGraph = struct {
                     _ = try destination.value_ptr.join(c, value);
                 }
             } else if (state.slots.getPtr(key)) |value| {
-                if (foreign) _ = try loaded.environments.join(c, &value.environments) else _ = try loaded.join(c, value);
+                if (foreign) { _ = try loaded.environments.join(c, &value.environments); _ = try loaded.payloads.join(c, &value.payloads); } else _ = try loaded.join(c, value);
             } else if (origin.source == .input and foreign) {
                 // An input is a formal Env, never a concrete slot payload.
                 // Callable/returned-closure contents require their own graph.
@@ -824,7 +1277,7 @@ const UpperGraph = struct {
         }
         return result;
     }
-    fn fixedOwnersGraph(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, directory: *const origin_model.Directory, function_id: origin_model.Symbol, graph: *const origin_model.Graph, budget: *origin_model.Budget, allocator: std.mem.Allocator, receiver: ?*const construction_origins.Analysis, returned: *Owners, thrown: *Owners) Error!bool {
+    fn fixedOwnersGraph(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, directory: *const origin_model.Directory, function_id: origin_model.Symbol, graph: *const origin_model.Graph, budget: *origin_model.Budget, allocator: std.mem.Allocator, receiver: ?*const construction_origins.Analysis, returned: *Owners, thrown: *Owners, completions: ?*UpperCompletions) Error!bool {
         const c = self.collector.c; const publication_rows = self.collector.common().authority.fixed_publication.publication.contracts;
         try c.charge(publication_rows.len + 1); const rows = try allocator.alloc(fixed_owners.Fixed, publication_rows.len);
         for (publication_rows, rows) |*row, *into| {
@@ -836,34 +1289,44 @@ const UpperGraph = struct {
             into.* = .{ .function_id = try publication_refs.symbol(c, allocator, row.function_id), .graph = if (row.return_origins) |*value| value else null, .parameters = parameters, .captures = captures, .may_throw = row.upper.facets.may_throw };
         }
         const physical = try self.physicalFields(allocator, directory);
-        var analysis = (if (receiver) |flow|
-            fixed_owners.analyzeReceiver(c.allocator, directory, physical, function_id, graph, rows, budget, flow)
-        else fixed_owners.analyze(c.allocator, directory, physical, function_id, graph, rows, budget)) catch |err| return publication_refs.graphFailure(err);
+        const invocation = effect_env.Invocation{ .caller = self.function, .block = self.block, .instruction = self.instruction, .target = target };
+        var inputs = PayloadInputs{ .g = self, .saved = saved, .a = allocator, .invocation = invocation }; defer inputs.deinit();
+        try inputs.build(target, op, offset, full.parameters.len);
+        if (inputs.unavailable) return self.noFixedBodyProof(full, returned, thrown);
+        var analysis = fixed_owners.analyzeInputs(c.allocator, directory, physical, function_id, graph, rows, budget, receiver, &inputs.initial) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
         if (analysis.pending != null or (full.facets.may_throw and !analysis.language_live)) return self.noFixedBodyProof(full, returned, thrown);
-        const invocation = effect_env.Invocation{ .caller = self.function, .block = self.block, .instruction = self.instruction, .target = target };
-        // All incoming source relationships are borrowed from the pre-call
-        // snapshot. Expire the old graph at this site before installing its
-        // newly derived parent/slot/code relationships as one namespace.
-        try destination.fixedBirth(c, invocation);
-        try c.charge(analysis.locations.len + 1); const environments = try c.allocator.alloc(effect_env.Set, analysis.locations.len); @memset(environments, .{});
-        defer { for (environments) |*environment_set| environment_set.deinit(c.allocator); c.allocator.free(environments); }
-        var export_graph = FixedExport{ .g = self, .analysis = &analysis, .target = target, .op = op, .offset = offset, .saved = saved, .destination = destination, .invocation = invocation, .allocator = allocator, .environments = environments };
-        if (!try export_graph.initialize()) return self.noFixedBodyProof(full, returned, thrown);
+        // The namespace is shared across completions; mutable saved contents
+        // are not. Clone the invalidated pre-result state before either exit
+        // installs its complete heap relationships.
+        var language_state: ?UpperState = if (full.facets.may_throw) try UpperState.clone(c, destination) else null;
+        defer if (language_state) |*state| state.deinit(c);
+        var root_export = FixedExport{ .g = self, .analysis = &analysis, .target = target, .op = op, .offset = offset, .saved = saved, .destination = destination, .invocation = invocation, .allocator = allocator, .environments = &.{}, .inputs = &inputs };
         for (analysis.effects) |effect| {
-            var projected = try export_graph.root(effect.root); defer projected.deinit(c.allocator);
+            var projected = try root_export.root(effect.root); defer projected.deinit(c.allocator);
             try self.mark(&projected, switch (effect.flag) { .read => .read, .write => .write, .structural => .structural });
         }
         const outputs = [_][]const usize{ analysis.normal, analysis.language }; const into = [_]*Owners{ returned, thrown };
-        const live = [_]bool{ analysis.normal_live, analysis.language_live };
-        for (outputs, into, live) |values, owners, reachable| {
+        const live = [_]bool{ analysis.normal_live, analysis.language_live and full.facets.may_throw };
+        for (outputs, into, live, 0..) |values, owners, reachable, index| {
             try c.step(); if (!reachable) continue;
+            const state = if (index == 0) destination else &language_state.?;
+            try state.fixedBirth(c, invocation);
+            try c.charge(analysis.locations.len + 1); const environments = try c.allocator.alloc(effect_env.Set, analysis.locations.len); @memset(environments, .{});
+            defer { for (environments) |*environment_set| environment_set.deinit(c.allocator); c.allocator.free(environments); }
+            var export_graph = FixedExport{ .g = self, .analysis = &analysis, .target = target, .op = op, .offset = offset, .saved = saved, .destination = state, .invocation = invocation, .allocator = allocator, .environments = environments, .inputs = &inputs, .completion = @enumFromInt(index) };
+            if (!try export_graph.initialize()) return self.noFixedBodyProof(full, returned, thrown);
             if (values.len == 0) owners.nonowning = true;
             for (values) |id| { var value = try export_graph.exportValue(id); defer value.deinit(c.allocator); _ = try owners.join(c, &value); }
         }
+        if (completions) |outgoing| {
+            outgoing.normal = analysis.normal_live;
+            if (outgoing.language_state) |*old| old.deinit(c);
+            outgoing.language_state = language_state; language_state = null;
+        }
         return true;
     }
-    fn fixedGraphSummary(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners) Error!bool {
+    fn fixedGraphSummary(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners, completions: ?*UpperCompletions) Error!bool {
         const collector = self.collector; const c = collector.c;
         const contract_index = collector.contracts[@intFromEnum(target)] orelse return false;
         const fixed = &c.program.tables.mode.common.authority.fixed_publication;
@@ -897,7 +1360,7 @@ const UpperGraph = struct {
         // The immutable complete fixed contract vector is solely the upper.
         const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
         if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
-        if (!receiver) return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), null, returned, thrown);
+        if (!receiver) return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), null, returned, thrown, completions);
         // Receiver return interpretation is owned by the independently checked
         // construction-frame protocol. It is not selected actual entrances or
         // the cached effect proof. Complete current-body inclusion above stays
@@ -920,10 +1383,11 @@ const UpperGraph = struct {
             var projected:Owners=.{}; defer projected.deinit(c.allocator);
             try self.projectSummary(&origin,target,op,state,offset,&projected); try self.mark(&projected,.write);
         }
-        return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), &analysis, returned, thrown);
+        return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), &analysis, returned, thrown, completions);
     }
     fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *UpperState, incoming: *const UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
         const collector = self.collector; const c = collector.c;
+        completions.deinit(c); completions.normal = true; completions.language = false;
         const full = if (self.summarizing) original: {
             try c.step(); break :original collector.upper(target) orelse return error.InvalidShape;
         } else try collector.consumeUpper(self.function, target);
@@ -939,24 +1403,27 @@ const UpperGraph = struct {
         if (!self.summarizing) for (full.parameters, 0..) |access_mode, i| {
             if(target_abi.construction!=null and i==0)continue; // The hidden frame is not an actual receiver object.
             try c.step(); const argument = &state.values[@intFromEnum(op.operands[offset + i])];
-            if (access_mode.read) try self.mark(argument, .read);
-            if (access_mode.write) try self.mark(argument, .write);
-            if (access_mode.structural) try self.mark(argument, .structural);
+            if (access_mode.read) try self.markContents(incoming, argument, .read);
+            if (access_mode.write) try self.markContents(incoming, argument, .write);
+            if (access_mode.structural) try self.markContents(incoming, argument, .structural);
         };
+        for (full.parameters) |flags| { try c.step(); if (flags.write or flags.structural) { try state.dirtyPayloads(c); break; } }
+        try c.step(); if (full.globals.writes.len != 0 or full.host_resources.writes.len != 0) try state.dirtyPayloads(c);
         // Complete declared writes revoke PRE-call selected contents on both
         // continuations. Fixed return relationships are then installed from
         // their immutable graph using the saved pre-call input, so a returned
         // activation is not accidentally revoked as an old captured value.
         for (full.captures) |captured| {
             try c.step(); if (!captured.write) continue;
+            try state.dirtyPayloads(c);
             for (collector.captures, 0..) |slot, id| {
                 try c.step(); const found = slot orelse continue;
                 const key = collector.common().closures.environments[@intFromEnum(found.environment)].slots[@intFromEnum(found.slot)].key;
                 if (std.mem.eql(u8, &key, &captured.slot)) try state.dirtyCapture(c, @enumFromInt(id));
             }
         }
-        if (full.facets.unknown_host or full.facets.@"await") try state.dirtyEnvironments(c);
-        const fixed = try self.fixedGraphSummary(target, op, incoming, state, offset, full, returned, thrown);
+        if (full.facets.unknown_host or full.facets.@"await") { try state.dirtyEnvironments(c); try state.dirtyPayloads(c); }
+        const fixed = try self.fixedGraphSummary(target, op, incoming, state, offset, full, returned, thrown, completions);
         const summary = &collector.aliases[@intFromEnum(target)];
         const project = summary.transparent and (self.summarizing or summary.available);
         if (!fixed) {
@@ -975,12 +1442,20 @@ const UpperGraph = struct {
                 }
             }
             completions.language = true;
+            if (completions.language_state == null) completions.language_state = try UpperState.clone(c, state);
         }
     }
     fn consumeAlternative(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, input: *const UpperState, alternatives: *?UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
         const c = self.collector.c; var branch = try UpperState.clone(c, input); var owns = true; defer if (owns) branch.deinit(c);
-        try self.consume(target, op, &branch, input, offset, prefix, returned, thrown, completions);
-        if (alternatives.*) |*old| _ = try old.join(c, &branch) else { alternatives.* = branch; owns = false; }
+        var outgoing: UpperCompletions = .{}; defer outgoing.deinit(c);
+        try self.consume(target, op, &branch, input, offset, prefix, returned, thrown, &outgoing);
+        completions.normal = completions.normal or outgoing.normal; completions.language = completions.language or outgoing.language;
+        if (outgoing.normal) {
+            if (alternatives.*) |*old| _ = try old.join(c, &branch) else { alternatives.* = branch; owns = false; }
+        }
+        if (outgoing.language_state) |*state| {
+            if (completions.language_state) |*old| _ = try old.join(c, state) else { completions.language_state = outgoing.language_state; outgoing.language_state = null; }
+        }
     }
     fn prepare(self: *UpperGraph) Error!void {
         const collector = self.collector; const c = collector.c; const v = collector.common();
@@ -1134,35 +1609,29 @@ const UpperGraph = struct {
                         const receiver = op.operands[0]; try self.mark(&state.values[@intFromEnum(receiver)], .read);
                         if (self.privateField(receiver, read.member)) |slot| {
                             if (state.slots.getPtr(slot)) |stored| try result.replace(c, stored) else _ = try result.makeOpaque(c);
-                        } else {
-                            try result.replace(c, &state.values[@intFromEnum(receiver)]);
-                            _ = try result.makeOpaque(c);
-                        }
+                        } else try self.selectPayload(&state, &state.values[@intFromEnum(receiver)], read.receiver_view, read.member, &result);
                     },
                     .domain_array_read => {
-                        try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); try self.mark(&result, .read);
-                        // A fresh container has no external receiver root, but
-                        // a loaded element/field can still alias p, G or a
-                        // capture. No selected-content alias proof exists in
-                        // this owner-only domain. Keep that absence explicit,
-                        // including when the loaded value later becomes a
-                        // callable or is transported through Cells/env slots.
-                        _ = try result.makeOpaque(c);
+                        const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .read);
+                        const view = function.registers[@intFromEnum(op.operands[0])].view orelse return error.InvalidShape;
+                        try self.selectPayload(&state, receiver, view, null, &result);
                     },
                     .domain_array_length => { try self.mark(&state.values[@intFromEnum(op.operands[0])], .read); result.nonowning = true; },
                     .domain_field_store => |write| {
                         try self.mark(&state.values[@intFromEnum(op.operands[0])], .write);
                         if (self.privateField(op.operands[0], write.member)) |slot| try state.store(c, slot, &state.values[@intFromEnum(op.operands[1])]);
+                        try self.storePayload(&state, &state.values[@intFromEnum(op.operands[0])], write.receiver_view, write.member, &state.values[@intFromEnum(op.operands[1])], false);
                     },
                     .eh_field_initialize => |write| {
                         // Legality/phase/anchors remain the existing upstream
                         // construction duty. Track only the actual operand's
                         // lexical roots; private storage grants no 81 privilege.
                         if (self.privateField(op.operands[0], write.field)) |slot| try state.store(c, slot, &state.values[@intFromEnum(op.operands[1])]);
+                        try self.storePayload(&state, &state.values[@intFromEnum(op.operands[0])], function.registers[@intFromEnum(op.operands[0])].view orelse return error.InvalidShape, write.field, &state.values[@intFromEnum(op.operands[1])], true);
                     },
                     .receiver_create,.receiver_child,.initialize_begin,.initialize_end => { result.nonowning=true; },
                     .receiver_allocate => {
-                        _=try result.add(c,.local);
+                        _=try result.add(c,.local); result.payloads.unknown = true;
                         if(!self.summarizing) { try collector.facet(self.function,.allocation); try collector.facet(self.function,.managed_reference); }
                     },
                     .initialize_field => {
@@ -1171,12 +1640,17 @@ const UpperGraph = struct {
                         if(!self.summarizing and !try collector.receiverField(self.function,b,index))collector.fixed_upper_origin_pending=true;
                         try self.mark(&state.values[@intFromEnum(op.operands[1])],.write); result.nonowning=true;
                     },
-                    .domain_array_store, .domain_array_resize => { const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .write); try self.mark(receiver, .structural); },
-                    .domain_view, .domain_refine, .domain_copy, .domain_read_span, .eh_assertion, .eh_presence_widen => try result.replace(c, &state.values[@intFromEnum(op.operands[0])]),
+                    .domain_array_store => |write| { const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .write); try self.mark(receiver, .structural);
+                        try self.storePayload(&state, receiver, write.receiver_view, null, &state.values[@intFromEnum(op.operands[2])], false);
+                    },
+                    .domain_array_resize => { const receiver = &state.values[@intFromEnum(op.operands[0])]; try self.mark(receiver, .write); try self.mark(receiver, .structural); },
+                    .domain_copy => try self.copyPayload(&state, op.result.?, &state.values[@intFromEnum(op.operands[0])], &result),
+                    .domain_view, .domain_refine, .eh_assertion, .eh_presence_widen => try result.replace(c, &state.values[@intFromEnum(op.operands[0])]),
+                    .domain_read_span => { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); _ = try result.makeOpaque(c); },
                     .eh_pack => { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (!self.summarizing) try collector.facet(self.function, .eh_control); },
                     .eh_carrier => |view| { try result.replace(c, &state.values[@intFromEnum(op.operands[0])]); if (!self.summarizing and view == null) try collector.facet(self.function, .eh_control); },
                     .function_make => {
-                        if (op.operands.len == 0) result.nonowning = true else {
+                        if (op.operands.len == 0) { result.nonowning = true; var empty: effect_env.Set = .{}; defer empty.deinit(c.allocator); try result.environments.pair(c, op.data.function_make.function, &empty); } else {
                             _ = try result.add(c, .local);
                             var selected = try effect_env.Set.clone(c, &state.values[@intFromEnum(op.operands[0])].environments.direct);
                             defer selected.deinit(c.allocator); if (selected.items.items.len == 0) selected.unknown = true;
@@ -1192,12 +1666,20 @@ const UpperGraph = struct {
                         _ = try result.environments.direct.add(c, .{ .layout = data.environment, .source = .{ .birth = handle } });
                         if (!self.summarizing) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
                     },
-                    .common_typed_array_create, .string_concat => {
+                    inline .common_typed_array_create, .domain_array_create => |array| {
+                        const key = try state.birthPayload(c, op.result.?, array.actual_array_type, 1); _ = try result.payloads.add(c, key); _ = try result.add(c, .local);
+                        var elements: Owners = .{}; defer elements.deinit(c.allocator);
+                        for (op.operands) |operand| { try c.step(); _ = try elements.join(c, &state.values[@intFromEnum(operand)]); }
+                        try payloadKeyWork(c, key); state.payloads.getPtr(key).?.slots[0] = try Owners.clone(c, &elements);
+                        if (!self.summarizing) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
+                    },
+                    .string_concat => {
                         _ = try result.add(c, .local);
                         if (!self.summarizing) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
                     },
                     .eh_construct => |data| {
                         _ = try result.add(c, .local);
+                        if (try self.payloadCount(data.owner)) |field_count| { const key = try state.birthPayload(c, op.result.?, data.owner, field_count); _ = try result.payloads.add(c, key); } else result.payloads.unknown = true;
                         if (summary.aggregates.get(op.result.?)) |aggregate| {
                             // A repeated static birth kills every old lexical
                             // field fact before 81/56 stores. Missing fields are
@@ -1212,7 +1694,8 @@ const UpperGraph = struct {
                     .domain_literal => |data| {
                         switch (v.types[@intFromEnum(data.actual_type)].kind) {
                             .scalar, .@"null", .@"undefined" => result.nonowning = true,
-                            .reference, .value, .string, .array, .readSpan => _ = try result.add(c, .local),
+                            .string => _ = try result.add(c, .local),
+                            .reference, .value, .array, .readSpan => { _ = try result.add(c, .local); result.payloads.unknown = true; },
                             else => _ = try result.makeOpaque(c),
                         }
                         if (!self.summarizing and v.types[@intFromEnum(data.actual_type)].kind == .reference) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
@@ -1220,6 +1703,7 @@ const UpperGraph = struct {
                     .eh_enter => if (!self.summarizing) { try collector.facet(self.function, .eh_control); },
                     .authorized_host => {
                         if (!self.summarizing) try collector.hostEffects(self.function);
+                        try state.dirtyPayloads(c);
                         // A verified scalar result carries no external owner.
                         // Missing material remains pending, never an empty root.
                         if (collector.host_material == null) _ = try result.makeOpaque(c) else result.nonowning = true;
@@ -1248,7 +1732,7 @@ const UpperGraph = struct {
                             const owners = [_]*Owners{ &selected, &failure };
                             for (atoms, owners) |values, into| for (values) |atom| {
                                 try c.step(); switch (atom.source) {
-                                    .allocation, .language_error => { _ = try into.add(c, .local); },
+                                    .allocation, .language_error => { _ = try into.add(c, .local); into.payloads.unknown = true; },
                                     .node => |id| switch (receiver_flow.?.graph.nodes[id]) {
                                         .local => { _ = try into.add(c, .local); },
                                         .parameter => |parameter| { _ = try into.add(c, .{ .parameter = parameter.index }); },
@@ -1266,7 +1750,7 @@ const UpperGraph = struct {
                         }
                     },
                     .eh_invoke, .eh_invoke_indirect, .common_method_invoke => {
-                        var completions: UpperCompletions = .{}; var found = false;
+                        var completions: UpperCompletions = .{ .normal = false }; defer completions.deinit(c); var found = false;
                         var input = try UpperState.clone(c, &state); defer input.deinit(c);
                         var alternatives: ?UpperState = null; defer if (alternatives) |*saved| saved.deinit(c);
                         var returned: Owners = .{}; defer returned.deinit(c.allocator);
@@ -1288,16 +1772,15 @@ const UpperGraph = struct {
                         if (alternatives) |saved| { state.deinit(c); state = saved; alternatives = null; }
                         if (!found) {
                             if (!self.summarizing) collector.fixed_upper_origin_pending = true;
-                            completions = .{ .language = true };
+                            completions.normal = true; completions.language = true;
                             _ = try returned.makeOpaque(c); _ = try thrown.makeOpaque(c);
                         }
                         const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, .common_method_invoke => |call| call.normal, else => unreachable };
                         const exceptional = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, .common_method_invoke => |call| call.exceptional, else => unreachable };
-                        // GraphEffects normal control is unconditional. Only
-                        // the RESULT may be bottom; an ignored result cannot
-                        // gate independently computed caller data/effects.
-                        try self.edge(entries, queued, &pending, normal, &state, if (function.blocks[@intFromEnum(normal)].parameters.len == 0) &.{} else &.{returned});
-                        if (completions.language) try self.edge(entries, queued, &pending, exceptional, &state, &.{thrown});
+                        // Only an immutable complete exit relation can close
+                        // an edge. A missing/bottom result cannot do so.
+                        if (completions.normal) try self.edge(entries, queued, &pending, normal, &state, if (function.blocks[@intFromEnum(normal)].parameters.len == 0) &.{} else &.{returned});
+                        if (completions.language) try self.edge(entries, queued, &pending, exceptional, if (completions.language_state) |*outgoing| outgoing else &state, &.{thrown});
                     },
                     .@"br", .eh_route => {
                         const target = switch (op.data) { .@"br" => |branch| branch.destination, .eh_route => |route| route.successor, else => unreachable };
@@ -1957,7 +2440,7 @@ const CaptureAdapterFixture = struct {
             .data = if (indirect) .{ .eh_invoke_indirect = .{ .callable = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } else .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
         var returned: Owners = .{}; defer returned.deinit(self.c.allocator);
         var thrown: Owners = .{}; defer thrown.deinit(self.c.allocator);
-        try self.c.require(try graph.fixedGraphSummary(@enumFromInt(1), op, state, state, if (indirect) 1 else 0, full, &returned, &thrown));
+        try self.c.require(try graph.fixedGraphSummary(@enumFromInt(1), op, state, state, if (indirect) 1 else 0, full, &returned, &thrown, null));
     }
 };
 
@@ -2022,7 +2505,7 @@ test "fixed capture adapter unions explicit foreign stores without replacing the
     try std.testing.expectError(error.InvalidShape, fixture.apply(&state, false));
 }
 
-test "a returned local Array with parameter contents stays pending at a later full parameter write" {
+test "a returned local Array with parameter contents rejects a caller missing that parameter write" {
     var fixture: CaptureAdapterFixture = undefined; fixture.init(.{}, .{}, .{}, false);
     var aliases: [3]AliasSummary = .{ .{}, .{}, .{} };
     defer for (&aliases) |*summary| summary.deinit(fixture.c.allocator);
@@ -2087,8 +2570,7 @@ test "a returned local Array with parameter contents stays pending at a later fu
     // This is the same production full-parameter transfer as a later call.
     // Its return is ignored; missing exported element ownership still cannot
     // turn p's externally reachable data into a known-empty Local proof.
-    try graph.consume(@enumFromInt(1), op, &state, &saved, 1, false, &returned, &thrown, &completions);
-    try std.testing.expect(fixture.collector.fixed_upper_origin_pending);
+    try std.testing.expectError(error.InvalidShape, graph.consume(@enumFromInt(1), op, &state, &saved, 1, false, &returned, &thrown, &completions));
 }
 // END independent fixed-capture adapter DTO tests.
 
@@ -2219,7 +2701,7 @@ test "receiver shared owner exporter preserves saved parent slots and the callab
     var arena = std.heap.ArenaAllocator.init(fixture.c.allocator); defer arena.deinit();
     var returned: Owners = .{}; defer returned.deinit(fixture.c.allocator);
     var thrown: Owners = .{}; defer thrown.deinit(fixture.c.allocator);
-    try std.testing.expect(try graph.fixedOwnersGraph(@enumFromInt(2), creator_op, &incoming, &state, 1, full, &dto.directory, dto.constructor, &dto.graph, &budget, arena.allocator(), &receiver, &returned, &thrown));
+    try std.testing.expect(try graph.fixedOwnersGraph(@enumFromInt(2), creator_op, &incoming, &state, 1, full, &dto.directory, dto.constructor, &dto.graph, &budget, arena.allocator(), &receiver, &returned, &thrown, null));
     try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
     for (returned.items.items) |owner| try std.testing.expect(owner != .unresolved);
     const pair = returned.environments.callables.getPtr(@enumFromInt(1)).?;
@@ -2252,7 +2734,7 @@ test "receiver shared owner exporter preserves saved parent slots and the callab
         var destination = try UpperState.clone(&fixture.c, &incoming); defer destination.deinit(&fixture.c);
         var rejected: Owners = .{}; defer rejected.deinit(fixture.c.allocator);
         var rejected_throw: Owners = .{}; defer rejected_throw.deinit(fixture.c.allocator);
-        try std.testing.expectError(error.InvalidShape, graph.fixedOwnersGraph(@enumFromInt(2), creator_op, &incoming, &destination, 1, full, &dto.directory, dto.constructor, &dto.graph, &budget, arena.allocator(), &receiver, &rejected, &rejected_throw));
+        try std.testing.expectError(error.InvalidShape, graph.fixedOwnersGraph(@enumFromInt(2), creator_op, &incoming, &destination, 1, full, &dto.directory, dto.constructor, &dto.graph, &budget, arena.allocator(), &receiver, &rejected, &rejected_throw, null));
         @field(fixture.parameter[0], flag) = true;
     }
 }
@@ -2559,7 +3041,7 @@ test "method adapter consumes every fixed arm prefix and saved receiver through 
     const op = fixture.caller_instructions[1];
     var alternatives: ?UpperState = null; defer if (alternatives) |*state| state.deinit(&c);
     var returned: Owners = .{}; defer returned.deinit(c.allocator);
-    var thrown: Owners = .{}; defer thrown.deinit(c.allocator); var completions: UpperCompletions = .{};
+    var thrown: Owners = .{}; defer thrown.deinit(c.allocator); var completions: UpperCompletions = .{}; defer completions.deinit(&c);
     try graph.consumeAlternative(@enumFromInt(1), op, &incoming, &alternatives, 0, true, &returned, &thrown, &completions);
     try graph.consumeAlternative(@enumFromInt(2), op, &incoming, &alternatives, 0, true, &returned, &thrown, &completions);
     try std.testing.expect(completions.language and !collector.fixed_upper_origin_pending);
@@ -2579,4 +3061,521 @@ test "method adapter consumes every fixed arm prefix and saved receiver through 
     var unavailable_throw: Owners = .{}; defer unavailable_throw.deinit(c.allocator);
     try graph.consumeAlternative(@enumFromInt(2), op, &incoming, &alternatives, 0, true, &unavailable, &unavailable_throw, &completions);
     try graph.mark(&unavailable, .write); try std.testing.expect(collector.fixed_upper_origin_pending);
+}
+
+test "returned Array contents with full caller parameter rights survive fixed export and consumer write" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{ .write = true }, .{}, .{}, false);
+    var aliases: [3]AliasSummary = .{ .{}, .{}, .{} };
+    defer for (&aliases) |*summary| summary.deinit(fixture.c.allocator);
+    fixture.collector.aliases = &aliases;
+    const reference_id = "sha256:6666666666666666666666666666666666666666666666666666666666666666";
+    const array_id = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const function_id = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+    var types: [3]tables.CommonType = undefined;
+    @memcpy(types[0..2], fixture.program.tables.mode.common.types);
+    types[2] = types[0]; types[2].id = @splat(0xaa); types[2].kind = .array; types[2].name = "ReturnedArray"; types[2].element = @enumFromInt(0);
+    fixture.program.tables.mode.common.types = &types;
+    fixture.abis[2].result = @enumFromInt(2); fixture.abis[2].result_carrier = .{ .@"type" = @enumFromInt(2) };
+    var bindings: [4]CaptureAdapterFixture.Storage.CommonBinding = undefined; @memcpy(bindings[0..2], &fixture.bindings);
+    bindings[2] = fixture.bindings[0]; bindings[2].id = "array-argument"; bindings[2].name = "array-argument";
+    bindings[2].owner = .{ .param = @enumFromInt(1) }; bindings[2].@"type" = @enumFromInt(2); bindings[2].carrier = .{ .@"type" = @enumFromInt(2) };
+    bindings[3] = fixture.bindings[0]; bindings[3].id = "creator-argument"; bindings[3].name = "creator-argument";
+    bindings[3].owner = .{ .param = @enumFromInt(2) };
+    fixture.program.tables.mode.common.storage.bindings = &bindings;
+    fixture.abis[1].parameters = &.{@enumFromInt(2)}; fixture.abis[1].argument_types = &.{@enumFromInt(2)};
+    fixture.abis[1].physical_parameters = &.{ .{ .environment = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(2) } };
+    fixture.abis[2].parameters = &.{@enumFromInt(3)}; fixture.abis[2].argument_types = &.{@enumFromInt(0)};
+    fixture.abis[2].physical_parameters = &.{.{ .@"type" = @enumFromInt(0) }};
+    fixture.contracts[1].upper.parameters = &.{.{ .index = 0, .read = false, .write = true, .structural = false }};
+    fixture.contracts[2].upper.parameters = &.{.{ .index = 0, .read = false, .write = false, .structural = false }};
+    fixture.program.tables.mode.common.authority.fixed_publication.dependencies = &.{
+        .{ .function_id = @splat(0x11), .callees = &.{ .{ .function_id = @splat(0x22), .digest = @splat(0x44) }, .{ .function_id = @splat(0x33), .digest = @splat(0x55) } }, .hosts = &.{} },
+        .{ .function_id = @splat(0x22), .callees = &.{}, .hosts = &.{} },
+        .{ .function_id = @splat(0x33), .callees = &.{}, .hosts = &.{} },
+    };
+    var managed: [3]Managed = .{ .empty, .empty, .empty }; fixture.collector.managed = &managed;
+    var concrete: [3]?usize = .{ null, null, null }; fixture.collector.concrete = &concrete;
+    const interpretation = origin_model.Directory{
+        .types = &.{ .{ .id = reference_id, .kind = .reference }, .{ .id = array_id, .kind = .array } },
+        .functions = &.{.{ .id = function_id, .kind = .source, .parameter_types = &.{reference_id}, .return_type = array_id, .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = null, .construction = null }},
+        .environments = &.{}, .globals = &.{}, .fields = &.{},
+        .constructions = &.{.{ .id = "reference-construction", .owner = reference_id, .base = null, .kind = .implicit_base, .function_id = null }},
+    };
+    const nodes = [_]origin_model.Value{ .{ .parameter = .{ .@"type" = reference_id, .index = 0 } }, .{ .local = .{ .@"type" = array_id } } };
+    const input = origin_model.Graph{ .nodes = &nodes, .heaps = &.{ .entry, .{ .store = .{ .previous = 0, .bases = &.{1}, .selector = "element", .view = array_id, .values = &.{0}, .control = 0, .initialize = true } } }, .controls = &.{.entry}, .calls = &.{}, .normal = &.{1}, .language = &.{}, .exits = .{ .normal = &.{.{ .heap = 1, .control = 0 }}, .language = &.{} }, .accesses = &.{} };
+    fixture.contracts[2].return_origins = input;
+    fixture.contracts[0].upper.facets.allocation = true; fixture.contracts[0].upper.facets.managed_reference = true; fixture.contracts[0].upper.facets.escape = true;
+    fixture.contracts[2].upper.facets.allocation = true; fixture.contracts[2].upper.facets.managed_reference = true; fixture.contracts[2].upper.facets.escape = true;
+    const fixed = [_]fixed_owners.Fixed{.{ .function_id = function_id, .graph = &input, .parameters = &.{.{}}, .captures = &.{}, .may_throw = false }};
+    var budget = origin_model.Budget{ .context = &fixture.c, .charge = publication_refs.graphCharge };
+    try origin_model.validateDirectory(fixture.c.allocator, &interpretation, &budget);
+    try std.testing.expect((try origin_model.validateGraph(fixture.c.allocator, &interpretation, function_id, &input, &budget)) == .valid);
+    var analysis = try fixed_owners.analyze(fixture.c.allocator, &interpretation, &.{}, function_id, &input, &fixed, &budget); defer analysis.deinit();
+    try std.testing.expectEqual(@as(?fixed_owners.Pending, null), analysis.pending);
+    const origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } };
+    var state = try fixture.saved(origin, true); defer state.deinit(&fixture.c);
+    var graph = UpperGraph{ .collector = &fixture.collector, .function = @enumFromInt(0) };
+    _ = try fixture.collector.consumeUpper(@enumFromInt(0), @enumFromInt(2));
+    const creator_op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = @enumFromInt(0), .operands = &.{@enumFromInt(0)}, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(2), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    const op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = null, .operands = &.{ @enumFromInt(1), @enumFromInt(0) }, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var export_graph = FixedExport{ .g = &graph, .analysis = &analysis, .target = @enumFromInt(2), .op = creator_op, .offset = 0, .saved = &state, .destination = &state, .invocation = .{ .caller = @enumFromInt(0), .block = @enumFromInt(0), .instruction = 0, .target = @enumFromInt(2) }, .allocator = analysis.arena.allocator(), .environments = &.{} };
+    var value = try export_graph.exportValue(analysis.normal[0]); defer value.deinit(fixture.c.allocator);
+    try state.values[0].replace(&fixture.c, &value);
+    var saved = try UpperState.clone(&fixture.c, &state); defer saved.deinit(&fixture.c);
+    var returned: Owners = .{}; defer returned.deinit(fixture.c.allocator);
+    var thrown: Owners = .{}; defer thrown.deinit(fixture.c.allocator);
+    var completions: UpperCompletions = .{};
+    // This is the same production full-parameter transfer as a later call.
+    // Its return is ignored; missing exported element ownership still cannot
+    // turn p's externally reachable data into a known-empty Local proof.
+    try graph.consume(@enumFromInt(1), op, &state, &saved, 1, false, &returned, &thrown, &completions);
+    try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+}
+
+test "normal returned Array contents do not inherit the language exit owners before a full consumer write" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{ .write = true }, .{}, .{}, false);
+    var aliases: [3]AliasSummary = .{ .{}, .{}, .{} };
+    defer for (&aliases) |*summary| summary.deinit(fixture.c.allocator);
+    fixture.collector.aliases = &aliases;
+    const reference_id = "sha256:6666666666666666666666666666666666666666666666666666666666666666";
+    const array_id = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const function_id = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+    var types: [3]tables.CommonType = undefined;
+    @memcpy(types[0..2], fixture.program.tables.mode.common.types);
+    types[2] = types[0]; types[2].id = @splat(0xaa); types[2].kind = .array; types[2].name = "ReturnedArray"; types[2].element = @enumFromInt(0);
+    fixture.program.tables.mode.common.types = &types;
+    fixture.abis[2].result = @enumFromInt(2); fixture.abis[2].result_carrier = .{ .@"type" = @enumFromInt(2) };
+    var bindings: [6]CaptureAdapterFixture.Storage.CommonBinding = undefined; @memcpy(bindings[0..2], &fixture.bindings);
+    bindings[2] = fixture.bindings[0]; bindings[2].id = "array-argument"; bindings[2].name = "array-argument";
+    bindings[2].owner = .{ .param = @enumFromInt(1) }; bindings[2].@"type" = @enumFromInt(2); bindings[2].carrier = .{ .@"type" = @enumFromInt(2) };
+    bindings[3] = fixture.bindings[0]; bindings[3].id = "creator-argument"; bindings[3].name = "creator-argument";
+    bindings[3].owner = .{ .param = @enumFromInt(2) };
+    bindings[4] = bindings[3]; bindings[4].id = "creator-q"; bindings[4].name = "creator-q";
+    bindings[5] = bindings[0]; bindings[5].id = "caller-q"; bindings[5].name = "caller-q";
+    var caller_permissions: [2]CaptureAdapterFixture.ParameterRow = .{ fixture.parameter[0], .{ .index = 1, .read = false, .write = false, .structural = false } };
+    fixture.contracts[0].upper.parameters = &caller_permissions;
+    fixture.abis[0].parameters = &.{ @enumFromInt(0), @enumFromInt(5) }; fixture.abis[0].argument_types = &.{ @enumFromInt(0), @enumFromInt(0) };
+    fixture.abis[0].physical_parameters = &.{ .{ .@"type" = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(0) } };
+    fixture.program.tables.mode.common.storage.bindings = &bindings;
+    fixture.abis[1].parameters = &.{@enumFromInt(2)}; fixture.abis[1].argument_types = &.{@enumFromInt(2)};
+    fixture.abis[1].physical_parameters = &.{ .{ .environment = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(2) } };
+    fixture.abis[2].parameters = &.{ @enumFromInt(3), @enumFromInt(4) }; fixture.abis[2].argument_types = &.{ @enumFromInt(0), @enumFromInt(0) };
+    fixture.abis[2].physical_parameters = &.{ .{ .@"type" = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(0) } };
+    fixture.contracts[1].upper.parameters = &.{.{ .index = 0, .read = false, .write = true, .structural = false }};
+    fixture.contracts[2].upper.parameters = &.{ .{ .index = 0, .read = false, .write = false, .structural = false }, .{ .index = 1, .read = false, .write = false, .structural = false } };
+    fixture.program.tables.mode.common.authority.fixed_publication.dependencies = &.{
+        .{ .function_id = @splat(0x11), .callees = &.{ .{ .function_id = @splat(0x22), .digest = @splat(0x44) }, .{ .function_id = @splat(0x33), .digest = @splat(0x55) } }, .hosts = &.{} },
+        .{ .function_id = @splat(0x22), .callees = &.{}, .hosts = &.{} },
+        .{ .function_id = @splat(0x33), .callees = &.{}, .hosts = &.{} },
+    };
+    var managed: [3]Managed = .{ .empty, .empty, .empty }; fixture.collector.managed = &managed;
+    var concrete: [3]?usize = .{ null, null, null }; fixture.collector.concrete = &concrete;
+    const interpretation = origin_model.Directory{
+        .types = &.{ .{ .id = reference_id, .kind = .reference }, .{ .id = array_id, .kind = .array } },
+        .functions = &.{.{ .id = function_id, .kind = .source, .parameter_types = &.{ reference_id, reference_id }, .return_type = array_id, .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = null, .construction = null }},
+        .environments = &.{}, .globals = &.{}, .fields = &.{},
+        .constructions = &.{.{ .id = "reference-construction", .owner = reference_id, .base = null, .kind = .implicit_base, .function_id = null }},
+    };
+    const nodes = [_]origin_model.Value{ .{ .parameter = .{ .@"type" = reference_id, .index = 0 } }, .{ .parameter = .{ .@"type" = reference_id, .index = 1 } }, .{ .local = .{ .@"type" = array_id } } };
+    const input = origin_model.Graph{
+        .nodes = &nodes, .heaps = &.{ .entry,
+            .{ .store = .{ .previous = 0, .bases = &.{2}, .selector = "element", .view = array_id, .values = &.{0}, .control = 0, .initialize = true } },
+            .{ .store = .{ .previous = 0, .bases = &.{2}, .selector = "element", .view = array_id, .values = &.{1}, .control = 0, .initialize = true } },
+        }, .controls = &.{.entry}, .calls = &.{}, .normal = &.{2}, .language = &.{2},
+        .exits = .{ .normal = &.{.{ .heap = 1, .control = 0 }}, .language = &.{.{ .heap = 2, .control = 0 }} }, .accesses = &.{},
+    };
+    fixture.contracts[2].return_origins = input;
+    fixture.contracts[0].upper.facets.allocation = true; fixture.contracts[0].upper.facets.managed_reference = true; fixture.contracts[0].upper.facets.escape = true;
+    fixture.contracts[2].upper.facets.allocation = true; fixture.contracts[2].upper.facets.managed_reference = true; fixture.contracts[2].upper.facets.escape = true;
+    fixture.contracts[2].upper.facets.may_throw = true;
+    const fixed = [_]fixed_owners.Fixed{.{ .function_id = function_id, .graph = &input, .parameters = &.{ .{}, .{} }, .captures = &.{}, .may_throw = true }};
+    var budget = origin_model.Budget{ .context = &fixture.c, .charge = publication_refs.graphCharge };
+    try origin_model.validateDirectory(fixture.c.allocator, &interpretation, &budget);
+    try std.testing.expect((try origin_model.validateGraph(fixture.c.allocator, &interpretation, function_id, &input, &budget)) == .valid);
+    var analysis = try fixed_owners.analyze(fixture.c.allocator, &interpretation, &.{}, function_id, &input, &fixed, &budget); defer analysis.deinit();
+    try std.testing.expectEqual(@as(?fixed_owners.Pending, null), analysis.pending);
+    const origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } };
+    var state = try fixture.saved(origin, true); defer state.deinit(&fixture.c);
+    _ = try state.values[2].add(&fixture.c, .{ .parameter = 1 });
+    var graph = UpperGraph{ .collector = &fixture.collector, .function = @enumFromInt(0) };
+    _ = try fixture.collector.consumeUpper(@enumFromInt(0), @enumFromInt(2));
+    const creator_op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = @enumFromInt(0), .operands = &.{ @enumFromInt(0), @enumFromInt(2) }, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(2), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    const op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = null, .operands = &.{ @enumFromInt(1), @enumFromInt(0) }, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var export_graph = FixedExport{ .g = &graph, .analysis = &analysis, .target = @enumFromInt(2), .op = creator_op, .offset = 0, .saved = &state, .destination = &state, .invocation = .{ .caller = @enumFromInt(0), .block = @enumFromInt(0), .instruction = 0, .target = @enumFromInt(2) }, .allocator = analysis.arena.allocator(), .environments = &.{} };
+    var value = try export_graph.exportValue(analysis.normal[0]); defer value.deinit(fixture.c.allocator);
+    try state.values[0].replace(&fixture.c, &value);
+    var saved = try UpperState.clone(&fixture.c, &state); defer saved.deinit(&fixture.c);
+    var returned: Owners = .{}; defer returned.deinit(fixture.c.allocator);
+    var thrown: Owners = .{}; defer thrown.deinit(fixture.c.allocator);
+    var completions: UpperCompletions = .{};
+    // This is the same production full-parameter transfer as a later call.
+    // Its return is ignored; missing exported element ownership still cannot
+    // turn p's externally reachable data into a known-empty Local proof.
+    try graph.consume(@enumFromInt(1), op, &state, &saved, 1, false, &returned, &thrown, &completions);
+    try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    // The other completion really carries q; it is not dropped from Analysis.
+    try std.testing.expect(analysis.normal_live and analysis.language_live);
+    try std.testing.expectEqual(@as(usize, 1), analysis.normal_payloads.len);
+    try std.testing.expectEqual(@as(usize, 1), analysis.language_payloads.len);
+    const normal_child = analysis.locations[analysis.normal_payloads[0].slots[0].values[0]].owner;
+    const language_child = analysis.locations[analysis.language_payloads[0].slots[0].values[0]].owner;
+    try std.testing.expect(normal_child == .parameter and normal_child.parameter == 0);
+    try std.testing.expect(language_child == .parameter and language_child.parameter == 1);
+    caller_permissions[0].write = false;
+    var denied = try UpperState.clone(&fixture.c, &saved); defer denied.deinit(&fixture.c);
+    try std.testing.expectError(error.InvalidShape, graph.consume(@enumFromInt(1), op, &denied, &saved, 1, false, &returned, &thrown, &completions));
+}
+
+
+// Literal metadata at the existing private FX adapter seam. This is not a
+// Source packet, body-coverage certificate, ActualAnalysis or VM receipt.
+test "closure Array fixed export preserves Code ENV parent slots and every caller content permission" {
+    const ClosureDTO = struct {
+        const reference_id = "sha256:" ++ "66" ** 32;
+        const callable_id = "sha256:" ++ "88" ** 32;
+        const array_id = "sha256:" ++ "aa" ** 32;
+        const caller_id = "sha256:" ++ "11" ** 32;
+        const consumer_id = "sha256:" ++ "22" ** 32;
+        const creator_id = "sha256:" ++ "33" ** 32;
+        const outer_id = "sha256:" ++ "44" ** 32;
+        const parent_id = "sha256:" ++ "77" ** 32;
+        const child_id = "sha256:" ++ "99" ** 32;
+        const parent_slot = "sha256:" ++ "55" ** 32;
+        const child_slot = "sha256:" ++ "ab" ** 32;
+        const global_id = "sha256:" ++ "bb" ** 32;
+        const directory = origin_model.Directory{
+            .types = &.{
+                .{ .id = reference_id, .kind = .reference },
+                .{ .id = callable_id, .kind = .function },
+                .{ .id = array_id, .kind = .array },
+            },
+            .functions = &.{
+                .{ .id = caller_id, .kind = .source, .parameter_types = &.{reference_id}, .return_type = reference_id, .environment_metadata_complete = true, .lexical_environment = parent_id, .activation_environment = null, .construction = null },
+                .{ .id = consumer_id, .kind = .source, .parameter_types = &.{array_id}, .return_type = reference_id, .environment_metadata_complete = true, .lexical_environment = child_id, .activation_environment = null, .construction = null },
+                .{ .id = creator_id, .kind = .source, .parameter_types = &.{reference_id}, .return_type = array_id, .environment_metadata_complete = true, .lexical_environment = parent_id, .activation_environment = child_id, .construction = null },
+                .{ .id = outer_id, .kind = .source, .parameter_types = &.{}, .return_type = reference_id, .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = parent_id, .construction = null },
+            },
+            .environments = &.{
+                .{ .id = parent_id, .parent = null, .slots = &.{.{ .key = parent_slot, .@"type" = reference_id, .writable = true }} },
+                .{ .id = child_id, .parent = parent_id, .slots = &.{.{ .key = child_slot, .@"type" = reference_id, .writable = true }} },
+            },
+            .globals = &.{.{ .id = global_id, .@"type" = reference_id }},
+            .fields = &.{},
+            .constructions = &.{.{ .id = "closure-reference-role", .owner = reference_id, .base = null, .kind = .implicit_base, .function_id = null }},
+        };
+        // All slices below are persistent const backing, independent of any
+        // initializer stack. The creator is an ordinary source function.
+        const relation = origin_model.Graph{
+            .nodes = &.{
+                .{ .environment_input = .{ .layout = parent_id } },
+                .{ .parameter = .{ .@"type" = reference_id, .index = 0 } },
+                .{ .environment_create = .{ .layout = child_id, .parent = &.{0}, .site = "closure-activation", .control = 0 } },
+                .{ .code = .{ .@"type" = callable_id, .function_id = consumer_id, .environment = &.{2}, .control = 0 } },
+                .{ .local = .{ .@"type" = array_id } },
+            },
+            .heaps = &.{
+                .entry,
+                .{ .store = .{ .previous = 0, .bases = &.{2}, .selector = "capture:" ++ child_slot, .view = "env:" ++ child_id, .values = &.{1}, .control = 0, .initialize = true } },
+                .{ .store = .{ .previous = 1, .bases = &.{4}, .selector = "element", .view = array_id, .values = &.{3}, .control = 0, .initialize = true } },
+            },
+            .controls = &.{.entry}, .calls = &.{}, .normal = &.{4}, .language = &.{},
+            .exits = .{ .normal = &.{.{ .heap = 2, .control = 0 }}, .language = &.{} }, .accesses = &.{},
+        };
+    };
+    var closure_fixture: CaptureAdapterFixture = undefined;
+    closure_fixture.init(.{ .read = true, .write = true, .structural = true }, .{ .read = true, .write = true, .structural = true }, .{ .read = true, .write = true, .structural = true }, true);
+    var closure_types: [3]tables.CommonType = undefined;
+    @memcpy(closure_types[0..2], closure_fixture.program.tables.mode.common.types);
+    closure_types[2] = closure_types[0]; closure_types[2].id = @splat(0xaa); closure_types[2].kind = .array;
+    closure_types[2].name = "ClosureArray"; closure_types[2].element = @enumFromInt(1);
+    closure_fixture.program.tables.mode.common.types = &closure_types;
+    var closure_functions: [4]model.Function = undefined;
+    @memcpy(closure_functions[0..3], &closure_fixture.functions);
+    closure_functions[3] = closure_functions[0]; closure_functions[3].id = @splat(0x44); closure_functions[3].abi = @enumFromInt(3);
+    closure_fixture.program.functions = &closure_functions;
+    var closure_bindings: [6]CaptureAdapterFixture.Storage.CommonBinding = undefined;
+    @memcpy(closure_bindings[0..2], &closure_fixture.bindings);
+    closure_bindings[1].owner = .{ .local = @enumFromInt(3) }; closure_bindings[1].scope = @enumFromInt(3);
+    closure_bindings[2] = closure_bindings[0]; closure_bindings[2].id = "closure-child-slot"; closure_bindings[2].name = "childSlot";
+    closure_bindings[2].owner = .{ .local = @enumFromInt(2) }; closure_bindings[2].scope = @enumFromInt(2);
+    closure_bindings[2].writable = true; closure_bindings[2].declaration_kind = .local;
+    closure_bindings[3] = closure_bindings[0]; closure_bindings[3].id = "closure-consumer-array"; closure_bindings[3].name = "array";
+    closure_bindings[3].owner = .{ .param = @enumFromInt(1) }; closure_bindings[3].scope = @enumFromInt(1);
+    closure_bindings[3].@"type" = @enumFromInt(2); closure_bindings[3].carrier = .{ .@"type" = @enumFromInt(2) };
+    closure_bindings[4] = closure_bindings[0]; closure_bindings[4].id = "closure-creator-parameter"; closure_bindings[4].name = "p";
+    closure_bindings[4].owner = .{ .param = @enumFromInt(2) }; closure_bindings[4].scope = @enumFromInt(2);
+    closure_bindings[5] = closure_bindings[0]; closure_bindings[5].id = "closure-global"; closure_bindings[5].name = "G";
+    closure_bindings[5].owner = .{ .global = @enumFromInt(0) }; closure_bindings[5].scope = null;
+    closure_bindings[5].writable = true; closure_bindings[5].declaration_kind = null;
+    closure_fixture.program.tables.mode.common.storage.bindings = &closure_bindings;
+    const closure_env_rows = [_]CaptureAdapterFixture.EnvironmentRow{
+        .{ .id = @splat(0x77), .owner = @enumFromInt(3), .parent = null, .slots = &.{.{ .binding = @enumFromInt(1), .key = @splat(0x55), .kind = .local, .@"type" = @enumFromInt(0), .writable = true }} },
+        .{ .id = @splat(0x99), .owner = @enumFromInt(2), .parent = @enumFromInt(0), .slots = &.{.{ .binding = @enumFromInt(2), .key = @splat(0xab), .kind = .local, .@"type" = @enumFromInt(0), .writable = true }} },
+    };
+    closure_fixture.program.tables.mode.common.closures.environments = &closure_env_rows;
+    closure_fixture.program.tables.mode.common.storage.environments = &.{
+        .{ .environment = @enumFromInt(0), .byte_size = 8, .alignment = 8, .reference_count = 1, .parent_offset = null, .slot_offsets = &.{0} },
+        .{ .environment = @enumFromInt(1), .byte_size = 16, .alignment = 8, .reference_count = 2, .parent_offset = 0, .slot_offsets = &.{8} },
+    };
+    var closure_abis: [4]CaptureAdapterFixture.Storage.CommonAbi = undefined;
+    @memcpy(closure_abis[0..3], &closure_fixture.abis);
+    closure_abis[1].parameters = &.{@enumFromInt(3)}; closure_abis[1].argument_types = &.{@enumFromInt(2)};
+    closure_abis[1].lexical_environment = @enumFromInt(1);
+    closure_abis[1].physical_parameters = &.{ .{ .environment = @enumFromInt(1) }, .{ .@"type" = @enumFromInt(2) } };
+    closure_abis[2].parameters = &.{@enumFromInt(4)}; closure_abis[2].argument_types = &.{@enumFromInt(0)};
+    closure_abis[2].lexical_environment = @enumFromInt(0);
+    closure_abis[2].physical_parameters = &.{ .{ .environment = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(0) } };
+    closure_abis[2].result = @enumFromInt(2); closure_abis[2].result_carrier = .{ .@"type" = @enumFromInt(2) };
+    closure_abis[3] = closure_fixture.abis[2]; closure_abis[3].function = @enumFromInt(3);
+    closure_fixture.program.tables.mode.common.abis = &closure_abis;
+    var closure_rows: [4]CaptureAdapterFixture.ClosureRow = undefined;
+    @memcpy(closure_rows[0..3], &closure_fixture.closures);
+    closure_rows[0].parent = @enumFromInt(3); closure_rows[0].activation_environment = null;
+    closure_rows[0].captures = &.{.{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) }};
+    closure_rows[1].parent = @enumFromInt(2); closure_rows[1].lexical_environment = @enumFromInt(1);
+    closure_rows[1].captures = &.{
+        .{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) },
+        .{ .environment = @enumFromInt(1), .slot = @enumFromInt(0) },
+    };
+    closure_rows[2].parent = @enumFromInt(3); closure_rows[2].lexical_environment = @enumFromInt(0); closure_rows[2].activation_environment = @enumFromInt(1);
+    closure_rows[2].captures = &.{.{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) }};
+    closure_rows[3] = .{ .function = @enumFromInt(3), .parent = null, .lexical_environment = null, .activation_environment = @enumFromInt(0), .captures = &.{} };
+    closure_fixture.program.tables.mode.common.closures.functions = &closure_rows;
+    closure_fixture.program.tables.mode.common.modules.globals = &.{.{
+        .id = @splat(0xbb), .source = @enumFromInt(0), .name = "G", .@"type" = @enumFromInt(0), .carrier = .{ .@"type" = @enumFromInt(0) },
+        .writable = true, .generated = false, .start = 0, .end = 1,
+        .decl_key = .{ .kind = .global, .name = "G", .path = &.{}, .source_path = "capture-adapter-dto.ts" }, .binding = @enumFromInt(5),
+    }};
+    closure_fixture.contracts[0].upper.globals = .{ .reads = &.{@splat(0xbb)}, .writes = &.{@splat(0xbb)} };
+    closure_fixture.contracts[0].upper.facets.allocation = true;
+    closure_fixture.contracts[0].upper.facets.managed_reference = true;
+    closure_fixture.contracts[0].upper.facets.escape = true;
+    closure_fixture.contracts[1].upper.parameters = &.{.{ .index = 0, .read = true, .write = true, .structural = true }};
+    closure_fixture.contracts[2].upper.parameters = &.{.{ .index = 0, .read = false, .write = false, .structural = false }};
+    closure_fixture.contracts[2].return_origins = ClosureDTO.relation;
+    closure_fixture.contracts[2].upper.facets.allocation = true;
+    closure_fixture.contracts[2].upper.facets.managed_reference = true;
+    closure_fixture.contracts[2].upper.facets.escape = true;
+    closure_fixture.program.tables.mode.common.authority.fixed_publication.dependencies = &.{
+        .{ .function_id = @splat(0x11), .callees = &.{ .{ .function_id = @splat(0x22), .digest = @splat(0x44) }, .{ .function_id = @splat(0x33), .digest = @splat(0x55) } }, .hosts = &.{} },
+        .{ .function_id = @splat(0x22), .callees = &.{}, .hosts = &.{} },
+        .{ .function_id = @splat(0x33), .callees = &.{}, .hosts = &.{} },
+    };
+    var closure_contracts: [4]?usize = .{ 0, 1, 2, null }; closure_fixture.collector.contracts = &closure_contracts;
+    var closure_captures: [6]?Capture = .{ null, .{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) }, .{ .environment = @enumFromInt(1), .slot = @enumFromInt(0) }, null, null, null };
+    closure_fixture.collector.captures = &closure_captures;
+    var closure_managed: [3]Managed = .{ .empty, .empty, .empty }; closure_fixture.collector.managed = &closure_managed;
+    var closure_concrete: [3]?usize = .{ null, null, null }; closure_fixture.collector.concrete = &closure_concrete;
+    var closure_aliases: [4]AliasSummary = .{ .{}, .{}, .{}, .{} }; closure_fixture.collector.aliases = &closure_aliases;
+    defer for (&closure_aliases) |*closure_summary| closure_summary.deinit(closure_fixture.c.allocator);
+    var closure_budget = origin_model.Budget{ .context = &closure_fixture.c, .charge = publication_refs.graphCharge };
+    try origin_model.validateDirectory(closure_fixture.c.allocator, &ClosureDTO.directory, &closure_budget);
+    try std.testing.expect((try origin_model.validateGraph(closure_fixture.c.allocator, &ClosureDTO.directory, ClosureDTO.creator_id, &ClosureDTO.relation, &closure_budget)) == .valid);
+
+    var closure_state = try UpperState.init(&closure_fixture.c, 5); defer closure_state.deinit(&closure_fixture.c);
+    _ = try closure_state.values[0].add(&closure_fixture.c, .{ .parameter = 0 });
+    const closure_parent_origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .input };
+    _ = try closure_state.values[1].environments.direct.add(&closure_fixture.c, closure_parent_origin);
+    var closure_global: Owners = .{}; defer closure_global.deinit(closure_fixture.c.allocator);
+    _ = try closure_global.add(&closure_fixture.c, .{ .global = @enumFromInt(0) });
+    try closure_state.store(&closure_fixture.c, .{ .binding = @enumFromInt(1), .environment = closure_parent_origin }, &closure_global);
+    var closure_incoming = try UpperState.clone(&closure_fixture.c, &closure_state); defer closure_incoming.deinit(&closure_fixture.c);
+    var closure_graph = UpperGraph{ .collector = &closure_fixture.collector, .function = @enumFromInt(0) };
+    const closure_creator_op = model.instruction.Instruction{
+        .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = @enumFromInt(2), .operands = &.{ @enumFromInt(1), @enumFromInt(0) },
+        .data = .{ .eh_invoke = .{ .callee = @enumFromInt(2), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } },
+    };
+    const closure_creator_upper = try closure_fixture.collector.consumeUpper(@enumFromInt(0), @enumFromInt(2));
+    var closure_arena = std.heap.ArenaAllocator.init(closure_fixture.c.allocator); defer closure_arena.deinit();
+    var closure_returned: Owners = .{}; defer closure_returned.deinit(closure_fixture.c.allocator);
+    var closure_thrown: Owners = .{}; defer closure_thrown.deinit(closure_fixture.c.allocator);
+    // The real adapter constructs typed Initial input, runs the one owner
+    // engine, and publishes Array/Code/ENV/slot identities through FixedExport.
+    try std.testing.expect(try closure_graph.fixedOwnersGraph(@enumFromInt(2), closure_creator_op, &closure_incoming, &closure_state, 1, closure_creator_upper, &ClosureDTO.directory, ClosureDTO.creator_id, &ClosureDTO.relation, &closure_budget, closure_arena.allocator(), null, &closure_returned, &closure_thrown, null));
+    try std.testing.expect(!closure_fixture.collector.fixed_upper_origin_pending);
+    try std.testing.expect(closure_returned.known() and !closure_returned.payloads.unknown);
+    try std.testing.expectEqual(@as(usize, 1), closure_returned.payloads.items.items.len);
+    const closure_array_key = closure_returned.payloads.items.items[0];
+    try std.testing.expect(closure_array_key.source == .fixed);
+    try std.testing.expectEqual(@as(t.FunctionRef, @enumFromInt(2)), closure_array_key.source.fixed.invocation.target);
+    const closure_array_record = closure_state.payloads.getPtr(closure_array_key).?;
+    try std.testing.expectEqual(@as(usize, 1), closure_array_record.slots.len);
+    try std.testing.expect(closure_array_record.slots[0] != null);
+    try closure_state.values[2].replace(&closure_fixture.c, &closure_returned);
+    try closure_graph.copyPayload(&closure_state, @enumFromInt(3), &closure_state.values[2], &closure_state.values[3]);
+    // Invoke the Code recovered by a caller Array read; never substitute the
+    // original parent ENV register for the child's Code+ENV association.
+    try closure_graph.selectPayload(&closure_state, &closure_state.values[3], @enumFromInt(2), null, &closure_state.values[4]);
+    const closure_selected = &closure_state.values[4];
+    try std.testing.expect(closure_selected.known() and !closure_selected.environments.callable_unknown);
+    try std.testing.expectEqual(@as(usize, 1), closure_selected.environments.callables.count());
+    const closure_pair = closure_selected.environments.callables.getPtr(@enumFromInt(1)).?;
+    try std.testing.expect(!closure_pair.unknown);
+    try std.testing.expectEqual(@as(usize, 1), closure_pair.items.items.len);
+    const closure_child_origin = closure_pair.items.items[0];
+    try std.testing.expectEqual(@as(t.EnvironmentRef, @enumFromInt(1)), closure_child_origin.layout);
+    try std.testing.expect(closure_child_origin.source == .fixed);
+    try std.testing.expectEqual(@as(t.FunctionRef, @enumFromInt(2)), closure_child_origin.source.fixed.invocation.target);
+    const closure_parents = closure_state.parents.getPtr(closure_child_origin).?;
+    try std.testing.expect(!closure_parents.unknown);
+    try std.testing.expectEqual(@as(usize, 1), closure_parents.items.items.len);
+    try std.testing.expect(std.meta.eql(closure_parent_origin, closure_parents.items.items[0]));
+    const closure_child_contents = closure_state.slots.getPtr(.{ .binding = @enumFromInt(2), .environment = closure_child_origin }).?;
+    try std.testing.expectEqual(@as(usize, 1), closure_child_contents.items.items.len);
+    try std.testing.expect(closure_child_contents.items.items[0] == .parameter);
+    try std.testing.expectEqual(@as(usize, 0), closure_child_contents.items.items[0].parameter);
+    const closure_parent_contents = closure_state.slots.getPtr(.{ .binding = @enumFromInt(1), .environment = closure_parent_origin }).?;
+    try std.testing.expectEqual(@as(usize, 1), closure_parent_contents.items.items.len);
+    try std.testing.expect(closure_parent_contents.items.items[0] == .global);
+    try std.testing.expectEqual(@as(t.GlobalRef, @enumFromInt(0)), closure_parent_contents.items.items[0].global);
+
+    const closure_consumer_op = model.instruction.Instruction{ .source = closure_creator_op.source, .result = null, .operands = &.{ @enumFromInt(4), @enumFromInt(3) },
+        .data = .{ .eh_invoke_indirect = .{ .callable = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var closure_before_consumer = try UpperState.clone(&closure_fixture.c, &closure_state); defer closure_before_consumer.deinit(&closure_fixture.c);
+    var closure_consumer_return: Owners = .{}; defer closure_consumer_return.deinit(closure_fixture.c.allocator);
+    var closure_consumer_throw: Owners = .{}; defer closure_consumer_throw.deinit(closure_fixture.c.allocator);
+    var closure_completions: UpperCompletions = .{};
+    defer closure_completions.deinit(&closure_fixture.c);
+    try closure_graph.consume(@enumFromInt(1), closure_consumer_op, &closure_state, &closure_before_consumer, 1, false, &closure_consumer_return, &closure_consumer_throw, &closure_completions);
+    try std.testing.expect(!closure_fixture.collector.fixed_upper_origin_pending);
+    // Each missing flag must fail from the same saved complete closure. The
+    // foreign capture/global roots cannot be paid by the parameter's rights.
+    inline for (.{ "read", "write", "structural" }) |closure_flag| {
+        @field(closure_fixture.parameter[0], closure_flag) = false;
+        var closure_no_parameter = try UpperState.clone(&closure_fixture.c, &closure_before_consumer); defer closure_no_parameter.deinit(&closure_fixture.c);
+        try std.testing.expectError(error.InvalidShape, closure_graph.consume(@enumFromInt(1), closure_consumer_op, &closure_no_parameter, &closure_before_consumer, 1, false, &closure_consumer_return, &closure_consumer_throw, &closure_completions));
+        @field(closure_fixture.parameter[0], closure_flag) = true;
+        @field(closure_fixture.caller_capture[0], closure_flag) = false;
+        var closure_no_capture = try UpperState.clone(&closure_fixture.c, &closure_before_consumer); defer closure_no_capture.deinit(&closure_fixture.c);
+        try std.testing.expectError(error.InvalidShape, closure_graph.consume(@enumFromInt(1), closure_consumer_op, &closure_no_capture, &closure_before_consumer, 1, false, &closure_consumer_return, &closure_consumer_throw, &closure_completions));
+        @field(closure_fixture.caller_capture[0], closure_flag) = true;
+    }
+    inline for (.{ "reads", "writes" }) |closure_global_mode| {
+        @field(closure_fixture.contracts[0].upper.globals, closure_global_mode) = &.{};
+        var closure_no_global = try UpperState.clone(&closure_fixture.c, &closure_before_consumer); defer closure_no_global.deinit(&closure_fixture.c);
+        try std.testing.expectError(error.InvalidShape, closure_graph.consume(@enumFromInt(1), closure_consumer_op, &closure_no_global, &closure_before_consumer, 1, false, &closure_consumer_return, &closure_consumer_throw, &closure_completions));
+        @field(closure_fixture.contracts[0].upper.globals, closure_global_mode) = &.{@splat(0xbb)};
+    }
+    closure_fixture.contracts[1].digest = @splat(0xee);
+    var closure_wrong_digest = try UpperState.clone(&closure_fixture.c, &closure_before_consumer); defer closure_wrong_digest.deinit(&closure_fixture.c);
+    try std.testing.expectError(error.InvalidShape, closure_graph.consume(@enumFromInt(1), closure_consumer_op, &closure_wrong_digest, &closure_before_consumer, 1, false, &closure_consumer_return, &closure_consumer_throw, &closure_completions));
+    closure_fixture.contracts[1].digest = @splat(0x44);
+    try std.testing.expect(!closure_fixture.collector.fixed_upper_origin_pending);
+    // A known Array cannot bless an unknown callable association.
+    var closure_unknown_pair = try UpperState.clone(&closure_fixture.c, &closure_before_consumer); defer closure_unknown_pair.deinit(&closure_fixture.c);
+    closure_unknown_pair.values[4].environments.callable_unknown = true;
+    var closure_unknown_saved = try UpperState.clone(&closure_fixture.c, &closure_unknown_pair); defer closure_unknown_saved.deinit(&closure_fixture.c);
+    try closure_graph.consume(@enumFromInt(1), closure_consumer_op, &closure_unknown_pair, &closure_unknown_saved, 1, false, &closure_consumer_return, &closure_consumer_throw, &closure_completions);
+    try std.testing.expect(closure_fixture.collector.fixed_upper_origin_pending);
+}
+
+// Append inside the Effects module: this exercises private production seams.
+// Literal metadata, layouts and graphs only; no Source/Actual admission claim.
+test "Value physical fields survive both fixed exits and copying before the complete consumer upper" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{ .write = true }, .{}, .{}, false);
+    const ref_id: t.Hash = @splat(0x66); const fn_id: t.Hash = @splat(0x88); const box_id: t.Hash = @splat(0xaa);
+    const field_id: t.Hash = @splat(0xbb); const anchor = fixture.bindings[0].origin.?;
+    const ref_text = "sha256:" ++ "66" ** 32; const box_text = "sha256:" ++ "aa" ** 32;
+    const field_text = "sha256:" ++ "bb" ** 32; const creator_text = "sha256:" ++ "33" ** 32;
+    const consumer_text = "sha256:" ++ "22" ** 32; const env_text = "sha256:" ++ "77" ** 32;
+    var aliases: [3]AliasSummary = .{ .{}, .{}, .{} }; defer for (&aliases) |*row| row.deinit(fixture.c.allocator);
+    fixture.collector.aliases = &aliases;
+    var types: [3]tables.CommonType = undefined; @memcpy(types[0..2], fixture.program.tables.mode.common.types);
+    types[2] = types[0]; types[2].id = box_id; types[2].kind = .value; types[2].name = "Box"; types[2].members = &.{@enumFromInt(0)};
+    fixture.program.tables.mode.common.types = &types;
+    var bindings: [7]CaptureAdapterFixture.Storage.CommonBinding = undefined; @memcpy(bindings[0..2], &fixture.bindings);
+    bindings[2] = bindings[0]; bindings[2].id = "consumer-box"; bindings[2].name = "consumer-box"; bindings[2].owner = .{ .param = @enumFromInt(1) }; bindings[2].scope = @enumFromInt(1); bindings[2].@"type" = @enumFromInt(2); bindings[2].carrier = .{ .@"type" = @enumFromInt(2) };
+    bindings[3] = bindings[0]; bindings[3].id = "creator-p"; bindings[3].name = "creator-p"; bindings[3].owner = .{ .param = @enumFromInt(2) }; bindings[3].scope = @enumFromInt(2);
+    bindings[4] = bindings[3]; bindings[4].id = "creator-q"; bindings[4].name = "creator-q";
+    bindings[5] = bindings[0]; bindings[5].id = "caller-q"; bindings[5].name = "caller-q";
+    bindings[6] = .{ .id = "box-field", .owner = .{ .field = @enumFromInt(0) }, .name = "field", .@"type" = @enumFromInt(0), .writable = true, .origin = anchor, .carrier = .{ .@"type" = @enumFromInt(0) }, .scope = null, .declaration_kind = null };
+    const common = &fixture.program.tables.mode.common; common.storage.bindings = &bindings;
+    common.storage.payload = .{ .byte_size = 16, .alignment = 8, .reference_count = 1 };
+    common.members.fields = &.{.{ .id = field_id, .owner = @enumFromInt(2), .ordinal = 0, .name = "field", .@"type" = @enumFromInt(0), .declared_type = @enumFromInt(0), .readonly = false, .optional = false, .access = .public, .origin = anchor, .binding = @enumFromInt(6) }};
+    common.storage.concrete = &.{
+        .{ .@"type" = @enumFromInt(0), .carrier = .{ .layout = .{ .byte_size = 8, .alignment = 8, .reference_count = 1 }, .field_offsets = &.{} }, .body = .{ .byte_size = 0, .alignment = 1, .reference_count = 0, .fields = &.{} } },
+        .{ .@"type" = @enumFromInt(1), .carrier = .{ .layout = .{ .byte_size = 40, .alignment = 8, .reference_count = 1 }, .field_offsets = &.{} }, .body = null },
+        .{ .@"type" = @enumFromInt(2), .carrier = .{ .layout = .{ .byte_size = 8, .alignment = 8, .reference_count = 1 }, .field_offsets = &.{0} }, .body = .{ .byte_size = 8, .alignment = 8, .reference_count = 1, .fields = &.{.{ .field = @enumFromInt(0), .binding = @enumFromInt(6), .offset = 0, .reference_offset = 0 }} } },
+    };
+    common.members.constructions = &.{
+        .{ .id = @splat(0x30), .owner = @enumFromInt(0), .function = null, .kind = .@"implicit-base", .origin = anchor, .parameters = &.{}, .signature = .{ .parameters = &.{}, .return_type = @enumFromInt(0) }, .source_signature = .{ .id = @splat(0x30), .origin = anchor }, .implicit_forward = null, .initialization_phase = .@"before-body", .initialization_fields = &.{}, .access = .public },
+        .{ .id = @splat(0x31), .owner = @enumFromInt(2), .function = null, .kind = .@"implicit-base", .origin = anchor, .parameters = &.{}, .signature = .{ .parameters = &.{}, .return_type = @enumFromInt(2) }, .source_signature = .{ .id = @splat(0x31), .origin = anchor }, .implicit_forward = null, .initialization_phase = .@"before-body", .initialization_fields = &.{}, .access = .public },
+    };
+    common.exceptions.scopes = &.{ .{ .owner = @enumFromInt(0), .path = &.{} }, .{ .owner = @enumFromInt(1), .path = &.{} }, .{ .owner = @enumFromInt(2), .path = &.{} } };
+    common.exceptions.bindings = &.{ .{ .binding = @enumFromInt(0), .scope = @enumFromInt(0) }, .{ .binding = @enumFromInt(1), .scope = @enumFromInt(0) }, .{ .binding = @enumFromInt(2), .scope = @enumFromInt(1) }, .{ .binding = @enumFromInt(3), .scope = @enumFromInt(2) }, .{ .binding = @enumFromInt(4), .scope = @enumFromInt(2) }, .{ .binding = @enumFromInt(5), .scope = @enumFromInt(0) } };
+    fixture.abis[0].parameters = &.{ @enumFromInt(0), @enumFromInt(5) }; fixture.abis[0].argument_types = &.{ @enumFromInt(0), @enumFromInt(0) }; fixture.abis[0].physical_parameters = &.{ .{ .@"type" = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(0) } };
+    fixture.abis[1].parameters = &.{@enumFromInt(2)}; fixture.abis[1].argument_types = &.{@enumFromInt(2)}; fixture.abis[1].physical_parameters = &.{ .{ .environment = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(2) } }; fixture.abis[1].result = @enumFromInt(2); fixture.abis[1].result_carrier = .{ .@"type" = @enumFromInt(2) };
+    fixture.abis[2].parameters = &.{ @enumFromInt(3), @enumFromInt(4) }; fixture.abis[2].argument_types = &.{ @enumFromInt(0), @enumFromInt(0) }; fixture.abis[2].physical_parameters = &.{ .{ .@"type" = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(0) } }; fixture.abis[2].result = @enumFromInt(2); fixture.abis[2].result_carrier = .{ .@"type" = @enumFromInt(2) };
+    const registers = [_]@import("wire-program-model.zig").Register{ .{ .carrier = .{ .environment = @enumFromInt(0) }, .view = null }, .{ .carrier = .{ .@"type" = @enumFromInt(2) }, .view = @enumFromInt(2) } };
+    fixture.functions[1].registers = &registers;
+    fixture.functions[1].blocks = &.{.{ .parameters = &.{ @enumFromInt(0), @enumFromInt(1) }, .instructions = &.{
+        .{ .source = anchor, .result = null, .operands = &.{}, .data = .{ .fuel = .{ .event = .entry } } },
+        .{ .source = anchor, .result = null, .operands = &.{@enumFromInt(1)}, .data = .@"return" },
+    } }};
+    var permissions: [2]CaptureAdapterFixture.ParameterRow = .{ fixture.parameter[0], .{ .index = 1, .read = false, .write = false, .structural = false } };
+    fixture.contracts[0].upper.parameters = &permissions;
+    fixture.contracts[1].upper.parameters = &.{.{ .index = 0, .read = false, .write = true, .structural = false }};
+    fixture.contracts[2].upper.parameters = &.{ .{ .index = 0, .read = false, .write = false, .structural = false }, .{ .index = 1, .read = false, .write = false, .structural = false } };
+    fixture.contracts[2].upper.facets.may_throw = true;
+    for (&fixture.contracts) |*row| { row.upper.facets.managed_reference = true; row.upper.facets.escape = true; row.upper.facets.allocation = true; }
+    const identity = origin_model.Graph{ .nodes = &.{ .{ .environment_input = .{ .layout = env_text } }, .{ .parameter = .{ .@"type" = box_text, .index = 0 } } }, .heaps = &.{.entry}, .controls = &.{.entry}, .calls = &.{}, .normal = &.{1}, .language = &.{}, .exits = .{ .normal = &.{.{ .heap = 0, .control = 0 }}, .language = &.{} }, .accesses = &.{} };
+    const creator = origin_model.Graph{
+        .nodes = &.{ .{ .parameter = .{ .@"type" = ref_text, .index = 0 } }, .{ .parameter = .{ .@"type" = ref_text, .index = 1 } }, .{ .local = .{ .@"type" = box_text } } },
+        .heaps = &.{ .entry, .{ .store = .{ .previous = 0, .bases = &.{2}, .selector = "field:" ++ field_text, .view = box_text, .values = &.{0}, .control = 0, .initialize = true } }, .{ .store = .{ .previous = 0, .bases = &.{2}, .selector = "field:" ++ field_text, .view = box_text, .values = &.{1}, .control = 0, .initialize = true } } },
+        .controls = &.{.entry}, .calls = &.{}, .normal = &.{2}, .language = &.{2}, .exits = .{ .normal = &.{.{ .heap = 1, .control = 0 }}, .language = &.{.{ .heap = 2, .control = 0 }} }, .accesses = &.{},
+    };
+    fixture.contracts[1].return_origins = identity; fixture.contracts[2].return_origins = creator;
+    const ScopeFunction = std.meta.Child(@FieldType(publication.StableScope, "functions")); var scope_functions: [3]ScopeFunction = undefined;
+    for (&scope_functions, 0..) |*row, index| row.* = .{ .function_id = fixture.functions[index].id, .signature_hash = fixture.functions[index].signature, .kind = .source,
+        .decl_key = .{ .kind = .function, .name = if (index == 0) "caller" else if (index == 1) "consumer" else "creator", .path = &.{}, .source_path = fixture.program.tables.sources[0].path },
+        .parameter_types = if (index == 1) &.{box_id} else &.{ ref_id, ref_id }, .return_type = if (index == 0) ref_id else box_id, .construction = null,
+        .lexical_parent = if (index == 1) fixture.functions[0].id else null, .lexical_environment = if (index == 1) @as(t.Hash, @splat(0x77)) else null, .activation_environment = if (index == 0) @as(t.Hash, @splat(0x77)) else null, .captures = &.{}, .access = .public,
+    };
+    var scope = std.mem.zeroes(publication.StableScope); scope.root_file = fixture.program.tables.sources[0].path; scope.functions = &scope_functions;
+    scope.types = &.{
+        .{ .id = ref_id, .label = "Ref", .shape = .{ .nominal = .{ .kind = .reference, .label = "Ref", .base = null, .construction = .{ .access = .public, .parameters = &.{}, .return_type = "Ref", .argument_signature = null }, .fields = &.{}, .methods = null } } },
+        .{ .id = fn_id, .label = "Fn", .shape = .{ .function = .{ .kind = .function, .label = "Fn", .parameters = &.{"Box"}, .return_type = "Box" } } },
+        .{ .id = box_id, .label = "Box", .shape = .{ .nominal = .{ .kind = .value, .label = "Box", .base = null, .construction = .{ .access = .public, .parameters = &.{}, .return_type = "Box", .argument_signature = null }, .fields = &.{.{ .access = .public, .index = 0, .name = "field", .readonly = false, .@"type" = "Ref" }}, .methods = null } } },
+    };
+    scope.environments = &.{.{ .id = @splat(0x77), .owner = fixture.functions[0].id, .parent = null, .slots = &.{.{ .key = @splat(0x55), .kind = .local, .@"type" = ref_id, .writable = true }} }};
+    scope.constructions = &.{ .{ .id = @splat(0x30), .owner = ref_id, .base = null, .kind = .@"implicit-base", .function_id = null }, .{ .id = @splat(0x31), .owner = box_id, .base = null, .kind = .@"implicit-base", .function_id = null } };
+    const fixed = &common.authority.fixed_publication; fixed.stable_scope = scope; fixed.publication.scope = scope;
+    fixed.dependencies = &.{ .{ .function_id = fixture.functions[0].id, .callees = &.{ .{ .function_id = fixture.functions[1].id, .digest = fixture.contracts[1].digest }, .{ .function_id = fixture.functions[2].id, .digest = fixture.contracts[2].digest } }, .hosts = &.{} }, .{ .function_id = fixture.functions[1].id, .callees = &.{}, .hosts = &.{} }, .{ .function_id = fixture.functions[2].id, .callees = &.{}, .hosts = &.{} } };
+    var concrete: [3]?usize = .{ 0, 1, 2 }; fixture.collector.concrete = &concrete;
+    var managed: [3]Managed = .{ .empty, .empty, .empty }; fixture.collector.managed = &managed;
+    var arena = std.heap.ArenaAllocator.init(fixture.c.allocator); defer arena.deinit(); var budget = origin_model.Budget{ .context = &fixture.c, .charge = publication_refs.graphCharge };
+    try @import("wire-program-layout-check.zig").check(&fixture.c);
+    const directory = try publication_refs.returnOriginDirectory(&fixture.c, arena.allocator(), fixed.*); try origin_model.validateDirectory(fixture.c.allocator, &directory, &budget);
+    try std.testing.expect((try origin_model.validateGraph(fixture.c.allocator, &directory, creator_text, &creator, &budget)) == .valid);
+    try std.testing.expect((try origin_model.validateGraph(fixture.c.allocator, &directory, consumer_text, &identity, &budget)) == .valid);
+    var graph = UpperGraph{ .collector = &fixture.collector, .function = @enumFromInt(0) }; const physical = try graph.physicalFields(arena.allocator(), &directory);
+    const rows = [_]fixed_owners.Fixed{ .{ .function_id = consumer_text, .graph = &identity, .parameters = &.{.{ .write = true }}, .captures = &.{}, .may_throw = false }, .{ .function_id = creator_text, .graph = &creator, .parameters = &.{ .{}, .{} }, .captures = &.{}, .may_throw = true } };
+    var analysis = try fixed_owners.analyze(fixture.c.allocator, &directory, physical, creator_text, &creator, &rows, &budget); defer analysis.deinit(); try std.testing.expectEqual(@as(?fixed_owners.Pending, null), analysis.pending);
+    var initial = try UpperState.init(&fixture.c, 5); defer initial.deinit(&fixture.c); _ = try initial.values[0].add(&fixture.c, .{ .parameter = 0 }); _ = try initial.values[2].add(&fixture.c, .{ .parameter = 1 });
+    const parent = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } }; _ = try initial.values[1].environments.direct.add(&fixture.c, parent); try initial.store(&fixture.c, .{ .binding = @enumFromInt(1), .environment = parent }, &initial.values[0]);
+    _ = try fixture.collector.consumeUpper(@enumFromInt(0), @enumFromInt(2));
+    const creator_op = model.instruction.Instruction{ .source = anchor, .result = @enumFromInt(4), .operands = &.{ @enumFromInt(0), @enumFromInt(2) }, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(2), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var normal = try UpperState.clone(&fixture.c, &initial); defer normal.deinit(&fixture.c); var language = try UpperState.clone(&fixture.c, &initial); defer language.deinit(&fixture.c);
+    for ([_]*UpperState{ &normal, &language }, 0..) |state, completion| {
+        var exporter = FixedExport{ .g = &graph, .analysis = &analysis, .target = @enumFromInt(2), .op = creator_op, .offset = 0, .saved = &initial, .destination = state, .invocation = .{ .caller = @enumFromInt(0), .block = @enumFromInt(0), .instruction = 0, .target = @enumFromInt(2) }, .allocator = arena.allocator(), .environments = &.{}, .completion = @enumFromInt(completion) };
+        var value = try exporter.exportValue(if (completion == 0) analysis.normal[0] else analysis.language[0]); defer value.deinit(fixture.c.allocator); try state.values[4].replace(&fixture.c, &value);
+        var field: Owners = .{}; defer field.deinit(fixture.c.allocator); try graph.selectPayload(state, &state.values[4], @enumFromInt(2), @enumFromInt(0), &field);
+        try std.testing.expectEqual(@as(usize, 1), field.items.items.len); try std.testing.expect(field.items.items[0] == .parameter and field.items.items[0].parameter == completion);
+    }
+    var copy: Owners = .{}; defer copy.deinit(fixture.c.allocator); try graph.copyPayload(&normal, @enumFromInt(3), &normal.values[4], &copy); try normal.values[3].replace(&fixture.c, &copy);
+    try std.testing.expect(!std.meta.eql(normal.values[4].payloads.items.items[0], copy.payloads.items.items[0]));
+    try graph.storePayload(&normal, &normal.values[4], @enumFromInt(2), @enumFromInt(0), &normal.values[2], false);
+    var copy_field: Owners = .{}; defer copy_field.deinit(fixture.c.allocator); try graph.selectPayload(&normal, &normal.values[3], @enumFromInt(2), @enumFromInt(0), &copy_field);
+    try std.testing.expectEqual(@as(usize, 1), copy_field.items.items.len); try std.testing.expect(copy_field.items.items[0] == .parameter and copy_field.items.items[0].parameter == 0);
+    const consume_op = model.instruction.Instruction{ .source = anchor, .result = null, .operands = &.{ @enumFromInt(1), @enumFromInt(3) }, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var saved_normal = try UpperState.clone(&fixture.c, &normal); defer saved_normal.deinit(&fixture.c); var returned: Owners = .{}; defer returned.deinit(fixture.c.allocator); var thrown: Owners = .{}; defer thrown.deinit(fixture.c.allocator); var completions: UpperCompletions = .{}; defer completions.deinit(&fixture.c);
+    try graph.consume(@enumFromInt(1), consume_op, &normal, &saved_normal, 1, false, &returned, &thrown, &completions); try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    var after: Owners = .{}; defer after.deinit(fixture.c.allocator); try graph.selectPayload(&normal, &returned, @enumFromInt(2), @enumFromInt(0), &after); try std.testing.expectEqual(@as(usize, 1), after.items.items.len); try std.testing.expect(after.items.items[0] == .parameter and after.items.items[0].parameter == 0);
+    const language_op = model.instruction.Instruction{ .source = anchor, .result = null, .operands = &.{ @enumFromInt(1), @enumFromInt(4) }, .data = consume_op.data };
+    var saved_language = try UpperState.clone(&fixture.c, &language); defer saved_language.deinit(&fixture.c);
+    try std.testing.expectError(error.InvalidShape, graph.consume(@enumFromInt(1), language_op, &language, &saved_language, 1, false, &returned, &thrown, &completions));
+    permissions[0].write = false; permissions[1].write = true;
+    var language_return: Owners = .{}; defer language_return.deinit(fixture.c.allocator);
+    try graph.consume(@enumFromInt(1), language_op, &language, &saved_language, 1, false, &language_return, &thrown, &completions); try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    var last: Owners = .{}; defer last.deinit(fixture.c.allocator); try graph.selectPayload(&language, &language_return, @enumFromInt(2), @enumFromInt(0), &last); try std.testing.expectEqual(@as(usize, 1), last.items.items.len); try std.testing.expect(last.items.items[0] == .parameter and last.items.items[0].parameter == 1);
 }
