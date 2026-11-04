@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace tsfg::wire {
-inline constexpr uint32_t version = 19, capability = 1019;
+inline constexpr uint32_t version = 20, capability = 1020;
 inline constexpr uint16_t noRegister = UINT16_MAX;
 inline constexpr uint32_t noDomain = UINT32_MAX;
 enum class Table : uint8_t { Sources, Types, Members, Domains, Storage, Views, Abis, Modules, Authority, Closures, Exceptions, Count };

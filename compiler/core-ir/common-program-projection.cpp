@@ -206,6 +206,22 @@ bool SourceModel::projection(){
 bool verifySource(Program &p,Error &e){
   SourceModel source(p,e);
   if(!source.directory()||!source.identities()||!source.sourceText()||!verifyCommonHostContext(p,e)||!source.projection())return false;
+  // Only complete original Source/HIR admission can fill this declaration
+  // directory. It carries incoming/minimum metadata, never initializer proof.
+  for(const auto &[id,fn]:source.functions){
+    const auto &initialization=field(*fn,"parameterInitialization");if(!source.spend())return false;
+    if(!field(*fn,"ownerType").getAsNull()||initialization.getAsNull())continue;
+    size_t sourceComparisons=1;for(size_t n=source.functionIds.size();n;n>>=1)sourceComparisons+=2;
+    if(!source.spend(sourceComparisons*(id.size()/8+1)))return false;
+    const auto &functionId=source.functionIds.at(id);size_t comparisons=1;for(size_t n=p.ordinaryParameterInputs.size();n;n>>=1)comparisons+=2;
+    if(!source.spend(comparisons*(functionId.size()/8+1)+1))return false;
+    Program::OrdinaryParameterInputs inputs;inputs.minimumArgumentCount=uint16_t(*field(initialization,"minimumArgumentCount").getAsInteger());
+    const auto &steps=items(field(initialization,"steps"));if(!source.spend(steps.size()+1))return false;inputs.argumentTypes.reserve(steps.size());
+    for(const auto &step:steps){const auto raw=field(step,"argumentType").getAsString().value();size_t comparisons=2;for(size_t n=source.typeIds.size();n;n>>=1)comparisons+=2;
+      if(!source.spend(comparisons*(raw.size()/8+1)+1))return false;
+      const auto &incoming=source.typeIds.at(raw.str());if(!source.spend(incoming.size()/8+2))return false;inputs.argumentTypes.push_back(incoming);}
+    if(!source.need(p.ordinaryParameterInputs.emplace(functionId,std::move(inputs)).second,"duplicate ordinary FDI declaration metadata"))return false;
+  }
   // Export only the independently checked structural scope directory. The
   // Builder owns no Source traversal and an absent declaration is not root.
   decltype(p.bindingScopes) scopes;

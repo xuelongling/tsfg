@@ -177,6 +177,7 @@ bool SourceBodies::callableExpression(const Json &v){
     const auto id=string(field(v,"functionId"));
     if(!model.need(model.functions.count(id)&&field(*model.functions.at(id),"ownerType").getAsNull()&&resolve(field(v,"range"))==id,"function value does not resolve to original named declaration"))return false;
     const auto &fn=*model.functions.at(id);Array parameters;
+    if(!model.need(bool(field(fn,"parameterInitialization").getAsNull()),"ordinary FDI function values require a separately supported callable adapter"))return false;
     for(const auto &p:items(field(fn,"parameters"))){if(!model.spend())return false;parameters.push_back(field(p,"declaredType"));}
     const auto expected=digest(std::string("tsfg.program.function-type.v2")+std::string(1,'\0')+canonical(Object{{"parameters",std::move(parameters)},{"returnType",field(fn,"returnType")}}));
     return model.need(type==expected&&actual==type,"function value type differs from original header");

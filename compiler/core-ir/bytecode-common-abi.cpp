@@ -17,7 +17,7 @@ bool Builder::abiTable() {
     fn.abi=functionIds.at(id);fn.source=sourceIds.at(actual->path);fn.declaration={actual->range.start,actual->range.end};
     fn.role=initializer?2:string(field(*declared->second,"kind"))=="construction-body"?1:0;
     fn.name=initializer?"$moduleInit":string(field(*declared->second,"name"));
-    Array parameters,argumentTypes,physicalParameters;Json receiver=nullptr,lexical=nullptr,result=nullptr,resultCarrier=nullptr,construction=nullptr,receiverFrame=nullptr,methodMinimum=nullptr;
+    Array parameters,argumentTypes,physicalParameters;Json receiver=nullptr,lexical=nullptr,result=nullptr,resultCarrier=nullptr,construction=nullptr,receiverFrame=nullptr,methodMinimum=nullptr,ordinaryMinimum=nullptr;
     if(!initializer){
       const auto &row=*declared->second;
       if(!step())return false;methodMinimum=field(row,"methodMinimumArgumentCount");
@@ -27,6 +27,9 @@ bool Builder::abiTable() {
       // Incoming views stay separate from declarations and physical carriers.
       if(!step(2))return false;const auto &initialization=field(row,"parameterInitialization");
       const bool fdi=!initialization.getAsNull();const auto &steps=items(field(initialization,"steps"));size_t ordinal=0;
+      if(fdi&&string(field(row,"kind"))=="source"){
+        if(!step())return false;ordinaryMinimum=field(initialization,"minimumArgumentCount");
+      }
       for(const auto &parameter:items(field(row,"parameters"))){
         if(!step())return false;parameters.emplace_back(bindingIds.at(string(field(parameter,"id"))));
         if(!step(2))return false;const auto incoming=*field(fdi?steps[ordinal]:parameter,fdi?"argumentType":"type").getAsString();
@@ -133,7 +136,7 @@ bool Builder::abiTable() {
       rows=std::move(projected);
     }
     abis.emplace_back(Object{{"sourcePlan",std::move(canonicalPlan)},{"kind","common"},{"function",functionIds.at(id)},{"signature",actual->signature},
-      {"methodMinimumArgumentCount",std::move(methodMinimum)},{"parameters",std::move(parameters)},{"argumentTypes",std::move(argumentTypes)},{"receiver",std::move(receiver)},{"construction",std::move(construction)},
+      {"methodMinimumArgumentCount",std::move(methodMinimum)},{"ordinaryMinimumArgumentCount",std::move(ordinaryMinimum)},{"parameters",std::move(parameters)},{"argumentTypes",std::move(argumentTypes)},{"receiver",std::move(receiver)},{"construction",std::move(construction)},
       {"receiverFrame",std::move(receiverFrame)},{"lexicalEnvironment",std::move(lexical)},
       {"physicalParameters",std::move(physicalParameters)},{"result",std::move(result)},{"resultCarrier",std::move(resultCarrier)}});
     out.functions.push_back(std::move(fn));

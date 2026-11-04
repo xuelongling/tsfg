@@ -61,9 +61,11 @@ void SourcePlan::region(const Array &rows,const Completion &active,const std::fu
         if(!check.step())return;args.push_back(load(bindingLocation(string(field(parameter,"id")),string(field(parameter,"type")),sourceAnchor(owner)),sourceAnchor(owner)));
       }
     };
-    const auto &type=*check.types.at(string(field(owner,"ownerType")));
-    if(string(field(type,"base")).empty())enterConstructor(type,receiverFrame,args,sourceAnchor(owner),initializeParameters);
-    else initializeParameters();
+    if(string(field(owner,"kind"))=="construction-body"){
+      const auto &type=*check.types.at(string(field(owner,"ownerType")));
+      if(string(field(type,"base")).empty())enterConstructor(type,receiverFrame,args,sourceAnchor(owner),initializeParameters);
+      else initializeParameters();
+    }else initializeParameters();
   }else for(const auto &[id,value]:initial)initializeBinding(id,value);
   if(!parameterEntry&&path=="body"&&string(field(owner,"kind"))=="construction-body"){
     std::vector<Reg> args;for(const auto &p:items(field(owner,"parameters"))){if(!check.step())return;args.push_back(load(bindingLocation(string(field(p,"id")),string(field(p,"type")),sourceAnchor(owner)),sourceAnchor(owner)));}

@@ -190,10 +190,24 @@ struct Derive {
         for(auto access:{"read","write"})witness(Object{{"kind","host-resource"},{"resource",resource},{"access",access}},&v);}
       const auto &range=field(v,"range");p.hostOrigins.try_emplace(string(field(fn,"id")),HostOrigin{operationSource,{uint32_t(field(range,"start").getAsInteger().value()),uint32_t(field(range,"end").getAsInteger().value())}});
     }else if(kind=="call"){
-      std::vector<Origins> args;if(v.getAsObject()->get("receiver"))args.push_back(visit(field(v,"receiver")));
-      for(const auto &a:items(field(v,"arguments")))args.push_back(visit(a));const auto fid=string(field(v,"callee"));
+      const auto fid=string(field(v,"callee"));const auto &arguments=items(field(v,"arguments"));
+      const Json *target=nullptr;const bool ordinaryLookup=field(field(p.hir,"format"),"version").getAsInteger()==3&&fid!="intrinsic:readSpan";
+      if(ordinaryLookup){size_t comparisons=1;for(size_t n=functions.size();n;n>>=1)comparisons+=2;
+        if(!step(comparisons*(fid.size()/8+1)))return result;const auto found=functions.find(fid);if(found!=functions.end())target=found->second;}
+      const bool ordinaryFDI=target&&string(field(*target,"kind"))=="source"&&!field(*target,"parameterInitialization").getAsNull();
+      const auto count=ordinaryFDI?items(field(*target,"parameters")).size():0;
+      std::vector<Origins> args;
+      // Reserve the complete omitted-suffix vector while it contains no owner
+      // sets. No noexcept/move trait or deep-copy price is assumed here.
+      if(ordinaryFDI&&arguments.size()<count){if(!step(count+1))return result;args.reserve(count);}
+      if(v.getAsObject()->get("receiver"))args.push_back(visit(field(v,"receiver")));
+      for(const auto &a:arguments)args.push_back(visit(a));
+      if(ordinaryFDI){
+        if(!ok(args.size()<=count,"ordinary FDI effect argument count differs")||!step(count-args.size()))return result;
+        while(args.size()<count)args.emplace_back();
+      }
       if(fid=="intrinsic:readSpan"){if(ok(!args.empty(),"ReadSpan actual owner missing"))result.owners=ownerCopy(args[0]);}
-      else if(functions.count(fid)&&string(field(*functions.at(fid),"kind"))=="method"){
+      else if(ordinaryLookup?target&&string(field(*target,"kind"))=="method":functions.count(fid)&&string(field(*functions.at(fid),"kind"))=="method"){
         Json rows=nullptr;if(!methodDispatch(p,string(field(field(v,"receiver"),"type")),fid,rows,e))return result;std::vector<std::string> targets;
         if(!methodTargets(p,rows,targets,e))return result;
         for(const auto &target:targets)if(auto *u=consume(target,args,v)){result.throwing|=u->mayThrow;if(reference(type))result.owners.insert("unknown:"+target);}

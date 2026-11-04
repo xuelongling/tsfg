@@ -82,8 +82,9 @@ export function commonSemanticIdentities(payload,spend) {
     const path=parentKey?[...parentKey.path,parentKey.kind,parentKey.name,...scopes.get(parent.id).get(fn.id).scope.path]:owner?['type',...owner.nominalKey.declarationPath]:[];
     const kind=owner?(owner.constructor?.id===fn.id?'constructor':'method'):'function';
     const key=commonDeclKey(fn.sourcePath,path,kind,fn.name),qualified=canonical({path,kind,name:fn.name});
-    const type={parameters:[...(owner?[semanticType(owner.id)]:[]),...fn.parameters.map(p=>semanticType(p.declaredType))],returns:semanticType(fn.returnType),
-      ...(kind==='method'?{minimumArgumentCount:fn.parameters.length}:{})};
+    const initialization=!owner?fn.parameterInitialization:null;
+    const type={parameters:[...(owner?[semanticType(owner.id)]:[]),...fn.parameters.map((p,index)=>semanticType(initialization?initialization.steps[index].argumentType:p.declaredType))],returns:semanticType(fn.returnType),
+      ...(kind==='method'?{minimumArgumentCount:fn.parameters.length}:initialization?{minimumArgumentCount:initialization.minimumArgumentCount}:{})};
     declKeys.set(fn.id,key);callableTypes.set(fn.id,type);signatures.set(fn.id,signatureId(type));
     functionIds.set(fn.id,functionId(fn.sourcePath,qualified,type));activeFunctions.delete(fn.id);
   }

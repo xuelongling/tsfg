@@ -81,6 +81,9 @@ pub const CommonAbi = struct {
     argument_types: []const t.TypeRef,
     // Explicit ordinary-method declaration metadata; every nonmethod is null.
     method_minimum_argument_count: ?u16 = null,
+    // Only real Source3 top-level ordinary optional/default FDI owns a count.
+    // JSON admission still requires the field even when its value is null.
+    ordinary_minimum_argument_count: ?u16 = null,
     receiver: ?t.BindingRef,
     construction: ?t.ConstructionIndex,
     receiver_frame: ?u16,

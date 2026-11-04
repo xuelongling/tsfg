@@ -37,8 +37,8 @@ function assertPrivate4ConstructionTransition(name,functions){
   const expected=constructionOracle.ordinary,prior=constructionOracle.cases.find(row=>row.name===name),
     start=functions.indexOf('  func.func @"program_'+expected.functionId.slice(7)+'"');assert.ok(start>=0);
   const next=functions.indexOf('  func.func ',start+1),end=next<0?functions.length:next,body=functions.slice(start,end);
-  // The private4 body oracle stays frozen; current private6 has its own schema.
-  assert.equal(commonCoreSchema,'sha256:babde5d7b48bfd75f55c94349b9a56371702148be9188cbf86b62085d52b9f5f');
+  // The private4 body oracle stays frozen; current private7 has its own schema.
+  assert.equal(commonCoreSchema,'sha256:0d27cadc89ca5f59d0f6c721a81d6f9c42c74bfab597986c4627dfd9c823cd59');
   assert.notEqual(commonCoreSchema,constructionOracle.schema);
   assert.equal(body.split('\n')[0],expected.header,'ordinary signature, public role and declaration anchor stay byte-exact');
   assert.deepEqual(body.split('\n').filter(line=>/^\s+cf\./.test(line)).map(line=>line.replaceAll(/%v\d+/g,'%value').replaceAll(/\^bb\d+/g,'^block')),

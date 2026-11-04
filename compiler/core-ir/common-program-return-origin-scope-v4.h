@@ -14,7 +14,8 @@ struct Type {std::string id,label;Shape shape;};
 struct Function {
   std::string functionId;
   V4::FunctionKind kind=V4::FunctionKind::Future;
-  // Fixed Scope logical vector: ordinary method receiver ALREADY INCLUDED.
+  // Owning fixed projection selects ordinary FDI incoming types; otherwise
+  // the fixed logical vector includes an ordinary method receiver once.
   std::vector<std::string> parameterTypes;
   std::string returnType;
   std::optional<std::string> lexicalEnvironment,activationEnvironment;
@@ -127,7 +128,7 @@ inline BuildResult build(const FixedScope &scope,const FieldIdentity &fieldIdent
   BuildResult result;Detail::Meter m(charge);
   const auto budget=[&](){result.status=BuildStatus::BudgetError;result.reason="scope-directory-budget";return std::move(result);};
   if(!m.spend()||!m.text(scope.profile.size()))return budget();
-  if(!m.equal(scope.profile,"common-program-fixed-v5")){if(!m.good)return budget();result.reason="fixed-v5-profile-required";return result;}
+  if(!m.equal(scope.profile,"common-program-fixed-v6")){if(!m.good)return budget();result.reason="fixed-v6-profile-required";return result;}
   if(!fieldIdentity){result.reason="trusted-field-identity-required";return result;}
   if(!m.spend(scope.types.size())||!m.spend(scope.functions.size())||!m.spend(scope.globals.size())||!m.spend(scope.environments.size()))return budget();
   auto &saved=result.directories;

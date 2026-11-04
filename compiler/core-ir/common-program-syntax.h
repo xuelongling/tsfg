@@ -33,7 +33,7 @@ struct SourceBodies {
   std::string resolve(const Json &);
   bool expression(const Json &,bool target=false,const std::string &expected={},bool readTarget=false);
   bool statements(const Json &,size_t,size_t);
-  bool annotation(const Json &,const std::string &);
+  bool annotation(const Json &,const std::string &,bool optional=false);
   bool setScope(const std::map<std::string,std::string> &);
   bool logical(const std::string &,const std::string &);
   bool callableExpression(const Json &);

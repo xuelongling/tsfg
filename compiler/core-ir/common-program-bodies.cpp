@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-syntax.h"
 #include "llvm/ADT/STLExtras.h"
+#include <tuple>
 namespace tsfg::commonProgram {
 namespace {
 Json range(const SourceToken &a,const SourceToken &b){return Object{{"start",int64_t(a.start)},{"end",int64_t(b.end)}};}
@@ -59,16 +60,20 @@ std::string SourceBodies::resolve(const Json &r){
   }
   return {};
 }
-bool SourceBodies::annotation(const Json &r,const std::string &expected){
+bool SourceBodies::annotation(const Json &r,const std::string &expected,bool optional){
   size_t a,b;if(!source->span(r,a,b))return false;
   if(!model.spend())return false;
   const AnnotationKey key{source->path,{source->tokens[a].start,source->tokens[b-1].end}};
   auto cached=annotationTypes.find(key);if(cached!=annotationTypes.end())return model.need(cached->second==expected,"original annotation type changed between uses");
   std::vector<std::pair<std::string,std::string>> origins;
+  // Optional syntax may contain a real annotation-only union whose effective
+  // +undefined type is the sole owned catalogue row. Retain parsed members,
+  // never synthesize a catalogue entry or split a claimed type identifier.
+  std::map<std::string,std::vector<std::string>> parsedUnions;
   std::function<std::string(unsigned)> unit,unionType;
   unit=[&](unsigned depth)->std::string{
     if(depth>32){reject(model.error,"core-ir-common-budget","type annotation nesting exceeds32");return {};}
-    if(!model.spend()||a>=b)return {};std::string result;
+    if(!model.spend()||a>=b)return {};std::string result;bool parsedUnion=false;
     if(source->tokens[a].text=="("){
       const auto start=source->tokens[a].start;
       ++a;bool callable=a+1<b&&source->tokens[a+1].text==":";
@@ -87,7 +92,9 @@ bool SourceBodies::annotation(const Json &r,const std::string &expected){
         if(!model.spend(2))return {};
         const auto signature=digest(std::string("tsfg.array-facts.signature.v8")+std::string(1,'\0')+canonical(Object{{"sourcePath",source->path},{"declarationRange",Object{{"start",int64_t(start)},{"end",int64_t(source->tokens[a-1].end)}}}}));
         origins.emplace_back(signature,result);
-      }else{result=unionType(depth+1);if(a>=b||source->tokens[a++].text!=")")return {};}
+      }else{result=unionType(depth+1);if(a>=b||source->tokens[a++].text!=")")return {};
+        if(optional){size_t comparisons=1;for(size_t n=parsedUnions.size();n;n>>=1)comparisons+=2;
+          if(!model.spend(comparisons*(result.size()/8+1)))return {};parsedUnion=parsedUnions.count(result);}}
     }else{
       const auto name=source->tokens[a++].text;
       if(name=="Array"||name=="ReadSpan"){
@@ -103,15 +110,54 @@ bool SourceBodies::annotation(const Json &r,const std::string &expected){
           if(!string(field(*t,"name")).empty()&&string(field(*t,"name"))==name){if(!result.empty()&&result!=id)return {};result=id;}}
       }
     }
-    while(a+1<b&&source->tokens[a].text=="["&&source->tokens[a+1].text=="]"){a+=2;result="array<"+result+">";}
+    while(a+1<b&&source->tokens[a].text=="["&&source->tokens[a+1].text=="]"){a+=2;result="array<"+result+">";parsedUnion=false;}
+    if(parsedUnion)return result;
     return model.types.count(result)?result:std::string();
   };
   unionType=[&](unsigned depth)->std::string{
-    auto first=unit(depth);if(first.empty())return {};std::set<std::string> members{first};
+    auto first=unit(depth);if(first.empty())return {};
+    if(optional){
+      std::set<std::string> members;
+      const auto insert=[&](llvm::StringRef text){size_t comparisons=2;for(size_t n=members.size();n;n>>=1)comparisons+=2;
+        if(!model.spend(comparisons*(text.size()/8+1)+1))return false;members.insert(text.str());return true;};
+      const auto add=[&](const std::string &id){
+        size_t comparisons=1;for(size_t n=parsedUnions.size();n;n>>=1)comparisons+=2;
+        if(!model.spend(comparisons*(id.size()/8+1)))return false;const auto parsed=parsedUnions.find(id);
+        if(parsed!=parsedUnions.end()){for(const auto &member:parsed->second)if(!insert(member))return false;return true;}
+        comparisons=1;for(size_t n=model.types.size();n;n>>=1)comparisons+=2;
+        if(!model.spend(comparisons*(id.size()/8+1)))return false;const auto found=model.types.find(id);
+        if(found!=model.types.end()&&string(field(*found->second,"kind"))=="union"){
+          for(const auto &member:items(field(*found->second,"members")))if(!insert(member.getAsString().value()))return false;return true;
+        }return insert(id);
+      };
+      if(!add(first))return {};
+      while(a<b&&source->tokens[a].text=="|"){++a;auto next=unit(depth);if(next.empty()||!add(next))return {};}
+      if(members.size()==1){if(!model.spend(members.begin()->size()/8+1))return {};return *members.begin();}
+      size_t bytes=8;for(const auto &member:members){if(!model.spend())return {};bytes+=member.size()+1;}
+      if(!model.spend(bytes/8+members.size()+1))return {};std::string id="union<";
+      for(const auto &member:members){if(id.size()>6)id+=",";id+=member;}id+=">";
+      size_t comparisons=1;for(size_t n=parsedUnions.size();n;n>>=1)comparisons+=2;
+      if(!model.spend(comparisons*(id.size()/8+1)+members.size()+1))return {};std::vector<std::string> saved;saved.reserve(members.size());
+      for(const auto &member:members){if(!model.spend(member.size()/8+2))return {};saved.push_back(member);}
+      parsedUnions.emplace(id,std::move(saved));return id;
+    }
+    std::set<std::string> members{first};
     while(a<b&&source->tokens[a].text=="|"){++a;auto next=unit(depth);if(next.empty())return {};members.insert(next);}
     if(members.size()==1)return first;std::string id="union<";for(const auto &m:members){if(id.size()>6)id+=",";id+=m;}return id+">";
   };
-  const auto actual=unionType(0);if(!model.need(actual==expected&&a==b,"original annotation does not name declared semantic type")||!model.spend(origins.size()+1))return false;
+  auto actual=unionType(0);
+  if(optional&&!actual.empty()){
+    size_t comparisons=1;for(size_t n=parsedUnions.size();n;n>>=1)comparisons+=2;
+    if(!model.spend(comparisons*(actual.size()/8+1)+2))return false;const auto parsed=parsedUnions.find(actual);
+    std::set<std::string> members{"undefined"};
+    if(parsed!=parsedUnions.end())for(const auto &member:parsed->second){size_t comparisons=2;for(size_t n=members.size();n;n>>=1)comparisons+=2;
+      if(!model.spend(comparisons*(member.size()/8+1)+1))return false;members.insert(member);}
+    else{if(!model.spend(actual.size()/8+2))return false;members.insert(actual);}
+    if(members.size()>1){size_t bytes=8;for(const auto &member:members){if(!model.spend())return false;bytes+=member.size()+1;}
+      if(!model.spend(bytes/8+members.size()+1))return false;actual="union<";for(const auto &member:members){if(actual.size()>6)actual+=",";actual+=member;}actual+=">";}
+    else actual="undefined";
+  }
+  if(!model.need(actual==expected&&a==b,"original annotation does not name declared semantic type")||!model.spend(origins.size()+1))return false;
   // Publish only complete, independently parsed annotations. ParenthesizedType
   // wrappers do not acquire the inner FunctionTypeNode's declaration identity.
   for(const auto &[signature,type]:origins){auto inserted=callableOrigins.emplace(signature,type);
@@ -119,16 +165,23 @@ bool SourceBodies::annotation(const Json &r,const std::string &expected){
   annotationTypes.emplace(key,expected);return true;
 }
 bool SourceBodies::annotations(){
-  std::map<std::string,std::vector<std::pair<Json,std::string>>> grouped;
-  const auto add=[&](const std::string &path,const Json &range,const std::string &type){
+  std::map<std::string,std::vector<std::tuple<Json,std::string,bool>>> grouped;
+  const auto add=[&](const std::string &path,const Json &range,const std::string &type,bool optional=false){
     if(range.getAsNull())return true;if(!model.spend(2+(path.size()+type.size())/64))return false;
-    grouped[path].emplace_back(range,type);return true;
+    grouped[path].emplace_back(range,type,optional);return true;
   };
   for(const auto &[id,alias]:model.aliases)if(!add(string(field(*alias,"sourcePath")),field(*alias,"annotationRange"),string(field(*alias,"type"))))return false;
   for(const auto &[id,fn]:model.functions){
     if(!model.spend())return false;const auto path=string(field(*fn,"sourcePath"));Array parameters;
+    const auto &initialization=field(*fn,"parameterInitialization");const bool ordinaryFDI=field(*fn,"ownerType").getAsNull()&&field(*fn,"lexicalParent").getAsNull()&&!initialization.getAsNull();
+    SourceSyntax *parameterSource=nullptr;if(ordinaryFDI){size_t comparisons=1;for(size_t n=syntax.size();n;n>>=1)comparisons+=2;
+      if(!model.spend(comparisons*(path.size()/8+1)))return false;parameterSource=&syntax.at(path);}
     for(const auto &p:items(field(*fn,"parameters"))){
-      if(!model.spend()||!add(path,field(p,"annotationRange"),string(field(p,"declaredType"))))return false;parameters.push_back(field(p,"declaredType"));
+      bool optional=false;if(ordinaryFDI){size_t first,last,rounds=1;for(size_t n=parameterSource->tokens.size();n;n>>=1)++rounds;
+        if(!model.spend(2*rounds+4)||!parameterSource->span(field(p,"nameRange"),first,last))return false;
+        optional=last<parameterSource->tokens.size()&&parameterSource->tokens[last].text=="?";}
+      if(!model.spend()||!add(path,field(p,"annotationRange"),string(field(p,"declaredType")),optional))return false;
+      parameters.push_back(field(p,"declaredType"));
     }
     for(const auto &b:items(field(*fn,"bindings")))if(!model.spend()||!add(path,field(b,"annotationRange"),string(field(b,"declaredType"))))return false;
     if(!add(path,field(*fn,"returnAnnotationRange"),string(field(*fn,"returnType"))))return false;
@@ -155,7 +208,7 @@ bool SourceBodies::annotations(){
   }}
   for(const auto &[path,rows]:grouped){
     if(!model.spend()||!model.need(syntax.count(path)&&visible.count(path),"annotation source scope missing"))return false;source=&syntax.at(path);if(!setScope(visible.at(path)))return false;
-    for(const auto &[range,type]:rows)if(!model.spend()||!annotation(range,type))return false;
+    for(const auto &[range,type,optional]:rows)if(!model.spend()||!annotation(range,type,optional))return false;
   }return true;
 }
 bool SourceBodies::function(const Json &fn){
@@ -177,6 +230,7 @@ bool SourceBodies::function(const Json &fn){
   Json actualName=field(fn,"nameRange");const auto owner=string(field(fn,"ownerType"));
   const bool constructor=model.types.count(owner)&&string(field(field(*model.types.at(owner),"constructor"),"id"))==id;
   const bool parameterInitialization=!field(fn,"parameterInitialization").getAsNull();
+  const bool ordinaryFDI=parameterInitialization&&field(model.facts,"version").getAsInteger()==3&&owner.empty()&&field(fn,"lexicalParent").getAsNull();
   const auto &initialization=field(fn,"parameterInitialization");const auto &steps=items(field(initialization,"steps"));
   if(!parameterInitialization)for(const auto &p:items(field(fn,"parameters"))){if(!model.spend())return false;initialized.insert(string(field(p,"id")));}
   if(constructor){
@@ -188,7 +242,7 @@ bool SourceBodies::function(const Json &fn){
   }
   if(!source->name(actualName,string(field(fn,"name"))))return false;
   if(field(fn,"ownerType").getAsNull())header.push_back("function");
-  header.push_back(std::move(actualName));header.push_back("(");size_t index=0;
+  header.push_back(std::move(actualName));header.push_back("(");size_t index=0,minimum=0;bool hasOrdinaryFDI=false;
   for(const auto &p:items(field(fn,"parameters"))){
     if(!model.spend())return false;if(index++)header.push_back(",");
     const Json *step=parameterInitialization?&steps[index-1]:nullptr;
@@ -215,8 +269,20 @@ bool SourceBodies::function(const Json &fn){
       same(field(*propertyField,"origin"),Object{{"source",path},{"start",field(field(p,"declarationRange"),"start")},{"end",field(field(p,"declarationRange"),"end")}}),
       "constructor parameter property source, type or modifiers differ"))return false;
     pieces.push_back(field(p,"nameRange"));
+    const bool optional=nb<pb&&source->tokens[nb].text=="?",defaulted=step&&!field(*step,"initializer").getAsNull();
+    if(!model.need(!optional||ordinaryFDI&&!defaulted,"optional parameter requires its original ordinary Source3 FDI stage"))return false;
+    if(ordinaryFDI){
+      if(!model.need(!field(p,"annotationRange").getAsNull(),"ordinary FDI parameter requires its original annotation"))return false;
+      if(optional){
+        const auto &type=*model.types.at(string(field(p,"declaredType")));bool undefined=string(field(type,"kind"))=="undefined";
+        for(const auto &member:items(field(type,"members"))){if(!model.spend())return false;undefined|=string(member)=="undefined";}
+        if(!model.need(undefined,"ordinary optional declaration lacks effective undefined"))return false;
+      }
+    }
+    if(optional){pieces.push_back("?");hasOrdinaryFDI=true;}
+    if(defaulted)hasOrdinaryFDI=true;if(!optional&&!defaulted)minimum=index;
     if(!field(p,"annotationRange").getAsNull()){
-      if(!annotation(field(p,"annotationRange"),string(field(p,"declaredType"))))return false;
+      if(!annotation(field(p,"annotationRange"),string(field(p,"declaredType")),optional))return false;
       pieces.push_back(":");pieces.push_back(field(p,"annotationRange"));
     }
     if(step&&!field(*step,"initializer").getAsNull()){
@@ -227,6 +293,8 @@ bool SourceBodies::function(const Json &fn){
     if(!source->sequence(field(p,"declarationRange"),pieces))return false;header.push_back(field(p,"declarationRange"));
     initialized.insert(string(field(p,"id")));
   }
+  if(ordinaryFDI&&!model.need(hasOrdinaryFDI&&field(initialization,"minimumArgumentCount").getAsInteger()==int64_t(minimum),
+    "ordinary FDI minimum or original optional/default declaration differs"))return false;
   header.push_back(")");
   if(!field(fn,"returnAnnotationRange").getAsNull()){
     if(!annotation(field(fn,"returnAnnotationRange"),string(field(fn,"returnType"))))return false;

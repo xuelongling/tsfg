@@ -34,9 +34,9 @@ const function_id = h("077f98bfa1152118761239b2b66aa950f40d3060b8d1ecd60a3b4f8cb
 const signature = h("3b23153e45e84b8bbf61a7006f338a6cd46cab42213bf55631c0eb566b559c37");
 const environment_id = h("33a7cc3d485a8ce7204bdd1237841cac6060528329b8a5705da0cdccc4f5e82c");
 const slot_key = h("dcbda08418e80e57be7764a3c87d16b93c3d37b17c9065e9d69313e5d1fe1c22");
-const scope_digest = h("a131387f541fce3bdc33e2c0c598452bab787dfe11fa72146724ddf234109c54");
+const scope_digest = h("349d83a0ca0d16971793023521ac5c8071bd0ea18949542315c8b8db9232d238");
 const contract_digest = h("aa32107e7c701965140953ce17667e0f16cc0824faa4163f9e1e3830e617986d");
-const publication_digest = h("dc1b8e6864d1b9587a8e17d055ea3ee2cda28f088a4d719eab23731dcfe6e93c");
+const publication_digest = h("8e35e5e3a80b807ee0deda7a7994b64fd3597d56695c524dc882247e65221a7c");
 const bool_text = "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721";
 const i32_text = "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727";
 const environment_text = "env:sha256:33a7cc3d485a8ce7204bdd1237841cac6060528329b8a5705da0cdccc4f5e82c";
@@ -198,7 +198,7 @@ const bindings = [_]storage.CommonBinding{
     .{ .id = binding_id, .owner = .{ .local = @enumFromInt(0) }, .name = "saved", .@"type" = @enumFromInt(1), .writable = false, .origin = at, .carrier = .{ .@"type" = @enumFromInt(1) }, .scope = @enumFromInt(0), .declaration_kind = .local },
 };
 const scope: publication.StableScope = .{
-    .profile = .@"common-program-fixed-v5", .declaration_types = &.{ bool_id, i32_id, void_id }, .constructions = &.{},
+    .profile = .@"common-program-fixed-v6", .declaration_types = &.{ bool_id, i32_id, void_id }, .constructions = &.{},
     .storage = .{ .fields = &.{}, .results = &.{} }, .root_file = source_path, .modules = &.{}, .roots = .{ .roots = &.{}, .required_roots = &.{} },
     .types = &.{
         .{ .id = bool_id, .label = "{\"kind\":\"scalar\",\"name\":\"bool\"}", .shape = .{ .primitive = .{ .kind = .scalar, .label = "{\"kind\":\"scalar\",\"name\":\"bool\"}" } } },
@@ -207,7 +207,7 @@ const scope: publication.StableScope = .{
     },
     .functions = &.{.{ .function_id = function_id, .signature_hash = signature, .kind = .source,
         .decl_key = .{ .kind = .function, .name = "factory", .path = &.{ "function", "factory" }, .source_path = source_path },
-        .parameter_types = &.{bool_id}, .method_minimum_argument_count = null, .return_type = void_id, .construction = null, .lexical_parent = null,
+        .parameter_types = &.{bool_id}, .method_minimum_argument_count = null, .ordinary_parameter_initialization = null, .return_type = void_id, .construction = null, .lexical_parent = null,
         .lexical_environment = null, .activation_environment = environment_id, .captures = &.{}, .access = .public }},
     .globals = &.{}, .environments = &.{.{ .id = environment_id, .owner = function_id, .parent = null,
         .slots = &.{.{ .key = slot_key, .kind = .local, .@"type" = i32_id, .writable = false }} }},
@@ -227,7 +227,7 @@ const Fixture = struct {
         self.functions[0] = .{ .id = function_id, .signature = signature, .abi = @enumFromInt(0), .source = @enumFromInt(0), .role = .ordinary,
             .declaration = .{ .start = 0, .end = 64 }, .name = "factory", .registers = registers[0..case.registers], .blocks = case.blocks };
         self.abis[0] = .{ .kind = .common, .function = @enumFromInt(0), .signature = signature,
-            .parameters = &.{@enumFromInt(0)}, .argument_types = &.{@enumFromInt(0)}, .method_minimum_argument_count = null, .receiver = null, .construction = null, .receiver_frame = null,
+            .parameters = &.{@enumFromInt(0)}, .argument_types = &.{@enumFromInt(0)}, .method_minimum_argument_count = null, .ordinary_minimum_argument_count = null, .receiver = null, .construction = null, .receiver_frame = null,
             .lexical_environment = null, .physical_parameters = &.{.{ .@"type" = @enumFromInt(0) }}, .result = null, .result_carrier = null,
             .source_plan = .{ .carriers = plan_carriers[0..case.registers], .blocks = case.plans } };
         self.program = .{ .envelope = .{ .magic = model.format.magic, .version = model.format.version, .schema_hash = model.format.schema_hash, .total_bytes = 80, .payload_hash = payload_hash },
@@ -244,7 +244,7 @@ const Fixture = struct {
                 .views = .{ .compatibility = &.{}, .dispatch = &.{}, .entries = &.{} }, .abis = &self.abis,
                 .modules = .{ .modules = &.{}, .globals = &.{}, .hosts = &.{}, .initialization = &.{}, .roots = .{ .roots = &.{}, .required_roots = &.{} } },
                 .authority = .{ .exports = .{}, .entries = .{}, .resources = .{}, .published = .{}, .fixed_publication = .{
-                    .stable_scope = scope, .publication = .{ .format = .{ .family = .@"tsfg.program-publication-candidate", .version = 5 }, .mode = .fixed, .scope = scope,
+                    .stable_scope = scope, .publication = .{ .format = .{ .family = .@"tsfg.program-publication-candidate", .version = 6 }, .mode = .fixed, .scope = scope,
                         .scope_digest = scope_digest, .expected_digest = publication_digest, .contracts = &.{.{ .function_id = function_id, .signature_hash = signature,
                             .upper = upper, .callables = .{ .parameters = &.{}, .returns = null, .slot_writes = .{} }, .return_origins = null, .digest = contract_digest }} },
                     .dependencies = &.{.{ .function_id = function_id, .callees = &.{}, .hosts = &.{} }}, .request = .{ .targets = &.{} } } },

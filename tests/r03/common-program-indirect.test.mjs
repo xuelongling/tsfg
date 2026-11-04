@@ -40,10 +40,10 @@ test('actual Source2 physical pair and factory activations',()=>{
   assert(bumpContexts.length>=3);const environments=new Set(bumpContexts.flatMap(c=>[...c.args[0].refs]));assert(environments.size>=2);
 });
 
-test('actual Source2 fixed upper singleton kernels and complete Core6',()=>{
+test('actual Source2 fixed upper singleton kernels and complete Core7',()=>{
   const hir=projectCommonProgram(facts('common-indirect-valid')),publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
-  assert.equal(publication.format.version,5);verifyCommonKernelGroup(hir,publication,request);
-  const core=emitCommonProgramCore(hir,publication,request);assert.match(core,/version = 6 : i32/);assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_alloc/);assert.match(core,/tsfg_program.make_closure/);
+  assert.equal(publication.format.version,6);verifyCommonKernelGroup(hir,publication,request);
+  const core=emitCommonProgramCore(hir,publication,request);assert.match(core,/version = 7 : i32/);assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_alloc/);assert.match(core,/tsfg_program.make_closure/);
   assert.equal((core.match(/func.func @/g)??[]).length,12);
 });
 test('actual Source2 broad apply keeps full Published upper conflict',()=>{

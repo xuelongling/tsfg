@@ -153,10 +153,17 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
       if(!model.need(model.types.count(callee)&&same(field(field(*model.types.at(callee),"construction"),"signature"),sig),"construction source signature differs"))return false;
       selected=model.constructionFunction(*model.types.at(callee));
     }
+    const Json *ordinaryTarget=nullptr;const bool ordinaryLookup=kind=="call"&&field(model.facts,"version").getAsInteger()==3&&callee!=string(field(field(model.payload,"readSpanIntrinsic"),"id"));
+    if(ordinaryLookup){size_t comparisons=1;for(size_t n=model.functions.size();n;n>>=1)comparisons+=2;
+      if(!model.spend(comparisons*(callee.size()/8+1)))return false;const auto found=model.functions.find(callee);if(found!=model.functions.end())ordinaryTarget=found->second;}
+    const bool ordinaryFDI=ordinaryTarget&&field(*ordinaryTarget,"ownerType").getAsNull()&&!field(*ordinaryTarget,"parameterInitialization").getAsNull();
+    if(ordinaryFDI)selected=ordinaryTarget;
     const auto &steps=selected?items(field(field(*selected,"parameterInitialization"),"steps")):items(Json(nullptr));
     const auto count=items(field(sig,"parameters")).size(),actualCount=items(field(v,"arguments")).size();
     const auto minimum=field(sig,"minimumArgumentCount").getAsInteger();
-    const bool arity=constructor&&field(model.facts,"version").getAsInteger()==3?minimum&&*minimum>=0&&size_t(*minimum)<=actualCount&&actualCount<=count:count==actualCount&&!minimum;
+    const bool variableArity=constructor&&field(model.facts,"version").getAsInteger()==3||ordinaryFDI;
+    const bool arity=variableArity?minimum&&*minimum>=0&&size_t(*minimum)<=actualCount&&actualCount<=count:count==actualCount&&!minimum;
+    if(ordinaryFDI&&!model.need(same(field(sig,"minimumArgumentCount"),field(field(*selected,"parameterInitialization"),"minimumArgumentCount")),"ordinary FDI call minimum differs from original declaration"))return false;
     if(!model.need(string(field(sig,"id"))==digest(std::string("tsfg.array-facts.signature.v8")+std::string(1,'\0')+
       canonical(Object{{"sourcePath",path},{"declarationRange",field(sig,"declarationRange")}}))&&arity,"original call signature identity/arity differs"))return false;
     std::vector<Json> pieces;if(kind=="new")pieces.push_back("new");pieces.push_back(field(v,"calleeRange"));pieces.push_back("(");size_t i=0;
@@ -169,7 +176,8 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
       if(callee==string(field(field(model.payload,"readSpanIntrinsic"),"id"))){
         if(!model.need(items(field(sig,"parameters")).size()==3&&string(items(field(sig,"parameters"))[1])=="u32"&&string(items(field(sig,"parameters"))[2])=="u32","ReadSpan original three-argument signature differs"))return false;
       }else{
-        if(!model.need(model.functions.count(callee),"direct call original function missing"))return false;const auto &fn=*model.functions.at(callee);Array expected;
+        if(!model.need(ordinaryLookup?ordinaryTarget!=nullptr:model.functions.count(callee),"direct call original function missing"))return false;
+        const auto &fn=ordinaryLookup?*ordinaryTarget:*model.functions.at(callee);Array expected;
         for(const auto &p:items(field(fn,"parameters")))expected.push_back(field(p,"declaredType"));
         if(!model.need(same(Json(std::move(expected)),field(sig,"parameters"))&&same(field(fn,"returnType"),field(sig,"returnType"))&&
           same(field(fn,"declarationRange"),field(sig,"declarationRange"))&&string(field(fn,"sourcePath"))==path,

@@ -45,7 +45,8 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
   for(const fn of hir.functions){spend();const owner=fn.kind==='construction-body'?types.get(fn.ownerType):null;
     protocols.set(fn.id,{lexicalEnvironment:fn.lexicalEnvironment??null,activationEnvironment:fn.activationEnvironment??null,
       construction:owner?{id:owner.construction.id,owner:owner.id,base:owner.base??null,receiverIndex:0}:null});}
-  for(const plan of physical?.corePlans??[]){spend();let receiver=false;for(const block of plan.graph.blocks)for(const op of block.instructions){spend();receiver ||= op.name.startsWith('tsfg_program.receiver_');}if(receiver)projectionPlans.set(plan.owner.id,plan);}
+  for(const plan of physical?.corePlans??[]){spend();let receiver=false;for(const block of plan.graph.blocks)for(const op of block.instructions){spend();receiver ||= op.name.startsWith('tsfg_program.receiver_');}
+    if(receiver||!plan.owner.ownerType&&plan.owner.parameterInitialization)projectionPlans.set(plan.owner.id,plan);}
   const catalogue={types:fixedCatalogue?.types??types,functions:fixedCatalogue?.functions??new Map(hir.functions.map(fn=>{spend();return [fn.id,{...protocols.get(fn.id),returnType:fn.returnType}];})),constructions:fixedCatalogue?.constructions??constructions,slots,environments};
   function reference(id,active=new Set()) {
     if(id===null||id==='void')return false;
@@ -93,6 +94,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
       return {upper:result,calls:projected.calls,hostCalls:[],completions:[...(projected.normal?['return']:[]),...(projected.language?['throw']:[])],local,pendingReason:projected.effects.potentialLanguage?'fixed-potential-language-open':null};
     }
     check(fn.kind!=='construction-body','return-origin-construction-open','the owning normalized constructor CFG is unavailable');
+    check(!fn.parameterInitialization,'return-origin-parameter-initialization-open','the owning normalized parameter initialization CFG is unavailable');
     const environmentRefs=new Map();if(fn.lexicalEnvironment)environmentRefs.set(fn.lexicalEnvironment,graph.environmentInput(fn.lexicalEnvironment));
     const environmentFor=id=>{
       if(environmentRefs.has(id))return environmentRefs.get(id);
@@ -376,7 +378,8 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
   for(const env of hir.environments)for(const slot of env.slots){spend();slots.set(slot.binding,slot);}
   for(const fn of hir.functions){
     spend(fn.parameters.length+(fn.bindings?.length??0)+(fn.captures?.length??0)+1);
-    const normalizedPlan=normalizedPlans.get(fn.id);let construction=false;
+    const normalizedPlan=normalizedPlans.get(fn.id),parameterInitialization=!fn.ownerType&&Boolean(fn.parameterInitialization),projected=Boolean(normalizedPlan)&&parameterInitialization,
+      missingInitialization=parameterInitialization&&!normalizedPlan;let construction=false;
     for(const block of normalizedPlan?.graph.blocks??[])for(const op of block.instructions){spend();construction ||= op.name.startsWith('tsfg_program.receiver_');}
     if(construction){const blocks=normalizedPlan.graph.blocks,indices=new Map(),controls=[],nodes=[];spend(blocks.length*2+1);
       for(const [index,block]of blocks.entries()){spend();indices.set(block.name,index);controls.push({kind:'join',inputs:[]});}
@@ -390,6 +393,7 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
     if(fn.ownerType)views.push(fn.ownerType);
     for(const capture of fn.captures??[]){spend();const slot=slots.get(capture.binding);check(slot,'return-origin-capture');views.push(slot.type);}
     if(fn.kind==='construction-body'&&normalized===null)reasons.set(fn.id,'construction-frame-open');
+    if(missingInitialization)reasons.set(fn.id,'parameter-initialization-cfg-open');
     while(pending.length){
       spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
       if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}
@@ -410,11 +414,15 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
       for(const key in row){spend(Math.ceil(key.length/8)+1);const child=row[key];if(child!==null&&typeof child==='object')pending.push(child);}
     }
     spend(views.length);for(const view of views){spend();const type=types.get(view);if(view==='void')continue;check(type,'return-origin-type');
-      if(['unknown','union'].includes(type.kind)&&!construction||type.kind==='value'&&!storageProjection?.supportsValue(type.id))reasons.set(fn.id,'storage-projection-open');
-      if(!['scalar','void','null','undefined'].includes(type.kind))scalar=false;}
-    if(normalizedPlan)for(const block of normalizedPlan.graph.blocks)for(const op of block.instructions){spend();if(construction&&op.name==='tsfg_program.global_store')reasons.set(fn.id,'global-payload-transfer-open');if(op.name==='tsfg_program.invoke'){
+      const scalarPresence=projected&&type.kind==='union'&&type.members.every(id=>{spend();return ['scalar','null','undefined'].includes(types.get(id)?.kind);});
+      // Raw FDI views cannot establish storage availability before their owning
+      // CFG exists. Preserve that missing prerequisite as the causal reason.
+      if(!missingInitialization&&((type.kind==='unknown'||type.kind==='union'&&!(projected&&scalarPresence))&&!construction||type.kind==='value'&&!storageProjection?.supportsValue(type.id)))reasons.set(fn.id,'storage-projection-open');
+      if(!['scalar','void','null','undefined'].includes(type.kind)&&!(projected&&scalarPresence))scalar=false;}
+    if(normalizedPlan)for(const block of normalizedPlan.graph.blocks)for(const op of block.instructions){spend();if((construction||projected)&&op.name==='tsfg_program.global_store')reasons.set(fn.id,'global-payload-transfer-open');if(op.name==='tsfg_program.invoke'){
       const target=op.properties.function_id;if(functions.has(target))calls.add(target);else reasons.set(fn.id,'private-construction-call-open');}}
     if(construction&&!reasons.has(fn.id)&&unavailableConstructorReturnOriginOperation(normalizedPlan,spend)!==null)reasons.set(fn.id,'construction-transfer-open');
+    if(projected&&!reasons.has(fn.id)&&unavailableConstructorReturnOriginOperation(normalizedPlan,spend)!==null)reasons.set(fn.id,'parameter-initialization-transfer-open');
     scalarLocal.set(fn.id,scalar);
     dependencies.set(fn.id,calls);
   }

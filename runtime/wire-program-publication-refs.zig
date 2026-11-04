@@ -92,6 +92,13 @@ fn scope(c: *Context, value: model.StableScope, functions: *const HashSet, types
             const minimum = row.method_minimum_argument_count orelse return error.InvalidShape;
             try c.require(row.parameter_types.len != 0 and minimum <= row.parameter_types.len - 1);
         } else try c.require(row.method_minimum_argument_count == null);
+        if (row.ordinary_parameter_initialization) |inputs| {
+            try c.row(@TypeOf(inputs));
+            try c.require(row.kind == .source and row.lexical_parent == null and row.lexical_environment == null and
+                row.construction == null and inputs.argument_types.len != 0 and inputs.minimum_argument_count <= row.parameter_types.len and
+                inputs.argument_types.len == row.parameter_types.len);
+            try hashRefs(c, inputs.argument_types, types, 64, .any);
+        }
         if (row.lexical_parent) |parent| try hashRef(c, parent, functions); if (row.lexical_environment) |env| try hashRef(c, env, environments); if (row.activation_environment) |env| try hashRef(c, env, environments);
         try hashRefs(c, row.captures, &all_slots, 65536, .sorted);
     }
@@ -189,7 +196,7 @@ pub fn returnOriginDirectory(c: *Context, allocator: std.mem.Allocator, value: m
     const functions = try allocator.alloc(origin.FunctionRow, fixed.functions.len);
     for (fixed.functions, 0..) |row, i| { try c.step(); functions[i] = .{ .id = try symbol(c, allocator, row.function_id),
         .kind = switch (row.kind) { .source => .source, .method => .method, .@"construction-body" => .construction_body },
-        .parameter_types = try symbols(c, allocator, row.parameter_types), .return_type = try symbol(c, allocator, row.return_type),
+        .parameter_types = try symbols(c, allocator, if (row.ordinary_parameter_initialization) |inputs| inputs.argument_types else row.parameter_types), .return_type = try symbol(c, allocator, row.return_type),
         .environment_metadata_complete = true, .lexical_environment = try optionalSymbol(c, allocator, row.lexical_environment),
         .activation_environment = try optionalSymbol(c, allocator, row.activation_environment), .construction = if (row.construction) |metadata| .{
             .id = try symbol(c, allocator, metadata.id), .owner = try symbol(c, allocator, metadata.owner),
@@ -237,7 +244,7 @@ pub fn check(c: *Context, value: model.FixedPublication) Error!void {
     var contracts = try build(c, value.publication.contracts, "function_id", 4096, true); defer contracts.deinit(c.allocator);
     try scope(c, value.stable_scope, &functions, &types, &globals, &environments, &modules, &hosts);
     try scope(c, value.publication.scope, &functions, &types, &globals, &environments, &modules, &hosts);
-    try c.row(@TypeOf(value.publication.format)); try c.require(value.publication.format.version == 5); try c.require(value.publication.contracts.len == value.stable_scope.functions.len);
+    try c.row(@TypeOf(value.publication.format)); try c.require(value.publication.format.version == 6); try c.require(value.publication.contracts.len == value.stable_scope.functions.len);
     var slot_count: usize = 0; for (v.closures.environments) |env| { try c.step(); try c.require(env.slots.len <= 65536 - slot_count); slot_count += env.slots.len; }
     try c.charge(slot_count + 1); var slots: HashSet = .{}; defer slots.deinit(c.allocator); try slots.ensureTotalCapacity(c.allocator, @intCast(slot_count));
     for (v.closures.environments) |env| for (env.slots) |slot| { try c.step(); _ = slots.getOrPutAssumeCapacity(slot.key); };

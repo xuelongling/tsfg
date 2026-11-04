@@ -143,6 +143,7 @@ fn commonStorage(c: *Context, v: tables.CommonTables) Error!void {
     for (v.abis) |row| { try c.row(@TypeOf(row)); _ = try c.ref(row.function, c.program.functions.len); try refs(c, row.parameters, n.bindings, 64, .unique);
         try refs(c, row.argument_types, n.types, 64, .any); try c.require(row.argument_types.len == row.parameters.len);
         if (row.method_minimum_argument_count) |minimum| try c.require(minimum <= row.parameters.len);
+        if (row.ordinary_minimum_argument_count) |minimum| try c.require(row.parameters.len != 0 and minimum <= row.parameters.len);
         try c.maybeRef(row.receiver, n.bindings); try c.maybeRef(row.lexical_environment, n.environments); try c.maybeRef(row.result, n.types); try bound(c, row.physical_parameters.len, 64);
         try c.maybeRef(row.construction, n.constructions);
         if (row.receiver_frame) |ordinal| try c.require(ordinal < row.physical_parameters.len);

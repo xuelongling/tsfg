@@ -132,6 +132,8 @@ if(TSFG_CORE_BUILD_ROLE STREQUAL "metadata-models")
   add_tsfg_metadata_models(tsfg-common-metadata-models "${_tsfg_core_entry}")
   add_tsfg_metadata_models(tsfg-method-minarity-metadata
     "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/r03/method-minarity-complete-literals.cpp")
+  add_tsfg_metadata_models(tsfg-ordinary-fdi-metadata
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/r03/ordinary-fdi-complete-literals.cpp")
 elseif(TSFG_CORE_BUILD_ROLE STREQUAL "static")
   # The static role has no native adapter in its source or link graph.
   function(add_tsfg_static_core_tool)

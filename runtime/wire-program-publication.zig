@@ -3,7 +3,7 @@ const t = @import("wire-program-types.zig");
 const member = @import("wire-program-members.zig");
 const origin = @import("wire-program-return-origin-model.zig");
 
-// Core6 header admission remains the external owning reader's duty.
+// Core7 header admission remains the external owning reader's duty.
 // These typed records do not reinterpret the unchanged formal wire17 envelope.
 pub const FixedStorage = struct {
     fields: []const struct { field_id: t.Hash, actual_types: []const t.Hash, unknown: bool },
@@ -60,7 +60,7 @@ pub const ScopeShape = union(enum) {
     },
 };
 pub const StableScope = struct {
-    profile: enum { @"common-program-fixed-v5" },
+    profile: enum { @"common-program-fixed-v6" },
     declaration_types: []const t.Hash,
     constructions: []const Construction,
     storage: FixedStorage,
@@ -75,6 +75,7 @@ pub const StableScope = struct {
         decl_key: DeclarationKey,
         parameter_types: []const t.Hash,
         method_minimum_argument_count: ?u16 = null,
+        ordinary_parameter_initialization: ?struct { minimum_argument_count: u16, argument_types: []const t.Hash } = null,
         return_type: t.Hash,
         construction: ?FunctionConstruction,
         lexical_parent: ?t.Hash,

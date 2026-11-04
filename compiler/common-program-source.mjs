@@ -60,7 +60,7 @@ export function commonSourceGrammar(source,spend) {
     slice:range=>text.slice(range.start,range.end)};
 }
 
-export function commonTypeSyntax(grammar,range,typeId,types,spend,aliases=[],visible=null) {
+export function commonTypeSyntax(grammar,range,typeId,types,spend,aliases=[],visible=null,implicitUndefined=false) {
   const tokens=grammar.spelling(range),bounds=grammar.indices(range),origins=[];let cursor=0;
   const take=text=>check(tokens[cursor++]===text,'source','concrete type annotation differs');
   function parse(depth=0) {
@@ -101,7 +101,15 @@ export function commonTypeSyntax(grammar,range,typeId,types,spend,aliases=[],vis
     const name=type.name??(['reference','value'].includes(type.kind)?type.nominalKey.declarationPath.at(-1):type.kind);
     return node.name===name;
   }
-  check(matches(union(0),typeId)&&cursor===tokens.length,'source','annotation does not name its concrete type');
+  const annotation=union(0);
+  let annotationMatches=matches(annotation,typeId);
+  if(!annotationMatches&&implicitUndefined){
+    const memberCount=annotation.kind==='union'?annotation.members.length:1;
+    spend(memberCount+3); // Copied slots, undefined node and union wrapper, before allocation.
+    const members=annotation.kind==='union'?[...annotation.members,{name:'undefined'}]:[annotation,{name:'undefined'}];
+    annotationMatches=matches({kind:'union',members},typeId);
+  }
+  check(annotationMatches&&cursor===tokens.length,'source','annotation does not name its concrete type');
   return origins;
 }
 

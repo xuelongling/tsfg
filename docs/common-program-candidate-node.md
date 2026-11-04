@@ -57,7 +57,7 @@ const core=emitCommonProgramCore(hir,publication,request);
 
 Later consumers retain the supplied publication: they verify it against the current complete Program rather than regenerate a narrower permission. Incoming scalar and function parameters keep their original parameter BindingId, lexical owner and shared environment cell. Callable signature compatibility supplies no closed target set or lifetime proof.
 
-The current private publication is version 5 (`common-program-fixed-v5`). Its
+The current private publication is version 6 (`common-program-fixed-v6`). Its
 complete owned scope binds the declaration, type, module, global, import/export,
 Env and construction directories together with fixed storage tables. The ordered
 group binds every function's signature, full upper, callable bounds and return
@@ -81,10 +81,33 @@ replace those facts.
 
 A parameter type containing undefined, including undefined alone, does not make
 that parameter optional. Source2/3 ordinary methods remain required-only and
-project an explicit minimum equal to their ordinary parameter count. Actual
-argument vectors and existing ordinary call gates remain unchanged. This
-metadata transport does not add omitted-argument calls, argument padding or
-ordinary parameter defaults/FDI; existing constructor FDI is unchanged.
+project an explicit minimum equal to their ordinary parameter count. Method
+omitted-argument calls and extra optional tails remain unsupported. Existing
+constructor FDI is unchanged.
+
+Common Source3 additionally admits direct calls to top-level ordinary scalar
+functions with real optional/default parameters. Source3 retains the original
+ordered parameter initialization steps, binding identities and initializer
+ranges. Only a real question token or initializer creates ordinary FDI; a
+required undefined union and a zero-parameter function keep the original
+required-only representation. All supplied arguments evaluate once in Source
+order, then omitted suffix arguments become undefined. The callee initializes
+its original bindings in order, retaining TDZ and default-expression completion
+behavior. FDI function values and indirect calls remain unsupported; existing
+required-only callable behavior is preserved.
+
+For ordinary FDI, the canonical signature binds the incoming parameter types
+and explicit minimum, while fixed `parameterTypes` retains the declared/effective
+binding types. Every ABI row carries required nullable
+`ordinaryMinimumArgumentCount`; each fixed function carries required nullable
+`ordinaryParameterInitialization={minimumArgumentCount,argumentTypes}`. Only a
+nonempty, top-level ordinary FDI declaration has non-null records. Cold readers
+independently compare the complete incoming vectors and minima. Missing fields,
+mixed versions, role disagreement and an empty non-null record reject. A shared
+typed metadata directory is populated after warm Source/HIR validation or the
+cold ABI/fixed join; it does not fabricate initializer expressions or authorize
+Source execution. The parameter-only legacy-to-Common bridge does not establish
+a complete Frontend-to-Common package connection.
 
 A null return graph means unavailable authority. It does not mean an empty graph
 or grant a return, capture or storage proof. A supplied graph must cover the
@@ -141,7 +164,7 @@ remain known while that reference body has no physical field route.
 
 Node metadata admission and publication identity retain their existing 100,000
 work allowance. Source, graph and body-effect analysis share the existing
-cumulative private Core6 physical allowance of 4,000,000, both at first publication and when
+cumulative private Core7 physical allowance of 4,000,000, both at first publication and when
 consuming a supplied publication. An inline, context or phase does not start a
 fresh budget. Per-operation fees remain charged.
 Old or mixed publication/graph formats and mismatched private Core identities
@@ -151,12 +174,13 @@ are rejected rather than upgraded in a reader.
 Source facts use the private v2 or v3 family with the matching Source descriptor;
 owned HIR uses its separate matching v2 or v3 descriptor. The v3 Source and HIR
 formats retain ordered constructor parameter initialization and actual omitted
-arguments. Existing v2 packets retain their original identities. Static Core
-carries the `tsfg.core-program-development` v6 marker and exact Common19
-development exchange identity (`0.19.0`, prospective packet capability 1019). The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
+arguments; Common Source3 also preserves the ordinary direct-call FDI steps
+described above. Existing v2 packets retain their original identities. Static Core
+carries the `tsfg.core-program-development` v7 marker and exact Common20
+development exchange identity (`0.20.0`, prospective packet capability 1020). The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
 
-Core6, Common19 and publication5/fixed-v5 remain unpublished private development
-formats. Common19 has only the prospective producer/passive metadata reader
+Core7, Common20 and publication6/fixed-v6 remain unpublished private development
+formats. Common20 has only the prospective producer/passive metadata reader
 binding; it does not adopt the registered formal wire17 loader, State or VM.
 The formal Frontend/HIR/bytecode registries, Source lock and admission remain unchanged by this private candidate. Candidate metadata never derives its private header from that registry. Shared MLIR string escaping has its own module so the budgeted printer does not import the scalar emitter and its formal registry.
 

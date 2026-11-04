@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Sole formal18 JSON boundary. This source has not been executed on a packet.
+// Prospective private Common20 JSON boundary. This source has not been executed on a packet.
 const std = @import("std");
 const model = @import("wire-program-model.zig");
 const tables = @import("wire-program-tables.zig");
@@ -137,7 +137,7 @@ pub const Decoder = struct {
         if (T == publication.ScopeShape) return self.scopeShape(node);
         if (T == publication.Publication) {
             const out = try self.record(T, try self.object(node), &.{});
-            if (out.format.version != 5) return error.InvalidShape;
+            if (out.format.version != 6) return error.InvalidShape;
             return out;
         }
         if (T == origin.Graph) {

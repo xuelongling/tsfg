@@ -61,32 +61,32 @@ const cases = [_]Case{
     .{ .minimums = .{ 0, 0, 0 }, .counts = .{ 1, 1, 1 }, .parameters = .{ .{ 3, 3 }, .{ 3, 3 }, .{ 3, 3 } }, .results = .{ 2, 2, 2 },
         .nominal_ids = .{ h("9fd957b09ec65f83dc8c16b2f414e9353ea3221f1e05953534fb2fda77c00d29"), h("0ca30880b3247669e41a9226de47986e3a9db1cd47d83538ebe8a6220d41a00f"), h("6eac773155b2b9953deb1840c1942836a1b4d19e5a7eb0e3c10c27ffc3676b5d") }, .signatures = .{ h("f02ec593d19a3943c82d53f69ee017a247e68c7dd738b34e79fcf5b935cf2c7c"), h("a60960b468b311d08f8f985666f1ac83eba57fe75810c0c4fa63e4a03d9cde9a"), h("0714f234ab78e2b4b96240fcb99e374cdf0ef803c028a87c182a8912d0da9b5b") }, .function_ids = .{ h("e1d8fff2e548fc4fe96dd53d924cdd0856938a6822875ec144f5000ff9e22872"), h("9a2d49ba4a36372c5139255ceb8c350a862e94d27404cf339acf0dfe887f50f8"), h("a4ec23df98bdb42d8989dbc8e4870b690348460ab1500f8cf3b01f125729575e") },
         .construction_ids = .{ h("f54db164df25e9f96e69d31556789e999435096a96fb83bdd959cf724e88a5fa"), h("94969c5dd70157bc57b48fd2073d474460b666003ce7b139c4426ee1742e64a8"), h("a5f21cfdace389310356ef4dfb444afbb894c4836b490247f5b22fb2d91c6084") }, .contract_digests = .{ h("f2d5f3d66f927de249ec7c9b250e3457ab53011c0bb9745b21bd10ca31899c0b"), h("3a4540dc599e22cdc6aa7435ca3cc153b2273c5eaea9bdc34a7c099c6aa1eff2"), h("0483a56c0dbfedcd0df55d7bdbcdd48f6262942ef711ced94fdeb3220f01ffa1") },
-        .scope_digest = h("42e6a212da313a3e7c5eecbef9a9d2b8810a03cff5872ee1d5452aaa55db81f2"), .publication_digest = h("7066e9ede6b9132aa1942ebe80a8912c8c083ab33571d71c73ebd0fb3a52737f"),
+        .scope_digest = h("6528d302f2c5232b689698e7c3820fff90ecb0f06f89433d2a42a3fe1a7d85c9"), .publication_digest = h("e4d02873f944a6f4de1b33c3f8bde14a79e5c69056d351208d743fbdd7d50bda"),
         .type_order = .{ 5, 3, 1, 6, 4, 0, 2 }, .function_order = .{ 1, 2, 0 }, .construction_order = .{ 1, 2, 0 } },
     .{ .minimums = .{ 0, 0, 1 }, .counts = .{ 1, 1, 1 }, .parameters = .{ .{ 3, 3 }, .{ 3, 3 }, .{ 3, 3 } }, .results = .{ 2, 2, 2 },
         .nominal_ids = .{ h("9fd957b09ec65f83dc8c16b2f414e9353ea3221f1e05953534fb2fda77c00d29"), h("0ca30880b3247669e41a9226de47986e3a9db1cd47d83538ebe8a6220d41a00f"), h("28b5d120ed00792b47feb9ece33ae1aefc0ac10b4c62aaf6bc9d6cd319caaaf3") }, .signatures = .{ h("f02ec593d19a3943c82d53f69ee017a247e68c7dd738b34e79fcf5b935cf2c7c"), h("a60960b468b311d08f8f985666f1ac83eba57fe75810c0c4fa63e4a03d9cde9a"), h("4966ec429551c4082e16996be75d0dcf46090f5826bcfaa3ead0f3628813dc5d") }, .function_ids = .{ h("e1d8fff2e548fc4fe96dd53d924cdd0856938a6822875ec144f5000ff9e22872"), h("9a2d49ba4a36372c5139255ceb8c350a862e94d27404cf339acf0dfe887f50f8"), h("f6d4e0c13434b856d2dbe773693851c8555ae75dc0ea8bd26c0e068036e6607d") },
         .construction_ids = .{ h("f54db164df25e9f96e69d31556789e999435096a96fb83bdd959cf724e88a5fa"), h("94969c5dd70157bc57b48fd2073d474460b666003ce7b139c4426ee1742e64a8"), h("66578c3d83ae695956aef82de948dbc88b0e81ff175fb3139771f27f6ce0a8ce") }, .contract_digests = .{ h("f2d5f3d66f927de249ec7c9b250e3457ab53011c0bb9745b21bd10ca31899c0b"), h("0483a56c0dbfedcd0df55d7bdbcdd48f6262942ef711ced94fdeb3220f01ffa1"), h("0686b290b9c1b4c78be498cbb6bee12faadd2ec114ea3a5259ef16e1cb74fd0e") },
-        .scope_digest = h("b171c726d715ef9c488d612bfa0350ff8225308fa4bfc1916d61e4e453142f59"), .publication_digest = h("e3e3bde793cb901d2be211137c63d20ed45f0ab463f64f37f334715c7f7fddf6"),
+        .scope_digest = h("70e1d048785077f8b467b12abc545d5cc08f4cb4480b03e8a3b4f15184ac99a1"), .publication_digest = h("b6c56df48c475635cff0a6d1c156f764965ed9d0341e5306909c31325233133f"),
         .type_order = .{ 5, 6, 3, 1, 4, 0, 2 }, .function_order = .{ 1, 0, 2 }, .construction_order = .{ 2, 1, 0 } },
     .{ .minimums = .{ 0, 0, 0 }, .counts = .{ 1, 1, 2 }, .parameters = .{ .{ 3, 3 }, .{ 3, 3 }, .{ 3, 3 } }, .results = .{ 2, 2, 2 },
         .nominal_ids = .{ h("9fd957b09ec65f83dc8c16b2f414e9353ea3221f1e05953534fb2fda77c00d29"), h("0ca30880b3247669e41a9226de47986e3a9db1cd47d83538ebe8a6220d41a00f"), h("aa8f9bad98536a85ea2ad07fd593217ab8bc2c96f650427983183dcbafda3400") }, .signatures = .{ h("f02ec593d19a3943c82d53f69ee017a247e68c7dd738b34e79fcf5b935cf2c7c"), h("a60960b468b311d08f8f985666f1ac83eba57fe75810c0c4fa63e4a03d9cde9a"), h("c60ae6ff0fea0093aeab0cac8d420fd0afe27f9679f1055dde34eb29899f252b") }, .function_ids = .{ h("e1d8fff2e548fc4fe96dd53d924cdd0856938a6822875ec144f5000ff9e22872"), h("9a2d49ba4a36372c5139255ceb8c350a862e94d27404cf339acf0dfe887f50f8"), h("2cc406f77e0d2deda8ed8ba6136de590d087b33705e350edd9b0390c28b0c8c5") },
         .construction_ids = .{ h("f54db164df25e9f96e69d31556789e999435096a96fb83bdd959cf724e88a5fa"), h("94969c5dd70157bc57b48fd2073d474460b666003ce7b139c4426ee1742e64a8"), h("5015fb3f4af5634683229557245eeb260c0640ad12a157188001801701f8f59d") }, .contract_digests = .{ h("ee9962a9175b1b6fe3d6bda634cfce725388ea04ef07c8e7e631543ed495ec39"), h("f2d5f3d66f927de249ec7c9b250e3457ab53011c0bb9745b21bd10ca31899c0b"), h("0483a56c0dbfedcd0df55d7bdbcdd48f6262942ef711ced94fdeb3220f01ffa1") },
-        .scope_digest = h("816fc77b26a46bb322f30ed7bf2edfaca2248cec3a6000ecdb570ed151c068ef"), .publication_digest = h("a6f41cabf32147aa1afe3825e816258210ac3bc4d718088cacd8841341e43638"),
+        .scope_digest = h("05d4d73d019944c531b3ca2c05acb2fd21d2eaf5068e417b24cf32feb5fe14be"), .publication_digest = h("c991cfc67714473fcec51eae2374b52d2e53c9b71578c6b7c38d974c28dd04f5"),
         .type_order = .{ 5, 3, 1, 4, 0, 6, 2 }, .function_order = .{ 2, 1, 0 }, .construction_order = .{ 2, 1, 0 } },
     .{ .minimums = .{ 0, 0, 0 }, .counts = .{ 1, 1, 1 }, .parameters = .{ .{ 3, 3 }, .{ 3, 3 }, .{ 0, 3 } }, .results = .{ 2, 2, 2 },
         .nominal_ids = .{ h("9fd957b09ec65f83dc8c16b2f414e9353ea3221f1e05953534fb2fda77c00d29"), h("0ca30880b3247669e41a9226de47986e3a9db1cd47d83538ebe8a6220d41a00f"), h("23a052dbc5b56d34f79aa0529ddf03024a1b73943a66293c308902162575d0bd") }, .signatures = .{ h("f02ec593d19a3943c82d53f69ee017a247e68c7dd738b34e79fcf5b935cf2c7c"), h("a60960b468b311d08f8f985666f1ac83eba57fe75810c0c4fa63e4a03d9cde9a"), h("22526e18b25fe120f347601d43e59e0ef598c700a2a077ec2aa8cddcbb4b206a") }, .function_ids = .{ h("e1d8fff2e548fc4fe96dd53d924cdd0856938a6822875ec144f5000ff9e22872"), h("9a2d49ba4a36372c5139255ceb8c350a862e94d27404cf339acf0dfe887f50f8"), h("629c694b1bde0c926ad5f4eee4fbda78fd0fdb7165f4cbb904f811ebdfea8027") },
         .construction_ids = .{ h("f54db164df25e9f96e69d31556789e999435096a96fb83bdd959cf724e88a5fa"), h("94969c5dd70157bc57b48fd2073d474460b666003ce7b139c4426ee1742e64a8"), h("e5180b33a2580a35542a632c19f4b5e960eb9791db2c019006928c66ab9a8d93") }, .contract_digests = .{ h("3acd69b0118f9e98ef514937d3953d4583001cf53ef6bafff009031d3b786860"), h("f2d5f3d66f927de249ec7c9b250e3457ab53011c0bb9745b21bd10ca31899c0b"), h("0483a56c0dbfedcd0df55d7bdbcdd48f6262942ef711ced94fdeb3220f01ffa1") },
-        .scope_digest = h("ed6b699ee0b29daa6d296b9164d84acc72b58def518eebc9a09428bba036781a"), .publication_digest = h("2601ed6667e587d40b83266737cf384026f26f79b6290b8a21bc375ba84a7733"),
+        .scope_digest = h("d26583a1ca3321a8eabbf9da211d8b22550741665c1069636ae30e76a885dbfb"), .publication_digest = h("0c9d9081c8f250910d6b47ed14a81a263d7502c2ebaf82ef7fa3a9df4b6dc292"),
         .type_order = .{ 5, 6, 3, 1, 4, 0, 2 }, .function_order = .{ 2, 1, 0 }, .construction_order = .{ 1, 2, 0 } },
     .{ .minimums = .{ 0, 0, 0 }, .counts = .{ 1, 1, 1 }, .parameters = .{ .{ 3, 3 }, .{ 3, 3 }, .{ 3, 3 } }, .results = .{ 0, 0, 0 },
         .nominal_ids = .{ h("82785c05921ee45cc768b40dd1425e1078650ecb37f573508ad2e81efce8daf8"), h("39928077f3ea245601fcb79d9a16946975c1f9af87cdd6ad6c0da809aef860fa"), h("83adaeafd71efbc49129d941b73e1d73054173bb550def74de6d8365888e5a64") }, .signatures = .{ h("61e7dad074d33e73367fb3bfff57158ba35e707a9633487bb3c8bb4136cad575"), h("b9cdf849b28176aa63af5589c4b70d6b0530023c6ddc7f362c9e17153f25dc35"), h("0bc50ca99267b6597d1f155dc605e61a6b5ad195bae725a34049b3eee064f877") }, .function_ids = .{ h("d1310313364000de1a8dac5025817cdd615ab3ef92ab18f9923d1691acd5e78b"), h("feb3a1922271e7dcaa412aa82d8ab1f8e1fedbf8fdbfd5dd1e57527430123f19"), h("82d997a1458acdf0af30577d8e6800d3885ad89a9f6008bf87e8309f08273010") },
         .construction_ids = .{ h("413451dbfb54615f54f15dc5570445692f7f7d7d5e7cdf61ff6c2e462739b3be"), h("70910cca9495b4ff16b60d68804ac9f947870ada512f117477a0b76e851b8732"), h("7d479b4f0708b14607f75df6766d62800deeaa9ba0af086bca8f249a109fbe75") }, .contract_digests = .{ h("d4c194a12823b1e1d71681d6ab1b34fd2dc3712981b9d9ed6f435acccad6c95d"), h("8d10f2a1ada0287110d1a487aeff5298eb18916401c49e00e39fadbdcf379479"), h("80f6ce50cde6fc3c5c4109044023ee9d8f890585b82c95ae468774313eab9754") },
-        .scope_digest = h("15c6f2781fa98d973607020917ea907e4459a1cd85e8f2e117bed22dfe60764b"), .publication_digest = h("652774b6cbaa977191e9631dca2aaedf9a40b6ba784c416c5f3b8bcf8c725745"),
+        .scope_digest = h("b04dff96f47a062915e6a2580f8360309a10343c31f3f34b69fdc174594f2f08"), .publication_digest = h("e63b65bb157cff8039a6077c05bec5e1e7541659ac81a2cb18c9f068fc3c6691"),
         .type_order = .{ 3, 5, 1, 4, 6, 0, 2 }, .function_order = .{ 2, 0, 1 }, .construction_order = .{ 0, 1, 2 } },
     .{ .minimums = .{ 0, 0, 0 }, .counts = .{ 1, 1, 1 }, .parameters = .{ .{ 3, 3 }, .{ 3, 3 }, .{ 3, 3 } }, .results = .{ 0, 0, 2 },
         .nominal_ids = .{ h("82785c05921ee45cc768b40dd1425e1078650ecb37f573508ad2e81efce8daf8"), h("39928077f3ea245601fcb79d9a16946975c1f9af87cdd6ad6c0da809aef860fa"), h("7f5210431b363aebd1d22cdfad8327991bc209e74fef6c9c2cb7a8ef1980e0ab") }, .signatures = .{ h("61e7dad074d33e73367fb3bfff57158ba35e707a9633487bb3c8bb4136cad575"), h("b9cdf849b28176aa63af5589c4b70d6b0530023c6ddc7f362c9e17153f25dc35"), h("5825d146d2bafd276795b2b350c1f4854a9e6d574ed71385c38f07b696ec5a1b") }, .function_ids = .{ h("d1310313364000de1a8dac5025817cdd615ab3ef92ab18f9923d1691acd5e78b"), h("feb3a1922271e7dcaa412aa82d8ab1f8e1fedbf8fdbfd5dd1e57527430123f19"), h("2519167de208f132aab4439790b7d2b5a413769dca8d2134a44f3a456b21c88d") },
         .construction_ids = .{ h("413451dbfb54615f54f15dc5570445692f7f7d7d5e7cdf61ff6c2e462739b3be"), h("70910cca9495b4ff16b60d68804ac9f947870ada512f117477a0b76e851b8732"), h("452a84fbcb96476a8b1e941f3c46d7fef49b7d3603e1e8c527fd9cd9c3075d3e") }, .contract_digests = .{ h("4bf7e77c2e39b40d8d22edb57a9755c4b6e525dd081e04294e13b839ea93b537"), h("8d10f2a1ada0287110d1a487aeff5298eb18916401c49e00e39fadbdcf379479"), h("80f6ce50cde6fc3c5c4109044023ee9d8f890585b82c95ae468774313eab9754") },
-        .scope_digest = h("8d7137f854bc0d165cd44f7b5c09230275efbe7b275a5e0277b66de4d9b08b32"), .publication_digest = h("ebee02569d62638c29eba6ea01127683650d40ba8781d502547cf1ae6a6a47c2"),
+        .scope_digest = h("2dbf26e56f1dfd903a6d0464cbeb0181df9d43b98614a733b9c291207c6fdac0"), .publication_digest = h("dc1d0f31f22daf3f99e68662a4a0c1c44e1807da66a5b26884606c9a1da3e76f"),
         .type_order = .{ 3, 5, 1, 6, 4, 0, 2 }, .function_order = .{ 2, 0, 1 }, .construction_order = .{ 0, 2, 1 } },
 };
 const Literal = struct {
@@ -223,14 +223,14 @@ const Literal = struct {
                 .source = @enumFromInt(0), .role = .ordinary, .declaration = .{ .start = start, .end = start + 30 },
                 .name = "match", .registers = self.registers[index][0..register_count], .blocks = self.blocks[index .. index + 1] };
             self.abis[index] = .{ .kind = .common, .function = @enumFromInt(index), .signature = example.signatures[owner],
-                .parameters = self.parameters[index][0..count], .argument_types = self.incoming[index][0..count], .method_minimum_argument_count = example.minimums[owner],
+                .parameters = self.parameters[index][0..count], .argument_types = self.incoming[index][0..count], .method_minimum_argument_count = example.minimums[owner], .ordinary_minimum_argument_count = null,
                 .receiver = self.receiver_refs[index], .construction = null, .receiver_frame = null, .lexical_environment = null,
                 .physical_parameters = self.physical[index][0 .. count + 1], .result = if (valued) self.typeRef(example.results[owner]) else null,
                 .result_carrier = if (valued) .{ .@"type" = self.typeRef(example.results[owner]) } else null,
                 .source_plan = .{ .carriers = self.plan_carriers[index][0..register_count], .blocks = self.plan_blocks[index .. index + 1] } };
             self.fixed_functions[index] = .{ .function_id = example.function_ids[owner], .signature_hash = example.signatures[owner], .kind = .method,
                 .decl_key = .{ .kind = .method, .name = "match", .path = method_paths[owner], .source_path = source_path },
-                .parameter_types = self.parameter_ids[index][0 .. count + 1], .method_minimum_argument_count = example.minimums[owner], .return_type = ids[example.results[owner]],
+                .parameter_types = self.parameter_ids[index][0 .. count + 1], .method_minimum_argument_count = example.minimums[owner], .ordinary_parameter_initialization = null, .return_type = ids[example.results[owner]],
                 .construction = null, .lexical_parent = null, .lexical_environment = null, .activation_environment = null, .captures = &.{}, .access = .public };
             var effect_upper = upper;
             effect_upper.parameters = self.upper_parameters[index][0 .. count + 1];
@@ -279,7 +279,7 @@ const Literal = struct {
                 .body = if (nominal) .{ .byte_size = 0, .alignment = 1, .reference_count = 0, .fields = &.{} } else null };
             concrete_index += 1;
         }
-        const scope: publication.StableScope = .{ .profile = .@"common-program-fixed-v5", .declaration_types = self.declaration_ids[0..declaration_count],
+        const scope: publication.StableScope = .{ .profile = .@"common-program-fixed-v6", .declaration_types = self.declaration_ids[0..declaration_count],
             .constructions = &self.fixed_constructors, .storage = .{ .fields = &.{}, .results = &.{} }, .root_file = source_path,
             .modules = &.{}, .roots = .{ .roots = &.{}, .required_roots = &.{} }, .types = &self.fixed_types, .functions = &self.fixed_functions,
             .globals = &.{}, .environments = &.{}, .host_context = null, .host_imports = &.{} };
@@ -294,9 +294,9 @@ const Literal = struct {
         self.proof_methods[0] = .{ .actual = @enumFromInt(function_positions[0]), .target = @enumFromInt(function_positions[1]) };
         self.proofs[0] = .{ .source_type = self.typeRef(4), .target_type = self.typeRef(5),
             .origin = .{ .source = @enumFromInt(0), .start = 170, .end = 180 }, .fields = &.{}, .methods = &self.proof_methods };
-        self.program = .{ .envelope = .{ .magic = model.format.magic, .version = 19, .schema_hash = model.format.schema_hash, .total_bytes = 80, .payload_hash = payload_hash },
+        self.program = .{ .envelope = .{ .magic = model.format.magic, .version = 20, .schema_hash = model.format.schema_hash, .total_bytes = 80, .payload_hash = payload_hash },
             .target = .{ .target = model.format.target, .triple = model.format.triple, .data_layout = model.format.data_layout,
-                .i32_bytes = 4, .i32_alignment = 4, .pointer_bits = 64, .pointer_alignment = 8, .capability = 1019 },
+                .i32_bytes = 4, .i32_alignment = 4, .pointer_bits = 64, .pointer_alignment = 8, .capability = 1020 },
             .input_identity = input_identity, .source_hash = source_hash, .source_path = source_path, .source_length = 200, .root_source = @enumFromInt(0),
             .functions = &self.functions, .tables = .{ .sources = &.{.{ .hash = source_hash, .path = source_path, .length = 200 }}, .mode = .{ .common = .{
                 .types = &self.types, .members = .{ .fields = &.{}, .methods = &self.methods, .constructions = &self.constructors }, .domains = &.{},
@@ -307,7 +307,7 @@ const Literal = struct {
                 .closures = .{ .functions = &self.closures, .environments = &.{}, .calls = &.{} },
                 .exceptions = .{ .functions = &self.function_control, .bindings = self.cells[0..binding_count], .scopes = &self.scopes },
                 .authority = .{ .exports = .{}, .entries = .{}, .resources = .{}, .published = .{}, .fixed_publication = .{
-                    .stable_scope = scope, .publication = .{ .format = .{ .family = .@"tsfg.program-publication-candidate", .version = 5 },
+                    .stable_scope = scope, .publication = .{ .format = .{ .family = .@"tsfg.program-publication-candidate", .version = 6 },
                         .mode = .fixed, .scope = scope, .scope_digest = example.scope_digest, .expected_digest = example.publication_digest, .contracts = &self.contracts },
                     .dependencies = &self.dependencies, .request = .{ .targets = &.{} } } },
             } } } };

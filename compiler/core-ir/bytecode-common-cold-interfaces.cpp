@@ -40,8 +40,32 @@ bool CommonCold::interfaces(){
     if(!result.getAsNull())returnType=type(uint32_t(*result.getAsInteger()));
     else for(size_t t=0;t<tables.types->size();++t){if(!charge())return false;if(string(field((*tables.types)[t],"kind"))=="void")returnType=type(uint32_t(t));}
     if(returnType.empty()||!same(Json(Array(logicalTypes)),field(given,"parameterTypes"))||returnType!=string(field(given,"returnType")))return reject("Common fixed logical ABI vector/result join");
-    Json signatureShape=Object{{"parameters",Json(Array(logicalTypes))},{"returns",returnType}};
+    const auto &ordinaryMinimum=field(abi,"ordinaryMinimumArgumentCount"),&fixedInitialization=field(given,"ordinaryParameterInitialization");
+    if(!charge())return false;
+    if(bool(ordinaryMinimum.getAsNull())!=bool(fixedInitialization.getAsNull()))return reject("Common fixed/ABI ordinary FDI presence differs");
+    Array incomingTypes;
+    if(!ordinaryMinimum.getAsNull()){
+      if(kind!="source"||!receiver.getAsNull()||!field(given,"lexicalParent").getAsNull()||
+        !same(ordinaryMinimum,field(fixedInitialization,"minimumArgumentCount")))return reject("Common fixed/ABI ordinary FDI minimum or role differs");
+      const auto &raw=items(field(abi,"argumentTypes")),&fixed=items(field(fixedInitialization,"argumentTypes"));
+      if(!charge(raw.size()+1))return false;incomingTypes.reserve(raw.size());
+      for(size_t i=0;i<raw.size();++i){
+        if(!charge(8))return false;auto incoming=type(uint32_t(*raw[i].getAsInteger()));const auto expected=fixed[i].getAsString().value();
+        if(!charge((incoming.size()+expected.size())/64+1))return false;
+        if(incoming!=expected)return reject("Common fixed/ABI ordinary FDI incoming vector differs");incomingTypes.push_back(std::move(incoming));
+      }
+      size_t comparisons=1;for(size_t n=model.ordinaryParameterInputs.size();n;n>>=1)comparisons+=2;
+      if(!charge(comparisons*(id.size()/8+1)+incomingTypes.size()+1))return false;
+      commonProgram::Program::OrdinaryParameterInputs inputs;inputs.minimumArgumentCount=uint16_t(*ordinaryMinimum.getAsInteger());
+      inputs.argumentTypes.reserve(incomingTypes.size());
+      for(const auto &incoming:incomingTypes){const auto text=incoming.getAsString().value();if(!charge(text.size()/8+2))return false;inputs.argumentTypes.push_back(text.str());}
+      model.ordinaryParameterInputs.emplace(id,std::move(inputs));
+    }
+    Json signatureShape=Object{{"parameters",ordinaryMinimum.getAsNull()?Json(Array(logicalTypes)):Json(std::move(incomingTypes))},{"returns",returnType}};
     if(kind=="method")(*signatureShape.getAsObject())["minimumArgumentCount"]=field(abi,"methodMinimumArgumentCount");
+    else if(!ordinaryMinimum.getAsNull()){
+      (*signatureShape.getAsObject())["minimumArgumentCount"]=ordinaryMinimum;
+    }
     const auto signature=digest(std::string("tsfg.module-callable-signature.candidate.v1")+'\0'+canonical(signatureShape));
     const auto name=canonical(Object{{"path",field(decl,"path")},{"kind",field(decl,"kind")},{"name",field(decl,"name")}});
     const auto expected=digest(std::string("tsfg.module-callable-function.candidate.v1")+'\0'+canonical(Object{{"path",path(actual.source)},{"name",name},{"signatureHash",signature}}));

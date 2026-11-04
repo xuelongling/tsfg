@@ -20,8 +20,10 @@ export function validateCommonDeclarations(payload,grammars,types,spend,visible)
       check(modifiers.every(token=>['public','private','protected','readonly'].includes(token)),'capability');
       check(p.annotationRange,'capability','complete concrete parameter annotation required');
       const step=fn.parameterInitialization?.steps[i];
-      g.sequence(p.declarationRange,[...modifiers,p.nameRange,':',p.annotationRange,...(step?.initializer?['=',step.initializer.range]:[])]);
-      commonTypeSyntax(g,p.annotationRange,p.declaredType,types,spend,payload.typeAliases,visible.get(fn.sourcePath));
+      const optional=all[pn.end]?.text==='?';
+      check(!optional||!fn.ownerType&&Boolean(step)&&!step.initializer,'parameter-initialization');
+      g.sequence(p.declarationRange,[...modifiers,p.nameRange,...(optional?['?']:[]),':',p.annotationRange,...(step?.initializer?['=',step.initializer.range]:[])]);
+      commonTypeSyntax(g,p.annotationRange,p.declaredType,types,spend,payload.typeAliases,visible.get(fn.sourcePath),optional);
     }
     if(fn.returnAnnotationRange)commonTypeSyntax(g,fn.returnAnnotationRange,fn.returnType,types,spend,payload.typeAliases,visible.get(fn.sourcePath));
     else check(fn.name==='constructor'||fn.returnType==='void','source');

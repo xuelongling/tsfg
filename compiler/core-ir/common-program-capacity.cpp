@@ -15,13 +15,17 @@ bool ActualCheck::representation(){
       const auto &source=*sourceFunctions.at(id);const size_t hidden=!field(source,"lexicalEnvironment").getAsNull();
       if(hidden&&!need(!parameters.empty()&&string(parameters[0])=="env:"+string(field(source,"lexicalEnvironment")),"conditional hidden environment ABI differs"))return false;
       const bool constructor=string(field(source,"kind"))=="construction-body";
+      bool ordinaryInputs=false;if(!constructor&&!p.ordinaryParameterInputs.empty()){
+        size_t comparisons=1;for(size_t n=p.ordinaryParameterInputs.size();n;n>>=1)comparisons+=2;
+        if(!step(comparisons*(id.size()/8+1)))return false;ordinaryInputs=p.ordinaryParameterInputs.count(id);
+      }
       if(constructor&&!need(parameters.size()>hidden&&string(parameters[hidden])=="receiver:"+string(field(source,"ownerType")),"conditional constructor frame ABI differs"))return false;
       if(!constructor&&!field(source,"ownerType").getAsNull())sourceBindings.push_back(string(field(source,"receiverBinding")));
       for(const auto &parameter:items(field(source,"parameters")))sourceBindings.push_back(string(field(parameter,"id")));
       for(size_t i=0;i<sourceBindings.size();++i){
         if(!step())return false;const auto position=i+hidden+constructor;
-        if(constructor&&field(field(p.hir,"format"),"version").getAsInteger()==3){
-          if(!receiverText(id)||!step(16))return false;const auto key=id+"/"+std::to_string(fn->blocks[0].parameters[position]);
+        if(constructor&&field(field(p.hir,"format"),"version").getAsInteger()==3||ordinaryInputs){
+          if(constructor&&!receiverText(id)||!step(16))return false;const auto key=id+"/"+std::to_string(fn->blocks[0].parameters[position]);
           if(!selected(string(parameters[position]),registerCapacity[key]))return false;
         }else if(!selected(string(parameters[position]),storageCapacity[sourceBindings[i]]))return false;
       }

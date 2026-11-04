@@ -58,22 +58,22 @@ const cases = [_]Case{
     .{ .minimums = .{ 0, 0 }, .nominal_ids = .{ h("344c40545ffadab90aa733863720f0917b62caeb8e3a1b6a55312d73eaabeeff"), h("c7e286f88efb0b5c22661f4f37044803024006402ebf70f43584483bbdc25807") },
         .signatures = .{ h("2a76651f5f2a02f66c791610927458cfac675ba24c51d3a66d05ffd2db6d097e"), h("0939425a8b5322a099e6792ea7e0544779d432c447df749400e3fea6e70f4df5") }, .function_ids = .{ h("920c395bf234fa62b0ed17a315496340e98c30e5f34fce286a5f7bd8bd58b221"), h("6bf78ae7e8f964ccc4eb3f34ad74549d910f404c0173d33d3e4174e8ec2cd16d") },
         .construction_ids = .{ h("b1b9f2ffaef3e50f9c28e06ca1d484a87194b9aced96aa24bf5bd0910a2aa64f"), h("e74c7125c140e925b73f786ad05c34f1cc8cc12d586b72e9a1e2ef5dece4bdc2") }, .contract_digests = .{ h("ad3d1243a0c9c1f9a0143eb36ec1defb966148ce691f8562a7a4cb00fb232984"), h("8f0a9b4f6497e638fc5e86f309090205f36e41901105efa7babc06cae00a9d3c") },
-        .scope_digest = h("d2332252507cf05746585d44132f3c0985ec782b199e1b481531be7bed8184c1"), .publication_digest = h("9dc92f9f8f77a7781f3f668b2eed90d8ac3ca67be7f2a920f309567f09c5300f"),
+        .scope_digest = h("542310418215dc65ed9b5ab47cd2762beae1a87380b32bb433c5ca6434346190"), .publication_digest = h("69d2b2f268a54ccd8a4e16b02f8019d1181b7a382bfdea2ff95a10ff2e0f9659"),
         .type_order = .{ 3, 4, 1, 0, 2, 5 }, .function_order = .{ 1, 0 }, .construction_order = .{ 0, 1 } },
     .{ .minimums = .{ 1, 1 }, .nominal_ids = .{ h("aaf3e701495e155f1dd43db666cf48c08d00829b84e4c2cde5ee980bd845ad88"), h("0429b6199a5198b05dc781fc6a5926d216b4bc62bba6e83c1dd40f3922efb649") },
         .signatures = .{ h("41e07997dc78282b816c2048bdc54a6cc39c663d2fbbf12b007159b275d44668"), h("d4fb3748b9b90c8492469ec803e5ca558a860f79c800b549e79e1fced8e50b34") }, .function_ids = .{ h("210abd809ccb219bb5da13939c35efb93738da46468750c9be5d0c53bf2e1fce"), h("788b6d57d485d3ca8f266f25f312c4e8d4b868e37bde8d3f895d2b37081f1b13") },
         .construction_ids = .{ h("2157f68a9fe24ea46ce85ca90052ee335765de389ec0ca4f8724d11b971a8fda"), h("eb8a9d30e249df52b9c1ab20b09c018dc41289120e8576e4033f0b170343c5ab") }, .contract_digests = .{ h("6f0c2dae1a37d9fef8dd543e4ec5cc7a31deff851995ae1c894f6fba5e2f31e0"), h("f4a360398a0645f2a45b0e17b4c8d42c15987bd819b3ee78d1ed70d57f2f3dc8") },
-        .scope_digest = h("6a85a290d01dbcba3c23806d79143968e4b243c42c5ff2182da957c39670d606"), .publication_digest = h("2b86443c996023a910349849267a5599ce80b5860934e3d8eaa781cb606fa962"),
+        .scope_digest = h("28c3b53398044e13935279adc5dd0454a25a135b53a9c58c4cd55d15eb8cd78f"), .publication_digest = h("00f45b24982b6cb6ba7461706e7684586bb117c90add8694c53fe5237cbf36f2"),
         .type_order = .{ 5, 3, 1, 0, 4, 2 }, .function_order = .{ 0, 1 }, .construction_order = .{ 0, 1 } },
     .{ .minimums = .{ 0, 1 }, .nominal_ids = .{ h("344c40545ffadab90aa733863720f0917b62caeb8e3a1b6a55312d73eaabeeff"), h("0429b6199a5198b05dc781fc6a5926d216b4bc62bba6e83c1dd40f3922efb649") },
         .signatures = .{ h("2a76651f5f2a02f66c791610927458cfac675ba24c51d3a66d05ffd2db6d097e"), h("d4fb3748b9b90c8492469ec803e5ca558a860f79c800b549e79e1fced8e50b34") }, .function_ids = .{ h("920c395bf234fa62b0ed17a315496340e98c30e5f34fce286a5f7bd8bd58b221"), h("788b6d57d485d3ca8f266f25f312c4e8d4b868e37bde8d3f895d2b37081f1b13") },
         .construction_ids = .{ h("b1b9f2ffaef3e50f9c28e06ca1d484a87194b9aced96aa24bf5bd0910a2aa64f"), h("eb8a9d30e249df52b9c1ab20b09c018dc41289120e8576e4033f0b170343c5ab") }, .contract_digests = .{ h("f4a360398a0645f2a45b0e17b4c8d42c15987bd819b3ee78d1ed70d57f2f3dc8"), h("8f0a9b4f6497e638fc5e86f309090205f36e41901105efa7babc06cae00a9d3c") },
-        .scope_digest = h("e7448c8e881e6c7f0a4ec6e5dd303495dcfa7425ce9debe908b83e387226ad08"), .publication_digest = h("c7607a55b2f7ccdd19c80a109265d882756ef4560fb2acf65041535a473d572f"),
+        .scope_digest = h("1534fd29ef3fe2ffccbffc2e7ff95483611746cb5f78372e3f9f8ebbee616180"), .publication_digest = h("b1f9d6cc2a56228c23dce45c288edb8174c10570e369aef5859a3af836d84a78"),
         .type_order = .{ 5, 3, 4, 1, 0, 2 }, .function_order = .{ 1, 0 }, .construction_order = .{ 0, 1 } },
     .{ .minimums = .{ 1, 0 }, .nominal_ids = .{ h("aaf3e701495e155f1dd43db666cf48c08d00829b84e4c2cde5ee980bd845ad88"), h("c7e286f88efb0b5c22661f4f37044803024006402ebf70f43584483bbdc25807") },
         .signatures = .{ h("41e07997dc78282b816c2048bdc54a6cc39c663d2fbbf12b007159b275d44668"), h("0939425a8b5322a099e6792ea7e0544779d432c447df749400e3fea6e70f4df5") }, .function_ids = .{ h("210abd809ccb219bb5da13939c35efb93738da46468750c9be5d0c53bf2e1fce"), h("6bf78ae7e8f964ccc4eb3f34ad74549d910f404c0173d33d3e4174e8ec2cd16d") },
         .construction_ids = .{ h("2157f68a9fe24ea46ce85ca90052ee335765de389ec0ca4f8724d11b971a8fda"), h("e74c7125c140e925b73f786ad05c34f1cc8cc12d586b72e9a1e2ef5dece4bdc2") }, .contract_digests = .{ h("6f0c2dae1a37d9fef8dd543e4ec5cc7a31deff851995ae1c894f6fba5e2f31e0"), h("ad3d1243a0c9c1f9a0143eb36ec1defb966148ce691f8562a7a4cb00fb232984") },
-        .scope_digest = h("8b7143a9e41316497b2b5715fde901be6cac2f5716ab751a7e4b033f35a99a9f"), .publication_digest = h("ca4280f202ba68abc8458743ff2200f4cb8c95839d1392c68e143179263a75b7"),
+        .scope_digest = h("5c01cebd47b9e5f5cccaee85215cea3f9022a5750b070ebbc8d37d64c99e6db1"), .publication_digest = h("3079bd718c4d1092839a9b514504c98a4f2aec149a9b799b20d20692cb7c51f9"),
         .type_order = .{ 3, 1, 0, 4, 2, 5 }, .function_order = .{ 0, 1 }, .construction_order = .{ 0, 1 } },
 };
 
@@ -170,14 +170,14 @@ const Literal = struct {
                 .source = @enumFromInt(0), .role = .ordinary, .declaration = .{ .start = start, .end = start + 30 },
                 .name = "consume", .registers = &self.registers[index], .blocks = self.blocks[index .. index + 1] };
             self.abis[index] = .{ .kind = .common, .function = @enumFromInt(index), .signature = example.signatures[owner],
-                .parameters = &self.parameters[index], .argument_types = &self.incoming[index], .method_minimum_argument_count = example.minimums[owner],
+                .parameters = &self.parameters[index], .argument_types = &self.incoming[index], .method_minimum_argument_count = example.minimums[owner], .ordinary_minimum_argument_count = null,
                 .receiver = @enumFromInt(owner + 2), .construction = null, .receiver_frame = null, .lexical_environment = null,
                 .physical_parameters = &self.physical[index], .result = null, .result_carrier = null,
                 .source_plan = .{ .carriers = &self.plan_carriers[index], .blocks = self.plan_blocks[index .. index + 1] } };
             self.parameter_ids[index] = .{ ids[owner + 4], union_id };
             self.fixed_functions[index] = .{ .function_id = example.function_ids[owner], .signature_hash = example.signatures[owner], .kind = .method,
                 .decl_key = .{ .kind = .method, .name = "consume", .path = method_paths[owner], .source_path = source_path },
-                .parameter_types = &self.parameter_ids[index], .method_minimum_argument_count = example.minimums[owner], .return_type = primitives[2],
+                .parameter_types = &self.parameter_ids[index], .method_minimum_argument_count = example.minimums[owner], .ordinary_parameter_initialization = null, .return_type = primitives[2],
                 .construction = null, .lexical_parent = null, .lexical_environment = null, .activation_environment = null, .captures = &.{}, .access = .public };
             self.contracts[index] = .{ .function_id = example.function_ids[owner], .signature_hash = example.signatures[owner], .upper = upper,
                 .callables = .{ .parameters = &.{}, .returns = null, .slot_writes = .{} }, .return_origins = null, .digest = example.contract_digests[index] };
@@ -220,16 +220,16 @@ const Literal = struct {
                 .body = if (nominal) .{ .byte_size = 0, .alignment = 1, .reference_count = 0, .fields = &.{} } else null };
             concrete_index += 1;
         }
-        const scope: publication.StableScope = .{ .profile = .@"common-program-fixed-v5", .declaration_types = &self.declaration_ids,
+        const scope: publication.StableScope = .{ .profile = .@"common-program-fixed-v6", .declaration_types = &self.declaration_ids,
             .constructions = &self.fixed_constructors, .storage = .{ .fields = &.{}, .results = &.{} }, .root_file = source_path,
             .modules = &.{}, .roots = .{ .roots = &.{}, .required_roots = &.{} }, .types = &self.fixed_types, .functions = &self.fixed_functions,
             .globals = &.{}, .environments = &.{}, .host_context = null, .host_imports = &.{} };
         self.proof_methods[0] = .{ .actual = @enumFromInt(function_positions[0]), .target = @enumFromInt(function_positions[1]) };
         self.proofs[0] = .{ .source_type = self.typeRef(4), .target_type = self.typeRef(5),
             .origin = .{ .source = @enumFromInt(0), .start = 110, .end = 120 }, .fields = &.{}, .methods = &self.proof_methods };
-        self.program = .{ .envelope = .{ .magic = model.format.magic, .version = 19, .schema_hash = model.format.schema_hash, .total_bytes = 80, .payload_hash = payload_hash },
+        self.program = .{ .envelope = .{ .magic = model.format.magic, .version = 20, .schema_hash = model.format.schema_hash, .total_bytes = 80, .payload_hash = payload_hash },
             .target = .{ .target = model.format.target, .triple = model.format.triple, .data_layout = model.format.data_layout,
-                .i32_bytes = 4, .i32_alignment = 4, .pointer_bits = 64, .pointer_alignment = 8, .capability = 1019 },
+                .i32_bytes = 4, .i32_alignment = 4, .pointer_bits = 64, .pointer_alignment = 8, .capability = 1020 },
             .input_identity = input_identity, .source_hash = source_hash, .source_path = source_path, .source_length = 160, .root_source = @enumFromInt(0),
             .functions = &self.functions, .tables = .{ .sources = &.{.{ .hash = source_hash, .path = source_path, .length = 160 }}, .mode = .{ .common = .{
                 .types = &self.types, .members = .{ .fields = &.{}, .methods = &self.methods, .constructions = &self.constructors }, .domains = &.{},
@@ -240,7 +240,7 @@ const Literal = struct {
                 .closures = .{ .functions = &self.closures, .environments = &.{}, .calls = &.{} },
                 .exceptions = .{ .functions = &self.function_control, .bindings = &self.cells, .scopes = &self.scopes },
                 .authority = .{ .exports = .{}, .entries = .{}, .resources = .{}, .published = .{}, .fixed_publication = .{
-                    .stable_scope = scope, .publication = .{ .format = .{ .family = .@"tsfg.program-publication-candidate", .version = 5 },
+                    .stable_scope = scope, .publication = .{ .format = .{ .family = .@"tsfg.program-publication-candidate", .version = 6 },
                         .mode = .fixed, .scope = scope, .scope_digest = example.scope_digest, .expected_digest = example.publication_digest, .contracts = &self.contracts },
                     .dependencies = &self.dependencies, .request = .{ .targets = &.{} } } },
             } } } };
@@ -386,10 +386,10 @@ test "private predecessor envelope and mixed capability are refused" {
     try model.requireFormat(literal.program.envelope, literal.program.target);
     literal.program.envelope.version = 18;
     try std.testing.expectError(error.WrongFormat, model.requireFormat(literal.program.envelope, literal.program.target));
-    literal.program.envelope.version = 19;
+    literal.program.envelope.version = 20;
     literal.program.target.capability = 1018;
     try std.testing.expectError(error.WrongFormat, model.requireFormat(literal.program.envelope, literal.program.target));
-    literal.program.target.capability = 1019;
+    literal.program.target.capability = 1020;
     literal.program.envelope.schema_hash = h("cd560f1da0e1d809fb2ffa907baf7a27b86e3ccecb8323e0e46ce1570a8a1b65");
     try std.testing.expectError(error.WrongFormat, model.requireFormat(literal.program.envelope, literal.program.target));
     literal.init(cases[0]);

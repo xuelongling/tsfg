@@ -250,6 +250,12 @@ const Common = struct {
             try c.charge(4);
             const method = c.program.functions[@intFromEnum(abi.function)].role == .ordinary and abi.receiver != null and abi.construction == null;
             try c.require(method == (abi.method_minimum_argument_count != null));
+            if (abi.ordinary_minimum_argument_count != null) {
+                try c.charge(7);
+                try c.require(!method and abi.parameters.len != 0 and
+                    c.program.functions[@intFromEnum(abi.function)].role == .ordinary and abi.receiver == null and
+                    abi.construction == null and abi.receiver_frame == null and abi.lexical_environment == null);
+            }
             if(abi.lexical_environment) |env| { try c.require(at<abi.physical_parameters.len); try carrierEqual(c,abi.physical_parameters[at],.{.environment=env}); at+=1; }
             if(abi.receiver) |ref| {
                 try c.charge(3); const id=@intFromEnum(ref); const binding=v.storage.bindings[id];

@@ -142,10 +142,14 @@ export function commonProgramValues(model,graph,state,invoke,indirect,constructi
     if(e.kind==='hostCall'){const host=model.hosts.get(e.callee);check(host,'host');
       const args=e.arguments.map(arg=>expression(arg));return op('host_call',args,e.type,{host_id:host.id,signature_hash:host.signatureHash,contract_hash:model.hir.hostContext.contract.digest},e.range);}
     if(e.kind==='call') {
+      const fn=model.functions.get(e.callee),steps=fn?.parameterInitialization?.steps;
       const args=[];if(e.receiver)args.push(expression(e.receiver));
-      for(const [index,arg]of e.arguments.entries())args.push(copy(expression(arg),e.signature.parameters[index],arg.range));
+      for(const [index,arg]of e.arguments.entries())args.push(copy(expression(arg),steps?.[index].argumentType??e.signature.parameters[index],arg.range));
       if(e.callee==='intrinsic:readSpan')return op('readspan',args,e.type,{},e.range);
-      const fn=model.functions.get(e.callee),value=invoke(e,args,fn);
+      if(steps)for(let index=e.arguments.length;index<steps.length;index++){
+        model.spend();args.push(copy(op('undefined',[],undefinedId,{},e.range),steps[index].argumentType,e.range));
+      }
+      const value=invoke(e,args,fn);
       return value??op('undefined',[],undefinedId,{},e.range);
     }
     if(e.kind==='new') {

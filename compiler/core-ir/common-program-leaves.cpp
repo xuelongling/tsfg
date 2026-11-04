@@ -82,16 +82,28 @@ SourcePlan::Reg SourcePlan::expression(const Json &e){
   }
   if(kind=="call"||kind=="new"||kind=="superConstruct"){
     std::vector<Reg> args;const auto &parameters=items(field(field(e,"signature"),"parameters"));size_t index=0;
+    const auto callee=string(field(e,"callee"));const Json *target=nullptr;
+    const bool ordinaryLookup=kind=="call"&&field(field(check.p.hir,"format"),"version").getAsInteger()==3&&callee!="intrinsic:readSpan";
+    if(ordinaryLookup){size_t comparisons=1;for(size_t n=check.sourceFunctions.size();n;n>>=1)comparisons+=2;
+      if(!check.step(comparisons*(callee.size()/8+1)))return noRegister;const auto found=check.sourceFunctions.find(callee);if(found!=check.sourceFunctions.end())target=found->second;}
+    const auto &steps=target?items(field(field(*target,"parameterInitialization"),"steps")):items(Json(nullptr));
     if(kind=="call"&&!field(e,"receiver").getAsNull())args.push_back(expression(field(e,"receiver")));
     for(const auto &arg:items(field(e,"arguments"))){
       if(!check.need(index<parameters.size(),"Source call argument index missing"))return noRegister;
-      const auto value=expression(arg);args.push_back(kind=="call"||field(field(check.p.hir,"format"),"version").getAsInteger()!=3?copy(value,string(parameters[index]),sourceAnchor(arg)):value);++index;
+      const auto value=expression(arg);args.push_back(!steps.empty()?copy(value,string(field(steps[index],"argumentType")),sourceAnchor(arg)):
+        kind=="call"||field(field(check.p.hir,"format"),"version").getAsInteger()!=3?copy(value,string(parameters[index]),sourceAnchor(arg)):value);++index;
     }
-    const auto callee=string(field(e,"callee"));
     if(kind=="call"){
       if(callee=="intrinsic:readSpan")return emit("readspan",std::move(args),type,Object{},r);
-      if(!check.need(check.sourceFunctions.count(callee),"Source direct callee missing"))return noRegister;
-      const auto value=invoke(e,std::move(args),*check.sourceFunctions.at(callee));
+      if(!check.need(ordinaryLookup?target!=nullptr:check.sourceFunctions.count(callee),"Source direct callee missing"))return noRegister;
+      if(index<steps.size()&&args.capacity()<steps.size()){
+        if(!check.step(steps.size()+2*args.size()+1))return noRegister;args.reserve(steps.size());
+      }
+      for(;index<steps.size();++index){
+        if(!check.step())return noRegister;const auto omitted=emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},r);
+        args.push_back(copy(omitted,string(field(steps[index],"argumentType")),r));
+      }
+      const auto value=invoke(e,std::move(args),ordinaryLookup?*target:*check.sourceFunctions.at(callee));
       return value==noRegister?emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},r):value;
     }
     if(kind=="new"){

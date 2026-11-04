@@ -5,9 +5,9 @@
 #include <map>
 
 namespace tsfg::wire::common {
-// The owning provider must admit current Core5, including Source3 FDI.
+// The owning provider must admit current Core7, including Source3 FDI.
 // This is an internal compilation prerequisite, not packet identity evidence.
-static_assert(commonProgram::profileVersion == 6);
+static_assert(commonProgram::profileVersion == 7);
 struct Binding {
   std::string id,role,owner,name,type,capacity,declaration;
   bool writable=false;llvm::json::Value origin=nullptr;

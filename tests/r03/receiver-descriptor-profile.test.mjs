@@ -12,16 +12,16 @@ import {appendCommonProgramMarker} from '../../compiler/common-program-core.mjs'
 import {commonTextBudget} from '../../compiler/common-program-budget.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 
-const profileSchema='sha256:db46cd091d08f951a4a1564e8cf24702dca6137fe0585bbfe256c522e6ee3332';
+const profileSchema='sha256:0d27cadc89ca5f59d0f6c721a81d6f9c42c74bfab597986c4627dfd9c823cd59';
 
 // Handwritten expected signatures come from the frozen receiver interface,
 // not from Source lowering, Core reconstruction or the descriptor under test.
-test('receiver private5 binds all nine exact independent operation signatures',()=>{
-  assert.equal(descriptor.version,5);assert.equal(commonCoreFormat.version,5);
+test('receiver private7 binds all nine exact independent operation signatures',()=>{
+  assert.equal(descriptor.version,7);assert.equal(commonCoreFormat.version,7);
   assert.equal(fixture.privateVersion,4);assert.notEqual(profileSchema,fixture.schema);
   assert.equal(commonCoreSchema,profileSchema);
   assert.deepEqual(descriptor.representation.fields,fixture.representationTables);
-  assert.equal(descriptor.marker.fields.includes('version:i32=5'),true);
+  assert.equal(descriptor.marker.fields.includes('version:i32=7'),true);
   assert.equal(descriptor.marker.fields.includes('version:i32=3'),false);
   assert.equal(descriptor.marker.fields.includes('version:i32=4'),false);
   assert.deepEqual(Object.keys(descriptor.receiverProtocol.operations).sort(),
@@ -48,10 +48,10 @@ test('receiver private5 binds all nine exact independent operation signatures',(
   }
 });
 
-test('shared C++ declarations and marker reader bind the same private5 profile',async()=>{
+test('shared C++ declarations and marker reader bind the same private7 profile',async()=>{
   const header=await readFile(new URL('../../compiler/core-ir/common-program.h',import.meta.url),'utf8'),
     parser=await readFile(new URL('../../compiler/core-ir/common-program.cpp',import.meta.url),'utf8');
-  assert.ok(header.includes('inline constexpr int32_t profileVersion=5;'));
+  assert.ok(header.includes('inline constexpr int32_t profileVersion=7;'));
   assert.ok(header.includes('inline constexpr llvm::StringLiteral schema="'+profileSchema+'";'));
   assert.ok(parser.includes('version.getInt()!=profileVersion'));
   assert.equal(parser.includes('version.getInt()!=3'),false);
@@ -67,7 +67,7 @@ test('shared C++ declarations and marker reader bind the same private5 profile',
   ]);
 });
 
-test('the real marker serializer prints private5 and hashes only its typed metadata strings',async()=>{
+test('the real marker serializer prints private7 and hashes only its typed metadata strings',async()=>{
   // Deliberately not passing facts, HIR or Program admission fixtures: the
   // caller-owned serialization boundary accepts already prepared text parts.
   const hir='{"fixture":"metadata-only"}',representation='{"bindings":[],"domains":[],"functions":[],"internalConstructors":[]}',
@@ -75,7 +75,7 @@ test('the real marker serializer prints private5 and hashes only its typed metad
     spend=commonMeter(1000000),text=commonTextBudget(spend);
   appendCommonProgramMarker(text,{hir,representation,publication,request,proof},spend);
   const printed=text.finish();
-  assert.ok(printed.startsWith(', tsfg_program.program = {family = "tsfg.core-program-development", version = 5 : i32'));
+  assert.ok(printed.startsWith(', tsfg_program.program = {family = "tsfg.core-program-development", version = 7 : i32'));
   assert.equal(printed.includes('version = 3 : i32'),false);
   const strings=new Map([...printed.matchAll(/([a-z_]+) = ("(?:\\.|[^"\\])*")/g)]
     .map(/** @returns {[string,string]} */ match=>{
@@ -90,7 +90,7 @@ test('the real marker serializer prints private5 and hashes only its typed metad
   for(const [key,expected]of Object.entries({publication,request,proof})){
     const encoded=strings.get(key);assert.ok(encoded!==undefined);assert.deepEqual(JSON.parse(encoded),expected);
   }
-  const expected=', tsfg_program.program = {family = "tsfg.core-program-development", version = 5 : i32'
+  const expected=', tsfg_program.program = {family = "tsfg.core-program-development", version = 7 : i32'
     +Object.entries({schema:profileSchema,hir,hir_hash:hash(hir+'\n'),representation,
       representation_hash:hash(representation+'\n'),publication:JSON.stringify(publication),
       request:JSON.stringify(request),proof:JSON.stringify(proof)})

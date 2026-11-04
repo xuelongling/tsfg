@@ -12,7 +12,7 @@ inline constexpr llvm::StringLiteral bytecodeSchema =
     "fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7";
 // The independently selected Common development envelope never changes the registered default.
 inline constexpr llvm::StringLiteral commonProgramBytecodeSchema =
-    "fd9668dd9f938d5b4ec6e1b1d7d5e54e49109ea7d0fd9a07bd67875719f37009";
+    "08b3b4b43f12a7b7a86fe89ebe0c16b1d0a5585bdcac6569f00cabd5fed4c775";
 enum class Exchange { Registered, EmptyReference, CommonDevelopment };
 inline constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 inline constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
@@ -34,7 +34,7 @@ inline bool read(mlir::ModuleOp module, Identity &out, Exchange exchange = Excha
   const bool commonDevelopment = exchange == Exchange::CommonDevelopment;
   const auto schema = emptyReference ? "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6" :
       ("sha256:" + (commonDevelopment ? commonProgramBytecodeSchema : bytecodeSchema)).str();
-  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : commonDevelopment ? "0.19.0" : "0.12.0") ||
+  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : commonDevelopment ? "0.20.0" : "0.12.0") ||
       text("tsfg_core.bytecode_schema") != schema || text("tsfg_core.target") != target ||
       text("tsfg_core.triple") != triple || text("tsfg_core.data_layout") != layout) return false;
   Identity value;

@@ -884,8 +884,18 @@ const Common = struct {
             const result=if(abi.result) |r| v.types[@intFromEnum(r)].id else try primitive(c,"void");
             try sameValue(c,ps,row.parameter_types); try equal(c,result,row.return_type);
             try sameValue(c,abi.method_minimum_argument_count,row.method_minimum_argument_count);
+            if (row.ordinary_parameter_initialization) |inputs| {
+                try c.require(row.kind == .source and row.lexical_parent == null and abi.receiver == null and
+                    abi.ordinary_minimum_argument_count != null and abi.ordinary_minimum_argument_count.? == inputs.minimum_argument_count);
+            } else try c.require(abi.ordinary_minimum_argument_count == null);
             const signature=if(row.kind==.method)
                 try digest(c,"tsfg.module-callable-signature.candidate.v1",.{.parameters=ps,.returns=result,.minimum_argument_count=row.method_minimum_argument_count orelse return error.InvalidShape})
+            else if (row.ordinary_parameter_initialization) |inputs| blk: {
+                const incoming = try domainIds(c, v.types, abi.argument_types); defer c.allocator.free(incoming);
+                try sameValue(c, incoming, inputs.argument_types);
+                break :blk try digest(c, "tsfg.module-callable-signature.candidate.v1", .{
+                    .parameters=incoming, .returns=result, .minimum_argument_count=inputs.minimum_argument_count });
+            }
             else try digest(c,"tsfg.module-callable-signature.candidate.v1",.{.parameters=ps,.returns=result});
             try equal(c,signature,f.signature); try equal(c,signature,row.signature_hash);
             const name=try encoded(c,.{.path=decl.path,.kind=decl.kind,.name=decl.name}); defer c.allocator.free(name);
@@ -975,8 +985,9 @@ const Common = struct {
             try equal(c,scope.host_context.?.contract_digest,a.contract_digest); try equal(c,scope.host_context.?.build_identity_digest,a.build_identity_digest);
         }
         // Match only the stable declaration projection to current owned HIR.
-        // FDI raw inputs are declaration roots, never signature parameters or
-        // observed Actual tags. Captured slots are declaration roots as well.
+        // FDI raw inputs are declaration roots; ordinary FDI also binds them
+        // in its signature. They are never observed Actual tags. Captured
+        // slots are declaration roots as well.
         try c.charge(v.types.len); const required=try c.allocator.alloc(bool,v.types.len); defer c.allocator.free(required); @memset(required,false);
         var pending:std.ArrayListUnmanaged(usize)=.empty; defer pending.deinit(c.allocator);
         for(v.types,0..) |row,i| { try c.step(); if(row.kind==.reference or row.kind==.value)try pending.append(c.allocator,i); }

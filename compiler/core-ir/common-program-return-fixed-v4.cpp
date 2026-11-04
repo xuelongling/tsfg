@@ -63,7 +63,9 @@ bool projectScope(Program &p,const Json &raw,Scope::FixedScope &out,Error &e){
     for(const auto &f:items(field(field(v,"shape"),"fields")))row.shape.fields.push_back({string(field(f,"name")),uint64_t(*field(f,"index").getAsInteger())});out.types.push_back(std::move(row));}
   for(const auto &v:items(field(raw,"functions"))){Scope::Function row;row.functionId=string(field(v,"functionId"));const auto kind=string(field(v,"kind"));
     row.kind=kind=="source"?V4::FunctionKind::Source:kind=="method"?V4::FunctionKind::Method:kind=="construction-body"?V4::FunctionKind::ConstructionBody:V4::FunctionKind::Future;
-    for(const auto &type:items(field(v,"parameterTypes")))row.parameterTypes.push_back(string(type));row.returnType=string(field(v,"returnType"));
+    const auto &ordinary=field(v,"ordinaryParameterInitialization");
+    const auto &incoming=ordinary.getAsNull()?field(v,"parameterTypes"):field(ordinary,"argumentTypes");
+    for(const auto &type:items(incoming))row.parameterTypes.push_back(string(type));row.returnType=string(field(v,"returnType"));
     if(!field(v,"construction").getAsNull()){
       const auto &rawConstruction=field(v,"construction");V4::Constructor construction;
       construction.id=string(field(rawConstruction,"id"));construction.owner=string(field(rawConstruction,"owner"));construction.receiverIndex=size_t(field(rawConstruction,"receiverIndex").getAsInteger().value());
@@ -79,7 +81,7 @@ bool projectScope(Program &p,const Json &raw,Scope::FixedScope &out,Error &e){
   return true;
 }
 bool archive(Program &p,const Json &raw,Json &currentScope,Error &e){
-  if(!need(exact(raw,{"profile","rootFile","declarationTypes","types","hostImports","hostContext","functions","environments","globals","modules","roots","storage","constructions"})&&field(raw,"types").getAsArray()&&field(raw,"declarationTypes").getAsArray(),e,"complete fixed-v4 archive required")||!publicationScope(p,currentScope,e))return false;
+  if(!need(exact(raw,{"profile","rootFile","declarationTypes","types","hostImports","hostContext","functions","environments","globals","modules","roots","storage","constructions"})&&field(raw,"types").getAsArray()&&field(raw,"declarationTypes").getAsArray(),e,"complete fixed-v6 archive required")||!publicationScope(p,currentScope,e))return false;
   std::map<std::string,const Json *> current,byId,byLabel;std::set<std::string> declared;Array declarationRows;std::string previous;
   for(const auto &v:items(field(p.hir,"types"))){if(!work(p,e))return false;current.emplace(string(field(v,"id")),&v);}
   for(const auto &v:items(field(raw,"declarationTypes"))){if(!text(p,v,e))return false;auto id=string(v);if(!need(previous.empty()||previous<id,e,"archive declaration order differs"))return false;previous=id;declared.insert(std::move(id));}

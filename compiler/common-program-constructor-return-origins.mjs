@@ -33,7 +33,8 @@ export function projectConstructorReturnOrigins({plan,model},catalogue,graph,spe
   for(const [index,parameter]of plan.parameters.entries()){spend();const target=plan.entry.parameters[index];
     if(parameter.frame)put(target.name,graph.receiverInput());
     else if(parameter.hidden)put(target.name,graph.environmentInput(fn.lexicalEnvironment));
-    else {const offset=fn.kind==='construction-body'||fn.kind==='method'?1:0,at=fn.parameters.findIndex(row=>{spend();return row.id===parameter.id;});put(target.name,graph.root('parameter',at<0?parameter.type:fn.parameters[at].type,at<0?0:at+offset));}}
+    else {const offset=fn.kind==='construction-body'||fn.kind==='method'?1:0,at=fn.parameters.findIndex(row=>{spend();return row.id===parameter.id;});
+      put(target.name,graph.root('parameter',!fn.ownerType&&fn.parameterInitialization?parameter.type:at<0?parameter.type:fn.parameters[at].type,at<0?0:at+offset));}}
   const edge=(target,state,values,locals)=>{const next=blocks.get(target);check(next,'return-origin-cfg','missing normalized successor');graph.mergeStates([state],'block:'+target);
     spend(values.length);for(const [index,value]of values.entries())put(next.block.parameters[index].name,value);
     for(const [id,type]of cellTypes){spend();graph.phi(graphType(type),locals.get(id)??new Set(),'cell:'+id+':'+target);}};

@@ -10,6 +10,7 @@ import {validateCommonDeclarations} from './common-program-declarations.mjs';
 import {validateCommonLexical} from './common-program-lexical.mjs';
 import {validateCommonHostDeclarations} from './common-program-hosts.mjs';
 import {commonSemanticIdentities} from './common-program-identities.mjs';
+import {validParameterPresence,annotationStates} from './presence.mjs';
 import {commonSourceDescriptor as descriptor,commonSourceFormat as format,canonical,sha256,own,
   commonSourceDescriptorV3,commonSourceFormatV3,
   commonBudget,commonJson,commonCheck as check,commonSame as same,commonMeter} from './common-program-common.mjs';
@@ -30,6 +31,125 @@ function shape(value,name,spend,selectedDescriptor) {
       :name==='arrayGenericStatement'?(value.kind==='return'?['value']:value.kind==='try'?['catchClause','finallyBlock']:value.kind==='varDeclaration'?['annotationRange','initializer']:[]):[];
     check(selected.every(key=>Object.hasOwn(value,key))&&Object.keys(value).every(key=>rule.required.includes(key)||selected.includes(key)||optional.includes(key)),'schema');}
   for(const [key,child]of Object.entries(value))shape(child,rule.properties[key],spend,selectedDescriptor);
+}
+
+// Bridge only parameter facts, after the legacy snapshot's ordinary function
+// and the Common function's bindings/expressions have been projected by their
+// owners. Retain their original anchors; this is not another frontend parser
+// or an admission path for a partial Common package.
+export function bridgeCommonProgramOrdinaryParameters(original,fn,source,initializers,types,spend) {
+  spend(Math.ceil((source.path.length+fn.sourcePath.length+original.name.length+fn.name.length)/8)+1);
+  spend();check(!fn.ownerType&&fn.lexicalParent===null&&!original.ownerType&&!original.lexicalParent
+    &&source.path===fn.sourcePath&&original.name===fn.name
+    &&same(original.range,fn.declarationRange)&&original.parameters.length===fn.parameters.length
+    &&fn.parameters.length<=64&&original.parameterInitializers.length===fn.parameters.length
+    &&initializers.length===fn.parameters.length,'parameter-initialization');
+  sourceRange(fn.declarationRange,source.content);
+  let minimum=0;
+  spend(fn.parameters.length);
+  const steps=fn.parameters.map((parameter,index)=>{
+    spend();const input=original.parameters[index],initializer=original.parameterInitializers[index],converted=initializers[index],presence=input.presence;
+    // Presence guards slice/strip the parameter pieces and parse the annotation
+    // twice. Reserve those text passes before either guard touches the source.
+    spend(Math.ceil((6*(presence.range.end-presence.range.start)+12*(presence.annotation.end-presence.annotation.start))/8)+1);
+    // originId serializes an escaped path (at most six units per input unit)
+    // and hashes that preimage; the fixed span/key material is bounded here.
+    spend(Math.ceil((12*fn.sourcePath.length+512)/8)+1);
+    check(validParameterPresence(presence,input,initializer,source.content,original.range)
+      &&parameter.kind==='parameter'&&parameter.lexicalOwner===fn.id&&parameter.writable===input.writable
+      &&parameter.name===input.name&&same(parameter.nameRange,input.range)
+      &&same(parameter.declarationRange,presence.range)&&same(parameter.annotationRange,presence.annotation)
+      &&parameter.id===originId(fn.sourcePath,input.range)&&Boolean(initializer)===Boolean(converted),'parameter-initialization');
+    const states=annotationStates(presence,source.content);
+    const memberCount=1+Number(Boolean(states&2||presence.optional&&!presence.default))+Number(Boolean(states&4));
+    spend(memberCount+Math.ceil((input.type.length+28)/8)+1);
+    const members=[input.type,...(states&2||presence.optional&&!presence.default?['undefined']:[]),...(states&4?['null']:[])];
+    members.sort((a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a<b?-1:a>b?1:0;});
+    const declared=members.length===1?members[0]:'union<'+members.join(',')+'>';
+    check(types.has(declared)&&parameter.declaredType===declared,'parameter-initialization');
+    // Pay spreads, Set insertion, the result array and joined type text before
+    // native collection operations; comparisons pay their actual string widths.
+    spend(3*(members.length+Number(presence.default))+Math.ceil((input.type.length+37)/8)+1);
+    const argument=[...new Set([...members,...(presence.default?['undefined']:[])])];
+    argument.sort((a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a<b?-1:a>b?1:0;});
+    const argumentType=argument.length===1?argument[0]:'union<'+argument.join(',')+'>';
+    check(types.has(argumentType),'parameter-initialization');
+    if(!presence.optional)minimum=index+1;
+    if(converted){
+      // The existing JSON walker prepays nodes, keys and text before shape's
+      // string scans. It also bounds the complete initializer tree.
+      commonBudget(converted,units=>spend(2*units));
+      shape(converted,'arrayGenericExpression',spend,commonSourceDescriptorV3);
+      check(same(converted.range,initializer.range),'parameter-initialization');}
+    spend(3+Math.ceil(parameter.id.length/8)+1);
+    return {binding:parameter.id,range:{...parameter.declarationRange},argumentType,...(converted?{initializer:converted}:{})};
+  });
+  // Required-only functions keep their established Source2/3 representation.
+  spend(original.parameters.length);
+  if(!original.parameters.some(parameter=>parameter.presence.optional))return undefined;
+  spend(steps.length);
+  const result={minimumArgumentCount:minimum,hasParameterExpressions:steps.some(step=>step.initializer),steps};
+  // Charge the complete record for this walk, structuredClone and freeze before
+  // own() starts either copying or recursively visiting the returned tree.
+  commonBudget(result,units=>spend(3*units));
+  return own(result);
+}
+
+// This directory is checked before callers select any incoming argument type.
+// '?' is evidence for omission; undefined union membership alone never is.
+export function validateCommonParameterInitialization(payload,sources,types,version,spend) {
+  spend(payload.functions.length+payload.types.length);const grammars=new Map();
+  for(const fn of payload.functions){
+    const initialization=fn.parameterInitialization;
+    check(initialization===undefined||version===3&&!fn.ownerType&&fn.lexicalParent===null,'parameter-initialization');
+    if(initialization===undefined)continue;
+    check(initialization,'parameter-initialization');
+    const steps=initialization.steps,source=sources.get(fn.sourcePath);check(source,'parameter-initialization');
+    if(!grammars.has(fn.sourcePath))grammars.set(fn.sourcePath,commonSourceGrammar(source,spend));
+    const g=grammars.get(fn.sourcePath);
+    spend(steps.length+fn.parameters.length);
+    check(steps.length===fn.parameters.length&&initialization.hasParameterExpressions===steps.some(step=>step.initializer),'parameter-initialization');
+    let minimum=0,hasOptionalOrDefault=false;
+    for(const [index,step]of steps.entries()){
+      spend();const parameter=fn.parameters[index];
+      check(step.binding===parameter.id&&same(step.range,parameter.declarationRange)&&parameter.annotationRange,'parameter-initialization');
+      const name=g.indices(parameter.nameRange),annotation=g.indices(parameter.annotationRange);
+      const optional=g.tokens[name.end]?.text==='?';
+      check(annotation.first===name.end+(optional?2:1)&&g.tokens[annotation.first-1].text===':', 'parameter-initialization');
+      check(!optional||!step.initializer,'parameter-initialization');
+      if(step.initializer){const initializer=g.indices(step.initializer.range);
+        check(g.tokens[annotation.end]?.text==='='&&initializer.first===annotation.end+1,'parameter-initialization');}
+      hasOptionalOrDefault||=optional||Boolean(step.initializer);
+      const declared=types.get(parameter.declaredType);check(declared,'parameter-initialization');
+      const members=declared.kind==='union'?declared.members:[declared.id];spend(members.length*3+1);
+      check(!optional||members.includes('undefined'),'parameter-initialization');
+      const argument=step.initializer?[...new Set([...members,'undefined'])].sort((a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a<b?-1:a>b?1:0;}):members;
+      check(types.has(step.argumentType)&&step.argumentType===(argument.length===1?argument[0]:'union<'+argument.join(',')+'>'),'parameter-initialization');
+      if(!optional&&!step.initializer)minimum=index+1;
+    }
+    check(initialization.minimumArgumentCount===minimum&&hasOptionalOrDefault,'parameter-initialization');
+  }
+  for(const type of payload.types){
+    if(type.construction)check(version===3?type.construction.signature.minimumArgumentCount!==undefined:type.construction.signature.minimumArgumentCount===undefined,'parameter-initialization');
+    const fn=type.constructor;if(!fn)continue;
+    check(version===3?Boolean(fn.parameterInitialization):fn.parameterInitialization===undefined,'parameter-initialization');
+    if(!fn.parameterInitialization)continue;
+    const initialization=fn.parameterInitialization,steps=initialization.steps;
+    check(fn.ownerType===type.id&&fn.name==='constructor','parameter-initialization');
+    spend(steps.length+fn.parameters.length);
+    check(steps.length===fn.parameters.length&&initialization.hasParameterExpressions===steps.some(step=>step.initializer),'parameter-initialization');
+    let minimum=0;
+    for(const [index,step]of steps.entries()){
+      spend();const parameter=fn.parameters[index];
+      check(step.binding===parameter.id&&same(step.range,parameter.declarationRange),'parameter-initialization');
+      const declared=types.get(parameter.declaredType);check(declared,'parameter-initialization');
+      const members=declared.kind==='union'?declared.members:[declared.id];spend(members.length*3+1);
+      const argument=step.initializer?[...new Set([...members,'undefined'])].sort((a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a<b?-1:a>b?1:0;}):members;
+      check(types.has(step.argumentType)&&step.argumentType===(argument.length===1?argument[0]:'union<'+argument.join(',')+'>'),'parameter-initialization');
+      if(!step.initializer)minimum=index+1;
+    }
+    check(initialization.minimumArgumentCount===minimum&&type.construction.signature.minimumArgumentCount===minimum,'parameter-initialization');
+  }
 }
 
 export function verifyCommonProgramFacts(value) {
@@ -55,29 +175,7 @@ export function verifyCommonProgramFacts(value) {
   const types=validateTypedArrayTypes(p,sources);
   // Own the complete constructor directory before any caller can select an
   // ordinal raw argument type. Expression checks below consume these rows.
-  spend(p.functions.length+p.types.length);
-  for(const fn of p.functions)check(fn.parameterInitialization===undefined,'parameter-initialization');
-  for(const type of p.types){
-    if(type.construction)check(selected.version===3?type.construction.signature.minimumArgumentCount!==undefined:type.construction.signature.minimumArgumentCount===undefined,'parameter-initialization');
-    const fn=type.constructor;if(!fn)continue;
-    check(selected.version===3?Boolean(fn.parameterInitialization):fn.parameterInitialization===undefined,'parameter-initialization');
-    if(!fn.parameterInitialization)continue;
-    const initialization=fn.parameterInitialization,steps=initialization.steps;
-    check(fn.ownerType===type.id&&fn.name==='constructor','parameter-initialization');
-    spend(steps.length+fn.parameters.length);
-    check(steps.length===fn.parameters.length&&initialization.hasParameterExpressions===steps.some(step=>step.initializer),'parameter-initialization');
-    let minimum=0;
-    for(const [index,step]of steps.entries()){
-      spend();const parameter=fn.parameters[index];
-      check(step.binding===parameter.id&&same(step.range,parameter.declarationRange),'parameter-initialization');
-      const declared=types.get(parameter.declaredType);check(declared,'parameter-initialization');
-      const members=declared.kind==='union'?declared.members:[declared.id];spend(members.length*3+1);
-      const argument=step.initializer?[...new Set([...members,'undefined'])].sort((a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a<b?-1:a>b?1:0;}):members;
-      check(types.has(step.argumentType)&&step.argumentType===(argument.length===1?argument[0]:'union<'+argument.join(',')+'>'),'parameter-initialization');
-      if(!step.initializer)minimum=index+1;
-    }
-    check(initialization.minimumArgumentCount===minimum&&type.construction.signature.minimumArgumentCount===minimum,'parameter-initialization');
-  }
+  validateCommonParameterInitialization(p,sources,types,selected.version,spend);
   validateTypedArrayDeclarations(p,sources);validateCommonHostDeclarations(p,sources,types,spend);
   const grammars=new Map([...sources].filter(([path])=>!path.endsWith('.d.ts')).map(([path,row])=>[path,commonSourceGrammar(row,spend)]));
   const functions=new Map(p.functions.map(fn=>[fn.id,fn])),globals=new Map(p.globals.map(row=>[row.binding.id,row]));

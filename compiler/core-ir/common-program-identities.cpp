@@ -54,15 +54,16 @@ bool SourceModel::directory(){
   if(!need(field(payload,"globals").getAsArray()&&items(field(payload,"globals")).size()<=4096,"global directory bound"))return false;
   for(const auto &g:items(field(payload,"globals"))){const auto id=string(field(field(g,"binding"),"id"));
     if(!spend()||!need(!id.empty()&&globals.emplace(id,&g).second,"global storage identity differs"))return false;}
-  // Check the complete constructor stage inventory before any identity,
+  // Check the complete Source3 stage inventory before any identity,
   // declaration or body traversal can follow another constructor's steps.
   // Function-ID order is not an initialization-metadata dependency order.
   if(version==3)for(const auto &[id,fn]:functions){
     if(!spend())return false;
     const auto &initialization=field(*fn,"parameterInitialization");
     const bool constructor=constructors.count(id);
-    if(!need(constructor==!initialization.getAsNull(),"constructor parameter initialization inventory differs"))return false;
-    if(!constructor)continue;
+    const bool ordinary=!constructor&&field(*fn,"ownerType").getAsNull()&&field(*fn,"lexicalParent").getAsNull();
+    if(!need(constructor?!initialization.getAsNull():initialization.getAsNull()||ordinary,"Source3 parameter initialization inventory or ordinary role differs"))return false;
+    if(initialization.getAsNull())continue;
     const auto &steps=items(field(initialization,"steps")),&parameters=items(field(*fn,"parameters"));
     if(!spend(steps.size()+parameters.size()+1)||!need(steps.size()==parameters.size(),"constructor parameter initialization step count differs"))return false;
     size_t minimum=0;bool hasExpressions=false;
@@ -87,8 +88,10 @@ bool SourceModel::directory(){
       if(!need(same(field(stage,"binding"),field(parameter,"id"))&&same(field(stage,"range"),field(parameter,"declarationRange"))&&argumentType==expected,
         "constructor raw argument type, binding or source range differs"))return false;
     }
-    if(!need(field(initialization,"minimumArgumentCount").getAsInteger()==int64_t(minimum)&&field(initialization,"hasParameterExpressions").getAsBoolean()==hasExpressions,
-      "constructor minimum arity or parameter expression flag differs"))return false;
+    const auto suppliedMinimum=field(initialization,"minimumArgumentCount").getAsInteger();
+    if(!need(suppliedMinimum&&*suppliedMinimum>=0&&size_t(*suppliedMinimum)<=parameters.size()&&
+      (!constructor||*suppliedMinimum==int64_t(minimum))&&field(initialization,"hasParameterExpressions").getAsBoolean()==hasExpressions,
+      "Source3 minimum arity or parameter expression flag differs"))return false;
   }
   if(version==3)for(const auto &[id,type]:types){
     if(!spend())return false;const auto &construction=field(*type,"construction");if(construction.getAsNull())continue;
@@ -201,10 +204,19 @@ bool SourceModel::identities(){
       if(!need(declarations.count(id),"nested function original scoped declaration is absent"))return false;
       for(const auto &part:declarations.at(id).path){if(!spend())return false;path.push_back(part);}
     }
-    for(const auto &a:items(field(fn,"parameters"))){if(!spend()||!need(typeIds.count(string(field(a,"declaredType"))),"parameter type differs"))return false;parameters.push_back(typeIds.at(string(field(a,"declaredType"))));}
+    const auto &initialization=field(fn,"parameterInitialization");const bool ordinaryFDI=kind=="function"&&field(fn,"lexicalParent").getAsNull()&&!initialization.getAsNull();
+    if(ordinaryFDI){
+      const auto &steps=items(field(initialization,"steps"));if(!spend(steps.size()+1))return false;parameters.reserve(steps.size());
+      for(const auto &step:steps){
+        const auto raw=field(step,"argumentType").getAsString().value();size_t comparisons=2;for(size_t n=typeIds.size();n;n>>=1)comparisons+=2;
+        if(!spend(comparisons*(raw.size()/8+1)+20))return false;const auto incoming=typeIds.find(raw.str());
+        if(!need(incoming!=typeIds.end(),"ordinary incoming parameter type differs"))return false;parameters.push_back(incoming->second);
+      }
+    }else for(const auto &a:items(field(fn,"parameters"))){if(!spend()||!need(typeIds.count(string(field(a,"declaredType"))),"parameter type differs"))return false;parameters.push_back(typeIds.at(string(field(a,"declaredType"))));}
     const auto result=string(field(fn,"returnType"));if(!need(typeIds.count(result),"function result type missing"))return false;
     Json signature=Object{{"parameters",std::move(parameters)},{"returns",typeIds.at(result)}};
     if(kind=="method")(*signature.getAsObject())["minimumArgumentCount"]=int64_t(items(field(fn,"parameters")).size());
+    else if(ordinaryFDI)(*signature.getAsObject())["minimumArgumentCount"]=field(initialization,"minimumArgumentCount");
     signatures[id]=digest(std::string("tsfg.module-callable-signature.candidate.v1")+std::string(1,'\0')+canonical(signature));
     const auto name=canonical(Object{{"path",Json(Array(path))},{"kind",kind},{"name",field(fn,"name")}});
     functionIds[id]=digest(std::string("tsfg.module-callable-function.candidate.v1")+std::string(1,'\0')+canonical(Object{{"path",field(fn,"sourcePath")},{"name",name},{"signatureHash",signatures.at(id)}}));

@@ -152,8 +152,9 @@ export function planCommonFunction(model,owner) {
       }
       return owner.parameters.map(p=>values.load(values.location({kind:'bindingTarget',binding:p.id,type:p.type,range:owner.range}),owner.range));
     };
-    const type=model.types.get(owner.ownerType);
-    if(type.base)initializeParameters();else values.enterConstructor(type,state.receiver,[],owner.range,initializeParameters);
+    if(constructor){const type=model.types.get(owner.ownerType);
+      if(type.base)initializeParameters();else values.enterConstructor(type,state.receiver,[],owner.range,initializeParameters);
+    }else initializeParameters();
     initial.length=0;
     if(owner.lexicalEnvironment)initial.push(['lexical:'+owner.id,{...entry.parameters[0]}]);
   }

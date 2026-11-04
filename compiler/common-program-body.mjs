@@ -22,9 +22,9 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     spend();const key=signatureId(path,range),previous=signatureOrigins.get(key);
     check(previous===undefined||previous===type,'signature','original signature has inconsistent concrete type');signatureOrigins.set(key,type);
   }
-  function typeAnnotation(path,range,type) {
+  function typeAnnotation(path,range,type,implicitUndefined=false) {
     const g=grammars.get(path);check(g,'source');
-    for(const origin of commonTypeSyntax(g,range,type,types,spend,payload.typeAliases,visibility.get(path)))registerOrigin(path,origin.range,origin.type);
+    for(const origin of commonTypeSyntax(g,range,type,types,spend,payload.typeAliases,visibility.get(path),implicitUndefined))registerOrigin(path,origin.range,origin.type);
   }
   for(const alias of payload.typeAliases){spend();typeAnnotation(alias.sourcePath,alias.annotationRange,alias.type);}
   for(const fn of [...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])]) {
@@ -39,14 +39,15 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     if(fn.returnAnnotationRange)typeAnnotation(fn.sourcePath,fn.returnAnnotationRange,fn.returnType);
     if(!fn.ownerType){spend(fn.parameters.length);registerOrigin(fn.sourcePath,fn.declarationRange,
       sha256('tsfg.program.function-type.v2\0'+canonical({parameters:fn.parameters.map(p=>p.declaredType),returnType:fn.returnType})));}
-    for(const row of [...fn.parameters,...fn.bindings])binding(row,fn.sourcePath,fn.declarationRange);
+    for(const row of [...fn.parameters,...fn.bindings])binding(row,fn.sourcePath,fn.declarationRange,
+      !fn.ownerType&&row.kind==='parameter'&&Boolean(fn.parameterInitialization)&&g.tokens[g.indices(row.nameRange).end]?.text==='?');
   }
-  function binding(row,path,parent) {
+  function binding(row,path,parent,implicitUndefined=false) {
     spend();const source=sources.get(path),g=grammars.get(path);check(source&&g&&types.has(row.declaredType),'binding');
     sourceRange(row.declarationRange,source.content,parent);sourceRange(row.nameRange,source.content,row.declarationRange);
     g.name(row.nameRange,row.name);check(row.id===originId(path,row.nameRange),'identity');
     check(!bindings.has(row.id),'binding');bindings.set(row.id,{row,path});
-    if(row.annotationRange)typeAnnotation(path,row.annotationRange,row.declaredType);
+    if(row.annotationRange)typeAnnotation(path,row.annotationRange,row.declaredType,implicitUndefined);
     if(row.elementAnnotationRange)sourceRange(row.elementAnnotationRange,source.content,row.annotationRange??row.declarationRange);
   }
   for(const row of payload.globals)binding(row.binding,row.sourcePath,{start:0,end:sources.get(row.sourcePath)?.content.length});
@@ -120,6 +121,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
       }
       if(value.kind==='functionReference'){const callee=functions.get(value.functionId),shape=type(value.type);
         check(callee&&!callee.ownerType&&shape.kind==='function'&&same(shape.parameters,callee.parameters.map(p=>p.declaredType))&&shape.returnType===callee.returnType&&value.flowType===value.type,'function-reference');
+        check(!callee.parameterInitialization,'capability','ordinary parameter initialization function values are outside the accepted direct-call Source subset');
         check(local.get(staticBindingName(text(value.range)))===callee.id,'scope');return;}
       if(value.kind==='indirectCall'){const callee=type(value.expression.flowType),signature=value.signature;check(callee.kind==='function'&&same(value.calleeRange,value.expression.range),'indirect-call');
         check(signature&&signature.id===signatureId(signature.sourcePath,signature.declarationRange)&&same(signature.parameters,callee.parameters)&&signature.returnType===callee.returnType&&value.arguments.length===callee.parameters.length&&value.type===callee.returnType,'signature');
@@ -179,16 +181,17 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
       }
       if(['call','hostCall','new','superConstruct'].includes(value.kind)) {
         const signature=value.signature;check(signature&&signature.id===signatureId(signature.sourcePath,signature.declarationRange),'signature');
-        const construction=value.kind==='new'||value.kind==='superConstruct',minimum=signature.minimumArgumentCount??signature.parameters.length;
+        const construction=value.kind==='new'||value.kind==='superConstruct',callee=value.kind==='call'?functions.get(value.callee):null,
+          initialization=callee&&!callee.ownerType?callee.parameterInitialization:null,minimum=signature.minimumArgumentCount??signature.parameters.length;
         check(!parameterInitializer||value.kind!=='superConstruct','capability','super construction in a parameter initializer is outside the accepted official Source subset');
-        check(construction||signature.minimumArgumentCount===undefined,'signature');
-        check(value.arguments.length>=(construction?minimum:signature.parameters.length)&&value.arguments.length<=signature.parameters.length&&signature.parameters.every(id=>types.has(id))&&types.has(signature.returnType),'signature');
+        check(construction||signature.minimumArgumentCount===initialization?.minimumArgumentCount,'signature');
+        check(value.arguments.length>=(construction||initialization?minimum:signature.parameters.length)&&value.arguments.length<=signature.parameters.length&&signature.parameters.every(id=>types.has(id))&&types.has(signature.returnType),'signature');
         if(value.receiver)child(value.receiver);
         const argumentOwner=construction?types.get(value.kind==='new'?value.type:value.callee):null;
         if(construction)check(argumentOwner?.construction&&same(signature,argumentOwner.construction.signature)&&value.callee===argumentOwner.id,'construction');
         let parameterOwner=argumentOwner;
         while(parameterOwner&&!parameterOwner.constructor&&parameterOwner.base){spend();parameterOwner=types.get(parameterOwner.base);}
-        const steps=parameterOwner?.constructor?.parameterInitialization?.steps;
+        const steps=parameterOwner?.constructor?.parameterInitialization?.steps??initialization?.steps;
         value.arguments.forEach((arg,i)=>child(arg,false,steps?.[i].argumentType??signature.parameters[i]));
         if(value.kind==='new'||value.kind==='superConstruct') {
           const owner=argumentOwner;

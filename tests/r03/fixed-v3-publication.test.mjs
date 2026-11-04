@@ -22,9 +22,9 @@ const rebind=publication=>{
 };
 const boundary=error=>error instanceof TypeError&&'code' in error;
 
-test('first publication binds complete fixed-v5 rows including explicit null capability',()=>{
-  const publication=make();assert.equal(publication.format.version,5);
-  assert.equal(publication.scope.profile,'common-program-fixed-v5');
+test('first publication binds complete fixed-v6 rows including explicit null capability',()=>{
+  const publication=make();assert.equal(publication.format.version,6);
+  assert.equal(publication.scope.profile,'common-program-fixed-v6');
   assert.deepEqual(publication.contracts.map(row=>row.functionId),hir.functions.map(fn=>fn.id));
   assert.equal(publication.scope.functions.length,hir.functions.length);
   assert.ok(publication.contracts.some(row=>row.returnOrigins===null),'Host-dependent return protocol stays unresolved');
