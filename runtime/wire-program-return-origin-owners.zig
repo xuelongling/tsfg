@@ -10,7 +10,7 @@ const S = m.Symbol;
 const E = m.Error;
 const B = m.Budget;
 const Set = std.ArrayListUnmanaged(R);
-pub const Root = union(enum) { nonowning: void, local: void, parameter: usize, global: S, capture: S };
+pub const Root = union(enum) { nonowning: void, local: void, parameter: usize, global: S, capture: S, input: usize };
 pub const Flags = struct { read: bool = false, write: bool = false, structural: bool = false };
 pub const Capture = struct { key: S, flags: Flags };
 pub const Fixed = struct { function_id: S, graph: ?*const m.Graph, parameters: []const Flags, captures: []const Capture, may_throw: bool };
@@ -18,19 +18,32 @@ pub const Fixed = struct { function_id: S, graph: ?*const m.Graph, parameters: [
 // CommonViews. null fields means unavailable, including removed private types.
 pub const Field = struct { id: S, view: S, physical: usize, type_id: S };
 pub const Physical = struct { type_id: S, fields: ?[]const Field };
-pub const Pending = enum { graph_protocol, unknown_origin, missing_fixed, receiver_protocol, environment_protocol, capture_uninitialized, copy_layout, incomplete_completion, unresolved_value };
-pub const Kind = enum { root, projection, copied, environment_input, environment_local, environment_component, code };
+pub const Pending = enum { graph_protocol, unknown_origin, missing_fixed, receiver_protocol, environment_protocol, capture_uninitialized, payload_uninitialized, payload_layout, copy_layout, incomplete_completion, unresolved_value };
+pub const Kind = enum { root, payload, projection, copied, environment_input, environment_local, environment_component, code };
 pub const Location = struct {
     kind: Kind, owner: Root, type_id: ?S = null,
     // scope/node/source are names in these equations, never runtime identities.
     scope: usize = 0, node: usize = 0, source: ?R = null,
     layout: ?S = null, function_id: ?S = null, key: ?S = null,
     environment: ?R = null,
+    view: ?S = null,
+    // Index in the caller's typed symbolic input graph, not an Actual ID.
+    input: ?R = null,
 };
 pub const Address = struct { base: R, selector: S, view: S, values: Set = .empty };
 const Heap = std.ArrayListUnmanaged(Address);
 pub const Effect = struct { root: Root, flag: m.AccessFlag };
 pub const Environment = struct { location: R, parents: []const R };
+pub const ContentSlot = struct { selector: S, view: S, physical: ?usize, values: []const R };
+pub const Payload = struct { location: R, type_id: S, slots: []ContentSlot };
+pub const InitialAddress = struct { base: R, selector: S, view: S, values: []const R };
+// Payload locations are canonical saved allocation/copy relationships. Aliases
+// use the same index; distinct payload indices require distinct source graph
+// births/copies. Unknown/formal alternatives remain root/projection locations.
+pub const Initial = struct {
+    locations: []const Location, arguments: []const []const R,
+    environment: []const R, heap: []const InitialAddress, parents: []const Environment,
+};
 pub const Analysis = struct {
     arena: std.heap.ArenaAllocator, pending: ?Pending = null,
     normal: []const R = &.{}, language: []const R = &.{},
@@ -38,9 +51,11 @@ pub const Analysis = struct {
     locations: []const Location = &.{}, environments: []const Environment = &.{},
     normal_heap: []const Address = &.{}, language_heap: []const Address = &.{},
     effects: []const Effect = &.{},
+    normal_payloads: []const Payload = &.{}, language_payloads: []const Payload = &.{},
     pub fn deinit(self: *Analysis) void { self.arena.deinit(); }
 };
 const Source = struct { frame: usize, heap: R };
+const CopySource = struct { target: R, source: R, frame: usize, action: R, heap: R };
 const Frame = struct {
     graph: *const m.Graph, function_id: S, scope_graph: *const m.Graph, scope_call: usize,
     arguments: []Set, environment: Set, input: Heap,
@@ -49,6 +64,7 @@ const Frame = struct {
     output: [2]Set = .{ .empty, .empty }, output_heap: [2]Heap = .{ .empty, .empty },
     live: [2]bool = .{ false, false }, completed: [2]bool = .{ false, false },
     receiver: ?*const construction.Analysis = null,
+    output_payloads: [2]std.ArrayListUnmanaged(Payload) = .{ .empty, .empty },
 };
 const Engine = struct {
     a: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, fixed: []const Fixed, budget: *B,
@@ -58,6 +74,8 @@ const Engine = struct {
     effects: std.ArrayListUnmanaged(Effect) = .empty,
     changed: bool = false, pending: ?Pending = null,
     receiver: ?*const construction.Analysis = null,
+    initial_heap: []const Address = &.{},
+    copies: std.ArrayListUnmanaged(CopySource) = .empty,
     fn append(self: *Engine, comptime T: type, list: *std.ArrayListUnmanaged(T), value: T) E!void {
         try self.budget.step(); if (list.items.len == list.capacity) try self.budget.spend(list.items.len + 1);
         try list.append(self.a, value);
@@ -76,12 +94,12 @@ const Engine = struct {
     fn sameOptional(self: *Engine, a: ?S, b: ?S) E!bool { if (a) |id| return b != null and try self.budget.equal(id, b.?); return b == null; }
     fn sameRoot(self: *Engine, a: Root, b: Root) E!bool {
         try self.budget.step(); if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
-        return switch (a) { .parameter => |id| id == b.parameter, .global => |id| self.budget.equal(id, b.global), .capture => |id| self.budget.equal(id, b.capture), else => true };
+        return switch (a) { .parameter => |id| id == b.parameter, .input => |id| id == b.input, .global => |id| self.budget.equal(id, b.global), .capture => |id| self.budget.equal(id, b.capture), else => true };
     }
     fn location(self: *Engine, row: Location) E!R {
         for (self.locations.items, 0..) |old, id| {
-            try self.budget.step(); if (old.kind != row.kind or old.scope != row.scope or old.node != row.node or old.source != row.source or old.environment != row.environment) continue;
-            if (try self.sameRoot(old.owner, row.owner) and try self.sameOptional(old.type_id, row.type_id) and try self.sameOptional(old.layout, row.layout) and try self.sameOptional(old.function_id, row.function_id) and try self.sameOptional(old.key, row.key)) return id;
+            try self.budget.step(); if (old.kind != row.kind or old.scope != row.scope or old.node != row.node or old.source != row.source or old.environment != row.environment or old.input != row.input) continue;
+            if (try self.sameRoot(old.owner, row.owner) and try self.sameOptional(old.type_id, row.type_id) and try self.sameOptional(old.layout, row.layout) and try self.sameOptional(old.function_id, row.function_id) and try self.sameOptional(old.key, row.key) and try self.sameOptional(old.view, row.view)) return id;
         }
         const id = self.locations.items.len; try self.append(Location, &self.locations, row); try self.append(Set, &self.parents, .empty); self.changed = true; return id;
     }
@@ -175,36 +193,42 @@ const Engine = struct {
         try self.budget.step(); if (a == b) return true; const x = self.locations.items[a]; const y = self.locations.items[b];
         if (envKind(x.kind) or envKind(y.kind)) return envKind(x.kind) and envKind(y.kind) and try self.budget.equal(x.layout.?, y.layout.?) and (x.kind != .environment_local or y.kind != .environment_local);
         if (x.owner == .nonowning or y.owner == .nonowning or x.kind == .copied or y.kind == .copied) return false;
+        if (x.kind == .payload and y.kind == .payload) return false;
         // Local births are distinct from each other. A formal/global value can
         // still alias a local's published contents, never the local birth itself.
         if (x.owner == .local or y.owner == .local) return false;
         return true;
     }
-    fn read(self: *Engine, heap: []const Address, base: R, selector: S, view: S, scope: usize, node: usize) E!Set {
+    fn sameSlot(self: *Engine, base: R, a: S, av: S, b: S, bv: S, must: bool) E!bool {
+        if (try self.budget.equal(a, b)) return true;
+        if (try self.budget.equal(a, "element") or try self.budget.equal(b, "element")) return false;
+        if (!std.mem.startsWith(u8, a, "field:") or !std.mem.startsWith(u8, b, "field:")) return false;
+        if (self.locations.items[base].type_id) |actual| {
+            for (self.physical) |physical| {
+                try self.budget.step(); if (!try self.budget.equal(actual, physical.type_id)) continue;
+                if (physical.fields) |fields| {
+                    var left: ?usize = null; var right: ?usize = null;
+                    for (fields) |field| {
+                        try self.budget.step();
+                        if (try self.budget.equal(field.id, a[6..]) and try self.budget.equal(field.view, av)) left = field.physical;
+                        if (try self.budget.equal(field.id, b[6..]) and try self.budget.equal(field.view, bv)) right = field.physical;
+                    }
+                    if (left != null and right != null) return left.? == right.?;
+                }
+                break;
+            }
+        }
+        // Unknown physical correspondence is a May alias, never a MUST
+        // initialization or copied-layout witness.
+        return !must and !try self.budget.equal(av, bv);
+    }
+    fn read(self: *Engine, heap: []const Address, base: R, selector: S, view: S, scope: usize, node: usize, type_id: ?S) E!Set {
         try self.budget.step();
         var result: Set = .empty; const row = self.locations.items[base];
-        if (row.owner != .local and row.owner != .nonowning) try self.add(&result, try self.location(.{ .kind = .projection, .owner = row.owner, .source = base, .scope = scope, .node = node, .key = selector }));
+        if (row.owner != .local and row.owner != .nonowning) try self.add(&result, try self.location(.{ .kind = .projection, .owner = row.owner, .type_id = type_id, .source = base, .scope = scope, .node = node, .key = selector, .view = view }));
         for (heap) |stored| {
             try self.budget.step(); if (!try self.mayAlias(base, stored.base)) continue;
-            // Original selector equality is exact. Different declared views
-            // use the already checked physical slot map, or remain may-alias.
-            var same = try self.budget.equal(selector, stored.selector);
-            if (!same and !try self.budget.equal(view, stored.view) and !try self.budget.equal(selector, "element") and !try self.budget.equal(stored.selector, "element")) {
-                same = true;
-                if (row.type_id) |actual| for (self.physical) |physical| {
-                    try self.budget.step(); if (!try self.budget.equal(actual, physical.type_id)) continue;
-                    if (physical.fields) |fields| {
-                        var a: ?usize = null; var b: ?usize = null;
-                        for (fields) |field| {
-                            try self.budget.step(); if (std.mem.startsWith(u8, selector, "field:") and try self.budget.equal(field.id, selector[6..]) and try self.budget.equal(field.view, view)) a = field.physical;
-                            if (std.mem.startsWith(u8, stored.selector, "field:") and try self.budget.equal(field.id, stored.selector[6..]) and try self.budget.equal(field.view, stored.view)) b = field.physical;
-                        }
-                        if (a != null and b != null) same = a.? == b.?;
-                    }
-                    break;
-                };
-            }
-            if (same) try self.merge(&result, stored.values.items);
+            if (try self.sameSlot(base, selector, view, stored.selector, stored.view, false)) try self.merge(&result, stored.values.items);
         }
         return result;
     }
@@ -234,6 +258,32 @@ const Engine = struct {
             if (flags.read) try self.effect(owner, .read); if (flags.write) try self.effect(owner, .write); if (flags.structural) try self.effect(owner, .structural);
         }
     }
+    fn contentEffects(self: *Engine, heap: []const Address, values: []const R, flags: Flags) E!void {
+        try self.budget.step(); if (!flags.read and !flags.write and !flags.structural) return;
+        var work: Set = .empty; var seen: Set = .empty; for (values) |value| try self.append(R, &work, value); var cursor: usize = 0;
+        while (cursor < work.items.len) : (cursor += 1) {
+            try self.budget.step(); const value = work.items[cursor]; var visited = false;
+            for (seen.items) |old| { try self.budget.step(); if (old == value) { visited = true; break; } }
+            if (visited) continue; try self.add(&seen, value);
+            const node = self.locations.items[value]; try self.valueEffects(&.{value}, flags);
+            if (node.kind == .code) { if (node.environment) |environment| try self.append(R, &work, environment); continue; }
+            if (envKind(node.kind)) {
+                for (self.parents.items[value].items) |parent| { try self.budget.step(); try self.append(R, &work, parent); }
+                const environment = try self.environmentRow(node.layout.?);
+                for (environment.slots) |slot| {
+                    try self.budget.step(); const selected = try self.captureValues(heap, &.{value}, environment.id, slot.key); for (selected.items) |child| try self.append(R, &work, child);
+                }
+                continue;
+            }
+            if (node.kind != .payload and node.kind != .copied and (node.kind != .root or node.owner != .local)) continue;
+            // Every known prefix value contributes. This is a May effect
+            // closure; returned MUST contents are checked independently.
+            for (heap) |address| {
+                try self.budget.step(); if (std.mem.startsWith(u8, address.selector, "capture:")) continue;
+                if (try self.mayAlias(value, address.base)) for (address.values.items) |child| try self.append(R, &work, child);
+            }
+        }
+    }
     fn ensure(self: *Engine, graph: *const m.Graph, function_id: S, scope_graph: *const m.Graph, scope_call: usize, arguments: []Set, environment: Set, input: []const Address, source: ?Source) E!usize {
         for (self.frames.items, 0..) |frame, index| {
             try self.budget.step(); if (frame.graph != graph or frame.scope_graph != scope_graph or frame.scope_call != scope_call or frame.arguments.len != arguments.len or !try self.sameSet(frame.environment.items, environment.items)) continue;
@@ -256,7 +306,7 @@ const Engine = struct {
         const id = self.frames.items.len; try self.append(*Frame, &self.frames, frame); self.changed = true; return id;
     }
     fn size(self: *Engine) E!usize {
-        var count = self.locations.items.len + self.frames.items.len;
+        var count = self.locations.items.len + self.frames.items.len + self.copies.items.len;
         for (self.parents.items) |set| { try self.budget.step(); count += set.items.len; }
         for (self.frames.items) |frame| {
             try self.budget.step(); count += frame.sources.items.len;
@@ -321,12 +371,12 @@ const Engine = struct {
     fn copied(self: *Engine, frame: *const Frame, value: R, site: S, scope: usize) E!R {
         const original = self.locations.items[value];
         if (original.type_id == null and original.owner == .local) { self.pending = .copy_layout; return value; }
-        if (original.type_id == null or (original.kind != .copied and (original.kind != .root or original.owner != .local))) return value;
+        if (original.type_id == null or (original.kind != .payload and original.kind != .copied and (original.kind != .root or original.owner != .local))) return value;
         if ((try self.typeRow(original.type_id.?)).kind != .value) return value;
         // One symbolic copy site/type can conservatively contain multiple
         // same-type source alternatives; it never denotes an actual instance.
         _ = frame;
-        return self.location(.{ .kind = .copied, .owner = .local, .type_id = original.type_id, .scope = scope, .key = site });
+        return self.location(.{ .kind = .copied, .owner = original.owner, .type_id = original.type_id, .scope = scope, .key = site });
     }
     fn evalValue(self: *Engine, index: usize, frame: *Frame, ordinal: usize, node: m.Value) E!void {
         const out = &frame.values[ordinal]; var defined = false;
@@ -399,7 +449,7 @@ const Engine = struct {
             .gate => |row| { if (!frame.controls[row.control]) return; const values = try self.resolved(frame, row.inputs); try self.merge(out, values.items); defined = try self.readyRefs(frame, row.inputs); },
             .projection => |row| {
                 if (!frame.controls[row.control]) return; const bases = try self.resolved(frame, row.bases);
-                for (bases.items) |base| { const values = try self.read(frame.heaps[row.heap].items, base, row.selector, row.view, index, ordinal); try self.merge(out, values.items); }
+                for (bases.items) |base| { const values = try self.read(frame.heaps[row.heap].items, base, row.selector, row.view, index, ordinal, row.@"type"); try self.merge(out, values.items); }
                 defined = frame.heap_ready[row.heap] and try self.readyRefs(frame, row.bases);
             },
             .copy => |row| {
@@ -439,12 +489,16 @@ const Engine = struct {
                 while (cursor < work.items.len) : (cursor += 1) {
                     try self.budget.step(); const original = work.items[cursor]; var visited = false; for (seen.items) |old| { try self.budget.step(); if (old == original) { visited = true; break; } } if (visited) continue; try self.add(&seen, original);
                     const target = try self.copied(frame, original, operation.site, index); if (target == original) continue;
+                    const edge = CopySource{ .target = target, .source = original, .frame = index, .action = ordinal, .heap = operation.heap };
+                    var represented = false;
+                    for (self.copies.items) |old| { try self.budget.step(); if (std.meta.eql(old, edge)) { represented = true; break; } }
+                    if (!represented) try self.append(CopySource, &self.copies, edge);
                     const type_id = self.locations.items[original].type_id.?; var fields: ?[]const Field = null;
                     for (self.physical) |physical| { try self.budget.step(); if (try self.budget.equal(type_id, physical.type_id)) { fields = physical.fields; break; } }
                     const complete = fields orelse { self.pending = .copy_layout; return; };
                     for (complete) |field| {
                         try self.budget.text(field.id.len); try self.budget.spend(field.id.len + 7); const selector = try std.mem.concat(self.a, u8, &.{ "field:", field.id });
-                        const values = try self.read(frame.heaps[operation.heap].items, original, selector, field.view, index, copy.value); var children: Set = .empty;
+                        const values = try self.read(frame.heaps[operation.heap].items, original, selector, field.view, index, copy.value, field.type_id); var children: Set = .empty;
                         for (values.items) |child| { const copied_child = try self.copied(frame, child, operation.site, index); try self.add(&children, copied_child); if (copied_child != child) try self.append(R, &work, child); }
                         try self.put(out, target, selector, field.view, children.items);
                     }
@@ -512,46 +566,71 @@ const Engine = struct {
         }
         return false;
     }
-    fn initialized(self: *Engine, start: Source, environment: R, key: S) E!bool {
-        const node = self.locations.items[environment]; if (node.kind != .environment_local) return true;
-        var work: std.ArrayListUnmanaged(Source) = .empty; var seen: std.ArrayListUnmanaged(Source) = .empty;
-        try self.append(Source, &work, start); var cursor: usize = 0; var defined = false;
+    fn initialized(self: *Engine, start: Source, base: R, selector: S, view: S) E!bool {
+        const Task = struct { source: Source, base: R };
+        var work: std.ArrayListUnmanaged(Task) = .empty; var seen: std.ArrayListUnmanaged(Task) = .empty;
+        try self.append(Task, &work, .{ .source = start, .base = base }); var cursor: usize = 0; var defined = false;
         while (cursor < work.items.len) : (cursor += 1) {
             const current = work.items[cursor]; var visited = false;
-            for (seen.items) |old| { try self.budget.step(); if (std.meta.eql(old, current)) { visited = true; break; } } if (visited) continue; try self.append(Source, &seen, current);
-            const frame = self.frames.items[current.frame];
-            switch (frame.graph.heaps[current.heap]) {
+            for (seen.items) |old| { try self.budget.step(); if (std.meta.eql(old, current)) { visited = true; break; } } if (visited) continue; try self.append(Task, &seen, current);
+            const frame = self.frames.items[current.source.frame]; const node = self.locations.items[current.base];
+            switch (frame.graph.heaps[current.source.heap]) {
                 .entry => {
-                    if (node.scope == current.frame) return false;
+                    if (node.input != null) {
+                        var found = false;
+                        for (self.initial_heap) |slot| {
+                            try self.budget.step(); if (slot.base == current.base and try self.sameSlot(current.base, selector, view, slot.selector, slot.view, true)) { found = true; break; }
+                        }
+                        if (found) { defined = true; continue; }
+                        if (frame.sources.items.len == 0) return false;
+                        for (frame.sources.items) |source| try self.append(Task, &work, .{ .source = source, .base = current.base });
+                        continue;
+                    }
+                    if (node.scope == current.source.frame) return false;
                     // A callee-local ENV does not exist on an alternative
                     // target's branch before its own activation. That absence
                     // is not an uninitialized instance of the same ENV. A
                     // path through the owning frame's entry still fails, and
                     // a walk with no actual initializing path stays false.
                     if (frame.sources.items.len == 0) continue;
-                    for (frame.sources.items) |source| try self.append(Source, &work, source);
+                    for (frame.sources.items) |source| try self.append(Task, &work, .{ .source = source, .base = current.base });
                 },
-                .join => |row| for (row.inputs) |parent| { const source = Source{ .frame = current.frame, .heap = parent }; if (try self.possibleHeap(source)) try self.append(Source, &work, source); },
+                .join => |row| for (row.inputs) |parent| { const source = Source{ .frame = current.source.frame, .heap = parent }; if (try self.possibleHeap(source)) try self.append(Task, &work, .{ .source = source, .base = current.base }); },
                 .store => |row| {
-                    if (row.initialize and frame.controls[row.control] and std.mem.startsWith(u8, row.selector, "capture:") and try self.budget.equal(row.selector[8..], key)) {
+                    if (row.initialize and frame.controls[row.control] and try self.sameSlot(current.base, selector, view, row.selector, row.view, true)) {
                         const bases = try self.resolved(frame, row.bases); const values = try self.resolved(frame, row.values);
-                        if (bases.items.len == 1 and bases.items[0] == environment and values.items.len != 0) { defined = true; continue; }
+                        const empty_array = row.values.len == 0 and try self.budget.equal(selector, "element") and node.type_id != null and (try self.typeRow(node.type_id.?)).kind == .array;
+                        if (bases.items.len == 1 and bases.items[0] == current.base and (values.items.len != 0 or empty_array)) { defined = true; continue; }
                     }
-                    try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous });
+                    try self.append(Task, &work, .{ .source = .{ .frame = current.source.frame, .heap = row.previous }, .base = current.base });
                 },
-                .copy => |row| try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous }),
+                .copy => |row| {
+                    const operation = frame.graph.nodes[row.value].copy;
+                    if (node.kind == .copied and node.key != null and try self.budget.equal(node.key.?, operation.site)) {
+                        var matched = false;
+                        // Includes recursive Value fields, which are not the
+                        // top-level Data.copy result. Every edge was recorded
+                        // by that real copy's physical field expansion.
+                        for (self.copies.items) |edge| {
+                            try self.budget.step(); if (edge.frame != current.source.frame or edge.action != current.source.heap or edge.target != current.base) continue;
+                            matched = true; try self.append(Task, &work, .{ .source = .{ .frame = edge.frame, .heap = edge.heap }, .base = edge.source });
+                        }
+                        if (matched) continue;
+                    }
+                    try self.append(Task, &work, .{ .source = .{ .frame = current.source.frame, .heap = row.previous }, .base = current.base });
+                },
                 .call => |row| {
                     var found = false;
                     for (frame.targets[row.call].items) |target| {
                         try self.budget.step();
                         const called = self.frames.items[target]; const exits = if (row.completion == .normal) called.graph.exits.normal else called.graph.exits.language;
-                        for (exits) |exit| { try self.budget.step(); if (called.controls[exit.control]) { found = true; try self.append(Source, &work, .{ .frame = target, .heap = exit.heap }); } }
+                        for (exits) |exit| { try self.budget.step(); if (called.controls[exit.control]) { found = true; try self.append(Task, &work, .{ .source = .{ .frame = target, .heap = exit.heap }, .base = current.base }); } }
                     }
                     if (!found) return false;
                 },
                 .receiver_action => |row| {
                     const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return false; };
-                    if (receiver.heap_live[current.heap]) try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous });
+                    if (receiver.heap_live[current.source.heap]) try self.append(Task, &work, .{ .source = .{ .frame = current.source.frame, .heap = row.previous }, .base = current.base });
                 },
             }
         }
@@ -561,18 +640,56 @@ const Engine = struct {
         const environments = try self.selectEnvironments(bases, layout);
         if (environments.items.len == 0) { self.pending = .environment_protocol; return; }
         for (environments.items) |environment| {
-            if (!try self.initialized(source, environment, key)) { self.pending = .capture_uninitialized; return; }
+            if (self.locations.items[environment].kind == .environment_local) {
+                try self.budget.spend(key.len + layout.len + 14);
+                const selector = try std.mem.concat(self.a, u8, &.{ "capture:", key });
+                const view = try std.mem.concat(self.a, u8, &.{ "env:", layout });
+                if (!try self.initialized(source, environment, selector, view)) { self.pending = .capture_uninitialized; return; }
+            }
             const values = try self.captureValues(self.frames.items[source.frame].heaps[source.heap].items, &.{environment}, layout, key);
             if (values.items.len == 0) { self.pending = .unresolved_value; return; }
         }
     }
-    fn completeEnvironments(self: *Engine, source: Source, values: []const R) E!void {
-        var work: Set = .empty; try self.merge(&work, values); var seen: Set = .empty; var cursor: usize = 0;
+    fn completeContents(self: *Engine, source: Source, values: []const R, payloads: *std.ArrayListUnmanaged(Payload)) E!void {
+        var work: Set = .empty; for (values) |value| try self.append(R, &work, value); var seen: Set = .empty; var cursor: usize = 0;
         while (cursor < work.items.len) : (cursor += 1) {
             try self.budget.step(); const value = work.items[cursor]; var visited = false; for (seen.items) |old| { try self.budget.step(); if (old == value) { visited = true; break; } } if (visited) continue; try self.add(&seen, value);
             const node = self.locations.items[value];
             if (node.kind == .code) { if (node.environment) |environment| try self.append(R, &work, environment); continue; }
-            if (!envKind(node.kind)) continue;
+            if (!envKind(node.kind)) {
+                if (node.kind != .payload and node.kind != .copied and (node.kind != .root or node.owner != .local)) continue;
+                const type_id = node.type_id orelse continue;
+                const shape = try self.typeRow(type_id);
+                var slots: std.ArrayListUnmanaged(ContentSlot) = .empty;
+                if (shape.kind == .array) {
+                    if (!try self.initialized(source, value, "element", type_id)) { self.pending = .payload_uninitialized; return; }
+                    const selected = try self.read(self.frames.items[source.frame].heaps[source.heap].items, value, "element", type_id, source.frame, 0, null);
+                    try self.append(ContentSlot, &slots, .{ .selector = "element", .view = type_id, .physical = null, .values = selected.items });
+                    for (selected.items) |child| try self.append(R, &work, child);
+                } else if (shape.kind == .reference or shape.kind == .value) {
+                    var fields: ?[]const Field = null;
+                    for (self.physical) |physical| { try self.budget.step(); if (try self.budget.equal(physical.type_id, type_id)) { fields = physical.fields; break; } }
+                    const complete = fields orelse { self.pending = .payload_layout; return; };
+                    for (complete) |field| {
+                        try self.budget.step(); if (!try self.budget.equal(field.view, type_id)) continue;
+                        try self.budget.spend(field.id.len + 7); const selector = try std.mem.concat(self.a, u8, &.{ "field:", field.id });
+                        if (!try self.initialized(source, value, selector, field.view)) { self.pending = .payload_uninitialized; return; }
+                        const selected = try self.read(self.frames.items[source.frame].heaps[source.heap].items, value, selector, field.view, source.frame, 0, field.type_id);
+                        if (selected.items.len == 0) { self.pending = .unresolved_value; return; }
+                        try self.append(ContentSlot, &slots, .{ .selector = selector, .view = field.view, .physical = field.physical, .values = selected.items });
+                        for (selected.items) |child| try self.append(R, &work, child);
+                    }
+                } else if (shape.kind == .function or shape.kind == .read_span or shape.kind == .unknown or shape.kind == .union_type) { self.pending = .payload_layout; return; } else continue;
+                var previous: ?usize = null;
+                for (payloads.items, 0..) |old, i| { try self.budget.step(); if (old.location == value) { previous = i; break; } }
+                if (previous) |i| {
+                    const old = &payloads.items[i]; if (old.slots.len != slots.items.len) return error.InvalidGraph;
+                    for (old.slots, slots.items) |*slot, incoming| {
+                        var merged: Set = .empty; try self.merge(&merged, slot.values); try self.merge(&merged, incoming.values); slot.values = merged.items;
+                    }
+                } else try self.append(Payload, payloads, .{ .location = value, .type_id = type_id, .slots = slots.items });
+                continue;
+            }
             const row = try self.environmentRow(node.layout.?);
             if (row.parent != null and self.parents.items[value].items.len == 0) { self.pending = .environment_protocol; return; }
             for (self.parents.items[value].items) |parent| try self.append(R, &work, parent);
@@ -597,7 +714,7 @@ const Engine = struct {
                     if (!try self.readyRefs(frame, refs)) { self.pending = .unresolved_value; return; }
                     const values = try self.resolved(frame, refs);
                     if (refs.len != 0 and values.items.len == 0) { self.pending = .unresolved_value; return; }
-                    try self.completeEnvironments(.{ .frame = index, .heap = exit.heap }, values.items); if (self.pending != null) return;
+                    try self.completeContents(.{ .frame = index, .heap = exit.heap }, values.items, &frame.output_payloads[completion]); if (self.pending != null) return;
                 }
             }
             for (graph.nodes, 0..) |node, ordinal| {
@@ -624,7 +741,7 @@ const Engine = struct {
                     // the current body or replaced with a local scalar.
                     if (upper.may_throw and !called.live[1]) { self.pending = .incomplete_completion; return; }
                     if (upper.parameters.len != called.arguments.len) return error.InvalidGraph;
-                    for (upper.parameters, called.arguments) |flags, argument| try self.valueEffects(argument.items, flags);
+                    for (upper.parameters, called.arguments) |flags, argument| try self.contentEffects(called.input.items, argument.items, flags);
                     for (upper.captures) |capture| try self.captureEffects(target, capture);
                 }
             }
@@ -640,7 +757,8 @@ const Engine = struct {
                 const store = row.store;
                 if (!try self.possibleHeap(.{ .frame = index, .heap = store.previous })) continue;
                 const bases = try self.resolved(frame, store.bases); const values = try self.resolved(frame, store.values);
-                if (!frame.heap_ready[heap_id] or bases.items.len == 0 or values.items.len == 0) { self.pending = .unresolved_value; return; }
+                const empty_elements = store.initialize and store.values.len == 0 and try self.budget.equal(store.selector, "element");
+                if (!frame.heap_ready[heap_id] or bases.items.len == 0 or (values.items.len == 0 and !empty_elements)) { self.pending = .unresolved_value; return; }
                 if (std.mem.startsWith(u8, store.selector, "capture:") and !store.initialize) {
                     // A later store does not make an uninitialized lexical
                     // slot initialized; every live predecessor must have init.
@@ -666,7 +784,7 @@ const Engine = struct {
                 if (try self.budget.equal(current, id)) {
                     const values = try self.captureValues(frame.input.items, frame.environment.items, id, capture.key);
                     if (values.items.len == 0) { self.pending = .environment_protocol; return; }
-                    try self.valueEffects(values.items, capture.flags); found = true; break;
+                    try self.contentEffects(frame.input.items, values.items, capture.flags); found = true; break;
                 }
                 lexical = (try self.environmentRow(current)).parent;
             }
@@ -679,7 +797,7 @@ const Engine = struct {
                     for (frame.graph.heaps, 0..) |_, heap_id| {
                         try self.budget.step(); if (!frame.heap_ready[heap_id]) continue;
                         const values = try self.captureValues(frame.heaps[heap_id].items, frame.values[ordinal].items, id, capture.key);
-                        if (values.items.len != 0) { try self.valueEffects(values.items, capture.flags); found = true; }
+                        if (values.items.len != 0) { try self.contentEffects(frame.heaps[heap_id].items, values.items, capture.flags); found = true; }
                     }
                 }
             };
@@ -693,15 +811,21 @@ const Engine = struct {
 // graphs with this same Budget. Raw JSON, Source, permission tokens and selected
 // Actual entrances are intentionally absent from this seam.
 pub fn analyze(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B) E!Analysis {
-    return analyzeImpl(allocator, directory, physical, function_id, graph, fixed, budget, null);
+    return analyzeImpl(allocator, directory, physical, function_id, graph, fixed, budget, null, null);
 }
 // The production caller borrows the single construction-domain interpretation
 // of this same immutable graph. No receiver machine is duplicated here; the
 // ordinary contents/ENV equations consume only its continuation facts.
 pub fn analyzeReceiver(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B, receiver: *const construction.Analysis) E!Analysis {
-    return analyzeImpl(allocator, directory, physical, function_id, graph, fixed, budget, receiver);
+    return analyzeImpl(allocator, directory, physical, function_id, graph, fixed, budget, receiver, null);
 }
-fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B, receiver: ?*const construction.Analysis) E!Analysis {
+// Input rows come from the caller's existing symbolic owner/content state.
+// Present heap rows are established slots; missing rows stay unknown. This is
+// the same Engine and Budget, with no runtime tags, SSA or receiver seed added.
+pub fn analyzeInputs(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B, receiver: ?*const construction.Analysis, initial: *const Initial) E!Analysis {
+    return analyzeImpl(allocator, directory, physical, function_id, graph, fixed, budget, receiver, initial);
+}
+fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B, receiver: ?*const construction.Analysis, initial: ?*const Initial) E!Analysis {
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
     var engine = Engine{ .a = result.arena.allocator(), .directory = directory, .physical = physical, .fixed = fixed, .budget = budget, .receiver = receiver };
     const protocol = try m.findFunction(directory, function_id, budget);
@@ -712,12 +836,50 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, phys
         if (facts.pending != null or graph.calls.len != 0 or facts.controls.len != graph.controls.len or facts.heap_live.len != graph.heaps.len or facts.action_results.len != graph.heaps.len or facts.frames.len != graph.nodes.len) { result.pending = .receiver_protocol; return result; }
     }
     const arguments = try engine.allocate(Set, protocol.parameter_types.len); @memset(arguments, .empty);
-    for (protocol.parameter_types, 0..) |type_id, index| {
-        try budget.step(); if (receiver != null and index == 0) continue;
-        const location = try engine.location(.{ .kind = .root, .owner = .{ .parameter = index }, .type_id = type_id }); try engine.add(&arguments[index], location);
+    var environment: Set = .empty; var input_heap: Heap = .empty;
+    if (initial) |input| {
+        try budget.step(); if (input.arguments.len != arguments.len) return error.InvalidGraph;
+        const mapping = try engine.allocate(R, input.locations.len);
+        for (input.locations, mapping, 0..) |row, *into, index| {
+            try budget.step(); var copy = row; copy.scope = std.math.maxInt(usize); copy.node = index; copy.source = null; copy.environment = null; copy.input = index;
+            into.* = try engine.location(copy);
+        }
+        for (input.locations, mapping) |row, into| {
+            try budget.step();
+            if (row.source) |source| { if (source >= mapping.len) return error.InvalidGraph; engine.locations.items[into].source = mapping[source]; }
+            if (row.environment) |env| { if (env >= mapping.len) return error.InvalidGraph; engine.locations.items[into].environment = mapping[env]; }
+        }
+        for (input.arguments, arguments, 0..) |refs, *into, index| {
+            try budget.step(); if (receiver != null and index == 0) continue;
+            for (refs) |ref| { try budget.step(); if (ref >= mapping.len) return error.InvalidGraph; try engine.add(into, mapping[ref]); }
+            if (into.items.len == 0) { result.pending = .unresolved_value; return result; }
+        }
+        for (input.environment) |ref| { try budget.step(); if (ref >= mapping.len) return error.InvalidGraph; try engine.add(&environment, mapping[ref]); }
+        if ((protocol.lexical_environment != null) != (environment.items.len != 0)) { result.pending = .environment_protocol; return result; }
+        for (input.parents) |entry| {
+            try budget.step(); if (entry.location >= mapping.len) return error.InvalidGraph;
+            for (entry.parents) |parent| { try budget.step(); if (parent >= mapping.len) return error.InvalidGraph; try engine.add(&engine.parents.items[mapping[entry.location]], mapping[parent]); }
+        }
+        for (input.heap) |address| {
+            try budget.step(); if (address.base >= mapping.len) return error.InvalidGraph; var values: Set = .empty;
+            for (address.values) |ref| { try budget.step(); if (ref >= mapping.len) return error.InvalidGraph; try engine.add(&values, mapping[ref]); }
+            if (values.items.len == 0) {
+                const node = engine.locations.items[mapping[address.base]];
+                if (node.kind != .payload or node.type_id == null or !try budget.equal(address.selector, "element") or (try engine.typeRow(node.type_id.?)).kind != .array) { result.pending = .payload_uninitialized; return result; }
+                // Only Initial's explicitly established empty Array cell is
+                // retained here. General May put(empty) remains unchanged.
+                try engine.append(Address, &input_heap, .{ .base = mapping[address.base], .selector = address.selector, .view = address.view });
+            } else try engine.put(&input_heap, mapping[address.base], address.selector, address.view, values.items);
+        }
+        engine.initial_heap = input_heap.items;
+    } else {
+        for (protocol.parameter_types, 0..) |type_id, index| {
+            try budget.step(); if (receiver != null and index == 0) continue;
+            const location = try engine.location(.{ .kind = .root, .owner = .{ .parameter = index }, .type_id = type_id }); try engine.add(&arguments[index], location);
+        }
+        if (protocol.lexical_environment) |layout| { const input = try engine.entryEnvironment(layout); try engine.add(&environment, input); }
     }
-    var environment: Set = .empty; if (protocol.lexical_environment) |layout| { const input = try engine.entryEnvironment(layout); try engine.add(&environment, input); }
-    _ = try engine.ensure(graph, function_id, graph, std.math.maxInt(usize), arguments, environment, &.{}, null);
+    _ = try engine.ensure(graph, function_id, graph, std.math.maxInt(usize), arguments, environment, input_heap.items, null);
     try engine.run(); if (engine.pending == null) try engine.validate();
     if (engine.pending == null) {
         // The selected function's full capture upper is an effect obligation
@@ -743,5 +905,6 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, phys
     result.normal_live = root.live[0]; result.language_live = root.live[1]; result.locations = engine.locations.items;
     result.normal_heap = root.output_heap[0].items; result.language_heap = root.output_heap[1].items;
     result.effects = engine.effects.items; result.environments = environments.items;
+    result.normal_payloads = root.output_payloads[0].items; result.language_payloads = root.output_payloads[1].items;
     return result;
 }

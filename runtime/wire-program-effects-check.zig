@@ -259,6 +259,12 @@ const FixedExport = struct {
             .parameter => |index| { try c.require(self.offset <= self.op.operands.len and index < self.op.operands.len - self.offset); _ = try result.join(c, &self.saved.values[@intFromEnum(self.op.operands[self.offset + index])]); },
             .global => |id| { const ref = try self.directoryRef(t.GlobalRef, self.g.collector.common().modules.globals, id); _ = try result.add(c, .{ .global = ref }); },
             .capture => |key| try self.g.projectCapture(self.target, self.op, self.saved, try self.captureRef(key), &result),
+            .input => {
+                // analyze/analyzeReceiver do not import private inputs. Until
+                // that adapter is installed, no symbolic input is a proof.
+                self.g.collector.fixed_upper_origin_pending = true;
+                _ = try result.makeOpaque(c);
+            },
         }
         return result;
     }
