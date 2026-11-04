@@ -72,7 +72,9 @@ bool verifyMembers(const Types &types,const Members &source,const Members &targe
       if(!types.count(view.result))return fail(error,"method return type is not owned");
       if(types.at(view.result).kind!="void"&&!logical(types,actual.result,view.result,dependencies,used,charge,error,policy))
         return fail(error,"method result representation differs");
-      for(size_t i=0;i<std::min(actual.parameters.size(),view.parameters.size());++i)
+      // Ordinary methods in the admitted Source subset have only required parameters.
+      if(actual.parameters.size()>view.parameters.size())return fail(error,"method requires more arguments than its view supplies");
+      for(size_t i=0;i<actual.parameters.size();++i)
         if(!logical(types,view.parameters[i],actual.parameters[i],dependencies,used,charge,error,policy))
           return fail(error,"method parameter direction/representation differs");
     }else return fail(error,"unknown member kind");

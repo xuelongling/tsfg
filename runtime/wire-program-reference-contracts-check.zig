@@ -386,7 +386,11 @@ const Checker = struct {
                 if (self.common.types[@intFromEnum(result)].kind != .@"void") {
                     try c.require(try self.logical(.{ .source = from.result orelse self.void_type orelse return error.InvalidShape, .target = result }, proof.origin));
                 }
-                for (0..@min(from.parameters.len, to.parameters.len)) |index| {
+                // Ordinary methods in the admitted Source subset have only required
+                // parameters. A projection may discard target arguments, but cannot
+                // require an argument that the target signature does not supply.
+                try c.require(from.parameters.len <= to.parameters.len);
+                for (0..from.parameters.len) |index| {
                     try c.step();
                     const a = self.common.storage.bindings[@intFromEnum(from.parameters[index])].@"type";
                     const b = self.common.storage.bindings[@intFromEnum(to.parameters[index])].@"type";
