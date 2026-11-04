@@ -11,9 +11,15 @@ const t = model.types;
 const Context = context.Context;
 pub const Error = context.Error;
 
+// One static invocation's symbolic return graph, not an Actual instance or a
+// callee RegisterRef. Re-entering this site ages old relationships before new
+// ones are installed; parent/slot/code relations share this namespace.
+pub const Invocation = struct { caller: t.FunctionRef, block: t.BlockRef, instruction: u16, target: t.FunctionRef };
+pub const Fixed = struct { invocation: Invocation, location: usize };
+
 pub const Origin = struct {
     layout: t.EnvironmentRef,
-    source: union(enum) { input: void, birth: t.RegisterRef },
+    source: union(enum) { input: void, birth: t.RegisterRef, fixed: Fixed },
 };
 pub const Set = struct {
     unknown: bool = false,
@@ -37,6 +43,15 @@ pub const Set = struct {
         while (index < self.items.items.len) {
             try c.step(); const origin = self.items.items[index];
             if (origin.source == .birth and origin.source.birth == handle) {
+                _ = self.items.swapRemove(index); self.unknown = true;
+            } else index += 1;
+        }
+    }
+    pub fn ageFixed(self: *Set, c: *Context, invocation: Invocation) Error!void {
+        var index: usize = 0;
+        while (index < self.items.items.len) {
+            try c.step(); const origin = self.items.items[index];
+            if (origin.source == .fixed and std.meta.eql(origin.source.fixed.invocation, invocation)) {
                 _ = self.items.swapRemove(index); self.unknown = true;
             } else index += 1;
         }
@@ -82,5 +97,9 @@ pub const Value = struct {
     pub fn age(self: *Value, c: *Context, handle: t.RegisterRef) Error!void {
         try self.direct.age(c, handle);
         var entries = self.callables.valueIterator(); while (entries.next()) |value| { try c.step(); try value.age(c, handle); }
+    }
+    pub fn ageFixed(self: *Value, c: *Context, invocation: Invocation) Error!void {
+        try self.direct.ageFixed(c, invocation);
+        var entries = self.callables.valueIterator(); while (entries.next()) |value| { try c.step(); try value.ageFixed(c, invocation); }
     }
 };

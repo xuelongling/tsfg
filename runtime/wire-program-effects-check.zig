@@ -21,6 +21,7 @@ const construction_origins = @import("wire-program-return-origin-construction.zi
 const publication_refs = @import("wire-program-publication-refs.zig");
 const body_origins = @import("wire-program-return-origin-body.zig");
 const structural_origins = @import("wire-program-return-origins.zig");
+const fixed_owners = @import("wire-program-return-origin-owners.zig");
 const actual_targets = @import("wire-program-targets-check.zig");
 const t = model.types;
 const Context = facts.Context;
@@ -71,6 +72,8 @@ const Owners = struct {
         const replacement = try Owners.clone(c, source); self.deinit(c.allocator); self.* = replacement;
     }
 };
+
+
 // Callee-relative lexical roots, never an actual result or selected heap.
 // A result not yet derived is bottom only during private fixed-point work,
 // never an empty owner proof. After that closure, missing result values acquire
@@ -100,7 +103,7 @@ const OwnerSlot = struct { binding: t.BindingRef, receiver: ?t.RegisterRef = nul
 const UpperState = struct {
     values: []Owners,
     slots: std.AutoHashMapUnmanaged(OwnerSlot, Owners) = .empty,
-    parents: std.AutoHashMapUnmanaged(t.RegisterRef, effect_env.Set) = .empty,
+    parents: std.AutoHashMapUnmanaged(effect_env.Origin, effect_env.Set) = .empty,
     fn init(c: *Context, registers: usize) Error!UpperState {
         try c.charge(registers + 1);
         const values = try c.allocator.alloc(Owners, registers); errdefer c.allocator.free(values); @memset(values, .{});
@@ -130,21 +133,29 @@ const UpperState = struct {
         // A Cell or private field absent on either path is uninitialized, not
         // a known local empty value. Preserve that alternative at the join.
         var previous = self.slots.iterator(); while (previous.next()) |slot| {
-            try c.step(); if (!source.slots.contains(slot.key_ptr.*)) changed = (try slot.value_ptr.makeOpaque(c)) or changed;
+            try c.step(); if (!source.slots.contains(slot.key_ptr.*)) {
+                // A fixed graph namespace is born with its complete checked
+                // slot directory. Its absence on another target alternative
+                // means that namespace was not born on that alternative.
+                if (slot.key_ptr.environment) |origin| if (origin.source == .fixed) continue;
+                changed = (try slot.value_ptr.makeOpaque(c)) or changed;
+            }
         }
         var entries = source.slots.iterator(); while (entries.next()) |slot| {
             try c.step(); const destination = try self.slots.getOrPut(c.allocator, slot.key_ptr.*);
             if (!destination.found_existing) {
-                destination.value_ptr.* = .{}; _ = try destination.value_ptr.makeOpaque(c); changed = true;
+                destination.value_ptr.* = .{};
+                const conditional = if (slot.key_ptr.environment) |origin| origin.source == .fixed else false;
+                if (!conditional) _ = try destination.value_ptr.makeOpaque(c); changed = true;
             }
             changed = (try destination.value_ptr.join(c, slot.value_ptr)) or changed;
         }
         var old_parents = self.parents.iterator(); while (old_parents.next()) |entry| {
-            try c.step(); if (!source.parents.contains(entry.key_ptr.*) and !entry.value_ptr.unknown) { entry.value_ptr.unknown = true; changed = true; }
+            try c.step(); if (!source.parents.contains(entry.key_ptr.*) and entry.key_ptr.source != .fixed and !entry.value_ptr.unknown) { entry.value_ptr.unknown = true; changed = true; }
         }
         var parents = source.parents.iterator(); while (parents.next()) |entry| {
             try c.step(); const destination = try self.parents.getOrPut(c.allocator, entry.key_ptr.*);
-            if (!destination.found_existing) { destination.value_ptr.* = .{ .unknown = true }; changed = true; }
+            if (!destination.found_existing) { destination.value_ptr.* = .{ .unknown = entry.key_ptr.source != .fixed }; changed = true; }
             changed = (try destination.value_ptr.join(c, entry.value_ptr)) or changed;
         }
         return changed;
@@ -154,7 +165,7 @@ const UpperState = struct {
         if (!destination.found_existing) destination.value_ptr.* = .{};
         try destination.value_ptr.replace(c, value);
     }
-    fn birth(self: *UpperState, c: *Context, handle: t.RegisterRef, parent: *const effect_env.Set) Error!void {
+    fn birth(self: *UpperState, c: *Context, handle: t.RegisterRef, layout: t.EnvironmentRef, parent: *const effect_env.Set) Error!void {
         // A static SSA definition is not an instance ID. Age every old value,
         // callable association and selected relation before reusing its key.
         for (self.values) |*value| { try c.step(); try value.environments.age(c, handle); }
@@ -165,9 +176,31 @@ const UpperState = struct {
         }
         for (remove.items) |key| { try c.step(); const old = self.slots.fetchRemove(key).?; var value = old.value; value.deinit(c.allocator); }
         var parents = self.parents.valueIterator(); while (parents.next()) |value| { try c.step(); try value.age(c, handle); }
-        if (self.parents.fetchRemove(handle)) |old| { var value = old.value; value.deinit(c.allocator); }
+        const origin = effect_env.Origin{ .layout = layout, .source = .{ .birth = handle } };
+        if (self.parents.fetchRemove(origin)) |old| { var value = old.value; value.deinit(c.allocator); }
         var copy = try effect_env.Set.clone(c, parent); errdefer copy.deinit(c.allocator);
-        try copy.age(c, handle); try self.parents.put(c.allocator, handle, copy);
+        try copy.age(c, handle); try self.parents.put(c.allocator, origin, copy);
+    }
+    fn fixedBirth(self: *UpperState, c: *Context, invocation: effect_env.Invocation) Error!void {
+        for (self.values) |*value| { try c.step(); try value.environments.ageFixed(c, invocation); }
+        var remove: std.ArrayListUnmanaged(OwnerSlot) = .empty; defer remove.deinit(c.allocator);
+        var entries = self.slots.iterator(); while (entries.next()) |entry| {
+            try c.step(); try entry.value_ptr.environments.ageFixed(c, invocation);
+            if (entry.key_ptr.environment) |origin| if (origin.source == .fixed and std.meta.eql(origin.source.fixed.invocation, invocation)) {
+                if (remove.items.len == remove.capacity) try c.charge(remove.items.len + 1);
+                try c.step(); try remove.append(c.allocator, entry.key_ptr.*);
+            };
+        }
+        for (remove.items) |key| { try c.step(); const old = self.slots.fetchRemove(key).?; var value = old.value; value.deinit(c.allocator); }
+        var old_parents: std.ArrayListUnmanaged(effect_env.Origin) = .empty; defer old_parents.deinit(c.allocator);
+        var parents = self.parents.iterator(); while (parents.next()) |entry| {
+            try c.step(); try entry.value_ptr.ageFixed(c, invocation);
+            if (entry.key_ptr.source == .fixed and std.meta.eql(entry.key_ptr.source.fixed.invocation, invocation)) {
+                if (old_parents.items.len == old_parents.capacity) try c.charge(old_parents.items.len + 1);
+                try c.step(); try old_parents.append(c.allocator, entry.key_ptr.*);
+            }
+        }
+        for (old_parents.items) |key| { try c.step(); const old = self.parents.fetchRemove(key).?; var value = old.value; value.deinit(c.allocator); }
     }
     fn dirtyCapture(self: *UpperState, c: *Context, binding_id: t.BindingRef) Error!void {
         try c.step();
@@ -192,6 +225,153 @@ const UpperState = struct {
 // Equivalent seam to C++ GraphEffects, not a second actual interpreter. Every
 // normal edge and both conditional edges are considered. A complete callee
 // upper opens the language edge even when the actual callee never threw.
+// Rebind one immutable Graph5 result into the existing lexical OWNER domain.
+// Only enum directory references and copied owner/parent/slot sets escape the
+// temporary Analysis. No Actual object, callee register or arena pointer does.
+const FixedExport = struct {
+    g: *UpperGraph, analysis: *const fixed_owners.Analysis, target: t.FunctionRef,
+    op: model.instruction.Instruction, offset: usize, saved: *const UpperState,
+    destination: *UpperState, invocation: effect_env.Invocation,
+    allocator: std.mem.Allocator, environments: []effect_env.Set,
+    fn directoryRef(self: *FixedExport, comptime Ref: type, rows: anytype, id: origin_model.Symbol) Error!Ref {
+        const c = self.g.collector.c;
+        for (rows, 0..) |row, index| {
+            const symbol = try publication_refs.symbol(c, self.allocator, row.id);
+            try c.charge(symbol.len / 8 + id.len / 8 + 2); if (std.mem.eql(u8, symbol, id)) return @enumFromInt(index);
+        }
+        return error.InvalidReference;
+    }
+    fn captureRef(self: *FixedExport, key: origin_model.Symbol) Error!Capture {
+        const c = self.g.collector.c;
+        try c.charge(self.g.collector.common().closures.environments.len);
+        for (self.g.collector.common().closures.environments, 0..) |environment, e| for (environment.slots, 0..) |slot, s| {
+            const symbol = try publication_refs.symbol(c, self.allocator, slot.key);
+            try c.charge(symbol.len / 8 + key.len / 8 + 2);
+            if (std.mem.eql(u8, symbol, key)) return .{ .environment = @enumFromInt(e), .slot = @enumFromInt(s) };
+        };
+        return error.InvalidReference;
+    }
+    fn root(self: *FixedExport, source: fixed_owners.Root) Error!Owners {
+        const c = self.g.collector.c; var result: Owners = .{}; errdefer result.deinit(c.allocator);
+        switch (source) {
+            .nonowning => result.nonowning = true,
+            .local => _ = try result.add(c, .local),
+            .parameter => |index| { try c.require(self.offset <= self.op.operands.len and index < self.op.operands.len - self.offset); _ = try result.join(c, &self.saved.values[@intFromEnum(self.op.operands[self.offset + index])]); },
+            .global => |id| { const ref = try self.directoryRef(t.GlobalRef, self.g.collector.common().modules.globals, id); _ = try result.add(c, .{ .global = ref }); },
+            .capture => |key| try self.g.projectCapture(self.target, self.op, self.saved, try self.captureRef(key), &result),
+        }
+        return result;
+    }
+    fn exportValue(self: *FixedExport, id: usize) Error!Owners {
+        const c = self.g.collector.c; try c.step(); const node = self.analysis.locations[id];
+        var result = try self.root(node.owner); errdefer result.deinit(c.allocator);
+        if (node.owner == .local and node.kind != .code and node.kind != .environment_local) {
+            // Ordinary aggregate contents are not yet persisted in UpperState.
+            // A local Array/Value/Reference may contain p/G/Code+ENV; exporting
+            // only Local would silently erase that relation before a later
+            // full-parameter write. Keep that capability explicitly opaque.
+            const type_ref = if (node.type_id) |type_id| try self.directoryRef(t.TypeRef, self.g.collector.common().types, type_id) else null;
+            if (type_ref == null) _ = try result.makeOpaque(c) else switch (self.g.collector.common().types[@intFromEnum(type_ref.?)].kind) {
+                .reference, .value, .array, .readSpan, .function, .unknown, .@"union" => _ = try result.makeOpaque(c),
+                else => {},
+            }
+        }
+        // A projected object field is not its base's callable payload. Ordinary
+        // parameter roots retain the supplied complete code/env associations.
+        const direct_capture = node.kind == .projection and node.owner == .capture and node.source != null and
+            (self.analysis.locations[node.source.?].kind == .environment_input or self.analysis.locations[node.source.?].kind == .environment_component);
+        if ((node.kind == .projection or node.kind == .copied) and !direct_capture) {
+            result.environments.deinit(c.allocator); result.environments = .{ .callable_unknown = true, .direct = .{ .unknown = true } };
+        }
+        if (node.kind == .code) {
+            result.environments.deinit(c.allocator); result.environments = .{};
+            const function = try self.directoryRef(t.FunctionRef, c.program.functions, node.function_id.?);
+            var selected: effect_env.Set = .{}; defer selected.deinit(c.allocator);
+            if (node.environment) |environment| _ = try selected.join(c, &self.environments[environment]);
+            try result.environments.pair(c, function, &selected);
+        } else if (node.kind == .environment_input or node.kind == .environment_local or node.kind == .environment_component) {
+            result.environments.deinit(c.allocator); result.environments = .{};
+            _ = try result.environments.direct.join(c, &self.environments[id]);
+        } else if (node.kind == .root and node.owner == .global) {
+            result.environments.callable_unknown = true; result.environments.direct.unknown = true;
+        }
+        // Saved incoming relations from a prior visit to THIS invocation must
+        // not collide with newly installed local relationships of this visit.
+        if (node.kind != .code and node.kind != .environment_local) try result.environments.ageFixed(c, self.invocation);
+        return result;
+    }
+    fn initialize(self: *FixedExport) Error!bool {
+        const c = self.g.collector.c; const v = self.g.collector.common();
+        for (self.analysis.locations, 0..) |node, index| {
+            try c.step(); if (node.layout == null) continue;
+            const layout = try self.directoryRef(t.EnvironmentRef, v.closures.environments, node.layout.?);
+            switch (node.kind) {
+                .environment_local => _ = try self.environments[index].add(c, .{ .layout = layout, .source = .{ .fixed = .{ .invocation = self.invocation, .location = index } } }),
+                .environment_input => {
+                    var supplied: effect_env.Set = .{}; defer supplied.deinit(c.allocator);
+                    try self.g.callEnvironments(self.target, self.op, self.saved, &supplied);
+                    try self.g.atEnvironment(self.saved, &supplied, layout, &self.environments[index]);
+                    try self.environments[index].ageFixed(c, self.invocation);
+                },
+                else => {},
+            }
+        }
+        for (self.analysis.locations, 0..) |node, index| {
+            try c.step(); if (node.kind != .environment_component) continue;
+            var source = try self.exportValue(node.source.?); defer source.deinit(c.allocator);
+            const function = try self.directoryRef(t.FunctionRef, c.program.functions, node.function_id.?);
+            self.environments[index].unknown = source.environments.callable_unknown;
+            if (source.environments.callables.getPtr(function)) |selected| _ = try self.environments[index].join(c, selected) else self.environments[index].unknown = true;
+            try self.environments[index].ageFixed(c, self.invocation);
+        }
+        for (self.environments) |*set| { try c.step(); if (set.unknown) return false; }
+        const heaps = [_][]const fixed_owners.Address{ self.analysis.normal_heap, self.analysis.language_heap };
+        // Reserve all possible new records before the publication loops. This
+        // pays allocation/rehash work for existing map capacity and prospective
+        // entries once, rather than hiding a growing map behind a unit lookup.
+        var parent_records: usize = 0; var slot_records: usize = 0;
+        for (self.analysis.environments) |environment| {
+            try c.step(); if (self.analysis.locations[environment.location].kind == .environment_local) parent_records += self.environments[environment.location].items.items.len;
+        }
+        for (heaps) |heap| {
+            try c.step(); for (heap) |address| {
+                try c.step(); if (self.analysis.locations[address.base].kind == .environment_local and std.mem.startsWith(u8, address.selector, "capture:")) slot_records += self.environments[address.base].items.items.len;
+            }
+        }
+        try c.charge(self.destination.parents.capacity() + 4 * (self.destination.parents.count() + parent_records) + 1);
+        try self.destination.parents.ensureUnusedCapacity(c.allocator, @intCast(parent_records));
+        try c.charge(self.destination.slots.capacity() + 4 * (self.destination.slots.count() + slot_records) + 1);
+        try self.destination.slots.ensureUnusedCapacity(c.allocator, @intCast(slot_records));
+        for (self.analysis.environments) |environment| {
+            try c.step(); const node = self.analysis.locations[environment.location]; if (node.kind != .environment_local) continue;
+            var parents: effect_env.Set = .{}; defer parents.deinit(c.allocator);
+            for (environment.parents) |parent| { try c.step(); _ = try parents.join(c, &self.environments[parent]); }
+            for (self.environments[environment.location].items.items) |origin| {
+                try c.step(); const destination = self.destination.parents.getOrPutAssumeCapacity(origin);
+                if (!destination.found_existing) destination.value_ptr.* = .{};
+                _ = try destination.value_ptr.join(c, &parents);
+            }
+        }
+        // Completion heaps carry their own final slot relationships. Prefix
+        // heaps are used by the domain for effects and initialization checks,
+        // never substituted for a returned closure's saved contents.
+        for (heaps) |heap| for (heap) |address| {
+            try c.step(); const node = self.analysis.locations[address.base];
+            if (node.kind != .environment_local or !std.mem.startsWith(u8, address.selector, "capture:")) continue;
+            const selected = try self.captureRef(address.selector[8..]);
+            const slot = v.closures.environments[@intFromEnum(selected.environment)].slots[@intFromEnum(selected.slot)];
+            var payload: Owners = .{}; defer payload.deinit(c.allocator);
+            for (address.values.items) |id| { var value = try self.exportValue(id); defer value.deinit(c.allocator); _ = try payload.join(c, &value); }
+            for (self.environments[address.base].items.items) |origin| {
+                try c.step(); const destination = self.destination.slots.getOrPutAssumeCapacity(.{ .binding = slot.binding, .environment = origin });
+                if (!destination.found_existing) destination.value_ptr.* = .{};
+                _ = try destination.value_ptr.join(c, &payload);
+            }
+        };
+        return true;
+    }
+};
+
 const UpperGraph = struct {
     collector: *Collector,
     function: t.FunctionRef,
@@ -200,6 +380,7 @@ const UpperGraph = struct {
     // transfer computes lexical summaries; only the final pass checks effects.
     summarizing: bool = false,
     changed: bool = false,
+    block: t.BlockRef = @enumFromInt(0), instruction: u16 = 0,
     fn proveLexicalCells(self: *UpperGraph) Error!bool {
         const c = self.collector.c; const v = self.collector.common(); const function = c.program.functions[@intFromEnum(self.function)];
         var created: std.AutoHashMapUnmanaged(t.BindingRef, struct { cell: t.CellRef, handle: t.RegisterRef }) = .empty; defer created.deinit(c.allocator);
@@ -427,7 +608,7 @@ const UpperGraph = struct {
             try c.step(); const parent = rows[@intFromEnum(origin.layout)].parent orelse { into.unknown = true; continue; };
             switch (origin.source) {
                 .input => _ = try into.add(c, .{ .layout = parent, .source = .input }),
-                .birth => |handle| if (state.parents.getPtr(handle)) |saved| {
+                .birth, .fixed => if (state.parents.getPtr(origin)) |saved| {
                     if (saved.items.items.len == 0) into.unknown = true;
                     _ = try into.join(c, saved);
                 } else { into.unknown = true; },
@@ -466,6 +647,44 @@ const UpperGraph = struct {
         // The target is a case of the complete permitted call, not evidence
         // of a missing environment pair. Missing cases remain unknown.
         try self.atEnvironment(state, &saved, layout, into);
+    }
+    fn projectCapture(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, selected: Capture, into: *Owners) Error!void {
+        const c = self.collector.c; const v = self.collector.common();
+        const slot = v.closures.environments[@intFromEnum(selected.environment)].slots[@intFromEnum(selected.slot)];
+        var supplied: effect_env.Set = .{}; defer supplied.deinit(c.allocator);
+        try self.callEnvironments(target, op, saved, &supplied);
+        var sources: effect_env.Set = .{}; defer sources.deinit(c.allocator);
+        try self.atEnvironment(saved, &supplied, selected.environment, &sources);
+        if (sources.unknown or sources.items.items.len == 0) _ = try into.makeOpaque(c);
+        for (sources.items.items) |source| {
+            try c.step();
+            // A foreign formal ENV remains c:key. Static lexical stores may
+            // add aliases, but no selected Actual payload can replace c:key.
+            if (source.source == .input) _ = try into.add(c, .{ .capture = selected });
+            if (saved.slots.getPtr(.{ .binding = slot.binding, .environment = source })) |payload| {
+                _ = try into.join(c, payload);
+            } else if (source.source == .input) {
+                into.environments.callable_unknown = true; into.environments.direct.unknown = true;
+            } else _ = try into.makeOpaque(c);
+        }
+    }
+    fn applyCaptureUpper(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, full: *const publication.EffectUpper) Error!void {
+        const c = self.collector.c; const v = self.collector.common();
+        for (full.captures) |capture| {
+            try c.step(); if (!capture.read and !capture.write and !capture.structural) continue;
+            var selected: ?Capture = null;
+            for (self.collector.captures) |row| {
+                try c.step(); const found = row orelse continue;
+                const key = v.closures.environments[@intFromEnum(found.environment)].slots[@intFromEnum(found.slot)].key;
+                try c.charge(9); if (std.mem.eql(u8, &key, &capture.slot)) { selected = found; break; }
+            }
+            const slot = selected orelse return error.InvalidReference;
+            var projected: Owners = .{}; defer projected.deinit(c.allocator);
+            try self.projectCapture(target, op, saved, slot, &projected);
+            if (capture.read) try self.mark(&projected, .read);
+            if (capture.write) try self.mark(&projected, .write);
+            if (capture.structural) try self.mark(&projected, .structural);
+        }
     }
     fn environment(self: *UpperGraph, state: *UpperState, roots: *const effect_env.Set, selected: Capture, loaded: *Owners, incoming: ?*const Owners, initialize: bool) Error!void {
         const collector = self.collector; const c = collector.c; const v = collector.common();
@@ -521,7 +740,7 @@ const UpperGraph = struct {
                 },
                 // A callee-local activation cannot be rebound by reusing its
                 // SSA number in the caller. Escaped Env graphs stay unknown.
-                .birth => into.unknown = true,
+                .birth, .fixed => into.unknown = true,
             }
         }
     }
@@ -564,11 +783,88 @@ const UpperGraph = struct {
         if (full.facets.may_throw) _ = try thrown.makeOpaque(self.collector.c);
         return true;
     }
-    fn fixedGraphSummary(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, offset: usize, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners) Error!bool {
+    fn physicalFields(self: *UpperGraph, allocator: std.mem.Allocator, directory: *const origin_model.Directory) Error![]const fixed_owners.Physical {
+        const c = self.collector.c; const v = self.collector.common();
+        try c.charge(directory.types.len + 1); const result = try allocator.alloc(fixed_owners.Physical, directory.types.len);
+        for (directory.types, result) |type_row, *into| {
+            try c.step(); into.* = .{ .type_id = type_row.id, .fields = null };
+            if (type_row.kind != .value and type_row.kind != .reference) continue;
+            for (v.storage.concrete) |concrete| {
+                try c.step(); const actual = try publication_refs.symbol(c, allocator, v.types[@intFromEnum(concrete.@"type")].id);
+                try c.charge(actual.len / 8 + type_row.id.len / 8 + 2); if (!std.mem.eql(u8, actual, type_row.id)) continue;
+                const body = concrete.body orelse break;
+                var fields: std.ArrayListUnmanaged(fixed_owners.Field) = .empty;
+                for (body.fields, 0..) |physical, index| {
+                    try c.step(); const field = v.members.fields[@intFromEnum(physical.field)];
+                    if (fields.items.len == fields.capacity) try c.charge(fields.items.len + 1); try c.row(fixed_owners.Field);
+                    try fields.append(allocator, .{ .id = try publication_refs.symbol(c, allocator, field.id), .view = actual, .physical = index, .type_id = try publication_refs.symbol(c, allocator, v.types[@intFromEnum(field.@"type")].id) });
+                }
+                for (v.views.compatibility) |compatibility| {
+                    try c.step(); if (compatibility.source_type != concrete.@"type") continue;
+                    const view = try publication_refs.symbol(c, allocator, v.types[@intFromEnum(compatibility.target_type)].id);
+                    for (compatibility.fields) |mapping| {
+                        try c.step(); if (mapping.target != .field or mapping.actual == null or mapping.actual.? != .field) continue;
+                        for (body.fields, 0..) |physical, index| {
+                            try c.step(); if (physical.field != mapping.actual.?.field) continue;
+                            const field = v.members.fields[@intFromEnum(mapping.target.field)];
+                            if (fields.items.len == fields.capacity) try c.charge(fields.items.len + 1); try c.row(fixed_owners.Field);
+                            try fields.append(allocator, .{ .id = try publication_refs.symbol(c, allocator, field.id), .view = view, .physical = index, .type_id = try publication_refs.symbol(c, allocator, v.types[@intFromEnum(field.@"type")].id) });
+                            break;
+                        }
+                    }
+                }
+                into.fields = fields.items; break;
+            }
+        }
+        return result;
+    }
+    fn ordinaryGraph(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, directory: *const origin_model.Directory, function_id: origin_model.Symbol, graph: *const origin_model.Graph, budget: *origin_model.Budget, allocator: std.mem.Allocator, returned: *Owners, thrown: *Owners) Error!bool {
+        const c = self.collector.c; const publication_rows = self.collector.common().authority.fixed_publication.publication.contracts;
+        try c.charge(publication_rows.len + 1); const rows = try allocator.alloc(fixed_owners.Fixed, publication_rows.len);
+        for (publication_rows, rows) |*row, *into| {
+            try c.charge(row.upper.parameters.len + row.upper.captures.len + 2);
+            const parameters = try allocator.alloc(fixed_owners.Flags, row.upper.parameters.len);
+            for (row.upper.parameters, parameters) |flags, *parameter| { try c.step(); parameter.* = .{ .read = flags.read, .write = flags.write, .structural = flags.structural }; }
+            const captures = try allocator.alloc(fixed_owners.Capture, row.upper.captures.len);
+            for (row.upper.captures, captures) |capture, *entry| { try c.step(); entry.* = .{ .key = try publication_refs.symbol(c, allocator, capture.slot), .flags = .{ .read = capture.read, .write = capture.write, .structural = capture.structural } }; }
+            into.* = .{ .function_id = try publication_refs.symbol(c, allocator, row.function_id), .graph = if (row.return_origins) |*value| value else null, .parameters = parameters, .captures = captures, .may_throw = row.upper.facets.may_throw };
+        }
+        const physical = try self.physicalFields(allocator, directory);
+        var analysis = fixed_owners.analyze(c.allocator, directory, physical, function_id, graph, rows, budget) catch |err| return publication_refs.graphFailure(err); defer analysis.deinit();
+        if (analysis.pending != null or (full.facets.may_throw and !analysis.language_live)) return self.noFixedBodyProof(full, returned, thrown);
+        const invocation = effect_env.Invocation{ .caller = self.function, .block = self.block, .instruction = self.instruction, .target = target };
+        // All incoming source relationships are borrowed from the pre-call
+        // snapshot. Expire the old graph at this site before installing its
+        // newly derived parent/slot/code relationships as one namespace.
+        try destination.fixedBirth(c, invocation);
+        try c.charge(analysis.locations.len + 1); const environments = try c.allocator.alloc(effect_env.Set, analysis.locations.len); @memset(environments, .{});
+        defer { for (environments) |*environment_set| environment_set.deinit(c.allocator); c.allocator.free(environments); }
+        var export_graph = FixedExport{ .g = self, .analysis = &analysis, .target = target, .op = op, .offset = offset, .saved = saved, .destination = destination, .invocation = invocation, .allocator = allocator, .environments = environments };
+        if (!try export_graph.initialize()) return self.noFixedBodyProof(full, returned, thrown);
+        for (analysis.effects) |effect| {
+            var projected = try export_graph.root(effect.root); defer projected.deinit(c.allocator);
+            try self.mark(&projected, switch (effect.flag) { .read => .read, .write => .write, .structural => .structural });
+        }
+        const outputs = [_][]const usize{ analysis.normal, analysis.language }; const into = [_]*Owners{ returned, thrown };
+        const live = [_]bool{ analysis.normal_live, analysis.language_live };
+        for (outputs, into, live) |values, owners, reachable| {
+            try c.step(); if (!reachable) continue;
+            if (values.len == 0) owners.nonowning = true;
+            for (values) |id| { var value = try export_graph.exportValue(id); defer value.deinit(c.allocator); _ = try owners.join(c, &value); }
+        }
+        return true;
+    }
+    fn fixedGraphSummary(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, returned: *Owners, thrown: *Owners) Error!bool {
         const collector = self.collector; const c = collector.c;
         const contract_index = collector.contracts[@intFromEnum(target)] orelse return false;
         const fixed = &c.program.tables.mode.common.authority.fixed_publication;
-        const graph = if (fixed.publication.contracts[contract_index].return_origins) |*value| value else return false;
+        const graph = if (fixed.publication.contracts[contract_index].return_origins) |*value| value else {
+            // Null is an unavailable relation, not an invitation to substitute
+            // this callee's current body. Only a dependent use of this opaque
+            // result requests owner proof; complete permissions still apply.
+            try self.applyCaptureUpper(target, op, state, full);
+            _ = try returned.makeOpaque(c); if (full.facets.may_throw) _ = try thrown.makeOpaque(c); return true;
+        };
         var receiver = false;
         for (graph.nodes) |node| { try c.step(); if (node == .receiver_input or node == .receiver_frame or node == .receiver_value) { receiver = true; break; } }
         // References, complete original contracts and directory ownership were
@@ -579,9 +875,6 @@ const UpperGraph = struct {
         var budget: origin_model.Budget = .{ .context = c, .charge = publication_refs.graphCharge };
         var body = try body_origins.project(c, target, &directory, &budget); defer body.deinit();
         if (body.pending != null) {
-            // Unsupported nonreceiver bodies retain their existing independent
-            // path; a receiver fixed contract can never use that Alias fallback.
-            if (!receiver) return false;
             return self.noFixedBodyProof(full, returned, thrown);
         }
         try c.charge(fixed.publication.contracts.len + 1);
@@ -594,6 +887,10 @@ const UpperGraph = struct {
         // The immutable complete fixed contract vector is solely the upper.
         const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
         if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
+        if (!receiver) return self.ordinaryGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), returned, thrown);
+        for (full.captures) |capture| {
+            try c.step(); if (capture.read or capture.write or capture.structural) return self.noFixedBodyProof(full, returned, thrown);
+        }
         // Receiver return interpretation is owned by the independently checked
         // construction-frame protocol. It is not selected actual entrances or
         // the cached effect proof. Complete current-body inclusion above stays
@@ -602,10 +899,7 @@ const UpperGraph = struct {
             try c.charge(2); const target_function = c.program.functions[@intFromEnum(target)];
             if (target_function.role != .construction_body or collector.common().abis[@intFromEnum(target_function.abi)].construction == null) return self.noFixedBodyProof(full, returned, thrown);
         }
-        var analysis = if (receiver)
-            construction_origins.analyzeReturns(c.allocator, &directory, graph, &budget, function_id) catch |err| return publication_refs.graphFailure(err)
-        else
-            construction_origins.analyze(c.allocator, &directory, graph, &budget, null) catch |err| return publication_refs.graphFailure(err);
+        var analysis = construction_origins.analyzeReturns(c.allocator, &directory, graph, &budget, function_id) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
         if (analysis.pending != null) return self.noFixedBodyProof(full, returned, thrown);
         for(analysis.initializations) |*write| {
@@ -654,7 +948,7 @@ const UpperGraph = struct {
         }
         return true;
     }
-    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
+    fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *UpperState, incoming: *const UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
         const collector = self.collector; const c = collector.c;
         const full = if (self.summarizing) original: {
             try c.step(); break :original collector.upper(target) orelse return error.InvalidShape;
@@ -675,30 +969,10 @@ const UpperGraph = struct {
             if (access_mode.write) try self.mark(argument, .write);
             if (access_mode.structural) try self.mark(argument, .structural);
         };
-        const fixed = try self.fixedGraphSummary(target, op, state, offset, full, returned, thrown);
-        const summary = &collector.aliases[@intFromEnum(target)];
-        const project = summary.transparent and (self.summarizing or summary.available);
-        if (!fixed) {
-            if (project and (summary.normal_seen or summary.normal_missing)) {
-                try self.projectSummary(&summary.normal, target, op, state, offset, returned);
-            } else if (!self.summarizing or !summary.transparent) {
-                _ = try returned.makeOpaque(c);
-            }
-        }
-        if (full.facets.may_throw) {
-            if (!fixed) {
-                if (project and (summary.language_seen or summary.language_missing)) {
-                    try self.projectSummary(&summary.language, target, op, state, offset, thrown);
-                } else if (!self.summarizing or !summary.transparent) {
-                    _ = try thrown.makeOpaque(c);
-                }
-            }
-            completions.language = true;
-        }
-        // Full declared effects, never a narrower observed body/target, kill
-        // selected mutable contents on BOTH normal and language continuations.
-        // write may also mean an interior write; losing precision is safer
-        // than assuming binding immutability authorizes a cross-call payload.
+        // Complete declared writes revoke PRE-call selected contents on both
+        // continuations. Fixed return relationships are then installed from
+        // their immutable graph using the saved pre-call input, so a returned
+        // activation is not accidentally revoked as an old captured value.
         for (full.captures) |captured| {
             try c.step(); if (!captured.write) continue;
             for (collector.captures, 0..) |slot, id| {
@@ -708,6 +982,31 @@ const UpperGraph = struct {
             }
         }
         if (full.facets.unknown_host or full.facets.@"await") try state.dirtyEnvironments(c);
+        const fixed = try self.fixedGraphSummary(target, op, incoming, state, offset, full, returned, thrown);
+        const summary = &collector.aliases[@intFromEnum(target)];
+        const project = summary.transparent and (self.summarizing or summary.available);
+        if (!fixed) {
+            if (project and (summary.normal_seen or summary.normal_missing)) {
+                try self.projectSummary(&summary.normal, target, op, incoming, offset, returned);
+            } else if (!self.summarizing or !summary.transparent) {
+                _ = try returned.makeOpaque(c);
+            }
+        }
+        if (full.facets.may_throw) {
+            if (!fixed) {
+                if (project and (summary.language_seen or summary.language_missing)) {
+                    try self.projectSummary(&summary.language, target, op, incoming, offset, thrown);
+                } else if (!self.summarizing or !summary.transparent) {
+                    _ = try thrown.makeOpaque(c);
+                }
+            }
+            completions.language = true;
+        }
+    }
+    fn consumeAlternative(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, input: *const UpperState, alternatives: *?UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
+        const c = self.collector.c; var branch = try UpperState.clone(c, input); var owns = true; defer if (owns) branch.deinit(c);
+        try self.consume(target, op, &branch, input, offset, prefix, returned, thrown, completions);
+        if (alternatives.*) |*old| _ = try old.join(c, &branch) else { alternatives.* = branch; owns = false; }
     }
     fn prepare(self: *UpperGraph) Error!void {
         const collector = self.collector; const c = collector.c; const v = collector.common();
@@ -817,6 +1116,7 @@ const UpperGraph = struct {
             if (controlled) { try c.step(); if (!receiver_flow.?.controls[receiver_flow.?.block_controls[b]]) continue; }
             var state = try UpperState.clone(c, &entries[b].?); defer state.deinit(c);
             for (function.blocks[b].instructions, 0..) |op, index| {
+                self.block = @enumFromInt(b); self.instruction = @intCast(index);
                 try c.charge(op.operands.len + 1); var result: Owners = .{}; defer result.deinit(c.allocator);
                 if (!self.summarizing) if (op.result) |reg| {
                     const saved = function.registers[@intFromEnum(reg)];
@@ -912,7 +1212,7 @@ const UpperGraph = struct {
                         const handle = op.result.?;
                         var parent: effect_env.Set = .{}; defer parent.deinit(c.allocator);
                         if (op.operands.len != 0) _ = try parent.join(c, &state.values[@intFromEnum(op.operands[0])].environments.direct);
-                        try state.birth(c, handle, &parent);
+                        try state.birth(c, handle, data.environment, &parent);
                         _ = try result.add(c, .local);
                         _ = try result.environments.direct.add(c, .{ .layout = data.environment, .source = .{ .birth = handle } });
                         if (!self.summarizing) { try collector.facet(self.function, .allocation); try collector.facet(self.function, .managed_reference); }
@@ -992,22 +1292,25 @@ const UpperGraph = struct {
                     },
                     .eh_invoke, .eh_invoke_indirect, .common_method_invoke => {
                         var completions: UpperCompletions = .{}; var found = false;
+                        var input = try UpperState.clone(c, &state); defer input.deinit(c);
+                        var alternatives: ?UpperState = null; defer if (alternatives) |*saved| saved.deinit(c);
                         var returned: Owners = .{}; defer returned.deinit(c.allocator);
                         var thrown: Owners = .{}; defer thrown.deinit(c.allocator);
                         switch (op.data) {
-                            .eh_invoke => |call| { const target_abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(call.callee)].abi)]; try self.consume(call.callee, op, &state, if (target_abi.lexical_environment != null) 1 else 0, false, &returned, &thrown, &completions); found = true; },
-                            .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| { try c.step(); const target = arm.target orelse return error.InvalidShape; try self.consume(target, op, &state, 0, true, &returned, &thrown, &completions); found = true; },
+                            .eh_invoke => |call| { const target_abi = v.abis[@intFromEnum(c.program.functions[@intFromEnum(call.callee)].abi)]; try self.consumeAlternative(call.callee, op, &input, &alternatives, if (target_abi.lexical_environment != null) 1 else 0, false, &returned, &thrown, &completions); found = true; },
+                            .common_method_invoke => |call| for (v.views.dispatch[@intFromEnum(call.dispatch)].method.arms) |arm| { try c.step(); const target = arm.target orelse return error.InvalidShape; try self.consumeAlternative(target, op, &input, &alternatives, 0, true, &returned, &thrown, &completions); found = true; },
                             .eh_invoke_indirect => {
                                 // Permission roots do not establish or refute
                                 // code/env pairs. consume checks the independently
                                 // retained pair for EVERY permitted target.
                                 for (v.closures.calls) |row| {
                                     try c.step(); if (row.function != self.function or @intFromEnum(row.block) != b or row.instruction != index) continue;
-                                    for (row.targets) |target| { try c.step(); try self.consume(target, op, &state, 1, false, &returned, &thrown, &completions); found = true; }
+                                    for (row.targets) |target| { try c.step(); try self.consumeAlternative(target, op, &input, &alternatives, 1, false, &returned, &thrown, &completions); found = true; }
                                 }
                             },
                             else => unreachable,
                         }
+                        if (alternatives) |saved| { state.deinit(c); state = saved; alternatives = null; }
                         if (!found) {
                             if (!self.summarizing) collector.fixed_upper_origin_pending = true;
                             completions = .{ .language = true };
@@ -1333,15 +1636,9 @@ pub const Collector = struct {
         for (full.globals.writes) |id| try self.inheritGlobal(function, id, .write);
         for (full.host_resources.reads) |id| try self.resources(function, id, false);
         for (full.host_resources.writes) |id| try self.resources(function, id, true);
-        for (full.captures) |wanted| {
-            try c.step(); const bound = self.upper(function) orelse continue;
-            var found = false;
-            for (bound.captures) |allowed| {
-                try c.step(); if (!std.mem.eql(u8, &wanted.slot, &allowed.slot)) continue;
-                try c.require((!wanted.read or allowed.read) and (!wanted.write or allowed.write) and (!wanted.structural or allowed.structural)); found = true; break;
-            }
-            try c.require(found);
-        }
+        // Capture flags are not textual caller-key inheritance. UpperGraph
+        // consumes this COMPLETE vector through the saved Code+ENV graph,
+        // including non-read slots and every permitted target.
         return &v.authority.fixed_publication.publication.contracts[contract_index].upper;
     }
     fn consume(self: *Collector, site: facts.Site, state: facts.StateView, target: t.FunctionRef, offset: usize, prefix: bool) Error!void {
@@ -1592,3 +1889,230 @@ pub const Collector = struct {
         const self: *Collector = @ptrCast(@alignCast(client)); try self.completed(world, site, completion, value);
     }
 };
+
+// BEGIN independent fixed-capture adapter DTO tests.
+// These literal metadata records exercise the production consumeUpper ->
+// fixedGraphSummary(null relation) -> projectCapture/mark path. They are not a
+// decoded Runtime Program, Source package, verified ActualAnalysis or entry
+// receipt. No body/SSA/VM admission is claimed; the tested dependency digest
+// comparison and COMPLETE EffectUpper records below are real inputs.
+const CaptureAdapterFixture = struct {
+    const Storage = @import("wire-program-storage.zig");
+    const Closures = @import("wire-program-control.zig").CommonClosures;
+    const ContractRow = std.meta.Child(@FieldType(publication.Publication, "contracts"));
+    const ParameterRow = std.meta.Child(@FieldType(publication.EffectUpper, "parameters"));
+    const CaptureRow = std.meta.Child(@FieldType(publication.EffectUpper, "captures"));
+    const EnvironmentRow = std.meta.Child(@FieldType(Closures, "environments"));
+    const SlotRow = std.meta.Child(@FieldType(EnvironmentRow, "slots"));
+    const ClosureRow = std.meta.Child(@FieldType(Closures, "functions"));
+    program: model.Program, c: Context, collector: Collector,
+    functions: [3]model.Function, abis: [3]Storage.CommonAbi,
+    bindings: [2]Storage.CommonBinding, contracts: [3]ContractRow,
+    parameter: [1]ParameterRow, caller_capture: [1]CaptureRow, target_capture: [1]CaptureRow,
+    environment_rows: [1]EnvironmentRow, slots: [1]SlotRow, closures: [3]ClosureRow,
+    contract_indices: [3]?usize, concrete: [2]?usize, capture_indices: [2]?Capture, managed: [2]Managed,
+    fn init(self: *CaptureAdapterFixture, parameter_flags: fixed_owners.Flags, caller_flags: fixed_owners.Flags, target_flags: fixed_owners.Flags, foreign_input: bool) void {
+        const ref_carrier = t.Carrier{ .@"type" = @enumFromInt(0) };
+        const owner: t.FunctionRef = @enumFromInt(if (foreign_input) @as(usize, 2) else 0);
+        const anchor = t.Origin{ .source = @enumFromInt(0), .start = 0, .end = 1 };
+        var common = std.mem.zeroes(tables.CommonTables);
+        common.types = &.{
+            .{ .id = @splat(0x66), .kind = .reference, .name = "AdapterReference", .native_code = 0, .base = null, .element = null, .members = &.{}, .methods = null, .nominal_key = null, .runtime_key = null },
+            .{ .id = @splat(0x88), .kind = .function, .name = "AdapterFunction", .native_code = 0, .base = null, .element = null, .members = &.{}, .methods = null, .nominal_key = null, .runtime_key = null },
+        };
+        self.bindings = .{
+            .{ .id = "p", .owner = .{ .param = @enumFromInt(0) }, .name = "p", .@"type" = @enumFromInt(0), .writable = false, .origin = anchor, .carrier = ref_carrier, .scope = @enumFromInt(0), .declaration_kind = .parameter },
+            .{ .id = "slot", .owner = .{ .local = owner }, .name = "slot", .@"type" = @enumFromInt(0), .writable = true, .origin = anchor, .carrier = ref_carrier, .scope = @enumFromInt(if (foreign_input) @as(usize, 2) else 0), .declaration_kind = .local },
+        };
+        common.storage.bindings = &self.bindings;
+        self.slots = .{.{ .binding = @enumFromInt(1), .key = @splat(0x55), .kind = .local, .@"type" = @enumFromInt(0), .writable = true }};
+        self.environment_rows = .{.{ .id = @splat(0x77), .owner = owner, .parent = null, .slots = &self.slots }};
+        common.closures.environments = &self.environment_rows;
+        common.storage.environments = &.{.{ .environment = @enumFromInt(0), .byte_size = 8, .alignment = 8, .reference_count = 1, .parent_offset = null, .slot_offsets = &.{0} }};
+        for (&self.functions, &self.abis, &self.closures, 0..) |*function, *abi, *closure, index| {
+            function.* = .{ .id = @splat(@as(u8, @intCast((index + 1) * 0x11))), .signature = @splat(0x99), .abi = @enumFromInt(index), .source = @enumFromInt(0), .role = .ordinary, .declaration = .{ .start = 0, .end = 1 }, .name = "captureAdapterDto", .registers = &.{}, .blocks = &.{} };
+            abi.* = .{ .kind = .common, .function = @enumFromInt(index), .signature = @splat(0x99), .parameters = &.{}, .argument_types = &.{}, .receiver = null, .construction = null, .receiver_frame = null, .lexical_environment = null, .physical_parameters = &.{}, .result = @enumFromInt(0), .result_carrier = ref_carrier, .source_plan = .{ .carriers = &.{}, .blocks = &.{} } };
+            closure.* = .{ .function = @enumFromInt(index), .parent = null, .lexical_environment = null, .activation_environment = null, .captures = &.{} };
+        }
+        self.abis[0].parameters = &.{@enumFromInt(0)}; self.abis[0].argument_types = &.{@enumFromInt(0)};
+        self.abis[0].lexical_environment = if (foreign_input) @enumFromInt(0) else null;
+        self.abis[0].physical_parameters = if (foreign_input) &.{ .{ .environment = @enumFromInt(0) }, ref_carrier } else &.{ref_carrier};
+        self.abis[1].lexical_environment = @enumFromInt(0); self.abis[1].physical_parameters = &.{.{ .environment = @enumFromInt(0) }};
+        self.closures[0].parent = if (foreign_input) @enumFromInt(2) else null;
+        self.closures[0].lexical_environment = self.abis[0].lexical_environment;
+        self.closures[@intFromEnum(owner)].activation_environment = @enumFromInt(0);
+        self.closures[1].parent = owner; self.closures[1].lexical_environment = @enumFromInt(0);
+        self.closures[1].captures = &.{.{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) }};
+        common.closures.functions = &self.closures; common.abis = &self.abis;
+        common.closures.calls = &.{.{ .function = @enumFromInt(0), .block = @enumFromInt(0), .instruction = 0, .signature = @splat(0x99), .targets = &.{@enumFromInt(1)} }};
+        self.parameter = .{.{ .index = 0, .read = parameter_flags.read, .write = parameter_flags.write, .structural = parameter_flags.structural }};
+        self.caller_capture = .{.{ .slot = @splat(0x55), .read = caller_flags.read, .write = caller_flags.write, .structural = caller_flags.structural }};
+        self.target_capture = .{.{ .slot = @splat(0x55), .read = target_flags.read, .write = target_flags.write, .structural = target_flags.structural }};
+        for (&self.contracts, 0..) |*contract_row, index| {
+            contract_row.* = std.mem.zeroes(ContractRow); contract_row.function_id = self.functions[index].id;
+            contract_row.signature_hash = @splat(0x99); contract_row.digest = @splat(@as(u8, @intCast((index + 3) * 0x11)));
+        }
+        self.contracts[0].upper.parameters = &self.parameter;
+        if (caller_flags.read or caller_flags.write or caller_flags.structural) self.contracts[0].upper.captures = &self.caller_capture;
+        self.contracts[1].upper.captures = &self.target_capture;
+        common.authority.fixed_publication.publication.contracts = &self.contracts;
+        common.authority.fixed_publication.dependencies = &.{
+            .{ .function_id = @splat(0x11), .callees = &.{.{ .function_id = @splat(0x22), .digest = @splat(0x44) }}, .hosts = &.{} },
+            .{ .function_id = @splat(0x22), .callees = &.{}, .hosts = &.{} },
+            .{ .function_id = @splat(0x33), .callees = &.{}, .hosts = &.{} },
+        };
+        self.program = .{ .envelope = std.mem.zeroes(model.Envelope), .target = std.mem.zeroes(model.Target), .input_identity = @splat(0), .source_hash = @splat(0), .source_path = "", .source_length = 0, .root_source = @enumFromInt(0), .tables = .{ .sources = &.{.{ .hash = @splat(0xaa), .path = "capture-adapter-dto.ts", .length = 1 }}, .mode = .{ .common = common } }, .functions = &self.functions };
+        self.c = .{ .program = &self.program, .allocator = std.testing.allocator };
+        self.contract_indices = .{ 0, 1, 2 }; self.concrete = .{ null, null };
+        self.capture_indices = .{ null, .{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) } }; self.managed = .{ .empty, .empty };
+        self.collector = .{ .c = &self.c, .host_material = null, .contracts = &self.contract_indices, .concrete = &self.concrete, .captures = &self.capture_indices, .managed = &self.managed, .aliases = &.{}, .receiver_effects = &.{} };
+    }
+    fn saved(self: *CaptureAdapterFixture, origin: effect_env.Origin, with_slot: bool) Error!UpperState {
+        var state = try UpperState.init(&self.c, 3); errdefer state.deinit(&self.c);
+        _ = try state.values[0].add(&self.c, .{ .parameter = 0 });
+        _ = try state.values[1].environments.direct.add(&self.c, origin);
+        if (with_slot) try state.store(&self.c, .{ .binding = @enumFromInt(1), .environment = origin }, &state.values[0]);
+        return state;
+    }
+    fn apply(self: *CaptureAdapterFixture, state: *UpperState, indirect: bool) Error!void {
+        var graph = UpperGraph{ .collector = &self.collector, .function = @enumFromInt(0) };
+        const full = try self.collector.consumeUpper(@enumFromInt(0), @enumFromInt(1));
+        const op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = null,
+            .operands = if (indirect) &.{@enumFromInt(2)} else &.{@enumFromInt(1)},
+            .data = if (indirect) .{ .eh_invoke_indirect = .{ .callable = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } else .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+        var returned: Owners = .{}; defer returned.deinit(self.c.allocator);
+        var thrown: Owners = .{}; defer thrown.deinit(self.c.allocator);
+        try self.c.require(try graph.fixedGraphSummary(@enumFromInt(1), op, state, state, if (indirect) 1 else 0, full, &returned, &thrown));
+    }
+};
+
+test "fixed capture adapter projects all local ENV flags without a caller child key" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{ .read = true, .write = true, .structural = true }, .{}, .{ .read = true, .write = true, .structural = true }, false);
+    const origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } };
+    var state = try fixture.saved(origin, true); defer state.deinit(&fixture.c);
+    try fixture.apply(&state, false); try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    inline for (.{ "read", "write", "structural" }) |flag| {
+        @field(fixture.parameter[0], flag) = false;
+        try std.testing.expectError(error.InvalidShape, fixture.apply(&state, false));
+        @field(fixture.parameter[0], flag) = true;
+    }
+}
+
+test "fixed capture adapter cannot replace parameter write with the child capture key" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{}, .{ .write = true }, .{ .write = true }, false);
+    const origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } };
+    var state = try fixture.saved(origin, true); defer state.deinit(&fixture.c);
+    try std.testing.expectError(error.InvalidShape, fixture.apply(&state, false));
+}
+
+test "fixed capture adapter preserves foreign input capture rights instead of parameter rights" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{ .write = true }, .{}, .{ .write = true }, true);
+    var state = try fixture.saved(.{ .layout = @enumFromInt(0), .source = .input }, false); defer state.deinit(&fixture.c);
+    try std.testing.expectError(error.InvalidShape, fixture.apply(&state, false));
+    fixture.contracts[0].upper.captures = &fixture.caller_capture; fixture.caller_capture[0].write = true;
+    try fixture.apply(&state, false); try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+}
+
+test "fixed capture adapter keeps unknown indirect pairs and missing local slots pending" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{ .write = true }, .{ .write = true }, .{ .write = true }, false);
+    const origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } };
+    var missing = try fixture.saved(origin, false); defer missing.deinit(&fixture.c);
+    try fixture.apply(&missing, false); try std.testing.expect(fixture.collector.fixed_upper_origin_pending);
+    fixture.collector.fixed_upper_origin_pending = false;
+    var state = try fixture.saved(origin, true); defer state.deinit(&fixture.c);
+    state.values[2].environments.callable_unknown = true;
+    try fixture.apply(&state, true); try std.testing.expect(fixture.collector.fixed_upper_origin_pending);
+}
+
+test "fixed capture adapter consumes known fixed return ENV pairs and the real dependency digest" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{ .write = true }, .{}, .{ .write = true }, false);
+    const origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .fixed = .{ .invocation = .{ .caller = @enumFromInt(0), .block = @enumFromInt(0), .instruction = 7, .target = @enumFromInt(2) }, .location = 3 } } };
+    var state = try fixture.saved(origin, true); defer state.deinit(&fixture.c);
+    var selected: effect_env.Set = .{}; defer selected.deinit(fixture.c.allocator); _ = try selected.add(&fixture.c, origin);
+    try state.values[2].environments.pair(&fixture.c, @enumFromInt(1), &selected);
+    try fixture.apply(&state, true); try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    fixture.contracts[1].digest = @splat(0xee);
+    try std.testing.expectError(error.InvalidShape, fixture.apply(&state, true));
+}
+
+test "fixed capture adapter unions explicit foreign stores without replacing the foreign key" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{}, .{ .write = true }, .{ .write = true }, true);
+    var state = try fixture.saved(.{ .layout = @enumFromInt(0), .source = .input }, true); defer state.deinit(&fixture.c);
+    // The fixed lexical store adds p; its presence cannot erase c:key, and
+    // c:key alone cannot erase the explicitly stored parameter alternative.
+    try std.testing.expectError(error.InvalidShape, fixture.apply(&state, false));
+    fixture.parameter[0].write = true;
+    try fixture.apply(&state, false); try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    fixture.contracts[0].upper.captures = &.{};
+    try std.testing.expectError(error.InvalidShape, fixture.apply(&state, false));
+}
+
+test "a returned local Array with parameter contents stays pending at a later full parameter write" {
+    var fixture: CaptureAdapterFixture = undefined; fixture.init(.{}, .{}, .{}, false);
+    var aliases: [3]AliasSummary = .{ .{}, .{}, .{} };
+    defer for (&aliases) |*summary| summary.deinit(fixture.c.allocator);
+    fixture.collector.aliases = &aliases;
+    const reference_id = "sha256:6666666666666666666666666666666666666666666666666666666666666666";
+    const array_id = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const function_id = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+    var types: [3]tables.CommonType = undefined;
+    @memcpy(types[0..2], fixture.program.tables.mode.common.types);
+    types[2] = types[0]; types[2].id = @splat(0xaa); types[2].kind = .array; types[2].name = "ReturnedArray"; types[2].element = @enumFromInt(0);
+    fixture.program.tables.mode.common.types = &types;
+    fixture.abis[2].result = @enumFromInt(2); fixture.abis[2].result_carrier = .{ .@"type" = @enumFromInt(2) };
+    var bindings: [4]CaptureAdapterFixture.Storage.CommonBinding = undefined; @memcpy(bindings[0..2], &fixture.bindings);
+    bindings[2] = fixture.bindings[0]; bindings[2].id = "array-argument"; bindings[2].name = "array-argument";
+    bindings[2].owner = .{ .param = @enumFromInt(1) }; bindings[2].@"type" = @enumFromInt(2); bindings[2].carrier = .{ .@"type" = @enumFromInt(2) };
+    bindings[3] = fixture.bindings[0]; bindings[3].id = "creator-argument"; bindings[3].name = "creator-argument";
+    bindings[3].owner = .{ .param = @enumFromInt(2) };
+    fixture.program.tables.mode.common.storage.bindings = &bindings;
+    fixture.abis[1].parameters = &.{@enumFromInt(2)}; fixture.abis[1].argument_types = &.{@enumFromInt(2)};
+    fixture.abis[1].physical_parameters = &.{ .{ .environment = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(2) } };
+    fixture.abis[2].parameters = &.{@enumFromInt(3)}; fixture.abis[2].argument_types = &.{@enumFromInt(0)};
+    fixture.abis[2].physical_parameters = &.{.{ .@"type" = @enumFromInt(0) }};
+    fixture.contracts[1].upper.parameters = &.{.{ .index = 0, .read = false, .write = true, .structural = false }};
+    fixture.contracts[2].upper.parameters = &.{.{ .index = 0, .read = false, .write = false, .structural = false }};
+    fixture.program.tables.mode.common.authority.fixed_publication.dependencies = &.{
+        .{ .function_id = @splat(0x11), .callees = &.{ .{ .function_id = @splat(0x22), .digest = @splat(0x44) }, .{ .function_id = @splat(0x33), .digest = @splat(0x55) } }, .hosts = &.{} },
+        .{ .function_id = @splat(0x22), .callees = &.{}, .hosts = &.{} },
+        .{ .function_id = @splat(0x33), .callees = &.{}, .hosts = &.{} },
+    };
+    var managed: [3]Managed = .{ .empty, .empty, .empty }; fixture.collector.managed = &managed;
+    var concrete: [3]?usize = .{ null, null, null }; fixture.collector.concrete = &concrete;
+    const interpretation = origin_model.Directory{
+        .types = &.{ .{ .id = reference_id, .kind = .reference }, .{ .id = array_id, .kind = .array } },
+        .functions = &.{.{ .id = function_id, .kind = .source, .parameter_types = &.{reference_id}, .return_type = array_id, .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = null, .construction = null }},
+        .environments = &.{}, .globals = &.{}, .fields = &.{},
+        .constructions = &.{.{ .id = "reference-construction", .owner = reference_id, .base = null, .kind = .implicit_base, .function_id = null }},
+    };
+    const nodes = [_]origin_model.Value{ .{ .parameter = .{ .@"type" = reference_id, .index = 0 } }, .{ .local = .{ .@"type" = array_id } } };
+    const input = origin_model.Graph{ .nodes = &nodes, .heaps = &.{ .entry, .{ .store = .{ .previous = 0, .bases = &.{1}, .selector = "element", .view = array_id, .values = &.{0}, .control = 0, .initialize = true } } }, .controls = &.{.entry}, .calls = &.{}, .normal = &.{1}, .language = &.{}, .exits = .{ .normal = &.{.{ .heap = 1, .control = 0 }}, .language = &.{} }, .accesses = &.{} };
+    fixture.contracts[2].return_origins = input;
+    fixture.contracts[0].upper.facets.allocation = true; fixture.contracts[0].upper.facets.managed_reference = true; fixture.contracts[0].upper.facets.escape = true;
+    fixture.contracts[2].upper.facets.allocation = true; fixture.contracts[2].upper.facets.managed_reference = true; fixture.contracts[2].upper.facets.escape = true;
+    const fixed = [_]fixed_owners.Fixed{.{ .function_id = function_id, .graph = &input, .parameters = &.{.{}}, .captures = &.{}, .may_throw = false }};
+    var budget = origin_model.Budget{ .context = &fixture.c, .charge = publication_refs.graphCharge };
+    try origin_model.validateDirectory(fixture.c.allocator, &interpretation, &budget);
+    try std.testing.expect((try origin_model.validateGraph(fixture.c.allocator, &interpretation, function_id, &input, &budget)) == .valid);
+    var analysis = try fixed_owners.analyze(fixture.c.allocator, &interpretation, &.{}, function_id, &input, &fixed, &budget); defer analysis.deinit();
+    try std.testing.expectEqual(@as(?fixed_owners.Pending, null), analysis.pending);
+    const origin = effect_env.Origin{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } };
+    var state = try fixture.saved(origin, true); defer state.deinit(&fixture.c);
+    var graph = UpperGraph{ .collector = &fixture.collector, .function = @enumFromInt(0) };
+    _ = try fixture.collector.consumeUpper(@enumFromInt(0), @enumFromInt(2));
+    const creator_op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = @enumFromInt(0), .operands = &.{@enumFromInt(0)}, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(2), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    const op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = null, .operands = &.{ @enumFromInt(1), @enumFromInt(0) }, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var export_graph = FixedExport{ .g = &graph, .analysis = &analysis, .target = @enumFromInt(2), .op = creator_op, .offset = 0, .saved = &state, .destination = &state, .invocation = .{ .caller = @enumFromInt(0), .block = @enumFromInt(0), .instruction = 0, .target = @enumFromInt(2) }, .allocator = analysis.arena.allocator(), .environments = &.{} };
+    var value = try export_graph.exportValue(analysis.normal[0]); defer value.deinit(fixture.c.allocator);
+    try state.values[0].replace(&fixture.c, &value);
+    var saved = try UpperState.clone(&fixture.c, &state); defer saved.deinit(&fixture.c);
+    var returned: Owners = .{}; defer returned.deinit(fixture.c.allocator);
+    var thrown: Owners = .{}; defer thrown.deinit(fixture.c.allocator);
+    var completions: UpperCompletions = .{};
+    // This is the same production full-parameter transfer as a later call.
+    // Its return is ignored; missing exported element ownership still cannot
+    // turn p's externally reachable data into a known-empty Local proof.
+    try graph.consume(@enumFromInt(1), op, &state, &saved, 1, false, &returned, &thrown, &completions);
+    try std.testing.expect(fixture.collector.fixed_upper_origin_pending);
+}
+// END independent fixed-capture adapter DTO tests.
