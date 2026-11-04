@@ -581,6 +581,78 @@ const Graph = struct {
         // This is only source/creation authority. Once-only initialization,
         // observation and CFG ordering remain separate obligations.
     }
+    fn environmentDirectInitialization(self: *Graph) Error!void {
+        if(self.mode!=.common or !self.has_environment_init)return;
+        const c=self.c;
+        const Pair=struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
+        var pairs: std.AutoHashMapUnmanaged(Pair,void)=.{}; defer pairs.deinit(c.allocator);
+        for(self.f.blocks) |block| for(block.instructions) |op| {
+            try c.step(); if(op.data!=.environment_init)continue;
+            const receiver=op.operands[0];
+            try c.charge(2); const definition=self.definitions[@intFromEnum(receiver)];
+            if(definition.position<0)continue;
+            const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
+            if(producer.data!=.environment_alloc)continue;
+            try c.row(Pair);
+            const capacity=@as(usize,pairs.capacity()); const used=@as(usize,pairs.count());
+            // This insert-only default-load map grows before lookup. Prepay
+            // old buckets, new metadata and each retained pair's rehash/copy.
+            if(used==capacity*std.hash_map.default_max_load_percentage/100)
+                try c.charge(capacity+@max(8,2*capacity)+3*used);
+            _=try pairs.getOrPut(c.allocator,.{.receiver=receiver,.slot=op.data.environment_init.slot});
+        };
+        try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
+        var iterator=pairs.keyIterator();
+        while(true) {
+            try c.step(); const pair=(iterator.next() orelse break).*;
+            const count=self.f.blocks.len;
+            // Only the original SSA result is tracked. Its unique definition
+            // can replace its instance only when that allocation executes again.
+            // Alias/phi receivers retain their existing provenance rules; this
+            // pass supplies no cross-register or interprocedural once proof.
+            try c.charge(4*count);
+            var last: [256]u2=undefined; @memset(last[0..count],0);
+            var incoming: [256]u2=undefined; @memset(incoming[0..count],0);
+            var outgoing: [256]u2=undefined; @memset(outgoing[0..count],0);
+            var queued: [256]bool=undefined; @memset(queued[0..count],false);
+            var pending: [256]usize=undefined;
+            for(self.f.blocks,0..) |block,b| for(block.instructions) |op| {
+                try c.step();
+                if(op.data==.environment_alloc and op.result.?==pair.receiver)last[b]=1
+                else if(op.data==.environment_init and op.operands[0]==pair.receiver and op.data.environment_init.slot==pair.slot)last[b]=2;
+            };
+            // Possible states: bottom=0, Uninitialized=1, Initialized=2.
+            // A block's last ordered reset/init determines its transfer. Union
+            // at joins retains every live incoming arm, including loop entries.
+            var head: usize=0; var size: usize=1;
+            try c.charge(3); pending[0]=0; queued[0]=true; incoming[0]=1;
+            while(size!=0) {
+                try c.step(); const b=pending[head]; head=(head+1)%count; size-=1; queued[b]=false;
+                try c.charge(4);
+                const next: u2=if(incoming[b]==0)0 else if(last[b]!=0)last[b] else incoming[b];
+                if(outgoing[b]==next)continue;
+                outgoing[b]=next;
+                for(self.facts[b].successors[0..self.facts[b].count]) |successor| {
+                    try c.charge(3); const joinedState=incoming[successor]|next;
+                    if(joinedState==incoming[successor])continue;
+                    incoming[successor]=joinedState;
+                    if(!queued[successor]) {
+                        try c.charge(3); pending[(head+size)%count]=successor; size+=1; queued[successor]=true;
+                    }
+                }
+            }
+            for(self.f.blocks,0..) |block,b| {
+                try c.step(); var state=incoming[b];
+                for(block.instructions) |op| {
+                    try c.step(); if(state==0)continue;
+                    if(op.data==.environment_alloc and op.result.?==pair.receiver)state=1
+                    else if(op.data==.environment_init and op.operands[0]==pair.receiver and op.data.environment_init.slot==pair.slot) {
+                        try c.require(state==1); state=2;
+                    }
+                }
+            }
+        }
+    }
     fn globalInitialization(self: *Graph) Error!void {
         if(self.mode!=.common or self.f.role!=.module_initializer)return;
         const c=self.c; const globals=c.program.tables.mode.common.modules.globals;
@@ -784,7 +856,7 @@ const Graph = struct {
     }
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
-        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.globalInitialization(); try self.numeric(); try self.fuel();
+        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.environmentDirectInitialization(); try self.globalInitialization(); try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof
         // adds no second dominance graph, Context, Source table or admission.
         if(self.mode==.common)try receiver_protocol.check(self.c,self.function,.{.definitions=self.definitions,.facts=self.facts});
