@@ -77,3 +77,11 @@ test('typed language constructor Ref arguments retain original C through catch a
 test('language constructor Ref controls keep completions types and original aliases', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-language-ref-negative-test.zig', prefix: 'r03-constructor-language-ref-negative-', expectedPasses: 7 });
 });
+
+test('typed constructor Ref parameters forward original C through B to D', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-transitive-ref-test.zig', prefix: 'r03-constructor-transitive-ref-', expectedPasses: 1 });
+});
+
+test('transitive constructor Ref controls preserve source chains and caller facts', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-transitive-ref-negative-test.zig', prefix: 'r03-constructor-transitive-ref-negative-', expectedPasses: 7 });
+});

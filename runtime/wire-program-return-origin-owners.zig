@@ -407,6 +407,19 @@ const Engine = struct {
             try self.budget.step(); if (atom.category != .object) { self.pending = .receiver_protocol; return null; }
             switch (atom.source) {
                 .allocation => |source| { const location_id = try self.receiverLocation(index, source, true) orelse return null; try self.add(&proved, location_id); },
+                .node => |source| {
+                    // Only this original private constructor parameter denotes
+                    // its Frame's complete caller-bound argument Set. Foreign
+                    // bare refs and public arbitrary formals grant no proof.
+                    try self.budget.spend(4); const frame = self.frames.items[index];
+                    const entry = frame.receiver_import orelse { self.pending = .receiver_protocol; return null; };
+                    if (entry.fact.analysis != frame.receiver or entry.fact.graph != frame.graph or source >= frame.graph.nodes.len) { self.pending = .receiver_protocol; return null; }
+                    const node = frame.graph.nodes[source];
+                    if (node != .parameter or node.parameter.index == 0 or node.parameter.index >= frame.arguments.len) { self.pending = .receiver_protocol; return null; }
+                    const originals = frame.arguments[node.parameter.index];
+                    if (originals.items.len == 0) return null;
+                    try self.merge(&proved, originals.items);
+                },
                 .scoped_allocation => |source| {
                     if (!try self.scopedLocations(index, source, &proved)) return null;
                 },
