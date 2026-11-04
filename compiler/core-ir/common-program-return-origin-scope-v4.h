@@ -127,7 +127,7 @@ inline BuildResult build(const FixedScope &scope,const FieldIdentity &fieldIdent
   BuildResult result;Detail::Meter m(charge);
   const auto budget=[&](){result.status=BuildStatus::BudgetError;result.reason="scope-directory-budget";return std::move(result);};
   if(!m.spend()||!m.text(scope.profile.size()))return budget();
-  if(!m.equal(scope.profile,"common-program-fixed-v4")){if(!m.good)return budget();result.reason="fixed-v4-profile-required";return result;}
+  if(!m.equal(scope.profile,"common-program-fixed-v5")){if(!m.good)return budget();result.reason="fixed-v5-profile-required";return result;}
   if(!fieldIdentity){result.reason="trusted-field-identity-required";return result;}
   if(!m.spend(scope.types.size())||!m.spend(scope.functions.size())||!m.spend(scope.globals.size())||!m.spend(scope.environments.size()))return budget();
   auto &saved=result.directories;

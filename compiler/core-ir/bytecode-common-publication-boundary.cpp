@@ -13,12 +13,12 @@ bool CommonCold::publicationBoundary(){
   if(!shape(fixed,{"stableScope","publication","dependencies","request"}))return reject("Common complete fixed-publication record required");
   const auto *given=fixed->getObject("stableScope"),*publication=fixed->getObject("publication"),*request=fixed->getObject("request");
   if(!shape(given,{"hostImports","hostContext","profile","rootFile","declarationTypes","types","constructions","storage","functions","environments","globals","modules","roots"})||
-    given->getString("profile")!="common-program-fixed-v4"||!given->getArray("declarationTypes")||!given->getArray("types")||!given->getArray("constructions")||
+    given->getString("profile")!="common-program-fixed-v5"||!given->getArray("declarationTypes")||!given->getArray("types")||!given->getArray("constructions")||
     !given->getArray("functions")||given->getArray("functions")->size()!=tables.closureFunctions->size()||
     !given->getArray("modules")||given->getArray("modules")->size()!=tables.modules->size()||
     !shape(publication,{"format","mode","scope","scopeDigest","expectedDigest","contracts"})||
     !shape(publication->getObject("format"),{"family","version"})||publication->getObject("format")->getString("family")!="tsfg.program-publication-candidate"||
-    publication->getObject("format")->getInteger("version")!=4||publication->getString("mode")!="fixed"||
+    publication->getObject("format")->getInteger("version")!=5||publication->getString("mode")!="fixed"||
     !identity(publication->get("scopeDigest"))||!identity(publication->get("expectedDigest"))||!publication->getArray("contracts")||
     publication->getArray("contracts")->size()!=tables.closureFunctions->size()||
     !shape(request,{"targets"})||!request->getArray("targets")||request->getArray("targets")->size()==1||request->getArray("targets")->size()>32||
@@ -26,7 +26,7 @@ bool CommonCold::publicationBoundary(){
   std::string previous;
   for(const auto &row:*given->getArray("functions")){
     if(!charge())return false;const auto *fn=row.getAsObject();
-    if(!shape(fn,{"functionId","declKey","kind","access","lexicalParent","lexicalEnvironment","activationEnvironment","captures","signatureHash","parameterTypes","returnType","construction"})||
+    if(!shape(fn,{"functionId","declKey","kind","access","lexicalParent","lexicalEnvironment","activationEnvironment","captures","signatureHash","methodMinimumArgumentCount","parameterTypes","returnType","construction"})||
       !identity(fn->get("functionId"))||!tables.functionIds.count(fn->getString("functionId")->str())||
       (!previous.empty()&&previous>=*fn->getString("functionId"))||!identity(fn->get("signatureHash"))||
       !shape(fn->getObject("declKey"),{"sourcePath","path","kind","name"})||!fn->getObject("declKey")->getArray("path")||
@@ -34,6 +34,10 @@ bool CommonCold::publicationBoundary(){
       !textValue(fn->getObject("declKey")->get("sourcePath"),4096)||!textValue(fn->getObject("declKey")->get("kind"),32)||
       !fn->getArray("captures")||fn->getArray("captures")->size()>65536||!fn->getArray("parameterTypes")||fn->getArray("parameterTypes")->size()>65||
       !identity(fn->get("returnType")))return reject("Common fixed logical function interface");
+    uint64_t minimum;const bool method=fn->getString("kind")=="method";
+    if(!charge()||(method?(fn->getArray("parameterTypes")->empty()||
+      !unsignedField(fn,"methodMinimumArgumentCount",fn->getArray("parameterTypes")->size()-1,minimum)):
+      fn->get("methodMinimumArgumentCount")->kind()!=llvm::json::Value::Null))return reject("Common fixed method minimum arity or role");
     for(const auto &part:*fn->getObject("declKey")->getArray("path"))if(!charge()||!textValue(&part,4096))return reject("Common original declaration path");
     const auto id=fn->getString("functionId")->str();functionInterfaces.emplace(id,uint32_t(functionInterfaces.size()));previous=id;
   }

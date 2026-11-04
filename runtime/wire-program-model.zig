@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Prospective private Common18 data, not an activated Runtime contract or VM handle.
+// Prospective private Common19 data, not an activated Runtime contract or VM handle.
 // The formal candidate decoder owns every slice in arena before publishing this
 // value. Type construction alone proves no schema, effects, SSA or lifetime.
 const std = @import("std");
@@ -9,10 +9,10 @@ pub const instruction = @import("wire-program-instruction.zig");
 
 pub const format = struct {
     pub const magic = "TSFGTBC0".*;
-    pub const version: u32 = 18;
-    pub const capability: u32 = 1018;
-    pub const schema_hash_hex = "cd560f1da0e1d809fb2ffa907baf7a27b86e3ccecb8323e0e46ce1570a8a1b65";
-    pub const schema_hash: types.Hash = .{ 0xcd, 0x56, 0x0f, 0x1d, 0xa0, 0xe1, 0xd8, 0x09, 0xfb, 0x2f, 0xfa, 0x90, 0x7b, 0xaf, 0x7a, 0x27, 0xb8, 0x6e, 0x3c, 0xce, 0xcb, 0x83, 0x23, 0xe0, 0xe4, 0x6c, 0xe1, 0x57, 0x0a, 0x8a, 0x1b, 0x65 };
+    pub const version: u32 = 19;
+    pub const capability: u32 = 1019;
+    pub const schema_hash_hex = "fd9668dd9f938d5b4ec6e1b1d7d5e54e49109ea7d0fd9a07bd67875719f37009";
+    pub const schema_hash: types.Hash = .{ 0xfd, 0x96, 0x68, 0xdd, 0x9f, 0x93, 0x8d, 0x5b, 0x4e, 0xc6, 0xe1, 0xb1, 0xd7, 0xd5, 0xe5, 0x4e, 0x49, 0x10, 0x9e, 0xa7, 0xd0, 0xfd, 0x9a, 0x07, 0xbd, 0x67, 0x87, 0x57, 0x19, 0xf3, 0x70, 0x09 };
     pub const max_bytes: usize = 8388608;
     // One trusted private Common cold allowance, shared by decoding and all
     // typed checks. This never changes or restores a Source/warm allowance.

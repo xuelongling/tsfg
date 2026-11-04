@@ -73,6 +73,8 @@ export function projectCommonProgram(facts,hostContext=null) {
     sourcePath:fn.sourcePath,name:fn.name,kind:fn.ownerType?'construction-body'===fn.name?'construction-body':ids.types.get(fn.ownerType).constructor?.id===fn.id?'construction-body':'method':'source',
     lexicalParent:fn.lexicalParent===null?null:ids.functionIds.get(fn.lexicalParent),declarationScope:{...fn.declarationScope},captures:structuredClone(fn.captures),
     access:fn.access,signatureHash:ids.signatures.get(fn.id),returnType:type(fn.returnType),
+    // Source2/3 admit required-only methods; preserve that explicit minimum.
+    methodMinimumArgumentCount:ids.declKeys.get(fn.id).kind==='method'?fn.parameters.length:null,
     parameters:fn.parameters.map(binding),bindings:fn.bindings.map(binding),body:statements(fn.body),range:{...fn.declarationRange},nameRange:{...fn.nameRange},
     returnAnnotationRange:structuredClone(fn.returnAnnotationRange),...(fn.ownerType?{ownerType:type(fn.ownerType),receiverBinding:'this@'+fn.id}:{}),
     ...(fn.overrideTarget?{overrideTarget:ids.functionIds.get(fn.overrideTarget)}:{}),

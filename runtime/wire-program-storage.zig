@@ -79,6 +79,8 @@ pub const CommonAbi = struct {
     // Ordinary raw input views, before defaults; binding declarations and
     // physical carriers remain independent. Hidden receiver/env are excluded.
     argument_types: []const t.TypeRef,
+    // Explicit ordinary-method declaration metadata; every nonmethod is null.
+    method_minimum_argument_count: ?u16 = null,
     receiver: ?t.BindingRef,
     construction: ?t.ConstructionIndex,
     receiver_frame: ?u16,

@@ -95,7 +95,9 @@ bool CommonTableVerifier::semanticTypes(){
   const auto *scope=fixed?fixed->getObject("stableScope"):nullptr;
   const auto *scopeTypes=scope?scope->getArray("types"):nullptr;
   if(!scopeTypes||scopeTypes->size()>4096)return reject("Common fixed declaration Type inventory");
-  std::vector<const Object *> declarations(types->size(),nullptr);std::string previous;
+  if(!charge(types->size()))return false;
+  std::vector<const Object *> declarations(types->size(),nullptr);
+  std::vector<const Array *> declarationMethods(types->size(),nullptr);std::string previous;
   for(const auto &value:*scopeTypes){
     const auto *row=value.getAsObject();
     if(!charge()||!shape(row,{"id","label","shape"})||!identity(row->get("id"))||!textValue(row->get("label"),1048576)||
@@ -107,7 +109,10 @@ bool CommonTableVerifier::semanticTypes(){
     if(!given||given->getString("kind")!=kind||given->getString("label")!=labels[current->second]||row->getString("label")!=labels[current->second]||
       !(inputs?shape(signature,{"access","parameters","returnType","minimumArgumentCount","argumentTypes"}):shape(signature,{"access","parameters","returnType"})))
       return reject("Common fixed nominal declaration signature");
-    declarations[current->second]=signature;
+    const auto *methodShapes=given->getArray("methods");
+    if(type.get("methods")->kind()!=Json::Null?(!methodShapes||methodShapes->size()!=type.getArray("methods")->size()):
+      given->get("methods")!=nullptr)return reject("Common fixed nominal method inventory");
+    declarationMethods[current->second]=methodShapes;declarations[current->second]=signature;
   }
   uint32_t voidType=UINT32_MAX;for(uint32_t i=0;i<types->size();++i){if(!charge())return false;if((*types)[i].getAsObject()->getString("kind")=="void")voidType=i;}
   std::vector<std::vector<uint32_t>> dependencies(types->size());
@@ -121,11 +126,20 @@ bool CommonTableVerifier::semanticTypes(){
       Array fs;for(const auto f:ownFields[i]){if(!charge())return false;const auto &field=*(*fields)[f].getAsObject();fs.push_back(Object{{"name",field.getString("name")->str()},
         {"index",*field.getInteger("ordinal")},{"type",add(index(field,"type"))},{"readonly",*field.getBoolean("readonly")},{"access",field.getString("access")->str()}});}s["fields"]=std::move(fs);
       std::vector<uint32_t> ordered;if(r.get("methods")->kind()!=Json::Null)for(const auto &m:*r.getArray("methods")){if(!charge())return false;ordered.push_back(uint32_t(*m.getAsInteger()));}
-      Array ms;for(const auto m:ordered){if(!charge())return false;const auto &method=*(*methods)[m].getAsObject();const auto &abi=*(*abis)[index(method,"function")].getAsObject();Array parameters;
+      if(!ordered.empty()&&!declarationMethods[i])return reject("Common nominal lacks its fixed method declaration");
+      Array ms;size_t methodOrdinal=0;for(const auto m:ordered){if(!charge())return false;const auto &method=*(*methods)[m].getAsObject();const auto &abi=*(*abis)[index(method,"function")].getAsObject();Array parameters;
         for(const auto &p:*abi.getArray("parameters")){if(!charge())return false;parameters.push_back(add(index(*(*bindings)[size_t(*p.getAsInteger())].getAsObject(),"type")));}
         const auto result=abi.get("result")->kind()!=Json::Null?index(abi,"result"):voidType;
-        if(result==UINT32_MAX)return reject("Common method missing void/result Type");ms.push_back(Object{{"name",method.getString("name")->str()},{"access",method.getString("access")->str()},
-          {"parameters",std::move(parameters)},{"returnType",add(result)}});
+        if(result==UINT32_MAX)return reject("Common method missing void/result Type");
+        const auto *declared=(*declarationMethods[i])[methodOrdinal++].getAsObject();uint64_t minimum;
+        if(!charge()||!shape(declared,{"name","access","parameters","returnType","minimumArgumentCount"})||
+          !unsignedField(declared,"minimumArgumentCount",abi.getArray("parameters")->size(),minimum)||
+          declared->getInteger("minimumArgumentCount")!=abi.getInteger("methodMinimumArgumentCount"))return reject("Common fixed/ABI method minimum arity differs");
+        Json methodShape=Object{{"name",method.getString("name")->str()},{"access",method.getString("access")->str()},
+          {"parameters",std::move(parameters)},{"returnType",add(result)},{"minimumArgumentCount",*abi.getInteger("methodMinimumArgumentCount")}};
+        std::string expectedMethod,givenMethod;
+        if(!canonical(methodShape,expectedMethod)||!canonical((*declarationMethods[i])[methodOrdinal-1],givenMethod))return false;
+        if(expectedMethod!=givenMethod)return reject("Common fixed/current method shape differs");ms.push_back(std::move(methodShape));
       }if(r.get("methods")->kind()!=Json::Null)s["methods"]=std::move(ms);
       const auto c=typeConstruction[i];if(c==UINT32_MAX)return reject("Common nominal construction inventory");const auto &ctor=*(*constructions)[c].getAsObject();Array ps;
       for(const auto &p:*ctor.getObject("signature")->getArray("parameters")){if(!charge())return false;ps.push_back(add(uint32_t(*p.getAsInteger())));}

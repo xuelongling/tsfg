@@ -121,8 +121,11 @@ bool CommonTableVerifier::directory(){
   if(!typeRows()||!memberRows()||!storageRows()||!moduleRows())return false;
   // ABI and closure/control rows are admitted here because all following
   // semantic joins and graph checks use these exact records as typed values.
-  for(size_t i=0;i<abis->size();++i){const auto *r=(*abis)[i].getAsObject();uint32_t f,n;Carrier value;
-    if(!charge(5)||!shape(r,{"kind","function","signature","parameters","argumentTypes","receiver","construction","receiverFrame","lexicalEnvironment","physicalParameters","result","resultCarrier","sourcePlan"})||!r->getObject("sourcePlan")||
+  if(!charge(program.functions.size()+methods->size()))return false;
+  std::vector<bool> methodFunctions(program.functions.size(),false);
+  for(const auto &method:*methods)methodFunctions[size_t(*method.getAsObject()->getInteger("function"))]=true;
+  for(size_t i=0;i<abis->size();++i){const auto *r=(*abis)[i].getAsObject();uint32_t f,n;Carrier value;uint64_t minimum;
+    if(!charge(5)||!shape(r,{"kind","function","signature","methodMinimumArgumentCount","parameters","argumentTypes","receiver","construction","receiverFrame","lexicalEnvironment","physicalParameters","result","resultCarrier","sourcePlan"})||!r->getObject("sourcePlan")||
       r->getString("kind")!="common"||!ref(r->get("function"),program.functions.size(),f)||f!=i||!identity(r->get("signature"))||
       *r->getString("signature")!="sha256:"+bytecode::hex(program.functions[i].signature)||!r->getArray("parameters")||r->getArray("parameters")->size()>64||
       !r->getArray("argumentTypes")||r->getArray("argumentTypes")->size()!=r->getArray("parameters")->size()||
@@ -130,6 +133,8 @@ bool CommonTableVerifier::directory(){
       !ref(r->get("construction"),constructions->size(),n,true)||!ref(r->get("receiverFrame"),r->getArray("physicalParameters")->size(),n,true)||
       !ref(r->get("lexicalEnvironment"),environments->size(),n,true)||!ref(r->get("result"),types->size(),n,true)||
       !carrier(r->get("resultCarrier"),value,true,true))return reject("Common ABI shape/reference");
+    if(!charge()||(methodFunctions[i]?!unsignedField(r,"methodMinimumArgumentCount",r->getArray("parameters")->size(),minimum):
+      r->get("methodMinimumArgumentCount")->kind()!=Json::Null))return reject("Common ABI method minimum arity or role");
     for(const auto &p:*r->getArray("parameters"))if(!charge()||!ref(&p,bindings->size(),n))return reject("Common ABI parameter binding");
     for(const auto &p:*r->getArray("argumentTypes"))if(!charge()||!ref(&p,types->size(),n))return reject("Common ABI incoming argument Type reference");
     for(const auto &p:*r->getArray("physicalParameters"))if(!charge()||!carrier(&p,value))return reject("Common ABI physical parameter");

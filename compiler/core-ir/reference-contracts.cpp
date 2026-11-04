@@ -56,6 +56,18 @@ bool logical(const Types &types,const std::string &from,const std::string &to,co
     const auto next=frame.children[frame.next++];frames.push_back({next});
   }
 }
+bool verifyMethod(const Types &types,const Member &actual,const Member &view,const std::set<Pair> &dependencies,
+    std::set<Pair> &used,const Charge &charge,std::string &error,Policy policy){
+  if(!types.count(view.result))return fail(error,"method return type is not owned");
+  if(types.at(view.result).kind!="void"&&!logical(types,actual.result,view.result,dependencies,used,charge,error,policy))
+    return fail(error,"method result representation differs");
+  // Retain the total-count gate independently of owning-adapter Common minima.
+  if(actual.parameters.size()>view.parameters.size())return fail(error,"method requires more arguments than its view supplies");
+  for(size_t i=0;i<actual.parameters.size();++i)
+    if(!logical(types,view.parameters[i],actual.parameters[i],dependencies,used,charge,error,policy))
+      return fail(error,"method parameter direction/representation differs");
+  return true;
+}
 bool verifyMembers(const Types &types,const Members &source,const Members &target,const std::vector<Pair> &mapping,
     const std::set<Pair> &dependencies,const std::set<std::string> &validatedMissing,const Charge &charge,std::string &error,Policy policy){
   std::set<Pair> used;std::set<std::string> targets;std::string previous;
@@ -69,14 +81,7 @@ bool verifyMembers(const Types &types,const Members &source,const Members &targe
     if(actual.kind=="field"){
       if(!logical(types,actual.type,view.type,dependencies,used,charge,error,policy))return fail(error,"field logical representation differs");
     }else if(actual.kind=="method"){
-      if(!types.count(view.result))return fail(error,"method return type is not owned");
-      if(types.at(view.result).kind!="void"&&!logical(types,actual.result,view.result,dependencies,used,charge,error,policy))
-        return fail(error,"method result representation differs");
-      // Ordinary methods in the admitted Source subset have only required parameters.
-      if(actual.parameters.size()>view.parameters.size())return fail(error,"method requires more arguments than its view supplies");
-      for(size_t i=0;i<actual.parameters.size();++i)
-        if(!logical(types,view.parameters[i],actual.parameters[i],dependencies,used,charge,error,policy))
-          return fail(error,"method parameter direction/representation differs");
+      if(!verifyMethod(types,actual,view,dependencies,used,charge,error,policy))return false;
     }else return fail(error,"unknown member kind");
   }
   for(const auto &id:validatedMissing)if(!charge(1)||!target.count(id)||!targets.insert(id).second)

@@ -247,6 +247,9 @@ const Common = struct {
         const seen=try c.allocator.alloc(bool,v.storage.bindings.len); defer c.allocator.free(seen); @memset(seen,false);
         for(v.abis) |abi| {
             try c.charge(4); var at:usize=0;
+            try c.charge(4);
+            const method = c.program.functions[@intFromEnum(abi.function)].role == .ordinary and abi.receiver != null and abi.construction == null;
+            try c.require(method == (abi.method_minimum_argument_count != null));
             if(abi.lexical_environment) |env| { try c.require(at<abi.physical_parameters.len); try carrierEqual(c,abi.physical_parameters[at],.{.environment=env}); at+=1; }
             if(abi.receiver) |ref| {
                 try c.charge(3); const id=@intFromEnum(ref); const binding=v.storage.bindings[id];

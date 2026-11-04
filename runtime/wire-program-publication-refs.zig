@@ -69,7 +69,7 @@ fn shape(c: *Context, value: model.ScopeShape, labels: *const StringSet) Error!v
                 for (inputs.argument_types) |label| try checkLabel(c, label, labels, false);
             }
             try bound(c, v.fields.len, 256); for (v.fields) |field| { try c.row(@TypeOf(field)); try c.text(field.name, 4096, 1); try c.require(field.index <= 255); try checkLabel(c, field.@"type", labels, false); }
-            if (v.methods) |methods| { try bound(c, methods.len, 4096); for (methods) |method| { try c.row(@TypeOf(method)); try c.text(method.name, 4096, 1); try bound(c, method.parameters.len, 64); for (method.parameters) |p| try checkLabel(c, p, labels, false); try checkLabel(c, method.return_type, labels, false); } }
+            if (v.methods) |methods| { try bound(c, methods.len, 4096); for (methods) |method| { try c.row(@TypeOf(method)); try c.text(method.name, 4096, 1); try bound(c, method.parameters.len, 64); try c.require(method.minimum_argument_count <= method.parameters.len); for (method.parameters) |p| try checkLabel(c, p, labels, false); try checkLabel(c, method.return_type, labels, false); } }
         },
     }
 }
@@ -88,6 +88,10 @@ fn scope(c: *Context, value: model.StableScope, functions: *const HashSet, types
     for (value.environments) |env| for (env.slots) |slot| { try c.step(); _ = all_slots.getOrPutAssumeCapacity(slot.key); };
     if (value.host_context != null) try c.charge(2);
     for (value.functions) |row| { try c.row(@TypeOf(row)); try hashRef(c, row.function_id, functions); try declaration(c, row.decl_key); try hashRefs(c, row.parameter_types, types, 65, .any); try hashRef(c, row.return_type, types);
+        if (row.kind == .method) {
+            const minimum = row.method_minimum_argument_count orelse return error.InvalidShape;
+            try c.require(row.parameter_types.len != 0 and minimum <= row.parameter_types.len - 1);
+        } else try c.require(row.method_minimum_argument_count == null);
         if (row.lexical_parent) |parent| try hashRef(c, parent, functions); if (row.lexical_environment) |env| try hashRef(c, env, environments); if (row.activation_environment) |env| try hashRef(c, env, environments);
         try hashRefs(c, row.captures, &all_slots, 65536, .sorted);
     }
@@ -233,7 +237,7 @@ pub fn check(c: *Context, value: model.FixedPublication) Error!void {
     var contracts = try build(c, value.publication.contracts, "function_id", 4096, true); defer contracts.deinit(c.allocator);
     try scope(c, value.stable_scope, &functions, &types, &globals, &environments, &modules, &hosts);
     try scope(c, value.publication.scope, &functions, &types, &globals, &environments, &modules, &hosts);
-    try c.row(@TypeOf(value.publication.format)); try c.require(value.publication.format.version == 4); try c.require(value.publication.contracts.len == value.stable_scope.functions.len);
+    try c.row(@TypeOf(value.publication.format)); try c.require(value.publication.format.version == 5); try c.require(value.publication.contracts.len == value.stable_scope.functions.len);
     var slot_count: usize = 0; for (v.closures.environments) |env| { try c.step(); try c.require(env.slots.len <= 65536 - slot_count); slot_count += env.slots.len; }
     try c.charge(slot_count + 1); var slots: HashSet = .{}; defer slots.deinit(c.allocator); try slots.ensureTotalCapacity(c.allocator, @intCast(slot_count));
     for (v.closures.environments) |env| for (env.slots) |slot| { try c.step(); _ = slots.getOrPutAssumeCapacity(slot.key); };

@@ -3,7 +3,7 @@ const t = @import("wire-program-types.zig");
 const member = @import("wire-program-members.zig");
 const origin = @import("wire-program-return-origin-model.zig");
 
-// Core4/schema14304 header admission remains the external owning reader's duty.
+// Core6 header admission remains the external owning reader's duty.
 // These typed records do not reinterpret the unchanged formal wire17 envelope.
 pub const FixedStorage = struct {
     fields: []const struct { field_id: t.Hash, actual_types: []const t.Hash, unknown: bool },
@@ -56,11 +56,11 @@ pub const ScopeShape = union(enum) {
             argument_signature: ?struct { minimum_argument_count: u16, argument_types: []const []const u8 },
         },
         fields: []const struct { access: member.Access, index: u16, name: []const u8, readonly: bool, @"type": []const u8 },
-        methods: ?[]const struct { access: member.Access, name: []const u8, parameters: []const []const u8, return_type: []const u8 },
+        methods: ?[]const struct { access: member.Access, name: []const u8, parameters: []const []const u8, return_type: []const u8, minimum_argument_count: u16 },
     },
 };
 pub const StableScope = struct {
-    profile: enum { @"common-program-fixed-v4" },
+    profile: enum { @"common-program-fixed-v5" },
     declaration_types: []const t.Hash,
     constructions: []const Construction,
     storage: FixedStorage,
@@ -74,6 +74,7 @@ pub const StableScope = struct {
         kind: enum { source, method, @"construction-body" },
         decl_key: DeclarationKey,
         parameter_types: []const t.Hash,
+        method_minimum_argument_count: ?u16 = null,
         return_type: t.Hash,
         construction: ?FunctionConstruction,
         lexical_parent: ?t.Hash,

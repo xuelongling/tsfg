@@ -16,10 +16,10 @@ struct SourceAnchor {uint32_t start=0,end=0;};
 inline constexpr uint16_t noRegister=UINT16_MAX;
 using Json=llvm::json::Value;using Object=llvm::json::Object;using Array=llvm::json::Array;
 inline constexpr llvm::StringLiteral marker="tsfg_program.program";
-inline constexpr int32_t profileVersion=5;
-// This reader admits only the current private5 descriptor identity below.
+inline constexpr int32_t profileVersion=6;
+// This reader admits only the current private6 descriptor identity below.
 inline constexpr size_t programWorkLimit=4000000;
-inline constexpr llvm::StringLiteral schema="sha256:db46cd091d08f951a4a1564e8cf24702dca6137fe0585bbfe256c522e6ee3332";
+inline constexpr llvm::StringLiteral schema="sha256:babde5d7b48bfd75f55c94349b9a56371702148be9188cbf86b62085d52b9f5f";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}

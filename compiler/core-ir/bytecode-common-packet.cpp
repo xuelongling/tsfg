@@ -73,7 +73,7 @@ bool payload(const Program &p, const std::array<std::string,static_cast<size_t>(
 }
 }
 bool encodeCommon(const Program &program, bytecode::Bytes &bytes, Error &error) {
-  static_assert(version==18 && capability==1018);
+  static_assert(version==19 && capability==1019);
   bytes.clear();error={};bytecode::Hash schemaHash;
   if(!bytecode::decodeHash(("sha256:"+coreHeader::commonProgramBytecodeSchema).str(),schemaHash)){
     error.message="Common exact development schema identity";return false;

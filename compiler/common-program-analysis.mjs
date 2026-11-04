@@ -14,7 +14,7 @@ import {commonCollections} from './common-program-budget.mjs';
 import {commonFixedStorageProjection} from './common-program-fixed-storage.mjs';
 import {commonBudget,commonMeter,commonRecord as record,commonCheck as check,commonSame as same,commonJson,
   canonical,sha256,own} from './common-program-common.mjs';
-const format=Object.freeze({family:'tsfg.program-publication-candidate',version:4});
+const format=Object.freeze({family:'tsfg.program-publication-candidate',version:5});
 const sorted=values=>values.every((value,index)=>index===0||values[index-1]<value);
 const hash=value=>typeof value==='string'&&/^sha256:[0-9a-f]{64}$/.test(value);
 const flags=['read','write','structural'];

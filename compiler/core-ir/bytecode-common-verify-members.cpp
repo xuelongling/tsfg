@@ -200,6 +200,28 @@ bool CommonTableVerifier::memberJoins(){
     recordIndices.emplace(key,uint32_t(recordIndices.size()));
     if(a!=b)available[{at(o,"source"),at(o,"start"),at(o,"end")}].emplace(typeId(a),typeId(b));
   }
+  // Both explicit and inherited projections join owned Method IDs to the
+  // already admitted ABI minima; shared required-only adapters stay unchanged.
+  const auto compatibleMethodMinimum=[&](const std::string &actual,const std::string &view){
+    size_t comparisons=2;for(auto count=methodIds.size();count;count>>=1)comparisons+=2;
+    if(!charge(9+comparisons*((actual.size()+view.size())/8+1)))return false;
+    const auto &from=*(*methods)[methodIds.at(actual)].getAsObject(),&to=*(*methods)[methodIds.at(view)].getAsObject();
+    const auto &fromAbi=*(*abis)[at(from,"function")].getAsObject(),&toAbi=*(*abis)[at(to,"function")].getAsObject();
+    return *fromAbi.getInteger("methodMinimumArgumentCount")<=*toAbi.getInteger("methodMinimumArgumentCount")||
+      reject("Common structural method minimum arity exceeds its view");
+  };
+  const auto compatibleSelectedMethod=[&](uint32_t actual,uint32_t view,const std::string &selected,const std::string &target,
+      const std::set<referenceContracts::Pair> &allowed,std::set<referenceContracts::Pair> &used){
+    if(!compatibleMethodMinimum(selected,target))return false;
+    size_t comparisons=2;for(auto count=memberCache.size();count;count>>=1)comparisons+=4;
+    if(!charge(comparisons+1))return false;const auto &actualMembers=memberCache.at(actual),&viewMembers=memberCache.at(view);
+    comparisons=2;for(auto count:{actualMembers.size(),viewMembers.size()})for(;count;count>>=1)comparisons+=2;
+    if(!charge(comparisons*((selected.size()+target.size())/8+1)+1))return false;
+    const auto &from=actualMembers.at(selected),&to=viewMembers.at(target);
+    if(!charge((from.name.size()+to.name.size())/8+1))return false;
+    if(from.kind!=to.kind||from.name!=to.name)return reject("explicit member mapping kind/name differs");
+    failure.clear();return referenceContracts::verifyMethod(logicalTypes,from,to,allowed,used,spend,failure,{true,true,false})||reject(failure);
+  };
   referenceContracts::MethodMaps projections;
   for(const auto &value:*compatibilities){if(!charge())return false;const auto &p=*value.getAsObject(),&o=*p.getObject("origin");const auto a=at(p,"sourceType"),b=at(p,"targetType");
     const auto fieldKey=[&](const Object &r,uint32_t owner)->std::string{
@@ -211,6 +233,7 @@ bool CommonTableVerifier::memberJoins(){
       if(target.empty()||actual.empty()||(!previousField.empty()&&previousField>=target)||!mapping.emplace(target,actual).second)return reject("Common FieldLikeRef actual/target owner or order");previousField=target;}
     for(const auto &m:*p.getArray("methods")){if(!charge())return false;const auto &row=*m.getAsObject();const auto target=(*methods)[at(row,"target")].getAsObject()->getString("id")->str(),actual=(*methods)[at(row,"actual")].getAsObject()->getString("id")->str();
       if(!memberCache[a].count(actual)||!memberCache[b].count(target)||(!previousMethod.empty()&&previousMethod>=target)||!mapping.emplace(target,actual).second)return reject("Common compatibility effective Method owner/order");previousMethod=target;
+      if(!compatibleMethodMinimum(actual,target))return false;
       auto &map=projections[{typeId(a),typeId(b)}];const auto old=map.find(target);if(old!=map.end()&&old->second!=actual)return reject("Common ambiguous structural Method projection");map[target]=actual;
     }
     const auto &allowed=available[{at(o,"source"),at(o,"start"),at(o,"end")}];std::set<referenceContracts::Pair> used;std::vector<referenceContracts::Pair> ordered;
@@ -230,12 +253,37 @@ bool CommonTableVerifier::memberJoins(){
       if(found==recordIndices.end())return reject("Common exact compatibility dependency is absent");dependencies.push_back(found->second);
     }
   }
-  if(!charge(projections.size()))return false;const auto inheritedProjections=projections;
-  for(const auto &[pair,mapping]:inheritedProjections){if(!charge(mapping.size()+1))return false;const auto source=typeIds.at(pair.first);
-    for(uint32_t actual=0;actual<types->size();++actual){if(!charge())return false;const auto kind=(*types)[actual].getAsObject()->getString("kind");if(kind!="reference"&&kind!="value")continue;
+  // Re-read each original declaration rather than the merged projection map:
+  // selected overrides must use this declaration's exact same-origin proofs.
+  for(const auto &value:*compatibilities){
+    if(!charge())return false;const auto &proof=*value.getAsObject(),&origin=*proof.getObject("origin");
+    const auto source=at(proof,"sourceType"),view=at(proof,"targetType");
+    const auto &mapping=*proof.getArray("methods");if(mapping.empty())continue;
+    size_t comparisons=2;for(auto count=available.size();count;count>>=1)comparisons+=2;
+    if(!charge(comparisons+mapping.size()+1))return false;
+    const auto &allowed=available.at({at(origin,"source"),at(origin,"start"),at(origin,"end")});
+    for(uint32_t actual=0;actual<types->size();++actual){if(!charge())return false;if(actual==source)continue;const auto kind=(*types)[actual].getAsObject()->getString("kind");if(kind!="reference"&&kind!="value")continue;
       std::vector<uint32_t> chain;if(!lineage(actual,chain))return false;if(std::find(chain.begin(),chain.end(),source)==chain.end())continue;
-      for(const auto &[target,mapped]:mapping){std::string selected;failure.clear();if(!referenceContracts::selectMethod(catalogue,{},typeId(actual),typeId(actual),mapped,selected,spend,failure)||selected.empty())return reject("Common inherited structural Method projection");
-        auto &out=projections[{typeId(actual),pair.second}];const auto old=out.find(target);if(old!=out.end()&&old->second!=selected)return reject("Common ambiguous inherited Method projection");out[target]=selected;}
+      for(const auto &value:mapping){
+        if(!charge(4))return false;const auto &edge=*value.getAsObject();
+        const auto targetText=*(*methods)[at(edge,"target")].getAsObject()->getString("id"),mappedText=*(*methods)[at(edge,"actual")].getAsObject()->getString("id");
+        if(!charge((targetText.size()+mappedText.size())/8+2))return false;const auto target=targetText.str(),mapped=mappedText.str();
+        std::string selected;failure.clear();if(!referenceContracts::selectMethod(catalogue,{},typeId(actual),typeId(actual),mapped,selected,spend,failure)||selected.empty())return reject("Common inherited structural Method projection");
+        std::set<referenceContracts::Pair> used;
+        if(!compatibleSelectedMethod(actual,view,selected,target,allowed,used))return false;
+        comparisons=2;for(auto count: {recordIndices.size(),typeIds.size()})for(;count;count>>=1)comparisons+=2;
+        if(!charge(comparisons+1))return false;
+        auto &dependencies=compatibilityDependencies[recordIndices.at({at(origin,"source"),at(origin,"start"),at(origin,"end"),source,view})];
+        for(const auto &[from,to]:used){
+          if(!charge(comparisons*((from.size()+to.size())/8+1)+dependencies.size()+2))return false;
+          const auto found=recordIndices.find({at(origin,"source"),at(origin,"start"),at(origin,"end"),typeIds.at(from),typeIds.at(to)});
+          if(found==recordIndices.end())return reject("Common exact inherited compatibility dependency is absent");
+          if(std::find(dependencies.begin(),dependencies.end(),found->second)==dependencies.end())dependencies.push_back(found->second);
+        }
+        comparisons=2;for(auto count: {projections.size(),methodIds.size()})for(;count;count>>=1)comparisons+=2;
+        if(!charge(comparisons*((selected.size()+target.size())/8+1)+3))return false;
+        auto &out=projections[{typeId(actual),typeId(view)}];const auto old=out.find(target);if(old!=out.end()&&old->second!=selected)return reject("Common ambiguous inherited Method projection");out[target]=selected;
+      }
     }
   }
   for(const auto &value:*dispatch){if(!charge())return false;const auto &d=*value.getAsObject();const auto view=at(d,"view"),member=at(d,"member");const bool method=d.getString("kind")=="method";
@@ -245,6 +293,30 @@ bool CommonTableVerifier::memberJoins(){
       const auto actualKind=(*types)[actual].getAsObject()->getString("kind");if((previousActual!=UINT32_MAX&&previousActual>=actual)||(actualKind!="reference"&&actualKind!="value"))return reject("Common dispatch actual Type/order");previousActual=actual;provided.insert(actual);
       if(method){std::string selected;failure.clear();if(!referenceContracts::selectMethod(catalogue,projections,typeId(actual),typeId(view),id,selected,spend,failure)||selected.empty())return reject("Common dispatch effective Method target");
         const auto found=methodIds.find(selected);if(found==methodIds.end()||arm.getInteger("target")!=(*methods)[found->second].getAsObject()->getInteger("function")||arm.getInteger("abi")!=arm.getInteger("target"))return reject("Common dispatch actual Method/ABI join");
+        // A complete verified projection keeps its original proof authority
+        // even when implementation() can also select the static declaration.
+        if(!charge(4))return false;const auto actualId=*(*types)[actual].getAsObject()->getString("id"),viewId=*(*types)[view].getAsObject()->getString("id");
+        size_t comparisons=2;for(auto count=projections.size();count;count>>=1)comparisons+=2;
+        if(!charge(comparisons*((actualId.size()+viewId.size())/8+1)+3))return false;
+        const auto projection=projections.find({actualId.str(),viewId.str()});bool verifiedProjection=false;
+        if(projection!=projections.end()){
+          comparisons=2;for(auto count=projection->second.size();count;count>>=1)comparisons+=2;
+          if(!charge(comparisons*(id.size()/8+1)+1))return false;const auto mapped=projection->second.find(id);
+          if(mapped!=projection->second.end()){
+            if(!charge(2*(actualId.size()/8+1)+1))return false;std::string mappedSelected;failure.clear();
+            if(!referenceContracts::selectMethod(catalogue,{},actualId.str(),actualId.str(),mapped->second,mappedSelected,spend,failure)||mappedSelected.empty())return reject("Common dispatch verified projection has no effective Method");
+            if(!charge((mappedSelected.size()+selected.size())/8+1))return false;
+            if(mappedSelected!=selected)return reject("Common dispatch selected Method differs from its verified projection");verifiedProjection=true;
+          }
+        }
+        if(!verifiedProjection){
+          // With no bound projection, only declaration-owner ancestry supplies
+          // the direct nominal route; it grants no reference-leaf proof origin.
+          std::vector<uint32_t> chain;if(!lineage(actual,chain)||!charge(chain.size()+3))return false;
+          if(std::find(chain.begin(),chain.end(),at(*(*methods)[member].getAsObject(),"owner"))==chain.end())return reject("Common dispatch selected Method has no verified route");
+          const std::set<referenceContracts::Pair> noProof;std::set<referenceContracts::Pair> used;
+          if(!compatibleSelectedMethod(actual,view,selected,id,noProof,used))return false;
+        }
       }else{
         if(arm.get("abi")->kind()!=Json::Null||arm.get("target")->kind()==Json::Null)return reject("Common Field dispatch ABI/target");const auto target=at(arm,"target");const auto selected=(*fields)[target].getAsObject()->getString("id")->str();
         if(!memberCache[actual].count(selected))return reject("Common Field dispatch actual ownership");bool projected=selected==id;

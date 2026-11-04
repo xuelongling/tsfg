@@ -723,7 +723,7 @@ const Common = struct {
             try out.raw(",\"methods\":[");
             for(methods,0..) |ref,i| {
                 try c.step(); const m=v.members.methods[@intFromEnum(ref)]; const abi=v.abis[@intFromEnum(c.program.functions[@intFromEnum(m.function)].abi)];
-                if(i!=0)try out.raw(","); try out.raw("{\"access\":"); try out.value(m.access); try out.raw(",\"name\":"); try out.value(m.name); try out.raw(",\"parameters\":[");
+                if(i!=0)try out.raw(","); try out.raw("{\"access\":"); try out.value(m.access); try out.raw(",\"minimumArgumentCount\":"); try out.value(abi.method_minimum_argument_count orelse return error.InvalidShape); try out.raw(",\"name\":"); try out.value(m.name); try out.raw(",\"parameters\":[");
                 for(abi.parameters,0..) |p,n| { if(n!=0)try out.raw(","); try out.value(try self.add(index,@intFromEnum(v.storage.bindings[@intFromEnum(p)].@"type"))); }
                 const result=if(abi.result) |p| @intFromEnum(p) else void_index; try c.require(result!=none);
                 try out.raw("],\"returnType\":"); try out.value(try self.add(index,result)); try out.raw("}");
@@ -883,7 +883,10 @@ const Common = struct {
             for(abi.parameters,0..) |b,i| ps[i+offset]=v.types[@intFromEnum(v.storage.bindings[@intFromEnum(b)].@"type")].id;
             const result=if(abi.result) |r| v.types[@intFromEnum(r)].id else try primitive(c,"void");
             try sameValue(c,ps,row.parameter_types); try equal(c,result,row.return_type);
-            const signature=try digest(c,"tsfg.module-callable-signature.candidate.v1",.{.parameters=ps,.returns=result});
+            try sameValue(c,abi.method_minimum_argument_count,row.method_minimum_argument_count);
+            const signature=if(row.kind==.method)
+                try digest(c,"tsfg.module-callable-signature.candidate.v1",.{.parameters=ps,.returns=result,.minimum_argument_count=row.method_minimum_argument_count orelse return error.InvalidShape})
+            else try digest(c,"tsfg.module-callable-signature.candidate.v1",.{.parameters=ps,.returns=result});
             try equal(c,signature,f.signature); try equal(c,signature,row.signature_hash);
             const name=try encoded(c,.{.path=decl.path,.kind=decl.kind,.name=decl.name}); defer c.allocator.free(name);
             try equal(c,f.id,try digest(c,"tsfg.module-callable-function.candidate.v1",.{.path=source(c,f.source).path,.name=name,.signature_hash=signature}));

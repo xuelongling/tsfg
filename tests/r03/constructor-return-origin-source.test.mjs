@@ -33,7 +33,7 @@ test('a genuine constructor receiver carries its stored parameter through the fi
     constructorRow=publication.contracts.find(row=>row.functionId===owner.id),passRow=publication.contracts.find(row=>row.functionId===pass.id);
   assert.ok(constructorRow.returnOrigins,'the real constructor needs a selected receiver graph');
   assert.ok(passRow.returnOrigins,'the caller needs the real constructed receiver and its stored content');
-  assert.equal(passRow.returnOrigins.format.version,5);assert.equal(publication.scope.profile,'common-program-fixed-v4');
+  assert.equal(passRow.returnOrigins.format.version,5);assert.equal(publication.scope.profile,'common-program-fixed-v5');
   assert.ok(Object.isFrozen(publication));
   for(const row of publication.contracts){const {digest,...body}=row;assert.equal(digest,identities.commonIdentity('published-contract',body));}
   assert.equal(publication.scopeDigest,identities.commonIdentity('publication-scope',publication.scope));

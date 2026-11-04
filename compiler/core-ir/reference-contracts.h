@@ -29,6 +29,10 @@ bool selectMethod(const MethodCatalogue &,const MethodMaps &,const std::string &
   const std::string &member,std::string &selected,const Charge &,std::string &);
 bool logical(const Types &,const std::string &,const std::string &,const std::set<Pair> &,
   std::set<Pair> &,const Charge &,std::string &,Policy={});
+// The caller has already joined method kind/name; this owns the full existing
+// return, total-count and contravariant parameter relation without Common min.
+bool verifyMethod(const Types &,const Member &,const Member &,const std::set<Pair> &,
+  std::set<Pair> &,const Charge &,std::string &,Policy={});
 bool verifyMembers(const Types &,const Members &,const Members &,const std::vector<Pair> &,
   const std::set<Pair> &,const std::set<std::string> &,const Charge &,std::string &,Policy={});
 bool closeDirectory(const std::map<OriginKey,std::set<Pair>> &,const Charge &,std::string &);

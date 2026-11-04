@@ -137,7 +137,7 @@ pub const Decoder = struct {
         if (T == publication.ScopeShape) return self.scopeShape(node);
         if (T == publication.Publication) {
             const out = try self.record(T, try self.object(node), &.{});
-            if (out.format.version != 4) return error.InvalidShape;
+            if (out.format.version != 5) return error.InvalidShape;
             return out;
         }
         if (T == origin.Graph) {

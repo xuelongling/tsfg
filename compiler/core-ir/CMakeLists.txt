@@ -121,15 +121,17 @@ if(TSFG_CORE_BUILD_ROLE STREQUAL "metadata-models")
   # A separate metadata-only test responsibility, not a production Core command
   # role or SDK admission path. Its invoker must qualify the SDK/toolchain and
   # current catalog + test source before supplying this executable to Node.
-  function(add_tsfg_metadata_models)
+  function(add_tsfg_metadata_models target entry)
     set(USE_SHARED "")
     set(LLVM_LINK_COMPONENTS Support)
-    add_llvm_executable(tsfg-common-metadata-models PARTIAL_SOURCES_INTENDED
-      DISABLE_LLVM_LINK_LLVM_DYLIB ${_tsfg_core_entry})
-    target_include_directories(tsfg-common-metadata-models PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(tsfg-common-metadata-models PRIVATE tsfg-core-common)
+    add_llvm_executable(${target} PARTIAL_SOURCES_INTENDED
+      DISABLE_LLVM_LINK_LLVM_DYLIB ${entry})
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE tsfg-core-common)
   endfunction()
-  add_tsfg_metadata_models()
+  add_tsfg_metadata_models(tsfg-common-metadata-models "${_tsfg_core_entry}")
+  add_tsfg_metadata_models(tsfg-method-minarity-metadata
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/r03/method-minarity-complete-literals.cpp")
 elseif(TSFG_CORE_BUILD_ROLE STREQUAL "static")
   # The static role has no native adapter in its source or link graph.
   function(add_tsfg_static_core_tool)

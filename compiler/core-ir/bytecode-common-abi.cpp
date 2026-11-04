@@ -17,9 +17,10 @@ bool Builder::abiTable() {
     fn.abi=functionIds.at(id);fn.source=sourceIds.at(actual->path);fn.declaration={actual->range.start,actual->range.end};
     fn.role=initializer?2:string(field(*declared->second,"kind"))=="construction-body"?1:0;
     fn.name=initializer?"$moduleInit":string(field(*declared->second,"name"));
-    Array parameters,argumentTypes,physicalParameters;Json receiver=nullptr,lexical=nullptr,result=nullptr,resultCarrier=nullptr,construction=nullptr,receiverFrame=nullptr;
+    Array parameters,argumentTypes,physicalParameters;Json receiver=nullptr,lexical=nullptr,result=nullptr,resultCarrier=nullptr,construction=nullptr,receiverFrame=nullptr,methodMinimum=nullptr;
     if(!initializer){
       const auto &row=*declared->second;
+      if(!step())return false;methodMinimum=field(row,"methodMinimumArgumentCount");
       // The required Core4 provider admits each Source3 FDI step's binding,
       // ordinal and raw incoming type before normalization reaches this owner.
       // Consume that owned HIR; do not reconstruct defaults in this adapter.
@@ -132,7 +133,7 @@ bool Builder::abiTable() {
       rows=std::move(projected);
     }
     abis.emplace_back(Object{{"sourcePlan",std::move(canonicalPlan)},{"kind","common"},{"function",functionIds.at(id)},{"signature",actual->signature},
-      {"parameters",std::move(parameters)},{"argumentTypes",std::move(argumentTypes)},{"receiver",std::move(receiver)},{"construction",std::move(construction)},
+      {"methodMinimumArgumentCount",std::move(methodMinimum)},{"parameters",std::move(parameters)},{"argumentTypes",std::move(argumentTypes)},{"receiver",std::move(receiver)},{"construction",std::move(construction)},
       {"receiverFrame",std::move(receiverFrame)},{"lexicalEnvironment",std::move(lexical)},
       {"physicalParameters",std::move(physicalParameters)},{"result",std::move(result)},{"resultCarrier",std::move(resultCarrier)}});
     out.functions.push_back(std::move(fn));

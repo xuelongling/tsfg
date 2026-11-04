@@ -97,7 +97,7 @@ bool publicationScope(Program &p,Json &out,Error &e){
   for(const auto &t:items(field(p.hir,"types")))if(seen.count(string(field(t,"id")))){
     if(!returnOriginMetadataCost(p,field(t,"semanticLabel"),e)||!returnOriginMetadataCost(p,field(t,"semanticShape"),e)||!work(p,e))return false;typeRows.push_back(Object{{"id",field(t,"id")},{"label",field(t,"semanticLabel")},{"shape",field(t,"semanticShape")}});}
   for(const auto &fn:items(field(p.hir,"functions"))){
-    for(auto key:{"id","declKey","kind","access","lexicalParent","lexicalEnvironment","activationEnvironment","signatureHash","parameters","captures","returnType"})if(!returnOriginMetadataCost(p,field(fn,key),e))return false;
+    for(auto key:{"id","declKey","kind","access","lexicalParent","lexicalEnvironment","activationEnvironment","signatureHash","methodMinimumArgumentCount","parameters","captures","returnType"})if(!returnOriginMetadataCost(p,field(fn,key),e))return false;
     if(!work(p,e))return false;Array parameters;if(!field(fn,"ownerType").getAsNull())parameters.push_back(field(fn,"ownerType"));
     for(const auto &a:items(field(fn,"parameters"))){if(!work(p,e))return false;parameters.push_back(field(a,"type"));}
     std::set<std::string> captured;
@@ -113,7 +113,7 @@ bool publicationScope(Program &p,Json &out,Error &e){
     functions.push_back(Object{{"functionId",field(fn,"id")},{"declKey",field(fn,"declKey")},{"kind",field(fn,"kind")},{"access",field(fn,"access")},
       {"lexicalParent",field(fn,"lexicalParent")},{"lexicalEnvironment",field(fn,"lexicalEnvironment")},{"activationEnvironment",field(fn,"activationEnvironment")},
       {"captures",std::move(captureKeys)},
-      {"signatureHash",field(fn,"signatureHash")},{"parameterTypes",std::move(parameters)},{"returnType",field(fn,"returnType")},{"construction",std::move(construction)}});
+      {"signatureHash",field(fn,"signatureHash")},{"methodMinimumArgumentCount",field(fn,"methodMinimumArgumentCount")},{"parameterTypes",std::move(parameters)},{"returnType",field(fn,"returnType")},{"construction",std::move(construction)}});
   }
   std::map<std::string,Json> orderedConstructions;
   for(const auto &[id,type]:types){const auto &ctor=field(*type,"construction");if(ctor.getAsNull())continue;
@@ -132,7 +132,7 @@ bool publicationScope(Program &p,Json &out,Error &e){
   for(const auto &r:items(field(field(p.hir,"closure"),"requiredRoots"))){if(!work(p,e))return false;required.push_back(select(p,r,{"kind","sourcePath","name","target"},e));}
   Array hosts;for(const auto &host:items(field(p.hir,"hostImports"))){if(!work(p,e))return false;hosts.push_back(select(p,host,{"id","sourcePath","name","capabilityId","signatureHash","parameterTypes","returnType"},e));}
   Json hostContext=nullptr;if(!p.hosts.empty())hostContext=Object{{"contractDigest",p.hostContractHash},{"buildIdentityDigest",field(field(field(field(p.hir,"hostContext"),"identity"),"buildIdentity"),"digest")}};
-  out=Object{{"hostImports",std::move(hosts)},{"hostContext",std::move(hostContext)},{"profile","common-program-fixed-v4"},{"rootFile",field(p.hir,"rootFile")},{"declarationTypes",std::move(declarationTypes)},{"types",std::move(typeRows)},{"constructions",std::move(constructions)},
+  out=Object{{"hostImports",std::move(hosts)},{"hostContext",std::move(hostContext)},{"profile","common-program-fixed-v5"},{"rootFile",field(p.hir,"rootFile")},{"declarationTypes",std::move(declarationTypes)},{"types",std::move(typeRows)},{"constructions",std::move(constructions)},
     {"functions",std::move(functions)},{"environments",std::move(environments)},{"globals",std::move(globals)},{"modules",std::move(modules)},
     {"roots",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(required)}}}};return e.message.empty();
 }
@@ -185,7 +185,7 @@ bool admitPublication(Program &p,Error &e){
   p.fixedEffects.clear();p.effects.clear();p.returnOriginVerified.clear();p.returnOriginPending.clear();p.scalarReturnOriginVerified.clear();p.returnOriginContracts.reset();
   const auto &pub=p.publication;const auto &contracts=items(field(pub,"contracts")),&functions=items(field(p.hir,"functions"));
   if(!need(exact(pub,{"format","mode","scope","scopeDigest","expectedDigest","contracts"})&&
-    same(field(pub,"format"),Object{{"family","tsfg.program-publication-candidate"},{"version",4}})&&
+    same(field(pub,"format"),Object{{"family","tsfg.program-publication-candidate"},{"version",5}})&&
     string(field(pub,"mode"))=="fixed"&&field(pub,"contracts").getAsArray()&&contracts.size()==functions.size(),e,"complete fixed publication required"))return false;
   for(size_t i=0;i<contracts.size();++i){const auto &row=contracts[i],&fn=functions[i];const auto id=string(field(fn,"id"));
     if(!work(p,e)||!need(exact(row,{"functionId","signatureHash","upper","callables","returnOrigins","digest"})&&same(field(row,"functionId"),field(fn,"id"))&&same(field(row,"signatureHash"),field(fn,"signatureHash")),e,"fixed contract identity/order differs"))return false;

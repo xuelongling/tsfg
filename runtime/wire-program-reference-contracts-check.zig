@@ -233,8 +233,9 @@ const Checker = struct {
     // Iterative M12 relation. Source union is ALL; target union is ANY.
     // No dependency ledger escapes this boolean check. Cross Array/Span and
     // undefined->void use the Common policy; nominal inheritance is NOT an
-    // implicit structural proof. Only an exact same-origin row supplies it.
-    fn logical(self: *Checker, pair: Pair, origin: t.Origin) Error!bool {
+    // implicit structural proof. Only an exact same-origin row supplies it; a
+    // null origin provides no nonidentity reference proof.
+    fn logical(self: *Checker, pair: Pair, origin: ?t.Origin) Error!bool {
         const c = self.c;
         var active: PairSet = .empty;
         defer active.deinit(c.allocator);
@@ -286,8 +287,12 @@ const Checker = struct {
                 try c.step();
                 try frame.children.append(c.allocator, .{ .source = from.element.?, .target = to.element.? });
             } else {
-                const matched = from.kind == .reference and to.kind == .reference and
-                    self.proofs.contains(.{ .origin = origin, .pair = frame.pair });
+                try c.step();
+                const matched = if (origin) |proof_origin| blk: {
+                    if (from.kind != .reference or to.kind != .reference) break :blk false;
+                    try c.step();
+                    break :blk self.proofs.contains(.{ .origin = proof_origin, .pair = frame.pair });
+                } else false;
                 const outcome = matched or (from.kind == .@"undefined" and to.kind == .@"void");
                 self.popLogical(&frames, &active);
                 completed = outcome;
@@ -340,6 +345,27 @@ const Checker = struct {
         const function = self.common.members.methods[@intFromEnum(method)].function;
         return &self.common.abis[@intFromEnum(self.c.program.functions[@intFromEnum(function)].abi)];
     }
+    fn methodCompatible(self: *Checker, actual: t.MethodRef, target: t.MethodRef, origin: ?t.Origin) Error!void {
+        const c = self.c;
+        try c.charge(6);
+        const from = self.methodAbi(actual);
+        const to = self.methodAbi(target);
+        const result = to.result orelse self.void_type orelse return error.InvalidShape;
+        try c.step();
+        if (self.common.types[@intFromEnum(result)].kind != .@"void") {
+            try c.require(try self.logical(.{ .source = from.result orelse self.void_type orelse return error.InvalidShape, .target = result }, origin));
+        }
+        // Keep the existing total-count and logical-type rules. Explicit minima
+        // do not authorize omitted call operands, parameter padding or defaults.
+        try c.require(from.parameters.len <= to.parameters.len);
+        try c.require(from.method_minimum_argument_count.? <= to.method_minimum_argument_count.?);
+        for (0..from.parameters.len) |index| {
+            try c.charge(3);
+            const a = self.common.storage.bindings[@intFromEnum(from.parameters[index])].@"type";
+            const b = self.common.storage.bindings[@intFromEnum(to.parameters[index])].@"type";
+            try c.require(try self.logical(.{ .source = b, .target = a }, origin));
+        }
+    }
     fn addProjection(self: *Checker, key: MethodProjection, actual: t.MethodRef) Error!void {
         try self.c.step();
         const found = try self.method_projections.getOrPut(self.c.allocator, key);
@@ -380,22 +406,7 @@ const Checker = struct {
                 previous_method = target;
                 try c.require(!(try covered.getOrPut(c.allocator, target)).found_existing);
                 try c.require(try self.sameName(self.memberName(actual), self.memberName(target)));
-                const from = self.methodAbi(mapping.actual);
-                const to = self.methodAbi(mapping.target);
-                const result = to.result orelse self.void_type orelse return error.InvalidShape;
-                if (self.common.types[@intFromEnum(result)].kind != .@"void") {
-                    try c.require(try self.logical(.{ .source = from.result orelse self.void_type orelse return error.InvalidShape, .target = result }, proof.origin));
-                }
-                // Ordinary methods in the admitted Source subset have only required
-                // parameters. A projection may discard target arguments, but cannot
-                // require an argument that the target signature does not supply.
-                try c.require(from.parameters.len <= to.parameters.len);
-                for (0..from.parameters.len) |index| {
-                    try c.step();
-                    const a = self.common.storage.bindings[@intFromEnum(from.parameters[index])].@"type";
-                    const b = self.common.storage.bindings[@intFromEnum(to.parameters[index])].@"type";
-                    try c.require(try self.logical(.{ .source = b, .target = a }, proof.origin));
-                }
+                try self.methodCompatible(mapping.actual, mapping.target, proof.origin);
                 try self.addProjection(.{ .pair = pair, .member = mapping.target }, mapping.actual);
             }
             // All selected keys came from the independently reconstructed
@@ -406,24 +417,48 @@ const Checker = struct {
         }
     }
     fn inheritProjections(self: *Checker) Error!void {
-        const Entry = struct { key: MethodProjection, actual: t.MethodRef };
+        const Entry = struct { key: MethodProjection, actual: t.MethodRef, origin: t.Origin };
         var original: std.ArrayListUnmanaged(Entry) = .empty;
         defer original.deinit(self.c.allocator);
-        try self.c.charge(self.method_projections.count());
-        var entries = self.method_projections.iterator();
-        while (entries.next()) |entry| try original.append(self.c.allocator, .{ .key = entry.key_ptr.*, .actual = entry.value_ptr.* });
+        var count: usize = 0;
+        for (self.common.views.compatibility) |proof| { try self.c.step(); count += proof.methods.len; }
+        try self.c.charge(count);
+        try original.ensureTotalCapacityPrecise(self.c.allocator, count);
+        // Preserve every original declaration's exact origin, including multiple
+        // origins for one projection; the derived map contains no proof origin.
+        for (self.common.views.compatibility) |proof| {
+            try self.c.step();
+            for (proof.methods) |mapping| {
+                try self.c.charge(8);
+                original.appendAssumeCapacity(.{ .key = .{ .pair = .{ .source = proof.source_type, .target = proof.target_type }, .member = mapping.target },
+                    .actual = mapping.actual, .origin = proof.origin });
+            }
+        }
         for (original.items) |entry| for (self.common.types, 0..) |_, index| {
             try self.c.step();
             const actual: t.TypeRef = @enumFromInt(index);
             if (!self.nominal(actual) or !try self.ancestry(actual, entry.key.pair.source)) continue;
             const selected = try self.implementation(actual, entry.actual) orelse return error.InvalidShape;
+            try self.methodCompatible(selected, entry.key.member, entry.origin);
             try self.addProjection(.{ .pair = .{ .source = actual, .target = entry.key.pair.target }, .member = entry.key.member }, selected);
         };
     }
     fn selectedMethod(self: *Checker, actual: t.TypeRef, view: t.TypeRef, member: t.MethodRef) Error!?t.MethodRef {
-        if (try self.implementation(actual, member)) |selected| return selected;
-        const mapped = self.method_projections.get(.{ .pair = .{ .source = actual, .target = view }, .member = member }) orelse return null;
-        return self.implementation(actual, mapped);
+        try self.c.charge(4);
+        if (self.method_projections.get(.{ .pair = .{ .source = actual, .target = view }, .member = member })) |mapped| {
+            // Reuse the final choice already checked under its original proof
+            // origin, even when the nominal route can reach the same member.
+            const selected = try self.implementation(actual, mapped) orelse return error.InvalidShape;
+            if (try self.implementation(actual, member)) |direct| try self.c.require(direct == selected);
+            return selected;
+        }
+        if (try self.implementation(actual, member)) |selected| {
+            // A nominal route carries no structural proof origin. Only the
+            // intrinsic logical rules may establish this final override shape.
+            try self.methodCompatible(selected, member, null);
+            return selected;
+        }
+        return null;
     }
     fn fieldProjected(self: *Checker, actual: t.TypeRef, view: t.TypeRef, member: t.FieldRef, selected: t.FieldRef) Error!bool {
         if (member == selected) return true;

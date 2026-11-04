@@ -15,6 +15,8 @@ bool CommonCold::interfaces(){
   for(const auto &given:original){
     if(!charge())return false;const auto id=string(field(given,"functionId"));const auto n=tables.functionIds.at(id);
     const auto &actual=tables.program.functions[n];const auto &abi=(*tables.abis)[n];const auto &decl=field(given,"declKey");
+    const auto kind=string(field(given,"kind")),declarationKind=string(field(decl,"kind"));
+    if(!charge()||!same(field(given,"methodMinimumArgumentCount"),field(abi,"methodMinimumArgumentCount")))return reject("Common fixed/ABI method minimum arity differs");
     if(actual.role==2||!closureRows.count(n)||string(field(decl,"sourcePath"))!=path(actual.source)||string(field(decl,"name"))!=actual.name||
       string(field(given,"signatureHash"))!="sha256:"+bytecode::hex(actual.signature))return reject("Common fixed function/definition join");
     const auto &closure=*closureRows.at(n);const auto receiver=field(abi,"receiver");Json owner=nullptr,receiverBinding=nullptr;
@@ -38,7 +40,9 @@ bool CommonCold::interfaces(){
     if(!result.getAsNull())returnType=type(uint32_t(*result.getAsInteger()));
     else for(size_t t=0;t<tables.types->size();++t){if(!charge())return false;if(string(field((*tables.types)[t],"kind"))=="void")returnType=type(uint32_t(t));}
     if(returnType.empty()||!same(Json(Array(logicalTypes)),field(given,"parameterTypes"))||returnType!=string(field(given,"returnType")))return reject("Common fixed logical ABI vector/result join");
-    const auto signature=digest(std::string("tsfg.module-callable-signature.candidate.v1")+'\0'+canonical(Object{{"parameters",Json(Array(logicalTypes))},{"returns",returnType}}));
+    Json signatureShape=Object{{"parameters",Json(Array(logicalTypes))},{"returns",returnType}};
+    if(kind=="method")(*signatureShape.getAsObject())["minimumArgumentCount"]=field(abi,"methodMinimumArgumentCount");
+    const auto signature=digest(std::string("tsfg.module-callable-signature.candidate.v1")+'\0'+canonical(signatureShape));
     const auto name=canonical(Object{{"path",field(decl,"path")},{"kind",field(decl,"kind")},{"name",field(decl,"name")}});
     const auto expected=digest(std::string("tsfg.module-callable-function.candidate.v1")+'\0'+canonical(Object{{"path",path(actual.source)},{"name",name},{"signatureHash",signature}}));
     if(signature!="sha256:"+bytecode::hex(actual.signature)||expected!=id)return reject("Common independently reconstructed logical function/signature identity");
@@ -55,7 +59,6 @@ bool CommonCold::interfaces(){
     Array captureKeys;for(const auto &key:keys){if(!charge())return false;captureKeys.push_back(key);}
     if(!same(parent,field(given,"lexicalParent"))||!same(lexical,field(given,"lexicalEnvironment"))||!same(activation,field(given,"activationEnvironment"))||
       !same(Json(Array(captureKeys)),field(given,"captures")))return reject("Common fixed lexical interface join");
-    const auto kind=string(field(given,"kind")),declarationKind=string(field(decl,"kind"));
     if(actual.role==1?(kind!="construction-body"||declarationKind!="constructor"||owner.getAsNull()):
       kind=="method"?declarationKind!="method"||owner.getAsNull():kind!="source"||declarationKind!="function"||!owner.getAsNull())return reject("Common logical function role differs from actual ABI");
     const auto selected=memberRows.find(n);const Json *member=selected==memberRows.end()?nullptr:selected->second;
@@ -69,6 +72,7 @@ bool CommonCold::interfaces(){
     }
     functions.push_back(Object{{"id",id},{"name",actual.name},{"sourcePath",path(actual.source)},{"range",Object{{"start",actual.declaration.start},{"end",actual.declaration.end}}},
       {"declKey",decl},{"kind",kind},{"access",field(given,"access")},{"signatureHash",signature},{"returnType",returnType},
+      {"methodMinimumArgumentCount",field(abi,"methodMinimumArgumentCount")},
       {"parameters",std::move(parameters)},{"bindings",std::move(locals)},{"receiverBinding",std::move(receiverBinding)},{"ownerType",std::move(owner)},
       {"lexicalParent",std::move(parent)},{"lexicalEnvironment",std::move(lexical)},{"activationEnvironment",std::move(activation)},{"captures",std::move(captures)}});
   }

@@ -47,13 +47,13 @@ export function commonProgramPublicationScope(hir,spend=commonMeter()) {
   spend(hir.hostImports.length+hir.functions.length+hir.environments.length+hir.globals.length+hir.modules.length+hir.closure.roots.length+hir.closure.requiredRoots.length+1);
   const constructions=[];for(const type of hir.types){spend();if(type.construction){const row=type.construction;constructions.push({id:row.id,owner:type.id,base:type.base??null,kind:row.kind,functionId:row.functionId});}}
   constructions.sort((a,b)=>{spend(Math.ceil((a.id.length+b.id.length)/8)+1);return a.id<b.id?-1:a.id>b.id?1:0;});
-  return {profile:'common-program-fixed-v4',rootFile:hir.rootFile,declarationTypes,types:rows(types,selected,spend),constructions,
+  return {profile:'common-program-fixed-v5',rootFile:hir.rootFile,declarationTypes,types:rows(types,selected,spend),constructions,
     hostImports:hir.hostImports.map(({id,sourcePath,name,capabilityId,signatureHash,parameterTypes,returnType})=>{spend(parameterTypes.length+1);return {id,sourcePath,name,capabilityId,signatureHash,parameterTypes,returnType};}),
     hostContext:hir.hostContext?{contractDigest:hir.hostContext.contract.digest,buildIdentityDigest:hir.hostContext.identity.buildIdentity.digest}:null,
     functions:hir.functions.map(fn=>{spend(fn.parameters.length+fn.captures.length+2);const parameterTypes=fn.ownerType?[fn.ownerType]:[];for(const p of fn.parameters)parameterTypes.push(p.type);
       const captures=fn.captures.map(row=>captureKeys.get(row.binding));captures.sort((a,b)=>{spend(Math.ceil((a.length+b.length)/8)+1);return a<b?-1:a>b?1:0;});
       const owner=fn.kind==='construction-body'?types.get(fn.ownerType):null;
-      return {captures,lexicalParent:fn.lexicalParent,lexicalEnvironment:fn.lexicalEnvironment,activationEnvironment:fn.activationEnvironment,functionId:fn.id,declKey:fn.declKey,kind:fn.kind,access:fn.access,signatureHash:fn.signatureHash,parameterTypes,returnType:fn.returnType,
+      return {captures,lexicalParent:fn.lexicalParent,lexicalEnvironment:fn.lexicalEnvironment,activationEnvironment:fn.activationEnvironment,functionId:fn.id,declKey:fn.declKey,kind:fn.kind,access:fn.access,signatureHash:fn.signatureHash,parameterTypes,returnType:fn.returnType,methodMinimumArgumentCount:fn.methodMinimumArgumentCount,
         construction:owner?{id:owner.construction.id,owner:owner.id,base:owner.base??null,receiverIndex:0}:null};}),
     environments:hir.environments.map(env=>{spend(env.slots.length+1);return {id:env.id,owner:env.owner,parent:env.parent,slots:env.slots.map(({key,type,writable,kind})=>({key,type,writable,kind}))};}),
     globals:hir.globals.map(row=>({globalId:row.id,declKey:row.declKey,type:row.type,writable:row.writable})),

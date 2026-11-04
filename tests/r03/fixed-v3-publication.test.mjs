@@ -22,9 +22,9 @@ const rebind=publication=>{
 };
 const boundary=error=>error instanceof TypeError&&'code' in error;
 
-test('first publication binds complete fixed-v4 rows including explicit null capability',()=>{
-  const publication=make();assert.equal(publication.format.version,4);
-  assert.equal(publication.scope.profile,'common-program-fixed-v4');
+test('first publication binds complete fixed-v5 rows including explicit null capability',()=>{
+  const publication=make();assert.equal(publication.format.version,5);
+  assert.equal(publication.scope.profile,'common-program-fixed-v5');
   assert.deepEqual(publication.contracts.map(row=>row.functionId),hir.functions.map(fn=>fn.id));
   assert.equal(publication.scope.functions.length,hir.functions.length);
   assert.ok(publication.contracts.some(row=>row.returnOrigins===null),'Host-dependent return protocol stays unresolved');
@@ -45,7 +45,7 @@ test('same-group null rows cannot be removed even when all digests are recompute
 });
 
 test('old publication and graph formats are rejected at their actual cold boundaries',()=>{
-  for(const version of [2,3]){const old=copy(make());old.format.version=version;assert.throws(()=>api.verifyCommonProgramPublication(old,hir),boundary);}
+  for(const version of [2,3,4]){const old=copy(make());old.format.version=version;assert.throws(()=>api.verifyCommonProgramPublication(old,hir),boundary);}
   for(const version of [3,4]){const graph=copy(make()),row=graph.contracts.find(row=>row.returnOrigins!==null);row.returnOrigins.format.version=version;rebind(graph);
     assert.throws(()=>api.verifyCommonProgramPublication(graph,hir),error=>boundary(error)&&error.code==='return-origin-graph-boundary');}
 });

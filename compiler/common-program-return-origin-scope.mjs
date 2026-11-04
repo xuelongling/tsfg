@@ -5,8 +5,8 @@ import {readCommonReturnOriginGraph} from './common-program-return-origin-graph.
 import {canonical,sha256} from './identity.mjs';
 
 /** @typedef {{id:string,label:string,shape:{kind:string,fields?:{name:string,index:number}[]}}} ScopeType */
-/** @typedef {{functionId:string,kind:string,parameterTypes:string[],returnType:string,lexicalEnvironment:string|null,activationEnvironment:string|null,construction:import('./common-program-return-origin-graph.mjs').ConstructionProtocol|null}} ScopeFunction */
-/** @typedef {{profile:'common-program-fixed-v4',types:ScopeType[],functions:ScopeFunction[],constructions:import('./common-program-return-origin-graph.mjs').ConstructionRow[],globals:{globalId:string,type:string}[],environments:{id:string,parent:string|null,slots:{key:string,type:string,writable:boolean}[]}[]}} FixedScope */
+/** @typedef {{functionId:string,kind:string,parameterTypes:string[],returnType:string,methodMinimumArgumentCount:number|null,lexicalEnvironment:string|null,activationEnvironment:string|null,construction:import('./common-program-return-origin-graph.mjs').ConstructionProtocol|null}} ScopeFunction */
+/** @typedef {{profile:'common-program-fixed-v5',types:ScopeType[],functions:ScopeFunction[],constructions:import('./common-program-return-origin-graph.mjs').ConstructionRow[],globals:{globalId:string,type:string}[],environments:{id:string,parent:string|null,slots:{key:string,type:string,writable:boolean}[]}[]}} FixedScope */
 
 /**
  * PRECONDITION: scope has already passed fixed-scope semantic identity/hash,
@@ -25,7 +25,7 @@ export function commonReturnOriginScopeDirectories(admittedFixedScope,spend) {
   const symbol=value=>{spend(Math.ceil(value.length/8)+1);return value;};
   const scope=admittedFixedScope;
   symbol(scope.profile);
-  if(scope.profile!=='common-program-fixed-v4')throw new TypeError('return-origin-scope: fixed-v4 profile required');
+  if(scope.profile!=='common-program-fixed-v5')throw new TypeError('return-origin-scope: fixed-v5 profile required');
   spend(scope.types.length+scope.functions.length+scope.globals.length+scope.environments.length+1);
   /** @type {Map<string,{kind:string}>} */
   const types=new Map();

@@ -136,7 +136,7 @@ Json SourceModel::shape(const Json &row){
   if(row.getAsObject()->get("methods")){Array methods;for(const auto &m:items(field(row,"methods"))){const auto fid=string(m);
     if(!spend()||!need(functions.count(fid),"semantic method target missing"))return nullptr;const auto &fn=*functions.at(fid);Array parameters;
     for(const auto &a:items(field(fn,"parameters"))){if(!spend())return nullptr;parameters.push_back(label(string(field(a,"declaredType"))));}
-    methods.push_back(Object{{"name",field(fn,"name")},{"access",field(fn,"access")},{"parameters",std::move(parameters)},
+    methods.push_back(Object{{"name",field(fn,"name")},{"access",field(fn,"access")},{"minimumArgumentCount",int64_t(items(field(fn,"parameters")).size())},{"parameters",std::move(parameters)},
       {"returnType",label(string(field(fn,"returnType")))}});}out["methods"]=std::move(methods);}
   if(row.getAsObject()->get("construction")){Array parameters;
     for(const auto &a:items(field(field(field(row,"construction"),"signature"),"parameters"))){if(!spend())return nullptr;parameters.push_back(label(string(a)));}
@@ -204,6 +204,7 @@ bool SourceModel::identities(){
     for(const auto &a:items(field(fn,"parameters"))){if(!spend()||!need(typeIds.count(string(field(a,"declaredType"))),"parameter type differs"))return false;parameters.push_back(typeIds.at(string(field(a,"declaredType"))));}
     const auto result=string(field(fn,"returnType"));if(!need(typeIds.count(result),"function result type missing"))return false;
     Json signature=Object{{"parameters",std::move(parameters)},{"returns",typeIds.at(result)}};
+    if(kind=="method")(*signature.getAsObject())["minimumArgumentCount"]=int64_t(items(field(fn,"parameters")).size());
     signatures[id]=digest(std::string("tsfg.module-callable-signature.candidate.v1")+std::string(1,'\0')+canonical(signature));
     const auto name=canonical(Object{{"path",Json(Array(path))},{"kind",kind},{"name",field(fn,"name")}});
     functionIds[id]=digest(std::string("tsfg.module-callable-function.candidate.v1")+std::string(1,'\0')+canonical(Object{{"path",field(fn,"sourcePath")},{"name",name},{"signatureHash",signatures.at(id)}}));

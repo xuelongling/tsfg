@@ -102,6 +102,7 @@ Json SourceModel::projectFunction(const Json &fn){
   Object out{{"id",functionIds.at(id)},{"declKey",declKeys.at(id)},{"sourceBinding",id},{"sourcePath",field(fn,"sourcePath")},
 {"lexicalParent",field(fn,"lexicalParent").getAsNull()?Json(nullptr):Json(functionIds.at(string(field(fn,"lexicalParent"))))},{"declarationScope",field(fn,"declarationScope")},{"captures",field(fn,"captures")},
     {"name",field(fn,"name")},{"kind",kind},{"access",field(fn,"access")},{"signatureHash",signatures.at(id)},
+    {"methodMinimumArgumentCount",llvm::StringRef(kind)=="method"?Json(int64_t(items(field(fn,"parameters")).size())):Json(nullptr)},
     {"returnType",type(field(fn,"returnType"))},{"parameters",std::move(parameters)},{"bindings",std::move(bindings)},
     {"body",statements(field(fn,"body"))},{"range",field(fn,"declarationRange")},{"nameRange",field(fn,"nameRange")},
     {"returnAnnotationRange",field(fn,"returnAnnotationRange")}};

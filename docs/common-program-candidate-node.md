@@ -57,7 +57,7 @@ const core=emitCommonProgramCore(hir,publication,request);
 
 Later consumers retain the supplied publication: they verify it against the current complete Program rather than regenerate a narrower permission. Incoming scalar and function parameters keep their original parameter BindingId, lexical owner and shared environment cell. Callable signature compatibility supplies no closed target set or lifetime proof.
 
-The current private publication is version 4 (`common-program-fixed-v4`). Its
+The current private publication is version 5 (`common-program-fixed-v5`). Its
 complete owned scope binds the declaration, type, module, global, import/export,
 Env and construction directories together with fixed storage tables. The ordered
 group binds every function's signature, full upper, callable bounds and return
@@ -67,6 +67,24 @@ unavailable. Implicit constructors remain owned construction roles, rather than
 invented public function rows. Declaration identity excludes replaceable bodies
 and initialization source identities; each current body is checked independently
 against its fixed row.
+
+Ordinary method semantic shapes and canonical signature payloads require
+`minimumArgumentCount`, counting ordinary parameters without the receiver or
+lexical environment. HIR functions, Common ABI rows and fixed-scope functions
+carry the matching required `methodMinimumArgumentCount`: an integer for a
+method and explicit null for every nonmethod. Consumers compare the complete
+selected method shape, signature, ABI and fixed declaration; missing, mismatched
+or out-of-range minima reject. Inherited and nominal method views retain the
+finally selected declaration's complete signature and original owner/declaration
+provenance and anchors. A display name, runtimeKey or unselected wrapper cannot
+replace those facts.
+
+A parameter type containing undefined, including undefined alone, does not make
+that parameter optional. Source2/3 ordinary methods remain required-only and
+project an explicit minimum equal to their ordinary parameter count. Actual
+argument vectors and existing ordinary call gates remain unchanged. This
+metadata transport does not add omitted-argument calls, argument padding or
+ordinary parameter defaults/FDI; existing constructor FDI is unchanged.
 
 A null return graph means unavailable authority. It does not mean an empty graph
 or grant a return, capture or storage proof. A supplied graph must cover the
@@ -123,7 +141,7 @@ remain known while that reference body has no physical field route.
 
 Node metadata admission and publication identity retain their existing 100,000
 work allowance. Source, graph and body-effect analysis share the existing
-cumulative private Core5 physical allowance of 4,000,000, both at first publication and when
+cumulative private Core6 physical allowance of 4,000,000, both at first publication and when
 consuming a supplied publication. An inline, context or phase does not start a
 fresh budget. Per-operation fees remain charged.
 Old or mixed publication/graph formats and mismatched private Core identities
@@ -134,9 +152,12 @@ Source facts use the private v2 or v3 family with the matching Source descriptor
 owned HIR uses its separate matching v2 or v3 descriptor. The v3 Source and HIR
 formats retain ordered constructor parameter initialization and actual omitted
 arguments. Existing v2 packets retain their original identities. Static Core
-carries the `tsfg.core-program-development` v5 marker and exact private
-0.12 header. The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
+carries the `tsfg.core-program-development` v6 marker and exact Common19
+development exchange identity (`0.19.0`, prospective packet capability 1019). The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
 
+Core6, Common19 and publication5/fixed-v5 remain unpublished private development
+formats. Common19 has only the prospective producer/passive metadata reader
+binding; it does not adopt the registered formal wire17 loader, State or VM.
 The formal Frontend/HIR/bytecode registries, Source lock and admission remain unchanged by this private candidate. Candidate metadata never derives its private header from that registry. Shared MLIR string escaping has its own module so the budgeted printer does not import the scalar emitter and its formal registry.
 
 Run the pure Node regressions with:
