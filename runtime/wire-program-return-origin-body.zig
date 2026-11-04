@@ -135,6 +135,58 @@ const CFG = struct {
         }
         self.b.pending = .archive_environment; return null;
     }
+    // Shared typed lexical projection for ordinary and receiver bodies.
+    fn lexical(self: *CFG, op: *const wire.instruction.Instruction, prior: Flow, function_id: origin.Symbol, block_index: usize, ordinal: usize) context.Error!Flow {
+        const c = self.b.c; const a = self.b.allocator; const v = &c.program.tables.mode.common;
+        const f = self.f; const builder = self.b; const budget = builder.budget; var flow = prior;
+        switch (op.data) {
+            .environment_alloc => |data| {
+                const row = try self.environment(data.environment) orelse return flow;
+                const parent = if (op.operands.len == 0) null else try self.one(self.registerRef(op.operands[0]));
+                const value = try builder.value(.{ .environment_create = .{ .layout = row.id, .parent = parent, .site = try self.site(function_id, op, block_index, ordinal), .control = flow.control } });
+                try self.define(op.result.?, value, flow.control);
+            },
+            .environment_parent => {
+                const layout = f.registers[@intFromEnum(op.result.?)].carrier.environment;
+                const row = try self.environment(layout) orelse return flow;
+                const value = try builder.value(.{ .environment_parent = .{ .layout = row.id, .bases = try self.one(self.registerRef(op.operands[0])), .control = flow.control } });
+                try self.define(op.result.?, value, flow.control);
+            },
+            inline .environment_init, .environment_load, .environment_store => |data| {
+                const layout = f.registers[@intFromEnum(op.operands[0])].carrier.environment;
+                const environment_row = try self.environment(layout) orelse return flow;
+                const slot = v.closures.environments[@intFromEnum(layout)].slots[@intFromEnum(data.slot)];
+                const key = try refs.symbol(c, a, slot.key);
+                var selected: ?*const origin.EnvironmentSlot = null;
+                for (environment_row.slots) |*entry| {
+                    try c.step(); if (budget.equal(entry.key, key) catch |err| return refs.graphFailure(err)) { selected = entry; break; }
+                }
+                const entry = selected orelse { builder.pending = .archive_environment; return flow; };
+                const actual_view = try builder.typeSymbol(slot.@"type") orelse return flow;
+                if (!(budget.equal(entry.@"type", actual_view) catch |err| return refs.graphFailure(err))) { builder.pending = .archive_environment; return flow; }
+                const bases = try self.one(self.registerRef(op.operands[0]));
+                if (op.data == .environment_load) {
+                    const value = try builder.value(.{ .capture = .{ .@"type" = entry.@"type", .id = entry.key, .layout = environment_row.id, .environment = bases, .heap = flow.heap, .control = flow.control } });
+                    try self.define(op.result.?, value, flow.control);
+                } else {
+                    try c.charge(key.len + environment_row.id.len + 14);
+                    const selector = try std.mem.concat(a, u8, &.{ "capture:", entry.key });
+                    const view = try std.mem.concat(a, u8, &.{ "env:", environment_row.id });
+                    // A slot write addresses its exact lexical key. It is not
+                    // a write permission on an opaque environment root.
+                    flow.heap = try self.heap(.{ .store = .{ .previous = flow.heap, .bases = bases, .selector = selector, .view = view, .values = try self.one(self.registerRef(op.operands[1])), .control = flow.control, .initialize = op.data == .environment_init } });
+                }
+            },
+            .function_make => |data| {
+                const row = try self.functionRow(data.function) orelse return flow;
+                const view = try builder.view(f, op.result.?) orelse return flow;
+                const value = try builder.value(.{ .code = .{ .@"type" = view, .function_id = row.id, .environment = if (row.lexical_environment != null) try self.one(self.registerRef(op.operands[0])) else null, .control = flow.control } });
+                try self.define(op.result.?, value, flow.control);
+            },
+            else => unreachable,
+        }
+        return flow;
+    }
     fn functionRow(self: *CFG, index: t.FunctionRef) context.Error!?*const origin.FunctionRow {
         const id = try refs.symbol(self.b.c, self.b.allocator, self.b.c.program.functions[@intFromEnum(index)].id);
         const found = origin.findFunction(self.b.directory, id, self.b.budget) catch |err| return refs.graphFailure(err);
@@ -324,15 +376,18 @@ const ReceiverMode = enum { certificate, control, effects };
 fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const origin.Directory, budget: *origin.Budget, result: *Projection, mode: ReceiverMode) context.Error!void {
     const control_only = mode == .control;
     const v = &c.program.tables.mode.common; const f = &c.program.functions[@intFromEnum(function)]; const abi = &v.abis[@intFromEnum(f.abi)];
-    if (abi.lexical_environment != null or abi.construction == null or abi.receiver_frame == null) { result.pending = .entry_protocol; return; }
+    if (abi.construction == null or abi.receiver_frame == null) { result.pending = .entry_protocol; return; }
+    const hidden: usize = if (abi.lexical_environment != null) 1 else 0;
     // Every block/op has already passed the same Context's SSA AND receiver
     // protocol checker. These checks only bound this projection's semantics.
-    for (f.registers) |*reg| { try c.step(); switch (reg.carrier) { .domain, .@"type", .payload, .receiver, .initialization, .cell => {}, else => { result.pending = .entry_protocol; return; } } }
+    // All seven owned carrier variants are supported; retain their original
+    // per-register budget charge without an unreachable enum fallback.
+    try c.charge(f.registers.len);
     if (mode == .certificate) for (abi.parameters, abi.argument_types, 0..) |binding, incoming, index| {
         // This joins the graph parameter annotation to its admitted interface.
         // It does not constrain or convert the actual Data category.
         try c.charge(3); const declared = v.storage.bindings[@intFromEnum(binding)].@"type";
-        if (incoming != declared or f.registers[@intFromEnum(f.blocks[0].parameters[index + 1])].view != declared) { result.pending = .raw_input; return; }
+        if (incoming != declared or f.registers[@intFromEnum(f.blocks[0].parameters[hidden + index + 1])].view != declared) { result.pending = .raw_input; return; }
     };
     for (f.blocks) |*block| for (block.instructions) |*op| {
         try c.step();
@@ -347,7 +402,8 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
             .receiver_create, .receiver_child, .receiver_allocate, .receiver_bind, .receiver_get, .receiver_result, .initialize_begin, .initialize_end,
             .br, .@"return", .eh_raise, .eh_unreachable => {},
-            .eh_cell, .eh_load, .eh_store, .cond_br, .eh_route, .domain_refine, .eh_assertion, .eh_pack, .eh_carrier, .eh_presence_widen, .domain_copy, .initialize_field => {},
+            .eh_cell, .eh_load, .eh_store, .cond_br, .eh_route, .domain_refine, .eh_assertion, .eh_pack, .eh_carrier, .eh_presence_widen, .domain_copy, .initialize_field,
+            .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => {},
             else => { result.pending = .operation; return; },
         }
     };
@@ -361,11 +417,16 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     if (root.function != function) { result.pending = .entry_protocol; return; }
     try cfg.start();
     if (b.pending) |reason| { result.pending = reason; return; }
+    if (abi.lexical_environment) |layout_ref| {
+        const row = try cfg.environment(layout_ref) orelse { result.pending = b.pending; return; };
+        const environment_input = try b.value(.{ .environment_input = .{ .layout = row.id } });
+        try cfg.insert(&cfg.values[@intFromEnum(f.blocks[0].parameters[0])], environment_input);
+    }
     const input = try b.value(.receiver_input);
     const frame_register = f.blocks[0].parameters[abi.receiver_frame.?];
     try cfg.insert(&cfg.values[@intFromEnum(frame_register)], input);
     for (abi.parameters, 0..) |_, index| {
-        try c.step(); const reg = f.blocks[0].parameters[index + 1];
+        try c.step(); const reg = f.blocks[0].parameters[hidden + index + 1];
         // Actual data categories remain arbitrary: neither raw nor static Type
         // is an entry conversion or an actual-tag proof. Control frames cannot
         // be stored in a language Cell under the prerequisite SSA protocol.
@@ -398,6 +459,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
         for (block.instructions, 0..) |*op, ordinal| {
             try c.step(); switch (op.data) {
                 .fuel => {},
+                .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => flow = try cfg.lexical(op, flow, function_id, block_index, ordinal),
                 .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal => {
                     const reg = op.result.?; const view = if (f.registers[@intFromEnum(reg)].view) |ref| try b.typeSymbol(ref) else null;
                     if (b.pending != null) break;
@@ -594,49 +656,7 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
         for (block.instructions, 0..) |*op, ordinal| {
         try c.step(); switch (op.data) {
             .fuel => {}, // Request fuel control is not a Graph5 language exit.
-            .environment_alloc => |data| {
-                const row = try cfg.environment(data.environment) orelse break;
-                const parent = if (op.operands.len == 0) null else try cfg.one(cfg.registerRef(op.operands[0]));
-                const value = try builder.value(.{ .environment_create = .{ .layout = row.id, .parent = parent, .site = try cfg.site(function_id, op, block_index, ordinal), .control = flow.control } });
-                try cfg.define(op.result.?, value, flow.control);
-            },
-            .environment_parent => {
-                const layout = f.registers[@intFromEnum(op.result.?)].carrier.environment;
-                const row = try cfg.environment(layout) orelse break;
-                const value = try builder.value(.{ .environment_parent = .{ .layout = row.id, .bases = try cfg.one(cfg.registerRef(op.operands[0])), .control = flow.control } });
-                try cfg.define(op.result.?, value, flow.control);
-            },
-            inline .environment_init, .environment_load, .environment_store => |data| {
-                const layout = f.registers[@intFromEnum(op.operands[0])].carrier.environment;
-                const environment_row = try cfg.environment(layout) orelse break;
-                const slot = v.closures.environments[@intFromEnum(layout)].slots[@intFromEnum(data.slot)];
-                const key = try refs.symbol(c, a, slot.key);
-                var selected: ?*const origin.EnvironmentSlot = null;
-                for (environment_row.slots) |*entry| {
-                    try c.step(); if (budget.equal(entry.key, key) catch |err| return refs.graphFailure(err)) { selected = entry; break; }
-                }
-                const entry = selected orelse { builder.pending = .archive_environment; break; };
-                const actual_view = try builder.typeSymbol(slot.@"type") orelse break;
-                if (!(budget.equal(entry.@"type", actual_view) catch |err| return refs.graphFailure(err))) { builder.pending = .archive_environment; break; }
-                const bases = try cfg.one(cfg.registerRef(op.operands[0]));
-                if (op.data == .environment_load) {
-                    const value = try builder.value(.{ .capture = .{ .@"type" = entry.@"type", .id = entry.key, .layout = environment_row.id, .environment = bases, .heap = flow.heap, .control = flow.control } });
-                    try cfg.define(op.result.?, value, flow.control);
-                } else {
-                    try c.charge(key.len + environment_row.id.len + 14);
-                    const selector = try std.mem.concat(a, u8, &.{ "capture:", entry.key });
-                    const view = try std.mem.concat(a, u8, &.{ "env:", environment_row.id });
-                    // A slot write addresses its exact lexical key. It is not
-                    // a write permission on an opaque environment root.
-                    flow.heap = try cfg.heap(.{ .store = .{ .previous = flow.heap, .bases = bases, .selector = selector, .view = view, .values = try cfg.one(cfg.registerRef(op.operands[1])), .control = flow.control, .initialize = op.data == .environment_init } });
-                }
-            },
-            .function_make => |data| {
-                const row = try cfg.functionRow(data.function) orelse break;
-                const view = try builder.view(f, op.result.?) orelse break;
-                const value = try builder.value(.{ .code = .{ .@"type" = view, .function_id = row.id, .environment = if (row.lexical_environment != null) try cfg.one(cfg.registerRef(op.operands[0])) else null, .control = flow.control } });
-                try cfg.define(op.result.?, value, flow.control);
-            },
+            .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => flow = try cfg.lexical(op, flow, function_id, block_index, ordinal),
             .eh_invoke => |call| try cfg.invoke(call.callee, op, flow, function_id, block_index, ordinal, false),
             .eh_invoke_indirect => {
                 var found = false;

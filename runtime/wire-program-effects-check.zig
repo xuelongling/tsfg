@@ -818,7 +818,7 @@ const UpperGraph = struct {
         }
         return result;
     }
-    fn ordinaryGraph(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, directory: *const origin_model.Directory, function_id: origin_model.Symbol, graph: *const origin_model.Graph, budget: *origin_model.Budget, allocator: std.mem.Allocator, returned: *Owners, thrown: *Owners) Error!bool {
+    fn fixedOwnersGraph(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, directory: *const origin_model.Directory, function_id: origin_model.Symbol, graph: *const origin_model.Graph, budget: *origin_model.Budget, allocator: std.mem.Allocator, receiver: ?*const construction_origins.Analysis, returned: *Owners, thrown: *Owners) Error!bool {
         const c = self.collector.c; const publication_rows = self.collector.common().authority.fixed_publication.publication.contracts;
         try c.charge(publication_rows.len + 1); const rows = try allocator.alloc(fixed_owners.Fixed, publication_rows.len);
         for (publication_rows, rows) |*row, *into| {
@@ -830,7 +830,10 @@ const UpperGraph = struct {
             into.* = .{ .function_id = try publication_refs.symbol(c, allocator, row.function_id), .graph = if (row.return_origins) |*value| value else null, .parameters = parameters, .captures = captures, .may_throw = row.upper.facets.may_throw };
         }
         const physical = try self.physicalFields(allocator, directory);
-        var analysis = fixed_owners.analyze(c.allocator, directory, physical, function_id, graph, rows, budget) catch |err| return publication_refs.graphFailure(err); defer analysis.deinit();
+        var analysis = (if (receiver) |flow|
+            fixed_owners.analyzeReceiver(c.allocator, directory, physical, function_id, graph, rows, budget, flow)
+        else fixed_owners.analyze(c.allocator, directory, physical, function_id, graph, rows, budget)) catch |err| return publication_refs.graphFailure(err);
+        defer analysis.deinit();
         if (analysis.pending != null or (full.facets.may_throw and !analysis.language_live)) return self.noFixedBodyProof(full, returned, thrown);
         const invocation = effect_env.Invocation{ .caller = self.function, .block = self.block, .instruction = self.instruction, .target = target };
         // All incoming source relationships are borrowed from the pre-call
@@ -887,10 +890,7 @@ const UpperGraph = struct {
         // The immutable complete fixed contract vector is solely the upper.
         const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
         if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
-        if (!receiver) return self.ordinaryGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), returned, thrown);
-        for (full.captures) |capture| {
-            try c.step(); if (capture.read or capture.write or capture.structural) return self.noFixedBodyProof(full, returned, thrown);
-        }
+        if (!receiver) return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), null, returned, thrown);
         // Receiver return interpretation is owned by the independently checked
         // construction-frame protocol. It is not selected actual entrances or
         // the cached effect proof. Complete current-body inclusion above stays
@@ -913,40 +913,7 @@ const UpperGraph = struct {
             var projected:Owners=.{}; defer projected.deinit(c.allocator);
             try self.projectSummary(&origin,target,op,state,offset,&projected); try self.mark(&projected,.write);
         }
-        var normal: Owners = .{}; defer normal.deinit(c.allocator);
-        var language: Owners = .{}; defer language.deinit(c.allocator);
-        const outputs = [_][]const construction_origins.Atom{ analysis.normal, analysis.language };
-        const into = [_]*Owners{ &normal, &language };
-        for (outputs, into) |atoms, owners| for (atoms) |atom| {
-            try c.step(); switch (atom.source) {
-                .allocation, .language_error => { _ = try owners.add(c, .local); },
-                .node => |id| switch (graph.nodes[id]) {
-                    .parameter => |row| { _ = try owners.add(c, .{ .parameter = row.index }); },
-                    .global => |row| {
-                        var found = false;
-                        for (collector.common().modules.globals, 0..) |global, index| {
-                            try c.charge(72 + row.id.len / 8 + 1);
-                            var text: [71]u8 = undefined; @memcpy(text[0..7], "sha256:");
-                            const hex = std.fmt.bytesToHex(global.id, .lower); @memcpy(text[7..], &hex);
-                            if (std.mem.eql(u8, row.id, &text)) { _ = try owners.add(c, .{ .global = @enumFromInt(index) }); found = true; break; }
-                        }
-                        try c.require(found);
-                    },
-                    .local => { _ = try owners.add(c, .local); },
-                    .literal, .nonowning => owners.nonowning = true,
-                    .code => { _ = try owners.makeOpaque(c); },
-                    else => unreachable,
-                },
-            }
-        };
-        if (analysis.normal_live) {
-            if (analysis.normal.len == 0) normal.nonowning = true;
-            try self.projectSummary(&normal, target, op, state, offset, returned);
-        } else _ = try returned.makeOpaque(c);
-        if (full.facets.may_throw) {
-            if (analysis.language_live and analysis.language.len != 0) try self.projectSummary(&language, target, op, state, offset, thrown) else _ = try thrown.makeOpaque(c);
-        }
-        return true;
+        return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), &analysis, returned, thrown);
     }
     fn consume(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, state: *UpperState, incoming: *const UpperState, offset: usize, prefix: bool, returned: *Owners, thrown: *Owners, completions: *UpperCompletions) Error!void {
         const collector = self.collector; const c = collector.c;
@@ -2116,3 +2083,168 @@ test "a returned local Array with parameter contents stays pending at a later fu
     try std.testing.expect(fixture.collector.fixed_upper_origin_pending);
 }
 // END independent fixed-capture adapter DTO tests.
+
+test "receiver shared owner exporter preserves saved parent slots and the callable ENV pair" {
+    const dto = struct {
+        const reference = "sha256:" ++ "66" ** 32;
+        const callable = "sha256:" ++ "88" ** 32;
+        const caller = "sha256:" ++ "11" ** 32;
+        const child = "sha256:" ++ "22" ** 32;
+        const constructor = "sha256:" ++ "33" ** 32;
+        const parent_env = "sha256:" ++ "77" ** 32;
+        const child_env = "sha256:" ++ "99" ** 32;
+        const foreign_slot = "sha256:" ++ "55" ** 32;
+        const local_slot = "sha256:" ++ "aa" ** 32;
+        const role = "sha256:" ++ "bb" ** 32;
+        const directory = origin_model.Directory{
+            .types = &.{ .{ .id = reference, .kind = .reference }, .{ .id = callable, .kind = .function } },
+            .functions = &.{
+                .{ .id = caller, .kind = .source, .parameter_types = &.{reference}, .return_type = reference, .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = parent_env, .construction = null },
+                .{ .id = child, .kind = .source, .parameter_types = &.{}, .return_type = reference, .environment_metadata_complete = true, .lexical_environment = child_env, .activation_environment = null, .construction = null },
+                .{ .id = constructor, .kind = .construction_body, .parameter_types = &.{ reference, reference }, .return_type = reference, .environment_metadata_complete = true, .lexical_environment = parent_env, .activation_environment = child_env, .construction = .{ .id = role, .owner = reference, .base = null, .receiver_index = 0 } },
+            },
+            .environments = &.{
+                .{ .id = parent_env, .parent = null, .slots = &.{.{ .key = foreign_slot, .@"type" = reference, .writable = true }} },
+                .{ .id = child_env, .parent = parent_env, .slots = &.{.{ .key = local_slot, .@"type" = reference, .writable = true }} },
+            },
+            .constructions = &.{.{ .id = role, .owner = reference, .base = null, .kind = .explicit, .function_id = constructor }},
+            .globals = &.{}, .fields = &.{},
+        };
+        const graph = origin_model.Graph{
+            .nodes = &.{
+                .{ .environment_input = .{ .layout = parent_env } }, .receiver_input,
+                .{ .parameter = .{ .@"type" = reference, .index = 1 } },
+                .{ .environment_create = .{ .layout = child_env, .parent = &.{0}, .site = "new-child-env", .control = 0 } },
+                .{ .capture = .{ .@"type" = reference, .id = local_slot, .layout = child_env, .environment = &.{3}, .heap = 1, .control = 0 } },
+                .{ .code = .{ .@"type" = callable, .function_id = child, .environment = &.{3}, .control = 0 } },
+                .{ .copy = .{ .@"type" = callable, .bases = &.{5}, .site = "copy-child-code", .heap = 2, .control = 0 } },
+                .{ .receiver_value = .{ .@"type" = reference, .action = 4 } },
+                .{ .receiver_value = .{ .@"type" = null, .action = 5 } },
+                .{ .environment_parent = .{ .layout = parent_env, .bases = &.{3}, .control = 0 } },
+            },
+            .heaps = &.{
+                .entry,
+                .{ .store = .{ .previous = 0, .bases = &.{3}, .selector = "capture:" ++ local_slot, .view = "env:" ++ child_env, .values = &.{2}, .control = 0, .initialize = true } },
+                .{ .store = .{ .previous = 1, .bases = &.{3}, .selector = "capture:" ++ local_slot, .view = "env:" ++ child_env, .values = &.{4}, .control = 0, .initialize = false } },
+                .{ .copy = .{ .previous = 2, .value = 6 } },
+                .{ .receiver_action = .{ .previous = 3, .control = 0, .frames = &.{1}, .action = .result, .operands = &.{6}, .completion = .normal } },
+                .{ .receiver_action = .{ .previous = 3, .control = 0, .frames = &.{1}, .action = .result, .operands = &.{6}, .completion = .language } },
+            },
+            .controls = &.{ .entry, .{ .receiver_completion = .{ .action = 4 } }, .{ .receiver_completion = .{ .action = 5 } } },
+            .calls = &.{}, .normal = &.{7}, .language = &.{8},
+            .exits = .{ .normal = &.{.{ .heap = 4, .control = 1 }}, .language = &.{.{ .heap = 5, .control = 2 }} }, .accesses = &.{},
+        };
+    };
+    var fixture: CaptureAdapterFixture = undefined;
+    fixture.init(.{ .read = true, .write = true, .structural = true }, .{}, .{ .write = true }, false);
+    var aliases: [3]AliasSummary = .{ .{}, .{}, .{} };
+    defer for (&aliases) |*summary| summary.deinit(fixture.c.allocator);
+    fixture.collector.aliases = &aliases;
+    // This is literal metadata at the production adapter seam, with no body,
+    // SSA/canonical-admission or ActualAnalysis claim. The same creator target
+    // owns the Directory, ABI, fixed contract, receiver and exported call.
+    var bindings: [4]CaptureAdapterFixture.Storage.CommonBinding = undefined;
+    @memcpy(bindings[0..2], &fixture.bindings);
+    bindings[2] = fixture.bindings[0]; bindings[2].id = "constructor-value"; bindings[2].name = "constructor-value";
+    bindings[2].owner = .{ .param = @enumFromInt(2) };
+    bindings[3] = bindings[2]; bindings[3].id = "constructor-receiver"; bindings[3].name = "this";
+    bindings[3].owner = .{ .receiver = @enumFromInt(2) }; bindings[3].declaration_kind = null;
+    fixture.program.tables.mode.common.storage.bindings = &bindings;
+    fixture.program.tables.mode.common.members.constructions = &.{.{
+        .id = @splat(0xbb), .owner = @enumFromInt(0), .function = @enumFromInt(2), .kind = .explicit, .origin = bindings[2].origin.?,
+        .parameters = &.{.{ .binding = @enumFromInt(2), .inherited_from = null, .origin = bindings[2].origin.?, .@"type" = @enumFromInt(0) }},
+        .signature = .{ .parameters = &.{@enumFromInt(0)}, .return_type = @enumFromInt(0) },
+        .source_signature = .{ .id = @splat(0x99), .origin = bindings[2].origin.? },
+        .implicit_forward = null, .initialization_phase = .@"before-body", .initialization_fields = &.{}, .access = .public,
+    }};
+    const EnvironmentRow = CaptureAdapterFixture.EnvironmentRow;
+    const environments = [_]EnvironmentRow{ fixture.environment_rows[0],
+        .{ .id = @splat(0x99), .owner = @enumFromInt(2), .parent = @enumFromInt(0), .slots = &.{.{ .binding = @enumFromInt(2), .key = @splat(0xaa), .kind = .parameter, .@"type" = @enumFromInt(0), .writable = true }} },
+    };
+    fixture.program.tables.mode.common.closures.environments = &environments;
+    fixture.program.tables.mode.common.storage.environments = &.{
+        .{ .environment = @enumFromInt(0), .byte_size = 8, .alignment = 8, .reference_count = 1, .parent_offset = null, .slot_offsets = &.{0} },
+        .{ .environment = @enumFromInt(1), .byte_size = 16, .alignment = 8, .reference_count = 2, .parent_offset = 0, .slot_offsets = &.{8} },
+    };
+    fixture.functions[2].role = .construction_body;
+    fixture.abis[2].parameters = &.{@enumFromInt(2)}; fixture.abis[2].argument_types = &.{@enumFromInt(0)};
+    fixture.abis[2].receiver = @enumFromInt(3); fixture.abis[2].construction = @enumFromInt(0); fixture.abis[2].receiver_frame = 1;
+    fixture.abis[2].lexical_environment = @enumFromInt(0);
+    fixture.abis[2].physical_parameters = &.{ .{ .environment = @enumFromInt(0) }, .{ .receiver = @enumFromInt(0) }, .{ .@"type" = @enumFromInt(0) } };
+    fixture.abis[1].lexical_environment = @enumFromInt(1); fixture.abis[1].physical_parameters = &.{.{ .environment = @enumFromInt(1) }};
+    fixture.closures[1].parent = @enumFromInt(2); fixture.closures[1].lexical_environment = @enumFromInt(1);
+    fixture.closures[1].captures = &.{.{ .environment = @enumFromInt(1), .slot = @enumFromInt(0) }};
+    fixture.closures[2].parent = @enumFromInt(0); fixture.closures[2].lexical_environment = @enumFromInt(0); fixture.closures[2].activation_environment = @enumFromInt(1);
+    fixture.target_capture[0].slot = @splat(0xaa);
+    fixture.contracts[2].return_origins = dto.graph;
+    fixture.contracts[2].upper.parameters = &.{
+        .{ .index = 0, .read = false, .write = false, .structural = false },
+        .{ .index = 1, .read = false, .write = false, .structural = false },
+    };
+    fixture.contracts[2].upper.captures = &.{
+        .{ .slot = @splat(0x55), .read = true, .write = true, .structural = true },
+        .{ .slot = @splat(0xaa), .read = true, .write = true, .structural = true },
+    };
+    fixture.contracts[2].upper.facets.allocation = true; fixture.contracts[2].upper.facets.managed_reference = true; fixture.contracts[2].upper.facets.escape = true;
+    fixture.contracts[0].upper.facets = fixture.contracts[2].upper.facets;
+    fixture.program.tables.mode.common.authority.fixed_publication.dependencies = &.{
+        .{ .function_id = @splat(0x11), .callees = &.{ .{ .function_id = @splat(0x22), .digest = @splat(0x44) }, .{ .function_id = @splat(0x33), .digest = @splat(0x55) } }, .hosts = &.{} },
+        .{ .function_id = @splat(0x22), .callees = &.{}, .hosts = &.{} },
+        .{ .function_id = @splat(0x33), .callees = &.{}, .hosts = &.{} },
+    };
+    var capture_indices: [4]?Capture = .{ null, .{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) }, .{ .environment = @enumFromInt(1), .slot = @enumFromInt(0) }, null };
+    var managed: [4]Managed = .{ .empty, .empty, .empty, .empty };
+    fixture.collector.captures = &capture_indices; fixture.collector.managed = &managed;
+    var budget = origin_model.Budget{ .context = &fixture.c, .charge = publication_refs.graphCharge };
+    try origin_model.validateDirectory(fixture.c.allocator, &dto.directory, &budget);
+    const validation = try origin_model.validateGraph(fixture.c.allocator, &dto.directory, dto.constructor, &dto.graph, &budget);
+    try std.testing.expect(validation == .pending); try std.testing.expectEqual(origin_model.Pending.construction_frame, validation.pending);
+    var receiver = try construction_origins.analyzeReturns(fixture.c.allocator, &dto.directory, &dto.graph, &budget, dto.constructor); defer receiver.deinit();
+    try std.testing.expectEqual(@as(?construction_origins.Pending, null), receiver.pending);
+    var state = try fixture.saved(.{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } }, true); defer state.deinit(&fixture.c);
+    state.values[2].nonowning = true; // The physical frame is never a Data owner.
+    var incoming = try UpperState.clone(&fixture.c, &state); defer incoming.deinit(&fixture.c);
+    const creator_op = model.instruction.Instruction{ .source = .{ .source = @enumFromInt(0), .start = 0, .end = 1 }, .result = @enumFromInt(2), .operands = &.{ @enumFromInt(1), @enumFromInt(2), @enumFromInt(0) },
+        .data = .{ .eh_invoke = .{ .callee = @enumFromInt(2), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var graph = UpperGraph{ .collector = &fixture.collector, .function = @enumFromInt(0) };
+    const full = try fixture.collector.consumeUpper(@enumFromInt(0), @enumFromInt(2));
+    var arena = std.heap.ArenaAllocator.init(fixture.c.allocator); defer arena.deinit();
+    var returned: Owners = .{}; defer returned.deinit(fixture.c.allocator);
+    var thrown: Owners = .{}; defer thrown.deinit(fixture.c.allocator);
+    try std.testing.expect(try graph.fixedOwnersGraph(@enumFromInt(2), creator_op, &incoming, &state, 1, full, &dto.directory, dto.constructor, &dto.graph, &budget, arena.allocator(), &receiver, &returned, &thrown));
+    try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    for (returned.items.items) |owner| try std.testing.expect(owner != .unresolved);
+    const pair = returned.environments.callables.getPtr(@enumFromInt(1)).?;
+    try std.testing.expect(!returned.environments.callable_unknown and !pair.unknown);
+    try std.testing.expectEqual(@as(usize, 1), pair.items.items.len);
+    const child_origin = pair.items.items[0]; try std.testing.expect(child_origin.source == .fixed);
+    try std.testing.expectEqual(@as(t.FunctionRef, @enumFromInt(2)), child_origin.source.fixed.invocation.target);
+    const parents = state.parents.getPtr(child_origin).?;
+    try std.testing.expectEqual(@as(usize, 1), parents.items.items.len);
+    try std.testing.expect(parents.items.items[0].source == .birth);
+    const contents = state.slots.getPtr(.{ .binding = @enumFromInt(2), .environment = child_origin }).?;
+    try std.testing.expect(contents.items.items.len == 1 and contents.items.items[0] == .parameter);
+    try std.testing.expectEqual(@as(usize, 0), contents.items.items[0].parameter);
+    try state.values[2].replace(&fixture.c, &returned);
+    var before_child = try UpperState.clone(&fixture.c, &state); defer before_child.deinit(&fixture.c);
+    const child_op = model.instruction.Instruction{ .source = creator_op.source, .result = null, .operands = &.{@enumFromInt(2)},
+        .data = .{ .eh_invoke_indirect = .{ .callable = @enumFromInt(1), .normal = @enumFromInt(0), .exceptional = @enumFromInt(0) } } };
+    var child_return: Owners = .{}; defer child_return.deinit(fixture.c.allocator);
+    var child_throw: Owners = .{}; defer child_throw.deinit(fixture.c.allocator); var completions: UpperCompletions = .{};
+    try graph.consume(@enumFromInt(1), child_op, &state, &before_child, 1, false, &child_return, &child_throw, &completions);
+    try std.testing.expect(!fixture.collector.fixed_upper_origin_pending);
+    before_child.values[2].environments.callable_unknown = true;
+    try graph.consume(@enumFromInt(1), child_op, &state, &before_child, 1, false, &child_return, &child_throw, &completions);
+    try std.testing.expect(fixture.collector.fixed_upper_origin_pending);
+    fixture.collector.fixed_upper_origin_pending = false;
+    // Complete capture flags still transfer when the immutable graph did not
+    // explicitly read the parent slot. A caller child key cannot replace p.
+    inline for (.{ "read", "write", "structural" }) |flag| {
+        @field(fixture.parameter[0], flag) = false;
+        var destination = try UpperState.clone(&fixture.c, &incoming); defer destination.deinit(&fixture.c);
+        var rejected: Owners = .{}; defer rejected.deinit(fixture.c.allocator);
+        var rejected_throw: Owners = .{}; defer rejected_throw.deinit(fixture.c.allocator);
+        try std.testing.expectError(error.InvalidShape, graph.fixedOwnersGraph(@enumFromInt(2), creator_op, &incoming, &destination, 1, full, &dto.directory, dto.constructor, &dto.graph, &budget, arena.allocator(), &receiver, &rejected, &rejected_throw));
+        @field(fixture.parameter[0], flag) = true;
+    }
+}

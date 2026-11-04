@@ -526,8 +526,8 @@ const ReceiverCertificate = struct {
                     id = row.inputs[0];
                 },
                 .receiver_value => |row| { if (self.analyses[side].action_results[row.action].len == 0) return .dead; terminal = true; break; },
-                inline .copy, .receiver_frame => |row| { if (try self.controlView(side, row.control) != .id) return .pending; terminal = true; break; },
-                .receiver_input, .parameter, .literal, .nonowning => { terminal = true; break; },
+                inline .copy, .receiver_frame, .environment_create, .environment_parent, .environment_component, .capture, .code, .projection => |row| { if (try self.controlView(side, row.control) != .id) return .pending; terminal = true; break; },
+                .receiver_input, .parameter, .literal, .nonowning, .environment_input, .global, .local => { terminal = true; break; },
                 else => return .pending,
             }
         }
@@ -545,7 +545,7 @@ const ReceiverCertificate = struct {
                     const predicate = (try self.controlView(side, row.control)).id;
                     if (graph.controls[predicate] != .entry) {
                         const same = switch (core) {
-                            inline .copy, .receiver_frame => |controlled| blk: { const intrinsic = try self.controlView(side, controlled.control); break :blk intrinsic == .id and intrinsic.id == predicate; },
+                            inline .copy, .receiver_frame, .environment_create, .environment_parent, .environment_component, .capture, .code, .projection => |controlled| blk: { const intrinsic = try self.controlView(side, controlled.control); break :blk intrinsic == .id and intrinsic.id == predicate; },
                             .receiver_value => |value_row| graph.controls[predicate] == .receiver_completion and graph.controls[predicate].receiver_completion.action == value_row.action,
                             else => false,
                         };
@@ -619,7 +619,13 @@ const ReceiverCertificate = struct {
                 const x = a.nodes[left]; const y = b.nodes[right];
                 if (std.meta.activeTag(x) != std.meta.activeTag(y)) break :blk false;
                 break :blk switch (x) {
-                    .receiver_input, .parameter, .literal, .nonowning => try exactEquation(model.Value, x, y, self.budget),
+                    .receiver_input, .parameter, .literal, .nonowning, .environment_input, .global, .local => try exactEquation(model.Value, x, y, self.budget),
+                    .environment_create => |row| try self.budget.equal(row.layout, y.environment_create.layout) and (row.parent == null) == (y.environment_create.parent == null),
+                    .environment_parent => |row| try self.budget.equal(row.layout, y.environment_parent.layout),
+                    .environment_component => |row| try self.budget.equal(row.layout, y.environment_component.layout) and try self.budget.equal(row.function_id, y.environment_component.function_id),
+                    .capture => |row| try self.budget.equal(row.@"type", y.capture.@"type") and try self.budget.equal(row.id, y.capture.id) and try self.budget.equal(row.layout, y.capture.layout),
+                    .code => |row| try self.budget.equal(row.@"type", y.code.@"type") and try self.budget.equal(row.function_id, y.code.function_id) and (row.environment == null) == (y.code.environment == null),
+                    .projection => |row| try self.budget.equal(row.@"type", y.projection.@"type") and try self.budget.equal(row.selector, y.projection.selector) and try self.budget.equal(row.view, y.projection.view),
                     inline .copy, .gate => |row, tag| try exactEquation(?Symbol, row.@"type", @field(y, @tagName(tag)).@"type", self.budget),
                     .receiver_value => |row| try exactEquation(?Symbol, row.@"type", y.receiver_value.@"type", self.budget),
                     // The reader joined this immutable construction ID to its
@@ -647,7 +653,27 @@ const ReceiverCertificate = struct {
         const a = self.graphs[0]; const b = self.graphs[1];
         switch (obligation.kind) {
             .value => switch (a.nodes[obligation.left]) {
-                .receiver_input, .parameter, .literal, .nonowning => {},
+                .receiver_input, .parameter, .literal, .nonowning, .environment_input, .global, .local => {},
+                .environment_create => |row| {
+                    const other = b.nodes[obligation.right].environment_create;
+                    if (!try self.site(row.site, other.site) or !try self.pair(.control, row.control, other.control)) return false;
+                    if (row.parent) |parent| if (!try self.values(parent, other.parent.?)) return false;
+                },
+                .environment_parent => |row| { const other = b.nodes[obligation.right].environment_parent; if (!try self.values(row.bases, other.bases) or !try self.pair(.control, row.control, other.control)) return false; },
+                .environment_component => |row| { const other = b.nodes[obligation.right].environment_component; if (!try self.values(row.callee, other.callee) or !try self.pair(.control, row.control, other.control)) return false; },
+                .capture => |row| {
+                    const other = b.nodes[obligation.right].capture;
+                    if (!try self.values(row.environment, other.environment) or !try self.pair(.heap, row.heap, other.heap) or !try self.pair(.control, row.control, other.control)) return false;
+                },
+                .code => |row| {
+                    const other = b.nodes[obligation.right].code;
+                    if (!try self.pair(.control, row.control, other.control)) return false;
+                    if (row.environment) |environment| if (!try self.values(environment, other.environment.?)) return false;
+                },
+                .projection => |row| {
+                    const other = b.nodes[obligation.right].projection;
+                    if (!try self.values(row.bases, other.bases) or !try self.pair(.heap, row.heap, other.heap) or !try self.pair(.control, row.control, other.control)) return false;
+                },
                 .gate => |row| {
                     const other = b.nodes[obligation.right].gate;
                     if (!try self.pair(.control, row.control, other.control) or !try self.values(row.inputs, other.inputs)) return false;

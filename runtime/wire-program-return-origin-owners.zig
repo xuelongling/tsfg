@@ -4,6 +4,7 @@
 // selected targets, allocation generations, holding or permission evidence.
 const std = @import("std");
 const m = @import("wire-program-return-origin-model.zig");
+const construction = @import("wire-program-return-origin-construction.zig");
 const R = m.Ref;
 const S = m.Symbol;
 const E = m.Error;
@@ -47,6 +48,7 @@ const Frame = struct {
     targets: []Set, sources: std.ArrayListUnmanaged(Source) = .empty,
     output: [2]Set = .{ .empty, .empty }, output_heap: [2]Heap = .{ .empty, .empty },
     live: [2]bool = .{ false, false }, completed: [2]bool = .{ false, false },
+    receiver: ?*const construction.Analysis = null,
 };
 const Engine = struct {
     a: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, fixed: []const Fixed, budget: *B,
@@ -55,6 +57,7 @@ const Engine = struct {
     parents: std.ArrayListUnmanaged(Set) = .empty,
     effects: std.ArrayListUnmanaged(Effect) = .empty,
     changed: bool = false, pending: ?Pending = null,
+    receiver: ?*const construction.Analysis = null,
     fn append(self: *Engine, comptime T: type, list: *std.ArrayListUnmanaged(T), value: T) E!void {
         try self.budget.step(); if (list.items.len == list.capacity) try self.budget.spend(list.items.len + 1);
         try list.append(self.a, value);
@@ -115,6 +118,7 @@ const Engine = struct {
                     for (frame.targets[row.call].items) |target| { try self.budget.step(); if (self.frames.items[target].live[@intFromEnum(row.completion)]) break :active true; }
                     break :active false;
                 },
+                .receiver_value => |row| if (frame.receiver) |receiver| receiver.heap_live[row.action] else true,
                 else => true,
             };
             if (active and !frame.ready[id]) return false;
@@ -247,7 +251,7 @@ const Engine = struct {
         const ready_nodes = try self.allocate(bool, graph.nodes.len); @memset(ready_nodes, false);
         const ready_heaps = try self.allocate(bool, graph.heaps.len); @memset(ready_heaps, false);
         const targets = try self.allocate(Set, graph.calls.len); @memset(targets, .empty);
-        frame.* = .{ .graph = graph, .function_id = function_id, .scope_graph = scope_graph, .scope_call = scope_call, .arguments = args, .environment = env, .input = heap, .values = values, .heaps = heaps, .controls = controls, .ready = ready_nodes, .heap_ready = ready_heaps, .targets = targets };
+        frame.* = .{ .graph = graph, .function_id = function_id, .scope_graph = scope_graph, .scope_call = scope_call, .arguments = args, .environment = env, .input = heap, .values = values, .heaps = heaps, .controls = controls, .ready = ready_nodes, .heap_ready = ready_heaps, .targets = targets, .receiver = if (self.frames.items.len == 0) self.receiver else null };
         if (source) |entry| try self.append(Source, &frame.sources, entry);
         const id = self.frames.items.len; try self.append(*Frame, &self.frames, frame); self.changed = true; return id;
     }
@@ -316,6 +320,7 @@ const Engine = struct {
     }
     fn copied(self: *Engine, frame: *const Frame, value: R, site: S, scope: usize) E!R {
         const original = self.locations.items[value];
+        if (original.type_id == null and original.owner == .local) { self.pending = .copy_layout; return value; }
         if (original.type_id == null or (original.kind != .copied and (original.kind != .root or original.owner != .local))) return value;
         if ((try self.typeRow(original.type_id.?)).kind != .value) return value;
         // One symbolic copy site/type can conservatively contain multiple
@@ -327,7 +332,31 @@ const Engine = struct {
         const out = &frame.values[ordinal]; var defined = false;
         switch (node) {
             .unknown => { self.pending = .unknown_origin; return; },
-            .receiver_input, .receiver_frame, .receiver_value => { self.pending = .receiver_protocol; return; },
+            .receiver_input, .receiver_frame => {
+                // Receiver frames are control carriers, never Data owners.
+                if (frame.receiver == null) { self.pending = .receiver_protocol; return; }
+                defined = true;
+            },
+            .receiver_value => |row| {
+                const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return; };
+                if (!receiver.heap_live[row.action]) return;
+                defined = true;
+                for (receiver.action_results[row.action]) |atom| {
+                    try self.budget.step();
+                    switch (atom.source) {
+                        .node => |source| {
+                            try self.merge(out, frame.values[source].items);
+                            defined = defined and frame.ready[source];
+                        },
+                        .allocation => |source| {
+                            // A formal newTarget is universally quantified.
+                            // Its construction owner is not an Actual type.
+                            try self.add(out, try self.location(.{ .kind = .root, .owner = .local, .type_id = receiver.frames[source].new_target, .scope = index, .node = source, .key = "receiver-allocation" }));
+                        },
+                        .language_error => |source| try self.add(out, try self.location(.{ .kind = .root, .owner = .local, .scope = index, .node = source, .key = "receiver-language-error" })),
+                    }
+                }
+            },
             .parameter => |row| { try self.merge(out, frame.arguments[row.index].items); defined = true; },
             .global => |row| { try self.add(out, try self.location(.{ .kind = .root, .owner = .{ .global = row.id }, .type_id = row.@"type" })); defined = true; },
             .literal => |row| { try self.add(out, try self.location(.{ .kind = .root, .owner = .nonowning, .type_id = row.@"type", .node = @intFromEnum(row.category) })); defined = true; },
@@ -391,6 +420,7 @@ const Engine = struct {
     }
     fn evalHeap(self: *Engine, index: usize, frame: *Frame, ordinal: usize, row: m.Heap) E!void {
         const out = &frame.heaps[ordinal]; var defined = false;
+        if (frame.receiver) |receiver| if (!receiver.heap_live[ordinal]) return;
         switch (row) {
             .entry => { try self.mergeHeap(out, frame.input.items); defined = true; },
             .join => |join| for (join.inputs) |input| { try self.budget.step(); try self.mergeHeap(out, frame.heaps[input].items); defined = defined or frame.heap_ready[input]; },
@@ -422,7 +452,11 @@ const Engine = struct {
                 defined = frame.heap_ready[copy.previous] and frame.ready[copy.value];
             },
             .call => |call| for (frame.targets[call.call].items) |target| { try self.budget.step(); const called = self.frames.items[target]; const completion = @intFromEnum(call.completion); try self.mergeHeap(out, called.output_heap[completion].items); defined = defined or called.completed[completion]; },
-            .receiver_action => { self.pending = .receiver_protocol; return; },
+            .receiver_action => |action| {
+                if (frame.receiver == null) { self.pending = .receiver_protocol; return; }
+                try self.mergeHeap(out, frame.heaps[action.previous].items);
+                defined = frame.heap_ready[action.previous] and try self.readyRefs(frame, action.operands);
+            },
         }
         self.ready(&frame.heap_ready[ordinal], defined);
     }
@@ -434,11 +468,15 @@ const Engine = struct {
                 try self.processCalls(index, frame); if (self.pending != null) return;
                 for (graph.controls, 0..) |control, ordinal| {
                     try self.budget.step(); var live = false;
-                    switch (control) {
-                        .entry => live = true,
-                        .join => |row| for (row.inputs) |input| { try self.budget.step(); live = live or frame.controls[input]; },
-                        .call => |row| for (frame.targets[row.call].items) |target| { try self.budget.step(); live = live or self.frames.items[target].live[@intFromEnum(row.completion)]; },
-                        .receiver_completion => { self.pending = .receiver_protocol; return; },
+                    if (frame.receiver) |receiver| {
+                        live = receiver.controls[ordinal];
+                    } else {
+                        switch (control) {
+                            .entry => live = true,
+                            .join => |row| for (row.inputs) |input| { try self.budget.step(); live = live or frame.controls[input]; },
+                            .call => |row| for (frame.targets[row.call].items) |target| { try self.budget.step(); live = live or self.frames.items[target].live[@intFromEnum(row.completion)]; },
+                            .receiver_completion => { self.pending = .receiver_protocol; return; },
+                        }
                     }
                     self.ready(&frame.controls[ordinal], live);
                 }
@@ -466,7 +504,10 @@ const Engine = struct {
                 .store => |row| if (frame.controls[row.control]) { try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous }); },
                 .copy => |row| if (frame.controls[frame.graph.nodes[row.value].copy.control]) { try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous }); },
                 .call => |row| for (frame.targets[row.call].items) |target| { try self.budget.step(); if (self.frames.items[target].live[@intFromEnum(row.completion)]) return true; },
-                .receiver_action => { self.pending = .receiver_protocol; return false; },
+                .receiver_action => |row| {
+                    const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return false; };
+                    if (receiver.heap_live[current.heap]) try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous });
+                },
             }
         }
         return false;
@@ -503,7 +544,10 @@ const Engine = struct {
                     }
                     if (!found) return false;
                 },
-                .receiver_action => { self.pending = .receiver_protocol; return false; },
+                .receiver_action => |row| {
+                    const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return false; };
+                    if (receiver.heap_live[current.heap]) try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous });
+                },
             }
         }
         return defined;
@@ -644,13 +688,27 @@ const Engine = struct {
 // graphs with this same Budget. Raw JSON, Source, permission tokens and selected
 // Actual entrances are intentionally absent from this seam.
 pub fn analyze(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B) E!Analysis {
+    return analyzeImpl(allocator, directory, physical, function_id, graph, fixed, budget, null);
+}
+// The production caller borrows the single construction-domain interpretation
+// of this same immutable graph. No receiver machine is duplicated here; the
+// ordinary contents/ENV equations consume only its continuation facts.
+pub fn analyzeReceiver(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B, receiver: *const construction.Analysis) E!Analysis {
+    return analyzeImpl(allocator, directory, physical, function_id, graph, fixed, budget, receiver);
+}
+fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, physical: []const Physical, function_id: S, graph: *const m.Graph, fixed: []const Fixed, budget: *B, receiver: ?*const construction.Analysis) E!Analysis {
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
-    var engine = Engine{ .a = result.arena.allocator(), .directory = directory, .physical = physical, .fixed = fixed, .budget = budget };
+    var engine = Engine{ .a = result.arena.allocator(), .directory = directory, .physical = physical, .fixed = fixed, .budget = budget, .receiver = receiver };
     const protocol = try m.findFunction(directory, function_id, budget);
     if (!protocol.environment_metadata_complete) { result.pending = .environment_protocol; return result; }
-    if (protocol.construction != null) { result.pending = .receiver_protocol; return result; }
+    if ((protocol.construction != null) != (receiver != null)) { result.pending = .receiver_protocol; return result; }
+    if (receiver) |facts| {
+        try budget.step();
+        if (facts.pending != null or graph.calls.len != 0 or facts.controls.len != graph.controls.len or facts.heap_live.len != graph.heaps.len or facts.action_results.len != graph.heaps.len or facts.frames.len != graph.nodes.len) { result.pending = .receiver_protocol; return result; }
+    }
     const arguments = try engine.allocate(Set, protocol.parameter_types.len); @memset(arguments, .empty);
     for (protocol.parameter_types, 0..) |type_id, index| {
+        try budget.step(); if (receiver != null and index == 0) continue;
         const location = try engine.location(.{ .kind = .root, .owner = .{ .parameter = index }, .type_id = type_id }); try engine.add(&arguments[index], location);
     }
     var environment: Set = .empty; if (protocol.lexical_environment) |layout| { const input = try engine.entryEnvironment(layout); try engine.add(&environment, input); }

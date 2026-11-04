@@ -39,6 +39,9 @@ pub const Analysis = struct {
     initializations: []const Initialization = &.{},
     // Control-only results borrow this arena; they confer no heap/field proof.
     controls: []const bool = &.{}, action_results: []const []const Atom = &.{},
+    // Shared formal receiver continuation facts. Content interpreters borrow
+    // these worlds' liveness; they do not repeat the receiver state machine.
+    heap_live: []const bool = &.{},
     pub fn deinit(self: *Analysis) void { self.arena.deinit(); }
 };
 const Atoms = std.ArrayListUnmanaged(Atom);
@@ -80,6 +83,7 @@ const Engine = struct {
     values: []Fact, worlds: []World, controls: []bool, frames: []Frame, results: []Atoms,
     input: ?Ref = null,
     changed: bool = false, pending: ?Pending = null, control_only: bool = false, effect_origins: bool = false,
+    formal_environments: bool = false,
     fn insert(self: *Engine, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!bool {
         for (into.items) |old| { try self.budget.step(); if (std.meta.eql(old, value)) return false; }
         try self.budget.step();
@@ -245,6 +249,13 @@ const Engine = struct {
                     .literal => |row| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = if (row.category == .@"undefined") .@"undefined" else .other }),
                     .local => try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = .object }),
                     .code => |row| if (self.controls[row.control]) { try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = .object }); },
+                    .environment_input, .environment_create, .environment_parent, .environment_component => {},
+                    inline .capture, .projection => |row| if (self.controls[row.control]) {
+                        // Category is intentionally universal, like a formal
+                        // parameter. The separate owner/content equations must
+                        // prove the saved ENV/heap relation before consumption.
+                        inline for (std.meta.tags(Category)) |category| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
+                    },
                     .unknown => if (self.control_only) {
                         inline for (std.meta.tags(Category)) |category| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
                     },
@@ -311,7 +322,13 @@ const Engine = struct {
                     .entry => if (!self.worlds[index].live) { self.worlds[index].live = true; self.changed = true; },
                     .join => |row| for (row.inputs) |input| try self.merge(&self.worlds[index], &self.worlds[input], null, null, null),
                     .receiver_action => |row| try self.action(index, row),
-                    .store => |row| try self.initialize(index,row),
+                    .store => |row| {
+                        if (self.formal_environments and std.mem.startsWith(u8, row.selector, "capture:")) {
+                            // The typed carrier boundary owns this ENV address.
+                            // It cannot bind or initialize a receiver field.
+                            if (self.controls[row.control]) try self.merge(&self.worlds[index], &self.worlds[row.previous], null, null, null);
+                        } else try self.initialize(index,row);
+                    },
                     .copy => |row| {
                         // A typed Data copy cannot mutate receiver controls.
                         // Keep its complete heap edge and prefix history; this
@@ -362,7 +379,8 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
                 if (!known) { result.pending = .data_protocol; return result; }
             },
             .literal, .parameter, .global, .nonowning, .join, .gate, .receiver_frame, .receiver_value => {},
-            .code => |row| if (row.environment != null) { result.pending = .data_protocol; return result; },
+            .code => |row| if (formal_function == null and row.environment != null) { result.pending = .data_protocol; return result; },
+            .environment_input, .environment_create, .environment_parent, .environment_component, .capture, .projection => if (formal_function == null) { result.pending = .data_protocol; return result; },
             else => { result.pending = .data_protocol; return result; },
         }
     }
@@ -374,6 +392,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
         .entry, .join, .receiver_action => {},
         .copy => if (!return_origins) { result.pending = .heap_protocol; return result; },
         .store=>|row|{
+            if (formal_function != null and std.mem.startsWith(u8, row.selector, "capture:")) continue;
             if((entry==null and !effect_origins) or input==null or !row.initialize) { result.pending=.scalar_initialization; return result; }
             const function=entry_function.?;
             try budget.text(row.selector.len);
@@ -407,7 +426,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     try budget.spend(graph.heaps.len); const worlds = try a.alloc(World, graph.heaps.len);
     for (worlds) |*world| { try budget.spend(graph.nodes.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len) }; @memset(world.bindings, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
-    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins };
+    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null };
     if(input) |id| {
       if (formal_function != null) {
         // The admitted construction-body interface owns an initially unbound
@@ -450,6 +469,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     }
     for(graph.heaps) |heap| if(heap==.store) {
         try budget.step(); const row=heap.store; if(!controls[row.control])continue;
+        if (formal_function != null and std.mem.startsWith(u8, row.selector, "capture:")) continue;
         if(!worlds[row.previous].live or !try engine.storeReady(row)) { result.pending=.scalar_initialization; return result; }
     };
     if (return_origins) for (graph.heaps) |heap| {
@@ -525,7 +545,9 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     if (formal_function != null) {
         try budget.spend(results.len); const action_results = try a.alloc([]const Atom, results.len);
         for (results, action_results) |value, *into| { try budget.step(); into.* = value.items; }
-        try budget.spend(2); result.controls = controls; result.action_results = action_results;
+        try budget.spend(worlds.len); const heap_live = try a.alloc(bool, worlds.len);
+        for (worlds, heap_live) |world, *live| { try budget.step(); live.* = world.live; }
+        try budget.spend(3); result.controls = controls; result.action_results = action_results; result.heap_live = heap_live;
     }
     return result;
 }
