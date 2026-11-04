@@ -581,6 +581,67 @@ const Graph = struct {
         // This is only source/creation authority. Once-only initialization,
         // observation and CFG ordering remain separate obligations.
     }
+    fn globalInitialization(self: *Graph) Error!void {
+        if(self.mode!=.common or self.f.role!=.module_initializer)return;
+        const c=self.c; const globals=c.program.tables.mode.common.modules.globals;
+        // GlobalRef identifies one program cell. Permission/defining-module
+        // ownership remains the independent module-contracts obligation.
+        try c.charge(globals.len);
+        const used=try c.allocator.alloc(bool,globals.len); defer c.allocator.free(used); @memset(used,false);
+        for(self.f.blocks) |block| for(block.instructions) |op| {
+            try c.step(); const ref=switch(op.data) { inline .global_load,.global_store=>|v|v.global, else=>continue };
+            const index=@intFromEnum(ref); if(globals[index].source==self.f.source)used[index]=true;
+        };
+        for(used,0..) |needed,index| {
+            try c.step(); if(!needed)continue;
+            const ref: t.GlobalRef=@enumFromInt(index);
+            try c.charge(4*self.f.blocks.len);
+            var initializes: [256]bool=undefined; @memset(initializes[0..self.f.blocks.len],false);
+            for(self.f.blocks,0..) |block,b| for(block.instructions) |op| {
+                try c.step(); if(op.data==.global_store and op.data.global_store.global==ref and op.data.global_store.initialize)initializes[b]=true;
+            };
+            // Possible states: bottom=0, Uninitialized=1, Initialized=2.
+            // Union at joins retains the uninitialized arm. Compute the finite
+            // fixed point before rejecting, so an initialized loop does not
+            // acquire a false Uninitialized state from an initial MUST bottom.
+            var incoming: [256]u2=undefined; @memset(incoming[0..self.f.blocks.len],0);
+            var outgoing: [256]u2=undefined; @memset(outgoing[0..self.f.blocks.len],0);
+            var queued: [256]bool=undefined; @memset(queued[0..self.f.blocks.len],false); var pending: [256]usize=undefined;
+            var head: usize=0; var size: usize=1; try c.step(); pending[0]=0; queued[0]=true; incoming[0]=1;
+            while(size!=0) {
+                try c.step(); const b=pending[head]; head=(head+1)%self.f.blocks.len; size-=1; queued[b]=false;
+                const next: u2=if(incoming[b]==0)0 else if(initializes[b])2 else incoming[b];
+                if(outgoing[b]==next)continue;
+                outgoing[b]=next;
+                for(self.facts[b].successors[0..self.facts[b].count]) |successor| {
+                    try c.step(); const joinedState=incoming[successor]|next;
+                    if(joinedState==incoming[successor])continue;
+                    incoming[successor]=joinedState;
+                    if(!queued[successor]) { try c.step(); pending[(head+size)%self.f.blocks.len]=successor; size+=1; queued[successor]=true; }
+                }
+            }
+            for(self.f.blocks,0..) |block,b| {
+                try c.step(); var state=incoming[b];
+                // Common has only block0 as an execution entry; reach() and
+                // usesDom() permit original unreachable blocks. Keep their
+                // empty path set rather than inventing extra entry states.
+                for(block.instructions) |op| {
+                    try c.step(); if(state==0)continue;
+                    switch(op.data) {
+                        .global_store=>|v| if(v.global==ref) {
+                            if(v.initialize) { try c.require(state==1); state=2; } else try c.require(state==2);
+                        },
+                        .global_load=>|v| if(v.global==ref) { try c.require(state==2); },
+                        else=>{},
+                    }
+                }
+            }
+        }
+        // Explicit cell operations in this initializer only. Callee/global
+        // observations, other module entries and Env instance state require
+        // their own interprocedural/activation proof; no completion receipt or
+        // initialization guarantee is inferred for them here.
+    }
     fn fuel(self: *Graph) Error!void {
         const c=self.c; var entries: usize=0;
         for(self.f.blocks,0..) |block,b| for(block.instructions,0..) |*op,i| {
@@ -723,7 +784,7 @@ const Graph = struct {
     }
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
-        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.numeric(); try self.fuel();
+        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.globalInitialization(); try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof
         // adds no second dominance graph, Context, Source table or admission.
         if(self.mode==.common)try receiver_protocol.check(self.c,self.function,.{.definitions=self.definitions,.facts=self.facts});
