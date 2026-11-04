@@ -385,7 +385,7 @@ const Engine = struct {
                 // The borrowed construction analysis has already interpreted
                 // this supported scalar-Data/no-ENV, standalone fixed leaf. Keep
                 // its original graph and facts in this same ordinary Engine.
-                if (frame.receiver_import != null or call.arguments.len > 1 or call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
+                if (frame.receiver_import != null or call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
                 var selected: ?*const construction.CallFact = null;
                 for (receiver.calls) |*fact| {
                     try self.budget.step(); if (fact.call != ordinal) continue;

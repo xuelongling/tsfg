@@ -187,23 +187,23 @@ const Engine = struct {
         const role = function.construction orelse { self.pending = .fixed_call; return null; };
         const declared = fixed.declaration.construction orelse { self.pending = .fixed_contract; return null; };
         if (function.kind != .construction_body or fixed.declaration.kind != .@"construction-body" or !function.environment_metadata_complete or
-            call.arguments.len > 1 or function.parameter_types.len != call.arguments.len + 1 or fixed.declaration.parameter_types.len != function.parameter_types.len or fixed.contract.upper.parameters.len != function.parameter_types.len or
+            function.parameter_types.len != call.arguments.len + 1 or fixed.declaration.parameter_types.len != function.parameter_types.len or fixed.contract.upper.parameters.len != function.parameter_types.len or
             fixed.declaration.lexical_environment != null or fixed.declaration.activation_environment != null or fixed.declaration.captures.len != 0 or fixed.contract.upper.captures.len != 0 or
             function.lexical_environment != null or function.activation_environment != null or declared.receiver_index != 0) { self.pending = .fixed_contract; return null; }
         for (fixed.contract.upper.parameters, 0..) |parameter, index| {
             try self.budget.step(); if (parameter.index != index) { self.pending = .fixed_contract; return null; }
         }
-        if (call.arguments.len == 1) {
-            const expected = function.parameter_types[1]; var scalar = false;
+        for (call.arguments, 1..) |argument, parameter_index| {
+            const expected = function.parameter_types[parameter_index]; var scalar = false;
             for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, expected)) { scalar = row.kind == .scalar; break; } }
-            if (!scalar or call.arguments[0].len == 0) { self.pending = .data_protocol; return null; }
+            if (!scalar or argument.len == 0) { self.pending = .data_protocol; return null; }
             // A typed wrapper is not evidence that its leaves have this type.
             // Retain the original scalar inputs; the owner equations transport
-            // their relationships into parameter one, separately from input0.
+            // their relationships into each ordered parameter, separately from input0.
             try self.budget.spend(2 * self.graph.nodes.len);
             const seen = try self.allocator.alloc(bool, self.graph.nodes.len); @memset(seen, false);
             const work = try self.allocator.alloc(Ref, self.graph.nodes.len); var count: usize = 0; var cursor: usize = 0; var leaf = false;
-            for (call.arguments[0]) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } }
+            for (argument) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } }
             while (cursor < count) : (cursor += 1) {
                 try self.budget.step(); const node = self.graph.nodes[work[cursor]];
                 const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate => |row| row.@"type", else => null };
@@ -219,7 +219,7 @@ const Engine = struct {
         }
         if (self.frames[frame].role == null or self.frames[frame].parent != null or !try self.budget.equal(self.frames[frame].role.?.id, role.id)) { self.pending = .call_entry; return null; }
         const graph = if (fixed.contract.return_origins) |*value| value else { self.pending = .fixed_call; return null; };
-        // This fixed standalone leaf transports at most one scalar Data input,
+        // This fixed standalone leaf transports ordered scalar Data inputs,
         // with no ENV or additional receiver-frame namespace. Unsupported dependencies are never solved
         // with a callee's current body, selected target or fresh default seed.
         if (graph.calls.len != 0) { self.pending = .fixed_call; return null; }
@@ -259,7 +259,7 @@ const Engine = struct {
     fn fixedCall(self: *Engine, heap_index: Ref, row: @FieldType(model.Heap, "call")) Error!void {
         const call = self.graph.calls[row.call];
         if (!self.controls[call.control] or !self.worlds[call.heap].live) return;
-        if (call.receiver == null or call.callee != null or call.environment != null or call.arguments.len > 1) { self.pending = .fixed_call; return; }
+        if (call.receiver == null or call.callee != null or call.environment != null) { self.pending = .fixed_call; return; }
         var selected: Refs = .empty;
         for (call.receiver.?) |id| { try self.budget.step(); for (self.values[id].frames.items) |frame| { _ = try self.insert(Ref, &selected, frame); } }
         if (selected.items.len == 0) return;

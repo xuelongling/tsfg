@@ -37,3 +37,11 @@ test('scalar constructor arguments retain caller input identity', async () => {
 test('scalar constructor arguments respect typed boundaries and full effect permissions', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-scalar-negative-test.zig', prefix: 'r03-constructor-scalar-negative-', expectedPasses: 4 });
 });
+
+test('ordered scalar constructor arguments retain each original caller input', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-multi-scalar-test.zig', prefix: 'r03-constructor-multi-scalar-', expectedPasses: 1 });
+});
+
+test('each scalar constructor argument keeps its typed and complete effect boundary', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-multi-scalar-negative-test.zig', prefix: 'r03-constructor-multi-scalar-negative-', expectedPasses: 3 });
+});
