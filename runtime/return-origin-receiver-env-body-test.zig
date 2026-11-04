@@ -285,7 +285,7 @@ test "receiver hidden ENV preserves logical input and complete closure heap thro
     const load = graph.nodes[try rootValue(graph, replace.values[0])].capture; try std.testing.expectEqualStrings(slot_key, load.id); try std.testing.expectEqual(replace.previous, load.heap);
     const initialize = graph.heaps[replace.previous].store; try std.testing.expect(initialize.initialize); try std.testing.expectEqualStrings("capture:" ++ slot_key, initialize.selector);
     const incoming = graph.nodes[try rootValue(graph, initialize.values[0])].parameter; try std.testing.expectEqual(@as(usize, 1), incoming.index);
-    var analysis = try construction.analyzeReturns(c.allocator, &directory, graph, &budget, ctor_text); defer analysis.deinit();
+    var analysis = try construction.analyzeReturns(c.allocator, &directory, graph, &budget, .{ .function_id = ctor_text }); defer analysis.deinit();
     try std.testing.expectEqual(@as(?construction.Pending, null), analysis.pending); try std.testing.expect(analysis.normal_live and !analysis.language_live);
     try std.testing.expectEqual(@as(usize, 1), analysis.normal.len); try std.testing.expect(analysis.normal[0].source == .node);
     // A function copy retains the original Code+ENV identity. The explicit
@@ -347,7 +347,7 @@ test "receiver control projection retains typed ENV stores without claiming copy
     const child = graph.nodes[try rootValue(graph, code.environment.?[0])].environment_create;
     try std.testing.expectEqualStrings(inner_env, child.layout);
     try std.testing.expectEqualStrings(outer_env, graph.nodes[try rootValue(graph, child.parent.?[0])].environment_input.layout);
-    var analysis = try construction.analyzeControls(c.allocator, &directory, graph, &budget, ctor_text); defer analysis.deinit();
+    var analysis = try construction.analyzeControls(c.allocator, &directory, graph, &budget, .{ .function_id = ctor_text }); defer analysis.deinit();
     try std.testing.expectEqual(@as(?construction.Pending, null), analysis.pending);
     try std.testing.expect(analysis.normal_live and !analysis.language_live);
 }

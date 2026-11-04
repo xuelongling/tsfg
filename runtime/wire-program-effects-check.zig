@@ -880,12 +880,13 @@ const UpperGraph = struct {
         if (body.pending != null) {
             return self.noFixedBodyProof(full, returned, thrown);
         }
+        const function_id = try publication_refs.symbol(c, arena.allocator(), c.program.functions[@intFromEnum(target)].id);
+        const constructor_input = try publication_refs.returnOriginConstructorInput(c, arena.allocator(), fixed.*, function_id);
         try c.charge(fixed.publication.contracts.len + 1);
         const contracts = try arena.allocator().alloc(structural_origins.FixedContract, fixed.publication.contracts.len);
-        for (fixed.publication.contracts, contracts) |*row, *entry| {
-            try c.step(); entry.* = .{ .function_id = try publication_refs.symbol(c, arena.allocator(), row.function_id), .graph = if (row.return_origins) |*value| value else null };
+        for (fixed.publication.contracts, constructor_input.fixed, contracts) |*row, *complete, *entry| {
+            try c.step(); entry.* = .{ .function_id = try publication_refs.symbol(c, arena.allocator(), row.function_id), .graph = if (row.return_origins) |*value| value else null, .complete = complete };
         }
-        const function_id = try publication_refs.symbol(c, arena.allocator(), c.program.functions[@intFromEnum(target)].id);
         // Body is independently derived ONLY from the current owned SSA/ABI.
         // The immutable complete fixed contract vector is solely the upper.
         const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
@@ -899,7 +900,7 @@ const UpperGraph = struct {
             try c.charge(2); const target_function = c.program.functions[@intFromEnum(target)];
             if (target_function.role != .construction_body or collector.common().abis[@intFromEnum(target_function.abi)].construction == null) return self.noFixedBodyProof(full, returned, thrown);
         }
-        var analysis = construction_origins.analyzeReturns(c.allocator, &directory, graph, &budget, function_id) catch |err| return publication_refs.graphFailure(err);
+        var analysis = construction_origins.analyzeReturns(c.allocator, &directory, graph, &budget, constructor_input) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
         if (analysis.pending != null) return self.noFixedBodyProof(full, returned, thrown);
         for(analysis.initializations) |*write| {
@@ -1021,7 +1022,8 @@ const UpperGraph = struct {
             control_body = try body_origins.projectReceiverControls(c, self.function, &directory, &budget);
             if (control_body.?.pending == null) {
                 const function_id = try publication_refs.symbol(c, control_arena.allocator(), function.id);
-                control_analysis = construction_origins.analyzeControls(c.allocator, &directory, &control_body.?.graph.?, &budget, function_id) catch |err| return publication_refs.graphFailure(err);
+                const constructor_input = try publication_refs.returnOriginConstructorInput(c, control_arena.allocator(), fixed.*, function_id);
+                control_analysis = construction_origins.analyzeControls(c.allocator, &directory, &control_body.?.graph.?, &budget, constructor_input) catch |err| return publication_refs.graphFailure(err);
                 if (control_analysis.?.pending == null) {
                     try c.row(body_origins.ReceiverFlow); try c.row(origin_model.Graph);
                     receiver_flow = .{ .graph = control_body.?.graph.?, .block_controls = control_body.?.block_controls, .receiver_actions = control_body.?.receiver_actions, .controls = control_analysis.?.controls, .action_results = control_analysis.?.action_results };
@@ -2199,7 +2201,7 @@ test "receiver shared owner exporter preserves saved parent slots and the callab
     try origin_model.validateDirectory(fixture.c.allocator, &dto.directory, &budget);
     const validation = try origin_model.validateGraph(fixture.c.allocator, &dto.directory, dto.constructor, &dto.graph, &budget);
     try std.testing.expect(validation == .pending); try std.testing.expectEqual(origin_model.Pending.construction_frame, validation.pending);
-    var receiver = try construction_origins.analyzeReturns(fixture.c.allocator, &dto.directory, &dto.graph, &budget, dto.constructor); defer receiver.deinit();
+    var receiver = try construction_origins.analyzeReturns(fixture.c.allocator, &dto.directory, &dto.graph, &budget, .{ .function_id = dto.constructor }); defer receiver.deinit();
     try std.testing.expectEqual(@as(?construction_origins.Pending, null), receiver.pending);
     var state = try fixture.saved(.{ .layout = @enumFromInt(0), .source = .{ .birth = @enumFromInt(1) } }, true); defer state.deinit(&fixture.c);
     state.values[2].nonowning = true; // The physical frame is never a Data owner.

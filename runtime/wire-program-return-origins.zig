@@ -10,7 +10,7 @@ const Budget = model.Budget;
 const Symbol = model.Symbol;
 const receiver_domain = @import("wire-program-return-origin-construction.zig");
 
-pub const FixedContract = struct { function_id: Symbol, graph: ?*const Graph };
+pub const FixedContract = struct { function_id: Symbol, graph: ?*const Graph, complete: ?*const receiver_domain.FixedFunction = null };
 const ValidatedContract = struct { function_id: Symbol, graph: ?*const Graph, protocol_pending: bool };
 pub const Pending = enum {
     graph_protocol, missing_return_graph, unknown_data_origin, missing_fixed_call,
@@ -475,20 +475,20 @@ const Engine = struct {
 // protocol. The existing construction Engine supplies formal completion facts;
 // this object only pairs original Ref/site names and checks every core row.
 const ReceiverCertificate = struct {
-    const Kind = enum { value, heap, control };
+    const Kind = enum { value, heap, control, call };
     const View = union(enum) { id: Ref, dead: void, pending: void };
     const Pair = struct { kind: Kind, left: Ref, right: Ref };
     const Site = struct { left: Symbol, right: Symbol };
     allocator: std.mem.Allocator, budget: *Budget,
     graphs: [2]*const Graph, analyses: [2]*const receiver_domain.Analysis,
-    maps: [2][3][]?Ref,
+    maps: [2][4][]?Ref,
     pending: std.ArrayListUnmanaged(Pair) = .empty,
     sites: std.ArrayListUnmanaged(Site) = .empty,
 
     fn init(allocator: std.mem.Allocator, budget: *Budget, body_graph: *const Graph, upper_graph: *const Graph, body_analysis: *const receiver_domain.Analysis, upper_analysis: *const receiver_domain.Analysis) Error!ReceiverCertificate {
         var result = ReceiverCertificate{ .allocator = allocator, .budget = budget, .graphs = .{ body_graph, upper_graph }, .analyses = .{ body_analysis, upper_analysis }, .maps = undefined };
         for (result.graphs, 0..) |graph, side| {
-            const sizes = [_]usize{ graph.nodes.len, graph.heaps.len, graph.controls.len };
+            const sizes = [_]usize{ graph.nodes.len, graph.heaps.len, graph.controls.len, graph.calls.len };
             for (sizes, 0..) |size, kind| {
                 try budget.spend(size + 1);
                 result.maps[side][kind] = try allocator.alloc(?Ref, size);
@@ -508,8 +508,7 @@ const ReceiverCertificate = struct {
         for (0..graph.controls.len + 1) |_| {
             try self.budget.step(); switch (graph.controls[id]) {
                 .join => |row| { if (row.inputs.len == 0) return .dead; if (row.inputs.len != 1) return .{ .id = id }; id = row.inputs[0]; },
-                .entry, .receiver_completion => return .{ .id = id },
-                else => return .pending,
+                .entry, .receiver_completion, .call => return .{ .id = id },
             }
         }
         return .pending; // No seed may be invented for a cyclic wrapper.
@@ -526,6 +525,13 @@ const ReceiverCertificate = struct {
                     id = row.inputs[0];
                 },
                 .receiver_value => |row| { if (self.analyses[side].action_results[row.action].len == 0) return .dead; terminal = true; break; },
+                .call => |row| {
+                    var completion = false; var live = false;
+                    for (graph.heaps, 0..) |heap, index| {
+                        try self.budget.step(); if (heap == .call and heap.call.call == row.call and heap.call.completion == row.completion) { completion = true; live = live or self.analyses[side].heap_live[index]; }
+                    }
+                    if (!completion) return .pending; if (!live) return .dead; terminal = true; break;
+                },
                 inline .copy, .receiver_frame, .environment_create, .environment_parent, .environment_component, .capture, .code, .projection => |row| { if (try self.controlView(side, row.control) != .id) return .pending; terminal = true; break; },
                 .receiver_input, .parameter, .literal, .nonowning, .environment_input, .global, .local => { terminal = true; break; },
                 else => return .pending,
@@ -547,6 +553,7 @@ const ReceiverCertificate = struct {
                         const same = switch (core) {
                             inline .copy, .receiver_frame, .environment_create, .environment_parent, .environment_component, .capture, .code, .projection => |controlled| blk: { const intrinsic = try self.controlView(side, controlled.control); break :blk intrinsic == .id and intrinsic.id == predicate; },
                             .receiver_value => |value_row| graph.controls[predicate] == .receiver_completion and graph.controls[predicate].receiver_completion.action == value_row.action,
+                            .call => |value_row| graph.controls[predicate] == .call and graph.controls[predicate].call.call == value_row.call and graph.controls[predicate].call.completion == value_row.completion,
                             else => false,
                         };
                         if (!same) return .{ .id = cursor };
@@ -567,13 +574,13 @@ const ReceiverCertificate = struct {
                 .store => |row| { if (try self.controlView(side, row.control) != .id) return .pending; return .{ .id = id }; },
                 .copy => |row| { if (graph.nodes[row.value] != .copy) return .pending; if (try self.controlView(side, graph.nodes[row.value].copy.control) != .id) return .pending; return .{ .id = id }; },
                 .entry => return .{ .id = id },
-                else => return .pending,
+                .call => { if (!self.analyses[side].heap_live[id]) return .dead; return .{ .id = id }; },
             }
         }
         return .pending;
     }
     fn view(self: *ReceiverCertificate, side: usize, kind: Kind, id: Ref) Error!View {
-        return switch (kind) { .value => self.valueView(side, id), .heap => self.heapView(side, id), .control => self.controlView(side, id) };
+        return switch (kind) { .value => self.valueView(side, id), .heap => self.heapView(side, id), .control => self.controlView(side, id), .call => .{ .id = id } };
     }
     fn pair(self: *ReceiverCertificate, kind: Kind, left: Ref, right: Ref) Error!bool {
         const a = try self.view(0, kind, left); const b = try self.view(1, kind, right);
@@ -614,7 +621,7 @@ const ReceiverCertificate = struct {
     fn scalar(self: *ReceiverCertificate, kind: Kind, left: Ref, right: Ref) Error!bool {
         try self.budget.step(); const a = self.graphs[0]; const b = self.graphs[1];
         return switch (kind) {
-            .control => switch (a.controls[left]) { .entry => b.controls[right] == .entry, .receiver_completion => b.controls[right] == .receiver_completion, .join => b.controls[right] == .join, else => false },
+            .control => switch (a.controls[left]) { .entry => b.controls[right] == .entry, .receiver_completion => b.controls[right] == .receiver_completion, .join => b.controls[right] == .join, .call => b.controls[right] == .call },
             .value => blk: {
                 const x = a.nodes[left]; const y = b.nodes[right];
                 if (std.meta.activeTag(x) != std.meta.activeTag(y)) break :blk false;
@@ -628,6 +635,7 @@ const ReceiverCertificate = struct {
                     .projection => |row| try self.budget.equal(row.@"type", y.projection.@"type") and try self.budget.equal(row.selector, y.projection.selector) and try self.budget.equal(row.view, y.projection.view),
                     inline .copy, .gate => |row, tag| try exactEquation(?Symbol, row.@"type", @field(y, @tagName(tag)).@"type", self.budget),
                     .receiver_value => |row| try exactEquation(?Symbol, row.@"type", y.receiver_value.@"type", self.budget),
+                    .call => |row| row.completion == y.call.completion and try exactEquation(?Symbol, row.@"type", y.call.@"type", self.budget),
                     // The reader joined this immutable construction ID to its
                     // complete kind/owner role in the shared Directory.
                     .receiver_frame => |row| try self.budget.equal(row.construction, y.receiver_frame.construction) and
@@ -636,6 +644,10 @@ const ReceiverCertificate = struct {
                     else => false,
                 };
             },
+            .call => blk: {
+                const x = a.calls[left]; const y = b.calls[right];
+                break :blk try self.budget.equal(x.function_id, y.function_id) and x.arguments.len == y.arguments.len and (x.environment == null) == (y.environment == null) and (x.callee == null) == (y.callee == null) and (x.receiver == null) == (y.receiver == null);
+            },
             .heap => blk: {
                 const x = a.heaps[left]; const y = b.heaps[right];
                 if (std.meta.activeTag(x) != std.meta.activeTag(y)) break :blk false;
@@ -643,7 +655,7 @@ const ReceiverCertificate = struct {
                     .entry, .copy, .join => true,
                     .store => |row| row.initialize == y.store.initialize and try self.budget.equal(row.selector, y.store.selector) and try self.budget.equal(row.view, y.store.view),
                     .receiver_action => |row| row.action == y.receiver_action.action and row.completion == y.receiver_action.completion,
-                    else => false,
+                    .call => |row| row.completion == y.call.completion,
                 };
             },
         };
@@ -679,6 +691,7 @@ const ReceiverCertificate = struct {
                     if (!try self.pair(.control, row.control, other.control) or !try self.values(row.inputs, other.inputs)) return false;
                 },
                 .receiver_value => |row| { if (!try self.pair(.heap, row.action, b.nodes[obligation.right].receiver_value.action)) return false; },
+                .call => |row| { if (!try self.pair(.call, row.call, b.nodes[obligation.right].call.call)) return false; },
                 .receiver_frame => |row| {
                     const other = b.nodes[obligation.right].receiver_frame;
                     if (!try self.site(row.site, other.site) or !try self.pair(.control, row.control, other.control)) return false;
@@ -702,6 +715,7 @@ const ReceiverCertificate = struct {
                         if (!try self.pair(.heap, left, right)) return false;
                     }
                 },
+                .call => |row| { if (!try self.pair(.call, row.call, b.heaps[obligation.right].call.call)) return false; },
                 .copy => |row| { const other = b.heaps[obligation.right].copy; if (!try self.pair(.heap, row.previous, other.previous) or !try self.pair(.value, row.value, other.value)) return false; },
                 .store => |row| {
                     const other = b.heaps[obligation.right].store;
@@ -711,11 +725,19 @@ const ReceiverCertificate = struct {
                     const other = b.heaps[obligation.right].receiver_action;
                     if (!try self.pair(.heap, row.previous, other.previous) or !try self.pair(.control, row.control, other.control) or !try self.values(row.frames, other.frames) or !try self.values(row.operands, other.operands)) return false;
                 },
-                else => return false,
+            },
+            .call => {
+                const row = a.calls[obligation.left]; const other = b.calls[obligation.right];
+                if (!try self.site(row.site, other.site) or !try self.pair(.heap, row.heap, other.heap) or !try self.pair(.control, row.control, other.control)) return false;
+                for (row.arguments, other.arguments) |left, right| { try self.budget.step(); if (!try self.values(left, right)) return false; }
+                if (row.receiver) |left| if (!try self.values(left, other.receiver.?)) return false;
+                if (row.environment) |left| if (!try self.values(left, other.environment.?)) return false;
+                if (row.callee) |left| if (!try self.values(left, other.callee.?)) return false;
             },
             .control => switch (a.controls[obligation.left]) {
                 .entry => {},
                 .receiver_completion => |row| { if (!try self.pair(.heap, row.action, b.controls[obligation.right].receiver_completion.action)) return false; },
+                .call => |row| { if (row.completion != b.controls[obligation.right].call.completion or !try self.pair(.call, row.call, b.controls[obligation.right].call.call)) return false; },
                 .join => |row| {
                     const other = b.controls[obligation.right].join;
                     if (row.inputs.len != other.inputs.len) return false;
@@ -728,7 +750,6 @@ const ReceiverCertificate = struct {
                         if (!try self.pair(.control, left, right)) return false;
                     }
                 },
-                else => return false,
             },
         }
         return true;
@@ -765,7 +786,7 @@ const ReceiverCertificate = struct {
         // may extend the bijection; ambiguous alternatives remain Pending.
         while (true) {
             var remaining = false; var progress = false;
-            for ([_]Kind{ .heap, .value, .control }) |kind| {
+            for ([_]Kind{ .heap, .value, .control, .call }) |kind| {
                 const left_map = self.maps[0][@intFromEnum(kind)]; const right_map = self.maps[1][@intFromEnum(kind)];
                 for (left_map, 0..) |mapped, left| {
                     try self.budget.step(); const resolved = try self.view(0, kind, left);
@@ -791,7 +812,7 @@ const ReceiverCertificate = struct {
         }
         // The reverse pass prevents an extra upper row/name from hiding a
         // missing current-body equation, Heap.copy or control/exit obligation.
-        for ([_]Kind{ .heap, .value, .control }) |kind| for (self.maps[1][@intFromEnum(kind)], 0..) |mapped, id| {
+        for ([_]Kind{ .heap, .value, .control, .call }) |kind| for (self.maps[1][@intFromEnum(kind)], 0..) |mapped, id| {
             try self.budget.step(); const resolved = try self.view(1, kind, id);
             if (resolved == .pending) return false;
             if (resolved == .id and resolved.id == id and mapped == null) return false;
@@ -800,12 +821,18 @@ const ReceiverCertificate = struct {
     }
 };
 
-fn receiverCovered(allocator: std.mem.Allocator, directory: *const model.Directory, function_id: Symbol, body_graph: *const Graph, upper_graph: *const Graph, budget: *Budget) Error!bool {
+fn receiverCovered(allocator: std.mem.Allocator, directory: *const model.Directory, function_id: Symbol, body_graph: *const Graph, upper_graph: *const Graph, fixed: []const FixedContract, budget: *Budget) Error!bool {
+    var complete: std.ArrayListUnmanaged(receiver_domain.FixedFunction) = .empty;
+    if (body_graph.calls.len != 0 or upper_graph.calls.len != 0) {
+        try budget.spend(fixed.len + 1); try complete.ensureTotalCapacityPrecise(allocator, fixed.len);
+        for (fixed) |row| { try budget.step(); const original = row.complete orelse return false; complete.appendAssumeCapacity(original.*); }
+    }
+    const input = receiver_domain.FormalInput{ .function_id = function_id, .fixed = complete.items };
     // Same formal receiver protocol/Engine as return interpretation. No
     // selected actual state or effect proof enters this complete certificate.
-    var body_analysis = try receiver_domain.analyzeReturns(allocator, directory, body_graph, budget, function_id); defer body_analysis.deinit();
+    var body_analysis = try receiver_domain.analyzeReturns(allocator, directory, body_graph, budget, input); defer body_analysis.deinit();
     if (body_analysis.pending != null) return false;
-    var upper_analysis = try receiver_domain.analyzeReturns(allocator, directory, upper_graph, budget, function_id); defer upper_analysis.deinit();
+    var upper_analysis = try receiver_domain.analyzeReturns(allocator, directory, upper_graph, budget, input); defer upper_analysis.deinit();
     if (upper_analysis.pending != null) return false;
     var certificate = try ReceiverCertificate.init(allocator, budget, body_graph, upper_graph, &body_analysis, &upper_analysis);
     return certificate.run();
@@ -853,7 +880,9 @@ pub fn covered(allocator: std.mem.Allocator, directory: *const model.Directory, 
         // The initial subset is call-free. Thus its complete fixed dependency
         // closure is the selected graph, and no null/unknown callee or
         // uninterpreted frame activation is treated as the same invocation.
-        if (body.calls.len != 0 or bound.calls.len != 0) return .{ .pending = .graph_protocol };
+        // Constructor calls require their complete original fixed source rows
+        // before either graph can acquire formal receiver completion facts.
+        if (body.calls.len != 0 or bound.calls.len != 0) for (fixed) |row| { try budget.step(); if (row.complete == null) return .{ .pending = .graph_protocol }; };
         for ([_]*const Graph{ body, bound }) |graph| {
             try budget.spend(graph.nodes.len);
             for (graph.nodes) |node| {
@@ -869,7 +898,7 @@ pub fn covered(allocator: std.mem.Allocator, directory: *const model.Directory, 
             }
         }
         if (try exactEquation(Graph, body.*, bound.*, budget)) return .covered;
-        if (try receiverCovered(workspace, directory, function_id, body, bound, budget)) return .covered;
+        if (try receiverCovered(workspace, directory, function_id, body, bound, fixed, budget)) return .covered;
         return .{ .pending = .receiver_no_exact_certificate };
     }
     var engine: Engine = .{ .allocator = workspace, .budget = budget, .body = body, .upper = bound, .fixed = validated };

@@ -79,8 +79,8 @@ fn analyze(fixture: *const Fixture, effects: bool) !domain.Analysis {
     const validation = try model.validateGraph(std.testing.allocator, &directory, "ctor", &graph, &budget);
     try std.testing.expect(validation == .pending);
     try std.testing.expectEqual(model.Pending.construction_frame, validation.pending);
-    var result = if (effects) try domain.analyzeEffects(std.testing.allocator, &directory, &graph, &budget, "ctor")
-        else try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, "ctor");
+    var result = if (effects) try domain.analyzeEffects(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" })
+        else try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" });
     errdefer result.deinit();
     try std.testing.expect(meter.remaining > 0 and meter.remaining < 100_000);
     return result;
@@ -171,7 +171,7 @@ test "a derived result-only graph still lacks parent protocol coverage" {
     const validation = try model.validateGraph(std.testing.allocator, &directory, "ctor", &graph, &budget);
     try std.testing.expect(validation == .pending);
     try std.testing.expectEqual(model.Pending.construction_frame, validation.pending);
-    var result = try domain.analyzeEffects(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeEffects(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, .entry_state), result.pending);
 }
 
@@ -189,7 +189,7 @@ test "formal child interpretation cannot refill an exhausted checked budget" {
     try std.testing.expect(validation == .pending);
     try std.testing.expectEqual(model.Pending.construction_frame, validation.pending);
     meter.remaining = 0;
-    try std.testing.expectError(error.BudgetExceeded, domain.analyzeEffects(std.testing.allocator, &directory, &graph, &budget, "ctor"));
+    try std.testing.expectError(error.BudgetExceeded, domain.analyzeEffects(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }));
     try std.testing.expectEqual(@as(usize, 0), meter.remaining);
 }
 
@@ -231,8 +231,8 @@ const MixedLanguageFixture = struct {
         const validation = try model.validateGraph(std.testing.allocator, &directory, "ctor", &body, &budget);
         try std.testing.expect(validation == .pending);
         try std.testing.expectEqual(model.Pending.construction_frame, validation.pending);
-        var result = if (effects) try domain.analyzeEffects(std.testing.allocator, &directory, &body, &budget, "ctor")
-            else try domain.analyzeReturns(std.testing.allocator, &directory, &body, &budget, "ctor");
+        var result = if (effects) try domain.analyzeEffects(std.testing.allocator, &directory, &body, &budget, .{ .function_id = "ctor" })
+            else try domain.analyzeReturns(std.testing.allocator, &directory, &body, &budget, .{ .function_id = "ctor" });
         errdefer result.deinit();
         try std.testing.expect(meter.remaining > 0 and meter.remaining < 100_000);
         return result;

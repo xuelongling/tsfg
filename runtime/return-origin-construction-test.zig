@@ -209,7 +209,7 @@ const ControlFixture = struct {
 fn checkControls(fixture: *const ControlFixture, normal: bool, language: bool) !void {
     const graph = fixture.graph(); var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&directory, &graph, &budget);
-    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
     try std.testing.expectEqual(normal, result.normal_live);
     try std.testing.expectEqual(language, result.language_live);
@@ -250,7 +250,7 @@ test "formal unknown result retains both object and nonobject completions" {
         .exits = .{ .normal = &.{.{ .heap = 1, .control = 1 }}, .language = &.{.{ .heap = 2, .control = 2 }} }, .accesses = &.{} };
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&directory, &graph, &budget);
-    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
     try std.testing.expect(result.normal_live and result.language_live);
     try std.testing.expect(result.controls[1] and result.controls[2]);
@@ -272,7 +272,7 @@ test "formal copies preserve categories without allocation or alias provenance" 
         .exits = .{ .normal = &.{.{ .heap = 1, .control = 1 }}, .language = &.{.{ .heap = 2, .control = 2 }} }, .accesses = &.{} };
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&directory, &graph, &budget);
-    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeControls(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
     try std.testing.expect(result.normal_live and result.language_live);
     try std.testing.expectEqual(@as(usize, 1), result.normal.len);
@@ -382,7 +382,7 @@ fn expectEffectFields(result: *const domain.Analysis, graph: *const model.Graph)
 fn expectEffectPending(graph: *const model.Graph, catalog: *const model.Directory, pending: domain.Pending) !void {
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(catalog, graph, &budget);
-    var result = try domain.analyzeEffects(std.testing.allocator, catalog, graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeEffects(std.testing.allocator, catalog, graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, pending), result.pending);
 }
 
@@ -401,7 +401,7 @@ test "effect formal copy retains a conditional owner without converting its decl
             .exits = .{ .normal = &.{.{ .heap = 1, .control = 1 }}, .language = &.{.{ .heap = 2, .control = 2 }} }, .accesses = &.{} };
         var meter: Meter = .{}; var budget = meter.budget();
         try expectTypedFixture(&effect_directory, &graph, &budget);
-        var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, "ctor"); defer result.deinit();
+        var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
         try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
         // An unbound result can select the object alternative or raise on the
         // undefined/primitive alternative; the declared view cannot erase either.
@@ -413,7 +413,7 @@ test "effect formal copy retains a conditional owner without converting its decl
         try std.testing.expectEqual(@as(usize, 0), result.initializations.len);
         var control_meter: Meter = .{}; var control_budget = control_meter.budget();
         try expectTypedFixture(&effect_directory, &graph, &control_budget);
-        var control = try domain.analyzeControls(std.testing.allocator, &effect_directory, &graph, &control_budget, "ctor"); defer control.deinit();
+        var control = try domain.analyzeControls(std.testing.allocator, &effect_directory, &graph, &control_budget, .{ .function_id = "ctor" }); defer control.deinit();
         try std.testing.expectEqual(@as(?domain.Pending, null), control.pending);
         try std.testing.expect(control.normal_live and control.language_live);
         try std.testing.expectEqual(@as(usize, 1), control.normal.len);
@@ -429,7 +429,7 @@ test "effect formal copy retains a conditional owner without converting its decl
 test "effect two managed fields retain all parameter categories on the bound receiver" {
     const fixture: EffectFixture = .{}; const graph = fixture.graph(); var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&effect_directory, &graph, &budget);
-    var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try expectEffectFields(&result, &graph);
     try std.testing.expect(result.normal_live and !result.language_live);
     try std.testing.expectEqual(@as(usize, 1), result.normal.len);
@@ -442,7 +442,7 @@ test "effect language completion retains both earlier managed field writes" {
     graph.normal = &.{}; graph.language = &.{7}; graph.exits = .{ .normal = &.{}, .language = &.{.{ .heap = 4, .control = 2 }} };
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&effect_directory, &graph, &budget);
-    var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try expectEffectFields(&result, &graph);
     try std.testing.expect(!result.normal_live and result.language_live);
     try std.testing.expectEqual(@as(usize, 3), result.language.len);
@@ -458,7 +458,7 @@ test "effect a nonterminating world join retains both managed prefix writes with
     var graph = fixture.graph(); graph.heaps = &heaps; graph.controls = &controls; graph.normal = &.{}; graph.language = &.{}; graph.exits = .{ .normal = &.{}, .language = &.{} };
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&effect_directory, &graph, &budget);
-    var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try expectEffectFields(&result, &graph);
     try std.testing.expect(!result.normal_live and !result.language_live);
     try std.testing.expectEqual(@as(usize, 0), result.normal.len);
@@ -529,7 +529,7 @@ test "effect a call keeps its separate fixed-callee proof obligation" {
 fn expectReturnPending(graph: *const model.Graph, catalog: *const model.Directory, pending: domain.Pending) !void {
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(catalog, graph, &budget);
-    var result = try domain.analyzeReturns(std.testing.allocator, catalog, graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeReturns(std.testing.allocator, catalog, graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, pending), result.pending);
 }
 
@@ -550,7 +550,7 @@ test "checked constructor return graphs retain copy heaps and both managed field
     graph.exits = .{ .normal = &.{.{ .heap = 7, .control = 3 }}, .language = &.{.{ .heap = 8, .control = 4 }} };
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&effect_directory, &graph, &budget);
-    var result = try domain.analyzeReturns(std.testing.allocator, &effect_directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeReturns(std.testing.allocator, &effect_directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
     try std.testing.expect(result.normal_live and !result.language_live);
     try std.testing.expect(result.controls[3] and !result.controls[4]);
@@ -587,7 +587,7 @@ test "checked base constructor scalar result retains its bound receiver fallback
     var fixture: ControlFixture = .{}; fixture.nodes[3] = .{ .literal = .{ .@"type" = "i32", .category = .other } };
     const graph = fixture.graph(); var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&directory, &graph, &budget);
-    var result = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
     try std.testing.expect(result.normal_live and !result.language_live);
     try std.testing.expectEqual(@as(usize, 1), result.normal.len);
@@ -605,7 +605,7 @@ test "checked constructor language exits retain scalar undefined and reference p
         graph.exits = .{ .normal = &.{}, .language = &.{.{ .heap = 2, .control = 2 }} };
         var meter: Meter = .{}; var budget = meter.budget();
         try expectTypedFixture(&directory, &graph, &budget);
-        var result = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+        var result = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
         try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
         try std.testing.expect(!result.normal_live and result.language_live);
         try std.testing.expectEqual(@as(usize, 1), result.language.len);
@@ -670,7 +670,7 @@ test "an effects logical view keeps the same formal owner and actual alternative
             .exits = .{ .normal = &.{.{ .heap = 1, .control = 1 }}, .language = &.{.{ .heap = 2, .control = 2 }} }, .accesses = &.{} };
         var meter: Meter = .{}; var budget = meter.budget();
         try expectTypedFixture(&effect_directory, &graph, &budget);
-        var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, "ctor"); defer result.deinit();
+        var result = try domain.analyzeEffects(std.testing.allocator, &effect_directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
         try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
         // A retained Array->Span view cannot remove undefined/primitive result
         // failure or make a fresh owner. It is only a lexical view equation.
@@ -697,7 +697,7 @@ test "a live return copy needs Data even when its result is discarded" {
     fixture.nodes[6].join.inputs = &.{ 3, 6 };
     var meter: Meter = .{}; var budget = meter.budget();
     try expectTypedFixture(&directory, &graph, &budget);
-    var result = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, "ctor"); defer result.deinit();
+    var result = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = "ctor" }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
     try std.testing.expect(result.normal_live and !result.language_live);
     try std.testing.expectEqual(@as(usize, 1), result.normal.len);

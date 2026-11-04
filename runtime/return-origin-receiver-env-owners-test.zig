@@ -81,7 +81,7 @@ fn typed(budget: *m.Budget, input: *const m.Graph) !void {
 test "receiver result preserves copied child Code ENV, parent contents and all fixed capture flags" {
     var meter: Meter = .{}; var budget = m.Budget{ .context = &meter, .charge = Meter.charge };
     try typed(&budget, &graph);
-    var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, constructor); defer receiver.deinit();
+    var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = constructor }); defer receiver.deinit();
     try std.testing.expectEqual(@as(?construction.Pending, null), receiver.pending);
     try std.testing.expect(receiver.heap_live[4] and !receiver.heap_live[5]);
     const before = meter.remaining; const fixed = contracts(&graph);
@@ -124,7 +124,7 @@ test "receiver closure completion cannot hide missing init or a copy heap that d
         if (lost_copy_prefix) changed_heaps[3].copy.previous = 0 else changed_heaps[1].store.initialize = false;
         var changed = graph; changed.heaps = &changed_heaps;
         var meter: Meter = .{}; var budget = m.Budget{ .context = &meter, .charge = Meter.charge }; try typed(&budget, &changed);
-        var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &changed, &budget, constructor); defer receiver.deinit();
+        var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &changed, &budget, .{ .function_id = constructor }); defer receiver.deinit();
         try std.testing.expectEqual(@as(?construction.Pending, null), receiver.pending);
         const fixed = contracts(&changed);
         var result = try owners.analyzeReceiver(std.testing.allocator, &directory, &.{}, constructor, &changed, &fixed, &budget, &receiver); defer result.deinit();
@@ -158,7 +158,7 @@ test "receiver allocation and error symbols do not collide or invent a formal Ac
     input.normal = &.{4}; input.language = &.{3};
     input.exits = .{ .normal = &.{.{ .heap = 2, .control = 2 }}, .language = &.{.{ .heap = 1, .control = 1 }} };
     var meter: Meter = .{}; var budget = m.Budget{ .context = &meter, .charge = Meter.charge }; try typed(&budget, &input);
-    var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &input, &budget, constructor); defer receiver.deinit();
+    var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &input, &budget, .{ .function_id = constructor }); defer receiver.deinit();
     try std.testing.expectEqual(@as(?construction.Pending, null), receiver.pending);
     try std.testing.expectEqual(@as(?m.Symbol, null), receiver.frames[1].new_target);
     const fixed = [_]owners.Fixed{.{ .function_id = constructor, .graph = &input, .parameters = &.{ .{}, .{} }, .captures = &.{}, .may_throw = true }};
@@ -176,7 +176,7 @@ test "receiver allocation and error symbols do not collide or invent a formal Ac
     var copy_heaps: [4]m.Heap = undefined; @memcpy(copy_heaps[0..3], input.heaps);
     copy_heaps[3] = .{ .copy = .{ .previous = 2, .value = 5 } }; copied.heaps = &copy_heaps;
     copied.normal = &.{5}; copied.exits.normal = &.{.{ .heap = 3, .control = 2 }}; try typed(&budget, &copied);
-    var copy_receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &copied, &budget, constructor); defer copy_receiver.deinit();
+    var copy_receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &copied, &budget, .{ .function_id = constructor }); defer copy_receiver.deinit();
     try std.testing.expectEqual(@as(?construction.Pending, null), copy_receiver.pending);
     const copy_fixed = [_]owners.Fixed{.{ .function_id = constructor, .graph = &copied, .parameters = &.{ .{}, .{} }, .captures = &.{}, .may_throw = true }};
     var copy_result = try owners.analyzeReceiver(std.testing.allocator, &directory, &.{}, constructor, &copied, &copy_fixed, &budget, &copy_receiver); defer copy_result.deinit();
@@ -185,7 +185,7 @@ test "receiver allocation and error symbols do not collide or invent a formal Ac
 
 test "receiver bridge spends the same remaining budget and cannot refill it" {
     var meter: Meter = .{}; var budget = m.Budget{ .context = &meter, .charge = Meter.charge }; try typed(&budget, &graph);
-    var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, constructor); defer receiver.deinit();
+    var receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = constructor }); defer receiver.deinit();
     try std.testing.expectEqual(@as(?construction.Pending, null), receiver.pending);
     meter.remaining = 1; const fixed = contracts(&graph);
     try std.testing.expectError(error.BudgetExceeded, owners.analyzeReceiver(std.testing.allocator, &directory, &.{}, constructor, &graph, &fixed, &budget, &receiver));
@@ -194,12 +194,12 @@ test "receiver bridge spends the same remaining budget and cannot refill it" {
 test "receiver unknown Data and calls remain explicit unfinished boundaries" {
     var changed_nodes = nodes; changed_nodes[2] = .unknown; var unknown = graph; unknown.nodes = &changed_nodes;
     var meter: Meter = .{}; var budget = m.Budget{ .context = &meter, .charge = Meter.charge }; try typed(&budget, &unknown);
-    var unknown_receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &unknown, &budget, constructor); defer unknown_receiver.deinit();
+    var unknown_receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &unknown, &budget, .{ .function_id = constructor }); defer unknown_receiver.deinit();
     try std.testing.expectEqual(construction.Pending.unknown_origin, unknown_receiver.pending.?);
     var with_call = graph;
     with_call.calls = &.{.{ .function_id = child, .arguments = &.{}, .environment = &.{3}, .callee = null, .receiver = null, .heap = 2, .control = 0, .site = "unfinished-constructor-call" }};
     try typed(&budget, &with_call);
-    var call_receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &with_call, &budget, constructor); defer call_receiver.deinit();
+    var call_receiver = try construction.analyzeReturns(std.testing.allocator, &directory, &with_call, &budget, .{ .function_id = constructor }); defer call_receiver.deinit();
     try std.testing.expectEqual(construction.Pending.fixed_call, call_receiver.pending.?);
     const fixed = contracts(&with_call);
     var result = try owners.analyzeReceiver(std.testing.allocator, &directory, &.{}, constructor, &with_call, &fixed, &budget, &call_receiver); defer result.deinit();

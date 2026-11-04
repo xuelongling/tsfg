@@ -6,6 +6,7 @@ const ctx = @import("wire-program-refcheck-context.zig");
 const t = @import("wire-program-types.zig");
 const model = @import("wire-program-publication.zig");
 const origin = @import("wire-program-return-origin-model.zig");
+const construction = @import("wire-program-return-origin-construction.zig");
 const Context = ctx.Context;
 const Error = ctx.Error;
 const HashSet = std.AutoHashMapUnmanaged(t.Hash, void);
@@ -250,4 +251,19 @@ pub fn check(c: *Context, value: model.FixedPublication) Error!void {
     }
     try returnGraphs(c, value);
     try c.require(value.request.targets.len != 1); try hashRefs(c, value.request.targets, &functions, 32, .unique);
+}
+
+// The enclosing Context already owns fixed scope/contract validation. Preserve
+// the original complete immutable rows and their digest/constructor metadata;
+// this projection grants no admission, selected actual state or reduced upper.
+pub fn returnOriginConstructorInput(c: *Context, allocator: std.mem.Allocator, value: model.FixedPublication, function_id: origin.Symbol) Error!construction.FormalInput {
+    const contracts = value.publication.contracts; const declarations = value.stable_scope.functions;
+    try c.require(contracts.len == declarations.len);
+    try c.charge(contracts.len + 1); const fixed = try allocator.alloc(construction.FixedFunction, contracts.len);
+    for (contracts, declarations, fixed) |*contract, *scope_function, *into| {
+        // Pair the two typed immutable directories once at this new boundary.
+        try c.charge(2); try c.require(std.mem.eql(u8, &contract.function_id, &scope_function.function_id) and std.mem.eql(u8, &contract.signature_hash, &scope_function.signature_hash));
+        into.* = .{ .function_id = try symbol(c, allocator, contract.function_id), .contract = contract, .declaration = scope_function };
+    }
+    return .{ .function_id = function_id, .fixed = fixed };
 }

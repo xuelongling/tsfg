@@ -108,7 +108,7 @@ test "checked receiver Body preserves both copy heaps and complete field prefix 
         try std.testing.expectEqual(heap.copy.previous, value.copy.heap);
     }
     try std.testing.expectEqual(@as(usize, 2), copies);
-    var result = try domain.analyzeReturns(c.allocator, &directory, graph, &budget, function_id); defer result.deinit();
+    var result = try domain.analyzeReturns(c.allocator, &directory, graph, &budget, .{ .function_id = function_id }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
     try std.testing.expect(result.normal_live and !result.language_live);
     try std.testing.expectEqual(@as(usize, 1), result.normal.len);

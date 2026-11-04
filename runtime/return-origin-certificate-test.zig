@@ -324,7 +324,7 @@ test "receiver full correspondence never deletes a potentially live language com
         try std.testing.expect(validation == .pending);
         try std.testing.expectEqual(model.Pending.construction_frame, validation.pending);
     }
-    var observed = try receiver_domain.analyzeReturns(std.testing.allocator, &receiver_directory, &left, &budget, "ctor"); defer observed.deinit();
+    var observed = try receiver_domain.analyzeReturns(std.testing.allocator, &receiver_directory, &left, &budget, .{ .function_id = "ctor" }); defer observed.deinit();
     try std.testing.expectEqual(@as(?receiver_domain.Pending, null), observed.pending);
     try std.testing.expect(!observed.normal_live and observed.language_live);
     try std.testing.expect(!observed.controls[9] and observed.controls[10]);

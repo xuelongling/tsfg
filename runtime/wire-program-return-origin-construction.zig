@@ -3,6 +3,7 @@
 // No Actual tags, Source provenance, dynamic activation or permission is made.
 const std = @import("std");
 const model = @import("wire-program-return-origin-model.zig");
+const publication = @import("wire-program-publication.zig");
 const Ref = model.Ref;
 const Budget = model.Budget;
 const Error = model.Error;
@@ -20,7 +21,16 @@ pub const Atom = struct {
     source: union(enum) { node: Ref, allocation: Ref, language_error: Ref },
     category: Category,
 };
-pub const Pending = enum { entry_state, fixed_call, data_protocol, heap_protocol, unknown_origin, parent_activation, frame_activation, scalar_initialization };
+pub const Pending = enum { entry_state, fixed_call, fixed_contract, fixed_completion, fixed_origin, call_entry, data_protocol, heap_protocol, unknown_origin, parent_activation, frame_activation, scalar_initialization };
+pub const PublicationContract = @typeInfo(@FieldType(publication.Publication, "contracts")).pointer.child;
+pub const ScopeFunction = @typeInfo(@FieldType(publication.StableScope, "functions")).pointer.child;
+// Borrow the complete already-owned immutable rows. No narrowed graph-only
+// upper, verification marker or selected actual state is accepted here.
+pub const FixedFunction = struct { function_id: model.Symbol, contract: *const PublicationContract, declaration: *const ScopeFunction };
+pub const FormalInput = struct { function_id: model.Symbol, fixed: []const FixedFunction = &.{} };
+pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{} };
+pub const InputExits = struct { input: Ref, normal: ExitBinding = .{}, language: ExitBinding = .{} };
+pub const CallFact = struct { call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis };
 pub const Initialization = struct { store: Ref, base: Atom, value: Atom };
 pub const FrameSummary = struct {
     // A formal receiver's null new_target is a universal compatible-target
@@ -42,6 +52,12 @@ pub const Analysis = struct {
     // Shared formal receiver continuation facts. Content interpreters borrow
     // these worlds' liveness; they do not repeat the receiver state machine.
     heap_live: []const bool = &.{},
+    // Child Analysis objects and ALL their arena chunks belong to this parent
+    // arena. calls[].analysis is a read-only borrowed view: never separately
+    // deinit it or allocate through its arena after this parent result moves.
+    // Destroying only this owning arena releases the entire call tree once.
+    // Graphs/contracts/directory rows remain borrowed and outlive this result.
+    calls: []const CallFact = &.{}, input_exits: ?InputExits = null,
     pub fn deinit(self: *Analysis) void { self.arena.deinit(); }
 };
 const Atoms = std.ArrayListUnmanaged(Atom);
@@ -83,7 +99,8 @@ const Engine = struct {
     values: []Fact, worlds: []World, controls: []bool, frames: []Frame, results: []Atoms,
     input: ?Ref = null,
     changed: bool = false, pending: ?Pending = null, control_only: bool = false, effect_origins: bool = false,
-    formal_environments: bool = false,
+    formal_environments: bool = false, formal_input: ?FormalInput = null,
+    calls: std.ArrayListUnmanaged(CallFact) = .empty, call_results: [][2]Atoms = &.{}, call_live: [][2]bool = &.{},
     fn insert(self: *Engine, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!bool {
         for (into.items) |old| { try self.budget.step(); if (std.meta.eql(old, value)) return false; }
         try self.budget.step();
@@ -150,6 +167,88 @@ const Engine = struct {
     fn outcome(self: *Engine, index: Ref, source: *const World, frame: Ref, values: []const Atom, replacement: ?[]const Atom, unbound: ?bool) Error!void {
         try self.merge(&self.worlds[index], source, frame, replacement, unbound);
         try self.atoms(&self.results[index], values);
+    }
+    fn fixedFunction(self: *Engine, id: model.Symbol) Error!?*const FixedFunction {
+        const input = self.formal_input orelse return null;
+        if (input.fixed.len != self.directory.functions.len) return null;
+        var selected: ?*const FixedFunction = null;
+        for (input.fixed, self.directory.functions) |*row, function| {
+            try self.budget.step();
+            if (!try self.budget.equal(row.function_id, function.id)) return null;
+            if (try self.budget.equal(row.function_id, id)) selected = row;
+        }
+        return selected;
+    }
+    fn callFact(self: *Engine, ordinal: Ref, frame: Ref) Error!?*const CallFact {
+        for (self.calls.items) |*fact| { try self.budget.step(); if (fact.call == ordinal and fact.receiver == frame) return fact; }
+        const call = self.graph.calls[ordinal];
+        const fixed = try self.fixedFunction(call.function_id) orelse { self.pending = .fixed_call; return null; };
+        const function = try model.findFunction(self.directory, call.function_id, self.budget);
+        const role = function.construction orelse { self.pending = .fixed_call; return null; };
+        const declared = fixed.declaration.construction orelse { self.pending = .fixed_contract; return null; };
+        if (function.kind != .construction_body or fixed.declaration.kind != .@"construction-body" or !function.environment_metadata_complete or
+            fixed.declaration.parameter_types.len != 1 or function.parameter_types.len != 1 or fixed.contract.upper.parameters.len != 1 or fixed.contract.upper.parameters[0].index != 0 or
+            fixed.declaration.lexical_environment != null or fixed.declaration.activation_environment != null or fixed.declaration.captures.len != 0 or fixed.contract.upper.captures.len != 0 or
+            function.lexical_environment != null or function.activation_environment != null or declared.receiver_index != 0) { self.pending = .fixed_contract; return null; }
+        if (self.frames[frame].role == null or self.frames[frame].parent != null or !try self.budget.equal(self.frames[frame].role.?.id, role.id)) { self.pending = .call_entry; return null; }
+        const graph = if (fixed.contract.return_origins) |*value| value else { self.pending = .fixed_call; return null; };
+        // This first cross-function entrance has no data/ENV transport and no
+        // additional frame namespace. Unsupported dependencies are never solved
+        // with a callee's current body, selected target or fresh default seed.
+        if (graph.calls.len != 0) { self.pending = .fixed_call; return null; }
+        for (graph.nodes) |node| { try self.budget.step(); if (node == .receiver_frame) { self.pending = .fixed_call; return null; } }
+        try self.budget.spend(1); const analysis = try self.allocator.create(Analysis);
+        analysis.* = try analyzeImpl(self.allocator, self.directory, graph, self.budget, null, .{ .function_id = function.id }, true, true);
+        if (analysis.pending) |reason| { self.pending = reason; analysis.deinit(); return null; }
+        if (fixed.contract.upper.facets.may_throw and !analysis.language_live) { self.pending = .fixed_completion; analysis.deinit(); return null; }
+        const exits = analysis.input_exits orelse { self.pending = .call_entry; analysis.deinit(); return null; };
+        if (self.calls.items.len == self.calls.capacity) try self.budget.spend(self.calls.items.len + 1);
+        try self.budget.step(); try self.calls.append(self.allocator, .{ .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis });
+        return &self.calls.items[self.calls.items.len - 1];
+    }
+    fn imported(self: *Engine, fact: *const CallFact, completion: model.Completion, values: []const Atom, into: *Atoms) Error!bool {
+        var error_site: ?Ref = null;
+        for (values) |atom| {
+            try self.budget.step(); const value: Atom = switch (atom.source) {
+                .allocation => |source| if (source == fact.input) .{ .source = .{ .allocation = fact.receiver }, .category = atom.category } else { self.pending = .fixed_origin; return false; },
+                .language_error => blk: {
+                    // A generated callee error remains local to this original
+                    // caller completion. CallFact retains its exact callee
+                    // action origin; no callee Ref is reinterpreted as caller.
+                    if (error_site == null) for (self.graph.heaps, 0..) |heap, index| {
+                        try self.budget.step(); if (heap == .call and heap.call.call == fact.call and heap.call.completion == completion) { error_site = index; break; }
+                    };
+                    const site = error_site orelse { self.pending = .fixed_origin; return false; };
+                    break :blk .{ .source = .{ .language_error = site }, .category = atom.category };
+                },
+                .node => { self.pending = .fixed_origin; return false; },
+            };
+            // Temporary mapped equations do not advance the fixed point.
+            // Only their merge into persistent caller facts may set changed.
+            _ = try self.insert(Atom, into, value);
+        }
+        return true;
+    }
+    fn fixedCall(self: *Engine, heap_index: Ref, row: @FieldType(model.Heap, "call")) Error!void {
+        const call = self.graph.calls[row.call];
+        if (!self.controls[call.control] or !self.worlds[call.heap].live) return;
+        if (call.receiver == null or call.callee != null or call.environment != null or call.arguments.len != 0) { self.pending = .fixed_call; return; }
+        var selected: Refs = .empty;
+        for (call.receiver.?) |id| { try self.budget.step(); for (self.values[id].frames.items) |frame| { _ = try self.insert(Ref, &selected, frame); } }
+        if (selected.items.len == 0) return;
+        if (selected.items.len != 1) { self.pending = .call_entry; return; }
+        const frame = selected.items[0]; const before = &self.worlds[call.heap].bindings[frame];
+        if (!before.unbound or before.atoms.items.len != 0) { self.pending = .call_entry; return; }
+        const fact = try self.callFact(row.call, frame) orelse return;
+        const binding = if (row.completion == .normal) fact.analysis.input_exits.?.normal else fact.analysis.input_exits.?.language;
+        if (!binding.live) return;
+        var replacement: Atoms = .empty;
+        if (!try self.imported(fact, row.completion, binding.atoms, &replacement)) return;
+        var returned: Atoms = .empty;
+        if (!try self.imported(fact, row.completion, if (row.completion == .normal) fact.analysis.normal else fact.analysis.language, &returned)) return;
+        try self.atoms(&self.call_results[row.call][@intFromEnum(row.completion)], returned.items);
+        try self.merge(&self.worlds[heap_index], &self.worlds[call.heap], frame, replacement.items, binding.unbound);
+        const live = &self.call_live[row.call][@intFromEnum(row.completion)]; if (!live.*) { live.* = true; self.changed = true; }
     }
     // Empty Data is not normally an absence proof. Only a finite, nonempty
     // wrapper DAG whose every leaf is a resolved impossible receiver completion
@@ -314,7 +413,7 @@ const Engine = struct {
                         try self.add(Ref, &into.frames, index);
                     },
                     .receiver_value => |row| try self.atoms(&into.atoms, self.results[row.action].items),
-                    else => unreachable, // The complete subset check precedes work.
+                    .call => |row| try self.atoms(&into.atoms, self.call_results[row.call][@intFromEnum(row.completion)].items),
                 }
             }
             for (self.graph.heaps, 0..) |heap, index| {
@@ -322,6 +421,7 @@ const Engine = struct {
                     .entry => if (!self.worlds[index].live) { self.worlds[index].live = true; self.changed = true; },
                     .join => |row| for (row.inputs) |input| try self.merge(&self.worlds[index], &self.worlds[input], null, null, null),
                     .receiver_action => |row| try self.action(index, row),
+                    .call => |row| try self.fixedCall(index, row),
                     .store => |row| {
                         if (self.formal_environments and std.mem.startsWith(u8, row.selector, "capture:")) {
                             // The typed carrier boundary owns this ENV address.
@@ -335,7 +435,6 @@ const Engine = struct {
                         // domain makes no copied physical Value/holding proof.
                         try self.merge(&self.worlds[index], &self.worlds[row.previous], null, null, null);
                     },
-                    else => unreachable,
                 }
             }
             for (self.graph.controls, 0..) |control, index| {
@@ -344,7 +443,7 @@ const Engine = struct {
                     .entry => true,
                     .join => |row| live: { for (row.inputs) |input| { try self.budget.step(); if (self.controls[input]) break :live true; } break :live false; },
                     .receiver_completion => |row| self.worlds[row.action].live,
-                    else => unreachable,
+                    .call => |row| self.call_live[row.call][@intFromEnum(row.completion)],
                 };
                 if (live) { self.controls[index] = true; self.changed = true; }
             }
@@ -358,10 +457,11 @@ const Engine = struct {
 // Optional entry carries only original IDs for an independently proved unbound
 // root. It must belong to this graph's owning function and completed same-
 // Context actual analysis. No raw payload, Source/FDI or permission is accepted.
-fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_function: ?model.Symbol, effect_origins: bool, return_origins: bool) Error!Analysis {
+fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_input: ?FormalInput, effect_origins: bool, return_origins: bool) Error!Analysis {
+    const formal_function = if (formal_input) |input| input.function_id else null;
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
     if (!try model.receiverActivations(allocator, graph, budget)) { result.pending = .frame_activation; return result; }
-    if (graph.calls.len != 0) { result.pending = .fixed_call; return result; }
+    if (graph.calls.len != 0 and (formal_input == null or formal_input.?.fixed.len == 0)) { result.pending = .fixed_call; return result; }
     var input: ?Ref = null;
     for (graph.nodes,0..) |node,index| {
         try budget.step(); switch (node) {
@@ -379,9 +479,9 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
                 if (!known) { result.pending = .data_protocol; return result; }
             },
             .literal, .parameter, .global, .nonowning, .join, .gate, .receiver_frame, .receiver_value => {},
+            .call => if (formal_input == null or formal_input.?.fixed.len == 0) { result.pending = .fixed_call; return result; },
             .code => |row| if (formal_function == null and row.environment != null) { result.pending = .data_protocol; return result; },
             .environment_input, .environment_create, .environment_parent, .environment_component, .capture, .projection => if (formal_function == null) { result.pending = .data_protocol; return result; },
-            else => { result.pending = .data_protocol; return result; },
         }
     }
     if (return_origins and input == null) { result.pending = .entry_state; return result; }
@@ -390,6 +490,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     const entry_function=if(input!=null)try model.findFunction(directory,formal_function orelse entry.?.function_id,budget) else null;
     for (graph.heaps) |heap| { try budget.step(); switch (heap) {
         .entry, .join, .receiver_action => {},
+        .call => if (formal_input == null or formal_input.?.fixed.len == 0) { result.pending = .fixed_call; return result; },
         .copy => if (!return_origins) { result.pending = .heap_protocol; return result; },
         .store=>|row|{
             if (formal_function != null and std.mem.startsWith(u8, row.selector, "capture:")) continue;
@@ -418,7 +519,6 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
             for(entry.?.scalar_fields) |id| { try budget.step(); if(try budget.equal(id,row.selector[6..])) { owned=true; break; } }
             if(!owned or !try nativeLiterals(a,directory,graph,row.values,budget)) { result.pending=.scalar_initialization; return result; }
         },
-        else => { result.pending = .heap_protocol; return result; },
     } }
     try budget.spend(graph.nodes.len); const values = try a.alloc(Fact, graph.nodes.len); @memset(values, .{});
     try budget.spend(graph.nodes.len); const frames = try a.alloc(Frame, graph.nodes.len); @memset(frames, .{});
@@ -426,7 +526,10 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     try budget.spend(graph.heaps.len); const worlds = try a.alloc(World, graph.heaps.len);
     for (worlds) |*world| { try budget.spend(graph.nodes.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len) }; @memset(world.bindings, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
-    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null };
+    var engine = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null, .formal_input = formal_input };
+    try budget.spend(2 * graph.calls.len);
+    engine.call_results = try a.alloc([2]Atoms, graph.calls.len); @memset(engine.call_results, .{ .empty, .empty });
+    engine.call_live = try a.alloc([2]bool, graph.calls.len); @memset(engine.call_live, .{ false, false });
     if(input) |id| {
       if (formal_function != null) {
         // The admitted construction-body interface owns an initially unbound
@@ -452,7 +555,16 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
         frames[id]=.{.role=role,.new_target=seed.new_target,.parent=null};
       }
     }
-    try engine.run(); if (engine.pending) |reason| { result.pending = reason; return result; }
+    // All immutable source graphs/metadata were validated at the same owning
+    // boundary. Every syntactic fixed dependency must still be available; an
+    // inactive completion is never permission to omit a target or solve a cycle.
+    for (graph.calls) |call| {
+        try budget.step(); const fixed = try engine.fixedFunction(call.function_id) orelse { result.pending = .fixed_call; return result; };
+        const dependency = if (fixed.contract.return_origins) |*value| value else { result.pending = .fixed_call; return result; };
+        if (dependency.calls.len != 0) { result.pending = .fixed_call; return result; }
+        for (dependency.nodes) |node| { try budget.step(); if (node == .unknown) { result.pending = .unknown_origin; return result; } }
+    }
+    try engine.run(); result.calls = engine.calls.items; if (engine.pending) |reason| { result.pending = reason; return result; }
     if (formal_function != null and input != null) {
         try budget.step(); const root = input.?;
         if (frames[root].role.?.base != null) {
@@ -493,6 +605,13 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
         if (!controls[row.control] or !worlds[row.previous].live) continue;
         for (row.operands) |id| { try budget.step(); if (values[id].atoms.items.len == 0) { result.pending = .unknown_origin; return result; } }
     };
+    for (graph.calls) |call| {
+        try budget.step(); if (!controls[call.control] or !worlds[call.heap].live) continue;
+        const receiver = call.receiver orelse { result.pending = .fixed_call; return result; };
+        var resolved = false;
+        for (receiver) |id| { try budget.step(); resolved = resolved or values[id].frames.items.len != 0; }
+        if (!resolved) { result.pending = .unknown_origin; return result; }
+    }
     var normal: Atoms = .empty; var language: Atoms = .empty;
     for (graph.exits.normal) |exit| {
         try budget.step(); if (controls[exit.control] and !worlds[exit.heap].live) { result.pending = .heap_protocol; return result; }
@@ -542,6 +661,21 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
     for(worlds) |*world| { try budget.step(); if(world.live)try engine.initializations(&writes,world.initializations.items); }
     result.initializations=writes.items;
     result.normal = normal.items; result.language = language.items; result.frames = summary;
+    if (input) |id| {
+        var exits = InputExits{ .input = id };
+        inline for (.{ model.Completion.normal, model.Completion.language }) |completion| {
+            const source = if (completion == .normal) graph.exits.normal else graph.exits.language;
+            const into = if (completion == .normal) &exits.normal else &exits.language;
+            var bound: Atoms = .empty;
+            for (source) |exit| {
+                try budget.step(); if (!controls[exit.control] or !worlds[exit.heap].live) continue;
+                into.live = true; into.unbound = into.unbound or worlds[exit.heap].bindings[id].unbound;
+                try engine.atoms(&bound, worlds[exit.heap].bindings[id].atoms.items);
+            }
+            into.atoms = bound.items;
+        }
+        result.input_exits = exits;
+    }
     if (formal_function != null) {
         try budget.spend(results.len); const action_results = try a.alloc([]const Atom, results.len);
         for (results, action_results) |value, *into| { try budget.step(); into.* = value.items; }
@@ -561,21 +695,21 @@ pub fn analyze(allocator: std.mem.Allocator, directory: *const model.Directory, 
 // The graph is the complete current normalized constructor control projection,
 // not its fixed own-return certificate. Unsupported calls and data/heap forms
 // retain Pending; callers must keep complete callee uppers independently.
-pub fn analyzeControls(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, function_id: model.Symbol) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, function_id, false, false);
+pub fn analyzeControls(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, null, input, false, false);
 }
 
 // Effect-only lexical owner flow through all current live-prefix field stores.
 // Formal roots retain arbitrary categories and conditional owners across copy;
 // no actual allocation, identity, freshness, holding or return proof is made.
-pub fn analyzeEffects(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, function_id: model.Symbol) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, function_id, true, false);
+pub fn analyzeEffects(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, null, input, true, false);
 }
 
 // Pure interpretation of an independently typed construction-frame return
 // graph. The caller must separately prove the complete current-body graph is
 // included in the immutable fixed graph. No effect-proof object, selected actual
 // entrance, allocation authority, physical Value clone or holding is accepted.
-pub fn analyzeReturns(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, function_id: model.Symbol) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, function_id, true, true);
+pub fn analyzeReturns(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, null, input, true, true);
 }

@@ -197,23 +197,27 @@ const CFG = struct {
         const indirect = mode == .indirect; const method = mode == .method;
         const row = try self.functionRow(target) orelse return;
         const abi = self.b.c.program.tables.mode.common.abis[@intFromEnum(self.b.c.program.functions[@intFromEnum(target)].abi)];
-        if (abi.receiver_frame != null or abi.construction != null) { self.b.pending = .entry_protocol; return; }
+        const constructor = abi.construction != null;
+        if ((abi.receiver_frame != null) != constructor or (row.construction != null) != constructor or (constructor and indirect)) { self.b.pending = .entry_protocol; return; }
         // Dynamic method operands carry receiver Data and evaluated arguments,
         // with no hidden ENV transport. Keep that unsupported entrance pending.
         if (method and (row.kind != .method or abi.receiver == null or row.lexical_environment != null or abi.lexical_environment != null)) { self.b.pending = .entry_protocol; return; }
         const hidden: usize = if (indirect or abi.lexical_environment != null) 1 else 0;
-        if (op.operands.len < hidden + row.parameter_types.len or (!method and op.operands.len - hidden != row.parameter_types.len)) { self.b.pending = .raw_input; return; }
-        try self.b.c.charge(row.parameter_types.len + 1);
-        const arguments = try self.b.allocator.alloc([]const origin.Ref, row.parameter_types.len);
-        for (op.operands[hidden..][0..row.parameter_types.len], arguments) |reg, *into| { try self.b.c.step(); into.* = try self.one(self.registerRef(reg)); }
+        const frame_count: usize = if (constructor) 1 else 0;
+        const argument_count = row.parameter_types.len - frame_count;
+        if (op.operands.len < hidden + frame_count + argument_count or (!method and op.operands.len - hidden - frame_count != argument_count)) { self.b.pending = .raw_input; return; }
+        try self.b.c.charge(argument_count + 1);
+        const arguments = try self.b.allocator.alloc([]const origin.Ref, argument_count);
+        for (op.operands[hidden + frame_count..][0..argument_count], arguments) |reg, *into| { try self.b.c.step(); into.* = try self.one(self.registerRef(reg)); }
         const callee = if (indirect) try self.one(self.registerRef(op.operands[0])) else null;
         var environment_refs: ?[]const origin.Ref = null;
         if (row.lexical_environment) |layout| {
             environment_refs = if (callee) |code| try self.one(try self.b.value(.{ .environment_component = .{ .layout = layout, .function_id = row.id, .callee = code, .control = flow.control } })) else try self.one(self.registerRef(op.operands[0]));
         }
+        const receiver = if (constructor) try self.one(self.registerRef(op.operands[abi.receiver_frame.?])) else null;
         const id = self.calls.items.len; try self.b.c.row(origin.Call);
         if (self.calls.items.len == self.calls.capacity) try self.b.c.charge(self.calls.items.len + 1);
-        try self.calls.append(self.b.allocator, .{ .function_id = row.id, .arguments = arguments, .environment = environment_refs, .callee = callee, .receiver = null, .heap = flow.heap, .control = flow.control, .site = try self.site(function_id, op, block, ordinal) });
+        try self.calls.append(self.b.allocator, .{ .function_id = row.id, .arguments = arguments, .environment = environment_refs, .callee = callee, .receiver = receiver, .heap = flow.heap, .control = flow.control, .site = try self.site(function_id, op, block, ordinal) });
         const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, .common_method_invoke => |call| call.normal, else => unreachable };
         const language = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, .common_method_invoke => |call| call.exceptional, else => unreachable };
         inline for (.{ origin.Completion.normal, origin.Completion.language }) |completion| {
@@ -406,7 +410,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
             .receiver_create, .receiver_child, .receiver_allocate, .receiver_bind, .receiver_get, .receiver_result, .initialize_begin, .initialize_end,
             .br, .@"return", .eh_raise, .eh_unreachable => {},
-            .eh_cell, .eh_load, .eh_store, .cond_br, .eh_route, .domain_refine, .eh_assertion, .eh_pack, .eh_carrier, .eh_presence_widen, .domain_copy, .initialize_field,
+            .eh_cell, .eh_load, .eh_store, .cond_br, .eh_route, .domain_refine, .eh_assertion, .eh_pack, .eh_carrier, .eh_presence_widen, .domain_copy, .initialize_field, .eh_invoke,
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => {},
             else => { result.pending = .operation; return; },
         }
@@ -463,6 +467,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
         for (block.instructions, 0..) |*op, ordinal| {
             try c.step(); switch (op.data) {
                 .fuel => {},
+                .eh_invoke => |call| try cfg.invoke(call.callee, op, flow, function_id, block_index, ordinal, .direct),
                 .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => flow = try cfg.lexical(op, flow, function_id, block_index, ordinal),
                 .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal => {
                     const reg = op.result.?; const view = if (f.registers[@intFromEnum(reg)].view) |ref| try b.typeSymbol(ref) else null;
@@ -865,7 +870,8 @@ pub fn coverReceiverEffects(c: *context.Context, function: t.FunctionRef) contex
     try receiverBody(c, function, &directory, &budget, &result.body, .effects);
     if (result.body.pending != null) return result;
     const function_id = try refs.symbol(c, result.arena.allocator(), c.program.functions[@intFromEnum(function)].id);
-    result.analysis = construction_domain.analyzeEffects(c.allocator, &directory, &result.body.graph.?, &budget, function_id) catch |err| return refs.graphFailure(err);
+    const input = try refs.returnOriginConstructorInput(c, result.arena.allocator(), fixed.*, function_id);
+    result.analysis = construction_domain.analyzeEffects(c.allocator, &directory, &result.body.graph.?, &budget, input) catch |err| return refs.graphFailure(err);
     if (result.analysis.?.pending != null) return result;
     try c.row(ReceiverEffectProof); try c.row(ReceiverFlow); try c.row(origin.Graph);
     result.proof = .{ .flow = .{ .graph = result.body.graph.?, .block_controls = result.body.block_controls, .receiver_actions = result.body.receiver_actions, .controls = result.analysis.?.controls, .action_results = result.analysis.?.action_results }, .fields = result.body.field_stores, .initializations = result.analysis.?.initializations };
