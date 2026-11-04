@@ -30,7 +30,7 @@ pub const FixedFunction = struct { function_id: model.Symbol, contract: *const P
 pub const FormalInput = struct { function_id: model.Symbol, fixed: []const FixedFunction = &.{} };
 pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{} };
 pub const InputExits = struct { input: Ref, normal: ExitBinding = .{}, language: ExitBinding = .{} };
-pub const CallFact = struct { call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis };
+pub const CallFact = struct { caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis };
 pub const Initialization = struct { store: Ref, base: Atom, value: Atom };
 pub const FrameSummary = struct {
     // A formal receiver's null new_target is a universal compatible-target
@@ -203,7 +203,7 @@ const Engine = struct {
         if (fixed.contract.upper.facets.may_throw and !analysis.language_live) { self.pending = .fixed_completion; analysis.deinit(); return null; }
         const exits = analysis.input_exits orelse { self.pending = .call_entry; analysis.deinit(); return null; };
         if (self.calls.items.len == self.calls.capacity) try self.budget.spend(self.calls.items.len + 1);
-        try self.budget.step(); try self.calls.append(self.allocator, .{ .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis });
+        try self.budget.step(); try self.calls.append(self.allocator, .{ .caller_graph = self.graph, .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis });
         return &self.calls.items[self.calls.items.len - 1];
     }
     fn imported(self: *Engine, fact: *const CallFact, completion: model.Completion, values: []const Atom, into: *Atoms) Error!bool {

@@ -17,3 +17,11 @@ test('constructor call certificates preserve both site and frame relations', asy
 test('typed constructor bodies retain their real call frame and native prefix', async () => {
   await nativeUnit({ source: 'runtime/return-origin-constructor-call-body-test.zig', prefix: 'r03-constructor-call-body-', expectedPasses: 2 });
 });
+
+test('fixed constructor owner payloads retain original frames and initialized contents', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-call-owners-test.zig', prefix: 'r03-constructor-call-owners-', expectedPasses: 1 });
+});
+
+test('constructor owner imports keep full permissions, separate completions, and pending boundaries', async () => {
+  await nativeUnit({ source: 'runtime/return-origin-constructor-call-owners-negative-test.zig', prefix: 'r03-constructor-call-owners-negative-', expectedPasses: 5 });
+});
