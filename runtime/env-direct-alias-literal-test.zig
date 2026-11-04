@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Complete literal typed metadata for transparent same-Env SSA state checks.
 // Unary Env forwarding stops at refs/layout/identity/SSA; its SourceCorr seam
-// remains OPEN. br-only cases also match the existing SourcePlan when SSA accepts.
+// remains OPEN. Control-flow-only cases also match the existing SourcePlan when SSA accepts.
 // No packet, Source package/carrier, decoder, Actual facts, execution or receipt.
 const std = @import("std");
 const model = @import("wire-program-model.zig");
@@ -65,7 +65,7 @@ const undefined_properties = [_]t.JsonMember{
     .{ .key = "layout", .value = .{ .string = "sha256:03ae292f71f43181805d6071471d8be44fb6d12338a2e89fea975d95f8d380bc" } },
 };
 // Instructions and plan rows below are independent typed literals. Unary Env
-// forwarding is checked only through SSA; br-only cases additionally match the
+// forwarding is checked only through SSA; control-flow cases also match the
 // unchanged SourcePlan after successful SSA. No TypeRef grants Env authority.
 const seed = [_]ins.Instruction{
     .{ .source = entry_at, .result = null, .operands = &.{}, .data = .{ .fuel = .{ .event = .entry } } },
@@ -243,6 +243,42 @@ const readonly_store: ins.Instruction = .{ .source = at, .result = null, .operan
 const plan_readonly_store: control.SourcePlanOperation = .{ .name = "env_store", .view = "void", .properties = &undefined_properties, .source = at, .result = null, .operands = &.{ r(4), r(2) }, .successors = &.{} };
 const conditional_entry = seed ++ [_]ins.Instruction{ alloc, .{ .source = at, .result = null, .operands = &.{ r(0), r(3) }, .data = .{ .cond_br = .{ .true_destination = b(1), .false_destination = b(2), .true_count = 1 } } } };
 const conditional_entry_plan = seed_plan ++ [_]control.SourcePlanOperation{ plan_alloc, .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{ r(0), r(3) }, .successors = &.{ b(1), b(2) } } };
+// Same-allocation conditional, diamond and loop parameters. These use only
+// existing control-flow transport and retain complete passive plan matching.
+const conditional_valid = [_]ins.Instruction{ init_copy, branch_store, branch_load, returned };
+const conditional_valid_plan = [_]control.SourcePlanOperation{ plan_init_copy, plan_branch_store, plan_branch_load, plan_return };
+const conditional_original = [_]ins.Instruction{ init_copy, branch_original_load, returned };
+const conditional_original_plan = [_]control.SourcePlanOperation{ plan_init_copy, plan_branch_original_load, plan_return };
+const same_edge_entry = seed ++ [_]ins.Instruction{ alloc, .{ .source = at, .result = null, .operands = &.{ r(0), r(3), r(3) }, .data = .{ .cond_br = .{ .true_destination = b(1), .false_destination = b(1), .true_count = 1 } } } };
+const same_edge_entry_plan = seed_plan ++ [_]control.SourcePlanOperation{ plan_alloc, .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{ r(0), r(3), r(3) }, .successors = &.{ b(1), b(1) } } };
+const same_merge_entry = seed ++ [_]ins.Instruction{ alloc, .{ .source = at, .result = null, .operands = &.{ r(0), r(3), r(3) }, .data = .{ .cond_br = .{ .true_destination = b(1), .false_destination = b(2), .true_count = 1 } } } };
+const same_merge_entry_plan = seed_plan ++ [_]control.SourcePlanOperation{ plan_alloc, .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{ r(0), r(3), r(3) }, .successors = &.{ b(1), b(2) } } };
+const same_merge_left = [_]ins.Instruction{.{ .source = at, .result = null, .operands = &.{r(4)}, .data = .{ .br = .{ .destination = b(3) } } }};
+const same_merge_left_plan = [_]control.SourcePlanOperation{.{ .name = "cf.br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{r(4)}, .successors = &.{b(3)} }};
+const same_merge_right = [_]ins.Instruction{.{ .source = at, .result = null, .operands = &.{r(5)}, .data = .{ .br = .{ .destination = b(3) } } }};
+const same_merge_right_plan = [_]control.SourcePlanOperation{.{ .name = "cf.br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{r(5)}, .successors = &.{b(3)} }};
+const same_merge_load: ins.Instruction = .{ .source = at, .result = r(7), .operands = &.{r(6)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } };
+const same_merge_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(6), r(1) }, .data = .{ .environment_store = .{ .slot = @enumFromInt(0) } } };
+const plan_same_merge_load: control.SourcePlanOperation = .{ .name = "env_load", .view = i32_text, .properties = &cell_properties, .source = at, .result = r(7), .operands = &.{r(6)}, .successors = &.{} };
+const plan_same_merge_store: control.SourcePlanOperation = .{ .name = "env_store", .view = "void", .properties = &cell_properties, .source = at, .result = null, .operands = &.{ r(6), r(1) }, .successors = &.{} };
+const seeded_loop_entry = seed ++ [_]ins.Instruction{ alloc, init_original, to_alias };
+const seeded_loop_entry_plan = seed_plan ++ [_]control.SourcePlanOperation{ plan_alloc, plan_init_original, plan_to_alias };
+const seeded_loop_back: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(0), r(4) }, .data = .{ .cond_br = .{ .true_destination = b(1), .false_destination = b(2), .true_count = 1 } } };
+const plan_seeded_loop_back: control.SourcePlanOperation = .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{ r(0), r(4) }, .successors = &.{ b(1), b(2) } };
+const seeded_loop_valid = [_]ins.Instruction{ condition, branch_store, branch_load, seeded_loop_back };
+const seeded_loop_valid_plan = [_]control.SourcePlanOperation{ plan_condition, plan_branch_store, plan_branch_load, plan_seeded_loop_back };
+const seeded_loop_repeat = [_]ins.Instruction{ condition, init_copy, branch_load, seeded_loop_back };
+const seeded_loop_repeat_plan = [_]control.SourcePlanOperation{ plan_condition, plan_init_copy, plan_branch_load, plan_seeded_loop_back };
+// Block2 is unreachable Common CFG with its own ungrounded Env cycle. Its edge
+// into block1 must prevent borrowing block0's allocation as a total proof.
+const seedless_load: ins.Instruction = .{ .source = at, .result = r(6), .operands = &.{r(4)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } };
+const plan_seedless_load: control.SourcePlanOperation = .{ .name = "env_load", .view = i32_text, .properties = &cell_properties, .source = at, .result = r(6), .operands = &.{r(4)}, .successors = &.{} };
+const seedless_entry = seed ++ [_]ins.Instruction{ alloc,
+    .{ .source = at, .result = null, .operands = &.{ r(3), r(2) }, .data = .{ .environment_init = .{ .slot = @enumFromInt(1), .anchor_kind = .source } } }, to_alias };
+const seedless_entry_plan = seed_plan ++ [_]control.SourcePlanOperation{ plan_alloc,
+    .{ .name = "env_init", .view = "void", .properties = &undefined_properties, .source = at, .result = null, .operands = &.{ r(3), r(2) }, .successors = &.{} }, plan_to_alias };
+const seedless_body = [_]ins.Instruction{ condition, .{ .source = at, .result = null, .operands = &.{ r(0), r(5), r(5) }, .data = .{ .cond_br = .{ .true_destination = b(2), .false_destination = b(1), .true_count = 1 } } } };
+const seedless_body_plan = [_]control.SourcePlanOperation{ plan_condition, .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{ r(0), r(5), r(5) }, .successors = &.{ b(2), b(1) } } };
 const Case = struct {
     name: []const u8, accept: bool,
     registers: []const model.Register = &unary_registers,
@@ -314,9 +350,9 @@ const cases = [_]Case{
     .{ .name = "br multihop initialization", .accept = true, .registers = &hop_registers, .carriers = &hop_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &branch_entry }, .{ .parameters = &.{r(4)}, .instructions = &hop_middle }, .{ .parameters = &.{r(5)}, .instructions = &hop_body } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &branch_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &hop_middle_plan }, .{ .parameters = &.{r(5)}, .operations = &hop_body_plan } } },
-    // A conditional predecessor and multi-source merge are not single-br
-    // identity proofs. Their existing treatment is intentionally unchanged.
-    .{ .name = "conditional edge unproven load unchanged", .accept = true, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
+    // The single conditional edge has one proven root and requires I.
+    // Different-allocation merges retain their prior incomplete treatment.
+    .{ .name = "conditional same root load requires initialization", .accept = false, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &conditional_entry }, .{ .parameters = &.{r(4)}, .instructions = &.{ branch_load, returned } }, .{ .parameters = &.{}, .instructions = &.{returned} } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &conditional_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &.{ plan_branch_load, plan_return } }, .{ .parameters = &.{}, .operations = &.{plan_return} } } },
     .{ .name = "different allocation merge load unchanged", .accept = true, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
@@ -328,6 +364,37 @@ const cases = [_]Case{
     .{ .name = "two conditional edges from one predecessor unchanged", .accept = true, .registers = &hop_registers, .carriers = &hop_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &double_edge_entry }, .{ .parameters = &.{r(5)}, .instructions = &double_edge_body } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &double_edge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &double_edge_body_plan } } },
+    .{ .name = "conditional same root initialized alias", .accept = true, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &conditional_entry }, .{ .parameters = &.{r(4)}, .instructions = &conditional_valid }, .{ .parameters = &.{}, .instructions = &.{returned} } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &conditional_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &conditional_valid_plan }, .{ .parameters = &.{}, .operations = &.{plan_return} } } },
+    .{ .name = "conditional same root duplicate init", .accept = false, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &conditional_entry }, .{ .parameters = &.{r(4)}, .instructions = &branch_once }, .{ .parameters = &.{}, .instructions = &.{returned} } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &conditional_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &branch_once_plan }, .{ .parameters = &.{}, .operations = &.{plan_return} } } },
+    .{ .name = "conditional same root init original load", .accept = true, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &conditional_entry }, .{ .parameters = &.{r(4)}, .instructions = &conditional_original }, .{ .parameters = &.{}, .instructions = &.{returned} } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &conditional_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &conditional_original_plan }, .{ .parameters = &.{}, .operations = &.{plan_return} } } },
+    .{ .name = "two conditional same root edges require initialization", .accept = false, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &same_edge_entry }, .{ .parameters = &.{r(4)}, .instructions = &.{ branch_load, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &same_edge_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &.{ plan_branch_load, plan_return } } } },
+    .{ .name = "same root diamond load requires initialization", .accept = false, .registers = &distinct_registers, .carriers = &distinct_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &same_merge_entry }, .{ .parameters = &.{r(4)}, .instructions = &same_merge_left }, .{ .parameters = &.{r(5)}, .instructions = &same_merge_right }, .{ .parameters = &.{r(6)}, .instructions = &.{ same_merge_load, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &same_merge_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &same_merge_left_plan }, .{ .parameters = &.{r(5)}, .operations = &same_merge_right_plan }, .{ .parameters = &.{r(6)}, .operations = &.{ plan_same_merge_load, plan_return } } } },
+    .{ .name = "same root diamond initialized alias", .accept = true, .registers = &distinct_registers, .carriers = &distinct_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &same_merge_entry }, .{ .parameters = &.{r(4)}, .instructions = &same_merge_left }, .{ .parameters = &.{r(5)}, .instructions = &same_merge_right }, .{ .parameters = &.{r(6)}, .instructions = &.{ init_carrier, same_merge_store, same_merge_load, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &same_merge_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &same_merge_left_plan }, .{ .parameters = &.{r(5)}, .operations = &same_merge_right_plan }, .{ .parameters = &.{r(6)}, .operations = &.{ plan_init_carrier, plan_same_merge_store, plan_same_merge_load, plan_return } } } },
+    .{ .name = "same root diamond duplicate init", .accept = false, .registers = &distinct_registers, .carriers = &distinct_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &same_merge_entry }, .{ .parameters = &.{r(4)}, .instructions = &same_merge_left }, .{ .parameters = &.{r(5)}, .instructions = &same_merge_right }, .{ .parameters = &.{r(6)}, .instructions = &.{ init_carrier, init_carrier, same_merge_load, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &same_merge_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &same_merge_left_plan }, .{ .parameters = &.{r(5)}, .operations = &same_merge_right_plan }, .{ .parameters = &.{r(6)}, .operations = &.{ plan_init_carrier, plan_init_carrier, plan_same_merge_load, plan_return } } } },
+    .{ .name = "same root seeded loop initialized reads", .accept = true, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &seeded_loop_entry }, .{ .parameters = &.{r(4)}, .instructions = &seeded_loop_valid }, .{ .parameters = &.{}, .instructions = &.{returned} } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &seeded_loop_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &seeded_loop_valid_plan }, .{ .parameters = &.{}, .operations = &.{plan_return} } } },
+    .{ .name = "same root seeded loop repeated init", .accept = false, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &branch_entry }, .{ .parameters = &.{r(4)}, .instructions = &seeded_loop_repeat }, .{ .parameters = &.{}, .instructions = &.{returned} } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &branch_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &seeded_loop_repeat_plan }, .{ .parameters = &.{}, .operations = &.{plan_return} } } },
+    .{ .name = "root plus seedless cycle remains unproven with independent init", .accept = true, .registers = &hop_registers, .carriers = &hop_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &seedless_entry }, .{ .parameters = &.{r(4)}, .instructions = &.{ seedless_load, returned } }, .{ .parameters = &.{r(5)}, .instructions = &seedless_body } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &seedless_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &.{ plan_seedless_load, plan_return } }, .{ .parameters = &.{r(5)}, .operations = &seedless_body_plan } } },
+
 };
 const types = [_]tables.CommonType{
     .{ .id = undefined_id, .kind = .@"undefined", .name = "undefined", .native_code = 0, .base = null, .element = null, .members = &.{}, .methods = null, .nominal_key = null, .runtime_key = null },
@@ -410,7 +477,7 @@ fn run(case: Case) !void {
     try identity.check(&c);
     const before_ssa = c.remaining;
     const result = ssa.check(&c);
-    // br-only cases additionally prove correspondence if SSA accepts. On the
+    // Control-flow cases also prove correspondence if SSA accepts. On the
     // old checker each missed rejection reaches this unchanged matcher first.
     // Unary Env forwarding has a separate, explicitly OPEN SourceCorr seam.
     if (result) |_| {
@@ -450,7 +517,17 @@ test "literal Env alias br fresh allocation per loop" { try run(cases[27]); }
 test "literal Env alias br repeated init loop without allocation" { try run(cases[28]); }
 test "literal Env alias br distinct allocations" { try run(cases[29]); }
 test "literal Env alias br multihop initialization" { try run(cases[30]); }
-test "literal Env alias conditional edge unproven load unchanged" { try run(cases[31]); }
+test "literal Env alias conditional same root load requires initialization" { try run(cases[31]); }
 test "literal Env alias different allocation merge load unchanged" { try run(cases[32]); }
 test "literal Env alias different allocation merge init unchanged" { try run(cases[33]); }
 test "literal Env alias two conditional edges from one predecessor unchanged" { try run(cases[34]); }
+test "literal Env alias conditional same root initialized alias" { try run(cases[35]); }
+test "literal Env alias conditional same root duplicate init" { try run(cases[36]); }
+test "literal Env alias conditional same root init original load" { try run(cases[37]); }
+test "literal Env alias two conditional same root edges require initialization" { try run(cases[38]); }
+test "literal Env alias same root diamond load requires initialization" { try run(cases[39]); }
+test "literal Env alias same root diamond initialized alias" { try run(cases[40]); }
+test "literal Env alias same root diamond duplicate init" { try run(cases[41]); }
+test "literal Env alias same root seeded loop initialized reads" { try run(cases[42]); }
+test "literal Env alias same root seeded loop repeated init" { try run(cases[43]); }
+test "literal Env alias root plus seedless cycle remains unproven with independent init" { try run(cases[44]); }

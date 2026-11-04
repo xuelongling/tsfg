@@ -489,9 +489,72 @@ const Graph = struct {
             if(code==.eh_invoke or code==.eh_invoke_indirect)for(fact.successors[0..fact.count]) |next|try c.require(self.facts[next].predecessor_count==1);
         };
     }
-    const EnvironmentIdentity=union(enum) { allocation: t.EnvironmentRef, source: t.RegisterRef, unknown };
-    // One identity-preserving step, shared by creation authority and state.
-    // General joins remain the initializer provenance closure's responsibility.
+    const EnvironmentOrigin=union(enum) { bottom, allocation: t.RegisterRef, mixed, unknown };
+    const EnvironmentEdge=struct { follower: t.RegisterRef, next: ?usize };
+    const EnvironmentProof=struct {
+        c: *Context, seen: []bool, origins: []EnvironmentOrigin, foreign: []bool,
+        followers: []?usize, edges: []EnvironmentEdge, pending: []t.RegisterRef, queued: []bool,
+        used: usize=0, size: usize=0,
+
+        fn link(self: *EnvironmentProof, source: t.RegisterRef, receiver: t.RegisterRef) Error!void {
+            const c=self.c; const index=@intFromEnum(source);
+            try c.row(EnvironmentEdge); try c.charge(2);
+            self.edges[self.used]=.{.follower=receiver,.next=self.followers[index]};
+            self.followers[index]=self.used; self.used+=1;
+            try c.step();
+            if(!self.seen[index]) {
+                try c.charge(2); self.seen[index]=true; self.pending[self.size]=source; self.size+=1;
+            }
+        }
+        fn propagate(self: *EnvironmentProof) Error!void {
+            const c=self.c; const count=self.origins.len;
+            // First propagate real allocation/unknown seeds. Only then poison
+            // still-bottom components, so phi(A,self) retains its grounded A.
+            for(0..2) |phase| {
+                var head: usize=0; var size: usize=0;
+                for(self.seen,0..) |needed,index| {
+                    try c.charge(3); if(!needed)continue;
+                    const origin_state=self.origins[index];
+                    const seed=if(phase==0)origin_state!=.bottom or self.foreign[index] else origin_state==.bottom;
+                    if(!seed)continue;
+                    if(phase==1) { try c.step(); self.origins[index]=.unknown; }
+                    try c.charge(2); self.pending[size]=@enumFromInt(index); self.queued[index]=true; size+=1;
+                }
+                while(size!=0) {
+                    try c.charge(3); const source=@intFromEnum(self.pending[head]);
+                    head=(head+1)%count; size-=1; self.queued[source]=false;
+                    try c.charge(3); const origin_state=self.origins[source]; const foreign=self.foreign[source];
+                    var edge=self.followers[source];
+                    while(edge) |index| {
+                        try c.row(EnvironmentEdge); try c.charge(3); const next=self.edges[index]; const follower=@intFromEnum(next.follower);
+                        const previous=self.origins[follower]; const was_foreign=self.foreign[follower];
+                        const joined_origin: EnvironmentOrigin=switch(origin_state) {
+                            .bottom => previous,
+                            .unknown => .unknown,
+                            .mixed => if(previous==.unknown).unknown else .mixed,
+                            .allocation => |allocation| switch(previous) {
+                                .bottom => origin_state,
+                                .allocation => |prior_allocation| if(prior_allocation==allocation)previous else .mixed,
+                                .mixed,.unknown => previous,
+                            },
+                        };
+                        const is_foreign=was_foreign or foreign;
+                        if(!std.meta.eql(previous,joined_origin) or was_foreign!=is_foreign) {
+                            try c.charge(2); self.origins[follower]=joined_origin; self.foreign[follower]=is_foreign;
+                            try c.step();
+                            if(!self.queued[follower]) {
+                                try c.charge(2); self.pending[(head+size)%count]=next.follower; self.queued[follower]=true; size+=1;
+                            }
+                        }
+                        edge=next.next;
+                    }
+                }
+            }
+        }
+    };
+    const EnvironmentIdentity=union(enum) { allocation: t.EnvironmentRef, source: t.RegisterRef, parameter: usize, unknown };
+    // Classify a typed definition once. All block-argument sources are owned by
+    // the shared edge traversal below, including both edges of one cond_br.
     fn environmentIdentity(self: *Graph, receiver: t.RegisterRef) Error!EnvironmentIdentity {
         const c=self.c;
         try c.charge(2); const definition=self.definitions[@intFromEnum(receiver)];
@@ -507,118 +570,110 @@ const Graph = struct {
                 else => return .unknown,
             }
         }
-        try c.step();
-        if(definition.block==0 or self.facts[definition.block].predecessor_count!=1)return .unknown;
-        try c.step(); var predecessors=Predecessors{.bits=self.facts[definition.block].predecessors};
-        const pred=(try predecessors.next(c)) orelse return .unknown;
-        try c.charge(2); const block=self.f.blocks[pred];
-        const branch_op=block.instructions[block.instructions.len-1];
-        if(branch_op.data!=.br)return .unknown;
-        try c.step();
-        for(self.f.blocks[definition.block].parameters,0..) |parameter,n| {
-            try c.step(); if(parameter!=receiver)continue;
-            try c.step(); return .{.source=branch_op.operands[n]};
-        }
-        return .unknown;
+        return if(definition.block==0).unknown else .{.parameter=definition.block};
     }
-    fn environmentInitializers(self: *Graph) Error!void {
-        if(self.mode!=.common or !self.has_environment_init)return;
-        const c=self.c;
-        const rows=c.program.tables.mode.common;
+    fn environmentOrigins(self: *Graph) Error!?[]?t.RegisterRef {
+        if(self.mode!=.common or !self.has_environment_access)return null;
+        const c=self.c; const rows=c.program.tables.mode.common;
         var activation: ?t.EnvironmentRef=null;
-        for(rows.closures.functions) |function| {
-            try c.step(); if(@intFromEnum(function.function)!=self.function)continue;
-            activation=function.activation_environment; break;
+        if(self.has_environment_init) {
+            for(rows.closures.functions) |function| {
+                try c.step(); if(@intFromEnum(function.function)!=self.function)continue;
+                activation=function.activation_environment; break;
+            }
+            const layout=activation orelse return error.InvalidShape;
+            try c.require(@intFromEnum(rows.closures.environments[@intFromEnum(layout)].owner)==self.function);
         }
-        const layout=activation orelse return error.InvalidShape;
-        try c.require(@intFromEnum(rows.closures.environments[@intFromEnum(layout)].owner)==self.function);
-
-        // Reverse the finite SSA forwarding graph from every init receiver.
-        // Same-layout input/parent/foreign values are not allocation evidence.
         const count=self.f.registers.len;
-        try c.charge(4*count);
+        // At most one unary edge per register, plus one transported argument
+        // per real CFG edge/target parameter. Fixed storage avoids hidden list
+        // growth/relocation and does not depend on a new alias state space.
+        var edge_capacity=count;
+        for(self.facts) |fact| {
+            try c.step();
+            for(fact.successors[0..fact.count]) |successor| {
+                try c.step(); edge_capacity+=self.f.blocks[successor].parameters.len;
+            }
+        }
+        try c.charge(6*count+edge_capacity);
         const seen=try c.allocator.alloc(bool,count); defer c.allocator.free(seen); @memset(seen,false);
-        const born=try c.allocator.alloc(bool,count); defer c.allocator.free(born); @memset(born,false);
+        const origins=try c.allocator.alloc(EnvironmentOrigin,count); defer c.allocator.free(origins); @memset(origins,.bottom);
+        const foreign=try c.allocator.alloc(bool,count); defer c.allocator.free(foreign); @memset(foreign,false);
+        const followers=try c.allocator.alloc(?usize,count); defer c.allocator.free(followers); @memset(followers,null);
         const pending=try c.allocator.alloc(t.RegisterRef,count); defer c.allocator.free(pending);
-        const followers=try c.allocator.alloc(std.ArrayListUnmanaged(t.RegisterRef),count);
-        defer c.allocator.free(followers); @memset(followers,.empty);
-        defer for(followers) |*list| list.deinit(c.allocator);
-        var size: usize=0;
+        const queued=try c.allocator.alloc(bool,count); defer c.allocator.free(queued); @memset(queued,false);
+        const edges=try c.allocator.alloc(EnvironmentEdge,edge_capacity); defer c.allocator.free(edges);
+        var proof=EnvironmentProof{.c=c,.seen=seen,.origins=origins,.foreign=foreign,
+            .followers=followers,.edges=edges,.pending=pending,.queued=queued};
         for(self.f.blocks) |block| for(block.instructions) |op| {
-            try c.step(); if(op.data!=.environment_init)continue;
-            const receiver=op.operands[0]; const index=@intFromEnum(receiver);
-            if(!seen[index]) { seen[index]=true; pending[size]=receiver; size+=1; }
+            try c.step(); switch(op.data) {
+                .environment_init,.environment_load,.environment_store => {},
+                else => continue,
+            }
+            try c.charge(2); const receiver=op.operands[0]; const index=@intFromEnum(receiver);
+            if(!seen[index]) { try c.charge(2); seen[index]=true; pending[proof.size]=receiver; proof.size+=1; }
         };
         var cursor: usize=0;
-        while(cursor<size) : (cursor+=1) {
+        while(cursor<proof.size) : (cursor+=1) {
             try c.step(); const receiver=pending[cursor]; const index=@intFromEnum(receiver);
-            try c.require(exact(self.carrierOf(receiver),.{.environment=layout}));
+            if(activation) |layout| {
+                try c.charge(2); foreign[index]=!exact(self.carrierOf(receiver),.{.environment=layout});
+            }
             switch(try self.environmentIdentity(receiver)) {
-                .allocation => |allocation| { try c.require(allocation==layout); born[index]=true; continue; },
-                .source => |source| {
-                    const source_index=@intFromEnum(source);
-                    try c.step(); try followers[source_index].append(c.allocator,receiver);
-                    if(!seen[source_index]) { seen[source_index]=true; pending[size]=source; size+=1; }
-                    continue;
+                .allocation => |allocation| {
+                    try c.step(); origins[index]=.{.allocation=receiver};
+                    if(activation) |layout| { try c.charge(2); foreign[index]=foreign[index] or allocation!=layout; }
                 },
-                .unknown => {},
+                .source => |source| try proof.link(source,receiver),
+                .unknown => { try c.step(); origins[index]=.unknown; },
+                .parameter => |block_index| {
+                    var ordinal: ?usize=null;
+                    try c.step();
+                    for(self.f.blocks[block_index].parameters,0..) |parameter,n| {
+                        try c.step(); if(parameter==receiver) { ordinal=n; break; }
+                    }
+                    const parameter=ordinal orelse { try c.step(); origins[index]=.unknown; continue; };
+                    var incoming: usize=0;
+                    try c.step(); var predecessors=Predecessors{.bits=self.facts[block_index].predecessors};
+                    while(try predecessors.next(c)) |pred| {
+                        try c.charge(3); const block=self.f.blocks[pred]; const op=block.instructions[block.instructions.len-1];
+                        const exits=self.facts[pred];
+                        for(exits.successors[0..exits.count],0..) |next,edge| {
+                            try c.step(); if(next!=block_index)continue;
+                            const arguments=switch(op.data) {
+                                .br,.eh_route => op.operands,
+                                .cond_br => |conditional| if(edge==0)op.operands[1..1+conditional.true_count] else op.operands[1+conditional.true_count..],
+                                // Invokes/numeric edges create values instead
+                                // of transporting a complete Env argument.
+                                else => { try c.step(); origins[index]=.unknown; continue; },
+                            };
+                            try c.step(); const source=arguments[parameter];
+                            try proof.link(source,receiver); incoming+=1;
+                        }
+                    }
+                    if(incoming==0) { try c.step(); origins[index]=.unknown; }
+                },
             }
-            try c.step(); const definition=self.definitions[index];
-            try c.require(definition.position<0);
-            // Block arguments preserve complete Env values through the exact
-            // branch/route operand vectors already checked by operations().
-            try c.require(definition.block!=0);
-            var ordinal: ?usize=null;
-            for(self.f.blocks[definition.block].parameters,0..) |parameter,n| {
-                try c.step(); if(parameter==receiver) { ordinal=n; break; }
-            }
-            const parameter=ordinal orelse return error.InvalidShape;
-            var incoming: usize=0;
-            var predecessors=Predecessors{.bits=self.facts[definition.block].predecessors};
-            while(try predecessors.next(c)) |pred| {
-                const block=self.f.blocks[pred]; const op=block.instructions[block.instructions.len-1];
-                const edges=self.facts[pred];
-                for(edges.successors[0..edges.count],0..) |next,edge| {
-                    try c.step(); if(next!=definition.block)continue;
-                    const arguments=switch(op.data) {
-                        .br,.eh_route => op.operands,
-                        .cond_br => |conditional| if(edge==0)op.operands[1..1+conditional.true_count] else op.operands[1+conditional.true_count..],
-                        // Invoke/numeric successors create values; they are
-                        // not transparent Env forwarding operations.
-                        else => return error.InvalidShape,
-                    };
-                    const source=arguments[parameter]; const source_index=@intFromEnum(source);
-                    try c.step(); try followers[source_index].append(c.allocator,receiver);
-                    if(!seen[source_index]) { seen[source_index]=true; pending[size]=source; size+=1; }
-                    incoming+=1;
-                }
-            }
-            try c.require(incoming!=0);
         }
-        // Ground every discovered forwarding component in a real allocation.
-        // Seedless cycles fail; joins inspect every possible incoming source.
-        size=0;
-        for(born,0..) |seed,index| {
-            try c.step(); if(seed) { pending[size]=@enumFromInt(index); size+=1; }
-        }
-        cursor=0;
-        while(cursor<size) : (cursor+=1) for(followers[@intFromEnum(pending[cursor])].items) |receiver| {
-            try c.step(); const index=@intFromEnum(receiver);
-            if(!born[index]) { born[index]=true; pending[size]=receiver; size+=1; }
+        try proof.propagate();
+        // Authority is required only for actual initializer receivers. Unknown
+        // load/store paths cannot invalidate an independent valid initializer.
+        for(self.f.blocks) |block| for(block.instructions) |op| {
+            try c.step(); if(op.data!=.environment_init)continue;
+            try c.charge(3); const index=@intFromEnum(op.operands[0]);
+            const origin_state=origins[index];
+            try c.require((origin_state==.allocation or origin_state==.mixed) and !foreign[index]);
         };
-        for(seen,born) |needed,grounded| { try c.require(!needed or grounded); }
-        // This is only source/creation authority. Once-only initialization,
-        // observation and CFG ordering remain separate obligations.
+        try c.charge(3*count);
+        const allocations=try c.allocator.alloc(?t.RegisterRef,count);
+        for(origins,allocations) |origin_state,*allocation| {
+            allocation.*=switch(origin_state) { .allocation => |ref| ref, else => null };
+        }
+        return allocations;
     }
-    fn environmentDirectCellState(self: *Graph) Error!void {
+    fn environmentDirectCellState(self: *Graph, allocations: []const ?t.RegisterRef) Error!void {
         if(self.mode!=.common or !self.has_environment_access)return;
         const c=self.c;
-        // Cache only receivers used by cell operations. A transparent chain
-        // has one source at every step, including single-predecessor br
-        // arguments. Other joins/producers retain their existing treatment.
-        try c.charge(self.f.registers.len);
-        const allocations=try c.allocator.alloc(?t.RegisterRef,self.f.registers.len);
-        defer c.allocator.free(allocations); @memset(allocations,null);
         const Pair=struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
         var pairs: std.AutoHashMapUnmanaged(Pair,void)=.{}; defer pairs.deinit(c.allocator);
         for(self.f.blocks) |block| for(block.instructions) |op| {
@@ -626,19 +681,7 @@ const Graph = struct {
                 inline .environment_init,.environment_load,.environment_store => |v| v.slot,
                 else => continue,
             };
-            const receiver=op.operands[0]; const index=@intFromEnum(receiver);
-            try c.step();
-            if(allocations[index]==null) {
-                var current=receiver; var remaining=self.f.registers.len;
-                while(remaining!=0) : (remaining-=1) {
-                    switch(try self.environmentIdentity(current)) {
-                        .allocation => { try c.step(); allocations[index]=current; break; },
-                        .source => |source| current=source,
-                        .unknown => break,
-                    }
-                }
-            }
-            try c.step(); const allocation=allocations[index] orelse continue;
+            try c.step(); const allocation=allocations[@intFromEnum(op.operands[0])] orelse continue;
             try c.row(Pair);
             const capacity=@as(usize,pairs.capacity()); const used=@as(usize,pairs.count());
             // This insert-only default-load map grows before lookup. Prepay
@@ -654,7 +697,7 @@ const Graph = struct {
             const count=self.f.blocks.len;
             // The unique original result resets this instance only when its
             // allocation executes again. Proven transparent receivers share
-            // that cell; phi and interprocedural state remain separate.
+            // that cell; mixed/unknown and interprocedural state remain separate.
             try c.charge(4*count);
             var last: [256]u2=undefined; @memset(last[0..count],0);
             var incoming: [256]u2=undefined; @memset(incoming[0..count],0);
@@ -910,7 +953,10 @@ const Graph = struct {
     }
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
-        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.environmentDirectCellState(); try self.globalInitialization(); try self.numeric(); try self.fuel();
+        try self.usesDom(); try self.entryAbi(); try self.operations();
+        const allocations=try self.environmentOrigins(); defer if(allocations) |values| self.c.allocator.free(values);
+        if(allocations) |values|try self.environmentDirectCellState(values);
+        try self.globalInitialization(); try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof
         // adds no second dominance graph, Context, Source table or admission.
         if(self.mode==.common)try receiver_protocol.check(self.c,self.function,.{.definitions=self.definitions,.facts=self.facts});
