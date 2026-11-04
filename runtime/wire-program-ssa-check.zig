@@ -45,6 +45,7 @@ const Graph = struct {
     c: *Context, f: *const model.Function, function: usize, mode: table.Mode,
     definitions: []Definition, uses: []Use, facts: []Facts, dom: []Bits, fully_reached: bool=false,
     has_environment_init: bool=false,
+    has_environment_access: bool=false,
 
     fn init(c: *Context, index: usize) Error!Graph {
         const f=&c.program.functions[index];
@@ -471,6 +472,7 @@ const Graph = struct {
                             // A mutable payload upper never grants replacement
                             // of a const binding's environment slot.
                             if(op.data==.environment_store)try c.require(slot.writable);
+                            try c.step(); self.has_environment_access=true;
                             if(op.data==.environment_init)self.has_environment_init=true;
                         },
                         .legacy => |rows| try self.legacyType(r,rows.closures.environments[env].slots[@intFromEnum(v.slot)].@"type"),
@@ -581,13 +583,16 @@ const Graph = struct {
         // This is only source/creation authority. Once-only initialization,
         // observation and CFG ordering remain separate obligations.
     }
-    fn environmentDirectInitialization(self: *Graph) Error!void {
-        if(self.mode!=.common or !self.has_environment_init)return;
+    fn environmentDirectCellState(self: *Graph) Error!void {
+        if(self.mode!=.common or !self.has_environment_access)return;
         const c=self.c;
         const Pair=struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
         var pairs: std.AutoHashMapUnmanaged(Pair,void)=.{}; defer pairs.deinit(c.allocator);
         for(self.f.blocks) |block| for(block.instructions) |op| {
-            try c.step(); if(op.data!=.environment_init)continue;
+            try c.step(); const slot=switch(op.data) {
+                inline .environment_init,.environment_load,.environment_store => |v| v.slot,
+                else => continue,
+            };
             const receiver=op.operands[0];
             try c.charge(2); const definition=self.definitions[@intFromEnum(receiver)];
             if(definition.position<0)continue;
@@ -599,7 +604,7 @@ const Graph = struct {
             // old buckets, new metadata and each retained pair's rehash/copy.
             if(used==capacity*std.hash_map.default_max_load_percentage/100)
                 try c.charge(capacity+@max(8,2*capacity)+3*used);
-            _=try pairs.getOrPut(c.allocator,.{.receiver=receiver,.slot=op.data.environment_init.slot});
+            _=try pairs.getOrPut(c.allocator,.{.receiver=receiver,.slot=slot});
         };
         try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
         var iterator=pairs.keyIterator();
@@ -609,7 +614,7 @@ const Graph = struct {
             // Only the original SSA result is tracked. Its unique definition
             // can replace its instance only when that allocation executes again.
             // Alias/phi receivers retain their existing provenance rules; this
-            // pass supplies no cross-register or interprocedural once proof.
+            // pass supplies no cross-register or interprocedural cell-state proof.
             try c.charge(4*count);
             var last: [256]u2=undefined; @memset(last[0..count],0);
             var incoming: [256]u2=undefined; @memset(incoming[0..count],0);
@@ -645,9 +650,14 @@ const Graph = struct {
                 try c.step(); var state=incoming[b];
                 for(block.instructions) |op| {
                     try c.step(); if(state==0)continue;
-                    if(op.data==.environment_alloc and op.result.?==pair.receiver)state=1
-                    else if(op.data==.environment_init and op.operands[0]==pair.receiver and op.data.environment_init.slot==pair.slot) {
-                        try c.require(state==1); state=2;
+                    switch(op.data) {
+                        .environment_alloc => if(op.result.?==pair.receiver) { state=1; },
+                        inline .environment_init,.environment_load,.environment_store => |v| {
+                            if(op.operands[0]!=pair.receiver or v.slot!=pair.slot)continue;
+                            if(op.data==.environment_init) { try c.require(state==1); state=2; }
+                            else try c.require(state==2);
+                        },
+                        else => {},
                     }
                 }
             }
@@ -856,7 +866,7 @@ const Graph = struct {
     }
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
-        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.environmentDirectInitialization(); try self.globalInitialization(); try self.numeric(); try self.fuel();
+        try self.usesDom(); try self.entryAbi(); try self.operations(); try self.environmentInitializers(); try self.environmentDirectCellState(); try self.globalInitialization(); try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof
         // adds no second dominance graph, Context, Source table or admission.
         if(self.mode==.common)try receiver_protocol.check(self.c,self.function,.{.definitions=self.definitions,.facts=self.facts});
