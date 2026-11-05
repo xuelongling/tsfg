@@ -10,7 +10,7 @@ const unused_expected: T.Expected = .{
 };
 
 // Called only with whole actual producer fixtures and independently cold-verified expected identities.
-fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bool) !void {
+fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bool, i32_copy_systems: ?usize) !void {
     var document = try T.Document.load(A, bytes, expected);
     var document_live = true;
     defer if (document_live) document.deinit();
@@ -76,6 +76,91 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         }
     }
     if (shared_required) try std.testing.expect(shared);
+    if (i32_copy_systems) |system_count| {
+        var destination: ?*const jobs.layout.Type = null;
+        var source: ?*const jobs.layout.Type = null;
+        var integer: ?*const jobs.layout.Type = null;
+        for (document.component_layout.payload.types) |*row| {
+            if (std.mem.eql(u8, row.name, "CopyDestination")) destination = row;
+            if (std.mem.eql(u8, row.name, "CopySource")) source = row;
+            if (row.kind == .scalar and std.mem.eql(u8, row.scalar, "i32")) integer = row;
+        }
+        try std.testing.expect(destination != null and source != null and integer != null);
+        const dst = destination.?;
+        const src = source.?;
+        try std.testing.expectEqual(jobs.layout.Kind.component, dst.kind);
+        try std.testing.expectEqual(jobs.layout.Kind.component, src.kind);
+        try std.testing.expectEqual(@as(u32, 4), integer.?.byteSize);
+        try std.testing.expectEqual(@as(u32, 8), dst.byteSize);
+        try std.testing.expectEqual(@as(u32, 8), dst.stride);
+        try std.testing.expectEqual(@as(u32, 4), src.byteSize);
+        try std.testing.expectEqual(@as(u32, 4), src.stride);
+        try std.testing.expectEqual(@as(usize, 2), dst.fields.len);
+        try std.testing.expectEqual(@as(usize, 1), src.fields.len);
+        try std.testing.expectEqualStrings("n", dst.fields[1].name);
+        try std.testing.expectEqualStrings("n", src.fields[0].name);
+        try std.testing.expectEqualStrings(integer.?.id, dst.fields[1].type);
+        try std.testing.expectEqualStrings(integer.?.id, src.fields[0].type);
+        try std.testing.expectEqual(@as(u32, 4), dst.fields[1].offset);
+        try std.testing.expectEqual(@as(u32, 0), src.fields[0].offset);
+        try std.testing.expectEqual(system_count, document.payload.entries.len);
+        for (document.payload.entries, 0..) |copy_entry, entry_index| {
+            try std.testing.expectEqual(@as(usize, 0), copy_entry.scalars.len);
+            try std.testing.expectEqual(@as(usize, 2), copy_entry.columns.len);
+            try std.testing.expectEqual(@as(usize, 2), copy_entry.tupleOccurrences.len);
+            var copy_plan = try document.bind(A, &store, batch, entry_index, &.{});
+            defer copy_plan.deinit();
+            try std.testing.expectEqualStrings(copy_entry.logicalFunctionId, copy_plan.logical_function_id);
+            var writes: usize = 0;
+            var reads: usize = 0;
+            for (copy_entry.tupleOccurrences, 0..) |tuple, tuple_index| {
+                const column = copy_entry.columns[tuple.columnIndex];
+                const backing = try batch.read(tuple.columnIndex);
+                const borrowed = try copy_plan.readTuple(tuple_index);
+                try std.testing.expectEqual(@intFromPtr(backing.ptr), @intFromPtr(borrowed.ptr));
+                try std.testing.expectEqual(backing.len, borrowed.len);
+                if (std.mem.eql(u8, column.componentType, dst.id)) {
+                    writes += 1;
+                    try std.testing.expectEqual(jobs.Access.write, tuple.mode);
+                    try std.testing.expectEqual(@as(u32, 8), column.stride);
+                    try std.testing.expectEqual(@as(usize, 16), borrowed.len);
+                    const writable = try copy_plan.writeTuple(tuple_index);
+                    try std.testing.expectEqual(@intFromPtr(backing.ptr), @intFromPtr(writable.ptr));
+                    // Store data only: this sentinel is not the result of executing dst.n = src.n.
+                    const sentinel = [_]u8{ 0x81, 0x00, 0xfe, 0x7f };
+                    @memcpy(writable[4..8], &sentinel);
+                    try std.testing.expectEqualSlices(u8, &sentinel, borrowed[4..8]);
+                    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 4), borrowed[0..4]);
+                    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 8), borrowed[8..16]);
+                } else {
+                    reads += 1;
+                    try std.testing.expectEqualStrings(src.id, column.componentType);
+                    try std.testing.expectEqual(jobs.Access.read, tuple.mode);
+                    try std.testing.expectEqual(@as(u32, 4), column.stride);
+                    try std.testing.expectEqual(@as(usize, 8), borrowed.len);
+                    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 8), borrowed);
+                    try std.testing.expectError(error.ReadOnly, copy_plan.writeTuple(tuple_index));
+                }
+            }
+            try std.testing.expectEqual(@as(usize, 1), writes);
+            try std.testing.expectEqual(@as(usize, 1), reads);
+        }
+        const systems = document.effects.report.systems;
+        try std.testing.expectEqual(system_count, systems.len);
+        if (system_count == 2) {
+            try std.testing.expect(!std.mem.eql(u8, systems[0].functionId, systems[1].functionId));
+            try std.testing.expectEqual(@as(usize, 1), document.effects.report.conflicts.len);
+            const forward = try document.effects.conflictComponents(systems[0].functionId, systems[1].functionId);
+            const reverse = try document.effects.conflictComponents(systems[1].functionId, systems[0].functionId);
+            try std.testing.expectEqual(@as(usize, 1), forward.len);
+            try std.testing.expectEqual(@as(usize, 1), reverse.len);
+            try std.testing.expectEqualStrings(dst.id, forward[0]);
+            try std.testing.expectEqualStrings(dst.id, reverse[0]);
+            try std.testing.expect(!std.mem.eql(u8, src.id, forward[0]));
+        } else {
+            try std.testing.expectEqual(@as(usize, 0), document.effects.report.conflicts.len);
+        }
+    }
     const too_many = try A.alloc(T.ScalarValue, scalars.len + 1);
     defer A.free(too_many);
     try std.testing.expectError(error.BindingMismatch, document.bind(A, &store, batch, 0, too_many));
@@ -210,6 +295,13 @@ test "actual f64 and f32 producer scalars bind independently without narrowing" 
 test "actual f64 view helper metadata retains its original borrowed batch" {
     try exerciseFixture("f64-helper", false);
 }
+test "actual i32 copy metadata binds original columns and preserves two-system conflicts" {
+    inline for (.{ "i32-copy", "i32-copy-conflict" }, 0..) |name, index| {
+        const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-" ++ name ++ "-receipt.json"), .{});
+        defer receipt.deinit();
+        try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-" ++ name ++ ".tmeta"), receipt.value, false, index + 1);
+    }
+}
 test "actual producer Layout releases arena growth without resize" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-parenthesized-receipt.json"), .{});
     defer receipt.deinit();
@@ -228,7 +320,7 @@ test "actual producer Layout releases arena growth without resize" {
 fn exerciseFixture(comptime name: []const u8, shared: bool) !void {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-" ++ name ++ "-receipt.json"), .{});
     defer receipt.deinit();
-    try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-" ++ name ++ ".tmeta"), receipt.value, shared);
+    try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-" ++ name ++ ".tmeta"), receipt.value, shared, null);
 }
 
 test "Query metadata explicitly admits strings above1MiB up to its own boundary without granting identity" {
