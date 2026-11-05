@@ -172,7 +172,11 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
     if(required.size()>4096)return fail("budget","logical GPU resource count exceeded");
   }
   Array admitted;std::set<Key> seen;std::pair<int64_t,int64_t> previousSlot{-1,-1};
+  const auto &primary=*functions.at(string(kernels.front()));
   for(const auto &binding:bindings){
+    // Each row owns its diagnostic context; an unknown resource falls back
+    // to the selected Source function rather than the preceding descriptor.
+    locate(primary,string(field(primary,"sourcePath")));
     if(!spend())return false;
     if(!exact(binding,{"kind","id","kernel","set","binding","access"}))return fail("binding","logical descriptor fields differ");
     const auto kind=string(field(binding,"kind")),id=string(field(binding,"id")),kernel=string(field(binding,"kernel"));
@@ -183,9 +187,12 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
     if(!set||!slot||*set<0||*set>UINT32_MAX||*slot<0||*slot>UINT32_MAX)return fail("binding","descriptor set and binding must be uint32");
     const auto order=std::pair{*set,*slot};if(previousSlot>=order)return fail("binding","descriptor slots must be unique and ordered");previousSlot=order;
     const Key key{kind,kernel,id};const auto found=required.find(key);
+    if(found!=required.end()){
+      const auto &anchor=found->second.source;e.path=string(field(anchor,"sourceId"));
+      e.range={uint32_t(field(anchor,"start").getAsInteger().value_or(0)),uint32_t(field(anchor,"end").getAsInteger().value_or(0))};
+    }
     if(found==required.end()||!seen.insert(key).second)return fail("identity","logical resource is foreign, extra or repeated");
-    const auto &resource=found->second;const auto &anchor=resource.source;e.path=string(field(anchor,"sourceId"));
-    e.range={uint32_t(field(anchor,"start").getAsInteger().value_or(0)),uint32_t(field(anchor,"end").getAsInteger().value_or(0))};
+    const auto &resource=found->second;
     const auto expected=resource.read?(resource.write?"read-write":"read"):"write";
     if(string(field(binding,"access"))!=expected)return fail("access","logical descriptor access must equal the fixed Published access");
     admitted.push_back(Object{{"kind",kind},{"id",id},{"kernel",field(binding,"kernel")},{"set",*set},{"binding",*slot},

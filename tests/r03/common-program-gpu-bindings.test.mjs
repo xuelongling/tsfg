@@ -119,6 +119,69 @@ test('logical GPU consumes original whole-Program and original group constraints
   assert.throws(()=>createCommonGpuBindingPlan(hir,forged,group,request),error=>diagnostic(error)&&error.code==='r03-common-program-publication-identity');
 });
 
+// Original Go public-v3 parser/checker capture and its independent official
+// AST/type/UTF16 oracle. No Source producer is invoked or DTO edited here.
+const [voidRaw,voidOracleRaw,voidSource]=await Promise.all(['package.json','official-oracle.json','source.ts']
+  .map(name=>fs.readFile(new URL('./testdata/common-program-gpu-void-v3/'+name,import.meta.url))));
+const voidFacts=readCommonProgramFacts(voidRaw);
+/** @type {typeof import('./testdata/common-program-gpu-void-v3/official-oracle.json')} */
+const voidOracle=JSON.parse(voidOracleRaw.toString('utf8'));
+const voidHir=buildCommonProgramHir(voidFacts,{family:'tsfg.common-program-context-candidate',version:voidFacts.version,
+  factsBytes:voidRaw,expectedPackageId:voidFacts.packageId});
+const voidPublication=createCommonProgramPublication(voidHir);
+const voidGroup={targets:voidHir.closure.roots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
+const voidDeclarations=voidOracle.functions.map(original=>{
+  const functions=voidHir.functions.filter(row=>row.sourceBinding===original.functionId);
+  const globals=voidHir.globals.filter(row=>row.sourceBinding===original.globalId);
+  assert.equal(functions.length,1);assert.equal(globals.length,1);
+  const fn=functions[0],global=globals[0],parameters=fn.parameters.filter(row=>row.sourceBinding===original.parameterId);
+  assert.equal(parameters.length,1);
+  return {original,fn,global,parameter:parameters[0]};
+});
+const voidSink=voidDeclarations.find(row=>row.original.name==='sink');assert.ok(voidSink);
+const voidRequest={family:'tsfg.gpu-logical-binding-request',version:2,target:'vulkan',kernels:[voidSink.fn.id],bindings:[
+  {kind:'global',id:voidSink.global.id,kernel:null,set:0,binding:0,access:'read-write'},
+  {kind:'parameter',id:voidSink.parameter.id,kernel:voidSink.fn.id,set:0,binding:1,access:'read'},
+]};
+const voidExtraReturn={...voidRequest,bindings:[...voidRequest.bindings,
+  {kind:'return',id:voidSink.fn.id,kernel:voidSink.fn.id,set:0,binding:2,access:'write'}]};
+const voidCore=commonProgramCore(voidHir,voidPublication,voidGroup,{borrowProof:true});
+const voidOwner={sourceId:'/src/main.ts',...voidSink.original.sourceRange};
+const voidExpected={family:'tsfg.gpu-logical-binding-plan',version:2,target:'vulkan',scope:'static-buffer-abi',
+  layout:{profile:'vulkan-storage-buffer-std430-scalar-i32-v1',memberOffset:0,memberBytes:4,memberAlignment:4,blockBytes:4},
+  inputIdentity:voidCore.proof.inputIdentity,hirDigest:voidCore.proof.hirDigest,scopeDigest:voidCore.proof.scopeDigest,
+  publishedDigest:voidCore.proof.publishedDigest,kernelProofDigest:digest(voidCore.proof),borrowProofDigest:digest(voidCore.borrowProof),
+  requestDigest:digest(voidRequest),groupTargets:voidGroup.targets,kernels:[{functionId:voidSink.fn.id,source:voidOwner}],bindings:[
+    {...voidRequest.bindings[0],type:'i32',source:{sourceId:'/src/main.ts',start:43,end:61}},
+    {...voidRequest.bindings[1],type:'i32',source:{sourceId:'/src/main.ts',...voidSink.original.parameterRange}},
+  ]};
+test('genuine Source3 void kernel retains its whole group and needs no return binding',()=>{
+  const hashes=['f6df2a10fcf109dc11881c28b0314200574f98036c995792e38bd9d76447406f',
+    'd642dcd060a5c242be4c62f04826966272604fbb8ea19a9b27bcce1822c71f4b',
+    '1480d9ad385aa6964ae2985a534ef6ca2b7f612b8e9e26ab90b4bd90559cb88f'];
+  [voidRaw,voidOracleRaw,voidSource].forEach((bytes,index)=>assert.equal(createHash('sha256').update(bytes).digest('hex'),hashes[index]));
+  assert.equal(voidFacts.version,3);assert.equal(voidOracle.sourceSha256,hashes[2]);
+  assert.deepEqual(voidOracle.sourceRange,{start:0,end:voidSource.toString('utf8').length});
+  assert.equal(voidHir.sources.find(row=>row.path==='/src/main.ts').content,voidSource.toString('utf8'));
+  assert.equal(voidHir.functions.length,2);assert.equal(voidGroup.targets.length,2);
+  assert.deepEqual(voidGroup.targets,voidDeclarations.map(row=>row.fn.id).sort());
+  voidDeclarations.forEach(({original,fn,global,parameter})=>{
+    assert.equal(fn.name,original.name);assert.notEqual(fn.id,original.functionId);assert.notEqual(global.id,original.globalId);
+    assert.deepEqual(fn.range,original.sourceRange);assert.deepEqual(parameter.range,original.parameterRange);
+  });
+  assert.equal(voidSink.original.returnType,'void');assert.equal(voidSink.original.returnExpression,null);
+  assert.equal(voidHir.types.find(row=>row.id===voidSink.fn.returnType).kind,'void');
+  assert.deepEqual(voidOwner,{sourceId:'/src/main.ts',start:89,end:155});
+  assert.equal(voidSource.subarray(43,61).toString('utf8'),'leftTotal: i32 = 0');
+  assert.ok(voidCore.borrowProof);
+  assert.deepEqual(createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,voidRequest),voidExpected);
+});
+test('genuine Source3 extra void return resource identifies its owner function',()=>{
+  assert.throws(()=>createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,voidExtraReturn),error=>
+    sourceDiagnostic(error)&&error.code==='r03-common-program-gpu-resource'&&error.ruleId==='r01-gpu'&&
+    error.primary.sourceId===voidOwner.sourceId&&error.primary.start===voidOwner.start&&error.primary.end===voidOwner.end);
+});
+
 // The owner supplies one independently qualified static compiler path. This
 // test has no tool discovery, build, Source process or API/device invocation.
 const executable=process.env.TSFG_GPU_BINDING_STATIC_CORE;
@@ -148,4 +211,21 @@ test('independent C++ logical GPU consumer matches the fixed oracle and cold rej
     [run(request,expected,''),run(request,expected,'\n\n')].forEach(result=>{
       assert.equal(result.error,undefined);assert.equal(result.status,3);assert.equal(result.stdout,'');assert.match(result.stderr,/canonical/);
     });
+  });
+test('independent C++ genuine Source3 void plan rejects an extra return at its owner anchor',
+  {skip:executable?false:'TSFG_GPU_BINDING_STATIC_CORE is not supplied'},()=>{
+    assert.ok(path.isAbsolute(executable));
+    const run=(bindingRequest,asserted)=>spawnSync(executable,['--common-program','--gpu-binding-plan'],{
+      input:canonical({family:'tsfg.gpu-logical-binding-input',version:2,core:voidCore.text,request:bindingRequest,plan:asserted})+'\n',
+      encoding:'utf8',maxBuffer:8388608,windowsHide:true,
+    });
+    [run(voidRequest,null),run(voidRequest,voidExpected)].forEach(accepted=>{
+      assert.equal(accepted.error,undefined);assert.equal(accepted.signal,null);assert.equal(accepted.status,0,accepted.stderr);
+      assert.equal(accepted.stdout,canonical(voidExpected)+'\n');assert.equal(accepted.stderr,'');
+    });
+    const rejected=run(voidExtraReturn,null);
+    assert.equal(rejected.error,undefined);assert.equal(rejected.signal,null);assert.equal(rejected.status,3,rejected.stderr);
+    assert.equal(rejected.stdout,'');
+    assert.match(rejected.stderr,/^\[core-ir-common-gpu-identity\] [^\r\n]+ \(\/src\/main\.ts:89:155\)\r?\n$/,
+      'extra void return must identify its owner, never the previous valid parameter at110..116');
   });
