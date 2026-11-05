@@ -222,7 +222,7 @@ bool verifyCallableTargets(Program &,Error &);
 bool verifyKernelProof(Program &,Error &);
 // Owns complete Program/borrow/kernel verification before producing descriptors.
 // The request has passed bounded JSON admission; no caller proof grants trust.
-// This produces logical descriptors only, never a device or execution permit.
+// This produces scalar buffer ABI descriptors, never a device or execution permit.
 bool createGpuBindingPlan(Program &,const Json &,Json &,Error &);
 bool deriveEffects(Program &,const Json &,Effects &,Error &);
 bool deriveInternalEffects(Program &,const std::map<std::string,Effects> &,Error &);

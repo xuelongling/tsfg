@@ -68,7 +68,7 @@ int runGpuBindingInput(llvm::StringRef bytes,mlir::MLIRContext &context){
   if(!readJson(bytes.drop_back(),input,budget,error))return failure();
   if(!exact(input,{"family","version","core","request","plan"})||
       exception::string(exception::field(input,"family"))!="tsfg.gpu-logical-binding-input"||
-      exception::field(input,"version").getAsInteger()!=1||!exception::field(input,"core").getAsString()){
+      exception::field(input,"version").getAsInteger()!=2||!exception::field(input,"core").getAsString()){
     reject(error,"core-ir-common-gpu-input","logical GPU input identity differs");return failure();
   }
   auto module=mlir::parseSourceString<mlir::ModuleOp>(*exception::field(input,"core").getAsString(),&context);

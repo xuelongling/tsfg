@@ -5,8 +5,8 @@ import {commonBudget,commonJson,commonRecord,commonCheck,canonical,sha256,own} f
 /** @typedef {'read'|'write'|'read-write'} GpuAccess */
 /** @typedef {{sourceId:string,start:number,end:number}} GpuSource */
 /** @typedef {{access:GpuAccess,source:GpuSource}} GpuResource */
-/** @typedef {{kind:'global'|'parameter',id:string,kernel:string|null,set:number,binding:number,access:GpuAccess}} GpuBinding */
-/** @typedef {{family:'tsfg.gpu-logical-binding-request',version:1,target:'vulkan',kernels:string[],bindings:GpuBinding[]}} GpuBindingRequest */
+/** @typedef {{kind:'global'|'parameter'|'return',id:string,kernel:string|null,set:number,binding:number,access:GpuAccess}} GpuBinding */
+/** @typedef {{family:'tsfg.gpu-logical-binding-request',version:2,target:'vulkan',kernels:string[],bindings:GpuBinding[]}} GpuBindingRequest */
 const requestFamily='tsfg.gpu-logical-binding-request',planFamily='tsfg.gpu-logical-binding-plan';
 /** @param {unknown} value */
 const hash=value=>typeof value==='string'&&/^sha256:[0-9a-f]{64}$/.test(value);
@@ -21,13 +21,13 @@ const resourceKey=row=>row.kind+':'+(row.kernel??'')+':'+row.id;
 /** @param {unknown} value */
 const digest=value=>sha256(canonical(value)+'\n');
 
-// This consumer checks compiler data. Descriptor numbers are logical names;
-// neither CPU layout nor API/device capabilities are inferred from them.
+// This consumer checks compiler data. Descriptor numbers remain logical names;
+// the scalar block layout grants no descriptor-base or device allocation limits.
 /** @param {unknown} value @returns {GpuBindingRequest} */
 function requestInput(value) {
   commonBudget(value);commonRecord(value,['family','version','target','kernels','bindings']);
   const request=/** @type {GpuBindingRequest} */(value);
-  check(request.family===requestFamily&&request.version===1,'request','unsupported logical GPU request identity');
+  check(request.family===requestFamily&&request.version===2,'request','unsupported logical GPU request identity');
   check(request.target==='vulkan','target','unsupported logical GPU target');
   check(Array.isArray(request.kernels)&&request.kernels.length>0&&request.kernels.length<=32&&
     request.kernels.every((id,index)=>hash(id)&&(index===0||request.kernels[index-1]<id)),
@@ -36,7 +36,8 @@ function requestInput(value) {
   const resources=new Set();
   request.bindings.forEach((row,index)=>{
     commonRecord(row,['kind','id','kernel','set','binding','access']);
-    check(hash(row.id)&&(row.kind==='global'?row.kernel===null:row.kind==='parameter'&&hash(row.kernel)),
+    check(hash(row.id)&&(row.kind==='global'?row.kernel===null:(row.kind==='parameter'||row.kind==='return')&&hash(row.kernel))&&
+      (row.kind!=='return'||row.id===row.kernel),
       'resource','unsupported or foreign logical GPU resource identity');
     check([row.set,row.binding].every(n=>Number.isInteger(n)&&n>=0&&n<=4294967295)&&
       ['read','write','read-write'].includes(row.access),'request','invalid logical descriptor or access');
@@ -85,6 +86,7 @@ export function createCommonGpuBindingPlan(input,publication,kernelRequest,value
         'GPU logical parameter type or mutable access is not implemented',{primary:{sourceId:fn.sourcePath,...parameter.range},functionId,parameterId:parameter.id});
       available.set('parameter:'+functionId+':'+parameter.id,{access:'read',source:{sourceId:fn.sourcePath,...parameter.range}});
     });
+    if(i32(fn.returnType))available.set('return:'+functionId+':'+functionId,{access:'write',source:source(fn)});
   });
   const bindings=request.bindings.map(row=>{
     const resource=available.get(resourceKey(row));
@@ -95,7 +97,8 @@ export function createCommonGpuBindingPlan(input,publication,kernelRequest,value
   });
   const bound=new Set(request.bindings.map(resourceKey)),missing=[...available].find(([key])=>!bound.has(key))?.[1];
   check(bindings.length===available.size,'coverage','logical GPU resources do not cover the selected fixed access set',{primary:missing?.source??primary});
-  const plan={family:planFamily,version:1,target:request.target,scope:'static-logical',inputIdentity:proof.inputIdentity,
+  const plan={family:planFamily,version:2,target:request.target,scope:'static-buffer-abi',
+    layout:{profile:'vulkan-storage-buffer-std430-scalar-i32-v1',memberOffset:0,memberBytes:4,memberAlignment:4,blockBytes:4},inputIdentity:proof.inputIdentity,
     hirDigest:proof.hirDigest,scopeDigest:proof.scopeDigest,publishedDigest:proof.publishedDigest,
     kernelProofDigest:digest(proof),borrowProofDigest:digest(borrowProof),requestDigest:digest(request),
     groupTargets:proof.targets,kernels,bindings};

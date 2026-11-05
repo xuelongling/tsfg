@@ -125,7 +125,7 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
   const auto fail=[&](llvm::StringRef kind,llvm::StringRef message){return reject(e,("core-ir-common-gpu-"+kind.str()),message);};
   const auto spend=[&](size_t n=1){return p.charge(n)||fail("budget","logical GPU binding work exceeded");};
   if(!exact(request,{"family","version","target","kernels","bindings"})||
-      string(field(request,"family"))!="tsfg.gpu-logical-binding-request"||field(request,"version").getAsInteger()!=1)
+      string(field(request,"family"))!="tsfg.gpu-logical-binding-request"||field(request,"version").getAsInteger()!=2)
     return fail("request","logical GPU binding request identity differs");
   if(string(field(request,"target"))!="vulkan")return fail("target","unsupported logical GPU target");
   const auto &kernels=items(field(request,"kernels")),&bindings=items(field(request,"bindings"));
@@ -152,6 +152,7 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
     const auto &fn=*found->second;const auto path=string(field(fn,"sourcePath"));locate(fn,path);
     const auto result=string(field(fn,"returnType"));const bool empty=types.count(result)&&string(field(*types.at(result),"kind"))=="void";
     if(!field(fn,"ownerType").getAsNull()||(!empty&&!i32(result)))return fail("capability","unsupported GPU receiver or return type");
+    if(!empty)required.emplace(Key{"return",id,id},Resource{false,true,source(fn,path)});
     const auto &upper=p.fixedEffects.at(id);const auto &parameters=items(field(fn,"parameters"));
     for(size_t index=0;index<parameters.size();++index){
       if(!spend())return false;const auto &parameter=parameters[index];locate(parameter,path);
@@ -175,8 +176,9 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
     if(!spend())return false;
     if(!exact(binding,{"kind","id","kernel","set","binding","access"}))return fail("binding","logical descriptor fields differ");
     const auto kind=string(field(binding,"kind")),id=string(field(binding,"id")),kernel=string(field(binding,"kernel"));
-    if(!field(binding,"id").getAsString()||(kind!="global"&&kind!="parameter")||
-        (kind=="global"?!field(binding,"kernel").getAsNull():!field(binding,"kernel").getAsString()))return fail("identity","logical resource identity differs");
+    if(!field(binding,"id").getAsString()||(kind!="global"&&kind!="parameter"&&kind!="return")||
+        (kind=="global"?!field(binding,"kernel").getAsNull():!field(binding,"kernel").getAsString())||
+        (kind=="return"&&id!=kernel))return fail("identity","logical resource identity differs");
     const auto set=field(binding,"set").getAsInteger(),slot=field(binding,"binding").getAsInteger();
     if(!set||!slot||*set<0||*set>UINT32_MAX||*slot<0||*slot>UINT32_MAX)return fail("binding","descriptor set and binding must be uint32");
     const auto order=std::pair{*set,*slot};if(previousSlot>=order)return fail("binding","descriptor slots must be unique and ordered");previousSlot=order;
@@ -194,9 +196,10 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
       const auto &anchor=resource.source;e.path=string(field(anchor,"sourceId"));
       e.range={uint32_t(field(anchor,"start").getAsInteger().value_or(0)),uint32_t(field(anchor,"end").getAsInteger().value_or(0))};break;
     }
-    return fail("coverage","logical bindings must cover every selected global and scalar parameter");
+    return fail("coverage","logical bindings must cover every selected global, scalar parameter and i32 return");
   }
-  out=Object{{"family","tsfg.gpu-logical-binding-plan"},{"version",1},{"target","vulkan"},{"scope","static-logical"},
+  out=Object{{"family","tsfg.gpu-logical-binding-plan"},{"version",2},{"target","vulkan"},{"scope","static-buffer-abi"},
+    {"layout",Object{{"profile","vulkan-storage-buffer-std430-scalar-i32-v1"},{"memberOffset",0},{"memberBytes",4},{"memberAlignment",4},{"blockBytes",4}}},
     {"inputIdentity",p.inputIdentity},{"hirDigest",p.hirHash},{"scopeDigest",field(p.publication,"scopeDigest")},
     {"publishedDigest",field(p.publication,"expectedDigest")},{"kernelProofDigest",digest(canonical(p.proof)+"\n")},
     {"borrowProofDigest",digest(canonical(borrowProof)+"\n")},{"requestDigest",digest(canonical(request)+"\n")},
