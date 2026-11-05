@@ -45,10 +45,11 @@ export function readCommonReturnOriginGraph(raw,directory,spend) {
   const record=(value,keys)=>{
     spend(keys.length+1);if(value===null||typeof value!=='object'||Array.isArray(value))fail('record required');
     const row=/** @type {Record<string,unknown>} */(value),prototype=Object.getPrototypeOf(value);
-    if(prototype!==Object.prototype&&prototype!==null)fail('JSON record required');let count=0;
+    if(prototype!==Object.prototype&&prototype!==null)fail('JSON record required');const expected=new Set(keys);let count=0;
     // No Object.keys/Reflect array is allocated before the shared meter can
     // observe a large unexpected record. Generic JSON has enumerable own keys.
-    for(const name in row){spend(Math.ceil(name.length/8)+keys.length+1);if(!Object.hasOwn(row,name)||!keys.includes(name))fail('unexpected field');count++;}
+    // The prepaid expected-field work builds one set, avoiding a scan per key.
+    for(const name in row){spend(Math.ceil(name.length/8)+2);if(!Object.hasOwn(row,name)||!expected.has(name))fail('unexpected field');count++;}
     if(count!==keys.length)fail('missing field');for(const name of keys){spend();const descriptor=Object.getOwnPropertyDescriptor(row,name);if(!descriptor?.enumerable||!Object.hasOwn(descriptor,'value'))fail('JSON data field required');}
     return row;
   };

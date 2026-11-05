@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Retained complete facts and pure compiler metadata only. No frontend aggregate,
-// Core text is compiler metadata only; Runtime/VM and C++ Graph stay unexecuted.
+// Core text and optional C++ proof verification remain compiler metadata only.
+// Source programs, Runtime/VM and generated native code stay unexecuted.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {pathToFileURL,fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import path from 'node:path';
+import {createMlirFixture} from './mlir-fixtures.mjs';
 const root=process.env.TSFG_PUB3_IMPLEMENTATION_ROOT??fileURLToPath(new URL('../..',import.meta.url));
 const api=await import(pathToFileURL(root+'/compiler/common-program-analysis.mjs').href),
   factsApi=await import(pathToFileURL(root+'/compiler/common-program-facts.mjs').href),
@@ -184,3 +189,115 @@ test('actual cold-admitted nonnull graph with false completion cannot fall throu
   assert.equal(api.analyzeCommonProgram(current,publication).functions.find(row=>row.functionId===left.id).returnOriginStatus.status,'open');
   assert.throws(()=>api.verifyCommonKernelGroup(current,publication,{targets:[left.id,right.id].sort()}),{code:'r03-common-program-kernel-return-origin-open'});
 });
+
+// Original public Common3 capture: the ordinary String application is kept
+// beside both required i32 kernels, without rewriting facts or their Source.
+const concatFixture=new URL('./testdata/common-program-string-concat-v3/',import.meta.url),
+  concatPackage=readFileSync(new URL('package.json',concatFixture)),
+  concatOracleBytes=readFileSync(new URL('official-oracle.json',concatFixture)),
+  concatSource=readFileSync(new URL('source.ts',concatFixture));
+const concatHashes={package:'d2889e70666406d37253e851084e44bcb396c341b135f487f4518bb6a9f25066',
+  oracle:'11c67820f54c5952c7463f2d61ff855f023adb35768b53e6a99cdb313864dbba',
+  source:'e4d0c2b93b29c91172b4b5ca2c19d42fdee2b3ffb8c3ef9c5085195849768d3f'};
+for(const [bytes,expected]of [[concatPackage,concatHashes.package],[concatOracleBytes,concatHashes.oracle],[concatSource,concatHashes.source]])
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),expected,'retain the exact qualified Go originals');
+/** @type {typeof import('./testdata/common-program-string-concat-v3/official-oracle.json')} */
+const concatOracle=JSON.parse(concatOracleBytes.toString('utf8'));
+const concatFacts=factsApi.readCommonProgramFacts(concatPackage),
+  concatHir=hirApi.buildCommonProgramHir(concatFacts,{family:'tsfg.common-program-context-candidate',version:concatFacts.version,
+    factsBytes:concatPackage,expectedPackageId:concatFacts.packageId}),
+  concatPublication=api.createCommonProgramPublication(concatHir),
+  concatAnalysis=api.analyzeCommonProgram(concatHir,concatPublication),
+  concatDeclarations=concatOracle.functions.map(original=>{
+    const matches=concatHir.functions.filter(fn=>fn.sourceBinding===original.id);assert.equal(matches.length,1);
+    return {original,fn:matches[0]};
+  });
+const concatApplication=concatDeclarations.find(row=>row.original.name==='concatValue');assert.ok(concatApplication);
+const concatGroup={targets:concatHir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
+const concatCoreApi=await import(pathToFileURL(root+'/compiler/common-program-core.mjs').href),
+  concatCore=concatCoreApi.commonProgramCore(concatHir,concatPublication,concatGroup);
+
+test('genuine StringConcat retains its complete Source and a covered nonnull fixed return graph',()=>{
+  const source=concatSource.toString('utf8');
+  assert.equal(concatFacts.version,3);assert.equal(concatOracle.sourceSha256,concatHashes.source);
+  assert.equal(concatSource.length,292);assert.equal(source.length,290);
+  assert.deepEqual(concatOracle.sourceRange,{start:0,end:source.length});
+  assert.deepEqual(concatHir.snapshot,concatFacts);
+  assert.equal(concatHir.sources.find(row=>row.path==='/src/main.ts').content,source);
+  assert.equal(concatHir.functions.length,3);assert.equal(concatHir.globals.length,0);
+  assert.equal(concatHir.closure.roots.length,4);assert.equal(concatHir.closure.requiredRoots.length,2);
+  assert.deepEqual(concatPublication.contracts.map(row=>row.functionId),concatHir.functions.map(fn=>fn.id));
+  for(const {original,fn}of concatDeclarations){
+    assert.equal(fn.name,original.name);assert.equal(fn.sourcePath,original.sourcePath);
+    assert.deepEqual(fn.range,original.range);assert.deepEqual(fn.nameRange,original.nameRange);
+    assert.equal(fn.parameters.length,1);assert.equal(fn.parameters[0].sourceBinding,original.parameterId);
+    assert.deepEqual(fn.parameters[0].range,original.parameterRange);
+    assert.equal(concatHir.types.find(row=>row.id===fn.returnType).sourceType,original.returnType);
+    const contract=concatPublication.contracts.find(row=>row.functionId===fn.id);assert.ok(contract);
+    assert.deepEqual(contract.returnOrigins?.format,{family:'tsfg.return-origin-graph-candidate',version:5});
+    assert.equal(concatAnalysis.functions.find(row=>row.functionId===fn.id).returnOriginStatus.status,'covered');
+  }
+  /** @type {Array<[typeof concatHir.closure.roots,typeof concatOracle.rootIntents]>} */
+  const rootPairs=[[concatHir.closure.roots,concatOracle.rootIntents],[concatHir.closure.requiredRoots,concatOracle.requiredRootIntents]];
+  for(const [actualRoots,expectedRoots]of rootPairs){
+    assert.equal(actualRoots.length,expectedRoots.length);
+    expectedRoots.forEach((expected,index)=>{
+      const actual=actualRoots[index];assert.deepEqual({kind:actual.kind,name:actual.name,sourcePath:actual.sourcePath},expected);
+      if(expected.kind==='module-initialization'){
+        assert.equal(actual.target,concatHir.modules[0].initializer);assert.deepEqual(actual.range,concatOracle.sourceRange);
+      }else{
+        const member=concatDeclarations.find(row=>row.original.name===expected.name);assert.ok(member);
+        assert.equal(actual.target,member.fn.id);assert.deepEqual(actual.range,member.original.range);
+      }
+    });
+  }
+  assert.deepEqual(concatGroup.targets,concatDeclarations.filter(row=>row.original.name!=='concatValue').map(row=>row.fn.id).sort());
+  assert.equal(concatGroup.targets.includes(concatApplication.fn.id),false);
+  const {original,fn}=concatApplication,returned=fn.body.find(row=>row.kind==='return');assert.ok(returned);
+  assert.deepEqual(returned.range,original.return);
+  const value=returned.value;assert.ok(value&&value.kind==='stringConcat');
+  assert.equal(value.operator,'+');assert.deepEqual(value.operatorRange,original.operatorRange);assert.deepEqual(value.range,original.expression);
+  assert.equal(value.left.kind,'bindingReference');assert.equal(value.left.binding,fn.parameters[0].id);assert.deepEqual(value.left.range,original.parameterUse);
+  assert.equal(value.right.kind,'stringLiteral');assert.deepEqual(value.right.range,original.literal);assert.deepEqual(value.right.codeUnits,original.literalCodeUnits);
+  assert.deepEqual(original.literalCodeUnits,[33]);assert.equal(original.literalToken,'"!"');
+  assert.ok(original.literal);assert.equal(source.slice(original.literal.start,original.literal.end),'"!"');
+  assert.equal(source.slice(original.expression.start,original.expression.end),'x + "!"');
+  assert.equal(concatPublication.contracts.find(row=>row.functionId===fn.id).upper.facets.allocation,true);
+  assert.equal(concatPublication.contracts.find(row=>row.functionId===fn.id).upper.facets.managedReference,true);
+});
+
+const stringReturnExecutable=process.env.TSFG_STRING_RETURN_STATIC_CORE;
+test('independent C++ certifies the ordinary StringConcat fixed return instead of accepting Pending',
+  {skip:stringReturnExecutable?false:'TSFG_STRING_RETURN_STATIC_CORE is not supplied'},async()=>{
+    assert.ok(path.isAbsolute(stringReturnExecutable));
+    const directory=await createMlirFixture('r03-string-return-origin-'),coreFile=path.join(directory,'common-program.mlir');
+    writeFileSync(coreFile,concatCore.text,{flag:'wx'});
+    const result=spawnSync(stringReturnExecutable,[coreFile,fileURLToPath(new URL('official-oracle.json',concatFixture))],
+      {encoding:'utf8',windowsHide:true,maxBuffer:8388608});
+    assert.equal(result.error,undefined);assert.equal(result.signal,null);
+    assert.equal(result.status,0,result.stderr+'\n'+result.stdout);assert.equal(result.stderr,'');
+    /** @typedef {{name:string,sourceFunctionId:string,semanticId:string,source:{path:string,range:{start:number,end:number}},nonnullPublishedGraph5:boolean,fixedReturnAvailable:boolean,pending:boolean,verified:boolean}} ReturnState */
+    /** @type {{family:string,version:number,passed:boolean,stage:string,coreRead:boolean,officialOracleBound:boolean,wholeProgramVerified:boolean,coreDigest:string,officialOracleDigest:string,concat:ReturnState,kernels:ReturnState[],authority:boolean,execution:Record<string,boolean>,firstError:null,firstParseDiagnostic:null}} */
+    const report=JSON.parse(result.stdout);
+    assert.equal(report.family,'tsfg.string-concat-return-origin-driver');assert.equal(report.version,1);
+    assert.equal(report.passed,true);assert.equal(report.stage,'concat-fixed-return');
+    assert.equal(report.coreRead,true);assert.equal(report.officialOracleBound,true);assert.equal(report.wholeProgramVerified,true);
+    assert.equal(report.coreDigest,'sha256:'+createHash('sha256').update(concatCore.text).digest('hex'));
+    assert.equal(report.officialOracleDigest,'sha256:'+concatHashes.oracle);
+    assert.equal(report.concat.name,'concatValue');assert.equal(report.concat.sourceFunctionId,concatApplication.original.id);
+    assert.equal(report.concat.semanticId,concatApplication.fn.id);
+    assert.deepEqual(report.concat.source,{path:'/src/main.ts',range:concatApplication.original.range});
+    assert.equal(report.concat.nonnullPublishedGraph5,true);assert.equal(report.concat.fixedReturnAvailable,true);
+    assert.equal(report.concat.verified,true);assert.equal(report.concat.pending,false);
+    assert.equal(report.kernels.length,2);
+    assert.deepEqual(report.kernels.map(row=>row.semanticId).sort(),concatGroup.targets);
+    for(const kernel of report.kernels){
+      const expected=concatDeclarations.find(row=>row.fn.id===kernel.semanticId);assert.ok(expected);
+      assert.equal(kernel.name,expected.original.name);assert.equal(kernel.sourceFunctionId,expected.original.id);
+      assert.deepEqual(kernel.source,{path:'/src/main.ts',range:expected.original.range});
+      assert.equal(kernel.nonnullPublishedGraph5,true);assert.equal(kernel.fixedReturnAvailable,true);
+      assert.equal(kernel.verified,true);assert.equal(kernel.pending,false);
+    }
+    assert.equal(report.authority,false);assert.deepEqual(report.execution,{source:false,vm:false,native:false,device:false});
+    assert.equal(report.firstError,null);assert.equal(report.firstParseDiagnostic,null);
+  });
