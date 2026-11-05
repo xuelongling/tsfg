@@ -6,6 +6,7 @@
 #include "bytecode-common-packet.h"
 #include "component-layout.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Parser/Parser.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -55,6 +56,34 @@ int readCoreInput(std::string &bytes) {
     if (std::cin.eof()) return 0;
     if (!std::cin) return 2;
   }
+}
+int runGpuBindingInput(llvm::StringRef bytes,mlir::MLIRContext &context){
+  Program budget;Error error;Json input=nullptr,plan=nullptr;
+  const auto failure=[&](){
+    llvm::errs()<<"["<<error.code<<"] "<<error.message;
+    if(!error.path.empty())llvm::errs()<<" ("<<error.path<<":"<<error.range.start<<":"<<error.range.end<<")";
+    llvm::errs()<<'\n';return 3;
+  };
+  if(!bytes.ends_with("\n")){reject(error,"core-ir-common-gpu-canonical","canonical GPU input requires one final LF");return failure();}
+  if(!readJson(bytes.drop_back(),input,budget,error))return failure();
+  if(!exact(input,{"family","version","core","request","plan"})||
+      exception::string(exception::field(input,"family"))!="tsfg.gpu-logical-binding-input"||
+      exception::field(input,"version").getAsInteger()!=1||!exception::field(input,"core").getAsString()){
+    reject(error,"core-ir-common-gpu-input","logical GPU input identity differs");return failure();
+  }
+  auto module=mlir::parseSourceString<mlir::ModuleOp>(*exception::field(input,"core").getAsString(),&context);
+  if(!module){reject(error,"core-ir-common-gpu-core","complete Common Core parse or verification failed");return failure();}
+  Program program;
+  if(!readCore(*module,program,error))return failure();
+  if(!program.charge(programWorkLimit-budget.remaining)){
+    reject(error,"core-ir-common-gpu-budget","GPU input and Core shared work exceeded");return failure();
+  }
+  if(!createGpuBindingPlan(program,exception::field(input,"request"),plan,error))return failure();
+  const auto &asserted=exception::field(input,"plan");
+  if(!asserted.getAsNull()&&!same(asserted,plan)){
+    reject(error,"core-ir-common-gpu-plan","asserted logical GPU plan differs from independent reconstruction");return failure();
+  }
+  return printCoreJson(plan);
 }
 int runCoreModule(mlir::ModuleOp module, llvm::StringRef command) {
   if (mlir::failed(mlir::verify(module))) return 3;

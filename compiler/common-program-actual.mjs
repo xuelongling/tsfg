@@ -262,8 +262,8 @@ export function analyzeCommonGraphs({model,plans},records=null,options=/** @type
             }else if(name==='receiver_bind'||name==='receiver_get'||name==='receiver_result'){
               const outcome=name==='receiver_bind'?receiver.bind(state.frames,args[0].frames,args[1]):name==='receiver_get'?receiver.get(state.frames,args[0].frames):receiver.result(state.frames,args[0].frames,args[1]);
               check(!outcome.pending,'capability','constructor result contains an unclassified actual payload');
-              if(outcome.normal){const after=outcome.language?cloneWorld(state):state;receiver.overlay(after.frames,outcome.normal.frames);edge(op.successors[0],after,[outcome.normal.value],true);}
-              if(outcome.language){const after=outcome.normal?cloneWorld(state):state;receiver.overlay(after.frames,outcome.language.frames);abandonInitializers(after);const thrown=a.empty();thrown.unknown=true;edge(op.successors[1],after,[thrown],true);}
+              if(outcome.normal){const after=outcome.language?cloneWorld(state):state;receiver.overlay(after.frames,outcome.normal.frames);edge(op.successors[0],after,[outcome.normal.value],false,true);}
+              if(outcome.language){const after=outcome.normal?cloneWorld(state):state;receiver.overlay(after.frames,outcome.language.frames);abandonInitializers(after);const thrown=a.empty();thrown.unknown=true;edge(op.successors[1],after,[thrown],false,true);}
               continues=false;
             }else if(name==='initialize_begin'){
               const owner=types.get(p.owner);check(owner?.construction,'identity');spend(args[1].refs.size);

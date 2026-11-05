@@ -220,6 +220,10 @@ bool publicationScope(Program &,Json &,Error &);
 bool validateCallableBounds(Program &,const Json &,const Json &,Error &);
 bool verifyCallableTargets(Program &,Error &);
 bool verifyKernelProof(Program &,Error &);
+// Owns complete Program/borrow/kernel verification before producing descriptors.
+// The request has passed bounded JSON admission; no caller proof grants trust.
+// This produces logical descriptors only, never a device or execution permit.
+bool createGpuBindingPlan(Program &,const Json &,Json &,Error &);
 bool deriveEffects(Program &,const Json &,Effects &,Error &);
 bool deriveInternalEffects(Program &,const std::map<std::string,Effects> &,Error &);
 bool readEffects(Program &,const Json &,const Json &,Effects &,Error &);

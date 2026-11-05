@@ -11,5 +11,6 @@ int readCoreInput(std::string &);
 // Shared bounded canonical output; the owning consumer verifies its IR first.
 int printCoreModule(mlir::ModuleOp);
 int printCoreJson(const llvm::json::Value &);
+int runGpuBindingInput(llvm::StringRef,mlir::MLIRContext &);
 int runCoreModule(mlir::ModuleOp, llvm::StringRef command);
 }

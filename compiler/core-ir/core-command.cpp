@@ -81,7 +81,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   if (common || query) {
     const auto command = llvm::StringRef(argv[2]);
     if (command != "--canonicalize" && command != "--optimize" &&
-        !(common && (command == "--component-layouts" || command == "--borrow-proof" || command == "--emit-bytecode")) &&
+        !(common && (command == "--component-layouts" || command == "--borrow-proof" || command == "--emit-bytecode" || command == "--gpu-binding-plan")) &&
         !(query && (command == "--effects" || command == "--cpu-batch" ||
           command == "--cpu-llvm" || command == "--llvm-ir" ||
           command == "--canonicalize-llvm-ir" || command == "--tmeta" ||
@@ -103,6 +103,8 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
     registry.insert<mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
     mlir::MLIRContext context(registry);
     context.disableMultithreading();
+    if (common && command == "--gpu-binding-plan")
+      return tsfg::commonProgram::runGpuBindingInput(bytes, context);
     if (query && command == "--canonicalize-llvm-ir")
       return tsfg::systemQuery::canonicalizeCpuLLVMIR(bytes, context);
     if (query && command == "--canonicalize-tmeta")
