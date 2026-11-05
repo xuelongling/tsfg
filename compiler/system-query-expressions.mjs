@@ -53,7 +53,7 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
         if(selected){if(selected.id!==value.property)fail('original first selected field declaration differs','source');break;}
         owner=type.base;
       }
-      if(!binding?.mode||!field||!owner||!['f32','f64'].includes(value.type)||field.sourceType!==value.type||field.access!=='public')fail('original component field ownership/type/access differs','type');
+      if(!binding?.mode||!field||!owner||!['i32','f32','f64'].includes(value.type)||field.sourceType!==value.type||field.access!=='public')fail('original component field ownership/type/access differs','type');
       if(target&&(access==='read'||binding.mode!=='write'||field.readonly))fail('Read borrow or declared readonly field cannot be written','permission');
       grammar.name(value.nameRange,field.name);grammar.sequence(value.range,[value.receiver.range,'.',value.nameRange]);
       return {...base,kind:target?'fieldTarget':'fieldAccess',receiver,property:field.fieldId,sourceField:field.sourceField,nameRange:{...value.nameRange},access:target?access:'read'};
@@ -66,9 +66,9 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
       return {...base,kind:'binary',operator:value.operator,operatorRange:{...value.operatorRange},left,right};
     }
     if(value.kind==='fieldAssignment'||value.kind==='bindingAssignment'){
-      if(!['=','+=','-=','*=','/='].includes(value.operator)||!['f32','f64'].includes(value.type)||value.target.kind!==(value.kind==='fieldAssignment'?'fieldTarget':'bindingTarget'))fail('owned floating-point assignment required','capability');
+      if(!['=','+=','-=','*=','/='].includes(value.operator)||!(['f32','f64'].includes(value.type)||value.type==='i32'&&value.kind==='fieldAssignment'&&value.operator==='=')||value.target.kind!==(value.kind==='fieldAssignment'?'fieldTarget':'bindingTarget'))fail('owned floating-point assignment or simple i32 field copy required','capability');
       const target=expression(value.target,value.operator==='='?'write':'readwrite',depth+1),assigned=expression(value.value,'read',depth+1,target.sourceType);
-      if(target.sourceType!==value.type||assigned.sourceType!==value.type)fail('original floating-point assignment widths differ','type');
+      if(target.sourceType!==value.type||assigned.sourceType!==value.type)fail('original assignment types differ','type');
       grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.target.range,value.operatorRange,value.value.range]);
       return {...base,kind:value.kind,operator:value.operator,operatorRange:{...value.operatorRange},target,value:assigned};
     }

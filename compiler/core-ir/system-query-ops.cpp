@@ -78,7 +78,8 @@ struct Check {
     }
     if(kind=="fieldAccess"){
       const auto &receiver=bindings.at(string(field(field(value,"receiver"),"binding")));auto *op=take(it,block,"tsfg.field_load",{receiver.value},1);
-      if(!op||!scalar(op->getResult(0).getType(),value)||!fieldOp(op,value,receiver,field(value,"range")))return {};return op->getResult(0);
+      if(!op)return {};const auto type=op->getResult(0).getType();
+      if(!need((type.isSignlessInteger(32)||type.isF32()||type.isF64())&&tsfg::scalarName(tsfg::typeCode(type))==string(field(value,"type")),"original field SSA type differs")||!fieldOp(op,value,receiver,field(value,"range")))return {};return op->getResult(0);
     }
     if(kind=="binary"){
       auto left=expression(it,block,field(value,"left"),bindings,depth+1);if(!left)return {};auto right=expression(it,block,field(value,"right"),bindings,depth+1);if(!right)return {};
