@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-gpu-lowering.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
+#include "mlir/Target/SPIRV/Serialization.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <optional>
 #include <tuple>
 
 namespace tsfg::commonProgram {
@@ -21,9 +24,10 @@ Json source(const Site &site){return Object{{"sourceId",site.path},{"start",site
 Json point(const Site &site){return Object{{"block",site.block},{"operation",site.index}};}
 struct Scalar {
   mlir::Value bits;bool actualI32=false;std::set<size_t> conditions;
+  Json origin=nullptr;
 };
 struct Cell {mlir::Value pointer;Scalar value;bool initialized=false;};
-struct Resource {spv::GlobalVariableOp variable;};
+struct Resource {spv::GlobalVariableOp variable;Json binding;};
 
 // This pass owns physical IR construction only. Source actual-value proof is
 // distinct from its i32 representation: resource bits alone prove no tag or
@@ -34,6 +38,8 @@ struct Lowering {
   mlir::IntegerType i32;spv::PointerType scalarPointer;
   std::map<Key,Resource> resources;
   Array functions,sourceOperations,obligations;
+  bool emittingModule=false;
+  Array preflightSteps,discharges;
   Lowering(Program &p,mlir::MLIRContext &context,Error &error):p(p),error(error),b(&context),
       module(mlir::ModuleOp::create(b.getUnknownLoc())),
       i32(mlir::IntegerType::get(&context,32,mlir::IntegerType::Signed)),
@@ -103,7 +109,7 @@ struct Lowering {
       const auto access=string(field(row,"access"));
       if(access=="read")variable->setAttr("non_writable",b.getUnitAttr());
       if(access=="write")variable->setAttr("non_readable",b.getUnitAttr());
-      resources.emplace(Key{kind,kernel,id},Resource{variable});
+      resources.emplace(Key{kind,kernel,id},Resource{variable,row});
     }
     for(const auto &selection:items(field(plan,"kernels"))){
       const auto id=string(field(selection,"functionId"));
@@ -136,10 +142,12 @@ struct Lowering {
         const Site where{fn.path,"abi.parameter",{uint32_t(*field(range,"start").getAsInteger()),uint32_t(*field(range,"end").getAsInteger())}};
         if(!spend(1,where))return false;
         if(fn.carriers[reg]!=exception::i32Id)return fail("capability","GPU parameter actual carrier is not implemented",where);
-        auto ptr=pointer(resources.at(Key{"parameter",id,string(field(parameter,"id"))}),where);
+        const auto &resource=resources.at(Key{"parameter",id,string(field(parameter,"id"))});
+        auto ptr=pointer(resource,where);
         auto value=b.create<spv::LoadOp>(b.getUnknownLoc(),ptr);mark(value,where,"parameter-load");
-        values.emplace(reg,Scalar{value.getResult(),false,{}});
+        values.emplace(reg,Scalar{value.getResult(),false,{},Object{{"kind","binding"},{"binding",resource.binding}}});
       }
+      bool visibleWrite=false,entryBudget=false;
       std::set<uint16_t> visited;uint16_t block=0;bool returned=false;
       while(!returned){
         if(!visited.insert(block).second)return fail("cfg","GPU cyclic control flow is not implemented",entrySite);
@@ -151,6 +159,14 @@ struct Lowering {
           if(op.name=="fuel"){
             const auto event=obligation(fn,where,"fuel","gpu-fuel-and-depth-domain",Object{{"event",field(op.properties,"event")}});
             original["obligationId"]=int64_t(event);
+            if(emittingModule){
+              if(visibleWrite||entryBudget||field(op.properties,"event").getAsInteger()!=1)
+                return fail("capability","single-call Host preflight requires one entry budget event before visible writes",where);
+              preflightSteps.push_back(Object{{"kind","entry-budget"},{"obligationId",int64_t(event)},
+                {"functionId",id},{"point",point(where)},{"source",source(where)},{"status","unfulfilled"},
+                {"event",field(op.properties,"event")},{"activeDepth",1},{"fuelCost",1},{"checkOrder",Array{"depth","fuel"}}});
+              entryBudget=true;
+            }
           }else if(op.name=="cell"){
             // The hoisted allocation is not source initialization.
           }else if(op.name=="store"){
@@ -166,7 +182,7 @@ struct Lowering {
             if(op.view!=exception::i32Id)return fail("capability","GPU constant type is not implemented",where);
             const llvm::APInt bits(32,string(field(op.properties,"decimal")),10);
             auto value=b.create<spv::ConstantOp>(b.getUnknownLoc(),i32,b.getIntegerAttr(i32,bits));mark(value,where,"constant");
-            values[op.result]={value.getResult(),true,{}};
+            values[op.result]={value.getResult(),true,{},Object{{"kind","constant-i32"},{"decimal",field(op.properties,"decimal")}}};
           }else if(op.name=="value_copy"){
             if(op.view!=exception::i32Id)return fail("capability","GPU value copy type is not implemented",where);
             values[op.result]=values.at(op.operands[0]);
@@ -177,17 +193,31 @@ struct Lowering {
             // Preserve the physical reload. A preceding Source store can prove
             // its Source value kind on this normal path, never equality to old
             // bits or GPU coherence/dispatch guarantees.
-            auto state=globalValues[global];state.bits=load.getResult();values[op.result]=std::move(state);
+            auto state=globalValues[global];state.bits=load.getResult();
+            if(!state.actualI32)state.origin=Object{{"kind","binding"},{"binding",resources.at(Key{"global","",global}).binding}};
+            values[op.result]=std::move(state);
           }else if(op.name=="global_store"){
             const auto global=string(field(op.properties,"global"));const auto value=values.at(op.operands[0]);
             if(!value.actualI32)return fail("actual","GPU global write needs Source actual-i32 proof on the conditional normal path",where);
             auto ptr=pointer(resources.at(Key{"global","",global}),where);
             auto store=b.create<spv::StoreOp>(b.getUnknownLoc(),ptr,value.bits);mark(store,where,"global-store");globalValues[global]=value;
+            visibleWrite=true;
           }else if(op.name=="numeric_use"){
             auto value=values.at(op.operands[0]);Array dependencies;for(auto condition:value.conditions)dependencies.push_back(int64_t(condition));
             const auto event=obligation(fn,where,"numeric-use","actual-initialized-i32",Object{
               {"operator",field(op.properties,"operator")},{"index",field(op.properties,"index")},
               {"operand",op.operands[0]},{"dependsOn",std::move(dependencies)}});
+            if(emittingModule){
+              if(visibleWrite||!entryBudget||value.origin.getAsNull())
+                return fail("capability","Host numeric preflight needs a reached pre-write binding or constant origin",where);
+              preflightSteps.push_back(Object{{"kind","numeric-use"},{"obligationId",int64_t(event)},
+                {"functionId",id},{"point",point(where)},{"source",source(where)},{"status","unfulfilled"},
+                {"operator",field(op.properties,"operator")},{"index",field(op.properties,"index")},
+                {"operand",op.operands[0]},
+                {"origin",value.origin},{"requiresInitialized",true},{"requiresActualTag","i32"},
+                {"undefinedOutcome","request-trap-at-this-operation"},
+                {"otherActualTags","unimplemented-capability-not-a-Source-trap"}});
+            }
             if(value.actualI32){
               (*obligations.back().getAsObject())["status"]=value.conditions.empty()?"proven-i32":"conditional-i32";
             }else value.conditions.insert(event);
@@ -204,6 +234,10 @@ struct Lowering {
               {"operator","+"},{"semantics","source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
             conditions.insert(event);auto sum=b.create<spv::IAddOp>(b.getUnknownLoc(),left.bits,right.bits);mark(sum,where,"i32-add");
             values[op.result]={sum.getResult(),true,std::move(conditions)};original["obligationId"]=int64_t(event);
+            if(emittingModule)discharges.push_back(Object{{"obligationId",int64_t(event)},{"status","discharged"},
+              {"basis","R01 section 4.2"},{"relation","low-32-bits-exact"},{"operation","spirv.IAdd"},
+              {"functionId",id},{"point",point(where)},{"source",source(where)},
+              {"requires",field(obligations.back(),"dependsOn")}});
           }else if(op.name=="cf.br"){
             const auto next=op.successors[0];std::vector<Scalar> arguments;
             for(auto operand:op.operands){
@@ -227,6 +261,7 @@ struct Lowering {
         if(!returned&&!continued)return fail("cfg","GPU normal-path terminator is not implemented",entrySite);
       }
       if(visited.size()!=fn.blocks.size())return fail("cfg","GPU lowering must cover the complete selected function CFG",entrySite);
+      if(emittingModule&&!entryBudget)return fail("capability","single-call module requires its original entry fuel/depth event",entrySite);
       functions.push_back(Object{{"functionId",id},{"symbol",symbol},{"source",field(selection,"source")}});
     }
     (*module)->setAttr("tsfg_gpu.scope",b.getStringAttr("non-launchable"));
@@ -253,5 +288,97 @@ bool lowerGpuBindingFunctions(Program &p,const Json &alreadyVerifiedPlan,
     {"functions",std::move(lowering.functions)},{"sourceOperations",std::move(lowering.sourceOperations)},
     {"obligations",std::move(lowering.obligations)}};
   return true;
+}
+
+bool emitGpuBindingModule(Program &p,const Json &alreadyVerifiedPlan,
+                          llvm::StringRef profile,mlir::MLIRContext &context,
+                          Json &out,Error &error){
+  context.getOrLoadDialect<spv::SPIRVDialect>();
+  Lowering lowering(p,context,error);
+  Site root{p.sourcePath,"abi.module",{0,p.sourceLength}};
+  const auto &selected=items(field(alreadyVerifiedPlan,"kernels"));
+  const auto &anchor=field(selected.front(),"source");
+  root.path=string(field(anchor,"sourceId"));
+  root.range={uint32_t(*field(anchor,"start").getAsInteger()),uint32_t(*field(anchor,"end").getAsInteger())};
+  if(profile!="single-source-call-v1")return lowering.fail("capability","unsupported explicit GPU module profile",root);
+  if(selected.size()!=1)return lowering.fail("capability","single-source-call-v1 requires one selected Source function",root);
+  lowering.emittingModule=true;
+  if(!lowering.run(alreadyVerifiedPlan))return false;
+  const auto planHash=digest(canonical(alreadyVerifiedPlan)+"\n");
+  Json profileData=Object{{"name",profile.str()},{"targetApi","vulkan"},{"targetApiVersion","1.1"},
+    {"spirvVersion","1.3"},{"executionModel","GLCompute"},{"addressingModel","Logical"},
+    {"memoryModel","GLSL450"},{"capabilities",Array{"Shader"}},{"extensions",Array{}},
+    {"activeSourceInstances",1},{"localSize",Array{1,1,1}},{"dispatch",Array{1,1,1}}};
+  Json preflight=Object{{"family","tsfg.gpu-host-preflight"},{"version",1},{"status","unfulfilled"},
+    {"planDigest",planHash},{"profile",profile.str()},{"functionId",field(selected.front(),"functionId")},
+    {"scope","reached-linear-prefix-before-first-visible-write"},
+    {"requirements",Object{{"arguments","already-evaluated-Source-values"},
+      {"actualState","same-binding-snapshot-as-payload"},{"payloadPreparation","after-ordered-preflight-success"},
+      {"resourceLifetime","until-confirmed-completion"},{"concurrency","one-active-Source-call-on-bound-resources"}}},
+    {"semanticFailure",Object{{"stage","before-submit"},{"channel","request-trap"},
+      {"userCatch",false},{"userFinally",false},{"rollback",false},{"deviceFailureProtocol",false}}},
+    {"steps",std::move(lowering.preflightSteps)}};
+  auto &b=lowering.b;
+  b.setInsertionPointToEnd(lowering.module->getBody());
+  const auto vce=spv::VerCapExtAttr::get(spv::Version::V_1_3,{spv::Capability::Shader},{},&context);
+  auto shader=b.create<spv::ModuleOp>(b.getUnknownLoc(),spv::AddressingModel::Logical,
+    spv::MemoryModel::GLSL450,std::optional<spv::VerCapExtAttr>(vce),std::nullopt);
+  auto &body=shader->getRegion(0).front();
+  // Move the very same verified resource/function operations, including the
+  // post-store global reload. There is no alternate body or handwritten IR.
+  auto &original=*lowering.module->getBody();
+  for(auto it=original.begin();it!=original.end();){
+    auto *op=&*it++;if(op!=shader.getOperation())op->moveBefore(&body,body.end());
+  }
+  spv::FuncOp entry;
+  for(auto &op:body)if(auto fn=llvm::dyn_cast<spv::FuncOp>(&op))entry=fn;
+  b.setInsertionPointToEnd(&body);
+  b.create<spv::EntryPointOp>(b.getUnknownLoc(),spv::ExecutionModel::GLCompute,entry,llvm::ArrayRef<mlir::Attribute>{});
+  b.create<spv::ExecutionModeOp>(b.getUnknownLoc(),entry,spv::ExecutionMode::LocalSize,llvm::ArrayRef<int32_t>{1,1,1});
+  shader->setAttr("tsfg_gpu.scope",b.getStringAttr("host-preflight-required"));
+  shader->setAttr("tsfg_gpu.plan_digest",b.getStringAttr(planHash));
+  shader->setAttr("tsfg_gpu.profile",b.getStringAttr(canonical(profileData)));
+  shader->setAttr("tsfg_gpu.obligations",b.getStringAttr(canonical(Json(Array(lowering.obligations)))));
+  shader->setAttr("tsfg_gpu.discharges",b.getStringAttr(canonical(Json(Array(lowering.discharges)))));
+  shader->setAttr("tsfg_gpu.host_preflight",b.getStringAttr(canonical(preflight)));
+  if(mlir::failed(mlir::verify(shader.getOperation())))return lowering.fail("verify","upstream physical SPIR-V module verification failed",root);
+  std::string text;llvm::raw_string_ostream stream(text);
+  shader.print(stream,mlir::OpPrintingFlags().printGenericOpForm());stream<<'\n';stream.flush();
+  if(!lowering.spend(text.size(),root))return false;
+
+  // Upstream serialization interprets non-argument attributes as SPIR-V
+  // decorations. Project only our two compiler metadata namespaces away on an
+  // owned clone; retain every real op, operand, type, symbol and decoration.
+  // The annotated module and receipt remain bound to the exact word vector.
+  mlir::OwningOpRef<spv::ModuleOp> serializable(llvm::cast<spv::ModuleOp>(shader->clone()));
+  serializable->walk([&](mlir::Operation *op){
+    llvm::SmallVector<mlir::StringAttr,8> names;
+    for(const auto &attr:op->getAttrs()){
+      const auto name=attr.getName().getValue();
+      if(name.starts_with("tsfg_gpu.")||name.starts_with("tsfg_source."))names.push_back(attr.getName());
+    }
+    for(auto name:names)op->removeAttr(name);
+  });
+  if(mlir::failed(mlir::verify(serializable->getOperation())))return lowering.fail("verify","metadata-free serialization projection verification failed",root);
+  spv::SerializationOptions options;
+  options.emitSymbolName=true;options.emitDebugInfo=false;options.saveModuleForValidation=false;
+  llvm::SmallVector<uint32_t,0> words;
+  if(mlir::failed(spv::serialize(*serializable,words,options)))return lowering.fail("serialize","upstream SPIR-V word serialization failed",root);
+  if(!lowering.spend(words.size(),root))return false;
+  Array wordValues;for(auto word:words)wordValues.push_back(int64_t(word));
+  Json result=Object{{"family","tsfg.gpu-binding-module"},{"version",1},{"scope","host-preflight-required"},
+    {"launchAuthorized",false},{"hostPreflightFulfilled",false},{"deviceExecution",false},
+    {"inputIdentity",field(alreadyVerifiedPlan,"inputIdentity")},{"planDigest",planHash},{"profile",std::move(profileData)},
+    {"layout",field(alreadyVerifiedPlan,"layout")},{"bindings",field(alreadyVerifiedPlan,"bindings")},
+    {"entryPoint",entry.getSymName().str()},{"module",std::move(text)},
+    {"serializationProjection","remove-tsfg_gpu-and-tsfg_source-metadata-only"},
+    {"wordsDigest",digest(canonical(Json(Array(wordValues)))+"\n")},{"words",std::move(wordValues)},
+    {"functions",std::move(lowering.functions)},{"sourceOperations",std::move(lowering.sourceOperations)},
+    {"obligations",std::move(lowering.obligations)},{"discharges",std::move(lowering.discharges)},
+    {"hostPreflight",std::move(preflight)}};
+  const auto encoded=canonical(result);
+  if(encoded.size()>=8388608||!lowering.spend(encoded.size(),root))
+    return lowering.fail("budget","GPU module artifact output budget exceeded",root);
+  (*result.getAsObject())["artifactDigest"]=digest(encoded+"\n");out=std::move(result);return true;
 }
 } // namespace tsfg::commonProgram
