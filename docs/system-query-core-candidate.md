@@ -22,6 +22,10 @@ The existing native f32/f64 Core arithmetic operations implement `+`, `-`, `*` a
 `/`. A compound assignment loads its actual target before evaluating the RHS,
 then applies its original operation and stores. Source statement and operand order remain explicit SSA
 dependencies. No component objects or boxed field values are constructed.
+Same-type i32 field `=` copies use those typed load/store operations directly;
+they introduce no numeric conversion or arithmetic. i32 literals, arithmetic,
+compound assignments, locals and scalar helper parameters/results remain outside
+this capability.
 
 Reachable f32/f64-result helpers become real func.func definitions with native f32/f64 or component-view parameters and typed func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 3; the Core/common wire contract remains unchanged.
 
@@ -56,7 +60,8 @@ checks. The component-layout26a envelope and its field order stay unchanged.
 This bounded slice supports the complete current owned fixtures: declaration
 only systems, cross-file and generic aliases, multiple component occurrences,
 Read/Write views of a shared component, inherited shadowed fields, direct same-width f32/f64
-field arithmetic, assignment and compound assignment. Ordinary system
+field arithmetic, assignment and compound assignment, plus same-type i32 field
+copies. Ordinary system
 parameters require a selected native scalar Core type and systems return void.
 Component metadata uses fixed fields with scalar literal initializers and
 implicit zero-argument construction. Explicit constructor/method metadata

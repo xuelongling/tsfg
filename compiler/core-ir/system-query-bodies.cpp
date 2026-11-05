@@ -58,7 +58,7 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
       const auto &t=*source->types.at(owner);for(const auto &candidate:items(field(t,"fields")))if(string(field(candidate,"name"))==name){selected=&candidate;break;}
       if(selected)break;owner=string(field(t,"base"));
     }
-    if(!need(selected&&same(field(*selected,"id"),field(value,"property"))&&(type=="f32"||type=="f64")&&string(field(f,"type"))==type&&string(field(f,"access"))=="public","first visible original field/type/access differs"))return false;
+    if(!need(selected&&same(field(*selected,"id"),field(value,"property"))&&(type=="i32"||type=="f32"||type=="f64")&&string(field(f,"type"))==type&&string(field(f,"access"))=="public","first visible original field/type/access differs"))return false;
     if(kind=="fieldTarget"&&!need(string(field(slot,"mode"))=="write"&&field(f,"readonly").getAsBoolean()==false,"Read borrow or declared readonly field cannot be written"))return false;
     return g.name(field(value,"nameRange"),name)&&g.sequence(r,{field(receiver,"range"),Json("."),field(value,"nameRange")});
   }
@@ -69,7 +69,7 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   }
   if(kind=="fieldAssignment"||kind=="bindingAssignment"){
     const auto op=string(field(value,"operator"));const auto &target=field(value,"target"),&rhs=field(value,"value");
-    return need((type=="f32"||type=="f64")&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))==(kind=="fieldAssignment"?"fieldTarget":"bindingTarget")&&string(field(target,"type"))==type&&string(field(rhs,"type"))==type,"owned same-width floating-point field assignment required")&&
+    return need((type=="f32"||type=="f64"||(type=="i32"&&kind=="fieldAssignment"&&op=="="))&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))==(kind=="fieldAssignment"?"fieldTarget":"bindingTarget")&&string(field(target,"type"))==type&&string(field(rhs,"type"))==type,"owned same-type floating-point assignment or simple i32 field copy required")&&
       expression(target,body,scope,path,depth+1)&&expression(rhs,body,scope,path,depth+1,type)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(target,"range"),field(value,"operatorRange"),field(rhs,"range")});
   }
   return need(false,"Query expression has no selected typed representation");
