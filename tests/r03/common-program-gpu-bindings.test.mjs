@@ -182,6 +182,73 @@ test('genuine Source3 extra void return resource identifies its owner function',
     error.primary.sourceId===voidOwner.sourceId&&error.primary.start===voidOwner.start&&error.primary.end===voidOwner.end);
 });
 
+// This original public-v3 Source returns bare x+7. Its nonnull fixed return
+// contract must be reconstructed by C++ without inventing literal provenance.
+const [constantRaw,constantOracleRaw,constantSource]=await Promise.all(['package.json','official-oracle.json','source.ts']
+  .map(name=>fs.readFile(new URL('./testdata/common-program-gpu-constant-v3/'+name,import.meta.url))));
+const constantFacts=readCommonProgramFacts(constantRaw);
+/** @type {typeof import('./testdata/common-program-gpu-constant-v3/official-oracle.json')} */
+const constantOracle=JSON.parse(constantOracleRaw.toString('utf8'));
+const constantHir=buildCommonProgramHir(constantFacts,{family:'tsfg.common-program-context-candidate',version:constantFacts.version,
+  factsBytes:constantRaw,expectedPackageId:constantFacts.packageId});
+const constantPublication=createCommonProgramPublication(constantHir);
+const constantGroup={targets:constantHir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
+const constantDeclarations=constantOracle.functions.map(original=>{
+  const functions=constantHir.functions.filter(row=>row.sourceBinding===original.id);assert.equal(functions.length,1);
+  const fn=functions[0],parameters=fn.parameters.filter(row=>row.sourceBinding===original.parameterId);assert.equal(parameters.length,1);
+  return {original,fn,parameter:parameters[0]};
+});
+const constantKernel=constantDeclarations.find(row=>row.original.name==='constantKernel');assert.ok(constantKernel);
+const constantRequest={family:'tsfg.gpu-logical-binding-request',version:2,target:'vulkan',kernels:[constantKernel.fn.id],bindings:[
+  {kind:'parameter',id:constantKernel.parameter.id,kernel:constantKernel.fn.id,set:0,binding:0,access:'read'},
+  {kind:'return',id:constantKernel.fn.id,kernel:constantKernel.fn.id,set:0,binding:1,access:'write'},
+]};
+const constantCore=commonProgramCore(constantHir,constantPublication,constantGroup,{borrowProof:true});
+const constantOwner={sourceId:'/src/main.ts',...constantKernel.original.range};
+const constantExpected={family:'tsfg.gpu-logical-binding-plan',version:2,target:'vulkan',scope:'static-buffer-abi',
+  layout:{profile:'vulkan-storage-buffer-std430-scalar-i32-v1',memberOffset:0,memberBytes:4,memberAlignment:4,blockBytes:4},
+  inputIdentity:constantCore.proof.inputIdentity,hirDigest:constantCore.proof.hirDigest,scopeDigest:constantCore.proof.scopeDigest,
+  publishedDigest:constantCore.proof.publishedDigest,kernelProofDigest:digest(constantCore.proof),borrowProofDigest:digest(constantCore.borrowProof),
+  requestDigest:digest(constantRequest),groupTargets:constantGroup.targets,kernels:[{functionId:constantKernel.fn.id,source:constantOwner}],bindings:[
+    {...constantRequest.bindings[0],type:'i32',source:{sourceId:'/src/main.ts',...constantKernel.original.parameterRange}},
+    {...constantRequest.bindings[1],type:'i32',source:constantOwner},
+  ]};
+
+test('genuine Source3 bare scalar addition retains literal 7 and the complete fixed kernel group',()=>{
+  const hashes=['756c91508f560677acf295b8cdcc3e0510e3c4d88fe61ee4c550bca3d9ff5b58',
+    '0ece76da2679e6377dc440e460741d7d49d601002405d2882ddafd72691266e6',
+    'a82c00937bce576e39deef14ff50001bf75c57d2d63bbde3db7f26ba35e8c04f'];
+  [constantRaw,constantOracleRaw,constantSource].forEach((bytes,index)=>assert.equal(createHash('sha256').update(bytes).digest('hex'),hashes[index]));
+  const source=constantSource.toString('utf8');
+  assert.equal(constantFacts.version,3);assert.equal(constantOracle.sourceSha256,hashes[2]);
+  assert.deepEqual(constantOracle.sourceRange,{start:0,end:source.length});assert.deepEqual(constantHir.snapshot,constantFacts);
+  assert.equal(constantHir.sources.find(row=>row.path==='/src/main.ts').content,source);
+  assert.equal(constantHir.functions.length,2);assert.equal(constantHir.globals.length,0);assert.equal(constantGroup.targets.length,2);
+  assert.equal(constantHir.closure.roots.length,3);
+  assert.deepEqual(constantGroup.targets,constantDeclarations.map(row=>row.fn.id).sort());
+  constantDeclarations.forEach(({original,fn,parameter})=>{
+    assert.equal(fn.name,original.name);assert.notEqual(fn.id,original.id);
+    assert.deepEqual(fn.range,original.range);assert.deepEqual(parameter.range,original.parameterRange);
+    assert.equal(constantHir.types.find(row=>row.id===fn.returnType).sourceType,'i32');
+  });
+  const original=constantKernel.original,literal=original.literal;assert.ok(literal);
+  assert.deepEqual(original.range,{start:39,end:102});assert.deepEqual(original.expression,{start:94,end:99});
+  assert.deepEqual(literal,{start:98,end:99});assert.equal(original.operator,'+');assert.equal(original.literalToken,'7');
+  assert.equal(source.slice(original.expression.start,original.expression.end),'x + 7');
+  assert.equal(source.slice(literal.start,literal.end),'7');
+  const returned=constantKernel.fn.body.find(row=>row.kind==='return');assert.ok(returned);
+  assert.deepEqual(returned.range,original.return);
+  const binary=returned.value;assert.ok(binary&&binary.kind==='binary');
+  assert.deepEqual(binary.range,original.expression);assert.equal(binary.operator,'+');
+  assert.equal(binary.left.kind,'bindingReference');assert.equal(binary.left.binding,constantKernel.parameter.id);
+  assert.deepEqual(binary.left.range,original.parameterUse);assert.equal(binary.right.kind,'numericLiteral');
+  assert.deepEqual(binary.right.range,literal);assert.equal(binary.right.decimal,'7');assert.equal(binary.right.token,'7');
+  const contract=constantPublication.contracts.find(row=>row.functionId===constantKernel.fn.id);assert.ok(contract);
+  assert.notEqual(contract.returnOrigins,null,'the C++ regression must verify a supplied nonnull return graph');
+  assert.ok(constantCore.borrowProof);
+  assert.deepEqual(createCommonGpuBindingPlan(constantHir,constantPublication,constantGroup,constantRequest),constantExpected);
+});
+
 // The owner supplies one independently qualified static compiler path. This
 // test has no tool discovery, build, Source process or API/device invocation.
 const executable=process.env.TSFG_GPU_BINDING_STATIC_CORE;
@@ -228,4 +295,15 @@ test('independent C++ genuine Source3 void plan rejects an extra return at its o
     assert.equal(rejected.stdout,'');
     assert.match(rejected.stderr,/^\[core-ir-common-gpu-identity\] [^\r\n]+ \(\/src\/main\.ts:89:155\)\r?\n$/,
       'extra void return must identify its owner, never the previous valid parameter at110..116');
+  });
+
+test('independent C++ reconstructs the genuine bare-addition return contract before GPU binding',
+  {skip:executable?false:'TSFG_GPU_BINDING_STATIC_CORE is not supplied'},()=>{
+    assert.ok(path.isAbsolute(executable));
+    const accepted=spawnSync(executable,['--common-program','--gpu-binding-plan'],{
+      input:canonical({family:'tsfg.gpu-logical-binding-input',version:2,core:constantCore.text,request:constantRequest,plan:constantExpected})+'\n',
+      encoding:'utf8',maxBuffer:8388608,windowsHide:true,
+    });
+    assert.equal(accepted.error,undefined);assert.equal(accepted.signal,null);assert.equal(accepted.status,0,accepted.stderr);
+    assert.equal(accepted.stdout,canonical(constantExpected)+'\n');assert.equal(accepted.stderr,'');
   });

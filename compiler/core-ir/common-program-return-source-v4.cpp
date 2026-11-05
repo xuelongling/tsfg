@@ -373,7 +373,8 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
       result.owner=std::move(returned);restore(mergeStates(normalStates));
     }
   }else if(kind=="numericLiteral"||kind=="booleanLiteral"||kind=="undefinedLiteral"||kind=="nullLiteral"||kind=="unary"||kind=="binary"||kind=="stringConcat"){
-    result.owner=literal(kind=="undefinedLiteral",type);
+    // Match the Source producer's arithmetic provenance while preserving operand effects.
+    if(kind!="unary"&&kind!="binary")result.owner=literal(kind=="undefinedLiteral",type);
     for(auto name:{"expression","left","right","receiver","index","value"}){if(!step())return result;if(const auto *child=value.getAsObject()->get(name))visit(*child);}
     if(kind=="stringConcat"){facet("allocation",&value);facet("managedReference",&value);result.owner=literal(false,type);}
   }else need(false,"Source expression has no return-origin equation");
