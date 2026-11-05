@@ -244,6 +244,74 @@ requires the current physical, notice and hash checks; a complete actual Ninja
 plan and final compiler/link dependencies remain unqualified. SDKv2 inventory,
 its historical provenance, and the copied X86 table refusal remain unchanged.
 
+## M39 SPIR-V emit-only source-use exception
+
+On 2026-11-05 the Owner accepted the bounded four-library source-use proposal,
+requiring generator qualification before execution. This is a separate
+exception to the conditional-presence restriction above, limited to the fixed
+LLVM/MLIR source commit `4cb57d27ddcad7c3a89d23ef576662a5c891e8c8`, tree
+`1ad1b903614825daa3ca3a5258fbb21e08d3c580`, and the following static targets:
+
+| Target | Explicit source scope |
+| --- | --- |
+| `MLIRSPIRVDialect` | The 21 C++ sources listed by `mlir/lib/Dialect/SPIRV/IR/CMakeLists.txt` |
+| `MLIRSPIRVImageInterfaces` | `mlir/lib/Dialect/SPIRV/Interfaces/SPIRVImageInterfaces.cpp` |
+| `MLIRSPIRVBinaryUtils` | `mlir/lib/Target/SPIRV/SPIRVBinaryUtils.cpp` |
+| `MLIRSPIRVSerialization` | `Serialization.cpp`, `Serializer.cpp` and `SerializeOps.cpp` in `mlir/lib/Target/SPIRV/Serialization/` |
+
+The TableGen scope is the 51-file literal-include union of the five seeds for
+the nine existing SPIR-V generation targets. Fifty files already have the
+applicable source/legal records. The sole added `.td` input is
+`mlir/lib/Dialect/SPIRV/IR/SPIRVCanonicalization.td`: 2656 bytes, blob
+`e8d2274d29aa079e9535e36ff09e0bee734fb5b0`, SHA256
+`c4ab2165fda5a3c53da7eee533583f337d0a2437a6231f5da21151db5ce06955`.
+Its original `Apache-2.0 WITH LLVM-exception` SPDX and MLIR license material
+remain intact. The existing 20 generated outputs may be reused; the missing
+`SPIRVCanonicalization.inc` is generated only from this qualified input union.
+
+The same-target C++ input scope also includes these three private headers,
+whose fixed blobs, raw hashes and original notices are retained separately:
+
+- `mlir/lib/Dialect/SPIRV/IR/SPIRVOpUtils.h`
+- `mlir/lib/Dialect/SPIRV/IR/SPIRVParsingUtils.h`
+- `mlir/lib/Target/SPIRV/Serialization/Serializer.h`
+
+These are internal inputs of the four named targets, not additional targets or
+third-party sources. Existing public headers and generic library dependencies
+retain their own exact source, legal and artifact bindings. The 51-file count
+describes the `.td` union, not the complete C++ dependency closure.
+
+The qualified generator helper is `mlir-tblgen.exe`, 7382016 bytes, SHA256
+`e28b0f716d152d15b4157ca8a1469b36335642f1d7f541a803b1348f166cd47a`.
+Its binding is the current C69 direct-static producer, BuildIdentity
+`sha256:a32a85d97d62a87b10995c06919219ce91eab46b42887dda3974766c844d1ee3`,
+whose `input-trace.json` raw SHA256 is
+`197402b081f67832a6b780041e9f957eef117b89205251af450bb94ba23bf6d1`.
+That trace's `generated` entry records the helper hash after the actual
+27-translation-unit tool build and link; source/tool/legal dependencies and
+the natural close with code 0 are reconciled with that producer. At
+qualification, the current file matched this recorded identity. This is helper
+qualification for the named generation role, not authentication by the older
+SDK6601 origin or a fresh hash treated as a trusted source. Approval alone
+would not qualify an unbound candidate executable.
+
+Applicable qualified source/tool records and matching generated outputs are
+reused. This exception adds no blanket requirement for a new observation
+wrapper, whole-SDK scan or duplicate build; unresolved target-specific input
+or artifact bindings still block their corresponding use. The full M01 intake
+and independent clean-rebuild obligations remain separate.
+
+The four archives and downstream serializer or product consumers require their
+actual build and verification results; permission is not a recorded PASS. This
+entry adopts no product SDK or Build Input Set members, changes no existing
+SDK6601/selected-source inventory, and grants no new upstream, device, Runtime,
+Source or VM role. Additional SPIR-V transformation, conversion,
+deserialization, registration or linking targets remain outside this exception.
+All other conditional-presence limits and existing refusals, including their
+actual dependencies and equivalent retries, remain in force.
+
+## Retained source-build requirements
+
 The original native/full-source copied table remains unregistered:
 `llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp`. Although its header has
 the standard LLVM SPDX declaration, its TernlogFunctions table is attributed
