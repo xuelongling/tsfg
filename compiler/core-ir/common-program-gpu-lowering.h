@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "common-program.h"
+#include <optional>
+#include <variant>
 
 namespace tsfg::commonProgram {
 // Caller owns readCore -> createGpuBindingPlan for this same Program/plan.
@@ -17,4 +19,83 @@ bool lowerGpuBindingFunctions(Program &,const Json &alreadyVerifiedPlan,
 bool emitGpuBindingModule(Program &,const Json &alreadyVerifiedPlan,
                           llvm::StringRef profile,mlir::MLIRContext &,
                           Json &out,Error &);
+
+enum class GpuModuleProfile {SingleSourceCallV1};
+enum class GpuResourceKind {Global,Parameter,Return};
+enum class GpuResourceAccess {Read,Write,ReadWrite};
+enum class GpuScalarType {I32};
+struct GpuSourceRange {std::string sourceId;SourceAnchor range;};
+struct GpuSourcePoint {uint32_t block=0,operation=0;};
+struct GpuObligationSite {
+  uint32_t obligationId=0;std::string functionId;
+  GpuSourceRange source;GpuSourcePoint point;
+};
+// Payload/member layout only, never device-allocation or descriptor-base alignment.
+struct GpuScalarBufferLayout {
+  uint32_t memberOffset=0,memberBytes=0,memberAlignment=0,blockBytes=0;
+};
+struct GpuDescriptor {
+  GpuResourceKind kind;GpuResourceAccess access;GpuScalarType type;
+  std::string id;std::optional<std::string> kernel;
+  uint32_t set=0,binding=0;GpuSourceRange source;
+};
+struct GpuBindingOrigin {uint32_t descriptorIndex=0;};
+struct GpuI32ConstantOrigin {uint32_t bits=0;std::string decimal;};
+using GpuNumericOrigin=std::variant<GpuBindingOrigin,GpuI32ConstantOrigin>;
+// Still pending: Source depth is checked before fuel, not compiler work budget.
+struct GpuEntryBudgetStep {
+  GpuObligationSite site;uint32_t event=0,activeDepth=0,fuelCost=0;
+};
+// Still pending: check actual initialization/tag. Undefined requests the original
+// operation's trap; other tags remain an unimplemented capability, not a new trap.
+struct GpuNumericUseStep {
+  GpuObligationSite site;std::string sourceOperator;uint32_t index=0,operand=0;
+  GpuNumericOrigin origin;
+};
+using GpuPendingHostStep=std::variant<GpuEntryBudgetStep,GpuNumericUseStep>;
+// R01 i32 modulo-2^32 relation only; prerequisites remain pending Host checks.
+struct GpuI32Discharge {GpuObligationSite site;std::vector<uint32_t> prerequisites;};
+struct GpuCallIdentity {
+  std::string inputIdentity,hirDigest,scopeDigest,publishedDigest;
+  std::string kernelProofDigest,borrowProofDigest,requestDigest,planDigest;
+  std::string wordsDigest,artifactDigest;
+};
+
+// Owns only admitted compiler data. Construction grants no Host fulfillment or
+// launch authority. A later consumer must preserve the same Source-value snapshot,
+// ordered checks, one active call and bound-resource lifetime until completion.
+class GpuPendingCall {
+public:
+  GpuPendingCall(const GpuPendingCall &)=default;
+  GpuPendingCall(GpuPendingCall &&)=default;
+  GpuPendingCall &operator=(const GpuPendingCall &)=default;
+  GpuPendingCall &operator=(GpuPendingCall &&)=default;
+  ~GpuPendingCall()=default;
+  GpuModuleProfile profile()const{return GpuModuleProfile::SingleSourceCallV1;}
+  bool launchAuthorized()const{return false;}
+  bool hostPreflightFulfilled()const{return false;}
+  const GpuCallIdentity &identity()const{return identity_;}
+  const std::string &functionId()const{return functionId_;}
+  const std::string &entryPoint()const{return entryPoint_;}
+  const GpuScalarBufferLayout &layout()const{return layout_;}
+  const std::vector<uint32_t> &words()const{return words_;}
+  const std::vector<GpuDescriptor> &descriptors()const{return descriptors_;}
+  const std::vector<GpuPendingHostStep> &hostSteps()const{return hostSteps_;}
+  const std::vector<GpuI32Discharge> &discharges()const{return discharges_;}
+private:
+  GpuPendingCall()=default;
+  GpuCallIdentity identity_;std::string functionId_,entryPoint_;
+  GpuScalarBufferLayout layout_;std::vector<uint32_t> words_;
+  std::vector<GpuDescriptor> descriptors_;
+  std::vector<GpuPendingHostStep> hostSteps_;std::vector<GpuI32Discharge> discharges_;
+  friend bool readGpuBindingModule(llvm::StringRef,Program &,const Json &,
+    llvm::StringRef,mlir::MLIRContext &,std::optional<GpuPendingCall> &,Error &);
+};
+// Unknown input is bounded canonical JSON plus one LF. Caller owns the same
+// readCore -> createGpuBindingPlan precondition as emitGpuBindingModule. Rebuild
+// and match the entire artifact before projecting owned typed pending data.
+// Failure leaves out unchanged; all work consumes Program.remaining, never fuel.
+bool readGpuBindingModule(llvm::StringRef bytes,Program &,const Json &alreadyVerifiedPlan,
+                          llvm::StringRef profile,mlir::MLIRContext &,
+                          std::optional<GpuPendingCall> &out,Error &);
 } // namespace tsfg::commonProgram

@@ -381,4 +381,118 @@ bool emitGpuBindingModule(Program &p,const Json &alreadyVerifiedPlan,
     return lowering.fail("budget","GPU module artifact output budget exceeded",root);
   (*result.getAsObject())["artifactDigest"]=digest(encoded+"\n");out=std::move(result);return true;
 }
+
+namespace {
+// These projections consume only the artifact reconstructed by the known
+// producer below. Unknown JSON never enters the typed pending-call model.
+GpuSourceRange projectedGpuSource(const Json &row){
+  return {string(field(row,"sourceId")),
+    {uint32_t(*field(row,"start").getAsInteger()),uint32_t(*field(row,"end").getAsInteger())}};
+}
+GpuObligationSite projectedGpuSite(const Json &row){
+  const auto &where=field(row,"point");
+  return {uint32_t(*field(row,"obligationId").getAsInteger()),string(field(row,"functionId")),
+    projectedGpuSource(field(row,"source")),
+    {uint32_t(*field(where,"block").getAsInteger()),uint32_t(*field(where,"operation").getAsInteger())}};
+}
+} // namespace
+
+bool readGpuBindingModule(llvm::StringRef bytes,Program &p,const Json &alreadyVerifiedPlan,
+                          llvm::StringRef profile,mlir::MLIRContext &context,
+                          std::optional<GpuPendingCall> &out,Error &error){
+  Site root{p.sourcePath,"abi.artifact",{0,p.sourceLength}};
+  const auto fail=[&](llvm::StringRef kind,llvm::StringRef message){
+    error.path=root.path;error.range=root.range;
+    return reject(error,"core-ir-common-gpu-artifact-"+kind.str(),message);
+  };
+  if(bytes.size()<2||bytes.back()!='\n')return fail("canonical","GPU artifact requires canonical JSON plus one LF");
+  Json admitted=nullptr;Error parseError;
+  if(!readJson(bytes.drop_back(),admitted,p,parseError))
+    return fail(parseError.code=="core-ir-common-budget"?"budget":"canonical",parseError.message);
+
+  // The plan is already admitted, but its owner must still be this Program.
+  // In particular, another same-schema Program's valid plan is not authority.
+  const auto planText=canonical(alreadyVerifiedPlan),proofText=canonical(p.proof);
+  if(!p.charge(planText.size()+proofText.size()+1))return fail("budget","GPU artifact identity work exceeded");
+  if(string(field(alreadyVerifiedPlan,"inputIdentity"))!=p.inputIdentity||
+     string(field(alreadyVerifiedPlan,"hirDigest"))!=p.hirHash||
+     !same(field(alreadyVerifiedPlan,"scopeDigest"),field(p.publication,"scopeDigest"))||
+     !same(field(alreadyVerifiedPlan,"publishedDigest"),field(p.publication,"expectedDigest"))||
+     !same(field(alreadyVerifiedPlan,"groupTargets"),field(p.request,"targets"))||
+     string(field(alreadyVerifiedPlan,"kernelProofDigest"))!=digest(proofText+"\n"))
+    return fail("context","verified GPU plan belongs to a different complete Program or fixed proof");
+  const auto &selection=items(field(alreadyVerifiedPlan,"kernels")).front();
+  const auto selectedSource=projectedGpuSource(field(selection,"source"));
+  root.path=selectedSource.sourceId;root.range=selectedSource.range;
+  if(profile!="single-source-call-v1")return fail("profile","unsupported explicit GPU artifact profile");
+  const auto planHash=digest(planText+"\n");
+  if(string(field(admitted,"family"))!="tsfg.gpu-binding-module"||field(admitted,"version").getAsInteger()!=1||
+     string(field(admitted,"inputIdentity"))!=p.inputIdentity||string(field(admitted,"planDigest"))!=planHash||
+     string(field(field(admitted,"profile"),"name"))!=profile)
+    return fail("identity","GPU artifact family, version, Program, plan or profile differs");
+
+  // Do not trust even self-consistent payload digests. Rebuild the actual SSA
+  // lowering, verified module, serialization and ordered Host recipe from the
+  // real Program. This consumes the caller's compiler budget without refill.
+  Json expected=nullptr;
+  if(!emitGpuBindingModule(p,alreadyVerifiedPlan,profile,context,expected,error))return false;
+  const auto expectedText=canonical(expected);
+  if(!p.charge(expectedText.size()+bytes.size()))return fail("budget","GPU artifact complete comparison work exceeded");
+  if(bytes.drop_back()!=expectedText)
+    return fail("content","GPU artifact differs from complete Program-derived module, words or pending Host contract");
+
+  const auto &knownBindings=items(field(expected,"bindings")),&knownSteps=items(field(field(expected,"hostPreflight"),"steps"));
+  const auto &knownWords=items(field(expected,"words")),&knownDischarges=items(field(expected,"discharges"));
+  if(!p.charge(knownBindings.size()+knownSteps.size()+knownWords.size()+knownDischarges.size()+1))
+    return fail("budget","GPU pending-call projection work exceeded");
+  GpuPendingCall pending;
+  pending.identity_={p.inputIdentity,p.hirHash,string(field(alreadyVerifiedPlan,"scopeDigest")),
+    string(field(alreadyVerifiedPlan,"publishedDigest")),string(field(alreadyVerifiedPlan,"kernelProofDigest")),
+    string(field(alreadyVerifiedPlan,"borrowProofDigest")),string(field(alreadyVerifiedPlan,"requestDigest")),
+    planHash,string(field(expected,"wordsDigest")),string(field(expected,"artifactDigest"))};
+  pending.functionId_=string(field(selection,"functionId"));pending.entryPoint_=string(field(expected,"entryPoint"));
+  const auto &layout=field(expected,"layout");
+  pending.layout_={uint32_t(*field(layout,"memberOffset").getAsInteger()),uint32_t(*field(layout,"memberBytes").getAsInteger()),
+    uint32_t(*field(layout,"memberAlignment").getAsInteger()),uint32_t(*field(layout,"blockBytes").getAsInteger())};
+  pending.words_.reserve(knownWords.size());
+  for(const auto &word:knownWords)pending.words_.push_back(uint32_t(*word.getAsInteger()));
+  std::map<Key,uint32_t> descriptorIndexes;
+  for(const auto &row:knownBindings){
+    const auto kind=string(field(row,"kind")),access=string(field(row,"access"));
+    const auto id=string(field(row,"id")),kernel=string(field(row,"kernel"));
+    GpuDescriptor descriptor{kind=="global"?GpuResourceKind::Global:kind=="parameter"?GpuResourceKind::Parameter:GpuResourceKind::Return,
+      access=="read"?GpuResourceAccess::Read:access=="write"?GpuResourceAccess::Write:GpuResourceAccess::ReadWrite,
+      GpuScalarType::I32,id,std::nullopt,uint32_t(*field(row,"set").getAsInteger()),
+      uint32_t(*field(row,"binding").getAsInteger()),projectedGpuSource(field(row,"source"))};
+    if(descriptor.kind!=GpuResourceKind::Global)descriptor.kernel=kernel;
+    descriptorIndexes.emplace(Key{kind,kernel,id},uint32_t(pending.descriptors_.size()));
+    pending.descriptors_.push_back(std::move(descriptor));
+  }
+  for(const auto &row:knownSteps){
+    const auto site=projectedGpuSite(row);
+    if(string(field(row,"kind"))=="entry-budget"){
+      pending.hostSteps_.push_back(GpuEntryBudgetStep{site,uint32_t(*field(row,"event").getAsInteger()),
+        uint32_t(*field(row,"activeDepth").getAsInteger()),uint32_t(*field(row,"fuelCost").getAsInteger())});
+    }else{
+      GpuNumericUseStep step{site,string(field(row,"operator")),uint32_t(*field(row,"index").getAsInteger()),
+        uint32_t(*field(row,"operand").getAsInteger()),GpuBindingOrigin{}};
+      const auto &origin=field(row,"origin");
+      if(string(field(origin,"kind"))=="binding"){
+        const auto &binding=field(origin,"binding");
+        step.origin=GpuBindingOrigin{descriptorIndexes.at(Key{string(field(binding,"kind")),
+          string(field(binding,"kernel")),string(field(binding,"id"))})};
+      }else{
+        const auto decimal=string(field(origin,"decimal"));
+        step.origin=GpuI32ConstantOrigin{uint32_t(llvm::APInt(32,decimal,10).getZExtValue()),decimal};
+      }
+      pending.hostSteps_.push_back(std::move(step));
+    }
+  }
+  for(const auto &row:knownDischarges){
+    GpuI32Discharge discharge{projectedGpuSite(row),{}};
+    for(const auto &dependency:items(field(row,"requires")))discharge.prerequisites.push_back(uint32_t(*dependency.getAsInteger()));
+    pending.discharges_.push_back(std::move(discharge));
+  }
+  out=std::move(pending);return true;
+}
 } // namespace tsfg::commonProgram
