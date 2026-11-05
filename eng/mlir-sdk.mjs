@@ -311,3 +311,89 @@ export async function readMlirSourceSdk({root,artifactRoot,productRoot,canonical
     sourceNotices,consumptionLegal,epochProof:epoch,sourceNoticesHash:sha256(noticeRaw)}));
   return sdk;
 }
+
+const gpuFunctionComponents=new WeakMap();
+
+/** Explicit candidate data reader, not SDK qualification or declaration grammar 3
+ * adoption. Physical roots and qualification records are never descriptor data. */
+export function readGpuFunctionComponentDescriptor(bytes,canonicalize) {
+  if(typeof canonicalize!=='function')fail('GPU component requires the formal canonical serializer');
+  if(!(bytes instanceof Uint8Array)||bytes.byteLength===0||bytes.byteLength>8388608)fail('GPU component descriptor byte bound');
+  const raw=Buffer.from(bytes),descriptor=parseSdkJson(raw,'GPU component descriptor',canonicalize);
+  if(!raw.equals(Buffer.from(canonicalize(descriptor)+'\n')))fail('GPU component descriptor is noncanonical');
+  const record=(value,keys)=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===keys;
+  const relative=value=>typeof value==='string'&&value.length>0&&path.posix.normalize(value)===value&&
+    !path.win32.isAbsolute(value)&&!/[\\:\0]/.test(value)&&
+    value.split('/').every(part=>part&&part!=='.'&&part!=='..'&&!/[. ]$/.test(part));
+  if(!record(descriptor,'archives,buildRole,files,includeDirectories,normalizedMode,profile,projectId,roots,target')||
+      descriptor.projectId!=='llvm-gpu-function-ir'||descriptor.buildRole!=='gpu-function-resource-ir'||
+      descriptor.target!=='windows-x86_64-msvc'||descriptor.profile!=='debug'||descriptor.normalizedMode!=='100644')
+    fail('GPU component descriptor role');
+  const roots=[{rootId:'sdk-current',rootEnvironment:'TSFG_GPU_FUNCTION_IR_SDK_ROOT'},
+    {rootId:'spirv-emit',rootEnvironment:'TSFG_GPU_FUNCTION_IR_SPIRV_ROOT'}];
+  const includeDirectories=['source/llvm/include','build/include','source/mlir/include','build/tools/mlir/include']
+    .map(name=>({rootId:'sdk-current',path:name}));
+  if(canonicalize(descriptor.roots)!==canonicalize(roots)||canonicalize(descriptor.includeDirectories)!==canonicalize(includeDirectories))
+    fail('GPU component logical roots or includes');
+  if(!Array.isArray(descriptor.files)||descriptor.files.length===0||descriptor.files.length>20000||
+      !Array.isArray(descriptor.archives)||descriptor.archives.length===0||descriptor.archives.length>descriptor.files.length)
+    fail('GPU component inventory bound');
+  const members=new Map(),aliases=new Set(),archiveMembers=new Set();let previous=null;
+  for(const file of descriptor.files) {
+    if(!record(file,'path,role,rootId,sha256')||typeof file.rootId!=='string'||typeof file.role!=='string'||
+        !relative(file.path)||typeof file.sha256!=='string'||!/^sha256:[0-9a-f]{64}$/.test(file.sha256))
+      fail('GPU component member shape');
+    const name=file.rootId+'/'+file.path;
+    if(aliases.has(name.toLowerCase())||(previous!==null&&Buffer.from(previous).compare(Buffer.from(name))>=0))
+      fail('GPU component duplicate, aliased or unordered member');
+    const include=/\.(h|inc|def)$/.test(file.path),archive=/^build\/lib\/[^/]+\.lib$/.test(file.path);
+    const allowed=file.rootId==='sdk-current'&&(
+      file.role==='source-include'&&include&&/^source\/(llvm|mlir)\/include\//.test(file.path)||
+      file.role==='generated-include'&&include&&/^build\/(include|tools\/mlir\/include)\//.test(file.path)||
+      file.role==='generic-ir-link-archive'&&archive)||
+      file.rootId==='spirv-emit'&&file.role==='spirv-emit-link-archive'&&
+        /^build\/lib\/MLIRSPIRV(Dialect|BinaryUtils|ImageInterfaces|Serialization)\.lib$/.test(file.path);
+    if(!allowed)fail('GPU component member root, path or role');
+    members.set(name,file);aliases.add(name.toLowerCase());previous=name;
+    if(archive)archiveMembers.add(name);
+  }
+  const selected=new Set();
+  for(const archive of descriptor.archives) {
+    if(!record(archive,'path,rootId')||!roots.some(root=>root.rootId===archive.rootId)||!relative(archive.path))
+      fail('GPU component ordered archive shape');
+    const name=archive.rootId+'/'+archive.path;
+    if(!archiveMembers.has(name)||selected.has(name))fail('GPU component ordered archive membership');
+    selected.add(name);
+  }
+  if(selected.size!==archiveMembers.size)fail('GPU component ordered archive coverage');
+  const component=Object.freeze({descriptor:freezeData(descriptor),descriptorHash:sha256(raw)});
+  gpuFunctionComponents.set(component,{members,roots});
+  return component;
+}
+
+/** Read exactly one declared data member. The caller supplies physical roots;
+ * this handle grants neither llvm-sdk provenance nor build/execution authority. */
+export async function readGpuFunctionComponentMember(component,rootLocations,rootId,memberPath) {
+  const proof=gpuFunctionComponents.get(component);
+  if(!proof)fail('GPU component live handle is missing');
+  const member=proof.roots.some(root=>root.rootId===rootId)&&typeof memberPath==='string'?proof.members.get(rootId+'/'+memberPath):undefined;
+  if(!member)fail('GPU component undeclared member');
+  if(!rootLocations||typeof rootLocations!=='object'||Array.isArray(rootLocations)||
+      Object.keys(rootLocations).sort().join(',')!==proof.roots.map(root=>root.rootId).sort().join(','))
+    fail('GPU component requires exactly its explicit physical roots');
+  // Copy caller locations before the first asynchronous filesystem operation.
+  const locations=new Map(),aliases=new Set();
+  for(const root of proof.roots) {
+    const value=rootLocations[root.rootId];
+    if(typeof value!=='string'||!/^E:[\\/]/i.test(value))fail('GPU component requires absolute E roots');
+    const absolute=path.resolve(value),alias=absolute.toLowerCase();
+    if(aliases.has(alias))fail('GPU component physical root alias');
+    locations.set(root.rootId,absolute);aliases.add(alias);
+  }
+  for(const root of locations.values())await ordinary(root,true);
+  const file=path.join(locations.get(member.rootId),member.path);
+  await ordinary(file);
+  const raw=await readFile(file);
+  if(sha256(raw)!==member.sha256)fail('GPU component changed declared member');
+  return raw;
+}

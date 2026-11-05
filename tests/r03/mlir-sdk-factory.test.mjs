@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { executeMlirTarget } from "../../eng/mlir-build.mjs";
 import { projectMlirSdkBuildIdentity, verifyMlirSdkBuildInputSet, verifyMlirSdkSourceInputs,
   validateMlirSdkInputDeclaration, readMlirSourceSdk, readMlirSdkDependency,
-  inspectMlirSdkProvenance } from "../../eng/mlir-sdk.mjs";
+  inspectMlirSdkProvenance, readGpuFunctionComponentDescriptor, readGpuFunctionComponentMember } from "../../eng/mlir-sdk.mjs";
 import { verifyMlirSdkSourceRegistration } from "../../eng/mlir-sdk-admission.mjs";
 import { readMlirLegalRegistration } from "../../eng/mlir-source-registration.mjs";
 import { readMlirSourceBuildLegalInputs } from "../../eng/mlir-source-legal.mjs";
@@ -242,4 +242,90 @@ test("data-only SDK intake binds three provenance roles and refuses unlisted, ch
   await fs.rename(directory, `${directory}.retained`);
   await fs.symlink(`${directory}.retained`, directory, "junction");
   await assert.rejects(readMlirSdkDependency(sdk, member, fixture.productRoot), /nonordinary input/);
+});
+
+// Only the nine stable fields from the actual M39 component candidate are
+// retained here. Physical locations/current8/legal records stay outside it.
+const gpuDescriptorRaw=await fs.readFile(new URL('./testdata/gpu-function-component-descriptor.json',import.meta.url));
+const gpuDescriptor=JSON.parse(gpuDescriptorRaw.toString('utf8'));
+const gpuHeader='source/llvm/include/llvm/Support/LogicalResult.h';
+const gpuHeaderHash='sha256:69470b3902e9e2c7a955c5fc01cd915bff5ed95a86086241e84191c7a611d788';
+
+test('explicit GPU component reader owns the real stable descriptor without adopting SDK or grammar3',async()=>{
+  assert.equal(hash(gpuDescriptorRaw),'sha256:0502ccdab0e3e9e8de7c415b4a42e3af6ebaf5ae7eadcb4341da5734095c9f3e');
+  assert.equal(gpuDescriptorRaw.toString('utf8'),independentJson(gpuDescriptor)+'\n');
+  const input=Buffer.from(gpuDescriptorRaw),component=readGpuFunctionComponentDescriptor(input,canonical);
+  input.fill(0);
+  assert.deepEqual(component.descriptor,gpuDescriptor);assert.equal(component.descriptorHash,hash(gpuDescriptorRaw));
+  assert.deepEqual(Object.keys(component.descriptor).sort(),['archives','buildRole','files','includeDirectories','normalizedMode','profile','projectId','roots','target']);
+  assert.equal(component.descriptor.projectId,'llvm-gpu-function-ir');assert.equal(component.descriptor.files.length,392);
+  for(const [role,count] of [['source-include',274],['generated-include',72],['generic-ir-link-archive',42],['spirv-emit-link-archive',4]])
+    assert.equal(component.descriptor.files.filter(file=>file.role===role).length,count);
+  assert.equal(component.descriptor.roots.length,2);assert.equal(component.descriptor.includeDirectories.length,4);
+  assert.equal(component.descriptor.archives.length,46);assert.deepEqual(component.descriptor.archives,gpuDescriptor.archives);
+  assert.ok(Object.isFrozen(component)&&Object.isFrozen(component.descriptor)&&Object.isFrozen(component.descriptor.files[0]));
+  assert.throws(()=>component.descriptor.files[0].path='changed',TypeError);
+  assert.equal('executionAuthority' in component,false);assert.equal('root' in component,false);
+  assert.throws(()=>inspectMlirSdkProvenance(component,productRoot),/authenticated live provenance/);
+  await assert.rejects(readMlirSdkDependency(component,'E:/must-not-read-component-as-sdk',productRoot),/authenticated live provenance/);
+  const declaration=await readJson('eng/build-inputs.json'),lock=await readJson('eng/mlir-sdk.lock.json');
+  validateMlirSdkInputDeclaration(declaration,canonical);assert.equal(declaration.schemaVersion,'2');assert.equal(lock.files.length,6601);
+  assert.throws(()=>validateMlirSdkInputDeclaration({...declaration,schemaVersion:'3',componentInputSets:[gpuDescriptor]},canonical),/grammar 2/);
+  assert.equal(lock.files.find(file=>file.path===gpuHeader).sha256,gpuHeaderHash,'single real member already belongs to the old 6601');
+});
+
+test('GPU component boundary rejects altered roles, provenance, aliases and archive coverage',()=>{
+  const changes=[
+    value=>{value.projectId='llvm-sdk';},value=>{value.buildRole='mlir-core';},value=>{value.profile='release';},
+    value=>{value.target='other';},value=>{value.normalizedMode='100755';},
+    value=>{value.qualificationRecords={};},value=>{value.roots[0].currentAbsolutePath='E:/physical';},
+    value=>{value.roots[0].rootEnvironment='TSFG_MLIR_SDK_ROOT';},value=>{value.roots[1]=value.roots[0];},
+    value=>{value.includeDirectories.reverse();},value=>{value.files.push(value.files[0]);},
+    value=>{value.files.splice(1,0,{...value.files[0],path:value.files[0].path.toUpperCase()});},
+    value=>{value.files[0].rootId='foreign';},value=>{value.files[0].rootId={};},
+    value=>{value.files[0].path='../escape.h';},value=>{value.files[0].path='build/include/../escape.h';},
+    value=>{value.files[0].role='source-include';},value=>{value.files[0].sha256='unknown';},
+    value=>{value.files[0].qualificationRefs=[];},value=>{value.files.pop();},value=>{value.archives.pop();},
+    value=>{value.archives.push(value.archives[0]);},
+    value=>{value.archives[0]={rootId:'spirv-emit/build',path:'lib/MLIRSPIRVSerialization.lib'};},
+    value=>{value.archives[0]={rootId:'sdk-current',path:gpuHeader};},
+  ];
+  for(const change of changes){
+    const value=structuredClone(gpuDescriptor);change(value);
+    assert.throws(()=>readGpuFunctionComponentDescriptor(Buffer.from(canonical(value)+'\n'),canonical),/GPU component/);
+  }
+  for(const bytes of [Buffer.from(' '+gpuDescriptorRaw),gpuDescriptorRaw.subarray(0,-1),Buffer.concat([gpuDescriptorRaw,Buffer.from('\n')]),
+    Buffer.from('{"projectId":"llvm-gpu-function-ir",'+gpuDescriptorRaw.toString('utf8').slice(1)),Buffer.from([0xc0,0xaf]),Buffer.alloc(8388609)])
+    assert.throws(()=>readGpuFunctionComponentDescriptor(bytes,canonical),/GPU component/);
+  assert.throws(()=>readGpuFunctionComponentDescriptor(Buffer.from(canonical({component:gpuDescriptor})+'\n'),canonical),/GPU component/);
+});
+
+test('GPU component member identity and explicit root failures are cold',async t=>{
+  const component=readGpuFunctionComponentDescriptor(gpuDescriptorRaw,canonical);
+  const roots={'sdk-current':'E:/gpu-component-unused-sdk','spirv-emit':'E:/gpu-component-unused-emit'};
+  const reads=observeExternalReads(t,Object.values(roots));
+  await assert.rejects(readGpuFunctionComponentMember({...component},roots,'sdk-current',gpuHeader),/live handle/);
+  for(const [rootId,name] of [['foreign',gpuHeader],['sdk-current/source','llvm/include/llvm/Support/LogicalResult.h'],
+    ['sdk-current','../LogicalResult.h'],['sdk-current',gpuHeader.toUpperCase()],['sdk-current','build/lib/cmake/llvm/LLVMExports.cmake']])
+    await assert.rejects(readGpuFunctionComponentMember(component,roots,rootId,name),/undeclared member/);
+  await assert.rejects(readGpuFunctionComponentMember(component,{},'sdk-current',gpuHeader),/explicit physical roots/);
+  await assert.rejects(readGpuFunctionComponentMember(component,{'sdk-current':'C:/outside','spirv-emit':roots['spirv-emit']},'sdk-current',gpuHeader),/absolute E roots/);
+  await assert.rejects(readGpuFunctionComponentMember(component,{'sdk-current':roots['sdk-current'],'spirv-emit':roots['sdk-current']},'sdk-current',gpuHeader),/physical root alias/);
+  assert.deepEqual(reads,[],'rejected logical identities/root mappings read no external body');
+});
+
+test('explicit GPU component reads only the qualified old header and rejects its wrong declared hash',{
+  skip:process.env.TSFG_GPU_FUNCTION_IR_SDK_ROOT&&process.env.TSFG_GPU_FUNCTION_IR_SPIRV_ROOT?false:'both explicit GPU component roots are not supplied',
+},async t=>{
+  const sdkRoot=process.env.TSFG_GPU_FUNCTION_IR_SDK_ROOT,emitRoot=process.env.TSFG_GPU_FUNCTION_IR_SPIRV_ROOT;assert.ok(sdkRoot&&emitRoot);
+  const roots={'sdk-current':sdkRoot,'spirv-emit':emitRoot},component=readGpuFunctionComponentDescriptor(gpuDescriptorRaw,canonical);
+  const member=component.descriptor.files.find(file=>file.rootId==='sdk-current'&&file.path===gpuHeader);
+  assert.equal(member.sha256,gpuHeaderHash);assert.equal(member.role,'source-include');
+  const reads=observeExternalReads(t,Object.values(roots).map(root=>path.resolve(root)));
+  const bytes=await readGpuFunctionComponentMember(component,roots,'sdk-current',gpuHeader);assert.equal(hash(bytes),gpuHeaderHash);
+  const altered=structuredClone(gpuDescriptor);altered.files.find(file=>file.rootId==='sdk-current'&&file.path===gpuHeader).sha256='sha256:'+'0'.repeat(64);
+  const wrong=readGpuFunctionComponentDescriptor(Buffer.from(canonical(altered)+'\n'),canonical);
+  await assert.rejects(readGpuFunctionComponentMember(wrong,roots,'sdk-current',gpuHeader),/changed declared member/);
+  assert.deepEqual(reads,[path.join(path.resolve(sdkRoot),gpuHeader),path.join(path.resolve(sdkRoot),gpuHeader)],
+    'positive and wrong-hash checks read the same one header; no archives or other SDK bodies');
 });
