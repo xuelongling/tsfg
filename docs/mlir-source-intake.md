@@ -469,30 +469,30 @@ Meson HOST compile/archive and BUILD standard C/C++ sanity/link/archive passed.
 All eight NIR data generators passed full data oracles; their canonical
 production bytes match, so those checks are reused.
 
-Nine common archives contain 355 AMD64 objects: NIR235, compiler3, VTN14
-and util103. `idep_nir`/`idep_vtn` are actual Lavapipe dependencies.
+Thirteen common archives contain 431 AMD64 objects: NIR235, compiler3,
+VTN14, util103 and common Vulkan76. Shared targets are Lavapipe dependencies.
 The Windows AMD option selects the common graph; no AMD driver is built.
 LLVM, Gallium and GL stay disabled. All new consumed fixed Mesa bytes were
 checked against the official archive; research patches are identified below.
-The coherent NIR/compiler/VTN includes are 135 Mesa, eight generated and
-196 existing ToolA inputs, with no foreign input.
+Vulkan's 484 actual dependencies are 164 Mesa, 43 generated and 277 ToolA,
+with no foreign input. Existing eight NIR data oracles remain applicable.
 
-The `u_atomic.h` derivative repairs names and implements 32/64 add-return.
-One RMW and unsigned-width addition; 17 private-counter checks passed per C/C++.
-Checks cover bounds, old/new values and argument evaluation. Original SHA256:
-`81bf636924f9c049606ed8d0be2e01cc7b9facc963955efc1faec2140b510960`.
-Current derivative SHA256:
+The controlled `u_atomic.h` fixes names and 32/64 add-return; derivative SHA256:
 `42b46a54bcdf1e60913cfa97c1601c14b2506672f77b7337f4ca09449d19685a`.
-Old qualified variants and first failures are retained once in the same case.
+Seventeen checks passed per C/C++, including wrap and argument evaluation.
+The radix utility now admits clang-cl to its original nonzero clz branch.
+Its derivative SHA256 is:
+`e2d57770c70b491f0a5660c69809ed4dffed238854278d23e96ccb170f73a9b1`.
+All 96 C bit-boundary checks passed; originals and first failures are retained.
 
 Current `libnir.a` is 53,860,670 bytes, SHA256
 `e6fc9e7ad8bb7fd57a8d18a3c0843d209e05d8c8bca94b9a8bba08a075115a85`.
 Current `libvtn.a` is 5,638,130 bytes, SHA256
 `c5a5a1978cb54338d205d8c15b03567f9dd42d7045363204b68b253a06dfe77e`.
 
-Both independent review axes passed. Four BLAKE3 SIMD assembly variants were
-compiled under the existing runtime-dispatch CPU contract; no probe was run.
-Its fixed 1.8.2 published license options and Apache-2.0 selection are retained.
+Both independent axes passed. All 24 glslang headers and three new offline
+controls passed. Four BLAKE3 SIMD variants use the runtime-dispatch contract;
+its fixed 1.8.2 notices and Apache-2.0 selection remain. No probe was run.
 XML schema, final Lavapipe linking/API/numerical, LLVM native/JIT, Source/VM and
 device results remain unclaimed. Product858/component392/SDK6601 and all
 actual safety/possible-overlap holds remain; author requests stay deferred.
