@@ -89,7 +89,7 @@ async function buildInputSet(workspaceRoot) {
     path.join(workspaceRoot, "eng", "build-inputs.json"),
     "Build Input declaration",
   );
-  if (declaration.schemaVersion === "2") validateMlirSdkInputDeclaration(declaration, canonicalize);
+  if (["2", "3"].includes(declaration.schemaVersion)) validateMlirSdkInputDeclaration(declaration, canonicalize);
   else if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
     throw new PackageFailureError("unsupported Build Input declaration schema");
   }

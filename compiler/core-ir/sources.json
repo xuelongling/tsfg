@@ -305,6 +305,15 @@
     ],
     "externalHeaders": []
   },
+  "gpu-function-resource-ir": {
+    "sources": [
+      "common-program-gpu-lowering.cpp"
+    ],
+    "headers": [
+      "common-program-gpu-lowering.h"
+    ],
+    "externalHeaders": []
+  },
   "static": {
     "sources": [
       "static-main.cpp"

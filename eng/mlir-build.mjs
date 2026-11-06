@@ -13,7 +13,7 @@ import { readMlirSdkDependency } from "./mlir-sdk.mjs";
 import { selectMlirConfigurationPaths as selectMlirSdkConfigurationPaths, selectMlirPrecompilePaths as selectMlirSdkPrecompilePaths } from "./mlir-sdk-paths.mjs";
 import { MlirBuildError, gitBytes, materializeSource, retainedNoticeBundle, readMlirPhysicalSource, verifyMlirStagedSourceInputs } from "./mlir-build-inputs.mjs";
 export { MlirBuildError } from "./mlir-build-inputs.mjs";
-import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning, requireMlirSdkCommandIntake } from "./mlir-command.mjs";
+import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning, requireMlirSdkCommandIntake, executeGpuFunctionTarget } from "./mlir-command.mjs";
 import { verifyCoreIrInputs } from "./core-ir-inputs.mjs";
 import { isPhysicalCmakeEvaluationCall, readCmakeTraceEvents } from "./mlir-cmake-evaluation.mjs";
 import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCache, assertMlirRoleDependency, requireMlirSourceDependency, selectMlirConfigurationPaths, selectMlirPrecompilePaths } from "./mlir-static-closure.mjs";
@@ -21,7 +21,7 @@ import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCac
 /** Actual production source-copy boundary shared with the consumer freshness gate. */
 export async function stageMlirProductSources({productRoot,product,identity,command}) {
   const coreInputs=await verifyCoreIrInputs(identity,productRoot,command.role);
-  const names=[...coreInputs,"eng/mlir-python-policy.cmake","eng/mlir-compiler-launcher.mjs",...(command.role==="static"?["eng/mlir-configuration-sources.cmake"]:[])];
+  const names=[...coreInputs,...(command.role==="gpu-function-resource-ir"?[]:["eng/mlir-python-policy.cmake"]),"eng/mlir-compiler-launcher.mjs",...(command.role==="static"?["eng/mlir-configuration-sources.cmake"]:[])];
   const expected=new Map();
   for(const name of names){const rows=identity.buildInputSet.entries.filter(row=>row.projectId==="tsfg"&&row.repositoryRelativePath===name);
     if(rows.length!==1||rows[0].sha256!==digest(await readFile(path.join(productRoot,name))))
@@ -221,6 +221,8 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
 export async function executeMlirTarget({ options, runtime, tools, productRoot, workspaceState, serialize,
   createIdentity, scopedToolchainDigest, verifyTools }) {
   const command = selectMlirCommandRole(options);
+  if (command.role === "gpu-function-resource-ir") return executeGpuFunctionTarget({options,runtime,tools,productRoot,workspaceState,serialize,
+    createIdentity,verifyTools,command,stageProduct:stageMlirProductSources,runLogged,validateOutputAncestor,validatePublication});
   const git = process.env.TSFG_GIT;
   const sdkRoot = process.env.TSFG_MLIR_SDK_ROOT, sdkArtifact = process.env.TSFG_MLIR_SDK_ARTIFACT_ROOT;
   const phase = selectMlirBuildPhase(options, command, !!(sdkRoot || sdkArtifact));

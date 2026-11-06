@@ -13,6 +13,7 @@ if(!storage)throw new Error('TSFG_TEST_STORAGE must name the owned test root');
 async function fixture(label,role='static'){
   const productRoot=path.join(storage,label),source={
     common:{sources:['added.cpp'],headers:['added.h'],externalHeaders:[]},
+    'gpu-function-resource-ir':{sources:['gpu-lowering.cpp'],headers:['gpu-lowering.h'],externalHeaders:[]},
     static:{sources:['static-main.cpp'],headers:[],externalHeaders:[]},
     native:{sources:['main.cpp','native-adapter.cpp'],headers:[],externalHeaders:['runtime/private-core.h']}
   },
@@ -24,10 +25,13 @@ async function fixture(label,role='static'){
       ['eng/core-ir-inputs.mjs',await readFile(new URL('../../eng/core-ir-inputs.mjs',import.meta.url),'utf8')]
     ]);
   if(role==='static')files.set('compiler/core-ir/static-main.cpp','// controlled static entry\n');
-  else{
+  else if(role==='native'){
     files.set('compiler/core-ir/main.cpp','// controlled native entry\n');
     files.set('compiler/core-ir/native-adapter.cpp','// controlled native adapter\n');
     files.set('runtime/private-core.h','// controlled cross-directory header\n');
+  }else{
+    files.set('compiler/core-ir/gpu-lowering.cpp','// controlled GPU library source\n');
+    files.set('compiler/core-ir/gpu-lowering.h','// controlled GPU library header\n');
   }
   for(const [name,bytes]of files){await mkdir(path.dirname(path.join(productRoot,name)),{recursive:true});await writeFile(path.join(productRoot,name),bytes,{flag:'wx'});}
   const manifest={coreCommandRole:role,buildIdentity:{options:{coreCommandRole:role}},
@@ -86,6 +90,16 @@ test('selected command role must match the compiled role before source access',a
   await assert.rejects(verifyCoreIrInputs(manifest,productRoot,'native'),/compiled command role differs/);
   manifest.coreCommandRole='native';
   await assert.rejects(verifyCoreIrInputs(manifest,productRoot),/compiled command role differs/);
+});
+test('GPU library role owns its added sources without importing either command entry',async()=>{
+  const {manifest,productRoot}=await fixture('gpu-library','gpu-function-resource-ir');
+  const names=await verifyCoreIrInputs(manifest,productRoot);
+  assert.ok(names.includes('compiler/core-ir/gpu-lowering.cpp'));
+  assert.ok(names.includes('compiler/core-ir/gpu-lowering.h'));
+  assert.ok(!names.includes('compiler/core-ir/static-main.cpp'));
+  assert.ok(!names.includes('compiler/core-ir/main.cpp'));
+  await writeFile(path.join(productRoot,'compiler/core-ir/gpu-lowering.h'),'// changed GPU interface\n');
+  await assert.rejects(verifyCoreIrInputs(manifest,productRoot),/compiled input differs.*gpu-lowering.h/);
 });
 test('cross-directory header cannot escape the owned runtime header directory',async()=>{
   const {manifest,productRoot,source}=await fixture('header-escape');source.native.externalHeaders=['runtime/../outside.h'];

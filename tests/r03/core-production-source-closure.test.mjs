@@ -14,7 +14,10 @@ const hash=bytes=>'sha256:'+createHash('sha256').update(bytes).digest('hex');
 // The finite role catalog is the CMake source declaration. Follow every local
 // quoted include independently, including declared public interface headers.
 const catalog=JSON.parse(await readFile(path.join(productRoot,'compiler/core-ir/sources.json'),'utf8'));
-assert.deepEqual(Object.keys(catalog).sort(),['common','native','static']);
+assert.deepEqual(Object.keys(catalog).sort(),['common','gpu-function-resource-ir','native','static']);
+assert.deepEqual(catalog['gpu-function-resource-ir'].sources,['common-program-gpu-lowering.cpp']);
+assert.deepEqual(catalog['gpu-function-resource-ir'].headers,['common-program-gpu-lowering.h']);
+assert.ok(!catalog.common.sources.includes('common-program-gpu-lowering.cpp'));
 const declaration=JSON.parse(await readFile(path.join(productRoot,'eng/build-inputs.json'),'utf8'));
 const entries=await Promise.all(declaration.entries.map(async entry=>({projectId:entry.projectId,
  repositoryRelativePath:entry.path,sha256:hash(await readFile(path.join(productRoot,entry.path)))})));

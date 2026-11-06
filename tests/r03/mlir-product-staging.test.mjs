@@ -12,15 +12,25 @@ import {sha256} from '../../compiler/identity.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url)),storage=process.env.TSFG_TEST_STORAGE,
   command=selectMlirCommandRole(new Map([['--core-command-role','static']]));
 if(!storage)throw new Error('TSFG_TEST_STORAGE must name the owned data-fixture root');
-async function sourceIdentity(){
+async function sourceIdentity(role='static'){
   const manifest=JSON.parse(await readFile(path.join(root,'compiler/core-ir/sources.json'),'utf8')),
     names=['compiler/core-ir/CMakeLists.txt','compiler/core-ir/sources.json','eng/core-ir-inputs.mjs',
-      ...[...manifest.common.sources,...manifest.common.headers,...manifest.static.sources,...manifest.static.headers].map(n=>'compiler/core-ir/'+n),
-      ...manifest.common.externalHeaders,...manifest.static.externalHeaders,'eng/mlir-python-policy.cmake',
-      'eng/mlir-compiler-launcher.mjs','eng/mlir-configuration-sources.cmake'];
+      ...[...manifest.common.sources,...manifest.common.headers,...manifest[role].sources,...manifest[role].headers].map(n=>'compiler/core-ir/'+n),
+      ...manifest.common.externalHeaders,...manifest[role].externalHeaders,...(role==='gpu-function-resource-ir'?[]:['eng/mlir-python-policy.cmake']),
+      'eng/mlir-compiler-launcher.mjs',...(role==='static'?['eng/mlir-configuration-sources.cmake']:[])];
   const entries=await Promise.all(names.map(async name=>({projectId:'tsfg',repositoryRelativePath:name,sha256:sha256(await readFile(path.join(root,name)))})));
-  return{names,identity:{buildIdentity:{options:{coreCommandRole:'static'}},buildInputSet:{entries}}};
+  return{names,identity:{buildIdentity:{options:{coreCommandRole:role}},buildInputSet:{entries}}};
 }
+test('GPU library stages its actual full source and public header catalog without either command adapter',async()=>{
+  const {names,identity}=await sourceIdentity('gpu-function-resource-ir'),product=path.join(storage,'current-gpu-library');
+  const gpu=selectMlirCommandRole(new Map([['--core-command-role','gpu-function-resource-ir']]));
+  assert.deepEqual(await stageMlirProductSources({productRoot:root,product,identity,command:gpu}),names);
+  assert.ok(names.includes('compiler/core-ir/common-program-gpu-lowering.cpp'));
+  assert.ok(names.includes('compiler/core-ir/common-program-gpu-lowering.h'));
+  assert.ok(!names.includes('compiler/core-ir/static-main.cpp'));assert.ok(!names.includes('compiler/core-ir/main.cpp'));
+  assert.ok(!names.includes('eng/mlir-python-policy.cmake'));assert.ok(!names.includes('eng/mlir-configuration-sources.cmake'));
+  for(const name of names)assert.deepEqual(await readFile(path.join(product,name)),await readFile(path.join(root,name)));
+});
 test('actual Core source manifest and policy controls stage byte-exactly via production function',async()=>{
   const {names,identity}=await sourceIdentity(),product=path.join(storage,'current-product');
   const staged=await stageMlirProductSources({productRoot:root,product,identity,command});
@@ -49,6 +59,7 @@ test('changed declared Core member refuses before copying',async()=>{
 for(const role of ['static','native'])test('role-selected '+role+' staging owns only its declared adapter and runtime header',async()=>{
   const productRoot=path.join(storage,role+'-input'),product=path.join(storage,role+'-output'),catalog={
     common:{sources:['shared.cpp'],headers:['shared.h'],externalHeaders:[]},
+    'gpu-function-resource-ir':{sources:['gpu-lowering.cpp'],headers:['gpu-lowering.h'],externalHeaders:[]},
     static:{sources:['static-main.cpp'],headers:[],externalHeaders:[]},
     native:{sources:['main.cpp','native-adapter.cpp'],headers:[],externalHeaders:['runtime/private-core.h']}
   };

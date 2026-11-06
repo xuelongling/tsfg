@@ -6,7 +6,7 @@ import {readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
-import {selectMlirCommandRole,requireMlirSdkCommandIntake} from '../../eng/mlir-command.mjs';
+import {selectMlirCommandRole,requireMlirSdkCommandIntake,gpuFunctionCmakeConfiguration,gpuFunctionArtifactIdentity} from '../../eng/mlir-command.mjs';
 import {executeMlirTarget,MlirBuildError} from '../../eng/mlir-build.mjs';
 import {verifiedConsumer} from '../../compiler/pipeline.mjs';
 import coreSourceCatalog from '../../compiler/core-ir/sources.json' with {type:'json'};
@@ -38,7 +38,31 @@ test('native SDK retains full intake; direct-source static has no SDK intake',()
  requireMlirSdkCommandIntake(selectMlirCommandRole(new Map()),true);
  requireMlirSdkCommandIntake(selectMlirCommandRole(new Map([['--core-command-role','static']])),false);
 });
-/** @param {'static'|'native'|undefined} role @param {'static'|'native'|null|undefined} identityRole */
+test('GPU component selects a STATIC library and cannot reuse either SDK or CLI authority',async()=>{
+ const gpu=selectMlirCommandRole(new Map([['--core-command-role','gpu-function-resource-ir']]));
+ assert.equal(gpu.target,'tsfg-gpu-function-ir');assert.equal(gpu.library,'tsfg-gpu-function-ir.lib');
+ assert.equal(gpu.artifactKind,'static-consumer-library');assert.equal(gpu.native,false);
+ assert.equal('executable' in gpu,false);assert.equal('symbols' in gpu,false);
+ assert.throws(()=>requireMlirSdkCommandIntake(gpu,true),/independent component/);
+ assert.throws(()=>gpuFunctionCmakeConfiguration({},productRoot),/live|authenticated/);
+ await assert.rejects(verifiedConsumer(await artifact('gpu-function-resource-ir'),'core'),/explicit compiler command role/);
+ await assert.rejects(verifiedConsumer(await artifact('gpu-function-resource-ir'),'core-native'),/explicit compiler command role/);
+});
+test('GPU artifact identity is unchanged when local qualification files are relocated',()=>{
+ // Data-only projection, not authentication or qualification of these locations.
+ const proof={descriptor:{projectId:'llvm-gpu-function-ir'},descriptorHash:'sha256:0502ccdab0e3e9e8de7c415b4a42e3af6ebaf5ae7eadcb4341da5734095c9f3e',
+  sourceIdentity:{sourceCommit:'4cb57d27ddcad7c3a89d23ef576662a5c891e8c8',sourceTree:'1ad1b903614825daa3ca3a5258fbb21e08d3c580',sourceRoot:'E:/original/source'},
+  qualification:{path:'E:/original/qualification.json',sha256:'sha256:'+'1'.repeat(64)},
+  epochProof:{path:'E:/original/epoch-proof.json',sha256:'sha256:ad7af29ce4c8bc1f8a47ed0550c3e67102e089cc1a34dfd3373253502b04e90b',productEpoch:1793401896,sourceHistoryMaximum:1790988496}};
+ const moved=structuredClone(proof);moved.sourceIdentity.sourceRoot='E:/relocated/source';
+ moved.qualification.path='E:/relocated/qualification.json';moved.qualification.sha256='sha256:'+'2'.repeat(64);
+ moved.epochProof.path='E:/relocated/epoch-proof.json';
+ const original=JSON.stringify(gpuFunctionArtifactIdentity(proof)),relocated=JSON.stringify(gpuFunctionArtifactIdentity(moved));
+ assert.equal(original,relocated);assert.deepEqual(JSON.parse(original),{projectId:'llvm-gpu-function-ir',descriptorHash:proof.descriptorHash,
+  sourceCommit:proof.sourceIdentity.sourceCommit,sourceTree:proof.sourceIdentity.sourceTree,sourceHistoryMaximum:1790988496});
+ assert.doesNotMatch(original,/E:|qualification|epoch-proof|ad7af29c|productEpoch/);
+});
+/** @param {'static'|'native'|'gpu-function-resource-ir'|undefined} role @param {'static'|'native'|'gpu-function-resource-ir'|null|undefined} identityRole */
 async function artifact(role,identityRole=role) {
  const selected=coreSourceCatalog[identityRole??role??'static'];
  const groups=[coreSourceCatalog.common,selected];

@@ -8,7 +8,7 @@ import {sha256} from '../compiler/identity.mjs';
  */
 export async function verifyCoreIrInputs(manifest,productRoot,commandRole=manifest.coreCommandRole??manifest.buildIdentity?.options?.coreCommandRole??'native') {
   const declaredRole=manifest.buildIdentity?.options?.coreCommandRole??manifest.coreCommandRole??'native';
-  if(!['static','native'].includes(commandRole)||commandRole!==declaredRole||
+  if(!['static','native','gpu-function-resource-ir'].includes(commandRole)||commandRole!==declaredRole||
       (manifest.coreCommandRole!==undefined&&manifest.coreCommandRole!==commandRole))
     throw new TypeError('r03-tool-core: compiled command role differs');
   const entries=manifest.buildInputSet?.entries;
@@ -24,9 +24,9 @@ export async function verifyCoreIrInputs(manifest,productRoot,commandRole=manife
   verify(manifestPath,raw);
   /** @type {unknown} */ const value=JSON.parse(raw.toString('utf8'));
   const invalid=()=>new TypeError('r03-tool-core: Core source directory differs');
-  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='common,native,static')throw invalid();
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='common,gpu-function-resource-ir,native,static')throw invalid();
   const catalog=/** @type {Record<string,unknown>} */(value);
-  const groups=['common','static','native'].map(role=>{
+  const groups=['common','static','native','gpu-function-resource-ir'].map(role=>{
     const value=catalog[role];
     if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='externalHeaders,headers,sources')throw invalid();
     const group=/** @type {Record<string,unknown>} */(value);
@@ -38,7 +38,7 @@ export async function verifyCoreIrInputs(manifest,productRoot,commandRole=manife
     if(new Set(names).size!==names.length)throw invalid();
     return {sources:/** @type {string[]} */(sources),headers:/** @type {string[]} */(headers),externalHeaders:/** @type {string[]} */(external)};
   });
-  const common=groups[0],selected=groups[commandRole==='static'?1:2];
+  const common=groups[0],selected=groups[commandRole==='static'?1:commandRole==='native'?2:3];
   const names=[...common.sources,...common.headers,...selected.sources,...selected.headers].map(n=>'compiler/core-ir/'+n)
     .concat(common.externalHeaders,selected.externalHeaders);
   if(new Set(names).size!==names.length)throw invalid();

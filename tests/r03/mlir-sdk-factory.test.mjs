@@ -8,8 +8,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { executeMlirTarget } from "../../eng/mlir-build.mjs";
 import { projectMlirSdkBuildIdentity, verifyMlirSdkBuildInputSet, verifyMlirSdkSourceInputs,
-  validateMlirSdkInputDeclaration, readMlirSourceSdk, readMlirSdkDependency,
-  inspectMlirSdkProvenance, readGpuFunctionComponentDescriptor, readGpuFunctionComponentMember } from "../../eng/mlir-sdk.mjs";
+  validateMlirSdkInputDeclaration, readMlirSdkInputDeclaration, readMlirSourceSdk, readMlirSdkDependency,
+  inspectMlirSdkProvenance, readGpuFunctionComponentDescriptor, readGpuFunctionComponentMember,
+  readGpuFunctionComponent, inspectGpuFunctionComponent, readGpuFunctionComponentDependency,
+  projectGpuFunctionComponentBuildIdentity, verifyGpuFunctionComponentBuildInputSet } from "../../eng/mlir-sdk.mjs";
 import { verifyMlirSdkSourceRegistration } from "../../eng/mlir-sdk-admission.mjs";
 import { readMlirLegalRegistration } from "../../eng/mlir-source-registration.mjs";
 import { readMlirSourceBuildLegalInputs } from "../../eng/mlir-source-legal.mjs";
@@ -251,7 +253,7 @@ const gpuDescriptor=JSON.parse(gpuDescriptorRaw.toString('utf8'));
 const gpuHeader='source/llvm/include/llvm/Support/LogicalResult.h';
 const gpuHeaderHash='sha256:69470b3902e9e2c7a955c5fc01cd915bff5ed95a86086241e84191c7a611d788';
 
-test('explicit GPU component reader owns the real stable descriptor without adopting SDK or grammar3',async()=>{
+test('explicit GPU component data reader owns the stable descriptor without SDK or build authority',async()=>{
   assert.equal(hash(gpuDescriptorRaw),'sha256:0502ccdab0e3e9e8de7c415b4a42e3af6ebaf5ae7eadcb4341da5734095c9f3e');
   assert.equal(gpuDescriptorRaw.toString('utf8'),independentJson(gpuDescriptor)+'\n');
   const input=Buffer.from(gpuDescriptorRaw),component=readGpuFunctionComponentDescriptor(input,canonical);
@@ -269,9 +271,117 @@ test('explicit GPU component reader owns the real stable descriptor without adop
   assert.throws(()=>inspectMlirSdkProvenance(component,productRoot),/authenticated live provenance/);
   await assert.rejects(readMlirSdkDependency(component,'E:/must-not-read-component-as-sdk',productRoot),/authenticated live provenance/);
   const declaration=await readJson('eng/build-inputs.json'),lock=await readJson('eng/mlir-sdk.lock.json');
-  validateMlirSdkInputDeclaration(declaration,canonical);assert.equal(declaration.schemaVersion,'2');assert.equal(lock.files.length,6601);
-  assert.throws(()=>validateMlirSdkInputDeclaration({...declaration,schemaVersion:'3',componentInputSets:[gpuDescriptor]},canonical),/grammar 2/);
+  validateMlirSdkInputDeclaration(declaration,canonical);assert.equal(declaration.schemaVersion,'3');assert.equal(lock.files.length,6601);
+  assert.deepEqual(declaration.componentInputSets,[gpuDescriptor]);
+  const declared=await readMlirSdkInputDeclaration({productRoot,canonicalize:canonical});
+  assert.ok(declared.component);assert.deepEqual(declared.component.descriptor,gpuDescriptor);
+  assert.equal(declared.component.descriptorHash,hash(gpuDescriptorRaw));
+  assert.ok(Object.isFrozen(declared.component.descriptor.files[0]));
+  assert.throws(()=>inspectGpuFunctionComponent(declared.component,productRoot),/authenticated live provenance/);
+  const {componentInputSets,...oldDeclaration}=declaration;
+  validateMlirSdkInputDeclaration({...oldDeclaration,schemaVersion:'2'},canonical);
+  assert.throws(()=>validateMlirSdkInputDeclaration({...declaration,componentInputSets:[gpuDescriptor,gpuDescriptor]},canonical),/unique independent/);
   assert.equal(lock.files.find(file=>file.path===gpuHeader).sha256,gpuHeaderHash,'single real member already belongs to the old 6601');
+});
+
+test('GPU build authentication is separate from data and old SDK authority',async t=>{
+  const data=readGpuFunctionComponentDescriptor(gpuDescriptorRaw,canonical);
+  const roots={'sdk-current':'E:/gpu-component-unused-sdk','spirv-emit':'E:/gpu-component-unused-emit'};
+  const reads=observeExternalReads(t,Object.values(roots));
+  for(const fake of [data,{...data},{executionAuthority:true},{}]) {
+    assert.throws(()=>inspectGpuFunctionComponent(fake,productRoot),/authenticated live provenance/);
+    await assert.rejects(readGpuFunctionComponentDependency(fake,path.join(roots['sdk-current'],gpuHeader),productRoot),/authenticated live provenance/);
+    assert.throws(()=>projectGpuFunctionComponentBuildIdentity({},fake,canonical),/authenticated live provenance/);
+    assert.throws(()=>verifyGpuFunctionComponentBuildInputSet({},fake,canonical),/authenticated live provenance/);
+    await assert.rejects(readGpuFunctionComponent({productRoot,rootLocations:roots,qualification:fake,epochProof:null,canonicalize:canonical}),/pinned qualification/);
+  }
+  const qualification={path:'E:/must-not-read-gpu-qualification.json',sha256:hash('not a qualification')};
+  for(const rootLocations of [{}, {...roots,'sdk-current':'C:/outside'}, {...roots,'spirv-emit':roots['sdk-current']}])
+    await assert.rejects(readGpuFunctionComponent({productRoot,rootLocations,qualification,epochProof:null,canonicalize:canonical}),/physical roots|absolute E roots|physical root alias/);
+  assert.deepEqual(reads,[]);
+});
+
+test('adopted GPU component authenticates its exact members and stable independent identity',{
+  skip:['TSFG_GPU_FUNCTION_IR_SDK_ROOT','TSFG_GPU_FUNCTION_IR_SPIRV_ROOT','TSFG_GPU_FUNCTION_IR_QUALIFICATION',
+    'TSFG_GPU_FUNCTION_IR_QUALIFICATION_SHA256','TSFG_GPU_FUNCTION_IR_EPOCH_PROOF','TSFG_GPU_FUNCTION_IR_EPOCH_PROOF_SHA256'].every(key=>process.env[key])?false:'explicit roots and pinned producer/epoch qualification are not supplied',
+},async t=>{
+  const sdkRoot=process.env.TSFG_GPU_FUNCTION_IR_SDK_ROOT,emitRoot=process.env.TSFG_GPU_FUNCTION_IR_SPIRV_ROOT;
+  const qualificationPath=process.env.TSFG_GPU_FUNCTION_IR_QUALIFICATION,qualificationHash=process.env.TSFG_GPU_FUNCTION_IR_QUALIFICATION_SHA256;
+  const epochPath=process.env.TSFG_GPU_FUNCTION_IR_EPOCH_PROOF,epochHash=process.env.TSFG_GPU_FUNCTION_IR_EPOCH_PROOF_SHA256;
+  assert.ok(sdkRoot&&emitRoot&&qualificationPath&&qualificationHash&&epochPath&&epochHash);
+  const rootLocations={'sdk-current':sdkRoot,'spirv-emit':emitRoot};
+  const qualification={path:qualificationPath,sha256:qualificationHash};
+  const epochProof={path:epochPath,sha256:epochHash};
+  const auth=await readGpuFunctionComponent({productRoot,rootLocations,qualification,epochProof,canonicalize:canonical});
+  const proof=inspectGpuFunctionComponent(auth,productRoot);
+  assert.equal(proof.descriptorHash,hash(gpuDescriptorRaw));assert.deepEqual(proof.descriptor,gpuDescriptor);
+  assert.equal(proof.archives.length,46);assert.equal(proof.includeDirectories.length,4);assert.equal(proof.sourceEntries.length,274);
+  assert.ok(proof.sourceEntries.every(file=>!path.isAbsolute(file.path)&&file.sha256.startsWith('sha256:')));
+  assert.equal(proof.sourceIdentity.sourceCommit,'4cb57d27ddcad7c3a89d23ef576662a5c891e8c8');
+  assert.equal(proof.sourceIdentity.sourceTree,'1ad1b903614825daa3ca3a5258fbb21e08d3c580');
+  assert.equal(proof.sourceIdentity.freshGitObserved,false);assert.equal(proof.licenseMaterials.length,5);
+  assert.equal(proof.epochProof.sourceHistoryMaximum,1790988496);
+  assert.equal(proof.epochProof.sourceCommit,proof.sourceIdentity.sourceCommit);
+  assert.ok(Object.isFrozen(proof)&&Object.isFrozen(proof.archives)&&Object.isFrozen(proof.sourceEntries[0]));
+  assert.equal(proof.executionAuthority,false);assert.equal(auth.executionAuthority,false);
+  assert.throws(()=>inspectGpuFunctionComponent({...auth},productRoot),/authenticated live provenance/);
+  assert.throws(()=>inspectGpuFunctionComponent(auth,path.dirname(productRoot)),/another product/);
+  assert.throws(()=>inspectMlirSdkProvenance(auth,productRoot),/authenticated live provenance/);
+  for(const foreign of [auth,proof.sourceIdentity])
+    await assert.rejects(readMlirSourceBuildLegalInputs({sourceRoot:proof.sourceIdentity.sourceRoot,git:undefined,paths:[],sdk:foreign,canonicalize:canonical}),/authenticated live provenance/);
+  const header=await readGpuFunctionComponentDependency(auth,path.join(proof.rootLocations['sdk-current'],gpuHeader),productRoot);
+  assert.equal(hash(header),gpuHeaderHash);
+  await assert.rejects(readGpuFunctionComponentDependency(auth,path.join(proof.rootLocations['sdk-current'],'build/lib/cmake/llvm/LLVMExports.cmake'),productRoot),/undeclared/);
+  await assert.rejects(readGpuFunctionComponent({productRoot,rootLocations,qualification:{...qualification,sha256:hash('wrong qualification')},epochProof,canonicalize:canonical}),/qualification hash/);
+  await assert.rejects(readGpuFunctionComponent({productRoot,rootLocations,qualification,epochProof:{...epochProof,sha256:hash('self-signed bound')},canonicalize:canonical}),/qualified Source epoch proof/);
+  // This is identity-projection data, not a producer or an execution proof.
+  const entries=proof.declaration.entries.map(entry=>({projectId:'tsfg',repositoryRelativePath:entry.path,normalizedMode:'100644',
+    sha256:entry.path==='eng/build-inputs.json'?proof.declarationHash:hash('projection fixture '+entry.path)}));
+  const payload={entries,schemaVersion:'1'},buildInputSet={...payload,digest:hash(independentJson(payload))};
+  const identity={buildInputSetDigest:buildInputSet.digest,options:{sourceTarget:'mlir-core',coreCommandRole:'gpu-function-resource-ir'},
+    profile:'debug',target:'windows-x86_64-msvc',source_date_epoch:'2000000000',toolchainClosureDigest:hash('identity projection only')};
+  const base={buildInputSet,buildIdentity:{...identity,digest:hash(independentJson(identity))}};
+  const projected=projectGpuFunctionComponentBuildIdentity(base,auth,canonical);
+  const expected=[...entries,...gpuDescriptor.files.map(file=>({projectId:'llvm-gpu-function-ir',repositoryRelativePath:file.rootId+'/'+file.path,
+    normalizedMode:'100644',sha256:file.sha256}))].sort((a,b)=>Buffer.from(a.projectId+'\0'+a.repositoryRelativePath).compare(Buffer.from(b.projectId+'\0'+b.repositoryRelativePath)));
+  assert.deepEqual(projected.buildInputSet.entries,expected);assert.equal(expected.length,858+392);
+  assert.equal(projected.buildInputSet.digest,hash(independentJson({entries:expected,schemaVersion:'1'})));
+  const {digest,...projectedIdentity}=projected.buildIdentity;
+  assert.equal(digest,hash(independentJson(projectedIdentity)));assert.equal(projectedIdentity.options.artifactKind,'static-consumer-library');
+  assert.equal(projectedIdentity.source_date_epoch,identity.source_date_epoch);
+  const encoded=independentJson(projected);
+  for(const physical of [...Object.values(rootLocations),qualification.path,qualification.sha256])assert.ok(!encoded.includes(physical));
+  assert.ok(!encoded.includes('current8'));assert.ok(!encoded.includes('qualificationRefs'));assert.ok(!encoded.includes('llvm-sdk'));
+  verifyGpuFunctionComponentBuildInputSet(projected.buildInputSet,auth,canonical);
+  for(const change of [value=>value.entries.pop(),value=>value.entries.push(value.entries[0]),
+    value=>value.entries[0].sha256=hash('different member'),value=>value.entries[0].projectId='llvm-sdk',
+    value=>value.entries[0].repositoryRelativePath='../escape',value=>value.entries[0].normalizedMode='100755']) {
+    const value=structuredClone(projected.buildInputSet);change(value);
+    value.digest=hash(independentJson({entries:value.entries,schemaVersion:'1'}));
+    assert.throws(()=>verifyGpuFunctionComponentBuildInputSet(value,auth,canonical),/GPU component|producer/);
+  }
+  for(const role of ['static','native']) {
+    const altered={...identity,options:{...identity.options,coreCommandRole:role}};
+    assert.throws(()=>projectGpuFunctionComponentBuildIdentity({...base,buildIdentity:{...altered,digest:hash(independentJson(altered))}},auth,canonical),/build role/);
+  }
+  const wrongKind={...identity,options:{...identity.options,artifactKind:'executable'}};
+  assert.throws(()=>projectGpuFunctionComponentBuildIdentity({...base,buildIdentity:{...wrongKind,digest:hash(independentJson(wrongKind))}},auth,canonical),/build role/);
+  const stale={...identity,source_date_epoch:String(proof.epochProof.sourceHistoryMaximum-1)};
+  assert.throws(()=>projectGpuFunctionComponentBuildIdentity({...base,buildIdentity:{...stale,digest:hash(independentJson(stale))}},auth,canonical),/Source history exceeds/);
+  const temporaryRoot=process.env.TSFG_MLIR_TEST_TEMP_ROOT;assert.ok(temporaryRoot&&/^E:[\\/]/i.test(temporaryRoot));
+  const badRoot=await fs.mkdtemp(path.join(temporaryRoot,'gpu-component-qualification-'));
+  const retained=JSON.parse(await fs.readFile(qualification.path,'utf8'));
+  const rejectedReads=observeExternalReads(t,[path.resolve(sdkRoot)]);
+  const changes=[value=>{value.component.projectId='llvm-sdk';},
+    value=>{value.component.sourceCommit='0'.repeat(40);},
+    value=>{value.proposedBuildInputDeclaration.componentInputSets[0].files[0].sha256=hash('self-signed foreign scope');}];
+  for(const [index,change] of changes.entries()) {
+    const altered=structuredClone(retained);change(altered);
+    const bytes=Buffer.from(independentJson(altered)+'\n'),file=path.join(badRoot,index+'.json');await fs.writeFile(file,bytes,{flag:'wx'});
+    await assert.rejects(readGpuFunctionComponent({productRoot,rootLocations,qualification:{path:file,sha256:hash(bytes)},epochProof,canonicalize:canonical}),
+      /foreign normative scope|qualified Source identity/,'a caller-computed sidecar hash cannot grant another role, Source or member scope');
+  }
+  assert.deepEqual(rejectedReads,[],'all self-signed foreign qualifications reject before SDK body reads');
 });
 
 test('GPU component boundary rejects altered roles, provenance, aliases and archive coverage',()=>{

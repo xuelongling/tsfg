@@ -215,7 +215,7 @@ export function verifyBuildInputLicenses(product, entries, coverage) {
     "eng/build-inputs.json",
     "license-input-coverage",
   );
-  if (declaration.schemaVersion === "2") validateMlirSdkInputDeclaration(declaration, canonicalize);
+  if (["2", "3"].includes(declaration.schemaVersion)) validateMlirSdkInputDeclaration(declaration, canonicalize);
   else if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
     throw new WorkspaceMismatchError(
       "license-input-coverage",
