@@ -460,38 +460,39 @@ The accepted source role does not clear the rights hold or any actual/unresolved
 execution boundary. Reuse applicable qualified records and keep remaining
 qualification and failures in the existing 39b summary.
 
-## Common NIR research-producer result — 2026-11-06
+## Common Mesa research-producer results — 2026-11-06
 
-The fixed sources admitted by ECP2026-0003/0004 now have limited actual
-producer results in the existing 39b summary. CPython3.14.8, the five fixed
-pure-Python sources, glslang15.1.0 and ToolA22.1.6 retain their exact identities.
+The sources admitted by ECP2026-0003/0004 have limited actual producer results
+in the existing 39b summary. Fixed CPython3.14.8, five pure-Python sources,
+glslang15.1.0 and ToolA22.1.6 retain their qualified identities and roles.
 Meson HOST compile/archive and BUILD standard C/C++ sanity/link/archive passed.
-All eight canonical NIR data generators passed complete data oracles; their
-outputs also match the canonical archive build byte for byte.
+All eight NIR data generators passed full data oracles; their canonical
+production bytes match, so those checks are reused.
 
-Only the common `idep_nir` consumed by Lavapipe was built. The canonical
-Windows Vulkan AMD option selected the full common graph with LLVM, Gallium
-and GL disabled; no AMD/WSI/backend object or helper was built or executed.
-The actual closure contains 231 original C sources, four generated C sources,
-12 Python generation commands and one archive command. Its 296 actual include
-dependencies are 96 Mesa, six generated and 194 existing ToolA inputs, with
-no foreign input. New unmodified Mesa bytes match the fixed official archive.
+Nine common archives contain 355 AMD64 objects: NIR235, compiler3, VTN14
+and util103. `idep_nir`/`idep_vtn` are actual Lavapipe dependencies.
+The Windows AMD option selects the common graph; no AMD driver is built.
+LLVM, Gallium and GL stay disabled. All new consumed fixed Mesa bytes were
+checked against the official archive; research patches are identified below.
+The coherent NIR/compiler/VTN includes are 135 Mesa, eight generated and
+196 existing ToolA inputs, with no foreign input.
 
-A controlled research derivative corrects only `u_atomic.h` identifiers
-`_interlockedexchangeadd64` and `_interlockedexchange64` to the actual declared
-`_InterlockedExchangeAdd64` and `_InterlockedExchange64`; casts, branches and
-old-value returns remain intact. The original header is retained separately:
+The `u_atomic.h` derivative repairs names and implements 32/64 add-return.
+One RMW and unsigned-width addition; 17 private-counter checks passed per C/C++.
+Checks cover bounds, old/new values and argument evaluation. Original SHA256:
 `81bf636924f9c049606ed8d0be2e01cc7b9facc963955efc1faec2140b510960`.
-The derivative hash is
-`8095f4811f09f2eb1858db94e4b0c3ed8768cab02733b5131a7e34a50f55b7a1`.
-The original failed compile and patch remain in the same qualification case.
-After that correction, all 235 AMD64 members compiled and archived naturally.
-`libnir.a` is 53,860,670 bytes, SHA256
-`63dfc3d09ba718fedb1eaba2150863733ce91d830def040a820771034264d0c9`.
+Current derivative SHA256:
+`42b46a54bcdf1e60913cfa97c1601c14b2506672f77b7337f4ca09449d19685a`.
+Old qualified variants and first failures are retained once in the same case.
 
-Both independent review axes passed. This is a research producer result;
-XML schema validation, complete Lavapipe linking/API or numerical execution,
-LLVM native/JIT, Source/VM and device results remain unclaimed. Product858,
-component392, SDK6601 and all actual safety/possible-overlap holds remain.
-The Owner deferred author/licensing requests to final consolidation; no
-author message was sent. Reuse applicable results and retain failures once.
+Current `libnir.a` is 53,860,670 bytes, SHA256
+`e6fc9e7ad8bb7fd57a8d18a3c0843d209e05d8c8bca94b9a8bba08a075115a85`.
+Current `libvtn.a` is 5,638,130 bytes, SHA256
+`c5a5a1978cb54338d205d8c15b03567f9dd42d7045363204b68b253a06dfe77e`.
+
+Both independent review axes passed. Four BLAKE3 SIMD assembly variants were
+compiled under the existing runtime-dispatch CPU contract; no probe was run.
+Its fixed 1.8.2 published license options and Apache-2.0 selection are retained.
+XML schema, final Lavapipe linking/API/numerical, LLVM native/JIT, Source/VM and
+device results remain unclaimed. Product858/component392/SDK6601 and all
+actual safety/possible-overlap holds remain; author requests stay deferred.
