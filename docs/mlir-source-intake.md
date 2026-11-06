@@ -459,3 +459,39 @@ TableGen, build, JIT/API/device, Source/VM or generated-output execution result.
 The accepted source role does not clear the rights hold or any actual/unresolved
 execution boundary. Reuse applicable qualified records and keep remaining
 qualification and failures in the existing 39b summary.
+
+## Common NIR research-producer result — 2026-11-06
+
+The fixed sources admitted by ECP2026-0003/0004 now have limited actual
+producer results in the existing 39b summary. CPython3.14.8, the five fixed
+pure-Python sources, glslang15.1.0 and ToolA22.1.6 retain their exact identities.
+Meson HOST compile/archive and BUILD standard C/C++ sanity/link/archive passed.
+All eight canonical NIR data generators passed complete data oracles; their
+outputs also match the canonical archive build byte for byte.
+
+Only the common `idep_nir` consumed by Lavapipe was built. The canonical
+Windows Vulkan AMD option selected the full common graph with LLVM, Gallium
+and GL disabled; no AMD/WSI/backend object or helper was built or executed.
+The actual closure contains 231 original C sources, four generated C sources,
+12 Python generation commands and one archive command. Its 296 actual include
+dependencies are 96 Mesa, six generated and 194 existing ToolA inputs, with
+no foreign input. New unmodified Mesa bytes match the fixed official archive.
+
+A controlled research derivative corrects only `u_atomic.h` identifiers
+`_interlockedexchangeadd64` and `_interlockedexchange64` to the actual declared
+`_InterlockedExchangeAdd64` and `_InterlockedExchange64`; casts, branches and
+old-value returns remain intact. The original header is retained separately:
+`81bf636924f9c049606ed8d0be2e01cc7b9facc963955efc1faec2140b510960`.
+The derivative hash is
+`8095f4811f09f2eb1858db94e4b0c3ed8768cab02733b5131a7e34a50f55b7a1`.
+The original failed compile and patch remain in the same qualification case.
+After that correction, all 235 AMD64 members compiled and archived naturally.
+`libnir.a` is 53,860,670 bytes, SHA256
+`63dfc3d09ba718fedb1eaba2150863733ce91d830def040a820771034264d0c9`.
+
+Both independent review axes passed. This is a research producer result;
+XML schema validation, complete Lavapipe linking/API or numerical execution,
+LLVM native/JIT, Source/VM and device results remain unclaimed. Product858,
+component392, SDK6601 and all actual safety/possible-overlap holds remain.
+The Owner deferred author/licensing requests to final consolidation; no
+author message was sent. Reuse applicable results and retain failures once.
