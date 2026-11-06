@@ -462,37 +462,36 @@ qualification and failures in the existing 39b summary.
 
 ## Common Mesa research-producer results — 2026-11-06
 
-The sources admitted by ECP2026-0003/0004 have limited actual producer results
-in the existing 39b summary. Fixed CPython3.14.8, five pure-Python sources,
-glslang15.1.0 and ToolA22.1.6 retain their qualified identities and roles.
-Meson HOST compile/archive and BUILD standard C/C++ sanity/link/archive passed.
-All eight NIR data generators passed full data oracles; their canonical
-production bytes match, so those checks are reused.
+Admitted fixed sources have bounded producer results in the existing 39b summary.
+CPython3.14.8, pure-Python packages, glslang15.1.0 and ToolA22.1.6
+retain qualified identities and roles. Meson HOST/BUILD standard sanity passed.
+Eight NIR data oracles are reused against byte-identical current outputs.
 
-Thirteen common archives contain 431 AMD64 objects: NIR235, compiler3,
-VTN14, util103 and common Vulkan76. Shared targets are Lavapipe dependencies.
+Fourteen common archives contain 432 AMD64 objects: NIR235, compiler3,
+VTN14, util103, Vulkan76, LP XMLconfig1. Two WSI C objects also qualified.
 The Windows AMD option selects the common graph; no AMD driver is built.
-LLVM, Gallium and GL stay disabled. All new consumed fixed Mesa bytes were
-checked against the official archive; research patches are identified below.
-Vulkan's 484 actual dependencies are 164 Mesa, 43 generated and 277 ToolA,
-with no foreign input. Existing eight NIR data oracles remain applicable.
+LLVM, Gallium and GL stay disabled in that graph. New consumed Mesa originals
+match the official archive; controlled source changes are identified below.
+Vulkan's 484 actual dependencies are 164 Mesa, 43 generated and 277 ToolA.
+LP XMLconfig consumes 18 Mesa, 184 ToolA and one private LP header; foreign0.
 
 The controlled `u_atomic.h` fixes names and 32/64 add-return; derivative SHA256:
 `42b46a54bcdf1e60913cfa97c1601c14b2506672f77b7337f4ca09449d19685a`.
 Seventeen checks passed per C/C++, including wrap and argument evaluation.
-The radix utility now admits clang-cl to its original nonzero clz branch.
-Its derivative SHA256 is:
+The radix utility admits clang-cl to its original nonzero clz branch; SHA256:
 `e2d57770c70b491f0a5660c69809ed4dffed238854278d23e96ccb170f73a9b1`.
 All 96 C bit-boundary checks passed; originals and first failures are retained.
 
 Current `libnir.a` is 53,860,670 bytes, SHA256
 `e6fc9e7ad8bb7fd57a8d18a3c0843d209e05d8c8bca94b9a8bba08a075115a85`.
-Current `libvtn.a` is 5,638,130 bytes, SHA256
-`c5a5a1978cb54338d205d8c15b03567f9dd42d7045363204b68b253a06dfe77e`.
+Private `libxmlconfig-lp.a` is 226,474 bytes, SHA256
+`481f36c3521584249681dd308a706aa0e90b05e4af044d50357ed805b8764131`.
 
-Both independent axes passed. All 24 glslang headers and three new offline
-controls passed. Four BLAKE3 SIMD variants use the runtime-dispatch contract;
-its fixed 1.8.2 notices and Apache-2.0 selection remain. No probe was run.
-XML schema, final Lavapipe linking/API/numerical, LLVM native/JIT, Source/VM and
-device results remain unclaimed. Product858/component392/SDK6601 and all
-actual safety/possible-overlap holds remain; author requests stay deferred.
+Both actual review axes passed. All 24 glslang headers and three new offline
+controls passed. LP's two original XML files produced 2devices/164apps/1engine/
+218options, checked in full with two offline controls; original C consumed only
+that private LP header. Four BLAKE3 SIMD variants use runtime dispatch; fixed
+1.8.2 original notices and the Apache-2.0 selection remain. No probe was run.
+XML schema and final Lavapipe link/API/numerical, LLVM native/JIT, Source/VM
+and device remain unclaimed. Product858/component392/SDK6601 and all actual
+safety/possible-overlap holds remain; author requests stay deferred.
