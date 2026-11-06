@@ -422,3 +422,40 @@ same function. A separate comparator requires two distinct actual build roots
 and compares canonical input/Build Identities, the complete manifest and all
 payload/PDB hashes. These are prepared acceptance checks, not completed native
 or clean-rebuild results; the full ticket remains incomplete until they run.
+
+## External Mesa Lavapipe native source-use role — 2026-11-06
+
+The Owner accepted [ECP 2026-0005](proposals/2026-0005-llvm-native-mesa-source-use.md)
+through `call_a563d87b107d4286b1b9062d6de248a7`. This is a new finite source-use
+role, not a transfer from compiler-side-M01, SDK6601 or the four SPIR-V archives.
+It uses only commit `4cb57d27ddcad7c3a89d23ef576662a5c891e8c8`, tree
+`1ad1b903614825daa3ca3a5258fbb21e08d3c580`, for the external Windows x64
+Mesa 26.2.6 Lavapipe acceptance-device build dependency. No product Runtime
+compiler/JIT architecture or arbitrary target backend is adopted.
+
+The ten roots are `LLVMMCJIT`, `LLVMExecutionEngine`, `LLVMRuntimeDyld`,
+`LLVMOrcTargetProcess`, `LLVMOrcShared`, `LLVMX86CodeGen`, `LLVMX86AsmParser`,
+`LLVMX86Disassembler`, `LLVMX86Desc` and `LLVMX86Info`. Their actual finite
+mandatory transitive dependencies may be closed under the adopted role;
+exact source, notice, generated-input, tool, CRT and link qualification remains
+required before consumption. Mere presence or add_subdirectory is not a new
+optional-root grant. The native five-target group lists 85 CPP; 84 have existing
+compiler-side-M01 license records, which do not themselves qualify this role.
+ExecutionEngine links OrcTargetProcess and OrcShared even with ORC JIT disabled;
+this does not enable full ORC JIT. X86TargetMCA is not in the proved minimum.
+
+X86Desc unconditionally lists `MCTargetDesc/X86InstComments.cpp`. Its copied
+Ternlog grant remains UNKNOWN and the path remains unregistered/license HOLD;
+standard LLVM SPDX and Owner adoption do not provide third-party rights.
+Separate authorization to ask for applicability is not evidence of a sent
+message, answer or grant. All actual safety refusals and same-purpose variants
+remain stopped; old native/wholeSDK labels with missing original call/argv/purpose
+retain possible-overlap UNKNOWN/HOLD, not global prohibition or permission.
+RuntimeDyld is not automatically an external LLDGuest dependency.
+
+This exception changes no product858/component392/SDK6601 members, input
+algorithms, formats or existing reader mappings. It asserts no native configure,
+TableGen, build, JIT/API/device, Source/VM or generated-output execution result.
+The accepted source role does not clear the rights hold or any actual/unresolved
+execution boundary. Reuse applicable qualified records and keep remaining
+qualification and failures in the existing 39b summary.
