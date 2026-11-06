@@ -462,10 +462,10 @@ qualification and failures in the existing 39b summary.
 
 ## Common Mesa research-producer results — 2026-11-06
 
-Admitted fixed sources have bounded producer results in the existing 39b summary.
-CPython3.14.8, pure-Python packages, glslang15.1.0 and ToolA22.1.6
-retain qualified identities and roles. Meson HOST/BUILD standard sanity passed.
-Eight NIR data oracles are reused against byte-identical current outputs.
+The fixed-source producer results below remain in the existing 39b summary.
+[ECP 2026-0006](proposals/2026-0006-directx-headers-wsi-source-use.md) adopts
+the fixed Windows WSI DirectX-Headers role; actual qualification is ongoing.
+Earlier tool and eight NIR data qualifications retain their recorded scopes.
 
 Fourteen common archives contain 432 AMD64 objects: NIR235, compiler3,
 VTN14, util103, Vulkan76, LP XMLconfig1. Two WSI C objects also qualified.
