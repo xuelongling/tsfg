@@ -460,20 +460,20 @@ The accepted source role does not clear the rights hold or any actual/unresolved
 execution boundary. Reuse applicable qualified records and keep remaining
 qualification and failures in the existing 39b summary.
 
-## Common Mesa research-producer results — 2026-11-06
+## Common Mesa research-producer results — 2026-11-07
 
 The fixed-source producer results below remain in the existing 39b summary.
 [ECP 2026-0006](proposals/2026-0006-directx-headers-wsi-source-use.md) adopts
-the fixed Windows WSI DirectX-Headers role; actual qualification is ongoing.
+the fixed Windows WSI DirectX-Headers role; both helper archives now qualified.
 Earlier tool and eight NIR data qualifications retain their recorded scopes.
 
-Fourteen common archives contain 432 AMD64 objects: NIR235, compiler3,
-VTN14, util103, Vulkan76, LP XMLconfig1. Two WSI C objects also qualified.
+Seventeen qualified archives contain 437 AMD64 objects, including the two
+DirectX helpers and the complete three-object WSI archive.
 The Windows AMD option selects the common graph; no AMD driver is built.
 LLVM, Gallium and GL stay disabled in that graph. New consumed Mesa originals
 match the official archive; controlled source changes are identified below.
-Vulkan's 484 actual dependencies are 164 Mesa, 43 generated and 277 ToolA.
-LP XMLconfig consumes 18 Mesa, 184 ToolA and one private LP header; foreign0.
+WSI's 418 includes are 65 Mesa, 6 DirectX, 9 generated and 338 ToolA.
+The two DirectX helpers consume 11 fixed headers and 370 ToolA; foreign0.
 
 The controlled `u_atomic.h` fixes names and 32/64 add-return; derivative SHA256:
 `42b46a54bcdf1e60913cfa97c1601c14b2506672f77b7337f4ca09449d19685a`.
@@ -484,8 +484,9 @@ All 96 C bit-boundary checks passed; originals and first failures are retained.
 
 Current `libnir.a` is 53,860,670 bytes, SHA256
 `e6fc9e7ad8bb7fd57a8d18a3c0843d209e05d8c8bca94b9a8bba08a075115a85`.
-Private `libxmlconfig-lp.a` is 226,474 bytes, SHA256
-`481f36c3521584249681dd308a706aa0e90b05e4af044d50357ed805b8764131`.
+Complete `libvulkan_wsi.a` is 1,925,986 bytes, SHA256
+`770996993a011a0b8be460c2de8cf5085810140ac5be1c7a6948ec57cd0e247b`.
+Its three members are AMD64; eight original public symbols are defined.
 
 Both actual review axes passed. All 24 glslang headers and three new offline
 controls passed. LP's two original XML files produced 2devices/164apps/1engine/
