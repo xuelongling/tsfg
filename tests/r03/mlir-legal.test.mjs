@@ -10,6 +10,39 @@ import { selectMlirConfigurationPaths } from "../../eng/mlir-sdk-paths.mjs";
 import { readMlirLegalRegistration } from "../../eng/mlir-source-registration.mjs";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 
+test("M39 llvm-config source reader retains fixed identity and complete original notice", async t => {
+  t.diagnostic(`actual source-reader PID ${process.pid}`);
+  const name = "llvm/tools/llvm-config/llvm-config.cpp";
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: [name] });
+  assert.equal(result.status, "selected-build-legal-inputs-verified");
+  assert.equal(result.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
+  assert.equal(result.baseCommit, "fc4aad7b5db3fff421df9a9637605b9ca5667881");
+  assert.equal(result.role, "compiler-side-M01");
+  assert.equal(result.sourceBuild, "not-run");
+  assert.equal(result.intakeComplete, false);
+  assert.equal(result.files.length, 1);
+  const registration = await readMlirLegalRegistration("build");
+  assert.equal(registration.lock.files.length, 8148);
+  assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8147))).digest("hex"),
+    "sha256:4b72673f8c78e24e16e961b44b48b7766eebd5749e3ecb912388c6556fb9084c");
+  const file = result.files[0];
+  assert.deepEqual([file.path, file.mode, file.blob, file.sha256], [name, "100644",
+    "24ea264419af4a5be8c994e0ae98aca3738e77b1",
+    "sha256:db054b58b71a339b02b5ff1612da22d52ff567d4dea5544c29897d246042d111"]);
+  assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+  assert.deepEqual(file.licenseMaterialPaths, ["llvm/LICENSE.TXT"]);
+  assert.equal(file.noticeStart, "0");
+  assert.equal(file.noticeEnd, "369");
+  assert.equal(file.noticeSha256, "sha256:180d5824cd28cfbbddc8734ed986d676aa021d42551b251193f307a7d8d75b47");
+  const raw = await readFile(path.join(process.env.TSFG_MLIR_SOURCE, name));
+  assert.equal(raw.length, 29159);
+  assert.equal("sha256:" + createHash("sha256").update(raw).digest("hex"), file.sha256);
+  assert.ok(raw.subarray(0, 369).equals(Buffer.from(file.completeOriginalAttribution)));
+  assert.equal(file.completeOriginalNotice, file.completeOriginalAttribution);
+  assert.match(file.completeOriginalNotice, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+});
+
 test("M39 fixed X86 source reader retains declared license and original attributions", async t => {
   t.diagnostic(`actual source-reader PID ${process.pid}`);
   const name = "llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp";
@@ -22,7 +55,7 @@ test("M39 fixed X86 source reader retains declared license and original attribut
   assert.equal(result.sourceBuild, "not-run");
   assert.equal(result.files.length, 1);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8147);
+  assert.equal(registration.lock.files.length, 8148);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8146))).digest("hex"),
     "sha256:89a0b879eaa69d89dda4bdbcbb8a0f3fa564c23ca7230d417e5855c687bba163");
   const file = result.files[0];
@@ -74,7 +107,7 @@ test("M39 fixed copied-material registration refuses changed identity grant and 
     for (const name of ["mlir-source-registration.mjs", "intake-ledger.mjs", "source-admission.mjs"])
       await copyFile(new URL(`../../eng/${name}`, import.meta.url), path.join(root, name));
     const lock = structuredClone(original);
-    const file = lock.files.at(-1);
+    const file = lock.files.find(file => file.path === "llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp");
     if (changed === "identity") lock.sourceCommit = "0".repeat(40);
     if (changed === "grant") file.copiedMaterial.supplementaryGrant = "MIT";
     if (changed === "attribution") file.copiedMaterial.completeOriginalAttribution = "incomplete attribution";
