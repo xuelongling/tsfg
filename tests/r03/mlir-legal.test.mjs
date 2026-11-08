@@ -41,7 +41,7 @@ test("M39 mandatory private headers reader retains exact18 identities and comple
   assert.equal(result.sourceBuild, "not-run");
   assert.equal(result.intakeComplete, false);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8167);
+  assert.equal(registration.lock.files.length, 8186);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8148))).digest("hex"), "sha256:4202b4f33fdbd901a29af59679864b68c127dee62b094a19e22803d224b63ba2");
   assert.deepEqual(result.files.map(file => [file.path, file.mode, file.blob, file.sha256]),
     expected.map(([name, blob, sha256]) => [name, "100644", blob, sha256]));
@@ -75,7 +75,7 @@ test("M39 llvm-config source reader retains fixed identity and complete original
   assert.equal(result.intakeComplete, false);
   assert.equal(result.files.length, 1);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8167);
+  assert.equal(registration.lock.files.length, 8186);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8147))).digest("hex"),
     "sha256:4b72673f8c78e24e16e961b44b48b7766eebd5749e3ecb912388c6556fb9084c");
   const file = result.files[0];
@@ -107,7 +107,7 @@ test("M39 fixed X86 source reader retains declared license and original attribut
   assert.equal(result.sourceBuild, "not-run");
   assert.equal(result.files.length, 1);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8167);
+  assert.equal(registration.lock.files.length, 8186);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8146))).digest("hex"),
     "sha256:89a0b879eaa69d89dda4bdbcbb8a0f3fa564c23ca7230d417e5855c687bba163");
   const file = result.files[0];
@@ -526,7 +526,7 @@ test("M39 external Mesa fork reader qualifies only the adopted e2 source and exa
   assert.equal(result.intakeComplete, false); assert.equal(result.sourceBuild, "not-run");
   const { lock } = await readMlirLegalRegistration("build");
   assert.equal(lock.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
-  assert.equal(lock.files.length, 8167);
+  assert.equal(lock.files.length, 8186);
   assert.equal(createHash("sha256").update(JSON.stringify(lock.files.slice(0, 8166))).digest("hex"),
     "ca4396c5d25786f1bd7fd1111d6f06bc08d2a9a7188e3c1358cf3a08ae602882");
   assert.equal(lock.files.find(file => file.path === paths[0]).sha256,
@@ -550,4 +550,52 @@ test("M39 external Mesa fork reader preserves M01 and refuses role or SDK transf
   for (const rejectedPaths of [["llvm/lib/Support/unknown.cpp"], ["mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp"]])
     await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MESA_LLVM_SOURCE,
       git: process.env.TSFG_GIT, paths: rejectedPaths, role: "external-Mesa-LLVM" }), { issueCode: "mlir-source-license" });
+});
+
+
+test("M39 external Mesa mandatory private inputs reader retains exact19 Git identities and notices", async t => {
+  t.diagnostic(`actual external private-input reader PID ${process.pid}`);
+  const expected = [
+    ["llvm/lib/Linker/LinkDiagnosticInfo.h","fdae1b79a9e17ba493fc108e4189f5048a1c3c8d","sha256:488a5c0e12889a95e3e924f4ba11c817a28da958fe3e90584e4aa400a68decb6",369,"sha256:d1ef44cb08d82a378202268420cd53cb89f30ebc7916a8dd89eb99c00a545d39","sha256:9cec54172126da1c1706fbd7c6ad31800fc56e05e43db1e606cdff0cf7daaebe"],
+    ["llvm/lib/Passes/PassRegistry.def","2cfb5b25926013fe31e56188a10b7109abf5edaa","sha256:46ea32fbb09366af5d8a5c452285b8df6c920d26b6853d7382774b051e9b8090",369,"sha256:e42a7beaae43d8e138724109d241f359e00e35eb2fb2745caa2fd845a3e1e492","sha256:f636bff787272602f908abb3f188047e4ad81c93893e874d687e2fe65efc8efd"],
+    ["llvm/lib/Target/X86/MCA/X86CustomBehaviour.h","05a1c22736a17b0f2217c413cf4de787ef8ead81","sha256:fb08c4d9163c89838345582c21dc7c2093643e374b6c3d1440a0b4f48831d06a",369,"sha256:b421d8e23a3f7160063d613a3e377203a412193edba5301c9d176760359ab201","sha256:6aa36e7ba343147bb05f56e18b1c771f37a0aa5aaa66608faf0d041e46aead85"],
+    ["llvm/lib/Transforms/Coroutines/CoroCloner.h","1e549f122b6ba1bc8c2115aeec80d3b194b7f8d4","sha256:1cb55defa1105ecd2417628f3fbf4c9cb184906f5b62af32d21136667fdfe413",369,"sha256:6d3cd1131919ff0a88c5fd43d13139fdaa41393d896886f6ab02d926f865ab36","sha256:1e3bb0ceb665aa2e9fa238466fdf92d420f27f0a2f3f58eada4cdc9055cdbf46"],
+    ["llvm/lib/Transforms/Coroutines/CoroInternal.h","cc47a557ee5c0bbc62c30c7aec5789328f2411a1","sha256:fb3e6da1db6ac0b5cd14d4b5aa77c39f489cd13a0a79c59cae49bd936fc09aa7",369,"sha256:f49c0c9d38b7d1fa1763953cf029ee8401955cde84d93d8ab4faa7dfbfc42083","sha256:3182fa8e45b69d9917363edef8dbe42c416bfb454013539ef3ef86d4d043e9f6"],
+    ["llvm/lib/Transforms/Vectorize/LoopVectorizationPlanner.h","ddef767f6937c255f4fb564d96d8dbb3bc45bd20","sha256:3c33cbd6eaffb177a734536f6a3f7dca453eab54a33df47aecd015c351ed68f9",369,"sha256:acd3ab7866191506607e19dff4ef1a5163d0ac6b2cdc0e6e0600041e450a5623","sha256:64de379992c957e40303e122881c5c00cdf2a302945275e9483bc175656d26d8"],
+    ["llvm/lib/Transforms/Vectorize/SandboxVectorizer/Passes/PassRegistry.def","02b973926854d5011e7e4450ff347cdeaed85c46","sha256:5f4b522e1d001d6a34b742e47b3f8230674f34342fe2a72576013687de812eb4",369,"sha256:e42a7beaae43d8e138724109d241f359e00e35eb2fb2745caa2fd845a3e1e492","sha256:59fb3e84410551b4831aab628c4fdb459219151f89215ac173a919aa5500112c"],
+    ["llvm/lib/Transforms/Vectorize/VPRecipeBuilder.h","534f51e86a9b7528e4fc57fa0c11f74fe67ecf19","sha256:6e76c5f2989464f1818af53355c6aaaaad8280584896e30d46512344bab2117e",369,"sha256:db49a12a3249b4cedcf33dfd76ab7e19a1d5973edae66e0396bc6472e379c0da","sha256:056abc77d6e118ead9ad05f61f604e0e8c3da62eabeb1c7493a0fbaf99521ec6"],
+    ["llvm/lib/Transforms/Vectorize/VPlan.h","466591488443428062234bc51b387b0dc2db5df2","sha256:c8cb86e855e310ac9ce1b8ef9dc61082d59a3c33dd930320a8c3dee5bb76d93b",369,"sha256:dcf8f7096088a1dfc2bc7394406c44abec6bb86cbff7c632c2da10da7821a3f0","sha256:fda86ee99d564fd75aab2c8bb48a7dd29418c0628d6f9c93b4ba5749611e003b"],
+    ["llvm/lib/Transforms/Vectorize/VPlanAnalysis.h","dc4be4270f7f1a41f076ce9670ebc95c88cc33c9","sha256:9b5668d4e44e0144e8c0b747c996a80b1c1a7b6565023ecbac94cb0d5afce90a",369,"sha256:919abeafa3b0586b0e49fc19aa40aba69bb8f14ad5c62693b09e2927f2490a5e","sha256:ba5edecedd3039123698aaf43b67367f615516ce12533f37388a61d05f040f2f"],
+    ["llvm/lib/Transforms/Vectorize/VPlanCFG.h","c79485c4cea71a1a4a9b07f8c56da20e627e57f2","sha256:89a6ffe1adb0b7582dd141ac060f6c707b4b662e122b4d3efd8fd501e3ea20e5",369,"sha256:2985598b44efde861e27716da322dc2e207ee5023e0ce4cd1a00f3acacc36706","sha256:22c6774a30a3e18abd9375e53ae4ba5c3168668609cadd9a91a0caf4aa7735b9"],
+    ["llvm/lib/Transforms/Vectorize/VPlanDominatorTree.h","44506f5ac3e81a96830f4e3c03171df835ef7869","sha256:413c85be39cde8993061bf698ddf9740d8cfe4f88d5fa140d2e9814924740d2c",369,"sha256:65b97e24996a107d99626f5f3ed0d0f5969521444245d3ab3a84ec072bab24f8","sha256:c3a6c6912ad0acf2f03f560c0654070d57b7560f20a3ff9a768b0ed3545fa0f5"],
+    ["llvm/lib/Transforms/Vectorize/VPlanHelpers.h","973cbaa4944d68cd7a6d9f9e2f8469a0e41a0dbb","sha256:b847caed7661515931fd949a7dfc7d4f577cfe79841895e75f8f9e82ecd9da88",369,"sha256:ced6988044824be2cf3c5db36179a44fb271e03f0c30a711ae98366fe7159bf0","sha256:aedc797e6a0f9556fae239c580e8e4bb397c4d56c6ac959537369411284374c4"],
+    ["llvm/lib/Transforms/Vectorize/VPlanPatternMatch.h","e22a90426b5991472d8c7b2ab4d7aa493ee7c8e4","sha256:26bd02a8b586861bcaf122787bf512e0906465e488d186496202a93362cfc60c",369,"sha256:c4f55acfdecd0684c750b6b1479635d04aada4e51f9bfcca45d960682d3b7ce0","sha256:e975d9d778de3e18a41e3625226fc205aee555788297e4899295bf35c75cf21d"],
+    ["llvm/lib/Transforms/Vectorize/VPlanSLP.h","44972c68ba9c98799a57a8a01a127bf0a56cdede","sha256:150ca6320fe02ef9a2d17644aee2cfefadb072323a8b27f014f217c8d7542119",369,"sha256:8e1e9b06c0f2b3fd4ffa0f2c0e72fe257c14b90b4d528a35b2c67aeeda4fd3fc","sha256:73e0c1f2cbbed845f794c3c8988e968f873a26d28c404d3ba6ab1360dc22094b"],
+    ["llvm/lib/Transforms/Vectorize/VPlanTransforms.h","f4ecee4e7f04fa937de76d1b889aafa53b09dc14","sha256:626956cdc9fccf64290764c04f62eceadae573397032ee5d122ae49196a2f3b3",369,"sha256:e48a8b5f4d2b40e9fd619e3cd39ae1b39f86d8abf7d0028eb6fb7ab11d8ea984","sha256:d00fa2ebf2dcc32f4affcfb3dc7b5cb58b6c6a0ab4c9e76581c5eb7239cbcc8e"],
+    ["llvm/lib/Transforms/Vectorize/VPlanUtils.h","4e7ed1f5a4ab7be45823633826de30adf821075e","sha256:cff286eadc98b25f0776e78eb199a334668d3200d3ce52ffe9b8f07a017787bf",369,"sha256:85dcb9f9a815f734dfc5dc0d82e7063e56ca8c93a7327f1f8ec45379070cca86","sha256:7e35fb75a67416b4ed319f1348b5b088ed6545deaf030e4b5f045c28990ed00f"],
+    ["llvm/lib/Transforms/Vectorize/VPlanValue.h","cae0633dbb185f25badba52a7a31b8109bccc4c1","sha256:ccf0dfb57194d8b7b78ee6f749bbd723684c4eb50fde7601883f6c37d8708f37",369,"sha256:65c5eb1961348597a1752f2e157b889caa8221c43a89f07c533a879f0940e971","sha256:6ee366d9a1d30d3569465edff556b41e64f27dd4bcc6cd234989cf22cc02ad91"],
+    ["llvm/lib/Transforms/Vectorize/VPlanVerifier.h","ccf79e8e5c9851eb03ec94516070a9771d89f2e6","sha256:a93e0affacd485d5cf1eb325049972715e751d6024ca1f9e0a35147edec22b3b",369,"sha256:8a5ce518b1e33bf11b2032dc998298861f433a40ce3b57db88c3f7aa8538db86","sha256:feac4dda039b3f7192bcecf97cb1d1d007f87deb890adbcf8089254a07f04cbc"]
+  ];
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MESA_LLVM_SOURCE,
+    git: process.env.TSFG_GIT, paths: expected.map(file => file[0]), role: "external-Mesa-LLVM" });
+  assert.equal(result.sourceCommit, "e2b6d966852c7830733f516998df7e5d35bd6e23");
+  assert.equal(result.role, "external-Mesa-LLVM");
+  assert.deepEqual(result.files.map(file => [file.path, file.blob, file.sha256, Number(file.noticeEnd),
+    file.noticeSha256, file.observedCheckoutSha256]), expected);
+  for (const file of result.files) {
+    assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+    assert.equal(file.role, result.role);
+    assert.equal(file.noticeStart, "0");
+    assert.equal(file.completeOriginalNotice, file.completeOriginalAttribution);
+    assert.equal(Buffer.byteLength(file.completeOriginalAttribution), Number(file.noticeEnd));
+    assert.match(file.completeOriginalAttribution, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+    assert.equal("sha256:" + createHash("sha256").update(file.completeOriginalAttribution).digest("hex"), file.noticeSha256);
+    assert.deepEqual(file.licenseMaterialPaths, ["llvm/LICENSE.TXT"]);
+  }
+  const { lock } = await readMlirLegalRegistration("build");
+  assert.equal(lock.files.length, 8186);
+  assert.equal(createHash("sha256").update(JSON.stringify(lock.files.slice(0, 8167))).digest("hex"),
+    "b5a9144258d9ffad76fcfdea762e00a8d93216b59667ab7ce65079b979358e23");
+  assert.equal(lock.externalMesa.changedFiles.length, 1);
+  assert.equal(lock.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
 });
