@@ -121,16 +121,21 @@ export function mlirCommittedSourceBytes(checkout, blob, name) {
 /** Conditional finite-delegation inventory; only actual fixed-target dependencies may consume its entries. */
 export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, role = "compiler-side-M01", sdk = null, canonicalize = undefined }) {
   try {
+    if (role === "external-Mesa-LLVM" && sdk) reject("External Mesa source inputs cannot transfer to the SDK");
     const proof = sdk ? inspectMlirSdkProvenance(sdk, fileURLToPath(new URL("..", import.meta.url))) : null;
-    if (role !== "compiler-side-M01") reject("Selected build registration is compiler-side M01 only");
+    if (role !== "compiler-side-M01" && role !== "external-Mesa-LLVM")
+      reject("Selected build registration is compiler-side M01 only unless the exact external Mesa role is selected");
     const { lock, sha256: registrationHash } = await readMlirLegalRegistration("build");
+    const external = role === "external-Mesa-LLVM" ? lock.externalMesa : null;
+    if (role === "external-Mesa-LLVM" && external?.role !== role) reject("External Mesa source role is not registered");
     if (!Array.isArray(paths) || paths.length === 0 || new Set(paths).size !== paths.length)
       reject("Actual build dependencies require distinct explicit paths");
-    const entries = new Map(lock.files.map(file => [file.path, file]));
+    const entries = new Map([...lock.files, ...(external?.changedFiles ?? [])].map(file => [file.path, file]));
     const selected = paths.map(name => {
       const file = entries.get(name);
       if (!file) reject(`No qualified mandatory build input: ${name}`);
-      return file;
+      if (external && file.stagedTransform) reject(`Staged transformations cannot transfer to external Mesa: ${name}`);
+      return external ? { ...file, role, use: "mandatory adopted external Mesa source-only dependency; actual target closure required" } : file;
     });
     const staged = stagedPolicy({ lock, sha256: registrationHash }, lock);
     if (sdk && selected.some(file => mlirStagedSourceDescriptor(staged, file.path)))
@@ -138,8 +143,8 @@ export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, r
     // Historical registration hashes identify the original build. The current
     // finite mapping independently qualifies every selected physical member.
     const identity = proof ? { baseCommit: proof.sourceNotices.baseCommit, sourceCommit: proof.identity.sourceCommit } :
-      await readMlirSourceIdentity({ sourceRoot, git });
-    if (identity.baseCommit !== lock.baseCommit || identity.sourceCommit !== lock.sourceCommit || lock.role !== "compiler-side-M01")
+      await readMlirSourceIdentity({ sourceRoot, git, role });
+    if (identity.baseCommit !== lock.baseCommit || identity.sourceCommit !== (external?.sourceCommit ?? lock.sourceCommit) || lock.role !== "compiler-side-M01")
       reject("Selected build registration cannot transfer source, version or role");
     for (const file of [...selected, ...lock.licenseMaterials]) {
       if (proof && lock.licenseMaterials.includes(file)) {
@@ -185,8 +190,8 @@ export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, r
           reject(`Registered copied-material attribution or development scope changed: ${file.path}`);
       }
     }
-    return { schemaVersion: "1", status: "selected-build-legal-inputs-verified", role: lock.role,
-      sourceCommit: lock.sourceCommit, baseCommit: lock.baseCommit, registrationLockSha256: registrationHash,
+    return { schemaVersion: "1", status: "selected-build-legal-inputs-verified", role,
+      sourceCommit: identity.sourceCommit, baseCommit: lock.baseCommit, registrationLockSha256: registrationHash,
       files: selected, licenseMaterials: lock.licenseMaterials, intakeComplete: false, sourceBuild: "not-run" };
   } catch (error) {
     if (error instanceof IntakeLedgerError) throw error;

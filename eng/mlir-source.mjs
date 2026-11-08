@@ -5,15 +5,16 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { sourceGitEnvironment, parseUpstreamProvenance, IntakeLedgerError } from "./intake-ledger.mjs";
 import { isPermittedSourceCarrier } from "./source-admission.mjs";
+import { readMlirLegalRegistration } from "./mlir-source-registration.mjs";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const reject = message => { throw new IntakeLedgerError("mlir-source-identity", message); };
 
 /**
  * Read-only provenance phase. This does not authorize or execute source builds.
- * @param {{sourceRoot?: string, git?: string}} input
+ * @param {{sourceRoot?: string, git?: string, role?: string}} input
  */
-export async function readMlirSourceIdentity({ sourceRoot, git }) {
+export async function readMlirSourceIdentity({ sourceRoot, git, role = "compiler-side-M01" }) {
   try {
     if (typeof sourceRoot !== "string" || !path.isAbsolute(sourceRoot) ||
         typeof git !== "string" || !path.isAbsolute(git)) reject("MLIR checkout and Git executable must be explicit absolute paths");
@@ -23,7 +24,7 @@ export async function readMlirSourceIdentity({ sourceRoot, git }) {
     const tool = await lstat(git);
     if (!tool.isFile() || tool.isSymbolicLink()) reject("Git executable must be a regular file");
     const lockBytes = await readFile(new URL("./mlir-source.lock.json", import.meta.url));
-    const lock = JSON.parse(lockBytes.toString("utf8"));
+    let lock = JSON.parse(lockBytes.toString("utf8"));
     if (Object.keys(lock).sort().join(",") !== "authorization,baseCommit,branch,canonicalUrl,carrierUrl,files,license,localChanges,projectId,schemaVersion,sourceCommit,sourceTree" ||
         lock.schemaVersion !== "1" || lock.projectId !== "llvm-project.git" ||
         !isPermittedSourceCarrier(lock.projectId, lock.carrierUrl, lock.canonicalUrl) ||
@@ -36,6 +37,12 @@ export async function readMlirSourceIdentity({ sourceRoot, git }) {
         lock.files.map(file => file.path).join(",") !== "UPSTREAM.toml,llvm/LICENSE.TXT,mlir/LICENSE.TXT" ||
         lock.files.some(file => Object.keys(file).sort().join(",") !== "blob,path,sha256" ||
           !/^[0-9a-f]{40}$/.test(file.blob) || !/^sha256:[0-9a-f]{64}$/.test(file.sha256))) reject("invalid MLIR provenance lock");
+    const original = lock;
+    const registration = role === "external-Mesa-LLVM" ? await readMlirLegalRegistration("build") : null;
+    const external = registration?.lock.externalMesa;
+    if (role !== "compiler-side-M01" && (!external || role !== external.role)) reject("Unknown source identity role");
+    if (external) lock = { ...lock, sourceCommit: external.sourceCommit, sourceTree: external.sourceTree,
+      files: [...lock.files, ...external.changedFiles] };
     const run = (...args) => {
       const child = spawnSync(git, ["-C", sourceRoot, ...args], { env: sourceGitEnvironment(),
         windowsHide: true, maxBuffer: 1024 * 1024, encoding: "buffer" });
@@ -47,11 +54,13 @@ export async function readMlirSourceIdentity({ sourceRoot, git }) {
         text("rev-parse", "HEAD") !== lock.sourceCommit ||
         text("rev-parse", "HEAD^{tree}") !== lock.sourceTree ||
         text("rev-parse", "--is-shallow-repository") !== "false" ||
-        text("symbolic-ref", "HEAD") !== lock.branch ||
+        (!external && text("symbolic-ref", "HEAD") !== lock.branch) ||
         text("config", "--get", "remote.origin.url") !== lock.carrierUrl ||
         text("status", "--porcelain=v1", "--untracked-files=all") !== "") reject("MLIR Git identity or clean-state mismatch");
     run("merge-base", "--is-ancestor", lock.baseCommit, lock.sourceCommit);
-    if (text("diff", "--no-ext-diff", "--no-textconv", "--name-only", lock.baseCommit, lock.sourceCommit, "--") !== "UPSTREAM.toml")
+    if (external && text("rev-parse", "HEAD^1") !== external.parentCommit) reject("External Mesa fork has another parent");
+    if (text("diff", "--no-ext-diff", "--no-textconv", "--name-only", lock.baseCommit, lock.sourceCommit, "--") !==
+        (external ? "UPSTREAM.toml\nllvm/cmake/modules/LLVM-Build.cmake" : "UPSTREAM.toml"))
       reject("MLIR provenance commit changes source or legal files");
     const inspected = [];
     for (const file of lock.files) {
@@ -73,12 +82,13 @@ export async function readMlirSourceIdentity({ sourceRoot, git }) {
     catch { reject("invalid UPSTREAM metadata syntax"); }
     if (Object.keys(upstream).sort().join(",") !== "base_oid,canonical_url,license,local_changes,sync_branch" ||
         upstream.base_oid !== lock.baseCommit || upstream.canonical_url !== lock.canonicalUrl ||
-        upstream.license !== lock.license || upstream.sync_branch !== lock.branch ||
+        upstream.license !== lock.license || upstream.sync_branch !== original.branch ||
         upstream.local_changes !== lock.localChanges) reject("UPSTREAM metadata does not match the product lock");
     return { schemaVersion: "1", status: "metadata-verified", intakeComplete: false,
       sourceBuild: "not-run", sourceRoot, sourceCommit: lock.sourceCommit, sourceTree: lock.sourceTree,
       baseCommit: lock.baseCommit, carrierUrl: lock.carrierUrl, canonicalUrl: lock.canonicalUrl,
-      branch: lock.branch, lockSha256: digest(lockBytes), metadata: upstream, inspectedFiles: inspected,
+      branch: external ? text("rev-parse", "--abbrev-ref", "HEAD") : lock.branch, lockSha256: registration?.sha256 ?? digest(lockBytes), metadata: upstream, inspectedFiles: inspected,
+      ...(external ? { role, provenanceLockSha256: digest(lockBytes) } : {}),
       workingTreeInspection: "Git clean; selected metadata and legal files match raw committed blobs",
       consumedFileLegalReview: "pending", wholeRepositoryRawAudit: "not-performed" };
   } catch (error) {

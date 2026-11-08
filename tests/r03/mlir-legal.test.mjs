@@ -41,7 +41,7 @@ test("M39 mandatory private headers reader retains exact18 identities and comple
   assert.equal(result.sourceBuild, "not-run");
   assert.equal(result.intakeComplete, false);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8166);
+  assert.equal(registration.lock.files.length, 8167);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8148))).digest("hex"), "sha256:4202b4f33fdbd901a29af59679864b68c127dee62b094a19e22803d224b63ba2");
   assert.deepEqual(result.files.map(file => [file.path, file.mode, file.blob, file.sha256]),
     expected.map(([name, blob, sha256]) => [name, "100644", blob, sha256]));
@@ -75,7 +75,7 @@ test("M39 llvm-config source reader retains fixed identity and complete original
   assert.equal(result.intakeComplete, false);
   assert.equal(result.files.length, 1);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8166);
+  assert.equal(registration.lock.files.length, 8167);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8147))).digest("hex"),
     "sha256:4b72673f8c78e24e16e961b44b48b7766eebd5749e3ecb912388c6556fb9084c");
   const file = result.files[0];
@@ -107,7 +107,7 @@ test("M39 fixed X86 source reader retains declared license and original attribut
   assert.equal(result.sourceBuild, "not-run");
   assert.equal(result.files.length, 1);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8166);
+  assert.equal(registration.lock.files.length, 8167);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8146))).digest("hex"),
     "sha256:89a0b879eaa69d89dda4bdbcbb8a0f3fa564c23ca7230d417e5855c687bba163");
   const file = result.files[0];
@@ -497,14 +497,57 @@ test("M01 legal decision refuses mutable approvals, altered notices and transfer
     lock => { lock.files[0].sha256 = `sha256:${"0".repeat(64)}`; },
     lock => { lock.files[0].notice = ""; }, lock => { lock.baseCommit = "0".repeat(40); }]) {
     const root = await createMlirFixture("mlir-legal-capsule-");
-    for (const name of ["mlir-source-legal.mjs", "mlir-source.mjs", "intake-ledger.mjs", "source-admission.mjs"])
+    for (const name of ["mlir-source-registration.mjs", "intake-ledger.mjs", "source-admission.mjs"])
       await copyFile(new URL(`../../eng/${name}`, import.meta.url), path.join(root, name));
     const lock = JSON.parse(await readFile(new URL("../../eng/mlir-source-legal.lock.json", import.meta.url), "utf8"));
     mutate(lock);
     await writeFile(path.join(root, "mlir-source-legal.lock.json"), `${JSON.stringify(lock, null, 2)}\n`);
-    const isolated = await import(pathToFileURL(path.join(root, "mlir-source-legal.mjs")).href);
-    await assert.rejects(isolated.readMlirSourceLegalFiles({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
-      git: process.env.TSFG_GIT }), { issueCode: "mlir-source-license" });
+    const isolated = await import(pathToFileURL(path.join(root, "mlir-source-registration.mjs")).href);
+    await assert.rejects(isolated.readMlirLegalRegistration("file"), { issueCode: "mlir-source-license" });
     // Retain exact owned corruption fixtures for the single validated cleanup phase.
   }
+});
+
+
+test("M39 external Mesa fork reader qualifies only the adopted e2 source and exact new member", async t => {
+  t.diagnostic(`actual external-source reader PID ${process.pid}`);
+  const paths = ["llvm/cmake/modules/LLVM-Build.cmake",
+    "llvm/lib/Target/X86/MCA/X86CustomBehaviour.cpp", "llvm/lib/ExecutionEngine/MCJIT/MCJIT.cpp"];
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MESA_LLVM_SOURCE,
+    git: process.env.TSFG_GIT, paths, role: "external-Mesa-LLVM" });
+  assert.equal(result.role, "external-Mesa-LLVM");
+  assert.equal(result.sourceCommit, "e2b6d966852c7830733f516998df7e5d35bd6e23");
+  assert.equal(result.baseCommit, "fc4aad7b5db3fff421df9a9637605b9ca5667881");
+  assert.deepEqual(result.files.map(file => file.path), paths);
+  assert.ok(result.files.every(file => file.role === result.role));
+  assert.equal(result.files[0].sha256, "sha256:19bec2544b7980f37f46b3929c43c92ef140f4bd34aaf780afd2c688ccd605d8");
+  assert.equal(result.files[1].sha256, "sha256:10ac0f676c154bfc23a6c3a781ed29d09af6ec353643a6005b265dca446c83d3");
+  assert.match(result.files[1].completeOriginalAttribution, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+  assert.equal(result.intakeComplete, false); assert.equal(result.sourceBuild, "not-run");
+  const { lock } = await readMlirLegalRegistration("build");
+  assert.equal(lock.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
+  assert.equal(lock.files.length, 8167);
+  assert.equal(createHash("sha256").update(JSON.stringify(lock.files.slice(0, 8166))).digest("hex"),
+    "ca4396c5d25786f1bd7fd1111d6f06bc08d2a9a7188e3c1358cf3a08ae602882");
+  assert.equal(lock.files.find(file => file.path === paths[0]).sha256,
+    "sha256:d99cffbb8fba80cd28562d79873a3c06d52aab30d7aea1c930560778b936a655");
+  assert.equal(lock.externalMesa.changedFiles.length, 1);
+  assert.equal(lock.externalMesa.changedFiles[0].path, paths[0]);
+});
+
+test("M39 external Mesa fork reader preserves M01 and refuses role or SDK transfer", async () => {
+  const paths = ["llvm/cmake/modules/LLVM-Build.cmake"];
+  const legacy = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths });
+  assert.equal(legacy.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
+  assert.equal(legacy.files[0].sha256, "sha256:d99cffbb8fba80cd28562d79873a3c06d52aab30d7aea1c930560778b936a655");
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths, role: "external-Mesa-LLVM" }), { issueCode: "mlir-source-identity" });
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MESA_LLVM_SOURCE,
+    git: process.env.TSFG_GIT, paths }), { issueCode: "mlir-source-identity" });
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MESA_LLVM_SOURCE,
+    git: process.env.TSFG_GIT, paths, role: "external-Mesa-LLVM", sdk: {} }), /cannot transfer to the SDK/);
+  for (const rejectedPaths of [["llvm/lib/Support/unknown.cpp"], ["mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp"]])
+    await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MESA_LLVM_SOURCE,
+      git: process.env.TSFG_GIT, paths: rejectedPaths, role: "external-Mesa-LLVM" }), { issueCode: "mlir-source-license" });
 });
