@@ -242,7 +242,7 @@ Core configuration. It grants no optional-library/backend compilation,
 generated/installed output, execution or Runtime role. Source selection still
 requires the current physical, notice and hash checks; a complete actual Ninja
 plan and final compiler/link dependencies remain unqualified. SDKv2 inventory,
-its historical provenance, and the copied X86 table refusal remain unchanged.
+its historical provenance and original copied X86 table failure evidence remain.
 
 ## M39 SPIR-V emit-only source-use exception
 
@@ -312,14 +312,14 @@ actual dependencies and equivalent retries, remain in force.
 
 ## Retained source-build requirements
 
-The original native/full-source copied table remains unregistered:
-`llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp`. Although its header has
-the standard LLVM SPDX declaration, its TernlogFunctions table is attributed
-as copied from an external DougallJ Gist. The exact upstream source and
-introduction commit are known, but a source-specific grant for that copied
-material has not been established. The strict reader therefore still rejects
-this path, and the complete normal Core source build remains blocked. This
-does not revoke the independently established provenance of other entries.
+[ECP2026-0007](proposals/2026-0007-development-source-qualification.md) moves the
+supplementary copied-table scope query to one consolidated pre-release review; it is not a recurring development HOLD
+or author-contact task. Keep its exact-policy coverage UNKNOWN and all original
+licenses, notices and provenance. `MCTargetDesc/X86InstComments.cpp` remains
+unregistered in the current reader; complete its fixed-source declared-license
+and notice mapping as implementation work, with targeted validation. No grant,
+registration or successful consumption is asserted by this documentation edit.
+Third-party source changes use the adopted fork; actual safety stops remain.
 
 Shared TargetParser generation consumes some AArch64, ARM, PowerPC and RISCV
 TableGen inputs even with only the X86 backend enabled. Their exact discovered
@@ -444,19 +444,19 @@ compiler-side-M01 license records, which do not themselves qualify this role.
 ExecutionEngine links OrcTargetProcess and OrcShared even with ORC JIT disabled;
 this does not enable full ORC JIT. X86TargetMCA is not in the proved minimum.
 
-X86Desc unconditionally lists `MCTargetDesc/X86InstComments.cpp`. Its copied
-Ternlog grant remains UNKNOWN and the path remains unregistered/license HOLD;
-standard LLVM SPDX and Owner adoption do not provide third-party rights.
-Separate authorization to ask for applicability is not evidence of a sent
-message, answer or grant. All actual safety refusals and same-purpose variants
-remain stopped; old native/wholeSDK labels with missing original call/argv/purpose
-retain possible-overlap UNKNOWN/HOLD, not global prohibition or permission.
+X86Desc unconditionally lists `MCTargetDesc/X86InstComments.cpp`, still absent
+from the current reader mapping. The 2026-11-08 Owner decision in accepted ECP2026-0007
+makes supplementary author-policy scope a pre-release follow-up, not a research
+permission gate. Preserve existing license/attribution records and complete
+the finite mapping under that decision; no message or new grant is recorded.
+Actual safety refusals and equivalent actions remain stopped; missing original
+call/argv/purpose retains genuine possible-overlap UNKNOWN/HOLD.
 RuntimeDyld is not automatically an external LLDGuest dependency.
 
 This exception changes no product858/component392/SDK6601 members, input
 algorithms, formats or existing reader mappings. It asserts no native configure,
 TableGen, build, JIT/API/device, Source/VM or generated-output execution result.
-The accepted source role does not clear the rights hold or any actual/unresolved
+The Owner's development clarification preserves every actual/unresolved
 execution boundary. Reuse applicable qualified records and keep remaining
 qualification and failures in the existing 39b summary.
 
