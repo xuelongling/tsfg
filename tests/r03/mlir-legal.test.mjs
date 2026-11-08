@@ -10,6 +10,58 @@ import { selectMlirConfigurationPaths } from "../../eng/mlir-sdk-paths.mjs";
 import { readMlirLegalRegistration } from "../../eng/mlir-source-registration.mjs";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 
+test("M39 mandatory private headers reader retains exact18 identities and complete notices", async t => {
+  t.diagnostic(`actual source-reader PID ${process.pid}`);
+  const expected = [
+    ["llvm/lib/ExecutionEngine/MCJIT/MCJIT.h","fbe64fabd3240f180ea2d91ffceee98dceb4802a","sha256:45aa87ede2f6f3bd5a7bfa7c8cf29e5697ecd7edae73dea542b977ec8cad4a49",13272,"369","sha256:206bb3d746d32e37780b364a6c5b8fb234489ed4e05982e3223abe5c4a9be5da"],
+    ["llvm/lib/ExecutionEngine/Orc/TargetProcess/OrcRTBootstrap.h","92b513d0bb53d90d97704de092cf848a75bf674b","sha256:9cd93b406affb8fef16db11679bc7345c906565d7f7e8f77c92dfe9d32c8b6f5",1287,"369","sha256:c1df0b0d639458e8955e9457397c200d08faf42fa27ef1b0e81a5e88b6b4906b"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldCOFF.h","8ca1c2e4efc3f4dd2420c211dd323a5a34750ba1","sha256:fe0d99f91e0b07bcdc658c3dace068d7613e7ee3562a95721a0318ea0ec51903",2131,"369","sha256:a7df3bbe07db2c73c2a8f07f3c76003f101f1db233b2d0a01b6f237724c930ea"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldCheckerImpl.h","bda554e9e5b673c61e6685081af2fe57d44636b6","sha256:25501c8916207267390fd8c88d40a17d46c935e0f69a165b6641e646191e68b1",3178,"369","sha256:136cb2607e38f49c2047e3726e67237c77ebabb520a5191b471952b3bf9192fd"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.h","deb623b1a4bef24cb570291191898d9ddc140648","sha256:c35654e200db387f9f0a972c7e338f6fef692f90fbcd23fd1602f1a012c42c08",10820,"369","sha256:c61c93988aea256428ac2dc2006bd8561818d8f712abe326cdbdb108afe69cad"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldImpl.h","89b20978c40e6722604d73b9d3d64ef1e46c3dd3","sha256:2bd2d6e2960d1203e29b55d7c9f24a0196ef572638c710eb766bef775c040e8c",22651,"369","sha256:a91bf7b493bff89ef5cba7c4e76301ebc0aa4d588c739948b62cb8011b46785d"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldMachO.h","061d0e8cbe94329bce66d2a8ab8a70ca01b074ef","sha256:689a67195791c313d88c356f31a2a9baf4e9240e3a4528fae1ad3547dc8303a1",6617,"369","sha256:b55c3c43cefbbe1f75b09b9e64032edfb398d9bac7492a797776575c74f542e0"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldCOFFAArch64.h","3ca6309874de5f2febe47aa9e4a10f270e769d3d","sha256:950342887f8108dc9a8773ef3d4c966609238d49358caac32237a9f2ae305ec0",13860,"369","sha256:5869c1e2496debaf807a2153dbce11fed67ab48300eecceff3e80805935bcb3f"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldCOFFI386.h","0d5afc289b8c5acd1fd3210070279bd3f85f344b","sha256:ee00c262e935e23852c9ca9ee5fd9fbae2db8b4cd94960e859a52b03b3c437c9",8501,"369","sha256:c49212a7db96af2806a9b6146bf1806c70816e2a38184179cee7b0342eb3c36b"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldCOFFThumb.h","19e42253ab1d79f76467b2d7e786d34fc1c95344","sha256:9e4171ed0e2234e234a509a4658bc75921d2d13889529cecd37c07c96753848c",13626,"369","sha256:86becb6b73d057b15c93102feaf14349ff9e9f548199218882d56128daf22d8c"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldCOFFX86_64.h","2a45535f68fa0834b2c0aae6073ee5137a142928","sha256:3f9779b3a49a2250480f6f9ebe947c9989b30d3fce59c8d28446fafc2054e730",12714,"369","sha256:a07b2fecd86231d5d12d503a41ba3f7695946535e6b9e48e72ade29d853b0ce5"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldELFMips.h","f03acb41d6703e21f381b36343a6c37227153ef3","sha256:46418b40bde19d3ee39ebd03fdaff277cfefdd16db966d433203bd178ad01ed1",2631,"369","sha256:f866c0f8816273d65dfd35aa262ddbf8e69b215c43a486f835c6ac8474a279aa"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldMachOAArch64.h","222928e1a2d2048efadbd650b127eed937b56a92","sha256:35345e3fcabc15294073967536344657334c3de214ddf7d5c35cfada51e87435",22078,"369","sha256:cc0962886c3936f21349964021a578adac56bfbdbec6c7992eff62894d3394c1"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldMachOARM.h","79b558eb7796dd0c0ab580c0fe524f5aa7b7f54a","sha256:a1ab5d73b786a8f236654c29e7a2b553c7fdbba7c241171553c595a15f0c41a3",16969,"369","sha256:99b8088029749f74738f1e7be2e2f242ce8be5d3caf1766bbe3ddb3ecdeab553"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldMachOI386.h","a983e22671b24e8858221133cc134c794f0ad3ae","sha256:c60ef55428b954f50752a3d355f84f66ca5a1a6b078945469bbda5e641f740dc",9741,"369","sha256:137642374f50c4d98dbb0e352d9bb7b41c795ca52e9bf6e930c640a9d190cc9c"],
+    ["llvm/lib/ExecutionEngine/RuntimeDyld/Targets/RuntimeDyldMachOX86_64.h","0e95369fbedb03b7f22c2d85ac2f027066ffbe9b","sha256:782039ba4d83ab4537f27cbddb662ca3b021e4420e9b988c3a3893b4cc6b4452",8614,"369","sha256:823bf6620f2066c642c5cbf07fe5a1bf00932bd45bc2e8e00041d8fe3a6a5070"],
+    ["llvm/lib/Target/X86/AsmParser/X86AsmParserCommon.h","b39cb33604ea525c2ee1164907a37415a31287e6","sha256:3e5129e516bc919e385543ab17a21f4be714768be6bd494ee5bffdfc8bfbf95d",1305,"368","sha256:078f0c28aef07eb5aa7b9a19baf02387655fe5ed097cc0f8f98deeaa66a4aa6b"],
+    ["llvm/lib/Target/X86/AsmParser/X86Operand.h","acc5caa9c436f148919a82dff308d83b0f6878db","sha256:7ba827019878bf7e84b5243ee606f627bceb7dbb81391ec868f7ed4b0f332e25",25636,"369","sha256:306113407cd6c291ea9fe6a9a469a0f1e2dfa29d1fefff1975a472a47cd8b203"]
+  ];
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: expected.map(file => file[0]) });
+  assert.equal(result.status, "selected-build-legal-inputs-verified");
+  assert.equal(result.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
+  assert.equal(result.baseCommit, "fc4aad7b5db3fff421df9a9637605b9ca5667881");
+  assert.equal(result.role, "compiler-side-M01");
+  assert.equal(result.sourceBuild, "not-run");
+  assert.equal(result.intakeComplete, false);
+  const registration = await readMlirLegalRegistration("build");
+  assert.equal(registration.lock.files.length, 8166);
+  assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8148))).digest("hex"), "sha256:4202b4f33fdbd901a29af59679864b68c127dee62b094a19e22803d224b63ba2");
+  assert.deepEqual(result.files.map(file => [file.path, file.mode, file.blob, file.sha256]),
+    expected.map(([name, blob, sha256]) => [name, "100644", blob, sha256]));
+  assert.deepEqual(result.licenseMaterials, registration.lock.licenseMaterials);
+  for (const [index, file] of result.files.entries()) {
+    const [, , sha256, bytes, noticeEnd, noticeSha256] = expected[index];
+    assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+    assert.deepEqual(file.licenseMaterialPaths, ["llvm/LICENSE.TXT"]);
+    assert.deepEqual([file.noticeStart, file.noticeEnd, file.noticeSha256], ["0", noticeEnd, noticeSha256]);
+    const raw = await readFile(path.join(process.env.TSFG_MLIR_SOURCE, file.path));
+    assert.equal(raw.length, bytes);
+    assert.equal("sha256:" + createHash("sha256").update(raw).digest("hex"), sha256);
+    const notice = raw.subarray(0, Number(noticeEnd));
+    assert.ok(notice.equals(Buffer.from(file.completeOriginalAttribution)));
+    assert.equal("sha256:" + createHash("sha256").update(notice).digest("hex"), noticeSha256);
+    assert.equal(file.completeOriginalNotice, file.completeOriginalAttribution);
+    assert.match(file.completeOriginalNotice, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+  }
+});
+
 test("M39 llvm-config source reader retains fixed identity and complete original notice", async t => {
   t.diagnostic(`actual source-reader PID ${process.pid}`);
   const name = "llvm/tools/llvm-config/llvm-config.cpp";
@@ -23,7 +75,7 @@ test("M39 llvm-config source reader retains fixed identity and complete original
   assert.equal(result.intakeComplete, false);
   assert.equal(result.files.length, 1);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8148);
+  assert.equal(registration.lock.files.length, 8166);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8147))).digest("hex"),
     "sha256:4b72673f8c78e24e16e961b44b48b7766eebd5749e3ecb912388c6556fb9084c");
   const file = result.files[0];
@@ -55,7 +107,7 @@ test("M39 fixed X86 source reader retains declared license and original attribut
   assert.equal(result.sourceBuild, "not-run");
   assert.equal(result.files.length, 1);
   const registration = await readMlirLegalRegistration("build");
-  assert.equal(registration.lock.files.length, 8148);
+  assert.equal(registration.lock.files.length, 8166);
   assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8146))).digest("hex"),
     "sha256:89a0b879eaa69d89dda4bdbcbb8a0f3fa564c23ca7230d417e5855c687bba163");
   const file = result.files[0];
