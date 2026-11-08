@@ -138,9 +138,9 @@ header and is recorded under the complete LLVM project grant, with no invented
 SPDX, after the existing40 relevant ancestor checks. Original references to
 algorithms and factual documentation remain attributed. This supplement
 adds no license, source version, target, optional-library or Runtime role.
-The resulting6952-entry registration leaves exactly the copied-table path
-below unresolved in the SDK source-membership join, with no raw-hash mismatch.
-The SDK reader rejects it before reading the first external SDK body.
+That6952-entry supplement left the copied-table path unresolved in the source
+join; the reader then rejected it before the first external SDK body. The later
+finite registration below is distinct from complete SDK qualification.
 
 The M14 direct-source static configure exposed four mandatory templates:
 `llvm/include/module.modulemap.build`,
@@ -314,12 +314,12 @@ actual dependencies and equivalent retries, remain in force.
 
 [ECP2026-0007](proposals/2026-0007-development-source-qualification.md) moves the
 supplementary copied-table scope query to one consolidated pre-release review; it is not a recurring development HOLD
-or author-contact task. Keep its exact-policy coverage UNKNOWN and all original
-licenses, notices and provenance. `MCTargetDesc/X86InstComments.cpp` remains
-unregistered in the current reader; complete its fixed-source declared-license
-and notice mapping as implementation work, with targeted validation. No grant,
-registration or successful consumption is asserted by this documentation edit.
-Third-party source changes use the adopted fork; actual safety stops remain.
+or author-contact task. Its exact-policy coverage and Gist revision stay UNKNOWN.
+The8147-entry build registration now includes `MCTargetDesc/X86InstComments.cpp`
+with fixed-fork identity, the original Apache declaration and574+318 notice bytes.
+The actual reader checks source identity and both original attribution slices.
+M01 static selection and native/Runtime qualification limits remain. Third-party
+source changes use the adopted fork; actual safety stops remain.
 
 Shared TargetParser generation consumes some AArch64, ARM, PowerPC and RISCV
 TableGen inputs even with only the X86 backend enabled. Their exact discovered
@@ -439,16 +439,16 @@ The ten roots are `LLVMMCJIT`, `LLVMExecutionEngine`, `LLVMRuntimeDyld`,
 mandatory transitive dependencies may be closed under the adopted role;
 exact source, notice, generated-input, tool, CRT and link qualification remains
 required before consumption. Mere presence or add_subdirectory is not a new
-optional-root grant. The native five-target group lists 85 CPP; 84 have existing
-compiler-side-M01 license records, which do not themselves qualify this role.
+optional-root grant. The native five-target group lists85 CPP, now all recorded
+for compiler-side-M01; those records do not themselves qualify this role.
 ExecutionEngine links OrcTargetProcess and OrcShared even with ORC JIT disabled;
 this does not enable full ORC JIT. X86TargetMCA is not in the proved minimum.
 
-X86Desc unconditionally lists `MCTargetDesc/X86InstComments.cpp`, still absent
-from the current reader mapping. The 2026-11-08 Owner decision in accepted ECP2026-0007
-makes supplementary author-policy scope a pre-release follow-up, not a research
-permission gate. Preserve existing license/attribution records and complete
-the finite mapping under that decision; no message or new grant is recorded.
+X86Desc unconditionally lists `MCTargetDesc/X86InstComments.cpp`, now registered
+for compiler-side-M01 with fixed identity and original header/inline attribution.
+Accepted ECP2026-0007 keeps supplementary author-policy scope a pre-release
+follow-up; exact scope and Gist revision remain UNKNOWN. Native consumption
+qualification remains required; no message or new grant is recorded.
 Actual safety refusals and equivalent actions remain stopped; missing original
 call/argv/purpose retains genuine possible-overlap UNKNOWN/HOLD.
 RuntimeDyld is not automatically an external LLDGuest dependency.

@@ -168,6 +168,22 @@ export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, r
         if (digest(notice) !== file.noticeSha256 || !notice.equals(Buffer.from(file.completeOriginalAttribution)))
           reject(`Registered complete original attribution changed: ${file.path}`);
       } else if (!raw.equals(Buffer.from(file.completeOriginalNotice))) reject(`Complete legal material changed: ${file.path}`);
+      if (file.copiedMaterial !== undefined) {
+        const copied = file.copiedMaterial;
+        if (file.path !== "llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp" ||
+            !keys(copied, "sourceUrl,sourceFileBlob,gistRevision,policyScope,releaseReview,developmentDecision,supplementaryGrant,noticeStart,noticeEnd,noticeSha256,completeOriginalAttribution") ||
+            copied.sourceUrl !== "https://gist.github.com/dougallj/81a80cd381988466c4e1c4889ecac95b#file-2-x86-base-txt" ||
+            copied.sourceFileBlob !== file.blob || copied.gistRevision !== "UNKNOWN" || copied.policyScope !== "UNKNOWN" ||
+            copied.releaseReview !== "consolidated-pre-release" || copied.developmentDecision !== "ECP2026-0007" ||
+            copied.supplementaryGrant !== "UNKNOWN" || !/^\d+$/.test(copied.noticeStart) || !/^\d+$/.test(copied.noticeEnd) ||
+            !rawHash(copied.noticeSha256) || typeof copied.completeOriginalAttribution !== "string" ||
+            Number(copied.noticeStart) < Number(file.noticeEnd) || Number(copied.noticeEnd) > raw.length ||
+            Number(copied.noticeEnd) - Number(copied.noticeStart) !== Buffer.byteLength(copied.completeOriginalAttribution) ||
+            digest(raw.subarray(Number(copied.noticeStart), Number(copied.noticeEnd))) !== copied.noticeSha256 ||
+            !raw.subarray(Number(copied.noticeStart), Number(copied.noticeEnd)).equals(Buffer.from(copied.completeOriginalAttribution)) ||
+            file.completeOriginalNotice !== file.completeOriginalAttribution + copied.completeOriginalAttribution)
+          reject(`Registered copied-material attribution or development scope changed: ${file.path}`);
+      }
     }
     return { schemaVersion: "1", status: "selected-build-legal-inputs-verified", role: lock.role,
       sourceCommit: lock.sourceCommit, baseCommit: lock.baseCommit, registrationLockSha256: registrationHash,

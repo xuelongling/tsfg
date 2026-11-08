@@ -5,10 +5,84 @@ import test from "node:test";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { readMlirSourceLegalFiles } from "../../eng/mlir-source-legal.mjs";
+import { readMlirSourceBuildLegalInputs, readMlirSourceLegalFiles } from "../../eng/mlir-source-legal.mjs";
 import { selectMlirConfigurationPaths } from "../../eng/mlir-sdk-paths.mjs";
 import { readMlirLegalRegistration } from "../../eng/mlir-source-registration.mjs";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
+
+test("M39 fixed X86 source reader retains declared license and original attributions", async t => {
+  t.diagnostic(`actual source-reader PID ${process.pid}`);
+  const name = "llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp";
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: [name] });
+  assert.equal(result.status, "selected-build-legal-inputs-verified");
+  assert.equal(result.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
+  assert.equal(result.baseCommit, "fc4aad7b5db3fff421df9a9637605b9ca5667881");
+  assert.equal(result.intakeComplete, false);
+  assert.equal(result.sourceBuild, "not-run");
+  assert.equal(result.files.length, 1);
+  const registration = await readMlirLegalRegistration("build");
+  assert.equal(registration.lock.files.length, 8147);
+  assert.equal("sha256:" + createHash("sha256").update(JSON.stringify(registration.lock.files.slice(0, 8146))).digest("hex"),
+    "sha256:89a0b879eaa69d89dda4bdbcbb8a0f3fa564c23ca7230d417e5855c687bba163");
+  const file = result.files[0];
+  assert.deepEqual([file.path, file.mode, file.blob, file.sha256], [name, "100644",
+    "76731437931a74f405d37e57365c0df86e81f9f4",
+    "sha256:a4229a4f46ebea0949314e557aacebe05ba2566850b20e5e2631ef5c5e336e85"]);
+  assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+  assert.deepEqual(file.licenseMaterialPaths, ["llvm/LICENSE.TXT"]);
+  const raw = await readFile(path.join(process.env.TSFG_MLIR_SOURCE, name));
+  assert.equal(raw.length, 61437);
+  const hash = bytes => "sha256:" + createHash("sha256").update(bytes).digest("hex");
+  assert.equal(hash(raw), file.sha256);
+  assert.equal(file.noticeStart, "0");
+  assert.equal(file.noticeEnd, "574");
+  assert.equal(file.noticeSha256, "sha256:225f924c484b1fc72887210372ab563b14d791d1ee85121761f242ab78482389");
+  assert.ok(raw.subarray(0, 574).equals(Buffer.from(file.completeOriginalAttribution)));
+  assert.match(file.completeOriginalNotice, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+  const copied = file.copiedMaterial;
+  assert.equal(copied.sourceUrl, "https://gist.github.com/dougallj/81a80cd381988466c4e1c4889ecac95b#file-2-x86-base-txt");
+  assert.equal(copied.sourceFileBlob, file.blob);
+  assert.equal(copied.gistRevision, "UNKNOWN");
+  assert.equal(copied.policyScope, "UNKNOWN");
+  assert.equal(copied.releaseReview, "consolidated-pre-release");
+  assert.equal(copied.developmentDecision, "ECP2026-0007");
+  assert.equal(copied.supplementaryGrant, "UNKNOWN");
+  assert.equal(copied.noticeStart, "23042");
+  assert.equal(copied.noticeEnd, "23360");
+  assert.equal(copied.noticeSha256, "sha256:2d1f6042176f47540d12b99db2de8f78f9f1e3eb958d1f5dac7d1f43b4974b0e");
+  assert.ok(raw.subarray(23042, 23360).equals(Buffer.from(copied.completeOriginalAttribution)));
+  assert.equal(hash(Buffer.from(copied.completeOriginalAttribution)), copied.noticeSha256);
+  assert.match(copied.completeOriginalAttribution, /This table was taken from/);
+  assert.match(copied.completeOriginalAttribution, /with slight massaging\./);
+  assert.equal(file.completeOriginalNotice, file.completeOriginalAttribution + copied.completeOriginalAttribution);
+});
+
+test("M39 fixed X86 source reader refuses unknown input and Runtime role", async () => {
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: ["llvm/lib/Target/X86/MCTargetDesc/NotRegistered.cpp"] }),
+  /No qualified mandatory build input:/);
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: ["llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp"], role: "game-runtime" }),
+  /compiler-side M01 only/);
+});
+
+test("M39 fixed copied-material registration refuses changed identity grant and attribution", async () => {
+  const original = (await readMlirLegalRegistration("build")).lock;
+  for (const changed of ["identity", "grant", "attribution"]) {
+    const root = await createMlirFixture("mlir-x86-" + changed + "-");
+    for (const name of ["mlir-source-registration.mjs", "intake-ledger.mjs", "source-admission.mjs"])
+      await copyFile(new URL(`../../eng/${name}`, import.meta.url), path.join(root, name));
+    const lock = structuredClone(original);
+    const file = lock.files.at(-1);
+    if (changed === "identity") lock.sourceCommit = "0".repeat(40);
+    if (changed === "grant") file.copiedMaterial.supplementaryGrant = "MIT";
+    if (changed === "attribution") file.copiedMaterial.completeOriginalAttribution = "incomplete attribution";
+    await writeFile(path.join(root, "mlir-source-build-legal.lock.json"), `${JSON.stringify(lock)}\n`);
+    const isolated = await import(pathToFileURL(path.join(root, "mlir-source-registration.mjs")).href);
+    await assert.rejects(isolated.readMlirLegalRegistration("build"), { issueCode: "mlir-source-license" });
+  }
+});
 
 test("M14 pinned MPI transformation binds its original notice and refuses caller grants", async () => {
   const legal = await import("../../eng/mlir-source-legal.mjs");
@@ -107,7 +181,7 @@ test("M14 configured source presence binds the exact reviewed supplement without
   const hash = value => "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex");
   assert.equal(hash(lock.files.slice(0, 6956)), "sha256:a6fe96cc53e5da87ebab9347d554800e1b22623206e7a1fa6dd658a97876737c");
   assert.equal(hash(lock.licenseMaterials), "sha256:1362f33d6d0378ac7e10464f28c2d025e9332f12e8e7eabe7422921412ea1755");
-  const added = lock.files.slice(6956);
+  const added = lock.files.slice(6956, 8146);
   assert.equal(added.length, 1190);
   assert.equal(hash(lock.files.slice(0, 8145)), "sha256:9e0ada822845e0a3647dbc5df332f975cf2d2e4a2ea1183f7a033cf39675c3b4");
   assert.equal(hash(lock.files.slice(0, 8144)), "sha256:55e7288987a41e996e9e73779085bfe6f229d1182b1a1d2b9ec6bc2c772b4ef9");
@@ -157,7 +231,9 @@ test("M14 configured source presence binds the exact reviewed supplement without
   const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
   for (const name of ["llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp"]) {
     assert.ok(!visible.has(name));
-    await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined, paths: [name] }),
+    assert.ok(lock.files.some(file => file.path === name));
+    await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined,
+      paths: ["llvm/lib/Target/X86/MCTargetDesc/NotRegistered.cpp"] }),
       /No qualified mandatory build input:/);
   }
   await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined,
@@ -187,10 +263,10 @@ test("M18 normal Core mandatory AOT sources retain exact standard and project-gr
   await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
     git: process.env.TSFG_GIT, paths: ["llvm/lib/Target/AArch64/AArch64TargetMachine.cpp"] }),
   { issueCode: "mlir-source-license" });
-  // The copied table's source-specific grant remains unresolved.
-  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
-    git: process.env.TSFG_GIT, paths: ["llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp"] }),
-  { issueCode: "mlir-source-license" });
+  const { lock } = await readMlirLegalRegistration("build");
+  const copied = lock.files.find(file => file.path === "llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp");
+  assert.equal(copied.copiedMaterial.policyScope, "UNKNOWN");
+  assert.equal(copied.copiedMaterial.releaseReview, "consolidated-pre-release");
 });
 
 test("M05 mandatory control flow source registration retains exact fixed-source original terms", async () => {
