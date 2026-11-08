@@ -315,8 +315,8 @@ actual dependencies and equivalent retries, remain in force.
 [ECP2026-0007](proposals/2026-0007-development-source-qualification.md) moves the
 supplementary copied-table scope query to one consolidated pre-release review; it is not a recurring development HOLD
 or author-contact task. Its exact-policy coverage and Gist revision stay UNKNOWN.
-The8147-entry build registration now includes `MCTargetDesc/X86InstComments.cpp`
-with fixed-fork identity, the original Apache declaration and574+318 notice bytes.
+The build registration includes `MCTargetDesc/X86InstComments.cpp`
+with fixed-fork identity, the original Apache declaration and 574+318 notice bytes.
 The actual reader checks source identity and both original attribution slices.
 M01 static selection and native/Runtime qualification limits remain. Third-party
 source changes use the adopted fork; actual safety stops remain.
