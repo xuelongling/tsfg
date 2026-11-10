@@ -64,7 +64,7 @@ if(TSFG_CORE_BUILD_ROLE STREQUAL "gpu-function-resource-ir")
   option(TSFG_BUILD_SOFTWARE_VULKAN_CONSUMER "Build the separate external software-device acceptance library" OFF)
   if(TSFG_BUILD_SOFTWARE_VULKAN_CONSUMER)
     # The caller owns the prospective input declaration and fixed Khronos
-    # Headers qualification. The normal 858-member IR build leaves this off.
+    # Headers qualification. The ordinary IR build leaves this off.
     if(NOT TSFG_GPU_SOFTWARE_HEADERS_INCLUDE_DIRECTORY OR
        NOT EXISTS "${TSFG_GPU_SOFTWARE_HEADERS_INCLUDE_DIRECTORY}/vulkan/vulkan_core.h")
       message(FATAL_ERROR "Software Vulkan consumer requires qualified fixed Khronos Headers")
