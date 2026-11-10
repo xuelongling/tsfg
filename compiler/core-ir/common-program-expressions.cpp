@@ -26,9 +26,14 @@ bool assignment(SourceModel &m,const std::string &from,const std::string &to){
 bool literal(SourceSyntax &source,const Json &v){
   auto &m=source.model;const auto kind=string(field(v,"kind")),type=string(field(v,"type"));
   if(kind=="numericLiteral"){
-    const auto token=string(field(v,"token"));if(!source.sequence(field(v,"range"),{Json(token)}))return false;
+    const auto token=string(field(v,"token"));const auto &range=field(v,"range");
+    const bool floating=type=="f32"||type=="f64";
+    const auto spelling=llvm::StringRef(token);
+    if(!floating&&spelling.starts_with("-")){
+      if(!source.sequence(range,{Json("-"),Json(spelling.drop_front())}))return false;
+    }else if(!source.sequence(range,{Json(token)}))return false;
     std::string digits;for(char c:token)if(c!='_')digits+=c;
-    if(type=="f32"||type=="f64"){
+    if(floating){
       llvm::APFloat number(type=="f32"?llvm::APFloat::IEEEsingle():llvm::APFloat::IEEEdouble());
       auto status=number.convertFromString(digits,llvm::APFloat::rmNearestTiesToEven);
       if(!status){llvm::consumeError(status.takeError());return m.need(false,"original floating literal differs");}
@@ -36,7 +41,9 @@ bool literal(SourceSyntax &source,const Json &v){
       hex.insert(0,(type=="f32"?8:16)-hex.size(),'0');return m.need(hex==string(field(v,"bits")),"exact original floating bits differ");
     }
     auto magnitude=llvm::StringRef(digits);const bool negative=magnitude.consume_front("-");
-    llvm::APInt number;if(!m.need(scalar(m,type)&&type!="bool"&&!magnitude.getAsInteger(0,number),"original integer literal differs"))return false;
+    const unsigned radix=magnitude.consume_front_insensitive("0x")?16:
+      magnitude.consume_front_insensitive("0b")?2:magnitude.consume_front_insensitive("0o")?8:10;
+    llvm::APInt number;if(!m.need(scalar(m,type)&&type!="bool"&&!magnitude.getAsInteger(radix,number),"original integer literal differs"))return false;
     const unsigned width=(type=="isize"||type=="usize"||type=="i64"||type=="u64")?64:type=="i32"||type=="u32"?32:type=="i16"||type=="u16"?16:8;
     llvm::SmallString<80> out;number.toString(out,10,false,false);const bool belowZero=negative&&!number.isZero(),signedType=type.front()=='i';
     const bool inRange=belowZero?signedType&&(number.getActiveBits()<width||number.getActiveBits()==width&&number.isPowerOf2()):

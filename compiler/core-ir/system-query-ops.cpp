@@ -41,7 +41,9 @@ struct Check {
   }
   mlir::Value arithmetic(mlir::Block::iterator &it,mlir::Block &block,llvm::StringRef name,mlir::Value left,mlir::Value right,const Json &value){
     auto *op=take(it,block,name,{left,right},1);if(!op)return {};
-    const auto &r=field(value,"operatorRange");if(!scalar(op->getResult(0).getType(),value)||!need(left.getType()==op->getResult(0).getType()&&right.getType()==left.getType(),"floating-point arithmetic operand/result widths differ")||
+    const auto type=op->getResult(0).getType();
+    const bool typed=string(field(value,"type"))=="i32"?need(type.isSignlessInteger(32)&&name=="tsfg_core.add","original i32 add type differs"):scalar(type,value);
+    const auto &r=field(value,"operatorRange");if(!typed||!need(left.getType()==type&&right.getType()==type,"arithmetic operand/result types differ")||
       !attrs(op,{"operator_start","operator_end","tsfg_source.start","tsfg_source.end"})||!anchor(op,field(value,"range"))||!integer(op,"operator_start",number(field(r,"start")))||!integer(op,"operator_end",number(field(r,"end"))))return {};return op->getResult(0);
   }
   mlir::Value expression(mlir::Block::iterator &it,mlir::Block &block,const Json &value,std::map<std::string,Binding> &bindings,unsigned depth=0){
@@ -49,7 +51,12 @@ struct Check {
     const auto kind=string(field(value,"kind"));
     if(kind=="bindingReference")return bindings.at(string(field(value,"binding"))).value;
     if(kind=="numericLiteral"){
-      auto *op=take(it,block,"tsfg_core.constant",{},1);if(!op||!scalar(op->getResult(0).getType(),value)||!attrs(op,{"value","tsfg_source.start","tsfg_source.end"})||!anchor(op,field(value,"range"))||!text(op,"value",string(field(value,"bits"))))return {};
+      auto *op=take(it,block,"tsfg_core.constant",{},1);if(!op||!attrs(op,{"value","tsfg_source.start","tsfg_source.end"})||!anchor(op,field(value,"range")))return {};
+      const auto type=op->getResult(0).getType();
+      if(string(field(value,"type"))=="i32"){
+        int64_t decimal=0;
+        if(!need(type.isSignlessInteger(32)&&!llvm::StringRef(string(field(value,"decimal"))).getAsInteger(10,decimal),"original i32 literal type/decimal differs")||!integer(op,"value",decimal,32))return {};
+      }else if(!scalar(type,value)||!text(op,"value",string(field(value,"bits"))))return {};
       return op->getResult(0);
     }
     if(kind=="parentheses")return expression(it,block,field(value,"expression"),bindings,depth+1);

@@ -34,7 +34,10 @@ export function emitSystemQueryCore(facts,context){
       return name?{name,type,semantic:value.type,binding:''}:null;
     };
     if(value.kind==='bindingReference')return bindings.get(value.binding);
-    if(value.kind==='numericLiteral')return emit('tsfg_core.constant',[],value.sourceType,'value = '+quote(value.bits),value.range);
+    if(value.kind==='numericLiteral'){
+      const literal=value.sourceType==='i32'?value.decimal+' : i32':quote(value.bits);
+      return emit('tsfg_core.constant',[],value.sourceType,'value = '+literal,value.range);
+    }
     if(value.kind==='parentheses')return expression(value.expression,bindings,owner,indent);
     if(value.kind==='call'){
       const helper=facts.scalarHelpers.find(helper=>helper.id===value.callee);

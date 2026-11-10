@@ -276,3 +276,109 @@ test('actual C++ i32 conflict comes from shared Write destination, not shared Re
   for(const conflicts of [[],[{...conflict,components:[sharedSource.typeId]}]])
     assert.throws(()=>readSystemQueryEffects(Buffer.from(canonical({...effects,conflicts})+'\n'),conflictFacts,conflictContext),TypeError);
 });
+
+const additionFixture=new URL('./testdata/system-query-i32-addition/',import.meta.url);
+const additionPins={
+  'source.ts':'d5bdb6679b7668844b4085dc87be666d9074f2b52b6b2726ced49bbbd4d5d9d5',
+  'request.json':'e96cdbe7d6c78b06b15d0dc4793b81616edcb53de27ce9fd7ca28a4ed369fb22',
+  'official-oracle.json':'56136fd9c543935557c241c1bbb1ddd0848933097f54f9431348186f259a80f0',
+  'package.json':'bd7c61229a118e33bf88b7fc69a798f07c7cde0c4adfb7916b4c7baa4d727657',
+};
+const additionOriginal=Object.fromEntries(Object.keys(additionPins).map(name=>[name,readFileSync(new URL(name,additionFixture))]));
+/** @type {typeof import('./testdata/system-query-i32-addition/package.json')} */
+const additionPacket=JSON.parse(additionOriginal['package.json'].toString('utf8'));
+/** @type {typeof import('./testdata/system-query-i32-addition/official-oracle.json')} */
+const additionOracle=JSON.parse(additionOriginal['official-oracle.json'].toString('utf8'));
+const additionContext={family:'tsfg.system-query-context-candidate',version:6,requestBytes:additionOriginal['request.json'],expectedPackageId:additionPacket.packageId};
+const additionFacts=readSystemQueryFacts(additionOriginal['package.json'],additionContext);
+const additionCore=emitSystemQueryCore(additionFacts,additionContext);
+
+test('genuine i32 field addition retains the v6 packet and original typed Core dataflow',()=>{
+  for(const [name,hash] of Object.entries(additionPins))assert.equal(sha256(additionOriginal[name]),'sha256:'+hash,name);
+  const source=additionOriginal['source.ts'].toString('utf8'),original=additionOracle.addition;
+  assert.equal(additionOracle.sourceSha256,additionPins['source.ts']);
+  assert.deepEqual(additionOracle.sourceRange,{start:0,end:source.length});
+  assert.deepEqual(printSystemQueryFacts(additionFacts,additionContext),additionOriginal['package.json']);
+  assert.deepEqual(additionFacts.program,additionPacket.payload.program);
+  assert.deepEqual(additionFacts.nodes,additionPacket.payload.nodes);
+  assert.equal(additionFacts.program.files.find(file=>file.path==='/src/main.ts').content,source);
+  const owned=additionFacts.systems[0];
+  assert.equal(owned.declaration.id,additionOracle.systemId);
+  const loop=owned.loops[0],assignment=loop.statements[0].value;
+  assert.equal(loop.queryBinding,additionOracle.queryBinding);
+  assert.deepEqual(loop.bindings.map(binding=>[binding.mode,binding.declaration.id]),additionOracle.fields.map(field=>[field.mode,field.bindingId]));
+  assert.ok(assignment?.target&&assignment.value?.left&&assignment.value?.right);
+  const {target,value:addition}=assignment,{left,right}=addition;
+  assert.equal(assignment.operator,'=');
+  assert.deepEqual(assignment.range,additionOracle.expression);
+  assert.deepEqual([target.sourceField,left.sourceField],additionOracle.fields.map(field=>field.fieldId));
+  assert.deepEqual([target.range,left.range],additionOracle.fields.map(field=>field.access));
+  assert.deepEqual([addition.operator,addition.sourceType,addition.range,addition.operatorRange],['+','i32',original.range,original.operator]);
+  assert.deepEqual([right.kind,right.type,right.token,right.decimal,right.range],['numericLiteral',scalarTypeIds.i32,original.token,original.decimal,original.literal]);
+  assert.equal(source.slice(original.literal.start,original.literal.end),'1');
+  const rows=additionCore.split('\n');
+  const load=rows.find(line=>line.includes('"tsfg.field_load"'));
+  const literal=rows.find(line=>line.includes('"tsfg_core.constant"'));
+  const add=rows.find(line=>line.includes('"tsfg_core.add"'));
+  const store=rows.find(line=>line.includes('"tsfg.field_store"'));
+  assert.ok(load&&literal&&add&&store);
+  const loaded=load.match(/(%\w+) = /),constant=literal.match(/(%\w+) = /),result=add.match(/(%\w+) = /);
+  assert.ok(loaded&&constant&&result);
+  assert.match(literal,/value = 1 : i32.*-> i32$/);
+  assert.ok(add.includes('"tsfg_core.add"('+loaded[1]+', '+constant[1]+')'));
+  assert.match(add,/\(i32, i32\) -> i32$/);
+  assert.ok(store.includes(', '+result[1]+')'));
+  assert.ok(hasAnchor(load,additionOracle.fields[1].access)&&hasAnchor(literal,original.literal)&&hasAnchor(add,original.range)&&hasAnchor(store,additionOracle.expression));
+  assert.ok(add.includes('operator_start = '+original.operator.start+' : i64')&&add.includes('operator_end = '+original.operator.end+' : i64'));
+});
+
+test('i32 field addition rejects forged literal, operator and write permission',()=>{
+  /** @type {Array<(value:typeof additionPacket.payload)=>void>} */
+  const corruptions=[
+    payload=>{payload.systems[0].loops[0].statements[0].value.value.right.decimal='2';},
+    payload=>{payload.systems[0].loops[0].statements[0].value.value.operator='-';},
+    payload=>{payload.systems[0].loops[0].bindings[0].mode='read';},
+  ];
+  for(const corrupt of corruptions){
+    const changed=structuredClone(additionPacket);
+    corrupt(changed.payload);
+    changed.packageId=sha256('tsfg.system-query.package.v6\0'+changed.schemaHash+'\0'+canonical(changed.payload));
+    assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(changed)+'\n'),{...additionContext,expectedPackageId:changed.packageId}),TypeError);
+  }
+});
+
+test('real C++ i32 field addition preserves bound layouts, effects, and wrapping LLVM SSA',{skip},()=>{
+  const bound=run('addition-bound',additionCore);
+  assert.equal(run('addition-bound-cold',bound),bound);
+  const batch=run('addition-batch',bound,'--cpu-batch');
+  assert.equal(run('addition-batch-cold',batch),batch);
+  const load=batch.split('\n').find(line=>line.includes('"memref.load"'));
+  const add=batch.split('\n').find(line=>line.includes('"arith.addi"')&&line.endsWith('-> i32'));
+  const store=batch.split('\n').find(line=>line.includes('"memref.store"'));
+  assert.ok(load&&add&&store);
+  assert.match(load,/-> i32$/);
+  assert.ok(load.includes('tsfg.batch.offset = 0 : i64')&&store.includes('tsfg.batch.offset = 4 : i64'));
+  assert.ok(hasAnchor(add,additionOracle.addition.range)&&hasAnchor(load,additionOracle.fields[1].access)&&hasAnchor(store,additionOracle.expression));
+  const effects=readSystemQueryEffects(Buffer.from(run('addition-effects',bound,'--effects')),additionFacts,additionContext);
+  assert.deepEqual(effects.conflicts,[]);
+  assert.deepEqual(effects.systems[0].loops[0].operations.map(row=>[row.kind,row.sourceField,row.source]),[
+    ['read',additionOracle.fields[1].fieldId,{path:'/src/main.ts',...additionOracle.fields[1].access}],
+    ['write',additionOracle.fields[0].fieldId,{path:'/src/main.ts',...additionOracle.expression}],
+  ]);
+  const dialect=run('addition-llvm-dialect',batch,'--cpu-llvm');
+  assert.equal(run('addition-llvm-dialect-cold',dialect),dialect);
+  const ir=run('addition-llvm-ir',dialect,'--llvm-ir');
+  assert.equal(run('addition-llvm-ir-cold',ir,'--canonicalize-llvm-ir'),ir);
+  const code=ir.split('\n!')[0],loaded=code.match(/(%[\w.]+) = load i32,/),summed=code.match(/(%[\w.]+) = add i32 (%[\w.]+), 1(?:\s|$)/);
+  assert.ok(loaded&&summed);
+  assert.equal(summed[2],loaded[1]);
+  assert.match(code,new RegExp('store i32 '+summed[1].replaceAll('.','\\.')+','));
+  assert.equal((code.match(/\badd i32\b/g)??[]).length,1);
+  assert.doesNotMatch(code,/\badd (?:nsw|nuw)\b[^\n]* i32\b/);
+  const badLiteral=bound.replace(/("tsfg_core\.constant"\(\) \{[^\n]*value = )1 : i32/,(_,prefix)=>prefix+'2 : i32');
+  const badAdd=ir.replace(' = add i32 '+loaded[1]+', 1',' = add nsw i32 '+loaded[1]+', 1');
+  assert.notEqual(badLiteral,bound);
+  assert.notEqual(badAdd,ir);
+  run('addition-wrong-core-literal',badLiteral,'--canonicalize',3);
+  run('addition-forged-llvm-wrap-flag',badAdd,'--canonicalize-llvm-ir',3);
+});

@@ -23,9 +23,12 @@ The existing native f32/f64 Core arithmetic operations implement `+`, `-`, `*` a
 then applies its original operation and stores. Source statement and operand order remain explicit SSA
 dependencies. No component objects or boxed field values are constructed.
 Same-type i32 field `=` copies use those typed load/store operations directly;
-they introduce no numeric conversion or arithmetic. i32 literals, arithmetic,
-compound assignments, locals and scalar helper parameters/results remain outside
-this capability.
+they introduce no numeric conversion or arithmetic. A simple i32 field
+assignment also accepts a direct i32 field plus an exact signed i32 integer
+literal. The literal becomes a typed i32 constant. The add wraps at 32 bits and
+feeds the destination store. Standalone i32 literals, other i32 arithmetic,
+compound assignments, locals and scalar helper parameters/results remain
+outside this capability.
 
 Reachable f32/f64-result helpers become real func.func definitions with native f32/f64 or component-view parameters and typed func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 3; the Core/common wire contract remains unchanged.
 
@@ -34,8 +37,8 @@ result. A let assignment updates that mapping in Source order; compound local
 assignment captures the previous SSA value before evaluating its RHS. A snapshot
 of a column keeps the earlier loaded value after a subsequent column write.
 Reading a local emits neither a new load nor a repeated helper call. Owned
-numeric literals use the existing `tsfg_core.constant` exact-bits representation
-and lower to standard `arith.constant` in the batch route. This adds no public
+numeric literals use the existing `tsfg_core.constant` with exact floating bits
+or an i32 integer attribute and lower to standard `arith.constant` in the batch route. This adds no public
 runtime parameter or metadata format; Query Core/effects remain version 3 and
 Query tmeta remains version 2.
 

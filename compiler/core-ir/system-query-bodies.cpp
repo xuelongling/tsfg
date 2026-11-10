@@ -13,6 +13,8 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   auto &g=grammar(path);const auto astKind=kind=="numericLiteral"?(llvm::StringRef(string(field(value,"token"))).starts_with("-")?"KindPrefixUnaryExpression":"KindNumericLiteral"):kind=="bindingReference"||kind=="bindingTarget"?"KindIdentifier":kind=="fieldAccess"||kind=="fieldTarget"?"KindPropertyAccessExpression":kind=="call"?"KindCallExpression":kind=="parentheses"?"KindParenthesizedExpression":"KindBinaryExpression";
   if(!at(path,r,astKind))return false;
   if(kind=="numericLiteral"){
+    if(expected=="i32")
+      return need(type=="i32"&&field(value,"bits").getAsNull(),"exact i32 addition literal required")&&verifySourceLiteral(g,value);
     const auto token=string(field(value,"token"));const auto inferred=token.find_first_of(".eE")!=std::string::npos&&token.find_first_of("xX")==std::string::npos?"f64":"i32";
     if(!need((type=="f32"||type=="f64")&&type==(expected.empty()?inferred:expected),"Query literal original contextual/default width differs")||!verifySourceLiteral(g,value))return false;
     const llvm::APInt bits(type=="f32"?32:64,string(field(value,"bits")),16);
@@ -64,13 +66,21 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   }
   if(kind=="binary"){
     const auto op=string(field(value,"operator"));const auto &left=field(value,"left"),&right=field(value,"right");
-    return need((type=="f32"||type=="f64")&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"+","-","*","/"},op)&&string(field(left,"type"))==type&&string(field(right,"type"))==type,"owned same-width floating-point arithmetic required")&&
-      expression(left,body,scope,path,depth+1,expected)&&expression(right,body,scope,path,depth+1,expected.empty()?string(field(left,"type")):expected)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(left,"range"),field(value,"operatorRange"),field(right,"range")});
+    const bool i32Addition=expected=="i32"&&type=="i32"&&op=="+"&&
+      string(field(left,"kind"))=="fieldAccess"&&string(field(right,"kind"))=="numericLiteral";
+    const bool floating=(type=="f32"||type=="f64")&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"+","-","*","/"},op);
+    return need((floating||i32Addition)&&string(field(left,"type"))==type&&string(field(right,"type"))==type,"owned same-type floating-point arithmetic or direct i32 field addition required")&&
+      expression(left,body,scope,path,depth+1,expected)&&
+      expression(right,body,scope,path,depth+1,expected.empty()?string(field(left,"type")):expected)&&
+      g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(left,"range"),field(value,"operatorRange"),field(right,"range")});
   }
   if(kind=="fieldAssignment"||kind=="bindingAssignment"){
     const auto op=string(field(value,"operator"));const auto &target=field(value,"target"),&rhs=field(value,"value");
+    // Only a direct binary RHS receives the i32 context. A standalone or
+    // parenthesized literal follows the pre-existing expression rules.
+    const auto rhsContext=type=="i32"&&string(field(rhs,"kind"))!="binary"?std::string{}:type;
     return need((type=="f32"||type=="f64"||(type=="i32"&&kind=="fieldAssignment"&&op=="="))&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))==(kind=="fieldAssignment"?"fieldTarget":"bindingTarget")&&string(field(target,"type"))==type&&string(field(rhs,"type"))==type,"owned same-type floating-point assignment or simple i32 field copy required")&&
-      expression(target,body,scope,path,depth+1)&&expression(rhs,body,scope,path,depth+1,type)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(target,"range"),field(value,"operatorRange"),field(rhs,"range")});
+      expression(target,body,scope,path,depth+1)&&expression(rhs,body,scope,path,depth+1,rhsContext)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(target,"range"),field(value,"operatorRange"),field(rhs,"range")});
   }
   return need(false,"Query expression has no selected typed representation");
 }

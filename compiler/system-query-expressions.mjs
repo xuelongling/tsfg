@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {sourceRange} from './typed-array-schema.mjs';
-import {canonical} from './identity.mjs';
+import {canonical,integerRange} from './identity.mjs';
 import {floatBits} from './float.mjs';
+import {typedArrayInteger} from './typed-array-literals.mjs';
 
 /** Project only inert syntax around an already owned expression.
  * @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} value
@@ -16,8 +17,8 @@ export function queryViewBinding(value){
 // Scope entries carry the original binding, component and permission; a type
 // identity alone never grants a writable view.
 export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fields,call,proof,spend,fail}){
-  /** @param {import('./system-query-facts.mjs').CheckedArrayExpression} value @param {'read'|'write'|'readwrite'} [access] @returns {import('./system-query-facts.mjs').SystemQueryLoopExpression} */
-  function expression(value,access='read',depth=0,expected=null){
+  /** @param {import('./system-query-facts.mjs').CheckedArrayExpression} value @param {'read'|'write'|'readwrite'} [access] @param {'assignment-rhs'|'addition-literal'|null} [i32Position] @returns {import('./system-query-facts.mjs').SystemQueryLoopExpression} */
+  function expression(value,access='read',depth=0,expected=null,i32Position=null){
     spend();if(depth>=32)fail('Query expression path exceeds32','capability');
     sourceRange(value.range,grammar.text,bodyRange);
     const target=value.kind==='fieldTarget'||value.kind==='bindingTarget';
@@ -26,6 +27,14 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
     const originalKind=value.kind==='numericLiteral'?(value.token.startsWith('-')?'KindPrefixUnaryExpression':'KindNumericLiteral'):['bindingReference','bindingTarget'].includes(value.kind)?'KindIdentifier':value.kind==='fieldAccess'||value.kind==='fieldTarget'?'KindPropertyAccessExpression':value.kind==='call'?'KindCallExpression':value.kind==='parentheses'?'KindParenthesizedExpression':'KindBinaryExpression';
     if(!ast.nodes.some(node=>node.sourcePath===grammar.source.path&&node.kind===originalKind&&canonical(node.range)===canonical(value.range)))fail('original Query expression AST differs','source');
     if(value.kind==='numericLiteral'){
+      if(i32Position==='addition-literal'){
+        const integerSpelling=/^-?(?:[0-9][0-9_]*|0[xXbBoO].+)$/;
+        if(value.type!=='i32'||value.bits!==undefined||!integerSpelling.test(value.token))
+          fail('exact i32 addition literal required','type');
+        const integer=typedArrayInteger(value.token),[min,max]=integerRange('i32');
+        if(integer<min||integer>max||integer.toString()!==value.decimal)fail('original i32 literal decimal/range differs','type');
+        grammar.sequence(value.range,[value.token]);return {...base,kind:'numericLiteral',token:value.token,decimal:value.decimal};
+      }
       const inferred=/[.eE]/.test(value.token)&&!/[xX]/.test(value.token)?'f64':'i32';
       if(value.type!==(expected??inferred)||!['f32','f64'].includes(value.type)||floatBits(value.token,value.type)!==value.bits)fail('original floating literal context/bits differ','type');
       grammar.sequence(value.range,[value.token]);return {...base,kind:'numericLiteral',token:value.token,bits:value.bits};
@@ -59,15 +68,17 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
       return {...base,kind:target?'fieldTarget':'fieldAccess',receiver,property:field.fieldId,sourceField:field.sourceField,nameRange:{...value.nameRange},access:target?access:'read'};
     }
     if(value.kind==='binary'){
-      if(!['+','-','*','/'].includes(value.operator)||!['f32','f64'].includes(value.type))fail('owned floating-point binary operator required','capability');
-      const left=expression(value.left,'read',depth+1,expected),right=expression(value.right,'read',depth+1,expected??left.sourceType);
-      if(left.sourceType!==value.type||right.sourceType!==value.type)fail('original floating-point operand widths differ','type');
+      const i32Addition=i32Position==='assignment-rhs'&&value.type==='i32'&&value.operator==='+'&&value.left.kind==='fieldAccess'&&value.right.kind==='numericLiteral';
+      if(!i32Addition&&(!['+','-','*','/'].includes(value.operator)||!['f32','f64'].includes(value.type)))fail('owned floating-point binary operator or direct i32 field addition required','capability');
+      const left=expression(value.left,'read',depth+1,expected),right=expression(value.right,'read',depth+1,expected??left.sourceType,i32Addition?'addition-literal':null);
+      if(left.sourceType!==value.type||right.sourceType!==value.type)fail('original arithmetic operand types differ','type');
       grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.left.range,value.operatorRange,value.right.range]);
       return {...base,kind:'binary',operator:value.operator,operatorRange:{...value.operatorRange},left,right};
     }
     if(value.kind==='fieldAssignment'||value.kind==='bindingAssignment'){
       if(!['=','+=','-=','*=','/='].includes(value.operator)||!(['f32','f64'].includes(value.type)||value.type==='i32'&&value.kind==='fieldAssignment'&&value.operator==='=')||value.target.kind!==(value.kind==='fieldAssignment'?'fieldTarget':'bindingTarget'))fail('owned floating-point assignment or simple i32 field copy required','capability');
-      const target=expression(value.target,value.operator==='='?'write':'readwrite',depth+1),assigned=expression(value.value,'read',depth+1,target.sourceType);
+      const target=expression(value.target,value.operator==='='?'write':'readwrite',depth+1);
+      const assigned=expression(value.value,'read',depth+1,target.sourceType,value.type==='i32'?'assignment-rhs':null);
       if(target.sourceType!==value.type||assigned.sourceType!==value.type)fail('original assignment types differ','type');
       grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.target.range,value.operatorRange,value.value.range]);
       return {...base,kind:value.kind,operator:value.operator,operatorRange:{...value.operatorRange},target,value:assigned};

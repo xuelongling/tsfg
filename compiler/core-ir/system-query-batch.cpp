@@ -45,10 +45,14 @@ struct Batch {
       if(name=="tsfg.view_borrow"){views[op.getResult(0)]=views.find(op.getOperand(0))->second;continue;}
       mlir::Operation *lowered=nullptr;
       if(name=="tsfg_core.constant"){
-        auto type=llvm::cast<mlir::FloatType>(op.getResult(0).getType());
-        const llvm::APInt bits(type.getWidth(),text(&op,"value"),16);
-        const llvm::APFloat value(type.getWidth()==32?llvm::APFloat::IEEEsingle():llvm::APFloat::IEEEdouble(),bits);
-        auto constant=b.create<mlir::arith::ConstantOp>(loc,type,b.getFloatAttr(type,value));values[op.getResult(0)]=constant;lowered=constant;
+        const auto type=op.getResult(0).getType();mlir::TypedAttr value;
+        if(type.isSignlessInteger(32))value=op.getAttrOfType<mlir::IntegerAttr>("value");
+        else{
+          const auto width=llvm::cast<mlir::FloatType>(type).getWidth();
+          const llvm::APInt bits(width,text(&op,"value"),16);
+          value=b.getFloatAttr(type,llvm::APFloat(width==32?llvm::APFloat::IEEEsingle():llvm::APFloat::IEEEdouble(),bits));
+        }
+        auto constant=b.create<mlir::arith::ConstantOp>(loc,type,value);values[op.getResult(0)]=constant;lowered=constant;
       }else if(name=="func.call"){
         std::vector<mlir::Value> args;
         for(auto arg:op.getOperands())if(auto it=views.find(arg);it!=views.end()){args.push_back(it->second.buffer);args.push_back(it->second.base);}else args.push_back(values.find(arg)->second);
@@ -69,7 +73,8 @@ struct Batch {
       }else{
         const auto left=values.find(op.getOperand(0))->second,right=values.find(op.getOperand(1))->second;mlir::Value result;
         // No fast-math flags, contraction or reassociation are introduced.
-        if(name=="tsfg_core.add")result=b.create<mlir::arith::AddFOp>(loc,left,right);
+        if(name=="tsfg_core.add"&&left.getType().isSignlessInteger(32))result=b.create<mlir::arith::AddIOp>(loc,left,right);
+        else if(name=="tsfg_core.add")result=b.create<mlir::arith::AddFOp>(loc,left,right);
         else if(name=="tsfg_core.sub")result=b.create<mlir::arith::SubFOp>(loc,left,right);
         else if(name=="tsfg_core.mul")result=b.create<mlir::arith::MulFOp>(loc,left,right);
         else if(name=="tsfg_core.div")result=b.create<mlir::arith::DivFOp>(loc,left,right);
