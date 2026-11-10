@@ -136,11 +136,95 @@ const fixturePins=[
       "affdd7a4149ff82005e31598cea7756d18fc244f3474f21541854b61d5b09ec4"
     ]
   }
+,
+{
+  "name": "value-loop-copy",
+  "target": "valueLoopCopy",
+  "pins": [
+    "b4211f9bffd6ef3f4c208842c2f753bb37ec666328b681a84b5cac838c0da35b",
+    "d22e18af011dfb838a79695941bb3f168f9f8aba45562e3bf3e937e0af0ddf3f",
+    "5812345fd0b3dfcc6c4ad2de5e11e4925e8d21a2d628d9771c45413eee531e9f"
+  ]
+},
+{
+  "name": "value-loop-receiver",
+  "target": "valueLoopReceiver",
+  "pins": [
+    "5f647f29886d2469f82db55394a33fe02a88f6f92d5b6643db939a284c977ba0",
+    "44bba394485afbf80ecc7a5bb7f1a4427310ec6c1138f2b92abddb67b3480aa4",
+    "5c246396f3b8b5cd382a6f886cb6e359efd0e7adabdfca3fd50eb03c0448bab8"
+  ]
+},
+{
+  "name": "nested-loop-copy",
+  "target": "nestedLoopCopy",
+  "pins": [
+    "8ecfac4d35c87fc40149c0fad385ca1d8c8ec9b1c484a9b79b1a64d12e4cb425",
+    "c790d8302cc9687917634b56b229c8aa50975d4fbb98b1bbdd2c26a45ad5750c",
+    "a2821ddc029e4895f758df5159868caf74040e32abee08267559f4b07601c302"
+  ]
+},
+{
+  "name": "value-loop-call",
+  "target": "valueLoopCall",
+  "pins": [
+    "07e93daacc8607786fd03e49a5e24ba184a90e42ee6da7be79b12d97d8de9ade",
+    "0f07161044000e22a562d0bbf8892384dd81c4b4d25b9719b11fbfa09704df8e",
+    "328bedd2a6be960b66badf7f57371ced6bc74705bd00851dbba82a46c10e811e"
+  ]
+}
 ];
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const reports=process.env.TSFG_VALUE_LLVM_REPORT_ROOT;
 const coreRoot=process.env.TSFG_VALUE_LLVM_CORE_ROOT;
 const reportIndex=reports?JSON.parse(await fs.readFile(path.join(reports,'index.json'),'utf8')):null;
+test('actual typed return-origin certificates retain unknown, callee, field, copy and receiver boundaries',
+  {skip:reports?false:'TSFG_VALUE_LLVM_REPORT_ROOT is not supplied'},async()=>{
+    const directory=reportIndex.originCertificates,observed=JSON.parse(await fs.readFile(path.join(directory,'observed.json'),'utf8'));
+    assert.equal(observed.qualified,true);assert.deepEqual(observed.first,[]);assert.equal(observed.exit.code,0);assert.equal(observed.close.code,0);
+    const control=JSON.parse(await fs.readFile(path.join(directory,'raw/stdout.bin'),'utf8'));assert.equal(control.passed,true);assert.equal(control.SourceProducer,false);assert.equal(control.executionAuthority,false);
+    assert.equal(control.controls.length,8);assert.ok(control.controls.every(row=>row.passed&&row.work>0&&row.work<=200000));
+  });
+function receiverOrder(graph){
+  const nodes=new Map(graph.instructions.map(row=>[row.id,row])),blocks=new Map(graph.blocks.map(row=>[row.id,row]));
+  const dominates=(a,b)=>a.block===b.block?a.id<b.id:blocks.get(b.block).dominators.includes(a.block);
+  const calls=graph.instructions.filter(row=>row.callee);assert.equal(calls.length,1);const call=calls[0];
+  const fromCall=(id,seen=new Set())=>{if(id===call.id)return true;if(seen.has(id))return false;seen.add(id);return (nodes.get(id)?.incoming??[]).some(next=>fromCall(next,seen));};
+  const stores=graph.instructions.filter(row=>row.kind==='store'&&nodes.get(row.pointer)?.kind==='getelementptr'&&fromCall(row.value));assert.equal(stores.length,1);
+  const written=stores[0],pointer=nodes.get(written.pointer),receiver=nodes.get(pointer.pointer);assert.equal(receiver.kind,'load');assert.equal(receiver.pointerResult,true);
+  const rebound=graph.instructions.filter(row=>row.kind==='store'&&row.pointer===receiver.pointer&&nodes.get(row.value)?.element==='aggregate'&&nodes.get(row.value).repeating&&dominates(row,call));
+  assert.equal(rebound.length,1);assert.ok(dominates(receiver,rebound[0]));assert.ok(dominates(rebound[0],call));assert.ok(dominates(call,written));
+  return {pointer,rebound:rebound[0]};
+}
+function loopStorage(report,fixture,fn){
+  const graph=report.controlFlows.find(row=>row.function==='value_'+fn.id.slice(7));assert.ok(graph);
+  const loops=fixture.name==='nested-loop-copy'?2:1;assert.equal(graph.backedges,loops);assert.equal(graph.everyCycleHasFuel,true);
+  assert.equal(report.sourceFuelSites,report.functions+loops);assert.equal(report.resourceProof,null);assert.match(report.storageLifetime,/fresh at each dynamic definition/);
+  const nodes=new Map(graph.instructions.map(row=>[row.id,row])),blocks=new Map(graph.blocks.map(row=>[row.id,row]));
+  const reaches=(from,to,blocked=new Set())=>{const todo=[from],seen=new Set();while(todo.length){const at=todo.pop();if(blocked.has(at)||seen.has(at))continue;if(at===to)return true;seen.add(at);todo.push(...blocks.get(at).successors);}return false;};
+  const cyclic=id=>blocks.get(id).successors.some(next=>reaches(next,id));
+  const flag=graph.instructions.find(row=>row.kind==='store'&&row.value===3&&nodes.get(row.pointer)?.element==='scalar');assert.ok(flag);
+  const conditionLoad=graph.instructions.find(row=>row.kind==='load'&&row.pointer===flag.pointer&&cyclic(row.block));assert.ok(conditionLoad);
+  const condition=graph.instructions.find(row=>row.kind==='icmp'&&row.predicate==='ne'&&row.operands.includes(conditionLoad.id));assert.ok(condition);
+  const branch=graph.instructions.find(row=>row.kind==='br'&&row.condition===condition.id);assert.ok(branch);
+  const normalReturn=graph.instructions.find(row=>row.kind==='ret'&&row.value>=0);assert.ok(normalReturn);
+  const dynamic=graph.instructions.filter(row=>row.kind==='alloca'&&row.repeating);
+  const effects=graph.instructions.filter(row=>row.kind==='store'&&nodes.get(row.pointer)?.kind==='getelementptr');
+  assert.ok(reaches(branch.block,normalReturn.block,new Set([...dynamic,...effects].map(row=>row.block))),'original condition has a zero-body path to the normal return');
+  if(fixture.name!=='value-loop'){assert.ok(dynamic.some(row=>row.element==='aggregate'));assert.equal(graph.hoistedCopyNegativeRejected,true);assert.ok(report.copies.some(row=>row.repeating&&row.sourceBeforeFreshAllocation));}
+  if(fixture.name==='nested-loop-copy')assert.ok(dynamic.some(row=>row.element==='scalar'),'inner binding is created on each outer iteration');
+  if(fixture.name==='value-loop-receiver'){
+    const selected=receiverOrder(graph),counter=structuredClone(graph);counter.instructions.find(row=>row.id===selected.pointer.id).pointer=selected.rebound.value;
+    assert.throws(()=>receiverOrder(counter),'replacing the retained receiver with the rebound plane must fail');
+  }
+  if(fixture.name==='value-loop-call'){
+    const call=graph.instructions.find(row=>row.callee);assert.ok(call);
+    const stored=graph.instructions.find(row=>row.kind==='store'&&row.value===call.id&&nodes.get(row.pointer)?.element==='aggregate');assert.ok(stored);
+    assert.equal(nodes.get(stored.pointer).repeating,true);
+    const normal=graph.instructions.find(row=>row.kind==='phi'&&row.incoming.includes(stored.pointer));assert.ok(normal);
+    assert.ok(graph.instructions.some(row=>row.kind==='load'&&row.pointer===normal.id),'normal block argument retains the fresh result plane');
+  }
+}
 for(const fixture of fixturePins){
   const raw=await Promise.all(['package.json','official-oracle.json','source.ts'].map(name=>fs.readFile(new URL('./testdata/formal-value-llvm-v3/'+fixture.name+'/'+name,import.meta.url))));
   raw.forEach((bytes,index)=>assert.equal(sha(bytes),fixture.pins[index],'frozen official Source input'));
@@ -164,7 +248,7 @@ for(const fixture of fixturePins){
     }
     if(coreRoot){assert.ok(path.isAbsolute(coreRoot));const directory=path.join(coreRoot,fixture.name);await fs.mkdir(directory,{recursive:true});await fs.writeFile(path.join(directory,'core.mlir'),core,{flag:'wx'});}
   });
-  const expectedReject=['value-loop','value-recursive','gc-callee','poison-unknown'].includes(fixture.name);
+  const expectedReject=['value-recursive','gc-callee','poison-unknown'].includes(fixture.name);
   test('actual '+fixture.name+' fixed-value compiler data and independent LLVM reader',
     {skip:reports?false:'TSFG_VALUE_LLVM_REPORT_ROOT is not supplied'},async()=>{
       assert.ok(path.isAbsolute(reports));const directory=reportIndex[fixture.name];assert.ok(path.isAbsolute(directory));
@@ -177,7 +261,8 @@ for(const fixture of fixturePins){
       assert.equal(report.functionId,fn.id);assert.equal(report.coreDigest,'sha256:'+sha(core));assert.equal(report.inputIdentity,hir.inputIdentity);
       assert.equal(report.callbacks,report.events.length);assert.equal(report.stackmaps,report.callbacks+report.functions);
       assert.equal(new Set(report.events.map(row=>row.interval)).size,report.events.length);
-      assert.equal(report.events.filter(row=>row.kind===1).length,report.functions);
+      assert.equal(report.events.filter(row=>row.kind===1).length,report.sourceFuelSites);
+      if(fixture.name.includes('loop'))loopStorage(report,fixture,fn);else assert.equal(report.sourceFuelSites,report.functions);
       assert.ok(report.events.every(row=>row.start>=0&&row.end>row.start&&row.end<=text.length));
       const valueType=fixture.name.startsWith('nested')||fixture.name==='value-equal'||fixture.name==='value-not-equal'?'Nested':fixture.name==='padded-equal'?'Padded':'Delta';
       const expected=valueType==='Nested'?{bytes:8,alignment:4,offsets:[0,4]}:valueType==='Padded'?{bytes:16,alignment:8,offsets:[0,8]}:{bytes:4,alignment:4,offsets:[0]};

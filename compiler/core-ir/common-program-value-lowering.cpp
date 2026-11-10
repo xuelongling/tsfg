@@ -29,8 +29,8 @@ namespace {
 using exception::field;using exception::items;using exception::string;
 constexpr size_t outputLimit=8388608;
 // Explicit value_copy owns a new field plane. Loads and nested projections
-// retain the selected plane's identity. Acyclic CFGs give each definition one
-// fixed entry slot, without a second Runtime lifetime or failure protocol.
+// retain the selected plane's identity. Each dynamic definition owns fresh
+// frame storage until return, including definitions reached through backedges.
 struct Lowering {
   Program &program;Error &error;Json layouts=nullptr;Array initializedFields;
   std::map<std::string,const Json *> declarations,physical,bindings;
@@ -40,7 +40,7 @@ struct Lowering {
   std::map<size_t,std::vector<uint16_t>> reachable;std::set<size_t> active;
   std::string text;llvm::raw_string_ostream out;unsigned temporary=0,continuation=0;uint64_t interval=0;
   const Function *function=nullptr;size_t functionIndex=0;
-  std::map<uint16_t,std::string> values,storage;std::string sourcePath;SourceAnchor sourceRange;
+  std::map<uint16_t,std::string> values;std::string sourcePath;SourceAnchor sourceRange;
   Lowering(Program &p,Error &e,const std::map<std::string,std::string> &storage):program(p),error(e),singletonStorage(storage),out(text){
     for(const auto &row:items(field(p.hir,"types")))declarations.emplace(string(field(row,"id")),&row);
     for(const auto &row:items(field(p.representation,"bindings")))bindings.emplace(string(field(row,"id")),&row);
@@ -102,7 +102,7 @@ struct Lowering {
     if(!step()||!need(active.insert(index).second,"recursive fixed-value calls require a separate lowering capability"))return false;
     std::vector<uint16_t> order;std::vector<uint8_t> state(selected.blocks.size());
     std::function<bool(uint16_t)> visit=[&](uint16_t block){
-      if(state[block]==2)return true;if(!step()||!need(state[block]==0,"cyclic fixed-value CFG requires a separate storage-lifetime capability"))return false;
+      if(state[block])return true;if(!step())return false;
       state[block]=1;order.push_back(block);
       for(size_t ordinal=0;ordinal<selected.blocks[block].operations.size();++ordinal){
         locate(index,block,ordinal);const auto &op=selected.blocks[block].operations[ordinal];if(!step())return false;
@@ -122,6 +122,10 @@ struct Lowering {
   }
   std::string constant(uint64_t value,llvm::StringRef native="i32"){
     const auto name=tmp();out<<"    "<<name<<" = arith.constant "<<value<<" : "<<native<<'\n';return name;
+  }
+  std::string allocate(const std::string &element,const std::string &name={}){
+    const auto one=constant(1,"i64"),result=name.empty()?tmp():name;
+    out<<"    "<<result<<" = llvm.alloca "<<one<<" x "<<element<<" : (i64) -> !llvm.ptr\n";return result;
   }
   std::string callback(unsigned kind,SourceAnchor source,size_t eventFunction){
     const auto identifier=constant((UINT64_C(1)<<63)|++interval,"i64"),shadow=constant(0);
@@ -165,13 +169,14 @@ struct Lowering {
     const auto operand=[&](size_t index)->const std::string &{return values.at(op.operands[index]);};
     const auto carrier=[&](uint16_t reg)->const std::string &{return function->carriers[reg];};
     const auto result=op.result==noRegister?std::string():values.at(op.result);
-    if(op.name=="cell")values[op.result]=storage.at(op.result);
+    if(op.name=="cell")allocate(registerType(op.view),result);
     else if(op.name=="store")out<<"    llvm.store "<<operand(1)<<", "<<operand(0)<<" : "<<registerType(carrier(op.operands[1]))<<", !llvm.ptr\n";
     else if(op.name=="load")out<<"    "<<result<<" = llvm.load "<<operand(0)<<" : !llvm.ptr -> "<<registerType(carrier(op.result))<<'\n';
     else if(op.name=="value_copy"||op.name=="view"||op.name=="carrier_cast"){
       if(!need(carrier(op.operands[0])==carrier(op.result),"fixed-value lowering cannot retag a semantic identity"))return false;
       if(valueType(carrier(op.result))&&op.name=="value_copy"){
-        const auto copied=load(operand(0),carrier(op.result));out<<"    llvm.store "<<copied<<", "<<storage.at(op.result)<<" : "<<type(carrier(op.result))<<", !llvm.ptr\n";values[op.result]=storage.at(op.result);
+        const auto copied=load(operand(0),carrier(op.result)),pointer=allocate(type(carrier(op.result)),result);
+        out<<"    llvm.store "<<copied<<", "<<pointer<<" : "<<type(carrier(op.result))<<", !llvm.ptr\n";
       }else values[op.result]=operand(0);
     }else if(op.name=="field_load"||op.name=="field_store"){
       const auto owner=carrier(op.operands[0]),selected=string(field(op.properties,"field"));if(!need(physical.count(owner),"field receiver has no fixed-value layout"))return false;
@@ -199,8 +204,8 @@ struct Lowering {
       for(auto reg:op.operands)arguments.push_back(valueType(carrier(reg))?load(values.at(reg),carrier(reg)):values.at(reg));
       const auto returned=tmp();out<<"    "<<returned<<" = func.call @value_"<<callee.id.substr(7)<<"(%state, %event";for(const auto &argument:arguments)out<<", "<<argument;
       out<<") : (!llvm.ptr, !llvm.ptr";for(auto reg:op.operands)out<<", "<<type(carrier(reg));out<<") -> "<<type(callee.resultCarrier)<<'\n';checkpoint(2,op.range);
-      const auto targetBlock=op.successors[0],reg=function->blocks[targetBlock].parameters[0];std::string value=returned;
-      if(valueType(callee.resultCarrier)){value=storage.at(reg);out<<"    llvm.store "<<returned<<", "<<value<<" : "<<type(callee.resultCarrier)<<", !llvm.ptr\n";}
+      const auto targetBlock=op.successors[0];std::string value=returned;
+      if(valueType(callee.resultCarrier)){value=allocate(type(callee.resultCarrier));out<<"    llvm.store "<<returned<<", "<<value<<" : "<<type(callee.resultCarrier)<<", !llvm.ptr\n";}
       out<<"    cf.br ";edge(targetBlock,{value});out<<'\n';
     }else if(op.name=="cf.br"){
       std::vector<std::string> arguments;for(auto reg:op.operands)arguments.push_back(values.at(reg));out<<"    cf.br ";edge(op.successors[0],arguments);out<<'\n';
@@ -212,19 +217,14 @@ struct Lowering {
     return text.size()<=outputLimit||reject(error,"core-ir-value-llvm-budget","fixed-value IR byte limit exceeded");
   }
   bool emit(size_t index){
-    function=&program.functions[index];functionIndex=index;values.clear();storage.clear();const auto &selected=*function;sourcePath=selected.path;sourceRange=selected.range;
+    function=&program.functions[index];functionIndex=index;values.clear();const auto &selected=*function;sourcePath=selected.path;sourceRange=selected.range;
     const auto returned=type(selected.resultCarrier);if(returned.empty())return false;std::set<uint16_t> retained;
     for(auto block:reachable.at(index)){for(auto reg:selected.blocks[block].parameters)retained.insert(reg);for(const auto &op:selected.blocks[block].operations)if(op.result!=noRegister)retained.insert(op.result);}
     for(auto reg:retained){if(registerType(selected.carriers[reg]).empty())return false;values.emplace(reg,"%r"+std::to_string(reg));}
     out<<"  func.func private @value_"<<selected.id.substr(7)<<"(%state: !llvm.ptr, %event: !llvm.ptr";for(auto reg:selected.blocks[0].parameters)out<<", %arg"<<reg<<": "<<type(selected.carriers[reg]);out<<") -> "<<returned<<" {\n";
     const auto frame=constant(index,"i64"),shadow=constant(0);out<<"    llvm.call_intrinsic \"llvm.experimental.stackmap\"("<<frame<<", "<<shadow<<") : (i64, i32) -> ()\n";
-    for(auto reg:retained){
-      const auto &id=selected.carriers[reg];if(!valueType(id)&&!llvm::StringRef(id).starts_with("cell:"))continue;
-      std::string element;if(valueType(id))element=type(id);else for(auto block:reachable.at(index))for(const auto &op:selected.blocks[block].operations)if(op.result==reg)element=registerType(op.view);
-      const auto one=constant(1,"i64"),slot=tmp();out<<"    "<<slot<<" = llvm.alloca "<<one<<" x "<<element<<" : (i64) -> !llvm.ptr\n";storage.emplace(reg,slot);
-    }
     for(auto reg:selected.blocks[0].parameters){
-      if(valueType(selected.carriers[reg])){out<<"    llvm.store %arg"<<reg<<", "<<storage.at(reg)<<" : "<<type(selected.carriers[reg])<<", !llvm.ptr\n";values[reg]=storage.at(reg);}else values[reg]="%arg"+std::to_string(reg);
+      if(valueType(selected.carriers[reg])){const auto slot=allocate(type(selected.carriers[reg]));out<<"    llvm.store %arg"<<reg<<", "<<slot<<" : "<<type(selected.carriers[reg])<<", !llvm.ptr\n";values[reg]=slot;}else values[reg]="%arg"+std::to_string(reg);
     }out<<"    cf.br ^b0\n";
     for(auto block:reachable.at(index)){
       out<<"  ^b"<<block;if(block&&!selected.blocks[block].parameters.empty()){out<<'(';bool first=true;for(auto reg:selected.blocks[block].parameters){if(!first)out<<", ";first=false;out<<values.at(reg)<<": "<<registerType(selected.carriers[reg]);}out<<')';}out<<":\n";
@@ -255,7 +255,7 @@ bool lowerFixedValueLLVM(mlir::ModuleOp core,llvm::StringRef functionId,FixedVal
   llvm::LLVMContext llvmContext;auto native=mlir::translateModuleToLLVMIR(*module,llvmContext,"tsfg.fixed-value");if(!native)return reject(error,"core-ir-value-llvm-export","official LLVM export failed");
   std::string original;llvm::raw_string_ostream originalStream(original);core.print(originalStream,mlir::OpPrintingFlags().printGenericOpForm());originalStream<<'\n';originalStream.flush();
   Array identities,closure;for(size_t i=0;i<program.functions.size();++i){const auto &fn=program.functions[i];identities.push_back(Object{{"index",int64_t(i)},{"id",fn.id},{"source",fn.path},{"start",fn.range.start},{"end",fn.range.end}});}for(const auto &[fn,blocks]:lowering.reachable)closure.push_back(program.functions[fn].id);
-  const auto proof=canonical(Object{{"version",1},{"functionId",functionId.str()},{"inputIdentity",program.inputIdentity},{"hirDigest",program.hirHash},{"fullCore",original},{"functions",std::move(identities)},{"closure",std::move(closure)},{"layouts",output.layouts},{"initializedFields",std::move(lowering.initializedFields)},{"rootFrame","caller-admitted EventV4; embedding checks existing failure before entry and after return"},{"executionAuthority",false}});
+  const auto proof=canonical(Object{{"version",1},{"functionId",functionId.str()},{"inputIdentity",program.inputIdentity},{"hirDigest",program.hirHash},{"fullCore",original},{"functions",std::move(identities)},{"closure",std::move(closure)},{"layouts",output.layouts},{"initializedFields",std::move(lowering.initializedFields)},{"rootFrame","caller-admitted EventV4; embedding checks existing failure before entry and after return"},{"storageLifetime","entry value parameters once; cells, value copies and aggregate call results fresh at each dynamic definition; storage remains live until function return"},{"resourceProof",nullptr},{"executionAuthority",false}});
   (*module)->setAttr("tsfg_program.fixed_value",mlir::StringAttr::get(&context,proof));
   if(mlir::failed(mlir::verify(*module)))return reject(error,"core-ir-value-llvm-mlir","fixed-value MLIR metadata verification failed");
   llvm::raw_string_ostream dialect(output.mlir);module->print(dialect,mlir::OpPrintingFlags().printGenericOpForm());dialect<<'\n';dialect.flush();

@@ -437,7 +437,7 @@ class Inclusion {
     if(value.kind==ValueKind::ReceiverValue)return live(graph,graph.heaps[value.action].control);
     if(value.kind==ValueKind::Call){const auto &call=graph.calls[value.call];if(!live(graph,call.control))return false;const auto *callee=fixed(call.functionId);return callee&&completes(*callee,value.completion);}return true;
   }
-  // Receiver equations have no nonidentical structural state certificate yet.
+  // Identity is a metered structural certificate for every admitted graph.
   // Compare every owned typed field, without interpreting completion liveness.
   bool identical(bool &same){
     same=false;const auto &a=body_,&b=upper_;
@@ -618,7 +618,9 @@ public:
       for(const auto &control:graph->controls){if(!m_.spend())return false;if(control.kind==ControlKind::ReceiverCompletion)receiverProtocol=true;}
       for(const auto &call:graph->calls){if(!m_.spend())return false;const auto *callee=fixed(call.functionId);if(!callee||!addGraph(*callee))return false;}
     }
-    if(receiverProtocol){bool same;if(!identical(same))return false;if(!same)return open("receiver-structural-certificate-open");result.status=InclusionStatus::Covered;result.reason=nullptr;return true;}
+    bool same;if(!identical(same))return false;
+    if(same){result.status=InclusionStatus::Covered;result.reason=nullptr;return true;}
+    if(receiverProtocol)return open("receiver-structural-certificate-open");
     if(!controlClosure())return false;Certificate first;if(!initial(first))return false;if(!push(search_,std::move(first),m_))return false;
     while(!search_.empty()){
       if(!m_.spend())return false;Certificate state=std::move(search_.back());search_.pop_back();bool failed=false;
