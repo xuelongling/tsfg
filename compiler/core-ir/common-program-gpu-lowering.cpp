@@ -539,4 +539,64 @@ bool readGpuBindingModule(llvm::StringRef bytes,Program &p,const Json &alreadyVe
   }
   out=std::move(pending);return true;
 }
+GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &call,
+                                              const GpuHostInputs &inputs,GpuHostBudget budget){
+  const auto before=budget;
+  const auto &entry=std::get<GpuEntryBudgetStep>(call.hostSteps().front());
+  const auto fail=[&](GpuHostFailureKind kind,llvm::StringRef code,llvm::StringRef rule,
+                      const GpuObligationSite &site)->GpuHostPreflightResult{
+    return GpuHostFailure{kind,code.str(),rule.str(),site,budget};
+  };
+  const auto identity=[](const GpuCallIdentity &id){
+    return std::tie(id.inputIdentity,id.hirDigest,id.scopeDigest,id.publishedDigest,
+      id.kernelProofDigest,id.borrowProofDigest,id.requestDigest,id.planDigest,id.wordsDigest,id.artifactDigest);
+  };
+  if(identity(inputs.identity)!=identity(call.identity()))
+    return fail(GpuHostFailureKind::Input,"core-ir-common-gpu-host-context","r01-gpu",entry.site);
+  const auto descriptor=[](const GpuDescriptor &row){
+    return std::tie(row.kind,row.access,row.type,row.id,row.kernel,row.set,row.binding,
+      row.source.sourceId,row.source.range.start,row.source.range.end);
+  };
+  const auto undefinedType=digest(llvm::StringRef("tsfg.type\0undefined",19));
+  const auto actualBits=[](llvm::StringRef type)->std::optional<uint32_t>{
+    for(const auto &[name,width]:std::initializer_list<std::pair<llvm::StringRef,uint32_t>>{
+      {"undefined",0},{"null",0},{"bool",1},{"i8",8},{"i16",16},{"i32",32},{"i64",64},
+      {"u8",8},{"u16",16},{"u32",32},{"u64",64},{"isize",64},{"usize",64},{"f32",32},{"f64",64}})
+      if(type==digest(std::string("tsfg.type\0",10)+name.str()))return width;
+    return std::nullopt;
+  };
+  std::vector<const GpuHostValue *> values(call.descriptors().size(),nullptr);
+  size_t input=0;
+  for(size_t index=0;index<call.descriptors().size();++index){
+    const auto &row=call.descriptors()[index];if(row.access==GpuResourceAccess::Write)continue;
+    if(input==inputs.bindings.size()||descriptor(inputs.bindings[input].descriptor)!=descriptor(row))
+      return fail(GpuHostFailureKind::Input,"core-ir-common-gpu-host-binding","r01-gpu",entry.site);
+    const auto &value=inputs.bindings[input++].value;
+    const auto width=actualBits(value.actualType);
+    if(!width||(*width<64&&(value.bits>>*width)!=0))
+      return fail(GpuHostFailureKind::Input,"core-ir-common-gpu-host-value","r01-gpu",entry.site);
+    values[index]=&value;
+  }
+  if(input!=inputs.bindings.size())
+    return fail(GpuHostFailureKind::Input,"core-ir-common-gpu-host-binding","r01-gpu",entry.site);
+  for(const auto &step:call.hostSteps()){
+    if(const auto *entry=std::get_if<GpuEntryBudgetStep>(&step)){
+      if(entry->activeDepth>budget.depthLimit)
+        return fail(GpuHostFailureKind::Trap,"r01-t-depth","r01-depth",entry->site);
+      if(entry->fuelCost>budget.fuelRemaining)
+        return fail(GpuHostFailureKind::Trap,"r01-t-fuel","r01-fuel",entry->site);
+      budget.fuelRemaining-=entry->fuelCost;
+    }else{
+      const auto &use=std::get<GpuNumericUseStep>(step);
+      if(const auto *origin=std::get_if<GpuBindingOrigin>(&use.origin)){
+        const auto &value=*values[origin->descriptorIndex];
+        if(value.actualType==undefinedType)
+          return fail(GpuHostFailureKind::Trap,"r01-t-undefined-numeric-use","r01-numeric-use",use.site);
+        if(value.actualType!=exception::i32Id)
+          return fail(GpuHostFailureKind::Capability,"core-ir-common-gpu-host-capability","r01-gpu",use.site);
+      }
+    }
+  }
+  return GpuHostProof(call,inputs,before,budget);
+}
 } // namespace tsfg::commonProgram

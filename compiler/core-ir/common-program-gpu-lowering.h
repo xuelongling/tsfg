@@ -99,4 +99,52 @@ private:
 bool readGpuBindingModule(llvm::StringRef bytes,Program &,const Json &alreadyVerifiedPlan,
                           llvm::StringRef profile,mlir::MLIRContext &,
                           std::optional<GpuPendingCall> &out,Error &);
+
+// Source actual TypeId and canonical payload bits, independent of the static
+// descriptor view. Absence has zero bits; pure assertions never change its tag.
+// Other scalar/absence tags retain their identity for a reached capability
+// failure. Only an actual i32 fulfills a numeric use; no conversion is applied.
+struct GpuHostValue {std::string actualType;uint64_t bits=0;};
+struct GpuHostBindingValue {GpuDescriptor descriptor;GpuHostValue value;};
+struct GpuHostInputs {GpuCallIdentity identity;std::vector<GpuHostBindingValue> bindings;};
+// One original Source call, with no caller frame in single-source-call-v1.
+// Compiler Program.remaining and physical execution budgets are separate.
+struct GpuHostBudget {uint64_t fuelRemaining=4097;uint32_t depthLimit=1;};
+enum class GpuHostFailureKind {Input,Capability,Trap};
+struct GpuHostFailure {
+  GpuHostFailureKind kind;std::string code,ruleId;GpuObligationSite site;
+  GpuHostBudget budget;
+};
+class GpuHostProof;
+using GpuHostPreflightResult=std::variant<GpuHostProof,GpuHostFailure>;
+// Owns the admitted call and its actual input snapshot. Only successful ordered
+// Host checks construct this proof. It grants no Runtime/device/launch authority.
+class GpuHostProof {
+public:
+  GpuHostProof(const GpuHostProof &)=default;
+  GpuHostProof(GpuHostProof &&)=default;
+  GpuHostProof &operator=(const GpuHostProof &)=default;
+  GpuHostProof &operator=(GpuHostProof &&)=default;
+  bool hostPreflightFulfilled()const{return true;}
+  bool launchAuthorized()const{return false;}
+  bool deviceExecutionAuthorized()const{return false;}
+  const GpuPendingCall &call()const{return call_;}
+  const std::vector<GpuHostBindingValue> &bindings()const{return bindings_;}
+  const GpuHostBudget &budgetBefore()const{return before_;}
+  const GpuHostBudget &budgetAfter()const{return after_;}
+private:
+  GpuHostProof(const GpuPendingCall &call,const GpuHostInputs &inputs,
+               GpuHostBudget before,GpuHostBudget after)
+    :call_(call),bindings_(inputs.bindings),before_(before),after_(after){}
+  GpuPendingCall call_;std::vector<GpuHostBindingValue> bindings_;
+  GpuHostBudget before_,after_;
+  friend GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &,
+    const GpuHostInputs &,GpuHostBudget);
+};
+// Validate complete call/resource identities before Source events. Bindings are
+// exactly the read/read-write descriptors in descriptor order. On valid inputs,
+// process the owned recipe in order: depth, fuel, then each numeric use. Failure
+// retains the reached original operation and the Source fuel post-state.
+GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &,
+                                              const GpuHostInputs &,GpuHostBudget);
 } // namespace tsfg::commonProgram
