@@ -140,14 +140,17 @@ bool sameSite(const GpuObligationSite &actual, const OperationSite &expected, ll
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc != 4) {
+  if (argc != 4 && argc != 5) {
     llvm::errs() << "expected metadata directory, official oracle path and i32 operator\n";
     return 2;
   }
   std::string coreBytes, requestBytes, planBytes, oracleBytes;
+  const bool expectedReject = argc == 5;
+  if (expectedReject && llvm::StringRef(argv[4]) != "expect-capability") return 2;
   const std::string operation(argv[3]);
+  const bool shift = operation == "<<" || operation == ">>" || operation == ">>>";
   if (operation != "+" && operation != "-" && operation != "*" &&
-      operation != "&" && operation != "|" && operation != "^" && operation != "~") return 2;
+      operation != "&" && operation != "|" && operation != "^" && operation != "~" && !shift) return 2;
   if (!readFile(argv[1], "common-program.mlir", coreBytes) ||
       !readFile(argv[1], "gpu-binding-request.json", requestBytes) ||
       !readFile(argv[1], "gpu-binding-plan.json", planBytes) ||
@@ -169,23 +172,27 @@ int main(int argc, char **argv) {
       items(field(oracle, "functions")).size() == 2 && field(*official, "operator").getAsString() == operation &&
       field(*official, "id").getAsString() && field(*official, "parameterId").getAsString(),
       "official Source function/parameter identities and complete source range are established independently")) return 3;
-  const bool unary = bool(field(*official, "literal").getAsNull());
+  const bool hasLiteral = !field(*official, "literal").getAsNull();
+  const bool unary = !hasLiteral && (operation == "-" || operation == "~");
   const size_t arity = unary ? 1 : 2;
-  if (!check(unary ? operation == "-" || operation == "~" :
-      operation != "~" && field(*official, "literalToken").getAsString() == "7",
-      "official AST distinguishes unary integer operations from binary operations with literal seven")) return 3;
-  GpuSourceRange functionRange, parameterRange, expressionRange, returnRange, parameterUseRange, literalRange, operatorRange;
+  const auto literalToken = hasLiteral ? string(field(*official, "literalToken")) : "";
+  int64_t literalValue = 0;
+  if (!check((unary || operation != "~") && (!hasLiteral ||
+      (!llvm::StringRef(literalToken).getAsInteger(10, literalValue) && literalValue >= -2147483648ll && literalValue <= 2147483647ll)),
+      "official AST distinguishes unary, exact signed-i32 literal and variable binary operands")) return 3;
+  GpuSourceRange functionRange, parameterRange, expressionRange, returnRange, parameterUseRange, literalRange, operatorRange, rightParameterUseRange;
   if (!readOfficialRange(field(*official, "range"), uint32_t(*sourceLength), functionRange) ||
       !readOfficialRange(field(*official, "parameterRange"), uint32_t(*sourceLength), parameterRange) ||
       !readOfficialRange(field(*official, "expression"), uint32_t(*sourceLength), expressionRange) ||
       !readOfficialRange(field(*official, "return"), uint32_t(*sourceLength), returnRange) ||
       !readOfficialRange(field(*official, "parameterUse"), uint32_t(*sourceLength), parameterUseRange) ||
-      (unary ? !readOfficialRange(field(*official, "operatorRange"), uint32_t(*sourceLength), operatorRange) :
-               !readOfficialRange(field(*official, "literal"), uint32_t(*sourceLength), literalRange))) return 3;
+      (unary ? !readOfficialRange(field(*official, "operatorRange"), uint32_t(*sourceLength), operatorRange) : hasLiteral ?
+               !readOfficialRange(field(*official, "literal"), uint32_t(*sourceLength), literalRange) :
+               !readOfficialRange(field(*official, "rightParameterUse"), uint32_t(*sourceLength), rightParameterUseRange))) return 3;
   for (const auto &row : {parameterRange, expressionRange, returnRange, parameterUseRange})
     if (!check(row.range.start >= functionRange.range.start && row.range.end <= functionRange.range.end,
         "official parameter and expression anchors belong to the selected function")) return 3;
-  const auto &otherOperand = unary ? operatorRange : literalRange;
+  const auto &otherOperand = unary ? operatorRange : hasLiteral ? literalRange : rightParameterUseRange;
   if (!check(parameterUseRange.range.start >= expressionRange.range.start && parameterUseRange.range.end <= expressionRange.range.end &&
       otherOperand.range.start >= expressionRange.range.start && otherOperand.range.end <= expressionRange.range.end,
       "official operand and operator/literal anchors belong to the arithmetic expression")) return 3;
@@ -265,20 +272,62 @@ int main(int argc, char **argv) {
         if (!check(!arithmetic && op.operands.size() == arity && field(op.properties, "operator").getAsString() == operation, "original arithmetic site")) return 3;
         arithmetic = where; expectedRange = &expressionRange;
       } else if (op.name == "constant") {
-        if (!check(!unary && !literal && field(op.properties, "decimal").getAsString() == "7", "actual SSA literal retains official Source 7 anchor")) return 3;
+        if (!check(hasLiteral && !literal && field(op.properties, "decimal").getAsString() == literalToken,
+            "actual SSA literal retains its independent official Source decimal and anchor")) return 3;
         literal = where; expectedRange = &literalRange;
       } else if (op.name == "cell" || op.name == "store") {
         expectedRange = &parameterRange;
       } else if (op.name == "load") {
-        expectedRange = &parameterUseRange;
+        if (!check(field(op.properties, "binding").getAsString() == parameterId, "actual parameter load retains its official Symbol binding")) return 3;
+        expectedRange = !unary && !hasLiteral && sameRange(where.source, rightParameterUseRange) ? &rightParameterUseRange : &parameterUseRange;
       } else if (op.name == "value_copy" || op.name == "func.return") {
         expectedRange = &returnRange;
       }
       if (!check(expectedRange && sameRange(where.source, *expectedRange), "every original Core operation retains its independent official Source anchor")) return 3;
     }
   }
-  if (!check(entry && uses[0] && arithmetic && (unary ? !uses[1] && !literal : uses[1] && literal),
+  if (!check(entry && uses[0] && arithmetic && (unary ? !uses[1] && !literal : uses[1] && bool(literal) == hasLiteral),
       "all original Source arithmetic sites exist with the official arity")) return 3;
+  if (expectedReject) {
+    if (!check(shift && (!hasLiteral || literalValue < 0 || literalValue > 31), "negative mode selects a genuinely unproved shift count")) return 3;
+    const std::string expectedMessage = hasLiteral ? "GPU shift constant count is outside the implemented 0..31 domain" :
+      "GPU shift requires a proven constant-i32 count in 0..31";
+    Array rejections;
+    const auto rejected = [&](llvm::StringRef api, const Error &failure, bool unchanged, int64_t remaining) {
+      if (!check(failure.code == "core-ir-common-gpu-lowering-capability" && failure.message == expectedMessage &&
+          failure.path == arithmetic->source.sourceId && failure.range.start == arithmetic->source.range.start &&
+          failure.range.end == arithmetic->source.range.end && unchanged && remaining > 0,
+          "real shift entry rejects its unproved count at the original binary Source site and preserves out")) return false;
+      rejections.push_back(Object{{"api", api.str()}, {"code", failure.code}, {"message", failure.message},
+        {"source", source(arithmetic->source)}, {"outUnchanged", unchanged}, {"compilerBudgetRemaining", remaining}});
+      return true;
+    };
+    const Json sentinel = Object{{"sentinel", "preserve-original-output"}};
+    Program functionProgram = program; Json functions = sentinel; Error functionError;
+    if (lowerGpuBindingFunctions(functionProgram, plan, context, functions, functionError) ||
+        !rejected("lowerGpuBindingFunctions", functionError, same(functions, sentinel), int64_t(functionProgram.remaining))) return 3;
+    Program moduleProgram = program; Json module = sentinel; Error moduleError;
+    if (emitGpuBindingModule(moduleProgram, plan, "single-source-call-v1", context, module, moduleError) ||
+        !rejected("emitGpuBindingModule", moduleError, same(module, sentinel), int64_t(moduleProgram.remaining))) return 3;
+    // This actual identity envelope reaches the reader's Program-derived
+    // lowering. It is never admitted or described as a valid artifact.
+    const Json envelope = Object{{"family", "tsfg.gpu-binding-module"}, {"version", 1},
+      {"inputIdentity", program.inputIdentity}, {"planDigest", digest(canonical(plan) + "\n")},
+      {"profile", Object{{"name", "single-source-call-v1"}}}};
+    Program readerProgram = program; std::optional<GpuPendingCall> pending; Error readerError;
+    if (readGpuBindingModule(canonical(envelope) + "\n", readerProgram, plan, "single-source-call-v1", context, pending, readerError) ||
+        !rejected("readGpuBindingModule", readerError, !pending, int64_t(readerProgram.remaining))) return 3;
+    Json report = Object{{"family", "tsfg.gpu-i32-shift-capability-test-report"}, {"version", 1},
+      {"operator", operation}, {"arity", int64_t(arity)}, {"coreSHA", digest(coreBytes)},
+      {"requestSHA", digest(requestBytes)}, {"planSHA", digest(planBytes)}, {"officialOracleSHA", digest(oracleBytes)},
+      {"source", source(arithmetic->source)}, {"rejections", std::move(rejections)},
+      {"typedInitial", "empty"}, {"typedFinal", "empty"}, {"readerIdentityEnvelope", envelope},
+      {"envelopeAdmittedAsArtifact", false}, {"artifactProduced", false},
+      {"execution", Object{{"source", false}, {"vm", false}, {"numerical", false}, {"hostPreflight", false}, {"device", false}}}};
+    if (llvm::sys::ChangeStdoutToBinary()) return 2;
+    llvm::outs() << canonical(report) << '\n'; llvm::outs().flush();
+    return llvm::outs().has_error() ? 2 : 0;
+  }
   Json artifact = nullptr;
   if (!emitGpuBindingModule(program, plan, "single-source-call-v1", context, artifact, error)) {
     llvm::errs() << "actual emit [" << error.code << "] " << error.message << '\n' << diagnostics; return 3;
@@ -327,7 +376,8 @@ int main(int argc, char **argv) {
       if (!check(binding && binding->descriptorIndex == parameterIndex, "actual typed parameter origin binds the selected descriptor")) return 3;
     } else {
       const auto *constant = std::get_if<GpuI32ConstantOrigin>(&step->origin);
-      if (!check(constant && constant->bits == 7 && constant->decimal == "7", "actual typed binary constant origin is seven")) return 3;
+      if (!check(constant && constant->bits == uint32_t(literalValue) && constant->decimal == literalToken,
+          "actual typed binary constant origin equals the independent official Source literal")) return 3;
     }
   }
   if (!check(sameSite(call.discharges()[0].site, *arithmetic, functionId) &&

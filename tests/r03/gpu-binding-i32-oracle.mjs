@@ -8,14 +8,17 @@ const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(valu
   ?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 const digest=value=>'sha256:'+createHash('sha256').update(canonical(value)+'\n').digest('hex');
 const integerOperations=new Map(Object.entries({
-  '2:+':{opcode:128,kind:'i32-add',operation:'spirv.IAdd',bitwise:false},
-  '2:-':{opcode:130,kind:'i32-sub',operation:'spirv.ISub',bitwise:false},
-  '2:*':{opcode:132,kind:'i32-mul',operation:'spirv.IMul',bitwise:false},
-  '1:-':{opcode:126,kind:'i32-negate',operation:'spirv.SNegate',bitwise:false},
-  '2:|':{opcode:197,kind:'i32-or',operation:'spirv.BitwiseOr',bitwise:true},
-  '2:^':{opcode:198,kind:'i32-xor',operation:'spirv.BitwiseXor',bitwise:true},
-  '2:&':{opcode:199,kind:'i32-and',operation:'spirv.BitwiseAnd',bitwise:true},
-  '1:~':{opcode:200,kind:'i32-not',operation:'spirv.Not',bitwise:true},
+  '2:+':{opcode:128,kind:'i32-add',operation:'spirv.IAdd',bitwise:false,shift:false},
+  '2:-':{opcode:130,kind:'i32-sub',operation:'spirv.ISub',bitwise:false,shift:false},
+  '2:*':{opcode:132,kind:'i32-mul',operation:'spirv.IMul',bitwise:false,shift:false},
+  '1:-':{opcode:126,kind:'i32-negate',operation:'spirv.SNegate',bitwise:false,shift:false},
+  '2:|':{opcode:197,kind:'i32-or',operation:'spirv.BitwiseOr',bitwise:true,shift:false},
+  '2:^':{opcode:198,kind:'i32-xor',operation:'spirv.BitwiseXor',bitwise:true,shift:false},
+  '2:&':{opcode:199,kind:'i32-and',operation:'spirv.BitwiseAnd',bitwise:true,shift:false},
+  '1:~':{opcode:200,kind:'i32-not',operation:'spirv.Not',bitwise:true,shift:false},
+  '2:<<':{opcode:196,kind:'i32-shl',operation:'spirv.ShiftLeftLogical',bitwise:false,shift:true},
+  '2:>>':{opcode:195,kind:'i32-shr',operation:'spirv.ShiftRightArithmetic',bitwise:false,shift:true},
+  '2:>>>':{opcode:194,kind:'i32-ushr',operation:'spirv.ShiftRightLogical',bitwise:false,shift:true},
 }));
 function integerOperation(operator,arity){
   assert.ok(arity===1||arity===2);
@@ -32,8 +35,8 @@ function literalString(args,start){
   assert.fail('unterminated SPIR-V literal string');
 }
 
-export function verifyGpuI32Words(words,entryName,operator,arity=2){
-  const arithmeticOpcode=integerOperation(operator,arity).opcode;
+export function verifyGpuI32Words(words,entryName,operator,arity=2,literalToken='7'){
+  const expected=integerOperation(operator,arity),arithmeticOpcode=expected.opcode;
   assert.ok(Array.isArray(words)&&words.length>=5);words.forEach(word=>assert.ok(Number.isInteger(word)&&word>=0&&word<=0xffffffff));
   assert.equal(words[0],0x07230203);assert.equal(words[1],0x00010300);assert.ok(words[3]>1);assert.equal(words[4],0);
   const rows=[],permitted=new Set([5,14,15,16,17,19,21,30,32,33,43,54,56,59,61,62,65,71,72,arithmeticOpcode,248,253]);
@@ -87,13 +90,15 @@ export function verifyGpuI32Words(words,entryName,operator,arity=2){
   const localStore=only(stores.filter(row=>pointerRoot(row.args[0]).kind==='local'),'parameter initialization');
   assert.equal(localStore.args[1],parameterLoad.args[1]);assert.equal(localStore.args[0],localLoad.args[2]);assert.equal(at(loads,1).length,0);assert.equal(at(stores,0).length,0);
   const arithmetic=only(of(arithmeticOpcode),'Source integer arithmetic');assert.equal(arithmetic.functionId,fn.args[1]);assert.equal(arithmetic.args.length,arity+2);signedI32(arithmetic.args[0]);
-  assert.equal(arithmetic.args[2],localLoad.args[1]);const seven=arity===2?definition(arithmetic.args[3],43):null;
-  if(seven){assert.deepEqual(seven.args.slice(2),[7]);signedI32(seven.args[0]);assert.equal(seven.args[0],arithmetic.args[0]);}
+  assert.equal(arithmetic.args[2],localLoad.args[1]);const constant=arity===2?definition(arithmetic.args[3],43):null;
+  if(constant){const literal=Number(literalToken);assert.ok(Number.isInteger(literal)&&literal>=-2147483648&&literal<=2147483647);
+    if(expected.shift)assert.ok(literal>=0&&literal<=31);
+    assert.deepEqual(constant.args.slice(2),[literal>>>0]);signedI32(constant.args[0]);assert.equal(constant.args[0],arithmetic.args[0]);}
   const write=only(at(stores,1),'unique return store');assert.equal(write.args[1],arithmetic.args[1]);
   const ret=only(of(253),'void physical return');assert.equal(ret.functionId,fn.args[1]);assert.deepEqual(ret.args,[]);
   const ordered=[parameterLoad,localStore,localLoad,arithmetic,write,ret];assert.ok(ordered.every((row,index)=>index===0||row.start>ordered[index-1].start));
   assert.ok(of(56)[0].start>ret.start);
-  return {seven,arithmetic,write,parameterLoad,mode,offsets,wordCount:words.length};
+  return {constant,arithmetic,write,parameterLoad,mode,offsets,wordCount:words.length};
 }
 
 export function verifyGpuI32Report(report,oracle,plan,operator){
@@ -104,9 +109,11 @@ export function verifyGpuI32Report(report,oracle,plan,operator){
   report.readerApiRejections.forEach(row=>{assert.equal(row.code,'core-ir-common-gpu-artifact-content');assert.equal(row.selfConsistentArtifactDigest,true);assert.equal(row.ownedOutputUnchanged,true);});
   assert.deepEqual(report.execution,{source:false,vm:false,numerical:false,hostPreflight:false,device:false});
   const ast=only(oracle.functions.filter(row=>row.name==='constantKernel'),'official arithmetic Source function');
-  assert.equal(ast.operator,operator);const unary=ast.literal===null,arity=unary?1:2;
+  assert.equal(ast.operator,operator);const unary=ast.literal===null&&(operator==='-'||operator==='~'),arity=unary?1:2;
   assert.equal(report.arity,arity);const expected=integerOperation(operator,arity);
-  if(!unary)assert.equal(ast.literalToken,'7');
+  const literalToken=unary?null:ast.literalToken,literalValue=Number(literalToken);
+  if(!unary){assert.notEqual(ast.literal,null);assert.match(literalToken,/^-?(0|[1-9][0-9]*)$/);assert.ok(Number.isInteger(literalValue)&&literalValue>=-2147483648&&literalValue<=2147483647);}
+  if(expected.shift)assert.ok(literalValue>=0&&literalValue<=31,'independent official count is in 0..31');
   const source=range=>({sourceId:'/src/main.ts',...range});
   assert.deepEqual(report.officialLiteral,unary?null:source(ast.literal));
   const baseline=report.sourceBaseline,ops=baseline.operations,one=name=>only(ops.filter(row=>row.name===name),'one Source '+name);
@@ -118,7 +125,7 @@ export function verifyGpuI32Report(report,oracle,plan,operator){
   ops.forEach(row=>{assert.ok(Object.hasOwn(ranges,row.name));assert.deepEqual(row.source,source(ranges[row.name]));});
   assert.equal(entry.properties.event,1);assert.equal(cell.properties.binding,ast.parameterId);
   assert.deepEqual(initial.operands,[cell.result,0]);assert.equal(initial.properties.initialize,true);
-  assert.deepEqual(load.operands,[cell.result]);if(constant){assert.equal(constant.properties.decimal,'7');assert.equal(constant.properties.token,'7');}
+  assert.deepEqual(load.operands,[cell.result]);if(constant){assert.equal(constant.properties.decimal,literalToken);assert.equal(constant.properties.token,literalToken);}
   const operands=constant?[load.result,constant.result]:[load.result];
   numeric.forEach((row,index)=>{assert.equal(row.properties.operator,operator);assert.equal(row.properties.index,index);assert.deepEqual(row.operands,[operands[index]]);assert.equal(row.successors.length,1);
     assert.equal(row.successors[0],index+1<numeric.length?numeric[index+1].point.block:arithmetic.point.block);});
@@ -140,23 +147,26 @@ export function verifyGpuI32Report(report,oracle,plan,operator){
   [entry,...numeric,arithmetic].forEach((row,index)=>{assert.equal(out.obligations[index].id,index);assert.equal(out.obligations[index].functionId,fn);assert.deepEqual(out.obligations[index].source,row.source);assert.deepEqual(out.obligations[index].point,row.point);});
   numericObligations.forEach((row,index)=>{assert.equal(row.operator,operator);assert.equal(row.index,index);assert.equal(row.operand,numeric[index].operands[0]);assert.equal(row.condition,'actual-initialized-i32');});
   assert.equal(fuel.event,1);assert.equal(relation.operator,operator);
-  assert.equal(relation.condition,expected.bitwise?'gpu-i32-bitwise-relation':'gpu-i32-numeric-relation');
-  assert.equal(relation.semantics,expected.bitwise?'source-i32-bitwise-32':'source-i32-modulo-2^32');assert.deepEqual(relation.dependsOn,[left.id]);
+  assert.equal(relation.condition,expected.shift?'gpu-i32-shift-relation':expected.bitwise?'gpu-i32-bitwise-relation':'gpu-i32-numeric-relation');
+  assert.equal(relation.semantics,expected.shift?'source-i32-shift-count-0-to-31':expected.bitwise?'source-i32-bitwise-32':'source-i32-modulo-2^32');assert.deepEqual(relation.dependsOn,[left.id]);
+  const countProof=expected.shift?{kind:'source-constant-i32',decimal:literalToken,count:literalValue,minimum:0,maximum:31}:undefined;
+  assert.deepEqual(relation.countProof,countProof);
   const site=(row,id)=>({obligationId:id,functionId:fn,point:row.point,source:row.source});
   assert.deepEqual(out.discharges,[{...site(arithmetic,relation.id),basis:expected.bitwise?'R03 integer bitwise operations':'R01 section 4.2',
-    operation:expected.operation,relation:expected.bitwise?'32-bit-pattern-exact':'low-32-bits-exact',requires:[left.id],status:'discharged'}]);
+    operation:expected.operation,relation:expected.shift?'count-in-range-result-exact':expected.bitwise?'32-bit-pattern-exact':'low-32-bits-exact',
+    requires:[left.id],status:'discharged',...(expected.shift?{countProof}:{})}]);
   const host=out.hostPreflight;assert.equal(host.status,'unfulfilled');assert.equal(host.steps.length,arity+1);
   assert.deepEqual(host.steps.map(row=>row.status),Array.from({length:arity+1},()=>'unfulfilled'));assert.deepEqual(host.steps[0].checkOrder,['depth','fuel']);
   assert.equal(host.steps[0].activeDepth,1);assert.equal(host.steps[0].fuelCost,1);assert.deepEqual(host.steps[0].source,entry.source);
   host.steps.slice(1).forEach((row,index)=>{assert.equal(row.operator,operator);assert.equal(row.index,index);assert.deepEqual(row.source,numeric[index].source);assert.equal(row.requiresInitialized,true);assert.equal(row.requiresActualTag,'i32');assert.equal(row.undefinedOutcome,'request-trap-at-this-operation');});
-  assert.deepEqual(host.steps[1].origin,{kind:'binding',binding:plan.bindings[0]});if(!unary)assert.deepEqual(host.steps[2].origin,{kind:'constant-i32',decimal:'7'});
+  assert.deepEqual(host.steps[1].origin,{kind:'binding',binding:plan.bindings[0]});if(!unary)assert.deepEqual(host.steps[2].origin,{kind:'constant-i32',decimal:literalToken});
   assert.equal(out.wordsDigest,digest(out.words));const {artifactDigest,...withoutDigest}=out;assert.equal(artifactDigest,digest(withoutDigest));
   assert.equal(typed.profile,'single-source-call-v1');assert.equal(typed.launchAuthorized,false);assert.equal(typed.hostPreflightFulfilled,false);assert.equal(typed.functionId,fn);assert.equal(typed.entryPoint,out.entryPoint);
   assert.deepEqual(typed.words,out.words);assert.deepEqual(typed.descriptors,plan.bindings);
   assert.deepEqual(typed.discharges,[{site:site(arithmetic,relation.id),prerequisites:[left.id]}]);
-  assert.deepEqual(typed.hostSteps,[{kind:'entry-budget',site:site(entry,0),event:1,activeDepth:1,fuelCost:1},...numeric.map((row,index)=>({kind:'numeric-use',site:site(row,index+1),operator,index,operand:row.operands[0],origin:index===0?{kind:'binding',descriptorIndex:0}:{kind:'constant-i32',bits:7,decimal:'7'}}))]);
+  assert.deepEqual(typed.hostSteps,[{kind:'entry-budget',site:site(entry,0),event:1,activeDepth:1,fuelCost:1},...numeric.map((row,index)=>({kind:'numeric-use',site:site(row,index+1),operator,index,operand:row.operands[0],origin:index===0?{kind:'binding',descriptorIndex:0}:{kind:'constant-i32',bits:literalValue>>>0,decimal:literalToken}}))]);
   assert.equal(typed.identity.wordsDigest,out.wordsDigest);assert.equal(typed.identity.artifactDigest,out.artifactDigest);
-  const binary=verifyGpuI32Words(out.words,out.entryPoint,operator,arity);
+  const binary=verifyGpuI32Words(out.words,out.entryPoint,operator,arity,literalToken);
   return {binary,sourceEvents:ops.length,words:out.words.length};
 }
 

@@ -227,28 +227,42 @@ struct Lowering {
           }else if(op.name=="binary"){
             const auto operation=string(field(op.properties,"operator"));
             const bool bitwise=operation=="&"||operation=="|"||operation=="^";
-            if(op.view!=exception::i32Id||(!bitwise&&operation!="+"&&operation!="-"&&operation!="*"))return fail("capability","GPU scalar operation is not implemented",where);
-            const auto kind=operation=="+"?"i32-add":operation=="-"?"i32-sub":operation=="*"?"i32-mul":operation=="&"?"i32-and":operation=="|"?"i32-or":"i32-xor";
+            const bool shift=operation=="<<"||operation==">>"||operation==">>>";
+            if(op.view!=exception::i32Id||(!bitwise&&!shift&&operation!="+"&&operation!="-"&&operation!="*"))return fail("capability","GPU scalar operation is not implemented",where);
+            const auto kind=operation=="+"?"i32-add":operation=="-"?"i32-sub":operation=="*"?"i32-mul":operation=="&"?"i32-and":operation=="|"?"i32-or":operation=="^"?"i32-xor":operation=="<<"?"i32-shl":operation==">>"?"i32-shr":"i32-ushr";
             const auto left=values.at(op.operands[0]),right=values.at(op.operands[1]);
             if(!left.actualI32||!right.actualI32)return fail("actual","GPU arithmetic needs Source actual-i32 proof or explicit numeric continuations",where);
+            Json countProof=nullptr;
+            if(shift){
+              if(!right.origin.getAsObject()||string(field(right.origin,"kind"))!="constant-i32")
+                return fail("capability","GPU shift requires a proven constant-i32 count in 0..31",where);
+              const auto decimal=string(field(right.origin,"decimal"));const llvm::APInt count(32,decimal,10);
+              if(count.uge(32))return fail("capability","GPU shift constant count is outside the implemented 0..31 domain",where);
+              countProof=Object{{"kind","source-constant-i32"},{"decimal",decimal},{"count",int64_t(count.getZExtValue())},{"minimum",0},{"maximum",31}};
+            }
             auto conditions=left.conditions;conditions.insert(right.conditions.begin(),right.conditions.end());
             Array dependencies;for(auto condition:conditions)dependencies.push_back(int64_t(condition));
-            const auto event=obligation(fn,where,kind,bitwise?"gpu-i32-bitwise-relation":"gpu-i32-numeric-relation",Object{
-              {"operator",operation},{"semantics",bitwise?"source-i32-bitwise-32":"source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
+            Object details{{"operator",operation},{"semantics",shift?"source-i32-shift-count-0-to-31":bitwise?"source-i32-bitwise-32":"source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}};
+            if(shift)details["countProof"]=countProof;
+            const auto event=obligation(fn,where,kind,shift?"gpu-i32-shift-relation":bitwise?"gpu-i32-bitwise-relation":"gpu-i32-numeric-relation",std::move(details));
             conditions.insert(event);mlir::Value result;
             if(operation=="+")result=b.create<spv::IAddOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
             else if(operation=="-")result=b.create<spv::ISubOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
             else if(operation=="*")result=b.create<spv::IMulOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
             else if(operation=="&")result=b.create<spv::BitwiseAndOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
             else if(operation=="|")result=b.create<spv::BitwiseOrOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
-            else result=b.create<spv::BitwiseXorOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else if(operation=="^")result=b.create<spv::BitwiseXorOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else if(operation=="<<")result=b.create<spv::ShiftLeftLogicalOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else if(operation==">>")result=b.create<spv::ShiftRightArithmeticOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else result=b.create<spv::ShiftRightLogicalOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
             mark(result.getDefiningOp(),where,kind);
             values[op.result]={result,true,std::move(conditions)};original["obligationId"]=int64_t(event);
-            if(emittingModule)discharges.push_back(Object{{"obligationId",int64_t(event)},{"status","discharged"},
-              {"basis",bitwise?"R03 integer bitwise operations":"R01 section 4.2"},{"relation",bitwise?"32-bit-pattern-exact":"low-32-bits-exact"},
-              {"operation",operation=="+"?"spirv.IAdd":operation=="-"?"spirv.ISub":operation=="*"?"spirv.IMul":operation=="&"?"spirv.BitwiseAnd":operation=="|"?"spirv.BitwiseOr":"spirv.BitwiseXor"},
+            if(emittingModule){Object discharge{{"obligationId",int64_t(event)},{"status","discharged"},
+              {"basis",bitwise?"R03 integer bitwise operations":"R01 section 4.2"},{"relation",shift?"count-in-range-result-exact":bitwise?"32-bit-pattern-exact":"low-32-bits-exact"},
+              {"operation",operation=="+"?"spirv.IAdd":operation=="-"?"spirv.ISub":operation=="*"?"spirv.IMul":operation=="&"?"spirv.BitwiseAnd":operation=="|"?"spirv.BitwiseOr":operation=="^"?"spirv.BitwiseXor":operation=="<<"?"spirv.ShiftLeftLogical":operation==">>"?"spirv.ShiftRightArithmetic":"spirv.ShiftRightLogical"},
               {"functionId",id},{"point",point(where)},{"source",source(where)},
-              {"requires",field(obligations.back(),"dependsOn")}});
+              {"requires",field(obligations.back(),"dependsOn")}};
+              if(shift)discharge["countProof"]=countProof;discharges.push_back(std::move(discharge));}
           }else if(op.name=="unary"){
             const auto operation=string(field(op.properties,"operator"));const bool bitwise=operation=="~";
             if(op.view!=exception::i32Id||(!bitwise&&operation!="-"))return fail("capability","GPU unary operation is not implemented",where);
