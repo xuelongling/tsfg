@@ -100,6 +100,31 @@ test('rejects malformed and internally split imported aliases',()=>{
   assert.throws(()=>validateModuleFacts(x.snapshot),/r03-module-facts/);
  }
 });
+
+test('rejects fixed-four surrogate escapes in an imported identifier',()=>{
+ const x=fixture({mode:'named',local:'bound',imported:escape('D801')+escape('DC00')+'value',
+  exportName:String.fromCodePoint(0x10400)+'value'});
+ assert.throws(()=>validateModuleFacts(x.snapshot),/r03-module-facts/);
+});
+
+for(const [name,first,second]of [
+ ['braced','{D801}','{DC00}'],
+ ['fixed-four then braced','D801','{DC00}'],
+ ['braced then fixed-four','{D801}','DC00'],
+])test('rejects '+name+' surrogate escapes in an imported identifier',()=>{
+ const x=fixture({mode:'named',local:'bound',imported:escape(first)+escape(second)+'value',
+  exportName:String.fromCodePoint(0x10400)+'value'});
+ assert.throws(()=>validateModuleFacts(x.snapshot),/r03-module-facts/);
+});
+
+for(const imported of [String.fromCodePoint(0x10400)+'value',escape('{10400}')+'value'])
+ test('preserves scalar astral imported identifier '+imported,()=>{
+  const x=fixture({mode:'named',local:'bound',imported,exportName:String.fromCodePoint(0x10400)+'value'});
+  const view=validateModuleFacts(x.snapshot);
+  assert.equal(view.views.get(x.appPath).get(x.binding),x.target);
+  assert.equal(x.snapshot.sources[1].content.slice(x.imp.bindings[0].range.start,x.imp.bindings[0].range.end),'bound');
+  assert.ok(x.snapshot.sources[1].content.includes(imported+' as bound'));
+ });
 test('rejects a named import range moved into a body span with a comment dot',()=>{
  const x=fixture({mode:'shorthand',local:'count'}),raw='count/* . */';
  const file=x.snapshot.sources[1];

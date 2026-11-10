@@ -71,20 +71,22 @@ function identifier(spelling) {
     }
     if(text[index+1]!=="u") fail();
     index+=2;
+    let point;
     if(text[index]==="{") {
-      let point=0,digits=0;index++;
+      point=0;let digits=0;index++;
       while(index<text.length && text[index]!=="}") {
         if(!/[0-9a-fA-F]/.test(text[index])) fail();
         point=point*16+Number.parseInt(text[index++],16);digits++;
         if(point>0x10ffff) fail();
       }
       if(!digits || text[index++]!=="}") fail();
-      characters.push(String.fromCodePoint(point));
     } else {
       const digits=text.slice(index,index+4);
       if(!/^[0-9a-fA-F]{4}$/.test(digits)) fail();
-      characters.push(String.fromCharCode(Number.parseInt(digits,16)));index+=4;
+      point=Number.parseInt(digits,16);index+=4;
     }
+    if(point>=0xd800&&point<=0xdfff) fail();
+    characters.push(String.fromCodePoint(point));
   }
   const name=characters.join("");
   if(!/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(name)) fail();
