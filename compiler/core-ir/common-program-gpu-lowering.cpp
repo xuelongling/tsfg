@@ -225,17 +225,19 @@ struct Lowering {
             values[fn.blocks[next].parameters[0]]=std::move(value);original["obligationId"]=int64_t(event);
             sourceOperations.push_back(std::move(original));block=next;continued=true;break;
           }else if(op.name=="binary"){
-            if(op.view!=exception::i32Id||string(field(op.properties,"operator"))!="+")return fail("capability","GPU scalar operation is not implemented",where);
+            const auto operation=string(field(op.properties,"operator"));const auto kind=operation=="+"?"i32-add":"i32-sub";
+            if(op.view!=exception::i32Id||(operation!="+"&&operation!="-"))return fail("capability","GPU scalar operation is not implemented",where);
             const auto left=values.at(op.operands[0]),right=values.at(op.operands[1]);
-            if(!left.actualI32||!right.actualI32)return fail("actual","GPU addition needs Source actual-i32 proof or explicit numeric continuations",where);
+            if(!left.actualI32||!right.actualI32)return fail("actual","GPU arithmetic needs Source actual-i32 proof or explicit numeric continuations",where);
             auto conditions=left.conditions;conditions.insert(right.conditions.begin(),right.conditions.end());
             Array dependencies;for(auto condition:conditions)dependencies.push_back(int64_t(condition));
-            const auto event=obligation(fn,where,"i32-add","gpu-i32-numeric-relation",Object{
-              {"operator","+"},{"semantics","source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
-            conditions.insert(event);auto sum=b.create<spv::IAddOp>(b.getUnknownLoc(),left.bits,right.bits);mark(sum,where,"i32-add");
-            values[op.result]={sum.getResult(),true,std::move(conditions)};original["obligationId"]=int64_t(event);
+            const auto event=obligation(fn,where,kind,"gpu-i32-numeric-relation",Object{
+              {"operator",operation},{"semantics","source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
+            conditions.insert(event);mlir::Value result=operation=="+"?b.create<spv::IAddOp>(b.getUnknownLoc(),left.bits,right.bits).getResult():
+              b.create<spv::ISubOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();mark(result.getDefiningOp(),where,kind);
+            values[op.result]={result,true,std::move(conditions)};original["obligationId"]=int64_t(event);
             if(emittingModule)discharges.push_back(Object{{"obligationId",int64_t(event)},{"status","discharged"},
-              {"basis","R01 section 4.2"},{"relation","low-32-bits-exact"},{"operation","spirv.IAdd"},
+              {"basis","R01 section 4.2"},{"relation","low-32-bits-exact"},{"operation",operation=="+"?"spirv.IAdd":"spirv.ISub"},
               {"functionId",id},{"point",point(where)},{"source",source(where)},
               {"requires",field(obligations.back(),"dependsOn")}});
           }else if(op.name=="cf.br"){
