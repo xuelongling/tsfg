@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Independent SPIR-V word/SSA oracle for genuine scalar i32 arithmetic.
+// Independent SPIR-V word/SSA oracle for genuine scalar i32 operations.
 // Opcode/layout grammar is separate from the compiler and its serializer.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -7,6 +7,20 @@ const only=(rows,label)=>{assert.equal(rows.length,1,label);return rows[0];};
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)
   ?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
 const digest=value=>'sha256:'+createHash('sha256').update(canonical(value)+'\n').digest('hex');
+const integerOperations=new Map(Object.entries({
+  '2:+':{opcode:128,kind:'i32-add',operation:'spirv.IAdd',bitwise:false},
+  '2:-':{opcode:130,kind:'i32-sub',operation:'spirv.ISub',bitwise:false},
+  '2:*':{opcode:132,kind:'i32-mul',operation:'spirv.IMul',bitwise:false},
+  '1:-':{opcode:126,kind:'i32-negate',operation:'spirv.SNegate',bitwise:false},
+  '2:|':{opcode:197,kind:'i32-or',operation:'spirv.BitwiseOr',bitwise:true},
+  '2:^':{opcode:198,kind:'i32-xor',operation:'spirv.BitwiseXor',bitwise:true},
+  '2:&':{opcode:199,kind:'i32-and',operation:'spirv.BitwiseAnd',bitwise:true},
+  '1:~':{opcode:200,kind:'i32-not',operation:'spirv.Not',bitwise:true},
+}));
+function integerOperation(operator,arity){
+  assert.ok(arity===1||arity===2);
+  const expected=integerOperations.get(arity+':'+operator);assert.ok(expected,'supported i32 operator and arity');return expected;
+}
 function literalString(args,start){
   const bytes=[];
   for(let index=start;index<args.length;index++)for(let shift=0;shift<32;shift+=8){
@@ -19,8 +33,7 @@ function literalString(args,start){
 }
 
 export function verifyGpuI32Words(words,entryName,operator,arity=2){
-  assert.ok(arity===1||arity===2);assert.ok(arity===1?operator==='-':['+','-','*'].includes(operator));
-  const arithmeticOpcode=arity===1?126:operator==='*'?132:operator==='-'?130:128;
+  const arithmeticOpcode=integerOperation(operator,arity).opcode;
   assert.ok(Array.isArray(words)&&words.length>=5);words.forEach(word=>assert.ok(Number.isInteger(word)&&word>=0&&word<=0xffffffff));
   assert.equal(words[0],0x07230203);assert.equal(words[1],0x00010300);assert.ok(words[3]>1);assert.equal(words[4],0);
   const rows=[],permitted=new Set([5,14,15,16,17,19,21,30,32,33,43,54,56,59,61,62,65,71,72,arithmeticOpcode,248,253]);
@@ -92,7 +105,7 @@ export function verifyGpuI32Report(report,oracle,plan,operator){
   assert.deepEqual(report.execution,{source:false,vm:false,numerical:false,hostPreflight:false,device:false});
   const ast=only(oracle.functions.filter(row=>row.name==='constantKernel'),'official arithmetic Source function');
   assert.equal(ast.operator,operator);const unary=ast.literal===null,arity=unary?1:2;
-  assert.equal(report.arity,arity);assert.ok(unary?operator==='-':['+','-','*'].includes(operator));
+  assert.equal(report.arity,arity);const expected=integerOperation(operator,arity);
   if(!unary)assert.equal(ast.literalToken,'7');
   const source=range=>({sourceId:'/src/main.ts',...range});
   assert.deepEqual(report.officialLiteral,unary?null:source(ast.literal));
@@ -122,15 +135,16 @@ export function verifyGpuI32Report(report,oracle,plan,operator){
   assert.equal(out.profile.activeSourceInstances,1);assert.equal(out.profile.targetApi,'vulkan');assert.equal(out.profile.targetApiVersion,'1.1');assert.equal(out.profile.spirvVersion,'1.3');
   assert.deepEqual(out.sourceOperations.map(row=>({name:row.name,point:row.point,source:row.source,functionId:row.functionId})),ops.map(row=>({name:row.name,point:row.point,source:row.source,functionId:fn})));
   assert.equal(out.obligations.length,arity+2);const fuel=out.obligations[0],numericObligations=out.obligations.slice(1,arity+1),relation=out.obligations[arity+1],left=numericObligations[0];
-  const kind=unary?'i32-negate':operator==='*'?'i32-mul':operator==='-'?'i32-sub':'i32-add';
-  const operation=unary?'spirv.SNegate':operator==='*'?'spirv.IMul':operator==='-'?'spirv.ISub':'spirv.IAdd';
-  assert.deepEqual(out.obligations.map(row=>row.kind),['fuel',...numeric.map(()=>'numeric-use'),kind]);
+  assert.deepEqual(out.obligations.map(row=>row.kind),['fuel',...numeric.map(()=>'numeric-use'),expected.kind]);
   assert.deepEqual(out.obligations.map(row=>row.status),['unfulfilled',...numeric.map((_,index)=>index===0?'unfulfilled':'proven-i32'),'unfulfilled']);
   [entry,...numeric,arithmetic].forEach((row,index)=>{assert.equal(out.obligations[index].id,index);assert.equal(out.obligations[index].functionId,fn);assert.deepEqual(out.obligations[index].source,row.source);assert.deepEqual(out.obligations[index].point,row.point);});
   numericObligations.forEach((row,index)=>{assert.equal(row.operator,operator);assert.equal(row.index,index);assert.equal(row.operand,numeric[index].operands[0]);assert.equal(row.condition,'actual-initialized-i32');});
-  assert.equal(fuel.event,1);assert.equal(relation.operator,operator);assert.equal(relation.semantics,'source-i32-modulo-2^32');assert.deepEqual(relation.dependsOn,[left.id]);
+  assert.equal(fuel.event,1);assert.equal(relation.operator,operator);
+  assert.equal(relation.condition,expected.bitwise?'gpu-i32-bitwise-relation':'gpu-i32-numeric-relation');
+  assert.equal(relation.semantics,expected.bitwise?'source-i32-bitwise-32':'source-i32-modulo-2^32');assert.deepEqual(relation.dependsOn,[left.id]);
   const site=(row,id)=>({obligationId:id,functionId:fn,point:row.point,source:row.source});
-  assert.deepEqual(out.discharges,[{...site(arithmetic,relation.id),basis:'R01 section 4.2',operation,relation:'low-32-bits-exact',requires:[left.id],status:'discharged'}]);
+  assert.deepEqual(out.discharges,[{...site(arithmetic,relation.id),basis:expected.bitwise?'R03 integer bitwise operations':'R01 section 4.2',
+    operation:expected.operation,relation:expected.bitwise?'32-bit-pattern-exact':'low-32-bits-exact',requires:[left.id],status:'discharged'}]);
   const host=out.hostPreflight;assert.equal(host.status,'unfulfilled');assert.equal(host.steps.length,arity+1);
   assert.deepEqual(host.steps.map(row=>row.status),Array.from({length:arity+1},()=>'unfulfilled'));assert.deepEqual(host.steps[0].checkOrder,['depth','fuel']);
   assert.equal(host.steps[0].activeDepth,1);assert.equal(host.steps[0].fuelCost,1);assert.deepEqual(host.steps[0].source,entry.source);

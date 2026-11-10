@@ -226,36 +226,46 @@ struct Lowering {
             sourceOperations.push_back(std::move(original));block=next;continued=true;break;
           }else if(op.name=="binary"){
             const auto operation=string(field(op.properties,"operator"));
-            if(op.view!=exception::i32Id||(operation!="+"&&operation!="-"&&operation!="*"))return fail("capability","GPU scalar operation is not implemented",where);
-            const auto kind=operation=="+"?"i32-add":operation=="-"?"i32-sub":"i32-mul";
+            const bool bitwise=operation=="&"||operation=="|"||operation=="^";
+            if(op.view!=exception::i32Id||(!bitwise&&operation!="+"&&operation!="-"&&operation!="*"))return fail("capability","GPU scalar operation is not implemented",where);
+            const auto kind=operation=="+"?"i32-add":operation=="-"?"i32-sub":operation=="*"?"i32-mul":operation=="&"?"i32-and":operation=="|"?"i32-or":"i32-xor";
             const auto left=values.at(op.operands[0]),right=values.at(op.operands[1]);
             if(!left.actualI32||!right.actualI32)return fail("actual","GPU arithmetic needs Source actual-i32 proof or explicit numeric continuations",where);
             auto conditions=left.conditions;conditions.insert(right.conditions.begin(),right.conditions.end());
             Array dependencies;for(auto condition:conditions)dependencies.push_back(int64_t(condition));
-            const auto event=obligation(fn,where,kind,"gpu-i32-numeric-relation",Object{
-              {"operator",operation},{"semantics","source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
+            const auto event=obligation(fn,where,kind,bitwise?"gpu-i32-bitwise-relation":"gpu-i32-numeric-relation",Object{
+              {"operator",operation},{"semantics",bitwise?"source-i32-bitwise-32":"source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
             conditions.insert(event);mlir::Value result;
             if(operation=="+")result=b.create<spv::IAddOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
             else if(operation=="-")result=b.create<spv::ISubOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
-            else result=b.create<spv::IMulOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else if(operation=="*")result=b.create<spv::IMulOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else if(operation=="&")result=b.create<spv::BitwiseAndOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else if(operation=="|")result=b.create<spv::BitwiseOrOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
+            else result=b.create<spv::BitwiseXorOp>(b.getUnknownLoc(),left.bits,right.bits).getResult();
             mark(result.getDefiningOp(),where,kind);
             values[op.result]={result,true,std::move(conditions)};original["obligationId"]=int64_t(event);
             if(emittingModule)discharges.push_back(Object{{"obligationId",int64_t(event)},{"status","discharged"},
-              {"basis","R01 section 4.2"},{"relation","low-32-bits-exact"},{"operation",operation=="+"?"spirv.IAdd":operation=="-"?"spirv.ISub":"spirv.IMul"},
+              {"basis",bitwise?"R03 integer bitwise operations":"R01 section 4.2"},{"relation",bitwise?"32-bit-pattern-exact":"low-32-bits-exact"},
+              {"operation",operation=="+"?"spirv.IAdd":operation=="-"?"spirv.ISub":operation=="*"?"spirv.IMul":operation=="&"?"spirv.BitwiseAnd":operation=="|"?"spirv.BitwiseOr":"spirv.BitwiseXor"},
               {"functionId",id},{"point",point(where)},{"source",source(where)},
               {"requires",field(obligations.back(),"dependsOn")}});
           }else if(op.name=="unary"){
-            if(op.view!=exception::i32Id||string(field(op.properties,"operator"))!="-")return fail("capability","GPU unary operation is not implemented",where);
+            const auto operation=string(field(op.properties,"operator"));const bool bitwise=operation=="~";
+            if(op.view!=exception::i32Id||(!bitwise&&operation!="-"))return fail("capability","GPU unary operation is not implemented",where);
             const auto value=values.at(op.operands[0]);
             if(!value.actualI32)return fail("actual","GPU negation needs Source actual-i32 proof or an explicit numeric continuation",where);
             Array dependencies;for(auto condition:value.conditions)dependencies.push_back(int64_t(condition));
-            const auto event=obligation(fn,where,"i32-negate","gpu-i32-numeric-relation",Object{
-              {"operator","-"},{"semantics","source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
+            const auto kind=bitwise?"i32-not":"i32-negate";
+            const auto event=obligation(fn,where,kind,bitwise?"gpu-i32-bitwise-relation":"gpu-i32-numeric-relation",Object{
+              {"operator",operation},{"semantics",bitwise?"source-i32-bitwise-32":"source-i32-modulo-2^32"},{"dependsOn",std::move(dependencies)}});
             auto conditions=value.conditions;conditions.insert(event);
-            auto result=b.create<spv::SNegateOp>(b.getUnknownLoc(),value.bits);mark(result,where,"i32-negate");
-            values[op.result]={result.getResult(),true,std::move(conditions)};original["obligationId"]=int64_t(event);
+            mlir::Value result;
+            if(bitwise)result=b.create<spv::NotOp>(b.getUnknownLoc(),value.bits).getResult();
+            else result=b.create<spv::SNegateOp>(b.getUnknownLoc(),value.bits).getResult();
+            mark(result.getDefiningOp(),where,kind);
+            values[op.result]={result,true,std::move(conditions)};original["obligationId"]=int64_t(event);
             if(emittingModule)discharges.push_back(Object{{"obligationId",int64_t(event)},{"status","discharged"},
-              {"basis","R01 section 4.2"},{"relation","low-32-bits-exact"},{"operation","spirv.SNegate"},
+              {"basis",bitwise?"R03 integer bitwise operations":"R01 section 4.2"},{"relation",bitwise?"32-bit-pattern-exact":"low-32-bits-exact"},{"operation",bitwise?"spirv.Not":"spirv.SNegate"},
               {"functionId",id},{"point",point(where)},{"source",source(where)},
               {"requires",field(obligations.back(),"dependsOn")}});
           }else if(op.name=="cf.br"){

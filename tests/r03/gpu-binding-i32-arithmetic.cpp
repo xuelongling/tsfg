@@ -141,12 +141,13 @@ bool sameSite(const GpuObligationSite &actual, const OperationSite &expected, ll
 
 int main(int argc, char **argv) {
   if (argc != 4) {
-    llvm::errs() << "expected metadata directory, official oracle path and +, - or *\n";
+    llvm::errs() << "expected metadata directory, official oracle path and i32 operator\n";
     return 2;
   }
   std::string coreBytes, requestBytes, planBytes, oracleBytes;
   const std::string operation(argv[3]);
-  if (operation != "+" && operation != "-" && operation != "*") return 2;
+  if (operation != "+" && operation != "-" && operation != "*" &&
+      operation != "&" && operation != "|" && operation != "^" && operation != "~") return 2;
   if (!readFile(argv[1], "common-program.mlir", coreBytes) ||
       !readFile(argv[1], "gpu-binding-request.json", requestBytes) ||
       !readFile(argv[1], "gpu-binding-plan.json", planBytes) ||
@@ -170,8 +171,9 @@ int main(int argc, char **argv) {
       "official Source function/parameter identities and complete source range are established independently")) return 3;
   const bool unary = bool(field(*official, "literal").getAsNull());
   const size_t arity = unary ? 1 : 2;
-  if (!check(unary ? operation == "-" : field(*official, "literalToken").getAsString() == "7",
-      "official AST distinguishes unary negation from binary arithmetic with literal seven")) return 3;
+  if (!check(unary ? operation == "-" || operation == "~" :
+      operation != "~" && field(*official, "literalToken").getAsString() == "7",
+      "official AST distinguishes unary integer operations from binary operations with literal seven")) return 3;
   GpuSourceRange functionRange, parameterRange, expressionRange, returnRange, parameterUseRange, literalRange, operatorRange;
   if (!readOfficialRange(field(*official, "range"), uint32_t(*sourceLength), functionRange) ||
       !readOfficialRange(field(*official, "parameterRange"), uint32_t(*sourceLength), parameterRange) ||
@@ -330,7 +332,7 @@ int main(int argc, char **argv) {
   }
   if (!check(sameSite(call.discharges()[0].site, *arithmetic, functionId) &&
       call.discharges()[0].prerequisites == std::vector<uint32_t>{left->site.obligationId},
-      "the unknown parameter numeric condition remains the wrap-discharge prerequisite")) return 3;
+      "the unknown parameter numeric condition remains the integer-discharge prerequisite")) return 3;
   const auto typed = typedProjection(call);
   if (!check(same(field(typed, "words"), field(artifact, "words")) &&
       call.identity().inputIdentity == program.inputIdentity && call.identity().hirDigest == program.hirHash &&

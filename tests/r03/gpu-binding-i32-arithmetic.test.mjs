@@ -21,7 +21,7 @@ async function fixture(folder,operator,pins){
   assert.equal(oracle.sourceSha256,sha(raw[2]));assert.deepEqual(oracle.sourceRange,{start:0,end:text.length});
   const ast=oracle.functions.find(row=>row.name==='constantKernel');assert.ok(ast);
   const arity=ast.literal===null?1:2;
-  assert.equal(ast.operator,operator);assert.equal(text.slice(ast.expression.start,ast.expression.end),arity===1?'-x':'x '+operator+' 7');
+  assert.equal(ast.operator,operator);assert.equal(text.slice(ast.expression.start,ast.expression.end),arity===1?operator+'x':'x '+operator+' 7');
   const hir=buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:facts.version,factsBytes:raw[0],expectedPackageId:facts.packageId});
   assert.equal(facts.version,3);assert.deepEqual(hir.snapshot,facts);assert.equal(hir.sources.find(row=>row.path==='/src/main.ts').content,text);
   assert.equal(hir.functions.length,2);assert.equal(hir.globals.length,0);assert.equal(hir.closure.roots.length,3);
@@ -31,7 +31,7 @@ async function fixture(folder,operator,pins){
   assert.equal(expression.kind,arity===1?'unary':'binary');assert.equal(expression.operator,operator);assert.deepEqual(expression.range,ast.expression);
   const operand=arity===1?expression.expression:expression.left;
   assert.equal(operand.binding,fn.parameters[0].id);assert.deepEqual(operand.range,ast.parameterUse);
-  if(arity===1){assert.deepEqual(expression.operatorRange,ast.operatorRange);assert.equal(operator,'-');}
+  if(arity===1){assert.deepEqual(expression.operatorRange,ast.operatorRange);assert.ok(operator==='-'||operator==='~');}
   else{assert.equal(expression.right.kind,'numericLiteral');assert.equal(expression.right.decimal,'7');assert.deepEqual(expression.right.range,ast.literal);}
   const publication=createCommonProgramPublication(hir),group={targets:hir.closure.roots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
   assert.equal(group.targets.length,2);assert.notEqual(publication.contracts.find(row=>row.functionId===fn.id).returnOrigins,null);
@@ -46,10 +46,16 @@ const plus=await fixture('common-program-gpu-constant-v3','+',['756c91508f560677
 const minus=await fixture('common-program-gpu-subtraction-v3','-',['8ad6c71edab8044391aa4c7927636f11be7e6c94236c71d0c07bef15b09ef0f0','ee6b05c68e54e03fac5d2a8f47b7acf8bf0001738f00b48287b98ca6caaa2c7e','b6fabcd68a6c435682828caf2cd36a754d48062b73b77052e8f513c3473b9c91']);
 const multiply=await fixture('common-program-gpu-multiply-v3','*',['b45e9701ccb2929bab7653a6d7c8f0d74381475e1c29d55e486ede37dfe4dcc4','8dc1069ab49de21deccd93c5a192c92494a3abf166750361a69c4be41882fe2e','2f629475d04d07405d3abfdac966d22cb3ab8d59c04c9d9f9d75b6dadfac2b93']);
 const negate=await fixture('common-program-gpu-negate-v3','-',['83dfdac458e3807f835b1fe0d0ebe75a5b08619a5a7dca5f5e914b1835457a81','0771b6ef5d29ef3ef617c0ded3594d85d2776e412c5c6fcbcdf8484746fd3f2e','2c3e70644c91ec21ad669308eda17c43d26521eaafbfce6ae21944c887a44437']);
-test('genuine Source3 i32 arithmetic preserves the complete group, binding, operator and fixed return',()=>{
-  assert.equal(new Set([plus,minus,multiply,negate].map(value=>value.plan.inputIdentity)).size,4);
-  assert.equal(new Set([plus,minus,multiply,negate].map(value=>value.core.text)).size,4);
-  for(const value of [plus,minus,multiply,negate]){
+const bitwiseAnd=await fixture('common-program-gpu-and-v3','&',['4db4f711f7c9dcecbdc184221d27bdc7f98950df881c6879e38046bb2c5284bc','f6b7d872c3d136354bcd91db4ec9ef83d00553ff858d177236e19cd0b352c542','e3a537fcaf1bd4b19a75ec5a55b1e2ee244c13d4f61559333052c3fec3cd3c64']);
+const bitwiseOr=await fixture('common-program-gpu-or-v3','|',['d2f379bb6aedd180ed5c055fbe7cacd50b3ae8a4d327436d1da6631a589eb48f','be3481efb4309a36e5d9371496b4f2e0f334bb459936f1425e01cb0fcc1234ca','0a6966df96684623d3c58d7a1fc6dd07d3f8d3f0feabde5db743f2dad5d18be6']);
+const bitwiseXor=await fixture('common-program-gpu-xor-v3','^',['840c9fde95a11168d60d50dc773002ccc64035cc2dd828ef28414eec3dff6600','e234c1e3a26bf1d5f1802ce839f3b047ee82ef775cc04ae228474a4c5f5b5134','f4df1a1a7d3bfab75bae7643268063d2e84ac729c935fa4740b6ac1f190a83b8']);
+const bitwiseNot=await fixture('common-program-gpu-not-v3','~',['11a95f67a95ed04b808046b46f4d50e2017d0c3b2beace20e1b5eb0aa8222a64','e32463dad5313801c2cd631b9f4bb28f0767cad5cc3560cacba8de576fdf45df','ab0db2e5161383c734a1b5496c8bb53688bcf392be0d302552a905467480a3d3']);
+const cases=[{name:'plus',value:plus},{name:'minus',value:minus},{name:'multiply',value:multiply},{name:'negate',value:negate},
+  {name:'and',value:bitwiseAnd},{name:'or',value:bitwiseOr},{name:'xor',value:bitwiseXor},{name:'not',value:bitwiseNot}];
+test('genuine Source3 i32 operations preserve the complete group, binding, operator and fixed return',()=>{
+  assert.equal(new Set(cases.map(({value})=>value.plan.inputIdentity)).size,cases.length);
+  assert.equal(new Set(cases.map(({value})=>value.core.text)).size,cases.length);
+  for(const {value}of cases){
     assert.equal(value.plan.version,2);assert.equal(value.plan.groupTargets.length,2);assert.equal(value.plan.kernels.length,1);
     assert.deepEqual(value.plan.bindings.map(row=>[row.kind,row.access,row.type]),[['parameter','read','i32'],['return','write','i32']]);
   }
@@ -58,24 +64,29 @@ test('genuine Source3 i32 arithmetic preserves the complete group, binding, oper
 // The build owner supplies qualified outputs from the permanent C++ consumer.
 // This oracle reads captured compiler data; it never executes Source or a device.
 const reports=process.env.TSFG_GPU_I32_REPORT_ROOT;
-for(const {name,value}of [{name:'plus',value:plus},{name:'minus',value:minus},{name:'multiply',value:multiply},{name:'negate',value:negate}])test('independent '+name+' SPIR-V words, Source obligations and owned pending reader',
+for(const {name,value}of cases)test('independent '+name+' SPIR-V words, Source obligations and owned pending reader',
   {skip:reports?false:'TSFG_GPU_I32_REPORT_ROOT is not supplied'},async()=>{
     assert.ok(path.isAbsolute(reports));
     const report=JSON.parse(await fs.readFile(path.join(reports,'green-'+name+'01/raw/stdout.bin'),'utf8'));
     assert.equal(report.coreSHA,'sha256:'+sha(value.core.text));assert.equal(report.requestSHA,digest(value.request));assert.equal(report.planSHA,digest(value.plan));
     const verify=row=>verifyGpuI32Report(row,value.oracle,value.plan,value.operator),accepted=verify(report);
     assert.equal(accepted.sourceEvents,value.arity===1?8:10);assert.equal(accepted.words,value.arity===1?182:187);
+    const bitwise=['&','|','^','~'].includes(value.operator);
     const rebind=row=>{const out=row.emittedModule;out.wordsDigest=digest(out.words);const {artifactDigest,...artifact}=out;out.artifactDigest=digest(artifact);row.typedPending.words=[...out.words];row.typedPending.identity.wordsDigest=out.wordsDigest;row.typedPending.identity.artifactDigest=out.artifactDigest;};
     const controls=[
-      row=>{const at=accepted.binary.arithmetic.start;row.emittedModule.words[at]=(row.emittedModule.words[at]&0xffff0000)|(value.operator==='-'?128:130);rebind(row);},
+      row=>{const at=accepted.binary.arithmetic.start,opcode=value.arity===1?(value.operator==='~'?126:200):value.operator==='&'?197:value.operator==='|'?198:value.operator==='^'?199:value.operator==='-'?128:130;
+        row.emittedModule.words[at]=(row.emittedModule.words[at]&0xffff0000)|opcode;rebind(row);},
       row=>{const words=row.emittedModule.words,at=accepted.binary.arithmetic.start;if(value.arity===1)words[at+3]=accepted.binary.parameterLoad.args[1];else [words[at+3],words[at+4]]=[words[at+4],words[at+3]];rebind(row);},
       row=>{row.emittedModule.obligations.at(-1).source.start++;rebind(row);},
       row=>{row.emittedModule.obligations.at(-1).dependsOn=[];row.emittedModule.discharges[0].requires=[];row.typedPending.discharges[0].prerequisites=[];rebind(row);},
       row=>{if(value.arity===1)row.typedPending.hostSteps[1].origin.descriptorIndex=1;else row.typedPending.hostSteps[2].origin.bits=8;},
       row=>{row.emittedModule.launchAuthorized=true;row.typedPending.launchAuthorized=true;rebind(row);},
+      row=>{row.arity=value.arity===1?2:1;},
+      row=>{row.emittedModule.obligations.at(-1).semantics=bitwise?'source-i32-modulo-2^32':'source-i32-bitwise-32';rebind(row);},
+      row=>{row.emittedModule.discharges[0].relation=bitwise?'low-32-bits-exact':'32-bit-pattern-exact';rebind(row);},
     ];
     controls.forEach(change=>{const changed=structuredClone(report);change(changed);assert.throws(()=>verify(changed));});
-    if(name==='plus'||name==='minus'){
+    if(!bitwise){
       const original=JSON.parse(await fs.readFile(path.join(reports,'red-'+name+'01/raw/stdout.bin'),'utf8'));
       assert.deepEqual(report.emittedModule,original.emittedModule);assert.deepEqual(report.typedPending,original.typedPending);
     }
