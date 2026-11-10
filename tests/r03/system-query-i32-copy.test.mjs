@@ -382,3 +382,107 @@ test('real C++ i32 field addition preserves bound layouts, effects, and wrapping
   run('addition-wrong-core-literal',badLiteral,'--canonicalize',3);
   run('addition-forged-llvm-wrap-flag',badAdd,'--canonicalize-llvm-ir',3);
 });
+
+const subtractionFixture=new URL('./testdata/system-query-i32-field-subtraction/',import.meta.url);
+const subtractionPins={
+  'source.ts':'ba9c7f81850efd8093eff51fd4d0ae91ba77aa71fa33ad3cd3a320d59c8bbe2f',
+  'request.json':'d8699678177a42a4cf4a78e6e8c60fed6b86acf8982aefad5ff4e548170237ef',
+  'official-oracle.json':'5389bc84ad02dbf579327962cd0032b406426a2270e9c3ea3e69e7ab400d5bf1',
+  'package.json':'0621097b57c3f6e7f248b3e370c8b14a2c02ff0116ed5e647c361e2a243086b3',
+};
+const subtractionOriginal=Object.fromEntries(Object.keys(subtractionPins).map(name=>[name,readFileSync(new URL(name,subtractionFixture))]));
+/** @type {typeof import('./testdata/system-query-i32-field-subtraction/package.json')} */
+const subtractionPacket=JSON.parse(subtractionOriginal['package.json'].toString('utf8'));
+/** @type {typeof import('./testdata/system-query-i32-field-subtraction/official-oracle.json')} */
+const subtractionOracle=JSON.parse(subtractionOriginal['official-oracle.json'].toString('utf8'));
+const subtractionContext={family:'tsfg.system-query-context-candidate',version:6,requestBytes:subtractionOriginal['request.json'],expectedPackageId:subtractionPacket.packageId};
+const subtractionFacts=readSystemQueryFacts(subtractionOriginal['package.json'],subtractionContext);
+const subtractionCore=emitSystemQueryCore(subtractionFacts,subtractionContext);
+const subtractionFields=[subtractionOracle.fields[1],subtractionOracle.arithmetic.rightField];
+
+test('genuine i32 field subtraction retains ordered Source fields in typed Core',()=>{
+  for(const [name,hash] of Object.entries(subtractionPins))assert.equal(sha256(subtractionOriginal[name]),'sha256:'+hash,name);
+  const text=subtractionOriginal['source.ts'].toString('utf8'),original=subtractionOracle.arithmetic;
+  assert.equal(subtractionOracle.sourceSha256,subtractionPins['source.ts']);
+  assert.deepEqual(subtractionOracle.sourceRange,{start:0,end:text.length});
+  assert.equal(text.slice(original.range.start,original.range.end),'src.n - dst.n');
+  assert.deepEqual(printSystemQueryFacts(subtractionFacts,subtractionContext),subtractionOriginal['package.json']);
+  assert.deepEqual(subtractionFacts.program,subtractionPacket.payload.program);
+  assert.deepEqual(subtractionFacts.nodes,subtractionPacket.payload.nodes);
+  const system=subtractionFacts.systems[0],loop=system.loops[0],assignment=loop.statements[0].value;
+  assert.equal(system.declaration.id,subtractionOracle.systemId);
+  assert.equal(loop.queryBinding,subtractionOracle.queryBinding);
+  assert.ok(assignment?.target&&assignment.value?.left&&assignment.value?.right);
+  const {target,value:subtraction}=assignment,{left,right}=subtraction;
+  assert.deepEqual([assignment.operator,assignment.range,assignment.operatorRange],['=',subtractionOracle.expression,subtractionOracle.operator]);
+  assert.deepEqual([target.sourceField,target.receiver.binding],[subtractionOracle.fields[0].fieldId,subtractionOracle.fields[0].bindingId]);
+  assert.deepEqual([subtraction.operator,subtraction.type,subtraction.range,subtraction.operatorRange],['-',scalarTypeIds.i32,original.range,original.operator]);
+  for(const [index,operand] of [left,right].entries()){
+    const expected=subtractionFields[index];
+    assert.deepEqual([operand.kind,operand.type,operand.sourceField,operand.range,operand.receiver.binding],
+      ['fieldAccess',scalarTypeIds.i32,expected.fieldId,expected.access,expected.bindingId]);
+  }
+  const rows=subtractionCore.split('\n');
+  const loads=rows.filter(row=>row.includes('"tsfg.field_load"'));
+  const sub=rows.find(row=>row.includes('"tsfg_core.sub"')),store=rows.find(row=>row.includes('"tsfg.field_store"'));
+  assert.equal(loads.length,2);
+  const sources=loads.map(row=>row.match(/(%\w+) = /)?.[1]);
+  assert.ok(sub&&store&&sources.every(Boolean));
+  assert.ok(loads.every((row,index)=>hasAnchor(row,subtractionFields[index].access)&&row.endsWith('-> i32')));
+  assert.ok(sub.includes('"tsfg_core.sub"('+sources.join(', ')+')')&&hasAnchor(sub,original.range));
+  const result=sub.match(/(%\w+) = /);
+  assert.ok(result&&store.includes(', '+result[1]+')')&&hasAnchor(store,subtractionOracle.expression));
+});
+
+test('i32 field subtraction retains division, compound and readonly boundaries',()=>{
+  /** @type {Array<(value:typeof subtractionPacket.payload)=>void>} */
+  const corruptions=[
+    payload=>{payload.systems[0].loops[0].statements[0].value.value.operator='/';},
+    payload=>{payload.systems[0].loops[0].statements[0].value.operator='-=';},
+    payload=>{payload.systems[0].loops[0].bindings[0].mode='read';},
+  ];
+  for(const corrupt of corruptions){
+    const changed=structuredClone(subtractionPacket);
+    corrupt(changed.payload);
+    changed.packageId=sha256('tsfg.system-query.package.v6\0'+changed.schemaHash+'\0'+canonical(changed.payload));
+    assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(changed)+'\n'),{...subtractionContext,expectedPackageId:changed.packageId}),TypeError);
+  }
+});
+
+test('real C++ i32 field subtraction preserves operand order, effects and wrapping LLVM',{skip},()=>{
+  const bound=run('subtraction-bound',subtractionCore);
+  assert.equal(run('subtraction-bound-cold',bound),bound);
+  const batch=run('subtraction-batch',bound,'--cpu-batch');
+  const batchRows=batch.split('\n'),loads=batchRows.filter(row=>row.includes('"memref.load"'));
+  const sub=batchRows.find(row=>row.includes('"arith.subi"')),store=batchRows.find(row=>row.includes('"memref.store"'));
+  assert.equal(loads.length,2);
+  assert.ok(sub&&store);
+  for(const [index,row] of loads.entries()){
+    assert.ok(row.endsWith('-> i32')&&hasAnchor(row,subtractionFields[index].access));
+    assert.ok(row.includes('tsfg.batch.source_field = '+coreQuote(subtractionFields[index].fieldId)));
+    assert.ok(row.includes('tsfg.batch.offset = '+[0,4][index]+' : i64'));
+  }
+  assert.ok(store.includes('tsfg.batch.offset = 4 : i64')&&hasAnchor(store,subtractionOracle.expression));
+  const effects=readSystemQueryEffects(Buffer.from(run('subtraction-effects',bound,'--effects')),subtractionFacts,subtractionContext);
+  assert.deepEqual(effects.conflicts,[]);
+  assert.deepEqual(effects.systems[0].loops[0].operations.map(row=>[row.kind,row.sourceField,row.source]),[
+    ...subtractionFields.map(field=>['read',field.fieldId,{path:'/src/main.ts',...field.access}]),
+    ['write',subtractionOracle.fields[0].fieldId,{path:'/src/main.ts',...subtractionOracle.expression}],
+  ]);
+  const dialect=run('subtraction-llvm-dialect',batch,'--cpu-llvm');
+  const ir=run('subtraction-llvm-ir',dialect,'--llvm-ir');
+  assert.equal(run('subtraction-llvm-ir-cold',ir,'--canonicalize-llvm-ir'),ir);
+  const code=ir.split('\n!')[0],inputs=[...code.matchAll(/(%[\w.]+) = load i32,/g)].map(match=>match[1]);
+  const operation=code.match(/(%[\w.]+) = sub i32 (%[\w.]+), (%[\w.]+)/);
+  assert.ok(operation);
+  assert.deepEqual(operation.slice(2),inputs);
+  assert.ok(code.includes('store i32 '+operation[1]+','));
+  const orderedCore=bound.split('\n').find(row=>row.includes('"tsfg_core.sub"'));
+  assert.ok(orderedCore);
+  const reversed=orderedCore.replace(/("tsfg_core\.sub"\()(%\w+), (%\w+)(\))/,(_,start,left,right,end)=>start+right+', '+left+end);
+  assert.notEqual(reversed,orderedCore);
+  run('subtraction-reversed-core-operands',bound.replace(orderedCore,reversed),'--canonicalize',3);
+  const flagged=ir.replace(' = sub i32 '+inputs.join(', '),' = sub nuw i32 '+inputs.join(', '));
+  assert.notEqual(flagged,ir);
+  run('subtraction-forged-llvm-wrap-flag',flagged,'--canonicalize-llvm-ir',3);
+});

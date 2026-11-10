@@ -42,7 +42,8 @@ struct Check {
   mlir::Value arithmetic(mlir::Block::iterator &it,mlir::Block &block,llvm::StringRef name,mlir::Value left,mlir::Value right,const Json &value){
     auto *op=take(it,block,name,{left,right},1);if(!op)return {};
     const auto type=op->getResult(0).getType();
-    const bool typed=string(field(value,"type"))=="i32"?need(type.isSignlessInteger(32)&&name=="tsfg_core.add","original i32 add type differs"):scalar(type,value);
+    const bool typed=string(field(value,"type"))=="i32"?
+      need(type.isSignlessInteger(32)&&(name=="tsfg_core.add"||name=="tsfg_core.sub"||name=="tsfg_core.mul"),"original wrapping i32 arithmetic type differs"):scalar(type,value);
     const auto &r=field(value,"operatorRange");if(!typed||!need(left.getType()==type&&right.getType()==type,"arithmetic operand/result types differ")||
       !attrs(op,{"operator_start","operator_end","tsfg_source.start","tsfg_source.end"})||!anchor(op,field(value,"range"))||!integer(op,"operator_start",number(field(r,"start")))||!integer(op,"operator_end",number(field(r,"end"))))return {};return op->getResult(0);
   }

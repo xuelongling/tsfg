@@ -14,7 +14,7 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   if(!at(path,r,astKind))return false;
   if(kind=="numericLiteral"){
     if(expected=="i32")
-      return need(type=="i32"&&field(value,"bits").getAsNull(),"exact i32 addition literal required")&&verifySourceLiteral(g,value);
+      return need(type=="i32"&&field(value,"bits").getAsNull(),"exact i32 arithmetic literal required")&&verifySourceLiteral(g,value);
     const auto token=string(field(value,"token"));const auto inferred=token.find_first_of(".eE")!=std::string::npos&&token.find_first_of("xX")==std::string::npos?"f64":"i32";
     if(!need((type=="f32"||type=="f64")&&type==(expected.empty()?inferred:expected),"Query literal original contextual/default width differs")||!verifySourceLiteral(g,value))return false;
     const llvm::APInt bits(type=="f32"?32:64,string(field(value,"bits")),16);
@@ -66,10 +66,11 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   }
   if(kind=="binary"){
     const auto op=string(field(value,"operator"));const auto &left=field(value,"left"),&right=field(value,"right");
-    const bool i32Addition=expected=="i32"&&type=="i32"&&op=="+"&&
-      string(field(left,"kind"))=="fieldAccess"&&string(field(right,"kind"))=="numericLiteral";
+    const auto rightKind=string(field(right,"kind"));
+    const bool i32Arithmetic=expected=="i32"&&type=="i32"&&(op=="+"||op=="-"||op=="*")&&
+      string(field(left,"kind"))=="fieldAccess"&&(rightKind=="fieldAccess"||rightKind=="numericLiteral");
     const bool floating=(type=="f32"||type=="f64")&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"+","-","*","/"},op);
-    return need((floating||i32Addition)&&string(field(left,"type"))==type&&string(field(right,"type"))==type,"owned same-type floating-point arithmetic or direct i32 field addition required")&&
+    return need((floating||i32Arithmetic)&&string(field(left,"type"))==type&&string(field(right,"type"))==type,"owned same-type floating-point arithmetic or direct i32 field arithmetic required")&&
       expression(left,body,scope,path,depth+1,expected)&&
       expression(right,body,scope,path,depth+1,expected.empty()?string(field(left,"type")):expected)&&
       g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(left,"range"),field(value,"operatorRange"),field(right,"range")});

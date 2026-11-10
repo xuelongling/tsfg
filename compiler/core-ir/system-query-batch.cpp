@@ -72,12 +72,12 @@ struct Batch {
         std::vector<mlir::Value> args;for(auto arg:op.getOperands())args.push_back(values.find(arg)->second);lowered=b.create<mlir::func::ReturnOp>(loc,args);
       }else{
         const auto left=values.find(op.getOperand(0))->second,right=values.find(op.getOperand(1))->second;mlir::Value result;
-        // No fast-math flags, contraction or reassociation are introduced.
-        if(name=="tsfg_core.add"&&left.getType().isSignlessInteger(32))result=b.create<mlir::arith::AddIOp>(loc,left,right);
-        else if(name=="tsfg_core.add")result=b.create<mlir::arith::AddFOp>(loc,left,right);
-        else if(name=="tsfg_core.sub")result=b.create<mlir::arith::SubFOp>(loc,left,right);
-        else if(name=="tsfg_core.mul")result=b.create<mlir::arith::MulFOp>(loc,left,right);
-        else if(name=="tsfg_core.div")result=b.create<mlir::arith::DivFOp>(loc,left,right);
+        const bool i32=left.getType().isSignlessInteger(32);
+        // Integer ops wrap by default. Floating ops keep strict evaluation.
+        if(name=="tsfg_core.add")result=i32?b.create<mlir::arith::AddIOp>(loc,left,right).getResult():b.create<mlir::arith::AddFOp>(loc,left,right).getResult();
+        else if(name=="tsfg_core.sub")result=i32?b.create<mlir::arith::SubIOp>(loc,left,right).getResult():b.create<mlir::arith::SubFOp>(loc,left,right).getResult();
+        else if(name=="tsfg_core.mul")result=i32?b.create<mlir::arith::MulIOp>(loc,left,right).getResult():b.create<mlir::arith::MulFOp>(loc,left,right).getResult();
+        else if(name=="tsfg_core.div"&&!i32)result=b.create<mlir::arith::DivFOp>(loc,left,right);
         else return need(false,"unselected verified Query operation in batch lowering");
         values[op.getResult(0)]=result;lowered=result.getDefiningOp();
       }
