@@ -34,8 +34,29 @@ llvm::json::Value abiType(const llvm::Type *type){
   if(type->isIntegerTy())return Object{{"integer",type->getIntegerBitWidth()}};
   if(type->isFloatTy())return "f32";if(type->isDoubleTy())return "f64";
   if(const auto *pointer=llvm::dyn_cast<llvm::PointerType>(type))return Object{{"pointer",pointer->getAddressSpace()}};
-  if(const auto *structure=llvm::dyn_cast<llvm::StructType>(type)){Array fields;for(const auto *field:structure->elements())fields.push_back(abiType(field));return Object{{"fields",std::move(fields)}};}
+  if(const auto *structure=llvm::dyn_cast<llvm::StructType>(type)){
+    Array fields;for(const auto *field:structure->elements())fields.push_back(abiType(field));
+    Object result{{"fields",std::move(fields)}};
+    if(structure->hasName())result["structName"]=structure->getName().str();
+    return result;
+  }
   return nullptr;
+}
+bool valuePlane(const llvm::Type *type){
+  const auto *structure=llvm::dyn_cast<llvm::StructType>(type);
+  return structure&&structure->isLiteral();
+}
+llvm::json::Array constantPresenceFields(const llvm::Value *value){
+  const auto *type=llvm::dyn_cast<llvm::StructType>(value->getType());
+  const auto *literal=llvm::dyn_cast<llvm::Constant>(value);
+  if(!type||!type->hasName()||type->getName()!=tsfg::commonProgram::numericPresenceStruct||!literal)return {};
+  llvm::json::Array fields;
+  for(unsigned i=0;i<2;++i){
+    const auto *member=llvm::dyn_cast_or_null<llvm::ConstantInt>(literal->getAggregateElement(i));
+    if(!member)return {};
+    fields.push_back(llvm::json::Object{{"width",member->getBitWidth()},{"bits",std::to_string(member->getZExtValue())}});
+  }
+  return fields;
 }
 struct Graph {
   std::vector<const llvm::BasicBlock *> blocks;
@@ -231,6 +252,15 @@ int main(int argc,char **argv){
   unsigned callbacks=0,stackmaps=0,geps=0,copies=0,comparisons=0,calls=0,functions=0;
   Array aggregateCopies,fieldWrites,fieldReads,eventRows,nativeLayouts,controlFlows;unsigned fieldComparisons=0,sourceFuelSites=0;
   std::set<uint64_t> intervals;
+  const auto undefinedEvent=static_cast<unsigned>(FixedValueEvent::UndefinedNumericUse);
+  const auto &numericTraps=items(field(*decoded,"numericTraps"));
+  std::map<uint64_t,const Json *> trapSites;
+  for(const auto &trap:numericTraps){
+    const auto interval=field(trap,"interval").getAsInteger();
+    if(!interval||*interval<1||field(trap,"kind").getAsInteger()!=undefinedEvent||
+       string(field(trap,"trap"))!=undefinedNumericTrap||string(field(trap,"rule"))!=undefinedNumericRule||
+       !trapSites.emplace(uint64_t(*interval),&trap).second)return 4;
+  }
   for(const auto &fn:*module){
     if(fn.isDeclaration()){
       if(!fn.isIntrinsic())return 4;continue;
@@ -281,7 +311,18 @@ int main(int argc,char **argv){
         record["repeating"]=graph.repeating.count(blockId)!=0;record["slot"]=slots.at(allocation);
       }
       if(const auto *load=llvm::dyn_cast<llvm::LoadInst>(&operation)){record["pointer"]=valueId(load->getPointerOperand());record["pointerResult"]=load->getType()->isPointerTy();}
-      if(const auto *store=llvm::dyn_cast<llvm::StoreInst>(&operation)){record["pointer"]=valueId(store->getPointerOperand());record["value"]=valueId(store->getValueOperand());}
+      if(const auto *store=llvm::dyn_cast<llvm::StoreInst>(&operation)){
+        record["pointer"]=valueId(store->getPointerOperand());record["value"]=valueId(store->getValueOperand());
+        auto fields=constantPresenceFields(store->getValueOperand());
+        if(!fields.empty())record["constantFields"]=std::move(fields);
+      }
+      if(const auto *extract=llvm::dyn_cast<llvm::ExtractValueInst>(&operation);extract&&extract->getNumIndices()==1){
+        record["aggregate"]=valueId(extract->getAggregateOperand());record["index"]=extract->getIndices()[0];
+      }
+      if(const auto *insert=llvm::dyn_cast<llvm::InsertValueInst>(&operation);insert&&insert->getNumIndices()==1){
+        record["aggregate"]=valueId(insert->getAggregateOperand());record["index"]=insert->getIndices()[0];
+        record["value"]=valueId(insert->getInsertedValueOperand());
+      }
       if(const auto *branch=llvm::dyn_cast<llvm::BranchInst>(&operation);branch&&branch->isConditional())record["condition"]=valueId(branch->getCondition());
       if(const auto *returned=llvm::dyn_cast<llvm::ReturnInst>(&operation);returned&&returned->getReturnValue())record["value"]=valueId(returned->getReturnValue());
       if(const auto *comparison=llvm::dyn_cast<llvm::ICmpInst>(&operation)){
@@ -297,12 +338,12 @@ int main(int argc,char **argv){
         fieldReads.push_back(Object{{"indices",std::move(indices)},{"rootSlot",root(pointer)},{"function",fn.getName().str()}});
       }
       if(const auto *store=llvm::dyn_cast<llvm::StoreInst>(&operation)){
-        if(const auto *argument=llvm::dyn_cast<llvm::Argument>(store->getValueOperand());argument&&argument->getType()->isStructTy()){
+        if(const auto *argument=llvm::dyn_cast<llvm::Argument>(store->getValueOperand());argument&&valuePlane(argument->getType())){
           const auto *allocation=llvm::dyn_cast<llvm::AllocaInst>(store->getPointerOperand());if(!allocation||allocation->getParent()!=&fn.getEntryBlock()||store->getParent()!=&fn.getEntryBlock()||!allocation->comesBefore(store))return 4;
           entryPlanes.push_back(Object{{"argument",argument->getArgNo()},{"slot",root(allocation)},{"allocation",valueId(allocation)},{"store",valueId(store)},{"type",abiType(argument->getType())},{"freshEachActivation",true}});
         }
-        copies+=store->getValueOperand()->getType()->isStructTy();
-        if(const auto *loaded=llvm::dyn_cast<llvm::LoadInst>(store->getValueOperand());loaded&&loaded->getType()->isStructTy()){
+        copies+=valuePlane(store->getValueOperand()->getType());
+        if(const auto *loaded=llvm::dyn_cast<llvm::LoadInst>(store->getValueOperand());loaded&&valuePlane(loaded->getType())){
           const auto *allocation=llvm::dyn_cast<llvm::AllocaInst>(store->getPointerOperand());
           if(!freshCopy(*store))return 4;if(graph.repeating.count(blockId))repeatedCopy=store;
           Array sourceSlots;for(auto slot:roots(loaded->getPointerOperand()))sourceSlots.push_back(slot);if(sourceSlots.empty())return 4;
@@ -312,8 +353,11 @@ int main(int argc,char **argv){
         if(const auto *pointer=llvm::dyn_cast<llvm::GetElementPtrInst>(store->getPointerOperand())){
           Array indices;for(const auto &index:pointer->indices()){const auto *literal=llvm::dyn_cast<llvm::ConstantInt>(index);if(!literal)return 4;indices.push_back(int64_t(literal->getZExtValue()));}
           const auto *literal=llvm::dyn_cast<llvm::ConstantInt>(store->getValueOperand());
-          fieldWrites.push_back(Object{{"indices",std::move(indices)},{"rootSlot",root(pointer)},{"function",fn.getName().str()},
-            {"constantBits",literal?Json(std::to_string(literal->getZExtValue())):Json(nullptr)}});
+          Object write{{"indices",std::move(indices)},{"rootSlot",root(pointer)},{"function",fn.getName().str()},
+            {"constantBits",literal?Json(std::to_string(literal->getZExtValue())):Json(nullptr)}};
+          auto fields=constantPresenceFields(store->getValueOperand());
+          if(!fields.empty())write["constantFields"]=std::move(fields);
+          fieldWrites.push_back(std::move(write));
         }
       }
       if(llvm::isa<llvm::CmpInst>(operation))++comparisons;
@@ -329,16 +373,30 @@ int main(int argc,char **argv){
           const auto *start=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(3));
           const auto *end=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(4));
           const auto *interval=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(5));
-          if(!kind||kind->getZExtValue()>7||!index||index->getZExtValue()>=items(field(*decoded,"functions")).size()||!start||!end||start->getZExtValue()>=end->getZExtValue()||!interval||!intervals.insert(interval->getZExtValue()).second)return 4;
+          if(!kind||(kind->getZExtValue()>7&&kind->getZExtValue()!=undefinedEvent)||!index||index->getZExtValue()>=items(field(*decoded,"functions")).size()||!start||!end||start->getZExtValue()>=end->getZExtValue()||!interval||!intervals.insert(interval->getZExtValue()).second)return 4;
           record["eventKind"]=int64_t(kind->getZExtValue());record["eventFunction"]=int64_t(index->getZExtValue());record["eventSource"]=Object{{"start",int64_t(start->getZExtValue())},{"end",int64_t(end->getZExtValue())}};
           const auto &owner=source.functions[index->getZExtValue()];bool anchored=false;
           if(kind->getZExtValue()==0)anchored=start->getZExtValue()==owner.range.start&&end->getZExtValue()==owner.range.end;
           else{
             if(index->getZExtValue()!=currentFunction)return 4;
+            const Json *trap=nullptr;
+            if(kind->getZExtValue()==undefinedEvent){
+              const auto site=trapSites.find(interval->getZExtValue());
+              if(site==trapSites.end())return 4;
+              trap=site->second;trapSites.erase(site);
+              if(string(field(*trap,"functionId"))!=owner.id||string(field(*trap,"source"))!=owner.path||
+                 field(*trap,"start").getAsInteger()!=start->getZExtValue()||field(*trap,"end").getAsInteger()!=end->getZExtValue())return 4;
+            }
             if(kind->getZExtValue()==3&&start->getZExtValue()==owner.range.start&&end->getZExtValue()==owner.range.end)anchored=true;
             for(const auto &sourceBlock:owner.blocks)for(const auto &sourceOperation:sourceBlock.operations){
               const auto event=kind->getZExtValue();const auto token=string(field(sourceOperation.properties,"operator"));
-              const bool correctKind=event==1?sourceOperation.name=="fuel":event==3||event==4?sourceOperation.name=="func.return":event>=5?sourceOperation.name=="binary"&&(event==5?token=="/":event==6?token=="%":token=="<<"||token==">>"||token==">>>"):sourceOperation.name!="fuel";
+              bool correctKind;
+              if(trap)correctKind=sourceOperation.name=="numeric_use"&&token==string(field(*trap,"operator"))&&
+                field(sourceOperation.properties,"index").getAsInteger()==field(*trap,"operandIndex").getAsInteger();
+              else if(event==1)correctKind=sourceOperation.name=="fuel";
+              else if(event==3||event==4)correctKind=sourceOperation.name=="func.return";
+              else if(event>=5)correctKind=sourceOperation.name=="binary"&&(event==5?token=="/":event==6?token=="%":token=="<<"||token==">>"||token==">>>");
+              else correctKind=sourceOperation.name!="fuel";
               if(correctKind&&start->getZExtValue()==sourceOperation.range.start&&end->getZExtValue()==sourceOperation.range.end)anchored=true;
             }
           }if(!anchored)return 4;
@@ -365,11 +423,12 @@ int main(int argc,char **argv){
     controlFlows.push_back(Object{{"function",fn.getName().str()},{"sourceIndex",int64_t(currentFunction)},{"sourceName",source.functions[currentFunction].name},{"sourceSignature",source.functions[currentFunction].signature},{"backedges",graph.backedges},
       {"everyCycleHasFuel",true},{"hoistedCopyNegativeRejected",rejectedHoist},{"floatingEnvironment",std::move(environment)},{"parameterTypes",std::move(parameterTypes)},{"resultType",abiType(fn.getReturnType())},{"entryPlanes",std::move(entryPlanes)},{"blocks",std::move(blockRows)},{"instructions",std::move(instructions)}});
   }
-  if(functions!=items(field(*decoded,"closure")).size()||stackmaps!=callbacks+functions||intervals.size()!=callbacks)return 4;
+  if(!trapSites.empty()||functions!=items(field(*decoded,"closure")).size()||stackmaps!=callbacks+functions||intervals.size()!=callbacks)return 4;
   llvm::outs()<<canonical(Object{{"passed",true},{"completeCoreRetained",true},{"mlirRoundTrip",true},{"functionId",argv[2]},{"functions",functions},
     {"callbacks",callbacks},{"stackmaps",stackmaps},{"fieldAddresses",geps},{"aggregateStores",copies},{"comparisons",comparisons},{"directCalls",calls},
     {"coreDigest",digest((*bytes)->getBuffer())},{"inputIdentity",field(*decoded,"inputIdentity")},{"hirDigest",field(*decoded,"hirDigest")},
-    {"layouts",lowered.layouts},{"initializedFields",field(*decoded,"initializedFields")},{"physicalCFG",field(*decoded,"physicalCFG")},{"events",std::move(eventRows)},
+    {"layouts",lowered.layouts},{"actualLayouts",field(*decoded,"actualLayouts")},{"numericTraps",field(*decoded,"numericTraps")},
+    {"initializedFields",field(*decoded,"initializedFields")},{"physicalCFG",field(*decoded,"physicalCFG")},{"events",std::move(eventRows)},
     {"copies",std::move(aggregateCopies)},{"fieldWrites",std::move(fieldWrites)},{"fieldReads",std::move(fieldReads)},
     {"nativeLayouts",std::move(nativeLayouts)},{"fieldComparisons",fieldComparisons},{"sourceFuelSites",sourceFuelSites},{"controlFlows",std::move(controlFlows)},
     {"floatingHelpers",helpers},{"sameFinalizedLLVMFromMLIR",true},{"irStages",stages},{"storageLifetime",field(*decoded,"storageLifetime")},{"resourceProof",nullptr},{"executionAuthority",false},{"llvm",lowered.llvm},{"mlir",lowered.mlir}})<<'\n';return 0;

@@ -19,6 +19,8 @@
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
@@ -35,10 +37,17 @@ constexpr size_t outputLimit=8388608;
 // retain the selected plane's identity. Each dynamic definition owns fresh
 // frame storage until return, including definitions reached through backedges.
 struct Lowering {
-  Program &program;Error &error;Json layouts=nullptr;Array initializedFields;
-  std::map<std::string,const Json *> declarations,physical,bindings;
+  struct Presence { bool tagged; unsigned i32Tag; };
+  struct PlaneField { std::string id, sourceBinding, carrier; };
+  struct StorageType { std::string mlir; llvm::Type *native; };
+  Program &program;Error &error;Json layouts=nullptr;Array initializedFields,actualLayouts,numericTraps;
+  std::map<std::string,const Json *> declarations,bindings;
+  std::map<std::string,Presence> presence;
+  std::map<std::string,std::vector<PlaneField>> planes;
   const std::map<std::string,std::string> &singletonStorage;
-  std::map<std::string,std::string> types;std::set<std::string> initialized;
+  llvm::LLVMContext storageContext;
+  llvm::DataLayout storageLayout{coreHeader::layout};
+  std::map<std::string,StorageType> types;
   std::set<std::string> floatingFunctions;
   std::set<std::string> bottomTypes;
   std::map<std::string,size_t> functions;
@@ -58,59 +67,123 @@ struct Lowering {
   bool step(){return program.charge(1)||reject(error,"core-ir-value-llvm-budget","fixed-value lowering work exceeded");}
   bool valueType(const std::string &id)const{return declarations.count(id)&&string(field(*declarations.at(id),"kind"))=="value";}
   bool bottomType(const std::string &id)const{return bottomTypes.count(id)!=0;}
+  const Presence *presenceType(const std::string &id) const {
+    const auto found=presence.find(id);
+    return found==presence.end()?nullptr:&found->second;
+  }
+  bool undefinedOnly(const std::string &id) const {
+    const auto *domain=presenceType(id);
+    return domain&&!domain->tagged;
+  }
+  std::string bindingCarrier(const std::string &id) const {
+    const auto found=bindings.find(id);
+    return found==bindings.end()?std::string{}:string(field(*found->second,"carrier"));
+  }
   uint8_t scalarCode(const std::string &id)const{
     const auto found=declarations.find(id);if(found==declarations.end()||string(field(*found->second,"kind"))!="scalar")return 0;
     const auto name=string(field(*found->second,"name"));for(uint8_t code=1;code<=13;++code)if(tsfg::scalarName(code)==name)return code;return 0;
   }
   std::string tmp(){return "%t"+std::to_string(temporary++);}
-  // These are the existing full verifier's fixed storage bounds, never a new
-  // producer assertion. Empty native fields, presence/TOP and retagged stores
-  // require the separate actual-value/presence lowering capability.
+  // The full verifier already checked each binding against its independently
+  // derived storage capacity. A present i32 initializer also fits the exact
+  // i32/undefined capacity when a later valid store changes its actual tag.
   bool fullyInitialized(const std::string &id){
-    if(initialized.count(id))return true;if(!step())return false;
+    if(planes.count(id))return true;if(!step())return false;
     const auto &decl=*declarations.at(id),&construction=field(decl,"construction");
     sourcePath=string(field(field(decl,"origin"),"sourcePath"));
     const auto &declRange=field(field(decl,"origin"),"range");sourceRange={uint32_t(field(declRange,"start").getAsInteger().value()),uint32_t(field(declRange,"end").getAsInteger().value())};
     const auto &fields=items(field(decl,"fields")),&order=items(field(construction,"initializationFields"));
     if(!need(field(decl,"base").getAsNull()&&string(field(construction,"kind"))=="implicit-base"&&field(construction,"functionId").getAsNull()&&field(construction,"implicitForward").getAsNull()&&fields.size()==order.size(),"fixed values require a complete implicit initialization plan"))return false;
+    std::vector<PlaneField> plane;
     for(size_t i=0;i<fields.size();++i){
       const auto &row=fields[i],&initializer=field(row,"initializer");const auto fieldId=string(field(row,"id")),child=string(field(row,"type")),raw=string(field(row,"sourceBinding"));
       sourcePath=string(field(field(row,"origin"),"source"));sourceRange={uint32_t(field(field(row,"origin"),"start").getAsInteger().value()),uint32_t(field(field(row,"origin"),"end").getAsInteger().value())};
-      const auto actual=singletonStorage.find(raw);const auto binding=bindings.find(raw);const auto kind=string(field(initializer,"kind"));
+      const auto actual=singletonStorage.find(raw);const auto carrier=bindingCarrier(raw);const auto kind=string(field(initializer,"kind"));
       const bool scalar=declarations.count(child)&&string(field(*declarations.at(child),"kind"))=="scalar";
       const bool literal=scalar&&(kind=="numericLiteral"||kind=="booleanLiteral")&&string(field(initializer,"type"))==child;
       const bool nested=valueType(child)&&kind=="new"&&string(field(initializer,"type"))==child&&items(field(initializer,"arguments")).empty();
-      if(!step()||!need(same(order[i],field(row,"id"))&&(literal||nested)&&binding!=bindings.end()&&string(field(*binding->second,"carrier"))==child&&actual!=singletonStorage.end()&&actual->second==child,"field initialization or independently derived actual storage may contain absence/non-fixed data"))return false;
+      const auto *domain=presenceType(carrier);
+      const bool fixed=carrier==child&&actual!=singletonStorage.end()&&actual->second==child;
+      const bool tagged=literal&&scalarCode(child)==1&&domain&&domain->tagged;
+      if(!step()||!need(same(order[i],field(row,"id"))&&(literal||nested)&&(fixed||tagged),"field initialization or independently derived actual storage has no admitted fixed carrier"))return false;
       if(nested&&!fullyInitialized(child))return false;
-      initializedFields.push_back(Object{{"owner",id},{"field",fieldId},{"type",child},{"actualType",actual->second},{"source",field(row,"origin")},{"initializer",initializer}});
-    }initialized.insert(id);return true;
+      plane.push_back({fieldId,raw,carrier});
+      initializedFields.push_back(Object{{"owner",id},{"field",fieldId},{"type",child},{"actualType",carrier},{"source",field(row,"origin")},{"initializer",initializer}});
+    }
+    planes.emplace(id,std::move(plane));
+    return true;
   }
   std::string type(const std::string &id){
-    if(types.count(id))return types.at(id);
+    if(types.count(id))return types.at(id).mlir;
     if(!step())return {};
-    if(!declarations.count(id)){
-      for(const auto &domain:items(field(program.representation,"domains"))){
-        if(!step())return {};
-        if(string(field(domain,"id"))==id&&string(field(domain,"representation"))=="bottom"){
-          need(false,"bottom carrier has no actual values; zero-payload lowering requires a separate capability");return {};
-        }
+    std::string result;
+    llvm::Type *native=nullptr;
+    Object record;
+    if(const auto *domain=presenceType(id)){
+      const auto name=domain->tagged?numericPresenceStruct:undefinedPresenceStruct;
+      std::vector<llvm::Type *> elements;
+      if(domain->tagged)elements={llvm::Type::getInt16Ty(storageContext),llvm::Type::getInt32Ty(storageContext)};
+      auto *structure=llvm::StructType::create(storageContext,elements,name);
+      native=structure;
+      result="!llvm.struct<\""+name.str()+"\", ("+(domain->tagged?"i16, i32":"")+")>";
+      record["structName"]=name;
+      record["tagBytes"]=domain->tagged?2:0;
+      if(domain->tagged){
+        const auto *layout=storageLayout.getStructLayout(structure);
+        if(!need(layout->getElementOffset(0)==0&&layout->getElementOffset(1)==4,"i32/undefined tag or payload offset differs"))return {};
+        record["payloadOffset"]=4;
+        record["i32Tag"]=domain->i32Tag;
+        record["undefinedTag"]=1-domain->i32Tag;
       }
-      need(false,"carrier does not name an owned semantic type");return {};
+    }else if(const auto *plane=planes.count(id)?&planes.at(id):nullptr){
+      std::vector<llvm::Type *> elements;
+      result="!llvm.struct<(";
+      for(const auto &member:*plane){
+        if(!step())return {};
+        const auto child=type(member.carrier);
+        if(child.empty())return {};
+        if(!elements.empty())result+=", ";
+        result+=child;
+        elements.push_back(types.at(member.carrier).native);
+      }
+      result+=")>";
+      auto *structure=llvm::StructType::get(storageContext,elements);
+      native=structure;
+      const auto *layout=storageLayout.getStructLayout(structure);
+      const auto &verified=program.layouts.at(id);
+      if(!need(verified.fieldOffsets.size()==plane->size(),"actual field layout count differs"))return {};
+      Array fields;
+      for(size_t i=0;i<plane->size();++i){
+        if(!step()||!need(layout->getElementOffset(i)==verified.fieldOffsets[i],"actual field layout offset differs"))return {};
+        fields.push_back(Object{{"id",(*plane)[i].id},{"sourceBinding",(*plane)[i].sourceBinding},
+          {"carrier",(*plane)[i].carrier},{"offset",verified.fieldOffsets[i]}});
+      }
+      record["fields"]=std::move(fields);
+    }else if(scalarCode(id)){
+      const auto name=string(field(*declarations.at(id),"name"));
+      if(name=="f32"||name=="f64"){
+        result=name;
+        native=name=="f32"?llvm::Type::getFloatTy(storageContext):llvm::Type::getDoubleTy(storageContext);
+      }else{
+        const auto bits=8*program.layouts.at(id).byteSize;
+        result="i"+std::to_string(bits);
+        native=llvm::Type::getIntNTy(storageContext,bits);
+      }
+    }else{
+      need(false,"carrier is outside the admitted fixed scalar, value or i32/undefined storage");
+      return {};
     }
-    const auto &decl=*declarations.at(id);const auto kind=string(field(decl,"kind"));std::string result;
-    if(kind=="scalar"){
-      const auto name=string(field(decl,"name"));
-      if(name=="f32"||name=="f64")result=name;
-      else if(name=="bool"||name=="i8"||name=="u8")result="i8";
-      else if(name=="i16"||name=="u16")result="i16";
-      else if(name=="i32"||name=="u32")result="i32";
-      else if(name=="i64"||name=="u64"||name=="isize"||name=="usize")result="i64";
-      else need(false,"unsupported fixed scalar");
-    }else if(kind=="value"&&physical.count(id)){
-      result="!llvm.struct<(";bool first=true;
-      for(const auto &member:items(field(*physical.at(id),"fields"))){const auto child=type(string(field(member,"type")));if(child.empty())return {};if(!first)result+=", ";first=false;result+=child;}result+=")>";
-    }else need(false,"selected closure requires GC-free fixed-value or scalar carriers");
-    if(!result.empty())types.emplace(id,result);return result;
+    const auto &verified=program.layouts.at(id);
+    if(!need(verified.referenceCount==0&&storageLayout.getTypeAllocSize(native)==verified.byteSize&&
+      storageLayout.getABITypeAlign(native).value()==verified.alignment,"LLVM storage size, alignment or GC roots differ from the verified layout"))return {};
+    if(!record.empty()){
+      record["id"]=id;
+      record["byteSize"]=verified.byteSize;
+      record["alignment"]=verified.alignment;
+      actualLayouts.push_back(std::move(record));
+    }
+    types.emplace(id,StorageType{result,native});
+    return result;
   }
   std::string registerType(const std::string &id){return valueType(id)||llvm::StringRef(id).starts_with("cell:")?"!llvm.ptr":type(id);}
   void locate(size_t fn,uint16_t block,size_t ordinal){
@@ -134,7 +207,7 @@ struct Lowering {
           if(!need(functions.count(id)&&selected.blocks[op.successors[0]].parameters.size()==1,"direct fixed callee requires one normal result in the verified inventory")||!closure(functions.at(id)))return false;
           locate(index,block,ordinal);if(!visit(op.successors[0]))return false;
         }else{
-          static const std::set<std::string> supported={"fuel","cell","store","load","value_copy","view","carrier_cast","field_load","field_store","constant","floating","boolean","strict_equal","numeric_use","binary","unary","func.return","cf.br","cf.cond_br"};
+          static const std::set<std::string> supported={"fuel","cell","store","load","value_copy","view","assert","carrier_cast","field_load","field_store","constant","floating","boolean","undefined","strict_equal","numeric_use","binary","unary","func.return","cf.br","cf.cond_br"};
           if(!need(supported.count(op.name),"operation in the selected closure has no fixed-value lowering"))return false;
           if(op.name=="cf.cond_br"&&!need(selected.blocks[op.successors[0]].parameters.empty()&&selected.blocks[op.successors[1]].parameters.empty(),"conditional fixed-value edges require their Source-normalized empty successors"))return false;
           for(auto successor:op.successors)if(!visit(successor))return false;
@@ -151,7 +224,9 @@ struct Lowering {
         if(!step())return false;
         if(op.name=="invoke"){
           if(!bottomType(program.functions[functions.at(string(field(op.properties,"function_id")))].resultCarrier)&&!visit(op.successors[0]))return false;
-        }else for(auto successor:op.successors)if(!visit(successor))return false;
+        }else if(op.name!="numeric_use"||!undefinedOnly(selected.carriers[op.operands[0]])){
+          for(auto successor:op.successors)if(!visit(successor))return false;
+        }
       }return true;
     };
     if(!visit(0))return false;emittedBlocks.emplace(index,std::move(order));return true;
@@ -186,8 +261,30 @@ struct Lowering {
   }
   std::string zero(const std::string &id){
     const auto native=type(id),result=tmp();
-    if(valueType(id))out<<"    "<<result<<" = llvm.mlir.zero : "<<native<<'\n';
+    if(valueType(id)||presenceType(id))out<<"    "<<result<<" = llvm.mlir.zero : "<<native<<'\n';
     else out<<"    "<<result<<" = arith.constant "<<(native=="f32"||native=="f64"?"0.0":"0")<<" : "<<native<<'\n';return result;
+  }
+  std::string extract(const std::string &value,const std::string &id,unsigned member){
+    const auto result=tmp();
+    out<<"    "<<result<<" = llvm.extractvalue "<<value<<"["<<member<<"] : "<<type(id)<<'\n';
+    return result;
+  }
+  std::string insert(const std::string &aggregate,const std::string &value,const std::string &id,unsigned member){
+    const auto result=tmp();
+    out<<"    "<<result<<" = llvm.insertvalue "<<value<<", "<<aggregate<<"["<<member<<"] : "<<type(id)<<'\n';
+    return result;
+  }
+  std::string adapt(const std::string &value,const std::string &from,const std::string &to){
+    if(from==to)return value;
+    const auto *target=presenceType(to);
+    if(target&&target->tagged&&(scalarCode(from)==1||undefinedOnly(from))){
+      const bool present=scalarCode(from)==1;
+      const auto empty=zero(to),tag=constant(present?target->i32Tag:1-target->i32Tag,"i16");
+      const auto tagged=insert(empty,tag,to,0);
+      return present?insert(tagged,value,to,1):tagged;
+    }
+    need(false,"fixed carrier adapter requires identity or exact singleton embedding");
+    return {};
   }
   std::string load(const std::string &pointer,const std::string &id){const auto result=tmp();out<<"    "<<result<<" = llvm.load "<<pointer<<" : !llvm.ptr -> "<<type(id)<<'\n';return result;}
   std::string fieldPointer(const std::string &pointer,const std::string &id,size_t index){
@@ -196,12 +293,25 @@ struct Lowering {
   std::string equal(const std::string &left,const std::string &right,const std::string &id){
     if(!step())return {};
     if(valueType(id)){
-      auto result=constant(1,"i1");const auto &fields=items(field(*physical.at(id),"fields"));
+      auto result=constant(1,"i1");const auto &fields=planes.at(id);
       for(size_t i=0;i<fields.size();++i){
-        const auto child=string(field(fields[i],"type")),a=fieldPointer(left,id,i),b=fieldPointer(right,id,i);
+        const auto &child=fields[i].carrier;
+        const auto a=fieldPointer(left,id,i),b=fieldPointer(right,id,i);
         const auto same=equal(valueType(child)?a:load(a,child),valueType(child)?b:load(b,child),child),joined=tmp();if(same.empty())return {};
         out<<"    "<<joined<<" = arith.andi "<<result<<", "<<same<<" : i1\n";result=joined;
       }return result;
+    }
+    if(const auto *domain=presenceType(id)){
+      if(!domain->tagged)return constant(1,"i1");
+      const auto leftTag=extract(left,id,0),rightTag=extract(right,id,0);
+      const auto leftBits=extract(left,id,1),rightBits=extract(right,id,1);
+      const auto undefined=constant(1-domain->i32Tag,"i16"),sameTag=tmp(),absent=tmp(),sameBits=tmp(),compatible=tmp(),result=tmp();
+      out<<"    "<<sameTag<<" = arith.cmpi eq, "<<leftTag<<", "<<rightTag<<" : i16\n"
+         <<"    "<<absent<<" = arith.cmpi eq, "<<leftTag<<", "<<undefined<<" : i16\n"
+         <<"    "<<sameBits<<" = arith.cmpi eq, "<<leftBits<<", "<<rightBits<<" : i32\n"
+         <<"    "<<compatible<<" = arith.ori "<<absent<<", "<<sameBits<<" : i1\n"
+         <<"    "<<result<<" = arith.andi "<<sameTag<<", "<<compatible<<" : i1\n";
+      return result;
     }
     const auto result=tmp();if(!arithmetic("eq",id,"i1",result,{left,right}))return {};return result;
   }
@@ -215,27 +325,45 @@ struct Lowering {
     const auto operand=[&](size_t index)->const std::string &{return values.at(op.operands[index]);};
     const auto carrier=[&](uint16_t reg)->const std::string &{return function->carriers[reg];};
     const auto result=op.result==noRegister?std::string():values.at(op.result);
-    if(op.name=="cell")allocate(registerType(op.view),result);
-    else if(op.name=="store")out<<"    llvm.store "<<operand(1)<<", "<<operand(0)<<" : "<<registerType(carrier(op.operands[1]))<<", !llvm.ptr\n";
-    else if(op.name=="load")out<<"    "<<result<<" = llvm.load "<<operand(0)<<" : !llvm.ptr -> "<<registerType(carrier(op.result))<<'\n';
-    else if(op.name=="value_copy"||op.name=="view"||op.name=="carrier_cast"){
-      if(!need(carrier(op.operands[0])==carrier(op.result),"fixed-value lowering cannot retag a semantic identity"))return false;
-      if(valueType(carrier(op.result))&&op.name=="value_copy"){
-        const auto copied=load(operand(0),carrier(op.result)),pointer=allocate(type(carrier(op.result)),result);
-        out<<"    llvm.store "<<copied<<", "<<pointer<<" : "<<type(carrier(op.result))<<", !llvm.ptr\n";
-      }else values[op.result]=operand(0);
+    if(op.name=="cell"||op.name=="store"||op.name=="load"){
+      const auto cell=bindingCarrier(string(field(op.properties,"binding")));
+      const auto native=registerType(cell);
+      if(native.empty())return false;
+      if(op.name=="cell")allocate(native,result);
+      else if(op.name=="store"){
+        if(!need(cell==carrier(op.operands[1]),"cell store differs from its verified carrier"))return false;
+        out<<"    llvm.store "<<operand(1)<<", "<<operand(0)<<" : "<<native<<", !llvm.ptr\n";
+      }else{
+        if(!need(cell==carrier(op.result),"cell load differs from its verified carrier"))return false;
+        out<<"    "<<result<<" = llvm.load "<<operand(0)<<" : !llvm.ptr -> "<<native<<'\n';
+      }
+    }else if(op.name=="value_copy"||op.name=="view"||op.name=="assert"||op.name=="carrier_cast"){
+      const auto &from=carrier(op.operands[0]),&to=carrier(op.result);
+      if(from==to&&valueType(to)&&op.name=="value_copy"){
+        const auto copied=load(operand(0),to),pointer=allocate(type(to),result);
+        out<<"    llvm.store "<<copied<<", "<<pointer<<" : "<<type(to)<<", !llvm.ptr\n";
+      }else{
+        const auto adjusted=adapt(operand(0),from,to);
+        if(adjusted.empty())return false;
+        values[op.result]=adjusted;
+      }
     }else if(op.name=="field_load"||op.name=="field_store"){
-      const auto owner=carrier(op.operands[0]),selected=string(field(op.properties,"field"));if(!need(physical.count(owner),"field receiver has no fixed-value layout"))return false;
-      const auto &fields=items(field(*physical.at(owner),"fields"));size_t index=0;for(;index<fields.size();++index)if(string(field(fields[index],"id"))==selected)break;
+      const auto owner=carrier(op.operands[0]),selected=string(field(op.properties,"field"));if(!need(planes.count(owner),"field receiver has no fixed-value layout"))return false;
+      const auto &fields=planes.at(owner);size_t index=0;
+      for(;index<fields.size();++index){if(!step())return false;if(fields[index].id==selected)break;}
       if(!need(index<fields.size(),"field identity differs from the fixed-value layout"))return false;
-      const auto child=string(field(fields[index],"type")),pointer=fieldPointer(operand(0),owner,index);
+      const auto &child=fields[index].carrier;
+      const auto pointer=fieldPointer(operand(0),owner,index);
       if(op.name=="field_load"){
-        if(!need(child==carrier(op.result),"field result differs from its semantic declaration"))return false;
+        if(!need(child==carrier(op.result),"field result differs from its verified carrier"))return false;
         if(valueType(child))values[op.result]=pointer;else out<<"    "<<result<<" = llvm.load "<<pointer<<" : !llvm.ptr -> "<<type(child)<<'\n';
       }else{
-        if(!need(child==carrier(op.operands[1]),"field store differs from its semantic declaration"))return false;
+        if(!need(child==carrier(op.operands[1]),"field store differs from its verified carrier"))return false;
         const auto stored=valueType(child)?load(operand(1),child):operand(1);out<<"    llvm.store "<<stored<<", "<<pointer<<" : "<<type(child)<<", !llvm.ptr\n";
       }
+    }else if(op.name=="undefined"){
+      if(!need(undefinedOnly(carrier(op.result)),"undefined literal lacks its exact absence carrier"))return false;
+      values[op.result]=zero(carrier(op.result));
     }else if(op.name=="floating"){
       const auto native=type(carrier(op.result));const std::string integer=native=="f32"?"i32":"i64";
       const auto bits=llvm::APInt(native=="f32"?32:64,string(field(op.properties,"bits")),16);const auto raw=tmp();
@@ -246,8 +374,26 @@ struct Lowering {
       out<<"    "<<result<<" = arith.constant "<<bits<<" : "<<native<<'\n';
     }else if(op.name=="numeric_use"){
       const auto id=carrier(op.operands[0]);
-      if(!need(scalarCode(id)==1,"numeric consumption requires actual i32 storage; absence/domain carriers need explicit presence lowering"))return false;
-      out<<"    cf.br ";edge(op.successors[0],{operand(0)});out<<'\n';
+      const auto *domain=presenceType(id);
+      if(!need(scalarCode(id)==1||domain,"numeric consumption requires an admitted actual i32/undefined carrier"))return false;
+      auto payload=operand(0);
+      if(domain){
+        const auto kind=static_cast<unsigned>(FixedValueEvent::UndefinedNumericUse);
+        if(domain->tagged){
+          const auto tag=extract(payload,id,0),i32=constant(domain->i32Tag,"i16"),present=tmp();
+          out<<"    "<<present<<" = arith.cmpi eq, "<<tag<<", "<<i32<<" : i16\n";
+          guard(present,kind);
+          payload=extract(payload,id,1);
+        }else{
+          callback(kind,op.range,functionIndex);
+          out<<"    cf.br ^failed\n";
+        }
+        numericTraps.push_back(Object{{"kind",kind},{"functionId",function->id},{"source",sourcePath},
+          {"start",op.range.start},{"end",op.range.end},{"operator",field(op.properties,"operator")},
+          {"operandIndex",field(op.properties,"index")},{"interval",int64_t(interval)},
+          {"trap",undefinedNumericTrap},{"rule",undefinedNumericRule}});
+      }
+      if(!domain||domain->tagged){out<<"    cf.br ";edge(op.successors[0],{payload});out<<'\n';}
     }else if(op.name=="binary"||op.name=="unary"){
       const auto token=string(field(op.properties,"operator"));
       static const std::map<std::string,std::string> binary={{"+","add"},{"-","sub"},{"*","mul"},{"/","div"},{"%","rem"},{"<<","shl"},{">>","shr"},{">>>","ushr"},{"&","and"},{"|","or"},{"^","xor"},{"<","lt"},{"<=","le"},{">","gt"},{">=","ge"}};
@@ -297,12 +443,23 @@ struct Lowering {
     out<<"  ^failed:\n";callback(3,selected.range,index);if(bottom)out<<"    func.return\n";else{const auto failed=zero(selected.resultCarrier);out<<"    func.return "<<failed<<" : "<<returned<<'\n';}out<<"  }\n";return true;
   }
   bool run(size_t index){
-    for(const auto &row:items(field(program.representation,"domains"))){if(!step())return false;if(string(field(row,"representation"))=="bottom"&&items(field(row,"actualTypes")).empty())bottomTypes.insert(string(field(row,"id")));}
+    const auto undefined=digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined");
+    for(const auto &row:items(field(program.representation,"domains"))){
+      if(!step())return false;
+      const auto id=string(field(row,"id")),representation=string(field(row,"representation"));
+      const auto &members=items(field(row,"actualTypes"));
+      if(representation=="bottom"&&members.empty())bottomTypes.insert(id);
+      else if(representation=="absence"&&members.size()==1&&string(members[0])==undefined)presence.emplace(id,Presence{false,0});
+      else if(representation=="finite-union"&&members.size()==2){
+        if(scalarCode(string(members[0]))==1&&string(members[1])==undefined)presence.emplace(id,Presence{true,0});
+        if(string(members[0])==undefined&&scalarCode(string(members[1]))==1)presence.emplace(id,Presence{true,1});
+      }
+    }
     if(!closure(index))return false;for(const auto &[fn,blocks]:reachable)if(!emissionCFG(fn))return false;std::vector<std::string> roots;
     for(const auto &[fn,blocks]:reachable)for(auto block:blocks){const auto &selected=program.functions[fn];if(valueType(selected.resultCarrier))roots.push_back(selected.resultCarrier);for(auto reg:selected.blocks[block].parameters)if(valueType(selected.carriers[reg]))roots.push_back(selected.carriers[reg]);for(const auto &op:selected.blocks[block].operations){if(valueType(op.view))roots.push_back(op.view);if(op.result!=noRegister&&valueType(selected.carriers[op.result]))roots.push_back(selected.carriers[op.result]);}}
     std::sort(roots.begin(),roots.end());roots.erase(std::unique(roots.begin(),roots.end()),roots.end());
     if(!need(!roots.empty(),"selected closure has no fixed-value carrier")||!fixedValueLayoutCatalog(program,roots,layouts,error))return false;
-    for(const auto &row:items(field(layouts,"types")))physical.emplace(string(field(row,"id")),&row);for(const auto &id:roots)if(!fullyInitialized(id))return false;
+    for(const auto &id:roots)if(!fullyInitialized(id)||type(id).empty())return false;
     out<<"module attributes {llvm.data_layout = \""<<coreHeader::layout<<"\", llvm.target_triple = \""<<coreHeader::triple<<"\"} {\n";for(const auto &[fn,blocks]:reachable)if(!emit(fn))return false;tsfg::declareScalarArithmetic(out,floatingFunctions);out<<"}\n";return true;
   }
 };
@@ -323,7 +480,7 @@ bool lowerFixedValueLLVM(mlir::ModuleOp core,llvm::StringRef functionId,FixedVal
   std::string original;llvm::raw_string_ostream originalStream(original);core.print(originalStream,mlir::OpPrintingFlags().printGenericOpForm());originalStream<<'\n';originalStream.flush();
   Array identities,closure,finalizerFunctions,physicalCFG;for(size_t i=0;i<program.functions.size();++i){const auto &fn=program.functions[i];identities.push_back(Object{{"index",int64_t(i)},{"id",fn.id},{"source",fn.path},{"start",fn.range.start},{"end",fn.range.end}});}for(const auto &[fn,blocks]:lowering.reachable){closure.push_back(program.functions[fn].id);finalizerFunctions.push_back("value_"+program.functions[fn].id.substr(7));Array emitted;for(auto block:lowering.emittedBlocks.at(fn))emitted.push_back(int64_t(block));physicalCFG.push_back(Object{{"functionId",program.functions[fn].id},{"resultCarrier",program.functions[fn].resultCarrier},{"emptyNormalResult",lowering.bottomType(program.functions[fn].resultCarrier)},{"blocks",std::move(emitted)}});}
   const Json stages=Object{{"mlir","converted-intermediate"},{"llvm","finalized"},{"requiresPostExportFinalization",true},{"finalizer","tsfg::materializeNativeFloating"},{"selection","exact-closure"},{"functions",std::move(finalizerFunctions)}};
-  const auto proof=canonical(Object{{"version",1},{"functionId",functionId.str()},{"inputIdentity",program.inputIdentity},{"hirDigest",program.hirHash},{"fullCore",original},{"functions",std::move(identities)},{"closure",std::move(closure)},{"physicalCFG",std::move(physicalCFG)},{"irStages",stages},{"layouts",output.layouts},{"initializedFields",std::move(lowering.initializedFields)},{"rootFrame","caller-admitted EventV4; embedding checks existing failure before entry and after return"},{"storageLifetime","entry value parameters once; cells, value copies and aggregate call results fresh at each dynamic definition; storage remains live until function return"},{"resourceProof",nullptr},{"executionAuthority",false}});
+  const auto proof=canonical(Object{{"version",1},{"functionId",functionId.str()},{"inputIdentity",program.inputIdentity},{"hirDigest",program.hirHash},{"fullCore",original},{"functions",std::move(identities)},{"closure",std::move(closure)},{"physicalCFG",std::move(physicalCFG)},{"irStages",stages},{"layouts",output.layouts},{"actualLayouts",std::move(lowering.actualLayouts)},{"numericTraps",std::move(lowering.numericTraps)},{"initializedFields",std::move(lowering.initializedFields)},{"rootFrame","caller-admitted EventV4; embedding checks existing failure before entry and after return"},{"storageLifetime","entry value parameters once; cells, value copies and aggregate call results fresh at each dynamic definition; storage remains live until function return"},{"resourceProof",nullptr},{"executionAuthority",false}});
   (*module)->setAttr("tsfg_program.fixed_value",mlir::StringAttr::get(&context,proof));
   if(mlir::failed(mlir::verify(*module)))return reject(error,"core-ir-value-llvm-mlir","fixed-value MLIR metadata verification failed");
   llvm::raw_string_ostream dialect(output.mlir);module->print(dialect,mlir::OpPrintingFlags().printGenericOpForm());dialect<<'\n';dialect.flush();

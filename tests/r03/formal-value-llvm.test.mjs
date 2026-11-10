@@ -248,7 +248,7 @@ for(const fixture of fixturePins){
     }
     if(coreRoot){assert.ok(path.isAbsolute(coreRoot));const directory=path.join(coreRoot,fixture.name);await fs.mkdir(directory,{recursive:true});await fs.writeFile(path.join(directory,'core.mlir'),core,{flag:'wx'});}
   });
-  const expectedReject=['gc-callee','poison-unknown'].includes(fixture.name);
+  const expectedReject=fixture.name==='gc-callee';
   test('actual '+fixture.name+' fixed-value compiler data and independent LLVM reader',
     {skip:reports?false:'TSFG_VALUE_LLVM_REPORT_ROOT is not supplied'},async()=>{
       assert.ok(path.isAbsolute(reports));const directory=reportIndex[fixture.name];assert.ok(path.isAbsolute(directory));
@@ -268,7 +268,8 @@ for(const fixture of fixturePins){
       const expected=valueType==='Nested'?{bytes:8,alignment:4,offsets:[0,4]}:valueType==='Padded'?{bytes:16,alignment:8,offsets:[0,8]}:{bytes:4,alignment:4,offsets:[0]};
       const layout=report.layouts.types.find(row=>row.name===valueType);assert.ok(layout);
       assert.deepEqual([layout.byteSize,layout.alignment,layout.fields.map(row=>row.offset)],[expected.bytes,expected.alignment,expected.offsets]);
-      for(const native of report.nativeLayouts)assert.deepEqual([native.byteSize,native.alignment,native.offsets],[expected.bytes,expected.alignment,expected.offsets]);
+      const actualBytes=fixture.name==='poison-unknown'?8:expected.bytes;
+      for(const native of report.nativeLayouts)assert.deepEqual([native.byteSize,native.alignment,native.offsets],[actualBytes,expected.alignment,expected.offsets]);
       assert.ok(report.copies.every(row=>row.separateStorage&&row.sourceSlot!==row.targetSlot));
       if(fixture.name==='value-copy'||fixture.name==='copy-original'||fixture.name==='nested-copy'){
         assert.ok(report.copies.length>=1);assert.ok(report.fieldWrites.length>=1);

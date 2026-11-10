@@ -7,9 +7,9 @@ Common Program and an original FunctionId through the static Core commands
 `--common-program --value-llvm <FunctionId>` and
 `--common-program --value-mlir <FunctionId>`. It verifies the complete input,
 then lowers a direct-call closure, including self/mutual recursion and cyclic control flow,
-with fully initialized, GC-free fixed values. Actual singleton field storage comes from that same verifier;
-uninitialized/presence/union storage and unsupported
-operations receive capability diagnostics with original Source anchors. Both
+with fully initialized, GC-free fixed values. The same verifier supplies the
+actual field storage, including exact i32/undefined capacity. Unsupported
+storage and operations receive capability diagnostics with original Source anchors. Both
 outputs retain the complete Core, identity, function/source directory and the
 verified target layouts. The internal state/event parameters reuse EventV4
 fuel, depth and first-failure rules. This stage produces compiler data and
@@ -48,11 +48,25 @@ TypeIds determine nominal width and signedness, including equal-width signed and
 unsigned types. Integer arithmetic wraps; division/remainder guard zero and handle
 signed MIN/-1 before LLVM arithmetic; shifts guard the original i32 count before
 any internal width adaptation. Comparisons and logical negation preserve each
-caller's bool storage. Fixed-value `numeric_use` normal edges currently require
-actual i32 physical storage from the full verifier. Absence/domain carriers retain
-their capability diagnostic until an explicit presence representation is lowered;
-an `as` view never substitutes for this actual-storage prerequisite. The existing
-undefined-at-numeric-consumption request-trap rule is unchanged.
+caller's bool storage.
+
+The private fixed-value plane follows the verified actual storage bindings and
+field offsets. Its i32/undefined carrier stores a 16-bit tag at offset zero and
+the i32 payload at offset four, with eight bytes and four-byte alignment. Tags
+follow the verified domain member order. Singleton undefined has zero payload
+bytes and can complete normally through a private call or return. The nominal
+layout catalog describes the declared fields. `actualLayouts` records the
+private types checked against LLVM DataLayout.
+
+Views, aliases, field and cell transfers, copies and private calls preserve the
+actual tag. `numeric_use` checks it after the original operand evaluation and
+checkpoint. A present operand forwards its original i32 bits. An undefined
+operand emits private event 256 for `r01-t-undefined-numeric-use` under
+`r01-numeric-use`, with the original FunctionId and UTF-16 anchor, then enters
+the frame's failure exit. The physical CFG omits the normal successor for an
+undefined-only operand while the complete Core retains that successor and its
+declared i32 capacity. The existing ABI4 Runtime bridge requires a later
+connection from this event to the failure record and `storeFailure` mapping.
 
 Fixed-value floating arithmetic and field equality use the same strict scalar
 helpers. The floating materializer receives the exact selected function list;
