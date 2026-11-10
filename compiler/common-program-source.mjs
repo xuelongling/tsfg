@@ -21,7 +21,7 @@ export function commonSourceGrammar(source,spend) {
   const text=source.content,tokens=[];
   // Type-context closing angles are individual tokens (ReadSpan<i32>=...);
   // sequence() joins operator punctuation only where an owned operator says so.
-  const pattern=/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*|\s+|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n])*"|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n])*'|(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[$_\p{ID_Start}])(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[$\u200c\u200d\p{ID_Continue}])*|(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)|===|!==|&&=|\|\|=|\?\?=|=>|&&|\|\||\?\?|\+\+|--|[+*\/%&|^\-]=|[^\s]/guy;
+  const pattern=/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*|\s+|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n])*"|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n])*'|(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$_\p{ID_Start}])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$\u200c\u200d\p{ID_Continue}])*|(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)|===|!==|&&=|\|\|=|\?\?=|=>|&&|\|\||\?\?|\+\+|--|[+*\/%&|^\-]=|[^\s]/guy;
   let position=0;
   while(position<text.length) {
     spend();pattern.lastIndex=position;const match=pattern.exec(text);check(match&&match.index===position,'source');
@@ -72,10 +72,10 @@ export function commonTypeSyntax(grammar,range,typeId,types,spend,aliases=[],vis
       else {cursor=saved;result=union(depth+1);take(')');}
     }
     else {
-      const name=tokens[cursor++];check(typeof name==='string','source');
+      const spelling=tokens[cursor++];check(typeof spelling==='string','source');const name=identifierName(spelling);
       if(['Array','ReadSpan'].includes(name)&&tokens[cursor]==='<') {
         cursor++;const element=union(depth+1);take('>');result={kind:name==='Array'?'array':'readSpan',element};
-      }else result={name:identifierName(name)};
+      }else result={name};
     }
     while(tokens[cursor]==='['){cursor++;take(']');result={kind:'array',element:result};}return result;
   }

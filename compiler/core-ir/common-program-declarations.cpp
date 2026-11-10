@@ -115,7 +115,7 @@ bool nominal(SourceModel &m,SourceBodies &b,SourceSyntax &s,const Json &t){
     while(cursor<fb&&(s.tokens[cursor].text=="public"||s.tokens[cursor].text=="private"||s.tokens[cursor].text=="protected"||s.tokens[cursor].text=="readonly"||s.tokens[cursor].text=="declare")){
       if(s.tokens[cursor].text=="readonly")readonly=true;else if(s.tokens[cursor].text!="declare")access=s.tokens[cursor].text;fp.push_back(s.tokens[cursor++].text);
     }
-    if(!m.need(cursor<fb&&s.tokens[cursor].text==string(field(f,"name"))&&field(f,"readonly").getAsBoolean()==readonly&&string(field(f,"access"))==access,"original field name/modifiers differ"))return false;
+    if(!m.need(cursor<fb&&field(f,"readonly").getAsBoolean()==readonly&&string(field(f,"access"))==access,"original field name/modifiers differ"))return false;
     Json name=Object{{"start",int64_t(s.tokens[cursor].start)},{"end",int64_t(s.tokens[cursor].end)}};
     if(!s.name(name,string(field(f,"name"))))return false;fp.push_back(name);++cursor;
     if(!m.need(string(field(f,"id"))==digest(std::string("tsfg.array-facts.field.v8")+std::string(1,'\0')+canonical(Object{{"sourcePath",path},{"nameRange",name}}))&&cursor<fb&&s.tokens[cursor++].text==":","original field identity/annotation differs"))return false;

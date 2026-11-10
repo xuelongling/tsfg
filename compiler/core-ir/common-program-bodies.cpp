@@ -51,11 +51,12 @@ bool SourceBodies::inventory(){
 }
 std::string SourceBodies::resolve(const Json &r){
   size_t a,b;if(!source->span(r,a,b))return {};
-  if(b==a+1){auto it=scope.find(source->tokens[a].text);return it==scope.end()?std::string():it->second;}
+  if(b==a+1){std::string name;if(!source->cookedIdentifier(a,name))return {};auto it=scope.find(name);return it==scope.end()?std::string():it->second;}
   if(b==a+3&&source->tokens[a+1].text=="."){
-    auto alias=scope.find(source->tokens[a].text);if(alias==scope.end()||!model.modules.count(alias->second))return {};
+    std::string name,member;if(!source->cookedIdentifier(a,name)||!source->cookedIdentifier(a+2,member))return {};
+    auto alias=scope.find(name);if(alias==scope.end()||!model.modules.count(alias->second))return {};
     for(const auto &e:items(field(*model.modules.at(alias->second),"exports"))){
-      if(!model.spend())return {};if(string(field(e,"name"))==source->tokens[a+2].text)return string(field(e,"target"));
+      if(!model.spend())return {};if(string(field(e,"name"))==member)return string(field(e,"target"));
     }
   }
   return {};
@@ -81,8 +82,8 @@ bool SourceBodies::annotation(const Json &r,const std::string &expected,bool opt
       if(callable){
         Array parameters;std::set<std::string> names;
         while(a<b&&source->tokens[a].text!=")"){
-          if(!model.spend()||a+1>=b)return {};const auto &name=source->tokens[a];
-          const Json nr=range(name,name);if(!source->name(nr,name.text)||!names.insert(name.text).second||source->tokens[++a].text!=":")return {};
+          if(!model.spend()||a+1>=b)return {};std::string name;
+          if(!source->cookedIdentifier(a,name)||!names.insert(name).second||source->tokens[++a].text!=":")return {};
           ++a;auto parameter=unionType(depth+1);if(parameter.empty())return {};parameters.push_back(parameter);
           if(a<b&&source->tokens[a].text==","){++a;continue;}break;
         }
@@ -96,7 +97,7 @@ bool SourceBodies::annotation(const Json &r,const std::string &expected,bool opt
         if(optional){size_t comparisons=1;for(size_t n=parsedUnions.size();n;n>>=1)comparisons+=2;
           if(!model.spend(comparisons*(result.size()/8+1)))return {};parsedUnion=parsedUnions.count(result);}}
     }else{
-      const auto name=source->tokens[a++].text;
+      std::string name;if(!source->cookedIdentifier(a++,name))return {};
       if(name=="Array"||name=="ReadSpan"){
         if(a>=b||source->tokens[a++].text!="<")return {};const auto element=unionType(depth+1);
         if(a>=b||source->tokens[a++].text!=">")return {};result=(name=="Array"?"array<":"readSpan<")+element+">";
@@ -199,7 +200,7 @@ bool SourceBodies::annotations(){
     const auto path=string(field(field(f,"origin"),"source"));if(!model.need(syntax.count(path),"field annotation source missing"))return false;
     auto &s=syntax.at(path);size_t a,b;const auto &o=field(f,"origin");if(!s.span(Object{{"start",field(o,"start")},{"end",field(o,"end")}},a,b))return false;
     while(a<b&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"public","private","protected","readonly","declare"},s.tokens[a].text)){if(!model.spend())return false;++a;}
-    if(!model.need(a+2<b&&s.tokens[a].text==string(field(f,"name"))&&s.tokens[a+1].text==":","field annotation prefix differs"))return false;a+=2;
+    if(!model.need(a+2<b&&s.tokens[a+1].text==":","field annotation prefix differs")||!s.name(range(s.tokens[a],s.tokens[a]),string(field(f,"name"))))return false;a+=2;
     if(s.tokens[b-1].text==";")--b;
     if(!field(f,"initializer").getAsNull()){
       size_t ia,ib;if(!s.span(field(field(f,"initializer"),"range"),ia,ib)||!model.need(ia>a&&s.tokens[ia-1].text=="=","field annotation initializer boundary differs"))return false;b=ia-1;

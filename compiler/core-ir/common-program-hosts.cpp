@@ -28,8 +28,9 @@ bool verifyCommonHostDeclarations(SourceModel &m){
     size_t begin,end;
     if(!syntax.span(field(*host,"declarationRange"),begin,end)||!m.need(begin==0&&end==syntax.tokens.size()&&end==11,"ambient declaration has extra or missing syntax"))return false;
     const auto &parameter=syntax.tokens[4];Json parameterRange=Object{{"start",int64_t(parameter.start)},{"end",int64_t(parameter.end)}};
-    if(!syntax.name(field(*host,"nameRange"),name)||!syntax.name(parameterRange,parameter.text)||!syntax.sequence(field(*host,"declarationRange"),
-      {"declare","function",field(*host,"nameRange"),"(",parameter.text,":","i32",")",":","i32",";"}))return false;
+    std::string parameterName;
+    if(!syntax.name(field(*host,"nameRange"),name)||!syntax.cookedIdentifier(4,parameterName)||!syntax.sequence(field(*host,"declarationRange"),
+      {"declare","function",field(*host,"nameRange"),"(",parameterRange,":","i32",")",":","i32",";"}))return false;
     const Json origin=Object{{"sourcePath",path},{"nameRange",field(*host,"nameRange")}};
     const Json signatureOrigin=Object{{"sourcePath",path},{"declarationRange",field(*host,"declarationRange")}};
     const auto signatureId=digest(std::string("tsfg.array-facts.signature.v8")+std::string(1,'\0')+canonical(signatureOrigin));

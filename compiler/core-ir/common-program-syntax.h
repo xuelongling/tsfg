@@ -9,6 +9,7 @@ struct SourceSyntax {
   bool read(llvm::StringRef);
   bool span(const Json &,size_t &,size_t &)const;
   bool name(const Json &,llvm::StringRef)const;
+  bool cookedIdentifier(size_t,std::string &)const;
   bool sequence(const Json &,const std::vector<Json> &,bool semicolon=false)const;
   bool range(const Json &,SourceAnchor &)const;
 };

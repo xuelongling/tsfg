@@ -34,8 +34,12 @@ export function identifierName(spelling) {
   const trivia = "(?:\\s|/\\*(?:(?!\\*/)[\\s\\S])*\\*/|//[^\\r\\n\\u2028\\u2029]*)";
   spelling = spelling.replace(new RegExp(`^${trivia}*`), "")
     .replace(new RegExp(`${trivia}*$`), "");
-  const name = spelling.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,
-    (_, point, unit) => String.fromCodePoint(Number.parseInt(point ?? unit, 16)));
+  const name = spelling.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/g,
+    (_, point, unit) => {
+      const scalar=Number.parseInt(point??unit,16);
+      if(scalar>=0xd800&&scalar<=0xdfff)throw new TypeError("invalid source identifier spelling");
+      return String.fromCodePoint(scalar);
+    });
   if (!/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(name))
     throw new TypeError("invalid source identifier spelling");
   return name;

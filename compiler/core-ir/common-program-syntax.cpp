@@ -7,6 +7,18 @@ namespace tsfg::commonProgram {
 namespace {
 bool space(char16_t c){return c==9||c==10||c==11||c==12||c==13||c==32||c==0xa0||c==0xfeff||c==0x2028||c==0x2029;}
 bool nameUnit(char16_t c){return c=='$'||c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||(c>=128&&!space(c));}
+bool escapedPoint(SourceModel &model,std::u16string_view content,size_t &at,size_t end,uint32_t &point){
+  if(!model.need(at+2<end&&content[at]=='\\'&&content[at+1]=='u',"identifier Unicode escape differs"))return false;
+  at+=2;const bool braced=content[at]=='{';if(braced)++at;point=0;unsigned digits=0;
+  while(at<end&&(braced?content[at]!='}':digits<4)){
+    if(!model.spend())return false;const auto c=content[at++];
+    const int value=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:-1;
+    if(!model.need(value>=0,"identifier Unicode escape differs"))return false;point=point*16+value;++digits;
+    if(!model.need(point<=0x10ffff,"identifier Unicode scalar differs"))return false;
+  }
+  if(!model.need(braced?digits>0&&at<end&&content[at++]=='}':digits==4,"identifier Unicode escape differs"))return false;
+  return model.need(!(point>=0xd800&&point<=0xdfff),"identifier Unicode scalar differs");
+}
 std::string utf8(std::u16string_view s){
   std::string out(s.size()*3,'\0');auto *a=reinterpret_cast<const llvm::UTF16 *>(s.data()),*end=a+s.size();
   auto *b=reinterpret_cast<llvm::UTF8 *>(out.data()),*start=b;
@@ -47,8 +59,11 @@ bool SourceSyntax::read(llvm::StringRef raw){
         const auto next=content[at];if(nameUnit(next)||next=='.'){++at;continue;}
         if((next=='+'||next=='-')&&at>first&&(content[at-1]=='e'||content[at-1]=='E')){++at;continue;}break;
       }
-    }else if(nameUnit(c)){
-      ++at;while(at<content.size()&&nameUnit(content[at]))++at;
+    }else if(nameUnit(c)||c=='\\'){
+      while(at<content.size()&&(nameUnit(content[at])||content[at]=='\\')){
+        if(content[at]=='\\'){uint32_t point;if(!escapedPoint(model,content,at,content.size(),point))return false;}
+        else ++at;
+      }
     }else{
       // TypeScript rescans `>=`/`>>` at concrete type argument boundaries.
       // Punctuation units preserve those boundaries; sequence() proves that a
@@ -75,15 +90,23 @@ bool SourceSyntax::span(const Json &r,size_t &first,size_t &end)const{
   return model.need(first<end&&first<tokens.size()&&tokens[first].start==a.start&&tokens[end-1].end==a.end,"original token envelope differs");
 }
 bool SourceSyntax::name(const Json &r,llvm::StringRef name)const{
-  size_t a,b;if(!span(r,a,b)||!model.need(b==a+1&&tokens[a].text==name,"original Source identifier spelling differs"))return false;
-  const auto &token=tokens[a];bool first=true;
-  for(size_t n=token.start;n<token.end;++n){
+  size_t a,b;if(!span(r,a,b)||!model.need(b==a+1,"original Source identifier spelling differs"))return false;
+  std::string cooked;return cookedIdentifier(a,cooked)&&model.need(cooked==name,"original Source identifier spelling differs");
+}
+bool SourceSyntax::cookedIdentifier(size_t index,std::string &out)const{
+  const auto &token=tokens[index];bool first=true;std::u16string cooked;
+  for(size_t n=token.start;n<token.end;){
     if(!model.spend())return false;uint32_t point=content[n];
-    if(point>=0xd800&&point<=0xdbff){if(!model.need(n+1<token.end&&content[n+1]>=0xdc00&&content[n+1]<=0xdfff,"identifier Unicode scalar differs"))return false;
-      point=0x10000+((point-0xd800)<<10)+(content[++n]-0xdc00);}
+    if(point=='\\'){if(!escapedPoint(model,content,n,token.end,point))return false;}
+    else{
+      ++n;if(point>=0xd800&&point<=0xdbff){if(!model.need(n<token.end&&content[n]>=0xdc00&&content[n]<=0xdfff,"identifier Unicode scalar differs"))return false;
+        point=0x10000+((point-0xd800)<<10)+(content[n++]-0xdc00);}
+    }
     if(!model.need(formalException::identifierPoint(point,first),"original Source identifier Unicode class differs"))return false;first=false;
+    if(point<0x10000)cooked+=char16_t(point);
+    else{cooked+=char16_t(0xd800+((point-0x10000)>>10));cooked+=char16_t(0xdc00+((point-0x10000)&0x3ff));}
   }
-  return model.need(!first,"empty original Source identifier");
+  if(!model.need(!first,"empty original Source identifier"))return false;out=utf8(cooked);return true;
 }
 bool SourceSyntax::sequence(const Json &r,const std::vector<Json> &parts,bool semicolon)const{
   size_t a,b;if(!span(r,a,b))return false;
