@@ -21,7 +21,7 @@ export function commonSourceGrammar(source,spend) {
   const text=source.content,tokens=[];
   // Type-context closing angles are individual tokens (ReadSpan<i32>=...);
   // sequence() joins operator punctuation only where an owned operator says so.
-  const pattern=/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*|\s+|"(?:\\[^\r\n\u2028\u2029]|[^"\\\r\n\u2028\u2029])*"|'(?:\\[^\r\n\u2028\u2029]|[^'\\\r\n\u2028\u2029])*'|(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[$_\p{ID_Start}])(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[$\u200c\u200d\p{ID_Continue}])*|(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)|===|!==|&&=|\|\|=|\?\?=|=>|&&|\|\||\?\?|\+\+|--|[+*\/%&|^\-]=|[^\s]/guy;
+  const pattern=/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*|\s+|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n])*"|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n])*'|(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[$_\p{ID_Start}])(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[$\u200c\u200d\p{ID_Continue}])*|(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)|===|!==|&&=|\|\|=|\?\?=|=>|&&|\|\||\?\?|\+\+|--|[+*\/%&|^\-]=|[^\s]/guy;
   let position=0;
   while(position<text.length) {
     spend();pattern.lastIndex=position;const match=pattern.exec(text);check(match&&match.index===position,'source');

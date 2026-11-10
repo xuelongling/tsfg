@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT
+# Preserve captured Source and JSON bytes, including CRLF continuations.
+* -text
+source.ts whitespace=cr-at-eol

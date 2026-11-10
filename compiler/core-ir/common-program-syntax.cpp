@@ -33,7 +33,12 @@ bool SourceSyntax::read(llvm::StringRef raw){
     if(c=='\''||c=='"'){
       const auto quote=c;++at;bool escaped=false,closed=false;
       while(at<content.size()){
-        auto next=content[at++];if(!model.need(next!=10&&next!=13&&next!=0x2028&&next!=0x2029,"unsupported multiline Source string"))return false;
+        auto next=content[at++];
+        if(next==10||next==13){
+          if(!model.need(escaped,"unsupported multiline Source string"))return false;
+          if(next==13&&at<content.size()&&content[at]==10)++at;
+          escaped=false;continue;
+        }
         if(!escaped&&next==quote){closed=true;break;}if(!escaped&&next=='\\')escaped=true;else escaped=false;
       }
       if(!model.need(closed,"unterminated original Source string"))return false;

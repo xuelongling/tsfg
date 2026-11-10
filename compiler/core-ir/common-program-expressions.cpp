@@ -53,6 +53,10 @@ bool literal(SourceSyntax &source,const Json &v){
   for(size_t n=1;n+1<raw.size();++n){if(!m.spend())return false;uint32_t c=raw[n];
     if(c=='\\'){
       if(!m.need(++n+1<raw.size(),"original String escape differs"))return false;c=raw[n];
+      if(c==10||c==13||c==0x2028||c==0x2029){
+        if(c==13&&n+1<raw.size()&&raw[n+1]==10)++n;
+        continue;
+      }
       if(c=='n')c=10;else if(c=='r')c=13;else if(c=='t')c=9;else if(c=='b')c=8;else if(c=='f')c=12;else if(c=='v')c=11;else if(c=='0')c=0;
       else if(c=='x'||c=='u'){
         const bool braced=c=='u'&&n+1<raw.size()&&raw[n+1]=='{';unsigned count=c=='x'?2:4;if(braced){++n;count=0;}
