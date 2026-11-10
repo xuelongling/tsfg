@@ -91,6 +91,16 @@ struct Components {
     Array rows;for(const auto &[id,row]:records){if(!step())return false;rows.push_back(row);}
     out=Object{{"components",std::move(roots)},{"types",std::move(rows)}};return true;
   }
+  bool values(const std::vector<std::string> &selected,Json &out){
+    for(const auto &t:items(field(p.hir,"types"))){if(!step())return false;types.emplace(string(field(t,"id")),&t);}
+    Array roots;
+    for(const auto &id:selected){
+      if(!step()||!need(types.count(id)&&string(field(*types.at(id),"kind"))=="value","fixed-value root must name an owned value declaration")||!build(id))return false;
+      roots.push_back(id);
+    }
+    Array rows;for(const auto &[id,row]:records){if(!step())return false;rows.push_back(row);}
+    out=Object{{"values",std::move(roots)},{"types",std::move(rows)}};return true;
+  }
   bool run(Json &out){
     Json catalogRows=nullptr;if(!catalog(catalogRows))return false;
     Json payload=Object{{"components",field(catalogRows,"components")},{"types",field(catalogRows,"types")},
@@ -106,4 +116,5 @@ struct Components {
 }
 bool componentLayouts(Program &p,Json &out,Error &e){Components builder(p,e);return builder.run(out);}
 bool componentLayoutCatalog(Program &p,Json &out,Error &e){Components builder(p,e);return builder.catalog(out);}
+bool fixedValueLayoutCatalog(Program &p,const std::vector<std::string> &roots,Json &out,Error &e){Components builder(p,e);return builder.values(roots,out);}
 } // namespace tsfg::commonProgram

@@ -2,6 +2,19 @@
 
 # Core scalar compiler outputs
 
+The shared compiler-internal fixed-value IR stage accepts a complete formal
+Common Program and an original FunctionId through the static Core commands
+`--common-program --value-llvm <FunctionId>` and
+`--common-program --value-mlir <FunctionId>`. It verifies the complete input,
+then lowers an acyclic direct-call closure with fully initialized, GC-free
+fixed values. Actual singleton field storage comes from that same verifier;
+uninitialized/presence/union storage, unsupported operations and recursive
+closures receive capability diagnostics with original Source anchors. Both
+outputs retain the complete Core, identity, function/source directory and the
+verified target layouts. The internal state/event parameters reuse EventV4
+fuel, depth and first-failure rules. This stage produces compiler data and
+publishes no aggregate C/RawSlot ABI or execution authority.
+
 The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.12 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
 
 `--emit-program-llvm` and `--emit-program-object` use the same complete validation

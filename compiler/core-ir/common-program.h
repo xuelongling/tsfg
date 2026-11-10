@@ -229,6 +229,9 @@ bool deriveInternalEffects(Program &,const std::map<std::string,Effects> &,Error
 bool readEffects(Program &,const Json &,const Json &,Effects &,Error &);
 Json writeEffects(const Effects &);
 bool verifyProgram(Program &,Error &);
+// Same complete verifier, with its independently derived exact storage tags.
+// Unresolved, callable or environment storage has no singleton entry.
+bool verifyProgram(Program &,Error &,std::map<std::string,std::string> &singletonStorage);
 bool uses(mlir::ModuleOp);
 void registerDialect(mlir::DialectRegistry &);
 mlir::LogicalResult verify(mlir::ModuleOp);

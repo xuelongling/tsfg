@@ -79,7 +79,7 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
   Program p;if(!metadata(module,p,error)||!readFunctions(module,p,error))return false;
   out=std::move(p);return true;
 }
-static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
+static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof,std::map<std::string,std::string> *singletonStorage){
   if(!p.charge(p.sourcePlans.size()))return reject(error,"core-ir-common-budget","logical witness release exceeded");
   for(const auto &[id,plan]:p.sourcePlans)if(!returnOriginMetadataCost(p,plan,error))return false;p.sourcePlans.clear();
   if(!p.charge(p.constructorReturnCFGs.size()))return reject(error,"core-ir-common-budget","constructor CFG witness release exceeded");p.constructorReturnCFGs.clear();
@@ -91,6 +91,11 @@ static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
   ActualCheck check{p,error};
   Json events=nullptr;
   if(!check.run()||!verifyCommonBorrows(check,borrowProof?&events:nullptr)||!verifyKernelProof(p,error))return false;
+  std::map<std::string,std::string> storage;
+  if(singletonStorage)for(const auto &[binding,capacity]:check.storageCapacity){
+    if(!check.step())return false;
+    if(!capacity.unknown&&!capacity.callableTop&&!capacity.hasEnvironment&&capacity.tags.size()==1)storage.emplace(binding,*capacity.tags.begin());
+  }
   if(borrowProof){
     if(!p.internalFunctions.empty())return reject(error,"core-ir-common-construction-borrow-open","printed internal constructor borrow proof is not admitted");
     Array functions,sources;std::map<std::string,const Function *> ordered;
@@ -106,10 +111,11 @@ static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
       {"request",Object{{"targets",field(p.request,"targets")}}},{"target",field(p.hir,"target")},{"sources",std::move(sources)},
       {"functions",std::move(functions)},{"events",std::move(events)}};
   }
-  return true;
+  if(singletonStorage)*singletonStorage=std::move(storage);return true;
 }
-bool verifyProgram(Program &p,Error &error){return verifyProgramImpl(p,error,nullptr);}
-bool analyzeCommonBorrowProof(Program &p,Error &error,Json &proof){return verifyProgramImpl(p,error,&proof);}
+bool verifyProgram(Program &p,Error &error){return verifyProgramImpl(p,error,nullptr,nullptr);}
+bool verifyProgram(Program &p,Error &error,std::map<std::string,std::string> &storage){return verifyProgramImpl(p,error,nullptr,&storage);}
+bool analyzeCommonBorrowProof(Program &p,Error &error,Json &proof){return verifyProgramImpl(p,error,&proof,nullptr);}
 mlir::LogicalResult verify(mlir::ModuleOp module){
   Program p;Error error;
   if(readCore(module,p,error)&&verifyProgram(p,error))return mlir::success();

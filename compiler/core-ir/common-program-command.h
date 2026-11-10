@@ -13,4 +13,5 @@ int printCoreModule(mlir::ModuleOp);
 int printCoreJson(const llvm::json::Value &);
 int runGpuBindingInput(llvm::StringRef,mlir::MLIRContext &);
 int runCoreModule(mlir::ModuleOp, llvm::StringRef command);
+int runFixedValueModule(mlir::ModuleOp,llvm::StringRef command,llvm::StringRef functionId);
 }

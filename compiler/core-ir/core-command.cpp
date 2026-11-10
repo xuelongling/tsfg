@@ -76,11 +76,13 @@ int readCoreInput(std::string &bytes, llvm::StringRef budgetCode) {
 } // namespace
 
 int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native) {
-  const bool common = argc == 3 && llvm::StringRef(argv[1]) == "--common-program";
+  const bool value = argc==4&&llvm::StringRef(argv[1])=="--common-program"&&
+    (llvm::StringRef(argv[2])=="--value-llvm"||llvm::StringRef(argv[2])=="--value-mlir");
+  const bool common = (argc == 3||value) && llvm::StringRef(argv[1]) == "--common-program";
   const bool query = argc == 3 && llvm::StringRef(argv[1]) == "--system-query";
   if (common || query) {
     const auto command = llvm::StringRef(argv[2]);
-    if (command != "--canonicalize" && command != "--optimize" &&
+    if (!value && command != "--canonicalize" && command != "--optimize" &&
         !(common && (command == "--component-layouts" || command == "--borrow-proof" || command == "--emit-bytecode" || command == "--gpu-binding-plan")) &&
         !(query && (command == "--effects" || command == "--cpu-batch" ||
           command == "--cpu-llvm" || command == "--llvm-ir" ||
@@ -114,6 +116,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
       llvm::errs() << "[core-ir-invalid] parse or verification failed\n";
       return 3;
     }
+    if(value)return tsfg::commonProgram::runFixedValueModule(*module,command,argv[3]);
     if (common) return tsfg::commonProgram::runCoreModule(*module, command);
     if (command == "--tmeta") {
       tsfg::commonProgram::Json metadata = nullptr;
