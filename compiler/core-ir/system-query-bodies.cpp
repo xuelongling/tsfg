@@ -11,7 +11,7 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   if(!need(source->types.count(type)&&number(field(r,"start"))>=number(field(body,"start"))&&number(field(r,"end"))<=number(field(body,"end"))&&
     (kind=="fieldTarget"||kind=="bindingTarget"||string(field(value,"flowType"))==type),"original expression range/logical type differs"))return false;
   auto &g=grammar(path);const auto astKind=kind=="numericLiteral"?(llvm::StringRef(string(field(value,"token"))).starts_with("-")?"KindPrefixUnaryExpression":"KindNumericLiteral"):kind=="bindingReference"||kind=="bindingTarget"?"KindIdentifier":kind=="fieldAccess"||kind=="fieldTarget"?"KindPropertyAccessExpression":kind=="call"?"KindCallExpression":kind=="parentheses"?"KindParenthesizedExpression":"KindBinaryExpression";
-  if(!at(path,r,astKind))return false;
+  const auto *original=at(path,r,astKind);if(!original)return false;
   if(kind=="numericLiteral"){
     if(expected=="i32")
       return need(type=="i32"&&field(value,"bits").getAsNull(),"exact i32 arithmetic literal required")&&verifySourceLiteral(g,value);
@@ -77,10 +77,15 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   }
   if(kind=="fieldAssignment"||kind=="bindingAssignment"){
     const auto op=string(field(value,"operator"));const auto &target=field(value,"target"),&rhs=field(value,"value");
-    // Only a direct binary RHS receives the i32 context. A standalone or
-    // parenthesized literal follows the pre-existing expression rules.
-    const auto rhsContext=type=="i32"&&string(field(rhs,"kind"))!="binary"?std::string{}:type;
-    return need((type=="f32"||type=="f64"||(type=="i32"&&kind=="fieldAssignment"&&op=="="))&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))==(kind=="fieldAssignment"?"fieldTarget":"bindingTarget")&&string(field(target,"type"))==type&&string(field(rhs,"type"))==type,"owned same-type floating-point assignment or simple i32 field copy required")&&
+    const bool i32Field=type=="i32"&&kind=="fieldAssignment";
+    const auto rhsKind=string(field(rhs,"kind"));
+    const auto parent=i32Field?nodes.find(string(field(*original,"parent"))):nodes.end();
+    const bool i32Compound=i32Field&&(op=="+="||op=="-="||op=="*=")&&
+      parent!=nodes.end()&&string(field(*parent->second,"kind"))=="KindExpressionStatement"&&
+      (rhsKind=="fieldAccess"||rhsKind=="numericLiteral");
+    // A standalone literal gets i32 context only as the direct compound RHS.
+    const auto rhsContext=i32Field&&!i32Compound&&rhsKind!="binary"?std::string{}:type;
+    return need((type=="f32"||type=="f64"||(i32Field&&(op=="="||i32Compound)))&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))==(kind=="fieldAssignment"?"fieldTarget":"bindingTarget")&&string(field(target,"type"))==type&&string(field(rhs,"type"))==type,"owned same-type floating-point assignment or direct i32 field assignment required")&&
       expression(target,body,scope,path,depth+1)&&expression(rhs,body,scope,path,depth+1,rhsContext)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(target,"range"),field(value,"operatorRange"),field(rhs,"range")});
   }
   return need(false,"Query expression has no selected typed representation");

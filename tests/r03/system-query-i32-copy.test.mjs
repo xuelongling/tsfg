@@ -486,3 +486,106 @@ test('real C++ i32 field subtraction preserves operand order, effects and wrappi
   assert.notEqual(flagged,ir);
   run('subtraction-forged-llvm-wrap-flag',flagged,'--canonicalize-llvm-ir',3);
 });
+
+const compoundFixture=new URL('./testdata/system-query-i32-field-compound/',import.meta.url);
+const compoundPins={
+  'source.ts':'0dd89dca704427a5c83bcd81a28c2b0394c79965bf1778949fea7b4f68e59a54',
+  'request.json':'5276dc35b780e6f773f79a79ecccd81a4a5b8d1b3f76d1f56b8f53d9371c730e',
+  'official-oracle.json':'fcc78d2947a7f27f2b680df12c7dc94fa656cdac5707e7e6ec06671f7dc9ef6b',
+  'package.json':'8ec279d5f9a3887c0b3be3bd996461db38fd6ccdc4fd0e1563e6a6ed32867937',
+};
+const compoundOriginal=Object.fromEntries(Object.keys(compoundPins).map(name=>[name,readFileSync(new URL(name,compoundFixture))]));
+/** @type {typeof import('./testdata/system-query-i32-field-compound/package.json')} */
+const compoundPacket=JSON.parse(compoundOriginal['package.json'].toString('utf8'));
+/** @type {typeof import('./testdata/system-query-i32-field-compound/official-oracle.json')} */
+const compoundOracle=JSON.parse(compoundOriginal['official-oracle.json'].toString('utf8'));
+const compoundContext={family:'tsfg.system-query-context-candidate',version:6,requestBytes:compoundOriginal['request.json'],expectedPackageId:compoundPacket.packageId};
+const compoundFacts=readSystemQueryFacts(compoundOriginal['package.json'],compoundContext);
+const compoundCore=emitSystemQueryCore(compoundFacts,compoundContext);
+const compoundFields=[compoundOracle.fields[0],compoundOracle.compound.rightField];
+
+test('genuine i32 compound subtraction loads the target before the original RHS',()=>{
+  for(const [name,hash] of Object.entries(compoundPins))assert.equal(sha256(compoundOriginal[name]),'sha256:'+hash,name);
+  const text=compoundOriginal['source.ts'].toString('utf8'),original=compoundOracle.compound;
+  assert.equal(compoundOracle.sourceSha256,compoundPins['source.ts']);
+  assert.deepEqual(compoundOracle.sourceRange,{start:0,end:text.length});
+  assert.equal(text.slice(original.range.start,original.range.end),'dst.n -= src.n');
+  assert.deepEqual(printSystemQueryFacts(compoundFacts,compoundContext),compoundOriginal['package.json']);
+  assert.deepEqual(compoundFacts.program,compoundPacket.payload.program);
+  assert.deepEqual(compoundFacts.nodes,compoundPacket.payload.nodes);
+  const system=compoundFacts.systems[0],loop=system.loops[0],assignment=loop.statements[0].value;
+  assert.equal(system.declaration.id,compoundOracle.systemId);
+  assert.equal(loop.queryBinding,compoundOracle.queryBinding);
+  assert.ok(assignment?.target?.receiver&&assignment.value?.receiver);
+  assert.deepEqual([assignment.operator,assignment.type,assignment.range,assignment.operatorRange],['-=',scalarTypeIds.i32,original.range,original.operator]);
+  assert.equal(assignment.target.access,'readwrite');
+  for(const [index,operand] of [assignment.target,assignment.value].entries()){
+    const expected=compoundFields[index];
+    assert.deepEqual([operand.type,operand.sourceField,operand.range,operand.receiver.binding],
+      [scalarTypeIds.i32,expected.fieldId,expected.access,expected.bindingId]);
+  }
+  const rows=compoundCore.split('\n'),loads=rows.filter(row=>row.includes('"tsfg.field_load"'));
+  const sub=rows.find(row=>row.includes('"tsfg_core.sub"')),store=rows.find(row=>row.includes('"tsfg.field_store"'));
+  assert.equal(loads.length,2);
+  const sources=loads.map(row=>row.match(/(%\w+) = /)?.[1]);
+  assert.ok(sub&&store&&sources.every(Boolean));
+  assert.ok(loads.every((row,index)=>hasAnchor(row,compoundFields[index].access)&&row.endsWith('-> i32')));
+  assert.ok(sub.includes('"tsfg_core.sub"('+sources.join(', ')+')')&&hasAnchor(sub,original.range));
+  assert.ok(sub.includes('operator_start = '+original.operator.start+' : i64')&&sub.includes('operator_end = '+original.operator.end+' : i64'));
+  const result=sub.match(/(%\w+) = /);
+  assert.ok(result&&store.includes(', '+result[1]+')')&&hasAnchor(store,original.range));
+});
+
+test('i32 compound subtraction keeps division and destination permissions guarded',()=>{
+  /** @type {Array<(value:typeof compoundPacket.payload)=>void>} */
+  const corruptions=[
+    payload=>{payload.systems[0].loops[0].statements[0].value.operator='/=';},
+    payload=>{payload.systems[0].loops[0].bindings[0].mode='read';},
+    payload=>{const field=payload.types.find(row=>row.name==='CopyDestination')?.fields?.find(row=>row.name==='n');assert.ok(field);field.readonly=true;},
+  ];
+  for(const corrupt of corruptions){
+    const changed=structuredClone(compoundPacket);
+    corrupt(changed.payload);
+    changed.packageId=sha256('tsfg.system-query.package.v6\0'+changed.schemaHash+'\0'+canonical(changed.payload));
+    assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(changed)+'\n'),{...compoundContext,expectedPackageId:changed.packageId}),TypeError);
+  }
+});
+
+test('real C++ i32 compound subtraction reads and writes the original target through wrapping LLVM',{skip},()=>{
+  const bound=run('compound-bound',compoundCore);
+  assert.equal(run('compound-bound-cold',bound),bound);
+  const batch=run('compound-batch',bound,'--cpu-batch');
+  const batchRows=batch.split('\n'),loads=batchRows.filter(row=>row.includes('"memref.load"'));
+  const sub=batchRows.find(row=>row.includes('"arith.subi"')),store=batchRows.find(row=>row.includes('"memref.store"'));
+  assert.equal(loads.length,2);
+  assert.ok(sub&&store);
+  for(const [index,row] of loads.entries()){
+    assert.ok(row.endsWith('-> i32')&&hasAnchor(row,compoundFields[index].access));
+    assert.ok(row.includes('tsfg.batch.source_field = '+coreQuote(compoundFields[index].fieldId)));
+    assert.ok(row.includes('tsfg.batch.offset = '+[4,0][index]+' : i64'));
+  }
+  assert.ok(store.includes('tsfg.batch.offset = 4 : i64')&&hasAnchor(store,compoundOracle.compound.range));
+  assert.ok(store.includes('tsfg.batch.source_field = '+coreQuote(compoundFields[0].fieldId)));
+  const effects=readSystemQueryEffects(Buffer.from(run('compound-effects',bound,'--effects')),compoundFacts,compoundContext);
+  assert.deepEqual(effects.conflicts,[]);
+  assert.deepEqual(effects.systems[0].loops[0].operations.map(row=>[row.kind,row.sourceField,row.sourceBinding,row.source]),[
+    ...compoundFields.map(field=>['read',field.fieldId,field.bindingId,{path:'/src/main.ts',...field.access}]),
+    ['write',compoundFields[0].fieldId,compoundFields[0].bindingId,{path:'/src/main.ts',...compoundOracle.compound.range}],
+  ]);
+  const dialect=run('compound-llvm-dialect',batch,'--cpu-llvm');
+  const ir=run('compound-llvm-ir',dialect,'--llvm-ir');
+  assert.equal(run('compound-llvm-ir-cold',ir,'--canonicalize-llvm-ir'),ir);
+  const code=ir.split('\n!')[0],inputs=[...code.matchAll(/(%[\w.]+) = load i32,/g)].map(match=>match[1]);
+  const operation=code.match(/(%[\w.]+) = sub i32 (%[\w.]+), (%[\w.]+)/);
+  assert.ok(operation);
+  assert.deepEqual(operation.slice(2),inputs);
+  assert.ok(code.includes('store i32 '+operation[1]+','));
+  const orderedCore=bound.split('\n').find(row=>row.includes('"tsfg_core.sub"'));
+  assert.ok(orderedCore);
+  const reversed=orderedCore.replace(/("tsfg_core\.sub"\()(%\w+), (%\w+)(\))/,(_,start,left,right,end)=>start+right+', '+left+end);
+  assert.notEqual(reversed,orderedCore);
+  run('compound-reversed-core-operands',bound.replace(orderedCore,reversed),'--canonicalize',3);
+  const flagged=ir.replace(' = sub i32 '+inputs.join(', '),' = sub nuw i32 '+inputs.join(', '));
+  assert.notEqual(flagged,ir);
+  run('compound-forged-llvm-wrap-flag',flagged,'--canonicalize-llvm-ir',3);
+});

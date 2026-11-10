@@ -27,8 +27,12 @@ simple i32 field assignment also accepts `+`, `-` or `*` with a direct i32 field
 on the left and a direct i32 field or exact signed i32 integer literal on the
 right. The literal becomes a typed i32 constant. The operation wraps at 32 bits
 and feeds the destination store in Source order. Standalone i32 literals,
-division, compound assignments, locals and scalar helper parameters/results
-remain outside this capability.
+division, locals and scalar helper parameters/results remain outside this
+capability. A direct i32 field statement using `+=`, `-=` or `*=` requires a
+writable target and a direct same-type field or exact i32 literal on the
+right. It loads the target's old value before the RHS, computes a wrapping
+result and writes that SSA value back to the same field. The effects record
+retains the target read and write and any intervening RHS field read.
 
 Reachable f32/f64-result helpers become real func.func definitions with native f32/f64 or component-view parameters and typed func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 3; the Core/common wire contract remains unchanged.
 
@@ -64,7 +68,7 @@ This bounded slice supports the complete current owned fixtures: declaration
 only systems, cross-file and generic aliases, multiple component occurrences,
 Read/Write views of a shared component, inherited shadowed fields, direct same-width f32/f64
 field arithmetic, assignment and compound assignment, plus same-type i32 field
-copies and simple field assignments with wrapping arithmetic. Ordinary system
+copies and direct field assignments with wrapping arithmetic. Ordinary system
 parameters require a selected native scalar Core type and systems return void.
 Component metadata uses fixed fields with scalar literal initializers and
 implicit zero-argument construction. Explicit constructor/method metadata

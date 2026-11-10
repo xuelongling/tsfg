@@ -25,7 +25,8 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
     if(!component.types.has(value.type)||!target&&value.flowType!==value.type)fail('original Query expression logical type differs','type');
     const type=component.semantic.typeIds.get(value.type),base={type,sourceType:value.type,range:{...value.range}};
     const originalKind=value.kind==='numericLiteral'?(value.token.startsWith('-')?'KindPrefixUnaryExpression':'KindNumericLiteral'):['bindingReference','bindingTarget'].includes(value.kind)?'KindIdentifier':value.kind==='fieldAccess'||value.kind==='fieldTarget'?'KindPropertyAccessExpression':value.kind==='call'?'KindCallExpression':value.kind==='parentheses'?'KindParenthesizedExpression':'KindBinaryExpression';
-    if(!ast.nodes.some(node=>node.sourcePath===grammar.source.path&&node.kind===originalKind&&canonical(node.range)===canonical(value.range)))fail('original Query expression AST differs','source');
+    const original=ast.nodes.find(node=>node.sourcePath===grammar.source.path&&node.kind===originalKind&&canonical(node.range)===canonical(value.range));
+    if(!original)fail('original Query expression AST differs','source');
     if(value.kind==='numericLiteral'){
       if(i32Position==='arithmetic-literal'){
         const integerSpelling=/^-?(?:[0-9][0-9_]*|0[xXbBoO].+)$/;
@@ -42,7 +43,6 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
     if(value.kind==='bindingReference'||value.kind==='bindingTarget'){
       const binding=scope.get(value.binding);
       if(!binding||binding.sourceType!==value.type||!binding.mode&&!['f32','f64'].includes(value.type))fail('original Query expression binding differs','source');
-      const original=ast.nodes.find(node=>node.sourcePath===grammar.source.path&&node.kind==='KindIdentifier'&&canonical(node.range)===canonical(value.range));
       if(canonical(proof.valueBinding(original))!==canonical(binding.declaration))fail('original lexical binding target differs','source');
       if(target&&(!binding.local||!binding.writable||access==='read'))fail('local target requires initialized writable let binding','permission');
       grammar.name(value.range,binding.declaration.name);return {...base,kind:target?'bindingTarget':'bindingReference',binding:value.binding,access:target?access:'read'};
@@ -77,9 +77,15 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
       return {...base,kind:'binary',operator:value.operator,operatorRange:{...value.operatorRange},left,right};
     }
     if(value.kind==='fieldAssignment'||value.kind==='bindingAssignment'){
-      if(!['=','+=','-=','*=','/='].includes(value.operator)||!(['f32','f64'].includes(value.type)||value.type==='i32'&&value.kind==='fieldAssignment'&&value.operator==='=')||value.target.kind!==(value.kind==='fieldAssignment'?'fieldTarget':'bindingTarget'))fail('owned floating-point assignment or simple i32 field copy required','capability');
+      const i32Field=value.type==='i32'&&value.kind==='fieldAssignment';
+      const i32Compound=i32Field&&['+=','-=','*='].includes(value.operator)&&
+        ast.directory.get(original.parent)?.kind==='KindExpressionStatement'&&
+        (value.value.kind==='fieldAccess'||value.value.kind==='numericLiteral');
+      if(!['=','+=','-=','*=','/='].includes(value.operator)||!(['f32','f64'].includes(value.type)||i32Field&&(value.operator==='='||i32Compound))||
+        value.target.kind!==(value.kind==='fieldAssignment'?'fieldTarget':'bindingTarget'))fail('owned floating-point assignment or direct i32 field assignment required','capability');
       const target=expression(value.target,value.operator==='='?'write':'readwrite',depth+1);
-      const assigned=expression(value.value,'read',depth+1,target.sourceType,value.type==='i32'?'assignment-rhs':null);
+      const position=i32Compound?'arithmetic-literal':i32Field?'assignment-rhs':null;
+      const assigned=expression(value.value,'read',depth+1,target.sourceType,position);
       if(target.sourceType!==value.type||assigned.sourceType!==value.type)fail('original assignment types differ','type');
       grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.target.range,value.operatorRange,value.value.range]);
       return {...base,kind:value.kind,operator:value.operator,operatorRange:{...value.operatorRange},target,value:assigned};

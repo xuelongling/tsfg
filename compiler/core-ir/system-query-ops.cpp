@@ -19,6 +19,10 @@ struct Check {
   bool integer(mlir::Operation *op,llvm::StringRef key,int64_t value,unsigned width=64){auto a=op->getAttrOfType<mlir::IntegerAttr>(key);return need(a&&a.getType().isSignlessInteger(width)&&a.getInt()==value,"operation numeric anchor/layout differs");}
   bool anchor(mlir::Operation *op,const Json &r){return integer(op,"tsfg_source.start",number(field(r,"start")))&&integer(op,"tsfg_source.end",number(field(r,"end")));}
   bool scalar(mlir::Type type,const Json &value){return need((type.isF32()||type.isF64())&&tsfg::scalarName(tsfg::typeCode(type))==string(field(value,"type")),"original floating-point SSA width differs");}
+  bool fieldScalar(mlir::Type type,const Json &value){
+    return need((type.isSignlessInteger(32)||type.isF32()||type.isF64())&&
+      tsfg::scalarName(tsfg::typeCode(type))==string(field(value,"type")),"original field SSA type differs");
+  }
   mlir::Operation *take(mlir::Block::iterator &it,mlir::Block &block,llvm::StringRef name,llvm::ArrayRef<mlir::Value> operands,unsigned results,unsigned regions=0){
     if(!m.spend()||!need(it!=block.end(),"missing typed Query operation"))return nullptr;auto *op=&*it++;
     if(!need(op->getName().getStringRef()==name&&op->getNumOperands()==operands.size()&&op->getNumResults()==results&&op->getNumRegions()==regions&&op->getNumSuccessors()==0,"typed Query operation shape/order differs"))return nullptr;
@@ -86,8 +90,7 @@ struct Check {
     }
     if(kind=="fieldAccess"){
       const auto &receiver=bindings.at(string(field(field(value,"receiver"),"binding")));auto *op=take(it,block,"tsfg.field_load",{receiver.value},1);
-      if(!op)return {};const auto type=op->getResult(0).getType();
-      if(!need((type.isSignlessInteger(32)||type.isF32()||type.isF64())&&tsfg::scalarName(tsfg::typeCode(type))==string(field(value,"type")),"original field SSA type differs")||!fieldOp(op,value,receiver,field(value,"range")))return {};return op->getResult(0);
+      if(!op||!fieldScalar(op->getResult(0).getType(),value)||!fieldOp(op,value,receiver,field(value,"range")))return {};return op->getResult(0);
     }
     if(kind=="binary"){
       auto left=expression(it,block,field(value,"left"),bindings,depth+1);if(!left)return {};auto right=expression(it,block,field(value,"right"),bindings,depth+1);if(!right)return {};
@@ -102,7 +105,7 @@ struct Check {
     }
     const auto &target=field(value,"target");const auto &receiver=bindings.at(string(field(field(target,"receiver"),"binding")));const auto op=string(field(value,"operator"));mlir::Value previous;
     if(op!="="){
-      auto *load=take(it,block,"tsfg.field_load",{receiver.value},1);if(!load||!scalar(load->getResult(0).getType(),target)||!fieldOp(load,target,receiver,field(target,"range")))return {};previous=load->getResult(0);
+      auto *load=take(it,block,"tsfg.field_load",{receiver.value},1);if(!load||!fieldScalar(load->getResult(0).getType(),target)||!fieldOp(load,target,receiver,field(target,"range")))return {};previous=load->getResult(0);
     }
     auto rhs=expression(it,block,field(value,"value"),bindings,depth+1);if(!rhs)return {};
     const auto name=op=="+="?"add":op=="-="?"sub":op=="*="?"mul":"div";
