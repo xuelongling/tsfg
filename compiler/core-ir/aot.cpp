@@ -28,6 +28,7 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
 #include <string>
+#include <vector>
 
 mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
                                         llvm::raw_ostream &output, NativeOutput kind) {
@@ -59,7 +60,9 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
   auto native = mlir::translateModuleToLLVMIR(*lowered, llvmContext, "tsfg-native");
   if (!native) return mlir::failure();
   materializeNativeConversions(*native);
-  materializeNativeFloating(*native);
+  std::vector<llvm::Function *> floatingFrames;
+  for(auto &function:*native)if(!function.isDeclaration()&&(function.getName().starts_with("native_")||function.getName()=="tsfg_native_invoke_v3"))floatingFrames.push_back(&function);
+  materializeNativeFloating(*native,floatingFrames);
   if(!materializeNativeModule(*native,verifiedCore,program)) {
     llvm::errs()<<"[core-ir-module-aot] instance materialization failed\n";return mlir::failure();
   }

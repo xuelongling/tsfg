@@ -4,10 +4,14 @@
 #include "common-program-value-lowering.h"
 #include "common-program-return-origins-v4.h"
 #include "dialect.h"
+#include "aot-float.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
@@ -15,6 +19,8 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
@@ -97,12 +103,77 @@ llvm::json::Value certificateControls(){
 }
 }
 
+namespace {
+std::string semanticIR(llvm::StringRef text){
+  std::string result;
+  while(!text.empty()){
+    auto split=text.split('\n');auto line=split.first;text=split.second;
+    const auto colon=line.find(':'),comment=line.find("; preds = ");
+    // LLVM's predecessor-use-list order changes across its text parser. This
+    // block-label annotation is a comment; all instructions/metadata remain.
+    if(colon!=llvm::StringRef::npos&&comment!=llvm::StringRef::npos&&colon<comment&&colon>0&&line.take_front(colon).find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$._-")==llvm::StringRef::npos&&line.slice(colon+1,comment).trim().empty())line=line.take_front(colon+1);
+    result+=line.str();result+='\n';
+  }return result;
+}
+bool floatingEnvironment(const llvm::Function &fn,llvm::json::Value &report){
+  using Object=llvm::json::Object;
+  if(!fn.hasFnAttribute(llvm::Attribute::StrictFP)){report=Object{{"active",false}};return true;}
+  std::map<std::string,const llvm::AllocaInst *> slots;
+  for(const auto &op:fn.getEntryBlock())if(const auto *slot=llvm::dyn_cast<llvm::AllocaInst>(&op))slots.emplace(slot->getName().str(),slot);
+  for(const auto *name:{"caller_mxcsr","caller_x87","strict_mxcsr","strict_x87"})if(!slots.count(name))return false;
+  const auto writes=[&](const llvm::Instruction *op,bool caller,bool x87){
+    const auto *call=llvm::dyn_cast_or_null<llvm::CallBase>(op);if(!call||call->arg_size()!=1)return false;
+    const auto *slot=slots.at(caller?(x87?"caller_x87":"caller_mxcsr"):(x87?"strict_x87":"strict_mxcsr"));
+    if(call->getArgOperand(0)!=slot)return false;
+    if(x87){const auto *assembly=llvm::dyn_cast<llvm::InlineAsm>(call->getCalledOperand());return assembly&&assembly->getAsmString()=="fldcw ($0)";}
+    return call->getCalledFunction()&&call->getCalledFunction()->getName()=="llvm.x86.sse.ldmxcsr";
+  };
+  unsigned callbacks=0,returns=0,readsSSE=0,readsX87=0;
+  for(const auto &block:fn)for(const auto &op:block){
+    if(const auto *call=llvm::dyn_cast<llvm::CallBase>(&op)){
+      if(call->getCalledFunction()&&call->getCalledFunction()->getName()=="llvm.x86.sse.stmxcsr"){if(call->getArgOperand(0)!=slots.at("caller_mxcsr"))return false;++readsSSE;}
+      if(const auto *assembly=llvm::dyn_cast<llvm::InlineAsm>(call->getCalledOperand()))if(assembly->getAsmString()=="fnstcw ($0)"){if(call->getArgOperand(0)!=slots.at("caller_x87"))return false;++readsX87;}
+      if(!call->isInlineAsm()&&call->isIndirectCall()){
+        ++callbacks;const auto *before=call->getPrevNode();
+        if(const auto *marker=llvm::dyn_cast_or_null<llvm::CallBase>(before);marker&&marker->getCalledFunction()&&marker->getCalledFunction()->getName().starts_with("llvm.experimental.stackmap"))before=before->getPrevNode();
+        if(!writes(before,true,true)||!writes(before->getPrevNode(),true,false)||!writes(call->getNextNode(),false,false)||!writes(call->getNextNode()->getNextNode(),false,true))return false;
+      }
+    }
+    if(llvm::isa<llvm::ReturnInst>(op)){++returns;if(!writes(op.getPrevNode(),true,true)||!writes(op.getPrevNode()->getPrevNode(),true,false))return false;}
+  }
+  if(readsSSE!=1||readsX87!=1||!returns)return false;
+  report=Object{{"active",true},{"callbacks",callbacks},{"returns",returns},{"callerEnvironmentReadOnce",true},{"callbackRestoreAndStrictReestablish",true},{"allReturnsRestoreCaller",true}};return true;
+}
+llvm::json::Value floatingHelpers(const llvm::Module &module){
+  using Object=llvm::json::Object;using Array=llvm::json::Array;Array functions;
+  for(const auto &fn:module)if(fn.getName().starts_with("tsfg_aot_f")){
+    if(fn.isDeclaration()||!fn.hasInternalLinkage()||!fn.hasFnAttribute(llvm::Attribute::StrictFP)||fn.getFnAttribute("denormal-fp-math").getValueAsString()!="ieee,ieee"||fn.getFnAttribute("denormal-fp-math-f32").getValueAsString()!="ieee,ieee")return nullptr;
+    Array calls,constants;std::set<std::pair<unsigned,uint64_t>> bits;
+    for(const auto &block:fn)for(const auto &op:block){
+      for(const auto &operand:op.operands()){
+        if(llvm::isa<llvm::PoisonValue,llvm::UndefValue>(operand))return nullptr;
+        if(const auto *literal=llvm::dyn_cast<llvm::ConstantInt>(operand))if(literal->getBitWidth()<=64)bits.emplace(literal->getBitWidth(),literal->getZExtValue());
+        if(const auto *literal=llvm::dyn_cast<llvm::ConstantFP>(operand)){const auto raw=literal->getValueAPF().bitcastToAPInt();bits.emplace(raw.getBitWidth(),raw.getZExtValue());}
+      }
+      if(const auto *call=llvm::dyn_cast<llvm::CallBase>(&op)){
+        if(!call->getCalledFunction()||!call->getCalledFunction()->isIntrinsic())return nullptr;Array modes;
+        for(const auto &argument:call->args())if(const auto *metadata=llvm::dyn_cast<llvm::MetadataAsValue>(argument))if(const auto *text=llvm::dyn_cast<llvm::MDString>(metadata->getMetadata()))modes.push_back(text->getString().str());
+        calls.push_back(Object{{"name",call->getCalledFunction()->getName().str()},{"modes",std::move(modes)}});
+      }
+    }
+    for(const auto &[width,value]:bits)constants.push_back(Object{{"width",width},{"bits",std::to_string(value)}});
+    functions.push_back(Object{{"name",fn.getName().str()},{"strict",true},{"internal",true},{"blocks",int64_t(fn.size())},{"calls",std::move(calls)},{"constants",std::move(constants)}});
+  }return functions;
+}
+}
+
 int main(int argc,char **argv){
   if(argc==2&&llvm::StringRef(argv[1])=="--origin-certificate-controls"){const auto controls=certificateControls();if(controls.getAsNull())return 4;llvm::outs()<<tsfg::commonProgram::canonical(controls)<<'\n';return 0;}
   if(argc!=3)return 2;
   auto bytes=llvm::MemoryBuffer::getFile(argv[1]);if(!bytes)return 2;
   mlir::DialectRegistry registry;tsfg::registerCoreDialect(registry);tsfg::commonProgram::registerDialect(registry);
   registry.insert<mlir::func::FuncDialect,mlir::cf::ControlFlowDialect,mlir::LLVM::LLVMDialect>();
+  mlir::registerBuiltinDialectTranslation(registry);mlir::registerLLVMDialectTranslation(registry);
   mlir::MLIRContext context(registry);context.disableMultithreading();
   auto core=mlir::parseSourceString<mlir::ModuleOp>((*bytes)->getBuffer(),&context);
   tsfg::commonProgram::Error error;tsfg::commonProgram::FixedValueLLVM lowered;
@@ -126,6 +197,17 @@ int main(int argc,char **argv){
   std::string roundTrip;llvm::raw_string_ostream coldStream(roundTrip);cold->print(coldStream,mlir::OpPrintingFlags().printGenericOpForm());coldStream<<'\n';coldStream.flush();if(roundTrip!=lowered.mlir)return 4;
   using namespace tsfg::commonProgram;
   using tsfg::exception::field;using tsfg::exception::items;using tsfg::exception::string;
+  llvm::LLVMContext coldContext;auto coldLLVM=mlir::translateModuleToLLVMIR(*cold,coldContext,"tsfg.fixed-value");if(!coldLLVM)return 4;
+  const auto &stages=field(*decoded,"irStages");const auto &symbols=items(field(stages,"functions")),&closure=items(field(*decoded,"closure"));
+  if(string(field(stages,"mlir"))!="converted-intermediate"||string(field(stages,"llvm"))!="finalized"||field(stages,"requiresPostExportFinalization").getAsBoolean()!=true||string(field(stages,"finalizer"))!="tsfg::materializeNativeFloating"||string(field(stages,"selection"))!="exact-closure"||symbols.size()!=closure.size())return 4;
+  std::vector<llvm::Function *> coldFrames;for(size_t i=0;i<closure.size();++i){const auto name="value_"+string(closure[i]).substr(7);if(string(symbols[i])!=name)return 4;auto *fn=coldLLVM->getFunction(name);if(!fn)return 4;coldFrames.push_back(fn);}
+  tsfg::materializeNativeFloating(*coldLLVM,coldFrames);
+  coldLLVM->setModuleIdentifier(module->getModuleIdentifier());
+  coldLLVM->getOrInsertNamedMetadata("tsfg.fixed.value")->addOperand(llvm::MDNode::get(coldContext,{llvm::MDString::get(coldContext,encoded->getString())}));
+  if(llvm::verifyModule(*coldLLVM,&llvm::errs()))return 4;
+  std::string coldText,finalText;llvm::raw_string_ostream coldPrinted(coldText),finalPrinted(finalText);coldLLVM->print(coldPrinted,nullptr);module->print(finalPrinted,nullptr);coldPrinted.flush();finalPrinted.flush();
+  if(semanticIR(coldText)!=semanticIR(finalText)){llvm::errs()<<"LLVM finalization roundtrip changes IR instructions or metadata\n";return 4;}
+  const auto helpers=floatingHelpers(*module);if(helpers.getAsNull()){llvm::errs()<<"floating helper oracle failed\n";return 4;}
   Program source;if(!readCore(*core,source,error))return 4;
   if(string(field(*decoded,"functionId"))!=argv[2]||field(*decoded,"executionAuthority").getAsBoolean()!=false)return 4;
   if(string(field(*decoded,"inputIdentity"))!=source.inputIdentity||string(field(*decoded,"hirDigest"))!=source.hirHash||items(field(*decoded,"functions")).size()!=source.functions.size())return 4;
@@ -142,10 +224,11 @@ int main(int argc,char **argv){
   std::set<uint64_t> intervals;
   for(const auto &fn:*module){
     if(fn.isDeclaration()){
-      if(!fn.getName().starts_with("llvm.experimental.stackmap"))return 4;continue;
-    }++functions;
+      if(!fn.isIntrinsic())return 4;continue;
+    }if(fn.getName().starts_with("tsfg_aot_f"))continue;++functions;
     if(!functionIndices.count(fn.getName().str())||fn.arg_size()<2)return 4;
     const auto currentFunction=functionIndices.at(fn.getName().str());
+    Json environment=nullptr;if(!floatingEnvironment(fn,environment)){llvm::errs()<<"floating environment oracle failed: "<<fn.getName()<<'\n';return 4;}
     Graph graph(fn);std::set<size_t> fuelBlocks;Array instructions,blockRows;const llvm::StoreInst *repeatedCopy=nullptr;
     std::map<const llvm::Value *,int64_t> valueIds;
     for(const auto &argument:fn.args())valueIds.emplace(&argument,valueIds.size());
@@ -175,6 +258,14 @@ int main(int argc,char **argv){
     const auto root=[&](const llvm::Value *value)->int64_t{const auto found=roots(value);return found.size()==1?*found.begin():-1;};
     for(const auto &block:fn)for(const auto &operation:block){
       const auto blockId=graph.indices.at(&block);Object record{{"id",valueId(&operation)},{"block",int64_t(blockId)},{"kind",operation.getOpcodeName()}};
+      Array scalarOperands;for(const auto &operand:operation.operands()){
+        Object row{{"id",valueId(operand.get())}};
+        if(const auto *literal=llvm::dyn_cast<llvm::ConstantInt>(operand);literal&&literal->getBitWidth()<=64){row["width"]=literal->getBitWidth();row["bits"]=std::to_string(literal->getZExtValue());}
+        scalarOperands.push_back(std::move(row));
+      }record["scalarOperands"]=std::move(scalarOperands);
+      if(operation.getType()->isIntegerTy())record["width"]=operation.getType()->getIntegerBitWidth();
+      if(const auto *binary=llvm::dyn_cast<llvm::OverflowingBinaryOperator>(&operation)){record["nsw"]=binary->hasNoSignedWrap();record["nuw"]=binary->hasNoUnsignedWrap();}
+      if(const auto *exact=llvm::dyn_cast<llvm::PossiblyExactOperator>(&operation))record["exact"]=exact->isExact();
       if(const auto *allocation=llvm::dyn_cast<llvm::AllocaInst>(&operation)){
         record["element"]=allocation->getAllocatedType()->isStructTy()?"aggregate":allocation->getAllocatedType()->isPointerTy()?"pointer":"scalar";
         record["repeating"]=graph.repeating.count(blockId)!=0;record["slot"]=slots.at(allocation);
@@ -214,21 +305,26 @@ int main(int argc,char **argv){
       if(llvm::isa<llvm::CmpInst>(operation))++comparisons;
       if(const auto *comparison=llvm::dyn_cast<llvm::CmpInst>(&operation))fieldComparisons+=comparison->getPredicate()==llvm::CmpInst::ICMP_EQ||comparison->getPredicate()==llvm::CmpInst::FCMP_OEQ;
       if(const auto *call=llvm::dyn_cast<llvm::CallBase>(&operation)){
-        if(call->isIndirectCall()){
+        if(call->isInlineAsm()){
+          const auto &assembly=*llvm::cast<llvm::InlineAsm>(call->getCalledOperand());if(assembly.getAsmString()!="fnstcw ($0)"&&assembly.getAsmString()!="fldcw ($0)")return 4;
+          record["environmentAssembly"]=assembly.getAsmString();
+        }else if(call->isIndirectCall()){
           ++callbacks;if(call->arg_size()!=6)return 4;
           const auto *kind=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(1));
           const auto *index=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(2));
           const auto *start=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(3));
           const auto *end=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(4));
           const auto *interval=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(5));
-          if(!kind||kind->getZExtValue()>4||!index||index->getZExtValue()>=items(field(*decoded,"functions")).size()||!start||!end||start->getZExtValue()>=end->getZExtValue()||!interval||!intervals.insert(interval->getZExtValue()).second)return 4;
+          if(!kind||kind->getZExtValue()>7||!index||index->getZExtValue()>=items(field(*decoded,"functions")).size()||!start||!end||start->getZExtValue()>=end->getZExtValue()||!interval||!intervals.insert(interval->getZExtValue()).second)return 4;
+          record["eventKind"]=int64_t(kind->getZExtValue());record["eventSource"]=Object{{"start",int64_t(start->getZExtValue())},{"end",int64_t(end->getZExtValue())}};
           const auto &owner=source.functions[index->getZExtValue()];bool anchored=false;
           if(kind->getZExtValue()==0)anchored=start->getZExtValue()==owner.range.start&&end->getZExtValue()==owner.range.end;
           else{
             if(index->getZExtValue()!=currentFunction)return 4;
             if(kind->getZExtValue()==3&&start->getZExtValue()==owner.range.start&&end->getZExtValue()==owner.range.end)anchored=true;
             for(const auto &sourceBlock:owner.blocks)for(const auto &sourceOperation:sourceBlock.operations){
-              const bool correctKind=kind->getZExtValue()==1?sourceOperation.name=="fuel":kind->getZExtValue()>=3?sourceOperation.name=="func.return":sourceOperation.name!="fuel";
+              const auto event=kind->getZExtValue();const auto token=string(field(sourceOperation.properties,"operator"));
+              const bool correctKind=event==1?sourceOperation.name=="fuel":event==3||event==4?sourceOperation.name=="func.return":event>=5?sourceOperation.name=="binary"&&(event==5?token=="/":event==6?token=="%":token=="<<"||token==">>"||token==">>>"):sourceOperation.name!="fuel";
               if(correctKind&&start->getZExtValue()==sourceOperation.range.start&&end->getZExtValue()==sourceOperation.range.end)anchored=true;
             }
           }if(!anchored)return 4;
@@ -236,6 +332,7 @@ int main(int argc,char **argv){
           eventRows.push_back(Object{{"kind",int64_t(kind->getZExtValue())},{"function",int64_t(index->getZExtValue())},{"start",int64_t(start->getZExtValue())},{"end",int64_t(end->getZExtValue())},{"interval",int64_t(interval->getZExtValue())}});
         }else if(call->getCalledFunction()->getName().starts_with("llvm.experimental.stackmap"))++stackmaps;
         else if(call->getCalledFunction()->getName().starts_with("value_")){++calls;record["callee"]=call->getCalledFunction()->getName().str();}
+        else if(call->getCalledFunction()->isIntrinsic()||call->getCalledFunction()->getName().starts_with("tsfg_aot_f"))record["callee"]=call->getCalledFunction()->getName().str();
         else return 4;
       }
       instructions.push_back(std::move(record));
@@ -249,7 +346,7 @@ int main(int argc,char **argv){
       rejectedHoist=!llvm::verifyModule(*module,&llvm::errs())&&!freshCopy(*repeatedCopy);allocation->moveBefore(next->getIterator());if(!rejectedHoist)return 4;
     }
     controlFlows.push_back(Object{{"function",fn.getName().str()},{"sourceIndex",int64_t(currentFunction)},{"sourceName",source.functions[currentFunction].name},{"backedges",graph.backedges},
-      {"everyCycleHasFuel",true},{"hoistedCopyNegativeRejected",rejectedHoist},{"blocks",std::move(blockRows)},{"instructions",std::move(instructions)}});
+      {"everyCycleHasFuel",true},{"hoistedCopyNegativeRejected",rejectedHoist},{"floatingEnvironment",std::move(environment)},{"blocks",std::move(blockRows)},{"instructions",std::move(instructions)}});
   }
   if(functions!=items(field(*decoded,"closure")).size()||stackmaps!=callbacks+functions||intervals.size()!=callbacks)return 4;
   llvm::outs()<<canonical(Object{{"passed",true},{"completeCoreRetained",true},{"mlirRoundTrip",true},{"functionId",argv[2]},{"functions",functions},
@@ -258,5 +355,5 @@ int main(int argc,char **argv){
     {"layouts",lowered.layouts},{"initializedFields",field(*decoded,"initializedFields")},{"events",std::move(eventRows)},
     {"copies",std::move(aggregateCopies)},{"fieldWrites",std::move(fieldWrites)},{"fieldReads",std::move(fieldReads)},
     {"nativeLayouts",std::move(nativeLayouts)},{"fieldComparisons",fieldComparisons},{"sourceFuelSites",sourceFuelSites},{"controlFlows",std::move(controlFlows)},
-    {"storageLifetime",field(*decoded,"storageLifetime")},{"resourceProof",nullptr},{"executionAuthority",false},{"llvm",lowered.llvm},{"mlir",lowered.mlir}})<<'\n';return 0;
+    {"floatingHelpers",helpers},{"sameFinalizedLLVMFromMLIR",true},{"irStages",stages},{"storageLifetime",field(*decoded,"storageLifetime")},{"resourceProof",nullptr},{"executionAuthority",false},{"llvm",lowered.llvm},{"mlir",lowered.mlir}})<<'\n';return 0;
 }

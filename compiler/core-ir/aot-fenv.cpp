@@ -9,7 +9,7 @@
 // Function-local state avoids globals/TLS and permits recursion and reentrant
 // callbacks. Restore the entry environment around each external callback, then
 // reestablish strict mode even when that callback changed its own environment.
-void tsfg::establishNativeFloatingEnvironment(llvm::Module &module) {
+void tsfg::establishNativeFloatingEnvironment(llvm::Module &module, llvm::ArrayRef<llvm::Function *> functions) {
   using namespace llvm;
   auto &context = module.getContext();
   auto *readSSE = Intrinsic::getOrInsertDeclaration(&module, Intrinsic::x86_sse_stmxcsr);
@@ -17,8 +17,8 @@ void tsfg::establishNativeFloatingEnvironment(llvm::Module &module) {
   auto *assemblyType = FunctionType::get(Type::getVoidTy(context), {PointerType::getUnqual(context)}, false);
   auto *readX87 = InlineAsm::get(assemblyType, "fnstcw ($0)", "r,~{memory}", true);
   auto *writeX87 = InlineAsm::get(assemblyType, "fldcw ($0)", "r,~{memory}", true);
-  for (auto &fn : module) {
-    if (fn.isDeclaration() || !(fn.getName().starts_with("native_") || fn.getName() == "tsfg_native_invoke_v3")) continue;
+  for (auto *selected : functions) {
+    auto &fn=*selected;
     fn.addFnAttr(Attribute::StrictFP);
     fn.addFnAttr("denormal-fp-math", "ieee,ieee");
     fn.addFnAttr("denormal-fp-math-f32", "ieee,ieee");

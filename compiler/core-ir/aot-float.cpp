@@ -52,13 +52,21 @@ void arithmetic(Function &fn, StringRef name) {
 }
 }
 
-void tsfg::materializeNativeFloating(llvm::Module &module) {
+void tsfg::materializeNativeFloating(llvm::Module &module, llvm::ArrayRef<llvm::Function *> frames) {
   llvm::SmallVector<llvm::Function *> functions;
   for (auto &fn : module) if (fn.isDeclaration() && fn.getName().starts_with("tsfg_aot_f")) functions.push_back(&fn);
+  const auto containsFloating = [](llvm::Type *root) {
+    llvm::SmallVector<llvm::Type *> pending{root};
+    while (!pending.empty()) {
+      auto *type=pending.pop_back_val();if(type->isFloatingPointTy())return true;
+      if(auto *structure=llvm::dyn_cast<llvm::StructType>(type))for(auto *field:structure->elements())pending.push_back(field);
+      else if(auto *array=llvm::dyn_cast<llvm::ArrayType>(type))pending.push_back(array->getElementType());
+    }return false;
+  };
   bool hasFloating = !functions.empty();
-  for (auto &fn : module) {
-    hasFloating |= fn.getReturnType()->isFloatingPointTy();
-    for (auto &argument : fn.args()) hasFloating |= argument.getType()->isFloatingPointTy();
+  for (auto *fn : frames) {
+    hasFloating |= containsFloating(fn->getReturnType());
+    for (auto &argument : fn->args()) hasFloating |= containsFloating(argument.getType());
   }
   if (!hasFloating) return;
   // X86AsmPrinter emits this MSVC marker whenever float values are present.
@@ -76,5 +84,5 @@ void tsfg::materializeNativeFloating(llvm::Module &module) {
     if (name == "rem") materializeNativeRemainder(*fn);
     else arithmetic(*fn, name);
   }
-  establishNativeFloatingEnvironment(module);
+  establishNativeFloatingEnvironment(module,frames);
 }

@@ -25,6 +25,28 @@ original fuel callback and failure continuation on every visit. This dynamic
 stack allocation is compiler data; resource admission remains open and both
 outputs retain `resourceProof: null` and `executionAuthority: false`.
 
+The scalar and fixed-value callers share `ScalarArithmeticEmitter`. Owned scalar
+TypeIds determine nominal width and signedness, including equal-width signed and
+unsigned types. Integer arithmetic wraps; division/remainder guard zero and handle
+signed MIN/-1 before LLVM arithmetic; shifts guard the original i32 count before
+any internal width adaptation. Comparisons and logical negation preserve each
+caller's bool storage. Fixed-value `numeric_use` normal edges currently require
+actual i32 physical storage from the full verifier. Absence/domain carriers retain
+their capability diagnostic until an explicit presence representation is lowered;
+an `as` view never substitutes for this actual-storage prerequisite. The existing
+undefined-at-numeric-consumption request-trap rule is unchanged.
+
+Fixed-value floating arithmetic and field equality use the same strict scalar
+helpers. The floating materializer receives the exact selected function list;
+aggregate fields participate in floating-use detection. LLVM output includes the
+materialized helpers and per-function environment protocol. MLIR output is the
+official converted intermediate with helper declarations: after LLVM export its
+consumer applies `materializeNativeFloating` to the `value_` functions named by the
+retained proof's closure. The independent reader performs that same finalization,
+verifies both LLVM modules, and compares their instructions, attributes and full
+metadata, ignoring LLVM's predecessor-order comments on block labels. These data
+checks grant no function execution or dynamic environment qualification.
+
 The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.12 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
 
 `--emit-program-llvm` and `--emit-program-object` use the same complete validation
@@ -90,7 +112,7 @@ and wrapper. They establish masked RNE with FTZ/DAZ clear, restore the entry sta
 before external event callbacks, reestablish strict mode afterwards, and restore
 the entry state on every return, including rejected wrappers and failure returns.
 State lives in each native frame, so nested calls and reentrant callbacks do not
-share mutable state. Integer-only modules keep their existing LLVM/COFF bytes.
+share mutable state. Integer-only modules acquire no floating-environment state.
 The MSVC floating-use marker is defined as a coalescible read-only `_fltused`
 COMDAT in the object, avoiding implicit CRT initialization. The existing source
 CMake build links the locked LLVM X86AsmParser component to assemble x87 control

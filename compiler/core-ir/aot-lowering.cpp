@@ -16,6 +16,91 @@
 #include <vector>
 #include <set>
 
+bool tsfg::ScalarArithmeticEmitter::emit(llvm::StringRef op, uint8_t code,
+    llvm::StringRef operandType, llvm::StringRef resultType,
+    llvm::StringRef result, llvm::ArrayRef<std::string> operands) {
+  const auto tmp = [&] { return "%t" + std::to_string(temporary++); };
+  const auto constant = [&](int64_t value, llvm::StringRef type) {
+    const auto name = tmp(); out << "  " << name << " = arith.constant " << value << " : " << type << '\n'; return name;
+  };
+  const bool comparison = op == "eq" || op == "ne" || op == "lt" || op == "le" || op == "gt" || op == "ge" || op == "bool_not";
+  const auto produced = comparison && resultType != "i1" ? tmp() : result.str();
+  const auto finishComparison = [&] {
+    if (produced != result) out << "  " << result << " = arith.extui " << produced << " : i1 to " << resultType << '\n';
+  };
+  const auto &left = operands[0];
+  if (floating(code)) {
+    const auto helper = operandType.str() + "_" + op.str(); floatingFunctions.insert(helper);
+    out << "  " << produced << " = func.call @tsfg_aot_" << helper << '(';
+    for (size_t i = 0; i < operands.size(); ++i) { if (i) out << ", "; out << operands[i]; }
+    out << ") : (";
+    for (size_t i = 0; i < operands.size(); ++i) { if (i) out << ", "; out << operandType; }
+    out << ") -> " << (comparison ? llvm::StringRef("i1") : resultType) << '\n';
+    finishComparison(); return true;
+  }
+  if (operands.size() == 1) {
+    if (op == "bool_not") {
+      const auto zero = constant(0, operandType);
+      out << "  " << produced << " = arith.cmpi eq, " << left << ", " << zero << " : " << operandType << '\n';
+      finishComparison(); return true;
+    }
+    if (op != "neg" && op != "not" && op != "pos") return false;
+    const auto mask = constant(op == "not" ? -1 : 0, operandType);
+    out << "  " << result << " = arith." << (op == "neg" ? "subi" : op == "pos" ? "ori" : "xori")
+        << ' ' << mask << ", " << left << " : " << operandType << '\n'; return true;
+  }
+  auto right = operands[1];
+  const auto width = code == 2 ? 1u : tsfg::width(code);
+  const bool signedValue = signedInteger(code);
+  if (op == "div" || op == "rem") {
+    const auto zero = constant(0, operandType), valid = tmp();
+    out << "  " << valid << " = arith.cmpi ne, " << right << ", " << zero << " : " << operandType << '\n';
+    guard(valid, op == "div" ? 5 : 6);
+    if (!signedValue) {
+      out << "  " << result << " = arith." << (op == "div" ? "divui" : "remui") << ' ' << left << ", " << right << " : " << operandType << '\n'; return true;
+    }
+    const auto min = constant(llvm::APInt::getSignedMinValue(width).getSExtValue(), operandType);
+    const auto neg = constant(-1, operandType), one = constant(1, operandType);
+    const auto isMin = tmp(), isNeg = tmp(), overflow = tmp(), divisor = tmp(), quotient = tmp();
+    out << "  " << isMin << " = arith.cmpi eq, " << left << ", " << min << " : " << operandType << '\n'
+        << "  " << isNeg << " = arith.cmpi eq, " << right << ", " << neg << " : " << operandType << '\n'
+        << "  " << overflow << " = arith.andi " << isMin << ", " << isNeg << " : i1\n"
+        << "  " << divisor << " = arith.select " << overflow << ", " << one << ", " << right << " : " << operandType << '\n'
+        << "  " << quotient << " = arith." << (op == "div" ? "divsi" : "remsi") << ' ' << left << ", " << divisor << " : " << operandType << '\n'
+        << "  " << result << " = arith.select " << overflow << ", " << (op == "div" ? min : zero) << ", " << quotient << " : " << operandType << '\n'; return true;
+  }
+  if (op == "shl" || op == "shr" || op == "ushr") {
+    const auto bound = constant(width, "i32"), valid = tmp();
+    out << "  " << valid << " = arith.cmpi ult, " << right << ", " << bound << " : i32\n"; guard(valid, 7);
+    if (width != 32) {
+      const auto adapted = tmp(); out << "  " << adapted << " = arith." << (width < 32 ? "trunci " : "extui ") << right << " : i32 to " << operandType << '\n'; right = adapted;
+    }
+  }
+  struct Mapping { llvm::StringRef core, arithmetic; };
+  static const Mapping arithmetic[] = {{"add","addi"},{"sub","subi"},{"mul","muli"},{"and","andi"},{"or","ori"},{"xor","xori"},{"shl","shli"},{"shr","shrsi"},{"ushr","shrui"}};
+  for (const auto entry : arithmetic) if (op == entry.core) {
+    const auto name = op == "shr" && !signedValue ? "shrui" : entry.arithmetic;
+    out << "  " << result << " = arith." << name << ' ' << left << ", " << right << " : " << operandType << '\n'; return true;
+  }
+  static const Mapping comparisons[] = {{"eq","eq"},{"ne","ne"},{"lt","slt"},{"le","sle"},{"gt","sgt"},{"ge","sge"}};
+  for (const auto entry : comparisons) if (op == entry.core) {
+    const auto predicate = signedValue || op == "eq" || op == "ne" ? entry.arithmetic.str() : "u" + op.str();
+    out << "  " << produced << " = arith.cmpi " << predicate << ", " << left << ", " << right << " : " << operandType << '\n'; finishComparison(); return true;
+  }
+  return false;
+}
+
+void tsfg::declareScalarArithmetic(llvm::raw_ostream &out, const std::set<std::string> &helpers) {
+  for (const auto &helper : helpers) {
+    const auto format = helper.substr(0,3), name = helper.substr(4);
+    const bool unary = name == "neg" || name == "pos";
+    const bool comparison = name == "eq" || name == "ne" || name == "lt" || name == "le" || name == "gt" || name == "ge";
+    out << "func.func private @tsfg_aot_" << helper << '(' << format;
+    if (!unary) out << ", " << format;
+    out << ") -> " << (comparison ? "i1" : format) << '\n';
+  }
+}
+
 namespace {
 // Events are calls through a caller-owned C callback. They have observable
 // effects and cannot be speculated, removed or reordered by LLVM optimization.
@@ -258,82 +343,12 @@ class Lowering {
     if (name == "tsfg_core.convert_checked" || name == "tsfg_core.convert_wrap" || name == "tsfg_core.reinterpret") {
       convert(op, start, end); return true;
     }
-    const auto left = value(op.getOperand(0)), operandType = type(op.getOperand(0).getType());
-    if (tsfg::floating(tsfg::typeCode(op.getOperand(0).getType()))) {
-      const auto suffix = name.drop_front(10).str();
-      const auto helper = "tsfg_aot_" + operandType + "_" + suffix;
-      floatingFunctions.insert(operandType + "_" + suffix);
-      out << "  " << result << " = func.call @" << helper << '(';
-      for (unsigned i = 0; i < op.getNumOperands(); ++i) {
-        if (i) out << ", "; out << value(op.getOperand(i));
-      }
-      out << ") : (";
-      for (unsigned i = 0; i < op.getNumOperands(); ++i) {
-        if (i) out << ", "; out << operandType;
-      }
-      out << ") -> " << resultName << '\n'; return true;
-    }
-    if (op.getNumOperands() == 1 &&
-        (name == "tsfg_core.neg" || name == "tsfg_core.not" || name == "tsfg_core.bool_not")) {
-      const auto mask = constant(name == "tsfg_core.neg" ? 0 : -1, operandType);
-      out << "  " << result << " = arith." << (name == "tsfg_core.neg" ? "subi" : "xori")
-          << ' ' << mask << ", " << left << " : " << operandType << '\n'; return true;
-    }
-    auto right = value(op.getOperand(1));
-    const auto code = tsfg::typeCode(op.getOperand(0).getType());
-    const auto width = code == 2 ? 1u : tsfg::width(code);
-    const bool signedValue = tsfg::signedInteger(code);
-    if (name == "tsfg_core.div" || name == "tsfg_core.rem") {
-      const auto zero = constant(0, operandType), valid = tmp();
-      out << "  " << valid << " = arith.cmpi ne, " << right << ", " << zero << " : " << operandType << '\n';
-      guard(valid, name == "tsfg_core.div" ? 5 : 6, start, end);
-      if (!signedValue) {
-        out << "  " << result << " = arith." << (name == "tsfg_core.div" ? "divui" : "remui")
-            << ' ' << left << ", " << right << " : " << operandType << '\n'; return true;
-      }
-      const auto min = constant(llvm::APInt::getSignedMinValue(width).getSExtValue(), operandType);
-      const auto neg = constant(-1, operandType), one = constant(1, operandType);
-      const auto isMin = tmp(), isNeg = tmp(), overflow = tmp(), divisor = tmp(), quotient = tmp();
-      out << "  " << isMin << " = arith.cmpi eq, " << left << ", " << min << " : " << operandType << '\n'
-          << "  " << isNeg << " = arith.cmpi eq, " << right << ", " << neg << " : " << operandType << '\n'
-          << "  " << overflow << " = arith.andi " << isMin << ", " << isNeg << " : i1\n"
-          << "  " << divisor << " = arith.select " << overflow << ", " << one << ", " << right << " : " << operandType << '\n'
-          << "  " << quotient << " = arith." << (name == "tsfg_core.div" ? "divsi" : "remsi")
-          << ' ' << left << ", " << divisor << " : " << operandType << '\n'
-          << "  " << result << " = arith.select " << overflow << ", "
-          << (name == "tsfg_core.div" ? min : zero) << ", " << quotient << " : " << operandType << '\n';
-      return true;
-    }
-    if (name == "tsfg_core.shl" || name == "tsfg_core.shr" || name == "tsfg_core.ushr") {
-      auto bound = constant(width), valid = tmp();
-      out << "  " << valid << " = arith.cmpi ult, " << right << ", " << bound << " : i32\n";
-      guard(valid, 7, start, end);
-      // Core shift counts remain i32. Adapt only after the count guard; these
-      // are compiler-internal operations, never new public Core numeric casts.
-      if (width != 32) {
-        const auto adapted = tmp();
-        out << "  " << adapted << " = arith." << (width < 32 ? "trunci " : "extui ")
-            << right << " : i32 to " << operandType << '\n'; right = adapted;
-      }
-    }
-    struct Mapping { llvm::StringRef core, arithmetic; };
-    static const Mapping mapping[] = {{"add", "addi"}, {"sub", "subi"}, {"mul", "muli"},
-      {"and", "andi"}, {"or", "ori"}, {"xor", "xori"}, {"shl", "shli"},
-      {"shr", "shrsi"}, {"ushr", "shrui"}};
-    for (auto entry : mapping) if (name == ("tsfg_core." + entry.core).str()) {
-      const auto arithmetic = entry.core == "shr" && !signedValue ? "shrui" : entry.arithmetic;
-      out << "  " << result << " = arith." << arithmetic << ' ' << left << ", " << right
-          << " : " << operandType << '\n'; return true;
-    }
-    static const Mapping comparisons[] = {{"eq", "eq"}, {"ne", "ne"}, {"lt", "slt"},
-      {"le", "sle"}, {"gt", "sgt"}, {"ge", "sge"}};
-    for (auto entry : comparisons) if (name == ("tsfg_core." + entry.core).str()) {
-      const auto predicate = signedValue || entry.core == "eq" || entry.core == "ne"
-          ? entry.arithmetic.str() : ("u" + entry.core).str();
-      out << "  " << result << " = arith.cmpi " << predicate << ", " << left << ", " << right
-          << " : " << operandType << '\n'; return true;
-    }
-    return false;
+    std::vector<std::string> operands;
+    for (auto operand : op.getOperands()) operands.push_back(value(operand));
+    tsfg::ScalarArithmeticEmitter arithmetic{out, temporary, floatingFunctions,
+      [&](const std::string &valid, unsigned trap) { guard(valid, trap, start, end); }};
+    return arithmetic.emit(name.drop_front(10), tsfg::typeCode(op.getOperand(0).getType()),
+      type(op.getOperand(0).getType()), resultName, result, operands);
   }
 public:
   explicit Lowering(mlir::ModuleOp module, bool program) : out(text), moduleMode(program || module->hasAttr("tsfg_core.sources")) {
@@ -446,14 +461,7 @@ public:
           << "func.func private @tsfg_aot_global_store_v4(!llvm.ptr, !llvm.ptr, i32, i64, i32, i32, i32, i32, i32) -> i32\n"
           << "func.func private @tsfg_aot_host31_v4(!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, i32, i32, i32, i32, i32, i32) -> (i32, i32)\n";
     }
-    for (const auto &helper : floatingFunctions) {
-      const auto format = helper.substr(0, 3), name = helper.substr(4);
-      const bool unary = name == "neg" || name == "pos";
-      const bool comparison = name == "eq" || name == "ne" || name == "lt" || name == "le" || name == "gt" || name == "ge";
-      out << "func.func private @tsfg_aot_" << helper << '(' << format;
-      if (!unary) out << ", " << format;
-      out << ") -> " << (comparison ? "i1" : format) << '\n';
-    }
+    tsfg::declareScalarArithmetic(out, floatingFunctions);
     for (const auto &helper : conversionFunctions)
       out << "func.func private @tsfg_aot_convert_" << helper << "(i64) -> (i64, i32)\n";
     out << "}\n"; return true;

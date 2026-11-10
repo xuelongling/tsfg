@@ -2,6 +2,9 @@
 #include "common-program-value-lowering.h"
 #include "common-program-header.h"
 #include "component-layout.h"
+#include "aot-lowering.h"
+#include "aot-float.h"
+#include "dialect.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
@@ -36,6 +39,7 @@ struct Lowering {
   std::map<std::string,const Json *> declarations,physical,bindings;
   const std::map<std::string,std::string> &singletonStorage;
   std::map<std::string,std::string> types;std::set<std::string> initialized;
+  std::set<std::string> floatingFunctions;
   std::map<std::string,size_t> functions;
   std::map<size_t,std::vector<uint16_t>> reachable;std::set<size_t> active;
   std::string text;llvm::raw_string_ostream out;unsigned temporary=0,continuation=0;uint64_t interval=0;
@@ -51,6 +55,10 @@ struct Lowering {
   }
   bool step(){return program.charge(1)||reject(error,"core-ir-value-llvm-budget","fixed-value lowering work exceeded");}
   bool valueType(const std::string &id)const{return declarations.count(id)&&string(field(*declarations.at(id),"kind"))=="value";}
+  uint8_t scalarCode(const std::string &id)const{
+    const auto found=declarations.find(id);if(found==declarations.end()||string(field(*found->second,"kind"))!="scalar")return 0;
+    const auto name=string(field(*found->second,"name"));for(uint8_t code=1;code<=13;++code)if(tsfg::scalarName(code)==name)return code;return 0;
+  }
   std::string tmp(){return "%t"+std::to_string(temporary++);}
   // These are the existing full verifier's fixed storage bounds, never a new
   // producer assertion. Empty native fields, presence/TOP and retagged stores
@@ -111,7 +119,7 @@ struct Lowering {
           if(!need(functions.count(id)&&selected.blocks[op.successors[0]].parameters.size()==1,"direct fixed callee requires one normal result in the verified inventory")||!closure(functions.at(id)))return false;
           locate(index,block,ordinal);if(!visit(op.successors[0]))return false;
         }else{
-          static const std::set<std::string> supported={"fuel","cell","store","load","value_copy","view","carrier_cast","field_load","field_store","constant","boolean","strict_equal","func.return","cf.br","cf.cond_br"};
+          static const std::set<std::string> supported={"fuel","cell","store","load","value_copy","view","carrier_cast","field_load","field_store","constant","floating","boolean","strict_equal","numeric_use","binary","unary","func.return","cf.br","cf.cond_br"};
           if(!need(supported.count(op.name),"operation in the selected closure has no fixed-value lowering"))return false;
           if(op.name=="cf.cond_br"&&!need(selected.blocks[op.successors[0]].parameters.empty()&&selected.blocks[op.successors[1]].parameters.empty(),"conditional fixed-value edges require their Source-normalized empty successors"))return false;
           for(auto successor:op.successors)if(!visit(successor))return false;
@@ -138,6 +146,16 @@ struct Lowering {
     out<<"    "<<yes<<" = arith.cmpi ne, "<<result<<", "<<zero<<" : i32\n    cf.cond_br "<<yes<<", ^"<<next<<", ^failed\n  ^"<<next<<":\n";
   }
   void checkpoint(unsigned kind,SourceAnchor source){allow(callback(kind,source,functionIndex));}
+  void guard(const std::string &valid,unsigned trap){
+    const auto good="next"+std::to_string(continuation++),bad="trap"+std::to_string(continuation++);
+    out<<"    cf.cond_br "<<valid<<", ^"<<good<<", ^"<<bad<<"\n  ^"<<bad<<":\n";
+    callback(trap,sourceRange,functionIndex);out<<"    cf.br ^failed\n  ^"<<good<<":\n";
+  }
+  bool arithmetic(llvm::StringRef name,const std::string &id,const std::string &resultType,const std::string &result,const std::vector<std::string> &operands){
+    const auto code=scalarCode(id);if(!need(code!=0,"arithmetic requires an owned scalar identity"))return false;
+    tsfg::ScalarArithmeticEmitter emitter{out,temporary,floatingFunctions,[&](const std::string &valid,unsigned trap){guard(valid,trap);}};
+    return need(emitter.emit(name,code,type(id),resultType,result,operands),"verified scalar operation has no shared arithmetic lowering");
+  }
   std::string zero(const std::string &id){
     const auto native=type(id),result=tmp();
     if(valueType(id))out<<"    "<<result<<" = llvm.mlir.zero : "<<native<<'\n';
@@ -157,7 +175,7 @@ struct Lowering {
         out<<"    "<<joined<<" = arith.andi "<<result<<", "<<same<<" : i1\n";result=joined;
       }return result;
     }
-    const auto native=type(id),result=tmp();out<<"    "<<result<<" = arith."<<(native=="f32"||native=="f64"?"cmpf oeq":"cmpi eq")<<", "<<left<<", "<<right<<" : "<<native<<'\n';return result;
+    const auto result=tmp();if(!arithmetic("eq",id,"i1",result,{left,right}))return {};return result;
   }
   void edge(uint16_t target,const std::vector<std::string> &arguments){
     out<<"^b"<<target;if(arguments.empty())return;out<<'(';const auto &parameters=function->blocks[target].parameters;
@@ -190,10 +208,26 @@ struct Lowering {
         if(!need(child==carrier(op.operands[1]),"field store differs from its semantic declaration"))return false;
         const auto stored=valueType(child)?load(operand(1),child):operand(1);out<<"    llvm.store "<<stored<<", "<<pointer<<" : "<<type(child)<<", !llvm.ptr\n";
       }
+    }else if(op.name=="floating"){
+      const auto native=type(carrier(op.result));const std::string integer=native=="f32"?"i32":"i64";
+      const auto bits=llvm::APInt(native=="f32"?32:64,string(field(op.properties,"bits")),16);const auto raw=tmp();
+      out<<"    "<<raw<<" = arith.constant "<<bits.getSExtValue()<<" : "<<integer<<"\n    "<<result<<" = arith.bitcast "<<raw<<" : "<<integer<<" to "<<native<<'\n';
     }else if(op.name=="constant"||op.name=="boolean"){
       const auto native=type(carrier(op.result));unsigned width=0;if(!need(!llvm::StringRef(native).drop_front().getAsInteger(10,width),"constant requires a fixed integer carrier"))return false;
       const auto bits=op.name=="boolean"?uint64_t(field(op.properties,"value").getAsBoolean()==true):llvm::APInt(width,string(field(op.properties,"decimal")),10).getZExtValue();
       out<<"    "<<result<<" = arith.constant "<<bits<<" : "<<native<<'\n';
+    }else if(op.name=="numeric_use"){
+      const auto id=carrier(op.operands[0]);
+      if(!need(scalarCode(id)==1,"numeric consumption requires actual i32 storage; absence/domain carriers need explicit presence lowering"))return false;
+      out<<"    cf.br ";edge(op.successors[0],{operand(0)});out<<'\n';
+    }else if(op.name=="binary"||op.name=="unary"){
+      const auto token=string(field(op.properties,"operator"));
+      static const std::map<std::string,std::string> binary={{"+","add"},{"-","sub"},{"*","mul"},{"/","div"},{"%","rem"},{"<<","shl"},{">>","shr"},{">>>","ushr"},{"&","and"},{"|","or"},{"^","xor"},{"<","lt"},{"<=","le"},{">","gt"},{">=","ge"}};
+      static const std::map<std::string,std::string> unary={{"+","pos"},{"-","neg"},{"~","not"},{"!","bool_not"}};
+      const auto &operators=op.name=="binary"?binary:unary;const auto found=operators.find(token);
+      if(!need(found!=operators.end(),"verified scalar operator has no arithmetic mapping"))return false;
+      std::vector<std::string> operands;for(auto reg:op.operands)operands.push_back(values.at(reg));
+      if(!arithmetic(found->second,carrier(op.operands[0]),type(carrier(op.result)),result,operands))return false;
     }else if(op.name=="strict_equal"){
       if(!need(carrier(op.operands[0])==carrier(op.operands[1]),"fixed equality requires the same owned semantic type"))return false;
       auto comparison=equal(operand(0),operand(1),carrier(op.operands[0]));if(comparison.empty())return false;
@@ -238,7 +272,7 @@ struct Lowering {
     std::sort(roots.begin(),roots.end());roots.erase(std::unique(roots.begin(),roots.end()),roots.end());
     if(!need(!roots.empty(),"selected closure has no fixed-value carrier")||!fixedValueLayoutCatalog(program,roots,layouts,error))return false;
     for(const auto &row:items(field(layouts,"types")))physical.emplace(string(field(row,"id")),&row);for(const auto &id:roots)if(!fullyInitialized(id))return false;
-    out<<"module attributes {llvm.data_layout = \""<<coreHeader::layout<<"\", llvm.target_triple = \""<<coreHeader::triple<<"\"} {\n";for(const auto &[fn,blocks]:reachable)if(!emit(fn))return false;out<<"}\n";return true;
+    out<<"module attributes {llvm.data_layout = \""<<coreHeader::layout<<"\", llvm.target_triple = \""<<coreHeader::triple<<"\"} {\n";for(const auto &[fn,blocks]:reachable)if(!emit(fn))return false;tsfg::declareScalarArithmetic(out,floatingFunctions);out<<"}\n";return true;
   }
 };
 }
@@ -253,9 +287,12 @@ bool lowerFixedValueLLVM(mlir::ModuleOp core,llvm::StringRef functionId,FixedVal
   if(mlir::failed(mlir::applyFullConversion(*module,target,std::move(patterns)))||mlir::failed(mlir::verify(*module)))return reject(error,"core-ir-value-llvm-conversion","official fixed-value generic conversion failed");
   FixedValueLLVM output;output.layouts=std::move(lowering.layouts);
   llvm::LLVMContext llvmContext;auto native=mlir::translateModuleToLLVMIR(*module,llvmContext,"tsfg.fixed-value");if(!native)return reject(error,"core-ir-value-llvm-export","official LLVM export failed");
+  std::vector<llvm::Function *> floatingFrames;for(const auto &[fn,blocks]:lowering.reachable)floatingFrames.push_back(native->getFunction("value_"+program.functions[fn].id.substr(7)));
+  tsfg::materializeNativeFloating(*native,floatingFrames);
   std::string original;llvm::raw_string_ostream originalStream(original);core.print(originalStream,mlir::OpPrintingFlags().printGenericOpForm());originalStream<<'\n';originalStream.flush();
-  Array identities,closure;for(size_t i=0;i<program.functions.size();++i){const auto &fn=program.functions[i];identities.push_back(Object{{"index",int64_t(i)},{"id",fn.id},{"source",fn.path},{"start",fn.range.start},{"end",fn.range.end}});}for(const auto &[fn,blocks]:lowering.reachable)closure.push_back(program.functions[fn].id);
-  const auto proof=canonical(Object{{"version",1},{"functionId",functionId.str()},{"inputIdentity",program.inputIdentity},{"hirDigest",program.hirHash},{"fullCore",original},{"functions",std::move(identities)},{"closure",std::move(closure)},{"layouts",output.layouts},{"initializedFields",std::move(lowering.initializedFields)},{"rootFrame","caller-admitted EventV4; embedding checks existing failure before entry and after return"},{"storageLifetime","entry value parameters once; cells, value copies and aggregate call results fresh at each dynamic definition; storage remains live until function return"},{"resourceProof",nullptr},{"executionAuthority",false}});
+  Array identities,closure,finalizerFunctions;for(size_t i=0;i<program.functions.size();++i){const auto &fn=program.functions[i];identities.push_back(Object{{"index",int64_t(i)},{"id",fn.id},{"source",fn.path},{"start",fn.range.start},{"end",fn.range.end}});}for(const auto &[fn,blocks]:lowering.reachable){closure.push_back(program.functions[fn].id);finalizerFunctions.push_back("value_"+program.functions[fn].id.substr(7));}
+  const Json stages=Object{{"mlir","converted-intermediate"},{"llvm","finalized"},{"requiresPostExportFinalization",true},{"finalizer","tsfg::materializeNativeFloating"},{"selection","exact-closure"},{"functions",std::move(finalizerFunctions)}};
+  const auto proof=canonical(Object{{"version",1},{"functionId",functionId.str()},{"inputIdentity",program.inputIdentity},{"hirDigest",program.hirHash},{"fullCore",original},{"functions",std::move(identities)},{"closure",std::move(closure)},{"irStages",stages},{"layouts",output.layouts},{"initializedFields",std::move(lowering.initializedFields)},{"rootFrame","caller-admitted EventV4; embedding checks existing failure before entry and after return"},{"storageLifetime","entry value parameters once; cells, value copies and aggregate call results fresh at each dynamic definition; storage remains live until function return"},{"resourceProof",nullptr},{"executionAuthority",false}});
   (*module)->setAttr("tsfg_program.fixed_value",mlir::StringAttr::get(&context,proof));
   if(mlir::failed(mlir::verify(*module)))return reject(error,"core-ir-value-llvm-mlir","fixed-value MLIR metadata verification failed");
   llvm::raw_string_ostream dialect(output.mlir);module->print(dialect,mlir::OpPrintingFlags().printGenericOpForm());dialect<<'\n';dialect.flush();
