@@ -46,6 +46,20 @@ bool rangeIs(const Json &value, uint32_t start, uint32_t end) {
          field(value, "end").getAsInteger() == end;
 }
 
+bool readOfficialRange(const Json &value, uint32_t sourceLength, GpuSourceRange &out) {
+  const auto start = field(value, "start").getAsInteger();
+  const auto end = field(value, "end").getAsInteger();
+  if (!check(start && end && *start >= 0 && *end > *start && uint64_t(*end) <= sourceLength,
+      "official AST range is nonempty and inside the genuine Source")) return false;
+  out = {"/src/main.ts", {uint32_t(*start), uint32_t(*end)}};
+  return true;
+}
+
+bool sameRange(const GpuSourceRange &actual, const GpuSourceRange &expected) {
+  return actual.sourceId == expected.sourceId && actual.range.start == expected.range.start &&
+      actual.range.end == expected.range.end;
+}
+
 Json source(const GpuSourceRange &value) {
   return Object{{"sourceId", value.sourceId}, {"start", int64_t(value.range.start)},
                 {"end", int64_t(value.range.end)}};
@@ -127,12 +141,12 @@ bool sameSite(const GpuObligationSite &actual, const OperationSite &expected, ll
 
 int main(int argc, char **argv) {
   if (argc != 4) {
-    llvm::errs() << "expected metadata directory, official oracle path and + or -\n";
+    llvm::errs() << "expected metadata directory, official oracle path and +, - or *\n";
     return 2;
   }
   std::string coreBytes, requestBytes, planBytes, oracleBytes;
   const std::string operation(argv[3]);
-  if (operation != "+" && operation != "-") return 2;
+  if (operation != "+" && operation != "-" && operation != "*") return 2;
   if (!readFile(argv[1], "common-program.mlir", coreBytes) ||
       !readFile(argv[1], "gpu-binding-request.json", requestBytes) ||
       !readFile(argv[1], "gpu-binding-plan.json", planBytes) ||
@@ -147,13 +161,32 @@ int main(int argc, char **argv) {
   for (const auto &row : items(field(oracle, "functions")))
     if (field(row, "name").getAsString() == "constantKernel") official = &row;
   const auto sourceHash = string(field(oracle, "sourceSha256"));
-  if (!check(sourceHash.size() == 64 &&
-      rangeIs(field(oracle, "sourceRange"), 0, 161) && items(field(oracle, "functions")).size() == 2 && official &&
-      rangeIs(field(*official, "range"), 39, 102) && rangeIs(field(*official, "parameterRange"), 70, 76) &&
-      rangeIs(field(*official, "expression"), 94, 99) && rangeIs(field(*official, "literal"), 98, 99) &&
-      field(*official, "operator").getAsString() == operation && field(*official, "literalToken").getAsString() == "7" &&
+  const auto sourceLength = field(field(oracle, "sourceRange"), "end").getAsInteger();
+  if (!check(official && sourceHash.size() == 64 && sourceLength && *sourceLength > 0 &&
+      uint64_t(*sourceLength) <= 0xffffffffull &&
+      rangeIs(field(oracle, "sourceRange"), 0, uint32_t(*sourceLength)) &&
+      items(field(oracle, "functions")).size() == 2 && field(*official, "operator").getAsString() == operation &&
       field(*official, "id").getAsString() && field(*official, "parameterId").getAsString(),
-      "official Source literal/function/parameter anchors and identity are established independently")) return 3;
+      "official Source function/parameter identities and complete source range are established independently")) return 3;
+  const bool unary = bool(field(*official, "literal").getAsNull());
+  const size_t arity = unary ? 1 : 2;
+  if (!check(unary ? operation == "-" : field(*official, "literalToken").getAsString() == "7",
+      "official AST distinguishes unary negation from binary arithmetic with literal seven")) return 3;
+  GpuSourceRange functionRange, parameterRange, expressionRange, returnRange, parameterUseRange, literalRange, operatorRange;
+  if (!readOfficialRange(field(*official, "range"), uint32_t(*sourceLength), functionRange) ||
+      !readOfficialRange(field(*official, "parameterRange"), uint32_t(*sourceLength), parameterRange) ||
+      !readOfficialRange(field(*official, "expression"), uint32_t(*sourceLength), expressionRange) ||
+      !readOfficialRange(field(*official, "return"), uint32_t(*sourceLength), returnRange) ||
+      !readOfficialRange(field(*official, "parameterUse"), uint32_t(*sourceLength), parameterUseRange) ||
+      (unary ? !readOfficialRange(field(*official, "operatorRange"), uint32_t(*sourceLength), operatorRange) :
+               !readOfficialRange(field(*official, "literal"), uint32_t(*sourceLength), literalRange))) return 3;
+  for (const auto &row : {parameterRange, expressionRange, returnRange, parameterUseRange})
+    if (!check(row.range.start >= functionRange.range.start && row.range.end <= functionRange.range.end,
+        "official parameter and expression anchors belong to the selected function")) return 3;
+  const auto &otherOperand = unary ? operatorRange : literalRange;
+  if (!check(parameterUseRange.range.start >= expressionRange.range.start && parameterUseRange.range.end <= expressionRange.range.end &&
+      otherOperand.range.start >= expressionRange.range.start && otherOperand.range.end <= expressionRange.range.end,
+      "official operand and operator/literal anchors belong to the arithmetic expression")) return 3;
   const auto officialFunctionId = string(field(*official, "id"));
   const auto officialParameterId = string(field(*official, "parameterId"));
 
@@ -186,21 +219,22 @@ int main(int argc, char **argv) {
   }
   if (!check(same(plan, savedPlan) && items(field(plan, "groupTargets")).size() == 2 &&
       items(field(plan, "kernels")).size() == 1 && program.sourcePath == "/src/main.ts" &&
-      program.sourceLength == 161 && program.sourceHash == "sha256:" + sourceHash,
+      program.sourceLength == uint32_t(*sourceLength) && program.sourceHash == "sha256:" + sourceHash,
       "complete genuine two-kernel Program and actual selected plan")) return 3;
   const auto functionId = string(field(items(field(plan, "kernels")).front(), "functionId"));
   const auto fn = std::find_if(program.functions.begin(), program.functions.end(), [&](const Function &row) { return row.id == functionId; });
   const Json *declaration = nullptr;
   for (const auto &row : items(field(program.hir, "functions")))
     if (field(row, "id").getAsString() == functionId) declaration = &row;
-  if (!check(fn != program.functions.end() && fn->range.start == 39 && fn->range.end == 102 &&
+  if (!check(fn != program.functions.end() && sameRange({fn->path, fn->range}, functionRange) &&
       declaration && field(*declaration, "name").getAsString() == "constantKernel" &&
       field(*declaration, "sourceBinding").getAsString() == officialFunctionId &&
       items(field(*declaration, "parameters")).size() == 1, "semantic function joins its actual Go Source binding")) return 3;
   const auto &parameter = items(field(*declaration, "parameters")).front();
   const auto parameterId = string(field(parameter, "id"));
   if (!check(field(parameter, "sourceBinding").getAsString() == officialParameterId &&
-      rangeIs(field(parameter, "range"), 70, 76), "parameter identity is joined rather than assumed to be a FunctionId")) return 3;
+      rangeIs(field(parameter, "range"), parameterRange.range.start, parameterRange.range.end),
+      "parameter identity is joined rather than assumed to be a FunctionId")) return 3;
 
   std::optional<OperationSite> entry, uses[2], arithmetic, literal;
   Array baseline;
@@ -216,34 +250,43 @@ int main(int argc, char **argv) {
           {"point", Object{{"block", int64_t(block)}, {"operation", int64_t(index)}}},
           {"properties", op.properties}, {"result", int64_t(op.result)},
           {"operands", std::move(operands)}, {"successors", std::move(successors)}});
+      const GpuSourceRange *expectedRange = nullptr;
       if (op.name == "fuel") {
-        if (!check(!entry && op.range.start == 39 && op.range.end == 102 && field(op.properties, "event").getAsInteger() == 1, "one original entry fuel event")) return 3;
-        entry = where;
+        if (!check(!entry && field(op.properties, "event").getAsInteger() == 1, "one original entry fuel event")) return 3;
+        entry = where; expectedRange = &functionRange;
       } else if (op.name == "numeric_use") {
         auto number = field(op.properties, "index").getAsInteger();
-        if (!check(number && (*number == 0 || *number == 1) && !uses[*number] && op.operands.size() == 1 &&
-            op.range.start == 94 && op.range.end == 99 && field(op.properties, "operator").getAsString() == operation, "original arithmetic numeric-use sites")) return 3;
-        uses[*number] = where;
-      } else if (op.name == "binary") {
-        if (!check(!arithmetic && op.range.start == 94 && op.range.end == 99 && field(op.properties, "operator").getAsString() == operation, "original arithmetic site")) return 3;
-        arithmetic = where;
+        if (!check(number && *number >= 0 && uint64_t(*number) < arity && !uses[*number] && op.operands.size() == 1 &&
+            field(op.properties, "operator").getAsString() == operation, "original arithmetic numeric-use sites")) return 3;
+        uses[*number] = where; expectedRange = &expressionRange;
+      } else if (op.name == (unary ? "unary" : "binary")) {
+        if (!check(!arithmetic && op.operands.size() == arity && field(op.properties, "operator").getAsString() == operation, "original arithmetic site")) return 3;
+        arithmetic = where; expectedRange = &expressionRange;
       } else if (op.name == "constant") {
-        if (!check(!literal && op.range.start == 98 && op.range.end == 99 && field(op.properties, "decimal").getAsString() == "7", "actual SSA literal retains official Source 7 anchor")) return 3;
-        literal = where;
+        if (!check(!unary && !literal && field(op.properties, "decimal").getAsString() == "7", "actual SSA literal retains official Source 7 anchor")) return 3;
+        literal = where; expectedRange = &literalRange;
+      } else if (op.name == "cell" || op.name == "store") {
+        expectedRange = &parameterRange;
+      } else if (op.name == "load") {
+        expectedRange = &parameterUseRange;
+      } else if (op.name == "value_copy" || op.name == "func.return") {
+        expectedRange = &returnRange;
       }
+      if (!check(expectedRange && sameRange(where.source, *expectedRange), "every original Core operation retains its independent official Source anchor")) return 3;
     }
   }
-  if (!check(entry && uses[0] && uses[1] && arithmetic && literal, "all original Source arithmetic sites exist")) return 3;
+  if (!check(entry && uses[0] && arithmetic && (unary ? !uses[1] && !literal : uses[1] && literal),
+      "all original Source arithmetic sites exist with the official arity")) return 3;
   Json artifact = nullptr;
   if (!emitGpuBindingModule(program, plan, "single-source-call-v1", context, artifact, error)) {
     llvm::errs() << "actual emit [" << error.code << "] " << error.message << '\n' << diagnostics; return 3;
   }
   const auto &host = field(artifact, "hostPreflight");
-  if (!check(items(field(artifact, "obligations")).size() == 4 &&
-      field(host, "status").getAsString() == "unfulfilled" && items(field(host, "steps")).size() == 3 &&
+  if (!check(items(field(artifact, "obligations")).size() == arity + 2 &&
+      field(host, "status").getAsString() == "unfulfilled" && items(field(host, "steps")).size() == arity + 1 &&
       std::all_of(items(field(host, "steps")).begin(), items(field(host, "steps")).end(), [](const Json &step) {
         return field(step, "status").getAsString() == "unfulfilled";
-      }), "four Source obligations are retained and all three ordered Host steps remain pending")) return 3;
+      }), "all Source obligations are retained and every ordered Host step remains pending")) return 3;
   auto artifactBytes = canonical(artifact) + "\n";
   std::optional<GpuPendingCall> pending;
   const auto before = program.remaining;
@@ -257,30 +300,37 @@ int main(int argc, char **argv) {
       call.functionId() == functionId && call.entryPoint() == string(field(artifact, "entryPoint")) &&
       call.words().size() >= 5 && call.words()[0] == 0x07230203 && call.words()[1] == 0x00010300 &&
       layout.memberOffset == 0 && layout.memberBytes == 4 && layout.memberAlignment == 4 && layout.blockBytes == 4 &&
-      call.descriptors().size() == 2 && call.hostSteps().size() == 3 && call.discharges().size() == 1,
+      call.descriptors().size() == 2 && call.hostSteps().size() == arity + 1 && call.discharges().size() == 1,
       "typed explicit profile, pending authority, real words, scalar layout and resources")) return 3;
   size_t parameterIndex = call.descriptors().size(), returnIndex = call.descriptors().size();
   for (size_t index = 0; index < call.descriptors().size(); ++index) {
     const auto &row = call.descriptors()[index];
     if (!check(row.type == GpuScalarType::I32 && row.kernel && *row.kernel == functionId && row.source.sourceId == "/src/main.ts", "typed source-bound scalar descriptor")) return 3;
-    if (row.kind == GpuResourceKind::Parameter && row.access == GpuResourceAccess::Read && row.id == parameterId && row.source.range.start == 70 && row.source.range.end == 76) parameterIndex = index;
-    if (row.kind == GpuResourceKind::Return && row.access == GpuResourceAccess::Write && row.id == functionId && row.source.range.start == 39 && row.source.range.end == 102) returnIndex = index;
+    if (row.kind == GpuResourceKind::Parameter && row.access == GpuResourceAccess::Read && row.id == parameterId && sameRange(row.source, parameterRange)) parameterIndex = index;
+    if (row.kind == GpuResourceKind::Return && row.access == GpuResourceAccess::Write && row.id == functionId && sameRange(row.source, functionRange)) returnIndex = index;
   }
   if (!check(parameterIndex < 2 && returnIndex < 2 && parameterIndex != returnIndex &&
       same(field(typedProjection(call), "descriptors"), field(plan, "bindings")), "parameter/return bindings exactly preserve the verified plan")) return 3;
   const auto *budget = std::get_if<GpuEntryBudgetStep>(&call.hostSteps()[0]);
   const auto *left = std::get_if<GpuNumericUseStep>(&call.hostSteps()[1]);
-  const auto *right = std::get_if<GpuNumericUseStep>(&call.hostSteps()[2]);
-  if (!check(budget && left && right && sameSite(budget->site, *entry, functionId) && budget->event == 1 && budget->activeDepth == 1 && budget->fuelCost == 1 &&
-      sameSite(left->site, *uses[0], functionId) && left->sourceOperator == operation && left->index == 0 && left->operand == uses[0]->operand &&
-      sameSite(right->site, *uses[1], functionId) && right->sourceOperator == operation && right->index == 1 && right->operand == uses[1]->operand,
-      "ordered pending entry and both numeric steps retain real Source sites/operands")) return 3;
-  const auto *binding = std::get_if<GpuBindingOrigin>(&left->origin);
-  const auto *constant = std::get_if<GpuI32ConstantOrigin>(&right->origin);
-  if (!check(binding && binding->descriptorIndex == parameterIndex && constant && constant->bits == 7 && constant->decimal == "7" &&
-      sameSite(call.discharges()[0].site, *arithmetic, functionId) &&
+  if (!check(budget && left && sameSite(budget->site, *entry, functionId) && budget->event == 1 && budget->activeDepth == 1 && budget->fuelCost == 1,
+      "ordered pending entry retains its original Source site and budget")) return 3;
+  for (size_t index = 0; index < arity; ++index) {
+    const auto *step = std::get_if<GpuNumericUseStep>(&call.hostSteps()[index + 1]);
+    if (!check(step && sameSite(step->site, *uses[index], functionId) && step->sourceOperator == operation &&
+        step->index == index && step->operand == uses[index]->operand,
+        "ordered numeric step retains its original Source site and operand")) return 3;
+    if (index == 0) {
+      const auto *binding = std::get_if<GpuBindingOrigin>(&step->origin);
+      if (!check(binding && binding->descriptorIndex == parameterIndex, "actual typed parameter origin binds the selected descriptor")) return 3;
+    } else {
+      const auto *constant = std::get_if<GpuI32ConstantOrigin>(&step->origin);
+      if (!check(constant && constant->bits == 7 && constant->decimal == "7", "actual typed binary constant origin is seven")) return 3;
+    }
+  }
+  if (!check(sameSite(call.discharges()[0].site, *arithmetic, functionId) &&
       call.discharges()[0].prerequisites == std::vector<uint32_t>{left->site.obligationId},
-      "actual typed constant origin is 7; only the unknown parameter numeric condition remains a wrap-discharge prerequisite")) return 3;
+      "the unknown parameter numeric condition remains the wrap-discharge prerequisite")) return 3;
   const auto typed = typedProjection(call);
   if (!check(same(field(typed, "words"), field(artifact, "words")) &&
       call.identity().inputIdentity == program.inputIdentity && call.identity().hirDigest == program.hirHash &&
@@ -309,7 +359,7 @@ int main(int argc, char **argv) {
   (*wrongWords.getAsObject())["words"].getAsArray()->back() = int64_t(0);
   auto wrongSource = artifact;
   auto &bindingSource = (*(*wrongSource.getAsObject())["bindings"].getAsArray())[0];
-  (*(*bindingSource.getAsObject())["source"].getAsObject())["start"] = int64_t(71);
+  (*(*bindingSource.getAsObject())["source"].getAsObject())["start"] = int64_t(call.descriptors()[0].source.range.start) + 1;
   auto wrongDependencies = artifact;
   auto &arithmeticDischarge = (*wrongDependencies.getAsObject())["discharges"].getAsArray()->front();
   (*arithmeticDischarge.getAsObject())["requires"] = Array{};
@@ -326,10 +376,10 @@ int main(int argc, char **argv) {
   coreBytes.clear(); requestBytes.clear(); planBytes.clear(); oracleBytes.clear();
   program = Program{}; request = nullptr; savedPlan = nullptr; plan = nullptr; oracle = nullptr;
   if (!check(same(typedProjection(*pending), typed), "all typed data remains owned after reader inputs and Program are released")) return 3;
-  Json report = Object{{"family", "tsfg.gpu-i32-arithmetic-reader-test-report"}, {"version", 1}, {"operator", operation},
+  Json report = Object{{"family", "tsfg.gpu-i32-arithmetic-reader-test-report"}, {"version", 1}, {"operator", operation}, {"arity", int64_t(arity)},
       {"coreSHA", coreHash}, {"requestSHA", requestHash}, {"planSHA", planHash}, {"officialOracleSHA", oracleHash},
-      {"officialLiteral", Object{{"sourceId", "/src/main.ts"}, {"start", 98}, {"end", 99}}},
-      {"sourceBaseline", Object{{"functionId", functionId}, {"source", Object{{"sourceId", "/src/main.ts"}, {"start", 39}, {"end", 102}}}, {"operations", std::move(baseline)}}},
+      {"officialLiteral", unary ? Json(nullptr) : source(literalRange)},
+      {"sourceBaseline", Object{{"functionId", functionId}, {"source", source(functionRange)}, {"operations", std::move(baseline)}}},
       {"emittedModule", std::move(artifact)}, {"typedPending", typed}, {"ownedAfterInputRelease", true},
       {"readerApiPositiveCount", 1}, {"readerApiRejectionCount", int64_t(rejectedArtifacts.size())},
       {"readerApiRejections", std::move(rejectedArtifacts)},
