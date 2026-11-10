@@ -54,7 +54,7 @@ export function validateCommonLexical(payload,grammars,types,coverage,spend,visi
   spend(payload.functions.length+payload.types.length);const functions=new Map(payload.functions.map(fn=>[fn.id,fn]));
   for(const type of types.values())if(type.constructor)functions.set(type.constructor.id,type.constructor);
   const scopes=new Map([...functions].map(([id,fn])=>[id,commonLexicalScopes(fn,spend)]));
-  for(const alias of payload.typeAliases){spend();const g=grammars.get(alias.sourcePath);check(g&&['function','reference','value'].includes(types.get(alias.type)?.kind),'type-alias');
+  for(const alias of payload.typeAliases){spend();const g=grammars.get(alias.sourcePath);check(g&&['scalar','function','reference','value'].includes(types.get(alias.type)?.kind),'type-alias');
     check(alias.id===originId(alias.sourcePath,alias.nameRange),'type-alias');g.name(alias.nameRange,alias.name);
     commonTypeSyntax(g,alias.annotationRange,alias.type,types,spend,payload.typeAliases,visible.get(alias.sourcePath));
     g.sequence(alias.declarationRange,['type',alias.nameRange,'=',alias.annotationRange],true);coverage.get(alias.sourcePath).push(alias.declarationRange);
