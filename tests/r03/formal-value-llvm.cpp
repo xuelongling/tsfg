@@ -28,6 +28,15 @@
 #include <functional>
 
 namespace {
+llvm::json::Value abiType(const llvm::Type *type){
+  using Object=llvm::json::Object;using Array=llvm::json::Array;
+  if(type->isVoidTy())return "void";
+  if(type->isIntegerTy())return Object{{"integer",type->getIntegerBitWidth()}};
+  if(type->isFloatTy())return "f32";if(type->isDoubleTy())return "f64";
+  if(const auto *pointer=llvm::dyn_cast<llvm::PointerType>(type))return Object{{"pointer",pointer->getAddressSpace()}};
+  if(const auto *structure=llvm::dyn_cast<llvm::StructType>(type)){Array fields;for(const auto *field:structure->elements())fields.push_back(abiType(field));return Object{{"fields",std::move(fields)}};}
+  return nullptr;
+}
 struct Graph {
   std::vector<const llvm::BasicBlock *> blocks;
   std::map<const llvm::BasicBlock *,size_t> indices;
@@ -229,7 +238,8 @@ int main(int argc,char **argv){
     if(!functionIndices.count(fn.getName().str())||fn.arg_size()<2)return 4;
     const auto currentFunction=functionIndices.at(fn.getName().str());
     Json environment=nullptr;if(!floatingEnvironment(fn,environment)){llvm::errs()<<"floating environment oracle failed: "<<fn.getName()<<'\n';return 4;}
-    Graph graph(fn);std::set<size_t> fuelBlocks;Array instructions,blockRows;const llvm::StoreInst *repeatedCopy=nullptr;
+    Graph graph(fn);std::set<size_t> fuelBlocks;Array instructions,blockRows,entryPlanes,parameterTypes;const llvm::StoreInst *repeatedCopy=nullptr;
+    for(const auto &argument:fn.args())parameterTypes.push_back(abiType(argument.getType()));
     std::map<const llvm::Value *,int64_t> valueIds;
     for(const auto &argument:fn.args())valueIds.emplace(&argument,valueIds.size());
     for(const auto &block:fn)for(const auto &operation:block)valueIds.emplace(&operation,valueIds.size());
@@ -287,6 +297,10 @@ int main(int argc,char **argv){
         fieldReads.push_back(Object{{"indices",std::move(indices)},{"rootSlot",root(pointer)},{"function",fn.getName().str()}});
       }
       if(const auto *store=llvm::dyn_cast<llvm::StoreInst>(&operation)){
+        if(const auto *argument=llvm::dyn_cast<llvm::Argument>(store->getValueOperand());argument&&argument->getType()->isStructTy()){
+          const auto *allocation=llvm::dyn_cast<llvm::AllocaInst>(store->getPointerOperand());if(!allocation||allocation->getParent()!=&fn.getEntryBlock()||store->getParent()!=&fn.getEntryBlock()||!allocation->comesBefore(store))return 4;
+          entryPlanes.push_back(Object{{"argument",argument->getArgNo()},{"slot",root(allocation)},{"allocation",valueId(allocation)},{"store",valueId(store)},{"type",abiType(argument->getType())},{"freshEachActivation",true}});
+        }
         copies+=store->getValueOperand()->getType()->isStructTy();
         if(const auto *loaded=llvm::dyn_cast<llvm::LoadInst>(store->getValueOperand());loaded&&loaded->getType()->isStructTy()){
           const auto *allocation=llvm::dyn_cast<llvm::AllocaInst>(store->getPointerOperand());
@@ -316,7 +330,7 @@ int main(int argc,char **argv){
           const auto *end=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(4));
           const auto *interval=llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(5));
           if(!kind||kind->getZExtValue()>7||!index||index->getZExtValue()>=items(field(*decoded,"functions")).size()||!start||!end||start->getZExtValue()>=end->getZExtValue()||!interval||!intervals.insert(interval->getZExtValue()).second)return 4;
-          record["eventKind"]=int64_t(kind->getZExtValue());record["eventSource"]=Object{{"start",int64_t(start->getZExtValue())},{"end",int64_t(end->getZExtValue())}};
+          record["eventKind"]=int64_t(kind->getZExtValue());record["eventFunction"]=int64_t(index->getZExtValue());record["eventSource"]=Object{{"start",int64_t(start->getZExtValue())},{"end",int64_t(end->getZExtValue())}};
           const auto &owner=source.functions[index->getZExtValue()];bool anchored=false;
           if(kind->getZExtValue()==0)anchored=start->getZExtValue()==owner.range.start&&end->getZExtValue()==owner.range.end;
           else{
@@ -331,7 +345,10 @@ int main(int argc,char **argv){
           if(kind->getZExtValue()==1)fuelBlocks.insert(blockId);
           eventRows.push_back(Object{{"kind",int64_t(kind->getZExtValue())},{"function",int64_t(index->getZExtValue())},{"start",int64_t(start->getZExtValue())},{"end",int64_t(end->getZExtValue())},{"interval",int64_t(interval->getZExtValue())}});
         }else if(call->getCalledFunction()->getName().starts_with("llvm.experimental.stackmap"))++stackmaps;
-        else if(call->getCalledFunction()->getName().starts_with("value_")){++calls;record["callee"]=call->getCalledFunction()->getName().str();}
+        else if(call->getCalledFunction()->getName().starts_with("value_")){
+          ++calls;record["callee"]=call->getCalledFunction()->getName().str();Array arguments;for(const auto &argument:call->args())arguments.push_back(abiType(argument->getType()));
+          record["argumentTypes"]=std::move(arguments);record["returnType"]=abiType(call->getType());
+        }
         else if(call->getCalledFunction()->isIntrinsic()||call->getCalledFunction()->getName().starts_with("tsfg_aot_f"))record["callee"]=call->getCalledFunction()->getName().str();
         else return 4;
       }
@@ -345,8 +362,8 @@ int main(int argc,char **argv){
       allocation->moveBefore(const_cast<llvm::Instruction *>(fn.getEntryBlock().getTerminator())->getIterator());
       rejectedHoist=!llvm::verifyModule(*module,&llvm::errs())&&!freshCopy(*repeatedCopy);allocation->moveBefore(next->getIterator());if(!rejectedHoist)return 4;
     }
-    controlFlows.push_back(Object{{"function",fn.getName().str()},{"sourceIndex",int64_t(currentFunction)},{"sourceName",source.functions[currentFunction].name},{"backedges",graph.backedges},
-      {"everyCycleHasFuel",true},{"hoistedCopyNegativeRejected",rejectedHoist},{"floatingEnvironment",std::move(environment)},{"blocks",std::move(blockRows)},{"instructions",std::move(instructions)}});
+    controlFlows.push_back(Object{{"function",fn.getName().str()},{"sourceIndex",int64_t(currentFunction)},{"sourceName",source.functions[currentFunction].name},{"sourceSignature",source.functions[currentFunction].signature},{"backedges",graph.backedges},
+      {"everyCycleHasFuel",true},{"hoistedCopyNegativeRejected",rejectedHoist},{"floatingEnvironment",std::move(environment)},{"parameterTypes",std::move(parameterTypes)},{"resultType",abiType(fn.getReturnType())},{"entryPlanes",std::move(entryPlanes)},{"blocks",std::move(blockRows)},{"instructions",std::move(instructions)}});
   }
   if(functions!=items(field(*decoded,"closure")).size()||stackmaps!=callbacks+functions||intervals.size()!=callbacks)return 4;
   llvm::outs()<<canonical(Object{{"passed",true},{"completeCoreRetained",true},{"mlirRoundTrip",true},{"functionId",argv[2]},{"functions",functions},

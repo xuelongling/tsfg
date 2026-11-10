@@ -84,7 +84,16 @@ struct Lowering {
   }
   std::string type(const std::string &id){
     if(types.count(id))return types.at(id);
-    if(!step()||!need(declarations.count(id),"carrier does not name an owned semantic type"))return {};
+    if(!step())return {};
+    if(!declarations.count(id)){
+      for(const auto &domain:items(field(program.representation,"domains"))){
+        if(!step())return {};
+        if(string(field(domain,"id"))==id&&string(field(domain,"representation"))=="bottom"){
+          need(false,"bottom carrier has no actual values; zero-payload lowering requires a separate capability");return {};
+        }
+      }
+      need(false,"carrier does not name an owned semantic type");return {};
+    }
     const auto &decl=*declarations.at(id);const auto kind=string(field(decl,"kind"));std::string result;
     if(kind=="scalar"){
       const auto name=string(field(decl,"name"));
@@ -107,7 +116,10 @@ struct Lowering {
   }
   bool closure(size_t index){
     if(reachable.count(index))return true;const auto &selected=program.functions[index];sourcePath=selected.path;sourceRange=selected.range;
-    if(!step()||!need(active.insert(index).second,"recursive fixed-value calls require a separate lowering capability"))return false;
+    if(!step())return false;
+    // An active call target already has an owning traversal. That traversal
+    // still validates its remaining CFG before any complete closure is emitted.
+    if(!active.insert(index).second)return true;
     std::vector<uint16_t> order;std::vector<uint8_t> state(selected.blocks.size());
     std::function<bool(uint16_t)> visit=[&](uint16_t block){
       if(state[block])return true;if(!step())return false;

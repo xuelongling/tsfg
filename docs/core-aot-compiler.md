@@ -6,10 +6,10 @@ The shared compiler-internal fixed-value IR stage accepts a complete formal
 Common Program and an original FunctionId through the static Core commands
 `--common-program --value-llvm <FunctionId>` and
 `--common-program --value-mlir <FunctionId>`. It verifies the complete input,
-then lowers a nonrecursive direct-call closure, including cyclic control flow,
+then lowers a direct-call closure, including self/mutual recursion and cyclic control flow,
 with fully initialized, GC-free fixed values. Actual singleton field storage comes from that same verifier;
-uninitialized/presence/union storage, unsupported operations and recursive
-closures receive capability diagnostics with original Source anchors. Both
+uninitialized/presence/union storage, bottom normal results and unsupported
+operations receive capability diagnostics with original Source anchors. Both
 outputs retain the complete Core, identity, function/source directory and the
 verified target layouts. The internal state/event parameters reuse EventV4
 fuel, depth and first-failure rules. This stage produces compiler data and
@@ -24,6 +24,20 @@ storage remains live until the function returns. Loop headers retain the
 original fuel callback and failure continuation on every visit. This dynamic
 stack allocation is compiler data; resource admission remains open and both
 outputs retain `resourceProof: null` and `executionAuthority: false`.
+
+Call-graph backedges reuse the active function's owning traversal. Each owning
+traversal still checks its complete selected CFG and normal continuations before
+the closure is emitted. Unsupported members reached after a call-graph backedge
+retain their capability diagnostic. Existing work charging, callee admission
+before a call, per-function entry fuel and the post-call failure checkpoint remain
+in place. Each dynamic activation receives its own parameter/copy planes, and
+caller-owned aggregate return storage follows the successful post-call check.
+
+Recursive functions with an inhabited fixed normal-result capacity use this
+interface. A verified `bottom` domain has an empty actual-type set and zero bytes;
+it receives the explicit zero-payload capability diagnostic. Lowering its
+unreachable normal continuation is separate work. The original Source return
+view remains retained in the complete Core and proof.
 
 The scalar and fixed-value callers share `ScalarArithmeticEmitter`. Owned scalar
 TypeIds determine nominal width and signedness, including equal-width signed and
