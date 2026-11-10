@@ -124,26 +124,19 @@ for(const fixture of fixtures){
     }
   });
 }
-for(const{target,pattern}of[{target:'valueRecursiveGc',pattern:/operation in the selected closure has no fixed-value lowering/},{target:'valueRecursiveBottom',pattern:/bottom/}]){
-  test('complete recursive capability rejection '+target,{skip:reports?false:'TSFG_VALUE_RECURSION_REPORT_ROOT is not supplied'},async()=>{
+  test('complete recursive capability rejection valueRecursiveGc',{skip:reports?false:'TSFG_VALUE_RECURSION_REPORT_ROOT is not supplied'},async()=>{
+    const target='valueRecursiveGc';
     assert.ok(path.isAbsolute(reports));const directory=index[target];assert.ok(path.isAbsolute(directory));const observed=JSON.parse(await fs.readFile(path.join(directory,'observed.json'),'utf8'));
     assert.equal(observed.qualified,true);assert.equal(observed.exit.code,3);assert.equal(observed.close.code,3);assert.deepEqual(observed.first,[]);assert.equal((await fs.readFile(path.join(directory,'raw/stdout.bin'))).length,0);
-    const stderr=await fs.readFile(path.join(directory,'raw/stderr.bin'),'utf8');assert.match(stderr,/\[core-ir-value-llvm-capability\]/);assert.match(stderr,pattern);
+    const stderr=await fs.readFile(path.join(directory,'raw/stderr.bin'),'utf8');assert.match(stderr,/\[core-ir-value-llvm-capability\]/);assert.match(stderr,/operation in the selected closure has no fixed-value lowering/);
     const config=JSON.parse(await fs.readFile(path.join(directory,'config.json'),'utf8'));assert.equal(config.args.length,2);assert.ok(path.isAbsolute(config.args[0]));
-    let selected,expectedCore,expectedRange;
-    if(target==='valueRecursiveGc'){
-      const {hir,core,oracle}=cases.get('value-mutual-recursive');selected=hir.functions.find(row=>row.name===target);expectedCore=sha(core);
+      const {hir,core,oracle}=cases.get('value-mutual-recursive'),selected=hir.functions.find(row=>row.name===target),expectedCore=sha(core);
       const original=oracle.functions.find(row=>row.name===target),calls=oracle.occurrences.filter(row=>row.kind==='call'&&row.range.start>=original.range.start&&row.range.end<=original.range.end);
       assert.ok(calls.find(row=>row.name===target).range.end<calls.find(row=>row.name==='allocating').range.start,'the managed callee follows the active recursive edge in genuine Source');
-      expectedRange=oracle.functions.find(row=>row.name==='allocating').range;
-    }else{
-      const raw=await fs.readFile(new URL('./testdata/formal-value-llvm-v3/value-recursive/package.json',import.meta.url));assert.equal(sha(raw),'3f3f35517e3bc0ec7707ceb9a0d7798beda22bd7446e3664fe30dae7ca9fbcd9');
-      const hir=projectCommonProgram(readCommonProgramFacts(raw));selected=hir.functions.find(row=>row.name==='valueRecursive');expectedCore='43a10b5628aecc3da20f3d6a7048bdf9de00a72ed8fabbdbc11520bb376d1c6a';expectedRange=selected.range;
-    }
+      const expectedRange=oracle.functions.find(row=>row.name==='allocating').range;
     assert.equal(config.args[1],selected.id,'the rejection selects this complete package function');
     const guard=config.sourceGuards.find(row=>row.path===config.args[0]);assert.ok(guard);
     const keys=['dev','ino','mode','nlink','size','mtimeNs','ctimeNs','birthtimeNs'],stat8=async()=>{const s=await fs.stat(config.args[0],{bigint:true});return Object.fromEntries(keys.map(key=>[key,String(s[key])]));};
     assert.deepEqual(await stat8(),guard.current8);assert.equal(sha(await fs.readFile(config.args[0])),expectedCore,'the actual rejected input is the complete genuine Core');assert.deepEqual(await stat8(),guard.current8);
     const anchor=stderr.match(/\(\/src\/main\.ts:(\d+):(\d+)\)/);assert.ok(anchor);assert.ok(Number(anchor[1])>=expectedRange.start&&Number(anchor[2])<=expectedRange.end&&Number(anchor[1])<Number(anchor[2]));
   });
-}

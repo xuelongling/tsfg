@@ -248,7 +248,7 @@ for(const fixture of fixturePins){
     }
     if(coreRoot){assert.ok(path.isAbsolute(coreRoot));const directory=path.join(coreRoot,fixture.name);await fs.mkdir(directory,{recursive:true});await fs.writeFile(path.join(directory,'core.mlir'),core,{flag:'wx'});}
   });
-  const expectedReject=['value-recursive','gc-callee','poison-unknown'].includes(fixture.name);
+  const expectedReject=['gc-callee','poison-unknown'].includes(fixture.name);
   test('actual '+fixture.name+' fixed-value compiler data and independent LLVM reader',
     {skip:reports?false:'TSFG_VALUE_LLVM_REPORT_ROOT is not supplied'},async()=>{
       assert.ok(path.isAbsolute(reports));const directory=reportIndex[fixture.name];assert.ok(path.isAbsolute(directory));
@@ -278,6 +278,7 @@ for(const fixture of fixturePins){
       const expectedWrites=fixture.name==='nested-copy'?['7','9']:fixture.name==='value-copy'||fixture.name==='copy-original'?['7']:fixture.name==='value-branch'?['4']:null;
       if(expectedWrites)assert.deepEqual(report.fieldWrites.map(row=>row.constantBits),expectedWrites,'actual LLVM field stores retain genuine Source literal bits');
       if(fixture.name==='value-call'){assert.equal(report.functions,2);assert.equal(report.directCalls,1);assert.equal(report.events.filter(row=>row.kind===0).length,1);}
+      if(fixture.name==='value-recursive'){assert.equal(report.controlFlows[0].resultType,'void');assert.equal(report.physicalCFG[0].emptyNormalResult,true);assert.deepEqual(report.physicalCFG[0].blocks,[0]);}
       if(['value-equal','value-not-equal','padded-equal'].includes(fixture.name)){assert.equal(report.fieldComparisons,2);assert.equal(report.fieldWrites.length,0);assert.ok(report.fieldReads.length>=4);}
     });
 }

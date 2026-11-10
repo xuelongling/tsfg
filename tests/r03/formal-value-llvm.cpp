@@ -369,7 +369,7 @@ int main(int argc,char **argv){
   llvm::outs()<<canonical(Object{{"passed",true},{"completeCoreRetained",true},{"mlirRoundTrip",true},{"functionId",argv[2]},{"functions",functions},
     {"callbacks",callbacks},{"stackmaps",stackmaps},{"fieldAddresses",geps},{"aggregateStores",copies},{"comparisons",comparisons},{"directCalls",calls},
     {"coreDigest",digest((*bytes)->getBuffer())},{"inputIdentity",field(*decoded,"inputIdentity")},{"hirDigest",field(*decoded,"hirDigest")},
-    {"layouts",lowered.layouts},{"initializedFields",field(*decoded,"initializedFields")},{"events",std::move(eventRows)},
+    {"layouts",lowered.layouts},{"initializedFields",field(*decoded,"initializedFields")},{"physicalCFG",field(*decoded,"physicalCFG")},{"events",std::move(eventRows)},
     {"copies",std::move(aggregateCopies)},{"fieldWrites",std::move(fieldWrites)},{"fieldReads",std::move(fieldReads)},
     {"nativeLayouts",std::move(nativeLayouts)},{"fieldComparisons",fieldComparisons},{"sourceFuelSites",sourceFuelSites},{"controlFlows",std::move(controlFlows)},
     {"floatingHelpers",helpers},{"sameFinalizedLLVMFromMLIR",true},{"irStages",stages},{"storageLifetime",field(*decoded,"storageLifetime")},{"resourceProof",nullptr},{"executionAuthority",false},{"llvm",lowered.llvm},{"mlir",lowered.mlir}})<<'\n';return 0;
