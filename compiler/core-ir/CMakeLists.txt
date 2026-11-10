@@ -61,6 +61,20 @@ if(TSFG_CORE_BUILD_ROLE STREQUAL "gpu-function-resource-ir")
     _GLIBCXX_ASSERTIONS _SCL_SECURE_NO_DEPRECATE _SCL_SECURE_NO_WARNINGS
     __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS __STDC_LIMIT_MACROS)
   target_link_libraries(tsfg-gpu-function-ir PUBLIC ${_tsfg_gpu_libraries})
+  option(TSFG_BUILD_SOFTWARE_VULKAN_CONSUMER "Build the separate external software-device acceptance library" OFF)
+  if(TSFG_BUILD_SOFTWARE_VULKAN_CONSUMER)
+    # The caller owns the prospective input declaration and fixed Khronos
+    # Headers qualification. The normal 858-member IR build leaves this off.
+    if(NOT TSFG_GPU_SOFTWARE_HEADERS_INCLUDE_DIRECTORY OR
+       NOT EXISTS "${TSFG_GPU_SOFTWARE_HEADERS_INCLUDE_DIRECTORY}/vulkan/vulkan_core.h")
+      message(FATAL_ERROR "Software Vulkan consumer requires qualified fixed Khronos Headers")
+    endif()
+    add_library(tsfg-gpu-software-vulkan-consumer STATIC ../gpu-software-vulkan-consumer.cpp ../gpu-software-vulkan-consumer.h)
+    target_include_directories(tsfg-gpu-software-vulkan-consumer PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/.."
+      PRIVATE "${TSFG_GPU_SOFTWARE_HEADERS_INCLUDE_DIRECTORY}")
+    target_link_libraries(tsfg-gpu-software-vulkan-consumer PUBLIC tsfg-gpu-function-ir PRIVATE kernel32 advapi32)
+    set_target_properties(tsfg-gpu-software-vulkan-consumer PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+  endif()
   # No LLVM/MLIR export or generic Core command/native source is selected here.
   return()
 endif()
