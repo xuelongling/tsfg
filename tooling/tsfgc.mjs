@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { readFile } from "node:fs/promises";
-import { compileHir, compileProgram, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
+import { compileHir, compileProgram, compileOwnedCore, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {commonJson} from '../compiler/common-program-common.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
@@ -43,7 +43,8 @@ try {
   if (inputKind === "hir" && ["run", "program-object"].includes(emit) && familyOf(input) === genericHirFormat.family)
     throw new TypeError("r03-cli-options: private generic HIR requires --emit hir|core|bytecode");
   const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
-  const compile = inputKind === "hir" ? (emit === "program-object" ? compileOwnedStaticProgram : compileOwnedHir)
+  const compile = inputKind === "hir"
+    ? emit === "core" ? compileOwnedCore : emit === "program-object" ? compileOwnedStaticProgram : compileOwnedHir
     : emit === "hir" ? compileHir : emit === "program-object" ? compileStaticProgram : compileProgram;
   const result = inputKind === "hir" && emit === "hir" ? { status: "ok", hir: input }
     : await compile(input, { frontend: options.get("--frontend"), core: options.get("--core") });

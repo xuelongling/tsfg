@@ -155,14 +155,31 @@ async function compileSnapshot(snapshot, options) {
   return produceBytecode(highLevel.hir, options);
 }
 
+async function produceCore(hir, options, lower) {
+  const executable = await verifiedConsumer(options.core, "core");
+  const lowered = lower(hir);
+  const common = isCommonProgramContext(options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate';
+  const prefix = common ? ['--common-program'] : [];
+  const core = consume(executable, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered).toString("utf8");
+  return { executable, prefix, common, core };
+}
+
 async function produceBytecode(hir, options, lower = value => lowerFormalHir(value, options.factsContext, options.callPublicationContext)) {
   try {
-    const core = await verifiedConsumer(options.core, "core");
-    const lowered = lower(hir), common = isCommonProgramContext(options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate', prefix = common ? ['--common-program'] : [];
-    const canonicalCore = consume(core, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered).toString("utf8");
-    const bytecode = consume(core, [...prefix, "--emit-bytecode"], canonicalCore);
+    const { executable, prefix, common, core } = await produceCore(hir, options, lower);
+    const bytecode = consume(executable, [...prefix, "--emit-bytecode"], core);
     (common ? verifyCommonProducedPacket : verifyProducedPacket)(bytecode);
-    return { status: "ok", hir, core: canonicalCore, bytecode };
+    return { status: "ok", hir, core, bytecode };
+  } catch (error) {
+    return { status: "tool-error", code: "r03-d-consumer", message: error.message };
+  }
+}
+
+/** Produce verified Core text from complete persisted owned HIR. */
+export async function compileOwnedCore(hir, options) {
+  try {
+    const { core } = await produceCore(hir, options, value => lowerOwnedHir(value, options.factsContext, options.callPublicationContext));
+    return { status: "ok", hir, core };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };
   }
