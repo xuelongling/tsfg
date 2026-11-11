@@ -124,8 +124,18 @@ ActualHeap::FieldTarget ActualHeap::fieldTarget(ActualCheck &c,const std::shared
   // resets. Keep the complete original text-index and directory fallback.
   const auto &key=*identity;
   for(auto &entry:fields_){
-    if(!c.step(3)||!c.step(entry.key->size()+key.size()+1))return {};
-    if(*entry.key!=key)continue;
+    if(!c.step(3))return {};
+    const auto &candidate=*entry.key;
+    // Keep the full canonical comparison for every possible long-key match.
+    if(key.size()>=16){
+      if(!c.step(4))return {};
+      if(candidate.size()!=key.size())continue;
+      if(!c.step(16))return {};
+      const auto quarter=key.size()/4,far=key.size()-quarter;
+      if(candidate.back()!=key.back()||candidate[quarter]!=key[quarter]||candidate[far]!=key[far])continue;
+    }
+    if(!c.step(candidate.size()+key.size()+1))return {};
+    if(candidate!=key)continue;
     if(!retargetField(c,entry,identity)||!c.step(2))return {};return {entry.value,false};
   }
   // A small directory can recover an existing canonical node without a full
