@@ -35,11 +35,13 @@ function literalString(args,start){
   assert.fail('unterminated SPIR-V literal string');
 }
 
-export function verifyGpuI32Words(words,entryName,operator,arity=2,literalToken='7'){
-  const expected=integerOperation(operator,arity),arithmeticOpcode=expected.opcode;
+export function verifyGpuI32Words(words,entryName,operator,arity=2,literalToken='7',following=[]){
+  const chain=[{operator,arity,literalToken},...following.map(row=>({...row,arity:2}))]
+    .map(row=>({...row,...integerOperation(row.operator,row.arity)}));
+  const arithmeticOpcodes=new Set(chain.map(row=>row.opcode));
   assert.ok(Array.isArray(words)&&words.length>=5);words.forEach(word=>assert.ok(Number.isInteger(word)&&word>=0&&word<=0xffffffff));
   assert.equal(words[0],0x07230203);assert.equal(words[1],0x00010300);assert.ok(words[3]>1);assert.equal(words[4],0);
-  const rows=[],permitted=new Set([5,14,15,16,17,19,21,30,32,33,43,54,56,59,61,62,65,71,72,arithmeticOpcode,248,253]);
+  const rows=[],permitted=new Set([5,14,15,16,17,19,21,30,32,33,43,54,56,59,61,62,65,71,72,248,253,...arithmeticOpcodes]);
   for(let start=5;start<words.length;){const count=words[start]>>>16,opcode=words[start]&0xffff;
     assert.ok(count>0&&start+count<=words.length);assert.ok(permitted.has(opcode),'permitted SPIR-V 1.3 instruction');
     rows.push({start,opcode,args:words.slice(start+1,start+count),functionId:null});start+=count;}
@@ -48,7 +50,8 @@ export function verifyGpuI32Words(words,entryName,operator,arity=2,literalToken=
   const entry=only(of(15),'GLCompute entry');assert.equal(entry.args[0],5);id(entry.args[1]);
   const entryLiteral=literalString(entry.args,2);assert.equal(entryLiteral.text,entryName);assert.equal(entryLiteral.next,entry.args.length);
   const mode=only(of(16),'LocalSize');assert.deepEqual(mode.args,[entry.args[1],17,1,1,1]);
-  const resultPosition=new Map([[19,0],[21,0],[30,0],[32,0],[33,0],[43,1],[54,1],[59,1],[61,1],[65,1],[arithmeticOpcode,1],[248,0]]),definitions=new Map();
+  const resultPosition=new Map([[19,0],[21,0],[30,0],[32,0],[33,0],[43,1],[54,1],[59,1],[61,1],[65,1],[248,0]]),definitions=new Map();
+  for(const opcode of arithmeticOpcodes)resultPosition.set(opcode,1);
   let currentFunction=null;
   for(const row of rows){if(row.opcode===54){assert.equal(currentFunction,null);currentFunction=row.args[1];}row.functionId=currentFunction;
     if(resultPosition.has(row.opcode)){const result=row.args[resultPosition.get(row.opcode)];id(result);assert.ok(!definitions.has(result));definitions.set(result,row);}
@@ -89,16 +92,25 @@ export function verifyGpuI32Words(words,entryName,operator,arity=2,literalToken=
   const parameterLoad=only(at(loads,0),'parameter read'),localLoad=only(loads.filter(row=>pointerRoot(row.args[2]).kind==='local'),'parameter reload');
   const localStore=only(stores.filter(row=>pointerRoot(row.args[0]).kind==='local'),'parameter initialization');
   assert.equal(localStore.args[1],parameterLoad.args[1]);assert.equal(localStore.args[0],localLoad.args[2]);assert.equal(at(loads,1).length,0);assert.equal(at(stores,0).length,0);
-  const arithmetic=only(of(arithmeticOpcode),'Source integer arithmetic');assert.equal(arithmetic.functionId,fn.args[1]);assert.equal(arithmetic.args.length,arity+2);signedI32(arithmetic.args[0]);
-  assert.equal(arithmetic.args[2],localLoad.args[1]);const constant=arity===2?definition(arithmetic.args[3],43):null;
-  if(constant){const literal=Number(literalToken);assert.ok(Number.isInteger(literal)&&literal>=-2147483648&&literal<=2147483647);
-    if(expected.shift)assert.ok(literal>=0&&literal<=31);
-    assert.deepEqual(constant.args.slice(2),[literal>>>0]);signedI32(constant.args[0]);assert.equal(constant.args[0],arithmetic.args[0]);}
-  const write=only(at(stores,1),'unique return store');assert.equal(write.args[1],arithmetic.args[1]);
+  const operations=rows.filter(row=>arithmeticOpcodes.has(row.opcode));
+  assert.equal(operations.length,chain.length,'Source integer arithmetic');
+  let input=localLoad.args[1];
+  const operands=operations.map((arithmetic,index)=>{
+    const expected=chain[index];
+    assert.equal(arithmetic.opcode,expected.opcode);assert.equal(arithmetic.functionId,fn.args[1]);
+    assert.equal(arithmetic.args.length,expected.arity+2);signedI32(arithmetic.args[0]);
+    assert.equal(arithmetic.args[2],input);input=arithmetic.args[1];
+    const constant=expected.arity===2?definition(arithmetic.args[3],43):null;
+    if(constant){const literal=Number(expected.literalToken);assert.ok(Number.isInteger(literal)&&literal>=-2147483648&&literal<=2147483647);
+      if(expected.shift)assert.ok(literal>=0&&literal<=31);
+      assert.deepEqual(constant.args.slice(2),[literal>>>0]);signedI32(constant.args[0]);assert.equal(constant.args[0],arithmetic.args[0]);}
+    return constant;
+  });
+  const write=only(at(stores,1),'unique return store');assert.equal(write.args[1],input);
   const ret=only(of(253),'void physical return');assert.equal(ret.functionId,fn.args[1]);assert.deepEqual(ret.args,[]);
-  const ordered=[parameterLoad,localStore,localLoad,arithmetic,write,ret];assert.ok(ordered.every((row,index)=>index===0||row.start>ordered[index-1].start));
+  const ordered=[parameterLoad,localStore,localLoad,...operations,write,ret];assert.ok(ordered.every((row,index)=>index===0||row.start>ordered[index-1].start));
   assert.ok(of(56)[0].start>ret.start);
-  return {constant,arithmetic,write,parameterLoad,mode,offsets,wordCount:words.length};
+  return {constant:operands[0],arithmetic:operations[0],operations,write,parameterLoad,mode,offsets,wordCount:words.length};
 }
 
 export function verifyGpuI32Report(report,oracle,plan,operator){

@@ -38,7 +38,8 @@ static_assert(!std::is_constructible_v<GpuHostProof,const GpuPendingCall &,const
 #endif
 }
 int main(int argc,char **argv){
-  if(argc!=2)return 2;
+  if(argc!=2&&(argc!=3||llvm::StringRef(argv[2])!="--check-derived-numeric-use"))return 2;
+  const bool checkDerived=argc==3;
   std::string coreBytes,requestBytes,planBytes;
   if(!read(argv[1],"common-program.mlir",coreBytes)||!read(argv[1],"gpu-binding-request.json",requestBytes)||
      !read(argv[1],"gpu-binding-plan.json",planBytes))return 2;
@@ -53,10 +54,32 @@ int main(int argc,char **argv){
      !createGpuBindingPlan(program,request,plan,error)||!check(same(plan,savedPlan),"actual complete plan"))return 3;
   Json artifact=nullptr;
   if(!emitGpuBindingModule(program,plan,"single-source-call-v1",context,artifact,error)){
-    llvm::errs()<<error.code<<": "<<error.message<<'\n';return 3;}
+    llvm::errs()<<error.code<<": "<<error.message<<" ("<<error.path<<":"<<error.range.start<<":"<<error.range.end<<")\n";return 3;}
   auto artifactBytes=canonical(artifact)+"\n";std::optional<GpuPendingCall> pending;
   if(!readGpuBindingModule(artifactBytes,program,plan,"single-source-call-v1",context,pending,error))return 3;
   if(!check(pending&&!pending->hostPreflightFulfilled()&&!pending->launchAuthorized(),"owned reader preserves pending call"))return 3;
+  if(checkDerived){
+    auto changed=artifact;
+    auto &discharges=*changed.getAsObject()->getArray("discharges");
+    const auto derived=std::find_if(discharges.begin(),discharges.end(),[](const Json &row){
+      return field(row,"relation").getAsString()=="computed-i32-is-numeric";
+    });
+    if(!check(derived!=discharges.end()&&!items(field(*derived,"requires")).empty(),
+       "actual computed i32 discharge has prior proof"))return 3;
+    const auto obligation=field(*derived,"obligationId").getAsInteger();
+    if(!check(std::any_of(pending->discharges().begin(),pending->discharges().end(),[&](const GpuI32Discharge &row){
+      return obligation==row.site.obligationId&&!row.prerequisites.empty();
+    }),"owned computed i32 discharge retains prerequisites"))return 3;
+    (*derived->getAsObject())["requires"]=Array{};
+    changed.getAsObject()->erase("artifactDigest");
+    const auto changedDigest=digest(canonical(changed)+"\n");
+    (*changed.getAsObject())["artifactDigest"]=changedDigest;
+    Error rejected;
+    if(!check(!readGpuBindingModule(canonical(changed)+"\n",program,plan,"single-source-call-v1",context,pending,rejected)&&
+        rejected.code=="core-ir-common-gpu-artifact-content"&&pending&&
+        pending->identity().artifactDigest==field(artifact,"artifactDigest").getAsString(),
+        "reader rejects rebound computed proof with missing prerequisites"))return 3;
+  }
 #ifdef TSFG_GPU_PREFLIGHT_BASELINE
   if(!check(pending->hostPreflightFulfilled(),"baseline has no successful Host preflight consumer for genuine call"))return 3;
   return 0;
@@ -149,6 +172,7 @@ int main(int argc,char **argv){
   if(!check(canonical(inputs(proof->bindings()))==savedInputs&&proof->call().words()==savedWords&&
       proof->call().identity().artifactDigest==identity&&proof->budgetAfter().fuelRemaining==1,"proof owns call and values after all caller inputs release"))return 3;
   (*report.getAsObject())["ownedAfterInputRelease"]=true;
+  if(checkDerived)(*report.getAsObject())["derivedReaderRejectedMissingPrerequisites"]=true;
   if(llvm::sys::ChangeStdoutToBinary())return 2;
   llvm::outs()<<canonical(report)<<'\n';llvm::outs().flush();return llvm::outs().has_error()?2:0;
 #endif

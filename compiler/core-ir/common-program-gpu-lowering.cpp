@@ -207,10 +207,17 @@ struct Lowering {
             const auto event=obligation(fn,where,"numeric-use","actual-initialized-i32",Object{
               {"operator",field(op.properties,"operator")},{"index",field(op.properties,"index")},
               {"operand",op.operands[0]},{"dependsOn",std::move(dependencies)}});
+            const bool computedI32=value.origin.getAsNull()&&value.actualI32&&!value.conditions.empty();
             if(emittingModule){
-              if(visibleWrite||!entryBudget||value.origin.getAsNull())
+              if(visibleWrite||!entryBudget||(!computedI32&&value.origin.getAsNull()))
                 return fail("capability","Host numeric preflight needs a reached pre-write binding or constant origin",where);
-              preflightSteps.push_back(Object{{"kind","numeric-use"},{"obligationId",int64_t(event)},
+              // The producing i32 operation and its prior checks already
+              // establish the tag. Keep this Source use in the proof chain.
+              if(computedI32)discharges.push_back(Object{{"obligationId",int64_t(event)},{"status","discharged"},
+                {"basis","Source actual i32 result"},{"relation","computed-i32-is-numeric"},{"operation","numeric-use"},
+                {"functionId",id},{"point",point(where)},{"source",source(where)},
+                {"requires",field(obligations.back(),"dependsOn")}});
+              else preflightSteps.push_back(Object{{"kind","numeric-use"},{"obligationId",int64_t(event)},
                 {"functionId",id},{"point",point(where)},{"source",source(where)},{"status","unfulfilled"},
                 {"operator",field(op.properties,"operator")},{"index",field(op.properties,"index")},
                 {"operand",op.operands[0]},
@@ -220,7 +227,8 @@ struct Lowering {
             }
             if(value.actualI32){
               (*obligations.back().getAsObject())["status"]=value.conditions.empty()?"proven-i32":"conditional-i32";
-            }else value.conditions.insert(event);
+            }
+            if(!value.actualI32||(emittingModule&&computedI32))value.conditions.insert(event);
             value.actualI32=true;const auto next=op.successors[0];
             values[fn.blocks[next].parameters[0]]=std::move(value);original["obligationId"]=int64_t(event);
             sourceOperations.push_back(std::move(original));block=next;continued=true;break;

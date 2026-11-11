@@ -53,8 +53,8 @@ struct GpuNumericUseStep {
   GpuNumericOrigin origin;
 };
 using GpuPendingHostStep=std::variant<GpuEntryBudgetStep,GpuNumericUseStep>;
-// Exact i32 arithmetic, bitwise or proven-count shift relation; prerequisites
-// remain pending Host checks.
+// Exact i32 operation or computed-value numeric-use relation. Prerequisites
+// refer to earlier compiler discharges and pending Host checks.
 struct GpuI32Discharge {GpuObligationSite site;std::vector<uint32_t> prerequisites;};
 struct GpuCallIdentity {
   std::string inputIdentity,hirDigest,scopeDigest,publishedDigest;
