@@ -225,6 +225,60 @@ function loopStorage(report,fixture,fn){
     assert.ok(graph.instructions.some(row=>row.kind==='load'&&row.pointer===normal.id),'normal block argument retains the fresh result plane');
   }
 }
+/** Follow the scalar return in the official cold LLVM print to its two owned field pairs.
+ * @param {string} llvm
+ * @param {string} functionId
+ */
+function paddedEquality(llvm,functionId){
+  const lines=llvm.split('\n'),symbol='@value_'+functionId.slice(7)+'(';
+  const header=lines.findIndex(line=>line.startsWith('define ')&&line.includes(symbol));
+  assert.ok(header>=0,'selected padded equality function');
+  const end=lines.indexOf('}',header);
+  assert.ok(end>header,'selected function body');
+  const body=lines.slice(header+1,end);
+  const parameters=[...lines[header].matchAll(/\{ i8, i64 \} (%[\w.$-]+)/g)].map(row=>row[1]);
+  assert.equal(parameters.length,2,'two original value parameters');
+  const definitions=new Map();
+  for(const line of body){
+    const row=line.match(/^  (%[\w.$-]+) = (.+)$/);
+    if(row)definitions.set(row[1],row[2]);
+  }
+  const stores=body.flatMap(line=>{
+    const row=line.match(/^  store (ptr|\{ i8, i64 \}) (%[\w.$-]+), ptr (%[\w.$-]+), align \d+$/);
+    return row?[row]:[];
+  });
+  const returns=body.flatMap(line=>line.match(/^  ret i8 (%[\w.$-]+)$/)?.slice(1)??[]);
+  assert.equal(returns.length,1,'one computed normal equality result');
+  const widened=definitions.get(returns[0])?.match(/^zext i1 (%[\w.$-]+) to i8$/);
+  assert.ok(widened,'normal result widens an i1 equality');
+  const join=definitions.get(widened[1])?.match(/^and i1 (%[\w.$-]+), (%[\w.$-]+)$/);
+  assert.ok(join,'normal result joins both field comparisons');
+  const compares=join.slice(1).map(id=>definitions.get(id)?.match(/^icmp eq (i8|i64) (%[\w.$-]+), (%[\w.$-]+)$/));
+  const reads=new Set(),addresses=[];
+  for(const [index,width] of ['i8','i64'].entries()){
+    const compare=compares.find(row=>row?.[1]===width);
+    assert.ok(compare,'return must depend on both field widths');
+    const sources=compare.slice(2).map(id=>{
+      reads.add(id);
+      const load=definitions.get(id)?.match(/^load (i8|i64), ptr (%[\w.$-]+), align \d+$/);
+      assert.ok(load&&load[1]===width,'comparison reads the declared field width');
+      const address=definitions.get(load[2])?.match(/^getelementptr \{ i8, i64 \}, ptr (%[\w.$-]+), i32 0, i32 ([01])$/);
+      assert.ok(address&&Number(address[2])===index,'comparison reads the declared field instead of padding');
+      addresses.push({id:load[2],base:address[1],field:index});
+      const alias=definitions.get(address[1])?.match(/^load ptr, ptr (%[\w.$-]+), align \d+$/);
+      assert.ok(alias,'field pointer uses a captured parameter plane');
+      reads.add(address[1]);
+      const plane=stores.filter(row=>row[1]==='ptr'&&row[3]===alias[1]);
+      assert.equal(plane.length,1,'one captured plane for the field read');
+      const source=stores.filter(row=>row[1]==='{ i8, i64 }'&&row[3]===plane[0][2]);
+      assert.equal(source.length,1,'one parameter initializes the plane');
+      return source[0][2];
+    });
+    assert.deepEqual(sources.sort(),[...parameters].sort(),'compare the same field of the two distinct parameters');
+  }
+  assert.deepEqual(new Set([...definitions].filter(([,operation])=>operation.startsWith('load ')).map(([id])=>id)),reads,'no other memory reads feed padded equality');
+  return {joined:widened[1],join,firstField:addresses[0]};
+}
 for(const fixture of fixturePins){
   const raw=await Promise.all(['package.json','official-oracle.json','source.ts'].map(name=>fs.readFile(new URL('./testdata/formal-value-llvm-v3/'+fixture.name+'/'+name,import.meta.url))));
   raw.forEach((bytes,index)=>assert.equal(sha(bytes),fixture.pins[index],'frozen official Source input'));
@@ -281,5 +335,15 @@ for(const fixture of fixturePins){
       if(fixture.name==='value-call'){assert.equal(report.functions,2);assert.equal(report.directCalls,1);assert.equal(report.events.filter(row=>row.kind===0).length,1);}
       if(fixture.name==='value-recursive'){assert.equal(report.controlFlows[0].resultType,'void');assert.equal(report.physicalCFG[0].emptyNormalResult,true);assert.deepEqual(report.physicalCFG[0].blocks,[0]);}
       if(['value-equal','value-not-equal','padded-equal'].includes(fixture.name)){assert.equal(report.fieldComparisons,2);assert.equal(report.fieldWrites.length,0);assert.ok(report.fieldReads.length>=4);}
+      if(fixture.name==='padded-equal'){
+        const {joined,join,firstField}=paddedEquality(report.llvm,fn.id);
+        const bypass=report.llvm.replace(`  ${joined} = ${join[0]}\n`,`  ${joined} = and i1 ${join[1]}, ${join[1]}\n`);
+        assert.notEqual(bypass,report.llvm);
+        assert.throws(()=>paddedEquality(bypass,fn.id),/both field widths/);
+        const {id,base,field}=firstField;
+        const padding=report.llvm.replace(`  ${id} = getelementptr { i8, i64 }, ptr ${base}, i32 0, i32 ${field}\n`,`  ${id} = getelementptr i8, ptr ${base}, i64 1\n`);
+        assert.notEqual(padding,report.llvm);
+        assert.throws(()=>paddedEquality(padding,fn.id),/declared field instead of padding/);
+      }
     });
 }
