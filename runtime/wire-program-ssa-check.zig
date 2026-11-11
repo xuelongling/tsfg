@@ -59,6 +59,7 @@ const Graph = struct {
     definitions: []Definition, uses: []Use, facts: []Facts, dom: []Bits, fully_reached: bool=false,
     has_environment_init: bool=false,
     has_environment_access: bool=false,
+    has_direct_environment_call: bool=false,
 
     fn init(c: *Context, index: usize) Error!Graph {
         const f=&c.program.functions[index];
@@ -267,6 +268,10 @@ const Graph = struct {
             .common => |v| {
                 const abi=v.abis[a];
                 for(op.operands,abi.physical_parameters) |r,carrier| { try c.require(exact(self.carrierOf(r),carrier)); }
+                if (abi.lexical_environment != null) {
+                    try c.step();
+                    self.has_direct_environment_call = true;
+                }
                 const output=self.f.blocks[@intFromEnum(normal.?)].parameters;
                 if(abi.result_carrier) |result|try c.require(output.len==1 and exact(self.carrierOf(output[0]),result)) else try c.require(output.len==0);
                 try self.language(exceptional.?);
@@ -1006,30 +1011,147 @@ const Graph = struct {
         }
     }
 
-    fn environmentDirectCellState(self: *Graph, proven: EnvironmentAllocations) Error!void {
-        if(self.mode!=.common or !self.has_environment_access)return;
+    const EnvironmentCell = struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
+    const EnvironmentCallSite = struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef, block: usize };
+    const EnvironmentCells = std.AutoHashMapUnmanaged(EnvironmentCell, void);
+    const EnvironmentCallSites = std.AutoHashMapUnmanaged(EnvironmentCallSite, void);
+
+    fn environmentMapGrowth(c: *Context, map: anytype, row_words: usize) Error!void {
+        const capacity = @as(usize, map.capacity());
+        const used = @as(usize, map.count());
+        // The insert-only default-load maps grow before lookup. Prepay old
+        // buckets, new metadata and the retained key/value rows.
+        if (used == capacity * std.hash_map.default_max_load_percentage / 100)
+            try c.charge(capacity + @max(8, 2 * capacity) + row_words * used);
+    }
+
+    fn rememberEnvironmentCell(c: *Context, pairs: *EnvironmentCells, cell: EnvironmentCell) Error!void {
+        try c.row(EnvironmentCell);
+        try environmentMapGrowth(c, pairs, 3);
+        _ = try pairs.getOrPut(c.allocator, cell);
+    }
+
+    fn directCalleeEnvironmentSlots(
+        self: *Graph,
+        target: *const model.Function,
+        layout: t.EnvironmentRef,
+        allocator: std.mem.Allocator,
+    ) Error![]const t.EnvironmentSlotRef {
+        const c = self.c;
+        const slots = c.program.tables.mode.common.closures.environments[@intFromEnum(layout)].slots;
+        if (slots.len == 0) return &.{};
+        try c.require(target.blocks[0].parameters.len != 0);
+        const input = target.blocks[0].parameters[0];
+        try c.require(exact(target.registers[@intFromEnum(input)].carrier, .{ .environment = layout }));
+        try c.charge(slots.len + zero.len + 4);
+        const seen_slots = try allocator.alloc(bool, slots.len);
+        @memset(seen_slots, false);
+        var needs: std.ArrayListUnmanaged(t.EnvironmentSlotRef) = .empty;
+        var seen_blocks = zero;
+        var pending: [256]usize = undefined;
+        pending[0] = 0;
+        put(&seen_blocks, 0);
+        var count: usize = 1;
+        var cursor: usize = 0;
+        while (cursor < count) : (cursor += 1) {
+            try c.charge(3);
+            const block = &target.blocks[pending[cursor]];
+            for (block.instructions) |*op| {
+                try c.step();
+                const slot = switch (op.data) {
+                    inline .environment_load, .environment_store => |v| v.slot,
+                    else => continue,
+                };
+                try c.charge(3);
+                if (op.operands[0] != input or seen_slots[@intFromEnum(slot)]) continue;
+                if (needs.items.len == needs.capacity) try c.charge(needs.items.len + 1);
+                try c.charge(2);
+                seen_slots[@intFromEnum(slot)] = true;
+                try needs.append(allocator, slot);
+            }
+            try c.step();
+            const successors = edgeTargets(&block.instructions[block.instructions.len - 1]);
+            for (successors.blocks[0..successors.count]) |next| {
+                try c.charge(4 + zero.len);
+                if (has(seen_blocks, next)) continue;
+                put(&seen_blocks, next);
+                pending[count] = next;
+                count += 1;
+            }
+        }
+        return needs.items;
+    }
+
+    fn observeDirectEnvironmentCalls(self: *Graph, pairs: *EnvironmentCells, sites: *EnvironmentCallSites) Error!void {
+        const c = self.c;
+        const common = &c.program.tables.mode.common;
+        var activation: ?t.EnvironmentRef = null;
+        for (common.closures.functions) |row| {
+            try c.step();
+            if (@intFromEnum(row.function) != self.function) continue;
+            activation = row.activation_environment;
+            break;
+        }
+        const layout = activation orelse return;
+        if (@intFromEnum(common.closures.environments[@intFromEnum(layout)].owner) != self.function) return;
+        try c.charge(self.f.blocks.len + 4);
+        var repeats: [256]?bool = undefined;
+        @memset(repeats[0..self.f.blocks.len], null);
+        var arena = std.heap.ArenaAllocator.init(c.allocator);
+        defer arena.deinit();
+        var needs: std.AutoHashMapUnmanaged(t.FunctionRef, []const t.EnvironmentSlotRef) = .empty;
+        defer needs.deinit(c.allocator);
+        for (self.f.blocks, 0..) |block, block_index| {
+            try c.charge(3);
+            if (!self.facts[block_index].reachable) continue;
+            const op = &block.instructions[block.instructions.len - 1];
+            if (op.data != .eh_invoke) continue;
+            try c.charge(4);
+            const callee = op.data.eh_invoke.callee;
+            const target = &c.program.functions[@intFromEnum(callee)];
+            const abi = &common.abis[@intFromEnum(target.abi)];
+            if (target.role != .ordinary or abi.lexical_environment != layout) continue;
+            const receiver = op.operands[0];
+            const actual = try self.environmentIdentity(receiver);
+            if (actual != .allocation or actual.allocation != layout) continue;
+            try c.charge(3);
+            const allocation_block = self.definitions[@intFromEnum(receiver)].block;
+            if (repeats[allocation_block] == null)
+                repeats[allocation_block] = try self.environmentAllocCanRepeat(allocation_block);
+            if (repeats[allocation_block].?) continue;
+            try c.charge(4);
+            try environmentMapGrowth(c, &needs, 4);
+            const entry = try needs.getOrPut(c.allocator, callee);
+            if (!entry.found_existing)
+                entry.value_ptr.* = try self.directCalleeEnvironmentSlots(target, layout, arena.allocator());
+            for (entry.value_ptr.*) |slot| {
+                try rememberEnvironmentCell(c, pairs, .{ .receiver = receiver, .slot = slot });
+                try c.row(EnvironmentCallSite);
+                try environmentMapGrowth(c, sites, 4);
+                _ = try sites.getOrPut(c.allocator, .{ .receiver = receiver, .slot = slot, .block = block_index });
+            }
+        }
+    }
+
+    fn environmentDirectCellState(self: *Graph, proven: ?EnvironmentAllocations) Error!void {
         const c=self.c;
-        const allocations = proven.direct;
-        const Pair=struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
-        var pairs: std.AutoHashMapUnmanaged(Pair,void)=.{}; defer pairs.deinit(c.allocator);
-        for(self.f.blocks) |block| for(block.instructions) |op| {
+        const allocations = if (proven) |known| known.direct else &.{};
+        var pairs: EnvironmentCells = .empty; defer pairs.deinit(c.allocator);
+        var call_sites: EnvironmentCallSites = .empty; defer call_sites.deinit(c.allocator);
+        if (proven) |known| for(self.f.blocks) |block| for(block.instructions) |op| {
             try c.step(); const slot=switch(op.data) {
                 inline .environment_init,.environment_load,.environment_store => |v| v.slot,
                 else => continue,
             };
             try c.step(); const allocation=allocations[@intFromEnum(op.operands[0])] orelse continue;
-            if (proven.checked_layout) |layout| {
+            if (known.checked_layout) |layout| {
                 try c.step();
                 if (self.environmentInLayout(allocation, layout)) continue;
             }
-            try c.row(Pair);
-            const capacity=@as(usize,pairs.capacity()); const used=@as(usize,pairs.count());
-            // This insert-only default-load map grows before lookup. Prepay
-            // old buckets, new metadata and each retained pair's rehash/copy.
-            if(used==capacity*std.hash_map.default_max_load_percentage/100)
-                try c.charge(capacity+@max(8,2*capacity)+3*used);
-            _=try pairs.getOrPut(c.allocator,.{.receiver=allocation,.slot=slot});
+            try rememberEnvironmentCell(c, &pairs, .{ .receiver = allocation, .slot = slot });
         };
+        if (self.has_direct_environment_call) try self.observeDirectEnvironmentCalls(&pairs, &call_sites);
+        const has_call_sites = call_sites.count() != 0;
         try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
         var iterator=pairs.keyIterator();
         while(true) {
@@ -1037,7 +1159,7 @@ const Graph = struct {
             const count=self.f.blocks.len;
             // The unique original result resets this instance only when its
             // allocation executes again. Proven transparent receivers share
-            // that cell; mixed/unknown and interprocedural state remain separate.
+            // that cell. A direct call can observe it, without changing state.
             try c.charge(4*count);
             var last: [256]u2=undefined; @memset(last[0..count],0);
             var incoming: [256]u2=undefined; @memset(incoming[0..count],0);
@@ -1083,6 +1205,13 @@ const Graph = struct {
                             if(allocations[@intFromEnum(op.operands[0])]!=pair.receiver or v.slot!=pair.slot)continue;
                             if(op.data==.environment_init) { try c.require(state==1); state=2; }
                             else try c.require(state==2);
+                        },
+                        .eh_invoke => if (has_call_sites) {
+                            // The child sees this binding before either of
+                            // the caller's continuations.
+                            try c.row(EnvironmentCallSite);
+                            if (call_sites.contains(.{ .receiver = pair.receiver, .slot = pair.slot, .block = b }))
+                                try c.require(state == 2);
                         },
                         else => {},
                     }
@@ -1381,7 +1510,7 @@ const Graph = struct {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
         try self.usesDom(); try self.entryAbi(); try self.operations();
         const allocations=try self.environmentOrigins(); defer if(allocations) |values| self.c.allocator.free(values.direct);
-        if(allocations) |values|try self.environmentDirectCellState(values);
+        if (allocations != null or self.has_direct_environment_call) try self.environmentDirectCellState(allocations);
         try self.globalInitialization(); try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof
         // adds no second dominance graph, Context, Source table or admission.

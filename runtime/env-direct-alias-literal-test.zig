@@ -653,3 +653,101 @@ test "literal Env loop can observe an older initialized allocation after allocat
         },
     });
 }
+
+const CallerInit = enum { before, after, absent };
+const ChildAccess = enum { load, store, unreachable_load };
+
+fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, accept: bool) !void {
+    const invoke_child: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = .{ .eh_invoke = .{
+        .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2),
+    } } };
+    const caller_entry = seed ++ [_]ins.Instruction{alloc} ++ (if (initialization == .before) [_]ins.Instruction{init_original} else [_]ins.Instruction{}) ++ [_]ins.Instruction{invoke_child};
+    const caller_return = if (initialization == .after) &.{ init_original, returned } else &.{returned};
+    const caller_registers = base_registers ++ [_]model.Register{.{ .carrier = .payload, .view = null }};
+    const caller_blocks = [_]model.Block{
+        .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
+        .{ .parameters = &.{}, .instructions = caller_return },
+        .{ .parameters = &.{r(4)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(4)}, .data = .eh_raise }} },
+    };
+    const child_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(0)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } };
+    const child_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(0), r(1) }, .data = .{ .environment_store = .{ .slot = @enumFromInt(0) } } };
+    const child_jump: ins.Instruction = .{ .source = at, .result = null, .operands = &.{}, .data = .{ .br = .{ .destination = b(1) } } };
+    const child_blocks: []const model.Block = switch (access) {
+        .load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], child_jump } },
+            .{ .parameters = &.{}, .instructions = &.{ child_load, returned } },
+        },
+        .store => &.{.{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], seed[1], child_store, returned } }},
+        .unreachable_load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], returned } },
+            .{ .parameters = &.{}, .instructions = &.{ child_load, returned } },
+        },
+    };
+    var fixture: Fixture = undefined;
+    fixture.init(.{ .name = "direct owned Env invocation", .accept = accept, .registers = &caller_registers, .blocks = &caller_blocks, .carriers = &.{}, .plans = &.{} });
+    var functions = [_]model.Function{ fixture.functions[0], fixture.functions[0] };
+    functions[1].id = @splat(0x96);
+    functions[1].abi = @enumFromInt(1);
+    functions[1].name = "observeCapture";
+    functions[1].registers = &.{ env_register, value_register };
+    functions[1].blocks = child_blocks;
+    var abis = [_]storage.CommonAbi{ fixture.abis[0], fixture.abis[0] };
+    abis[1].function = @enumFromInt(1);
+    abis[1].parameters = &.{};
+    abis[1].argument_types = &.{};
+    abis[1].lexical_environment = @enumFromInt(0);
+    abis[1].physical_parameters = &.{env_register.carrier};
+    fixture.program.functions = &functions;
+    const common = &fixture.program.tables.mode.common;
+    common.abis = &abis;
+    common.closures.functions = &.{
+        common.closures.functions[0],
+        .{ .function = @enumFromInt(1), .parent = @enumFromInt(0), .lexical_environment = @enumFromInt(0), .activation_environment = null,
+            .captures = &.{.{ .environment = @enumFromInt(0), .slot = @enumFromInt(0) }} },
+    };
+    common.exceptions.functions = &.{ common.exceptions.functions[0], .{ .function = @enumFromInt(1), .handlers = &.{} } };
+    const fixed = &common.authority.fixed_publication;
+    var child_declaration = fixed.stable_scope.functions[0];
+    child_declaration.function_id = functions[1].id;
+    child_declaration.decl_key.name = functions[1].name;
+    child_declaration.decl_key.path = &.{ "function", "aliasFactory", "observeCapture" };
+    child_declaration.parameter_types = &.{};
+    child_declaration.lexical_parent = functions[0].id;
+    child_declaration.lexical_environment = environment_id;
+    child_declaration.activation_environment = null;
+    child_declaration.captures = &.{slot_key};
+    fixed.stable_scope.functions = &.{ fixed.stable_scope.functions[0], child_declaration };
+    fixed.publication.scope = fixed.stable_scope;
+    var child_contract = fixed.publication.contracts[0];
+    child_contract.function_id = functions[1].id;
+    child_contract.digest = @splat(0x52);
+    fixed.publication.contracts = &.{ fixed.publication.contracts[0], child_contract };
+    fixed.dependencies = &.{
+        .{ .function_id = functions[0].id, .callees = &.{.{ .function_id = functions[1].id, .digest = child_contract.digest }}, .hosts = &.{} },
+        .{ .function_id = functions[1].id, .callees = &.{}, .hosts = &.{} },
+    };
+    var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    try refs.check(&c);
+    try layout.check(&c);
+    const result = ssa.check(&c);
+    if (accept) try result else try std.testing.expectError(error.InvalidShape, result);
+}
+
+test "literal direct child cannot read an uninitialized owned Env slot" {
+    try runDirectChild(.absent, .load, false);
+}
+test "literal direct child's read requires init before invoke rather than on return" {
+    try runDirectChild(.after, .load, false);
+}
+test "literal direct child can read an initialized owned Env slot" {
+    try runDirectChild(.before, .load, true);
+}
+test "literal direct child cannot store into an uninitialized owned Env slot" {
+    try runDirectChild(.absent, .store, false);
+}
+test "literal direct child can store into an initialized owned Env slot" {
+    try runDirectChild(.before, .store, true);
+}
+test "literal direct child with only an unreachable Env read needs no init" {
+    try runDirectChild(.absent, .unreachable_load, true);
+}
