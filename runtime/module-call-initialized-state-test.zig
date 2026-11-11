@@ -340,7 +340,7 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                     .function_make => |v| {
                         const target=try c.ref(v.function,c.program.functions.len);
                         try std.testing.expect(op.result!=null and op.operands.len==0);
-                        try std.testing.expectEqual(f1,c.program.functions[target].id);
+                        try std.testing.expectEqual(if(index==1)f2 else f1,c.program.functions[target].id);
                         try std.testing.expect(c.program.functions[target].role==.ordinary);
                         try std.testing.expect(common.abis[target].lexical_environment==null);
                         try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(op.result.?)].carrier,callable_carrier));
@@ -360,8 +360,10 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                         try std.testing.expect(logical.kind==.function and logical.element==void_type and logical.members.len==0);
                         const call=common.closures.calls[0];
                         try std.testing.expect(call.function==@as(t.FunctionRef,@enumFromInt(index)) and call.block==@as(t.BlockRef,@enumFromInt(b)) and call.instruction==i);
-                        try std.testing.expect(call.targets.len==1 and call.targets[0]==@as(t.FunctionRef,@enumFromInt(1)) and std.mem.eql(u8,&call.signature,&signature));
-                        const abi=common.abis[1];
+                        const target: usize=if(index==1)2 else 1;
+                        try std.testing.expect(call.targets.len==1 and call.targets[0]==@as(t.FunctionRef,@enumFromInt(target)) and std.mem.eql(u8,&call.signature,&signature));
+                        try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(op.operands[0])].carrier,callable_carrier));
+                        const abi=common.abis[target];
                         try std.testing.expect(abi.receiver==null and abi.lexical_environment==null and abi.physical_parameters.len==0 and abi.result==null);
                     },
                     .eh_carrier => |view| {
@@ -578,7 +580,7 @@ const SavedCodeFixture = struct {
     concrete: [4]Concrete,
     calls: [1]FixedCall,
 
-    fn install(self: *SavedCodeFixture, base: *Fixture, caller: *wire.Function, comptime initialized: bool, comptime transport: SavedCodeTransport) void {
+    fn installTypes(self: *SavedCodeFixture, base: *Fixture) void {
         const common=&base.program.tables.mode.common;
         self.types=base.types ++ [_]tables.CommonType{
             .{ .id=@splat(0x13),.kind=.@"void",.name="void",.native_code=0,.base=null,.element=null,.members=&.{},.methods=null,.nominal_key=null,.runtime_key=null },
@@ -588,6 +590,13 @@ const SavedCodeFixture = struct {
             .{ .@"type"=void_type,.carrier=.{ .layout=.{ .byte_size=0,.alignment=1,.reference_count=0 },.field_offsets=&.{} },.body=null },
             .{ .@"type"=callable_type,.carrier=.{ .layout=.{ .byte_size=40,.alignment=8,.reference_count=1 },.field_offsets=&.{} },.body=null },
         };
+        common.types=&self.types;
+        common.storage.concrete=&self.concrete;
+        common.closures.calls=&self.calls;
+    }
+
+    fn install(self: *SavedCodeFixture, base: *Fixture, caller: *wire.Function, comptime initialized: bool, comptime transport: SavedCodeTransport) void {
+        self.installTypes(base);
         const prefix = if (initialized) [_]ins.Instruction{constant,init0,make_saved} else [_]ins.Instruction{constant,make_saved};
         const suffix = switch (transport) {
             .literal => [_]ins.Instruction{invoke_saved},
@@ -600,9 +609,6 @@ const SavedCodeFixture = struct {
         caller.registers=saved_registers[0..switch (transport) { .literal => 3, .copy,.view => 4, .copy_view => 5 }];
         self.calls=.{.{ .function=@enumFromInt(0),.block=@enumFromInt(0),.instruction=@intCast(instructions.len-1),
             .signature=signature,.targets=&.{@enumFromInt(1)} }};
-        common.types=&self.types;
-        common.storage.concrete=&self.concrete;
-        common.closures.calls=&self.calls;
     }
 
     fn installBlock(self: *SavedCodeFixture, base: *Fixture, caller: *wire.Function, comptime initialized: bool, comptime transport: BlockCodeTransport) void {
@@ -671,6 +677,38 @@ test "module fixed Code view of a block parameter retains the literal" { try che
 test "module fixed Code requires initialization on parallel edges carrying one literal" { try checkBlockCode(.store_before_init,false,.parallel,true); }
 test "module fixed Code parallel edges allow a prior initialized write" { try checkBlockCode(.store_after_init,true,.parallel,false); }
 test "module fixed Code parallel edges distinguish separate literals for one target" { try checkBlockCode(.before_init,false,.distinct,false); }
+
+fn checkNestedLiteral(initialized: bool, write: bool, rejected: bool) !void {
+    var fixture: Fixture=undefined;
+    fixture.init(if(initialized).nested_after_init else .nested_before_init);
+    var saved: SavedCodeFixture=undefined;
+    saved.installTypes(&fixture);
+    saved.calls=.{.{ .function=@enumFromInt(1),.block=@enumFromInt(0),.instruction=2,
+        .signature=signature,.targets=&.{@enumFromInt(2)} }};
+    fixture.callee_instructions[0..5].*=.{entry_fuel,make_saved,invoke_saved,ret,raise};
+    fixture.callee_instructions[1].result=r1;
+    fixture.callee_instructions[1].data.function_make.function=@enumFromInt(2);
+    fixture.callee_instructions[2].operands=&language;
+    fixture.callee_instructions[4].operands=&value;
+    fixture.callee_blocks[0].instructions=fixture.callee_instructions[0..3];
+    fixture.callee_blocks[1].instructions=fixture.callee_instructions[3..4];
+    fixture.callee_blocks[2].instructions=fixture.callee_instructions[4..5];
+    fixture.functions[1].registers=&.{caller_registers[1],code_register};
+    if(write) {
+        fixture.other_instructions[0..4].*=.{entry_fuel,constant,store0,ret};
+        fixture.other_blocks[0].instructions=fixture.other_instructions[0..4];
+    }
+    var c=context.Context{ .program=&fixture.program,.allocator=std.testing.allocator };
+    try prerequisites(&c,false);
+    var fixed=try fixed_targets.analyze(&c);
+    defer fixed.deinit(c.allocator);
+    if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
+}
+
+test "module nested literal Code requires initialization before a read" { try checkNestedLiteral(false,false,true); }
+test "module nested literal Code allows an initialized read" { try checkNestedLiteral(true,false,false); }
+test "module nested literal Code requires initialization before a write" { try checkNestedLiteral(false,true,true); }
+test "module nested literal Code allows an initialized write" { try checkNestedLiteral(true,true,false); }
 
 test "module fixed Code leaves foreign Globals to the verified module order" {
     var fixture: CrossFixture=undefined;

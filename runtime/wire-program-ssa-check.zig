@@ -440,6 +440,19 @@ const Graph = struct {
         };
     }
 
+    fn fixedCallTargets(self: *Graph, function: t.FunctionRef, block: t.BlockRef, position: usize) Error![]const t.FunctionRef {
+        const c = self.c;
+        var matched: ?[]const t.FunctionRef = null;
+        for (c.program.tables.mode.common.closures.calls) |*row| {
+            try c.step();
+            if (row.function != function or row.block != block or row.instruction != position) continue;
+            try c.require(matched == null);
+            matched = row.targets;
+        }
+        try c.step();
+        return matched orelse error.InvalidShape;
+    }
+
     fn commonCall(self: *Graph, op: *const ins.Instruction, b: usize, position: usize, initializer_callee: ?*?t.FunctionRef) Error!void {
         const c=self.c; const v=c.program.tables.mode.common; const method=std.meta.activeTag(op.data)==.common_method_invoke;
         const normal=if(method)op.data.common_method_invoke.normal else op.data.eh_invoke_indirect.normal;
@@ -458,13 +471,10 @@ const Graph = struct {
             const signature=v.types[@intFromEnum(logical)]; const encoded=v.types[@intFromEnum(op.data.eh_invoke_indirect.callable)];
             try c.require(signature.kind==.function and signature.element==encoded.element and signature.members.len==encoded.members.len);
             for(signature.members,encoded.members) |actual,expected| { try c.step(); try c.require(actual==expected); }
-            var matched=false;
-            for(v.closures.calls) |row| {
-                try c.step(); if(@intFromEnum(row.function)!=self.function or @intFromEnum(row.block)!=b or row.instruction!=position)continue;
-                try c.require(!matched); matched=true;
-                for(row.targets) |target| { try c.step(); try targets.append(c.allocator,@intFromEnum(target)); }
+            for (try self.fixedCallTargets(@enumFromInt(self.function), @enumFromInt(b), position)) |target| {
+                try c.step();
+                try targets.append(c.allocator, @intFromEnum(target));
             }
-            try c.require(matched);
         }
         const output=self.f.blocks[@intFromEnum(normal)].parameters;
         if(targets.items.len==0) {
@@ -1710,11 +1720,27 @@ const Graph = struct {
             }
         }
     }
+    fn nestedLiteralCodeTarget(self: *Graph, function: t.FunctionRef, block: t.BlockRef, prefix: []const ins.Instruction, receiver: t.RegisterRef) Error!?t.FunctionRef {
+        // The unique earlier definition in this block dominates the call.
+        // Each body's own SSA check validates the callable and both ABI edges.
+        const c = self.c;
+        for (prefix) |*producer| {
+            try c.step();
+            if (producer.result != receiver) continue;
+            if (producer.data != .function_make) return null;
+            const targets = try self.fixedCallTargets(function, block, prefix.len);
+            try c.step();
+            const target = producer.data.function_make.function;
+            return if (targets.len == 1 and targets[0] == target) target else null;
+        }
+        return null;
+    }
+
     fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs) Error!void {
         // An imported ordinary call can reach the initializer's own Globals
         // through a callback. Visit exact targets from block 0, once per body.
         const c=self.c; try c.charge(3); const functions=c.program.functions;
-        const first=functions[@intFromEnum(target)];
+        const first=&functions[@intFromEnum(target)];
         if(first.role!=.ordinary)return;
         const globals=c.program.tables.mode.common.modules.globals;
         const mask_bits=@bitSizeOf(std.DynamicBitSetUnmanaged.MaskInt);
@@ -1727,21 +1753,25 @@ const Graph = struct {
         var pending_blocks: [256]usize=undefined; var function_cursor: usize=0; var function_count: usize=1;
         while(function_cursor<function_count) : (function_cursor+=1) {
             try c.step();
-            const function=&functions[@intFromEnum(pending_functions[function_cursor])];
+            const function_ref=pending_functions[function_cursor];
+            const function=&functions[@intFromEnum(function_ref)];
             var seen_blocks=zero;
             try c.charge(2); pending_blocks[0]=0; put(&seen_blocks,0);
             var block_cursor: usize=0; var block_count: usize=1;
             while(block_cursor<block_count) : (block_cursor+=1) {
-                try c.step(); const block=function.blocks[pending_blocks[block_cursor]];
-                for(block.instructions) |op| {
+                try c.step(); const block_index=pending_blocks[block_cursor];
+                const block=&function.blocks[block_index];
+                for(block.instructions,0..) |*op,position| {
                     try c.step(); const ref=switch(op.data) {
-                        .eh_invoke=>|v| {
-                            try c.charge(3); const index=@intFromEnum(v.callee);
+                        inline .eh_invoke,.eh_invoke_indirect=>|v,kind| {
+                            if (kind == .eh_invoke_indirect) try c.charge(2);
+                            const selected = if (kind == .eh_invoke) v.callee else
+                                (try self.nestedLiteralCodeTarget(function_ref, @enumFromInt(block_index), block.instructions[0..position], op.operands[0])) orelse continue;
+                            try c.charge(3); const index=@intFromEnum(selected);
                             if(!seen_functions.isSet(index)) {
                                 seen_functions.set(index);
-                                const callee=functions[index];
-                                if(callee.role==.ordinary) {
-                                    try c.step(); pending_functions[function_count]=v.callee; function_count+=1;
+                                if(functions[index].role==.ordinary) {
+                                    try c.step(); pending_functions[function_count]=selected; function_count+=1;
                                 }
                             }
                             continue;
