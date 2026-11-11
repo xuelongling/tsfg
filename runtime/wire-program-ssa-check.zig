@@ -1125,10 +1125,21 @@ const Graph = struct {
                             const call = observed_call orelse return null;
                             const invoke = &block.instructions[block.instructions.len - 1];
                             const code = op.result orelse return null;
-                            // The recorded call already proves the Code producer
-                            // and target. Its sole use must be this local call.
+                            // The recorded call already proves the Code producer and
+                            // target. Each forwarded value must stay local and have
+                            // a single use on the way to this call.
                             if (index != 0 or operand != call.receiver or invoke.data != .eh_invoke_indirect or
-                                invoke.operands[0] != code or self.uses[@intFromEnum(code)].count != 1) return null;
+                                self.uses[@intFromEnum(code)].count != 1) return null;
+                            var forwarded = invoke.operands[0];
+                            while (forwarded != code) {
+                                try c.charge(3);
+                                const ref = @intFromEnum(forwarded);
+                                if (self.definitions[ref].block != block_index or self.uses[ref].count != 1) return null;
+                                forwarded = switch (try self.initializerCodeDefinition(forwarded)) {
+                                    .source => |source| source,
+                                    else => return null,
+                                };
+                            }
                             has_local_saved_code = true;
                         },
                         else => return null,

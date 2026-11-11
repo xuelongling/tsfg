@@ -661,7 +661,7 @@ const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forw
 
 const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, rotated_edges, repeated_copy, repeated_previous };
 
-const ChildInvocation = enum { direct, saved, saved_extra_use };
+const ChildInvocation = enum { direct, saved, saved_extra_use, saved_copy, saved_view, saved_copy_view, saved_copy_view_extra_use };
 const saved_code_type: t.TypeRef = @enumFromInt(types.len);
 const saved_code_register: model.Register = .{ .carrier = .{ .@"type" = saved_code_type }, .view = saved_code_type };
 
@@ -687,8 +687,30 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         .source = at, .result = r(code_index + 1), .operands = &.{code},
         .data = .{ .domain_copy = .{ .static_view = saved_code_type } },
     };
+    const view_code: ins.Instruction = .{
+        .source = at, .result = r(code_index + 1), .operands = &.{code},
+        .data = .{ .domain_view = .{ .static_view = saved_code_type } },
+    };
+    const view_copy: ins.Instruction = .{
+        .source = at, .result = r(code_index + 2), .operands = &.{r(code_index + 1)}, .data = view_code.data,
+    };
+    const extra_use: ins.Instruction = .{
+        .source = at, .result = r(code_index + 3), .operands = &.{r(code_index + 1)}, .data = copy_code.data,
+    };
+    const code_transport = switch (invocation) {
+        .direct, .saved => [_]ins.Instruction{},
+        .saved_extra_use, .saved_copy => [_]ins.Instruction{copy_code},
+        .saved_view => [_]ins.Instruction{view_code},
+        .saved_copy_view => [_]ins.Instruction{ copy_code, view_copy },
+        .saved_copy_view_extra_use => [_]ins.Instruction{ copy_code, view_copy, extra_use },
+    };
+    const invoked_code = switch (invocation) {
+        .direct, .saved, .saved_extra_use => code,
+        .saved_copy, .saved_view => r(code_index + 1),
+        .saved_copy_view, .saved_copy_view_extra_use => r(code_index + 2),
+    };
     const invoke_child: ins.Instruction = .{
-        .source = at, .result = null, .operands = if (invocation == .direct) &.{receiver} else &.{code},
+        .source = at, .result = null, .operands = if (invocation == .direct) &.{receiver} else &.{invoked_code},
         .data = if (invocation == .direct)
             .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2) } }
         else
@@ -716,8 +738,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         .after, .absent, .second_edge_only, .both_edges => [_]ins.Instruction{},
     };
     const call = (if (saves_code) [_]ins.Instruction{make_code} else [_]ins.Instruction{}) ++
-        (if (invocation == .saved_extra_use) [_]ins.Instruction{copy_code} else [_]ins.Instruction{}) ++
-        before_call ++ [_]ins.Instruction{invoke_child};
+        code_transport ++ before_call ++ [_]ins.Instruction{invoke_child};
     const to_call: ins.Instruction = .{ .source = at, .result = null,
         .operands = if (transport == .block_parameter) &.{r(3)} else &.{}, .data = .{ .br = .{ .destination = b(3) } } };
     const choose_receiver: ins.Instruction = .{ .source = at, .result = null,
@@ -751,7 +772,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const caller_registers = base_registers ++ ([_]model.Register{env_register} ** aliases_count) ++ [_]model.Register{payload_register} ++
         (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{}) ++
         (if (saves_code) [_]model.Register{saved_code_register} else [_]model.Register{}) ++
-        (if (invocation == .saved_extra_use) [_]model.Register{saved_code_register} else [_]model.Register{});
+        ([_]model.Register{saved_code_register} ** code_transport.len);
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
@@ -1222,4 +1243,28 @@ test "literal saved child observes init of the selected Env after Code creation"
 
 test "literal mixed Env proof excludes saved Code with a second use" {
     try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_extra_use, true);
+}
+
+test "local Code copy requires the selected Env initialized on the second edge" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_copy, false);
+}
+
+test "local Code view requires the selected Env initialized on the first edge" {
+    try runChild(.second_edge_only, .load, .direct, .distinct_edges, .saved_view, false);
+}
+
+test "local Code copy and view still require init before the call" {
+    try runChild(.after, .store, .direct, .distinct_edges, .saved_copy_view, false);
+}
+
+test "local Code copy and view accept two initialized Env edges" {
+    try runChild(.both_edges, .load, .direct, .distinct_edges, .saved_copy_view, true);
+}
+
+test "local Code view observes selected Env init after forwarding" {
+    try runChild(.before, .load, .direct, .distinct_edges, .saved_view, true);
+}
+
+test "local Code copy with a second use stays outside the mixed Env proof" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_copy_view_extra_use, true);
 }
