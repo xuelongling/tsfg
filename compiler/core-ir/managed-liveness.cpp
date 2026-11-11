@@ -139,13 +139,16 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
   const auto width=fn.carriers.size(),words=(width+63)/64;
   if(!spend(fn.blocks.size()*(words+1)+width+1))return false;
 
-  const bool closureComponents=mode==CommonCallRootMode::ClosureComponents;
-  std::set<llvm::StringRef> direct,callables;
+  const bool closureComponents=mode!=CommonCallRootMode::DirectHandles;
+  const bool languageComponents=mode==CommonCallRootMode::LanguagePayloadComponents;
+  const auto payloadCarrier="payload:"+schema.str();
+  std::set<llvm::StringRef> direct,callables,inlinePayloads;
   for(const auto &row:items(field(program.hir,"types"))){
     const auto id=field(row,"id").getAsString().value(),kind=field(row,"kind").getAsString().value();
     if(!spend(id.size()/8+1))return false;
-    if(kind=="reference"||kind=="array")direct.insert(id);
+    if(kind=="reference"||kind=="array"||kind=="string")direct.insert(id);
     if(closureComponents&&kind=="function")callables.insert(id);
+    if(languageComponents&&(kind=="scalar"||kind=="null"||kind=="undefined"))inlinePayloads.insert(id);
   }
   for(const auto &row:items(field(program.representation,"domains"))){
     const auto id=field(row,"id").getAsString().value();
@@ -164,7 +167,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(!spend(id.size()/8+1))return false;
     bindings.emplace(id,field(row,"carrier").getAsString().value());
   }
-  enum class RootKind { None, Handle, CallableEnvironment, Unsupported };
+  enum class RootKind { None, Handle, CallableEnvironment, LanguagePayload, Unsupported };
   std::vector<RootKind> kinds;
   kinds.reserve(width);
   for(llvm::StringRef carrier:fn.carriers){
@@ -186,6 +189,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
         const bool environment=closureComponents&&carrier.starts_with("env:");
         if(storage.byteSize==8&&(environment||direct.count(carrier)))kind=RootKind::Handle;
         if(storage.byteSize==40&&callables.count(carrier))kind=RootKind::CallableEnvironment;
+        if(languageComponents&&storage.byteSize==16&&carrier==payloadCarrier)kind=RootKind::LanguagePayload;
       }
     }
     kinds.push_back(kind);
@@ -195,6 +199,45 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
   const auto call=[](const Operation &op){
     return op.name=="invoke"||op.name=="invoke_method"||op.name=="invoke_indirect"||op.name=="host_call";
   };
+  llvm::BitVector payloadRoots;
+  if(languageComponents){
+    if(!spend(2*width+fn.blocks[0].parameters.size()+1))return false;
+    payloadRoots.resize(width);
+    std::vector<std::vector<uint16_t>> forwardedTo(width);
+    std::deque<uint16_t> pendingPayloads;
+    const auto mark=[&](uint16_t reg){
+      if(!payloadRoots.test(reg)){payloadRoots.set(reg);pendingPayloads.push_back(reg);}
+    };
+    for(auto reg:fn.blocks[0].parameters)if(kinds[reg]==RootKind::LanguagePayload)mark(reg);
+    for(const auto &block:fn.blocks){
+      if(!spend(block.operations.size()+1))return false;
+      for(const auto &op:block.operations){
+        if(op.result!=noRegister&&kinds[op.result]==RootKind::LanguagePayload&&
+           (op.name!="pack"||!inlinePayloads.count(fn.carriers[op.operands[0]])))mark(op.result);
+      }
+      const auto &end=block.operations.back();
+      const bool forwarded=forwards(end);
+      size_t offset=end.name=="cf.cond_br"?1:0;
+      for(auto successor:end.successors){
+        const auto &parameters=fn.blocks[successor].parameters;
+        if(!spend(parameters.size()+1))return false;
+        for(auto reg:parameters){
+          if(kinds[reg]==RootKind::LanguagePayload){
+            if(forwarded)forwardedTo[end.operands[offset]].push_back(reg);
+            else mark(reg);
+          }
+          ++offset;
+        }
+      }
+    }
+    // Only known inline scalar and absence packs start unmarked. An
+    // aggregate may need a handle in the payload even if its fields do not.
+    while(!pendingPayloads.empty()){
+      const auto reg=pendingPayloads.front();pendingPayloads.pop_front();
+      if(!spend(forwardedTo[reg].size()+1))return false;
+      for(auto target:forwardedTo[reg])mark(target);
+    }
+  }
   std::vector<llvm::BitVector> incoming(fn.blocks.size(),llvm::BitVector(width));
   std::vector<std::vector<uint16_t>> predecessors(fn.blocks.size());
   for(size_t block=0;block<fn.blocks.size();++block){
@@ -259,7 +302,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
       if(!call(op))continue;
       const auto &path=sources.at({uint16_t(block),uint16_t(i-1)});
       if(!spend(words+path.size()/8+op.name.size()/8+2))return false;
-      CommonCallRootPoint point{uint16_t(block),uint16_t(i-1),op.name,path,op.range.start,op.range.end,{},{}};
+      CommonCallRootPoint point{uint16_t(block),uint16_t(i-1),op.name,path,op.range.start,op.range.end,{},{},{}};
       for(int reg=live.find_first();reg>=0;reg=live.find_next(reg)){
         if(!spend(1))return false;
         if(kinds[reg]==RootKind::Unsupported){
@@ -268,6 +311,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
         }
         if(kinds[reg]==RootKind::Handle)point.registers.push_back(uint16_t(reg));
         if(kinds[reg]==RootKind::CallableEnvironment)point.callableEnvironments.push_back(uint16_t(reg));
+        if(kinds[reg]==RootKind::LanguagePayload&&payloadRoots.test(reg))point.languagePayloads.push_back(uint16_t(reg));
       }
       points.push_back(std::move(point));
     }

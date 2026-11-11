@@ -19,6 +19,10 @@ constexpr llvm::StringLiteral applyId="sha256:f81224112d56acf107ebcf77097425c259
 constexpr llvm::StringLiteral captureEntryId="sha256:08336fc3b75806ccea5baaefcc96787673b5abcd49e2237549a56b1280429c66";
 constexpr llvm::StringLiteral captureFactoryId="sha256:7b7462e6f982797f4db5e2d2e71baa0ba88221c8cb97396e491a5b152c8aa5c8";
 constexpr llvm::StringLiteral closureEntryId="sha256:3247ed3759a3779cdde9a7369e5532c6b766c9414fdaed81bc9e6e7d944c816f";
+constexpr llvm::StringLiteral pendingReferenceId="sha256:87d64c5de6c4ce58136981e48222c1eae5b4088101a7add1c1824b9db735ad13";
+constexpr llvm::StringLiteral pendingScalarId="sha256:778c6f954484852958044ca0b0cf465e970df07e453deef836d498ee5ae04153";
+constexpr llvm::StringLiteral pendingValueId="sha256:be87c98a7eca2aa319feea864d51dd52786814beacd856a229e018753f06b54b";
+constexpr llvm::StringLiteral stringEntryId="sha256:f0ee64fefc8c14813a266777e9ac42ad0e8a5563f6959e7cfc5360bfb9a54708";
 
 void diagnostic(const tsfg::commonProgram::Error &error) {
   llvm::errs()<<'['<<error.code<<"] "<<error.message<<" ("<<error.path<<':'<<error.range.start<<':'<<error.range.end<<")\n";
@@ -34,7 +38,8 @@ bool pointsMatch(const tsfg::CommonCallRoots &result,llvm::ArrayRef<tsfg::Common
     const auto &point=result.points[i],&want=expected[i];
     if(point.block!=want.block||point.instruction!=want.instruction||point.operation!=want.operation||
        point.sourcePath!=want.sourcePath||point.start!=want.start||point.end!=want.end||
-       point.registers!=want.registers||point.callableEnvironments!=want.callableEnvironments)return false;
+       point.registers!=want.registers||point.callableEnvironments!=want.callableEnvironments||
+       point.languagePayloads!=want.languagePayloads)return false;
   }
   return true;
 }
@@ -87,6 +92,37 @@ bool rejectsWrongPublication(mlir::ModuleOp module,llvm::StringRef functionId,
       tsfg::CommonCallRootMode::ClosureComponents)&&empty(result)&&error.code=="core-ir-common-publication";
 }
 
+int pendingLanguage(mlir::ModuleOp module,llvm::StringRef functionId) {
+  using tsfg::CommonCallRootPoint;
+  using tsfg::CommonCallRootMode;
+  tsfg::CommonCallRoots result;
+  tsfg::commonProgram::Error error;
+  const bool stringEntry=functionId==stringEntryId;
+  const auto mode=stringEntry?CommonCallRootMode::DirectHandles:CommonCallRootMode::LanguagePayloadComponents;
+  if(!tsfg::analyzeCommonCallRoots(module,functionId,result,error,tsfg::commonCallRootsWorkLimit,mode)){
+    diagnostic(error);return 3;
+  }
+  std::vector<CommonCallRootPoint> expected={{0,3,"invoke","/src/main.ts",475,487,{1},{},{}}};
+  if(functionId==pendingScalarId)expected={{1,3,"invoke","/src/main.ts",409,419,{},{},{}}};
+  if(functionId==pendingValueId)expected={{1,3,"invoke","/src/main.ts",648,658,{},{},{6}}};
+  if(functionId==pendingReferenceId)expected={
+    {5,3,"invoke","/src/main.ts",315,325,{},{},{13}},
+    {8,5,"invoke","/src/main.ts",315,325,{},{},{18}},
+    {11,5,"invoke","/src/main.ts",315,325,{},{},{26}},
+  };
+  if(result.inputIdentity!="sha256:184752f73d32f62ce6dd4458acf038b8bc4807cdda1b8a53d49c7f4f4dd1c70f"||
+     result.functionId!=functionId||!pointsMatch(result,expected)||result.work==0||
+     result.work>tsfg::commonCallRootsWorkLimit){
+    llvm::errs()<<"call roots differ from the original pending completion or String operand\n";return 4;
+  }
+  if(!stringEntry&&(tsfg::analyzeCommonCallRoots(module,functionId,result,error)||!empty(result)||
+      error.code!="core-ir-common-call-roots-capability")){
+    diagnostic(error);return 4;
+  }
+  llvm::outs()<<"exact roots at "<<expected.front().sourcePath<<':'<<expected.front().start<<".."<<expected.front().end<<'\n';
+  return 0;
+}
+
 int callable(mlir::ModuleOp module,llvm::StringRef functionId) {
   using tsfg::CommonCallRootPoint;
   using tsfg::CommonCallRootMode;
@@ -133,6 +169,8 @@ int main(int argc,char **argv) {
   mlir::MLIRContext context(registry);context.disableMultithreading();
   const auto module=mlir::parseSourceString<mlir::ModuleOp>((*input)->getBuffer(),&context);if(!module)return 3;
   const llvm::StringRef functionId=argv[2];
+  if(functionId==pendingReferenceId||functionId==pendingScalarId||functionId==pendingValueId||functionId==stringEntryId)
+    return pendingLanguage(*module,functionId);
   if(functionId==applyId||functionId==captureEntryId||functionId==captureFactoryId)return callable(*module,functionId);
   tsfg::CommonCallRoots result;tsfg::commonProgram::Error error;
   if(functionId==adaptedId){
