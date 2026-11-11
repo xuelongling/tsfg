@@ -654,19 +654,20 @@ test "literal Env loop can observe an older initialized allocation after allocat
     });
 }
 
-const CallerInit = enum { before, after, absent, other_only, before_with_other };
+const CallerInit = enum { before, after, absent, other_only, before_with_other, first_edge_only };
 const ChildAccess = enum { load, store, unreachable_load, copy_load, carrier_load, assertion_store, parameter_load, parameter_store, parallel_load, distinct_load, loop_load, dead_predecessor_load };
 const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward, assertion_forward };
 
-const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, repeated_copy, repeated_previous };
+const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, rotated_edges, repeated_copy, repeated_previous };
 
 fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, comptime transport: CallerTransport, accept: bool) !void {
     const aliases_count = switch (transport) {
         .original => 0,
         .copied, .block_parameter, .repeated_copy, .repeated_previous => 1,
         .viewed, .same_edges, .distinct_edges => 2,
+        .rotated_edges => 3,
     };
-    const receiver = if (transport == .repeated_previous) r(3) else r(3 + aliases_count);
+    const receiver = if (transport == .repeated_previous or transport == .rotated_edges) r(3) else r(3 + aliases_count);
     const exception = r(4 + aliases_count);
     const invoke_child: ins.Instruction = .{ .source = at, .result = null, .operands = &.{receiver}, .data = .{ .eh_invoke = .{
         .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2),
@@ -674,17 +675,22 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     const initialize = switch (aliases_count) {
         0 => init_original,
         1 => init_copy,
-        2 => init_view,
+        2, 3 => init_view,
         else => unreachable,
     };
     const has_other = initialization == .other_only or initialization == .before_with_other;
     const other = r(5 + aliases_count);
     const other_alloc: ins.Instruction = .{ .source = at, .result = other, .operands = &.{}, .data = alloc.data };
     const other_init: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ other, r(1) }, .data = init_original.data };
+    const init_rotated_second: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(6), r(1) }, .data = init_original.data };
     const before_call = switch (initialization) {
-        .before => [_]ins.Instruction{initialize},
+        .before => if (transport == .rotated_edges)
+            [_]ins.Instruction{ initialize, init_rotated_second }
+        else
+            [_]ins.Instruction{initialize},
         .other_only => [_]ins.Instruction{ other_alloc, other_init },
         .before_with_other => [_]ins.Instruction{ other_alloc, initialize },
+        .first_edge_only => if (transport == .rotated_edges) [_]ins.Instruction{initialize} else [_]ins.Instruction{},
         .after, .absent => [_]ins.Instruction{},
     };
     const call = before_call ++ [_]ins.Instruction{invoke_child};
@@ -695,13 +701,19 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .data = .{ .cond_br = .{ .true_destination = b(3), .false_destination = b(3), .true_count = 1 } } };
     const enter_repeated: ins.Instruction = .{ .source = at, .result = null, .operands = &.{other}, .data = to_call.data };
     const reenter_repeated: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = to_call.data };
+    const rotate_receivers: ins.Instruction = .{ .source = at, .result = null,
+        .operands = &.{ r(0), r(3), r(4), r(4), r(3) },
+        .data = .{ .cond_br = .{ .true_destination = b(3), .false_destination = b(3), .true_count = 2 } } };
     const caller_entry = switch (transport) {
         .original => seed ++ [_]ins.Instruction{alloc} ++ call,
         .copied => seed ++ [_]ins.Instruction{ alloc, copy } ++ call,
         .viewed => seed ++ [_]ins.Instruction{ alloc, copy, view } ++ call,
         .block_parameter => seed ++ [_]ins.Instruction{ alloc, to_call },
         .same_edges => seed ++ [_]ins.Instruction{ alloc, copy, choose_receiver },
-        .distinct_edges => seed ++ [_]ins.Instruction{ alloc, second_alloc, choose_receiver },
+        .distinct_edges => seed ++ [_]ins.Instruction{ alloc, second_alloc } ++
+            (if (initialization == .first_edge_only) [_]ins.Instruction{init_original} else [_]ins.Instruction{}) ++
+            [_]ins.Instruction{choose_receiver},
+        .rotated_edges => seed ++ [_]ins.Instruction{ alloc, second_alloc, rotate_receivers },
         .repeated_copy => seed ++ [_]ins.Instruction{to_call},
         .repeated_previous => seed ++ [_]ins.Instruction{ other_alloc, enter_repeated },
     };
@@ -719,6 +731,7 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .{ .parameters = &.{exception}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{exception}, .data = .eh_raise }} },
     } ++ switch (transport) {
         .block_parameter, .same_edges, .distinct_edges => [_]model.Block{.{ .parameters = &.{receiver}, .instructions = &call }},
+        .rotated_edges => [_]model.Block{.{ .parameters = &.{ r(5), r(6) }, .instructions = &call }},
         .repeated_copy => [_]model.Block{.{ .parameters = &.{}, .instructions = &([_]ins.Instruction{ condition, alloc, copy } ++ call) }},
         .repeated_previous => [_]model.Block{.{ .parameters = &.{r(4)}, .instructions = &([_]ins.Instruction{ condition, alloc, init_copy } ++ call) }},
         else => [_]model.Block{},
@@ -983,8 +996,20 @@ test "literal direct call checks both edges carrying the same uninitialized Env"
 test "literal direct call accepts both edges carrying the same initialized Env" {
     try runDirectChild(.before, .copy_load, .view_forward, .same_edges, true);
 }
-test "literal direct call with distinct incoming Env allocations stays outside the exact-instance proof" {
-    try runDirectChild(.absent, .load, .direct, .distinct_edges, true);
+test "literal direct call requires the selected Env initialized on either incoming edge" {
+    try runDirectChild(.absent, .load, .direct, .distinct_edges, false);
+}
+test "literal direct call accepts initialization of the selected Env on either incoming edge" {
+    try runDirectChild(.before, .load, .direct, .distinct_edges, true);
+}
+test "literal direct call rejects late initialization of the selected Env" {
+    try runDirectChild(.after, .load, .direct, .distinct_edges, false);
+}
+test "literal direct call cannot store through an uninitialized selected Env" {
+    try runDirectChild(.absent, .store, .direct, .distinct_edges, false);
+}
+test "literal direct call cannot use initialization of only one incoming Env allocation" {
+    try runDirectChild(.first_edge_only, .load, .direct, .distinct_edges, false);
 }
 test "literal repeated fresh Env needs initialization before a child read" {
     try runDirectChild(.absent, .load, .direct, .repeated_copy, false);
@@ -1066,4 +1091,11 @@ test "literal callee CFG forwards carrier and assertion aliases before the calle
 }
 test "literal callee CFG forwards the same initialized Env through carrier and assertion aliases" {
     try runDirectChild(.before, .parameter_load, .assertion_forward, .block_parameter, true);
+}
+
+test "literal exact Env call accepts both swapped block parameters initialized" {
+    try runDirectChild(.before, .load, .direct, .rotated_edges, true);
+}
+test "literal exact Env call needs initialization on both swapped incoming edges" {
+    try runDirectChild(.first_edge_only, .load, .direct, .rotated_edges, false);
 }

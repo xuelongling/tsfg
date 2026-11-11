@@ -872,16 +872,24 @@ const Graph = struct {
             if (op.data == .environment_init)
                 try c.require((origin_state == .allocation or origin_state == .mixed) and !foreign[index]);
         };
+        if (!mixed_access) for (calls) |*call| {
+            try c.charge(2);
+            if (origins[@intFromEnum(call.receiver)] == .mixed) {
+                mixed_access = true;
+                break;
+            }
+        };
         try c.charge(2 * count);
         const allocations = try c.allocator.alloc(?t.RegisterRef, count);
         errdefer c.allocator.free(allocations);
         for (origins, allocations) |origin_state, *allocation| {
             allocation.* = switch (origin_state) { .allocation => |ref| ref, else => null };
         }
+        const checked_layout = if (mixed_access) try self.environmentMixedState(origins, calls) else null;
         return .{
             .direct = allocations,
-            .checked_layout = if (mixed_access) try self.environmentMixedState(origins) else null,
-            .call_blocks_with_older_aliases = if (calls.len == 0)
+            .checked_layout = checked_layout,
+            .call_blocks_with_older_aliases = if (calls.len == 0 or checked_layout == owned_layout)
                 zero
             else
                 try self.environmentCallBlocksWithOlderAliases(owned_layout.?, calls, origins),
@@ -925,7 +933,7 @@ const Graph = struct {
     fn environmentOlderAliasAtEntry(self: *Graph, layout: t.EnvironmentRef, block: usize, origins: []const EnvironmentOrigin) Error!bool {
         const c = self.c;
         // The reverse origin walk starts at every Env access. Bottom rows
-        // cannot contribute to an observation in this nonescaping layout.
+        // cannot contribute to a tracked Env observation.
         for (origins, self.definitions, self.f.registers) |origin_state, *definition, *register| {
             try c.charge(3);
             if (origin_state == .bottom or !exact(register.carrier, .{ .environment = layout })) continue;
@@ -982,7 +990,11 @@ const Graph = struct {
         return blocked;
     }
 
-    fn environmentMixedState(self: *Graph, origins: []const EnvironmentOrigin) Error!?t.EnvironmentRef {
+    fn environmentMixedState(
+        self: *Graph,
+        origins: []const EnvironmentOrigin,
+        calls: []const DirectEnvironmentCall,
+    ) Error!?t.EnvironmentRef {
         const c = self.c;
         const closures = c.program.tables.mode.common.closures;
         var owner_layout: ?t.EnvironmentRef = null;
@@ -1000,16 +1012,28 @@ const Graph = struct {
         defer c.allocator.free(slots);
         @memset(slots, false);
 
-        // Each tracked object belongs to this activation and stays within this
-        // function. A repeated allocation needs a separate entry alias check.
+        // Track only supported transports and observations of this layout.
+        // A repeated allocation needs a separate entry alias check.
         try c.charge(zero.len);
         var repeat_blocks = zero;
         var roots: [4096]t.RegisterRef = undefined;
         var root_count: usize = 0;
-        var has_mixed_access = false;
+        var has_mixed_observation = false;
+        var next_call: usize = 0;
         for (self.f.blocks, 0..) |block, block_index| {
             try c.step();
             if (!self.facts[block_index].reachable) continue;
+            const call_at_block = if (calls.len != 0) at_call: {
+                try c.charge(2);
+                break :at_call next_call < calls.len and calls[next_call].block == block_index;
+            } else false;
+            if (call_at_block) {
+                try c.charge(4);
+                const origin_state = &origins[@intFromEnum(calls[next_call].receiver)];
+                if (origin_state.* == .unknown or origin_state.* == .bottom) return null;
+                has_mixed_observation = has_mixed_observation or origin_state.* == .mixed;
+                next_call += 1;
+            }
             var has_allocation = false;
             for (block.parameters) |parameter| {
                 try c.charge(2);
@@ -1021,7 +1045,7 @@ const Graph = struct {
                     if (self.environmentInLayout(op.operands[0], layout)) {
                         const origin_state = origins[@intFromEnum(op.operands[0])];
                         if (origin_state == .unknown or origin_state == .bottom) return null;
-                        has_mixed_access = has_mixed_access or origin_state == .mixed;
+                        has_mixed_observation = has_mixed_observation or origin_state == .mixed;
                         slots[@intFromEnum(slot)] = true;
                     }
                 }
@@ -1047,6 +1071,7 @@ const Graph = struct {
                         .br, .cond_br, .eh_route => {},
                         .domain_copy, .domain_view, .eh_carrier, .eh_assertion => if (!result_in_layout or index != 0) return null,
                         .environment_init, .environment_load, .environment_store => if (index != 0) return null,
+                        .eh_invoke => if (index != 0 or !call_at_block) return null,
                         else => return null,
                     }
                 }
@@ -1068,7 +1093,23 @@ const Graph = struct {
                 }
             }
         }
-        if (!has_mixed_access) return null;
+        if (!has_mixed_observation) return null;
+        try c.charge(3);
+        var arena = std.heap.ArenaAllocator.init(c.allocator);
+        defer arena.deinit();
+        var needs: EnvironmentCalleeSlots = .empty;
+        defer needs.deinit(c.allocator);
+        var call_sites: EnvironmentCallSites = .empty;
+        defer call_sites.deinit(c.allocator);
+        for (calls) |*call| {
+            try c.row(DirectEnvironmentCall);
+            const observed = try self.environmentSlotsForCall(call.callee, layout, &needs, arena.allocator());
+            for (observed) |slot| {
+                try c.step();
+                slots[@intFromEnum(slot)] = true;
+                try rememberEnvironmentCallSite(c, &call_sites, .{ .receiver = call.receiver, .slot = slot, .block = call.block });
+            }
+        }
         const entry_aliases = try self.environmentEntryAliases(layout);
         defer c.allocator.free(entry_aliases);
         for (slots, 0..) |used, slot| {
@@ -1077,7 +1118,7 @@ const Graph = struct {
             for (roots[0..root_count]) |root| {
                 try c.charge(2 + zero.len);
                 const repeat = has(repeat_blocks, self.definitions[@intFromEnum(root)].block);
-                try self.environmentTrackSlot(layout, root, @enumFromInt(slot), entry_aliases, repeat);
+                try self.environmentTrackSlot(layout, root, @enumFromInt(slot), entry_aliases, repeat, &call_sites);
             }
         }
         return layout;
@@ -1169,11 +1210,13 @@ const Graph = struct {
         slot: t.EnvironmentSlotRef,
         entry_aliases: []const EnvironmentAliases,
         reset_at_allocation: bool,
+        call_sites: *const EnvironmentCallSites,
     ) Error!void {
         const c = self.c;
         const words = (self.f.registers.len + 63) / 64;
         var heads: [256]?usize = undefined;
-        try c.charge(self.f.blocks.len + no_environment_aliases.len);
+        try c.charge(1 + self.f.blocks.len + no_environment_aliases.len);
+        const has_call_sites = call_sites.count() != 0;
         @memset(heads[0..self.f.blocks.len], null);
         var states: std.ArrayList(EnvironmentState) = .empty;
         defer states.deinit(c.allocator);
@@ -1211,6 +1254,17 @@ const Graph = struct {
                 }
             }
             const terminator = &block.instructions[block.instructions.len - 1];
+            if (has_call_sites) {
+                try c.charge(2);
+                if (terminator.data == .eh_invoke and terminator.operands.len != 0) {
+                    try c.row(EnvironmentCallSite);
+                    const receiver = terminator.operands[0];
+                    if (call_sites.contains(.{ .receiver = receiver, .slot = slot, .block = state.block })) {
+                        try c.step();
+                        if (state.includes(receiver)) try c.require(state.initialized);
+                    }
+                }
+            }
             const facts = &self.facts[state.block];
             for (facts.successors[0..facts.count], 0..) |successor, edge| {
                 try c.charge(4 + environment_state_words);
@@ -1235,6 +1289,29 @@ const Graph = struct {
     const EnvironmentCallSite = struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef, block: usize };
     const EnvironmentCells = std.AutoHashMapUnmanaged(EnvironmentCell, void);
     const EnvironmentCallSites = std.AutoHashMapUnmanaged(EnvironmentCallSite, void);
+    const EnvironmentCalleeSlots = std.AutoHashMapUnmanaged(t.FunctionRef, []const t.EnvironmentSlotRef);
+
+    fn rememberEnvironmentCallSite(c: *Context, sites: *EnvironmentCallSites, site: EnvironmentCallSite) Error!void {
+        try c.row(EnvironmentCallSite);
+        try environmentMapGrowth(c, sites, 4);
+        _ = try sites.getOrPut(c.allocator, site);
+    }
+
+    fn environmentSlotsForCall(
+        self: *Graph,
+        callee: t.FunctionRef,
+        layout: t.EnvironmentRef,
+        needs: *EnvironmentCalleeSlots,
+        allocator: std.mem.Allocator,
+    ) Error![]const t.EnvironmentSlotRef {
+        const c = self.c;
+        try c.charge(4);
+        try environmentMapGrowth(c, needs, 4);
+        const entry = try needs.getOrPut(c.allocator, callee);
+        if (!entry.found_existing)
+            entry.value_ptr.* = try self.directCalleeEnvironmentSlots(callee, layout, allocator);
+        return entry.value_ptr.*;
+    }
 
     fn environmentMapGrowth(c: *Context, map: anytype, row_words: usize) Error!void {
         const capacity = @as(usize, map.capacity());
@@ -1526,7 +1603,7 @@ const Graph = struct {
         try c.charge(4);
         var arena = std.heap.ArenaAllocator.init(c.allocator);
         defer arena.deinit();
-        var needs: std.AutoHashMapUnmanaged(t.FunctionRef, []const t.EnvironmentSlotRef) = .empty;
+        var needs: EnvironmentCalleeSlots = .empty;
         defer needs.deinit(c.allocator);
         for (calls) |*call| {
             try c.row(DirectEnvironmentCall);
@@ -1535,16 +1612,10 @@ const Graph = struct {
             if (!self.environmentInLayout(receiver, layout)) continue;
             const allocation_block = self.definitions[@intFromEnum(receiver)].block;
             if (has(proven.call_blocks_with_older_aliases, allocation_block)) continue;
-            try c.charge(4);
-            try environmentMapGrowth(c, &needs, 4);
-            const entry = try needs.getOrPut(c.allocator, call.callee);
-            if (!entry.found_existing)
-                entry.value_ptr.* = try self.directCalleeEnvironmentSlots(call.callee, layout, arena.allocator());
-            for (entry.value_ptr.*) |slot| {
+            const observed = try self.environmentSlotsForCall(call.callee, layout, &needs, arena.allocator());
+            for (observed) |slot| {
                 try rememberEnvironmentCell(c, pairs, .{ .receiver = receiver, .slot = slot });
-                try c.row(EnvironmentCallSite);
-                try environmentMapGrowth(c, sites, 4);
-                _ = try sites.getOrPut(c.allocator, .{ .receiver = receiver, .slot = slot, .block = call.block });
+                try rememberEnvironmentCallSite(c, sites, .{ .receiver = receiver, .slot = slot, .block = call.block });
             }
         }
     }
@@ -1569,7 +1640,7 @@ const Graph = struct {
             }
             try rememberEnvironmentCell(c, &pairs, .{ .receiver = allocation, .slot = slot });
         };
-        if (calls.len != 0)
+        if (calls.len != 0 and proven.checked_layout != owned_layout)
             try self.observeDirectEnvironmentCalls(owned_layout.?, calls, &proven, &pairs, &call_sites);
         const has_call_sites = call_sites.count() != 0;
         try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
