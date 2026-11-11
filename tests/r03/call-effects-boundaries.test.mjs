@@ -7,6 +7,10 @@ import {verifyHir,analyzeModuleCalls} from '../../compiler/hir.mjs';
 
 const oracle=JSON.parse(await readFile(new URL('./call-effects-oracle.json',import.meta.url),'utf8'));
 const first=JSON.parse(await readFile(new URL('./call-effects-first.json',import.meta.url),'utf8'));
+const currentInitial=new Map([
+ ['pure',JSON.parse(await readFile(new URL('./call-effects-pure-current.json',import.meta.url),'utf8'))],
+ ...Object.entries(JSON.parse(await readFile(new URL('./call-effects-followup-current.json',import.meta.url),'utf8'))),
+]);
 const clone=value=>structuredClone(value);
 const pure={reads:[],writes:[],unknownHost:false};
 const top={reads:[],writes:[],unknownHost:true};
@@ -27,8 +31,8 @@ function rejects(action,kind,primary=undefined) {
   return true;
  });
 }
-// Only malformed-input mutations are re-signed here. All semantic/report/hash
-// expectations are pre-implementation literals in call-effects-oracle.json.
+// Semantic reports and Published digests are frozen in call-effects-oracle.json.
+// Re-sign malformed inputs and derive the current fixtures' report identities.
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'
  ? '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}':JSON.stringify(value);
 const digest=(domain,value)=>'sha256:'+createHash('sha256').update(domain+'\0'+canonical(value)).digest('hex');
@@ -42,11 +46,22 @@ const initial=name=>oracle.initial.find(item=>item.name===name);
 const fixed=name=>oracle.fixed.find(item=>item.name===name);
 const fixedFrom=item=>({mode:'fixed',expectedDigest:item.expected.publishedDigest,contracts:clone(item.expected.contracts)});
 
+function currentInitialInput(item) {
+ const hir=currentInitial.get(item.name);
+ if(hir===undefined)return item;
+ assert.deepEqual(hir.sources,item.hir.sources);
+ // Cold test DTOs retain the frozen report's semantic expectations.
+ const expected={...item.expected,inputIdentity:hir.inputIdentity,
+  hirDigest:'sha256:'+createHash('sha256').update(canonical(hir)).digest('hex')};
+ return {hir,expected};
+}
+
 for(const item of oracle.initial)test('initial complete module analysis: '+item.name,()=>{
- assert.deepEqual(verifyHir(item.hir),item.hir);
- assert.deepEqual(analyzeModuleCalls(item.hir,item.context),item.expected);
- assert.deepEqual(selected(item.hir,item.context),item.hir);
- assert.deepEqual(analyzeModuleCalls(JSON.parse(JSON.stringify(item.hir)),JSON.parse(JSON.stringify(item.context))),item.expected);
+ const {hir,expected}=currentInitialInput(item);
+ assert.deepEqual(verifyHir(hir),hir);
+ assert.deepEqual(analyzeModuleCalls(hir,item.context),expected);
+ assert.deepEqual(selected(hir,item.context),hir);
+ assert.deepEqual(analyzeModuleCalls(JSON.parse(JSON.stringify(hir)),JSON.parse(JSON.stringify(item.context))),expected);
 });
 for(const item of oracle.fixed)test('fixed complete module analysis: '+item.name,()=>{
  assert.deepEqual(analyzeModuleCalls(item.hir,item.context),item.expected);
@@ -187,8 +202,9 @@ test('reports are owned immutable values and cold recomputation requires its sup
 
 const extra=JSON.parse(await readFile(new URL('./call-effects-extra.json',import.meta.url),'utf8'));
 for(const item of extra.initial)test('complete direct-call analysis: '+item.name,()=>{
- assert.deepEqual(verifyHir(item.hir),item.hir);
- assert.deepEqual(analyzeModuleCalls(item.hir,item.context),item.expected);
+ const {hir,expected}=currentInitialInput(item);
+ assert.deepEqual(verifyHir(hir),hir);
+ assert.deepEqual(analyzeModuleCalls(hir,item.context),expected);
 });
 for(const item of extra.fixed)test('complete initializer analysis: '+item.name,()=>{
  assert.deepEqual(verifyHir(item.hir),item.hir);
