@@ -11,7 +11,7 @@ import { verifyStringHir } from './string-hir-model.mjs';
 import {isTypedArrayContext,verifyTypedArrayHir} from './typed-array-hir.mjs';
 import {isOptionalPropertyContext,verifyOptionalPropertyHir} from './optional-property-hir.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
-import { isNullableGroupsContext, isNullableTypeofContext, check as nullableCheck } from './nullable-common.mjs';
+import { isSelectedNullableContext, check as nullableCheck } from './nullable-common.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { verifyClosureHir } from './closure-hir.mjs';
 import { scalarOperations, validScalarUnary, validScalarBinary } from './scalar-operators.mjs';
@@ -45,7 +45,7 @@ export function verifyHir(hir, factsContext = undefined, callPublicationContext 
     if(callPublicationContext!==undefined)throw new TypeError('r03-optional-property-context: unexpected publication');
     return verifyOptionalPropertyHir(hir,factsContext);
   }
-  if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
+  if (isSelectedNullableContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return verifyNullableHir(hir, factsContext);
   }
   if(isTypedArrayContext(factsContext))return verifyTypedArrayHir(hir,factsContext,callPublicationContext);

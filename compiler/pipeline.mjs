@@ -15,7 +15,7 @@ import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
 import {isCommonProgramContext} from './common-program-hir.mjs';
-import {isNullableGroupsContext,isNullableTypeofContext} from './nullable-common.mjs';
+import {isSelectedNullableContext} from './nullable-common.mjs';
 import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
@@ -180,7 +180,7 @@ async function produceBytecode(hir, options, lower = value => lowerFormalHir(val
 export async function compileOwnedCore(hir, options) {
   try {
     const { factsContext, callPublicationContext } = options;
-    const lower = isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext) ? lowerHir : lowerOwnedHir;
+    const lower = isSelectedNullableContext(factsContext) ? lowerHir : lowerOwnedHir;
     const { core } = await produceCore(hir, options, value => lower(value, factsContext, callPublicationContext));
     return { status: "ok", hir, core };
   } catch (error) {

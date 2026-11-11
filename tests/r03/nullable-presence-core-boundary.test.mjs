@@ -2,9 +2,12 @@
 // The Core seam consumes whole verified private HIR; no Source/native execution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { emitNullableCore } from '../../compiler/nullable-core-emitter.mjs';
+import { buildHir, lowerHir, printHir, readHir, verifyHir } from '../../compiler/hir.mjs';
+import { compileOwnedCore } from '../../compiler/pipeline.mjs';
 /** @param {any} value @returns {string} */
 function jcs(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -32,6 +35,41 @@ function rejects(action,category,anchor = undefined) {
     if (anchor === undefined) assert.ok(!Object.hasOwn(error,'primary'));
     else { assert.deepStrictEqual(error.primary,anchor); assert.ok(Object.isFrozen(error.primary)); }
     return true;
+  });
+}
+
+const coreExecutable = process.env.TSFG_CORE_IR_EXE;
+for (const [index,row] of cases.entries()) {
+  test('owned Source4 presence HIR preserves the complete ' + row.name + ' capture', () => {
+    const selected = context(row), text = row.hirJcsNoLf + '\n';
+    const cold = readHir(Buffer.from(text),selected);
+    assert.deepEqual(cold,hir(row));
+    const built = buildHir(fresh(row.expectedSnapshot),selected);
+    assert.equal(built.status,'ok',built.diagnostics?.[0]?.message);
+    assert.deepEqual(built.hir,cold);
+    assert.deepEqual(verifyHir(cold,selected),cold);
+    assert.equal(printHir(cold,selected),text);
+    assert.equal(lowerHir(cold,selected),goldens[index].expectedCore);
+    const wrong = {...selected,expectedPackageId:'sha256:'+'0'.repeat(64)};
+    assert.throws(() => readHir(Buffer.from(text),wrong),{code:'r03-nullable-identity'});
+    assert.throws(() => lowerHir(cold,selected,{}),{code:'r03-nullable-context'});
+  });
+
+  test('static Core API consumes owned Source4 presence ' + row.name,{skip:!coreExecutable},async t => {
+    assert.ok(coreExecutable);
+    const selected = context(row), cold = readHir(Buffer.from(row.hirJcsNoLf+'\n'),selected);
+    const options = {core:coreExecutable,factsContext:selected};
+    const result = await compileOwnedCore(cold,options);
+    assert.equal(result.status,'ok',result.message);
+    assert.deepEqual(result.hir,cold);
+    const input = Buffer.from(goldens[index].expectedCore);
+    const direct = spawnSync(coreExecutable,['--canonicalize'],{input,windowsHide:true,maxBuffer:16*1024*1024,timeout:30000});
+    assert.equal(direct.error,undefined);
+    assert.equal(direct.signal,null);
+    assert.equal(direct.status,0,direct.stderr.toString('utf8'));
+    assert.equal(direct.stderr.length,0);
+    assert.deepEqual(Buffer.from(result.core),direct.stdout);
+    t.diagnostic(`direct static Core PID ${direct.pid}, ${direct.stdout.length} bytes, ${sha(direct.stdout)}`);
   });
 }
 

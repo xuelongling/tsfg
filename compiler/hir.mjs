@@ -16,7 +16,7 @@ import { coreExchangeFormat } from './core-ssa-emitter.mjs';
 import { readHirWire } from "./hir-wire.mjs";
 import { genericHirFormat, lowerGenericHir, printGenericHir } from './generic-hir.mjs';
 import { failure as exceptionHirFailure } from "./exception-hir-common.mjs";
-import { isNullableGroupsContext, isNullableTypeofContext, check as nullableCheck } from './nullable-common.mjs';
+import { isSelectedNullableContext, check as nullableCheck } from './nullable-common.mjs';
 import { buildNullableHir, readNullableGroupsHir } from "./nullable-hir.mjs";
 import { emitNullableCore } from "./nullable-core-emitter.mjs";
 import { validateFrontendSnapshot, resolveType, resolveSymbol } from './frontend.mjs';
@@ -59,7 +59,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
       phase:error.phase??'hir',message:error.message,...(error.primary?{primary:error.primary}:{})}]};return /** @type {typeof result & {status:'error',hir?:undefined}} */(result);}
   }
   if(isOptionalPropertyContext(factsContext)&&callPublicationContext===undefined)return buildOptionalPropertyHir(snapshot,factsContext);
-  if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
+  if (isSelectedNullableContext(factsContext)) {
     try { nullableCheck(callPublicationContext === undefined, 'context'); return { status: 'ok', hir: buildNullableHir(snapshot, factsContext) }; }
     catch (error) { const result = { status: 'error', diagnostics: [{ code: error.code, ruleId: error.ruleId, phase: error.phase, message: error.message,
       ...(error.primary ? { primary: error.primary } : {}) }] };
@@ -236,7 +236,7 @@ export const printHir = (hir, factsContext = undefined, callPublicationContext =
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
   if(isCommonProgramContext(factsContext))return verifyHir(readCommonProgramHir(bytes),factsContext,callPublicationContext);
   if(isOptionalPropertyContext(factsContext)&&callPublicationContext===undefined)return readOptionalPropertyHir(bytes,factsContext);
-  if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
+  if (isSelectedNullableContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return readNullableGroupsHir(bytes, factsContext);
   }
   if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext,callPublicationContext);
@@ -262,7 +262,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     return emitCommonProgramCore(checked,callPublicationContext.publication,callPublicationContext.request);
   }
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
-  if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
+  if (isSelectedNullableContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return emitNullableCore(hir, factsContext);
   }
   if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);

@@ -154,19 +154,13 @@ check(groupsSchemaHash === 'sha256:16278abcc5c2c3639856a350e32bdb94d0d5e3ff669a9
   && sha256(canonical(groupsDescriptor.sourceDescriptor)) === groupsSourceSchema, 'schema');
 export const groupsSnapshotFormat = Object.freeze({ family: snapshotFormat.family, version: 5, schemaHash: groupsSchemaHash });
 export const groupsHirFormat = Object.freeze({ family: hirFormat.family, version: 5, schemaHash: groupsSchemaHash });
-// Public dispatch inspects only a plain own data selector; validators then preflight the entire context.
-function isNullableSourceVersion(value, version) {
+// Public dispatch inspects only a plain own data selector. The Nullable owner
+// validates the selected Source version and capture before using the context.
+export function isSelectedNullableContext(value) {
   if (!value || typeof value !== 'object' || isProxy(value)
       || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
-  return Object.getOwnPropertyDescriptor(value, 'sourceVersion')?.value === version;
-}
-export function isNullableGroupsContext(value) {
-  return isNullableSourceVersion(value, 5);
-}
-
-// Independent private6 selector; never routes an old context through the new grammar.
-export function isNullableTypeofContext(value) {
-  return isNullableSourceVersion(value, 6);
+  const version = Object.getOwnPropertyDescriptor(value, 'sourceVersion')?.value;
+  return version === 4 || version === 5 || version === 6;
 }
 export const typeofSourceSchema = typeofDescriptor.sourceSchemaHash;
 export const typeofSchemaHash = sha256(canonical(typeofDescriptor));
