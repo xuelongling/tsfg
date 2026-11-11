@@ -14,6 +14,7 @@ import { buildStringHir } from './string-hir.mjs';
 import { readStringHir } from './string-hir-model.mjs';
 import { coreExchangeFormat } from './core-ssa-emitter.mjs';
 import { readHirWire } from "./hir-wire.mjs";
+import { genericHirFormat, lowerGenericHir, printGenericHir } from './generic-hir.mjs';
 import { failure as exceptionHirFailure } from "./exception-hir-common.mjs";
 import { isNullableGroupsContext, isNullableTypeofContext, check as nullableCheck } from './nullable-common.mjs';
 import { buildNullableHir, readNullableGroupsHir } from "./nullable-hir.mjs";
@@ -228,7 +229,9 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
   }
 }
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
-export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) => `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
+export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) =>
+  factsContext === undefined && callPublicationContext === undefined && familyOf(hir) === genericHirFormat.family
+    ? printGenericHir(hir) : `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
 /** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
   if(isCommonProgramContext(factsContext))return verifyHir(readCommonProgramHir(bytes),factsContext,callPublicationContext);
@@ -239,6 +242,7 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
   if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext,callPublicationContext);
   if (factsContext !== undefined) return readStringHir(bytes, factsContext);
   const { text, value } = readHirWire(bytes);
+  if (callPublicationContext === undefined && familyOf(value) === genericHirFormat.family) return value;
   const hir = verifyHir(value, undefined, callPublicationContext);
   if (text !== printHir(hir, undefined, callPublicationContext)) {
     if (hir?.format?.family === "tsfg.exception-hir-candidate")
@@ -292,4 +296,12 @@ export function lowerFormalHir(hir, factsContext = undefined, callPublicationCon
   if(hir?.format?.family==='tsfg.closure-hir-candidate')return emitFormalClosureCore(hir);
   if(hir?.format?.family==='tsfg.exception-hir-candidate')return emitFormalExceptionCore(hir);
   return lowerHir(hir, factsContext,callPublicationContext);
+}
+
+/** Lower a complete owned HIR for the static Core consumer.
+ * @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
+export function lowerOwnedHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if (factsContext === undefined && callPublicationContext === undefined && familyOf(hir) === genericHirFormat.family)
+    return lowerGenericHir(hir);
+  return lowerFormalHir(hir, factsContext, callPublicationContext);
 }

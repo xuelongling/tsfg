@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto';
 import { decodeGenericPackage, encodeGenericPackage } from '../../compiler/generic-package.mjs';
 import { validateGenericInstanceResult } from '../../compiler/generic-instance.mjs';
 import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir, lowerGenericHir } from '../../compiler/generic-hir.mjs';
+import { readHir, printHir, lowerOwnedHir } from '../../compiler/hir.mjs';
+import { canonical } from '../../compiler/identity.mjs';
 
 const fixture=name=>readFile(new URL('./fixtures/'+name,import.meta.url));
 for(const family of ['conditional','mapped']) test('official cold '+family+' chain/self/mutual closure preserves complete bool/f64 HIR and Core',async()=>{
@@ -30,6 +32,21 @@ for(const family of ['conditional','mapped']) test('official cold '+family+' cha
  assert.equal(cold.functions.length,12);assert.equal(new Set(cold.functions.map(f=>f.id)).size,12);
  assert.equal((oracle.core.match(/"func.call"/g)??[]).length,10);
  assert.equal((oracle.core.match(/"tsfg_core.fuel"/g)??[]).length,12);
+});
+
+for(const family of ['conditional','mapped']) test('owned HIR cold entry reproduces static Core for recursive '+family,async()=>{
+ const bytes=await fixture(`generic-recursive-${family}-hir-v7.json`);
+ const core=await fixture(`generic-recursive-${family}-core-v7.mlir`);
+ const hir=readHir(bytes);
+ assert.equal(printHir(hir),bytes.toString('utf8'));
+ assert.equal(lowerOwnedHir(hir),core.toString('utf8'));
+ assert.throws(()=>readHir(Buffer.concat([bytes,Buffer.from('\n')])),/generic-hir-canonical/);
+ const predecessor=structuredClone(hir);
+ predecessor.format.version=6;
+ assert.throws(()=>readHir(Buffer.from(canonical(predecessor)+'\n')),/generic-hir-identity/);
+ const foreign=structuredClone(hir);
+ foreign.functions[0].id='sha256:'+'0'.repeat(64);
+ assert.throws(()=>lowerOwnedHir(foreign),/generic-hir-identity/);
 });
 
 for(const family of ['conditional','mapped']) test('recursive '+family+' facts reject broken cyclic edges, identities and budgets before HIR',async()=>{

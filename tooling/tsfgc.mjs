@@ -4,6 +4,8 @@ import { compileHir, compileProgram, compileOwnedHir, compileOwnedStaticProgram,
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {commonJson} from '../compiler/common-program-common.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
+import { genericHirFormat } from '../compiler/generic-hir.mjs';
+import { familyOf } from '../compiler/module-callable-common.mjs';
 import {canonical} from '../compiler/identity.mjs';
 
 try {
@@ -38,6 +40,8 @@ try {
   if(['query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit))throw new TypeError('r03-cli-options: Query output requires --query-request');
   const bytes = await readFile(options.get("--input"));
   const input = inputKind === "hir" ? readHir(bytes) : JSON.parse(bytes.toString("utf8"));
+  if (inputKind === "hir" && ["run", "program-object"].includes(emit) && familyOf(input) === genericHirFormat.family)
+    throw new TypeError("r03-cli-options: private generic HIR requires --emit hir|core|bytecode");
   const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
   const compile = inputKind === "hir" ? (emit === "program-object" ? compileOwnedStaticProgram : compileOwnedHir)
     : emit === "hir" ? compileHir : emit === "program-object" ? compileStaticProgram : compileProgram;

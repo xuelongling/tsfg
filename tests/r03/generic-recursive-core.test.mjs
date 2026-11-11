@@ -2,8 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {verifiedConsumer} from '../../compiler/pipeline.mjs';
+import {compileOwnedHir,verifiedConsumer} from '../../compiler/pipeline.mjs';
 import {buildGenericHir,lowerGenericHir} from '../../compiler/generic-hir.mjs';
+import {readHir} from '../../compiler/hir.mjs';
 import {invokeCore,accepted,rejected} from './generic-core-package-capture.mjs';
 import {verifyProducedPacket} from '../../compiler/producer-packet.mjs';
 
@@ -15,12 +16,17 @@ for(const family of ['conditional','mapped'])test('verified static Core canonica
  const bytes=await fixture(`generic-recursive-${family}-package-v7.json`);
  const record=JSON.parse((await fixture(`generic-recursive-${family}-record-v7.json`)).toString('utf8'));
  const hir=buildGenericHir(bytes,record.result,record.requests),core=lowerGenericHir(hir);
+ const cold=readHir(await fixture(`generic-recursive-${family}-hir-v7.json`));
  for(const command of ['--canonicalize','--optimize']){
   const first=await invokeCore(core,command);accepted(first);
   const canonical=await invokeCore(first.stdout);accepted(canonical);
   const repeat=await invokeCore(canonical.stdout);accepted(repeat);assert.deepEqual(repeat.stdout,canonical.stdout);
   const emitted=await invokeCore(canonical.stdout,'--emit-bytecode');accepted(emitted);
   verifyProducedPacket(emitted.stdout);
+  const compiled=await compileOwnedHir(cold,{core:executable,optimize:command==='--optimize'});
+  assert.equal(compiled.status,'ok',JSON.stringify(compiled));
+  assert.deepEqual(Buffer.from(compiled.core),canonical.stdout);
+  assert.deepEqual(compiled.bytecode,emitted.stdout);
   const text=canonical.stdout.toString('utf8');
   assert.equal((text.match(/"func\.func"/g)??[]).length,12);
   assert.equal((text.match(/"func\.call"/g)??[]).length,10);

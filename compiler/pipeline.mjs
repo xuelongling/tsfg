@@ -7,7 +7,7 @@ import { analyzeFrontend } from "./frontend.mjs";
 import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { lowerGenericHir } from "./generic-hir.mjs";
 export { compilePackageHir };
-import { buildHir, lowerFormalHir } from "./hir.mjs";
+import { buildHir, lowerFormalHir, lowerOwnedHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
 import {readSystemQueryFacts} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
@@ -172,7 +172,7 @@ async function produceBytecode(hir, options, lower = value => lowerFormalHir(val
  * Facts and fixed publication context are verified by lowering; Source admission is independent.
  */
 export async function compileOwnedHir(hir, options) {
-  return produceBytecode(hir, options);
+  return produceBytecode(hir, options, value => lowerOwnedHir(value, options.factsContext, options.callPublicationContext));
 }
 
 /** Produce one whole statically linked program object from complete owned HIR.
