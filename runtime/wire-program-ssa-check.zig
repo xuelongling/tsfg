@@ -333,27 +333,111 @@ const Graph = struct {
         const actual=v.domains[@intFromEnum(expected.domain)].actual_types;
         try c.require(actual.len==tags.count()); for(actual) |tag| { try c.step(); try c.require(tags.contains(tag)); }
     }
-    fn initializerCodeTarget(self: *Graph, receiver: t.RegisterRef) Error!?t.FunctionRef {
+    const InitializerCodeDefinition = union(enum) { literal: t.FunctionRef, source: t.RegisterRef, parameter: usize, unknown };
+
+    fn initializerCodeDefinition(self: *Graph, receiver: t.RegisterRef) Error!InitializerCodeDefinition {
         const c = self.c;
-        var current = receiver;
-        // The reachable call's SSA dominance proof orders each unary source.
-        while (true) {
-            try c.charge(3);
-            const definition = self.definitions[@intFromEnum(current)];
-            if (definition.position < 0) return null;
-            try c.charge(3);
-            const producer = &self.f.blocks[definition.block].instructions[@intCast(definition.position)];
-            switch (producer.data) {
-                .function_make => |v| return v.function,
-                .domain_copy, .domain_view => {
-                    try c.charge(3);
-                    const source = producer.operands[0];
-                    if (!exact(self.carrierOf(current), self.carrierOf(source))) return null;
-                    current = source;
-                },
-                else => return null,
+        try c.charge(3);
+        const definition = self.definitions[@intFromEnum(receiver)];
+        if (definition.position < 0)
+            return if (definition.block == 0) .unknown else .{ .parameter = definition.block };
+        try c.charge(3);
+        const producer = &self.f.blocks[definition.block].instructions[@intCast(definition.position)];
+        switch (producer.data) {
+            .function_make => |v| return .{ .literal = v.function },
+            .domain_copy, .domain_view => {
+                try c.charge(3);
+                const source = producer.operands[0];
+                return if (exact(self.carrierOf(receiver), self.carrierOf(source))) .{ .source = source } else .unknown;
+            },
+            else => return .unknown,
+        }
+    }
+
+    fn initializerCodeMerge(self: *Graph, receiver: t.RegisterRef) Error!?t.RegisterRef {
+        const c = self.c;
+        const count = self.f.registers.len;
+        var edge_capacity = count;
+        for (self.facts) |*fact| {
+            try c.step();
+            if (!fact.reachable) continue;
+            for (fact.successors[0..fact.count]) |next| {
+                try c.step();
+                edge_capacity += self.f.blocks[next].parameters.len;
             }
         }
+        var proof = try EnvironmentProof.init(c, count, edge_capacity);
+        defer proof.deinit();
+        try proof.need(receiver);
+        var cursor: usize = 0;
+        while (cursor < proof.size) : (cursor += 1) {
+            try c.charge(2);
+            const current = proof.pending[cursor];
+            const index = @intFromEnum(current);
+            switch (try self.initializerCodeDefinition(current)) {
+                .literal => {
+                    // The original SSA definition identifies the saved Code;
+                    // equal FunctionRefs from separate definitions stay mixed.
+                    try c.step();
+                    proof.origins[index] = .{ .allocation = current };
+                },
+                .source => |source| try proof.link(source, current),
+                .parameter => |block| {
+                    var ordinal: ?usize = null;
+                    for (self.f.blocks[block].parameters, 0..) |parameter, n| {
+                        try c.step();
+                        if (parameter == current) { ordinal = n; break; }
+                    }
+                    const argument_index = ordinal orelse return null;
+                    try c.charge(zero.len + 1);
+                    var predecessors = Predecessors{ .bits = self.facts[block].predecessors };
+                    while (try predecessors.next(c)) |predecessor| {
+                        try c.step();
+                        const fact = &self.facts[predecessor];
+                        if (!fact.reachable) continue;
+                        try c.charge(3);
+                        const instructions = self.f.blocks[predecessor].instructions;
+                        const terminator = &instructions[instructions.len - 1];
+                        for (fact.successors[0..fact.count], 0..) |next, edge| {
+                            try c.step();
+                            if (next != block) continue;
+                            if (environmentEdgeArguments(terminator, edge)) |arguments| {
+                                try c.charge(3);
+                                const source = arguments[argument_index];
+                                if (exact(self.carrierOf(current), self.carrierOf(source))) {
+                                    try proof.link(source, current);
+                                    continue;
+                                }
+                            }
+                            try c.step();
+                            proof.origins[index] = .unknown;
+                        }
+                    }
+                },
+                .unknown => {
+                    try c.step();
+                    proof.origins[index] = .unknown;
+                },
+            }
+        }
+        try proof.propagate();
+        try c.step();
+        return switch (proof.origins[@intFromEnum(receiver)]) {
+            .allocation => |source| source,
+            else => null,
+        };
+    }
+
+    fn initializerCodeTarget(self: *Graph, receiver: t.RegisterRef) Error!?t.FunctionRef {
+        var current = receiver;
+        // Reachable SSA orders unary sources. A block merge needs the shared
+        // grounded-origin proof because CFG backedges can revisit parameters.
+        while (true) switch (try self.initializerCodeDefinition(current)) {
+            .literal => |target| return target,
+            .source => |source| current = source,
+            .parameter => current = (try self.initializerCodeMerge(current)) orelse return null,
+            .unknown => return null,
+        };
     }
 
     fn commonCall(self: *Graph, op: *const ins.Instruction, b: usize, position: usize, initializer_callee: ?*?t.FunctionRef) Error!void {

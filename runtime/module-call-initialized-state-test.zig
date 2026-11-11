@@ -309,7 +309,7 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
             try std.testing.expectEqual(f.id,contract.function_id); try std.testing.expectEqual(f.signature,contract.signature_hash);
             try std.testing.expectEqualSlices(t.Hash,&.{g0,g1},contract.upper.globals.reads);
         }
-        var defined=[_]bool{false} ** saved_registers.len;
+        var defined=[_]bool{false} ** block_code_registers.len;
         for(f.registers) |r| { try c.carrier(r.carrier); try c.maybeRef(r.view,c.counts().types); }
         for(f.blocks,0..) |block,b| {
             for(block.parameters) |r| { const n=try c.ref(r,f.registers.len); try std.testing.expect(!defined[n]); defined[n]=true; }
@@ -369,8 +369,24 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                         try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(op.operands[0])].carrier,sc));
                         try std.testing.expect(f.registers[@intFromEnum(op.result.?)].carrier==.payload);
                     },
-                    .br => |v| { _=try c.ref(v.destination,f.blocks.len); try std.testing.expect(i+1==block.instructions.len and op.operands.len==0 and op.result==null); },
-                    .cond_br => |v| { _=try c.ref(v.true_destination,f.blocks.len); _=try c.ref(v.false_destination,f.blocks.len); try std.testing.expect(i+1==block.instructions.len and op.operands.len==1 and v.true_count==0 and op.result==null); },
+                    .br => |v| {
+                        const destination=try c.ref(v.destination,f.blocks.len);
+                        try std.testing.expect(i+1==block.instructions.len and op.result==null);
+                        if (op.operands.len!=0) {
+                            try std.testing.expect(destination==3 and std.mem.eql(t.RegisterRef,op.operands,&.{r2}));
+                            try std.testing.expectEqualSlices(t.RegisterRef,&.{r3},f.blocks[destination].parameters);
+                        }
+                    },
+                    .cond_br => |v| {
+                        const yes=try c.ref(v.true_destination,f.blocks.len);
+                        const no=try c.ref(v.false_destination,f.blocks.len);
+                        try std.testing.expect(i+1==block.instructions.len and op.result==null);
+                        if (v.true_count==0) try std.testing.expectEqual(@as(usize,1),op.operands.len) else {
+                            try std.testing.expect(yes==3 and no==3 and v.true_count==1);
+                            try std.testing.expectEqualSlices(t.RegisterRef,&.{saved_condition,r2,r3},op.operands);
+                            try std.testing.expectEqualSlices(t.RegisterRef,&.{saved_tail},f.blocks[yes].parameters);
+                        }
+                    },
                     .@"return" => {
                         const abi=common.abis[@intFromEnum(f.abi)];
                         try std.testing.expect(i+1==block.instructions.len and op.result==null);
@@ -536,9 +552,12 @@ test "module callback leaves a foreign Global outside the caller initialization 
 const Concrete = @typeInfo(@FieldType(storage.CommonStorage,"concrete")).pointer.child;
 const FixedCall = @typeInfo(@FieldType(@FieldType(tables.CommonTables,"closures"),"calls")).pointer.child;
 const SavedCodeTransport = enum { literal, copy, view, copy_view };
+const BlockCodeTransport = enum { single, single_view, parallel, distinct };
 const saved_tail: t.RegisterRef = @enumFromInt(4);
+const saved_condition: t.RegisterRef = @enumFromInt(5);
 const code_register: wire.Register = .{ .carrier=callable_carrier,.view=callable_type };
 const saved_registers = [_]wire.Register{caller_registers[0],caller_registers[1],code_register,code_register,code_register};
+const block_code_registers = saved_registers ++ [_]wire.Register{caller_registers[2]};
 const make_saved: ins.Instruction = .{ .source=anchor,.result=r2,.operands=&empty,.data=.{ .function_make=.{ .function=@enumFromInt(1) } } };
 const forward_saved: ins.Instruction = .{ .source=anchor,.result=r3,.operands=&.{r2},.data=.{ .domain_copy=.{ .static_view=callable_type } } };
 const view_saved: ins.Instruction = .{ .source=anchor,.result=r3,.operands=&.{r2},.data=.{ .domain_view=.{ .static_view=callable_type } } };
@@ -547,6 +566,12 @@ const invoke_saved: ins.Instruction = .{ .source=anchor,.result=null,.operands=&
     .data=.{ .eh_invoke_indirect=.{ .callable=callable_type,.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
 const invoke_forwarded: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{r3},.data=invoke_saved.data };
 const invoke_copied_view: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{saved_tail},.data=invoke_saved.data };
+const enter_code_block: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{r2},
+    .data=.{ .br=.{ .destination=@enumFromInt(3) } } };
+const choose_code: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{saved_condition,r2,r3},
+    .data=.{ .cond_br=.{ .true_destination=@enumFromInt(3),.false_destination=@enumFromInt(3),.true_count=1 } } };
+const code_condition: ins.Instruction = .{ .source=anchor,.result=saved_condition,.operands=&empty,.data=bool_op.data };
+const make_second_code: ins.Instruction = .{ .source=anchor,.result=r3,.operands=&empty,.data=make_saved.data };
 
 const SavedCodeFixture = struct {
     types: [4]tables.CommonType,
@@ -579,6 +604,30 @@ const SavedCodeFixture = struct {
         common.storage.concrete=&self.concrete;
         common.closures.calls=&self.calls;
     }
+
+    fn installBlock(self: *SavedCodeFixture, base: *Fixture, caller: *wire.Function, comptime initialized: bool, comptime transport: BlockCodeTransport) void {
+        self.install(base,caller,initialized,.literal);
+        const prefix = if (initialized) [_]ins.Instruction{constant,init0,make_saved} else [_]ins.Instruction{constant,make_saved};
+        const suffix = switch (transport) {
+            .single,.single_view => [_]ins.Instruction{enter_code_block},
+            .parallel => [_]ins.Instruction{code_condition,forward_saved,choose_code},
+            .distinct => [_]ins.Instruction{code_condition,make_second_code,choose_code},
+        };
+        const completion: []const ins.Instruction = switch (transport) {
+            .single => &.{invoke_forwarded},
+            .single_view => &.{view_copied,invoke_copied_view},
+            .parallel,.distinct => &.{invoke_copied_view},
+        };
+        base.blocks[0].instructions=&(prefix ++ suffix);
+        base.blocks[3]=.{
+            .parameters=switch (transport) { .single,.single_view => &.{r3}, .parallel,.distinct => &.{saved_tail} },
+            .instructions=completion,
+        };
+        caller.blocks=base.blocks[0..4];
+        caller.registers=block_code_registers[0..switch (transport) { .single => 4,.single_view => 5,.parallel,.distinct => 6 }];
+        self.calls[0].block=@enumFromInt(3);
+        self.calls[0].instruction=@intCast(completion.len-1);
+    }
 };
 
 fn checkSavedCode(case: Case, comptime initialized: bool, comptime transport: SavedCodeTransport, rejected: bool) !void {
@@ -603,6 +652,25 @@ test "module fixed Code copy allows an initialized read" { try checkSavedCode(.a
 test "module fixed Code view still requires initialization before a write" { try checkSavedCode(.store_before_init,false,.view,true); }
 test "module fixed Code view allows an initialized write" { try checkSavedCode(.store_after_init,true,.view,false); }
 test "module fixed Code copy followed by a view keeps the exact target" { try checkSavedCode(.before_init,false,.copy_view,true); }
+
+fn checkBlockCode(case: Case, comptime initialized: bool, comptime transport: BlockCodeTransport, rejected: bool) !void {
+    var fixture: Fixture=undefined;
+    fixture.init(case);
+    var saved: SavedCodeFixture=undefined;
+    saved.installBlock(&fixture,&fixture.functions[0],initialized,transport);
+    var c=context.Context{ .program=&fixture.program,.allocator=std.testing.allocator };
+    try prerequisites(&c,false);
+    var fixed=try fixed_targets.analyze(&c);
+    defer fixed.deinit(c.allocator);
+    if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
+}
+
+test "module fixed Code block parameter requires initialization before a read" { try checkBlockCode(.before_init,false,.single,true); }
+test "module fixed Code block parameter allows a prior initialized read" { try checkBlockCode(.after_init,true,.single,false); }
+test "module fixed Code view of a block parameter retains the literal" { try checkBlockCode(.before_init,false,.single_view,true); }
+test "module fixed Code requires initialization on parallel edges carrying one literal" { try checkBlockCode(.store_before_init,false,.parallel,true); }
+test "module fixed Code parallel edges allow a prior initialized write" { try checkBlockCode(.store_after_init,true,.parallel,false); }
+test "module fixed Code parallel edges distinguish separate literals for one target" { try checkBlockCode(.before_init,false,.distinct,false); }
 
 test "module fixed Code leaves foreign Globals to the verified module order" {
     var fixture: CrossFixture=undefined;
