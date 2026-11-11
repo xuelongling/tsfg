@@ -12,20 +12,19 @@ import {commonMeter} from '../../compiler/common-program-common.mjs';
 
 const readHir=name=>projectCommonProgram(readCommonProgramFacts(readFileSync(new URL('./testdata/common-loop-local-factory/'+name+'.json',import.meta.url))));
 const hasCode=(error,code)=>error instanceof Error&&'code' in error&&error.code===code;
-function consume(name){
-  const hir=readHir(name),publication=createCommonProgramPublication(hir),
-    request={targets:hir.closure.requiredRoots.filter(r=>r.kind==='kernel').map(r=>r.target).sort()};
+function consume(hir,publication=createCommonProgramPublication(hir)){
+  const request={targets:hir.closure.requiredRoots.filter(r=>r.kind==='kernel').map(r=>r.target).sort()};
   return emitCommonProgramCore(hir,publication,request);
 }
 test('complete official Source keeps a readonly self-held reader through an Array element and loop exit',()=>{
-  const core=consume('readonly-callable-array-held-safe');
+  const core=consume(readHir('readonly-callable-array-held-safe'));
   assert.equal(typeof core,'string');assert.match(core,/tsfg_program\.array_read/);
 });
 test('a reader saved before Array overwrite still owns its original capture after the new factory returns',()=>{
-  assert.doesNotThrow(()=>consume('readonly-callable-array-saved-old'));
+  assert.doesNotThrow(()=>consume(readHir('readonly-callable-array-saved-old')));
 });
 for(const name of ['conditional-empty','stored-undefined'])test('actual callable Array read retains absence: '+name,()=>{
-  assert.throws(()=>consume('readonly-callable-array-'+name),e=>hasCode(e,'r03-common-program-capability'));
+  assert.throws(()=>consume(readHir('readonly-callable-array-'+name)),e=>hasCode(e,'r03-common-program-capability'));
 });
 test('a proved initialized element still retains a stored undefined payload through verified union views',()=>{
   const hir=readHir('readonly-callable-array-stored-union-undefined'),types=new Map(hir.types.map(t=>[t.id,t])),
@@ -35,5 +34,23 @@ test('a proved initialized element still retains a stored undefined payload thro
   assert.throws(()=>createCommonProgramPublication(hir),e=>e instanceof Error&&hasCode(e,'r03-common-program-capability')&&e.message.includes('actual indirect operand is not callable'));
 });
 test('the full Array writer bound includes an unobserved global-read code arm',()=>{
-  assert.throws(()=>consume('readonly-callable-array-unobserved-global-reader'),e=>hasCode(e,'r03-common-program-borrow-pending'));
+  const hir=readHir('readonly-callable-array-unobserved-global-reader');
+  const loop=hir.functions.find(fn=>fn.name==='loopRead');
+  const reader=hir.functions.find(fn=>fn.name==='readOwned');
+  const globalReader=hir.functions.find(fn=>fn.name==='readOtherGlobal26t');
+  const leftTotal=hir.globals.find(row=>row.name==='leftTotal');
+  assert.ok(loop&&reader&&globalReader&&leftTotal);
+  assert.ok(reader.lexicalEnvironment);
+  assert.equal(globalReader.lexicalEnvironment,null);
+  const call=loop.body.at(-1).value;
+  assert.equal(call.kind,'indirectCall');
+  assert.deepEqual(call.range,{start:2300,end:2312});
+  assert.deepEqual(commonTargets(hir,commonMeter()).site(loop.id,call.range),{
+    top:false,functions:[reader.id,globalReader.id].sort()
+  });
+  const publication=createCommonProgramPublication(hir);
+  const contract=publication.contracts.find(row=>row.functionId===loop.id);
+  assert.ok(contract);
+  assert.deepEqual(contract.upper.globals.reads,[leftTotal.id]);
+  assert.throws(()=>consume(hir,publication),e=>hasCode(e,'r03-common-program-borrow-pending'));
 });

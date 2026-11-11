@@ -12,7 +12,7 @@ import {signatureId} from '../../compiler/module-callable-common.mjs';
 
 {
   const bytes=readFileSync(new URL('./testdata/common-loop-local-factory/readonly-callable-array-held-safe.json',import.meta.url));
-  assert.equal(createHash('sha256').update(bytes).digest('hex'),'c39788be0d847caf85e96865ce88de2eba980f7459e324ceb9d9c24e7f43cb16');
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),'01f175eeb133d53c1543b0aecbb140d8baaa180829b61274f7150452658697f5');
   const hir=projectCommonProgram(readCommonProgramFacts(bytes)),root=hir.functions.find(fn=>fn.name==='loopRead'),
     factory=hir.functions.find(fn=>fn.name==='makeOwnedReader'),reader=hir.functions.find(fn=>fn.name==='readOwned'&&fn.lexicalParent===factory.id),
     array=root.bindings.find(binding=>binding.name==='readers').type;

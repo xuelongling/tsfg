@@ -435,6 +435,48 @@ class Solver {
     for(const auto &facet:upper.facets){if(!m_.text(facet.size()))return false;if(!m_.equal(facet,"mayThrow")){if(!m_.good)return false;Ref id;if(!symbol(facet,id)||!insert(context.facets,id))return false;}}return true;
   }
 
+  bool readonlyAlternative(const V4::Call &call,const FixedFunction &fixed,Ref function,const Set &codes,bool &eligible){
+    eligible=false;const auto &upper=*fixed.upper;
+    if(!call.callee||call.receiver||call.environment||fixed.protocol.lexicalEnvironment||fixed.protocol.construction||codes.empty()||
+        !upper.captures.empty()||!upper.globals.writes.empty()||!upper.hostResources.reads.empty()||!upper.hostResources.writes.empty()||
+        upper.parameters.size()!=call.arguments.size())return true;
+    for(const auto &parameter:upper.parameters){if(!m_.spend())return false;if(parameter.write||parameter.structural)return true;}
+    for(const auto &facet:upper.facets){if(!m_.equal(facet,"managedReference"))return m_.good;}
+    for(auto id:codes){if(!m_.spend())return false;const auto &code=locations_[id];if(code.kind!=LocationKind::Code||code.function==function)return true;}
+    eligible=true;return true;
+  }
+  bool inheritReadonlyAlternative(Context &context,Ref function,const PublishedEffects &upper,const std::vector<Set> &arguments){
+    if(!insert(context.calls,function)||!resourceEffects(context,upper.globals,"g:"))return false;
+    for(Ref i=0;i<arguments.size();++i)if(!flagged(context,upper.parameters[i],arguments[i]))return false;
+    for(const auto &facet:upper.facets){Ref id;if(!symbol(facet,id)||!insert(context.facets,id))return false;}
+    return true;
+  }
+  llvm::StringRef indirectOccurrence(const V4::Call &call){
+    llvm::StringRef site=call.site;if(!m_.text(site.size())||!m_.text(call.functionId.size()))return {};
+    if(!site.consume_front("[\"")||!site.consume_front(call.functionId)||!site.consume_front("\""))return {};
+    const auto occurrence=site;uint32_t start,end;
+    if(!site.consume_front(",")||site.consumeInteger(10,start)||!site.consume_front(",")||site.consumeInteger(10,end)||
+        start>=end||site!=",\"indirectCall\"]")return {};
+    return occurrence;
+  }
+  bool sameOccurrenceWitness(const Context &context,const V4::Call &call,const Set &codes,bool &covered){
+    covered=false;const auto occurrence=indirectOccurrence(call);if(!m_.good)return false;if(occurrence.empty())return true;
+    bool ready;if(!readyRefs(context,*call.callee,ready))return false;if(!ready||!context.heapReady[call.heap])return true;
+    size_t argumentWork=call.arguments.size()+call.callee->size();
+    for(const auto &argument:call.arguments){if(!readyRefs(context,argument,ready))return false;if(!ready)return true;argumentWork+=argument.size();}
+    Set scheduled;const auto &calls=context.graph->calls;
+    for(Ref i=0;i<calls.size();++i){
+      if(!m_.spend())return false;const auto &other=calls[i];
+      if(context.targets[i].empty()||!other.callee||other.receiver||other.heap!=call.heap||other.control!=call.control)continue;
+      const auto otherOccurrence=indirectOccurrence(other);if(!m_.good)return false;
+      if(!m_.equal(occurrence,otherOccurrence)){if(!m_.good)return false;continue;}
+      if(!m_.spend(argumentWork+1))return false;if(*other.callee!=*call.callee||other.arguments!=call.arguments)continue;
+      Ref function;if(!symbol(other.functionId,function)||!insert(scheduled,function,false))return false;
+    }
+    for(auto id:codes){if(!numericLookup(scheduled.size()))return false;if(!scheduled.count(locations_[id].function))return true;}
+    covered=true;return true;
+  }
+
   bool runCalls(Context &context){const auto &graph=*context.graph;if(!m_.spend(graph.calls.size()))return false;
     for(Ref index=0;index<graph.calls.size();++index){if(!m_.spend())return false;const auto &call=graph.calls[index];if(!context.controls[call.control]||!context.heapReady[call.heap])continue;
       bool available=true;for(const auto &argument:call.arguments){bool value;if(!readyRefs(context,argument,value))return false;available=available&&value;}
@@ -459,6 +501,12 @@ class Solver {
           if(!formalCode(id))return open("code-source-nonowning-or-unknown");if(expected==None){if(call.environment)return open("unexpected-code-component");if(!schedule(Set{}))return false;}
           else{if(!call.environment)return open("missing-formal-code-component");for(auto env:components){if(!m_.spend())return false;const auto component=locations_[env];if(component.kind==LocationKind::EnvironmentComponent&&component.source==id&&component.function==function&&component.layout==expected){Set selected;if(!insert(selected,env,false)||!schedule(selected))return false;}}}
         }}
+        if(context.targets[index].empty()){
+          bool readonly;if(!readonlyAlternative(call,*record,function,codes,readonly))return false;
+          // Keep the full allowed upper on the effect lattice. Only a settled
+          // same-site witness may leave this alternative out of the data path.
+          if(readonly&&!inheritReadonlyAlternative(context,function,*record->upper,arguments))return false;
+        }
       }else if(expected==None){if(call.environment)return open("unexpected-direct-environment");if(!schedule(Set{}))return false;}
       else{if(!call.environment)return open("missing-direct-environment");Set bases,selected;if(!resolve(context,*call.environment,bases)||!selectEnvironments(bases,expected,selected))return false;if(!selected.empty()&&!schedule(selected))return false;}
     }return true;
@@ -741,11 +789,16 @@ class Solver {
       else if(node.kind==V4::ValueKind::EnvironmentCreate){Ref selected;if(!symbol(node.layout,selected))return false;const auto *row=layout(selected);if(!row)return false;if(row->parent)for(auto env:context.values[index]){if(!numericLookup(environmentParents_.size()))return false;const auto found=environmentParents_.find(env);if(found==environmentParents_.end()||found->second.empty())return open("activation-parent-unresolved");}}
     }
     for(Ref index=0;index<graph.calls.size();++index){if(!m_.spend())return false;const auto &call=graph.calls[index];if(!context.controls[call.control])continue;Ref function;if(!symbol(call.functionId,function))return false;const auto *record=fixedFunction(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!symbol(*record->protocol.lexicalEnvironment,expected))return false;
-      if(call.callee){Set codes,components;if(!resolve(context,*call.callee,codes))return false;if(call.environment&&!resolve(context,*call.environment,components))return false;
+      Set codes;
+      if(call.callee){Set components;if(!resolve(context,*call.callee,codes))return false;if(call.environment&&!resolve(context,*call.environment,components))return false;
         for(auto id:codes){if(!m_.spend())return false;const auto code=locations_[id];if(code.kind==LocationKind::Code&&code.function!=function)continue;
           if(expected!=None){if(!call.environment)return open("selected-code-component-missing");bool matched=false;for(auto env:components){if(!m_.spend())return false;const auto component=locations_[env];matched=matched||(code.kind==LocationKind::Code?env==code.environment:component.kind==LocationKind::EnvironmentComponent&&component.source==id&&component.function==function&&component.layout==expected);}if(!matched)return open("selected-code-env-pair-unresolved");}}
       }
-      if(context.targets[index].empty())return open("permitted-code-env-target-unresolved");
+      if(context.targets[index].empty()){
+        bool readonly,covered=false;
+        if(!readonlyAlternative(call,*record,function,codes,readonly)||(readonly&&!sameOccurrenceWitness(context,call,codes,covered)))return false;
+        if(!covered)return open("permitted-code-env-target-unresolved");
+      }
       for(auto target:context.targets[index]){auto &called=*contexts_[target];for(const auto &capture:called.upper->captures){if(!m_.spend())return false;if(!capture.flags.read&&!capture.flags.write&&!capture.flags.structural)continue;
           Ref selected;std::vector<CaptureSource> sources;if(!captureSources(called,capture.slot,selected,sources))return false;if(sources.empty())return open("fixed-capture-saved-environment-unresolved");
           if(!m_.spend(sources.size()))return false;for(const auto &source:sources)if(!completeCapture(*contexts_[source.context],source.heap,*source.bases,selected,capture.slot))return false;}}

@@ -6,7 +6,8 @@ import {canonical,commonCheck as check} from './common-program-common.mjs';
 import {commonReturnOriginReceivers,commonReceiverActivations} from './common-program-return-origin-receivers.mjs';
 
 export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actualType,environments,constructions=new Map(),rootProtocol},spend) {
-  const format=graph=>check(graph.format?.family==='tsfg.return-origin-graph-candidate'&&graph.format.version===5,'return-origins','one draft5 graph family is required');
+  const isGraph5=graph=>graph?.format?.family==='tsfg.return-origin-graph-candidate'&&graph.format.version===5;
+  const format=graph=>check(isGraph5(graph),'return-origins','one draft5 graph family is required');
   format(root);
   // Source excludes recursive publication components before projection. Pure
   // graph consumers need the same fresh-cell precondition where recursion can
@@ -123,6 +124,37 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
       for(const targets of current.targets)for(const target of targets){spend();pending.push(target);}
     }return {selected,sources:result};
   };
+  const readOnlyArm=(call,record)=>{
+    const upper=record.upper;
+    if(!isGraph5(record.graph)||!upper||call.environment!==null||call.receiver!==null||record.protocol.lexicalEnvironment!==null||record.protocol.construction||
+      upper.parameters.length!==call.arguments.length||upper.captures.length||upper.globals.writes.length||
+      upper.hostResources.reads.length||upper.hostResources.writes.length)return false;
+    for(const parameter of upper.parameters){spend();if(parameter.write||parameter.structural)return false;}
+    for(const flag in upper.facets){spend();if(flag!=='managedReference'&&upper.facets[flag])return false;}
+    return true;
+  };
+  // Source keys the same indirect occurrence separately for each target.
+  const indirectOccurrence=call=>{
+    const prefix='["'+call.functionId+'"';
+    spend(Math.ceil((prefix.length+call.site.length)/8)+1);
+    if(!call.site.startsWith(prefix)||!call.site.endsWith(',"indirectCall"]'))return null;
+    const occurrence=call.site.slice(prefix.length),range=/^,([0-9]+),([0-9]+),"indirectCall"\]$/.exec(occurrence);
+    if(!range)return null;
+    const start=Number(range[1]),end=Number(range[2]);
+    return start<end&&end<=0xffffffff?occurrence:null;
+  };
+  const selectedSiblings=(context,call,uncovered)=>{
+    const occurrence=indirectOccurrence(call);if(occurrence===null)return false;
+    const operands=key([call.callee,call.arguments]);
+    for(const [index,sibling]of context.graph.calls.entries()){
+      spend();if(!uncovered.has(sibling.functionId)||!context.targets[index].size||sibling.receiver!==null||
+        sibling.heap!==call.heap||sibling.control!==call.control)continue;
+      if(indirectOccurrence(sibling)===occurrence&&key([sibling.callee,sibling.arguments])===operands){
+        uncovered.delete(sibling.functionId);if(!uncovered.size)return true;
+      }
+    }
+    return false;
+  };
   const inherit=(context,called)=>{
     for(const [flag,owners]of called.effects){spend();for(const owner of owners)effect(context,flag,owner);}
     add(context.facets,called.facets);add(context.calls,called.calls);add(context.calls,[called.id]);
@@ -169,18 +201,29 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
         else check(call.receiver===null,'return-origin-receiver','ordinary call cannot receive a frame');
         const expected=record.protocol.lexicalEnvironment,scope=key([context.id,call.site,index]),selected=[];
         if(call.callee!==null){
-          for(const id of resolved(context,call.callee)){spend();const node=locations[id].node;
+          const codes=resolved(context,call.callee);let otherCode=codes.size>0;
+          for(const id of codes){spend();const node=locations[id].node;
             if(node.kind==='code'){
               if(node.functionId!==call.functionId)continue;
+              otherCode=false;
               check(expected===null?node.environment===null:node.environment!==null,'return-origin-environment-open','Code/environment protocol differs');
               if(expected===null){check(call.environment===null,'return-origin-environment-open','unexpected noncapturing component');selected.push(new Set());}
               else{check(call.environment!==null,'return-origin-environment-open','selected Code component is missing');for(const env of resolved(context,call.environment)){spend();if(env===node.environment)selected.push(new Set([env]));}}
             }else{
+              otherCode=false;
               check(['parameter','global','capture-entry','entry-projection'].includes(node.kind)&&locations[id].owner!==null&&!locations[id].owner.startsWith('unknown:'),'return-origin-environment-open','Code source is unknown or nonowning');
               if(expected===null){check(call.environment===null,'return-origin-environment-open','unexpected Code component');selected.push(new Set());}
               else{check(call.environment!==null,'return-origin-environment-open','formal Code component is missing');for(const env of resolved(context,call.environment)){spend();const component=locations[env].node;
                 if(component.kind==='environment-component'&&component.source===id&&component.functionId===call.functionId&&component.layout===expected)selected.push(new Set([env]));}}
             }
+          }
+          // Keep the fixed permission in the effect closure. Data and heap
+          // completions still come from the scheduled concrete contexts.
+          if(otherCode&&readOnlyArm(call,record)){
+            const upper=record.upper;add(context.calls,[call.functionId]);
+            for(const [index,parameter]of upper.parameters.entries()){spend();if(parameter.read)valueEffects(context,'read',args[index]);}
+            for(const id of upper.globals.reads){spend();effect(context,'read','g:'+id);}
+            if(upper.facets.managedReference)add(context.facets,['managedReference']);
           }
         }else if(expected===null){check(call.environment===null,'return-origin-environment-open','unexpected direct environment');selected.push(new Set());}
         else{check(call.environment!==null,'return-origin-environment-open','direct environment is missing');const values=selectEnvironments(resolved(context,call.environment),expected);if(values.size)selected.push(values);}
@@ -378,8 +421,15 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
         }
         if(formal&&parameter)continue;
       }
-      // Local Code production, unknown ownership, and unresolved capturing
-      // pairs cannot narrow a fixed capability merely to the observed payload.
+      if(context.targets[index].size===0&&call.callee!==null&&context.heapReady[call.heap]&&readyRefs(context,call.callee)&&
+        call.arguments.every(refs=>readyRefs(context,refs))&&readOnlyArm(call,fixed.get(call.functionId))){
+        const codes=resolved(context,call.callee),uncovered=new Set();let exactOther=codes.size>0;
+        for(const id of codes){spend();const node=locations[id].node;
+          if(node.kind!=='code'||node.functionId===call.functionId){exactOther=false;break;}
+          uncovered.add(node.functionId);
+        }
+        if(exactOther&&selectedSiblings(context,call,uncovered))continue;
+      }
       check(context.targets[index].size>0,'return-origin-environment-open','permitted Code/environment pair is unresolved');
       for(const target of context.targets[index]){const called=contexts[target];potentialLanguage ||= Boolean(called.upper?.facets.mayThrow&&!called.languageLive);for(const access of called.upper?.captures??[]){spend();if(!access.read&&!access.write&&!access.structural)continue;
         const {selected,sources}=captureSources(called,access.slot);check(sources.length>0,'return-origin-environment-open','fixed capture has no matching saved environment in its complete call closure');

@@ -328,16 +328,36 @@ test('draft5: a weak store through alternative Envs cannot establish MUST initia
 });
 
 
-test('Source: full fixed A/B permission survives a returned CodeA-only graph',()=>{
-  const input=fixture(),Other='otherAllowed',G='fixture:other-write';
+test('Source: exact CodeA keeps the fixed reads of unselected B at the same indirect call',()=>{
+  const input=fixture(),Other='otherAllowed',G='fixture:other-global';
   input.hir.globals.push({id:G,sourceBinding:'raw:'+G,type:B,writable:false});
   const other=fn(Other,[],B,[{kind:'return',range,value:{kind:'globalReference',global:G,type:B,range}}]);input.hir.functions.push(other);
-  const wider=upper(emptyGraph());wider.globals.writes=[G];wider.facets.managedReference=true;
+  const wider=upper(emptyGraph());wider.globals.reads=[G];wider.facets.managedReference=true;
   input.records.set(Other,{upper:wider,callables:noTransfer()});
   input.records.get(Make).callables.returns={top:false,functions:[Read,Other].sort()};
   assert.deepEqual(makeGraph().nodes.filter(row=>row.kind==='code').map(row=>row.functionId),[Read],'fixed returned data contains only CodeA');
+  const {body}=extract(input),origin=body.returnOrigins;
+  assert.deepEqual(body.globals.reads,[G]);
+  assert.deepEqual(body.parameters.map(row=>row.write),[true,false],'only the selected Code contributes the concrete returned owner');
+  assert.ok(origin.calls.some(call=>call.functionId===Other));
+  const solved=solveReturnOriginContexts(origin,fixed(input),callbacks(input),commonMeter(1000000));
+  assert.ok(solved.effects.get('read').has('g:'+G),'the fixed graph carries the unselected read independently of Source effects');
+  const split=structuredClone(origin),selected=split.calls.find(call=>call.functionId===Read);
+  assert.ok(selected);
+  selected.site=JSON.stringify([Read,80,82,'indirectCall']);
+  assert.throws(()=>solveReturnOriginContexts(split,fixed(input),callbacks(input),commonMeter(1000000)),
+    {code:'r03-common-program-return-origin-environment-open'});
+  for(const call of split.calls)if(call.callee!==null)call.site=JSON.stringify([call.functionId,80,80,'indirectCall']);
+  assert.throws(()=>solveReturnOriginContexts(split,fixed(input),callbacks(input),commonMeter(1000000)),
+    {code:'r03-common-program-return-origin-environment-open'});
+  const incomplete=fixed(input),missing=incomplete.get(Other);
+  assert.ok(missing);
+  incomplete.set(Other,{...missing,graph:null});
+  assert.throws(()=>solveReturnOriginContexts(origin,incomplete,callbacks(input),commonMeter(1000000)),
+    {code:'r03-common-program-return-origin-environment-open'});
+  wider.globals.writes=[G];
   assert.throws(()=>extract(input),/** @param {unknown} error */error=>error instanceof TypeError&&'code' in error&&error.code==='r03-common-program-return-origin-environment-open',
-    'permitted B cannot disappear merely because the saved Code/environment is A; the unresolved full capability stays OPEN');
+    'an unselected writer still requires its fixed Code/environment pair');
 });
 
 // Distinct local actual tags refine aliases. Neither Source spelling nor
