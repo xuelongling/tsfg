@@ -127,6 +127,16 @@ class Solver {
   std::vector<Address> addresses_;
   std::map<Ref,Set> environmentParents_;
   std::map<Ref,Ref> slotOwners_;
+  struct CaptureSlotKey {
+    Ref layout;
+    const std::string *key;
+    bool operator<(const CaptureSlotKey &other) const{
+      if(layout!=other.layout)return layout<other.layout;
+      return std::less<const std::string *>{}(key,other.key);
+    }
+  };
+  struct CaptureSlot {Ref label,type,selector,view;};
+  std::optional<std::map<CaptureSlotKey,CaptureSlot>> captureSlots_;
   enum class Definition {Absent,Undefined,Defined};
   std::map<std::tuple<Ref,Ref,Ref,Ref>,Definition> definitionMemo_;
   std::vector<std::unique_ptr<Context>> contexts_;
@@ -245,9 +255,40 @@ class Solver {
     }return true;
   }
   bool environmentAlias(Ref left,Ref right,bool &answer){if(!m_.spend())return false;const auto a=locations_[left],b=locations_[right];answer=left==right||(environmentKind(a.kind)&&environmentKind(b.kind)&&a.layout==b.layout&&(a.kind!=LocationKind::EnvironmentLocal||b.kind!=LocationKind::EnvironmentLocal));return true;}
-  bool captureValues(const Heap &heap,const Set &bases,Ref layoutId,llvm::StringRef key,Set &out){const auto *row=layout(layoutId);if(!row)return false;const V4::EnvironmentSlot *slot=nullptr;
-    for(const auto &candidate:row->slots){if(!m_.spend())return false;if(m_.equal(candidate.key,key)){slot=&candidate;break;}if(!m_.good)return false;}if(!slot)return open("capture-slot-open");
-    Set selected;if(!selectEnvironments(bases,layoutId,selected))return false;Ref label,type,selector,view;if(!symbol(key,label)||!symbol(slot->type,type)||!prefixed("capture:",key,selector)||!prefixed("env:",name(layoutId),view))return false;
+  bool captureValues(const Heap &heap,const Set &bases,Ref layoutId,const std::string &key,Set &out){
+    // SlotKey strings belong to immutable graph nodes, fixed upper effects,
+    // or environment rows. Only their declaration lookup is reusable.
+    if(!captureSlots_){
+      if(!m_.spend(2))return false;
+      captureSlots_.emplace();
+    }
+    auto &slots=*captureSlots_;
+    // A debug comparison can also compare the two keys in reverse.
+    if(!m_.spend(5)||!numericLookup(slots.size(),4))return false;
+    const CaptureSlotKey signature{layoutId,&key};
+    auto found=slots.lower_bound(signature);
+    const bool known=found!=slots.end()&&found->first.layout==layoutId&&found->first.key==&key;
+    const V4::EnvironmentSlot *declaration=nullptr;
+    if(!known){
+      const auto *row=layout(layoutId);if(!row)return false;
+      for(const auto &candidate:row->slots){
+        if(!m_.spend())return false;
+        if(m_.equal(candidate.key,key)){declaration=&candidate;break;}
+        if(!m_.good)return false;
+      }
+      if(!declaration)return open("capture-slot-open");
+    }
+    Set selected;if(!selectEnvironments(bases,layoutId,selected))return false;
+    if(!known){
+      CaptureSlot slot;
+      if(!symbol(key,slot.label)||!symbol(declaration->type,slot.type)||
+         !prefixed("capture:",key,slot.selector)||!prefixed("env:",name(layoutId),slot.view))return false;
+      // Prepay the node, six fields and the hinted insertion comparisons.
+      if(!m_.spend(15))return false;
+      found=slots.emplace_hint(found,signature,slot);
+    }
+    if(!m_.spend(4))return false;
+    const auto [label,type,selector,view]=found->second;
     for(auto base:selected){if(!m_.spend())return false;const auto node=locations_[base];
       if(node.kind==LocationKind::EnvironmentEntry||node.kind==LocationKind::EnvironmentComponent){Location value;value.kind=node.kind==LocationKind::EnvironmentEntry?LocationKind::CaptureEntry:LocationKind::EntryProjection;value.type=type;value.label=label;value.owner=node.owner;
         if(node.kind==LocationKind::EnvironmentEntry&&!prefixed("c:",key,value.owner))return false;Key identity;Ref result;if(!this->key(identity,{11,base,label})||!location(std::move(identity),value,result)||!insert(out,result,false))return false;}
@@ -593,7 +634,13 @@ class Solver {
   }
   bool receiverValue(Context &context,Ref index,const V4::Value &node,Set &output){
     if(node.kind==V4::ValueKind::ReceiverInput)return add(output,context.receivers);
-    if(node.kind==V4::ValueKind::ReceiverValue)return context.receiverLive[node.action]?add(output,context.receiverValues[node.action]):true;
+    if(node.kind==V4::ValueKind::ReceiverValue){
+      if(!context.receiverLive[node.action])return true;
+      if(!m_.spend(4))return false;
+      const auto &values=context.receiverValues[node.action];
+      // This result receives values only from this growing receiver action.
+      return output.size()==values.size()||add(output,values);
+    }
     if(!context.controls[node.control])return true;Ref id;if(!symbol(node.construction,id))return false;const auto *row=construction(id);if(!row)return false;
     const auto append=[&](Ref parent,Ref target){Ref value;return frameIdentity(context,index,id,target,parent,value,parent!=None&&locations_[parent].receiverRoot)&&insert(output,value);};
     if(node.parent){Set parents;if(!resolve(context,*node.parent,parents)||!m_.spend(parents.size()))return false;
@@ -649,7 +696,7 @@ class Solver {
       case V4::ValueKind::Parameter:case V4::ValueKind::Global:case V4::ValueKind::Local:case V4::ValueKind::Nonowning:
       case V4::ValueKind::Literal:case V4::ValueKind::EnvironmentInput:case V4::ValueKind::ReceiverInput:return true;
       case V4::ValueKind::Code:return !node.environment;
-      case V4::ValueKind::EnvironmentCreate:return !node.parent;
+      case V4::ValueKind::EnvironmentCreate:case V4::ValueKind::ReceiverFrame:return !node.parent;
       default:return false;
     }
   }
@@ -843,7 +890,7 @@ class Solver {
     }
     if(!m_.spend())return false;definitionMemo_.emplace(signature,defined);return true;
   }
-  bool completeCapture(Context &context,std::optional<Ref> heap,const Set &bases,Ref layoutId,llvm::StringRef key){Set selected;if(!selectEnvironments(bases,layoutId,selected))return false;if(selected.empty())return open("capture-environment-unresolved");Ref slot;if(!symbol(key,slot))return false;
+  bool completeCapture(Context &context,std::optional<Ref> heap,const Set &bases,Ref layoutId,const std::string &key){Set selected;if(!selectEnvironments(bases,layoutId,selected))return false;if(selected.empty())return open("capture-environment-unresolved");Ref slot;if(!symbol(key,slot))return false;
     for(auto environment:selected){if(!m_.spend())return false;Definition defined;if(!captureDefinition(context,heap,environment,slot,defined))return false;
       Set single,values;if(!insert(single,environment,false)||!captureValues(heap?context.heaps[*heap]:context.input,single,layoutId,key,values))return false;
       if(defined!=Definition::Defined||values.empty())return open("capture-payload-unresolved-on-reachable-path");}return true;
@@ -892,7 +939,7 @@ public:
   Solver(const V4::Graph &root,const FixedFunctions &fixed,const Callbacks &callbacks,const V4::Charge &charge):root_(root),fixed_(fixed),callbacks_(callbacks),m_(charge){}
   SolveResult run(){
     result_.status=Status::Solved;result_.reason="ordinary-fixed-context-closure";
-    if(!m_.spend())return finish();callbackCharge_=[this](std::size_t n){return m_.spend(n);};
+    if(!m_.spend(2))return finish();callbackCharge_=[this](std::size_t n){return m_.spend(n);};
     if(root_.version!=5){open("graph5-only");return finish();}if(!protocolReady(callbacks_.rootProtocol))return finish();
     // The global stable SlotKey directory belongs to this one admitted group.
     if(callbacks_.environments)for(const auto &row:*callbacks_.environments){Ref owner;if(!symbol(row.first,owner)||!m_.spend(row.second.slots.size()))return finish();
