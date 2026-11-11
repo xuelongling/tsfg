@@ -32,8 +32,13 @@ const empty = [_]t.RegisterRef{};
 const value = [_]t.RegisterRef{r0};
 const condition = [_]t.RegisterRef{r2};
 const language = [_]t.RegisterRef{r1};
+const returned_value = [_]t.RegisterRef{r2};
+const callee_operand = [_]t.RegisterRef{r1};
 const caller_registers = [_]wire.Register{ .{ .carrier=sc,.view=scalar },.{ .carrier=.payload,.view=null },.{ .carrier=bc,.view=boolean } };
+const result_caller_registers = [_]wire.Register{ .{ .carrier=sc,.view=scalar },.{ .carrier=.payload,.view=null },.{ .carrier=sc,.view=scalar } };
 const callee_registers = [_]wire.Register{ .{ .carrier=sc,.view=scalar },.{ .carrier=sc,.view=scalar } };
+const branch_callee_registers = [_]wire.Register{ .{ .carrier=sc,.view=scalar },.{ .carrier=bc,.view=boolean } };
+const exceptional_registers = [_]wire.Register{ .{ .carrier=sc,.view=scalar },.{ .carrier=.payload,.view=null } };
 const constant: ins.Instruction = .{ .source=anchor,.result=r0,.operands=&empty,.data=.{ .const_i32=7 } };
 const bool_op: ins.Instruction = .{ .source=anchor,.result=r2,.operands=&empty,.data=.{ .const_bool=true } };
 const init0: ins.Instruction = .{ .source=anchor,.result=null,.operands=&value,.data=.{ .global_store=.{ .global=@enumFromInt(0),.initialize=true } } };
@@ -42,21 +47,41 @@ const load0: ins.Instruction = .{ .source=anchor,.result=r0,.operands=&empty,.da
 const load1: ins.Instruction = .{ .source=anchor,.result=r0,.operands=&empty,.data=.{ .global_load=.{ .global=@enumFromInt(1) } } };
 const entry_fuel: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .fuel=.{ .event=.entry } } };
 const ret: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.@"return" };
+const payload_from_i32: ins.Instruction = .{ .source=anchor,.result=r1,.operands=&value,.data=.{ .eh_carrier=null } };
 const raise: ins.Instruction = .{ .source=anchor,.result=null,.operands=&language,.data=.eh_raise };
 const invoke: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .eh_invoke=.{ .callee=@enumFromInt(1),.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
+const invoke_thrower: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .eh_invoke=.{ .callee=@enumFromInt(2),.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
+const next_block: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(1) } } };
 const upper: publication.EffectUpper = .{
     .parameters=&.{},.captures=&.{},.globals=.{ .reads=&.{g0,g1},.writes=&.{g0,g1} },
     .host_resources=.{ .reads=&.{},.writes=&.{} },
     .facets=.{ .allocation=false,.@"await"=false,.eh_control=true,.escape=false,.lock=false,.managed_reference=false,.may_throw=true,.unknown_host=false },
 };
-const Case = enum { after_init, before_init, callee_only, potential_only, other_global, other_callee, both_arms, missing_arm, unsupported_multiblock, store_before_init, store_after_init };
+const Dependency = @typeInfo(@FieldType(publication.FixedPublication, "dependencies")).pointer.child;
+const direct_dependencies = [3]Dependency{
+    .{ .function_id=f0,.callees=&.{.{ .function_id=f1,.digest=@splat(0x61) }},.hosts=&.{} },
+    .{ .function_id=f1,.callees=&.{},.hosts=&.{} },
+    .{ .function_id=f2,.callees=&.{},.hosts=&.{} },
+};
+const nested_dependencies = [3]Dependency{
+    direct_dependencies[0],
+    .{ .function_id=f1,.callees=&.{.{ .function_id=f2,.digest=@splat(0x62) }},.hosts=&.{} },
+    direct_dependencies[2],
+};
+const Case = enum {
+    after_init, before_init, callee_only, potential_only, other_global, other_callee, both_arms, missing_arm,
+    store_before_init, store_after_init, multiblock_read_before_init, multiblock_read_after_init,
+    multiblock_unreachable, multiblock_branch_before_init, multiblock_branch_after_init,
+    multiblock_store_before_init, multiblock_store_after_init,
+    multiblock_exception_before_init, multiblock_exception_after_init,
+};
 const Fixture = struct {
     program: wire.Program,
     instructions: [10]ins.Instruction,
     blocks: [6]wire.Block,
-    callee_instructions: [5]ins.Instruction,
-    callee_blocks: [2]wire.Block,
-    other_instructions: [3]ins.Instruction,
+    callee_instructions: [6]ins.Instruction,
+    callee_blocks: [3]wire.Block,
+    other_instructions: [4]ins.Instruction,
     other_blocks: [1]wire.Block,
     functions: [3]wire.Function,
     abis: [3]storage.CommonAbi,
@@ -80,24 +105,80 @@ const Fixture = struct {
         self.blocks[2]=.{ .parameters=&language,.instructions=self.instructions[5..6] };
         self.callee_instructions[0..3].*=.{entry_fuel,load0,ret};
         self.callee_blocks[0]=.{ .parameters=&empty,.instructions=self.callee_instructions[0..3] };
-        self.other_instructions=.{entry_fuel,load0,ret}; self.other_blocks=.{.{ .parameters=&empty,.instructions=&self.other_instructions }};
-        var block_count: usize=3; var callee_block_count: usize=1; var callee_register_count: usize=1;
-        const function_count: usize=if(case==.other_callee)3 else 2;
+        self.other_instructions[0..3].*=.{entry_fuel,load0,ret};
+        self.other_blocks=.{.{ .parameters=&empty,.instructions=self.other_instructions[0..3] }};
+        var block_count: usize=3; var callee_block_count: usize=1;
+        var caller_regs: []const wire.Register=&caller_registers;
+        var callee_regs: []const wire.Register=callee_registers[0..1];
+        const exceptional=case==.multiblock_exception_before_init or case==.multiblock_exception_after_init;
+        const function_count: usize=if(case==.other_callee or exceptional)3 else 2;
         switch(case) {
             .after_init => {},
             .before_init => {
                 self.instructions[0..6].*=.{constant,bool_op,invoke,init0,ret,raise};
                 self.blocks[0].instructions=self.instructions[0..3]; self.blocks[1].instructions=self.instructions[3..5];
             },
-            .callee_only,.unsupported_multiblock => {
+            .callee_only,.multiblock_unreachable => {
                 self.instructions[0..5].*=.{constant,bool_op,invoke,ret,raise};
                 self.blocks[0].instructions=self.instructions[0..3]; self.blocks[1].instructions=self.instructions[3..4]; self.blocks[2].instructions=self.instructions[4..5];
-                if(case==.unsupported_multiblock) {
-                    callee_block_count=2; callee_register_count=2;
-                    self.callee_instructions=.{entry_fuel,constant,.{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(1) } } },load0,ret};
-                    self.callee_instructions[3].result=r1;
-                    self.callee_blocks=.{ .{ .parameters=&empty,.instructions=self.callee_instructions[0..3] },.{ .parameters=&empty,.instructions=self.callee_instructions[3..5] } };
+                if(case==.multiblock_unreachable) {
+                    callee_block_count=2;
+                    self.callee_instructions[0..4].*=.{entry_fuel,ret,load0,ret};
+                    self.callee_blocks[0].instructions=self.callee_instructions[0..2];
+                    self.callee_blocks[1]=.{ .parameters=&empty,.instructions=self.callee_instructions[2..4] };
                 }
+            },
+            .multiblock_read_before_init,.multiblock_read_after_init => {
+                caller_regs=&result_caller_registers;
+                if(case==.multiblock_read_before_init) {
+                    self.instructions[0..5].*=.{constant,invoke,init0,ret,raise};
+                    self.blocks[0].instructions=self.instructions[0..2];
+                    self.blocks[1].instructions=self.instructions[2..4];
+                } else {
+                    self.instructions[0..5].*=.{constant,init0,invoke,ret,raise};
+                    self.blocks[0].instructions=self.instructions[0..3];
+                    self.blocks[1].instructions=self.instructions[3..4];
+                }
+                self.blocks[1].parameters=&returned_value;
+                self.blocks[2].instructions=self.instructions[4..5];
+                self.abis[1].result=scalar; self.abis[1].result_carrier=sc;
+                callee_block_count=2; callee_regs=&callee_registers;
+                self.callee_instructions[0..5].*=.{entry_fuel,constant,next_block,load0,ret};
+                self.callee_instructions[3].result=r1;
+                self.callee_instructions[4].operands=&callee_operand;
+                self.callee_blocks[0].instructions=self.callee_instructions[0..3];
+                self.callee_blocks[1]=.{ .parameters=&empty,.instructions=self.callee_instructions[3..5] };
+            },
+            .multiblock_branch_before_init,.multiblock_branch_after_init => {
+                if(case==.multiblock_branch_before_init) {
+                    self.instructions[0..6].*=.{constant,bool_op,invoke,init0,ret,raise};
+                    self.blocks[0].instructions=self.instructions[0..3]; self.blocks[1].instructions=self.instructions[3..5];
+                }
+                callee_block_count=3; callee_regs=&branch_callee_registers;
+                const branch: ins.Instruction=.{ .source=anchor,.result=null,.operands=&callee_operand,
+                    .data=.{ .cond_br=.{ .true_destination=@enumFromInt(1),.false_destination=@enumFromInt(2),.true_count=0 } } };
+                self.callee_instructions=.{entry_fuel,bool_op,branch,load0,ret,ret};
+                self.callee_instructions[1].result=r1;
+                self.callee_blocks=.{
+                    .{ .parameters=&empty,.instructions=self.callee_instructions[0..3] },
+                    .{ .parameters=&empty,.instructions=self.callee_instructions[3..5] },
+                    .{ .parameters=&empty,.instructions=self.callee_instructions[5..6] },
+                };
+            },
+            .multiblock_exception_before_init,.multiblock_exception_after_init => {
+                if(case==.multiblock_exception_before_init) {
+                    self.instructions[0..6].*=.{constant,bool_op,invoke,init0,ret,raise};
+                    self.blocks[0].instructions=self.instructions[0..3]; self.blocks[1].instructions=self.instructions[3..5];
+                }
+                callee_block_count=3; callee_regs=&exceptional_registers;
+                self.callee_instructions[0..5].*=.{entry_fuel,invoke_thrower,ret,load0,raise};
+                self.callee_blocks=.{
+                    .{ .parameters=&empty,.instructions=self.callee_instructions[0..2] },
+                    .{ .parameters=&empty,.instructions=self.callee_instructions[2..3] },
+                    .{ .parameters=&language,.instructions=self.callee_instructions[3..5] },
+                };
+                self.other_instructions=.{entry_fuel,constant,payload_from_i32,raise};
+                self.other_blocks[0].instructions=&self.other_instructions;
             },
             .potential_only,.other_callee => {
                 self.instructions[0..6].*=.{constant,bool_op,invoke,init0,ret,raise};
@@ -105,10 +186,17 @@ const Fixture = struct {
                 self.callee_instructions[1]=constant;
             },
             .other_global => { self.callee_instructions[1]=load1; },
-            .store_before_init,.store_after_init => {
-                self.callee_instructions[0..4].*=.{entry_fuel,constant,store0,ret};
-                self.callee_blocks[0].instructions=self.callee_instructions[0..4];
-                if(case==.store_before_init) {
+            .store_before_init,.store_after_init,.multiblock_store_before_init,.multiblock_store_after_init => {
+                if(case==.multiblock_store_before_init or case==.multiblock_store_after_init) {
+                    callee_block_count=2;
+                    self.callee_instructions[0..5].*=.{entry_fuel,constant,next_block,store0,ret};
+                    self.callee_blocks[0].instructions=self.callee_instructions[0..3];
+                    self.callee_blocks[1]=.{ .parameters=&empty,.instructions=self.callee_instructions[3..5] };
+                } else {
+                    self.callee_instructions[0..4].*=.{entry_fuel,constant,store0,ret};
+                    self.callee_blocks[0].instructions=self.callee_instructions[0..4];
+                }
+                if(case==.store_before_init or case==.multiblock_store_before_init) {
                     // No initializer-local Global op: discovery must see the
                     // callee's exact noninitializing write, not its upper.
                     self.instructions[0..5].*=.{constant,bool_op,invoke,ret,raise};
@@ -129,12 +217,13 @@ const Fixture = struct {
                 if(case==.missing_arm)self.blocks[2].instructions=self.instructions[6..7];
             },
         }
-        const function: wire.Function=.{ .id=f0,.signature=signature,.abi=@enumFromInt(0),.source=@enumFromInt(0),.role=.module_initializer,.declaration=.{ .start=0,.end=100 },.name="$moduleInit",.registers=&caller_registers,.blocks=self.blocks[0..block_count] };
+        const function: wire.Function=.{ .id=f0,.signature=signature,.abi=@enumFromInt(0),.source=@enumFromInt(0),.role=.module_initializer,.declaration=.{ .start=0,.end=100 },.name="$moduleInit",.registers=caller_regs,.blocks=self.blocks[0..block_count] };
         self.functions=.{function,function,function};
         self.functions[1].id=f1; self.functions[1].abi=@enumFromInt(1); self.functions[1].role=.ordinary; self.functions[1].name="sameName";
-        self.functions[1].registers=callee_registers[0..callee_register_count]; self.functions[1].blocks=self.callee_blocks[0..callee_block_count];
+        self.functions[1].registers=callee_regs; self.functions[1].blocks=self.callee_blocks[0..callee_block_count];
         self.functions[2].id=f2; self.functions[2].abi=@enumFromInt(2); self.functions[2].role=.ordinary; self.functions[2].name="sameName";
-        self.functions[2].registers=callee_registers[0..1]; self.functions[2].blocks=&self.other_blocks;
+        self.functions[2].registers=if(exceptional)&exceptional_registers else callee_registers[0..1];
+        self.functions[2].blocks=&self.other_blocks;
         var common=std.mem.zeroes(tables.CommonTables); common.types=&self.types; common.abis=self.abis[0..function_count]; common.storage.bindings=&self.bindings;
         common.storage.payload=.{ .byte_size=16,.alignment=8,.reference_count=1 };
         common.storage.concrete=&.{ .{ .@"type"=scalar,.carrier=.{ .layout=.{ .byte_size=4,.alignment=4,.reference_count=0 },.field_offsets=&.{} },.body=null },.{ .@"type"=boolean,.carrier=.{ .layout=.{ .byte_size=1,.alignment=1,.reference_count=0 },.field_offsets=&.{} },.body=null } };
@@ -155,11 +244,8 @@ const Fixture = struct {
             .{ .function_id=f2,.signature_hash=signature,.upper=upper,.callables=.{ .parameters=&.{},.returns=null,.slot_writes=.{} },.return_origins=null,.digest=@splat(0x62) },
         };
         common.authority.fixed_publication.publication.contracts=common.authority.fixed_publication.publication.contracts[0..function_count-1];
-        common.authority.fixed_publication.dependencies=&.{
-            .{ .function_id=f0,.callees=&.{.{ .function_id=f1,.digest=@splat(0x61) }},.hosts=&.{} },
-            .{ .function_id=f1,.callees=&.{},.hosts=&.{} },
-            .{ .function_id=f2,.callees=&.{},.hosts=&.{} },
-        }; common.authority.fixed_publication.dependencies=common.authority.fixed_publication.dependencies[0..function_count];
+        const dependencies=if(exceptional)&nested_dependencies else &direct_dependencies;
+        common.authority.fixed_publication.dependencies=dependencies[0..function_count];
         self.program=.{ .envelope=std.mem.zeroes(wire.Envelope),.target=std.mem.zeroes(wire.Target),.input_identity=@splat(0),.source_hash=@splat(0),.source_path="",.source_length=0,.root_source=@enumFromInt(0),.tables=.{ .sources=&self.sources,.mode=.{ .common=common } },.functions=self.functions[0..function_count] };
     }
 };
@@ -199,16 +285,32 @@ fn prerequisites(c: *context.Context) !void {
                     .eh_invoke => |v| {
                         const target=try c.ref(v.callee,c.program.functions.len); _=try c.ref(v.normal,f.blocks.len); _=try c.ref(v.exceptional,f.blocks.len);
                         try std.testing.expect(i+1==block.instructions.len and op.operands.len==0 and op.result==null);
-                        try std.testing.expectEqual(@as(usize,1),target); try std.testing.expectEqual(f1,c.program.functions[target].id);
+                        const callee_id=if(index==0)f1 else f2;
+                        try std.testing.expectEqual(index+1,target);
+                        try std.testing.expectEqual(callee_id,c.program.functions[target].id);
                         try std.testing.expectEqual(module.source,c.program.functions[target].source);
                         try std.testing.expect(c.program.functions[target].role==.ordinary);
-                        const dependency=common.authority.fixed_publication.dependencies[index].callees[0];
-                        try std.testing.expectEqual(f1,dependency.function_id);
-                        try std.testing.expectEqual(common.authority.fixed_publication.publication.contracts[0].digest,dependency.digest);
+                        const callees=common.authority.fixed_publication.dependencies[index].callees;
+                        try std.testing.expectEqual(@as(usize,1),callees.len);
+                        const dependency=callees[0];
+                        try std.testing.expectEqual(callee_id,dependency.function_id);
+                        try std.testing.expectEqual(common.authority.fixed_publication.publication.contracts[target-1].digest,dependency.digest);
+                    },
+                    .eh_carrier => |view| {
+                        try std.testing.expect(view==null and op.result!=null and op.operands.len==1);
+                        try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(op.operands[0])].carrier,sc));
+                        try std.testing.expect(f.registers[@intFromEnum(op.result.?)].carrier==.payload);
                     },
                     .br => |v| { _=try c.ref(v.destination,f.blocks.len); try std.testing.expect(i+1==block.instructions.len and op.operands.len==0 and op.result==null); },
                     .cond_br => |v| { _=try c.ref(v.true_destination,f.blocks.len); _=try c.ref(v.false_destination,f.blocks.len); try std.testing.expect(i+1==block.instructions.len and op.operands.len==1 and v.true_count==0 and op.result==null); },
-                    .@"return" => try std.testing.expect(i+1==block.instructions.len and op.operands.len==0 and op.result==null),
+                    .@"return" => {
+                        const abi=common.abis[@intFromEnum(f.abi)];
+                        try std.testing.expect(i+1==block.instructions.len and op.result==null);
+                        if(abi.result_carrier) |result| {
+                            try std.testing.expectEqual(@as(usize,1),op.operands.len);
+                            try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(op.operands[0])].carrier,result));
+                        } else try std.testing.expectEqual(@as(usize,0),op.operands.len);
+                    },
                     .eh_raise => try std.testing.expect(i+1==block.instructions.len and op.operands.len==1 and op.result==null and f.registers[@intFromEnum(op.operands[0])].carrier==.payload),
                     .fuel => try std.testing.expect(op.result==null and op.operands.len==0),
                     else => return error.TestUnexpectedOpcode,
@@ -234,6 +336,14 @@ test "module call cannot borrow another GlobalRef initialization" { try check(.o
 test "module call uses exact target rather than an uncalled same-name function" { try check(.other_callee,false); }
 test "module call accepts initialization on both caller arms" { try check(.both_arms,false); }
 test "module call rejects an uninitialized caller merge arm" { try check(.missing_arm,true); }
-test "module call leaves a multi-block callee to its existing separate obligation" { try check(.unsupported_multiblock,false); }
 test "module call rejects a callee-only ordinary write before initialization" { try check(.store_before_init,true); }
 test "module call accepts ordinary write after initialization" { try check(.store_after_init,false); }
+test "module call rejects a reachable multi-block read before initialization" { try check(.multiblock_read_before_init,true); }
+test "module call keeps a multi-block callee's scalar result after initialization" { try check(.multiblock_read_after_init,false); }
+test "module call ignores a Global read in a disconnected callee block" { try check(.multiblock_unreachable,false); }
+test "module call checks a Global read on one reachable callee branch" { try check(.multiblock_branch_before_init,true); }
+test "module call accepts a branched callee after initialization" { try check(.multiblock_branch_after_init,false); }
+test "module call rejects a reachable multi-block write before initialization" { try check(.multiblock_store_before_init,true); }
+test "module call accepts a reachable multi-block write after initialization" { try check(.multiblock_store_after_init,false); }
+test "module call rejects a Global read on the exceptional callee edge before initialization" { try check(.multiblock_exception_before_init,true); }
+test "module call accepts an initialized Global read on the exceptional callee edge" { try check(.multiblock_exception_after_init,false); }

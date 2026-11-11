@@ -27,6 +27,19 @@ fn anchorsEmpty(op: *const ins.Instruction) bool { return op.operator_anchor == 
 const Definition = receiver_protocol.Definition;
 const Use = struct { block: usize=0, position: usize=0, operand: usize=0, count: usize=0 };
 const Facts = receiver_protocol.Facts;
+const EdgeTargets = struct { blocks: [2]usize = .{0,0}, count: usize = 0 };
+fn edgeTargets(op: *const ins.Instruction) EdgeTargets {
+    return switch(op.data) {
+        .br => |v| .{ .blocks=.{@intFromEnum(v.destination),0},.count=1 },
+        .cond_br => |v| .{ .blocks=.{@intFromEnum(v.true_destination),@intFromEnum(v.false_destination)},.count=2 },
+        .domain_numeric_use => |v| .{ .blocks=.{@intFromEnum(v.normal_successor),0},.count=1 },
+        inline .eh_invoke,.eh_invoke_indirect,.common_method_invoke => |v| .{ .blocks=.{@intFromEnum(v.normal),@intFromEnum(v.exceptional)},.count=2 },
+        inline .receiver_bind,.receiver_get,.receiver_result => |v| .{ .blocks=.{@intFromEnum(v.normal),@intFromEnum(v.language)},.count=2 },
+        .eh_route => |v| .{ .blocks=.{@intFromEnum(v.successor),0},.count=1 },
+        else => .{},
+    };
+}
+const GlobalRefs = std.AutoHashMapUnmanaged(t.GlobalRef, void);
 const Predecessors = struct {
     bits: Bits, word: usize=0,
     fn next(self: *Predecessors, c: *Context) Error!?usize {
@@ -126,17 +139,10 @@ const Graph = struct {
                     if(use.count==0) { use.block=b; use.position=i; use.operand=n; } use.count+=1;
                 }
             }
-            const op=&block.instructions[block.instructions.len-1];
+            const targets=edgeTargets(&block.instructions[block.instructions.len-1]);
             const edges=&self.facts[b];
-            switch(op.data) {
-                .br => |v| { edges.count=1; edges.successors[0]=@intFromEnum(v.destination); },
-                .cond_br => |v| { edges.count=2; edges.successors=.{@intFromEnum(v.true_destination),@intFromEnum(v.false_destination)}; },
-                .domain_numeric_use => |v| { edges.count=1; edges.successors[0]=@intFromEnum(v.normal_successor); },
-                inline .eh_invoke,.eh_invoke_indirect,.common_method_invoke => |v| { edges.count=2; edges.successors=.{@intFromEnum(v.normal),@intFromEnum(v.exceptional)}; },
-                inline .receiver_bind,.receiver_get,.receiver_result => |v| { edges.count=2; edges.successors=.{@intFromEnum(v.normal),@intFromEnum(v.language)}; },
-                .eh_route => |v| { edges.count=1; edges.successors[0]=@intFromEnum(v.successor); },
-                else => {}, // All remaining typed opcodes have no CFG edges.
-            }
+            edges.successors=targets.blocks;
+            edges.count=targets.count;
             for(edges.successors[0..edges.count]) |next| {
                 try c.require(next!=0); const incoming=&self.facts[next];
                 if(self.mode!=.common or !has(incoming.predecessors,b))incoming.predecessor_count+=1;
@@ -750,22 +756,39 @@ const Graph = struct {
             }
         }
     }
-    fn directGlobalBody(self: *Graph, target: t.FunctionRef) Error![]const ins.Instruction {
-        // The opcode's exact FunctionRef owns the call target. Only a simple
-        // same-module ordinary body is covered here, never a potential fixed
-        // upper, a display-name match or a transitive/conditional observation.
-        const c=self.c; try c.charge(5); const function=c.program.functions[@intFromEnum(target)];
-        if(function.role!=.ordinary or function.source!=self.f.source or function.blocks.len!=1)return &.{};
-        const body=function.blocks[0].instructions;
-        if(body[body.len-1].data!=.@"return")return &.{};
-        for(body) |op| {
-            try c.step(); switch(op.data) {
-                .fuel,.const_i32,.const_bool,.global_load,.@"return"=>{},
-                .global_store=>|v| if(v.initialize)return &.{},
-                else=>return &.{},
+    fn directGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs) Error!void {
+        // The exact FunctionRef selects one ordinary body. Follow its local
+        // CFG from block 0 and record explicit access on either exit path.
+        const c=self.c; try c.charge(3); const function=c.program.functions[@intFromEnum(target)];
+        if(function.role!=.ordinary or function.source!=self.f.source)return;
+        const globals=c.program.tables.mode.common.modules.globals;
+        var pending: [256]usize=undefined; var seen=zero;
+        try c.charge(2); pending[0]=0; put(&seen,0);
+        var cursor: usize=0; var count: usize=1;
+        while(cursor<count) : (cursor+=1) {
+            try c.step(); const block=function.blocks[pending[cursor]];
+            for(block.instructions) |op| {
+                try c.step(); const ref=switch(op.data) {
+                    .global_load=>|v| v.global,
+                    .global_store=>|v| if(v.initialize)continue else v.global,
+                    else=>continue,
+                };
+                for(owned) |own| {
+                    try c.step(); if(own!=ref)continue;
+                    try c.charge(2); const index=@intFromEnum(ref);
+                    if(globals[index].source==self.f.source) {
+                        try observed.put(c.allocator,ref,{});
+                        used[index]=true;
+                    }
+                    break;
+                }
+            }
+            try c.step(); const next=edgeTargets(&block.instructions[block.instructions.len-1]);
+            for(next.blocks[0..next.count]) |successor| {
+                try c.step(); if(has(seen,successor))continue;
+                try c.step(); put(&seen,successor); pending[count]=successor; count+=1;
             }
         }
-        return body;
     }
     fn globalInitialization(self: *Graph) Error!void {
         if(self.mode!=.common or self.f.role!=.module_initializer)return;
@@ -778,24 +801,30 @@ const Graph = struct {
         for(modules.modules) |module| {
             try c.step(); if(@intFromEnum(module.initializer)==self.function and module.source==self.f.source) { own_globals=module.globals; break; }
         }
-        for(self.f.blocks) |block| for(block.instructions) |op| {
-            try c.step(); switch(op.data) {
-                inline .global_load,.global_store=>|v| {
-                    const index=@intFromEnum(v.global); if(globals[index].source==self.f.source)used[index]=true;
-                },
-                .eh_invoke=>|v| if(own_globals.len!=0) {
-                    for(try self.directGlobalBody(v.callee)) |callee_op| {
-                        try c.step(); const ref=switch(callee_op.data) { inline .global_load,.global_store=>|access|access.global, else=>continue };
-                        for(own_globals) |owned| {
-                            try c.step(); if(owned==ref) {
-                                try c.step(); const index=@intFromEnum(ref); if(globals[index].source==self.f.source)used[index]=true; break;
-                            }
+        var callee_globals = std.AutoHashMapUnmanaged(t.FunctionRef, GlobalRefs){};
+        defer {
+            var entries=callee_globals.valueIterator();
+            while(entries.next()) |entry| entry.deinit(c.allocator);
+            callee_globals.deinit(c.allocator);
+        }
+        for(self.f.blocks,0..) |block,b| {
+            try c.step(); if(!self.facts[b].reachable)continue;
+            for(block.instructions) |op| {
+                try c.step(); switch(op.data) {
+                    inline .global_load,.global_store=>|v| {
+                        const index=@intFromEnum(v.global); if(globals[index].source==self.f.source)used[index]=true;
+                    },
+                    .eh_invoke=>|v| if(own_globals.len!=0) {
+                        try c.step(); const entry=try callee_globals.getOrPut(c.allocator,v.callee);
+                        if(!entry.found_existing) {
+                            entry.value_ptr.*=.empty;
+                            try self.directGlobalUses(v.callee,own_globals,used,entry.value_ptr);
                         }
-                    }
-                },
-                else=>{},
+                    },
+                    else=>{},
+                }
             }
-        };
+        }
         for(used,0..) |needed,index| {
             try c.step(); if(!needed)continue;
             const ref: t.GlobalRef=@enumFromInt(index);
@@ -836,21 +865,19 @@ const Graph = struct {
                             if(v.initialize) { try c.require(state==1); state=2; } else try c.require(state==2);
                         },
                         .global_load=>|v| if(v.global==ref) { try c.require(state==2); },
-                        .eh_invoke=>|v| if(own_globals.len!=0) {
-                            for(try self.directGlobalBody(v.callee)) |callee_op| {
-                                try c.step(); const observed=switch(callee_op.data) { inline .global_load,.global_store=>|access|access.global, else=>continue };
-                                if(observed==ref)try c.require(state==2);
-                            }
+                        .eh_invoke=>|v| if(own_globals.len!=0 and state!=2) {
+                            try c.charge(2);
+                            const observed=callee_globals.getPtr(v.callee) orelse return error.InvalidShape;
+                            try c.require(!observed.contains(ref));
                         },
                         else=>{},
                     }
                 }
             }
         }
-        // Covered direct bodies cannot initialize a Global and add no state
-        // mutation. Other callee shapes/targets/modules and Env instance state
-        // retain their separate proof obligations; no completion receipt or
-        // general interprocedural initialization guarantee is inferred here.
+        // Callee observations do not change either continuation's state.
+        // Transitive and dynamic targets, other modules and Env instance state
+        // retain their separate proof obligations.
     }
     fn fuel(self: *Graph) Error!void {
         const c=self.c; var entries: usize=0;
