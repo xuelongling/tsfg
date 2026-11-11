@@ -1277,6 +1277,18 @@ const UpperGraph = struct {
         }
         return result;
     }
+    fn unselectedReadOnlyGlobals(c: *Context, upper: *const publication.EffectUpper) Error!?[]const t.Hash {
+        try c.charge(5);
+        if (upper.captures.len != 0 or upper.globals.writes.len != 0 or upper.host_resources.reads.len != 0 or upper.host_resources.writes.len != 0) return null;
+        inline for (std.meta.fields(@TypeOf(upper.facets))) |field| {
+            if (comptime !std.mem.eql(u8, field.name, "managed_reference")) {
+                try c.step();
+                if (@field(upper.facets, field.name)) return null;
+            }
+        }
+        return upper.globals.reads;
+    }
+
     fn fixedOwnersGraph(self: *UpperGraph, target: t.FunctionRef, op: model.instruction.Instruction, saved: *const UpperState, destination: *UpperState, offset: usize, full: *const publication.EffectUpper, directory: *const origin_model.Directory, function_id: origin_model.Symbol, graph: *const origin_model.Graph, budget: *origin_model.Budget, allocator: std.mem.Allocator, receiver: ?*const construction_origins.Analysis, returned: *Owners, thrown: *Owners, completions: ?*UpperCompletions) Error!bool {
         const c = self.collector.c; const publication_rows = self.collector.common().authority.fixed_publication.publication.contracts;
         try c.charge(publication_rows.len + 1); const rows = try allocator.alloc(fixed_owners.Fixed, publication_rows.len);
@@ -1286,7 +1298,8 @@ const UpperGraph = struct {
             for (row.upper.parameters, parameters) |flags, *parameter| { try c.step(); parameter.* = .{ .read = flags.read, .write = flags.write, .structural = flags.structural }; }
             const captures = try allocator.alloc(fixed_owners.Capture, row.upper.captures.len);
             for (row.upper.captures, captures) |capture, *entry| { try c.step(); entry.* = .{ .key = try publication_refs.symbol(c, allocator, capture.slot), .flags = .{ .read = capture.read, .write = capture.write, .structural = capture.structural } }; }
-            into.* = .{ .function_id = try publication_refs.symbol(c, allocator, row.function_id), .graph = if (row.return_origins) |*value| value else null, .parameters = parameters, .captures = captures, .may_throw = row.upper.facets.may_throw };
+            into.* = .{ .function_id = try publication_refs.symbol(c, allocator, row.function_id), .graph = if (row.return_origins) |*value| value else null, .parameters = parameters, .captures = captures, .may_throw = row.upper.facets.may_throw,
+                .unselected_read_only_globals = if (row.return_origins != null) try unselectedReadOnlyGlobals(c, &row.upper) else null };
         }
         const physical = try self.physicalFields(allocator, directory);
         const invocation = effect_env.Invocation{ .caller = self.function, .block = self.block, .instruction = self.instruction, .target = target };

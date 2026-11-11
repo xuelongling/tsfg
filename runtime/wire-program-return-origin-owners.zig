@@ -13,7 +13,12 @@ const Set = std.ArrayListUnmanaged(R);
 pub const Root = union(enum) { nonowning: void, local: void, parameter: usize, global: S, capture: S, input: usize };
 pub const Flags = struct { read: bool = false, write: bool = false, structural: bool = false };
 pub const Capture = struct { key: S, flags: Flags };
-pub const Fixed = struct { function_id: S, graph: ?*const m.Graph, parameters: []const Flags, captures: []const Capture, may_throw: bool };
+pub const Fixed = struct {
+    function_id: S, graph: ?*const m.Graph, parameters: []const Flags, captures: []const Capture, may_throw: bool,
+    // Present only when the verified upper permits no effects beyond reads and
+    // managed references. An empty list denotes a read-only arm without globals.
+    unselected_read_only_globals: ?[]const [32]u8 = null,
+};
 // Full physical directory projected from the already checked CommonStorage and
 // CommonViews. null fields means unavailable, including removed private types.
 pub const Field = struct { id: S, view: S, physical: usize, type_id: S };
@@ -931,6 +936,119 @@ const Engine = struct {
             }
         }
     }
+    fn siteOffset(self: *Engine, text: S) E!?u32 {
+        try self.budget.spend(5 * text.len + 1);
+        if (text.len == 0) return null;
+        var value: u32 = 0;
+        for (text) |digit| {
+            if (digit < '0' or digit > '9') return null;
+            const product = @mulWithOverflow(value, 10);
+            const sum = @addWithOverflow(product[0], @as(u32, digit) - '0');
+            if (product[1] != 0 or sum[1] != 0) return null;
+            value = sum[0];
+        }
+        return value;
+    }
+
+    // Source keys the same indirect occurrence separately for each target.
+    fn indirectOccurrence(self: *Engine, call: *const m.Call) E!?S {
+        const suffix = ",\"indirectCall\"]";
+        const start = call.function_id.len + 3;
+        try self.budget.text(call.site.len);
+        if (call.site.len <= start + suffix.len or !std.mem.startsWith(u8, call.site, "[\"") or
+            call.site[start - 1] != '"' or !std.mem.endsWith(u8, call.site, suffix)) return null;
+        if (!try self.budget.equal(call.site[2 .. start - 1], call.function_id)) return null;
+        const range = call.site[start .. call.site.len - suffix.len];
+        try self.budget.text(range.len);
+        if (range[0] != ',') return null;
+        const separator = 1 + (std.mem.indexOfScalar(u8, range[1..], ',') orelse return null);
+        const first = try self.siteOffset(range[1..separator]) orelse return null;
+        const last = try self.siteOffset(range[separator + 1 ..]) orelse return null;
+        return if (first < last) range else null;
+    }
+
+    fn selectedSibling(self: *Engine, frame: *const Frame, call: *const m.Call, occurrence: S, code: S) E!bool {
+        siblings: for (frame.graph.calls, frame.targets) |*sibling, targets| {
+            try self.budget.spend(6);
+            if (targets.items.len == 0 or sibling.receiver != null or sibling.heap != call.heap or sibling.control != call.control or
+                sibling.arguments.len != call.arguments.len or !try self.budget.equal(sibling.function_id, code)) continue;
+            const callee = sibling.callee orelse continue;
+            const site = try self.indirectOccurrence(sibling) orelse continue;
+            if (!try self.budget.equal(site, occurrence) or !try self.sameSet(callee, call.callee.?)) continue;
+            for (sibling.arguments, call.arguments) |actual, expected| {
+                try self.budget.step();
+                if (!try self.sameSet(actual, expected)) continue :siblings;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    fn globalReadSymbol(self: *Engine, id: [32]u8) E!S {
+        // Lookup only after the complete sibling proof. The checked directory
+        // owns the returned Symbol; the typed fixed upper owns the hash.
+        try self.budget.spend(72);
+        const digits = std.fmt.bytesToHex(id, .lower);
+        var text: [71]u8 = undefined;
+        @memcpy(text[0..7], "sha256:");
+        @memcpy(text[7..], &digits);
+        const globals = self.directory.globals;
+        var first: usize = 0;
+        var last = globals.len;
+        while (first < last) {
+            try self.budget.spend(5);
+            const middle = first + (last - first) / 2;
+            const row = &globals[middle];
+            try self.budget.text(row.id.len);
+            try self.budget.text(text.len);
+            switch (std.mem.order(u8, row.id, &text)) {
+                .lt => first = middle + 1,
+                .gt => last = middle,
+                .eq => return row.id,
+            }
+        }
+        return error.InvalidReference;
+    }
+
+    fn unselectedReadOnlyArm(self: *Engine, frame: *const Frame, call: *const m.Call) E!bool {
+        const callee = call.callee orelse return false;
+        try self.budget.spend(5);
+        if (call.environment != null or call.receiver != null or !frame.heap_ready[call.heap] or !try self.readyRefs(frame, callee)) return false;
+        const fixed = try self.contract(call.function_id) orelse return false;
+        const globals = fixed.unselected_read_only_globals orelse return false;
+        const graph = fixed.graph orelse return false;
+        if (graph.version != 5 or fixed.may_throw or fixed.captures.len != 0 or fixed.parameters.len != call.arguments.len) return false;
+        const protocol = try m.findFunction(self.directory, call.function_id, self.budget);
+        if (!protocol.environment_metadata_complete or protocol.lexical_environment != null or protocol.construction != null) return false;
+        for (fixed.parameters, call.arguments) |flags, refs| {
+            try self.budget.spend(3);
+            if (flags.write or flags.structural or !try self.readyRefs(frame, refs)) return false;
+        }
+        const occurrence = try self.indirectOccurrence(call) orelse return false;
+        const codes = try self.resolved(frame, callee);
+        if (codes.items.len == 0) return false;
+        for (codes.items) |id| {
+            try self.budget.spend(3);
+            const code = &self.locations.items[id];
+            if (code.kind != .code or try self.budget.equal(code.function_id.?, call.function_id) or
+                !try self.selectedSibling(frame, call, occurrence, code.function_id.?)) return false;
+        }
+        // Keep the fixed permission. Only scheduled targets supply data, heap
+        // and completion facts for the indirect occurrence.
+        for (fixed.parameters, call.arguments) |flags, refs| {
+            try self.budget.step();
+            if (flags.read) {
+                const argument = try self.resolved(frame, refs);
+                try self.contentEffects(frame.heaps[call.heap].items, argument.items, flags);
+            }
+        }
+        for (globals) |id| {
+            try self.budget.step();
+            try self.effect(.{ .global = try self.globalReadSymbol(id) }, .read);
+        }
+        return true;
+    }
+
     fn validate(self: *Engine) E!void {
         for (self.frames.items, 0..) |frame, index| {
             const graph = frame.graph;
@@ -960,7 +1078,11 @@ const Engine = struct {
             }
             for (graph.calls, frame.targets, 0..) |call, targets, ordinal| {
                 try self.budget.step(); if (!frame.controls[call.control]) continue;
-                if (targets.items.len == 0) { self.pending = .environment_protocol; return; }
+                if (targets.items.len == 0) {
+                    if (try self.unselectedReadOnlyArm(frame, &call)) continue;
+                    self.pending = .environment_protocol;
+                    return;
+                }
                 if (call.receiver != null) {
                     const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return; };
                     var selected: ?*const construction.CallFact = null;

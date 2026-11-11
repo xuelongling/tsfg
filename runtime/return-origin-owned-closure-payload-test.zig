@@ -91,3 +91,73 @@ test "saved Array Code ENV parents preserve input global capture effects and bot
         try std.testing.expect(parameter and capture and global);
     }
 }
+
+const unselected_global = "sha256:" ++ ("bb" ** 32);
+const unselected_globals = scope.globals[0..] ++ [_]m.GlobalRow{.{ .id = unselected_global, .@"type" = "reference" }};
+
+fn unselectedReadOnlyArm(alternate_site: []const u8, permit_read_only: bool) !owners.Analysis {
+    const functions = scope.functions[0..] ++ [_]m.FunctionRow{
+        .{ .id = "i", .kind = .source, .parameter_types = &.{"array"}, .return_type = "array", .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = null, .construction = null },
+    };
+    var directory = scope;
+    directory.functions = functions;
+    directory.globals = unselected_globals;
+    const called = m.Graph{
+        .nodes = &.{.{ .parameter = .{ .@"type" = "array", .index = 0 } }}, .heaps = &.{.entry}, .controls = &.{.entry},
+        .calls = &.{}, .normal = &.{0}, .language = &.{}, .exits = .{ .normal = &.{.{ .heap = 0, .control = 0 }}, .language = &.{} }, .accesses = &.{},
+    };
+    const calls = [_]m.Call{
+        .{ .function_id = "h", .arguments = &.{&.{0}}, .environment = null, .callee = &.{1}, .receiver = null, .heap = 0, .control = 0, .site = "[\"h\",10,20,\"indirectCall\"]" },
+        .{ .function_id = "i", .arguments = &.{&.{0}}, .environment = null, .callee = &.{1}, .receiver = null, .heap = 0, .control = 0, .site = alternate_site },
+    };
+    const caller = m.Graph{
+        .nodes = &.{
+            .{ .parameter = .{ .@"type" = "array", .index = 0 } },
+            .{ .code = .{ .@"type" = "function", .function_id = "h", .environment = null, .control = 0 } },
+            .{ .call = .{ .@"type" = "array", .call = 0, .completion = .normal } },
+        },
+        .heaps = &.{ .entry, .{ .call = .{ .call = 0, .completion = .normal } } },
+        .controls = &.{ .entry, .{ .call = .{ .call = 0, .completion = .normal } } },
+        .calls = &calls, .normal = &.{2}, .language = &.{}, .exits = .{ .normal = &.{.{ .heap = 1, .control = 1 }}, .language = &.{} }, .accesses = &.{},
+    };
+    var fixed = [_]owners.Fixed{
+        .{ .function_id = "f", .graph = &caller, .parameters = &.{.{}}, .captures = &.{}, .may_throw = false },
+        .{ .function_id = "h", .graph = &called, .parameters = &.{.{}}, .captures = &.{}, .may_throw = false },
+        .{ .function_id = "i", .graph = &called, .parameters = &.{.{ .read = true }}, .captures = &.{}, .may_throw = false },
+    };
+    if (@hasField(owners.Fixed, "unselected_read_only_globals") and permit_read_only) {
+        fixed[2].unselected_read_only_globals = &.{@splat(0xbb)};
+    }
+    var meter: Meter = .{};
+    var budget = m.Budget{ .context = &meter, .charge = Meter.charge };
+    try m.validateDirectory(std.testing.allocator, &directory, &budget);
+    try std.testing.expect((try m.validateGraph(std.testing.allocator, &directory, "f", &caller, &budget)) == .valid);
+    return owners.analyze(std.testing.allocator, &directory, &.{}, "f", &caller, &fixed, &budget);
+}
+
+test "settled sibling keeps an unselected Code arm's fixed reads" {
+    var result = try unselectedReadOnlyArm("[\"i\",10,20,\"indirectCall\"]", true);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?owners.Pending, null), result.pending);
+    try std.testing.expect(result.normal_live and !result.language_live);
+    try std.testing.expectEqual(@as(usize, 1), result.normal.len);
+    try std.testing.expectEqual(@as(usize, 0), result.locations[result.normal[0]].owner.parameter);
+    try std.testing.expectEqual(@as(usize, 2), result.effects.len);
+    try std.testing.expectEqual(m.AccessFlag.read, result.effects[0].flag);
+    try std.testing.expectEqual(@as(usize, 0), result.effects[0].root.parameter);
+    try std.testing.expectEqual(m.AccessFlag.read, result.effects[1].flag);
+    try std.testing.expectEqualStrings(unselected_global, result.effects[1].root.global);
+    try std.testing.expectEqual(unselected_globals[1].id.ptr, result.effects[1].root.global.ptr);
+}
+
+test "unselected Code arm needs a selected sibling at the exact occurrence" {
+    var result = try unselectedReadOnlyArm("[\"i\",11,20,\"indirectCall\"]", true);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?owners.Pending, .environment_protocol), result.pending);
+}
+
+test "unselected Code arm needs an independently verified read-only upper" {
+    var result = try unselectedReadOnlyArm("[\"i\",10,20,\"indirectCall\"]", false);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?owners.Pending, .environment_protocol), result.pending);
+}
