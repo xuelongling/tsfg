@@ -128,15 +128,20 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         var system_calls: std.ArrayList(Call) = .empty;
         for (system.loops, raw.loops, 0..) |loop, original_loop, loop_index| {
             try context.spend(1);
-            if (loop.index != loop_index or !digestId(loop.selectionId) or !same(loop.queryBinding, original_loop.queryBinding) or !sameSource(loop.source, .{ .path = raw.declaration.sourcePath, .start = original_loop.range.start, .end = original_loop.range.end }) or loop.columns.len != original_loop.bindings.len) return error.InvalidEffects;
+            if (loop.index != loop_index or !digestId(loop.selectionId) or !digestId(loop.queryBinding) or !same(loop.queryBinding, original_loop.queryBinding) or !sameSource(loop.source, .{ .path = raw.declaration.sourcePath, .start = original_loop.range.start, .end = original_loop.range.end }) or loop.columns.len != original_loop.bindings.len) return error.InvalidEffects;
             try context.source(loop.source, system.source);
+            const query = try context.queryItems(raw.parameters, loop.queryBinding);
+            if (query.len != loop.columns.len) return error.InvalidEffects;
             var loop_caps: std.ArrayList(Capability) = .empty;
-            for (loop.columns, original_loop.bindings, 0..) |column, binding, tuple_index| {
-                try context.spend(1);
+            for (loop.columns, original_loop.bindings, query, 0..) |column, binding, item, tuple_index| {
+                try context.spend(2);
+                // Source component IDs are nominal digests. Bound the tuple comparison before reading either ID.
+                if (item.componentType.len != "nominal:".len + 64 or !same(binding.componentType, item.componentType) or binding.mode != item.mode) return error.InvalidEffects;
                 if (column.tupleIndex != tuple_index or column.tupleIndex != binding.index or !same(column.sourceBinding, binding.declaration.id) or !same(column.sourceComponentType, binding.componentType) or !same(column.componentType, try context.componentId(binding.componentType)) or column.mode != binding.mode or !sameSource(column.source, declarationSource(binding.declaration))) return error.InvalidEffects;
                 try context.source(column.source, loop.source);
                 try context.addCapability(&loop_caps, .{ .componentType = column.componentType, .sourceComponentType = column.sourceComponentType, .mode = column.mode });
             }
+            try context.selectionIdentity(loop.columns, loop.selectionId);
             std.mem.sort(Capability, loop_caps.items, {}, lessCapability);
             try context.capabilities(loop.capabilities);
             if (!sameCapabilities(loop_caps.items, loop.capabilities)) return error.InvalidEffects;
@@ -221,6 +226,38 @@ const Context = struct {
             for (self.catalog.payload.types) |component| if (component.kind == .component and same(component.name, row.name orelse return error.InvalidEffects) and same(component.sourcePath, row.sourcePath orelse return error.InvalidEffects) and component.range.start == range.start and component.range.end == range.end) return component.id;
         }
         return error.InvalidEffects;
+    }
+    fn queryItems(self: *Context, parameters: []const RawParameter, binding: []const u8) Error![]const RawItem {
+        var selected: ?[]const RawItem = null;
+        for (parameters) |parameter| {
+            try self.spend(1);
+            if (!same(parameter.binding.id, binding)) continue;
+            if (selected != null) return error.InvalidEffects;
+            selected = (parameter.query orelse return error.InvalidEffects).items;
+        }
+        return selected orelse error.InvalidEffects;
+    }
+    fn selectionIdentity(self: *Context, columns: []const Column, expected: []const u8) Error!void {
+        try self.spend(2);
+        var hash = std.crypto.hash.sha2.Sha256.init(.{});
+        hash.update("tsfg.query.type.v1\x00[");
+        // Verified columns preserve the selected Query tuple order and repetitions.
+        // Component digests and the two Access tags need no JSON escaping.
+        for (columns, 0..) |column, index| {
+            try self.spend(2);
+            if (!digestId(column.componentType)) return error.InvalidEffects;
+            hash.update(if (index == 0) "{\"componentType\":\"" else ",{\"componentType\":\"");
+            hash.update(column.componentType);
+            hash.update(switch (column.mode) {
+                .read => "\",\"mode\":\"read\"}",
+                .write => "\",\"mode\":\"write\"}",
+            });
+        }
+        hash.update("]");
+        var value: [32]u8 = undefined;
+        hash.final(&value);
+        const encoded = std.fmt.bytesToHex(value, .lower);
+        if (!same(expected["sha256:".len..], &encoded)) return error.InvalidEffects;
     }
     fn capabilities(self: *Context, rows: []const Capability) Error!void {
         for (rows, 0..) |row, index| {

@@ -173,6 +173,42 @@ test "typed effects reject rehashed noncanonical edges and invalid members modes
     };
 }
 
+test "typed effects reject another genuine Query selection identity" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-multi.tmeta"), receipt.value);
+    defer document.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var report = document.effects.report;
+    const systems = try allocator.dupe(E.System, report.systems);
+    report.systems = systems;
+    var original: ?*E.Loop = null;
+    var other_selection: ?[]const u8 = null;
+    for (systems) |*system| {
+        if (system.loops.len == 0) continue;
+        if (original) |first| {
+            for (system.loops) |loop| {
+                if (!std.mem.eql(u8, loop.selectionId, first.selectionId)) {
+                    other_selection = loop.selectionId;
+                    break;
+                }
+            }
+            if (other_selection != null) break;
+        } else {
+            const loops = try allocator.dupe(E.Loop, system.loops);
+            system.loops = loops;
+            original = &loops[0];
+        }
+    }
+    (original orelse return error.MissingQuerySelection).selectionId = other_selection orelse return error.MissingOtherQuerySelection;
+    const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
+    const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, document.payload.sourcePacket, document.payload.inputIdentity, document.payload.packageId, document.payload.target, &document.component_layout));
+}
+
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();
