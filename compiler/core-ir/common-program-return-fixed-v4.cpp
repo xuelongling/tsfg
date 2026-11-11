@@ -149,7 +149,8 @@ bool archive(Program &p,const Json &raw,Json &currentScope,Error &e){
 // This is the owning dependency boundary for current-tuple M12 isolation.
 // It consumes the complete validated Source catalogue and selected proofs;
 // it grants no physical authority until actual capacity/layout checks below.
-bool isolateReturnStorage(Program &p,const std::map<std::string,const Json *> &types,std::set<std::string> &affected,Error &e){
+bool isolateReturnStorage(ActualCheck &check,const std::map<std::string,const Json *> &types,std::set<std::string> &affected){
+  auto &p=check.p;auto &e=check.e;
   std::map<std::string,std::string> sourceTypes,members,bindings;
   std::map<std::string,const Json *> functions,environments;
   std::map<std::string,std::set<std::string>> edges;std::set<std::string> seeds;bool uncertain=false;
@@ -165,6 +166,19 @@ bool isolateReturnStorage(Program &p,const std::map<std::string,const Json *> &t
   for(const auto &env:items(field(p.hir,"environments"))){std::string id;if(!copyId(field(env,"id"),id)||!work(p,e))return false;environments.emplace(id,&env);}
   for(const auto &row:items(field(p.hir,"globals"))){std::string binding,type;if(!copyId(field(row,"sourceBinding"),binding)||!copyId(field(row,"type"),type)||!work(p,e))return false;bindings.insert_or_assign(binding,type);}
   const auto native=[](llvm::StringRef kind){return kind=="scalar"||kind=="null"||kind=="undefined"||kind=="void";};
+  const auto nativeCatch=[&](const std::string &id){
+    if(!work(p,e,id.size()/8+1))return false;
+    const auto found=check.storageCapacity.find(id);
+    if(found==check.storageCapacity.end())return false;
+    const auto &capacity=found->second;
+    if(capacity.tags.empty()||capacity.unknown||capacity.callableTop||capacity.hasEnvironment)return false;
+    for(const auto &tag:capacity.tags){
+      if(!work(p,e,tag.size()/8+1))return false;
+      const auto type=types.find(tag);
+      if(type==types.end()||!native(string(field(*type->second,"kind"))))return false;
+    }
+    return true;
+  };
   const auto identity=[&](const std::string &id){if(!work(p,e,id.size()/8+1))return false;const auto found=types.find(id);
     if(found==types.end()){uncertain=true;return false;}const auto kind=field(*found->second,"kind").getAsString().value();return !native(kind);};
   const auto connect=[&](const std::string &left,const std::string &right){if(!work(p,e,(left.size()+right.size())/8+1))return false;
@@ -214,13 +228,16 @@ bool isolateReturnStorage(Program &p,const std::map<std::string,const Json *> &t
       for(const auto &entry:*object){const auto key=llvm::StringRef(entry.first);if(!work(p,e,key.size()/8+1))return false;
         if(key!="sourceSignature"&&(entry.second.getAsObject()||entry.second.getAsArray())){if(!work(p,e))return false;pending.push_back(&entry.second);}}
     }
-    // The entire protected body must be exactly one pure native throw.
-    // No call/access/allocation, nested control or body write may lend proof
-    // from an observed exception set to this catch binding.
+    // The actual verifier has already solved and checked capacity through
+    // language failure edges, before fixed storage routes become available.
+    // A single pure native throw can also prove an unobserved catch binding.
     if(!work(p,e,rows.size()))return false;std::set<std::string> catches;
     for(const auto *row:rows){if(string(field(*row,"kind"))!="try")continue;const auto &binding=field(field(*row,"catchClause"),"binding");if(binding.getAsNull())continue;
       std::string caught;if(!copyId(field(binding,"id"),caught)||!work(p,e))return false;const auto &protectedRows=items(field(field(*row,"tryBlock"),"body"));
-      if(!writes.count(caught)&&protectedRows.size()==1&&string(field(protectedRows[0],"kind"))=="throw"&&nativePayload(field(protectedRows[0],"value"),std::set<std::string>{})){
+      if(writes.count(caught))continue;
+      const bool pureNativeThrow=protectedRows.size()==1&&string(field(protectedRows[0],"kind"))=="throw"&&nativePayload(field(protectedRows[0],"value"),std::set<std::string>{});
+      if(!e.message.empty())return false;
+      if(pureNativeThrow||nativeCatch(caught)){
         if(!work(p,e,caught.size()/8+1))return false;catches.insert(std::move(caught));}
       if(!e.message.empty())return false;
     }
@@ -337,7 +354,7 @@ bool prepareReturnOriginStorage(ActualCheck &check){
   std::map<std::string,const Json *> types,bindings;std::vector<const Json *> nominal;std::map<std::string,bool> bodyIdentity;
   for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;types.emplace(string(field(type,"id")),&type);}
   for(const auto &binding:items(field(p.representation,"bindings"))){if(!returnOriginMetadataCost(p,binding,e))return false;bindings.emplace(string(field(binding,"id")),&binding);}
-  std::set<std::string> affected;if(!isolateReturnStorage(p,types,affected,e))return false;
+  std::set<std::string> affected;if(!isolateReturnStorage(check,types,affected))return false;
   const auto &fixedStorage=field(field(p.publication,"scope"),"storage");
   for(const auto &[id,type]:types){const auto kind=string(field(*type,"kind"));if(!work(p,e,id.size()/8+1))return false;if(kind!="reference"&&kind!="value")continue;
     const auto &ctor=field(*type,"construction");
