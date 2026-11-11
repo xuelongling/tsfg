@@ -81,6 +81,9 @@ struct Location {LocationKind kind=LocationKind::Unknown;Ref type=None,label=Non
 struct Binding {bool unbound=true;Set values;};
 struct FrameWorld : std::map<Ref,Binding> {bool live=false;};
 struct Address {Ref base=0,selector=0,view=0;};
+struct InheritedInput {
+  std::size_t effectCount=0,boundHistoryRevision=0,boundReceiverCount=0;
+};
 struct Context {
   Ref index=0,function=None,scope=0;
   const V4::Graph *graph=nullptr;
@@ -91,6 +94,7 @@ struct Context {
   // Keep each actual Frame's lifetime separate so child-call prefixes can be
   // inherited without attributing an independent nested new to receiver0.
   std::map<Ref,Set> boundHistory;
+  std::size_t boundHistoryRevision=0;
   std::set<std::pair<Ref,Ref>> entrySources;
   std::vector<Set> arguments,values,targets;
   Heap input,normalHeap,languageHeap;
@@ -104,6 +108,7 @@ struct Context {
   bool normalLive=false,languageLive=false,normalReady=false,languageReady=false;
   std::array<Set,3> effects;
   Set facets,calls;
+  std::unique_ptr<std::map<Ref,InheritedInput>> inheritedInputs;
 };
 
 class Solver {
@@ -320,8 +325,14 @@ class Solver {
       if(context.receivers.count(current)){owned=true;break;}
     }
     if(!owned)return true;
-    if(!numericLookup(context.boundHistory.size())||!m_.spend())return false;
-    return add(context.boundHistory[frame],values)&&add(context.boundReceivers,values);
+    if(!numericLookup(context.boundHistory.size())||!m_.spend(3))return false;
+    auto &history=context.boundHistory[frame];
+    const auto size=history.size();
+    if(!add(history,values))return false;
+    if(history.size()==size)return true;
+    if(!add(context.boundReceivers,values)||!m_.spend())return false;
+    ++context.boundHistoryRevision;
+    return true;
   }
   bool recordBoundWorld(Context &context,const FrameWorld &world){
     if(context.receivers.empty()||!world.live)return true;if(!m_.spend(world.size()))return false;
@@ -367,7 +378,7 @@ class Solver {
       bool acyclic;if(!V4::Detail::receiverActivations(*graph,m_,acyclic))return false;
       if(!acyclic)return open("repeated-receiver-frame-activation");if(!m_.spend())return false;checkedActivations_.insert(graph);
     }
-    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*2)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size())||!m_.spend(arguments.size())||!m_.spend())return false;
+    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*2)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size())||!m_.spend(arguments.size())||!m_.spend(3))return false;
     auto value=std::make_unique<Context>();value->index=contexts_.size();value->function=function;value->scope=scope;value->graph=graph;value->upper=upper;value->protocol=protocol;
     value->values.resize(graph->nodes.size());value->ready.resize(graph->nodes.size(),false);value->heaps.resize(graph->heaps.size());value->heapReady.resize(graph->heaps.size(),false);value->controls.resize(graph->controls.size(),false);value->targets.resize(graph->calls.size());value->arguments.resize(arguments.size());
     if(!m_.spend(graph->heaps.size()*3))return false;value->frames.resize(graph->heaps.size());value->receiverValues.resize(graph->heaps.size());value->receiverLive.resize(graph->heaps.size(),false);
@@ -424,22 +435,62 @@ class Solver {
     return true;
   }
   bool inherit(Context &context,const Context &called){
-    if(!context.receivers.empty()){
+    if(!m_.spend(8))return false;
+    if(!context.inheritedInputs){
+      if(!m_.spend(2))return false;
+      context.inheritedInputs=std::make_unique<std::map<Ref,InheritedInput>>();
+    }
+    auto &inputs=*context.inheritedInputs;
+    if(!numericLookup(inputs.size()))return false;
+    const auto found=inputs.lower_bound(called.index);
+    const bool first=found==inputs.end()||found->first!=called.index;
+    const auto &upper=*called.upper;
+    const bool history=!context.receivers.empty();
+    const bool receiverParameter=called.protocol->construction&&!upper.parameters.empty();
+    // Each effect set only grows. Read the total before transferring, since
+    // the caller and callee can be the same context.
+    const InheritedInput input{
+      called.effects[0].size()+called.effects[1].size()+called.effects[2].size()+called.facets.size()+called.calls.size(),
+      history?called.boundHistoryRevision:0,
+      receiverParameter?called.boundReceivers.size():0
+    };
+    if(!first&&!m_.spend(3))return false;
+    const bool historyChanged=history&&(first||found->second.boundHistoryRevision!=input.boundHistoryRevision);
+    const bool effectsChanged=first||found->second.effectCount!=input.effectCount;
+    const bool receiverChanged=receiverParameter&&(first||found->second.boundReceiverCount!=input.boundReceiverCount);
+    if(historyChanged){
       if(!m_.spend(called.boundHistory.size()))return false;
       for(const auto &[frame,values]:called.boundHistory)if(!m_.spend()||!recordBoundReceiver(context,frame,values))return false;
     }
-    for(Ref i=0;i<3;++i)if(!m_.spend()||!add(context.effects[i],called.effects[i]))return false;
-    if(!add(context.facets,called.facets)||!add(context.calls,called.calls)||!insert(context.calls,called.function))return false;
-    const auto &upper=*called.upper;if(!m_.spend(upper.parameters.size())||!m_.spend(upper.captures.size())||!m_.spend(upper.facets.size()))return false;
-    for(Ref i=0;i<upper.parameters.size();++i)if(!flagged(context,upper.parameters[i],called.protocol->construction&&i==0?called.boundReceivers:called.arguments[i]))return false;
+    if(effectsChanged){
+      for(Ref i=0;i<3;++i)if(!m_.spend()||!add(context.effects[i],called.effects[i]))return false;
+      if(!add(context.facets,called.facets)||!add(context.calls,called.calls))return false;
+    }
+    if(first){
+      if(!insert(context.calls,called.function)||!m_.spend(upper.parameters.size())||!m_.spend(upper.facets.size()))return false;
+      for(Ref i=0;i<upper.parameters.size();++i)
+        if(!flagged(context,upper.parameters[i],receiverParameter&&i==0?called.boundReceivers:called.arguments[i]))return false;
+    }else if(receiverChanged&&(!m_.spend()||!flagged(context,upper.parameters.front(),called.boundReceivers)))return false;
+    // Capture sources depend on live Env parents and reachable descendants.
+    if(!m_.spend(upper.captures.size()))return false;
     for(const auto &capture:upper.captures){if(!m_.spend(3))return false;if(!capture.flags.read&&!capture.flags.write&&!capture.flags.structural)continue;
       Ref selected;std::vector<CaptureSource> sources;if(!captureSources(called,capture.slot,selected,sources)||!m_.spend(sources.size()))return false;
       for(const auto &source:sources){if(!m_.spend())return false;const auto &saved=*contexts_[source.context];Set values;
         if(!captureValues(source.heap?saved.heaps[*source.heap]:saved.input,*source.bases,selected,capture.slot,values)||!flagged(context,capture.flags,values))return false;}
     }
 
-    if(!resourceEffects(context,upper.globals,"g:")||!resourceEffects(context,upper.hostResources,"h:"))return false;
-    for(const auto &facet:upper.facets){if(!m_.text(facet.size()))return false;if(!m_.equal(facet,"mayThrow")){if(!m_.good)return false;Ref id;if(!symbol(facet,id)||!insert(context.facets,id))return false;}}return true;
+    if(first){
+      if(!resourceEffects(context,upper.globals,"g:")||!resourceEffects(context,upper.hostResources,"h:"))return false;
+      for(const auto &facet:upper.facets){if(!m_.text(facet.size()))return false;if(!m_.equal(facet,"mayThrow")){if(!m_.good)return false;Ref id;if(!symbol(facet,id)||!insert(context.facets,id))return false;}}
+    }
+    if(historyChanged||effectsChanged||receiverChanged){
+      // lower_bound supplied the correct hint, so insertion needs only
+      // neighboring key comparisons in addition to the new node.
+      if(!m_.spend(first?9:3))return false;
+      if(first)inputs.emplace_hint(found,called.index,input);
+      else found->second=input;
+    }
+    return true;
   }
 
   bool readonlyAlternative(const V4::Call &call,const FixedFunction &fixed,Ref function,const Set &codes,bool &eligible){
@@ -856,7 +907,7 @@ public:
     Set environment;if(callbacks_.rootProtocol.lexicalEnvironment){Ref layout,id;if(!symbol(*callbacks_.rootProtocol.lexicalEnvironment,layout)||!entryEnvironment(layout,id)||!insert(environment,id,false))return finish();}
     Ref rootScope;Key identity;if(!key(identity,{None})||!internKey(scopeIds_,std::move(identity),rootScope))return finish();
     Set receivers;if(callbacks_.rootProtocol.construction){
-      Ref id;Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
+      Ref id;if(!m_.spend(2))return finish();Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
       if(!symbol(protocol.id,id)||!construction(id))return finish();
       for(const auto &[key,candidate]:*callbacks_.constructions){bool eligible;if(!m_.spend()||!derives(candidate,protocol.owner,eligible))return finish();if(!eligible)continue;
         Ref target,frame;if(!symbol(candidate.owner,target)||!frameIdentity(root,None,id,target,None,frame,true)||!insert(receivers,frame,false))return finish();}
