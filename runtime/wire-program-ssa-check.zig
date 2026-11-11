@@ -559,6 +559,22 @@ const Graph = struct {
         }
     };
     const EnvironmentIdentity=union(enum) { allocation: t.EnvironmentRef, source: t.RegisterRef, parameter: usize, unknown };
+    const EnvironmentAllocations = struct {
+        direct: []?t.RegisterRef,
+        checked_layout: ?t.EnvironmentRef,
+    };
+
+    fn environmentEdgeArguments(op: *const ins.Instruction, edge: usize) ?[]const t.RegisterRef {
+        return switch (op.data) {
+            .br, .eh_route => op.operands,
+            .cond_br => |conditional| if (edge == 0)
+                op.operands[1 .. 1 + conditional.true_count]
+            else
+                op.operands[1 + conditional.true_count ..],
+            // These edges create values instead of transporting Env arguments.
+            else => null,
+        };
+    }
     // Classify a typed definition once. All block-argument sources are owned by
     // the shared edge traversal below, including both edges of one cond_br.
     fn environmentIdentity(self: *Graph, receiver: t.RegisterRef) Error!EnvironmentIdentity {
@@ -578,7 +594,7 @@ const Graph = struct {
         }
         return if(definition.block==0).unknown else .{.parameter=definition.block};
     }
-    fn environmentOrigins(self: *Graph) Error!?[]?t.RegisterRef {
+    fn environmentOrigins(self: *Graph) Error!?EnvironmentAllocations {
         if(self.mode!=.common or !self.has_environment_access)return null;
         const c=self.c; const rows=c.program.tables.mode.common;
         var activation: ?t.EnvironmentRef=null;
@@ -646,12 +662,8 @@ const Graph = struct {
                         const exits=self.facts[pred];
                         for(exits.successors[0..exits.count],0..) |next,edge| {
                             try c.step(); if(next!=block_index)continue;
-                            const arguments=switch(op.data) {
-                                .br,.eh_route => op.operands,
-                                .cond_br => |conditional| if(edge==0)op.operands[1..1+conditional.true_count] else op.operands[1+conditional.true_count..],
-                                // Invokes/numeric edges create values instead
-                                // of transporting a complete Env argument.
-                                else => { try c.step(); origins[index]=.unknown; continue; },
+                            const arguments=environmentEdgeArguments(&op,edge) orelse {
+                                try c.step(); origins[index]=.unknown; continue;
                             };
                             try c.step(); const source=arguments[parameter];
                             try proof.link(source,receiver); incoming+=1;
@@ -672,14 +684,291 @@ const Graph = struct {
         };
         try c.charge(3*count);
         const allocations=try c.allocator.alloc(?t.RegisterRef,count);
+        errdefer c.allocator.free(allocations);
+        var mixed = false;
         for(origins,allocations) |origin_state,*allocation| {
             allocation.*=switch(origin_state) { .allocation => |ref| ref, else => null };
+            mixed = mixed or origin_state == .mixed;
         }
-        return allocations;
+        return .{
+            .direct = allocations,
+            .checked_layout = if (mixed) try self.environmentMixedState(origins) else null,
+        };
     }
-    fn environmentDirectCellState(self: *Graph, allocations: []const ?t.RegisterRef) Error!void {
+
+    fn environmentAccessSlot(op: *const ins.Instruction) ?t.EnvironmentSlotRef {
+        return switch (op.data) {
+            inline .environment_init, .environment_load, .environment_store => |v| v.slot,
+            else => null,
+        };
+    }
+
+    fn environmentInLayout(self: *const Graph, register: t.RegisterRef, layout: t.EnvironmentRef) bool {
+        return exact(self.carrierOf(register), .{ .environment = layout });
+    }
+
+    fn environmentAllocCanRepeat(self: *Graph, start: usize) Error!bool {
+        const c = self.c;
+        try c.charge(zero.len + 3);
+        var seen = zero;
+        var pending: [256]usize = undefined;
+        pending[0] = start;
+        var size: usize = 1;
+        var cursor: usize = 0;
+        while (cursor < size) : (cursor += 1) {
+            try c.charge(3);
+            const row = &self.facts[pending[cursor]];
+            for (row.successors[0..row.count]) |next| {
+                try c.charge(4);
+                if (next == start) return true;
+                if (has(seen, next)) continue;
+                put(&seen, next);
+                pending[size] = next;
+                size += 1;
+            }
+        }
+        return false;
+    }
+
+    fn environmentMixedState(self: *Graph, origins: []const EnvironmentOrigin) Error!?t.EnvironmentRef {
+        const c = self.c;
+        const closures = c.program.tables.mode.common.closures;
+        var owner_layout: ?t.EnvironmentRef = null;
+        for (closures.functions) |row| {
+            try c.step();
+            if (@intFromEnum(row.function) != self.function) continue;
+            owner_layout = row.activation_environment;
+            break;
+        }
+        const layout = owner_layout orelse return null;
+        if (@intFromEnum(closures.environments[@intFromEnum(layout)].owner) != self.function) return null;
+        const slot_count = closures.environments[@intFromEnum(layout)].slots.len;
+        try c.charge(slot_count);
+        const slots = try c.allocator.alloc(bool, slot_count);
+        defer c.allocator.free(slots);
+        @memset(slots, false);
+
+        // Each tracked object belongs to this activation, stays within this
+        // function and has at most one allocation per call.
+        var roots: [4096]t.RegisterRef = undefined;
+        var root_count: usize = 0;
+        var has_mixed_access = false;
+        for (self.f.blocks, 0..) |block, block_index| {
+            try c.step();
+            if (!self.facts[block_index].reachable) continue;
+            var has_allocation = false;
+            for (block.parameters) |parameter| {
+                try c.charge(2);
+                if (block_index == 0 and self.environmentInLayout(parameter, layout)) return null;
+            }
+            for (block.instructions) |*op| {
+                try c.charge(3);
+                if (environmentAccessSlot(op)) |slot| {
+                    if (self.environmentInLayout(op.operands[0], layout)) {
+                        const origin_state = origins[@intFromEnum(op.operands[0])];
+                        if (origin_state == .unknown or origin_state == .bottom) return null;
+                        has_mixed_access = has_mixed_access or origin_state == .mixed;
+                        slots[@intFromEnum(slot)] = true;
+                    }
+                }
+                const result_in_layout = if (op.result) |result| self.environmentInLayout(result, layout) else false;
+                if (result_in_layout) {
+                    switch (op.data) {
+                        .environment_alloc => {
+                            roots[root_count] = op.result.?;
+                            root_count += 1;
+                            has_allocation = true;
+                        },
+                        .domain_copy, .domain_view, .eh_carrier, .eh_assertion => {
+                            try c.step();
+                            if (!self.environmentInLayout(op.operands[0], layout)) return null;
+                        },
+                        else => return null,
+                    }
+                }
+                for (op.operands, 0..) |operand, index| {
+                    try c.charge(2);
+                    if (!self.environmentInLayout(operand, layout)) continue;
+                    switch (op.data) {
+                        .br, .cond_br, .eh_route => {},
+                        .domain_copy, .domain_view, .eh_carrier, .eh_assertion => if (!result_in_layout or index != 0) return null,
+                        .environment_init, .environment_load, .environment_store => if (index != 0) return null,
+                        else => return null,
+                    }
+                }
+            }
+            if (has_allocation and try self.environmentAllocCanRepeat(block_index)) return null;
+            const terminator = &block.instructions[block.instructions.len - 1];
+            if (environmentEdgeArguments(terminator, 0) == null) {
+                const edges = &self.facts[block_index];
+                for (edges.successors[0..edges.count]) |next| {
+                    try c.step();
+                    for (self.f.blocks[next].parameters) |parameter| {
+                        try c.charge(2);
+                        if (self.environmentInLayout(parameter, layout)) return null;
+                    }
+                }
+            }
+        }
+        if (!has_mixed_access) return null;
+        const entry_aliases = try self.environmentEntryAliases(layout);
+        defer c.allocator.free(entry_aliases);
+        for (slots, 0..) |used, slot| {
+            try c.step();
+            if (!used) continue;
+            for (roots[0..root_count]) |root| {
+                try c.step();
+                try self.environmentTrackSlot(layout, root, @enumFromInt(slot), entry_aliases);
+            }
+        }
+        return layout;
+    }
+
+    // Track one allocation and slot at a time. A state records the initialized
+    // bit together with precisely the SSA values that denote this allocation.
+    // Distinct predecessor facts are merged only when both parts agree.
+    const EnvironmentAliases = [64]u64;
+    const no_environment_aliases: EnvironmentAliases = @splat(0);
+    fn markEnvironmentAlias(aliases: *EnvironmentAliases, target: usize, present: bool) void {
+        const mask = @as(u64, 1) << @as(u6, @truncate(target));
+        const word = &aliases[target / 64];
+        if (present) word.* |= mask else word.* &= ~mask;
+    }
+
+    fn environmentEntryAliases(self: *Graph, layout: t.EnvironmentRef) Error![]EnvironmentAliases {
+        const c = self.c;
+        const count = self.f.blocks.len;
+        try c.charge(1 + count * no_environment_aliases.len);
+        const masks = try c.allocator.alloc(EnvironmentAliases, count);
+        errdefer c.allocator.free(masks);
+        @memset(masks, no_environment_aliases);
+        for (self.f.registers, self.definitions, 0..) |register, definition, index| {
+            try c.charge(3);
+            if (!exact(register.carrier, .{ .environment = layout })) continue;
+            for (masks, 0..) |*mask, block| {
+                try c.charge(3 + zero.len);
+                if (definition.block != block and has(self.dom[block], definition.block)) {
+                    try c.step();
+                    markEnvironmentAlias(mask, index, true);
+                }
+            }
+        }
+        return masks;
+    }
+
+    const EnvironmentState = struct {
+        aliases: EnvironmentAliases,
+        initialized: bool,
+        block: usize,
+        next: ?usize = null,
+
+        fn mark(self: *EnvironmentState, target: t.RegisterRef, present: bool) void {
+            markEnvironmentAlias(&self.aliases, @intFromEnum(target), present);
+        }
+
+        fn includes(self: *const EnvironmentState, target: t.RegisterRef) bool {
+            const index = @intFromEnum(target);
+            return self.aliases[index / 64] & (@as(u64, 1) << @as(u6, @truncate(index))) != 0;
+        }
+    };
+    const environment_state_words = @sizeOf(EnvironmentState) / @sizeOf(u64);
+
+    fn environmentEnqueue(
+        c: *Context,
+        states: *std.ArrayList(EnvironmentState),
+        heads: []?usize,
+        state: *const EnvironmentState,
+        words: usize,
+    ) Error!void {
+        try c.step();
+        var cursor = heads[state.block];
+        while (cursor) |index| {
+            try c.charge(3);
+            const known = &states.items[index];
+            if (known.initialized == state.initialized) {
+                try c.charge(words);
+                if (std.mem.eql(u64, known.aliases[0..words], state.aliases[0..words])) return;
+            }
+            cursor = known.next;
+        }
+        if (states.items.len == states.capacity) {
+            const capacity = @max(8, 2 * states.capacity);
+            try c.charge(1 + (capacity + states.items.len) * environment_state_words);
+            try states.ensureTotalCapacityPrecise(c.allocator, capacity);
+        }
+        try c.charge(5 + environment_state_words);
+        const stored = states.addOneAssumeCapacity();
+        stored.* = state.*;
+        stored.next = heads[state.block];
+        heads[state.block] = states.items.len - 1;
+    }
+
+    fn environmentTrackSlot(
+        self: *Graph,
+        layout: t.EnvironmentRef,
+        root: t.RegisterRef,
+        slot: t.EnvironmentSlotRef,
+        entry_aliases: []const EnvironmentAliases,
+    ) Error!void {
+        const c = self.c;
+        const words = (self.f.registers.len + 63) / 64;
+        var heads: [256]?usize = undefined;
+        try c.charge(self.f.blocks.len + no_environment_aliases.len);
+        @memset(heads[0..self.f.blocks.len], null);
+        var states: std.ArrayList(EnvironmentState) = .empty;
+        defer states.deinit(c.allocator);
+        try environmentEnqueue(c, &states, &heads, &.{ .aliases = no_environment_aliases, .initialized = false, .block = 0 }, words);
+        var cursor: usize = 0;
+        while (cursor < states.items.len) : (cursor += 1) {
+            try c.charge(5 + environment_state_words);
+            var state = states.items[cursor];
+            const block = &self.f.blocks[state.block];
+            for (block.instructions) |*op| {
+                try c.charge(3);
+                if (op.result) |result| {
+                    if (self.environmentInLayout(result, layout)) {
+                        try c.charge(4);
+                        const selected = if (op.data == .environment_alloc)
+                            result == root
+                        else
+                            state.includes(op.operands[0]);
+                        state.mark(result, selected);
+                    }
+                }
+                if (environmentAccessSlot(op)) |access| {
+                    try c.charge(3);
+                    if (access != slot or !state.includes(op.operands[0])) continue;
+                    if (op.data == .environment_init) {
+                        try c.require(!state.initialized);
+                        state.initialized = true;
+                    } else try c.require(state.initialized);
+                }
+            }
+            const terminator = &block.instructions[block.instructions.len - 1];
+            const facts = &self.facts[state.block];
+            for (facts.successors[0..facts.count], 0..) |successor, edge| {
+                try c.charge(4 + environment_state_words);
+                var next = state;
+                next.block = successor;
+                // Dominating values can still be observed. The successor's
+                // parameters are replaced by the parallel edge assignments.
+                try c.charge(2 * words);
+                for (next.aliases[0..words], entry_aliases[successor][0..words]) |*word, mask| word.* &= mask;
+                if (environmentEdgeArguments(terminator, edge)) |arguments| {
+                    for (self.f.blocks[successor].parameters, arguments) |target, source| {
+                        try c.charge(3);
+                        if (self.environmentInLayout(target, layout)) next.mark(target, state.includes(source));
+                    }
+                }
+                try environmentEnqueue(c, &states, &heads, &next, words);
+            }
+        }
+    }
+
+    fn environmentDirectCellState(self: *Graph, proven: EnvironmentAllocations) Error!void {
         if(self.mode!=.common or !self.has_environment_access)return;
         const c=self.c;
+        const allocations = proven.direct;
         const Pair=struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
         var pairs: std.AutoHashMapUnmanaged(Pair,void)=.{}; defer pairs.deinit(c.allocator);
         for(self.f.blocks) |block| for(block.instructions) |op| {
@@ -688,6 +977,10 @@ const Graph = struct {
                 else => continue,
             };
             try c.step(); const allocation=allocations[@intFromEnum(op.operands[0])] orelse continue;
+            if (proven.checked_layout) |layout| {
+                try c.step();
+                if (self.environmentInLayout(allocation, layout)) continue;
+            }
             try c.row(Pair);
             const capacity=@as(usize,pairs.capacity()); const used=@as(usize,pairs.count());
             // This insert-only default-load map grows before lookup. Prepay
@@ -1046,7 +1339,7 @@ const Graph = struct {
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
         try self.usesDom(); try self.entryAbi(); try self.operations();
-        const allocations=try self.environmentOrigins(); defer if(allocations) |values| self.c.allocator.free(values);
+        const allocations=try self.environmentOrigins(); defer if(allocations) |values| self.c.allocator.free(values.direct);
         if(allocations) |values|try self.environmentDirectCellState(values);
         try self.globalInitialization(); try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof

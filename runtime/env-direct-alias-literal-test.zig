@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete literal typed metadata for transparent same-Env SSA state checks.
+// Complete literal typed metadata for Env alias and initialization checks.
 // Unary Env forwarding stops at refs/layout/identity/SSA; its SourceCorr seam
 // remains OPEN. Control-flow-only cases also match the existing SourcePlan when SSA accepts.
 // No packet, Source package/carrier, decoder, Actual facts, execution or receipt.
@@ -235,8 +235,14 @@ const merge_left = [_]ins.Instruction{.{ .source = at, .result = null, .operands
 const merge_left_plan = [_]control.SourcePlanOperation{.{ .name = "cf.br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{r(5)}, .successors = &.{b(3)} }};
 const merge_right = [_]ins.Instruction{.{ .source = at, .result = null, .operands = &.{r(6)}, .data = .{ .br = .{ .destination = b(3) } } }};
 const merge_right_plan = [_]control.SourcePlanOperation{.{ .name = "cf.br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{r(6)}, .successors = &.{b(3)} }};
-const double_edge_entry = seed ++ [_]ins.Instruction{ alloc, second_alloc, .{ .source = at, .result = null, .operands = &.{ r(0), r(3), r(4) }, .data = .{ .cond_br = .{ .true_destination = b(1), .false_destination = b(1), .true_count = 1 } } } };
-const double_edge_entry_plan = seed_plan ++ [_]control.SourcePlanOperation{ plan_alloc, plan_second_alloc, .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{ r(0), r(3), r(4) }, .successors = &.{ b(1), b(1) } } };
+const merge_left_initialized = [_]ins.Instruction{init_view} ++ merge_left;
+const merge_left_initialized_plan = [_]control.SourcePlanOperation{plan_init_view} ++ merge_left_plan;
+const merge_right_initialized = [_]ins.Instruction{init_carrier} ++ merge_right;
+const merge_right_initialized_plan = [_]control.SourcePlanOperation{plan_init_carrier} ++ merge_right_plan;
+const merge_right_other_initialized = [_]ins.Instruction{init_original} ++ merge_right;
+const merge_right_other_initialized_plan = [_]control.SourcePlanOperation{plan_init_original} ++ merge_right_plan;
+const double_edge_entry = seed ++ [_]ins.Instruction{ alloc, second_alloc, init_original, .{ .source = at, .result = null, .operands = &.{ r(0), r(3), r(4) }, .data = .{ .cond_br = .{ .true_destination = b(1), .false_destination = b(1), .true_count = 1 } } } };
+const double_edge_entry_plan = seed_plan ++ [_]control.SourcePlanOperation{ plan_alloc, plan_second_alloc, plan_init_original, .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .source = at, .result = null, .operands = &.{ r(0), r(3), r(4) }, .successors = &.{ b(1), b(1) } } };
 const double_edge_body = [_]ins.Instruction{.{ .source = at, .result = r(6), .operands = &.{r(5)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } }, returned };
 const double_edge_body_plan = [_]control.SourcePlanOperation{.{ .name = "env_load", .view = i32_text, .properties = &cell_properties, .source = at, .result = r(6), .operands = &.{r(5)}, .successors = &.{} }, plan_return };
 const readonly_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(4), r(2) }, .data = .{ .environment_store = .{ .slot = @enumFromInt(1) } } };
@@ -355,13 +361,13 @@ const cases = [_]Case{
     .{ .name = "conditional same root load requires initialization", .accept = false, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &conditional_entry }, .{ .parameters = &.{r(4)}, .instructions = &.{ branch_load, returned } }, .{ .parameters = &.{}, .instructions = &.{returned} } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &conditional_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &.{ plan_branch_load, plan_return } }, .{ .parameters = &.{}, .operations = &.{plan_return} } } },
-    .{ .name = "different allocation merge load unchanged", .accept = true, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
+    .{ .name = "different allocation merge requires initialization", .accept = false, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &merge_entry }, .{ .parameters = &.{r(5)}, .instructions = &merge_left }, .{ .parameters = &.{r(6)}, .instructions = &merge_right }, .{ .parameters = &.{r(7)}, .instructions = &.{ load_assertion, returned } } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &merge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &merge_left_plan }, .{ .parameters = &.{r(6)}, .operations = &merge_right_plan }, .{ .parameters = &.{r(7)}, .operations = &.{ plan_load_assertion, plan_return } } } },
-    .{ .name = "different allocation merge init unchanged", .accept = true, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
+    .{ .name = "different allocation merge rejects repeated initialization", .accept = false, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &merge_entry }, .{ .parameters = &.{r(5)}, .instructions = &merge_left }, .{ .parameters = &.{r(6)}, .instructions = &merge_right }, .{ .parameters = &.{r(7)}, .instructions = &.{ init_assertion, init_assertion, load_assertion, returned } } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &merge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &merge_left_plan }, .{ .parameters = &.{r(6)}, .operations = &merge_right_plan }, .{ .parameters = &.{r(7)}, .operations = &.{ plan_init_assertion, plan_init_assertion, plan_load_assertion, plan_return } } } },
-    .{ .name = "two conditional edges from one predecessor unchanged", .accept = true, .registers = &hop_registers, .carriers = &hop_carriers, .match_plan = true,
+    .{ .name = "different allocation on two conditional edges requires initialization", .accept = false, .registers = &hop_registers, .carriers = &hop_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &double_edge_entry }, .{ .parameters = &.{r(5)}, .instructions = &double_edge_body } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &double_edge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &double_edge_body_plan } } },
     .{ .name = "conditional same root initialized alias", .accept = true, .registers = &branch_registers, .carriers = &branch_carriers, .match_plan = true,
@@ -394,7 +400,21 @@ const cases = [_]Case{
     .{ .name = "root plus seedless cycle remains unproven with independent init", .accept = true, .registers = &hop_registers, .carriers = &hop_carriers, .match_plan = true,
         .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &seedless_entry }, .{ .parameters = &.{r(4)}, .instructions = &.{ seedless_load, returned } }, .{ .parameters = &.{r(5)}, .instructions = &seedless_body } },
         .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &seedless_entry_plan }, .{ .parameters = &.{r(4)}, .operations = &.{ plan_seedless_load, plan_return } }, .{ .parameters = &.{r(5)}, .operations = &seedless_body_plan } } },
-
+    .{ .name = "different allocation merge can initialize the selected slot", .accept = true, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &merge_entry }, .{ .parameters = &.{r(5)}, .instructions = &merge_left }, .{ .parameters = &.{r(6)}, .instructions = &merge_right }, .{ .parameters = &.{r(7)}, .instructions = &.{ init_assertion, store_assertion, load_assertion, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &merge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &merge_left_plan }, .{ .parameters = &.{r(6)}, .operations = &merge_right_plan }, .{ .parameters = &.{r(7)}, .operations = &.{ plan_init_assertion, plan_store_assertion, plan_load_assertion, plan_return } } } },
+    .{ .name = "both arms may initialize only their selected allocation", .accept = true, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &merge_entry }, .{ .parameters = &.{r(5)}, .instructions = &merge_left_initialized }, .{ .parameters = &.{r(6)}, .instructions = &merge_right_initialized }, .{ .parameters = &.{r(7)}, .instructions = &.{ load_assertion, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &merge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &merge_left_initialized_plan }, .{ .parameters = &.{r(6)}, .operations = &merge_right_initialized_plan }, .{ .parameters = &.{r(7)}, .operations = &.{ plan_load_assertion, plan_return } } } },
+    .{ .name = "mixed init leaves an unselected allocation unchanged", .accept = false, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &merge_entry }, .{ .parameters = &.{r(5)}, .instructions = &merge_left }, .{ .parameters = &.{r(6)}, .instructions = &merge_right }, .{ .parameters = &.{r(7)}, .instructions = &.{ init_assertion, load_original, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &merge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &merge_left_plan }, .{ .parameters = &.{r(6)}, .operations = &merge_right_plan }, .{ .parameters = &.{r(7)}, .operations = &.{ plan_init_assertion, plan_load_original, plan_return } } } },
+    .{ .name = "mixed init rejects a slot initialized in one selected arm", .accept = false, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &merge_entry }, .{ .parameters = &.{r(5)}, .instructions = &merge_left_initialized }, .{ .parameters = &.{r(6)}, .instructions = &merge_right }, .{ .parameters = &.{r(7)}, .instructions = &.{ init_assertion, load_assertion, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &merge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &merge_left_initialized_plan }, .{ .parameters = &.{r(6)}, .operations = &merge_right_plan }, .{ .parameters = &.{r(7)}, .operations = &.{ plan_init_assertion, plan_load_assertion, plan_return } } } },
+    .{ .name = "mixed init completes direct observation on every arm", .accept = true, .registers = &merge_registers, .carriers = &merge_carriers, .match_plan = true,
+        .blocks = &.{ .{ .parameters = &.{r(0)}, .instructions = &merge_entry }, .{ .parameters = &.{r(5)}, .instructions = &merge_left }, .{ .parameters = &.{r(6)}, .instructions = &merge_right_other_initialized }, .{ .parameters = &.{r(7)}, .instructions = &.{ init_assertion, load_original, returned } } },
+        .plans = &.{ .{ .parameters = &.{r(0)}, .operations = &merge_entry_plan }, .{ .parameters = &.{r(5)}, .operations = &merge_left_plan }, .{ .parameters = &.{r(6)}, .operations = &merge_right_other_initialized_plan }, .{ .parameters = &.{r(7)}, .operations = &.{ plan_init_assertion, plan_load_original, plan_return } } } },
 };
 const types = [_]tables.CommonType{
     .{ .id = undefined_id, .kind = .@"undefined", .name = "undefined", .native_code = 0, .base = null, .element = null, .members = &.{}, .methods = null, .nominal_key = null, .runtime_key = null },
@@ -518,9 +538,9 @@ test "literal Env alias br repeated init loop without allocation" { try run(case
 test "literal Env alias br distinct allocations" { try run(cases[29]); }
 test "literal Env alias br multihop initialization" { try run(cases[30]); }
 test "literal Env alias conditional same root load requires initialization" { try run(cases[31]); }
-test "literal Env alias different allocation merge load unchanged" { try run(cases[32]); }
-test "literal Env alias different allocation merge init unchanged" { try run(cases[33]); }
-test "literal Env alias two conditional edges from one predecessor unchanged" { try run(cases[34]); }
+test "literal Env different allocation merge load requires initialization" { try run(cases[32]); }
+test "literal Env different allocation merge rejects repeated initialization" { try run(cases[33]); }
+test "literal Env two conditional edges carrying different allocations require initialization" { try run(cases[34]); }
 test "literal Env alias conditional same root initialized alias" { try run(cases[35]); }
 test "literal Env alias conditional same root duplicate init" { try run(cases[36]); }
 test "literal Env alias conditional same root init original load" { try run(cases[37]); }
@@ -531,3 +551,57 @@ test "literal Env alias same root diamond duplicate init" { try run(cases[41]); 
 test "literal Env alias same root seeded loop initialized reads" { try run(cases[42]); }
 test "literal Env alias same root seeded loop repeated init" { try run(cases[43]); }
 test "literal Env alias root plus seedless cycle remains unproven with independent init" { try run(cases[44]); }
+test "literal Env merge initializes the selected slot for later store and load" { try run(cases[45]); }
+test "literal Env merge observes the allocation initialized in each arm" { try run(cases[46]); }
+test "literal Env merge init leaves the unselected allocation unchanged" { try run(cases[47]); }
+test "literal Env merge rejects init after one selected arm already initialized" { try run(cases[48]); }
+test "literal Env merge init and arm init together permit a direct observation" { try run(cases[49]); }
+
+const initialized_double_edge_entry = seed ++ [_]ins.Instruction{
+    alloc, second_alloc, init_original, init_copy, double_edge_entry[double_edge_entry.len - 1],
+};
+
+test "literal Env merge does not retain aliases local to successive diamond arms" {
+    const diamonds = 11;
+    const register_count = 7 + 2 * diamonds;
+    const exit = 1 + 3 * diamonds;
+    const registers = base_registers ++ ([_]model.Register{env_register} ** (2 + 2 * diamonds)) ++ [_]model.Register{value_register};
+    var splits: [diamonds]ins.Instruction = undefined;
+    var arms: [diamonds][2][2]ins.Instruction = undefined;
+    var blocks: [exit + 1]model.Block = undefined;
+    blocks[0] = .{ .parameters = &.{r(0)}, .instructions = &initialized_double_edge_entry };
+    for (0..diamonds) |index| {
+        const header = 1 + 3 * index;
+        const join: t.BlockRef = @enumFromInt(header + 3);
+        splits[index] = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = .{ .cond_br = .{
+            .true_destination = @enumFromInt(header + 1), .false_destination = @enumFromInt(header + 2), .true_count = 0,
+        } } };
+        blocks[header] = .{ .parameters = if (index == 0) &.{r(5)} else &.{}, .instructions = splits[index..][0..1] };
+        for (0..2) |arm| {
+            var local_copy = copy;
+            local_copy.result = @enumFromInt(6 + 2 * index + arm);
+            local_copy.operands = &.{r(5)};
+            arms[index][arm] = .{ local_copy, .{ .source = at, .result = null, .operands = &.{}, .data = .{ .br = .{ .destination = join } } } };
+            blocks[header + 1 + arm] = .{ .parameters = &.{}, .instructions = &arms[index][arm] };
+        }
+    }
+    var load = double_edge_body[0];
+    load.result = @enumFromInt(register_count - 1);
+    blocks[exit] = .{ .parameters = &.{}, .instructions = &.{ load, returned } };
+    // SourcePlan correspondence is separate for transparent unary Env copies.
+    try run(.{ .name = "closed Env diamond chain", .accept = true, .registers = &registers, .carriers = &.{}, .blocks = &blocks, .plans = &.{} });
+}
+
+test "literal Env merge keeps the selected allocation on a loop backedge" {
+    const carried = ins.Instruction{ .source = at, .result = null, .operands = &.{ r(0), r(5) }, .data = .{ .cond_br = .{
+        .true_destination = b(1), .false_destination = b(2), .true_count = 1,
+    } } };
+    try run(.{
+        .name = "closed Env loop", .accept = true, .registers = &hop_registers, .carriers = &.{}, .plans = &.{},
+        .blocks = &.{
+            .{ .parameters = &.{r(0)}, .instructions = &initialized_double_edge_entry },
+            .{ .parameters = &.{r(5)}, .instructions = &.{ condition, double_edge_body[0], carried } },
+            .{ .parameters = &.{}, .instructions = &.{returned} },
+        },
+    });
+}
