@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "core-command.h"
 #include "aot.h"
+#include "common-program-command.h"
+#include "common-program-value-lowering.h"
 #include "native_cost.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
@@ -42,8 +44,21 @@ int inspect() {
   if (!input) return 2;
   return tsfg::inspectNativeInstructions((*input)->getMemBufferRef(), llvm::outs()) ? 0 : 3;
 }
+int fixedValue(mlir::ModuleOp module, llvm::StringRef command, llvm::StringRef functionId) {
+  using namespace tsfg::commonProgram;
+  FixedValueLLVM value;
+  Error error;
+  if (!lowerFixedValueLLVM(module, functionId, value, error)) {
+    llvm::errs() << "[" << error.code << "] " << error.message;
+    if (!error.path.empty())
+      llvm::errs() << " (" << error.path << ":" << error.range.start << ":" << error.range.end << ")";
+    llvm::errs() << '\n';
+    return 3;
+  }
+  return printCoreData(command == "--value-llvm" ? value.llvm : value.mlir);
+}
 } // namespace
 int main(int argc, char **argv) {
-  const tsfg::CoreNativeCommands native{emit, inspect};
+  const tsfg::CoreNativeCommands native{emit, inspect, fixedValue};
   return tsfg::runCoreCommand(argc, argv, &native);
 }

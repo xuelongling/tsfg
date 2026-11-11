@@ -13,6 +13,11 @@ target initialization and instruction inspection. Native lowering and X86
 libraries belong only to this full target. There is no alternative verifier,
 interpreter, language profile, or duplicate IR implementation.
 
+The full command also provides `--common-program --value-llvm <FunctionId>` and
+`--common-program --value-mlir <FunctionId>`. These return compiler data using
+the shared verified Core input and the existing strict floating finalizer.
+The static command rejects both modes before reading input.
+
 The static target binds AddLLVM's component selection in a local CMake function:
 `LLVM_LINK_COMPONENTS` is `Support`, `USE_SHARED` is empty, and
 `DISABLE_LLVM_LINK_LLVM_DYLIB` prevents the umbrella-library branch. Its complete

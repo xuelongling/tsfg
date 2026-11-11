@@ -6,10 +6,12 @@
 namespace tsfg {
 // Optional native implementation. The command runner owns parsing, dialect
 // registration, identity checks and complete Core verification for both tools.
-// emit receives a verified module; inspect owns its independent object input.
+// emit receives verified Core; fixedValue owns its specialized verification.
+// inspect owns its independent object input.
 struct CoreNativeCommands {
   int (*emit)(mlir::ModuleOp, llvm::StringRef command);
   int (*inspect)();
+  int (*fixedValue)(mlir::ModuleOp, llvm::StringRef command, llvm::StringRef functionId);
 };
 // Static Core supplies nullptr and rejects native commands before reading stdin.
 // Exit 2 is I/O/command failure, exit 3 is invalid input or capability failure.

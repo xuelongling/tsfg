@@ -13,6 +13,15 @@ import coreSourceCatalog from '../../compiler/core-ir/sources.json' with {type:'
 import {createMlirFixture} from './mlir-fixtures.mjs';
 const productRoot=fileURLToPath(new URL('../../',import.meta.url));
 const hash=value=>'sha256:'+createHash('sha256').update(value).digest('hex');
+test('fixed-value LLVM command inputs belong to the full command role',()=>{
+ const source='common-program-value-lowering.cpp',header='common-program-value-lowering.h';
+ for(const role of ['common','static']){
+  assert.ok(!coreSourceCatalog[role].sources.includes(source));
+  assert.ok(!coreSourceCatalog[role].headers.includes(header));
+ }
+ assert.ok(coreSourceCatalog.native.sources.includes(source));
+ assert.ok(coreSourceCatalog.native.headers.includes(header));
+});
 test('production build selects explicit targets and preserves the complete native default',()=>{
  assert.equal(selectMlirCommandRole(new Map()).target,'tsfg-core-ir');
  const ordinary=selectMlirCommandRole(new Map([['--core-command-role','static']]));

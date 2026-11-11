@@ -5,7 +5,6 @@
 #include "bytecode-common.h"
 #include "bytecode-common-packet.h"
 #include "component-layout.h"
-#include "common-program-value-lowering.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/Program.h"
@@ -40,6 +39,11 @@ int printCoreModule(mlir::ModuleOp module){
   Output output;module->print(output,mlir::OpPrintingFlags().printGenericOpForm());output<<'\n';return finish(output);
 }
 int printCoreJson(const Json &value){Output output;output<<canonical(value)<<'\n';return finish(output);}
+int printCoreData(llvm::StringRef bytes) {
+  Output output;
+  output << bytes;
+  return finish(output);
+}
 int readCoreInput(std::string &bytes) {
   if (llvm::sys::ChangeStdinToBinary()) return 2;
   constexpr size_t limit = 8388608;
@@ -85,15 +89,6 @@ int runGpuBindingInput(llvm::StringRef bytes,mlir::MLIRContext &context){
     reject(error,"core-ir-common-gpu-plan","asserted logical GPU plan differs from independent reconstruction");return failure();
   }
   return printCoreJson(plan);
-}
-int runFixedValueModule(mlir::ModuleOp module,llvm::StringRef command,llvm::StringRef functionId){
-    FixedValueLLVM value;Error error;
-    if(!lowerFixedValueLLVM(module,functionId,value,error)){
-      llvm::errs()<<"["<<error.code<<"] "<<error.message;
-      if(!error.path.empty())llvm::errs()<<" ("<<error.path<<":"<<error.range.start<<":"<<error.range.end<<")";
-      llvm::errs()<<'\n';return 3;
-    }
-    Output output;output<<(command=="--value-llvm"?value.llvm:value.mlir);return finish(output);
 }
 int runCoreModule(mlir::ModuleOp module, llvm::StringRef command) {
   if (mlir::failed(mlir::verify(module))) return 3;

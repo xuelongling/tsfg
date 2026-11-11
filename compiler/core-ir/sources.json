@@ -110,7 +110,6 @@
       "common-program-syntax.cpp",
       "common-program-transfer.cpp",
       "common-program-types.cpp",
-      "common-program-value-lowering.cpp",
       "common-program.cpp",
       "component-layout.cpp",
       "core-command.cpp",
@@ -250,7 +249,6 @@
       "common-program-syntax.h",
       "common-program-target-flow.h",
       "common-program.h",
-      "common-program-value-lowering.h",
       "component-layout.h",
       "core-command.h",
       "core-source.h",
@@ -337,6 +335,7 @@
       "aot-module.cpp",
       "aot-program.cpp",
       "aot.cpp",
+      "common-program-value-lowering.cpp",
       "main.cpp",
       "native_cost.cpp"
     ],
@@ -350,6 +349,7 @@
       "aot-module.h",
       "aot-slot-codec.h",
       "aot.h",
+      "common-program-value-lowering.h",
       "native_cost.h"
     ],
     "externalHeaders": [

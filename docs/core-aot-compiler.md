@@ -2,8 +2,8 @@
 
 # Core scalar compiler outputs
 
-The shared compiler-internal fixed-value IR stage accepts a complete formal
-Common Program and an original FunctionId through the static Core commands
+The full Core compiler exposes the shared compiler-internal fixed-value IR
+stage for a complete formal Common Program and an original FunctionId through
 `--common-program --value-llvm <FunctionId>` and
 `--common-program --value-mlir <FunctionId>`. It verifies the complete input,
 then lowers a direct-call closure, including self/mutual recursion and cyclic control flow,

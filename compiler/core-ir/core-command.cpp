@@ -78,6 +78,10 @@ int readCoreInput(std::string &bytes, llvm::StringRef budgetCode) {
 int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native) {
   const bool value = argc==4&&llvm::StringRef(argv[1])=="--common-program"&&
     (llvm::StringRef(argv[2])=="--value-llvm"||llvm::StringRef(argv[2])=="--value-mlir");
+  if (value && !native) {
+    llvm::errs() << "[core-ir-command-role] fixed-value IR commands require the full compiler\n";
+    return 2;
+  }
   const bool common = (argc == 3||value) && llvm::StringRef(argv[1]) == "--common-program";
   const bool query = argc == 3 && llvm::StringRef(argv[1]) == "--system-query";
   if (common || query) {
@@ -116,7 +120,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
       llvm::errs() << "[core-ir-invalid] parse or verification failed\n";
       return 3;
     }
-    if(value)return tsfg::commonProgram::runFixedValueModule(*module,command,argv[3]);
+    if (value) return native->fixedValue(*module, command, argv[3]);
     if (common) return tsfg::commonProgram::runCoreModule(*module, command);
     if (command == "--tmeta") {
       tsfg::commonProgram::Json metadata = nullptr;
