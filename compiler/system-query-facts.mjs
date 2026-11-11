@@ -2,7 +2,7 @@
 // An owning cold boundary for checked source data. No execution admission.
 import descriptor from '../contracts/system-query-facts.schema.json' with {type:'json'};
 import {canonical,sha256,own} from './identity.mjs';
-import {copyGenericJsonBytes,readGenericJson} from './generic-json.mjs';
+import {copyGenericJsonBytes,inspectGenericJson,readGenericJson} from './generic-json.mjs';
 import {checkTypedArrayShape,sourceRange,originId,logicalPath,byteOrder} from './typed-array-schema.mjs';
 import {validateTypedArrayTypes} from './typed-array-types.mjs';
 import {commonSourceDescriptor} from './common-program-common.mjs';
@@ -18,6 +18,14 @@ import {commonSourceGrammar,commonTypeSyntax,commonSourceAccess} from './common-
 export const systemQueryFactsFormat=own({family:descriptor.family,version:descriptor.version,schemaHash:sha256(canonical(descriptor)+'\n')});
 const policy={...descriptor.limits,safeNonnegativeIntegers:true,allowNul:true,rejectPrototypeKeys:false};
 const receipts=new WeakMap();
+// Derive the CLI context from a bounded string probe. The full reader still
+// checks the canonical packet identity and the independently supplied request.
+/** @param {Uint8Array} bytes @param {Uint8Array} requestBytes */
+export function systemQueryRequestContext(bytes,requestBytes){
+  const {selection}=inspectGenericJson(copyGenericJsonBytes(bytes,policy),policy,['packageId']);
+  return {family:'tsfg.system-query-context-candidate',version:systemQueryFactsFormat.version,requestBytes,expectedPackageId:hash(selection?.value)};
+}
+
 
 /** @typedef {Readonly<{start:number,end:number}>} SystemQueryRange */
 /** @typedef {Readonly<{id:string,sourcePath:string,kind:string,name:string,range:SystemQueryRange,nameRange:SystemQueryRange}>} SystemQueryOrigin */

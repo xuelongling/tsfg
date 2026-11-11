@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {readFileSync,mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {canonical} from '../../compiler/identity.mjs';
@@ -43,6 +45,35 @@ test('CPU batch public pipeline retains current-manifest and original-context ga
   const input=cases.find(row=>row.name==='view-parenthesized');
   await assert.rejects(compileSystemQuery(input.bytes,{...input.context,expectedPackageId:'sha256:'+'0'.repeat(64)},{core:tool,cpuBatch:true}),/identity|differs/);
   await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:'missing',cpuBatch:true}),/artifact-manifest|ENOENT/);
+});
+
+test('Query CLI uses bounded owned JSON diagnostics before tool lookup',async t=>{
+  const root=mkdtempSync(path.join(tmpdir(),'tsfg-query-cli-metadata-'));
+  const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
+  const fixture=base=>fileURLToPath(new URL('./testdata/system-query-views/'+base+'.json',import.meta.url));
+  const request=fixture('view-parenthesized-request');
+  const oversized=Buffer.alloc(8388609,0x20);
+  oversized[0]=0x7b;
+  const invalidUtf8=Buffer.concat([Buffer.from('{"packageId":"'),Buffer.from([0xff]),Buffer.from('"}\n')]);
+  const cases=[
+    {name:'oversized',bytes:oversized,diagnostic:/^generic-package-io-limit:/},
+    {name:'invalid UTF-8',bytes:invalidUtf8,diagnostic:/^generic-package-io-utf8:/},
+    {name:'genuine facts',bytes:null,diagnostic:/^r03-tool-core: formal executable is required/},
+  ];
+  for(const [index,{name,bytes,diagnostic}] of cases.entries())await t.test(name,()=>{
+    const input=bytes?path.join(root,index+'.json'):fixture('view-parenthesized-facts');
+    if(bytes)writeFileSync(input,bytes,{flag:'wx'});
+    const args=[cli,'--input',input,'--query-request',request,'--emit','core'];
+    const child=spawnSync(process.execPath,args,{windowsHide:true,timeout:30000});
+    writeFileSync(path.join(root,index+'-stdout.bin'),child.stdout??Buffer.alloc(0));
+    writeFileSync(path.join(root,index+'-stderr.bin'),child.stderr??Buffer.alloc(0));
+    writeFileSync(path.join(root,index+'-child.json'),JSON.stringify({pid:child.pid,args,status:child.status,signal:child.signal,error:child.error?.message??null})+'\n');
+    assert.ifError(child.error);
+    assert.equal(child.signal,null);
+    assert.equal(child.status,2);
+    assert.equal(child.stdout.length,0);
+    assert.match(child.stderr.toString('utf8'),diagnostic);
+  });
 });
 
 test('Query CLI accepts the current owned facts and exact request for all static outputs',{skip:!enabled},async()=>{
