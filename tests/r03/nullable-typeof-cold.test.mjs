@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
 import {importNullableCapturedResponse,verifyNullableSnapshot} from '../../compiler/nullable-frontend.mjs';
 import {buildHir,verifyHir,printHir,readHir,lowerHir} from '../../compiler/hir.mjs';
+import {compileOwnedCore} from '../../compiler/pipeline.mjs';
 import {raw,data,expected,fresh,sha,jcs,packetAttack,spliceSource,groupedContinuationAttack} from './nullable-typeof-fixtures.mjs';
 
 test('typeof undefined actual Source capture matches independently assembled whole facts and frozen input',()=>{
@@ -27,6 +30,32 @@ test('typeof undefined actual complete capture cold snapshot HIR read print Core
  const text=printHir(fresh(built.hir),c);assert.equal(text,jcs(expected.hir)+'\n');
  const cold=readHir(Buffer.from(text),c);assert.deepEqual(cold,expected.hir);
  assert.equal(lowerHir(cold,c),raw('core.mlir').toString());
+});
+
+const coreExecutable=process.env.TSFG_CORE_IR_EXE;
+for(const name of ['nullable-groups-v5','nullable-typeof-v6'])test(`owned Core preserves the explicit ${name} context`,{skip:!coreExecutable},async t=>{
+ assert.ok(coreExecutable);
+ const {hir,context}=JSON.parse(readFileSync(new URL(`./testdata/${name}/expected.json`,import.meta.url),'utf8'));
+ const cold=readHir(Buffer.from(jcs(hir)+'\n'),context);
+ const options={core:coreExecutable,factsContext:context};
+ const result=await compileOwnedCore(cold,options);
+ assert.equal(result.status,'ok',result.message);
+ assert.deepEqual(result.hir,cold);
+ const input=Buffer.from(lowerHir(cold,context));
+ const direct=spawnSync(coreExecutable,['--canonicalize'],{input,windowsHide:true,maxBuffer:16*1024*1024,timeout:30000});
+ assert.equal(direct.error,undefined);
+ assert.equal(direct.signal,null);
+ assert.equal(direct.status,0,direct.stderr.toString('utf8'));
+ assert.equal(direct.stderr.length,0);
+ assert.deepEqual(Buffer.from(result.core),direct.stdout);
+ t.diagnostic(`direct static Core PID ${direct.pid}, ${direct.stdout.length} bytes, ${sha(direct.stdout)}`);
+ const wrongContext={...context,expectedPackageId:'sha256:'+'0'.repeat(64)};
+ const wrong=await compileOwnedCore(cold,{...options,factsContext:wrongContext});
+ assert.equal(wrong.status,'tool-error');
+ assert.match(wrong.message,/^r03-nullable-identity:/);
+ const unexpected=await compileOwnedCore(cold,{...options,callPublicationContext:{}});
+ assert.equal(unexpected.status,'tool-error');
+ assert.match(unexpected.message,/^r03-nullable-context:/);
 });
 
 test('typeof undefined Core uses strict complement and preserves null through lazy existing CFG',()=>{

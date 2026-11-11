@@ -7,7 +7,7 @@ import { analyzeFrontend } from "./frontend.mjs";
 import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { lowerGenericHir } from "./generic-hir.mjs";
 export { compilePackageHir };
-import { buildHir, lowerFormalHir, lowerOwnedHir } from "./hir.mjs";
+import { buildHir, lowerHir, lowerFormalHir, lowerOwnedHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
 import {readSystemQueryFacts} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
@@ -15,6 +15,7 @@ import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
 import {isCommonProgramContext} from './common-program-hir.mjs';
+import {isNullableGroupsContext,isNullableTypeofContext} from './nullable-common.mjs';
 import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
@@ -178,7 +179,9 @@ async function produceBytecode(hir, options, lower = value => lowerFormalHir(val
 /** Produce verified Core text from complete persisted owned HIR. */
 export async function compileOwnedCore(hir, options) {
   try {
-    const { core } = await produceCore(hir, options, value => lowerOwnedHir(value, options.factsContext, options.callPublicationContext));
+    const { factsContext, callPublicationContext } = options;
+    const lower = isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext) ? lowerHir : lowerOwnedHir;
+    const { core } = await produceCore(hir, options, value => lower(value, factsContext, callPublicationContext));
     return { status: "ok", hir, core };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };
