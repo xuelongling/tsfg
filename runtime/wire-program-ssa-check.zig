@@ -60,6 +60,8 @@ const Graph = struct {
     has_environment_init: bool=false,
     has_environment_access: bool=false,
     has_direct_environment_call: bool=false,
+    has_saved_environment_call: bool=false,
+    has_environment_allocation: bool=false,
 
     fn init(c: *Context, index: usize) Error!Graph {
         const f=&c.program.functions[index];
@@ -333,7 +335,8 @@ const Graph = struct {
         const actual=v.domains[@intFromEnum(expected.domain)].actual_types;
         try c.require(actual.len==tags.count()); for(actual) |tag| { try c.step(); try c.require(tags.contains(tag)); }
     }
-    const InitializerCodeDefinition = union(enum) { literal: t.FunctionRef, source: t.RegisterRef, parameter: usize, unknown };
+    const CodeProducer = struct { instruction: *const ins.Instruction, block: usize };
+    const InitializerCodeDefinition = union(enum) { literal: CodeProducer, source: t.RegisterRef, parameter: usize, unknown };
 
     fn initializerCodeDefinition(self: *Graph, receiver: t.RegisterRef) Error!InitializerCodeDefinition {
         const c = self.c;
@@ -344,7 +347,7 @@ const Graph = struct {
         try c.charge(3);
         const producer = &self.f.blocks[definition.block].instructions[@intCast(definition.position)];
         switch (producer.data) {
-            .function_make => |v| return .{ .literal = v.function },
+            .function_make => return .{ .literal = .{ .instruction = producer, .block = definition.block } },
             .domain_copy, .domain_view => {
                 try c.charge(3);
                 const source = producer.operands[0];
@@ -428,16 +431,22 @@ const Graph = struct {
         };
     }
 
-    fn initializerCodeTarget(self: *Graph, receiver: t.RegisterRef) Error!?t.FunctionRef {
+    fn originalCodeProducer(self: *Graph, receiver: t.RegisterRef) Error!?CodeProducer {
         var current = receiver;
         // Reachable SSA orders unary sources. A block merge needs the shared
         // grounded-origin proof because CFG backedges can revisit parameters.
         while (true) switch (try self.initializerCodeDefinition(current)) {
-            .literal => |target| return target,
+            .literal => |literal| return literal,
             .source => |source| current = source,
             .parameter => current = (try self.initializerCodeMerge(current)) orelse return null,
             .unknown => return null,
         };
+    }
+
+    fn initializerCodeTarget(self: *Graph, receiver: t.RegisterRef) Error!?t.FunctionRef {
+        const producer = (try self.originalCodeProducer(receiver)) orelse return null;
+        try self.c.step();
+        return producer.instruction.data.function_make.function;
     }
 
     fn fixedCallTargets(self: *Graph, function: t.FunctionRef, block: t.BlockRef, position: usize) Error![]const t.FunctionRef {
@@ -483,6 +492,11 @@ const Graph = struct {
             try c.require(!method and (output.len==0 or exact(self.carrierOf(output[0]),.payload))); return;
         }
         for(targets.items) |target| { try c.step(); try c.require(c.program.functions[target].role!=.module_initializer); }
+        if (!method and targets.items.len == 1) {
+            try c.charge(2);
+            if (v.abis[self.abiIndex(targets.items[0])].lexical_environment != null)
+                self.has_saved_environment_call = true;
+        }
         var carriers: std.ArrayListUnmanaged(t.Carrier)=.empty; defer carriers.deinit(c.allocator);
         const offset: usize=if(method)0 else 1;
         for(op.operands[offset..],offset..) |r,i| {
@@ -599,6 +613,7 @@ const Graph = struct {
                     try c.require(exact(self.carrierOf(op.result.?),.{.@"type"=expected}));
                 },
                 .environment_alloc => |v| {
+                    self.has_environment_allocation = true;
                     const parent=switch(c.program.tables.mode) { .common => |rows| rows.closures.environments[@intFromEnum(v.environment)].parent,
                         .legacy => |rows| rows.closures.environments[@intFromEnum(v.environment)].parent, .exception => unreachable };
                     if(parent) |id|try c.require(exact(self.carrierOf(op.operands[0]),.{.environment=id}));
@@ -799,7 +814,7 @@ const Graph = struct {
     fn environmentOrigins(
         self: *Graph,
         owned_layout: ?t.EnvironmentRef,
-        calls: []const DirectEnvironmentCall,
+        calls: []const EnvironmentCall,
     ) Error!?EnvironmentAllocations {
         if (!self.has_environment_access and calls.len == 0) return null;
         const c = self.c;
@@ -970,7 +985,7 @@ const Graph = struct {
     fn environmentCallBlocksWithOlderAliases(
         self: *Graph,
         layout: t.EnvironmentRef,
-        calls: []const DirectEnvironmentCall,
+        calls: []const EnvironmentCall,
         origins: []const EnvironmentOrigin,
     ) Error!Bits {
         const c = self.c;
@@ -1003,7 +1018,7 @@ const Graph = struct {
     fn environmentMixedState(
         self: *Graph,
         origins: []const EnvironmentOrigin,
-        calls: []const DirectEnvironmentCall,
+        calls: []const EnvironmentCall,
     ) Error!?t.EnvironmentRef {
         const c = self.c;
         const closures = c.program.tables.mode.common.closures;
@@ -1112,7 +1127,7 @@ const Graph = struct {
         var call_sites: EnvironmentCallSites = .empty;
         defer call_sites.deinit(c.allocator);
         for (calls) |*call| {
-            try c.row(DirectEnvironmentCall);
+            try c.row(EnvironmentCall);
             const observed = try self.environmentSlotsForCall(call.callee, layout, &needs, arena.allocator());
             for (observed) |slot| {
                 try c.step();
@@ -1570,14 +1585,14 @@ const Graph = struct {
         return needs.items;
     }
 
-    const DirectEnvironmentCall = struct { receiver: t.RegisterRef, callee: t.FunctionRef, block: usize };
+    const EnvironmentCall = struct { receiver: t.RegisterRef, callee: t.FunctionRef, block: usize };
 
-    fn directEnvironmentCalls(
+    fn ownedEnvironmentCalls(
         self: *Graph,
         owned_layout: ?t.EnvironmentRef,
-        buffer: *[256]DirectEnvironmentCall,
-    ) Error![]const DirectEnvironmentCall {
-        if (!self.has_direct_environment_call) return &.{};
+        buffer: *[256]EnvironmentCall,
+    ) Error![]const EnvironmentCall {
+        if (!self.has_direct_environment_call and !self.has_saved_environment_call) return &.{};
         const layout = owned_layout orelse return &.{};
         const c = self.c;
         const common = &c.program.tables.mode.common;
@@ -1588,23 +1603,43 @@ const Graph = struct {
             try c.charge(3);
             if (!self.facts[block_index].reachable) continue;
             const op = &block.instructions[block.instructions.len - 1];
-            if (op.data != .eh_invoke) continue;
+            const callee = switch (op.data) {
+                .eh_invoke => |call| call.callee,
+                .eh_invoke_indirect => fixed: {
+                    if (!self.has_saved_environment_call) continue;
+                    const targets = try self.fixedCallTargets(@enumFromInt(self.function), @enumFromInt(block_index), block.instructions.len - 1);
+                    try c.step();
+                    if (targets.len != 1) continue;
+                    break :fixed targets[0];
+                },
+                else => continue,
+            };
             try c.charge(4);
-            const callee = op.data.eh_invoke.callee;
             const target = &c.program.functions[@intFromEnum(callee)];
             const abi = &common.abis[@intFromEnum(target.abi)];
             if (target.role != .ordinary or abi.lexical_environment != layout) continue;
-            try c.row(DirectEnvironmentCall);
-            buffer[count] = .{ .receiver = op.operands[0], .callee = callee, .block = block_index };
+            const receiver = if (op.data == .eh_invoke) op.operands[0] else saved: {
+                const producer = (try self.originalCodeProducer(op.operands[0])) orelse continue;
+                try c.charge(3);
+                const instruction = producer.instruction;
+                if (instruction.data.function_make.function != callee or instruction.operands.len != 1) continue;
+                // One SSA definition can create several different Code values in a loop.
+                if (try self.environmentAllocCanRepeat(producer.block)) continue;
+                const captured = instruction.operands[0];
+                if (!self.environmentInLayout(captured, layout)) continue;
+                break :saved captured;
+            };
+            try c.row(EnvironmentCall);
+            buffer[count] = .{ .receiver = receiver, .callee = callee, .block = block_index };
             count += 1;
         }
         return buffer[0..count];
     }
 
-    fn observeDirectEnvironmentCalls(
+    fn observeEnvironmentCalls(
         self: *Graph,
         layout: t.EnvironmentRef,
-        calls: []const DirectEnvironmentCall,
+        calls: []const EnvironmentCall,
         proven: *const EnvironmentAllocations,
         pairs: *EnvironmentCells,
         sites: *EnvironmentCallSites,
@@ -1615,13 +1650,30 @@ const Graph = struct {
         defer arena.deinit();
         var needs: EnvironmentCalleeSlots = .empty;
         defer needs.deinit(c.allocator);
+        var saved_allocations: ?struct { checked: Bits, repeated: Bits } = if (self.has_saved_environment_call) prepared: {
+            try c.charge(2 * zero.len);
+            break :prepared .{ .checked = zero, .repeated = zero };
+        } else null;
         for (calls) |*call| {
-            try c.row(DirectEnvironmentCall);
+            try c.row(EnvironmentCall);
             try c.charge(3 + zero.len);
             const receiver = proven.direct[@intFromEnum(call.receiver)] orelse continue;
             if (!self.environmentInLayout(receiver, layout)) continue;
             const allocation_block = self.definitions[@intFromEnum(receiver)].block;
             if (has(proven.call_blocks_with_older_aliases, allocation_block)) continue;
+            if (saved_allocations) |*saved| {
+                try c.charge(3);
+                const block = &self.f.blocks[call.block];
+                if (block.instructions[block.instructions.len - 1].data == .eh_invoke_indirect) {
+                    try c.charge(2 + 2 * zero.len);
+                    if (!has(saved.checked, allocation_block)) {
+                        put(&saved.checked, allocation_block);
+                        if (try self.environmentAllocCanRepeat(allocation_block))
+                            put(&saved.repeated, allocation_block);
+                    }
+                    if (has(saved.repeated, allocation_block)) continue;
+                }
+            }
             const observed = try self.environmentSlotsForCall(call.callee, layout, &needs, arena.allocator());
             for (observed) |slot| {
                 try rememberEnvironmentCell(c, pairs, .{ .receiver = receiver, .slot = slot });
@@ -1634,7 +1686,7 @@ const Graph = struct {
         self: *Graph,
         proven: EnvironmentAllocations,
         owned_layout: ?t.EnvironmentRef,
-        calls: []const DirectEnvironmentCall,
+        calls: []const EnvironmentCall,
     ) Error!void {
         const c=self.c;
         const allocations = proven.direct;
@@ -1651,7 +1703,7 @@ const Graph = struct {
             try rememberEnvironmentCell(c, &pairs, .{ .receiver = allocation, .slot = slot });
         };
         if (calls.len != 0 and proven.checked_layout != owned_layout)
-            try self.observeDirectEnvironmentCalls(owned_layout.?, calls, &proven, &pairs, &call_sites);
+            try self.observeEnvironmentCalls(owned_layout.?, calls, &proven, &pairs, &call_sites);
         const has_call_sites = call_sites.count() != 0;
         try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
         var iterator=pairs.keyIterator();
@@ -1707,7 +1759,7 @@ const Graph = struct {
                             if(op.data==.environment_init) { try c.require(state==1); state=2; }
                             else try c.require(state==2);
                         },
-                        .eh_invoke => if (has_call_sites) {
+                        .eh_invoke, .eh_invoke_indirect => if (has_call_sites) {
                             // The child sees this binding before either of
                             // the caller's continuations.
                             try c.row(EnvironmentCallSite);
@@ -2103,13 +2155,14 @@ const Graph = struct {
             break :rows callees;
         }else null;
         try self.operations(initializer_callees);
-        if (self.mode == .common and (self.has_environment_access or self.has_direct_environment_call)) {
-            const owned_layout = if (self.has_environment_init or self.has_direct_environment_call)
+        const has_owned_call = self.has_direct_environment_call or (self.has_saved_environment_call and self.has_environment_allocation);
+        if (self.mode == .common and (self.has_environment_access or has_owned_call)) {
+            const owned_layout = if (self.has_environment_init or has_owned_call)
                 try self.ownedEnvironmentLayout()
             else
                 null;
-            var call_buffer_storage: [256]DirectEnvironmentCall = undefined;
-            const calls = try self.directEnvironmentCalls(owned_layout, &call_buffer_storage);
+            var call_buffer_storage: [256]EnvironmentCall = undefined;
+            const calls = try self.ownedEnvironmentCalls(owned_layout, &call_buffer_storage);
             if (try self.environmentOrigins(owned_layout, calls)) |allocations| {
                 defer self.c.allocator.free(allocations.direct);
                 try self.environmentDirectCellState(allocations, owned_layout, calls);

@@ -14,6 +14,7 @@ const refs = @import("wire-program-table-refs.zig");
 const layout = @import("wire-program-layout-check.zig");
 const identity = @import("wire-program-identity-check.zig");
 const ssa = @import("wire-program-ssa-check.zig");
+const fixed_targets = @import("wire-program-fixed-targets-check.zig");
 const correspondence = @import("wire-program-source-correspondence.zig");
 const t = model.types;
 const ins = model.instruction;
@@ -660,7 +661,14 @@ const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forw
 
 const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, rotated_edges, repeated_copy, repeated_previous };
 
+const ChildInvocation = enum { direct, saved };
+const saved_code_type: t.TypeRef = @enumFromInt(types.len);
+
 fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, comptime transport: CallerTransport, accept: bool) !void {
+    try runChild(initialization, access, path, transport, .direct, accept);
+}
+
+fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, comptime transport: CallerTransport, comptime invocation: ChildInvocation, accept: bool) !void {
     const aliases_count = switch (transport) {
         .original => 0,
         .copied, .block_parameter, .repeated_copy, .repeated_previous => 1,
@@ -669,16 +677,22 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     };
     const receiver = if (transport == .repeated_previous or transport == .rotated_edges) r(3) else r(3 + aliases_count);
     const exception = r(4 + aliases_count);
-    const invoke_child: ins.Instruction = .{ .source = at, .result = null, .operands = &.{receiver}, .data = .{ .eh_invoke = .{
-        .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2),
-    } } };
+    const has_other = initialization == .other_only or initialization == .before_with_other;
+    const code = r(5 + aliases_count + @as(u16, @intFromBool(has_other or transport == .repeated_previous)));
+    const make_code: ins.Instruction = .{ .source = at, .result = code, .operands = &.{receiver}, .data = .{ .function_make = .{ .function = @enumFromInt(1) } } };
+    const invoke_child: ins.Instruction = .{
+        .source = at, .result = null, .operands = if (invocation == .direct) &.{receiver} else &.{code},
+        .data = if (invocation == .direct)
+            .{ .eh_invoke = .{ .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2) } }
+        else
+            .{ .eh_invoke_indirect = .{ .callable = saved_code_type, .normal = b(1), .exceptional = b(2) } },
+    };
     const initialize = switch (aliases_count) {
         0 => init_original,
         1 => init_copy,
         2, 3 => init_view,
         else => unreachable,
     };
-    const has_other = initialization == .other_only or initialization == .before_with_other;
     const other = r(5 + aliases_count);
     const other_alloc: ins.Instruction = .{ .source = at, .result = other, .operands = &.{}, .data = alloc.data };
     const other_init: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ other, r(1) }, .data = init_original.data };
@@ -693,7 +707,7 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .first_edge_only => if (transport == .rotated_edges) [_]ins.Instruction{initialize} else [_]ins.Instruction{},
         .after, .absent => [_]ins.Instruction{},
     };
-    const call = before_call ++ [_]ins.Instruction{invoke_child};
+    const call = (if (invocation == .saved) [_]ins.Instruction{make_code} else [_]ins.Instruction{}) ++ before_call ++ [_]ins.Instruction{invoke_child};
     const to_call: ins.Instruction = .{ .source = at, .result = null,
         .operands = if (transport == .block_parameter) &.{r(3)} else &.{}, .data = .{ .br = .{ .destination = b(3) } } };
     const choose_receiver: ins.Instruction = .{ .source = at, .result = null,
@@ -724,7 +738,8 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     };
     const payload_register: model.Register = .{ .carrier = .payload, .view = null };
     const caller_registers = base_registers ++ ([_]model.Register{env_register} ** aliases_count) ++ [_]model.Register{payload_register} ++
-        (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{});
+        (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{}) ++
+        (if (invocation == .saved) [_]model.Register{.{ .carrier = .{ .@"type" = saved_code_type }, .view = saved_code_type }} else [_]model.Register{});
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
@@ -910,9 +925,32 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         dependencies[index].callees = &targets[index];
     }
     fixed.dependencies = &dependencies;
+    const saved_types = types ++ [_]tables.CommonType{.{
+        .id = @splat(0xce), .kind = .function, .name = "observeCapture", .native_code = 0,
+        .base = null, .element = @enumFromInt(3), .members = &.{}, .methods = null, .nominal_key = null, .runtime_key = null,
+    }};
+    const Concrete = std.meta.Child(@TypeOf(common.storage.concrete));
+    const saved_concrete = common.storage.concrete[0..types.len].* ++ [_]Concrete{.{
+        .@"type" = saved_code_type, .carrier = .{ .layout = .{ .byte_size = 40, .alignment = 8, .reference_count = 1 }, .field_offsets = &.{} }, .body = null,
+    }};
+    const call_block = if (caller_blocks.len == 3) 0 else 3;
+    const Call = std.meta.Child(@TypeOf(common.closures.calls));
+    const saved_calls = [_]Call{.{
+        .function = @enumFromInt(0), .block = @enumFromInt(call_block), .instruction = @intCast(caller_blocks[call_block].instructions.len - 1),
+        .signature = signature, .targets = &.{@enumFromInt(1)},
+    }};
+    if (invocation == .saved) {
+        common.types = &saved_types;
+        common.storage.concrete = &saved_concrete;
+        common.closures.calls = &saved_calls;
+    }
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
     try refs.check(&c);
     try layout.check(&c);
+    if (invocation == .saved) {
+        var proof = try fixed_targets.analyze(&c);
+        defer proof.deinit(c.allocator);
+    }
     const result = ssa.check(&c);
     if (accept) try result else try std.testing.expectError(error.InvalidShape, result);
 }
@@ -1098,4 +1136,26 @@ test "literal exact Env call accepts both swapped block parameters initialized" 
 }
 test "literal exact Env call needs initialization on both swapped incoming edges" {
     try runDirectChild(.first_edge_only, .load, .direct, .rotated_edges, false);
+}
+
+test "literal saved child cannot read an uninitialized captured Env" {
+    try runChild(.absent, .load, .direct, .original, .saved, false);
+}
+test "literal saved child can observe initialization after creation and before call" {
+    try runChild(.before, .load, .direct, .original, .saved, true);
+}
+test "literal saved child read requires init before call rather than on return" {
+    try runChild(.after, .load, .direct, .original, .saved, false);
+}
+test "literal saved child cannot store through an uninitialized captured alias" {
+    try runChild(.absent, .store, .direct, .copied, .saved, false);
+}
+test "literal saved child cannot use another Env instance's initialization" {
+    try runChild(.other_only, .load, .direct, .original, .saved, false);
+}
+test "literal saved child retains its initialized capture after a new Env allocation" {
+    try runChild(.before_with_other, .load, .direct, .original, .saved, true);
+}
+test "literal saved Code from a repeating allocation remains outside the current-instance proof" {
+    try runChild(.absent, .load, .direct, .repeated_previous, .saved, true);
 }
