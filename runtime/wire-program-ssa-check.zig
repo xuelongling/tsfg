@@ -527,11 +527,19 @@ const Graph = struct {
             try c.row(EnvironmentEdge); try c.charge(2);
             self.edges[self.used]=.{.follower=receiver,.next=self.followers[index]};
             self.followers[index]=self.used; self.used+=1;
-            try c.step();
-            if(!self.seen[index]) {
-                try c.charge(2); self.seen[index]=true; self.pending[self.size]=source; self.size+=1;
-            }
+            try self.need(source);
         }
+
+        fn need(self: *EnvironmentProof, receiver: t.RegisterRef) Error!void {
+            try self.c.step();
+            const index = @intFromEnum(receiver);
+            if (self.seen[index]) return;
+            try self.c.charge(2);
+            self.seen[index] = true;
+            self.pending[self.size] = receiver;
+            self.size += 1;
+        }
+
         fn propagate(self: *EnvironmentProof) Error!void {
             const c=self.c; const count=self.origins.len;
             // First propagate real allocation/unknown seeds. Only then poison
@@ -614,18 +622,27 @@ const Graph = struct {
         }
         return if(definition.block==0).unknown else .{.parameter=definition.block};
     }
-    fn environmentOrigins(self: *Graph) Error!?EnvironmentAllocations {
-        if(self.mode!=.common or !self.has_environment_access)return null;
-        const c=self.c; const rows=c.program.tables.mode.common;
-        var activation: ?t.EnvironmentRef=null;
-        if(self.has_environment_init) {
-            for(rows.closures.functions) |function| {
-                try c.step(); if(@intFromEnum(function.function)!=self.function)continue;
-                activation=function.activation_environment; break;
-            }
-            const layout=activation orelse return error.InvalidShape;
-            try c.require(@intFromEnum(rows.closures.environments[@intFromEnum(layout)].owner)==self.function);
+    fn ownedEnvironmentLayout(self: *Graph) Error!?t.EnvironmentRef {
+        const c = self.c;
+        const closures = &c.program.tables.mode.common.closures;
+        for (closures.functions) |row| {
+            try c.step();
+            if (@intFromEnum(row.function) != self.function) continue;
+            const layout = row.activation_environment orelse return null;
+            try c.step();
+            return if (@intFromEnum(closures.environments[@intFromEnum(layout)].owner) == self.function) layout else null;
         }
+        return null;
+    }
+
+    fn environmentOrigins(
+        self: *Graph,
+        owned_layout: ?t.EnvironmentRef,
+        calls: []const DirectEnvironmentCall,
+    ) Error!?EnvironmentAllocations {
+        if (!self.has_environment_access and calls.len == 0) return null;
+        const c = self.c;
+        const activation = if (self.has_environment_init) owned_layout orelse return error.InvalidShape else null;
         const count=self.f.registers.len;
         // At most one unary edge per register, plus one transported argument
         // per real CFG edge/target parameter. Fixed storage avoids hidden list
@@ -647,14 +664,16 @@ const Graph = struct {
         const edges=try c.allocator.alloc(EnvironmentEdge,edge_capacity); defer c.allocator.free(edges);
         var proof=EnvironmentProof{.c=c,.seen=seen,.origins=origins,.foreign=foreign,
             .followers=followers,.edges=edges,.pending=pending,.queued=queued};
-        for(self.f.blocks) |block| for(block.instructions) |op| {
-            try c.step(); switch(op.data) {
-                .environment_init,.environment_load,.environment_store => {},
-                else => continue,
-            }
-            try c.charge(2); const receiver=op.operands[0]; const index=@intFromEnum(receiver);
-            if(!seen[index]) { try c.charge(2); seen[index]=true; pending[proof.size]=receiver; proof.size+=1; }
+        if (self.has_environment_access) for (self.f.blocks) |block| for (block.instructions) |*op| {
+            try c.step();
+            if (environmentAccessSlot(op) == null) continue;
+            try c.step();
+            try proof.need(op.operands[0]);
         };
+        for (calls) |*call| {
+            try c.step();
+            try proof.need(call.receiver);
+        }
         var cursor: usize=0;
         while(cursor<proof.size) : (cursor+=1) {
             try c.step(); const receiver=pending[cursor]; const index=@intFromEnum(receiver);
@@ -696,23 +715,26 @@ const Graph = struct {
         try proof.propagate();
         // Authority is required only for actual initializer receivers. Unknown
         // load/store paths cannot invalidate an independent valid initializer.
-        for(self.f.blocks) |block| for(block.instructions) |op| {
-            try c.step(); if(op.data!=.environment_init)continue;
-            try c.charge(3); const index=@intFromEnum(op.operands[0]);
-            const origin_state=origins[index];
-            try c.require((origin_state==.allocation or origin_state==.mixed) and !foreign[index]);
+        var mixed_access = false;
+        if (self.has_environment_access) for (self.f.blocks) |block| for (block.instructions) |*op| {
+            try c.step();
+            if (environmentAccessSlot(op) == null) continue;
+            try c.charge(3);
+            const index = @intFromEnum(op.operands[0]);
+            const origin_state = origins[index];
+            mixed_access = mixed_access or origin_state == .mixed;
+            if (op.data == .environment_init)
+                try c.require((origin_state == .allocation or origin_state == .mixed) and !foreign[index]);
         };
-        try c.charge(3*count);
-        const allocations=try c.allocator.alloc(?t.RegisterRef,count);
+        try c.charge(2 * count);
+        const allocations = try c.allocator.alloc(?t.RegisterRef, count);
         errdefer c.allocator.free(allocations);
-        var mixed = false;
-        for(origins,allocations) |origin_state,*allocation| {
-            allocation.*=switch(origin_state) { .allocation => |ref| ref, else => null };
-            mixed = mixed or origin_state == .mixed;
+        for (origins, allocations) |origin_state, *allocation| {
+            allocation.* = switch (origin_state) { .allocation => |ref| ref, else => null };
         }
         return .{
             .direct = allocations,
-            .checked_layout = if (mixed) try self.environmentMixedState(origins) else null,
+            .checked_layout = if (mixed_access) try self.environmentMixedState(origins) else null,
         };
     }
 
@@ -1174,39 +1196,20 @@ const Graph = struct {
         return needs.items;
     }
 
-    fn directEnvironmentAllocation(self: *Graph, receiver: t.RegisterRef, layout: t.EnvironmentRef) Error!?t.RegisterRef {
-        var current = receiver;
-        while (true) {
-            // The observer starts in a reachable block. SSA dominance has
-            // already proved that each transparent source precedes its user.
-            try self.c.step();
-            switch (try self.environmentIdentity(current)) {
-                .allocation => |allocated| return if (allocated == layout) current else null,
-                .source => |source| current = source,
-                .parameter, .unknown => return null,
-            }
-        }
-    }
+    const DirectEnvironmentCall = struct { receiver: t.RegisterRef, callee: t.FunctionRef, block: usize };
 
-    fn observeDirectEnvironmentCalls(self: *Graph, pairs: *EnvironmentCells, sites: *EnvironmentCallSites) Error!void {
+    fn directEnvironmentCalls(
+        self: *Graph,
+        owned_layout: ?t.EnvironmentRef,
+        buffer: *[256]DirectEnvironmentCall,
+    ) Error![]const DirectEnvironmentCall {
+        if (!self.has_direct_environment_call) return &.{};
+        const layout = owned_layout orelse return &.{};
         const c = self.c;
         const common = &c.program.tables.mode.common;
-        var activation: ?t.EnvironmentRef = null;
-        for (common.closures.functions) |row| {
-            try c.step();
-            if (@intFromEnum(row.function) != self.function) continue;
-            activation = row.activation_environment;
-            break;
-        }
-        const layout = activation orelse return;
-        if (@intFromEnum(common.closures.environments[@intFromEnum(layout)].owner) != self.function) return;
-        try c.charge(self.f.blocks.len + 4);
-        var repeats: [256]?bool = undefined;
-        @memset(repeats[0..self.f.blocks.len], null);
-        var arena = std.heap.ArenaAllocator.init(c.allocator);
-        defer arena.deinit();
-        var needs: std.AutoHashMapUnmanaged(t.FunctionRef, []const t.EnvironmentSlotRef) = .empty;
-        defer needs.deinit(c.allocator);
+        try c.step();
+        if (common.closures.environments[@intFromEnum(layout)].slots.len == 0) return &.{};
+        var count: usize = 0;
         for (self.f.blocks, 0..) |block, block_index| {
             try c.charge(3);
             if (!self.facts[block_index].reachable) continue;
@@ -1217,44 +1220,74 @@ const Graph = struct {
             const target = &c.program.functions[@intFromEnum(callee)];
             const abi = &common.abis[@intFromEnum(target.abi)];
             if (target.role != .ordinary or abi.lexical_environment != layout) continue;
-            const receiver = (try self.directEnvironmentAllocation(op.operands[0], layout)) orelse continue;
+            try c.row(DirectEnvironmentCall);
+            buffer[count] = .{ .receiver = op.operands[0], .callee = callee, .block = block_index };
+            count += 1;
+        }
+        return buffer[0..count];
+    }
+
+    fn observeDirectEnvironmentCalls(
+        self: *Graph,
+        layout: t.EnvironmentRef,
+        calls: []const DirectEnvironmentCall,
+        allocations: []const ?t.RegisterRef,
+        pairs: *EnvironmentCells,
+        sites: *EnvironmentCallSites,
+    ) Error!void {
+        const c = self.c;
+        try c.charge(self.f.blocks.len + 4);
+        var repeats: [256]?bool = undefined;
+        @memset(repeats[0..self.f.blocks.len], null);
+        var arena = std.heap.ArenaAllocator.init(c.allocator);
+        defer arena.deinit();
+        var needs: std.AutoHashMapUnmanaged(t.FunctionRef, []const t.EnvironmentSlotRef) = .empty;
+        defer needs.deinit(c.allocator);
+        for (calls) |*call| {
+            try c.row(DirectEnvironmentCall);
             try c.charge(3);
+            const receiver = allocations[@intFromEnum(call.receiver)] orelse continue;
+            if (!self.environmentInLayout(receiver, layout)) continue;
             const allocation_block = self.definitions[@intFromEnum(receiver)].block;
             if (repeats[allocation_block] == null)
                 repeats[allocation_block] = try self.environmentAllocCanRepeat(allocation_block);
             if (repeats[allocation_block].?) continue;
             try c.charge(4);
             try environmentMapGrowth(c, &needs, 4);
-            const entry = try needs.getOrPut(c.allocator, callee);
+            const entry = try needs.getOrPut(c.allocator, call.callee);
             if (!entry.found_existing)
-                entry.value_ptr.* = try self.directCalleeEnvironmentSlots(callee, layout, arena.allocator());
+                entry.value_ptr.* = try self.directCalleeEnvironmentSlots(call.callee, layout, arena.allocator());
             for (entry.value_ptr.*) |slot| {
                 try rememberEnvironmentCell(c, pairs, .{ .receiver = receiver, .slot = slot });
                 try c.row(EnvironmentCallSite);
                 try environmentMapGrowth(c, sites, 4);
-                _ = try sites.getOrPut(c.allocator, .{ .receiver = receiver, .slot = slot, .block = block_index });
+                _ = try sites.getOrPut(c.allocator, .{ .receiver = receiver, .slot = slot, .block = call.block });
             }
         }
     }
 
-    fn environmentDirectCellState(self: *Graph, proven: ?EnvironmentAllocations) Error!void {
+    fn environmentDirectCellState(
+        self: *Graph,
+        proven: EnvironmentAllocations,
+        owned_layout: ?t.EnvironmentRef,
+        calls: []const DirectEnvironmentCall,
+    ) Error!void {
         const c=self.c;
-        const allocations = if (proven) |known| known.direct else &.{};
+        const allocations = proven.direct;
         var pairs: EnvironmentCells = .empty; defer pairs.deinit(c.allocator);
         var call_sites: EnvironmentCallSites = .empty; defer call_sites.deinit(c.allocator);
-        if (proven) |known| for(self.f.blocks) |block| for(block.instructions) |op| {
-            try c.step(); const slot=switch(op.data) {
-                inline .environment_init,.environment_load,.environment_store => |v| v.slot,
-                else => continue,
-            };
+        if (self.has_environment_access) for (self.f.blocks) |block| for (block.instructions) |*op| {
+            try c.step();
+            const slot = environmentAccessSlot(op) orelse continue;
             try c.step(); const allocation=allocations[@intFromEnum(op.operands[0])] orelse continue;
-            if (known.checked_layout) |layout| {
+            if (proven.checked_layout) |layout| {
                 try c.step();
                 if (self.environmentInLayout(allocation, layout)) continue;
             }
             try rememberEnvironmentCell(c, &pairs, .{ .receiver = allocation, .slot = slot });
         };
-        if (self.has_direct_environment_call) try self.observeDirectEnvironmentCalls(&pairs, &call_sites);
+        if (calls.len != 0)
+            try self.observeDirectEnvironmentCalls(owned_layout.?, calls, allocations, &pairs, &call_sites);
         const has_call_sites = call_sites.count() != 0;
         try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
         var iterator=pairs.keyIterator();
@@ -1623,8 +1656,18 @@ const Graph = struct {
             break :rows callees;
         }else null;
         try self.operations(initializer_callees);
-        const allocations=try self.environmentOrigins(); defer if(allocations) |values| self.c.allocator.free(values.direct);
-        if (allocations != null or self.has_direct_environment_call) try self.environmentDirectCellState(allocations);
+        if (self.mode == .common and (self.has_environment_access or self.has_direct_environment_call)) {
+            const owned_layout = if (self.has_environment_init or self.has_direct_environment_call)
+                try self.ownedEnvironmentLayout()
+            else
+                null;
+            var call_buffer_storage: [256]DirectEnvironmentCall = undefined;
+            const calls = try self.directEnvironmentCalls(owned_layout, &call_buffer_storage);
+            if (try self.environmentOrigins(owned_layout, calls)) |allocations| {
+                defer self.c.allocator.free(allocations.direct);
+                try self.environmentDirectCellState(allocations, owned_layout, calls);
+            }
+        }
         if(initializer_callees) |callees| try self.globalInitialization(callees);
         try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof

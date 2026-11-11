@@ -658,13 +658,13 @@ const CallerInit = enum { before, after, absent, other_only, before_with_other }
 const ChildAccess = enum { load, store, unreachable_load, copy_load };
 const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward };
 
-const CallerTransport = enum { original, copied, viewed, block_parameter, repeated_copy };
+const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, repeated_copy };
 
 fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, comptime transport: CallerTransport, accept: bool) !void {
     const aliases_count = switch (transport) {
         .original => 0,
         .copied, .block_parameter, .repeated_copy => 1,
-        .viewed => 2,
+        .viewed, .same_edges, .distinct_edges => 2,
     };
     const receiver = r(3 + aliases_count);
     const exception = r(4 + aliases_count);
@@ -690,11 +690,16 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     const call = before_call ++ [_]ins.Instruction{invoke_child};
     const to_call: ins.Instruction = .{ .source = at, .result = null,
         .operands = if (transport == .block_parameter) &.{r(3)} else &.{}, .data = .{ .br = .{ .destination = b(3) } } };
+    const choose_receiver: ins.Instruction = .{ .source = at, .result = null,
+        .operands = &.{ r(0), r(3), r(4) },
+        .data = .{ .cond_br = .{ .true_destination = b(3), .false_destination = b(3), .true_count = 1 } } };
     const caller_entry = switch (transport) {
         .original => seed ++ [_]ins.Instruction{alloc} ++ call,
         .copied => seed ++ [_]ins.Instruction{ alloc, copy } ++ call,
         .viewed => seed ++ [_]ins.Instruction{ alloc, copy, view } ++ call,
         .block_parameter => seed ++ [_]ins.Instruction{ alloc, to_call },
+        .same_edges => seed ++ [_]ins.Instruction{ alloc, copy, choose_receiver },
+        .distinct_edges => seed ++ [_]ins.Instruction{ alloc, second_alloc, choose_receiver },
         .repeated_copy => seed ++ [_]ins.Instruction{to_call},
     };
     const caller_return: []const ins.Instruction = if (transport == .repeated_copy) &.{to_call} else if (initialization == .after) &.{ initialize, returned } else &.{returned};
@@ -706,7 +711,7 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .{ .parameters = &.{}, .instructions = caller_return },
         .{ .parameters = &.{exception}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{exception}, .data = .eh_raise }} },
     } ++ switch (transport) {
-        .block_parameter => [_]model.Block{.{ .parameters = &.{receiver}, .instructions = &call }},
+        .block_parameter, .same_edges, .distinct_edges => [_]model.Block{.{ .parameters = &.{receiver}, .instructions = &call }},
         .repeated_copy => [_]model.Block{.{ .parameters = &.{}, .instructions = &([_]ins.Instruction{ condition, alloc, copy } ++ call) }},
         else => [_]model.Block{},
     };
@@ -889,8 +894,26 @@ test "literal direct grandchild cannot read an uninitialized owned Env passed th
 test "literal direct grandchild can read an owned Env slot initialized through a copy and view" {
     try runDirectChild(.before, .load, .forwarded, .viewed, true);
 }
-test "literal direct call through an Env block parameter keeps the existing proof boundary" {
-    try runDirectChild(.absent, .load, .direct, .block_parameter, true);
+test "literal direct call rejects an uninitialized owned Env passed as a block parameter" {
+    try runDirectChild(.absent, .load, .direct, .block_parameter, false);
+}
+test "literal Env block parameter needs init before invoke instead of after return" {
+    try runDirectChild(.after, .load, .direct, .block_parameter, false);
+}
+test "literal direct call can read an owned Env initialized through a block parameter" {
+    try runDirectChild(.before, .load, .direct, .block_parameter, true);
+}
+test "literal direct call rejects a store through an uninitialized Env block parameter" {
+    try runDirectChild(.absent, .store, .direct, .block_parameter, false);
+}
+test "literal direct call checks both edges carrying the same uninitialized Env" {
+    try runDirectChild(.absent, .copy_load, .view_forward, .same_edges, false);
+}
+test "literal direct call accepts both edges carrying the same initialized Env" {
+    try runDirectChild(.before, .copy_load, .view_forward, .same_edges, true);
+}
+test "literal direct call with distinct incoming Env allocations stays outside the exact-instance proof" {
+    try runDirectChild(.absent, .load, .direct, .distinct_edges, true);
 }
 test "literal direct call through a copy of a repeated Env allocation keeps the existing proof boundary" {
     try runDirectChild(.absent, .load, .direct, .repeated_copy, true);
