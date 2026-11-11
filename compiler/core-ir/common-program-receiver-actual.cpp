@@ -570,22 +570,38 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
   const std::string &construction,const std::string &newTarget,bool repeated,const std::string &parent){
   const std::string *parts[]={&activation,&site,&owner,&construction,&newTarget,&parent};
   const ActualFrameDirectory::value_type *metadata=nullptr;
-  for(const auto &candidate:frameIdentities){
-    if(!step(13))return {};bool same=true;
-    for(size_t i=0;i<std::size(parts);++i)same&=candidate.parts[i].size()==parts[i]->size();
-    if(!same)continue;
-    for(auto i:{2,4,5,1,0,3}){
+  size_t position=0;
+  if(!step(3))return {};
+  constexpr size_t order[]={2,4,5,1,0,3};
+  // Sort by the cheap complete geometry first; ties still compare all bytes
+  // before selecting an immutable identity row.
+  const auto compare=[&](const ActualFrameIdentity &candidate)->std::optional<int>{
+    if(!step(13))return {};
+    for(auto i:order){
+      const auto a=candidate.parts[i].size(),b=parts[i]->size();
+      if(a!=b)return a<b?-1:1;
+    }
+    for(auto i:order){
       if(!step(4))return {};
-      if(!parts[i]->empty()&&candidate.parts[i].back()!=parts[i]->back()){same=false;break;}
+      if(parts[i]->empty())continue;
+      const auto a=static_cast<unsigned char>(candidate.parts[i].back()),b=static_cast<unsigned char>(parts[i]->back());
+      if(a!=b)return a<b?-1:1;
     }
-    if(!same)continue;
-    // Reject different owners/newTargets before comparing long activation paths.
-    // Every surviving component still requires its complete original bytes.
-    for(auto i:{2,4,5,1,0,3}){
+    for(auto i:order){
       if(!step(2*parts[i]->size()+2))return {};
-      if(candidate.parts[i]!=*parts[i]){same=false;break;}
+      const auto result=candidate.parts[i].compare(*parts[i]);
+      if(result)return result;
     }
-    if(same){if(!step(2))return {};metadata=candidate.row;break;}
+    return 0;
+  };
+  size_t end=frameIdentities.size();
+  while(position<end){
+    if(!step(5))return {};
+    const auto mid=position+(end-position)/2;
+    const auto &candidate=frameIdentities[mid];
+    const auto compared=compare(candidate);if(!compared)return {};
+    if(*compared==0){if(!step(2))return {};metadata=candidate.row;break;}
+    if(*compared<0)position=mid+1;else end=mid;
   }
   if(!metadata){
     // These admitted UTF8 views stay live through synchronous canonical/hash.
@@ -607,8 +623,9 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
     }
     size_t bytes=0;for(const auto *part:parts)bytes+=part->size();
     // Own six immutable strings, including their eventual clear/release, and one row pointer.
-    if(!step(bytes/64+31))return {};
-    frameIdentities.push_back({{activation,site,owner,construction,newTarget,parent},metadata});
+    const auto shifted=frameIdentities.size()-position;
+    if(!step(bytes/64+32)||!step(26*shifted))return {};
+    frameIdentities.insert(frameIdentities.begin()+position,{{activation,site,owner,construction,newTarget,parent},metadata});
   }
   const auto &key=metadata->first;const auto old=findFrame(*this,world,key.text());if(!old)return {};
   if(*old!=world.end()&&repeated){
