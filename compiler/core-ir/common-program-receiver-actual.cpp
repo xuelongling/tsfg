@@ -71,6 +71,33 @@ Parts split(ActualCheck &c,const ActualValue &input){
   if(callable||input.unknown){if(!c.step(input.callables.size()))return {};out.object.callables=input.callables;}
   out.primitive|=out.pending;return out;
 }
+constexpr size_t linearCursorCount=8;
+constexpr llvm::StringLiteral cursorPrefix="initialization:sha256:";
+// Current cursor nodes are published with the same fixed textual prefix. A
+// short digest prefix orders most probes; ties still use complete text.
+std::optional<std::pair<size_t,bool>> cursorPosition(ActualCheck &check,const ActualCursorId &query){
+  if(!check.step(3))return {};
+  const auto key=query.view();
+  const auto prefix=key.substr(cursorPrefix.size(),4);
+  size_t first=0,last=check.receiverCursorIndex.size();
+  while(first<last){
+    if(!check.step(14))return {}; // Two 4-byte probes and bounded index operations.
+    const auto mid=first+(last-first)/2;
+    const auto &id=check.receiverCursorIndex[mid]->first;
+    const auto text=id.view();
+    auto order=text.substr(cursorPrefix.size(),4).compare(prefix);
+    if(!order){
+      if(!check.step(20))return {};
+      const auto equal=id.canonicalRelation(query,check.symbolUniverse);
+      if(equal&&*equal)return std::pair{mid,true};
+      if(!check.step(text.size()+key.size()+1))return {};
+      order=text.compare(key);
+      if(!order)return std::pair{mid,true};
+    }
+    if(order<0)first=mid+1;else last=mid;
+  }
+  return std::pair{first,false};
+}
 }
 ActualCursorId ActualCheck::ownedCursor(std::shared_ptr<const std::string> &&frame,size_t position){
   auto id="initialization:"+digest(canonical(Array{llvm::StringRef(*frame),int64_t(position)}));
@@ -81,9 +108,23 @@ ActualCursorId ActualCheck::ownedCursor(std::shared_ptr<const std::string> &&fra
     const auto inserted=receiverCursors.emplace(ActualCursorId(pending),ActualCursorInfo{std::move(frame),position});
     pending->admitted_=inserted.second;entry=inserted.first;
     if(inserted.second){
-      if(receiverCursorIndex.size()==receiverCursorIndex.capacity()){
-        if(!step(receiverCursorIndex.size()+1))return {};receiverCursorIndex.reserve(std::max<size_t>(1,receiverCursorIndex.size()*2));}
-      if(!step())return {};receiverCursorIndex.push_back(&*entry);
+      const auto indexed=receiverCursorIndex.size();
+      const auto needed=indexed==linearCursorCount?receiverCursors.size():indexed+1;
+      if(needed>receiverCursorIndex.capacity()){
+        if(!step(indexed+1))return {};receiverCursorIndex.reserve(std::max(needed,2*indexed));}
+      if(indexed<linearCursorCount){
+        if(!step())return {};receiverCursorIndex.push_back(&*entry);
+      }else if(indexed==linearCursorCount){
+        // The directory already owns the same nodes in complete text order.
+        const auto count=receiverCursors.size();
+        if(!step(2*count+3))return {};
+        receiverCursorIndex.clear();
+        for(const auto &row:receiverCursors)receiverCursorIndex.push_back(&row);
+      }else{
+        const auto position=cursorPosition(*this,entry->first);if(!position)return {};
+        if(!step(3+receiverCursorIndex.size()-position->first))return {};
+        receiverCursorIndex.insert(receiverCursorIndex.begin()+position->first,&*entry);
+      }
     }
   }
   if(!step(4))return {};return entry->first;
@@ -91,7 +132,16 @@ ActualCursorId ActualCheck::ownedCursor(std::shared_ptr<const std::string> &&fra
 bool ActualCheck::receiverText(const std::string &s){return step(12*s.size()+8);}
 const ActualCursorInfo *ActualCheck::cursorMetadata(const ActualCursorId &id){
   if(!step())return nullptr;
-  for(const auto *entry:receiverCursorIndex){
+  if(receiverCursorIndex.size()>linearCursorCount){
+    if(!step(4))return nullptr;
+    if(id.size()==cursorPrefix.size()+64){
+      if(!step(2*cursorPrefix.size()))return nullptr;
+      if(id.view().starts_with(cursorPrefix)){
+        const auto position=cursorPosition(*this,id);if(!position)return nullptr;
+        if(position->second){if(!step(2))return nullptr;return &receiverCursorIndex[position->first]->second;}
+      }
+    }
+  }else for(const auto *entry:receiverCursorIndex){
     if(!step(2)||!step(20))return nullptr;const auto same=entry->first.canonicalRelation(id,symbolUniverse);
     if(same){if(!*same)continue;}else{if(!step(entry->first.size()+id.size()+1))return nullptr;if(entry->first!=id)continue;}
     if(!step())return nullptr;return &entry->second;
