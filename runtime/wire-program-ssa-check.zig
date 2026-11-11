@@ -1066,17 +1066,18 @@ const Graph = struct {
         var roots: [4096]t.RegisterRef = undefined;
         var root_count: usize = 0;
         var has_mixed_observation = false;
+        var has_local_saved_code = false;
         var next_call: usize = 0;
         for (self.f.blocks, 0..) |block, block_index| {
             try c.step();
             if (!self.facts[block_index].reachable) continue;
-            const call_at_block = if (calls.len != 0) at_call: {
+            const observed_call = if (calls.len != 0) at_call: {
                 try c.charge(2);
-                break :at_call next_call < calls.len and calls[next_call].block == block_index;
-            } else false;
-            if (call_at_block) {
+                break :at_call if (next_call < calls.len and calls[next_call].block == block_index) &calls[next_call] else null;
+            } else null;
+            if (observed_call) |call| {
                 try c.charge(4);
-                const origin_state = &origins[@intFromEnum(calls[next_call].receiver)];
+                const origin_state = &origins[@intFromEnum(call.receiver)];
                 if (origin_state.* == .unknown or origin_state.* == .bottom) return null;
                 has_mixed_observation = has_mixed_observation or origin_state.* == .mixed;
                 next_call += 1;
@@ -1118,7 +1119,18 @@ const Graph = struct {
                         .br, .cond_br, .eh_route => {},
                         .domain_copy, .domain_view, .eh_carrier, .eh_assertion => if (!result_in_layout or index != 0) return null,
                         .environment_init, .environment_load, .environment_store => if (index != 0) return null,
-                        .eh_invoke => if (index != 0 or !call_at_block) return null,
+                        .eh_invoke => if (index != 0 or observed_call == null) return null,
+                        .function_make => {
+                            try c.charge(6);
+                            const call = observed_call orelse return null;
+                            const invoke = &block.instructions[block.instructions.len - 1];
+                            const code = op.result orelse return null;
+                            // The recorded call already proves the Code producer
+                            // and target. Its sole use must be this local call.
+                            if (index != 0 or operand != call.receiver or invoke.data != .eh_invoke_indirect or
+                                invoke.operands[0] != code or self.uses[@intFromEnum(code)].count != 1) return null;
+                            has_local_saved_code = true;
+                        },
                         else => return null,
                     }
                 }
@@ -1141,6 +1153,10 @@ const Graph = struct {
             }
         }
         if (!has_mixed_observation) return null;
+        if (has_local_saved_code) {
+            try c.charge(zero.len);
+            if (!std.mem.eql(u64, &repeat_blocks, &zero)) return null;
+        }
         try c.charge(3);
         var arena = std.heap.ArenaAllocator.init(c.allocator);
         defer arena.deinit();
@@ -1154,7 +1170,7 @@ const Graph = struct {
             for (observed) |slot| {
                 try c.step();
                 slots[@intFromEnum(slot)] = true;
-                try rememberEnvironmentCallSite(c, &call_sites, .{ .receiver = call.receiver, .slot = slot, .block = call.block });
+                try rememberEnvironmentCallSite(c, &call_sites, .{ .slot = slot, .block = call.block }, call.receiver);
             }
         }
         const entry_aliases = try self.environmentEntryAliases(layout);
@@ -1303,10 +1319,10 @@ const Graph = struct {
             const terminator = &block.instructions[block.instructions.len - 1];
             if (has_call_sites) {
                 try c.charge(2);
-                if (terminator.data == .eh_invoke and terminator.operands.len != 0) {
+                if (terminator.data == .eh_invoke or terminator.data == .eh_invoke_indirect) {
                     try c.row(EnvironmentCallSite);
-                    const receiver = terminator.operands[0];
-                    if (call_sites.contains(.{ .receiver = receiver, .slot = slot, .block = state.block })) {
+                    try c.step();
+                    if (call_sites.get(.{ .slot = slot, .block = state.block })) |receiver| {
                         try c.step();
                         if (state.includes(receiver)) try c.require(state.initialized);
                     }
@@ -1333,15 +1349,16 @@ const Graph = struct {
     }
 
     const EnvironmentCell = struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef };
-    const EnvironmentCallSite = struct { receiver: t.RegisterRef, slot: t.EnvironmentSlotRef, block: usize };
+    const EnvironmentCallSite = struct { slot: t.EnvironmentSlotRef, block: usize };
     const EnvironmentCells = std.AutoHashMapUnmanaged(EnvironmentCell, void);
-    const EnvironmentCallSites = std.AutoHashMapUnmanaged(EnvironmentCallSite, void);
+    const EnvironmentCallSites = std.AutoHashMapUnmanaged(EnvironmentCallSite, t.RegisterRef);
     const EnvironmentCalleeSlots = std.AutoHashMapUnmanaged(t.FunctionRef, []const t.EnvironmentSlotRef);
 
-    fn rememberEnvironmentCallSite(c: *Context, sites: *EnvironmentCallSites, site: EnvironmentCallSite) Error!void {
+    fn rememberEnvironmentCallSite(c: *Context, sites: *EnvironmentCallSites, site: EnvironmentCallSite, receiver: t.RegisterRef) Error!void {
         try c.row(EnvironmentCallSite);
+        try c.step();
         try environmentMapGrowth(c, sites, 4);
-        _ = try sites.getOrPut(c.allocator, site);
+        try sites.put(c.allocator, site, receiver);
     }
 
     fn environmentSlotsForCall(
@@ -1711,7 +1728,7 @@ const Graph = struct {
             const observed = try self.environmentSlotsForCall(call.callee, layout, &needs, arena.allocator());
             for (observed) |slot| {
                 try rememberEnvironmentCell(c, pairs, .{ .receiver = receiver, .slot = slot });
-                try rememberEnvironmentCallSite(c, sites, .{ .receiver = receiver, .slot = slot, .block = call.block });
+                try rememberEnvironmentCallSite(c, sites, .{ .slot = slot, .block = call.block }, receiver);
             }
         }
     }
@@ -1797,7 +1814,8 @@ const Graph = struct {
                             // The child sees this binding before either of
                             // the caller's continuations.
                             try c.row(EnvironmentCallSite);
-                            if (call_sites.contains(.{ .receiver = pair.receiver, .slot = pair.slot, .block = b }))
+                            try c.step();
+                            if (call_sites.get(.{ .slot = pair.slot, .block = b }) == pair.receiver)
                                 try c.require(state == 2);
                         },
                         else => {},

@@ -655,13 +655,13 @@ test "literal Env loop can observe an older initialized allocation after allocat
     });
 }
 
-const CallerInit = enum { before, after, absent, other_only, before_with_other, first_edge_only };
+const CallerInit = enum { before, after, absent, other_only, before_with_other, first_edge_only, second_edge_only, both_edges };
 const ChildAccess = enum { load, store, unreachable_load, copy_load, carrier_load, assertion_store, parameter_load, parameter_store, parallel_load, distinct_load, loop_load, dead_predecessor_load };
 const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward, assertion_forward, saved_forward, saved_parameter_forward };
 
 const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, rotated_edges, repeated_copy, repeated_previous };
 
-const ChildInvocation = enum { direct, saved };
+const ChildInvocation = enum { direct, saved, saved_extra_use };
 const saved_code_type: t.TypeRef = @enumFromInt(types.len);
 const saved_code_register: model.Register = .{ .carrier = .{ .@"type" = saved_code_type }, .view = saved_code_type };
 
@@ -679,8 +679,14 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const receiver = if (transport == .repeated_previous or transport == .rotated_edges) r(3) else r(3 + aliases_count);
     const exception = r(4 + aliases_count);
     const has_other = initialization == .other_only or initialization == .before_with_other;
-    const code = r(5 + aliases_count + @as(u16, @intFromBool(has_other or transport == .repeated_previous)));
+    const code_index = 5 + aliases_count + @as(u16, @intFromBool(has_other or transport == .repeated_previous));
+    const code = r(code_index);
+    const saves_code = invocation != .direct;
     const make_code: ins.Instruction = .{ .source = at, .result = code, .operands = &.{receiver}, .data = .{ .function_make = .{ .function = @enumFromInt(1) } } };
+    const copy_code: ins.Instruction = .{
+        .source = at, .result = r(code_index + 1), .operands = &.{code},
+        .data = .{ .domain_copy = .{ .static_view = saved_code_type } },
+    };
     const invoke_child: ins.Instruction = .{
         .source = at, .result = null, .operands = if (invocation == .direct) &.{receiver} else &.{code},
         .data = if (invocation == .direct)
@@ -697,6 +703,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const other = r(5 + aliases_count);
     const other_alloc: ins.Instruction = .{ .source = at, .result = other, .operands = &.{}, .data = alloc.data };
     const other_init: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ other, r(1) }, .data = init_original.data };
+    const init_second: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(4), r(1) }, .data = init_original.data };
     const init_rotated_second: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(6), r(1) }, .data = init_original.data };
     const before_call = switch (initialization) {
         .before => if (transport == .rotated_edges)
@@ -706,9 +713,11 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         .other_only => [_]ins.Instruction{ other_alloc, other_init },
         .before_with_other => [_]ins.Instruction{ other_alloc, initialize },
         .first_edge_only => if (transport == .rotated_edges) [_]ins.Instruction{initialize} else [_]ins.Instruction{},
-        .after, .absent => [_]ins.Instruction{},
+        .after, .absent, .second_edge_only, .both_edges => [_]ins.Instruction{},
     };
-    const call = (if (invocation == .saved) [_]ins.Instruction{make_code} else [_]ins.Instruction{}) ++ before_call ++ [_]ins.Instruction{invoke_child};
+    const call = (if (saves_code) [_]ins.Instruction{make_code} else [_]ins.Instruction{}) ++
+        (if (invocation == .saved_extra_use) [_]ins.Instruction{copy_code} else [_]ins.Instruction{}) ++
+        before_call ++ [_]ins.Instruction{invoke_child};
     const to_call: ins.Instruction = .{ .source = at, .result = null,
         .operands = if (transport == .block_parameter) &.{r(3)} else &.{}, .data = .{ .br = .{ .destination = b(3) } } };
     const choose_receiver: ins.Instruction = .{ .source = at, .result = null,
@@ -726,7 +735,8 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         .block_parameter => seed ++ [_]ins.Instruction{ alloc, to_call },
         .same_edges => seed ++ [_]ins.Instruction{ alloc, copy, choose_receiver },
         .distinct_edges => seed ++ [_]ins.Instruction{ alloc, second_alloc } ++
-            (if (initialization == .first_edge_only) [_]ins.Instruction{init_original} else [_]ins.Instruction{}) ++
+            (if (initialization == .first_edge_only or initialization == .both_edges) [_]ins.Instruction{init_original} else [_]ins.Instruction{}) ++
+            (if (initialization == .second_edge_only or initialization == .both_edges) [_]ins.Instruction{init_second} else [_]ins.Instruction{}) ++
             [_]ins.Instruction{choose_receiver},
         .rotated_edges => seed ++ [_]ins.Instruction{ alloc, second_alloc, rotate_receivers },
         .repeated_copy => seed ++ [_]ins.Instruction{to_call},
@@ -740,7 +750,8 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const payload_register: model.Register = .{ .carrier = .payload, .view = null };
     const caller_registers = base_registers ++ ([_]model.Register{env_register} ** aliases_count) ++ [_]model.Register{payload_register} ++
         (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{}) ++
-        (if (invocation == .saved) [_]model.Register{saved_code_register} else [_]model.Register{});
+        (if (saves_code) [_]model.Register{saved_code_register} else [_]model.Register{}) ++
+        (if (invocation == .saved_extra_use) [_]model.Register{saved_code_register} else [_]model.Register{});
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
@@ -949,7 +960,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     }};
     const call_block = if (caller_blocks.len == 3) 0 else 3;
     const Call = std.meta.Child(@TypeOf(common.closures.calls));
-    const caller_calls = if (invocation == .saved) [_]Call{.{
+    const caller_calls = if (saves_code) [_]Call{.{
         .function = @enumFromInt(0), .block = @enumFromInt(call_block), .instruction = @intCast(caller_blocks[call_block].instructions.len - 1),
         .signature = signature, .targets = &.{@enumFromInt(1)},
     }} else [_]Call{};
@@ -1191,4 +1202,24 @@ test "literal saved child cannot forward an uninitialized Env through block-tran
 }
 test "literal saved child forwards the initialized Env through block-transported Code" {
     try runChild(.before, .store, .saved_parameter_forward, .original, .saved, true);
+}
+
+test "literal saved child rejects the uninitialized second Env edge" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved, false);
+}
+
+test "literal saved child rejects the uninitialized first Env edge" {
+    try runChild(.second_edge_only, .load, .direct, .distinct_edges, .saved, false);
+}
+
+test "literal saved child accepts two initialized Env edges" {
+    try runChild(.both_edges, .load, .direct, .distinct_edges, .saved, true);
+}
+
+test "literal saved child observes init of the selected Env after Code creation" {
+    try runChild(.before, .load, .direct, .distinct_edges, .saved, true);
+}
+
+test "literal mixed Env proof excludes saved Code with a second use" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_extra_use, true);
 }
