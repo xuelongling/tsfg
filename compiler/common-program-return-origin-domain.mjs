@@ -105,6 +105,22 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
       for(const [id,values]of heap){spend();const stored=addresses[id];if(stored.selector==='capture:'+key&&stored.view==='env:'+layoutId&&environmentAlias(base,stored.base))for(const value of values){spend();result.add(value);}}
     }return result;
   };
+  // A selected Code may become ready before its incoming heap. Wait for the
+  // exact local cells used by this fixed bound before saving that call input.
+  const incomingCapturesReady=(heap,bases,record)=>{
+    const incoming=record.protocol.lexicalEnvironment;
+    if(!bases.size||incoming===null)return true;
+    for(const access of record.upper?.captures??[]){
+      spend();if(!access.read&&!access.write&&!access.structural)continue;
+      if(slotDirectory.get(access.slot)?.id!==incoming)continue;
+      for(const base of bases){
+        spend();if(locations[base].node.kind!=='environment-local')continue;
+        const cell=addressIds.get(key([base,'capture:'+access.slot,'env:'+incoming]));
+        if(cell===undefined||!heap.get(cell)?.size)return false;
+      }
+    }
+    return true;
+  };
   const effect=(context,flag,owner)=>{let selected=context.effects.get(flag);if(!selected){spend();selected=new Set();context.effects.set(flag,selected);changed=true;}add(selected,[owner]);};
   const valueEffects=(context,flag,values)=>{for(const id of values){spend();const owner=locations[id].owner;if(owner!==null)effect(context,flag,owner);}};
   // Published capture keys summarize the entire fixed call closure. Resolve
@@ -227,7 +243,11 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
           }
         }else if(expected===null){check(call.environment===null,'return-origin-environment-open','unexpected direct environment');selected.push(new Set());}
         else{check(call.environment!==null,'return-origin-environment-open','direct environment is missing');const values=selectEnvironments(resolved(context,call.environment),expected);if(values.size)selected.push(values);}
-        for(const environment of selected){spend();const called=ensure(call.functionId,args,environment,context.heaps[call.heap],scope,{context,heap:call.heap},receiver,context.receiverHeaps[call.heap]);add(context.targets[index],[called.index]);}
+        for(const environment of selected){
+          spend();if(!incomingCapturesReady(context.heaps[call.heap],environment,record))continue;
+          const called=ensure(call.functionId,args,environment,context.heaps[call.heap],scope,{context,heap:call.heap},receiver,context.receiverHeaps[call.heap]);
+          add(context.targets[index],[called.index]);
+        }
       }
       for(let index=0;index<graph.controls.length;index++){spend();const control=graph.controls[index];let live=false;
         if(control.kind==='entry')live=true;else if(control.kind==='join')live=control.inputs.some(input=>{spend();return context.controls[input];});
@@ -399,13 +419,18 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
       if(node.kind==='environmentCreate'&&layout(node.layout).parent!==null)for(const env of context.values[index])check((environmentParents.get(env)?.size??0)>0,'return-origin-environment-open','actual activation parent is unresolved');
     }
     for(let index=0;index<graph.calls.length;index++){spend();const call=graph.calls[index];if(!context.controls[call.control])continue;
-      if(call.callee!==null){const codes=resolved(context,call.callee),expected=fixed.get(call.functionId).protocol.lexicalEnvironment;
+      const record=fixed.get(call.functionId),expected=record.protocol.lexicalEnvironment,heap=context.heaps[call.heap];
+      if(call.callee!==null){const codes=resolved(context,call.callee);
         for(const id of codes){spend();const node=locations[id].node;if(node.kind==='code'&&node.functionId!==call.functionId)continue;
           if(expected!==null){check(call.environment!==null,'return-origin-environment-open','Code environment component is missing');let matched=false;
             for(const env of resolved(context,call.environment)){spend();const component=locations[env].node;
-              matched ||= node.kind==='code'?env===node.environment:component.kind==='environment-component'&&component.source===id&&component.functionId===call.functionId&&component.layout===expected;}
+              const compatible=node.kind==='code'?env===node.environment:component.kind==='environment-component'&&component.source===id&&component.functionId===call.functionId&&component.layout===expected;
+              if(compatible){matched=true;check(incomingCapturesReady(heap,new Set([env]),record),'return-origin-environment-open','capture payload is unresolved on a reachable heap path');}}
             check(matched,'return-origin-environment-open','selected Code/environment pair is unresolved');}
         }
+      }else if(expected!==null&&call.environment!==null){
+        const selected=selectEnvironments(resolved(context,call.environment),expected);
+        check(incomingCapturesReady(heap,selected,record),'return-origin-environment-open','capture payload is unresolved on a reachable heap path');
       }
       // A fixed function's formal Code may be supplied as one exact Fn by its
       // caller. Exclude only that proven noncapturing data alternative; inherit
