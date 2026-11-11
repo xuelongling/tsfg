@@ -19,17 +19,23 @@ try {
   }
   const emit = options.get("--emit") ?? "run";
   const inputKind = options.get("--input-kind") ?? "source";
+  const hasFixedCommon = options.has("--publication") || options.has("--kernel-request");
+  const fixedCommonCore = inputKind === "hir" && emit === "core" && hasFixedCommon;
   if (!["source", "hir"].includes(inputKind) || inputKind === "hir" &&
-      (!["hir", "core", "bytecode", "program-object", "run"].includes(emit) || ["--frontend", "--query-request", "--publication", "--kernel-request"].some(key => options.has(key))))
+      (!["hir", "core", "bytecode", "program-object", "run"].includes(emit) ||
+        ["--frontend", "--query-request"].some(key => options.has(key)) || hasFixedCommon && !fixedCommonCore))
     throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|program-object|run without Source, Query or borrow inputs");
   if (!["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof"].includes(emit) || !options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|program-object|run are required");
+  if (fixedCommonCore && (!options.has("--publication") || !options.has("--kernel-request") || !options.has("--core") ||
+      ["--vm", "--requests"].some(key => options.has(key))))
+    throw new TypeError("r03-cli-options: Common Core requires --publication, --kernel-request and --core without Runtime inputs");
   if(emit==='borrow-proof'){
     if(!options.has('--publication')||!options.has('--kernel-request')||!options.has('--core')||['--frontend','--vm','--requests','--query-request'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: borrow-proof requires complete Common HIR, fixed --publication, --kernel-request and --core');
     const hir=readCommonProgramHir(await readFile(options.get('--input'))),publication=commonJson(await readFile(options.get('--publication'))),request=commonJson(await readFile(options.get('--kernel-request')));
     const result=await compileCommonBorrowProof(hir,publication,request,{core:options.get('--core')});process.stdout.write(canonical(result.proof)+'\n');
-  }else if(options.has('--publication')||options.has('--kernel-request'))throw new TypeError('r03-cli-options: fixed Common publication/request require --emit borrow-proof');
+  }else if(hasFixedCommon&&!fixedCommonCore)throw new TypeError('r03-cli-options: fixed Common publication/request require --emit borrow-proof or --input-kind hir --emit core');
   else if(options.has('--query-request')){
     if(!['core','query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects|query-batch|query-llvm|query-llvm-ir|query-tmeta');
@@ -43,17 +49,23 @@ try {
   const input = inputKind === "hir" ? readHir(bytes) : JSON.parse(bytes.toString("utf8"));
   if (inputKind === "hir") {
     const family = familyOf(input);
-    if (family === commonHirFormat.family && emit !== "hir")
-      throw new TypeError("r03-cli-options: Common HIR requires --emit hir");
+    if (fixedCommonCore && family !== commonHirFormat.family)
+      throw new TypeError("r03-cli-options: fixed publication and request require Common HIR");
+    if (family === commonHirFormat.family && emit !== "hir" && !fixedCommonCore)
+      throw new TypeError("r03-cli-options: Common HIR requires --emit hir or fixed publication and request for --emit core");
     if (family === genericHirFormat.family && ["run", "program-object"].includes(emit))
       throw new TypeError("r03-cli-options: private generic HIR requires --emit hir|core|bytecode");
   }
+  const callPublicationContext = fixedCommonCore ? {
+    publication: commonJson(await readFile(options.get("--publication"))),
+    request: commonJson(await readFile(options.get("--kernel-request"))),
+  } : undefined;
   const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
   const compile = inputKind === "hir"
     ? emit === "core" ? compileOwnedCore : emit === "program-object" ? compileOwnedStaticProgram : compileOwnedHir
     : emit === "hir" ? compileHir : emit === "program-object" ? compileStaticProgram : compileProgram;
   const result = inputKind === "hir" && emit === "hir" ? { status: "ok", hir: input }
-    : await compile(input, { frontend: options.get("--frontend"), core: options.get("--core") });
+    : await compile(input, { frontend: options.get("--frontend"), core: options.get("--core"), callPublicationContext });
   if (result.status !== "ok") {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = result.status === "tool-error" ? 11 : 3;

@@ -10,7 +10,7 @@ import {canonical,sha256} from '../../compiler/identity.mjs';
 import {importCapturedFrontendResponse} from '../../compiler/frontend.mjs';
 import {buildHir,lowerFormalHir,printHir,readHir} from '../../compiler/hir.mjs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
-import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
+import {buildCommonProgramHir,projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {compileOwnedCore,compileOwnedHir,verifiedConsumer} from '../../compiler/pipeline.mjs';
 import {expectedHir} from './formal-exception-source-oracle.mjs';
 
@@ -19,11 +19,16 @@ assert.equal(sha256(fixture),'sha256:5f22b4e99e09737ef6d58c544fc44a107d8fc0b6dc9
 const {hir}=JSON.parse(fixture.toString('utf8'));
 const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
 
-async function runCli(value,args){
+async function runCli(value,args,documents={}){
   const directory=await mkdtemp(path.join(tmpdir(),'tsfg-owned-hir-cli-'));
   const input=path.join(directory,'owned-hir.json');
   await writeFile(input,canonical(value)+'\n');
   const command=[cli,'--input',input,...args];
+  for(const [option,document] of Object.entries(documents)){
+    const file=path.join(directory,option+'.json');
+    await writeFile(file,canonical(document)+'\n');
+    command.push('--'+option,file);
+  }
   const child=spawnSync(process.execPath,command,{windowsHide:true,maxBuffer:16*1024*1024,timeout:30000});
   await writeFile(path.join(directory,'stdout.bin'),child.stdout??Buffer.alloc(0));
   await writeFile(path.join(directory,'stderr.bin'),child.stderr??Buffer.alloc(0));
@@ -97,6 +102,47 @@ test('owned HIR CLI rejects corrupt identity and conflicting Source, Query or bo
 });
 
 if(process.env.TSFG_CORE_IR_EXE){
+  test('cold Common Core CLI consumes its original fixed publication and request',async()=>{
+    const factsPath=new URL('../fixtures/r03/common-self-held-storage/self-held-external-store-safe-package.json',import.meta.url);
+    const directory=new URL('../fixtures/r03/common-fixed-publication/',import.meta.url);
+    const publicationPath=new URL('self-held-safe.publication-v6.json',directory);
+    const [factsBytes,publicationBytes,historicalBytes]=await Promise.all([
+      readFile(factsPath),readFile(publicationPath),readFile(new URL('self-held-safe.owned.json',directory)),
+    ]);
+    assert.equal(sha256(factsBytes),'sha256:d0440c17dd8e5f02e3e9e456cfe116bce415fd163a6d0ab750f3934616842989');
+    assert.equal(sha256(publicationBytes),'sha256:6b95c791e7b80c11c91ed91af54a864714f8447cf52dabf3276c30ddba15c931');
+    const owned=projectCommonProgram(readCommonProgramFacts(factsBytes));
+    const publication=JSON.parse(publicationBytes.toString('utf8'));
+    const historical=JSON.parse(historicalBytes.toString('utf8'));
+    const request=historical.request;
+    const core=process.env.TSFG_CORE_IR_EXE;
+    const expected=await compileOwnedCore(owned,{core,callPublicationContext:{publication,request}});
+    assert.equal(expected.status,'ok',expected.message);
+    const args=['--input-kind','hir','--emit','core','--core',core];
+    const withPublication=[...args,'--publication',fileURLToPath(publicationPath)];
+    const documents={'kernel-request':request};
+    const result=await runCli(owned,withPublication,documents);
+    assert.equal(result.status,0,result.stderr.toString('utf8'));
+    assert.equal(result.stderr.length,0);
+    assert.deepEqual(result.stdout,Buffer.from(expected.core));
+    assert.equal(owned.functions.length,2);
+    for(const fn of owned.functions) assert.ok(result.stdout.includes(Buffer.from(fn.id)));
+    assert.ok(result.stdout.includes(Buffer.from(publication.expectedDigest)));
+
+    for(const child of [
+      await runCli(owned,withPublication),
+      await runCli(owned,args,documents),
+      await runCli(hir,withPublication,documents),
+    ]){
+      assert.equal(child.status,2);
+      assert.equal(child.stdout.length,0);
+      assert.match(child.stderr.toString('utf8'),/r03-cli-options/);
+    }
+    const old=await runCli(owned,args,{publication:historical.publication,...documents});
+    assert.equal(old.status,11);
+    assert.match(JSON.parse(old.stdout.toString('utf8')).message,/r03-common-program-schema/);
+  });
+
   test('cold Common Core still requires fixed publication and request',async()=>{
     const {mixed}=await mixedCommonHir();
     const cold=readHir(Buffer.from(printHir(mixed)));

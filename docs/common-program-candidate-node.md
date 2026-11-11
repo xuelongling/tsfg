@@ -37,6 +37,16 @@ narrowed by either interface. A later view use across an owner resize still
 rejects before a successful proof can be published. This output grants no
 execution, scheduling or Runtime qualification.
 
+For a persisted Common HIR, pass the fixed publication and original kernel
+request to the static Core command.
+
+```powershell
+node tooling/tsfgc.mjs --input-kind hir --input owned-hir.json --publication published.json --kernel-request kernel-request.json --core tsfg-core-static.exe --emit core
+```
+
+The command verifies the complete owned HIR and supplied bounds and prints the
+canonical Core from the qualified static consumer.
+
 The candidate entry points consume one complete Source package, own its HIR, verify fixed Published bounds and emit static Core. They preserve ordinary functions, initializers, globals, nominal types and original capture bindings even when a kernel selects only part of the Program.
 
 ```js
