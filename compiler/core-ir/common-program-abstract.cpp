@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
 #include <algorithm>
+#include <array>
 #include <iterator>
 namespace tsfg::commonProgram {
 namespace {
@@ -192,7 +193,38 @@ bool ActualCheck::putOwnedField(ActualHeap &heap,const ActualFieldSlot &slot,Act
 }
 ActualHeap ActualCheck::copyHeap(const ActualHeap &from){
   ActualHeap out;if(!step(from.size()))return out;
-  for(const auto &[id,v]:from){if(!step(id.size()/64+1))return {};out.emplace(id,copy(v));if(!e.message.empty())return {};}
+  constexpr size_t maxIndexedRows=16,maxIndexedFields=2;
+  if(!step(3))return {};
+  const auto fieldCount=from.fields_.size();
+  if(fieldCount==0||fieldCount>maxIndexedFields||from.size()>maxIndexedRows){
+    for(const auto &[id,v]:from){if(!step(id.size()/64+1))return {};out.emplace(id,copy(v));if(!e.message.empty())return {};}
+    return out;
+  }
+  // Bound the remap to a small number of exact source-node comparisons.
+  // Register the destination nodes in the source index's lookup order.
+  if(!step(maxIndexedFields+2))return {};
+  std::array<ActualHeap::iterator,maxIndexedFields> nodes{out.end(),out.end()};
+  auto remaining=fieldCount;
+  for(const auto &[id,value]:from){
+    if(!step(id.size()/64+2))return {};
+    auto owned=copy(value);
+    if(!e.message.empty())return {};
+    const auto node=out.emplace(id,std::move(owned)).first;
+    if(!remaining)continue;
+    for(size_t index=0;index<fieldCount;++index){
+      if(!step(3))return {};
+      if(from.fields_[index].key!=&id)continue;
+      if(!step(2))return {};
+      nodes[index]=node;
+      --remaining;
+      break;
+    }
+  }
+  if(remaining)return out;
+  if(!step(fieldCount+1))return {};
+  out.fields_.reserve(fieldCount);
+  for(size_t index=0;index<fieldCount;++index)
+    if(!step()||!out.appendField(*this,nodes[index],from.fields_[index].identity))return {};
   return out;
 }
 bool ActualCheck::mergeHeap(ActualHeap &into,ActualHeap &&from){
