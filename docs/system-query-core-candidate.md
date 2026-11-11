@@ -23,12 +23,13 @@ The existing native f32/f64 Core arithmetic operations implement `+`, `-`, `*` a
 then applies its original operation and stores. Source statement and operand order remain explicit SSA
 dependencies. No component objects or boxed field values are constructed.
 Same-type i32 field copies use those typed load/store operations directly. A
-simple i32 field assignment also accepts `+`, `-` or `*` with a direct i32 field
-on the left and a direct i32 field or exact signed i32 integer literal on the
-right. The literal becomes a typed i32 constant. The operation wraps at 32 bits
-and feeds the destination store in Source order. Standalone i32 literals,
-division, locals and scalar helper parameters/results remain outside this
-capability. A direct i32 field statement using `+=`, `-=` or `*=` requires a
+simple i32 field assignment accepts a direct exact signed i32 integer literal
+and writes its typed constant without loading the destination. It also accepts
+`+`, `-` or `*` with a direct i32 field on the left and a direct i32 field or exact
+signed i32 integer literal on the right. The operation wraps at 32 bits and
+feeds the destination store in Source order. i32 division, locals and scalar
+helper parameters/results remain outside this capability. A direct i32 field
+statement using `+=`, `-=` or `*=` requires a
 writable target and a direct same-type field or exact i32 literal on the
 right. It loads the target's old value before the RHS, computes a wrapping
 result and writes that SSA value back to the same field. The effects record

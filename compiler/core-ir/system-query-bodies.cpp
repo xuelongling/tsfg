@@ -14,7 +14,7 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   const auto *original=at(path,r,astKind);if(!original)return false;
   if(kind=="numericLiteral"){
     if(expected=="i32")
-      return need(type=="i32"&&field(value,"bits").getAsNull(),"exact i32 arithmetic literal required")&&verifySourceLiteral(g,value);
+      return need(type=="i32"&&field(value,"bits").getAsNull(),"exact i32 literal required")&&verifySourceLiteral(g,value);
     const auto token=string(field(value,"token"));const auto inferred=token.find_first_of(".eE")!=std::string::npos&&token.find_first_of("xX")==std::string::npos?"f64":"i32";
     if(!need((type=="f32"||type=="f64")&&type==(expected.empty()?inferred:expected),"Query literal original contextual/default width differs")||!verifySourceLiteral(g,value))return false;
     const llvm::APInt bits(type=="f32"?32:64,string(field(value,"bits")),16);
@@ -83,8 +83,8 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
     const bool i32Compound=i32Field&&(op=="+="||op=="-="||op=="*=")&&
       parent!=nodes.end()&&string(field(*parent->second,"kind"))=="KindExpressionStatement"&&
       (rhsKind=="fieldAccess"||rhsKind=="numericLiteral");
-    // A standalone literal gets i32 context only as the direct compound RHS.
-    const auto rhsContext=i32Field&&!i32Compound&&rhsKind!="binary"?std::string{}:type;
+    // Only direct literals and the existing arithmetic forms get i32 context.
+    const auto rhsContext=i32Field&&!i32Compound&&rhsKind!="binary"&&rhsKind!="numericLiteral"?std::string{}:type;
     return need((type=="f32"||type=="f64"||(i32Field&&(op=="="||i32Compound)))&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))==(kind=="fieldAssignment"?"fieldTarget":"bindingTarget")&&string(field(target,"type"))==type&&string(field(rhs,"type"))==type,"owned same-type floating-point assignment or direct i32 field assignment required")&&
       expression(target,body,scope,path,depth+1)&&expression(rhs,body,scope,path,depth+1,rhsContext)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(target,"range"),field(value,"operatorRange"),field(rhs,"range")});
   }

@@ -94,10 +94,12 @@ of the same component.
 
 Loop statements use the existing shared Source expression/target tables. The
 current slice represents direct same-width f32/f64 field reads, `+`, `-`, `*`, `/`, and `=` or
-`+=`, `-=`, `*=`, `/=` field assignments. It also supports i32 field reads and
-same-type `=` field copies, with no conversion or arithmetic. This does not add
-i32 numeric literals, arithmetic, compound assignments, locals or scalar helper
-parameters/results. Types come from the original parameter/component facts;
+`+=`, `-=`, `*=`, `/=` field assignments. An i32 field assignment supports a
+direct same-type field or exact signed i32 literal, as well as direct `+`, `-`,
+and `*` with an i32 field left operand and field or exact literal right
+operand. Direct i32 field statements using `+=`, `-=`, and `*=` accept the same
+right operands. i32 locals and scalar helper parameters/results remain outside
+this profile. Types come from the original parameter/component facts;
 the cold reader checks those relationships and original syntax without running
 a second checker. Operator anchors must occupy their original position between
 the operands in the parent expression. Typed output carries semantic TypeIds and

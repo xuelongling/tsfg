@@ -26,9 +26,10 @@ invented for Source that does not access entity identities.
 An explicit `scf.for` row loop computes `row * columnStride`. A field address
 adds its independently derived byte offset. `memref.view` selects one original
 i32, f32 or f64 at that byte address; loads and stores operate on that view.
-An i32 field copy keeps the same i32 SSA value from load to store, without
-conversion or arithmetic. It does not add i32 literals, arithmetic, compound
-assignments, locals or scalar helper parameters/results. Other fixed fields
+An i32 field copy keeps the same SSA value from load to store. A direct i32
+literal assignment writes the exact typed constant without reading the
+destination. i32 addition, subtraction and multiplication use wrapping
+integer operations, including in compound assignments. Other fixed fields
 and padding remain in the original component buffer. No component copy or
 allocation is introduced. Helper view parameters become the same byte buffer
 and row offset; permission narrowing does not freeze another alias. Scalar
