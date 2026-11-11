@@ -522,6 +522,44 @@ const Graph = struct {
         followers: []?usize, edges: []EnvironmentEdge, pending: []t.RegisterRef, queued: []bool,
         used: usize=0, size: usize=0,
 
+        fn init(c: *Context, count: usize, edge_capacity: usize) Error!EnvironmentProof {
+            try c.charge(6 * count + edge_capacity);
+            const allocator = c.allocator;
+            const seen = try allocator.alloc(bool, count);
+            errdefer allocator.free(seen);
+            const origins = try allocator.alloc(EnvironmentOrigin, count);
+            errdefer allocator.free(origins);
+            const foreign = try allocator.alloc(bool, count);
+            errdefer allocator.free(foreign);
+            const followers = try allocator.alloc(?usize, count);
+            errdefer allocator.free(followers);
+            const pending = try allocator.alloc(t.RegisterRef, count);
+            errdefer allocator.free(pending);
+            const queued = try allocator.alloc(bool, count);
+            errdefer allocator.free(queued);
+            const edges = try allocator.alloc(EnvironmentEdge, edge_capacity);
+            @memset(seen, false);
+            @memset(origins, .bottom);
+            @memset(foreign, false);
+            @memset(followers, null);
+            @memset(queued, false);
+            return .{
+                .c = c, .seen = seen, .origins = origins, .foreign = foreign,
+                .followers = followers, .edges = edges, .pending = pending, .queued = queued,
+            };
+        }
+
+        fn deinit(self: *EnvironmentProof) void {
+            const allocator = self.c.allocator;
+            allocator.free(self.seen);
+            allocator.free(self.origins);
+            allocator.free(self.foreign);
+            allocator.free(self.followers);
+            allocator.free(self.edges);
+            allocator.free(self.pending);
+            allocator.free(self.queued);
+        }
+
         fn link(self: *EnvironmentProof, source: t.RegisterRef, receiver: t.RegisterRef) Error!void {
             const c=self.c; const index=@intFromEnum(source);
             try c.row(EnvironmentEdge); try c.charge(2);
@@ -654,16 +692,11 @@ const Graph = struct {
                 try c.step(); edge_capacity+=self.f.blocks[successor].parameters.len;
             }
         }
-        try c.charge(6*count+edge_capacity);
-        const seen=try c.allocator.alloc(bool,count); defer c.allocator.free(seen); @memset(seen,false);
-        const origins=try c.allocator.alloc(EnvironmentOrigin,count); defer c.allocator.free(origins); @memset(origins,.bottom);
-        const foreign=try c.allocator.alloc(bool,count); defer c.allocator.free(foreign); @memset(foreign,false);
-        const followers=try c.allocator.alloc(?usize,count); defer c.allocator.free(followers); @memset(followers,null);
-        const pending=try c.allocator.alloc(t.RegisterRef,count); defer c.allocator.free(pending);
-        const queued=try c.allocator.alloc(bool,count); defer c.allocator.free(queued); @memset(queued,false);
-        const edges=try c.allocator.alloc(EnvironmentEdge,edge_capacity); defer c.allocator.free(edges);
-        var proof=EnvironmentProof{.c=c,.seen=seen,.origins=origins,.foreign=foreign,
-            .followers=followers,.edges=edges,.pending=pending,.queued=queued};
+        var proof = try EnvironmentProof.init(c, count, edge_capacity);
+        defer proof.deinit();
+        const origins = proof.origins;
+        const foreign = proof.foreign;
+        const pending = proof.pending;
         if (self.has_environment_access) for (self.f.blocks) |block| for (block.instructions) |*op| {
             try c.step();
             if (environmentAccessSlot(op) == null) continue;
@@ -1083,6 +1116,89 @@ const Graph = struct {
         return false;
     }
 
+    fn directCalleeEnvironmentAliases(
+        c: *Context,
+        target: *const model.Function,
+        input: t.RegisterRef,
+        layout: t.EnvironmentRef,
+        reachable: []const usize,
+        edge_capacity: usize,
+    ) Error!std.DynamicBitSetUnmanaged {
+        const carrier: t.Carrier = .{ .environment = layout };
+        var proof = try EnvironmentProof.init(c, target.registers.len, edge_capacity);
+        defer proof.deinit();
+        // The sole positive seed is the hidden entry Env, whose identity is
+        // preserved by an exact-carrier copy or by every incoming CFG edge.
+        for (target.blocks[0].parameters) |parameter| {
+            try c.charge(3);
+            const index = @intFromEnum(parameter);
+            if (!exact(target.registers[index].carrier, carrier)) continue;
+            try proof.need(parameter);
+            proof.origins[index] = if (parameter == input) .{ .allocation = input } else .unknown;
+        }
+        for (reachable) |block_index| {
+            try c.charge(2);
+            const block = &target.blocks[block_index];
+            for (block.instructions) |*op| {
+                try c.step();
+                const result = op.result orelse continue;
+                try c.charge(3);
+                const index = @intFromEnum(result);
+                if (!exact(target.registers[index].carrier, carrier)) continue;
+                try proof.need(result);
+                if (op.data == .domain_copy or op.data == .domain_view) {
+                    try c.charge(3);
+                    const source = op.operands[0];
+                    if (exact(target.registers[@intFromEnum(source)].carrier, carrier)) {
+                        try proof.link(source, result);
+                        continue;
+                    }
+                }
+                try c.step();
+                proof.origins[index] = .unknown;
+            }
+            try c.charge(2);
+            const terminator = &block.instructions[block.instructions.len - 1];
+            const successors = edgeTargets(terminator);
+            for (successors.blocks[0..successors.count], 0..) |next, edge| {
+                try c.charge(3);
+                const parameters = target.blocks[next].parameters;
+                if (parameters.len == 0) continue;
+                const arguments = environmentEdgeArguments(terminator, edge);
+                for (parameters, 0..) |parameter, index| {
+                    try c.charge(3);
+                    const register = @intFromEnum(parameter);
+                    if (!exact(target.registers[register].carrier, carrier)) continue;
+                    try proof.need(parameter);
+                    if (arguments) |values| {
+                        try c.charge(3);
+                        const source = values[index];
+                        if (exact(target.registers[@intFromEnum(source)].carrier, carrier)) {
+                            try proof.link(source, parameter);
+                            continue;
+                        }
+                    }
+                    try c.step();
+                    proof.origins[register] = .unknown;
+                }
+            }
+        }
+        try proof.propagate();
+        const mask_bits = @bitSizeOf(std.DynamicBitSetUnmanaged.MaskInt);
+        const registers = target.registers.len;
+        try c.charge(4 + (registers + mask_bits - 1) / mask_bits);
+        var aliases = try std.DynamicBitSetUnmanaged.initEmpty(c.allocator, registers);
+        errdefer aliases.deinit(c.allocator);
+        for (proof.origins, 0..) |*origin_state, index| {
+            try c.charge(2);
+            if (origin_state.* == .allocation and origin_state.allocation == input) {
+                try c.step();
+                aliases.set(index);
+            }
+        }
+        return aliases;
+    }
+
     fn directCalleeEnvironmentSlots(
         self: *Graph,
         first: t.FunctionRef,
@@ -1110,22 +1226,51 @@ const Graph = struct {
             try c.require(target.blocks[0].parameters.len != 0);
             const input = target.blocks[0].parameters[0];
             try c.require(exact(target.registers[@intFromEnum(input)].carrier, .{ .environment = layout }));
-            var aliases: ?std.DynamicBitSetUnmanaged = null;
-            defer if (aliases) |*known| known.deinit(c.allocator);
-            // FIFO visits strict dominators before their uses. Each body
-            // contributes only exact-carrier copies of its hidden Env input.
             var seen_blocks = zero;
             pending_blocks[0] = 0;
             put(&seen_blocks, 0);
             var count: usize = 1;
             var cursor: usize = 0;
+            var edge_capacity = target.registers.len;
+            var has_environment_parameters = false;
             while (cursor < count) : (cursor += 1) {
                 try c.charge(3);
                 const block = &target.blocks[pending_blocks[cursor]];
+                if (cursor != 0 and !has_environment_parameters) {
+                    for (block.parameters) |parameter| {
+                        try c.charge(2);
+                        if (!exact(target.registers[@intFromEnum(parameter)].carrier, .{ .environment = layout })) continue;
+                        has_environment_parameters = true;
+                        break;
+                    }
+                }
+                try c.charge(2);
+                const successors = edgeTargets(&block.instructions[block.instructions.len - 1]);
+                for (successors.blocks[0..successors.count]) |next| {
+                    try c.charge(5 + zero.len);
+                    edge_capacity += target.blocks[next].parameters.len;
+                    if (has(seen_blocks, next)) continue;
+                    put(&seen_blocks, next);
+                    pending_blocks[count] = next;
+                    count += 1;
+                }
+            }
+            // With no Env block parameters, a dominating copy is available
+            // when its use is visited in FIFO order.
+            var aliases: ?std.DynamicBitSetUnmanaged = if (has_environment_parameters)
+                try directCalleeEnvironmentAliases(c, target, input, layout, pending_blocks[0..count], edge_capacity)
+            else
+                null;
+            defer if (aliases) |*known| known.deinit(c.allocator);
+            for (pending_blocks[0..count]) |block_index| {
+                try c.charge(2);
+                const block = &target.blocks[block_index];
                 for (block.instructions) |*op| {
                     try c.step();
                     const slot = switch (op.data) {
                         .domain_copy, .domain_view => {
+                            try c.step();
+                            if (has_environment_parameters) continue;
                             try c.charge(2);
                             if (!try matchesDirectEnvironment(c, aliases, input, op.operands[0])) continue;
                             try c.charge(3);
@@ -1153,14 +1298,6 @@ const Graph = struct {
                 }
                 try c.charge(2);
                 const terminator = &block.instructions[block.instructions.len - 1];
-                const successors = edgeTargets(terminator);
-                for (successors.blocks[0..successors.count]) |next| {
-                    try c.charge(4 + zero.len);
-                    if (has(seen_blocks, next)) continue;
-                    put(&seen_blocks, next);
-                    pending_blocks[count] = next;
-                    count += 1;
-                }
                 if (terminator.data != .eh_invoke) continue;
                 try c.charge(3);
                 if (terminator.operands.len == 0 or !try matchesDirectEnvironment(c, aliases, input, terminator.operands[0])) continue;

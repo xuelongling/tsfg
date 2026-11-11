@@ -655,8 +655,8 @@ test "literal Env loop can observe an older initialized allocation after allocat
 }
 
 const CallerInit = enum { before, after, absent, other_only, before_with_other };
-const ChildAccess = enum { load, store, unreachable_load, copy_load };
-const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward };
+const ChildAccess = enum { load, store, unreachable_load, copy_load, parameter_load, parameter_store, parallel_load, distinct_load, loop_load, dead_predecessor_load };
+const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward };
 
 const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, repeated_copy };
 
@@ -720,6 +720,19 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     const child_jump: ins.Instruction = .{ .source = at, .result = null, .operands = &.{}, .data = .{ .br = .{ .destination = b(1) } } };
     const child_copy: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{r(0)}, .data = copy.data };
     const child_copy_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(2)}, .data = child_load.data };
+    const branch_hidden: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = child_jump.data };
+    const parameter_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(2), r(1) }, .data = child_store.data };
+    const boolean: ins.Instruction = .{ .source = at, .result = r(3), .operands = &.{}, .data = .{ .const_bool = true } };
+    const second_environment: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{}, .data = alloc.data };
+    const parallel_branch: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(3), r(0), r(2) }, .data = .{ .cond_br = .{
+        .true_destination = b(1), .false_destination = b(1), .true_count = 1,
+    } } };
+    const parallel_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(4)}, .data = child_load.data };
+    const loop_branch: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(3), r(2) }, .data = .{ .cond_br = .{
+        .true_destination = b(1), .false_destination = b(2), .true_count = 1,
+    } } };
+    const branch_dead: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = child_jump.data };
+    const dead_environment: ins.Instruction = .{ .source = at, .result = r(3), .operands = &.{}, .data = alloc.data };
     const leaf_blocks: []const model.Block = switch (access) {
         .load => &.{
             .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], child_jump } },
@@ -734,12 +747,37 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
             .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], child_copy, child_jump } },
             .{ .parameters = &.{}, .instructions = &.{ child_copy_load, returned } },
         },
+        .parameter_load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], branch_hidden } },
+            .{ .parameters = &.{r(2)}, .instructions = &.{ child_copy_load, returned } },
+        },
+        .parameter_store => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], seed[1], branch_hidden } },
+            .{ .parameters = &.{r(2)}, .instructions = &.{ parameter_store, returned } },
+        },
+        .parallel_load, .distinct_load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], boolean, if (access == .parallel_load) child_copy else second_environment, parallel_branch } },
+            .{ .parameters = &.{r(4)}, .instructions = &.{ parallel_load, returned } },
+        },
+        .loop_load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], boolean, branch_hidden } },
+            .{ .parameters = &.{r(2)}, .instructions = &.{ condition, child_copy_load, loop_branch } },
+            .{ .parameters = &.{}, .instructions = &.{returned} },
+        },
+        .dead_predecessor_load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], branch_hidden } },
+            .{ .parameters = &.{r(2)}, .instructions = &.{ child_copy_load, returned } },
+            .{ .parameters = &.{}, .instructions = &.{ dead_environment, branch_dead } },
+        },
     };
     const call_grandchild: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = .{ .eh_invoke = .{
         .callee = @enumFromInt(2), .normal = b(1), .exceptional = b(2),
     } } };
     const child_view: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{r(0)}, .data = view.data };
     const call_with_view: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(2)}, .data = call_grandchild.data };
+    const branch_to_forward: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = .{ .br = .{ .destination = b(3) } } };
+    const parameter_view: ins.Instruction = .{ .source = at, .result = r(3), .operands = &.{r(2)}, .data = view.data };
+    const call_with_parameter: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = call_grandchild.data };
     const forwarding_entry: []const ins.Instruction = if (path == .view_forward)
         &.{ seed[0], child_view, call_with_view }
     else
@@ -749,6 +787,11 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .{ .parameters = &.{}, .instructions = &.{returned} },
         .{ .parameters = &.{r(1)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(1)}, .data = .eh_raise }} },
         .{ .parameters = &.{}, .instructions = &.{call_grandchild} },
+    } else if (path == .parameter_forward) &.{
+        .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], branch_to_forward } },
+        .{ .parameters = &.{}, .instructions = &.{returned} },
+        .{ .parameters = &.{r(1)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(1)}, .data = .eh_raise }} },
+        .{ .parameters = &.{r(2)}, .instructions = &.{ parameter_view, call_with_parameter } },
     } else &.{
         .{ .parameters = &.{r(0)}, .instructions = forwarding_entry },
         .{ .parameters = &.{}, .instructions = &.{returned} },
@@ -781,14 +824,19 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         functions[index].id = @splat(@as(u8, @intCast(0x95 + index)));
         functions[index].abi = @enumFromInt(index);
         functions[index].name = if (index == 1) "observeCapture" else "observeCaptureThroughChild";
-        functions[index].registers = if (forwarding)
-            (if (path == .view_forward) &.{ env_register, payload_register, env_register } else &.{ env_register, payload_register })
-        else if (recursive)
+        functions[index].registers = if (forwarding) switch (path) {
+            .view_forward => &.{ env_register, payload_register, env_register },
+            .parameter_forward => &.{ env_register, payload_register, env_register, env_register },
+            else => &.{ env_register, payload_register },
+        } else if (recursive)
             &.{ env_register, value_register, payload_register }
-        else if (access == .copy_load)
-            &.{ env_register, value_register, env_register }
-        else
-            &.{ env_register, value_register };
+        else switch (access) {
+            .copy_load, .parameter_load, .parameter_store => &.{ env_register, value_register, env_register },
+            .parallel_load, .distinct_load => &.{ env_register, value_register, env_register, base_registers[0], env_register },
+            .loop_load => &.{ env_register, value_register, env_register, base_registers[0] },
+            .dead_predecessor_load => &.{ env_register, value_register, env_register, env_register },
+            else => &.{ env_register, value_register },
+        };
         functions[index].blocks = if (forwarding) forwarding_blocks else if (recursive) recursive_blocks else leaf_blocks;
         abis[index].function = function;
         abis[index].parameters = &.{};
@@ -936,4 +984,35 @@ test "literal grandchild Env view and copy cannot use an unrelated allocation's 
 }
 test "literal unrelated uninitialized Env does not block a grandchild view and copy" {
     try runDirectChild(.before_with_other, .copy_load, .view_forward, .viewed, true);
+}
+
+test "literal child block parameter read requires prior Env initialization" {
+    try runDirectChild(.absent, .parameter_load, .direct, .original, false);
+}
+test "literal child block parameter reads the initialized Env" {
+    try runDirectChild(.before, .parameter_load, .direct, .original, true);
+}
+test "literal child block parameter store requires prior Env initialization" {
+    try runDirectChild(.absent, .parameter_store, .direct, .original, false);
+}
+test "literal child forwards its Env parameter to the grandchild before caller init" {
+    try runDirectChild(.after, .parameter_load, .parameter_forward, .block_parameter, false);
+}
+test "literal child forwards an initialized Env parameter to the grandchild" {
+    try runDirectChild(.before, .parameter_load, .parameter_forward, .block_parameter, true);
+}
+test "literal callee's two conditional edges can carry the same uninitialized Env" {
+    try runDirectChild(.absent, .parallel_load, .direct, .original, false);
+}
+test "literal callee's two conditional edges distinguish separate Env instances" {
+    try runDirectChild(.absent, .distinct_load, .direct, .original, true);
+}
+test "literal callee loop parameter retains its uninitialized entry Env" {
+    try runDirectChild(.absent, .loop_load, .direct, .original, false);
+}
+test "literal callee loop parameter retains its initialized entry Env" {
+    try runDirectChild(.before, .loop_load, .direct, .original, true);
+}
+test "literal dead callee predecessor cannot obscure the reachable entry Env" {
+    try runDirectChild(.absent, .dead_predecessor_load, .direct, .original, false);
 }
