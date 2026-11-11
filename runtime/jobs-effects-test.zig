@@ -340,6 +340,36 @@ test "typed effects reject a field read on the other alias of the same component
     try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, current.sourcePacket, current.inputIdentity, current.packageId, current.target, &document.component_layout));
 }
 
+test "typed effects reject a different field in a nested Source helper" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-f64-helper-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-f64-helper.tmeta"), receipt.value);
+    defer document.deinit();
+    const operations = document.effects.report.systems[0].loops[0].operations;
+    const nested = operations[5];
+    const other = operations[4];
+    try std.testing.expectEqual(@as(usize, 2), nested.callPath.len);
+    try std.testing.expectEqualStrings(nested.componentType, other.componentType);
+    try std.testing.expect(!std.mem.eql(u8, nested.sourceField, other.sourceField));
+
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const current = document.payload;
+    var packet = try std.json.parseFromSliceLeaky(std.json.Value, allocator, current.sourcePacket, .{});
+    const helpers = packet.object.getPtr("payload").?.object.getPtr("scalarHelpers").?.array.items;
+    for (helpers) |*helper| {
+        if (!std.mem.eql(u8, helper.object.get("id").?.string, nested.callPath[1].sourceHelperId)) continue;
+        const property = helper.object.getPtr("value").?.object.getPtr("property").?;
+        try std.testing.expectEqualStrings(nested.sourceField, property.string);
+        property.* = .{ .string = other.sourceField };
+        const source = try std.json.Stringify.valueAlloc(allocator, packet, .{});
+        try std.testing.expectError(error.InvalidEffects, E.decode(allocator, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+        return;
+    }
+    return error.MissingFixtureHelper;
+}
+
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();

@@ -5,6 +5,9 @@ const layout = @import("layout.zig");
 const Access = @import("store.zig").Access;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Identity = [71]u8;
+const max_helper_depth = 32;
+const max_helper_parameters = 32;
+const max_expression_depth = 32;
 const scalar_types = std.StaticStringMap(void).initComptime(.{
     .{ "i8", {} },    .{ "i16", {} },   .{ "i32", {} },  .{ "i64", {} },
     .{ "u8", {} },    .{ "u16", {} },   .{ "u32", {} },  .{ "u64", {} },
@@ -35,6 +38,7 @@ const RawBinding = struct { componentType: []const u8, declaration: Decl, index:
 const RawExpression = struct {
     kind: enum { binary, bindingAssignment, bindingReference, bindingTarget, call, fieldAccess, fieldAssignment, fieldTarget, numericLiteral, parentheses },
     arguments: []const RawExpression = &.{},
+    binding: []const u8 = "",
     callee: []const u8 = "",
     calleeRange: ?layout.Range = null,
     expression: ?*const RawExpression = null,
@@ -48,10 +52,19 @@ const RawExpression = struct {
     value: ?*const RawExpression = null,
 };
 const RawStatement = struct { initializer: ?*const RawExpression = null, value: ?*const RawExpression = null };
-const SourceBodyRows = struct { calls: []const Call, operations: ?[]const Operation = null };
+const SourceView = struct { binding: []const u8, column: *const Column, mode: Access };
+const SourceOperations = struct {
+    remaining: []const Operation,
+    columns: []const Column,
+    views: []const SourceView = &.{},
+    path: [max_helper_depth]*const Call = undefined,
+    depth: usize = 0,
+};
+const SourceBodyRows = struct { calls: []const Call, operations: ?*SourceOperations = null };
 const RawLoop = struct { bindings: []const RawBinding, queryBinding: []const u8, range: layout.Range, statements: []const RawStatement };
 const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const SourceParameter, returnType: []const u8 };
 const RawHelperParameter = struct {
+    binding: struct { id: []const u8 },
     index: u32,
     logicalType: []const u8,
     query: ?struct {},
@@ -106,7 +119,6 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
     };
     const original_file = primary orelse return error.InvalidEffects;
     if (!same(report.source.path, original_file.path) or report.source.utf16Length != original_file.utf16Length or !same(report.source.sha256, try std.fmt.allocPrint(allocator, "sha256:{s}", .{original_file.sha256}))) return error.InvalidEffects;
-    var source_helpers: [64]*const RawHelper = undefined;
     for (report.scalarHelpers, 0..) |helper, index| {
         try context.spend(1);
         if (!digestId(helper.functionId) or !digestId(helper.signatureHash) or (index > 0 and std.mem.order(u8, report.scalarHelpers[index - 1].functionId, helper.functionId) != .lt)) return error.InvalidEffects;
@@ -124,12 +136,12 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         try context.source(helper.source, null);
         try context.helperIdentity(raw, &helper);
         try context.spend(1);
-        source_helpers[index] = raw;
+        context.source_helpers[index] = raw;
     }
     for (report.scalarHelpers, 0..) |helper, index| {
         // Call targets may be forward references. Validate all identities first.
         try context.spend(1);
-        const raw = source_helpers[index];
+        const raw = context.source_helpers[index];
         if (raw.value == null and raw.statements.len == 0) return error.InvalidEffects;
         try context.sourceBody(raw.statements, raw.value, helper.source, .{ .calls = helper.calls });
         try context.fieldRows(helper.fieldEffects);
@@ -149,7 +161,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
             if (same(next, helper.functionId)) return error.InvalidEffects;
             if (contains(transitive.items, next)) continue;
             try transitive.append(allocator, next);
-            const child = context.helper(next) orelse return error.InvalidEffects;
+            const child_index = (try context.helperIndex(next)) orelse return error.InvalidEffects;
+            const child = &report.scalarHelpers[child_index];
             for (child.calls) |call| try pending.append(allocator, call.functionId);
         }
         std.mem.sort([]const u8, transitive.items, {}, lessString);
@@ -199,29 +212,15 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
             std.mem.sort(Capability, loop_caps.items, {}, lessCapability);
             try context.capabilities(loop.capabilities);
             if (!sameCapabilities(loop_caps.items, loop.capabilities)) return error.InvalidEffects;
-            try context.sourceBody(original_loop.statements, null, loop.source, .{ .calls = loop.calls, .operations = loop.operations });
+            var operations: SourceOperations = .{ .remaining = loop.operations, .columns = loop.columns };
+            try context.sourceBody(original_loop.statements, null, loop.source, .{ .calls = loop.calls, .operations = &operations });
+            if (operations.remaining.len != 0) return error.InvalidEffects;
             for (loop.operations) |operation| {
                 try context.spend(1);
                 if (operation.tupleIndex >= loop.columns.len) return error.InvalidEffects;
                 const column = loop.columns[operation.tupleIndex];
-                if (!same(operation.componentType, column.componentType) or !same(operation.sourceBinding, column.sourceBinding) or (operation.kind == .write and column.mode != .write) or operation.callPath.len > 32) return error.InvalidEffects;
+                if (!same(operation.componentType, column.componentType) or !same(operation.sourceBinding, column.sourceBinding) or (operation.kind == .write and column.mode != .write)) return error.InvalidEffects;
                 try context.field(operation.componentType, operation.field, operation.sourceField, operation.kind == .write);
-                var owner = loop.source;
-                var available = loop.calls;
-                for (operation.callPath) |call| {
-                    try context.spend(1);
-                    var found = false;
-                    for (available) |candidate| if (sameCall(call, candidate)) {
-                        found = true;
-                        break;
-                    };
-                    if (!found) return error.InvalidEffects;
-                    try context.call(call, owner);
-                    const next = context.helper(call.functionId).?;
-                    owner = next.source;
-                    available = next.calls;
-                }
-                try context.source(operation.source, owner);
             }
             try context.fieldRows(loop.fieldEffects);
             if (!sameFieldRows(try context.countFields(loop.operations), loop.fieldEffects)) return error.InvalidEffects;
@@ -229,7 +228,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
             try system_calls.appendSlice(allocator, loop.calls);
         }
         if (system_calls.items.len != system.calls.len) return error.InvalidEffects;
-        for (system_calls.items, system.calls) |left, right| if (!sameCall(left, right)) return error.InvalidEffects;
+        for (system_calls.items, system.calls) |*left, *right| if (!sameCall(left, right)) return error.InvalidEffects;
         try context.fieldRows(system.fieldEffects);
         if (!sameFieldRows(try context.countFields(system_operations.items), system.fieldEffects)) return error.InvalidEffects;
     }
@@ -256,18 +255,28 @@ const Context = struct {
     report: *const Report,
     facts: Projection,
     catalog: *const layout.Layout,
+    source_helpers: [64]*const RawHelper = undefined,
     remaining: usize = 1000000,
     fn spend(self: *Context, amount: usize) Error!void {
         if (amount > self.remaining) return error.EffectsLimit;
         self.remaining -= amount;
     }
     fn source(self: *Context, value: Source, owner: ?Source) Error!void {
-        try self.spend(1);
-        for (self.facts.payload.program.files) |file| if (same(value.path, file.path)) {
-            if (value.start >= value.end or value.end > file.utf16Length) return error.InvalidEffects;
-            if (owner) |parent| if (!same(value.path, parent.path) or value.start < parent.start or value.end > parent.end) return error.InvalidEffects;
+        try self.spend(2);
+        if (value.start >= value.end) return error.InvalidEffects;
+        if (owner) |parent| {
+            // The admitted parent already establishes the file and its bounds.
+            try self.spend(5 + 2 * (@min(value.path.len, parent.path.len) / 64));
+            if (value.start < parent.start or value.end > parent.end or !same(value.path, parent.path)) return error.InvalidEffects;
             return;
-        };
+        }
+        for (self.facts.payload.program.files) |*file| {
+            try self.spend(3);
+            try self.spend(2 + 2 * (@min(value.path.len, file.path.len) / 64));
+            if (!same(value.path, file.path)) continue;
+            if (value.end > file.utf16Length) return error.InvalidEffects;
+            return;
+        }
         return error.InvalidEffects;
     }
     fn componentId(self: *Context, raw: []const u8) Error![]const u8 {
@@ -325,7 +334,7 @@ const Context = struct {
     }
     fn helperIdentity(self: *Context, raw: *const RawHelper, reported: *const Helper) !void {
         try self.spend(4);
-        if (!digestId(raw.id) or raw.parameters.len > 32 or !floatType(raw.returnType)) return error.InvalidEffects;
+        if (!digestId(raw.id) or raw.parameters.len > max_helper_parameters or !floatType(raw.returnType)) return error.InvalidEffects;
         const declaration = &raw.declaration;
         // The Source helper ID names this declaration by its original range and path.
         try self.spend(8 + 16 * (declaration.sourcePath.len / 64 + 1));
@@ -416,40 +425,46 @@ const Context = struct {
         };
         try list.append(self.allocator, item);
     }
-    fn helper(self: *const Context, id: []const u8) ?*const Helper {
-        for (self.report.scalarHelpers) |*row| if (same(row.functionId, id)) return row;
+    fn helperIndex(self: *Context, id: []const u8) Error!?usize {
+        try self.spend(2);
+        if (!digestId(id)) return null;
+        for (self.report.scalarHelpers, 0..) |*row, index| {
+            try self.spend(5);
+            if (same(row.functionId, id)) return index;
+        }
         return null;
     }
-    fn call(self: *Context, value: Call, owner: Source) Error!void {
-        try self.spend(1);
-        const target = self.helper(value.functionId) orelse return error.InvalidEffects;
+    fn call(self: *Context, value: *const Call, owner: Source) Error!usize {
+        const index = (try self.helperIndex(value.functionId)) orelse return error.InvalidEffects;
+        try self.spend(10);
+        const target = &self.report.scalarHelpers[index];
         if (!same(target.signatureHash, value.signatureHash) or !same(target.sourceHelperId, value.sourceHelperId)) return error.InvalidEffects;
         try self.source(value.source, owner);
         try self.source(value.calleeSource, value.source);
+        return index;
     }
     fn sourceBody(self: *Context, statements: []const RawStatement, legacy_value: ?*const RawExpression, owner: Source, rows: SourceBodyRows) Error!void {
         var remaining = rows;
         if (legacy_value) |expression| {
             if (statements.len != 0) return error.InvalidEffects;
-            try self.sourceExpression(expression, &remaining, owner);
+            try self.sourceExpression(expression, &remaining, owner, 0);
         } else for (statements) |*statement| {
             try self.spend(1);
             const expression = statement.initializer orelse statement.value orelse return error.InvalidEffects;
-            try self.sourceExpression(expression, &remaining, owner);
+            try self.sourceExpression(expression, &remaining, owner, 0);
         }
         if (remaining.calls.len != 0) return error.InvalidEffects;
-        if (remaining.operations) |*operations| {
-            if (try self.nextDirectOperation(operations) != null) return error.InvalidEffects;
-        }
     }
-    fn sourceExpression(self: *Context, expression: *const RawExpression, rows: *SourceBodyRows, owner: Source) Error!void {
+    fn sourceExpression(self: *Context, expression: *const RawExpression, rows: *SourceBodyRows, owner: Source, depth: usize) Error!void {
         try self.spend(1);
+        if (depth >= max_expression_depth) return error.EffectsLimit;
+        const next_depth = depth + 1;
         switch (expression.kind) {
-            .fieldAccess => if (rows.operations) |*operations|
-                try self.sourceFieldOperation(operations, .read, expression, expression.range),
+            .fieldAccess => if (rows.operations) |operations|
+                try self.sourceFieldOperation(operations, .read, expression, expression.range, owner),
             .call => {
                 // Direct calls in arguments precede the enclosing call in the report.
-                for (expression.arguments) |*argument| try self.sourceExpression(argument, rows, owner);
+                for (expression.arguments) |*argument| try self.sourceExpression(argument, rows, owner, next_depth);
                 // Four range fields and fixed-width helper identity checks.
                 try self.spend(12);
                 const callee_range = expression.calleeRange orelse return error.InvalidEffects;
@@ -458,12 +473,14 @@ const Context = struct {
                 if (edge.source.start != expression.range.start or edge.source.end != expression.range.end or
                     edge.calleeSource.start != callee_range.start or edge.calleeSource.end != callee_range.end or
                     !same(edge.sourceHelperId, expression.callee)) return error.InvalidEffects;
-                try self.call(edge.*, owner);
+                const target = try self.call(edge, owner);
                 rows.calls = rows.calls[1..];
+                if (rows.operations) |operations|
+                    try self.sourceHelperOperations(operations, edge, target, expression.arguments);
             },
             .binary => {
-                try self.sourceExpression(expression.left orelse return error.InvalidEffects, rows, owner);
-                try self.sourceExpression(expression.right orelse return error.InvalidEffects, rows, owner);
+                try self.sourceExpression(expression.left orelse return error.InvalidEffects, rows, owner, next_depth);
+                try self.sourceExpression(expression.right orelse return error.InvalidEffects, rows, owner, next_depth);
             },
             .fieldAssignment => {
                 const target = if (rows.operations != null) expression.target orelse return error.InvalidEffects else null;
@@ -471,33 +488,98 @@ const Context = struct {
                     try self.spend(2);
                     if (field_target.kind != .fieldTarget) return error.InvalidEffects;
                     if (!same(expression.operator, "="))
-                        try self.sourceFieldOperation(&rows.operations.?, .read, field_target, field_target.range);
+                        try self.sourceFieldOperation(rows.operations.?, .read, field_target, field_target.range, owner);
                 }
-                try self.sourceExpression(expression.value orelse return error.InvalidEffects, rows, owner);
+                try self.sourceExpression(expression.value orelse return error.InvalidEffects, rows, owner, next_depth);
                 if (target) |field_target|
-                    try self.sourceFieldOperation(&rows.operations.?, .write, field_target, expression.range);
+                    try self.sourceFieldOperation(rows.operations.?, .write, field_target, expression.range, owner);
             },
-            .bindingAssignment => try self.sourceExpression(expression.value orelse return error.InvalidEffects, rows, owner),
-            .parentheses => try self.sourceExpression(expression.expression orelse return error.InvalidEffects, rows, owner),
+            .bindingAssignment => try self.sourceExpression(expression.value orelse return error.InvalidEffects, rows, owner, next_depth),
+            .parentheses => try self.sourceExpression(expression.expression orelse return error.InvalidEffects, rows, owner, next_depth),
             else => {},
         }
     }
-    fn nextDirectOperation(self: *Context, operations: *[]const Operation) Error!?*const Operation {
-        while (operations.*.len != 0) {
-            try self.spend(2);
-            const operation = &operations.*[0];
-            operations.* = operations.*[1..];
-            if (operation.callPath.len == 0) return operation;
+    fn sourceViewArgument(self: *Context, original: *const RawExpression) Error![]const u8 {
+        var expression = original;
+        for (0..max_expression_depth) |_| {
+            try self.spend(1);
+            switch (expression.kind) {
+                .parentheses => expression = expression.expression orelse return error.InvalidEffects,
+                .bindingReference => return expression.binding,
+                else => return error.InvalidEffects,
+            }
         }
-        return null;
+        return error.EffectsLimit;
     }
-    fn sourceFieldOperation(self: *Context, operations: *[]const Operation, kind: Access, field_expression: *const RawExpression, range: layout.Range) Error!void {
-        const operation = (try self.nextDirectOperation(operations)) orelse return error.InvalidEffects;
+    fn sourceView(self: *Context, operations: *const SourceOperations, binding: []const u8) Error!SourceView {
+        try self.spend(3);
+        if (!digestId(binding)) return error.InvalidEffects;
+        if (operations.depth == 0) {
+            for (operations.columns) |*column| {
+                try self.spend(5);
+                if (same(column.sourceBinding, binding)) return .{ .binding = binding, .column = column, .mode = column.mode };
+            }
+        } else {
+            for (operations.views) |*view| {
+                try self.spend(5);
+                if (same(view.binding, binding)) {
+                    try self.spend(4);
+                    return view.*;
+                }
+            }
+        }
+        return error.InvalidEffects;
+    }
+    fn sourceHelperOperations(self: *Context, operations: *SourceOperations, call_edge: *const Call, target: usize, arguments: []const RawExpression) Error!void {
+        try self.spend(8);
+        if (operations.depth >= operations.path.len) return error.EffectsLimit;
+        const raw = self.source_helpers[target];
+        if (arguments.len != raw.parameters.len) return error.InvalidEffects;
+        var views: [max_helper_parameters]SourceView = undefined;
+        var count: usize = 0;
+        for (raw.parameters, arguments) |*formal, *argument| {
+            try self.spend(2);
+            const view = if (formal.view) |*value| value else continue;
+            const actual = try self.sourceView(operations, try self.sourceViewArgument(argument));
+            try self.spend(9);
+            if (!digestId(formal.binding.id) or !same(formal.logicalType, actual.column.sourceComponentType) or
+                (view.access.mode == .write and actual.mode != .write)) return error.InvalidEffects;
+            views[count] = .{ .binding = formal.binding.id, .column = actual.column, .mode = view.access.mode };
+            count += 1;
+        }
+        const previous_views = operations.views;
+        operations.views = views[0..count];
+        operations.path[operations.depth] = call_edge;
+        operations.depth += 1;
+        defer {
+            operations.depth -= 1;
+            operations.views = previous_views;
+        }
+        const helper_row = &self.report.scalarHelpers[target];
+        try self.sourceBody(raw.statements, raw.value, helper_row.source, .{ .calls = helper_row.calls, .operations = operations });
+    }
+    fn sourceFieldOperation(self: *Context, operations: *SourceOperations, kind: Access, field_expression: *const RawExpression, range: layout.Range, owner: Source) Error!void {
         try self.spend(16);
+        if (operations.remaining.len == 0) return error.InvalidEffects;
+        const operation = &operations.remaining[0];
         const receiver = field_expression.receiver orelse return error.InvalidEffects;
+        const binding = if (operations.depth == 0) receiver.binding else actual: {
+            const view = try self.sourceView(operations, receiver.binding);
+            if (kind == .write and view.mode != .write) return error.InvalidEffects;
+            break :actual view.column.sourceBinding;
+        };
         if (!digestId(receiver.binding) or !digestId(field_expression.property) or operation.kind != kind or
             operation.source.start != range.start or operation.source.end != range.end or
-            !same(operation.sourceBinding, receiver.binding) or !same(operation.sourceField, field_expression.property)) return error.InvalidEffects;
+            !same(operation.sourceBinding, binding) or !same(operation.sourceField, field_expression.property) or
+            operation.callPath.len != operations.depth) return error.InvalidEffects;
+        for (operation.callPath, 0..) |*reported, index| {
+            try self.spend(2);
+            const expected = operations.path[index];
+            try self.spend(20 + 2 * (expected.source.path.len / 64 + expected.calleeSource.path.len / 64));
+            if (!sameCall(reported, expected)) return error.InvalidEffects;
+        }
+        try self.source(operation.source, owner);
+        operations.remaining = operations.remaining[1..];
     }
     fn field(self: *Context, component: []const u8, id: []const u8, source_id: []const u8, writable: bool) Error!void {
         try self.spend(1);
@@ -576,7 +658,7 @@ fn sameFieldRows(a: []const FieldEffects, b: []const FieldEffects) bool {
     for (a, b) |left, right| if (!same(left.componentType, right.componentType) or !same(left.field, right.field) or !same(left.sourceField, right.sourceField) or left.readCount != right.readCount or left.writeCount != right.writeCount) return false;
     return true;
 }
-fn sameCall(a: Call, b: Call) bool {
+fn sameCall(a: *const Call, b: *const Call) bool {
     return same(a.functionId, b.functionId) and same(a.signatureHash, b.signatureHash) and same(a.sourceHelperId, b.sourceHelperId) and sameSource(a.source, b.source) and sameSource(a.calleeSource, b.calleeSource);
 }
 fn selectionHasher() Sha256 {
