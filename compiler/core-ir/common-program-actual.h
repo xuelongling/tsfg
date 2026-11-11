@@ -5,6 +5,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/iterator.h"
 #include <deque>
+#include <array>
 #include <optional>
 #include <memory>
 #include <unordered_map>
@@ -180,6 +181,12 @@ struct ActualFrameInfo {
   ActualInitializationFields fields=ActualInitializationFields::empty();
 };
 using ActualFrameDirectory=std::map<ActualFrameId,ActualFrameInfo,ActualFrameIdLess>;
+// Full factory inputs own their bytes. The admitted directory row is immutable
+// and survives World updates; this cache expires before that solve's directory.
+struct ActualFrameIdentity {
+  std::array<std::string,6> parts;
+  const ActualFrameDirectory::value_type *row;
+};
 // Cursor rows retain immutable frame bytes independently of any check/map.
 // A default or moved-from row is not admitted metadata; factories publish owners.
 struct ActualCursorInfo {std::shared_ptr<const std::string> frame;size_t position=0;};
@@ -335,6 +342,7 @@ struct ActualCheck {
   std::set<const Operation *> unresolvedCalls;
   RegionDomain regions;
   ActualFrameDirectory receiverFrames;
+  std::vector<ActualFrameIdentity> frameIdentities;
   ActualCursorDirectory receiverCursors;
   // Derived lookup only: immutable map nodes, never execution World values.
   std::vector<const ActualCursorDirectory::value_type *> receiverCursorIndex;

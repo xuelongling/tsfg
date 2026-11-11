@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
 #include <algorithm>
+#include <deque>
 #include <tuple>
 #include <type_traits>
 namespace tsfg::commonProgram {
 namespace {
 template<class Directory>
-auto selectionLowerBound(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
-  const auto count=directory.size();size_t height=0;
-  for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return std::nullopt;height+=2;}
-  height=std::min(height,count);
-  if(!c.step(1+height+(count?height+1:0)*(2*query.size()+1)))return std::nullopt;
-  return directory.lower_bound(query);
+auto findFrame(ActualCheck &c,Directory &directory,const std::string &query)->std::optional<decltype(directory.begin())>{
+  if(!c.step(2))return std::nullopt;
+  // Bound the candidate scan by the full spelling cost of one equality.
+  if(directory.size()>query.size())return selectionFrameLookup(c,directory,query);
+  for(auto row=directory.begin();row!=directory.end();++row){
+    if(!c.step(5))return std::nullopt;
+    const auto &text=row->first.text();
+    if(&text==&query)return row;
+    if(text.size()!=query.size()||(!text.empty()&&text.back()!=query.back()))continue;
+    if(!c.step(text.size()+query.size()+1))return std::nullopt;
+    if(text==query)return row;
+  }return directory.end();
 }
 bool data(const ActualValue &v){return v.unknown||v.callableTop||!v.tags.empty()||!v.objects.empty()||!v.callables.empty();}
 template<class Retain>
@@ -20,8 +27,11 @@ bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&r
   for(const auto &[id,value]:world){if(!c.step())return false;if(data(value.bound)&&!retain(value.bound))return false;
     // Live Worlds contain symbols from this check's current archive. Its
     // immutable full spelling order already supplies the retained root order.
-    if(!c.step(2))return false;const auto count=value.births.size();
-    if(count){size_t height=0;
+    if(!c.step(3))return false;const auto count=value.births.size();
+    if(count==1){
+      // A single owned journal entry is already in full spelling order.
+      if(!c.step(3)||!retain(value.births.begin()->second.real)||!c.e.message.empty())return false;
+    }else if(count){size_t height=0;
       for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return false;height+=2;}
       height=std::min(height,count);size_t retained=0;
       for(const auto &[spelling,slot]:c.fieldSlotArchive){
@@ -188,9 +198,9 @@ ActualFrameWorld ActualCheck::copyFrames(const ActualFrameWorld &world){
 }
 bool ActualCheck::joinFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
   if(&into==&from)return false;if(!step(from.size()))return false;bool changed=false;
-  for(const auto &[id,incoming]:from){if(!receiverText(id.text())||!step(8))return false;auto found=into.find(id);
-    if(found==into.end()){auto owned=copyFrame(incoming);if(!e.message.empty()||!step(4))return false;into.emplace(id,std::move(owned));changed=true;continue;}
-    auto &v=found->second;changed=merge(v.bound,incoming.bound)||changed;if(!step(incoming.births.size()))return false;
+  for(const auto &[id,incoming]:from){const auto found=findFrame(*this,into,id.text());if(!found)return false;
+    if(*found==into.end()){if(!receiverText(id.text())||!step(8))return false;auto owned=copyFrame(incoming);if(!e.message.empty()||!step(4))return false;into.emplace(id,std::move(owned));changed=true;continue;}
+    auto &v=(*found)->second;changed=merge(v.bound,incoming.bound)||changed;if(!step(incoming.births.size()))return false;
     for(const auto &[slot,row]:incoming.births){if(!step())return false;auto old=v.births.find(slot);
       if(old==v.births.end()){auto owned=copyBirth(row);if(!e.message.empty())return false;v.births.emplace(slot,std::move(owned));changed=true;}
       else {changed=merge(old->second.real,row.real)||changed;if(row.pending&&!old->second.pending){old->second.pending=true;changed=true;}}}
@@ -202,35 +212,46 @@ bool ActualCheck::joinFrames(ActualFrameWorld &into,const ActualFrameWorld &from
 }
 bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
   if(&into==&from)return true;auto owned=copyFrames(from);if(!e.message.empty()||!step(owned.size()))return false;
-  for(auto &[id,value]:owned){if(!receiverText(id.text())||!step(4))return false;into.insert_or_assign(id,std::move(value));}return true;
+  for(auto &[id,value]:owned){const auto found=findFrame(*this,into,id.text());if(!found)return false;
+    if(*found==into.end()){if(!receiverText(id.text())||!step(4))return false;into.emplace(id,std::move(value));}
+    else {if(!step(2))return false;(*found)->second=std::move(value);}
+  }return true;
 }
 namespace {
 template<class Input>
 ActualFrameWorld selectedInputFrames(ActualCheck &check,const ActualFrameWorld &world,const Input &values,const ActualHeap &heap){
   using Entry=ActualFrameWorld::value_type;
   struct Selection {const Entry *row;const ActualFrameInfo *info;};
-  std::map<llvm::StringRef,Selection,std::less<>> selected;std::vector<const std::string *> pending;
+  // Keep borrowed rows stable while their index grows in full FrameId order.
+  if(!check.step(8))return {};
+  std::deque<Selection> selections;std::vector<Selection *> selected;std::vector<const std::string *> pending;
   const auto append=[&](auto &queue,auto pointer){
     if(queue.size()==queue.capacity()){
       if(!check.step(queue.size()+1))return false;queue.reserve(std::max<size_t>(1,queue.size()*2));}
     if(!check.step())return false;queue.push_back(pointer);return true;
   };
   const auto admit=[&](const std::string &id,const Entry *known,bool &fresh)->Selection *{
-    if(!check.step())return nullptr;fresh=false;const auto at=selectionLowerBound(check,selected,id);if(!at)return nullptr;
-    if(*at!=selected.end()&&(*at)->first==id){if(!check.step())return nullptr;return &(*at)->second;}
+    if(!check.step(2))return nullptr;fresh=false;size_t first=0,last=selected.size();
+    while(first<last){
+      if(!check.step(6))return nullptr;const auto middle=first+(last-first)/2;
+      const auto &other=selected[middle]->row->first;
+      if(!check.step(other.size()+id.size()+1))return nullptr;
+      const auto order=other.view().compare(id);
+      if(!order)return selected[middle];
+      if(order<0)first=middle+1;else last=middle;
+    }
     const Entry *row=known;
-    if(!row){const auto found=selectionFrameLookup(check,world,id);
+    if(!row){const auto found=findFrame(check,world,id);
       if(!found||!check.need(*found!=world.end(),"selected frame is absent from completion"))return nullptr;row=&**found;}
     const ActualFrameInfo *info=nullptr;
-    if(!known){const auto frame=selectionFrameLookup(check,check.receiverFrames,id);
+    if(!known){const auto frame=findFrame(check,check.receiverFrames,id);
       if(!frame||!check.need(*frame!=check.receiverFrames.end(),"selected frame is absent from completion"))return nullptr;info=&(*frame)->second;}
-    if(*at!=selected.end()&&!check.step(2*(id.size()+(*at)->first.size()+1)))return nullptr;
-    if(*at!=selected.begin()){if(!check.step(selected.size()+1))return nullptr;const auto previous=std::prev(*at);
-      if(!check.step(2*(previous->first.size()+id.size()+1)))return nullptr;}
-    // View construction/copy4, two selected pointers constructed/moved4, node1;
-    // then one fresh flag and one returned pointer. No owned ID is created.
-    if(!check.step(11))return nullptr;const auto inserted=selected.try_emplace(*at,row->first.view(),Selection{row,info});
-    fresh=true;return &inserted->second;
+    if(selected.size()==selected.capacity()){
+      if(!check.step(selected.size()+1))return nullptr;
+      selected.reserve(std::max<size_t>(1,selected.size()*2));}
+    if(!check.step(12+selected.size()-first))return nullptr;
+    selections.push_back({row,info});auto *entry=&selections.back();
+    selected.insert(selected.begin()+first,entry);fresh=true;return entry;
   };
   // Collect all roots/cursors first, retaining the original error-stage order.
   if(!check.step(values.size()))return {};
@@ -277,25 +298,25 @@ ActualFrameWorld selectedInputFrames(ActualCheck &check,const ActualFrameWorld &
   // Visit initial selections in full-key order. Resolve each row's metadata,
   // then its parent's World before appending that parent's deferred metadata.
   if(!check.step(selected.size()+1))return {};pending.clear();std::vector<Selection *> ancestry;
-  for(auto &[id,row]:selected)if(!append(ancestry,&row))return {};
+  for(auto *row:selected)if(!append(ancestry,row))return {};
   for(size_t i=0;i<ancestry.size();++i){if(!check.step())return {};auto &row=*ancestry[i];
-    if(!row.info){const auto frame=selectionFrameLookup(check,check.receiverFrames,row.row->first.text());
+    if(!row.info){const auto frame=findFrame(check,check.receiverFrames,row.row->first.text());
       if(!frame||!check.need(*frame!=check.receiverFrames.end(),"selected birth frame is absent")||!check.step())return {};row.info=&(*frame)->second;}
     const auto &parent=row.info->parent;if(parent.empty())continue;
-    const auto found=selectionFrameLookup(check,world,parent);
+    const auto found=findFrame(check,world,parent);
     if(!found||!check.need(*found!=world.end(),"selected birth parent is absent"))return {};bool fresh=false;
     const auto next=admit(parent,&**found,fresh);if(!next)return {};
     if(fresh&&!append(ancestry,next))return {};}
   ActualFrameWorld result;if(!check.step(selected.size()))return {};
-  for(const auto &[id,row]:selected){
+  for(const auto *row:selected){
     // The primary immutable key is shared: retain/release4, node1 and Binding move1.
     // Every mutable Binding and historical payload still goes through copyFrame.
     // Full-key order proves a strict end hint. Pay its last-neighbour compare
     // and debug reverse before the independent key/binding are constructed.
     if(!result.empty()){if(!check.step(result.size()+1))return {};const auto previous=std::prev(result.end());
-      if(!check.step(2*(previous->first.size()+id.size()+1)))return {};}
-    if(!check.step(6))return {};auto next=check.copyFrame(row.row->second);if(!check.e.message.empty())return {};
-    result.emplace_hint(result.end(),row.row->first,std::move(next));
+      if(!check.step(2*(previous->first.size()+row->row->first.size()+1)))return {};}
+    if(!check.step(6))return {};auto next=check.copyFrame(row->row->second);if(!check.e.message.empty())return {};
+    result.emplace_hint(result.end(),row->row->first,std::move(next));
   }return result;
 }
 }
@@ -372,24 +393,56 @@ bool ActualCheck::receiverReconcile(const ActualFrameWorld &world,ActualHeap &he
 }
 std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &activation,const std::string &site,const std::string &owner,
   const std::string &construction,const std::string &newTarget,bool repeated,const std::string &parent){
-  // These admitted UTF8 views stay live through synchronous canonical/hash.
-  // Remove only the unused LLVM Value prevalidation walk; both policy walks,
-  // output/hash and the existing per-part metadata work remain paid.
-  for(const auto *s:{&activation,&site,&owner,&construction,&newTarget,&parent})if(!step(10*s->size()+8))return {};
-  if(!step(128)||!need(types.count(owner)&&types.count(newTarget),"frame owner/newTarget is not owned"))return {};
-  const llvm::StringRef parts[]={activation,site,owner,construction,newTarget,parent};
-  auto id="receiver:"+digest(canonicalStrings(parts));
-  auto metadata=receiverFrames.find(id);if(metadata==receiverFrames.end()){const auto &type=*types.at(owner);const auto &ctor=field(type,"construction");ActualFrameInfo info;
-    // Keep the original eight metadata operations, then pay the two-word
-    // view acquisition/construction/assignment bound before borrowing it.
-    if(!step(8)||!step(6))return {};
-    info.owner=owner;info.construction=construction;info.newTarget=newTarget;info.parent=parent;info.derived=!string(field(type,"base")).empty();
-    info.fields=ActualInitializationFields(items(field(ctor,"initializationFields")));
-    // Same adopt-and-publish boundary as fieldSlot: allocation/release8, buffer and node-owner moves4.
-    if(!step(8)||!step(4))return {};metadata=receiverFrames.emplace(ActualFrameId(std::move(id)),std::move(info)).first;}
-  const auto &key=metadata->first;auto old=world.find(key);
-  if(old!=world.end()&&repeated){old->second.weak=true;old->second.unbound=true;old->second.prefixMin=0;}
-  else {if(!step(8)||!step(4))return {};ActualFrameBinding value;value.weak=repeated;world.insert_or_assign(key,std::move(value));}
+  const std::string *parts[]={&activation,&site,&owner,&construction,&newTarget,&parent};
+  const ActualFrameDirectory::value_type *metadata=nullptr;
+  for(const auto &candidate:frameIdentities){
+    if(!step(13))return {};bool same=true;
+    for(size_t i=0;i<std::size(parts);++i)same&=candidate.parts[i].size()==parts[i]->size();
+    if(!same)continue;
+    for(auto i:{2,4,5,1,0,3}){
+      if(!step(4))return {};
+      if(!parts[i]->empty()&&candidate.parts[i].back()!=parts[i]->back()){same=false;break;}
+    }
+    if(!same)continue;
+    // Reject different owners/newTargets before comparing long activation paths.
+    // Every surviving component still requires its complete original bytes.
+    for(auto i:{2,4,5,1,0,3}){
+      if(!step(2*parts[i]->size()+2))return {};
+      if(candidate.parts[i]!=*parts[i]){same=false;break;}
+    }
+    if(same){if(!step(2))return {};metadata=candidate.row;break;}
+  }
+  if(!metadata){
+    // These admitted UTF8 views stay live through synchronous canonical/hash.
+    // Both policy walks, output/hash and per-part metadata work remain paid.
+    for(const auto *part:parts)if(!step(10*part->size()+8))return {};
+    if(!step(128)||!need(types.count(owner)&&types.count(newTarget),"frame owner/newTarget is not owned"))return {};
+    const llvm::StringRef texts[]={activation,site,owner,construction,newTarget,parent};
+    auto id="receiver:"+digest(canonicalStrings(texts));
+    auto found=receiverFrames.find(id);if(found==receiverFrames.end()){const auto &type=*types.at(owner);const auto &ctor=field(type,"construction");ActualFrameInfo info;
+      // Metadata reads, shared field view, allocation/release and owner moves.
+      if(!step(8)||!step(6))return {};
+      info.owner=owner;info.construction=construction;info.newTarget=newTarget;info.parent=parent;info.derived=!string(field(type,"base")).empty();
+      info.fields=ActualInitializationFields(items(field(ctor,"initializationFields")));
+      if(!step(8)||!step(4))return {};found=receiverFrames.emplace(ActualFrameId(std::move(id)),std::move(info)).first;}
+    metadata=&*found;
+    if(frameIdentities.size()==frameIdentities.capacity()){
+      if(!step(26*frameIdentities.size()+1))return {};
+      frameIdentities.reserve(std::max<size_t>(1,frameIdentities.size()*2));
+    }
+    size_t bytes=0;for(const auto *part:parts)bytes+=part->size();
+    // Own six immutable strings, including their eventual clear/release, and one row pointer.
+    if(!step(bytes/64+31))return {};
+    frameIdentities.push_back({{activation,site,owner,construction,newTarget,parent},metadata});
+  }
+  const auto &key=metadata->first;const auto old=findFrame(*this,world,key.text());if(!old)return {};
+  if(*old!=world.end()&&repeated){
+    if(!step(3))return {};auto &value=(*old)->second;value.weak=true;value.unbound=true;value.prefixMin=0;
+  }else{
+    if(!step(8)||!step(4))return {};ActualFrameBinding value;value.weak=repeated;
+    if(*old==world.end()){if(!receiverText(key.text()))return {};world.emplace(key,std::move(value));}
+    else (*old)->second=std::move(value);
+  }
   // Returning the current string API still copies full bytes, even though its SSA consumer can move that result.
   if(!step(key.size()/64+1))return {};return key.text();
 }
@@ -420,9 +473,9 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
     arms.push_back(Arm{&id,selected,&binding,update,normal});return true;
   };
   if(!step(ids.size()))return out;
-  for(const auto &id:ids){const auto binding=selectionFrameLookup(*this,world,id);
+  for(const auto &id:ids){const auto binding=findFrame(*this,world,id);
     if(!binding||!need(*binding!=world.end(),"receiver frame is absent from completion"))return {};
-    const auto frame=selectionFrameLookup(*this,receiverFrames,id);
+    const auto frame=findFrame(*this,receiverFrames,id);
     if(!frame||!need(*frame!=receiverFrames.end(),"receiver frame is absent from completion"))return {};
     auto &before=(*binding)->second;const auto &info=(*frame)->second;
     if(!step())return {};if(action==ReceiverAction::Result){
@@ -455,7 +508,7 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
     else {next=copyFrames(world);if(!e.message.empty())return {};}
     if(a.update!=Update::None){ActualFrameBinding *binding;
       if(last){if(!step())return {};binding=a.binding;}
-      else {const auto found=selectionFrameLookup(*this,next,*a.id);
+      else {const auto found=findFrame(*this,next,*a.id);
         if(!found||!need(*found!=next.end(),"receiver frame is absent from completion"))return {};binding=&(*found)->second;}
       // The standard allocator propagates on move-assignment: the final
       // destination owns the original nodes. A clone needs its own lookup.

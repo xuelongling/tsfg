@@ -7,6 +7,11 @@
 #include <tuple>
 
 namespace tsfg::commonProgram {
+struct ReturnSourceCatalog {
+  struct Slot {std::string key,type,layout;};
+  std::map<std::string,const Json *> types,functions,globals,layouts;
+  std::map<std::string,Slot> slots;
+};
 namespace {
 using Ref=size_t;
 using Refs=std::set<Ref>;
@@ -26,9 +31,9 @@ struct ReturnSource {
   std::map<std::string,Ref> interned,valuePhis,heapPhis,controlPhis;
   std::map<std::string,Json> accesses;
   State state;
-  std::map<std::string,const Json *> types,functions,globals,layouts,bindings;
-  struct Slot {std::string key,type,layout;};
-  std::map<std::string,Slot> slots;
+  ReturnSourceCatalogCache catalog;
+  std::map<std::string,const Json *> bindings;
+  using Slot=ReturnSourceCatalog::Slot;
   std::map<std::string,Refs> environmentRefs;
   std::map<std::string,bool> references;
   std::set<std::string> activeTypes,foreignCaptures;
@@ -167,9 +172,9 @@ struct ReturnSource {
     if(!lookup(environmentRefs.size(),id))return {};auto known=environmentRefs.find(id);if(known!=environmentRefs.end())return copyRefs(known->second);
     auto current=lexical;std::set<std::string> seen;
     while(!current.empty()){
-      if(!lookup(layouts.size(),current)||!text(current)||!step())return {};
-      if(!need(seen.insert(current).second&&layouts.count(current),"required lexical environment is missing or cyclic"))return {};
-      const auto parent=string(field(*layouts.at(current),"parent"));if(parent.empty())break;
+      if(!lookup(catalog->layouts.size(),current)||!text(current)||!step())return {};
+      if(!need(seen.insert(current).second&&catalog->layouts.count(current),"required lexical environment is missing or cyclic"))return {};
+      const auto parent=string(field(*catalog->layouts.at(current),"parent"));if(parent.empty())break;
       if(!lookup(environmentRefs.size(),current)||!need(environmentRefs.count(current),"lexical parent has no input environment"))return {};
       if(!lookup(environmentRefs.size(),parent))return {};auto selected=environmentRefs.find(parent);
       if(selected==environmentRefs.end()){auto value=environmentParent(environmentRefs.at(current),parent);if(!text(parent)||!step())return {};selected=environmentRefs.emplace(parent,std::move(value)).first;}
@@ -180,8 +185,8 @@ struct ReturnSource {
   bool reference(const std::string &id){
     if(!text(id))return false;if(id=="void")return false;if(!lookup(references.size(),id))return false;
     if(auto found=references.find(id);found!=references.end())return found->second;
-    if(!lookup(types.size(),id)||!step()||!need(types.count(id)&&activeTypes.insert(id).second,"unowned or cyclic containment type"))return false;
-    const auto &row=*types.at(id);const auto kind=string(field(row,"kind"));bool result=kind=="reference"||kind=="array"||kind=="readSpan"||kind=="string"||kind=="unknown";
+    if(!lookup(catalog->types.size(),id)||!step()||!need(catalog->types.count(id)&&activeTypes.insert(id).second,"unowned or cyclic containment type"))return false;
+    const auto &row=*catalog->types.at(id);const auto kind=string(field(row,"kind"));bool result=kind=="reference"||kind=="array"||kind=="readSpan"||kind=="string"||kind=="unknown";
     if(kind=="union")for(const auto &member:items(field(row,"members"))){if(!step())return false;result|=reference(string(member));}
     if(kind=="value")for(const auto &member:items(field(row,"fields"))){if(!step())return false;result|=reference(string(field(member,"type")));}
     activeTypes.erase(id);if(!text(id)||!step())return false;references.emplace(id,result);return result;
@@ -216,15 +221,15 @@ struct ReturnSource {
   Evaluation expression(const Json &,Environment &);
   Body body(const Array &,Environment &);
   Evaluation call(const std::string &,const std::vector<Refs> &,const Json &,Environment &,const Refs *,const Refs *receiver=nullptr,const std::string *ownedSite=nullptr);
-  bool initialize();
+  bool initialize(ReturnSourceCatalogCache *);
   bool normalized(const Function &,Json &);
   bool finish(const Body &,Json &);
-  bool run(Json &);
+  bool run(Json &,ReturnSourceCatalogCache *);
 };
 
 ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vector<Refs> &arguments,const Json &value,Environment &environment,const Refs *selectedCode,const Refs *receiver,const std::string *ownedSite){
-  Evaluation result;if(!lookup(functions.size(),id)||!need(functions.count(id),"call has no owned function protocol"))return result;
-  const auto &callee=*functions.at(id);const bool constructor=string(field(callee,"kind"))=="construction-body";
+  Evaluation result;if(!lookup(catalog->functions.size(),id)||!need(catalog->functions.count(id),"call has no owned function protocol"))return result;
+  const auto &callee=*catalog->functions.at(id);const bool constructor=string(field(callee,"kind"))=="construction-body";
   if(!need(constructor==bool(receiver),"constructor call receiver role differs"))return result;
   const auto &ordinary=items(field(callee,"parameters"));const auto count=ordinary.size()+(!constructor&&!field(callee,"ownerType").getAsNull());
   if(!step(count+1))return result;if(arguments.size()<count){open("call lacks the owned default-parameter return-origin protocol");return result;}
@@ -278,18 +283,18 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
   const auto visit=[&](const Json &child){auto nested=expression(child,environment);inherit(result,nested);return std::move(nested.owner);};
   if(kind=="bindingReference"||kind=="bindingTarget"||kind=="thisReference"){
     const auto binding=kind=="thisReference"?string(field(fn,"receiverBinding")):string(field(value,"binding"));
-    if(!lookup(slots.size(),binding))return result;auto slot=slots.find(binding);
-    if(slot!=slots.end()){
+    if(!lookup(catalog->slots.size(),binding))return result;auto slot=catalog->slots.find(binding);
+    if(slot!=catalog->slots.end()){
       result.owner=capture(environmentFor(slot->second.layout),slot->second);
       if(kind!="bindingTarget"&&foreignCaptures.count(binding))captureAccess(slot->second,true,false,&value);
     }else{if(!lookup(environment.size(),binding))return result;auto selected=environment.find(binding);result.owner=selected==environment.end()?Refs{}:copyRefs(selected->second);}
   }else if(kind=="functionReference"){
-    const auto id=string(field(value,"functionId"));if(!lookup(functions.size(),id)||!need(functions.count(id),"function value has no owned declaration"))return result;
-    const auto layout=string(field(*functions.at(id),"lexicalEnvironment"));std::optional<Refs> incoming;
+    const auto id=string(field(value,"functionId"));if(!lookup(catalog->functions.size(),id)||!need(catalog->functions.count(id),"function value has no owned declaration"))return result;
+    const auto layout=string(field(*catalog->functions.at(id),"lexicalEnvironment"));std::optional<Refs> incoming;
     if(!layout.empty()){incoming=environmentFor(layout);facet("managedReference",&value);}result.owner=code(id,incoming,type);
   }else if(kind=="globalReference"||kind=="globalTarget"){
-    const auto id=string(field(value,"global"));if(!lookup(globals.size(),id)||!need(globals.count(id),"global value has no owned declaration"))return result;
-    result.owner=root("global",string(field(*globals.at(id),"type")),id);
+    const auto id=string(field(value,"global"));if(!lookup(catalog->globals.size(),id)||!need(catalog->globals.count(id),"global value has no owned declaration"))return result;
+    result.owner=root("global",string(field(*catalog->globals.at(id),"type")),id);
     if(kind=="globalReference"){if(!lookup(direct.reads.size(),id)||!step())return result;direct.reads.insert(id);}
   }else if(kind=="parentheses"||kind=="as"||kind=="nonNull")result.owner=visit(field(value,"expression"));
   else if(kind=="binary"&&(string(field(value,"operator"))=="&&"||string(field(value,"operator"))=="||"||string(field(value,"operator"))=="??")){
@@ -316,7 +321,7 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
     const auto targetKind=string(field(*target,"kind")),binding=string(field(*target,"binding")),operation=string(field(value,"operator"));
     const bool hasContainer=target->getAsObject()->get("receiver")!=nullptr;Refs container;if(hasContainer)container=visit(field(*target,"receiver"));
     if(target->getAsObject()->get("index"))visit(field(*target,"index"));
-    if(!lookup(slots.size(),binding))return result;auto slot=slots.find(binding);const bool captured=slot!=slots.end();
+    if(!lookup(catalog->slots.size(),binding))return result;auto slot=catalog->slots.find(binding);const bool captured=slot!=catalog->slots.end();
     const auto selected=hasContainer?copyRefs(container):captured&&operation=="="?Refs{}:visit(*target);
     const bool external=hasContainer||targetKind=="globalTarget"||foreignCaptures.count(binding),logical=operation=="&&="||operation=="||="||operation=="?" "?=";
     if(external&&operation!="="&&!captured)mark(selected,"read",&value);
@@ -360,8 +365,8 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
         if(!need(fixed!=p.callableSites.end(),"indirect call has no independently validated target site"))return result;
         if(fixed->second.top||fixed->second.functions.empty()){open("indirect call has an unresolved permitted target set");return result;}
         if(!step(fixed->second.functions.size()))return result;for(const auto &id:fixed->second.functions){if(!text(id)||!step())return result;targets.push_back(id);}
-      }else{const auto id=string(field(value,"callee"));if(!lookup(functions.size(),id)||!need(functions.count(id),"direct call has no owned declaration"))return result;
-        if(string(field(*functions.at(id),"kind"))=="method"){
+      }else{const auto id=string(field(value,"callee"));if(!lookup(catalog->functions.size(),id)||!need(catalog->functions.count(id),"direct call has no owned declaration"))return result;
+        if(string(field(*catalog->functions.at(id),"kind"))=="method"){
           Json dispatch=nullptr;if(!methodDispatch(p,string(field(field(value,"receiver"),"type")),id,dispatch,error)||!methodTargets(p,dispatch,targets,error))return result;
         }else{if(!text(id)||!step())return result;targets.push_back(id);}
       }
@@ -390,20 +395,20 @@ ReturnSource::Body ReturnSource::body(const Array &rows,Environment &environment
     if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="varDeclaration"||kind=="initialize"){
       if(kind!="varDeclaration"||!field(row,"initializer").getAsNull()){
         const auto assigned=inspect(field(row,"initializer"));const auto binding=string(field(row,"binding")),global=string(field(row,"global"));const Json *declaration=nullptr;
-        if(!global.empty()){if(!lookup(globals.size(),global)||!need(globals.count(global),"initializer has no owned global"))return result;declaration=globals.at(global);}
+        if(!global.empty()){if(!lookup(catalog->globals.size(),global)||!need(catalog->globals.count(global),"initializer has no owned global"))return result;declaration=catalog->globals.at(global);}
         else{if(!lookup(bindings.size(),binding))return result;auto found=bindings.find(binding);if(found!=bindings.end())declaration=found->second;}
         const auto type=declaration?string(field(*declaration,"type")):string(field(field(row,"initializer"),"type"));
         auto stored=copied(assigned,type,field(row,"range"),"declaration-store");if(!text(binding)||!lookup(environment.size(),binding)||!step())return result;environment.insert_or_assign(binding,std::move(stored));
         if(!global.empty()){if(!text(global)||!lookup(direct.writes.size(),global)||!step())return result;direct.writes.insert(global);}
-        if(!lookup(slots.size(),binding))return result;auto slot=slots.find(binding);
-        if(slot!=slots.end()){if(!text(slot->second.key)||!text(slot->second.layout)||!step(2))return result;
+        if(!lookup(catalog->slots.size(),binding))return result;auto slot=catalog->slots.find(binding);
+        if(slot!=catalog->slots.end()){if(!text(slot->second.key)||!text(slot->second.layout)||!step(2))return result;
           write(environmentFor(slot->second.layout),"capture:"+slot->second.key,environment.at(binding),"env:"+slot->second.layout,kind!="varDeclaration");}
       }
     }else if(kind=="expression")inspect(field(row,"value"));
     else if(kind=="return"){
       if(const auto *value=row.getAsObject()->get("value")){
-        const auto evaluated=inspect(*value);const auto type=string(field(fn,"returnType"));if(!lookup(types.size(),type))return result;
-        const bool nothing=type=="void"||(types.count(type)&&string(field(*types.at(type),"kind"))=="void");
+        const auto evaluated=inspect(*value);const auto type=string(field(fn,"returnType"));if(!lookup(catalog->types.size(),type))return result;
+        const bool nothing=type=="void"||(catalog->types.count(type)&&string(field(*catalog->types.at(type),"kind"))=="void");
         if(!nothing)add(current.returned,copied(evaluated,type,field(row,"range"),"return"));
         if(reference(type))facet("escape",&row);
         // Code/Env actual ownership and conditional ReadSpan escape are checked
@@ -431,8 +436,8 @@ ReturnSource::Body ReturnSource::body(const Array &rows,Environment &environment
       const auto putType=[&](const std::string &id,const std::string &type){if(!text(id)||!text(type)||!lookup(bindingTypes.size(),id)||!step())return;bindingTypes.insert_or_assign(id,type);};
       for(const auto &[id,type]:parameters)putType(id,type);
       for(const auto &[id,binding]:bindings)putType(id,string(field(*binding,"type")));
-      for(const auto &[id,global]:globals)putType(string(field(*global,"sourceBinding")),string(field(*global,"type")));
-      for(const auto &capture:items(field(fn,"captures"))){const auto binding=string(field(capture,"binding"));if(!lookup(slots.size(),binding)||!need(slots.count(binding),"loop capture lacks owned slot"))return result;putType(binding,slots.at(binding).type);}
+      for(const auto &[id,global]:catalog->globals)putType(string(field(*global,"sourceBinding")),string(field(*global,"type")));
+      for(const auto &capture:items(field(fn,"captures"))){const auto binding=string(field(capture,"binding"));if(!lookup(catalog->slots.size(),binding)||!need(catalog->slots.count(binding),"loop capture lacks owned slot"))return result;putType(binding,catalog->slots.at(binding).type);}
       const auto loopPhi=[&](Environment &target,const Environment &inputs){for(const auto &[binding,values]:inputs){
         if(!lookup(bindingTypes.size(),binding))return;auto type=bindingTypes.find(binding);if(type==bindingTypes.end())continue;
         if(!text(loopSite)||!text(binding)||!step())return;auto joined=phi(type->second,values,loopSite+"/"+binding);
@@ -483,10 +488,10 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
   if(!step(cfg.carriers.size()+cfg.blocks.size())||!need(cfg.id==functionId&&!cfg.blocks.empty(),"admitted constructor CFG owner differs"))return false;
   const auto views=p.registerViews.find(functionId);if(!need(views!=p.registerViews.end()&&views->second.size()==cfg.carriers.size(),"admitted CFG has no complete semantic register projection"))return false;
   std::map<std::string,std::string> fieldOwners;
-  for(const auto &[id,type]:types)for(const auto &member:items(field(*type,"fields"))){
+  for(const auto &[id,type]:catalog->types)for(const auto &member:items(field(*type,"fields"))){
     if(!step()||!text(id)||!text(string(field(member,"id"))))return false;fieldOwners.emplace(string(field(member,"id")),id);
   }
-  const auto view=[&](uint16_t reg)->std::optional<std::string>{const auto &type=views->second[reg];if(!text(type))return {};return types.count(type)?std::optional<std::string>{type}:std::nullopt;};
+  const auto view=[&](uint16_t reg)->std::optional<std::string>{const auto &type=views->second[reg];if(!text(type))return {};return catalog->types.count(type)?std::optional<std::string>{type}:std::nullopt;};
   const auto mergeInputs=[&](Json &row,const Refs &inputs){
     Refs merged;for(const auto &input:items(field(row,"inputs"))){if(!step())return false;merged.insert(size_t(input.getAsInteger().value()));}
     add(merged,inputs);if(!good())return false;(*row.getAsObject())["inputs"]=refs(merged);return good();
@@ -594,19 +599,19 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
       }else if(name=="global_store"){
         return open("normalized global store payload has no return-origin projection");
       }else if(name=="global_load"){
-        const auto id=string(field(props,"global"));if(!lookup(globals.size(),id)||!need(globals.count(id),"normalized global has no owned declaration"))return false;
-        const auto type=string(field(*globals.at(id),"type"));auto selected=root("global",type,id);
+        const auto id=string(field(props,"global"));if(!lookup(catalog->globals.size(),id)||!need(catalog->globals.count(id),"normalized global has no owned declaration"))return false;
+        const auto type=string(field(*catalog->globals.at(id),"type"));auto selected=root("global",type,id);
         if(!lookup(direct.reads.size(),id)||!step())return false;direct.reads.insert(id);mark(selected,"read");if(!save(selected))return false;
       }else if(name=="receiver_create"||name=="receiver_child"){
-        const auto type=string(field(props,"owner"));if(!lookup(types.size(),type)||!need(types.count(type),"normalized receiver owner is outside owned types"))return false;
-        const auto construction=string(field(field(*types.at(type),"construction"),"id"));if(!text(construction)||!step(9))return false;
+        const auto type=string(field(props,"owner"));if(!lookup(catalog->types.size(),type)||!need(catalog->types.count(type),"normalized receiver owner is outside owned types"))return false;
+        const auto construction=string(field(field(*catalog->types.at(type),"construction"),"id"));if(!text(construction)||!step(9))return false;
         const auto identity=registerSite(operation.result);
         if(!save(Refs{node(Object{{"kind","receiverFrame"},{"type",nullptr},{"construction",construction},{"newTarget",name=="receiver_create"?field(props,"new_target"):Json(nullptr)},
           {"parent",name=="receiver_child"?Json(refs(value(0))):Json(nullptr)},{"site",identity},{"control",int64_t(state.control)}})}))return false;
       }else if(name=="receiver_allocate"){
         const auto owner=string(field(props,"owner"));
-        if(!lookup(types.size(),owner)||!need(resultType&&*resultType==owner&&types.count(owner),"normalized receiver allocation lacks its owned result type"))return false;
-        const auto kind=string(field(*types.at(owner),"kind"));
+        if(!lookup(catalog->types.size(),owner)||!need(resultType&&*resultType==owner&&catalog->types.count(owner),"normalized receiver allocation lacks its owned result type"))return false;
+        const auto kind=string(field(*catalog->types.at(owner),"kind"));
         if(!need(kind=="reference"||kind=="value","normalized receiver allocation is not a class"))return false;
         auto normal=action("allocate",value(0),{},resultType,false);restore(normal.first);
         if(kind=="reference")facet("allocation",nullptr,"receiver_allocate");
@@ -629,8 +634,8 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
       }else if(name=="env_parent"){
         if(!save(environmentParent(value(0),string(field(props,"layout")))))return false;
       }else if(name=="env_init"||name=="env_store"||name=="env_load"){
-        const auto binding=field(props,"binding").getAsString().value();if(!text(binding)||!lookup(slots.size(),binding))return false;
-        const auto selected=slots.find(binding.str());if(!need(selected!=slots.end(),"normalized environment operation lacks an owned slot"))return false;const auto &slot=selected->second;
+        const auto binding=field(props,"binding").getAsString().value();if(!text(binding)||!lookup(catalog->slots.size(),binding))return false;
+        const auto selected=catalog->slots.find(binding.str());if(!need(selected!=catalog->slots.end(),"normalized environment operation lacks an owned slot"))return false;const auto &slot=selected->second;
         // Complete validated CFG events independently retain the slot binding
         // permission, even when no Source read/write flags are available.
         if(name!="env_init"){
@@ -642,8 +647,8 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
       }else if(name=="make_closure"){
         if(!resultType)return open("normalized closure has no Source view");std::optional<Refs> environment;if(!args.empty())environment=value(0);if(!save(code(string(field(props,"function_id")),environment,*resultType)))return false;
       }else if(name=="invoke"){
-        const auto target=string(field(props,"function_id"));if(!lookup(functions.size(),target))return false;if(!functions.count(target))return open("private recursive constructor invocation has no public fixed row");
-        const auto &callee=*functions.at(target);size_t offset=!field(callee,"lexicalEnvironment").getAsNull();std::optional<Refs> receiver;
+        const auto target=string(field(props,"function_id"));if(!lookup(catalog->functions.size(),target))return false;if(!catalog->functions.count(target))return open("private recursive constructor invocation has no public fixed row");
+        const auto &callee=*catalog->functions.at(target);size_t offset=!field(callee,"lexicalEnvironment").getAsNull();std::optional<Refs> receiver;
         if(string(field(callee,"kind"))=="construction-body")receiver=value(offset++);
         std::vector<Refs> arguments;if(!step(args.size()-offset))return false;for(size_t index=offset;index<args.size();++index)arguments.push_back(value(index));
         if(!lookup(p.sourceBlocks.size(),functionId))return false;const auto sourceBlocks=p.sourceBlocks.find(functionId);
@@ -668,34 +673,46 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
   return finish(completed,raw);
 }
 
-bool ReturnSource::initialize(){
+bool ReturnSource::initialize(ReturnSourceCatalogCache *saved){
   if(!step()||!declarationMetadata(fn))return false;
   direct=Effects{};functionId=string(field(fn,"id"));lexical=string(field(fn,"lexicalEnvironment"));activation=string(field(fn,"activationEnvironment"));
   if(!step(2))return false;heaps.push_back(Object{{"kind","entry"}});controls.push_back(Object{{"kind","entry"}});
-  const auto catalog=[&](const Json &rows,auto &directory){if(!step(items(rows).size()))return;for(const auto &row:items(rows)){
+  const auto load=[&](const Json &rows,auto &directory){if(!step(items(rows).size()))return;for(const auto &row:items(rows)){
     if(!declarationMetadata(row))return;const auto id=string(field(row,"id"));if(!lookup(directory.size(),id)||!step())return;directory.emplace(id,&row);}};
-  catalog(field(p.hir,"types"),types);catalog(field(p.hir,"functions"),functions);catalog(field(p.hir,"globals"),globals);catalog(field(p.hir,"environments"),layouts);catalog(field(fn,"parameters"),bindings);catalog(field(fn,"bindings"),bindings);
-  if(!good())return false;
-  for(const auto &[id,layout]:layouts)for(const auto &slot:items(field(*layout,"slots"))){
-    if(!step(8)||!metadata(slot)||!text(id))return false;const auto binding=string(field(slot,"binding"));
-    if(!lookup(slots.size(),binding)||!need(!slots.count(binding),"binding has multiple environment slot owners"))return false;
-    slots.emplace(binding,Slot{string(field(slot,"key")),string(field(slot,"type")),id});
+  if(!step(4))return false;
+  if(saved&&*saved)catalog=*saved;
+  else{
+    if(!step(8))return false;
+    auto created=std::make_shared<ReturnSourceCatalog>();
+    load(field(p.hir,"types"),created->types);load(field(p.hir,"functions"),created->functions);
+    load(field(p.hir,"globals"),created->globals);load(field(p.hir,"environments"),created->layouts);
+    if(!good())return false;
+    for(const auto &[id,layout]:created->layouts)for(const auto &slot:items(field(*layout,"slots"))){
+      if(!step(8)||!metadata(slot)||!text(id))return false;const auto binding=string(field(slot,"binding"));
+      if(!lookup(created->slots.size(),binding)||!need(!created->slots.count(binding),"binding has multiple environment slot owners"))return false;
+      created->slots.emplace(binding,Slot{string(field(slot,"key")),string(field(slot,"type")),id});
+    }
+    catalog=std::move(created);
+    // Only the enclosing publication proof can retain the borrowed catalog.
+    if(saved){if(!step(4))return false;*saved=catalog;}
   }
+  load(field(fn,"parameters"),bindings);load(field(fn,"bindings"),bindings);
+  if(!good())return false;
   for(const auto &capture:items(field(fn,"captures"))){
     if(!step()||!metadata(capture))return false;const auto binding=string(field(capture,"binding"));
-    if(!lookup(slots.size(),binding)||!need(slots.count(binding),"capture has no owned lexical slot")||!lookup(foreignCaptures.size(),binding)||!step())return false;foreignCaptures.insert(binding);
-    captureAccess(slots.at(binding),field(capture,"read").getAsBoolean()==true,field(capture,"write").getAsBoolean()==true);
+    if(!lookup(catalog->slots.size(),binding)||!need(catalog->slots.count(binding),"capture has no owned lexical slot")||!lookup(foreignCaptures.size(),binding)||!step())return false;foreignCaptures.insert(binding);
+    captureAccess(catalog->slots.at(binding),field(capture,"read").getAsBoolean()==true,field(capture,"write").getAsBoolean()==true);
   }
   return good();
 }
 
-bool ReturnSource::run(Json &raw){
-  if(!initialize())return false;
+bool ReturnSource::run(Json &raw,ReturnSourceCatalogCache *saved){
+  if(!initialize(saved))return false;
   if(string(field(fn,"kind"))=="construction-body")return open("constructor graph requires admitted normalized CFG");
   if(!lexical.empty()){if(!text(lexical)||!step())return false;environmentRefs.emplace(lexical,environmentInput(lexical));facet("managedReference",nullptr,"lexicalEnvironment");}
   if(!activation.empty()){
-    if(!lookup(layouts.size(),activation)||!need(layouts.count(activation),"activation environment has no owned layout"))return false;
-    const auto parent=string(field(*layouts.at(activation),"parent"));std::optional<Refs> selected;if(!parent.empty())selected=environmentFor(parent);
+    if(!lookup(catalog->layouts.size(),activation)||!need(catalog->layouts.count(activation),"activation environment has no owned layout"))return false;
+    const auto parent=string(field(*catalog->layouts.at(activation),"parent"));std::optional<Refs> selected;if(!parent.empty())selected=environmentFor(parent);
     auto value=environmentCreate(activation,selected,site(functionId,field(fn,"range"),"activation"));if(!text(activation)||!step())return false;environmentRefs.insert_or_assign(activation,std::move(value));
     facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");
   }
@@ -705,8 +722,8 @@ bool ReturnSource::run(Json &raw){
   if(!step(parameters.size()))return false;direct.parameters.resize(parameters.size());Environment environment;
   for(size_t i=0;i<parameters.size();++i){const auto &[id,type]=parameters[i];auto value=root("parameter",type,{},i);
     if(!text(id)||!lookup(environment.size(),id)||!step())return false;environment.emplace(id,std::move(value));
-    if(!lookup(slots.size(),id))return false;auto slot=slots.find(id);
-    if(slot!=slots.end()&&slot->second.layout==activation){if(!text(slot->second.key)||!text(activation)||!step(2))return false;
+    if(!lookup(catalog->slots.size(),id))return false;auto slot=catalog->slots.find(id);
+    if(slot!=catalog->slots.end()&&slot->second.layout==activation){if(!text(slot->second.key)||!text(activation)||!step(2))return false;
       write(environmentFor(activation),"capture:"+slot->second.key,environment.at(id),"env:"+activation,true);}
   }
   std::set<std::string> vars;
@@ -724,8 +741,8 @@ bool ReturnSource::run(Json &raw){
     if(!text(key)||!lookup(vars.size(),key)||!step())return false;const auto id=key.str();if(!vars.count(id))continue;
     auto value=literal(true);
     if(!text(id)||!lookup(environment.size(),id)||!step())return false;environment.emplace(id,std::move(value));
-    if(!lookup(slots.size(),id))return false;auto slot=slots.find(id);
-    if(slot!=slots.end()&&slot->second.layout==activation){if(!text(slot->second.key)||!text(activation)||!step(2))return false;
+    if(!lookup(catalog->slots.size(),id))return false;auto slot=catalog->slots.find(id);
+    if(slot!=catalog->slots.end()&&slot->second.layout==activation){if(!text(slot->second.key)||!text(activation)||!step(2))return false;
       write(environmentFor(activation),"capture:"+slot->second.key,environment.at(id),"env:"+activation,true);}
   }
   bool managed=reference(string(field(fn,"returnType")));for(const auto &[id,type]:parameters){if(!step())return false;managed|=reference(type);}
@@ -748,18 +765,18 @@ bool ReturnSource::finish(const Body &completed,Json &raw){
 }
 } // namespace
 
-bool projectNormalizedReturnOriginBody(Program &p,const Json &fn,const Function &cfg,Json &raw,Effects &direct,Error &error,EffectDiagnostics *diagnostics,std::vector<ReturnOriginAccessWitness> *accesses){
-  ReturnSource source{p,fn,direct,error,diagnostics,accesses};return source.initialize()&&source.normalized(cfg,raw);
+bool projectNormalizedReturnOriginBody(Program &p,const Json &fn,const Function &cfg,Json &raw,Effects &direct,Error &error,EffectDiagnostics *diagnostics,std::vector<ReturnOriginAccessWitness> *accesses,ReturnSourceCatalogCache *catalog){
+  ReturnSource source{p,fn,direct,error,diagnostics,accesses};return source.initialize(catalog)&&source.normalized(cfg,raw);
 }
 
-bool deriveReturnOriginBody(Program &p,const Json &fn,Json &raw,Effects &direct,Error &error,EffectDiagnostics *diagnostics,std::vector<ReturnOriginAccessWitness> *accesses){
+bool deriveReturnOriginBody(Program &p,const Json &fn,Json &raw,Effects &direct,Error &error,EffectDiagnostics *diagnostics,std::vector<ReturnOriginAccessWitness> *accesses,ReturnSourceCatalogCache *catalog){
   // Only the Source owner supplies this witness after its independent match.
   // The shared projection itself neither constructs nor requires that token.
   const auto id=field(fn,"id").getAsString().value();
   size_t lookup=1;for(auto count=p.constructorReturnCFGs.size();count;count>>=1)lookup+=2;
   if(!p.charge((id.size()/8+1)*(lookup+1)))return reject(error,"core-ir-common-budget","Source return-origin CFG dispatch exceeded shared work");
   const auto qualified=p.constructorReturnCFGs.find(id.str());
-  if(qualified!=p.constructorReturnCFGs.end())return projectNormalizedReturnOriginBody(p,fn,qualified->second.get(),raw,direct,error,diagnostics,accesses);
-  ReturnSource source{p,fn,direct,error,diagnostics,accesses};return source.run(raw);
+  if(qualified!=p.constructorReturnCFGs.end())return projectNormalizedReturnOriginBody(p,fn,qualified->second.get(),raw,direct,error,diagnostics,accesses,catalog);
+  ReturnSource source{p,fn,direct,error,diagnostics,accesses};return source.run(raw,catalog);
 }
 } // namespace tsfg::commonProgram

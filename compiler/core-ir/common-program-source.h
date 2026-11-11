@@ -67,8 +67,10 @@ bool finishReturnOriginProofs(Program &,Error &);
 // No Source body or FDI steps are read; callers must own those admission facts.
 // The result is raw equations plus direct effects, not reader/inclusion/domain
 // proof or cold authorization. The existing cumulative Program charge is shared.
-bool projectNormalizedReturnOriginBody(Program &,const Json &ownedFunction,const Function &admittedCFG,Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,std::vector<ReturnOriginAccessWitness> *accesses=nullptr);
-bool deriveReturnOriginBody(Program &,const Json &,Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,std::vector<ReturnOriginAccessWitness> *accesses=nullptr);
+struct ReturnSourceCatalog;
+using ReturnSourceCatalogCache=std::shared_ptr<const ReturnSourceCatalog>;
+bool projectNormalizedReturnOriginBody(Program &,const Json &ownedFunction,const Function &admittedCFG,Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,std::vector<ReturnOriginAccessWitness> *accesses=nullptr,ReturnSourceCatalogCache *catalog=nullptr);
+bool deriveReturnOriginBody(Program &,const Json &,Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,std::vector<ReturnOriginAccessWitness> *accesses=nullptr,ReturnSourceCatalogCache *catalog=nullptr);
 // Consumes equations derived from the complete independently owned current
 // body, with all semantic views/physical Value capabilities admitted. The raw
 // input is not the Published graph, and direct effects/witnesses must also be
@@ -88,7 +90,7 @@ DirectThrowPotential projectDirectThrowPotential(Program &,const Function &check
   const CommonReturnOriginV4::Graph &current,const CommonReturnOriginV4::Graph &fixed,Error &);
 ProjectedReturnEffects deriveProjectedEffects(Program &,const Json &ownedFunction,const Json &currentBody,Effects &direct,Error &,EffectDiagnostics *,const std::vector<ReturnOriginAccessWitness> &);
 // Warm effects-only completion requires a trusted normalized physical-void CFG.
-ProjectedReturnEffects deriveOwnedEffects(Program &,const Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr);
+ProjectedReturnEffects deriveOwnedEffects(Program &,const Json &,Effects &,Error &,EffectDiagnostics *diagnostics=nullptr,ReturnSourceCatalogCache *catalog=nullptr);
 bool fixedReturnOriginAvailable(const Program &,const std::string &);
 bool scalarReturnOriginProof(Program &,const std::string &,Error &);
 bool deriveScalarEffects(Program &,const Json &,Effects &,Error &);

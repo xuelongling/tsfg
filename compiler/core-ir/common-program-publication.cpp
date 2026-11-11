@@ -212,9 +212,11 @@ bool admitPublication(Program &p,Error &e){
 }
 bool verifyPublication(Program &p,Error &e){
   if(!p.returnOriginContracts)return reject(e,"core-ir-common-publication","fixed group must be admitted before body proof");
+  // The immutable catalog borrows this Program's HIR only during this proof.
+  ReturnSourceCatalogCache catalog;
   const auto &functions=items(field(p.hir,"functions"));
   for(const auto &fn:functions){Effects effective;const auto id=string(field(fn,"id"));
-    const auto derived=deriveOwnedEffects(p,fn,effective,e);if(derived==ProjectedReturnEffects::Invalid)return false;
+    const auto derived=deriveOwnedEffects(p,fn,effective,e,nullptr,&catalog);if(derived==ProjectedReturnEffects::Invalid)return false;
     // Actual storage and callee ABI obligations may be wider than a Source
     // assertion's view. They only add requirements to this fixed contract.
     auto physical=p.effects.find(id);if(physical!=p.effects.end()){

@@ -504,7 +504,7 @@ bool scalarReturnOriginProof(Program &p,const std::string &root,Error &e){
   }
   return true;
 }
-ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out,Error &e,EffectDiagnostics *diagnostics){
+ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out,Error &e,EffectDiagnostics *diagnostics,ReturnSourceCatalogCache *catalog){
   using Status=ProjectedReturnEffects;
   if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return Status::Invalid;auto &state=*p.returnOriginContracts;const auto id=string(field(fn,"id"));auto bound=state.graphs.find(id);
   const Function *physical=nullptr;
@@ -558,8 +558,8 @@ ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out
       if(!work(p,e))return Status::Invalid;p.returnOriginPending.insert(id);return Status::Open;}
   }
   Json raw=nullptr;std::vector<ReturnOriginAccessWitness> witnesses;
-  const bool body=physical?projectNormalizedReturnOriginBody(p,fn,*physical,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr):
-    deriveReturnOriginBody(p,fn,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr);
+  const bool body=physical?projectNormalizedReturnOriginBody(p,fn,*physical,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr,catalog):
+    deriveReturnOriginBody(p,fn,raw,out,e,diagnostics,diagnostics?&witnesses:nullptr,catalog);
   if(!body){
     if(e.code!="core-ir-common-return-origin-open")return Status::Invalid;p.returnOriginPending.insert(id);e=Error{};return Status::Open;
   }
