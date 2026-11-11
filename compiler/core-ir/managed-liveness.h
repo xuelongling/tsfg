@@ -27,6 +27,8 @@ struct CommonCallRootPoint {
   std::string operation, sourcePath;
   uint32_t start, end;
   std::vector<uint16_t> registers;
+  // Each listed callable carries one optional environment handle.
+  std::vector<uint16_t> callableEnvironments;
 };
 struct CommonCallRoots {
   std::string inputIdentity, functionId;
@@ -36,8 +38,12 @@ struct CommonCallRoots {
   size_t work = 0;
 };
 inline constexpr size_t commonCallRootsWorkLimit = 1000000;
+enum class CommonCallRootMode { DirectHandles, ClosureComponents };
 // Analyzes one function only after verifying the whole Common module. Register
 // ordinals and carriers are owned compiler data, with no physical addresses.
+// ClosureComponents also admits direct lexical environment handles and lists
+// the environment component of live callable SSA values separately.
 bool analyzeCommonCallRoots(mlir::ModuleOp, llvm::StringRef functionId,
-    CommonCallRoots &, commonProgram::Error &, size_t workLimit = commonCallRootsWorkLimit);
+    CommonCallRoots &, commonProgram::Error &, size_t workLimit = commonCallRootsWorkLimit,
+    CommonCallRootMode mode = CommonCallRootMode::DirectHandles);
 } // namespace tsfg

@@ -224,3 +224,13 @@ node --test --test-concurrency=1 tests/r03/common-program-host-core.test.mjs
 ```
 
 These are static parser, verifier, canonicalizer and optimizer checks. Static Core, paired metadata and these controls grant no Host, wire, native, VM or AOT execution qualification.
+
+The private C++ call-root analysis verifies the complete Common Core module
+before selecting one FunctionId. Its direct-handle mode records live reference
+and Array handles by SSA register ordinal at each call's original source
+range. The opt-in closure mode also records direct lexical environment
+handles and identifies each live callable's optional environment handle in a
+separate list. The FunctionId portion of a callable carries no root. The
+analysis rejects live managed cells and other unsupported composite carriers.
+The output describes compiler roots for downstream lowering. It supplies no
+physical frame locations or moving-heap execution result.

@@ -117,7 +117,7 @@ mlir::LogicalResult recomputeManagedLiveness(mlir::func::FuncOp function, Manage
 }
 
 bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
-    CommonCallRoots &output,commonProgram::Error &error,size_t workLimit) {
+    CommonCallRoots &output,commonProgram::Error &error,size_t workLimit,CommonCallRootMode mode) {
   using namespace commonProgram;
   using exception::field;
   using exception::items;
@@ -139,11 +139,13 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
   const auto width=fn.carriers.size(),words=(width+63)/64;
   if(!spend(fn.blocks.size()*(words+1)+width+1))return false;
 
-  std::set<llvm::StringRef> direct;
+  const bool closureComponents=mode==CommonCallRootMode::ClosureComponents;
+  std::set<llvm::StringRef> direct,callables;
   for(const auto &row:items(field(program.hir,"types"))){
     const auto id=field(row,"id").getAsString().value(),kind=field(row,"kind").getAsString().value();
     if(!spend(id.size()/8+1))return false;
     if(kind=="reference"||kind=="array")direct.insert(id);
+    if(closureComponents&&kind=="function")callables.insert(id);
   }
   for(const auto &row:items(field(program.representation,"domains"))){
     const auto id=field(row,"id").getAsString().value();
@@ -162,7 +164,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(!spend(id.size()/8+1))return false;
     bindings.emplace(id,field(row,"carrier").getAsString().value());
   }
-  enum class RootKind { None, Handle, Unsupported };
+  enum class RootKind { None, Handle, CallableEnvironment, Unsupported };
   std::vector<RootKind> kinds;
   kinds.reserve(width);
   for(llvm::StringRef carrier:fn.carriers){
@@ -175,11 +177,18 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
       if(!spend(carrier.size()/8+1))return false;
     }
     const auto layout=program.layouts.find(carrier.str());
-    if(layout!=program.layouts.end()&&layout->second.referenceCount==0)kinds.push_back(RootKind::None);
-    else if(!cell&&direct.count(carrier)&&layout!=program.layouts.end()&&
-            layout->second.referenceCount==1&&layout->second.byteSize==8&&layout->second.alignment==8)
-      kinds.push_back(RootKind::Handle);
-    else kinds.push_back(RootKind::Unsupported);
+    auto kind=RootKind::Unsupported;
+    if(layout!=program.layouts.end()){
+      const auto &storage=layout->second;
+      if(storage.referenceCount==0)kind=RootKind::None;
+      if(!cell&&storage.referenceCount==1&&storage.alignment==8){
+        // Verified env: carriers are owned lexical environment layouts.
+        const bool environment=closureComponents&&carrier.starts_with("env:");
+        if(storage.byteSize==8&&(environment||direct.count(carrier)))kind=RootKind::Handle;
+        if(storage.byteSize==40&&callables.count(carrier))kind=RootKind::CallableEnvironment;
+      }
+    }
+    kinds.push_back(kind);
   }
 
   const auto forwards=[](const Operation &op){return op.name=="cf.br"||op.name=="cf.cond_br"||op.name=="route";};
@@ -250,7 +259,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
       if(!call(op))continue;
       const auto &path=sources.at({uint16_t(block),uint16_t(i-1)});
       if(!spend(words+path.size()/8+op.name.size()/8+2))return false;
-      CommonCallRootPoint point{uint16_t(block),uint16_t(i-1),op.name,path,op.range.start,op.range.end,{}};
+      CommonCallRootPoint point{uint16_t(block),uint16_t(i-1),op.name,path,op.range.start,op.range.end,{},{}};
       for(int reg=live.find_first();reg>=0;reg=live.find_next(reg)){
         if(!spend(1))return false;
         if(kinds[reg]==RootKind::Unsupported){
@@ -258,6 +267,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
           return reject(error,"core-ir-common-call-roots-capability","live carrier has no direct managed root component proof");
         }
         if(kinds[reg]==RootKind::Handle)point.registers.push_back(uint16_t(reg));
+        if(kinds[reg]==RootKind::CallableEnvironment)point.callableEnvironments.push_back(uint16_t(reg));
       }
       points.push_back(std::move(point));
     }
