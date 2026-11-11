@@ -1220,11 +1220,11 @@ const Graph = struct {
         }
     }
     fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs) Error!void {
-        // Visit exact same-module ordinary call targets from their local block
-        // 0. Mark on enqueue so recursive edges visit each body only once.
+        // An imported ordinary call can reach the initializer's own Globals
+        // through a callback. Visit exact targets from block 0, once per body.
         const c=self.c; try c.charge(3); const functions=c.program.functions;
         const first=functions[@intFromEnum(target)];
-        if(first.role!=.ordinary or first.source!=self.f.source)return;
+        if(first.role!=.ordinary)return;
         const globals=c.program.tables.mode.common.modules.globals;
         const mask_bits=@bitSizeOf(std.DynamicBitSetUnmanaged.MaskInt);
         try c.charge(4+functions.len+(functions.len+mask_bits-1)/mask_bits);
@@ -1249,7 +1249,7 @@ const Graph = struct {
                             if(!seen_functions.isSet(index)) {
                                 seen_functions.set(index);
                                 const callee=functions[index];
-                                if(callee.role==.ordinary and callee.source==self.f.source) {
+                                if(callee.role==.ordinary) {
                                     try c.step(); pending_functions[function_count]=v.callee; function_count+=1;
                                 }
                             }

@@ -12,6 +12,7 @@ const publication = @import("wire-program-publication.zig");
 const context = @import("wire-program-refcheck-context.zig");
 const layout = @import("wire-program-layout-check.zig");
 const ssa = @import("wire-program-ssa-check.zig");
+const module_contracts = @import("wire-program-module-contracts-check.zig");
 const t = wire.types;
 const ins = wire.instruction;
 const scalar: t.TypeRef = @enumFromInt(0);
@@ -282,15 +283,16 @@ const Fixture = struct {
     }
 };
 
-fn prerequisites(c: *context.Context) !void {
+fn prerequisites(c: *context.Context, foreign: bool) !void {
     const common=c.program.tables.mode.common;
     const module=common.modules.modules[0];
     try std.testing.expectEqual(@as(t.FunctionRef,@enumFromInt(0)),module.initializer);
     try std.testing.expectEqual(c.program.functions[0].source,module.source);
     for(common.modules.globals,0..) |global,index| {
         _=try c.ref(global.binding,common.storage.bindings.len); _=try c.ref(global.source,c.program.tables.sources.len);
-        try std.testing.expectEqual(@as(t.GlobalRef,@enumFromInt(index)),module.globals[index]);
-        try std.testing.expectEqual(module.source,global.source);
+        const owner=common.modules.modules[if(foreign)index else 0];
+        try std.testing.expectEqual(@as(t.GlobalRef,@enumFromInt(index)),owner.globals[if(foreign)0 else index]);
+        try std.testing.expectEqual(owner.source,global.source);
     }
     for(c.program.functions,0..) |f,index| {
         try c.anchor(f.declaration,f.source); _=try c.ref(f.abi,common.abis.len);
@@ -321,7 +323,8 @@ fn prerequisites(c: *context.Context) !void {
                         const callee_id=if(expected_target==1)f1 else f2;
                         try std.testing.expectEqual(expected_target,target);
                         try std.testing.expectEqual(callee_id,c.program.functions[target].id);
-                        try std.testing.expectEqual(module.source,c.program.functions[target].source);
+                        const target_source: t.SourceRef=if(foreign and expected_target==1)@enumFromInt(1) else module.source;
+                        try std.testing.expectEqual(target_source,c.program.functions[target].source);
                         try std.testing.expect(c.program.functions[target].role==.ordinary);
                         const callees=common.authority.fixed_publication.dependencies[index].callees;
                         try std.testing.expectEqual(@as(usize,1),callees.len);
@@ -357,7 +360,7 @@ fn prerequisites(c: *context.Context) !void {
 fn check(case: Case, rejected: bool) !void {
     var fixture: Fixture=undefined; fixture.init(case);
     var c=context.Context{ .program=&fixture.program,.allocator=std.testing.allocator };
-    try prerequisites(&c);
+    try prerequisites(&c,false);
     if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
     try std.testing.expect(c.remaining>0 and c.remaining<wire.format.max_work);
 }
@@ -384,3 +387,116 @@ test "module call rejects a transitive Global read before initialization" { try 
 test "module call accepts a transitive Global read after initialization" { try check(.nested_after_init,false); }
 test "module call rejects a transitive read through a recursive call graph" { try check(.recursive_before_init,true); }
 test "module call accepts a recursive call graph with its observed Global initialized" { try check(.recursive_after_init,false); }
+
+const foreign_source: t.SourceRef = @enumFromInt(1);
+const owner_path = "/module-call-initialized.ts";
+const foreign_path = "/module-call-relay.ts";
+const foreign_anchor: t.Origin = .{ .source=foreign_source,.start=0,.end=100 };
+const foreign_initializer: t.Hash = @splat(0x33);
+const owner_module: t.Hash = @splat(0x50);
+const foreign_module: t.Hash = @splat(0x51);
+const Global = @typeInfo(@FieldType(tables.CommonModules,"globals")).pointer.child;
+const Module = @typeInfo(@FieldType(tables.CommonModules,"modules")).pointer.child;
+const cross_modules = [_]Module{
+    .{ .id=owner_module,.source=@enumFromInt(0),.external=true,.initializer=@enumFromInt(0),.dependencies=&.{@enumFromInt(1)},.globals=&.{@enumFromInt(0)},
+       .imports=&.{.{ .kind=.import,.specifier="./module-call-relay",.source=foreign_source,.bindings=&.{
+           .{ .imported="relay",.kind=.function,.name="relay",.target=f1,.target_source=foreign_source },
+           .{ .imported="g1",.kind=.global,.name="g1",.target=g1,.target_source=foreign_source },
+       } }},.exports=&.{.{ .kind=.function,.name="observe",.target=f2,.target_source=@enumFromInt(0) }} },
+    .{ .id=foreign_module,.source=foreign_source,.external=true,.initializer=@enumFromInt(3),.dependencies=&.{@enumFromInt(0)},.globals=&.{@enumFromInt(1)},
+       .imports=&.{.{ .kind=.import,.specifier="./module-call-initialized",.source=@enumFromInt(0),.bindings=&.{
+           .{ .imported="observe",.kind=.function,.name="observe",.target=f2,.target_source=@enumFromInt(0) },
+       } }},.exports=&.{
+           .{ .kind=.function,.name="relay",.target=f1,.target_source=foreign_source },
+           .{ .kind=.global,.name="g1",.target=g1,.target_source=foreign_source },
+       } },
+};
+const cross_scope_modules = [_]publication.ScopeModule{
+    .{ .id=owner_module,.source_path=owner_path,.external=true,.initializer=f0,.dependencies=&.{foreign_path},.globals=&.{g0},
+       .imports=&.{.{ .kind=.import,.specifier="./module-call-relay",.source_path=foreign_path,.bindings=&.{
+           .{ .imported="relay",.kind=.function,.name="relay",.target=f1,.target_source_path=foreign_path },
+           .{ .imported="g1",.kind=.global,.name="g1",.target=g1,.target_source_path=foreign_path },
+       } }},.exports=&.{.{ .kind=.function,.name="observe",.target=f2,.target_source_path=owner_path }} },
+    .{ .id=foreign_module,.source_path=foreign_path,.external=true,.initializer=foreign_initializer,.dependencies=&.{owner_path},.globals=&.{g1},
+       .imports=&.{.{ .kind=.import,.specifier="./module-call-initialized",.source_path=owner_path,.bindings=&.{
+           .{ .imported="observe",.kind=.function,.name="observe",.target=f2,.target_source_path=owner_path },
+       } }},.exports=&.{
+           .{ .kind=.function,.name="relay",.target=f1,.target_source_path=foreign_path },
+           .{ .kind=.global,.name="g1",.target=g1,.target_source_path=foreign_path },
+       } },
+};
+const cross_dependencies = nested_dependencies ++ [_]Dependency{
+    .{ .function_id=foreign_initializer,.callees=&.{},.hosts=&.{} },
+};
+const CrossCase = enum { read_before, read_after, write_before, write_after, foreign_read };
+const CrossFixture = struct {
+    base: Fixture,
+    functions: [4]wire.Function,
+    abis: [4]storage.CommonAbi,
+    sources: [2]tables.Source,
+    globals: [2]Global,
+    foreign_ops: [3]ins.Instruction,
+    foreign_blocks: [1]wire.Block,
+
+    fn init(self: *CrossFixture, case: CrossCase) void {
+        self.base.init(if(case==.read_after or case==.write_after).nested_after_init else .nested_before_init);
+        self.sources=.{self.base.sources[0],.{ .hash=@splat(0x20),.path=foreign_path,.length=100 }};
+        self.functions[0..3].*=self.base.functions;
+        self.functions[1].source=foreign_source;
+        self.functions[1].name="relay";
+        self.functions[2].name="observe";
+        for(self.base.callee_instructions[0..4]) |*op| op.source=foreign_anchor;
+        if(case==.write_before or case==.write_after){
+            self.base.other_instructions[0..4].*=.{entry_fuel,constant,store0,ret};
+            self.base.other_blocks[0].instructions=self.base.other_instructions[0..4];
+        }else if(case==.foreign_read)self.base.other_instructions[1]=load1;
+        self.foreign_ops=.{constant,init0,ret};
+        for(&self.foreign_ops) |*op| op.source=foreign_anchor;
+        self.foreign_ops[1].data.global_store.global=@enumFromInt(1);
+        self.foreign_blocks=.{.{ .parameters=&empty,.instructions=&self.foreign_ops }};
+        self.functions[3]=self.functions[0];
+        self.functions[3].id=foreign_initializer;
+        self.functions[3].abi=@enumFromInt(3);
+        self.functions[3].source=foreign_source;
+        self.functions[3].registers=callee_registers[0..1];
+        self.functions[3].blocks=&self.foreign_blocks;
+        self.abis[0..3].*=self.base.abis;
+        self.abis[3]=self.abis[0];
+        self.abis[3].function=@enumFromInt(3);
+        self.base.bindings[1].origin=foreign_anchor;
+        var common=&self.base.program.tables.mode.common;
+        self.globals=common.modules.globals[0..2].*;
+        self.globals[1].source=foreign_source;
+        self.globals[1].decl_key.source_path=foreign_path;
+        common.abis=&self.abis;
+        common.modules.globals=&self.globals;
+        common.modules.modules=&cross_modules;
+        common.modules.initialization=&.{@enumFromInt(1),@enumFromInt(0)};
+        common.exceptions.functions=&.{
+            .{ .function=@enumFromInt(0),.handlers=&.{} },.{ .function=@enumFromInt(1),.handlers=&.{} },
+            .{ .function=@enumFromInt(2),.handlers=&.{} },.{ .function=@enumFromInt(3),.handlers=&.{} },
+        };
+        common.authority.fixed_publication.stable_scope.root_file=owner_path;
+        common.authority.fixed_publication.stable_scope.modules=&cross_scope_modules;
+        common.authority.fixed_publication.dependencies=&cross_dependencies;
+        self.base.program.tables.sources=&self.sources;
+        self.base.program.functions=&self.functions;
+    }
+};
+
+fn checkCrossModule(case: CrossCase, rejected: bool) !void {
+    var fixture: CrossFixture=undefined;
+    fixture.init(case);
+    var c=context.Context{ .program=&fixture.base.program,.allocator=std.testing.allocator };
+    try prerequisites(&c,true);
+    // This verifies exact Source owners, reciprocal import/export relations,
+    // initializer ABI and the cycle-tolerant initialization order independently.
+    try module_contracts.checkModules(&c);
+    if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
+    try std.testing.expect(c.remaining>0 and c.remaining<wire.format.max_work);
+}
+test "module callback rejects an owned Global read before initialization" { try checkCrossModule(.read_before,true); }
+test "module callback accepts an initialized owned Global read" { try checkCrossModule(.read_after,false); }
+test "module callback rejects an owned Global write before initialization" { try checkCrossModule(.write_before,true); }
+test "module callback accepts an initialized owned Global write" { try checkCrossModule(.write_after,false); }
+test "module callback leaves a foreign Global outside the caller initialization proof" { try checkCrossModule(.foreign_read,false); }
