@@ -251,7 +251,13 @@ fn expectStructuralRejection(payload: T.Payload, expected: T.Expected) !void {
     var negative_expected = expected;
     negative_expected.payloadHash = &negative.hash;
     // Deliberately recomputed identity is a negative control, never a cold-verified producer receipt.
-    try std.testing.expectError(error.InvalidMetadata, T.Document.load(A, negative.bytes, negative_expected));
+    if (T.Document.load(A, negative.bytes, negative_expected)) |loaded| {
+        var unexpected = loaded;
+        unexpected.deinit();
+        return error.TestExpectedError;
+    } else |err| {
+        try std.testing.expectEqual(error.InvalidMetadata, err);
+    }
 }
 
 fn encodePayload(payload: T.Payload) !struct { bytes: []u8, hash: [71]u8 } {
@@ -292,6 +298,68 @@ test "actual above1MiB producer payload passes the same owning reader and batch 
 test "actual f64 and f32 producer scalars bind independently without narrowing" {
     try exerciseFixture("f64-mixed", false);
 }
+const ScalarMetadataChange = enum { position, binding, width, missing };
+
+fn expectScalarMetadataRejection(change: ScalarMetadataChange) !void {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-f64-mixed-receipt.json"), .{});
+    defer receipt.deinit();
+    var original = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-f64-mixed.tmeta"), receipt.value);
+    defer original.deinit();
+    var payload = original.payload;
+    const entries = try A.dupe(T.Entry, payload.entries);
+    defer A.free(entries);
+    payload.entries = entries;
+    const entry = &entries[0];
+    const scalars = try A.dupe(T.Scalar, entry.scalars);
+    defer A.free(scalars);
+    try std.testing.expectEqual(@as(usize, 2), scalars.len);
+    try std.testing.expectEqual(@as(u32, 1), scalars[0].sourceParameter);
+    try std.testing.expectEqual(@as(u32, 2), scalars[1].sourceParameter);
+    try std.testing.expectEqualStrings("f64", scalars[0].type);
+    try std.testing.expectEqualStrings("f32", scalars[1].type);
+    entry.scalars = scalars;
+    const original_suffix = ", f32) -> ()";
+    try std.testing.expect(std.mem.endsWith(u8, entry.abiType, original_suffix));
+    const suffix = switch (change) {
+        .position => suffix: {
+            scalars[1].sourceParameter += 1;
+            break :suffix original_suffix;
+        },
+        .binding => suffix: {
+            scalars[1].sourceBinding = scalars[0].sourceBinding;
+            break :suffix original_suffix;
+        },
+        .width => suffix: {
+            scalars[1].type = "f64";
+            break :suffix ", f64) -> ()";
+        },
+        .missing => suffix: {
+            entry.scalars = scalars[0..1];
+            break :suffix ") -> ()";
+        },
+    };
+    const abi = try std.mem.concat(A, u8, &.{ entry.abiType[0 .. entry.abiType.len - original_suffix.len], suffix });
+    defer A.free(abi);
+    entry.abiType = abi;
+    try expectStructuralRejection(payload, receipt.value);
+}
+
+test "Query metadata rejects a scalar at a different Source position" {
+    try expectScalarMetadataRejection(.position);
+}
+
+test "Query metadata rejects a scalar with another Source binding" {
+    try expectScalarMetadataRejection(.binding);
+}
+
+test "Query metadata rejects a scalar width inconsistent with Source" {
+    try expectScalarMetadataRejection(.width);
+}
+
+test "Query metadata rejects an incomplete Source scalar sequence" {
+    try expectScalarMetadataRejection(.missing);
+}
+
 test "actual f64 view helper metadata retains its original borrowed batch" {
     try exerciseFixture("f64-helper", false);
 }

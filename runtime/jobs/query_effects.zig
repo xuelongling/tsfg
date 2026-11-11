@@ -23,17 +23,22 @@ const Decl = struct { id: []const u8, range: layout.Range, sourcePath: []const u
 const RawField = struct { id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 } };
 const RawType = struct { id: []const u8, name: ?[]const u8 = null, sourcePath: ?[]const u8 = null, declarationRange: ?layout.Range = null, nominalKey: ?struct { category: []const u8 } = null, fields: []const RawField = &.{} };
 const RawItem = struct { componentType: []const u8, mode: Access };
-const RawParameter = struct { binding: struct { id: []const u8 }, query: ?struct { items: []const RawItem } };
+pub const SourceParameter = struct { binding: struct { id: []const u8 }, logicalType: []const u8, query: ?struct { items: []const RawItem } };
 const RawBinding = struct { componentType: []const u8, declaration: Decl, index: u32, mode: Access };
 const RawLoop = struct { bindings: []const RawBinding, queryBinding: []const u8, range: layout.Range };
-const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const RawParameter };
+const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const SourceParameter };
 const Projection = struct { payload: struct { program: struct { files: []const SourceFile, rootFile: []const u8 }, scalarHelpers: []const struct { declaration: Decl, id: []const u8 }, systems: []const RawSystem, types: []const RawType } };
 
 pub const Analysis = struct {
     report: Report,
-    pub fn system(self: *const Analysis, id: []const u8) ?*const System {
-        for (self.report.systems) |*row| if (same(row.functionId, id)) return row;
+    source_parameters: []const []const SourceParameter,
+
+    pub fn systemIndex(self: *const Analysis, id: []const u8) ?usize {
+        for (self.report.systems, 0..) |row, index| if (same(row.functionId, id)) return index;
         return null;
+    }
+    pub fn system(self: *const Analysis, id: []const u8) ?*const System {
+        return &self.report.systems[self.systemIndex(id) orelse return null];
     }
     /// Only distinct known systems are a protocol pair; this does not choose scheduling.
     pub fn conflictComponents(self: *const Analysis, left: []const u8, right: []const u8) Error![]const []const u8 {
@@ -102,6 +107,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         std.mem.sort([]const u8, transitive.items, {}, lessString);
         if (!sameStrings(transitive.items, helper.transitiveCallees)) return error.InvalidEffects;
     }
+    try context.spend(report.systems.len);
+    const source_parameters = try allocator.alloc([]const SourceParameter, report.systems.len);
     for (report.systems, 0..) |system, index| {
         try context.spend(1);
         if (!digestId(system.functionId) or !digestId(system.signatureHash) or (index > 0 and std.mem.order(u8, report.systems[index - 1].functionId, system.functionId) != .lt)) return error.InvalidEffects;
@@ -114,6 +121,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
             }
         }
         const raw = original orelse return error.InvalidEffects;
+        source_parameters[index] = raw.parameters;
         if (!sameSource(system.source, declarationSource(raw.declaration)) or system.loops.len != raw.loops.len) return error.InvalidEffects;
         for (report.systems[0..index]) |previous| if (same(previous.sourceFunctionId, system.sourceFunctionId)) return error.InvalidEffects;
         try context.source(system.source, null);
@@ -194,7 +202,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         edge += 1;
     };
     if (edge != report.conflicts.len) return error.InvalidEffects;
-    return .{ .report = report };
+    return .{ .report = report, .source_parameters = source_parameters };
 }
 
 const Context = struct {
@@ -227,7 +235,7 @@ const Context = struct {
         }
         return error.InvalidEffects;
     }
-    fn queryItems(self: *Context, parameters: []const RawParameter, binding: []const u8) Error![]const RawItem {
+    fn queryItems(self: *Context, parameters: []const SourceParameter, binding: []const u8) Error![]const RawItem {
         var selected: ?[]const RawItem = null;
         for (parameters) |parameter| {
             try self.spend(1);
