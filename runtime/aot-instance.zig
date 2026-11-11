@@ -10,6 +10,7 @@ const semantics = @import("host-semantic-contract.zig");
 const identity = @import("host_semantic_identity.zig");
 
 pub const version: u32 = 4;
+pub const undefined_numeric_use_reason: u32 = 16;
 pub const max_logical_parameters: usize = 64;
 pub const max_physical_arguments: usize = 128;
 

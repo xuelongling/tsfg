@@ -9,6 +9,7 @@ const request = @import("request.zig");
 const bytecode = @import("bytecode.zig");
 const host = @import("host_counter.zig");
 const clock = @import("clock.zig");
+const undefined_numeric_use_event: u32 = 0x100;
 
 pub const Context = struct {
     allocator: std.mem.Allocator,
@@ -145,6 +146,10 @@ pub const Context = struct {
             if (entity == self.requested and self.frames.items.len == 1) self.returned_source = location.source;
             return true;
         }
+        if (kind == undefined_numeric_use_event) {
+            if (start >= end) return self.bad(entity, source, start, end);
+            return self.fail(1, abi.undefined_numeric_use_reason, entity, source, start, end);
+        }
         if (kind != 1 and kind != 2) return self.bad(entity, source, start, end);
         if (kind == 1) {
             if (self.fuel == 0) return self.fail(1, 7, entity, source, start, end);
@@ -175,6 +180,10 @@ pub fn storeFailure(metadata: *const program.Metadata, failure: abi.Failure, fal
         5 => { request.storeArithmeticTrap(out, "r01-t-conversion-range", "r01-conversions", id, source); return; },
         7 => { request.storeArithmeticTrap(out, "r01-t-fuel", "r01-fuel", id, source); return; },
         8 => { request.storeArithmeticTrap(out, "r01-t-depth", "r01-depth", id, source); return; },
+        abi.undefined_numeric_use_reason => {
+            request.storeArithmeticTrap(out, "r01-t-undefined-numeric-use", "r01-numeric-use", id, source);
+            return;
+        },
         else => {},
     };
     const code: []const u8 = if (failure.kind == 3) switch (failure.reason) {
@@ -182,4 +191,117 @@ pub fn storeFailure(metadata: *const program.Metadata, failure: abi.Failure, fal
         13 => "r05-request-capability", 14 => "r05-request-host-contract", else => "r05-execution-abort",
     } else "r05-execution-abort";
     request.storeRequestFailure(out, code, id, source);
+}
+
+test "fixed value undefined consumption records the original trap and unwinds the active frame" {
+    // The checked valueNumericOnlyUndefined event carries function 4,
+    // UTF-16 [287, 289) and interval 12. Only its callback metadata is used.
+    const entity: u32 = 4;
+    const path = "/src/main.ts";
+    const name = "valueNumericOnlyUndefined";
+    var id: bytecode.FunctionId = undefined;
+    _ = try std.fmt.hexToBytes(&id, "a3310d5ceb3e47bb782953c0fb39a4a31113c5473195bfc449d6091871395d34");
+    var hash: [32]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&hash, "d8061bed116ae031c3e66373de2884cd9e78ae44bb87e23da26392a55c5e3352");
+    const sources = [_]program.Source{.{
+        .path = .{ .data = path.ptr, .length = path.len, .reserved = 0 },
+        .hash = hash,
+        .length = 626,
+        .reserved = 0,
+    }};
+    var functions = [_]program.Function{std.mem.zeroes(program.Function)} ** (entity + 1);
+    functions[entity].id = id;
+    functions[entity].name = .{ .data = name.ptr, .length = name.len, .reserved = 0 };
+    functions[entity].start = 177;
+    functions[entity].end = 292;
+    functions[entity].result = 1;
+    var compiled = std.mem.zeroes(program.Program);
+    compiled.function_count = functions.len;
+    compiled.source_count = sources.len;
+    compiled.functions = &functions;
+    compiled.sources = &sources;
+    const fallback = bytecode.ModuleInfo{
+        .function_id = @splat(0xff),
+        .function_name = "fallback",
+        .source = .{ .path = path, .hash = hash, .start = 0, .end = 626 },
+        .input_identity = @splat(0),
+        .signature_hash = @splat(0),
+        .type_id = @splat(0),
+        .source_utf16_length = 626,
+        .function_start = 0,
+        .function_end = 626,
+        .return_type = 1,
+        .register_count = 0,
+        .instruction_count = 0,
+        .instruction_offset = 0,
+        .block_count = 0,
+    };
+    const metadata = program.Metadata{ .program = &compiled, .default_info = fallback, .selected_info = fallback };
+    const allocator = std.testing.allocator;
+    const instance = abi.Instance{ .allocator = allocator, .globals = &.{}, .initialized = &.{}, .hosts = &.{}, .record = std.mem.zeroes(abi.InstanceRecord) };
+    var invocation = abi.Request.init(null, &Context.event);
+    var counter: host.Counter = .{};
+    var context: Context = .{
+        .allocator = allocator,
+        .metadata = &metadata,
+        .instance = &instance,
+        .invocation = &invocation,
+        .counter = &counter,
+        .limits = .{},
+        .fuel = 7,
+        .work = 11,
+        .deadline = .{},
+        .requested = entity,
+    };
+    defer context.deinit();
+    invocation.event_state = &context;
+    try context.frames.append(allocator, entity);
+    context.depth = 1;
+
+    const event = invocation.event.?;
+    try std.testing.expectEqual(@as(i32, 0), event(invocation.event_state, 256, entity, 287, 289, 12));
+    var outcome: request.RequestOutcome = undefined;
+    storeFailure(&metadata, invocation.failure, &fallback, &outcome);
+    try std.testing.expectEqualStrings("r01-t-undefined-numeric-use", outcome.failed.code);
+    try std.testing.expectEqualStrings("trap", outcome.failed.category);
+    try std.testing.expectEqual(@as(usize, 1), outcome.failed.rule_ids.len);
+    try std.testing.expectEqualStrings("r01-numeric-use", outcome.failed.rule_ids[0]);
+    try std.testing.expectEqual(id, outcome.failed.function_id);
+    try std.testing.expectEqualStrings(path, outcome.failed.source.path);
+    try std.testing.expectEqual(hash, outcome.failed.source.hash);
+    try std.testing.expectEqual(@as(u32, 287), outcome.failed.source.start);
+    try std.testing.expectEqual(@as(u32, 289), outcome.failed.source.end);
+    try std.testing.expectEqual(@as(u32, 1), invocation.failure.kind);
+    try std.testing.expectEqual(@as(u32, 16), invocation.failure.reason);
+    try std.testing.expectEqual(@as(u64, 7), context.fuel);
+    try std.testing.expectEqual(@as(u64, 11), context.work);
+    try std.testing.expect(!context.invalid_event);
+
+    const first = invocation.failure;
+    try std.testing.expectEqual(@as(i32, 0), event(invocation.event_state, 3, entity, 177, 292, 13));
+    try std.testing.expectEqual(@as(u32, 0), context.depth);
+    try std.testing.expectEqual(@as(usize, 0), context.frames.items.len);
+    try std.testing.expectEqualDeep(first, invocation.failure);
+    try std.testing.expect(!context.invalid_event);
+
+    try std.testing.expectEqual(@as(i32, 0), event(invocation.event_state, 256, entity, 288, 289, 14));
+    try std.testing.expectEqualDeep(first, invocation.failure);
+    try std.testing.expect(context.invalid_event);
+
+    // Fresh requests reject a missing frame, invalid source span, or interval.
+    for ([_]struct { start: u32, interval: u64, active: bool }{
+        .{ .start = 287, .interval = 12, .active = false },
+        .{ .start = 176, .interval = 12, .active = true },
+        .{ .start = 287, .interval = 0, .active = true },
+    }) |invalid| {
+        invocation.failure = .{};
+        context.invalid_event = false;
+        context.frames.clearRetainingCapacity();
+        context.depth = @intFromBool(invalid.active);
+        if (invalid.active) context.frames.appendAssumeCapacity(entity);
+        try std.testing.expectEqual(@as(i32, 0), event(invocation.event_state, 256, entity, invalid.start, 289, invalid.interval));
+        try std.testing.expect(context.invalid_event);
+        try std.testing.expectEqual(@as(u32, 2), invocation.failure.kind);
+        try std.testing.expectEqual(@as(u32, 9), invocation.failure.reason);
+    }
 }

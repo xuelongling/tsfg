@@ -65,8 +65,12 @@ operand emits private event 256 for `r01-t-undefined-numeric-use` under
 `r01-numeric-use`, with the original FunctionId and UTF-16 anchor, then enters
 the frame's failure exit. The physical CFG omits the normal successor for an
 undefined-only operand while the complete Core retains that successor and its
-declared i32 capacity. The existing ABI4 Runtime bridge requires a later
-connection from this event to the failure record and `storeFailure` mapping.
+declared i32 capacity. The ABI4 Runtime host callback accepts event 256 from
+the active function at its checked nonempty Source span. It records the first
+failure as kind 1, reason 16 and returns failure. `storeFailure` reports the
+same R01 trap, Rule, FunctionId and UTF-16 span. The leave event unwinds the
+frame. The public fixed-value calling ABI, compiled metadata and generated
+function execution remain open.
 
 Fixed-value floating arithmetic and field equality use the same strict scalar
 helpers. The floating materializer receives the exact selected function list;
