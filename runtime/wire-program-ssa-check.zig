@@ -1037,6 +1037,50 @@ const Graph = struct {
         return blocked;
     }
 
+    fn savedEnvironmentCallThroughBranch(
+        self: *Graph,
+        block: usize,
+        code: t.RegisterRef,
+        captured: t.RegisterRef,
+        calls: []const EnvironmentCall,
+    ) Error!bool {
+        const c = self.c;
+        try c.charge(8);
+        const instructions = self.f.blocks[block].instructions;
+        const position = instructions.len - 1;
+        const terminator = &instructions[position];
+        const first_argument: usize = switch (terminator.data) {
+            .br => 0,
+            .cond_br => 1,
+            else => return false,
+        };
+        const use = self.uses[@intFromEnum(code)];
+        const facts = &self.facts[block];
+        if (use.block != block or use.position != position or use.count != facts.count or use.operand < first_argument) return false;
+        const argument = use.operand - first_argument;
+        const destination = facts.successors[0];
+        if (self.facts[destination].predecessor_count != 1) return false;
+        // A conditional can mention the Code once on each exclusive edge.
+        // Both edges must assign the same destination parameter.
+        for (facts.successors[0..facts.count], 0..) |next, edge| {
+            try c.charge(4);
+            if (next != destination) return false;
+            const arguments = environmentEdgeArguments(terminator, edge).?;
+            if (argument >= arguments.len or arguments[argument] != code) return false;
+        }
+        try c.charge(5);
+        const target = &self.f.blocks[destination];
+        const parameter = target.parameters[argument];
+        const invoke = &target.instructions[target.instructions.len - 1];
+        if (invoke.data != .eh_invoke_indirect or invoke.operands[0] != parameter or self.uses[@intFromEnum(parameter)].count != 1) return false;
+        for (calls) |*call| {
+            try c.charge(2);
+            if (call.block < destination) continue;
+            return call.block == destination and call.receiver == captured;
+        }
+        return false;
+    }
+
     fn environmentMixedState(
         self: *Graph,
         origins: []const EnvironmentOrigin,
@@ -1066,7 +1110,7 @@ const Graph = struct {
         var roots: [4096]t.RegisterRef = undefined;
         var root_count: usize = 0;
         var has_mixed_observation = false;
-        var has_local_saved_code = false;
+        var has_saved_code_observation = false;
         var next_call: usize = 0;
         for (self.f.blocks, 0..) |block, block_index| {
             try c.step();
@@ -1122,13 +1166,18 @@ const Graph = struct {
                         .eh_invoke => if (index != 0 or observed_call == null) return null,
                         .function_make => {
                             try c.charge(6);
-                            const call = observed_call orelse return null;
-                            const invoke = &block.instructions[block.instructions.len - 1];
                             const code = op.result orelse return null;
+                            if (index != 0) return null;
+                            const call = observed_call orelse {
+                                if (!try self.savedEnvironmentCallThroughBranch(block_index, code, operand, calls)) return null;
+                                has_saved_code_observation = true;
+                                continue;
+                            };
+                            const invoke = &block.instructions[block.instructions.len - 1];
                             // The recorded call already proves the Code producer and
                             // target. Each forwarded value must stay local and have
                             // a single use on the way to this call.
-                            if (index != 0 or operand != call.receiver or invoke.data != .eh_invoke_indirect or
+                            if (operand != call.receiver or invoke.data != .eh_invoke_indirect or
                                 self.uses[@intFromEnum(code)].count != 1) return null;
                             var forwarded = invoke.operands[0];
                             while (forwarded != code) {
@@ -1140,7 +1189,7 @@ const Graph = struct {
                                     else => return null,
                                 };
                             }
-                            has_local_saved_code = true;
+                            has_saved_code_observation = true;
                         },
                         else => return null,
                     }
@@ -1164,7 +1213,7 @@ const Graph = struct {
             }
         }
         if (!has_mixed_observation) return null;
-        if (has_local_saved_code) {
+        if (has_saved_code_observation) {
             try c.charge(zero.len);
             if (!std.mem.eql(u64, &repeat_blocks, &zero)) return null;
         }
