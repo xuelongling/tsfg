@@ -50,6 +50,8 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
   const aliases=(a,b)=>{spend();const x=locations[a].node,y=locations[b].node;if(x.kind==='nonowning'||y.kind==='nonowning')return false;
     const envX=x.kind.startsWith('environment-'),envY=y.kind.startsWith('environment-');
     if(envX||envY)return envX&&envY&&a===b;
+    // A receiver allocation carries its exact, ancestry-checked newTarget.
+    if(x.kind==='receiver-object'&&y.kind==='receiver-object'&&x.type!==y.type)return false;
     if(a!==b&&inline(a)&&inline(b)&&(x.kind==='copied-value'||y.kind==='copied-value'))return false;
     return mayAlias({id:a,node:x},{id:b,node:y});};
   const sameField=(base,selector,view,stored)=>{spend();if(selector==='element'||stored.selector==='element')return selector===stored.selector;

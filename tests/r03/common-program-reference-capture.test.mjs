@@ -7,6 +7,8 @@ import {projectCommonProgram,verifyCommonProgramHir} from '../../compiler/common
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {emitCommonProgramCore} from '../../compiler/common-program-core.mjs';
 import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
+import {commonFixedStorageProjection} from '../../compiler/common-program-fixed-storage.mjs';
+import {commonReturnOriginAvailability,commonReturnOriginSource} from '../../compiler/common-program-return-origin-source.mjs';
 import {commonIdentity} from '../../compiler/common-program-identities.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 const packet=name=>readCommonProgramFacts(readFileSync(new URL('./testdata/common-reference-capture/'+name+'.json',import.meta.url)));
@@ -48,6 +50,27 @@ for(const name of names)test('complete official nominal reference original captu
     assert.ok(publication.contracts.flatMap(c=>c.upper.captures).some(c=>c.slot===slot.key&&c.write));
   }
   if(process.env.TSFG_REFERENCE_CORE_ROOT){mkdirSync(process.env.TSFG_REFERENCE_CORE_ROOT,{recursive:true});writeFileSync(process.env.TSFG_REFERENCE_CORE_ROOT+'/'+name+'.mlir',core);}
+});
+
+test('official nominal constructor fields keep distinct actual types in fixed capture origins',()=>{
+  const hir=projectCommonProgram(packet('local-const')),physical=commonProgramPhysical(hir),storage=commonFixedStorageProjection(hir,physical);
+  assert.notEqual(storage.status,'open');
+  const {spend,callables,methods}=physical.model,availability=commonReturnOriginAvailability(hir,callables,methods,spend,storage,physical),
+    source=commonReturnOriginSource(hir,spend,physical,storage,null,null,availability.selected),functions=new Map(hir.functions.map(fn=>[fn.id,fn])),
+    caller=hir.functions.find(fn=>fn.name==='captureSpanOrdinary'),records=new Map();
+  assert.ok(caller);
+  function derive(id){
+    if(records.has(id))return;
+    assert.ok(availability.selected.has(id));
+    for(const target of availability.dependencies.get(id))derive(target);
+    const result=source.derive(functions.get(id),records);records.set(id,result.upper);return result;
+  }
+  const result=derive(caller.id);
+  assert.deepEqual([...records.keys()].map(id=>functions.get(id).name).sort(),
+    ['captureSpanOrdinary','constructor','constructor','makeOwnedReader','makeReaderBox','readOwned']);
+  assert.deepEqual(result.completions,['return']);
+  assert.ok(result.calls.some(call=>call.kind==='indirectCall'&&functions.get(call.target).name==='readOwned'));
+  assert.ok(result.upper.returnOrigins.nodes.some(row=>row.kind==='environmentComponent'));
 });
 
 for(const change of ['owner','binding','type','occurrence','entry-root','source-spelling'])test('self-hashed cold original reference rejects '+change,()=>{
