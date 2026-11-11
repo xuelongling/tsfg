@@ -756,37 +756,61 @@ const Graph = struct {
             }
         }
     }
-    fn directGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs) Error!void {
-        // The exact FunctionRef selects one ordinary body. Follow its local
-        // CFG from block 0 and record explicit access on either exit path.
-        const c=self.c; try c.charge(3); const function=c.program.functions[@intFromEnum(target)];
-        if(function.role!=.ordinary or function.source!=self.f.source)return;
+    fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs) Error!void {
+        // Visit exact same-module ordinary call targets from their local block
+        // 0. Mark on enqueue so recursive edges visit each body only once.
+        const c=self.c; try c.charge(3); const functions=c.program.functions;
+        const first=functions[@intFromEnum(target)];
+        if(first.role!=.ordinary or first.source!=self.f.source)return;
         const globals=c.program.tables.mode.common.modules.globals;
-        var pending: [256]usize=undefined; var seen=zero;
-        try c.charge(2); pending[0]=0; put(&seen,0);
-        var cursor: usize=0; var count: usize=1;
-        while(cursor<count) : (cursor+=1) {
-            try c.step(); const block=function.blocks[pending[cursor]];
-            for(block.instructions) |op| {
-                try c.step(); const ref=switch(op.data) {
-                    .global_load=>|v| v.global,
-                    .global_store=>|v| if(v.initialize)continue else v.global,
-                    else=>continue,
-                };
-                for(owned) |own| {
-                    try c.step(); if(own!=ref)continue;
-                    try c.charge(2); const index=@intFromEnum(ref);
-                    if(globals[index].source==self.f.source) {
-                        try observed.put(c.allocator,ref,{});
-                        used[index]=true;
+        const mask_bits=@bitSizeOf(std.DynamicBitSetUnmanaged.MaskInt);
+        try c.charge(4+functions.len+(functions.len+mask_bits-1)/mask_bits);
+        const pending_functions=try c.allocator.alloc(t.FunctionRef,functions.len);
+        defer c.allocator.free(pending_functions);
+        var seen_functions=try std.DynamicBitSetUnmanaged.initEmpty(c.allocator,functions.len);
+        defer seen_functions.deinit(c.allocator);
+        pending_functions[0]=target; seen_functions.set(@intFromEnum(target));
+        var pending_blocks: [256]usize=undefined; var function_cursor: usize=0; var function_count: usize=1;
+        while(function_cursor<function_count) : (function_cursor+=1) {
+            try c.step();
+            const function=&functions[@intFromEnum(pending_functions[function_cursor])];
+            var seen_blocks=zero;
+            try c.charge(2); pending_blocks[0]=0; put(&seen_blocks,0);
+            var block_cursor: usize=0; var block_count: usize=1;
+            while(block_cursor<block_count) : (block_cursor+=1) {
+                try c.step(); const block=function.blocks[pending_blocks[block_cursor]];
+                for(block.instructions) |op| {
+                    try c.step(); const ref=switch(op.data) {
+                        .eh_invoke=>|v| {
+                            try c.charge(3); const index=@intFromEnum(v.callee);
+                            if(!seen_functions.isSet(index)) {
+                                seen_functions.set(index);
+                                const callee=functions[index];
+                                if(callee.role==.ordinary and callee.source==self.f.source) {
+                                    try c.step(); pending_functions[function_count]=v.callee; function_count+=1;
+                                }
+                            }
+                            continue;
+                        },
+                        .global_load=>|v| v.global,
+                        .global_store=>|v| if(v.initialize)continue else v.global,
+                        else=>continue,
+                    };
+                    for(owned) |own| {
+                        try c.step(); if(own!=ref)continue;
+                        try c.charge(2); const index=@intFromEnum(ref);
+                        if(globals[index].source==self.f.source) {
+                            try observed.put(c.allocator,ref,{});
+                            used[index]=true;
+                        }
+                        break;
                     }
-                    break;
                 }
-            }
-            try c.step(); const next=edgeTargets(&block.instructions[block.instructions.len-1]);
-            for(next.blocks[0..next.count]) |successor| {
-                try c.step(); if(has(seen,successor))continue;
-                try c.step(); put(&seen,successor); pending[count]=successor; count+=1;
+                try c.step(); const next=edgeTargets(&block.instructions[block.instructions.len-1]);
+                for(next.blocks[0..next.count]) |successor| {
+                    try c.step(); if(has(seen_blocks,successor))continue;
+                    try c.step(); put(&seen_blocks,successor); pending_blocks[block_count]=successor; block_count+=1;
+                }
             }
         }
     }
@@ -818,7 +842,7 @@ const Graph = struct {
                         try c.step(); const entry=try callee_globals.getOrPut(c.allocator,v.callee);
                         if(!entry.found_existing) {
                             entry.value_ptr.*=.empty;
-                            try self.directGlobalUses(v.callee,own_globals,used,entry.value_ptr);
+                            try self.directClosureGlobalUses(v.callee,own_globals,used,entry.value_ptr);
                         }
                     },
                     else=>{},
@@ -876,8 +900,8 @@ const Graph = struct {
             }
         }
         // Callee observations do not change either continuation's state.
-        // Transitive and dynamic targets, other modules and Env instance state
-        // retain their separate proof obligations.
+        // Dynamic targets, other modules and Env instance state retain their
+        // separate proof obligations.
     }
     fn fuel(self: *Graph) Error!void {
         const c=self.c; var entries: usize=0;

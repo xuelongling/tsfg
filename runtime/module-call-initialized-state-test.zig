@@ -50,7 +50,7 @@ const ret: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.da
 const payload_from_i32: ins.Instruction = .{ .source=anchor,.result=r1,.operands=&value,.data=.{ .eh_carrier=null } };
 const raise: ins.Instruction = .{ .source=anchor,.result=null,.operands=&language,.data=.eh_raise };
 const invoke: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .eh_invoke=.{ .callee=@enumFromInt(1),.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
-const invoke_thrower: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .eh_invoke=.{ .callee=@enumFromInt(2),.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
+const invoke_nested: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .eh_invoke=.{ .callee=@enumFromInt(2),.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
 const next_block: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(1) } } };
 const upper: publication.EffectUpper = .{
     .parameters=&.{},.captures=&.{},.globals=.{ .reads=&.{g0,g1},.writes=&.{g0,g1} },
@@ -68,12 +68,18 @@ const nested_dependencies = [3]Dependency{
     .{ .function_id=f1,.callees=&.{.{ .function_id=f2,.digest=@splat(0x62) }},.hosts=&.{} },
     direct_dependencies[2],
 };
+const recursive_dependencies = [3]Dependency{
+    nested_dependencies[0],
+    nested_dependencies[1],
+    .{ .function_id=f2,.callees=&.{.{ .function_id=f1,.digest=@splat(0x61) }},.hosts=&.{} },
+};
 const Case = enum {
     after_init, before_init, callee_only, potential_only, other_global, other_callee, both_arms, missing_arm,
     store_before_init, store_after_init, multiblock_read_before_init, multiblock_read_after_init,
     multiblock_unreachable, multiblock_branch_before_init, multiblock_branch_after_init,
     multiblock_store_before_init, multiblock_store_after_init,
     multiblock_exception_before_init, multiblock_exception_after_init,
+    nested_before_init, nested_after_init, recursive_before_init, recursive_after_init,
 };
 const Fixture = struct {
     program: wire.Program,
@@ -81,8 +87,8 @@ const Fixture = struct {
     blocks: [6]wire.Block,
     callee_instructions: [6]ins.Instruction,
     callee_blocks: [3]wire.Block,
-    other_instructions: [4]ins.Instruction,
-    other_blocks: [1]wire.Block,
+    other_instructions: [5]ins.Instruction,
+    other_blocks: [3]wire.Block,
     functions: [3]wire.Function,
     abis: [3]storage.CommonAbi,
     bindings: [2]storage.CommonBinding,
@@ -106,12 +112,15 @@ const Fixture = struct {
         self.callee_instructions[0..3].*=.{entry_fuel,load0,ret};
         self.callee_blocks[0]=.{ .parameters=&empty,.instructions=self.callee_instructions[0..3] };
         self.other_instructions[0..3].*=.{entry_fuel,load0,ret};
-        self.other_blocks=.{.{ .parameters=&empty,.instructions=self.other_instructions[0..3] }};
+        self.other_blocks[0]=.{ .parameters=&empty,.instructions=self.other_instructions[0..3] };
         var block_count: usize=3; var callee_block_count: usize=1;
+        var other_block_count: usize=1;
         var caller_regs: []const wire.Register=&caller_registers;
         var callee_regs: []const wire.Register=callee_registers[0..1];
         const exceptional=case==.multiblock_exception_before_init or case==.multiblock_exception_after_init;
-        const function_count: usize=if(case==.other_callee or exceptional)3 else 2;
+        const recursive=case==.recursive_before_init or case==.recursive_after_init;
+        const nested=exceptional or recursive or case==.nested_before_init or case==.nested_after_init;
+        const function_count: usize=if(case==.other_callee or nested)3 else 2;
         switch(case) {
             .after_init => {},
             .before_init => {
@@ -171,14 +180,37 @@ const Fixture = struct {
                     self.blocks[0].instructions=self.instructions[0..3]; self.blocks[1].instructions=self.instructions[3..5];
                 }
                 callee_block_count=3; callee_regs=&exceptional_registers;
-                self.callee_instructions[0..5].*=.{entry_fuel,invoke_thrower,ret,load0,raise};
+                self.callee_instructions[0..5].*=.{entry_fuel,invoke_nested,ret,load0,raise};
                 self.callee_blocks=.{
                     .{ .parameters=&empty,.instructions=self.callee_instructions[0..2] },
                     .{ .parameters=&empty,.instructions=self.callee_instructions[2..3] },
                     .{ .parameters=&language,.instructions=self.callee_instructions[3..5] },
                 };
-                self.other_instructions=.{entry_fuel,constant,payload_from_i32,raise};
-                self.other_blocks[0].instructions=&self.other_instructions;
+                self.other_instructions[0..4].*=.{entry_fuel,constant,payload_from_i32,raise};
+                self.other_blocks[0].instructions=self.other_instructions[0..4];
+            },
+            .nested_before_init,.nested_after_init,.recursive_before_init,.recursive_after_init => {
+                if(case==.nested_before_init or case==.recursive_before_init) {
+                    self.instructions[0..6].*=.{constant,bool_op,invoke,init0,ret,raise};
+                    self.blocks[0].instructions=self.instructions[0..3]; self.blocks[1].instructions=self.instructions[3..5];
+                }
+                callee_block_count=3; callee_regs=exceptional_registers[1..2];
+                self.callee_instructions[0..4].*=.{entry_fuel,invoke_nested,ret,raise};
+                self.callee_instructions[3].operands=&value;
+                self.callee_blocks=.{
+                    .{ .parameters=&empty,.instructions=self.callee_instructions[0..2] },
+                    .{ .parameters=&empty,.instructions=self.callee_instructions[2..3] },
+                    .{ .parameters=&value,.instructions=self.callee_instructions[3..4] },
+                };
+                if(recursive) {
+                    other_block_count=3;
+                    self.other_instructions=.{entry_fuel,load0,invoke,ret,raise};
+                    self.other_blocks=.{
+                        .{ .parameters=&empty,.instructions=self.other_instructions[0..3] },
+                        .{ .parameters=&empty,.instructions=self.other_instructions[3..4] },
+                        .{ .parameters=&language,.instructions=self.other_instructions[4..5] },
+                    };
+                }
             },
             .potential_only,.other_callee => {
                 self.instructions[0..6].*=.{constant,bool_op,invoke,init0,ret,raise};
@@ -222,8 +254,8 @@ const Fixture = struct {
         self.functions[1].id=f1; self.functions[1].abi=@enumFromInt(1); self.functions[1].role=.ordinary; self.functions[1].name="sameName";
         self.functions[1].registers=callee_regs; self.functions[1].blocks=self.callee_blocks[0..callee_block_count];
         self.functions[2].id=f2; self.functions[2].abi=@enumFromInt(2); self.functions[2].role=.ordinary; self.functions[2].name="sameName";
-        self.functions[2].registers=if(exceptional)&exceptional_registers else callee_registers[0..1];
-        self.functions[2].blocks=&self.other_blocks;
+        self.functions[2].registers=if(exceptional or recursive)&exceptional_registers else callee_registers[0..1];
+        self.functions[2].blocks=self.other_blocks[0..other_block_count];
         var common=std.mem.zeroes(tables.CommonTables); common.types=&self.types; common.abis=self.abis[0..function_count]; common.storage.bindings=&self.bindings;
         common.storage.payload=.{ .byte_size=16,.alignment=8,.reference_count=1 };
         common.storage.concrete=&.{ .{ .@"type"=scalar,.carrier=.{ .layout=.{ .byte_size=4,.alignment=4,.reference_count=0 },.field_offsets=&.{} },.body=null },.{ .@"type"=boolean,.carrier=.{ .layout=.{ .byte_size=1,.alignment=1,.reference_count=0 },.field_offsets=&.{} },.body=null } };
@@ -244,7 +276,7 @@ const Fixture = struct {
             .{ .function_id=f2,.signature_hash=signature,.upper=upper,.callables=.{ .parameters=&.{},.returns=null,.slot_writes=.{} },.return_origins=null,.digest=@splat(0x62) },
         };
         common.authority.fixed_publication.publication.contracts=common.authority.fixed_publication.publication.contracts[0..function_count-1];
-        const dependencies=if(exceptional)&nested_dependencies else &direct_dependencies;
+        const dependencies=if(recursive)&recursive_dependencies else if(nested)&nested_dependencies else &direct_dependencies;
         common.authority.fixed_publication.dependencies=dependencies[0..function_count];
         self.program=.{ .envelope=std.mem.zeroes(wire.Envelope),.target=std.mem.zeroes(wire.Target),.input_identity=@splat(0),.source_hash=@splat(0),.source_path="",.source_length=0,.root_source=@enumFromInt(0),.tables=.{ .sources=&self.sources,.mode=.{ .common=common } },.functions=self.functions[0..function_count] };
     }
@@ -285,8 +317,9 @@ fn prerequisites(c: *context.Context) !void {
                     .eh_invoke => |v| {
                         const target=try c.ref(v.callee,c.program.functions.len); _=try c.ref(v.normal,f.blocks.len); _=try c.ref(v.exceptional,f.blocks.len);
                         try std.testing.expect(i+1==block.instructions.len and op.operands.len==0 and op.result==null);
-                        const callee_id=if(index==0)f1 else f2;
-                        try std.testing.expectEqual(index+1,target);
+                        const expected_target: usize=if(index==1)2 else 1;
+                        const callee_id=if(expected_target==1)f1 else f2;
+                        try std.testing.expectEqual(expected_target,target);
                         try std.testing.expectEqual(callee_id,c.program.functions[target].id);
                         try std.testing.expectEqual(module.source,c.program.functions[target].source);
                         try std.testing.expect(c.program.functions[target].role==.ordinary);
@@ -347,3 +380,7 @@ test "module call rejects a reachable multi-block write before initialization" {
 test "module call accepts a reachable multi-block write after initialization" { try check(.multiblock_store_after_init,false); }
 test "module call rejects a Global read on the exceptional callee edge before initialization" { try check(.multiblock_exception_before_init,true); }
 test "module call accepts an initialized Global read on the exceptional callee edge" { try check(.multiblock_exception_after_init,false); }
+test "module call rejects a transitive Global read before initialization" { try check(.nested_before_init,true); }
+test "module call accepts a transitive Global read after initialization" { try check(.nested_after_init,false); }
+test "module call rejects a transitive read through a recursive call graph" { try check(.recursive_before_init,true); }
+test "module call accepts a recursive call graph with its observed Global initialized" { try check(.recursive_after_init,false); }
