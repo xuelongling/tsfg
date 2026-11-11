@@ -116,6 +116,7 @@ class Solver {
   bool changed_=false;
   V4::Symbols<Ref> symbols_;
   std::vector<const std::string *> symbolNames_;
+  std::map<const std::string *,Ref> graphSymbols_;
   std::map<Key,Ref> locationIds_,addressIds_,scopeIds_,siteIds_,contextIds_;
   std::vector<Location> locations_;
   std::vector<Address> addresses_;
@@ -143,6 +144,12 @@ class Solver {
     std::string copy;if(!m_.copy(copy,text)||!m_.spend()||!V4::Detail::room(symbolNames_,m_))return false;
     out=symbolNames_.size();const auto inserted=symbols_.emplace(std::move(copy),out);
     symbolNames_.push_back(&inserted.first->first);return true;
+  }
+  // Graph and protocol strings are immutable for the entire synchronous solve.
+  bool graphSymbol(const std::string &text,Ref &out){
+    if(!numericLookup(graphSymbols_.size()))return false;const auto found=graphSymbols_.lower_bound(&text);
+    if(found!=graphSymbols_.end()&&found->first==&text){out=found->second;return true;}
+    if(!symbol(text,out)||!m_.spend())return false;graphSymbols_.emplace_hint(found,&text,out);return true;
   }
   bool prefixed(llvm::StringRef prefix,llvm::StringRef text,Ref &out){
     if(!m_.text(prefix.size())||!m_.text(text.size())||!m_.spend(2))return false;
@@ -284,8 +291,8 @@ class Solver {
     Ref owner;if(!symbol("local:return-origin",owner))return false;const auto type=locations_[source].type;
     Key identity;Location value{LocationKind::CopiedValue,type,None,owner,site};value.categories=1;return key(identity,{8,site,type})&&location(std::move(identity),value,out);
   }
-  bool site(const Context &context,llvm::StringRef source,Ref &out){
-    Ref label;if(!symbol(source,label))return false;Key identity;return key(identity,{context.scope,context.function,label})&&internKey(siteIds_,std::move(identity),out);
+  bool site(const Context &context,const std::string &source,Ref &out){
+    Ref label;if(!graphSymbol(source,label))return false;Key identity;return key(identity,{context.scope,context.function,label})&&internKey(siteIds_,std::move(identity),out);
   }
   bool mergeFrames(FrameWorld &out,const FrameWorld &source,bool lattice=true){
     if(!m_.spend())return false;if(!source.live)return true;const bool first=!out.live;
@@ -483,8 +490,8 @@ class Solver {
       if(call.callee){bool value;if(!readyRefs(context,*call.callee,value))return false;available=available&&value;}if(call.environment){bool value;if(!readyRefs(context,*call.environment,value))return false;available=available&&value;}if(!available)continue;
       if(call.receiver){bool value;if(!readyRefs(context,*call.receiver,value))return false;if(!value)continue;}
       if(!m_.spend(call.arguments.size()))return false;std::vector<Set> arguments(call.arguments.size());for(Ref i=0;i<call.arguments.size();++i)if(!resolve(context,call.arguments[i],arguments[i]))return false;
-      Ref function,label,scope;Key identity;if(!symbol(call.functionId,function)||!symbol(call.site,label)||!key(identity,{context.function,label,index})||!internKey(scopeIds_,std::move(identity),scope))return false;
-      const auto *record=fixedFunction(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!symbol(*record->protocol.lexicalEnvironment,expected))return false;
+      Ref function,label,scope;Key identity;if(!graphSymbol(call.functionId,function)||!graphSymbol(call.site,label)||!key(identity,{context.function,label,index})||!internKey(scopeIds_,std::move(identity),scope))return false;
+      const auto *record=fixedFunction(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;
       Set receivers;if(call.receiver&&!resolve(context,*call.receiver,receivers))return false;
       if(record->protocol.construction){
         Ref expected;if(!symbol(record->protocol.construction->id,expected)||!m_.spend(receivers.size()))return false;
@@ -545,28 +552,29 @@ class Solver {
   }
   static bool environmentValue(V4::ValueKind kind){return kind==V4::ValueKind::EnvironmentInput||kind==V4::ValueKind::EnvironmentCreate||kind==V4::ValueKind::EnvironmentParent||kind==V4::ValueKind::EnvironmentComponent||kind==V4::ValueKind::Capture||kind==V4::ValueKind::Code;}
   bool nonowning(const std::optional<std::string> &view,Ref &out){if(!view)return open("nonowning-source-view-open");Ref type;Key identity;if(!symbol(*view,type)||!key(identity,{5,type}))return false;return location(std::move(identity),{LocationKind::Nonowning,type,None,None,None},out);}
-  bool voidView(const std::optional<std::string> &view,bool &answer){answer=false;if(!view)return true;Ref type;if(!symbol(*view,type))return false;if(type==void_){answer=true;return true;}
+  bool voidView(const std::optional<std::string> &view,bool &answer){answer=false;if(!view)return true;Ref type;if(!graphSymbol(*view,type))return false;if(type==void_){answer=true;return true;}
     if(callbacks_.actualType){if(!m_.text(view->size())||!m_.spend())return false;const auto *shape=callbacks_.actualType(*view,callbackCharge_);if(!m_.good)return false;answer=shape&&shape->kind==V4::TypeKind::Void;}return true;
   }
-  bool runEnvironmentValue(Context &context,Ref index,const V4::Value &node,Set &output){Ref id=None;if(node.kind!=V4::ValueKind::Code&&!symbol(node.layout,id))return false;
-    if(node.kind==V4::ValueKind::EnvironmentInput){Ref expected=None;if(context.protocol->lexicalEnvironment&&!symbol(*context.protocol->lexicalEnvironment,expected))return false;if(id!=expected)return open("entry-environment-layout-open");return add(output,context.environment);}
-    if(!context.controls[node.control])return true;
-    if(node.kind==V4::ValueKind::EnvironmentCreate){Ref expected=None;if(context.protocol->activationEnvironment&&!symbol(*context.protocol->activationEnvironment,expected))return false;if(id!=expected)return open("activation-environment-layout-open");const auto *row=layout(id);if(!row)return false;
-      Ref siteLabel,owner,result;Key identity;if(!symbol(node.site,siteLabel)||!symbol("local:return-origin",owner)||!key(identity,{12,context.function,context.scope,index,siteLabel,id,context.environment.size()}))return false;
+  bool runEnvironmentValue(Context &context,Ref index,const V4::Value &node,Set &output){
+    if(node.kind!=V4::ValueKind::EnvironmentInput&&!context.controls[node.control])return true;
+    Ref id=None;if(node.kind!=V4::ValueKind::Code&&!graphSymbol(node.layout,id))return false;
+    if(node.kind==V4::ValueKind::EnvironmentInput){Ref expected=None;if(context.protocol->lexicalEnvironment&&!graphSymbol(*context.protocol->lexicalEnvironment,expected))return false;if(id!=expected)return open("entry-environment-layout-open");return add(output,context.environment);}
+    if(node.kind==V4::ValueKind::EnvironmentCreate){Ref expected=None;if(context.protocol->activationEnvironment&&!graphSymbol(*context.protocol->activationEnvironment,expected))return false;if(id!=expected)return open("activation-environment-layout-open");const auto *row=layout(id);if(!row)return false;
+      Ref siteLabel,owner,result;Key identity;if(!graphSymbol(node.site,siteLabel)||!symbol("local:return-origin",owner)||!key(identity,{12,context.function,context.scope,index,siteLabel,id,context.environment.size()}))return false;
       if(!m_.spend(context.environment.size()))return false;for(auto env:context.environment)if(!number(identity,env))return false;if(!number(identity,context.arguments.size())||!m_.spend(context.arguments.size()))return false;
       for(const auto &argument:context.arguments){if(!number(identity,argument.size())||!m_.spend(argument.size()))return false;for(auto value:argument)if(!number(identity,value))return false;}
       Location value;value.kind=LocationKind::EnvironmentLocal;value.layout=id;value.owner=owner;if(!m_.spend())return false;value.creator=context.index;if(!location(std::move(identity),value,result))return false;Set *selected;if(!parents(result,selected))return false;
       if(!row->parent){if(node.parent)return open("unexpected-activation-parent");}else{if(!node.parent)return open("activation-parent-open");Ref parent;Set bases,actual;if(!symbol(*row->parent,parent)||!resolve(context,*node.parent,bases)||!selectEnvironments(bases,parent,actual)||!add(*selected,actual))return false;}return insert(output,result);
     }
     if(node.kind==V4::ValueKind::EnvironmentParent){Set bases,selected;return resolve(context,node.bases,bases)&&selectEnvironments(bases,id,selected)&&add(output,selected);}
-    if(node.kind==V4::ValueKind::EnvironmentComponent){bool available;if(!readyRefs(context,node.callee,available))return false;if(!available)return true;Ref function;if(!symbol(node.functionId,function))return false;const auto *record=fixedProtocol(function);if(!record)return false;
-      Ref expected=None;if(record->protocol.lexicalEnvironment&&!symbol(*record->protocol.lexicalEnvironment,expected))return false;if(expected!=id)return open("component-function-layout-open");if(!layout(id))return false;Set sources;if(!resolve(context,node.callee,sources))return false;
+    if(node.kind==V4::ValueKind::EnvironmentComponent){bool available;if(!readyRefs(context,node.callee,available))return false;if(!available)return true;Ref function;if(!graphSymbol(node.functionId,function))return false;const auto *record=fixedProtocol(function);if(!record)return false;
+      Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;if(expected!=id)return open("component-function-layout-open");if(!layout(id))return false;Set sources;if(!resolve(context,node.callee,sources))return false;
       for(auto source:sources){if(!m_.spend())return false;const auto value=locations_[source];if(value.kind==LocationKind::Code){if(value.function!=function)continue;if(value.environment==None||locations_[value.environment].layout!=id)return open("selected-code-env-layout-open");if(!insert(output,value.environment))return false;}
         else{if(!formalCode(source))return open("formal-code-component-owner-open");Ref env;if(!componentEnvironment(source,function,id,env)||!insert(output,env))return false;}}
       return true;
     }
     if(node.kind==V4::ValueKind::Capture){Set bases,values;return resolve(context,*node.environment,bases)&&captureValues(context.heaps[node.heap],bases,id,node.id,values)&&add(output,values);}
-    Ref function,type;if(!node.type)return open("code-source-view-open");if(!symbol(node.functionId,function)||!symbol(*node.type,type))return false;const auto *record=fixedProtocol(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!symbol(*record->protocol.lexicalEnvironment,expected))return false;
+    Ref function,type;if(!node.type)return open("code-source-view-open");if(!graphSymbol(node.functionId,function)||!graphSymbol(*node.type,type))return false;const auto *record=fixedProtocol(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;
     const auto pack=[&](Ref env){Key identity;Location value;value.kind=LocationKind::Code;value.type=type;value.function=function;value.environment=env;value.owner=env==None?None:locations_[env].owner;value.categories=1;Ref code;return key(identity,{13,function,env,type})&&location(std::move(identity),value,code)&&insert(output,code);};
     if(expected==None){if(node.environment)return open("unexpected-code-environment");return pack(None);}if(!node.environment)return open("code-environment-open");Set bases,selected;if(!resolve(context,*node.environment,bases)||!selectEnvironments(bases,expected,selected))return false;for(auto env:selected)if(!pack(env))return false;return true;
   }
@@ -585,9 +593,20 @@ class Solver {
         bool emptyVoid=false;if(normal&&!voidView(node.type,emptyVoid))return false;defined=defined||((normal?called.normalReady:called.languageReady)&&((!(normal?called.graph->normal:called.graph->language).empty()&&values)||emptyVoid));}}
     return ready(context.ready,index,defined);
   }
+  static bool fixedValue(const V4::Value &node){
+    switch(node.kind){
+      case V4::ValueKind::Parameter:case V4::ValueKind::Global:case V4::ValueKind::Local:case V4::ValueKind::Nonowning:
+      case V4::ValueKind::Literal:case V4::ValueKind::EnvironmentInput:case V4::ValueKind::ReceiverInput:return true;
+      case V4::ValueKind::Code:return !node.environment;
+      case V4::ValueKind::EnvironmentCreate:return !node.parent;
+      default:return false;
+    }
+  }
   bool runValues(Context &context){
     const auto &graph=*context.graph;if(!m_.spend(graph.nodes.size()))return false;
     for(Ref i=0;i<graph.nodes.size();++i){if(!m_.spend())return false;const auto &node=graph.nodes[i];auto &output=context.values[i];
+      // Arguments and the incoming Env/receiver belong to the immutable context key.
+      if(context.ready[i]&&fixedValue(node))continue;
       if(environmentValue(node.kind)){if(!runEnvironmentValue(context,i,node,output))return false;}
       else if(node.kind==V4::ValueKind::ReceiverInput||node.kind==V4::ValueKind::ReceiverFrame||node.kind==V4::ValueKind::ReceiverValue){if(!receiverValue(context,i,node,output))return false;}
       else if(node.kind==V4::ValueKind::Parameter){const auto &args=context.function==None?rootArguments_:context.arguments;if(node.index>=args.size())return open("parameter-vector-open");if(!add(output,args[node.index]))return false;if(context.function!=None&&args[node.index].empty()){Ref id;if(!nonowning(node.type,id)||!insert(output,id))return false;}}
@@ -595,7 +614,7 @@ class Solver {
       else if(node.kind==V4::ValueKind::Gate){if(context.controls[node.control]){Set values;if(!resolve(context,node.inputs,values)||!add(output,values))return false;}}
       else if(node.kind==V4::ValueKind::Projection){
         if(!context.controls[node.control])continue;Set bases;Ref selector,view;Key origin;
-        if(!resolve(context,node.bases,bases)||!symbol(node.selector,selector)||!symbol(node.view,view)||!key(origin,{context.function,i})||!m_.spend(bases.size()))return false;
+        if(!resolve(context,node.bases,bases)||!graphSymbol(node.selector,selector)||!graphSymbol(node.view,view)||!key(origin,{context.function,i})||!m_.spend(bases.size()))return false;
         for(auto base:bases){Set values;if(!read(context.heaps[node.heap],base,selector,view,origin,values)||!add(output,values))return false;}
       }else if(node.kind==V4::ValueKind::Copy){
         if(!context.controls[node.control])continue;Set sources;Ref selectedSite;if(!resolve(context,node.bases,sources)||!site(context,node.site,selectedSite)||!m_.spend(sources.size()))return false;
@@ -607,7 +626,7 @@ class Solver {
           if(node.completion==V4::Completion::Normal?called.normalLive:called.languageLive){
             if(!add(output,node.completion==V4::Completion::Normal?called.normal:called.language))return false;
             if(node.completion==V4::Completion::Normal&&called.normal.empty()&&node.type){
-              Ref type;if(!symbol(*node.type,type))return false;bool isVoid=type==void_;
+              Ref type;if(!graphSymbol(*node.type,type))return false;bool isVoid=type==void_;
               // This is a Source RETURN VIEW, not an asserted actual tag. An
               // erased union/unknown view must not be rejected or reclassified
               // as a local actual value merely to recognize native void data.
@@ -699,12 +718,13 @@ class Solver {
   bool runHeaps(Context &context){
     const auto &graph=*context.graph;if(!m_.spend(graph.heaps.size()))return false;
     for(Ref i=0;i<graph.heaps.size();++i){if(!m_.spend())return false;const auto &heap=graph.heaps[i];auto &output=context.heaps[i];
+      if(heap.kind==V4::HeapKind::Entry&&context.heapReady[i])continue;
       if(heap.kind!=V4::HeapKind::ReceiverAction){if(!heapReady(context,i,heap))return false;if(!context.heapReady[i])continue;}
       if(heap.kind==V4::HeapKind::Entry){if(!merge(output,context.input)||!mergeFrames(context.frames[i],context.inputFrames))return false;}
       else if(heap.kind==V4::HeapKind::Join){if(!m_.spend(heap.inputs.size()))return false;for(auto parent:heap.inputs){if(!m_.spend())return false;if(context.heapReady[parent]&&(!merge(output,context.heaps[parent])||!mergeFrames(context.frames[i],context.frames[parent])))return false;}}
       else if(heap.kind==V4::HeapKind::Store){
         if(!merge(output,context.heaps[heap.previous])||!mergeFrames(context.frames[i],context.frames[heap.previous]))return false;if(!context.controls[heap.control])continue;
-        Set bases,values;Ref selector,view;if(!resolve(context,heap.bases,bases)||!resolve(context,heap.values,values)||!symbol(heap.selector,selector)||!symbol(heap.view,view)||!m_.spend(bases.size()))return false;
+        Set bases,values;Ref selector,view;if(!resolve(context,heap.bases,bases)||!resolve(context,heap.values,values)||!graphSymbol(heap.selector,selector)||!graphSymbol(heap.view,view)||!m_.spend(bases.size()))return false;
         const bool capture=llvm::StringRef(heap.selector).starts_with("capture:");Ref expected=None;if(capture){if(!llvm::StringRef(heap.view).starts_with("env:")||!symbol(llvm::StringRef(heap.view).drop_front(4),expected))return open("capture-store-view-open");}
         for(auto base:bases){if(capture&&(!environmentKind(locations_[base].kind)||locations_[base].layout!=expected))return open("capture-store-environment-layout-open");if(!put(output,base,selector,view,values))return false;}
       }else if(heap.kind==V4::HeapKind::Copy){if(!copyHeap(context,heap,output)||!mergeFrames(context.frames[i],context.frames[heap.previous]))return false;}
