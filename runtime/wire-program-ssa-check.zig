@@ -333,7 +333,7 @@ const Graph = struct {
         const actual=v.domains[@intFromEnum(expected.domain)].actual_types;
         try c.require(actual.len==tags.count()); for(actual) |tag| { try c.step(); try c.require(tags.contains(tag)); }
     }
-    fn commonCall(self: *Graph, op: *const ins.Instruction, b: usize, position: usize) Error!void {
+    fn commonCall(self: *Graph, op: *const ins.Instruction, b: usize, position: usize, initializer_callee: ?*?t.FunctionRef) Error!void {
         const c=self.c; const v=c.program.tables.mode.common; const method=std.meta.activeTag(op.data)==.common_method_invoke;
         const normal=if(method)op.data.common_method_invoke.normal else op.data.eh_invoke_indirect.normal;
         const exceptional=if(method)op.data.common_method_invoke.exceptional else op.data.eh_invoke_indirect.exceptional;
@@ -387,6 +387,18 @@ const Graph = struct {
         if(method and !valued) { try c.require(output.len==0); return; }
         if(voids!=0)try c.require(!method and voids==targets.items.len and output.len==0)
         else { try c.require(output.len==1); try self.joined(self.carrierOf(output[0]),carriers.items); }
+        if(initializer_callee) |record| if(targets.items.len==1) {
+            // Use the saved Code's actual SSA definition and the same fixed
+            // call row that supplied the checked argument and result ABI.
+            try c.charge(3);
+            const definition=self.definitions[@intFromEnum(op.operands[0])];
+            if(definition.position>=0) {
+                try c.charge(3);
+                const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
+                if(producer.data==.function_make and @intFromEnum(producer.data.function_make.function)==targets.items[0])
+                    record.*=producer.data.function_make.function;
+            }
+        };
     }
     fn legacyCallable(self: *Graph, op: *const ins.Instruction, signature: t.TypeRef) Error!void {
         const v=self.c.program.tables.mode.legacy; const row=v.types[@intFromEnum(signature)];
@@ -412,7 +424,7 @@ const Graph = struct {
             .legacy => return error.WrongMode,
         }
     }
-    fn operations(self: *Graph) Error!void {
+    fn operations(self: *Graph, initializer_callees: ?[]?t.FunctionRef) Error!void {
         const c=self.c;
         for(self.f.blocks,0..) |block,b| for(block.instructions,0..) |*op,i| {
             try c.step();
@@ -443,8 +455,11 @@ const Graph = struct {
                 .eh_raise => try c.require(exact(self.carrierOf(op.operands[0]),.payload)),
                 .call => |v| try self.direct(op,@intFromEnum(v.callee),null,null),
                 .eh_invoke => |v| try self.direct(op,@intFromEnum(v.callee),v.normal,v.exceptional),
-                .eh_invoke_indirect => |v| if(self.mode==.common)try self.commonCall(op,b,i) else try self.indirectEh(op,v.callable,v.normal,v.exceptional),
-                .common_method_invoke => try self.commonCall(op,b,i),
+                .eh_invoke_indirect => |v| if(self.mode==.common)
+                    try self.commonCall(op,b,i,if(initializer_callees) |callees| &callees[b] else null)
+                else
+                    try self.indirectEh(op,v.callable,v.normal,v.exceptional),
+                .common_method_invoke => try self.commonCall(op,b,i,null),
                 .function_call => |v| try self.legacyCallable(op,v.signature),
                 .function_make => |v| {
                     switch(c.program.tables.mode) {
@@ -1319,8 +1334,7 @@ const Graph = struct {
             }
         }
     }
-    fn globalInitialization(self: *Graph) Error!void {
-        if(self.mode!=.common or self.f.role!=.module_initializer)return;
+    fn globalInitialization(self: *Graph, initializer_callees: []const ?t.FunctionRef) Error!void {
         const c=self.c; const modules=c.program.tables.mode.common.modules; const globals=modules.globals;
         // GlobalRef identifies one program cell. Permission/defining-module
         // ownership remains the independent module-contracts obligation.
@@ -1343,11 +1357,13 @@ const Graph = struct {
                     inline .global_load,.global_store=>|v| {
                         const index=@intFromEnum(v.global); if(globals[index].source==self.f.source)used[index]=true;
                     },
-                    .eh_invoke=>|v| if(own_globals.len!=0) {
-                        try c.step(); const entry=try callee_globals.getOrPut(c.allocator,v.callee);
+                    inline .eh_invoke,.eh_invoke_indirect=>|v,kind| if(own_globals.len!=0) {
+                        try c.step();
+                        const callee=if(kind==.eh_invoke) v.callee else initializer_callees[b] orelse continue;
+                        const entry=try callee_globals.getOrPut(c.allocator,callee);
                         if(!entry.found_existing) {
                             entry.value_ptr.*=.empty;
-                            try self.directClosureGlobalUses(v.callee,own_globals,used,entry.value_ptr);
+                            try self.directClosureGlobalUses(callee,own_globals,used,entry.value_ptr);
                         }
                     },
                     else=>{},
@@ -1394,9 +1410,10 @@ const Graph = struct {
                             if(v.initialize) { try c.require(state==1); state=2; } else try c.require(state==2);
                         },
                         .global_load=>|v| if(v.global==ref) { try c.require(state==2); },
-                        .eh_invoke=>|v| if(own_globals.len!=0 and state!=2) {
+                        inline .eh_invoke,.eh_invoke_indirect=>|v,kind| if(own_globals.len!=0 and state!=2) {
                             try c.charge(2);
-                            const observed=callee_globals.getPtr(v.callee) orelse return error.InvalidShape;
+                            const callee=if(kind==.eh_invoke) v.callee else initializer_callees[b] orelse continue;
+                            const observed=callee_globals.getPtr(callee) orelse return error.InvalidShape;
                             try c.require(!observed.contains(ref));
                         },
                         else=>{},
@@ -1550,10 +1567,19 @@ const Graph = struct {
     }
     fn run(self: *Graph) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
-        try self.usesDom(); try self.entryAbi(); try self.operations();
+        try self.usesDom(); try self.entryAbi();
+        var call_buffer: [256]?t.FunctionRef=undefined;
+        const initializer_callees: ?[]?t.FunctionRef=if(self.mode==.common and self.f.role==.module_initializer) rows: {
+            const callees=call_buffer[0..self.f.blocks.len];
+            try self.c.charge(callees.len);
+            @memset(callees,null);
+            break :rows callees;
+        }else null;
+        try self.operations(initializer_callees);
         const allocations=try self.environmentOrigins(); defer if(allocations) |values| self.c.allocator.free(values.direct);
         if (allocations != null or self.has_direct_environment_call) try self.environmentDirectCellState(allocations);
-        try self.globalInitialization(); try self.numeric(); try self.fuel();
+        if(initializer_callees) |callees| try self.globalInitialization(callees);
+        try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof
         // adds no second dominance graph, Context, Source table or admission.
         if(self.mode==.common)try receiver_protocol.check(self.c,self.function,.{.definitions=self.definitions,.facts=self.facts});

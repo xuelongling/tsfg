@@ -13,6 +13,7 @@ const context = @import("wire-program-refcheck-context.zig");
 const layout = @import("wire-program-layout-check.zig");
 const ssa = @import("wire-program-ssa-check.zig");
 const module_contracts = @import("wire-program-module-contracts-check.zig");
+const fixed_targets = @import("wire-program-fixed-targets-check.zig");
 const t = wire.types;
 const ins = wire.instruction;
 const scalar: t.TypeRef = @enumFromInt(0);
@@ -20,6 +21,10 @@ const boolean: t.TypeRef = @enumFromInt(1);
 const r0: t.RegisterRef = @enumFromInt(0);
 const r1: t.RegisterRef = @enumFromInt(1);
 const r2: t.RegisterRef = @enumFromInt(2);
+const r3: t.RegisterRef = @enumFromInt(3);
+const void_type: t.TypeRef = @enumFromInt(2);
+const callable_type: t.TypeRef = @enumFromInt(3);
+const callable_carrier: t.Carrier = .{ .@"type"=callable_type };
 const sc: t.Carrier = .{ .@"type"=scalar };
 const bc: t.Carrier = .{ .@"type"=boolean };
 const anchor: t.Origin = .{ .source=@enumFromInt(0),.start=0,.end=100 };
@@ -304,9 +309,9 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
             try std.testing.expectEqual(f.id,contract.function_id); try std.testing.expectEqual(f.signature,contract.signature_hash);
             try std.testing.expectEqualSlices(t.Hash,&.{g0,g1},contract.upper.globals.reads);
         }
-        var defined=[_]bool{false} ** caller_registers.len;
+        var defined=[_]bool{false} ** 4;
         for(f.registers) |r| { try c.carrier(r.carrier); try c.maybeRef(r.view,c.counts().types); }
-        for(f.blocks) |block| {
+        for(f.blocks,0..) |block,b| {
             for(block.parameters) |r| { const n=try c.ref(r,f.registers.len); try std.testing.expect(!defined[n]); defined[n]=true; }
             for(block.instructions,0..) |op,i| {
                 try c.origin(op.source);
@@ -331,6 +336,28 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                         const dependency=callees[0];
                         try std.testing.expectEqual(callee_id,dependency.function_id);
                         try std.testing.expectEqual(common.authority.fixed_publication.publication.contracts[target-1].digest,dependency.digest);
+                    },
+                    .function_make => |v| {
+                        const target=try c.ref(v.function,c.program.functions.len);
+                        try std.testing.expect(op.result!=null and op.operands.len==0);
+                        try std.testing.expectEqual(f1,c.program.functions[target].id);
+                        try std.testing.expect(c.program.functions[target].role==.ordinary);
+                        try std.testing.expect(common.abis[target].lexical_environment==null);
+                        try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(op.result.?)].carrier,callable_carrier));
+                    },
+                    .domain_copy => |v| {
+                        try std.testing.expect(v.static_view==callable_type and op.result==r3 and op.operands.len==1 and op.operands[0]==r2);
+                    },
+                    .eh_invoke_indirect => |v| {
+                        _=try c.ref(v.normal,f.blocks.len); _=try c.ref(v.exceptional,f.blocks.len);
+                        try std.testing.expect(i+1==block.instructions.len and op.operands.len==1 and op.result==null and v.callable==callable_type);
+                        const logical=common.types[@intFromEnum(v.callable)];
+                        try std.testing.expect(logical.kind==.function and logical.element==void_type and logical.members.len==0);
+                        const call=common.closures.calls[0];
+                        try std.testing.expect(call.function==@as(t.FunctionRef,@enumFromInt(index)) and call.block==@as(t.BlockRef,@enumFromInt(b)) and call.instruction==i);
+                        try std.testing.expect(call.targets.len==1 and call.targets[0]==@as(t.FunctionRef,@enumFromInt(1)) and std.mem.eql(u8,&call.signature,&signature));
+                        const abi=common.abis[1];
+                        try std.testing.expect(abi.receiver==null and abi.lexical_environment==null and abi.physical_parameters.len==0 and abi.result==null);
                     },
                     .eh_carrier => |view| {
                         try std.testing.expect(view==null and op.result!=null and op.operands.len==1);
@@ -500,3 +527,76 @@ test "module callback accepts an initialized owned Global read" { try checkCross
 test "module callback rejects an owned Global write before initialization" { try checkCrossModule(.write_before,true); }
 test "module callback accepts an initialized owned Global write" { try checkCrossModule(.write_after,false); }
 test "module callback leaves a foreign Global outside the caller initialization proof" { try checkCrossModule(.foreign_read,false); }
+
+const Concrete = @typeInfo(@FieldType(storage.CommonStorage,"concrete")).pointer.child;
+const FixedCall = @typeInfo(@FieldType(@FieldType(tables.CommonTables,"closures"),"calls")).pointer.child;
+const saved_registers = [_]wire.Register{caller_registers[0],caller_registers[1],
+    .{ .carrier=callable_carrier,.view=callable_type },.{ .carrier=callable_carrier,.view=callable_type }};
+const make_saved: ins.Instruction = .{ .source=anchor,.result=r2,.operands=&empty,.data=.{ .function_make=.{ .function=@enumFromInt(1) } } };
+const forward_saved: ins.Instruction = .{ .source=anchor,.result=r3,.operands=&.{r2},.data=.{ .domain_copy=.{ .static_view=callable_type } } };
+const invoke_saved: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{r2},
+    .data=.{ .eh_invoke_indirect=.{ .callable=callable_type,.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
+const invoke_forwarded: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{r3},.data=invoke_saved.data };
+
+const SavedCodeFixture = struct {
+    types: [4]tables.CommonType,
+    concrete: [4]Concrete,
+    calls: [1]FixedCall,
+
+    fn install(self: *SavedCodeFixture, base: *Fixture, caller: *wire.Function, initialized: bool, forwarded: bool) void {
+        const common=&base.program.tables.mode.common;
+        self.types=base.types ++ [_]tables.CommonType{
+            .{ .id=@splat(0x13),.kind=.@"void",.name="void",.native_code=0,.base=null,.element=null,.members=&.{},.methods=null,.nominal_key=null,.runtime_key=null },
+            .{ .id=@splat(0x14),.kind=.function,.name="observe",.native_code=0,.base=null,.element=void_type,.members=&.{},.methods=null,.nominal_key=null,.runtime_key=null },
+        };
+        self.concrete=common.storage.concrete[0..2].* ++ [_]Concrete{
+            .{ .@"type"=void_type,.carrier=.{ .layout=.{ .byte_size=0,.alignment=1,.reference_count=0 },.field_offsets=&.{} },.body=null },
+            .{ .@"type"=callable_type,.carrier=.{ .layout=.{ .byte_size=40,.alignment=8,.reference_count=1 },.field_offsets=&.{} },.body=null },
+        };
+        const instructions: []const ins.Instruction=if(forwarded)
+            &.{constant,make_saved,forward_saved,invoke_forwarded}
+        else if(initialized)
+            &.{constant,init0,make_saved,invoke_saved}
+        else
+            &.{constant,make_saved,invoke_saved};
+        base.blocks[0].instructions=instructions;
+        caller.registers=saved_registers[0..if(forwarded)4 else 3];
+        self.calls=.{.{ .function=@enumFromInt(0),.block=@enumFromInt(0),.instruction=@intCast(instructions.len-1),
+            .signature=signature,.targets=&.{@enumFromInt(1)} }};
+        common.types=&self.types;
+        common.storage.concrete=&self.concrete;
+        common.closures.calls=&self.calls;
+    }
+};
+
+fn checkSavedCode(case: Case, initialized: bool, forwarded: bool, rejected: bool) !void {
+    var fixture: Fixture=undefined;
+    fixture.init(case);
+    var saved: SavedCodeFixture=undefined;
+    saved.install(&fixture,&fixture.functions[0],initialized,forwarded);
+    var c=context.Context{ .program=&fixture.program,.allocator=std.testing.allocator };
+    try prerequisites(&c,false);
+    var fixed=try fixed_targets.analyze(&c);
+    defer fixed.deinit(c.allocator);
+    if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
+}
+
+test "module fixed Code rejects a read before initialization" { try checkSavedCode(.before_init,false,false,true); }
+test "module fixed Code accepts an initialized read" { try checkSavedCode(.after_init,true,false,false); }
+test "module fixed Code rejects a write before initialization" { try checkSavedCode(.store_before_init,false,false,true); }
+test "module fixed Code accepts an initialized write" { try checkSavedCode(.store_after_init,true,false,false); }
+test "module fixed Code uses the saved FunctionRef over an uncalled same-name target" { try checkSavedCode(.other_callee,false,false,false); }
+test "module fixed Code keeps forwarded receivers outside this local proof" { try checkSavedCode(.before_init,false,true,false); }
+
+test "module fixed Code leaves foreign Globals to the verified module order" {
+    var fixture: CrossFixture=undefined;
+    fixture.init(.foreign_read);
+    var saved: SavedCodeFixture=undefined;
+    saved.install(&fixture.base,&fixture.functions[0],false,false);
+    var c=context.Context{ .program=&fixture.base.program,.allocator=std.testing.allocator };
+    try prerequisites(&c,true);
+    try module_contracts.checkModules(&c);
+    var fixed=try fixed_targets.analyze(&c);
+    defer fixed.deinit(c.allocator);
+    try ssa.check(&c);
+}
