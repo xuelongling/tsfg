@@ -13,6 +13,42 @@ int compareConstructionKey(const ActualConstructionKeyView &query,llvm::StringRe
     at+=count;if(count<segment.size())return 1;
   }return at<flat.size()?-1:0;
 }
+using ReceiverRows=std::pair<const ActualFrameInfo *,const ActualFrameBinding *>;
+std::optional<ReceiverRows> receiverRows(ActualCheck &check,const ActualFrameWorld &world,
+    const std::string &id,const char *missing){
+  if(!check.step(8))return std::nullopt;
+  const auto length=id.size();
+  if(length>=64&&world.size()<=8&&check.receiverFrames.size()<=length){
+    // Resolve the complete text in the small World first. Its admitted key
+    // shares immutable storage with the corresponding metadata row.
+    size_t compared=0;
+    for(const auto &[key,binding]:world){
+      if(!check.step(7))return std::nullopt;
+      const auto &text=key.text();
+      if(text.size()!=length||text.back()!=id.back())continue;
+      if(!check.step())return std::nullopt;
+      if(compared==2)break;
+      if(!check.step(2*length+2))return std::nullopt;
+      ++compared;
+      if(text!=id)continue;
+      for(const auto &[registered,metadata]:check.receiverFrames){
+        if(!check.step(3))return std::nullopt;
+        if(&registered.text()==&text){
+          if(!check.step(3))return std::nullopt;
+          return ReceiverRows{&metadata,&binding};
+        }
+      }
+      break;
+    }
+  }
+  // Independently owned keys and larger Worlds retain the full lookup.
+  if(!check.receiverText(id))return std::nullopt;
+  const auto metadata=check.receiverFrames.find(id);
+  const auto binding=metadata==check.receiverFrames.end()?world.end():world.find(id);
+  if(!check.need(metadata!=check.receiverFrames.end()&&binding!=world.end(),missing)||!check.step(3))
+    return std::nullopt;
+  return ReceiverRows{&metadata->second,&binding->second};
+}
 }
 bool ActualConstructionKeyLess::operator()(const ActualConstructionKeyView &a,const std::string &b)const{return compareConstructionKey(a,b)<0;}
 bool ActualConstructionKeyLess::operator()(const std::string &a,const ActualConstructionKeyView &b)const{return compareConstructionKey(b,a)>0;}
@@ -28,17 +64,16 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       auto id=createFrame(state.frames,context.activation,site,owner,construction,string(field(props,"new_target")),repeated);
       if(!e.message.empty())return false;value.frames.insert(std::move(id));
     }else {if(!step(args[0].frames.size()))return false;for(const auto &parent:args[0].frames){
-      if(!receiverText(parent))return false;const auto metadata=receiverFrames.find(parent);const auto binding=metadata==receiverFrames.end()?state.frames.end():state.frames.find(parent);
-      if(!need(metadata!=receiverFrames.end()&&binding!=state.frames.end(),"child receiver parent missing"))return false;
-      const auto &info=metadata->second;auto id=createFrame(state.frames,context.activation,site,owner,construction,info.newTarget,
-        repeated||binding->second.weak,parent);if(!e.message.empty())return false;value.frames.insert(std::move(id));}}
+      const auto rows=receiverRows(*this,state.frames,parent,"child receiver parent missing");if(!rows)return false;
+      const auto &[info,binding]=*rows;auto id=createFrame(state.frames,context.activation,site,owner,construction,info->newTarget,
+        repeated||binding->weak,parent);if(!e.message.empty())return false;value.frames.insert(std::move(id));}}
   }else if(name=="receiver_allocate"){
     if(!step(args[0].frames.size()))return false;
     for(const auto &id:args[0].frames){
-      if(!receiverText(id))return false;const auto metadata=receiverFrames.find(id);const auto binding=metadata==receiverFrames.end()?state.frames.end():state.frames.find(id);
-      if(!need(metadata!=receiverFrames.end()&&binding!=state.frames.end(),"allocation frame missing"))return false;const auto &info=metadata->second;if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
+      const auto rows=receiverRows(*this,state.frames,id,"allocation frame missing");if(!rows)return false;
+      const auto &info=*rows->first;if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
       if(!receiverText(info.newTarget))return false;auto ref="construction/"+id+"/"+info.newTarget;
-      const bool weak=binding->second.weak;auto old=objects.find(ref);
+      const bool weak=rows->second->weak;auto old=objects.find(ref);
       if(old!=objects.end()&&!old->second.weak&&weak)weakChanged=true;
       const bool repeated=weak||(old!=objects.end()&&old->second.weak);
       if(!step())return false;auto object=old;
