@@ -240,6 +240,52 @@ test "typed effects reject a system signature inconsistent with Source" {
     try expectSystemIdentityRejection(.signature);
 }
 
+fn expectHelperIdentityRejection(comptime field: enum { scalar_width, view_mode, return_width, name }) !void {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-f64-helper-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-f64-helper.tmeta"), receipt.value);
+    defer document.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var packet = try std.json.parseFromSliceLeaky(std.json.Value, allocator, document.payload.sourcePacket, .{});
+    const payload = packet.object.getPtr("payload").?;
+    for (payload.object.getPtr("scalarHelpers").?.array.items) |*helper| {
+        const declaration = helper.object.getPtr("declaration").?;
+        if (!std.mem.eql(u8, declaration.object.get("name").?.string, "scaledX")) continue;
+        const parameters = helper.object.getPtr("parameters").?.array.items;
+        const view = parameters[0].object.getPtr("view").?;
+        const access = view.object.getPtr("access").?;
+        const change = switch (field) {
+            .scalar_width => .{ parameters[1].object.getPtr("logicalType").?, "f64", "f32" },
+            .view_mode => .{ access.object.getPtr("mode").?, "read", "write" },
+            .return_width => .{ helper.object.getPtr("returnType").?, "f64", "f32" },
+            .name => .{ declaration.object.getPtr("name").?, "scaledX", "readX" },
+        };
+        try std.testing.expectEqualStrings(change[1], change[0].string);
+        change[0].* = .{ .string = change[2] };
+        const source = try std.json.Stringify.valueAlloc(allocator, packet, .{});
+        const current = document.payload;
+        try std.testing.expectError(error.InvalidEffects, E.decode(allocator, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+        return;
+    }
+    return error.MissingFixtureHelper;
+}
+
+test "typed effects check Source helper scalar width" {
+    try expectHelperIdentityRejection(.scalar_width);
+}
+test "typed effects check Source helper view mode" {
+    try expectHelperIdentityRejection(.view_mode);
+}
+test "typed effects check Source helper return width" {
+    try expectHelperIdentityRejection(.return_width);
+}
+test "typed effects check Source helper declaration name" {
+    try expectHelperIdentityRejection(.name);
+}
+
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();

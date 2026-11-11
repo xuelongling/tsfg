@@ -35,7 +35,14 @@ pub const SourceParameter = struct { binding: struct { id: []const u8 }, logical
 const RawBinding = struct { componentType: []const u8, declaration: Decl, index: u32, mode: Access };
 const RawLoop = struct { bindings: []const RawBinding, queryBinding: []const u8, range: layout.Range };
 const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const SourceParameter, returnType: []const u8 };
-const Projection = struct { payload: struct { program: struct { files: []const SourceFile, rootFile: []const u8 }, scalarHelpers: []const struct { declaration: Decl, id: []const u8 }, systems: []const RawSystem, types: []const RawType } };
+const RawHelperParameter = struct {
+    index: u32,
+    logicalType: []const u8,
+    query: ?struct {},
+    view: ?struct { access: struct { componentType: []const u8, index: u32, mode: Access } },
+};
+const RawHelper = struct { declaration: Decl, id: []const u8, parameters: []const RawHelperParameter, returnType: []const u8 };
+const Projection = struct { payload: struct { program: struct { files: []const SourceFile, rootFile: []const u8 }, scalarHelpers: []const RawHelper, systems: []const RawSystem, types: []const RawType } };
 
 pub const Analysis = struct {
     report: Report,
@@ -78,17 +85,18 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         try context.spend(1);
         if (!digestId(helper.functionId) or !digestId(helper.signatureHash) or (index > 0 and std.mem.order(u8, report.scalarHelpers[index - 1].functionId, helper.functionId) != .lt)) return error.InvalidEffects;
         for (report.scalarHelpers[0..index]) |previous| if (same(previous.sourceHelperId, helper.sourceHelperId) or same(previous.sourceFunctionId, helper.sourceFunctionId)) return error.InvalidEffects;
-        var original: ?Decl = null;
-        for (context.facts.payload.scalarHelpers) |row| {
+        var original: ?*const RawHelper = null;
+        for (context.facts.payload.scalarHelpers) |*row| {
             try context.spend(1);
             if (same(row.id, helper.sourceHelperId)) {
                 if (original != null) return error.InvalidEffects;
-                original = row.declaration;
+                original = row;
             }
         }
-        const decl = original orelse return error.InvalidEffects;
-        if (!same(helper.sourceFunctionId, decl.id) or !sameSource(helper.source, declarationSource(decl))) return error.InvalidEffects;
+        const raw = original orelse return error.InvalidEffects;
+        if (!same(helper.sourceFunctionId, raw.declaration.id) or !sameSource(helper.source, declarationSource(raw.declaration))) return error.InvalidEffects;
         try context.source(helper.source, null);
+        try context.helperIdentity(raw, &helper);
     }
     for (report.scalarHelpers) |helper| {
         try context.calls(helper.calls, helper.source);
@@ -231,13 +239,20 @@ const Context = struct {
         return error.InvalidEffects;
     }
     fn componentId(self: *Context, raw: []const u8) Error![]const u8 {
-        for (self.facts.payload.types) |row| {
-            try self.spend(1);
+        for (self.facts.payload.types) |*row| {
+            try self.spend(1 + @min(raw.len, row.id.len) / 64);
             if (!same(row.id, raw)) continue;
             const kind = row.nominalKey orelse return error.InvalidEffects;
             const range = row.declarationRange orelse return error.InvalidEffects;
             if (!same(kind.category, "component")) return error.InvalidEffects;
-            for (self.catalog.payload.types) |component| if (component.kind == .component and same(component.name, row.name orelse return error.InvalidEffects) and same(component.sourcePath, row.sourcePath orelse return error.InvalidEffects) and component.range.start == range.start and component.range.end == range.end) return component.id;
+            const name = row.name orelse return error.InvalidEffects;
+            const path = row.sourcePath orelse return error.InvalidEffects;
+            for (self.catalog.payload.types) |*component| {
+                try self.spend(1);
+                if (component.kind != .component or component.range.start != range.start or component.range.end != range.end) continue;
+                try self.spend(2 + @min(name.len, component.name.len) / 64 + @min(path.len, component.sourcePath.len) / 64);
+                if (same(component.name, name) and same(component.sourcePath, path)) return component.id;
+            }
         }
         return error.InvalidEffects;
     }
@@ -253,9 +268,8 @@ const Context = struct {
     }
     fn systemIdentity(self: *Context, raw: *const RawSystem, system: *const System, declared: *std.ArrayList(Capability)) !void {
         try self.spend(4);
-        if (raw.declaration.name.len == 0 or !same(raw.returnType, "void")) return error.InvalidEffects;
-        var signature = Sha256.init(.{});
-        signature.update("tsfg.module-callable-signature.candidate.v1\x00{\"parameters\":[");
+        if (!same(raw.returnType, "void")) return error.InvalidEffects;
+        var signature = signatureHasher();
         for (raw.parameters, 0..) |*parameter, index| {
             try self.spend(4);
             const id = if (parameter.query) |query| param: {
@@ -264,7 +278,7 @@ const Context = struct {
                 for (query.items, 0..) |*item, item_index| {
                     try self.spend(1);
                     const component = try self.componentId(item.componentType);
-                    try self.selectionItem(&selection, item_index, component, item.mode);
+                    try self.accessItem(&selection, item_index, component, item.mode);
                     try self.addCapability(declared, .{ .componentType = component, .sourceComponentType = item.componentType, .mode = item.mode });
                 }
                 selection.update("]");
@@ -273,36 +287,70 @@ const Context = struct {
                 if (!scalar_types.has(parameter.logicalType)) return error.InvalidEffects;
                 break :param hashIdentity("tsfg.type\x00", parameter.logicalType);
             };
-            if (index != 0) signature.update(",");
-            signature.update("\"");
-            signature.update(&id);
-            signature.update("\"");
+            addSignatureParameter(&signature, index, &id);
         }
+        try self.callableIdentity(&raw.declaration, system.functionId, system.signatureHash, &signature, raw.returnType);
+    }
+    fn helperIdentity(self: *Context, raw: *const RawHelper, reported: *const Helper) !void {
+        try self.spend(4);
+        if (!digestId(raw.id) or raw.parameters.len > 32 or !floatType(raw.returnType)) return error.InvalidEffects;
+        const declaration = &raw.declaration;
+        // The Source helper ID names this declaration by its original range and path.
+        try self.spend(8 + 16 * (declaration.sourcePath.len / 64 + 1));
+        const source_key = try std.json.Stringify.valueAlloc(self.allocator, .{
+            .declarationRange = declaration.range,
+            .sourcePath = declaration.sourcePath,
+        }, .{});
+        defer self.allocator.free(source_key);
+        if (!same(raw.id, &hashIdentity("tsfg.array-facts.function.v8\x00", source_key))) return error.InvalidEffects;
+
+        var signature = signatureHasher();
+        for (raw.parameters, 0..) |*parameter, index| {
+            try self.spend(4);
+            if (parameter.index != index or parameter.query != null) return error.InvalidEffects;
+            const id = if (parameter.view) |view| param: {
+                const access = view.access;
+                if (access.index != 0 or parameter.logicalType.len != "nominal:".len + 64 or !same(parameter.logicalType, access.componentType)) return error.InvalidEffects;
+                const component = try self.componentId(parameter.logicalType);
+                var view_hash = Sha256.init(.{});
+                view_hash.update("tsfg.query.view.v1\x00");
+                try self.accessItem(&view_hash, 0, component, access.mode);
+                break :param finishIdentity(&view_hash);
+            } else param: {
+                if (!floatType(parameter.logicalType)) return error.InvalidEffects;
+                break :param hashIdentity("tsfg.type\x00", parameter.logicalType);
+            };
+            addSignatureParameter(&signature, index, &id);
+        }
+        try self.callableIdentity(declaration, reported.functionId, reported.signatureHash, &signature, raw.returnType);
+    }
+    fn callableIdentity(self: *Context, declaration: *const Decl, function_id: []const u8, signature_hash: []const u8, signature: *Sha256, return_type: []const u8) !void {
+        if (declaration.name.len == 0) return error.InvalidEffects;
         signature.update("],\"returns\":\"");
-        signature.update(&hashIdentity("tsfg.type\x00", "void"));
+        signature.update(&hashIdentity("tsfg.type\x00", return_type));
         signature.update("\"}");
-        const signature_id = finishIdentity(&signature);
-        if (!same(system.signatureHash, &signature_id)) return error.InvalidEffects;
+        const signature_id = finishIdentity(signature);
+        if (!same(signature_hash, &signature_id)) return error.InvalidEffects;
 
         // Prepay both canonical JSON encodings and the final hash. The
         // nested name is encoded once as an object and again as a string.
-        const source_bytes = raw.declaration.name.len + raw.declaration.sourcePath.len;
+        const source_bytes = declaration.name.len + declaration.sourcePath.len;
         try self.spend(16 + 32 * (source_bytes / 64 + 1));
         const name = try std.json.Stringify.valueAlloc(self.allocator, .{
             .kind = "function",
-            .name = raw.declaration.name,
+            .name = declaration.name,
             .path = [_]u32{},
         }, .{});
         defer self.allocator.free(name);
         const preimage = try std.json.Stringify.valueAlloc(self.allocator, .{
             .name = name,
-            .path = raw.declaration.sourcePath,
+            .path = declaration.sourcePath,
             .signatureHash = @as([]const u8, &signature_id),
         }, .{});
         defer self.allocator.free(preimage);
-        if (!same(system.functionId, &hashIdentity("tsfg.module-callable-function.candidate.v1\x00", preimage))) return error.InvalidEffects;
+        if (!same(function_id, &hashIdentity("tsfg.module-callable-function.candidate.v1\x00", preimage))) return error.InvalidEffects;
     }
-    fn selectionItem(self: *Context, hash: *Sha256, index: usize, component: []const u8, mode: Access) Error!void {
+    fn accessItem(self: *Context, hash: *Sha256, index: usize, component: []const u8, mode: Access) Error!void {
         try self.spend(2);
         if (!digestId(component)) return error.InvalidEffects;
         // The fixed digest and the two Access tags need no JSON escaping.
@@ -317,7 +365,7 @@ const Context = struct {
         try self.spend(2);
         var hash = selectionHasher();
         for (columns, 0..) |*column, index|
-            try self.selectionItem(&hash, index, column.componentType, column.mode);
+            try self.accessItem(&hash, index, column.componentType, column.mode);
         hash.update("]");
         if (!same(expected, &finishIdentity(&hash))) return error.InvalidEffects;
     }
@@ -434,6 +482,20 @@ fn selectionHasher() Sha256 {
     var hash = Sha256.init(.{});
     hash.update("tsfg.query.type.v1\x00[");
     return hash;
+}
+fn signatureHasher() Sha256 {
+    var hash = Sha256.init(.{});
+    hash.update("tsfg.module-callable-signature.candidate.v1\x00{\"parameters\":[");
+    return hash;
+}
+fn addSignatureParameter(hash: *Sha256, index: usize, id: *const Identity) void {
+    if (index != 0) hash.update(",");
+    hash.update("\"");
+    hash.update(id);
+    hash.update("\"");
+}
+fn floatType(value: []const u8) bool {
+    return same(value, "f32") or same(value, "f64");
 }
 fn finishIdentity(hash: *Sha256) Identity {
     var value: [Sha256.digest_length]u8 = undefined;
