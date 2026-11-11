@@ -25,15 +25,26 @@ pub const Conflict = struct { components: []const []const u8, left: []const u8, 
 pub const SourceFile = struct { path: []const u8, sha256: []const u8, utf16Length: u32 };
 pub const Report = struct { conflicts: []const Conflict, coreVersion: []const u8, family: []const u8, inputIdentity: []const u8, packageId: []const u8, queryVersion: u32, scalarHelpers: []const Helper, source: SourceFile, systems: []const System, target: layout.Target, version: u32 };
 
-// Only the already-owned packet's declaration/type/loop facts directory is projected.
-// The full original packet remains in Document; no syntax AST or expression is interpreted.
+// Project the Source declaration, type and call-anchor facts. Document owns the full packet.
 const Decl = struct { id: []const u8, name: []const u8 = "", range: layout.Range, sourcePath: []const u8 };
 const RawField = struct { id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 } };
 const RawType = struct { id: []const u8, name: ?[]const u8 = null, sourcePath: ?[]const u8 = null, declarationRange: ?layout.Range = null, nominalKey: ?struct { category: []const u8 } = null, fields: []const RawField = &.{} };
 const RawItem = struct { componentType: []const u8, mode: Access };
 pub const SourceParameter = struct { binding: struct { id: []const u8 }, logicalType: []const u8, query: ?struct { items: []const RawItem } };
 const RawBinding = struct { componentType: []const u8, declaration: Decl, index: u32, mode: Access };
-const RawLoop = struct { bindings: []const RawBinding, queryBinding: []const u8, range: layout.Range };
+const RawExpression = struct {
+    kind: enum { binary, bindingAssignment, bindingReference, bindingTarget, call, fieldAccess, fieldAssignment, fieldTarget, numericLiteral, parentheses },
+    arguments: []const RawExpression = &.{},
+    callee: []const u8 = "",
+    calleeRange: ?layout.Range = null,
+    expression: ?*const RawExpression = null,
+    left: ?*const RawExpression = null,
+    range: layout.Range,
+    right: ?*const RawExpression = null,
+    value: ?*const RawExpression = null,
+};
+const RawStatement = struct { initializer: ?*const RawExpression = null, value: ?*const RawExpression = null };
+const RawLoop = struct { bindings: []const RawBinding, queryBinding: []const u8, range: layout.Range, statements: []const RawStatement };
 const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const SourceParameter, returnType: []const u8 };
 const RawHelperParameter = struct {
     index: u32,
@@ -41,7 +52,14 @@ const RawHelperParameter = struct {
     query: ?struct {},
     view: ?struct { access: struct { componentType: []const u8, index: u32, mode: Access } },
 };
-const RawHelper = struct { declaration: Decl, id: []const u8, parameters: []const RawHelperParameter, returnType: []const u8 };
+const RawHelper = struct {
+    declaration: Decl,
+    id: []const u8,
+    parameters: []const RawHelperParameter,
+    returnType: []const u8,
+    statements: []const RawStatement = &.{},
+    value: ?*const RawExpression = null,
+};
 const Projection = struct { payload: struct { program: struct { files: []const SourceFile, rootFile: []const u8 }, scalarHelpers: []const RawHelper, systems: []const RawSystem, types: []const RawType } };
 
 pub const Analysis = struct {
@@ -72,6 +90,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
     const report = parsed.value;
     if (!same(try std.json.Stringify.valueAlloc(allocator, report, .{}), bytes[0 .. bytes.len - 1]) or report.version != 3 or report.queryVersion != 3 or !same(report.coreVersion, "0.12.0") or !same(report.family, "tsfg.system-query-effects-candidate") or !same(report.inputIdentity, input_identity) or !same(report.packageId, package_id)) return error.InvalidEffects;
     inline for (std.meta.fields(layout.Target)) |field| if (!same(@field(report.target, field.name), @field(target, field.name))) return error.InvalidEffects;
+    if (packet.len > 8388608) return error.EffectsLimit;
+    try jsonBudget(packet);
     const projected = std.json.parseFromSlice(Projection, allocator, packet, .{ .allocate = .alloc_always, .max_value_len = 8388608, .ignore_unknown_fields = true }) catch |err| return if (err == error.OutOfMemory) err else error.InvalidEffects;
     var context: Context = .{ .allocator = allocator, .report = &report, .facts = projected.value, .catalog = catalog };
     if (report.systems.len != context.facts.payload.systems.len or report.scalarHelpers.len != context.facts.payload.scalarHelpers.len or report.systems.len > 4096 or report.scalarHelpers.len > 64) return error.InvalidEffects;
@@ -81,6 +101,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
     };
     const original_file = primary orelse return error.InvalidEffects;
     if (!same(report.source.path, original_file.path) or report.source.utf16Length != original_file.utf16Length or !same(report.source.sha256, try std.fmt.allocPrint(allocator, "sha256:{s}", .{original_file.sha256}))) return error.InvalidEffects;
+    var source_helpers: [64]*const RawHelper = undefined;
     for (report.scalarHelpers, 0..) |helper, index| {
         try context.spend(1);
         if (!digestId(helper.functionId) or !digestId(helper.signatureHash) or (index > 0 and std.mem.order(u8, report.scalarHelpers[index - 1].functionId, helper.functionId) != .lt)) return error.InvalidEffects;
@@ -97,9 +118,15 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         if (!same(helper.sourceFunctionId, raw.declaration.id) or !sameSource(helper.source, declarationSource(raw.declaration))) return error.InvalidEffects;
         try context.source(helper.source, null);
         try context.helperIdentity(raw, &helper);
+        try context.spend(1);
+        source_helpers[index] = raw;
     }
-    for (report.scalarHelpers) |helper| {
-        try context.calls(helper.calls, helper.source);
+    for (report.scalarHelpers, 0..) |helper, index| {
+        // Call targets may be forward references. Validate all identities first.
+        try context.spend(1);
+        const raw = source_helpers[index];
+        if (raw.value == null and raw.statements.len == 0) return error.InvalidEffects;
+        try context.sourceCalls(raw.statements, raw.value, helper.calls, helper.source);
         try context.fieldRows(helper.fieldEffects);
         var direct: std.ArrayList([]const u8) = .empty;
         for (helper.calls) |call| if (!contains(direct.items, call.functionId)) {
@@ -167,7 +194,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
             std.mem.sort(Capability, loop_caps.items, {}, lessCapability);
             try context.capabilities(loop.capabilities);
             if (!sameCapabilities(loop_caps.items, loop.capabilities)) return error.InvalidEffects;
-            try context.calls(loop.calls, loop.source);
+            try context.sourceCalls(original_loop.statements, null, loop.calls, loop.source);
             for (loop.operations) |operation| {
                 try context.spend(1);
                 if (operation.tupleIndex >= loop.columns.len) return error.InvalidEffects;
@@ -395,8 +422,43 @@ const Context = struct {
         try self.source(value.source, owner);
         try self.source(value.calleeSource, value.source);
     }
-    fn calls(self: *Context, rows: []const Call, owner: Source) Error!void {
-        for (rows) |row| try self.call(row, owner);
+    fn sourceCalls(self: *Context, statements: []const RawStatement, legacy_value: ?*const RawExpression, calls: []const Call, owner: Source) Error!void {
+        var remaining = calls;
+        if (legacy_value) |expression| {
+            if (statements.len != 0) return error.InvalidEffects;
+            try self.sourceExpressionCalls(expression, &remaining, owner);
+        } else for (statements) |*statement| {
+            try self.spend(1);
+            const expression = statement.initializer orelse statement.value orelse return error.InvalidEffects;
+            try self.sourceExpressionCalls(expression, &remaining, owner);
+        }
+        if (remaining.len != 0) return error.InvalidEffects;
+    }
+    fn sourceExpressionCalls(self: *Context, expression: *const RawExpression, calls: *[]const Call, owner: Source) Error!void {
+        try self.spend(1);
+        switch (expression.kind) {
+            .call => {
+                // Direct calls in arguments precede the enclosing call in the report.
+                for (expression.arguments) |*argument| try self.sourceExpressionCalls(argument, calls, owner);
+                // Four range fields and fixed-width helper identity checks.
+                try self.spend(12);
+                const callee_range = expression.calleeRange orelse return error.InvalidEffects;
+                if (calls.*.len == 0 or !digestId(expression.callee)) return error.InvalidEffects;
+                const edge = &calls.*[0];
+                if (edge.source.start != expression.range.start or edge.source.end != expression.range.end or
+                    edge.calleeSource.start != callee_range.start or edge.calleeSource.end != callee_range.end or
+                    !same(edge.sourceHelperId, expression.callee)) return error.InvalidEffects;
+                try self.call(edge.*, owner);
+                calls.* = calls.*[1..];
+            },
+            .binary => {
+                try self.sourceExpressionCalls(expression.left orelse return error.InvalidEffects, calls, owner);
+                try self.sourceExpressionCalls(expression.right orelse return error.InvalidEffects, calls, owner);
+            },
+            .bindingAssignment, .fieldAssignment => try self.sourceExpressionCalls(expression.value orelse return error.InvalidEffects, calls, owner),
+            .parentheses => try self.sourceExpressionCalls(expression.expression orelse return error.InvalidEffects, calls, owner),
+            else => {},
+        }
     }
     fn field(self: *Context, component: []const u8, id: []const u8, source_id: []const u8, writable: bool) Error!void {
         try self.spend(1);

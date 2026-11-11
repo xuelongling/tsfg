@@ -286,6 +286,29 @@ test "typed effects check Source helper declaration name" {
     try expectHelperIdentityRejection(.name);
 }
 
+test "typed effects reject a changed Source call anchor" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-f64-helper-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-f64-helper.tmeta"), receipt.value);
+    defer document.deinit();
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const current = document.payload;
+    var packet = try std.json.parseFromSliceLeaky(std.json.Value, allocator, current.sourcePacket, .{});
+    const systems = packet.object.getPtr("payload").?.object.getPtr("systems").?.array.items;
+    const loops = systems[0].object.getPtr("loops").?.array.items;
+    const statements = loops[0].object.getPtr("statements").?.array.items;
+    const assignment = statements[0].object.getPtr("value").?;
+    const call = assignment.object.getPtr("value").?;
+    try std.testing.expectEqualStrings("call", call.object.get("kind").?.string);
+    const callee_end = call.object.getPtr("calleeRange").?.object.getPtr("end").?;
+    try std.testing.expectEqual(@as(i64, 492), callee_end.integer);
+    callee_end.* = call.object.get("range").?.object.get("end").?;
+    const source = try std.json.Stringify.valueAlloc(allocator, packet, .{});
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+}
+
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();
