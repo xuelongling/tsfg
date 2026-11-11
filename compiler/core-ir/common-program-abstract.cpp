@@ -128,6 +128,26 @@ ActualHeap::FieldTarget ActualHeap::fieldTarget(ActualCheck &c,const std::shared
     if(*entry.key!=key)continue;
     if(!retargetField(c,entry,identity)||!c.step(2))return {};return {entry.value,false};
   }
+  // A small directory can recover an existing canonical node without a full
+  // spelling search. Use bounded byte probes before the one complete comparison.
+  if(!c.step(4))return {};
+  if(key.size()>=16&&entries_.size()<=key.size()/8){
+    if(!c.step(4))return {};
+    const auto quarter=key.size()/4,far=key.size()-quarter;
+    for(auto node=entries_.begin();node!=entries_.end();++node){
+      if(!c.step(8))return {};
+      const auto &candidate=node->first;
+      if(candidate.size()!=key.size()||(!key.empty()&&candidate.back()!=key.back()))continue;
+      if(!c.step(8))return {};
+      if(candidate[quarter]!=key[quarter]||candidate[quarter+1]!=key[quarter+1])continue;
+      if(!c.step(8))return {};
+      if(candidate[far]!=key[far]||candidate[far+1]!=key[far+1])continue;
+      if(!c.step(candidate.size()+key.size()+1))return {};
+      if(candidate!=key)break;
+      if(!appendField(c,node,identity)||!c.step(2))return {};
+      return {&node->second,false};
+    }
+  }
   if(!c.receiverText(key))return {};auto [node,inserted]=entries_.try_emplace(key);
   if(!appendField(c,node,identity)||!c.step(2))return {};return {&node->second,inserted};
 }
