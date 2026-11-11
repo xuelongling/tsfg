@@ -25,6 +25,15 @@ original fuel callback and failure continuation on every visit. This dynamic
 stack allocation is compiler data; resource admission remains open and both
 outputs retain `resourceProof: null` and `executionAuthority: false`.
 
+A local implicit-base construction of a fully initialized fixed value
+allocates its plane at the original Core allocation, after the work
+checkpoint. The verified fresh frame and linear initializer cursor remain
+compiler values. Field initializers store into the bound plane in Source
+order. The construction's normal result carries that plane into the existing
+value-copy and return rules. The complete Core retains both receiver
+continuations. Physical lowering selects the normal continuation only for
+the verified fresh allocation, binding and completed initialization.
+
 Call-graph backedges reuse the active function's owning traversal. Each owning
 traversal still checks its complete selected CFG and normal continuations before
 the closure is emitted. Unsupported members reached after a call-graph backedge

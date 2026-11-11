@@ -40,6 +40,7 @@ struct Lowering {
   struct Presence { bool tagged; unsigned i32Tag; };
   struct PlaneField { std::string id, sourceBinding, carrier; };
   struct StorageType { std::string mlir; llvm::Type *native; };
+  struct Construction { const Operation *bind; uint16_t allocated, bound; };
   Program &program;Error &error;Json layouts=nullptr;Array initializedFields,actualLayouts,numericTraps;
   std::map<std::string,const Json *> declarations,bindings;
   std::map<std::string,Presence> presence;
@@ -53,6 +54,7 @@ struct Lowering {
   std::map<std::string,size_t> functions;
   std::map<size_t,std::vector<uint16_t>> reachable;std::set<size_t> active;
   std::map<size_t,std::vector<uint16_t>> emittedBlocks;
+  std::map<size_t,std::map<uint16_t,Construction>> constructions;
   std::string text;llvm::raw_string_ostream out;unsigned temporary=0,continuation=0;uint64_t interval=0;
   const Function *function=nullptr;size_t functionIndex=0;
   std::map<uint16_t,std::string> values;std::string sourcePath;SourceAnchor sourceRange;
@@ -190,6 +192,41 @@ struct Lowering {
     sourceRange=program.functions[fn].blocks[block].operations[ordinal].range;
     sourcePath=program.operationSources.at(program.functions[fn].id).at({block,uint16_t(ordinal)});
   }
+  static bool constructionToken(const Operation &op){
+    return op.name=="receiver_create"||op.name=="initialize_begin"||op.name=="initialize_field";
+  }
+  bool construction(size_t index,uint16_t block,size_t ordinal){
+    const auto &fn=program.functions[index];
+    const auto &ops=fn.blocks[block].operations;
+    const auto &op=ops[ordinal];
+    const auto owner=string(field(op.properties,"owner"));
+    if(!need(valueType(owner),"implicit construction requires an owned fixed value"))return false;
+    auto &sites=constructions[index];
+    if(op.name=="receiver_create"){
+      // A fresh local frame is allocated and bound before control leaves its
+      // defining block. The complete Core verifier already checks newTarget,
+      // normal edge ownership and the linear initializer token.
+      if(!need(ops.size()-ordinal==3,"fixed construction requires fresh allocation and binding in its defining block"))return false;
+      const auto &allocate=ops[ordinal+1],&bind=ops[ordinal+2];
+      if(!need(allocate.name=="receiver_allocate"&&allocate.operands[0]==op.result&&bind.name=="receiver_bind"&&
+        bind.operands[0]==op.result&&bind.operands[1]==allocate.result,"fixed construction allocation and binding must use the same fresh frame"))return false;
+      const auto bound=fn.blocks[bind.successors[0]].parameters[0];
+      if(!need(fn.carriers[bound]==owner,"fixed construction binding requires its exact owned carrier"))return false;
+      sites.emplace(op.result,Construction{&bind,allocate.result,bound});
+      return true;
+    }
+    if(op.name=="initialize_field"||op.name=="initialize_end")return true;
+    const auto found=sites.find(op.operands[0]);
+    if(!need(found!=sites.end(),"fixed construction action requires a verified fresh local frame"))return false;
+    const auto &site=found->second;
+    if(op.name=="receiver_allocate")return need(op.result==site.allocated,"fixed construction frame has a second allocation");
+    if(op.name=="receiver_bind")return need(&op==site.bind,"fixed construction frame has a second binding");
+    if(op.name=="initialize_begin")return need(op.operands[1]==site.bound,"fixed initialization must use the bound receiver");
+    const auto result=fn.blocks[op.successors[0]].parameters[0];
+    return need(op.operands.size()==1&&ordinal>0&&ops[ordinal-1].name=="initialize_end"&&
+      ops[ordinal-1].operands[1]==site.bound&&fn.carriers[result]==owner,
+      "fixed construction must complete initialization before returning the bound receiver");
+  }
   bool closure(size_t index){
     if(reachable.count(index))return true;const auto &selected=program.functions[index];sourcePath=selected.path;sourceRange=selected.range;
     if(!step())return false;
@@ -206,6 +243,10 @@ struct Lowering {
           const auto id=string(field(op.properties,"function_id"));
           if(!need(functions.count(id)&&selected.blocks[op.successors[0]].parameters.size()==1,"direct fixed callee requires one normal result in the verified inventory")||!closure(functions.at(id)))return false;
           locate(index,block,ordinal);if(!visit(op.successors[0]))return false;
+        }else if(constructionToken(op)||op.name=="receiver_allocate"||op.name=="receiver_bind"||
+                 op.name=="initialize_end"||op.name=="receiver_result"){
+          if(!construction(index,block,ordinal))return false;
+          if(!op.successors.empty()&&!visit(op.successors[0]))return false;
         }else{
           static const std::set<std::string> supported={"fuel","cell","store","load","value_copy","view","assert","carrier_cast","field_load","field_store","constant","floating","boolean","undefined","strict_equal","numeric_use","binary","unary","func.return","cf.br","cf.cond_br"};
           if(!need(supported.count(op.name),"operation in the selected closure has no fixed-value lowering"))return false;
@@ -224,6 +265,8 @@ struct Lowering {
         if(!step())return false;
         if(op.name=="invoke"){
           if(!bottomType(program.functions[functions.at(string(field(op.properties,"function_id")))].resultCarrier)&&!visit(op.successors[0]))return false;
+        }else if(op.name=="receiver_bind"||op.name=="receiver_result"){
+          if(!visit(op.successors[0]))return false;
         }else if(op.name!="numeric_use"||!undefinedOnly(selected.carriers[op.operands[0]])){
           for(auto successor:op.successors)if(!visit(successor))return false;
         }
@@ -324,8 +367,16 @@ struct Lowering {
     if(!step())return false;if(op.name=="fuel"){checkpoint(1,op.range);return true;}checkpoint(2,op.range);
     const auto operand=[&](size_t index)->const std::string &{return values.at(op.operands[index]);};
     const auto carrier=[&](uint16_t reg)->const std::string &{return function->carriers[reg];};
-    const auto result=op.result==noRegister?std::string():values.at(op.result);
-    if(op.name=="cell"||op.name=="store"||op.name=="load"){
+    const auto result=op.result==noRegister||constructionToken(op)?std::string():values.at(op.result);
+    if(op.name=="receiver_create"||op.name=="initialize_begin"||op.name=="initialize_end"){
+      // The checked frame and initializer cursor have no physical value.
+    }else if(op.name=="receiver_allocate"){
+      allocate(type(carrier(op.result)),result);
+    }else if(op.name=="receiver_bind"||op.name=="receiver_result"){
+      const auto &site=constructions.at(functionIndex).at(op.operands[0]);
+      const auto selected=op.name=="receiver_bind"?site.allocated:site.bound;
+      out<<"    cf.br ";edge(op.successors[0],{values.at(selected)});out<<'\n';
+    }else if(op.name=="cell"||op.name=="store"||op.name=="load"){
       const auto cell=bindingCarrier(string(field(op.properties,"binding")));
       const auto native=registerType(cell);
       if(native.empty())return false;
@@ -347,19 +398,21 @@ struct Lowering {
         if(adjusted.empty())return false;
         values[op.result]=adjusted;
       }
-    }else if(op.name=="field_load"||op.name=="field_store"){
-      const auto owner=carrier(op.operands[0]),selected=string(field(op.properties,"field"));if(!need(planes.count(owner),"field receiver has no fixed-value layout"))return false;
+    }else if(op.name=="field_load"||op.name=="field_store"||op.name=="initialize_field"){
+      const size_t receiver=op.name=="initialize_field"?1:0;
+      const auto owner=carrier(op.operands[receiver]),selected=string(field(op.properties,"field"));if(!need(planes.count(owner),"field receiver has no fixed-value layout"))return false;
       const auto &fields=planes.at(owner);size_t index=0;
       for(;index<fields.size();++index){if(!step())return false;if(fields[index].id==selected)break;}
       if(!need(index<fields.size(),"field identity differs from the fixed-value layout"))return false;
       const auto &child=fields[index].carrier;
-      const auto pointer=fieldPointer(operand(0),owner,index);
+      const auto pointer=fieldPointer(operand(receiver),owner,index);
       if(op.name=="field_load"){
         if(!need(child==carrier(op.result),"field result differs from its verified carrier"))return false;
         if(valueType(child))values[op.result]=pointer;else out<<"    "<<result<<" = llvm.load "<<pointer<<" : !llvm.ptr -> "<<type(child)<<'\n';
       }else{
-        if(!need(child==carrier(op.operands[1]),"field store differs from its verified carrier"))return false;
-        const auto stored=valueType(child)?load(operand(1),child):operand(1);out<<"    llvm.store "<<stored<<", "<<pointer<<" : "<<type(child)<<", !llvm.ptr\n";
+        if(!need(child==carrier(op.operands[receiver+1]),"field store differs from its verified carrier"))return false;
+        const auto &input=operand(receiver+1);
+        const auto stored=valueType(child)?load(input,child):input;out<<"    llvm.store "<<stored<<", "<<pointer<<" : "<<type(child)<<", !llvm.ptr\n";
       }
     }else if(op.name=="undefined"){
       if(!need(undefinedOnly(carrier(op.result)),"undefined literal lacks its exact absence carrier"))return false;
@@ -429,7 +482,7 @@ struct Lowering {
   bool emit(size_t index){
     function=&program.functions[index];functionIndex=index;values.clear();const auto &selected=*function;sourcePath=selected.path;sourceRange=selected.range;
     const bool bottom=bottomType(selected.resultCarrier);const auto returned=bottom?"()":type(selected.resultCarrier);if(returned.empty())return false;std::set<uint16_t> retained;
-    for(auto block:emittedBlocks.at(index)){for(auto reg:selected.blocks[block].parameters)retained.insert(reg);for(const auto &op:selected.blocks[block].operations)if(op.result!=noRegister)retained.insert(op.result);}
+    for(auto block:emittedBlocks.at(index)){for(auto reg:selected.blocks[block].parameters)retained.insert(reg);for(const auto &op:selected.blocks[block].operations)if(op.result!=noRegister&&!constructionToken(op))retained.insert(op.result);}
     for(auto reg:retained){if(registerType(selected.carriers[reg]).empty())return false;values.emplace(reg,"%r"+std::to_string(reg));}
     out<<"  func.func private @value_"<<selected.id.substr(7)<<"(%state: !llvm.ptr, %event: !llvm.ptr";for(auto reg:selected.blocks[0].parameters)out<<", %arg"<<reg<<": "<<type(selected.carriers[reg]);out<<") -> "<<returned<<" {\n";
     const auto frame=constant(index,"i64"),shadow=constant(0);out<<"    llvm.call_intrinsic \"llvm.experimental.stackmap\"("<<frame<<", "<<shadow<<") : (i64, i32) -> ()\n";

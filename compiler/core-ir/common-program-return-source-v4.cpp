@@ -604,7 +604,14 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
         if(!save(Refs{node(Object{{"kind","receiverFrame"},{"type",nullptr},{"construction",construction},{"newTarget",name=="receiver_create"?field(props,"new_target"):Json(nullptr)},
           {"parent",name=="receiver_child"?Json(refs(value(0))):Json(nullptr)},{"site",identity},{"control",int64_t(state.control)}})}))return false;
       }else if(name=="receiver_allocate"){
-        auto normal=action("allocate",value(0),{},resultType,false);restore(normal.first);facet("allocation",nullptr,"receiver_allocate");facet("managedReference",nullptr,"receiver_allocate");if(!save(normal.second))return false;
+        const auto owner=string(field(props,"owner"));
+        if(!lookup(types.size(),owner)||!need(resultType&&*resultType==owner&&types.count(owner),"normalized receiver allocation lacks its owned result type"))return false;
+        const auto kind=string(field(*types.at(owner),"kind"));
+        if(!need(kind=="reference"||kind=="value","normalized receiver allocation is not a class"))return false;
+        auto normal=action("allocate",value(0),{},resultType,false);restore(normal.first);
+        if(kind=="reference")facet("allocation",nullptr,"receiver_allocate");
+        if(reference(owner))facet("managedReference",nullptr,"receiver_allocate");
+        if(!save(normal.second))return false;
       }else if(name=="receiver_bind"||name=="receiver_get"||name=="receiver_result"){
         if(!need(operation.successors.size()==2,"normalized receiver action lacks both completions"))return false;
         const auto type=view(cfg.blocks[operation.successors[0]].parameters[0]);const auto before=state;const auto operands=args.size()==2?value(1):Refs{};
