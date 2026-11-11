@@ -104,10 +104,32 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       if(!step(result.validatedFrames.size()))return false;
       // Completion already paid full-byte World/global queries for every ID, in original order.
       for(const auto *frame:result.validatedFrames){
-        const auto &info=frame->second;if(!step(5))return false;
+        const auto &info=frame->second;if(!step(18))return false;
         const ActualConstructionKeyView query{info.construction,info.newTarget};
-        const auto bytes=query.construction.size()+1+query.newTarget.size();
-        const auto count=constructionCapacity.size();size_t height=0;
+        const auto separator=query.construction.size(),targetBytes=query.newTarget.size();
+        const auto bytes=separator+1+targetBytes;
+        const auto count=constructionCapacity.size();
+        auto existing=constructionCapacity.end();
+        // Most constructors share the same hash prefix. Use the segment
+        // boundaries to reject other rows before paying for one full comparison.
+        if(count&&count<=8&&bytes>=64&&separator&&targetBytes){
+          if(!step(8))return false;
+          const auto constructionTail=query.construction.back(),targetTail=query.newTarget.back();
+          for(auto row=constructionCapacity.begin();row!=constructionCapacity.end();++row){
+            if(!step(20))return false;
+            const auto &key=row->first;
+            if(key.size()!=bytes||key[separator]!='/'||
+              key[separator-1]!=constructionTail||key.back()!=targetTail)continue;
+            if(!step(2*bytes+27))return false;
+            if(compareConstructionKey(query,key)==0)existing=row;
+            break;
+          }
+        }
+        if(existing!=constructionCapacity.end()){
+          if(!recordCapacity(existing->second,result.selected))return false;
+          continue;
+        }
+        size_t height=0;
         for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
         height=std::min(height,count);
         // Each comparison reads at most two complete query byte streams. The
