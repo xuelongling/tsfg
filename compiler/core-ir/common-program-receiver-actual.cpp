@@ -244,7 +244,7 @@ ActualFrameWorld selectedInputFrames(ActualCheck &check,const ActualFrameWorld &
     if(!row){const auto found=findFrame(check,world,id);
       if(!found||!check.need(*found!=world.end(),"selected frame is absent from completion"))return nullptr;row=&**found;}
     const ActualFrameInfo *info=nullptr;
-    if(!known){const auto frame=findFrame(check,check.receiverFrames,id);
+    if(!known){const auto frame=findFrame(check,check.receiverFrames,row->first.text());
       if(!frame||!check.need(*frame!=check.receiverFrames.end(),"selected frame is absent from completion"))return nullptr;info=&(*frame)->second;}
     if(selected.size()==selected.capacity()){
       if(!check.step(selected.size()+1))return nullptr;
@@ -483,7 +483,7 @@ ActualReceiverCompletion ActualCheck::receiverCompletion(ActualFrameWorld &&worl
   if(!step(ids.size()))return out;
   for(const auto &id:ids){const auto binding=findFrame(*this,world,id);
     if(!binding||!need(*binding!=world.end(),"receiver frame is absent from completion"))return {};
-    const auto frame=findFrame(*this,receiverFrames,id);
+    const auto frame=findFrame(*this,receiverFrames,(*binding)->first.text());
     if(!frame||!need(*frame!=receiverFrames.end(),"receiver frame is absent from completion"))return {};
     auto &before=(*binding)->second;const auto &info=(*frame)->second;
     if(!step())return {};if(action==ReceiverAction::Result){
