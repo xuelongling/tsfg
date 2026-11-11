@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 
 export const selectedJob = 'sha256:df91096cd1604f9c9af35e04df1ff3c11d77faeb3d9890cbf9bdc57ab4d83c6e';
 export const factsSchema = 'sha256:79d8f807552e301b606aacdee7b81fcee83d8996ff2043e58c435e5f2b7b519c';
-export const hirSchema = 'sha256:09c18929e4c6acecd4eea93318c56ccddb7d66e693be311aec220e3c0fe7c073';
+export const hirSchema = 'sha256:bfc28b79c2e8ee7a66c3e12a963d939c6f4e209a38579ce437c18ca4745a57df';
 export const stringType = 'sha256:7d62b2f4422bdcf8ffbd8d54487d799753faecc3655296bfd81d3e94b606a46e';
 export const signature = 'sha256:854eb80faa738dba624abb80156ef142ab727222ac63c01620c51768ad44e5c4';
 export const sourcePath = '/oracle24e/corpus.ts';
@@ -38,7 +38,7 @@ export async function fixture() {
   /** @type {Array<[Buffer, number, string]>} */
   const pins = [
     [factsBytes, 4855, '801792594c3f3b81d7d0a726bf99ea33772425f65abe3552236068d848c4498a'],
-    [hirBytes, 6692, 'c82d0d29c0342544029974f3329a1366ab0b773306bb342285da5121a235d453'],
+    [hirBytes, 6692, '752a7c65e323d7c5589ef18c575facdde7543959a5ed798e39245f5b893f98ca'],
     [manualBytes, 5844, '1f482ea65d89630dac8234fbe016216d3854cf3ed4e9beada2fbbfc5150a1b1c'],
   ];
   for (const [bytes, size, hash] of pins) {

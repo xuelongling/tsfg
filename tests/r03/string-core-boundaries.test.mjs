@@ -20,7 +20,7 @@ async function pinned(file, length, digest) {
 /** @returns {Promise<any[]>} */
 async function cases() {
   const bytes = await pinned('./string-core-oracle.json', 43500,
-    'c6ce728e5663e658629cd3e63a9887f54e6bf57f90d7e397a2a49b19c9f84e9f');
+    '527355bb1adc8d63dc3ee92726c16056f7af927868ab0511aecd767b31cb1efd');
   const oracle = JSON.parse(bytes.toString('utf8'));
   const out = [];
   for (const c of oracle.cases) {

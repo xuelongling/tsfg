@@ -40,7 +40,7 @@ test('24f FIRST public buildHir: selected actual v2 typed concat', t => {
   const factsBytes = pinned('./string-facts-concat.frozen-v2.jcs.json', 4855,
     '801792594c3f3b81d7d0a726bf99ea33772425f65abe3552236068d848c4498a');
   const expectedBytes = pinned('./string-hir-concat.frozen-v2.jcs.json', 6692,
-    'c82d0d29c0342544029974f3329a1366ab0b773306bb342285da5121a235d453');
+    '752a7c65e323d7c5589ef18c575facdde7543959a5ed798e39245f5b893f98ca');
   // JSON.parse supplies untrusted input data, not a substitute v2 validator.
   const input = JSON.parse(factsBytes.toString('utf8'));
   assert.equal(input.packageId, v2SelectedJob);

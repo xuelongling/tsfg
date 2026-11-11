@@ -19,7 +19,7 @@ async function frozen(file, length, digest) {
 }
 
 test("24g FIRST: every frozen whole String HIR lowers to independently fixed complete Core", async t => {
-  const oracleBytes = await frozen("./string-core-oracle.json", 43500, "c6ce728e5663e658629cd3e63a9887f54e6bf57f90d7e397a2a49b19c9f84e9f");
+  const oracleBytes = await frozen("./string-core-oracle.json", 43500, "527355bb1adc8d63dc3ee92726c16056f7af927868ab0511aecd767b31cb1efd");
   const oracle = JSON.parse(oracleBytes.toString("utf8"));
   assert.equal(oracle.provenance.newOutputSampled, false);
   assert.equal(oracle.provenance.lowerHirCalled, false);

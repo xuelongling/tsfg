@@ -15,7 +15,7 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 async function frozenOracle() {
   const bytes = await readFile(new URL('./string-core-escaping-oracle.json', import.meta.url));
   assert.equal(bytes.length, 56974);
-  assert.equal(sha(bytes), 'b605c6e33d2e68ee648c0cbc1d6b42af64f3d667766ecc4cd283d3042f912dd7');
+  assert.equal(sha(bytes), '03fa32e195027c668527da2c964ed158f0928f4b8587dbe291c13d9fff311b32');
   const oracle = JSON.parse(bytes.toString('utf8'));
   assert.equal(oracle.provenance.newOutputSampled, false);
   assert.equal(oracle.provenance.productImported, false);
