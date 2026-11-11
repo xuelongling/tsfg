@@ -2891,6 +2891,7 @@ const MethodAdapterDTO = struct {
             self.method_a_blocks = .{.{ .parameters = if (hidden_environment) &method_a_parameters_env else &method_a_parameters_plain, .instructions = &self.method_a_instructions }};
             self.functions[1].blocks = &self.method_a_blocks;
             self.abis[1].function = @enumFromInt(1); self.abis[1].parameters = &.{@enumFromInt(3)}; self.abis[1].argument_types = &.{a_type}; self.abis[1].receiver = @enumFromInt(2);
+            self.abis[1].method_minimum_argument_count = 1;
             self.abis[1].lexical_environment = if (hidden_environment) @enumFromInt(0) else null; self.abis[1].physical_parameters = if (hidden_environment) &method_a_physical_env else &method_a_physical_plain;
             self.abis[1].result_carrier = ac;
             self.method_a_operations = .{
@@ -2903,6 +2904,7 @@ const MethodAdapterDTO = struct {
             self.functions[2].registers = &method_b_registers;
             self.functions[2].blocks = &method_b_blocks;
             self.abis[2].function = @enumFromInt(2); self.abis[2].signature = @splat(0xee); self.abis[2].parameters = &.{}; self.abis[2].argument_types = &.{}; self.abis[2].receiver = @enumFromInt(4);
+            self.abis[2].method_minimum_argument_count = 0;
             self.abis[2].physical_parameters = &.{bc}; self.abis[2].result_carrier = bc;
             self.abis[2].source_plan = .{ .carriers = &.{ b_text, a_text }, .blocks = &method_b_plan };
             if (hidden_environment) {
@@ -2977,6 +2979,7 @@ test "method adapter consumes every fixed arm prefix and saved receiver through 
         .kind = if (index == 0) .source else .method,
         .decl_key = .{ .kind = if (index == 0) .function else .method, .name = if (index == 0) "methodCaller" else "choose", .path = if (index == 0) &.{} else if (index == 1) &.{"A"} else &.{"B"}, .source_path = fixture.sources[0].path },
         .parameter_types = if (index < 2) &.{ a_id, a_id } else &.{b_id}, .return_type = a_id,
+        .method_minimum_argument_count = fixture.abis[index].method_minimum_argument_count,
         .construction = null, .lexical_parent = null, .lexical_environment = null, .activation_environment = null, .captures = &.{}, .access = .public,
     };
     var scope = std.mem.zeroes(publication.StableScope); scope.root_file = fixture.sources[0].path;
@@ -2984,10 +2987,10 @@ test "method adapter consumes every fixed arm prefix and saved receiver through 
     scope.types = &.{
         .{ .id = a_id, .label = "A", .shape = .{ .nominal = .{ .kind = .reference, .label = "A", .base = null,
             .construction = .{ .access = .public, .parameters = &.{}, .return_type = "A", .argument_signature = null }, .fields = &.{},
-            .methods = &.{.{ .access = .public, .name = "choose", .parameters = &.{"A"}, .return_type = "A" }} } } },
+            .methods = &.{.{ .access = .public, .name = "choose", .parameters = &.{"A"}, .return_type = "A", .minimum_argument_count = 1 }} } } },
         .{ .id = b_id, .label = "B", .shape = .{ .nominal = .{ .kind = .reference, .label = "B", .base = "A",
             .construction = .{ .access = .public, .parameters = &.{}, .return_type = "B", .argument_signature = null }, .fields = &.{},
-            .methods = &.{.{ .access = .public, .name = "choose", .parameters = &.{}, .return_type = "A" }} } } },
+            .methods = &.{.{ .access = .public, .name = "choose", .parameters = &.{}, .return_type = "A", .minimum_argument_count = 0 }} } } },
     };
     scope.constructions = &.{
         .{ .id = constructor_a, .owner = a_id, .base = null, .kind = .@"implicit-base", .function_id = null },
