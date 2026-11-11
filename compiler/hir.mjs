@@ -250,7 +250,7 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
 
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerHir(hir, factsContext = undefined, callPublicationContext = undefined) {
-  if(isCommonProgramContext(factsContext)||familyOf(hir)==='tsfg.program-hir-candidate'){
+  if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate')){
     const checked=verifyHir(hir,factsContext);commonBudget(callPublicationContext);commonRecord(callPublicationContext,['publication','request']);
     return emitCommonProgramCore(checked,callPublicationContext.publication,callPublicationContext.request);
   }
@@ -284,12 +284,12 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
  * explicit candidate route; String HIR is revalidated and compiled directly.
  * @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerFormalHir(hir, factsContext = undefined, callPublicationContext = undefined) {
-  if(isCommonProgramContext(factsContext)||familyOf(hir)==='tsfg.program-hir-candidate')return lowerHir(hir,factsContext,callPublicationContext);
-  if(hir?.format?.family==='tsfg.closure-hir-candidate')return emitFormalClosureCore(hir);
-  if(hir?.format?.family==='tsfg.exception-hir-candidate')return emitFormalExceptionCore(hir);
+  if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate'))return lowerHir(hir,factsContext,callPublicationContext);
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if (factsContext !== undefined)
     return emitFormalStringCore(hir, factsContext);
+  if(hir?.format?.family==='tsfg.closure-hir-candidate')return emitFormalClosureCore(hir);
+  if(hir?.format?.family==='tsfg.exception-hir-candidate')return emitFormalExceptionCore(hir);
   return lowerHir(hir, factsContext,callPublicationContext);
 }

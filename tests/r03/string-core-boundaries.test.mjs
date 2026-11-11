@@ -5,8 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { lowerHir, verifyHir, readHir, printHir } from '../../compiler/hir.mjs';
-import registry from '../../contracts/registry.json' with { type: 'json' };
+import { buildHir, lowerHir, lowerFormalHir, verifyHir, readHir, printHir } from '../../compiler/hir.mjs';
 
 /** @param {string | Uint8Array} value */
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -92,7 +91,10 @@ test('24g context validation precedes hostile HIR traversal and never invokes co
       getPrototypeOf() { traps++; throw Error('HIR prototype sentinel'); },
     });
     const bad = context(c); bad.expectedPackageId = 'sha256:' + '0'.repeat(64);
-    assert.deepEqual(failure(() => lowerHir(h, bad)), expectedError('context'));
+    for (const lower of [lowerHir, lowerFormalHir])
+      assert.deepEqual(failure(() => lower(h, bad)), expectedError('context'));
+    for (const verify of [verifyHir, printHir])
+      assert.throws(() => verify(h, context(c), {}), {code: 'r03-d-call-effects'});
     assert.equal(traps, 0);
     const variants = [null, {}, {...context(c), extra: true}, {...context(c), factsVersion: 1},
       {...context(c), factsBytes: Buffer.from('null\n')}, {...context(c), expectedPackageId: c.hir.source.hash}];
@@ -188,15 +190,20 @@ test('24g upstream input budgets preserve the old exact limit DTO before Core em
 // verifyHir to manufacture a public overflow. C++ input8MiB is tested separately.
 
 test('24g absent context keeps the complete scalar Core path across formal identity migration', async () => {
-  const bytes = await pinned('./string-core-default-scalar.json', 2809, 'd33fb852bd564e41d1f96d2545326ff751e5ae9ce90d8ddccf9d8a34f46a4425');
-  const f = JSON.parse(bytes.toString('utf8'));
-  assert.equal(f.provenance.sourceCompilerRun, false); assert.equal(f.provenance.emitterCalled, false);
-  assert.deepEqual(verifyHir(clone(f.hir)), f.hir);
-  // Preserve the frozen original. Only the current formal version/schema change;
-  // every identity, function, SSA body and anchor stays byte-for-byte identical.
-  const current = f.core.replace('tsfg_core.version = "0.9.0"', `tsfg_core.version = "${registry['tsfg.bytecode'].semver}"`)
-    .replace('sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6', registry['tsfg.bytecode'].schemaHash);
-  assert.equal(lowerHir(clone(f.hir)), current);
-  assert.equal(lowerHir(clone(f.hir), undefined), current);
-  assert.deepEqual(failure(() => lowerHir(clone(f.hir), {})), expectedError('context'));
+  const original = JSON.parse((await pinned('./string-core-default-scalar.json', 2809,
+    'd33fb852bd564e41d1f96d2545326ff751e5ae9ce90d8ddccf9d8a34f46a4425')).toString('utf8'));
+  assert.equal(original.provenance.sourceCompilerRun, false);
+  assert.equal(original.provenance.emitterCalled, false);
+  assert.throws(() => verifyHir(original.hir), /r03-hir-invalid/);
+  const {snapshot, hir} = JSON.parse((await pinned('./testdata/formal-cold-profile/owned-snapshot-hir.json', 43319,
+    '5f22b4e99e09737ef6d58c544fc44a107d8fc0b6dc9d0c00ea52a9f837af8ae7')).toString('utf8'));
+  const core = (await pinned('./testdata/formal-cold-profile/checked-i8.core.mlir', 1472,
+    '908bcb58249895f78d1c2e8e1ec8cee5b4a10d4b5d66f9b0e0bd803a0c12f05a')).toString('utf8');
+  assert.deepEqual(buildHir(snapshot), {status: 'ok', hir});
+  assert.deepEqual(verifyHir(hir), hir);
+  assert.deepEqual(readHir(Buffer.from(printHir(hir))), hir);
+  assert.equal(lowerHir(hir), core);
+  assert.equal(lowerHir(hir, undefined), core);
+  assert.equal(lowerFormalHir(hir), core);
+  assert.deepEqual(failure(() => lowerHir(hir, {})), expectedError('context'));
 });

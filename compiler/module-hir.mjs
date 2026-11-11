@@ -35,7 +35,7 @@ const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(
 const types = scalarTypeIds;
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
-  if(isCommonProgramContext(factsContext)||familyOf(hir)==='tsfg.program-hir-candidate'){
+  if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate')){
     const checked=verifyCommonProgramHir(hir);
     if(factsContext!==undefined)commonCheck(isCommonProgramContext(factsContext)&&commonSame(checked,buildCommonProgramHir(checked.snapshot,factsContext)),'context');
     if(callPublicationContext!==undefined){commonBudget(callPublicationContext);commonRecord(callPublicationContext,['publication','request']);analyzeCommonProgram(checked,callPublicationContext.publication);}
@@ -49,37 +49,38 @@ export function verifyHir(hir, factsContext = undefined, callPublicationContext 
     nullableCheck(callPublicationContext === undefined, 'context'); return verifyNullableHir(hir, factsContext);
   }
   if(isTypedArrayContext(factsContext))return verifyTypedArrayHir(hir,factsContext,callPublicationContext);
-  if (callPublicationContext === undefined) return verifyWholeHir(hir, factsContext);
-  return selectedModuleCalls(hir, factsContext, callPublicationContext).hir;
+  if (factsContext !== undefined) {
+    if (callPublicationContext !== undefined) callEffectsFailure();
+    return verifyStringHir(hir, factsContext);
+  }
+  if (callPublicationContext === undefined) return verifyWholeHir(hir);
+  return selectedModuleCalls(hir, callPublicationContext).hir;
 }
 
 /** Analyze only a complete verified ordinary module HIR and an explicit publication.
  * @param {any} hir @param {any} context */
 export function analyzeModuleCalls(hir, context) {
-  return selectedModuleCalls(hir, undefined, context).analysis;
+  return selectedModuleCalls(hir, context).analysis;
 }
 
-/** @param {any} hir @param {any} factsContext @param {any} context */
-function selectedModuleCalls(hir, factsContext, context) {
+/** @param {any} hir @param {any} context */
+function selectedModuleCalls(hir, context) {
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
-    if (factsContext !== undefined) callEffectsFailure();
     const analysis = analyzeModuleCallableCalls(hir, context);
     return { hir: verifyModuleCallableHir(hir), analysis };
   }
   checkCallEffectsInputs(hir, context);
-  if (factsContext !== undefined || hir?.modules === undefined || hir?.format !== undefined)
+  if (hir?.modules === undefined || hir?.format !== undefined)
     callEffectsFailure();
   // The existing complete validator remains the only HIR validator. Selected
   // analysis supplies its own final kernel policy after checking the fixed table.
-  const checked = verifyWholeHir(hir, undefined, true);
+  const checked = verifyWholeHir(hir, true);
   const analysis = analyzeVerifiedModuleCalls(checked, context);
   return { hir: checked, analysis };
 }
 
-/** @param {any} hir @param {any} [factsContext] @param {boolean} [selectedCalls] */
-function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
-  // An explicit facts context owns selection and must reject before any HIR inspection.
-  if (factsContext !== undefined) return verifyStringHir(hir, factsContext);
+/** @param {any} hir @param {boolean} [selectedCalls] */
+function verifyWholeHir(hir, selectedCalls = false) {
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') return verifyModuleCallableHir(hir);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return verifyExceptionHir(hir);
   if (hir?.format?.family === 'tsfg.nullable-hir-candidate') return verifyNullableHir(hir);

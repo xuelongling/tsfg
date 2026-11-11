@@ -1,0 +1,7 @@
+module attributes {tsfg_core.version = "0.12.0", tsfg_core.input_identity = "sha256:6633bcb07fbaad08521ef11f2bce23973ad2c41ba55f6746a644ac37dfe8b6e7", tsfg_core.source_hash = "sha256:0b920464a1c8fe31ba155780417356a6bb234a908d5e8ba0d13ca08feb13aaaf", tsfg_core.source_path = "/src/main.ts", tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc", tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128", tsfg_core.bytecode_schema = "sha256:fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7", tsfg_core.source_length = 66 : i64} {
+  func.func @"entry"(%v0: f64) -> !tsfg_core.integer<"i8"> attributes {tsfg_core.function_id = "sha256:918f8b18243a35039a8449e454b158507abc1faaabcf641bc66d368ea722bbea", tsfg_core.signature_hash = "sha256:846655fb1cadb746a4d3d242059e66084d2f61dce2a49fcc539951ebee1d5143", tsfg_core.type_id = "sha256:f640daef8324c8aa7a18bd2bc3eb980260aacf835b0f1a1de1a938e30e734ba8", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 66 : i64, tsfg_core.parameter_presence = "00"} {
+    "tsfg_core.fuel"() {event = 1 : i32, tsfg_source.start = 0 : i64, tsfg_source.end = 66 : i64} : () -> ()
+    %v1 = "tsfg_core.convert_checked"(%v0) {tsfg_source.start = 41 : i64, tsfg_source.end = 63 : i64} : (f64) -> !tsfg_core.integer<"i8">
+    "func.return"(%v1) {tsfg_source.start = 33 : i64, tsfg_source.end = 64 : i64} : (!tsfg_core.integer<"i8">) -> ()
+  }
+}
