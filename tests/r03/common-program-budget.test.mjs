@@ -16,7 +16,7 @@ import {commonProgramPlan} from '../../compiler/common-program-plan.mjs';
 import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
-import {coreExchangeFormat} from '../../compiler/core-ssa-emitter.mjs';
+import commonWireBinding from '../../contracts/common-program-wire-development.json' with {type:'json'};
 import {commonCollections,commonSortedSubset,commonTextBudget} from '../../compiler/common-program-budget.mjs';
 import {commonReferenceBodyModel} from './common-program-model-cases.mjs';
 const limit=/** @param {any} e */e=>e.code==='r03-common-program-limit';
@@ -70,12 +70,17 @@ test('aggregate text and escaped fragments fail atomically before final join',()
   const text=commonTextBudget(commonMeter(1000),12);text.append('123456');assert.throws(()=>text.append('7890123'),limit);assert.throws(()=>text.finish(),limit);
   const fragment=commonTextBudget(commonMeter(1000),8);assert.throws(()=>fragment.combine(['12345','6789']),limit);assert.throws(()=>fragment.finish(),limit);
 });
-for(const name of ['positive','mixed'])test('common module carries the ordinary nine-field Core header from its real root: '+name,async()=>{
+for(const name of ['positive','mixed'])test('Common20 module carries the nine-field Core header from its real root: '+name,async()=>{
   const hir=await program(name),publication=createCommonProgramPublication(hir),request={targets:hir.closure.roots.filter(r=>r.kind==='kernel').map(r=>r.target).sort()},text=commonProgramCore(hir,publication,request).text;
-  const source=hir.sources.find(s=>s.path===hir.rootFile),strings={version:coreExchangeFormat.version,input_identity:hir.inputIdentity,source_hash:source.hash,
-    source_path:source.path,target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout,bytecode_schema:coreExchangeFormat.bytecodeSchema};
-  for(const [key,value]of Object.entries(strings))assert.ok(text.includes('tsfg_core.'+key+' = '+JSON.stringify(value)),key);
-  assert.ok(text.includes('tsfg_core.source_length = '+source.content.length+' : i64'));
+  assert.equal(commonWireBinding.wire.version,20);
+  const source=hir.sources.find(s=>s.path===hir.rootFile),strings={version:'0.20.0',input_identity:hir.inputIdentity,source_hash:source.hash,
+    source_path:source.path,target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout,bytecode_schema:commonWireBinding.wire.schemaHash};
+  const marker=text.indexOf('tsfg_program.program = ');
+  assert.ok(marker>0);
+  const header=text.slice(0,marker);
+  assert.equal([...header.matchAll(/\btsfg_core\.[a-z_]+ = /g)].length,9);
+  for(const [key,value]of Object.entries(strings))assert.ok(header.includes('tsfg_core.'+key+' = '+JSON.stringify(value)),key);
+  assert.ok(header.includes('tsfg_core.source_length = '+source.content.length+' : i64'));
 });
 
 test('repeated real TypeId quoting reuses escaped output within the original work cap',()=>{

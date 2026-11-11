@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {commonRegions,emptyRegionValue} from '../../compiler/common-program-regions.mjs';
+import {commonAbstract} from '../../compiler/common-program-abstract.mjs';
+import {commonReceiverActual} from '../../compiler/common-program-receiver-actual.mjs';
 function fixture(){
  const domain=commonRegions(commonMeter(100000)),heap=new Map(),scope=domain.scope('loop','factory-call');
  const make=(reference,type='env:Reader')=>domain.allocate(scope,'verified-activation',reference,type,heap);
@@ -104,13 +106,26 @@ test('region prepare prepays a straight-line instruction scan with no successor 
   /** @param {any} error */error=>error.code==='r03-common-program-limit');
 });
 test('region feedback prepays empty version rows before walking them',()=>{
- const setup=commonMeter(100000),remaining=commonMeter(2);let feedback=false;
- const d=commonRegions(amount=>(feedback?remaining:setup)(amount)),
+ let meter=commonMeter(100000),charged=0,walked=false;
+ const spend=(amount=1)=>{charged+=amount;meter(amount);},model={spend,types:new Map(),objects:new Map()},
+  receiver=commonReceiverActual(model,commonAbstract(model)),d=commonRegions(spend),
   entry={name:'header',parameters:[],instructions:[{name:'cf.br',operands:[],successors:['header'],result:null}]},
   plan={owner:{id:'empty-row-loop'},entry,graph:{blocks:[entry]}},scope=d.scope('caller/header','factory'),
-  state={values:new Map(),heap:new Map(),regions:new Map()};
- d.prepare([plan]);for(let index=0;index<100;index++)d.allocate(scope,'factory','empty-'+index,'env:Empty',state.regions);
- feedback=true;
- assert.throws(()=>d.feedback({id:'caller',plan},'header','header',state),
+  regions=new Map(),state={values:new Map(),heap:new Map(),regions,frames:receiver.store()},context={id:'caller',plan};
+ const values=regions.values.bind(regions);
+ regions.values=()=>{walked=true;return values();};
+ d.prepare([plan]);
+ const beforeEmpty=charged;
+ d.feedback(context,'header','header',state,false,receiver);
+ const prefix=charged-beforeEmpty;
+ assert.equal(walked,true);
+ for(let index=0;index<100;index++)d.allocate(scope,'factory','empty-'+index,'env:Empty',regions);
+ assert.equal(regions.size,100);
+ walked=false;
+ const beforeFull=charged;
+ meter=commonMeter(prefix+2);
+ assert.throws(()=>d.feedback(context,'header','header',state,false,receiver),
   /** @param {any} error */error=>error.code==='r03-common-program-limit');
+ assert.equal(charged-beforeFull,prefix+regions.size);
+ assert.equal(walked,false);
 });

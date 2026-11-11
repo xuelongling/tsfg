@@ -112,6 +112,9 @@ test('M12 expression closure and implicit forwarding remain strict after outer p
 test('one complete fixed-publication Core retains the relation consumers and ordinary EH',()=>{
   const publication=createCommonProgramPublication(hir),request={targets:hir.closure.roots.filter(r=>r.kind==='kernel').map(r=>r.target).sort()};
   const text=lowerHir(hir,context,{publication,request});assert.equal((text.match(/func\.func @/g)??[]).length,10);
-  assert.ok(text.includes('tsfg_program.catch_bind'));assert.ok(text.includes('tsfg_program.allocate_reference'));
+  assert.equal([...text.matchAll(/"tsfg_program\.receiver_create"/g)].length,2);
+  assert.equal([...text.matchAll(/"tsfg_program\.receiver_allocate"/g)].length,2);
+  assert.equal([...text.matchAll(/"tsfg_program\.initialize_field"/g)].length,3);
+  assert.equal([...text.matchAll(/"tsfg_program\.catch_bind"/g)].length,1);
   assert.ok(text.includes(fn('convert').id));assert.ok(text.includes(fn('ordinary').id));
 });
