@@ -794,6 +794,7 @@ ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Js
   }
   auto protocol=state.bodyDirectories.protocol(id,charge);if(!need(protocol.status==Scope::BuildStatus::Ready,e,"body protocol unavailable"))return Status::Invalid;
   Domain::Callbacks callbacks;callbacks.rootProtocol=std::move(protocol.protocol);callbacks.environments=&state.fixedDirectories.interpretation().environments;callbacks.constructions=&state.fixedDirectories.interpretation().constructions;
+  callbacks.settleIndependentLeaves=true;
   callbacks.actualType=[&](llvm::StringRef type,const V4::Charge &paid)->const Domain::ActualShape *{
     V4::Detail::Meter meter(paid);std::string key;if(!meter.lookup(state.shapes.size(),type.size())||!meter.copy(key,type))return nullptr;const auto found=state.shapes.find(key);if(found==state.shapes.end()||(found->second.kind==V4::TypeKind::Value&&!found->second.completePhysicalFields))return nullptr;return &found->second;
   };

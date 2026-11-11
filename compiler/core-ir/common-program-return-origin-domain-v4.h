@@ -58,6 +58,7 @@ struct Callbacks {
   // Missing means true. Returning false requires independent admitted evidence;
   // differing formal symbols alone do not establish actual non-aliasing.
   std::function<bool(const LocationView &,const LocationView &,const V4::Charge &)> mayAlias;
+  bool settleIndependentLeaves=false;
 };
 struct Summary {
   // owners[node] and live[control] are root-context queries. Empty data is not
@@ -85,6 +86,8 @@ struct InheritedInput {
   std::size_t effectCount=0,boundHistoryRevision=0,boundReceiverCount=0;
 };
 struct Context {
+  enum class Sweep {Shared,Independent,Settled};
+  Sweep sweep=Sweep::Shared;
   Ref index=0,function=None,scope=0;
   const V4::Graph *graph=nullptr;
   const PublishedEffects *upper=nullptr;
@@ -421,6 +424,17 @@ class Solver {
     }
     if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*2)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size())||!m_.spend(arguments.size())||!m_.spend(3))return false;
     auto value=std::make_unique<Context>();value->index=contexts_.size();value->function=function;value->scope=scope;value->graph=graph;value->upper=upper;value->protocol=protocol;
+
+    if(callbacks_.settleIndependentLeaves&&function!=None){
+      if(!m_.spend(6))return false;
+      if(graph->calls.empty()&&!protocol->lexicalEnvironment&&!protocol->activationEnvironment){
+        value->sweep=Context::Sweep::Independent;
+        for(const auto &node:graph->nodes){
+          if(!m_.spend(3))return false;
+          if(environmentValue(node.kind)){value->sweep=Context::Sweep::Shared;break;}
+        }
+      }
+    }
     value->values.resize(graph->nodes.size());value->ready.resize(graph->nodes.size(),false);value->heaps.resize(graph->heaps.size());value->heapReady.resize(graph->heaps.size(),false);value->controls.resize(graph->controls.size(),false);value->targets.resize(graph->calls.size());value->arguments.resize(arguments.size());
     if(!m_.spend(graph->heaps.size()*3))return false;value->frames.resize(graph->heaps.size());value->receiverValues.resize(graph->heaps.size());value->receiverLive.resize(graph->heaps.size(),false);
     for(Ref i=0;i<arguments.size();++i)if(!m_.spend()||!add(value->arguments[i],arguments[i]))return false;
@@ -966,8 +980,24 @@ public:
       changed_=false;
       // Stable heap-allocated contexts survive vector growth while calls append
       // new contexts to this very worklist. Results resume only recorded targets.
-      for(Ref i=0;i<contexts_.size();++i){if(!m_.spend())return finish();auto &context=*contexts_[i];
+      for(Ref i=0;i<contexts_.size();++i){
+        if(!m_.spend())return finish();
+        auto &context=*contexts_[i];
+        bool independent=false,priorChange=false;
+        if(callbacks_.settleIndependentLeaves){
+          if(!m_.spend(6))return finish();
+          if(context.sweep==Context::Sweep::Settled)continue;
+          independent=context.sweep==Context::Sweep::Independent;
+          if(independent){priorChange=changed_;changed_=false;}
+        }
         if(!runCalls(context)||!runControls(context)||!runValues(context)||!runHeaps(context)||!finishContext(context))return finish();
+        if(independent){
+          if(!m_.spend(5))return finish();
+          // This complete sweep used immutable input and no other context or
+          // Env equation. A zero-change pass also interned no new origin IDs.
+          if(!changed_)context.sweep=Context::Sweep::Settled;
+          changed_|=priorChange;
+        }
       }
     }
     if(active())for(auto &context:contexts_)if(!strict(*context))return finish();
