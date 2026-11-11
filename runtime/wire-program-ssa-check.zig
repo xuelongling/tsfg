@@ -431,6 +431,17 @@ const Graph = struct {
         };
     }
 
+    fn codeOriginGraph(c: *Context, function: t.FunctionRef) Error!Graph {
+        // A reachable ordinary body may not have completed its own SSA pass.
+        var graph = try Graph.init(c, @intFromEnum(function));
+        errdefer graph.deinit();
+        try graph.directory();
+        try graph.reach();
+        graph.dom = try graph.dominance(false);
+        try graph.usesDom();
+        return graph;
+    }
+
     fn originalCodeProducer(self: *Graph, receiver: t.RegisterRef) Error!?CodeProducer {
         var current = receiver;
         // Reachable SSA orders unary sources. A block merge needs the shared
@@ -447,6 +458,17 @@ const Graph = struct {
         const producer = (try self.originalCodeProducer(receiver)) orelse return null;
         try self.c.step();
         return producer.instruction.data.function_make.function;
+    }
+
+    fn savedEnvironmentReceiver(self: *Graph, receiver: t.RegisterRef, callee: t.FunctionRef, layout: t.EnvironmentRef) Error!?t.RegisterRef {
+        const producer = (try self.originalCodeProducer(receiver)) orelse return null;
+        try self.c.charge(3);
+        const instruction = producer.instruction;
+        if (instruction.data.function_make.function != callee or instruction.operands.len != 1) return null;
+        // One SSA definition can create several different Code values in a loop.
+        if (try self.environmentAllocCanRepeat(producer.block)) return null;
+        const captured = instruction.operands[0];
+        return if (self.environmentInLayout(captured, layout)) captured else null;
     }
 
     fn fixedCallTargets(self: *Graph, function: t.FunctionRef, block: t.BlockRef, position: usize) Error![]const t.FunctionRef {
@@ -1514,6 +1536,8 @@ const Graph = struct {
             else
                 null;
             defer if (aliases) |*known| known.deinit(c.allocator);
+            var code_origins: ?Graph = null;
+            defer if (code_origins) |*origins| origins.deinit();
             for (pending_blocks[0..count]) |block_index| {
                 try c.charge(2);
                 const block = &target.blocks[block_index];
@@ -1550,15 +1574,32 @@ const Graph = struct {
                 }
                 try c.charge(2);
                 const terminator = &block.instructions[block.instructions.len - 1];
-                if (terminator.data != .eh_invoke) continue;
-                try c.charge(3);
-                if (terminator.operands.len == 0 or !try matchesDirectEnvironment(c, aliases, input, terminator.operands[0])) continue;
+                const callee = switch (terminator.data) {
+                    .eh_invoke => |call| direct: {
+                        try c.charge(3);
+                        if (terminator.operands.len == 0 or !try matchesDirectEnvironment(c, aliases, input, terminator.operands[0])) continue;
+                        break :direct call.callee;
+                    },
+                    .eh_invoke_indirect => fixed: {
+                        try c.charge(2);
+                        const targets = try self.fixedCallTargets(current, @enumFromInt(block_index), block.instructions.len - 1);
+                        if (targets.len != 1) continue;
+                        break :fixed targets[0];
+                    },
+                    else => continue,
+                };
                 try c.charge(4);
-                const callee = terminator.data.eh_invoke.callee;
                 const index = @intFromEnum(callee);
                 const function = &c.program.functions[index];
                 const abi = &common.abis[@intFromEnum(function.abi)];
                 if (function.role != .ordinary or abi.lexical_environment != layout) continue;
+                if (terminator.data == .eh_invoke_indirect) {
+                    try c.charge(2);
+                    if (code_origins == null) code_origins = try codeOriginGraph(c, current);
+                    const origins = &code_origins.?;
+                    const captured = (try origins.savedEnvironmentReceiver(terminator.operands[0], callee, layout)) orelse continue;
+                    if (!try matchesDirectEnvironment(c, aliases, input, captured)) continue;
+                }
                 // All retained edges carry the same instance in the target's
                 // first entry parameter. Mark on discovery so recursive calls
                 // scan each reachable body once.
@@ -1618,17 +1659,10 @@ const Graph = struct {
             const target = &c.program.functions[@intFromEnum(callee)];
             const abi = &common.abis[@intFromEnum(target.abi)];
             if (target.role != .ordinary or abi.lexical_environment != layout) continue;
-            const receiver = if (op.data == .eh_invoke) op.operands[0] else saved: {
-                const producer = (try self.originalCodeProducer(op.operands[0])) orelse continue;
-                try c.charge(3);
-                const instruction = producer.instruction;
-                if (instruction.data.function_make.function != callee or instruction.operands.len != 1) continue;
-                // One SSA definition can create several different Code values in a loop.
-                if (try self.environmentAllocCanRepeat(producer.block)) continue;
-                const captured = instruction.operands[0];
-                if (!self.environmentInLayout(captured, layout)) continue;
-                break :saved captured;
-            };
+            const receiver = if (op.data == .eh_invoke)
+                op.operands[0]
+            else
+                (try self.savedEnvironmentReceiver(op.operands[0], callee, layout)) orelse continue;
             try c.row(EnvironmentCall);
             buffer[count] = .{ .receiver = receiver, .callee = callee, .block = block_index };
             count += 1;
@@ -1821,18 +1855,7 @@ const Graph = struct {
         const resolved = switch (prefix_origin) {
             .literal => |target| target,
             .nonlocal => |register| {
-
-                if (origins.* == null) {
-                    // The ordinary body may not have reached its own SSA pass.
-                    // Build its checked directory once before reusing the initializer proof.
-                    var graph = try Graph.init(c, @intFromEnum(function_ref));
-                    errdefer graph.deinit();
-                    try graph.directory();
-                    try graph.reach();
-                    graph.dom = try graph.dominance(false);
-                    try graph.usesDom();
-                    origins.* = graph;
-                }
+                if (origins.* == null) origins.* = try codeOriginGraph(c, function_ref);
                 const graph = &origins.*.?;
                 const proven = try graph.initializerCodeTarget(register);
                 const selected = if (proven == targets[0]) proven else null;

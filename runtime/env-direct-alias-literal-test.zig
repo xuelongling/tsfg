@@ -657,12 +657,13 @@ test "literal Env loop can observe an older initialized allocation after allocat
 
 const CallerInit = enum { before, after, absent, other_only, before_with_other, first_edge_only };
 const ChildAccess = enum { load, store, unreachable_load, copy_load, carrier_load, assertion_store, parameter_load, parameter_store, parallel_load, distinct_load, loop_load, dead_predecessor_load };
-const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward, assertion_forward };
+const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward, assertion_forward, saved_forward, saved_parameter_forward };
 
 const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, rotated_edges, repeated_copy, repeated_previous };
 
 const ChildInvocation = enum { direct, saved };
 const saved_code_type: t.TypeRef = @enumFromInt(types.len);
+const saved_code_register: model.Register = .{ .carrier = .{ .@"type" = saved_code_type }, .view = saved_code_type };
 
 fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, comptime transport: CallerTransport, accept: bool) !void {
     try runChild(initialization, access, path, transport, .direct, accept);
@@ -739,7 +740,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const payload_register: model.Register = .{ .carrier = .payload, .view = null };
     const caller_registers = base_registers ++ ([_]model.Register{env_register} ** aliases_count) ++ [_]model.Register{payload_register} ++
         (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{}) ++
-        (if (invocation == .saved) [_]model.Register{.{ .carrier = .{ .@"type" = saved_code_type }, .view = saved_code_type }} else [_]model.Register{});
+        (if (invocation == .saved) [_]model.Register{saved_code_register} else [_]model.Register{});
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
@@ -825,10 +826,21 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const parameter_carrier: ins.Instruction = .{ .source = at, .result = r(3), .operands = &.{r(2)}, .data = carrier.data };
     const parameter_assertion: ins.Instruction = .{ .source = at, .result = r(4), .operands = &.{r(3)}, .data = assertion.data };
     const call_with_assertion: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(4)}, .data = call_grandchild.data };
-    const forwarding_entry: []const ins.Instruction = if (path == .view_forward)
-        &.{ seed[0], child_view, call_with_view }
-    else
-        &.{ seed[0], call_grandchild };
+    const saved_child = path == .saved_forward or path == .saved_parameter_forward;
+    const make_child: ins.Instruction = .{
+        .source = at, .result = r(3), .operands = &.{r(2)}, .data = .{ .function_make = .{ .function = @enumFromInt(2) } },
+    };
+    const call_saved_child: ins.Instruction = .{
+        .source = at, .result = null, .operands = if (path == .saved_parameter_forward) &.{r(4)} else &.{r(3)},
+        .data = .{ .eh_invoke_indirect = .{ .callable = saved_code_type, .normal = b(1), .exceptional = b(2) } },
+    };
+    const branch_to_saved: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = branch_to_forward.data };
+    const forwarding_entry: []const ins.Instruction = switch (path) {
+        .view_forward => &.{ seed[0], child_view, call_with_view },
+        .saved_forward => &.{ seed[0], child_view, make_child, call_saved_child },
+        .saved_parameter_forward => &.{ seed[0], child_view, make_child, branch_to_saved },
+        else => &.{ seed[0], call_grandchild },
+    };
     const forwarding_blocks: []const model.Block = if (path == .unreachable_forward) &.{
         .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], returned } },
         .{ .parameters = &.{}, .instructions = &.{returned} },
@@ -842,11 +854,11 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
             &.{ parameter_carrier, parameter_assertion, call_with_assertion }
         else
             &.{ parameter_view, call_with_parameter } },
-    } else &.{
+    } else &([_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = forwarding_entry },
         .{ .parameters = &.{}, .instructions = &.{returned} },
         .{ .parameters = &.{r(1)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(1)}, .data = .eh_raise }} },
-    };
+    } ++ if (path == .saved_parameter_forward) [_]model.Block{.{ .parameters = &.{r(4)}, .instructions = &.{call_saved_child} }} else [_]model.Block{});
     const call_back: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = .{ .eh_invoke = .{
         .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2),
     } } };
@@ -878,6 +890,8 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
             .view_forward => &.{ env_register, payload_register, env_register },
             .parameter_forward => &.{ env_register, payload_register, env_register, env_register },
             .assertion_forward => &.{ env_register, payload_register, env_register, env_register, env_register },
+            .saved_forward => &.{ env_register, payload_register, env_register, saved_code_register },
+            .saved_parameter_forward => &.{ env_register, payload_register, env_register, saved_code_register, saved_code_register },
             else => &.{ env_register, payload_register },
         } else if (recursive)
             &.{ env_register, value_register, payload_register }
@@ -935,11 +949,17 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     }};
     const call_block = if (caller_blocks.len == 3) 0 else 3;
     const Call = std.meta.Child(@TypeOf(common.closures.calls));
-    const saved_calls = [_]Call{.{
+    const caller_calls = if (invocation == .saved) [_]Call{.{
         .function = @enumFromInt(0), .block = @enumFromInt(call_block), .instruction = @intCast(caller_blocks[call_block].instructions.len - 1),
         .signature = signature, .targets = &.{@enumFromInt(1)},
-    }};
-    if (invocation == .saved) {
+    }} else [_]Call{};
+    const middle_calls = if (saved_child) [_]Call{.{
+        .function = @enumFromInt(1), .block = if (path == .saved_parameter_forward) b(3) else b(0),
+        .instruction = if (path == .saved_parameter_forward) 0 else @intCast(forwarding_entry.len - 1),
+        .signature = signature, .targets = &.{@enumFromInt(2)},
+    }} else [_]Call{};
+    const saved_calls = caller_calls ++ middle_calls;
+    if (saved_calls.len != 0) {
         common.types = &saved_types;
         common.storage.concrete = &saved_concrete;
         common.closures.calls = &saved_calls;
@@ -947,7 +967,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
     try refs.check(&c);
     try layout.check(&c);
-    if (invocation == .saved) {
+    if (saved_calls.len != 0) {
         var proof = try fixed_targets.analyze(&c);
         defer proof.deinit(c.allocator);
     }
@@ -1158,4 +1178,17 @@ test "literal saved child retains its initialized capture after a new Env alloca
 }
 test "literal saved Code from a repeating allocation remains outside the current-instance proof" {
     try runChild(.absent, .load, .direct, .repeated_previous, .saved, true);
+}
+
+test "literal direct child cannot forward an uninitialized Env through saved Code" {
+    try runChild(.absent, .load, .saved_forward, .original, .direct, false);
+}
+test "literal direct child forwards an initialized Env through saved Code" {
+    try runChild(.before, .load, .saved_forward, .original, .direct, true);
+}
+test "literal saved child cannot forward an uninitialized Env through block-transported Code" {
+    try runChild(.absent, .store, .saved_parameter_forward, .original, .saved, false);
+}
+test "literal saved child forwards the initialized Env through block-transported Code" {
+    try runChild(.before, .store, .saved_parameter_forward, .original, .saved, true);
 }
