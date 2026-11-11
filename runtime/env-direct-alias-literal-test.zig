@@ -658,15 +658,15 @@ const CallerInit = enum { before, after, absent, other_only, before_with_other }
 const ChildAccess = enum { load, store, unreachable_load, copy_load, carrier_load, assertion_store, parameter_load, parameter_store, parallel_load, distinct_load, loop_load, dead_predecessor_load };
 const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward, assertion_forward };
 
-const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, repeated_copy };
+const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, repeated_copy, repeated_previous };
 
 fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, comptime transport: CallerTransport, accept: bool) !void {
     const aliases_count = switch (transport) {
         .original => 0,
-        .copied, .block_parameter, .repeated_copy => 1,
+        .copied, .block_parameter, .repeated_copy, .repeated_previous => 1,
         .viewed, .same_edges, .distinct_edges => 2,
     };
-    const receiver = r(3 + aliases_count);
+    const receiver = if (transport == .repeated_previous) r(3) else r(3 + aliases_count);
     const exception = r(4 + aliases_count);
     const invoke_child: ins.Instruction = .{ .source = at, .result = null, .operands = &.{receiver}, .data = .{ .eh_invoke = .{
         .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2),
@@ -693,6 +693,8 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     const choose_receiver: ins.Instruction = .{ .source = at, .result = null,
         .operands = &.{ r(0), r(3), r(4) },
         .data = .{ .cond_br = .{ .true_destination = b(3), .false_destination = b(3), .true_count = 1 } } };
+    const enter_repeated: ins.Instruction = .{ .source = at, .result = null, .operands = &.{other}, .data = to_call.data };
+    const reenter_repeated: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = to_call.data };
     const caller_entry = switch (transport) {
         .original => seed ++ [_]ins.Instruction{alloc} ++ call,
         .copied => seed ++ [_]ins.Instruction{ alloc, copy } ++ call,
@@ -701,11 +703,16 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .same_edges => seed ++ [_]ins.Instruction{ alloc, copy, choose_receiver },
         .distinct_edges => seed ++ [_]ins.Instruction{ alloc, second_alloc, choose_receiver },
         .repeated_copy => seed ++ [_]ins.Instruction{to_call},
+        .repeated_previous => seed ++ [_]ins.Instruction{ other_alloc, enter_repeated },
     };
-    const caller_return: []const ins.Instruction = if (transport == .repeated_copy) &.{to_call} else if (initialization == .after) &.{ initialize, returned } else &.{returned};
+    const caller_return: []const ins.Instruction = switch (transport) {
+        .repeated_copy => &.{to_call},
+        .repeated_previous => &.{reenter_repeated},
+        else => if (initialization == .after) &.{ initialize, returned } else &.{returned},
+    };
     const payload_register: model.Register = .{ .carrier = .payload, .view = null };
     const caller_registers = base_registers ++ ([_]model.Register{env_register} ** aliases_count) ++ [_]model.Register{payload_register} ++
-        (if (has_other) [_]model.Register{env_register} else [_]model.Register{});
+        (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{});
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
@@ -713,6 +720,7 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     } ++ switch (transport) {
         .block_parameter, .same_edges, .distinct_edges => [_]model.Block{.{ .parameters = &.{receiver}, .instructions = &call }},
         .repeated_copy => [_]model.Block{.{ .parameters = &.{}, .instructions = &([_]ins.Instruction{ condition, alloc, copy } ++ call) }},
+        .repeated_previous => [_]model.Block{.{ .parameters = &.{r(4)}, .instructions = &([_]ins.Instruction{ condition, alloc, init_copy } ++ call) }},
         else => [_]model.Block{},
     };
     const child_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(0)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } };
@@ -978,8 +986,17 @@ test "literal direct call accepts both edges carrying the same initialized Env" 
 test "literal direct call with distinct incoming Env allocations stays outside the exact-instance proof" {
     try runDirectChild(.absent, .load, .direct, .distinct_edges, true);
 }
-test "literal direct call through a copy of a repeated Env allocation keeps the existing proof boundary" {
-    try runDirectChild(.absent, .load, .direct, .repeated_copy, true);
+test "literal repeated fresh Env needs initialization before a child read" {
+    try runDirectChild(.absent, .load, .direct, .repeated_copy, false);
+}
+test "literal repeated fresh Env allows a child read after per-iteration initialization" {
+    try runDirectChild(.before, .load, .direct, .repeated_copy, true);
+}
+test "literal repeated fresh Env needs initialization before a child store" {
+    try runDirectChild(.absent, .store, .direct, .repeated_copy, false);
+}
+test "literal repeated Env call with an older entry alias stays outside the current-instance proof" {
+    try runDirectChild(.absent, .load, .direct, .repeated_previous, true);
 }
 
 test "literal child copy requires owned Env initialization before the caller invoke" {

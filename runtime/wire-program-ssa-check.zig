@@ -650,6 +650,7 @@ const Graph = struct {
     const EnvironmentAllocations = struct {
         direct: []?t.RegisterRef,
         checked_layout: ?t.EnvironmentRef,
+        call_blocks_with_older_aliases: Bits,
     };
 
     fn environmentEdgeArguments(op: *const ins.Instruction, edge: usize) ?[]const t.RegisterRef {
@@ -796,6 +797,10 @@ const Graph = struct {
         return .{
             .direct = allocations,
             .checked_layout = if (mixed_access) try self.environmentMixedState(origins) else null,
+            .call_blocks_with_older_aliases = if (calls.len == 0)
+                zero
+            else
+                try self.environmentCallBlocksWithOlderAliases(owned_layout.?, calls, origins),
         };
     }
 
@@ -858,6 +863,39 @@ const Graph = struct {
             }
         }
         return false;
+    }
+
+    fn environmentCallBlocksWithOlderAliases(
+        self: *Graph,
+        layout: t.EnvironmentRef,
+        calls: []const DirectEnvironmentCall,
+        origins: []const EnvironmentOrigin,
+    ) Error!Bits {
+        const c = self.c;
+        try c.charge(3 * zero.len);
+        var checked = zero;
+        var blocked = zero;
+        for (calls) |*call| {
+            try c.charge(2);
+            const origin_state = &origins[@intFromEnum(call.receiver)];
+            if (origin_state.* != .allocation) continue;
+            try c.charge(4 + zero.len);
+            const allocation = origin_state.allocation;
+            if (!self.environmentInLayout(allocation, layout)) continue;
+            const block = self.definitions[@intFromEnum(allocation)].block;
+            if (has(checked, block)) continue;
+            try c.step();
+            put(&checked, block);
+            // A repeated allocation still defines the current instance if
+            // no tracked receiver can refer to an older instance at entry.
+            if (try self.environmentAllocCanRepeat(block) and
+                try self.environmentOlderAliasAtEntry(layout, block, origins))
+            {
+                try c.step();
+                put(&blocked, block);
+            }
+        }
+        return blocked;
     }
 
     fn environmentMixedState(self: *Graph, origins: []const EnvironmentOrigin) Error!?t.EnvironmentRef {
@@ -1396,27 +1434,23 @@ const Graph = struct {
         self: *Graph,
         layout: t.EnvironmentRef,
         calls: []const DirectEnvironmentCall,
-        allocations: []const ?t.RegisterRef,
+        proven: *const EnvironmentAllocations,
         pairs: *EnvironmentCells,
         sites: *EnvironmentCallSites,
     ) Error!void {
         const c = self.c;
-        try c.charge(self.f.blocks.len + 4);
-        var repeats: [256]?bool = undefined;
-        @memset(repeats[0..self.f.blocks.len], null);
+        try c.charge(4);
         var arena = std.heap.ArenaAllocator.init(c.allocator);
         defer arena.deinit();
         var needs: std.AutoHashMapUnmanaged(t.FunctionRef, []const t.EnvironmentSlotRef) = .empty;
         defer needs.deinit(c.allocator);
         for (calls) |*call| {
             try c.row(DirectEnvironmentCall);
-            try c.charge(3);
-            const receiver = allocations[@intFromEnum(call.receiver)] orelse continue;
+            try c.charge(3 + zero.len);
+            const receiver = proven.direct[@intFromEnum(call.receiver)] orelse continue;
             if (!self.environmentInLayout(receiver, layout)) continue;
             const allocation_block = self.definitions[@intFromEnum(receiver)].block;
-            if (repeats[allocation_block] == null)
-                repeats[allocation_block] = try self.environmentAllocCanRepeat(allocation_block);
-            if (repeats[allocation_block].?) continue;
+            if (has(proven.call_blocks_with_older_aliases, allocation_block)) continue;
             try c.charge(4);
             try environmentMapGrowth(c, &needs, 4);
             const entry = try needs.getOrPut(c.allocator, call.callee);
@@ -1452,7 +1486,7 @@ const Graph = struct {
             try rememberEnvironmentCell(c, &pairs, .{ .receiver = allocation, .slot = slot });
         };
         if (calls.len != 0)
-            try self.observeDirectEnvironmentCalls(owned_layout.?, calls, allocations, &pairs, &call_sites);
+            try self.observeDirectEnvironmentCalls(owned_layout.?, calls, &proven, &pairs, &call_sites);
         const has_call_sites = call_sites.count() != 0;
         try c.charge(@as(usize,pairs.capacity())+1); // Include empty buckets before any next().
         var iterator=pairs.keyIterator();
