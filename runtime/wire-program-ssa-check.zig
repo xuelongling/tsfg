@@ -1721,17 +1721,32 @@ const Graph = struct {
         }
     }
     fn nestedLiteralCodeTarget(self: *Graph, function: t.FunctionRef, block: t.BlockRef, prefix: []const ins.Instruction, receiver: t.RegisterRef) Error!?t.FunctionRef {
-        // The unique earlier definition in this block dominates the call.
-        // Each body's own SSA check validates the callable and both ABI edges.
+        // Visit only earlier definitions in this block. An exact unary
+        // source must appear farther back in the same prefix.
         const c = self.c;
-        for (prefix) |*producer| {
+        var current = receiver;
+        var position = prefix.len;
+        while (position != 0) {
             try c.step();
-            if (producer.result != receiver) continue;
-            if (producer.data != .function_make) return null;
-            const targets = try self.fixedCallTargets(function, block, prefix.len);
-            try c.step();
-            const target = producer.data.function_make.function;
-            return if (targets.len == 1 and targets[0] == target) target else null;
+            position -= 1;
+            const producer = &prefix[position];
+            if (producer.result != current) continue;
+            switch (producer.data) {
+                .function_make => |literal| {
+                    // Each body's SSA check still validates the call ABI.
+                    const targets = try self.fixedCallTargets(function, block, prefix.len);
+                    try c.step();
+                    return if (targets.len == 1 and targets[0] == literal.function) literal.function else null;
+                },
+                .domain_copy, .domain_view => {
+                    try c.charge(4);
+                    const registers = c.program.functions[@intFromEnum(function)].registers;
+                    const source = producer.operands[0];
+                    if (!exact(registers[@intFromEnum(current)].carrier, registers[@intFromEnum(source)].carrier)) return null;
+                    current = source;
+                },
+                else => return null,
+            }
         }
         return null;
     }

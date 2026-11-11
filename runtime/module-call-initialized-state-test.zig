@@ -345,13 +345,16 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                         try std.testing.expect(common.abis[target].lexical_environment==null);
                         try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(op.result.?)].carrier,callable_carrier));
                     },
-                    .domain_copy => |v| {
-                        try std.testing.expect(v.static_view==callable_type and op.result==r3 and op.operands.len==1 and op.operands[0]==r2);
-                    },
-                    .domain_view => |v| {
+                    inline .domain_copy,.domain_view => |v,kind| {
                         try std.testing.expect(v.static_view==callable_type and op.operands.len==1);
-                        try std.testing.expect((op.result==r3 and op.operands[0]==r2) or
-                            (op.result==saved_tail and op.operands[0]==r3));
+                        if (index==1) {
+                            try std.testing.expect(op.result==r2 and op.operands[0]==r1);
+                            try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(r1)].carrier,callable_carrier));
+                            try std.testing.expect(std.meta.eql(f.registers[@intFromEnum(r2)].carrier,callable_carrier));
+                        } else {
+                            try std.testing.expect((op.result==r3 and op.operands[0]==r2) or
+                                (kind==.domain_view and op.result==saved_tail and op.operands[0]==r3));
+                        }
                     },
                     .eh_invoke_indirect => |v| {
                         _=try c.ref(v.normal,f.blocks.len); _=try c.ref(v.exceptional,f.blocks.len);
@@ -678,22 +681,28 @@ test "module fixed Code requires initialization on parallel edges carrying one l
 test "module fixed Code parallel edges allow a prior initialized write" { try checkBlockCode(.store_after_init,true,.parallel,false); }
 test "module fixed Code parallel edges distinguish separate literals for one target" { try checkBlockCode(.before_init,false,.distinct,false); }
 
-fn checkNestedLiteral(initialized: bool, write: bool, rejected: bool) !void {
+const NestedCodeTransport = enum { literal, copy, view };
+
+fn checkNestedCode(initialized: bool, write: bool, comptime transport: NestedCodeTransport, rejected: bool) !void {
     var fixture: Fixture=undefined;
     fixture.init(if(initialized).nested_after_init else .nested_before_init);
     var saved: SavedCodeFixture=undefined;
     saved.installTypes(&fixture);
-    saved.calls=.{.{ .function=@enumFromInt(1),.block=@enumFromInt(0),.instruction=2,
+    const call_position = if (transport == .literal) 2 else 3;
+    saved.calls=.{.{ .function=@enumFromInt(1),.block=@enumFromInt(0),.instruction=call_position,
         .signature=signature,.targets=&.{@enumFromInt(2)} }};
-    fixture.callee_instructions[0..5].*=.{entry_fuel,make_saved,invoke_saved,ret,raise};
+    const alias: ins.Instruction = .{ .source=anchor,.result=r2,.operands=&language,
+        .data=if(transport==.copy)forward_saved.data else view_saved.data };
+    const prefix = if (transport == .literal) [_]ins.Instruction{entry_fuel,make_saved} else [_]ins.Instruction{entry_fuel,make_saved,alias};
+    fixture.callee_instructions[0..call_position+3].* = prefix ++ [_]ins.Instruction{invoke_saved,ret,raise};
     fixture.callee_instructions[1].result=r1;
     fixture.callee_instructions[1].data.function_make.function=@enumFromInt(2);
-    fixture.callee_instructions[2].operands=&language;
-    fixture.callee_instructions[4].operands=&value;
-    fixture.callee_blocks[0].instructions=fixture.callee_instructions[0..3];
-    fixture.callee_blocks[1].instructions=fixture.callee_instructions[3..4];
-    fixture.callee_blocks[2].instructions=fixture.callee_instructions[4..5];
-    fixture.functions[1].registers=&.{caller_registers[1],code_register};
+    fixture.callee_instructions[call_position].operands=if(transport==.literal)&language else &.{r2};
+    fixture.callee_instructions[call_position+2].operands=&value;
+    fixture.callee_blocks[0].instructions=fixture.callee_instructions[0..call_position+1];
+    fixture.callee_blocks[1].instructions=fixture.callee_instructions[call_position+1..call_position+2];
+    fixture.callee_blocks[2].instructions=fixture.callee_instructions[call_position+2..call_position+3];
+    fixture.functions[1].registers=if(transport==.literal)&.{caller_registers[1],code_register} else &.{caller_registers[1],code_register,code_register};
     if(write) {
         fixture.other_instructions[0..4].*=.{entry_fuel,constant,store0,ret};
         fixture.other_blocks[0].instructions=fixture.other_instructions[0..4];
@@ -705,10 +714,14 @@ fn checkNestedLiteral(initialized: bool, write: bool, rejected: bool) !void {
     if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
 }
 
-test "module nested literal Code requires initialization before a read" { try checkNestedLiteral(false,false,true); }
-test "module nested literal Code allows an initialized read" { try checkNestedLiteral(true,false,false); }
-test "module nested literal Code requires initialization before a write" { try checkNestedLiteral(false,true,true); }
-test "module nested literal Code allows an initialized write" { try checkNestedLiteral(true,true,false); }
+test "module nested literal Code requires initialization before a read" { try checkNestedCode(false,false,.literal,true); }
+test "module nested literal Code allows an initialized read" { try checkNestedCode(true,false,.literal,false); }
+test "module nested literal Code requires initialization before a write" { try checkNestedCode(false,true,.literal,true); }
+test "module nested literal Code allows an initialized write" { try checkNestedCode(true,true,.literal,false); }
+test "module nested Code copy requires initialization before a read" { try checkNestedCode(false,false,.copy,true); }
+test "module nested Code copy allows an initialized read" { try checkNestedCode(true,false,.copy,false); }
+test "module nested Code view requires initialization before a write" { try checkNestedCode(false,true,.view,true); }
+test "module nested Code view allows an initialized write" { try checkNestedCode(true,true,.view,false); }
 
 test "module fixed Code leaves foreign Globals to the verified module order" {
     var fixture: CrossFixture=undefined;
