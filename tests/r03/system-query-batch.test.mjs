@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {canonical} from '../../compiler/identity.mjs';
 import {coreQuote} from '../../compiler/mlir-strings.mjs';
 import {readSystemQueryFacts} from '../../compiler/system-query-facts.mjs';
@@ -42,6 +43,42 @@ test('CPU batch public pipeline retains current-manifest and original-context ga
   const input=cases.find(row=>row.name==='view-parenthesized');
   await assert.rejects(compileSystemQuery(input.bytes,{...input.context,expectedPackageId:'sha256:'+'0'.repeat(64)},{core:tool,cpuBatch:true}),/identity|differs/);
   await assert.rejects(compileSystemQuery(input.bytes,input.context,{core:'missing',cpuBatch:true}),/artifact-manifest|ENOENT/);
+});
+
+test('Query CLI accepts the current owned facts and exact request for all static outputs',{skip:!enabled},async()=>{
+  const input=cases.find(row=>row.name==='view-parenthesized');
+  const fixture=base=>fileURLToPath(new URL('./testdata/system-query-views/'+base+'.json',import.meta.url));
+  const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
+  const product=await compileSystemQuery(input.bytes,input.context,{core:tool,effects:true,cpuBatch:true,tmeta:true});
+  const expected=new Map([
+    ['core',product.core],
+    ['query-effects',canonical(product.effects)+'\n'],
+    ['query-batch',product.cpuBatch],
+    ['query-llvm',run('cli-reference-llvm',product.core,'--cpu-llvm')],
+    ['query-llvm-ir',run('cli-reference-llvm-ir',product.core,'--llvm-ir')],
+    ['query-tmeta',canonical(product.tmeta.envelope)+'\n'],
+  ]);
+  const invoke=(name,mode,request)=>{
+    const command=[cli,'--input',fixture('view-parenthesized-facts'),'--query-request',fixture(request),'--core',tool,'--emit',mode];
+    const child=spawnSync(process.execPath,command,{windowsHide:true,maxBuffer:16*1024*1024,timeout:60000});
+    const prefix=output+'/cli-'+name;
+    writeFileSync(prefix+'-stdout.raw',child.stdout??Buffer.alloc(0));
+    writeFileSync(prefix+'-stderr.raw',child.stderr??Buffer.alloc(0));
+    writeFileSync(prefix+'-child.json',JSON.stringify({pid:child.pid,command,status:child.status,signal:child.signal,error:child.error?.message})+'\n');
+    assert.ifError(child.error);
+    assert.equal(child.signal,null);
+    return child;
+  };
+  for(const [mode,bytes]of expected){
+    const child=invoke(mode,mode,'view-parenthesized-request');
+    assert.equal(child.status,0,child.stderr.toString('utf8'));
+    assert.equal(child.stderr.length,0);
+    assert.deepEqual(child.stdout,Buffer.from(bytes));
+  }
+  const mismatch=invoke('wrong-request','core','view-direct-request');
+  assert.equal(mismatch.status,2);
+  assert.equal(mismatch.stdout.length,0);
+  assert.match(mismatch.stderr.toString('utf8'),/r10-system-query-identity: complete original request differs/);
 });
 
 for(const input of cases)test('actual Query to standard CPU batch: '+input.name,{skip:!enabled},()=>{

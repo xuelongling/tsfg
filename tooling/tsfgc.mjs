@@ -6,6 +6,7 @@ import {commonJson} from '../compiler/common-program-common.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
 import { genericHirFormat } from '../compiler/generic-hir.mjs';
 import { familyOf } from '../compiler/module-callable-common.mjs';
+import { systemQueryFactsFormat } from '../compiler/system-query-facts.mjs';
 import {canonical} from '../compiler/identity.mjs';
 
 try {
@@ -33,7 +34,7 @@ try {
     if(!['core','query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects|query-batch|query-llvm|query-llvm-ir|query-tmeta');
     const bytes=await readFile(options.get('--input')),requestBytes=await readFile(options.get('--query-request'));
-    const context={family:'tsfg.system-query-context-candidate',version:5,requestBytes,expectedPackageId:JSON.parse(bytes.toString('utf8')).packageId};
+    const context={family:'tsfg.system-query-context-candidate',version:systemQueryFactsFormat.version,requestBytes,expectedPackageId:JSON.parse(bytes.toString('utf8')).packageId};
     const result=await compileSystemQuery(bytes,context,{core:options.get('--core'),effects:emit==='query-effects',cpuBatch:emit==='query-batch',cpuLLVM:emit==='query-llvm'?'dialect':emit==='query-llvm-ir'?'ir':undefined,tmeta:emit==='query-tmeta'});
     process.stdout.write(emit==='query-tmeta'?canonical(result.tmeta.envelope)+'\n':emit==='query-effects'?canonical(result.effects)+'\n':emit==='query-batch'?result.cpuBatch:emit==='query-llvm'||emit==='query-llvm-ir'?result.cpuLLVM:result.core);
   }else{
