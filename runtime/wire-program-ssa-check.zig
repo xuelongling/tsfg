@@ -1033,51 +1033,93 @@ const Graph = struct {
 
     fn directCalleeEnvironmentSlots(
         self: *Graph,
-        target: *const model.Function,
+        first: t.FunctionRef,
         layout: t.EnvironmentRef,
         allocator: std.mem.Allocator,
     ) Error![]const t.EnvironmentSlotRef {
         const c = self.c;
-        const slots = c.program.tables.mode.common.closures.environments[@intFromEnum(layout)].slots;
+        const common = &c.program.tables.mode.common;
+        const slots = common.closures.environments[@intFromEnum(layout)].slots;
         if (slots.len == 0) return &.{};
-        try c.require(target.blocks[0].parameters.len != 0);
-        const input = target.blocks[0].parameters[0];
-        try c.require(exact(target.registers[@intFromEnum(input)].carrier, .{ .environment = layout }));
-        try c.charge(slots.len + zero.len + 4);
+        try c.charge(slots.len + 5);
         const seen_slots = try allocator.alloc(bool, slots.len);
         @memset(seen_slots, false);
         var needs: std.ArrayListUnmanaged(t.EnvironmentSlotRef) = .empty;
-        var seen_blocks = zero;
-        var pending: [256]usize = undefined;
-        pending[0] = 0;
-        put(&seen_blocks, 0);
-        var count: usize = 1;
-        var cursor: usize = 0;
-        while (cursor < count) : (cursor += 1) {
-            try c.charge(3);
-            const block = &target.blocks[pending[cursor]];
-            for (block.instructions) |*op| {
-                try c.step();
-                const slot = switch (op.data) {
-                    inline .environment_load, .environment_store => |v| v.slot,
-                    else => continue,
-                };
+        var seen_functions: ?std.DynamicBitSetUnmanaged = null;
+        defer if (seen_functions) |*seen| seen.deinit(c.allocator);
+        var pending_functions: std.ArrayListUnmanaged(t.FunctionRef) = .empty;
+        defer pending_functions.deinit(c.allocator);
+        var pending_blocks: [256]usize = undefined;
+        var current = first;
+        var function_cursor: usize = 0;
+        while (true) {
+            try c.charge(zero.len + 5);
+            const target = &c.program.functions[@intFromEnum(current)];
+            try c.require(target.blocks[0].parameters.len != 0);
+            const input = target.blocks[0].parameters[0];
+            try c.require(exact(target.registers[@intFromEnum(input)].carrier, .{ .environment = layout }));
+            var seen_blocks = zero;
+            pending_blocks[0] = 0;
+            put(&seen_blocks, 0);
+            var count: usize = 1;
+            var cursor: usize = 0;
+            while (cursor < count) : (cursor += 1) {
                 try c.charge(3);
-                if (op.operands[0] != input or seen_slots[@intFromEnum(slot)]) continue;
-                if (needs.items.len == needs.capacity) try c.charge(needs.items.len + 1);
+                const block = &target.blocks[pending_blocks[cursor]];
+                for (block.instructions) |*op| {
+                    try c.step();
+                    const slot = switch (op.data) {
+                        inline .environment_load, .environment_store => |v| v.slot,
+                        else => continue,
+                    };
+                    try c.charge(3);
+                    if (op.operands[0] != input or seen_slots[@intFromEnum(slot)]) continue;
+                    if (needs.items.len == needs.capacity) try c.charge(needs.items.len + 1);
+                    try c.charge(2);
+                    seen_slots[@intFromEnum(slot)] = true;
+                    try needs.append(allocator, slot);
+                }
                 try c.charge(2);
-                seen_slots[@intFromEnum(slot)] = true;
-                try needs.append(allocator, slot);
+                const terminator = &block.instructions[block.instructions.len - 1];
+                const successors = edgeTargets(terminator);
+                for (successors.blocks[0..successors.count]) |next| {
+                    try c.charge(4 + zero.len);
+                    if (has(seen_blocks, next)) continue;
+                    put(&seen_blocks, next);
+                    pending_blocks[count] = next;
+                    count += 1;
+                }
+                if (terminator.data != .eh_invoke) continue;
+                try c.charge(3);
+                if (terminator.operands.len == 0 or terminator.operands[0] != input) continue;
+                try c.charge(4);
+                const callee = terminator.data.eh_invoke.callee;
+                const index = @intFromEnum(callee);
+                const function = &c.program.functions[index];
+                const abi = &common.abis[@intFromEnum(function.abi)];
+                if (function.role != .ordinary or abi.lexical_environment != layout) continue;
+                // All retained edges carry the same instance in the target's
+                // first entry parameter. Mark on discovery so recursive calls
+                // scan each reachable body once.
+                try c.charge(2);
+                if (seen_functions == null) {
+                    const mask_bits = @bitSizeOf(std.DynamicBitSetUnmanaged.MaskInt);
+                    const functions = c.program.functions.len;
+                    try c.charge(4 + (functions + mask_bits - 1) / mask_bits);
+                    seen_functions = try std.DynamicBitSetUnmanaged.initEmpty(c.allocator, functions);
+                    seen_functions.?.set(@intFromEnum(first));
+                }
+                if (seen_functions.?.isSet(index)) continue;
+                if (pending_functions.items.len == pending_functions.capacity)
+                    try c.charge(pending_functions.items.len + 1);
+                try c.charge(2);
+                seen_functions.?.set(index);
+                try pending_functions.append(c.allocator, callee);
             }
-            try c.step();
-            const successors = edgeTargets(&block.instructions[block.instructions.len - 1]);
-            for (successors.blocks[0..successors.count]) |next| {
-                try c.charge(4 + zero.len);
-                if (has(seen_blocks, next)) continue;
-                put(&seen_blocks, next);
-                pending[count] = next;
-                count += 1;
-            }
+            try c.charge(3);
+            if (function_cursor == pending_functions.items.len) break;
+            current = pending_functions.items[function_cursor];
+            function_cursor += 1;
         }
         return needs.items;
     }
@@ -1123,7 +1165,7 @@ const Graph = struct {
             try environmentMapGrowth(c, &needs, 4);
             const entry = try needs.getOrPut(c.allocator, callee);
             if (!entry.found_existing)
-                entry.value_ptr.* = try self.directCalleeEnvironmentSlots(target, layout, arena.allocator());
+                entry.value_ptr.* = try self.directCalleeEnvironmentSlots(callee, layout, arena.allocator());
             for (entry.value_ptr.*) |slot| {
                 try rememberEnvironmentCell(c, pairs, .{ .receiver = receiver, .slot = slot });
                 try c.row(EnvironmentCallSite);
