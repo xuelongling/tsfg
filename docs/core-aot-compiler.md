@@ -42,6 +42,12 @@ before a call, per-function entry fuel and the post-call failure checkpoint rema
 in place. Each dynamic activation receives its own parameter/copy planes, and
 caller-owned aggregate return storage follows the successful post-call check.
 
+An ordinary private `void` call has a zero-argument normal continuation.
+Fixed-value arguments still cross the call by value. The callee's normal
+return records the return and leave events, then returns no LLVM value. The
+caller continues only after the post-call checkpoint succeeds, with no SSA
+result to forward.
+
 An independently verified `bottom` result domain has an empty actual-type set
 and zero bytes. Its private function returns void through the existing failure
 unwind. A bottom call retains callee admission and the post-call checkpoint,

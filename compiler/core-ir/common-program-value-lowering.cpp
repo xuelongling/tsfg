@@ -69,6 +69,7 @@ struct Lowering {
   bool step(){return program.charge(1)||reject(error,"core-ir-value-llvm-budget","fixed-value lowering work exceeded");}
   bool valueType(const std::string &id)const{return declarations.count(id)&&string(field(*declarations.at(id),"kind"))=="value";}
   bool bottomType(const std::string &id)const{return bottomTypes.count(id)!=0;}
+  bool hasReturnPayload(const std::string &id)const{return id!="void"&&!bottomType(id);}
   const Presence *presenceType(const std::string &id) const {
     const auto found=presence.find(id);
     return found==presence.end()?nullptr:&found->second;
@@ -241,7 +242,11 @@ struct Lowering {
         locate(index,block,ordinal);const auto &op=selected.blocks[block].operations[ordinal];if(!step())return false;
         if(op.name=="invoke"){
           const auto id=string(field(op.properties,"function_id"));
-          if(!need(functions.count(id)&&selected.blocks[op.successors[0]].parameters.size()==1,"direct fixed callee requires one normal result in the verified inventory")||!closure(functions.at(id)))return false;
+          const auto target=functions.find(id);
+          if(!need(target!=functions.end(),"direct fixed callee is absent from the verified inventory"))return false;
+          const auto &callee=program.functions[target->second];
+          const size_t arity=callee.resultCarrier=="void"?0:1;
+          if(!need(selected.blocks[op.successors[0]].parameters.size()==arity,"direct fixed callee normal continuation differs from its verified result")||!closure(target->second))return false;
           locate(index,block,ordinal);if(!visit(op.successors[0]))return false;
         }else if(constructionToken(op)||op.name=="receiver_allocate"||op.name=="receiver_bind"||
                  op.name=="initialize_end"||op.name=="receiver_result"){
@@ -463,25 +468,35 @@ struct Lowering {
     }else if(op.name=="invoke"){
       const auto target=functions.at(string(field(op.properties,"function_id")));const auto &callee=program.functions[target];allow(callback(0,callee.range,target));std::vector<std::string> arguments;
       for(auto reg:op.operands)arguments.push_back(valueType(carrier(reg))?load(values.at(reg),carrier(reg)):values.at(reg));
-      const bool bottom=bottomType(callee.resultCarrier);const auto returned=bottom?std::string{}:tmp();out<<"    ";if(!bottom)out<<returned<<" = ";out<<"func.call @value_"<<callee.id.substr(7)<<"(%state, %event";for(const auto &argument:arguments)out<<", "<<argument;
-      out<<") : (!llvm.ptr, !llvm.ptr";for(auto reg:op.operands)out<<", "<<type(carrier(reg));out<<") -> "<<(bottom?"()":type(callee.resultCarrier))<<'\n';checkpoint(2,op.range);
-      if(bottom){out<<"    cf.br ^failed\n";return text.size()<=outputLimit||reject(error,"core-ir-value-llvm-budget","fixed-value IR byte limit exceeded");}
-      const auto targetBlock=op.successors[0];std::string value=returned;
-      if(valueType(callee.resultCarrier)){value=allocate(type(callee.resultCarrier));out<<"    llvm.store "<<returned<<", "<<value<<" : "<<type(callee.resultCarrier)<<", !llvm.ptr\n";}
-      out<<"    cf.br ";edge(targetBlock,{value});out<<'\n';
+      const bool payload=hasReturnPayload(callee.resultCarrier);
+      const auto returned=payload?tmp():std::string{};
+      out<<"    ";if(payload)out<<returned<<" = ";out<<"func.call @value_"<<callee.id.substr(7)<<"(%state, %event";for(const auto &argument:arguments)out<<", "<<argument;
+      out<<") : (!llvm.ptr, !llvm.ptr";for(auto reg:op.operands)out<<", "<<type(carrier(reg));out<<") -> "<<(payload?type(callee.resultCarrier):"()")<<'\n';checkpoint(2,op.range);
+      if(bottomType(callee.resultCarrier))out<<"    cf.br ^failed\n";
+      else{
+        std::vector<std::string> results;
+        if(payload){
+          auto value=returned;
+          if(valueType(callee.resultCarrier)){value=allocate(type(callee.resultCarrier));out<<"    llvm.store "<<returned<<", "<<value<<" : "<<type(callee.resultCarrier)<<", !llvm.ptr\n";}
+          results.push_back(std::move(value));
+        }
+        out<<"    cf.br ";edge(op.successors[0],results);out<<'\n';
+      }
     }else if(op.name=="cf.br"){
       std::vector<std::string> arguments;for(auto reg:op.operands)arguments.push_back(values.at(reg));out<<"    cf.br ";edge(op.successors[0],arguments);out<<'\n';
     }else if(op.name=="cf.cond_br"){
       const auto zero=constant(0,type(carrier(op.operands[0]))),condition=tmp();out<<"    "<<condition<<" = arith.cmpi ne, "<<operand(0)<<", "<<zero<<" : "<<type(carrier(op.operands[0]))<<"\n    cf.cond_br "<<condition<<", ";edge(op.successors[0],{});out<<", ";edge(op.successors[1],{});out<<'\n';
     }else if(op.name=="func.return"){
       if(!need(!bottomType(function->resultCarrier),"bottom normal result has no physically inhabited return"))return false;
-      callback(4,op.range,functionIndex);callback(3,op.range,functionIndex);const auto returned=valueType(function->resultCarrier)?load(operand(0),function->resultCarrier):operand(0);out<<"    func.return "<<returned<<" : "<<type(function->resultCarrier)<<'\n';
+      callback(4,op.range,functionIndex);callback(3,op.range,functionIndex);
+      if(function->resultCarrier=="void")out<<"    func.return\n";
+      else{const auto returned=valueType(function->resultCarrier)?load(operand(0),function->resultCarrier):operand(0);out<<"    func.return "<<returned<<" : "<<type(function->resultCarrier)<<'\n';}
     }
     return text.size()<=outputLimit||reject(error,"core-ir-value-llvm-budget","fixed-value IR byte limit exceeded");
   }
   bool emit(size_t index){
     function=&program.functions[index];functionIndex=index;values.clear();const auto &selected=*function;sourcePath=selected.path;sourceRange=selected.range;
-    const bool bottom=bottomType(selected.resultCarrier);const auto returned=bottom?"()":type(selected.resultCarrier);if(returned.empty())return false;std::set<uint16_t> retained;
+    const bool payload=hasReturnPayload(selected.resultCarrier);const auto returned=payload?type(selected.resultCarrier):"()";if(returned.empty())return false;std::set<uint16_t> retained;
     for(auto block:emittedBlocks.at(index)){for(auto reg:selected.blocks[block].parameters)retained.insert(reg);for(const auto &op:selected.blocks[block].operations)if(op.result!=noRegister&&!constructionToken(op))retained.insert(op.result);}
     for(auto reg:retained){if(registerType(selected.carriers[reg]).empty())return false;values.emplace(reg,"%r"+std::to_string(reg));}
     out<<"  func.func private @value_"<<selected.id.substr(7)<<"(%state: !llvm.ptr, %event: !llvm.ptr";for(auto reg:selected.blocks[0].parameters)out<<", %arg"<<reg<<": "<<type(selected.carriers[reg]);out<<") -> "<<returned<<" {\n";
@@ -493,7 +508,7 @@ struct Lowering {
       out<<"  ^b"<<block;if(block&&!selected.blocks[block].parameters.empty()){out<<'(';bool first=true;for(auto reg:selected.blocks[block].parameters){if(!first)out<<", ";first=false;out<<values.at(reg)<<": "<<registerType(selected.carriers[reg]);}out<<')';}out<<":\n";
       for(size_t ordinal=0;ordinal<selected.blocks[block].operations.size();++ordinal){locate(index,block,ordinal);if(!operation(selected.blocks[block].operations[ordinal]))return false;}
     }
-    out<<"  ^failed:\n";callback(3,selected.range,index);if(bottom)out<<"    func.return\n";else{const auto failed=zero(selected.resultCarrier);out<<"    func.return "<<failed<<" : "<<returned<<'\n';}out<<"  }\n";return true;
+    out<<"  ^failed:\n";callback(3,selected.range,index);if(!payload)out<<"    func.return\n";else{const auto failed=zero(selected.resultCarrier);out<<"    func.return "<<failed<<" : "<<returned<<'\n';}out<<"  }\n";return true;
   }
   bool run(size_t index){
     const auto undefined=digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined");
