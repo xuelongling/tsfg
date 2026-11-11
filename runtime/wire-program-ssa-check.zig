@@ -1720,7 +1720,13 @@ const Graph = struct {
             }
         }
     }
-    fn nestedLiteralCodeTarget(self: *Graph, function: t.FunctionRef, block: t.BlockRef, prefix: []const ins.Instruction, receiver: t.RegisterRef) Error!?t.FunctionRef {
+    const NestedCodeOrigin = union(enum) { literal: t.FunctionRef, nonlocal: t.RegisterRef, unknown };
+    // An indirect call is a terminator. Its body and block identify the site
+    // even if distinct typed functions borrow the same instruction slice.
+    const NestedCodeSite = struct { function: t.FunctionRef, block: t.BlockRef };
+    const NestedCodeTargets = std.AutoHashMapUnmanaged(NestedCodeSite, ?t.FunctionRef);
+
+    fn nestedCodePrefix(self: *Graph, function: *const model.Function, prefix: []const ins.Instruction, receiver: t.RegisterRef) Error!NestedCodeOrigin {
         // Visit only earlier definitions in this block. An exact unary
         // source must appear farther back in the same prefix.
         const c = self.c;
@@ -1732,26 +1738,64 @@ const Graph = struct {
             const producer = &prefix[position];
             if (producer.result != current) continue;
             switch (producer.data) {
-                .function_make => |literal| {
-                    // Each body's SSA check still validates the call ABI.
-                    const targets = try self.fixedCallTargets(function, block, prefix.len);
-                    try c.step();
-                    return if (targets.len == 1 and targets[0] == literal.function) literal.function else null;
-                },
+                .function_make => |literal| return .{ .literal = literal.function },
                 .domain_copy, .domain_view => {
                     try c.charge(4);
-                    const registers = c.program.functions[@intFromEnum(function)].registers;
                     const source = producer.operands[0];
-                    if (!exact(registers[@intFromEnum(current)].carrier, registers[@intFromEnum(source)].carrier)) return null;
+                    if (!exact(function.registers[@intFromEnum(current)].carrier, function.registers[@intFromEnum(source)].carrier)) return .unknown;
                     current = source;
                 },
-                else => return null,
+                else => return .unknown,
             }
         }
-        return null;
+        return .{ .nonlocal = current };
     }
 
-    fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs) Error!void {
+    fn nestedCodeTarget(self: *Graph, function_ref: t.FunctionRef, block: t.BlockRef, prefix: []const ins.Instruction, receiver: t.RegisterRef, origins: *?Graph, cached: *NestedCodeTargets) Error!?t.FunctionRef {
+        const c = self.c;
+        try c.charge(2);
+        const function = &c.program.functions[@intFromEnum(function_ref)];
+        const prefix_origin = try self.nestedCodePrefix(function, prefix, receiver);
+        if (prefix_origin == .unknown) return null;
+        const site = NestedCodeSite{ .function = function_ref, .block = block };
+        if (prefix_origin == .nonlocal) {
+            // Initializer roots may converge on this same immutable call site.
+            try c.charge(3);
+            if (cached.get(site)) |previous| return previous;
+        }
+        const targets = try self.fixedCallTargets(function_ref, block, prefix.len);
+        try c.step();
+        if (targets.len != 1) return null;
+        const resolved = switch (prefix_origin) {
+            .literal => |target| target,
+            .nonlocal => |register| {
+
+                if (origins.* == null) {
+                    // The ordinary body may not have reached its own SSA pass.
+                    // Build its checked directory once before reusing the initializer proof.
+                    var graph = try Graph.init(c, @intFromEnum(function_ref));
+                    errdefer graph.deinit();
+                    try graph.directory();
+                    try graph.reach();
+                    graph.dom = try graph.dominance(false);
+                    try graph.usesDom();
+                    origins.* = graph;
+                }
+                const graph = &origins.*.?;
+                const proven = try graph.initializerCodeTarget(register);
+                const selected = if (proven == targets[0]) proven else null;
+                try c.charge(4);
+                try environmentMapGrowth(c, cached, 3);
+                try cached.put(c.allocator, site, selected);
+                return selected;
+            },
+            .unknown => unreachable,
+        };
+        try c.step();
+        return if (resolved == targets[0]) resolved else null;
+    }
+
+    fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs, nested_targets: *NestedCodeTargets) Error!void {
         // An imported ordinary call can reach the initializer's own Globals
         // through a callback. Visit exact targets from block 0, once per body.
         const c=self.c; try c.charge(3); const functions=c.program.functions;
@@ -1770,6 +1814,8 @@ const Graph = struct {
             try c.step();
             const function_ref=pending_functions[function_cursor];
             const function=&functions[@intFromEnum(function_ref)];
+            var origins: ?Graph = null;
+            defer if (origins) |*graph| graph.deinit();
             var seen_blocks=zero;
             try c.charge(2); pending_blocks[0]=0; put(&seen_blocks,0);
             var block_cursor: usize=0; var block_count: usize=1;
@@ -1781,7 +1827,7 @@ const Graph = struct {
                         inline .eh_invoke,.eh_invoke_indirect=>|v,kind| {
                             if (kind == .eh_invoke_indirect) try c.charge(2);
                             const selected = if (kind == .eh_invoke) v.callee else
-                                (try self.nestedLiteralCodeTarget(function_ref, @enumFromInt(block_index), block.instructions[0..position], op.operands[0])) orelse continue;
+                                (try self.nestedCodeTarget(function_ref, @enumFromInt(block_index), block.instructions[0..position], op.operands[0], &origins, nested_targets)) orelse continue;
                             try c.charge(3); const index=@intFromEnum(selected);
                             if(!seen_functions.isSet(index)) {
                                 seen_functions.set(index);
@@ -1823,6 +1869,8 @@ const Graph = struct {
         for(modules.modules) |module| {
             try c.step(); if(@intFromEnum(module.initializer)==self.function and module.source==self.f.source) { own_globals=module.globals; break; }
         }
+        var nested_targets: NestedCodeTargets = .empty;
+        defer nested_targets.deinit(c.allocator);
         var callee_globals = std.AutoHashMapUnmanaged(t.FunctionRef, GlobalRefs){};
         defer {
             var entries=callee_globals.valueIterator();
@@ -1842,7 +1890,7 @@ const Graph = struct {
                         const entry=try callee_globals.getOrPut(c.allocator,callee);
                         if(!entry.found_existing) {
                             entry.value_ptr.*=.empty;
-                            try self.directClosureGlobalUses(callee,own_globals,used,entry.value_ptr);
+                            try self.directClosureGlobalUses(callee,own_globals,used,entry.value_ptr,&nested_targets);
                         }
                     },
                     else=>{},

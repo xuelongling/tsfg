@@ -378,8 +378,13 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                         const destination=try c.ref(v.destination,f.blocks.len);
                         try std.testing.expect(i+1==block.instructions.len and op.result==null);
                         if (op.operands.len!=0) {
-                            try std.testing.expect(destination==3 and std.mem.eql(t.RegisterRef,op.operands,&.{r2}));
-                            try std.testing.expectEqualSlices(t.RegisterRef,&.{r3},f.blocks[destination].parameters);
+                            if (index==1) {
+                                try std.testing.expect(destination==1 and std.mem.eql(t.RegisterRef,op.operands,&.{r1}));
+                                try std.testing.expectEqualSlices(t.RegisterRef,&.{r2},f.blocks[destination].parameters);
+                            } else {
+                                try std.testing.expect(destination==3 and std.mem.eql(t.RegisterRef,op.operands,&.{r2}));
+                                try std.testing.expectEqualSlices(t.RegisterRef,&.{r3},f.blocks[destination].parameters);
+                            }
                         }
                     },
                     .cond_br => |v| {
@@ -387,8 +392,13 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                         const no=try c.ref(v.false_destination,f.blocks.len);
                         try std.testing.expect(i+1==block.instructions.len and op.result==null);
                         if (v.true_count==0) try std.testing.expectEqual(@as(usize,1),op.operands.len) else {
-                            try std.testing.expect(yes==3 and no==3 and v.true_count==1);
-                            try std.testing.expectEqualSlices(t.RegisterRef,&.{saved_condition,r2,r3},op.operands);
+                            if (index==1) {
+                                try std.testing.expect(yes==1 and no==1 and v.true_count==1);
+                                try std.testing.expectEqualSlices(t.RegisterRef,&.{r3,r1,r2},op.operands);
+                            } else {
+                                try std.testing.expect(yes==3 and no==3 and v.true_count==1);
+                                try std.testing.expectEqualSlices(t.RegisterRef,&.{saved_condition,r2,r3},op.operands);
+                            }
                             try std.testing.expectEqualSlices(t.RegisterRef,&.{saved_tail},f.blocks[yes].parameters);
                         }
                     },
@@ -722,6 +732,66 @@ test "module nested Code copy requires initialization before a read" { try check
 test "module nested Code copy allows an initialized read" { try checkNestedCode(true,false,.copy,false); }
 test "module nested Code view requires initialization before a write" { try checkNestedCode(false,true,.view,true); }
 test "module nested Code view allows an initialized write" { try checkNestedCode(true,true,.view,false); }
+
+const NestedCfgTransport = enum { parameter, parallel, distinct, dominating };
+
+fn checkNestedCfgCode(initialized: bool, write: bool, comptime transport: NestedCfgTransport, rejected: bool) !void {
+    var fixture: Fixture=undefined;
+    fixture.init(if(initialized).nested_after_init else .nested_before_init);
+    var saved: SavedCodeFixture=undefined;
+    saved.installTypes(&fixture);
+    saved.calls=.{.{ .function=@enumFromInt(1),.block=@enumFromInt(1),.instruction=0,
+        .signature=signature,.targets=&.{@enumFromInt(2)} }};
+    const literal: ins.Instruction = .{ .source=anchor,.result=r1,.operands=&empty,
+        .data=.{ .function_make=.{ .function=@enumFromInt(2) } } };
+    const alternate: ins.Instruction = .{ .source=anchor,.result=r2,.operands=if(transport==.distinct)&empty else &.{r1},
+        .data=if(transport==.distinct)literal.data else forward_saved.data };
+    const choose_condition: ins.Instruction = .{ .source=anchor,.result=r3,.operands=&empty,.data=bool_op.data };
+    const parallel: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{r3,r1,r2},
+        .data=.{ .cond_br=.{ .true_destination=@enumFromInt(1),.false_destination=@enumFromInt(1),.true_count=1 } } };
+    const branch: ins.Instruction = .{ .source=anchor,.result=null,.operands=if(transport==.parameter)&.{r1} else &empty,.data=next_block.data };
+    const entry = switch (transport) {
+        .parameter,.dominating => [_]ins.Instruction{entry_fuel,literal,branch},
+        .parallel,.distinct => [_]ins.Instruction{entry_fuel,literal,alternate,choose_condition,parallel},
+    };
+    const receiver: t.RegisterRef = switch (transport) {
+        .parameter => r2,
+        .parallel,.distinct => saved_tail,
+        .dominating => r1,
+    };
+    const indirect: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{receiver},
+        .data=.{ .eh_invoke_indirect=.{ .callable=callable_type,.normal=@enumFromInt(2),.exceptional=@enumFromInt(3) } } };
+    const reraised: ins.Instruction = .{ .source=anchor,.result=null,.operands=&value,.data=.eh_raise };
+    const blocks = [_]wire.Block{
+        .{ .parameters=&empty,.instructions=&entry },
+        .{ .parameters=if(transport==.dominating)&empty else &.{receiver},.instructions=&.{indirect} },
+        .{ .parameters=&empty,.instructions=&.{ret} },
+        .{ .parameters=&value,.instructions=&.{reraised} },
+    };
+    fixture.functions[1].blocks=&blocks;
+    fixture.functions[1].registers=switch(transport) {
+        .parameter => &.{caller_registers[1],code_register,code_register},
+        .parallel,.distinct => &.{caller_registers[1],code_register,code_register,caller_registers[2],code_register},
+        .dominating => &.{caller_registers[1],code_register},
+    };
+    if(write) {
+        fixture.other_instructions[0..4].*=.{entry_fuel,constant,store0,ret};
+        fixture.other_blocks[0].instructions=fixture.other_instructions[0..4];
+    }
+    var c=context.Context{ .program=&fixture.program,.allocator=std.testing.allocator };
+    try prerequisites(&c,false);
+    var fixed=try fixed_targets.analyze(&c);
+    defer fixed.deinit(c.allocator);
+    if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
+}
+
+test "module nested Code block parameter requires initialization before a read" { try checkNestedCfgCode(false,false,.parameter,true); }
+test "module nested Code block parameter allows an initialized read" { try checkNestedCfgCode(true,false,.parameter,false); }
+test "module nested Code parallel edges carrying one definition require initialization before a write" { try checkNestedCfgCode(false,true,.parallel,true); }
+test "module nested Code parallel edges allow an initialized write" { try checkNestedCfgCode(true,true,.parallel,false); }
+test "module nested Code parallel edges distinguish separate literals for one target" { try checkNestedCfgCode(false,false,.distinct,false); }
+test "module nested Code definition in a dominating block requires initialization before a read" { try checkNestedCfgCode(false,false,.dominating,true); }
+test "module nested Code definition in a dominating block allows an initialized read" { try checkNestedCfgCode(true,false,.dominating,false); }
 
 test "module fixed Code leaves foreign Globals to the verified module order" {
     var fixture: CrossFixture=undefined;
