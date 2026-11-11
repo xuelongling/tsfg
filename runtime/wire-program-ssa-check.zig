@@ -730,6 +730,33 @@ const Graph = struct {
         return false;
     }
 
+    fn environmentOlderAliasAtEntry(self: *Graph, layout: t.EnvironmentRef, block: usize, origins: []const EnvironmentOrigin) Error!bool {
+        const c = self.c;
+        // The reverse origin walk starts at every Env access. Bottom rows
+        // cannot contribute to an observation in this nonescaping layout.
+        for (origins, self.definitions, self.f.registers) |origin_state, *definition, *register| {
+            try c.charge(3);
+            if (origin_state == .bottom or !exact(register.carrier, .{ .environment = layout })) continue;
+            // The allocation's own result is assigned anew in this block.
+            // Earlier definitions in the block can only forward an entry value.
+            try c.charge(3 + zero.len);
+            const available = if (definition.block == block)
+                definition.position < 0
+            else
+                has(self.dom[block], definition.block);
+            if (!available) continue;
+            switch (origin_state) {
+                .allocation => |root| {
+                    try c.step();
+                    if (self.definitions[@intFromEnum(root)].block == block) return true;
+                },
+                .mixed, .unknown => return true,
+                .bottom => unreachable,
+            }
+        }
+        return false;
+    }
+
     fn environmentMixedState(self: *Graph, origins: []const EnvironmentOrigin) Error!?t.EnvironmentRef {
         const c = self.c;
         const closures = c.program.tables.mode.common.closures;
@@ -748,8 +775,10 @@ const Graph = struct {
         defer c.allocator.free(slots);
         @memset(slots, false);
 
-        // Each tracked object belongs to this activation, stays within this
-        // function and has at most one allocation per call.
+        // Each tracked object belongs to this activation and stays within this
+        // function. A repeated allocation needs a separate entry alias check.
+        try c.charge(zero.len);
+        var repeat_blocks = zero;
         var roots: [4096]t.RegisterRef = undefined;
         var root_count: usize = 0;
         var has_mixed_access = false;
@@ -797,7 +826,11 @@ const Graph = struct {
                     }
                 }
             }
-            if (has_allocation and try self.environmentAllocCanRepeat(block_index)) return null;
+            if (has_allocation and try self.environmentAllocCanRepeat(block_index)) {
+                if (try self.environmentOlderAliasAtEntry(layout, block_index, origins)) return null;
+                try c.step();
+                put(&repeat_blocks, block_index);
+            }
             const terminator = &block.instructions[block.instructions.len - 1];
             if (environmentEdgeArguments(terminator, 0) == null) {
                 const edges = &self.facts[block_index];
@@ -817,8 +850,9 @@ const Graph = struct {
             try c.step();
             if (!used) continue;
             for (roots[0..root_count]) |root| {
-                try c.step();
-                try self.environmentTrackSlot(layout, root, @enumFromInt(slot), entry_aliases);
+                try c.charge(2 + zero.len);
+                const repeat = has(repeat_blocks, self.definitions[@intFromEnum(root)].block);
+                try self.environmentTrackSlot(layout, root, @enumFromInt(slot), entry_aliases, repeat);
             }
         }
         return layout;
@@ -909,6 +943,7 @@ const Graph = struct {
         root: t.RegisterRef,
         slot: t.EnvironmentSlotRef,
         entry_aliases: []const EnvironmentAliases,
+        reset_at_allocation: bool,
     ) Error!void {
         const c = self.c;
         const words = (self.f.registers.len + 63) / 64;
@@ -928,11 +963,17 @@ const Graph = struct {
                 if (op.result) |result| {
                     if (self.environmentInLayout(result, layout)) {
                         try c.charge(4);
-                        const selected = if (op.data == .environment_alloc)
-                            result == root
-                        else
-                            state.includes(op.operands[0]);
-                        state.mark(result, selected);
+                        if (op.data == .environment_alloc) {
+                            const selected = result == root;
+                            if (selected and reset_at_allocation) {
+                                // The entry proof excludes observations of the
+                                // previous instance. Drop its dormant aliases.
+                                try c.charge(2 + no_environment_aliases.len);
+                                state.aliases = no_environment_aliases;
+                                state.initialized = false;
+                            }
+                            state.mark(result, selected);
+                        } else state.mark(result, state.includes(op.operands[0]));
                     }
                 }
                 if (environmentAccessSlot(op)) |access| {

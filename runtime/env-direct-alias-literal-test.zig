@@ -605,3 +605,51 @@ test "literal Env merge keeps the selected allocation on a loop backedge" {
         },
     });
 }
+
+fn runFreshMixedLoop(body: []const ins.Instruction, accept: bool) !void {
+    const entry = seed ++ [_]ins.Instruction{.{ .source = at, .result = null, .operands = &.{r(0)}, .data = .{ .cond_br = .{
+        .true_destination = b(1), .false_destination = b(3), .true_count = 0,
+    } } }};
+    const allocate_pair = [_]ins.Instruction{ condition, alloc, second_alloc,
+        .{ .source = at, .result = null, .operands = &.{ r(0), r(3), r(4) }, .data = .{ .cond_br = .{
+            .true_destination = b(2), .false_destination = b(2), .true_count = 1,
+        } } },
+    };
+    try run(.{
+        .name = "fresh mixed Env loop", .accept = accept, .registers = &hop_registers, .carriers = &.{}, .plans = &.{},
+        .blocks = &.{
+            .{ .parameters = &.{r(0)}, .instructions = &entry },
+            .{ .parameters = &.{}, .instructions = &allocate_pair },
+            .{ .parameters = &.{r(5)}, .instructions = body },
+            .{ .parameters = &.{}, .instructions = &.{returned} },
+        },
+    });
+}
+
+const fresh_mixed_backedge = fresh_body[fresh_body.len - 1];
+
+test "literal Env loop can initialize the selected fresh allocation on every iteration" {
+    try runFreshMixedLoop(&.{ init_view, double_edge_body[0], fresh_mixed_backedge }, true);
+}
+
+test "literal Env loop requires a fresh selected allocation to be initialized" {
+    try runFreshMixedLoop(&.{ double_edge_body[0], fresh_mixed_backedge }, false);
+}
+
+test "literal Env loop rejects two initializations in the same allocation instance" {
+    try runFreshMixedLoop(&.{ init_view, init_view, double_edge_body[0], fresh_mixed_backedge }, false);
+}
+
+test "literal Env loop can observe an older initialized allocation after allocating its successor" {
+    const carry_new = ins.Instruction{ .source = at, .result = null, .operands = &.{ r(0), r(4) }, .data = .{ .cond_br = .{
+        .true_destination = b(1), .false_destination = b(2), .true_count = 1,
+    } } };
+    try run(.{
+        .name = "previous Env generation remains live", .accept = true, .registers = &hop_registers, .carriers = &.{}, .plans = &.{},
+        .blocks = &.{
+            .{ .parameters = &.{r(0)}, .instructions = &branch_original_once_entry },
+            .{ .parameters = &.{r(5)}, .instructions = &.{ condition, second_alloc, double_edge_body[0], init_copy, carry_new } },
+            .{ .parameters = &.{}, .instructions = &.{returned} },
+        },
+    });
+}
