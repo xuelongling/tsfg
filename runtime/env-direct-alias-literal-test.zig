@@ -654,26 +654,67 @@ test "literal Env loop can observe an older initialized allocation after allocat
     });
 }
 
-const CallerInit = enum { before, after, absent };
-const ChildAccess = enum { load, store, unreachable_load };
-const CallPath = enum { direct, forwarded, unreachable_forward, cycle };
+const CallerInit = enum { before, after, absent, other_only, before_with_other };
+const ChildAccess = enum { load, store, unreachable_load, copy_load };
+const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward };
 
-fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, accept: bool) !void {
-    const invoke_child: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = .{ .eh_invoke = .{
+const CallerTransport = enum { original, copied, viewed, block_parameter, repeated_copy };
+
+fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAccess, comptime path: CallPath, comptime transport: CallerTransport, accept: bool) !void {
+    const aliases_count = switch (transport) {
+        .original => 0,
+        .copied, .block_parameter, .repeated_copy => 1,
+        .viewed => 2,
+    };
+    const receiver = r(3 + aliases_count);
+    const exception = r(4 + aliases_count);
+    const invoke_child: ins.Instruction = .{ .source = at, .result = null, .operands = &.{receiver}, .data = .{ .eh_invoke = .{
         .callee = @enumFromInt(1), .normal = b(1), .exceptional = b(2),
     } } };
-    const caller_entry = seed ++ [_]ins.Instruction{alloc} ++ (if (initialization == .before) [_]ins.Instruction{init_original} else [_]ins.Instruction{}) ++ [_]ins.Instruction{invoke_child};
-    const caller_return = if (initialization == .after) &.{ init_original, returned } else &.{returned};
+    const initialize = switch (aliases_count) {
+        0 => init_original,
+        1 => init_copy,
+        2 => init_view,
+        else => unreachable,
+    };
+    const has_other = initialization == .other_only or initialization == .before_with_other;
+    const other = r(5 + aliases_count);
+    const other_alloc: ins.Instruction = .{ .source = at, .result = other, .operands = &.{}, .data = alloc.data };
+    const other_init: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ other, r(1) }, .data = init_original.data };
+    const before_call = switch (initialization) {
+        .before => [_]ins.Instruction{initialize},
+        .other_only => [_]ins.Instruction{ other_alloc, other_init },
+        .before_with_other => [_]ins.Instruction{ other_alloc, initialize },
+        .after, .absent => [_]ins.Instruction{},
+    };
+    const call = before_call ++ [_]ins.Instruction{invoke_child};
+    const to_call: ins.Instruction = .{ .source = at, .result = null,
+        .operands = if (transport == .block_parameter) &.{r(3)} else &.{}, .data = .{ .br = .{ .destination = b(3) } } };
+    const caller_entry = switch (transport) {
+        .original => seed ++ [_]ins.Instruction{alloc} ++ call,
+        .copied => seed ++ [_]ins.Instruction{ alloc, copy } ++ call,
+        .viewed => seed ++ [_]ins.Instruction{ alloc, copy, view } ++ call,
+        .block_parameter => seed ++ [_]ins.Instruction{ alloc, to_call },
+        .repeated_copy => seed ++ [_]ins.Instruction{to_call},
+    };
+    const caller_return: []const ins.Instruction = if (transport == .repeated_copy) &.{to_call} else if (initialization == .after) &.{ initialize, returned } else &.{returned};
     const payload_register: model.Register = .{ .carrier = .payload, .view = null };
-    const caller_registers = base_registers ++ [_]model.Register{payload_register};
+    const caller_registers = base_registers ++ ([_]model.Register{env_register} ** aliases_count) ++ [_]model.Register{payload_register} ++
+        (if (has_other) [_]model.Register{env_register} else [_]model.Register{});
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
-        .{ .parameters = &.{r(4)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(4)}, .data = .eh_raise }} },
+        .{ .parameters = &.{exception}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{exception}, .data = .eh_raise }} },
+    } ++ switch (transport) {
+        .block_parameter => [_]model.Block{.{ .parameters = &.{receiver}, .instructions = &call }},
+        .repeated_copy => [_]model.Block{.{ .parameters = &.{}, .instructions = &([_]ins.Instruction{ condition, alloc, copy } ++ call) }},
+        else => [_]model.Block{},
     };
     const child_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(0)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } };
     const child_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(0), r(1) }, .data = .{ .environment_store = .{ .slot = @enumFromInt(0) } } };
     const child_jump: ins.Instruction = .{ .source = at, .result = null, .operands = &.{}, .data = .{ .br = .{ .destination = b(1) } } };
+    const child_copy: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{r(0)}, .data = copy.data };
+    const child_copy_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(2)}, .data = child_load.data };
     const leaf_blocks: []const model.Block = switch (access) {
         .load => &.{
             .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], child_jump } },
@@ -684,17 +725,27 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
             .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], returned } },
             .{ .parameters = &.{}, .instructions = &.{ child_load, returned } },
         },
+        .copy_load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], child_copy, child_jump } },
+            .{ .parameters = &.{}, .instructions = &.{ child_copy_load, returned } },
+        },
     };
     const call_grandchild: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = .{ .eh_invoke = .{
         .callee = @enumFromInt(2), .normal = b(1), .exceptional = b(2),
     } } };
+    const child_view: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{r(0)}, .data = view.data };
+    const call_with_view: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(2)}, .data = call_grandchild.data };
+    const forwarding_entry: []const ins.Instruction = if (path == .view_forward)
+        &.{ seed[0], child_view, call_with_view }
+    else
+        &.{ seed[0], call_grandchild };
     const forwarding_blocks: []const model.Block = if (path == .unreachable_forward) &.{
         .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], returned } },
         .{ .parameters = &.{}, .instructions = &.{returned} },
         .{ .parameters = &.{r(1)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(1)}, .data = .eh_raise }} },
         .{ .parameters = &.{}, .instructions = &.{call_grandchild} },
     } else &.{
-        .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], call_grandchild } },
+        .{ .parameters = &.{r(0)}, .instructions = forwarding_entry },
         .{ .parameters = &.{}, .instructions = &.{returned} },
         .{ .parameters = &.{r(1)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(1)}, .data = .eh_raise }} },
     };
@@ -725,7 +776,14 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         functions[index].id = @splat(@as(u8, @intCast(0x95 + index)));
         functions[index].abi = @enumFromInt(index);
         functions[index].name = if (index == 1) "observeCapture" else "observeCaptureThroughChild";
-        functions[index].registers = if (forwarding) &.{ env_register, payload_register } else if (recursive) &.{ env_register, value_register, payload_register } else &.{ env_register, value_register };
+        functions[index].registers = if (forwarding)
+            (if (path == .view_forward) &.{ env_register, payload_register, env_register } else &.{ env_register, payload_register })
+        else if (recursive)
+            &.{ env_register, value_register, payload_register }
+        else if (access == .copy_load)
+            &.{ env_register, value_register, env_register }
+        else
+            &.{ env_register, value_register };
         functions[index].blocks = if (forwarding) forwarding_blocks else if (recursive) recursive_blocks else leaf_blocks;
         abis[index].function = function;
         abis[index].parameters = &.{};
@@ -771,44 +829,88 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
 }
 
 test "literal direct child cannot read an uninitialized owned Env slot" {
-    try runDirectChild(.absent, .load, .direct, false);
+    try runDirectChild(.absent, .load, .direct, .original, false);
 }
 test "literal direct child's read requires init before invoke rather than on return" {
-    try runDirectChild(.after, .load, .direct, false);
+    try runDirectChild(.after, .load, .direct, .original, false);
 }
 test "literal direct child can read an initialized owned Env slot" {
-    try runDirectChild(.before, .load, .direct, true);
+    try runDirectChild(.before, .load, .direct, .original, true);
 }
 test "literal direct child cannot store into an uninitialized owned Env slot" {
-    try runDirectChild(.absent, .store, .direct, false);
+    try runDirectChild(.absent, .store, .direct, .original, false);
 }
 test "literal direct child can store into an initialized owned Env slot" {
-    try runDirectChild(.before, .store, .direct, true);
+    try runDirectChild(.before, .store, .direct, .original, true);
 }
 test "literal direct child with only an unreachable Env read needs no init" {
-    try runDirectChild(.absent, .unreachable_load, .direct, true);
+    try runDirectChild(.absent, .unreachable_load, .direct, .original, true);
 }
 test "literal direct grandchild requires owned Env initialization before the first call" {
-    try runDirectChild(.after, .load, .forwarded, false);
+    try runDirectChild(.after, .load, .forwarded, .original, false);
 }
 test "literal direct grandchild cannot read an uninitialized owned Env slot" {
-    try runDirectChild(.absent, .load, .forwarded, false);
+    try runDirectChild(.absent, .load, .forwarded, .original, false);
 }
 test "literal direct grandchild can read an initialized owned Env slot" {
-    try runDirectChild(.before, .load, .forwarded, true);
+    try runDirectChild(.before, .load, .forwarded, .original, true);
 }
 test "literal direct grandchild cannot store into an uninitialized owned Env slot" {
-    try runDirectChild(.absent, .store, .forwarded, false);
+    try runDirectChild(.absent, .store, .forwarded, .original, false);
 }
 test "literal direct grandchild can store into an initialized owned Env slot" {
-    try runDirectChild(.before, .store, .forwarded, true);
+    try runDirectChild(.before, .store, .forwarded, .original, true);
 }
 test "literal unreachable grandchild call needs no owned Env initialization" {
-    try runDirectChild(.absent, .load, .unreachable_forward, true);
+    try runDirectChild(.absent, .load, .unreachable_forward, .original, true);
 }
 test "literal direct call cycle can observe an initialized owned Env slot" {
-    try runDirectChild(.before, .load, .cycle, true);
+    try runDirectChild(.before, .load, .cycle, .original, true);
 }
 test "literal direct call cycle cannot observe an uninitialized owned Env slot" {
-    try runDirectChild(.absent, .load, .cycle, false);
+    try runDirectChild(.absent, .load, .cycle, .original, false);
+}
+
+test "literal direct child cannot read an uninitialized owned Env passed through a copy" {
+    try runDirectChild(.absent, .load, .direct, .copied, false);
+}
+test "literal direct child requires a copied Env slot initialized before either continuation" {
+    try runDirectChild(.after, .load, .direct, .copied, false);
+}
+test "literal direct child cannot store into an uninitialized owned Env passed through a copy" {
+    try runDirectChild(.absent, .store, .direct, .copied, false);
+}
+test "literal direct child can store into an owned Env slot initialized through a copy" {
+    try runDirectChild(.before, .store, .direct, .copied, true);
+}
+test "literal direct grandchild cannot read an uninitialized owned Env passed through a copy and view" {
+    try runDirectChild(.absent, .load, .forwarded, .viewed, false);
+}
+test "literal direct grandchild can read an owned Env slot initialized through a copy and view" {
+    try runDirectChild(.before, .load, .forwarded, .viewed, true);
+}
+test "literal direct call through an Env block parameter keeps the existing proof boundary" {
+    try runDirectChild(.absent, .load, .direct, .block_parameter, true);
+}
+test "literal direct call through a copy of a repeated Env allocation keeps the existing proof boundary" {
+    try runDirectChild(.absent, .load, .direct, .repeated_copy, true);
+}
+
+test "literal child copy requires owned Env initialization before the caller invoke" {
+    try runDirectChild(.absent, .copy_load, .direct, .original, false);
+}
+test "literal child can read an initialized owned Env through a copy in its dominator" {
+    try runDirectChild(.before, .copy_load, .direct, .original, true);
+}
+test "literal grandchild reached through an Env view requires initialization" {
+    try runDirectChild(.absent, .load, .view_forward, .original, false);
+}
+test "literal grandchild reached through an Env view can read an initialized instance" {
+    try runDirectChild(.before, .load, .view_forward, .original, true);
+}
+test "literal grandchild Env view and copy cannot use an unrelated allocation's initialization" {
+    try runDirectChild(.other_only, .copy_load, .view_forward, .viewed, false);
+}
+test "literal unrelated uninitialized Env does not block a grandchild view and copy" {
+    try runDirectChild(.before_with_other, .copy_load, .view_forward, .viewed, true);
 }

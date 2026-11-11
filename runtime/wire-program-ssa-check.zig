@@ -1046,6 +1046,21 @@ const Graph = struct {
         _ = try pairs.getOrPut(c.allocator, cell);
     }
 
+    fn matchesDirectEnvironment(
+        c: *Context,
+        aliases: ?std.DynamicBitSetUnmanaged,
+        input: t.RegisterRef,
+        value: t.RegisterRef,
+    ) Error!bool {
+        try c.step();
+        if (value == input) return true;
+        if (aliases) |known| {
+            try c.step();
+            return known.isSet(@intFromEnum(value));
+        }
+        return false;
+    }
+
     fn directCalleeEnvironmentSlots(
         self: *Graph,
         first: t.FunctionRef,
@@ -1073,6 +1088,10 @@ const Graph = struct {
             try c.require(target.blocks[0].parameters.len != 0);
             const input = target.blocks[0].parameters[0];
             try c.require(exact(target.registers[@intFromEnum(input)].carrier, .{ .environment = layout }));
+            var aliases: ?std.DynamicBitSetUnmanaged = null;
+            defer if (aliases) |*known| known.deinit(c.allocator);
+            // FIFO visits strict dominators before their uses. Each body
+            // contributes only exact-carrier copies of its hidden Env input.
             var seen_blocks = zero;
             pending_blocks[0] = 0;
             put(&seen_blocks, 0);
@@ -1084,11 +1103,27 @@ const Graph = struct {
                 for (block.instructions) |*op| {
                     try c.step();
                     const slot = switch (op.data) {
+                        .domain_copy, .domain_view => {
+                            try c.charge(2);
+                            if (!try matchesDirectEnvironment(c, aliases, input, op.operands[0])) continue;
+                            try c.charge(3);
+                            const result = @intFromEnum(op.result.?);
+                            if (!exact(target.registers[result].carrier, .{ .environment = layout })) continue;
+                            if (aliases == null) {
+                                const mask_bits = @bitSizeOf(std.DynamicBitSetUnmanaged.MaskInt);
+                                const registers = target.registers.len;
+                                try c.charge(4 + (registers + mask_bits - 1) / mask_bits);
+                                aliases = try std.DynamicBitSetUnmanaged.initEmpty(c.allocator, registers);
+                            }
+                            try c.step();
+                            aliases.?.set(result);
+                            continue;
+                        },
                         inline .environment_load, .environment_store => |v| v.slot,
                         else => continue,
                     };
                     try c.charge(3);
-                    if (op.operands[0] != input or seen_slots[@intFromEnum(slot)]) continue;
+                    if (!try matchesDirectEnvironment(c, aliases, input, op.operands[0]) or seen_slots[@intFromEnum(slot)]) continue;
                     if (needs.items.len == needs.capacity) try c.charge(needs.items.len + 1);
                     try c.charge(2);
                     seen_slots[@intFromEnum(slot)] = true;
@@ -1106,7 +1141,7 @@ const Graph = struct {
                 }
                 if (terminator.data != .eh_invoke) continue;
                 try c.charge(3);
-                if (terminator.operands.len == 0 or terminator.operands[0] != input) continue;
+                if (terminator.operands.len == 0 or !try matchesDirectEnvironment(c, aliases, input, terminator.operands[0])) continue;
                 try c.charge(4);
                 const callee = terminator.data.eh_invoke.callee;
                 const index = @intFromEnum(callee);
@@ -1139,6 +1174,20 @@ const Graph = struct {
         return needs.items;
     }
 
+    fn directEnvironmentAllocation(self: *Graph, receiver: t.RegisterRef, layout: t.EnvironmentRef) Error!?t.RegisterRef {
+        var current = receiver;
+        while (true) {
+            // The observer starts in a reachable block. SSA dominance has
+            // already proved that each transparent source precedes its user.
+            try self.c.step();
+            switch (try self.environmentIdentity(current)) {
+                .allocation => |allocated| return if (allocated == layout) current else null,
+                .source => |source| current = source,
+                .parameter, .unknown => return null,
+            }
+        }
+    }
+
     fn observeDirectEnvironmentCalls(self: *Graph, pairs: *EnvironmentCells, sites: *EnvironmentCallSites) Error!void {
         const c = self.c;
         const common = &c.program.tables.mode.common;
@@ -1168,9 +1217,7 @@ const Graph = struct {
             const target = &c.program.functions[@intFromEnum(callee)];
             const abi = &common.abis[@intFromEnum(target.abi)];
             if (target.role != .ordinary or abi.lexical_environment != layout) continue;
-            const receiver = op.operands[0];
-            const actual = try self.environmentIdentity(receiver);
-            if (actual != .allocation or actual.allocation != layout) continue;
+            const receiver = (try self.directEnvironmentAllocation(op.operands[0], layout)) orelse continue;
             try c.charge(3);
             const allocation_block = self.definitions[@intFromEnum(receiver)].block;
             if (repeats[allocation_block] == null)
