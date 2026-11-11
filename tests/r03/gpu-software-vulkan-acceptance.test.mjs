@@ -242,11 +242,16 @@ const qualificationPath=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_QUALIFICATION;
 const qualificationSHA256=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_QUALIFICATION_SHA256;
 function verifyRecovery(report){
   const final=report.final,transitions=report.transitions;
+  assert.ok(transitions.length>0);
+  assert.deepEqual(transitions.at(-1),final);
   assert.ok(transitions.every(value=>value.deviceGeneration===final.deviceGeneration&&value.submissionId===final.submissionId&&canonical(value.identity)===canonical(report.identity)));
-  const timeouts=transitions.filter(value=>value.state==='Unfinished'&&value.vkResult===2);
-  assert.equal(report.timeout,timeouts.length?'OBSERVED':'NOT_OBSERVED');
-  if(!report.retainedResumeObserved){assert.equal(report.recovery,'NOT_RUN');return;}
-  assert.ok(timeouts.length>0);
+  const firstTimeout=transitions.findIndex(value=>value.state==='Unfinished'&&value.vkResult===2);
+  const timeoutObserved=firstTimeout!==-1;
+  assert.equal(report.timeout,timeoutObserved?'OBSERVED':'NOT_OBSERVED');
+  // A timeout followed by another wait required a successful retained resume.
+  const resumed=timeoutObserved&&firstTimeout+1<transitions.length;
+  assert.equal(report.retainedResumeObserved,resumed);
+  if(!resumed){assert.equal(report.recovery,'NOT_RUN');return;}
   if(final.state==='Completed'&&final.completionKnown)assert.equal(report.recovery,'COMPLETED');
   else if(final.state==='DeviceLost')assert.equal(report.recovery,'DEVICE_LOST');
   else if(final.submitted&&!final.completionKnown)assert.equal(report.recovery,'RETAINED');
