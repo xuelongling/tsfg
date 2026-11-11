@@ -298,6 +298,11 @@ pub const ManagedHeap = struct {
     }
 
     pub fn createTypedArray(self: *ManagedHeap, layout: ArrayLayout, inputs: []const ArrayInput, lifetime: Lifetime) Error!Handle {
+        return self.publishArray(layout, inputs, lifetime, null);
+    }
+
+    const ArrayBacking = struct { type_id: [32]u8, element_type: [32]u8 };
+    fn publishArray(self: *ManagedHeap, layout: ArrayLayout, inputs: []const ArrayInput, lifetime: Lifetime, backing: ?ArrayBacking) Error!Handle {
         try self.check();
         const scope = try self.scopeFor(lifetime);
         if (self.next_identity == std.math.maxInt(u64)) return error.IdentityExhausted;
@@ -306,7 +311,11 @@ pub const ManagedHeap = struct {
         try state.objects.ensureUnusedCapacity(self.allocator, 1);
         const object = try arrays.create(self.allocator, state, self.owner, self.next_identity, layout, inputs);
         errdefer collector.destroy(self.allocator, object);
-        try state.types.admitLayout(self.allocator, layout);
+        if (backing) |identity| {
+            try state.types.admitArrayBacking(self.allocator, identity.type_id, identity.element_type, layout);
+            object.payload.array.semantic_type = identity.type_id;
+            object.payload.array.element_type = identity.element_type;
+        } else try state.types.admitLayout(self.allocator, layout);
         state.objects.appendAssumeCapacity(object);
         self.next_identity += 1;
         return self.installRoot(slot, object, scope);
@@ -315,12 +324,7 @@ pub const ManagedHeap = struct {
     pub fn createBackedArray(self: *ManagedHeap, module: anytype, id: [32]u8, inputs: []const ArrayInput, lifetime: Lifetime) Error!Handle {
         comptime { if (@TypeOf(module) != @import("typed-array-backing.zig").Module) @compileError("verified array backing required"); }
         const contract = try module.array(id);
-        try self.check();
-        try (try self.ensureState()).types.admitArrayBacking(self.allocator, id, contract.element_type, contract.domain.layout);
-        const handle = try self.createTypedArray(contract.domain.layout, inputs, lifetime);
-        const object = try self.resolve(handle);
-        object.payload.array.semantic_type = id; object.payload.array.element_type = contract.element_type;
-        return handle;
+        return self.publishArray(contract.domain.layout, inputs, lifetime, .{ .type_id = id, .element_type = contract.element_type });
     }
     pub fn typedArrayIdentity(self: *ManagedHeap, handle: Handle) Error![32]u8 {
         const object = try self.resolve(handle); if (object.payload != .array) return error.TypeMismatch; return object.payload.array.semantic_type;

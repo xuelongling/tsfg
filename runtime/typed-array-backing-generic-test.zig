@@ -77,6 +77,59 @@ test "nested backed Array edges preserve original child element identity" {
     try std.testing.expectEqual(@as(u32, 2), try heap.typedArrayLength(alias, inner.domain.layout));
     try std.testing.expectEqualSlices(u8, &inner.type_id, &(try heap.typedArrayIdentity(alias)));
 }
+test "failed first backed Array allocation leaves its backing available" {
+    var narrow = try load("narrow"); defer narrow.deinit();
+    var nested = try load("nested"); defer nested.deinit();
+    const first = narrow.arrays[0];
+    const second = try nested.array(first.type_id);
+    try std.testing.expect(!first.domain.layout.same(second.domain.layout));
+    const initial = [_]backing.Literal{.{ .type_id = second.element_type, .input = .{ .bytes = &.{ 39, 0, 0, 0 }, .references = &.{} } }};
+    var heap = managed.ManagedHeap.init(allocator); defer heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(narrow.authority.layouts);
+    try std.testing.expectError(error.ScopeRequired, narrow.create(&heap, first.type_id, &.{}, .temporary));
+    try std.testing.expectEqual(@as(usize, 0), try heap.objectCount());
+    try std.testing.expectEqual(@as(usize, 0), (try managed.testing.rootStats(&heap)).count);
+    const object = try nested.create(&heap, second.type_id, &initial, .persistent);
+    try std.testing.expectError(error.TypeMismatch, narrow.create(&heap, first.type_id, &.{}, .persistent));
+    try heap.collect();
+    try std.testing.expectEqualSlices(u8, &second.type_id, &(try heap.typedArrayIdentity(object)));
+    var value = try nested.read(&heap, object, second.type_id, 0, .persistent); defer value.deinit(allocator);
+    try std.testing.expectEqualSlices(u8, initial[0].input.bytes, value.value.bytes);
+    try heap.release(object);
+    try heap.collect();
+    try std.testing.expectEqual(@as(usize, 0), try heap.objectCount());
+}
+test "first backed Array allocation failure at every allocator boundary leaves no admission" {
+    var narrow = try load("narrow"); defer narrow.deinit();
+    var nested = try load("nested"); defer nested.deinit();
+    const first = narrow.arrays[0];
+    const second = try nested.array(first.type_id);
+    var failures: usize = 0;
+    for (0..256) |offset| {
+        var failing = std.testing.FailingAllocator.init(allocator, .{});
+        var heap = managed.ManagedHeap.init(failing.allocator()); defer heap.deinit() catch unreachable;
+        try heap.installTypedLayouts(narrow.authority.layouts);
+        failing.fail_index = failing.alloc_index + offset;
+        failing.resize_fail_index = failing.resize_index;
+        const attempt = narrow.create(&heap, first.type_id, &.{}, .persistent);
+        failing.fail_index = std.math.maxInt(usize);
+        failing.resize_fail_index = std.math.maxInt(usize);
+        if (attempt) |object| {
+            try std.testing.expect(failures > 0);
+            try std.testing.expectError(error.TypeMismatch, nested.create(&heap, second.type_id, &.{}, .persistent));
+            try heap.release(object);
+            return;
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            failures += 1;
+            try std.testing.expectEqual(@as(usize, 0), try heap.objectCount());
+            try std.testing.expectEqual(@as(usize, 0), (try managed.testing.rootStats(&heap)).count);
+            const object = try nested.create(&heap, second.type_id, &.{}, .persistent);
+            try heap.release(object);
+        }
+    }
+    return error.FirstBackedArrayAllocationDidNotSucceed;
+}
 test "readonly static access cannot mutate while mutable alias retains string identity" {
     var module = try load("readonly"); defer module.deinit(); const row = module.arrays[0];
     var target: ?[32]u8 = null; var string_id: ?[32]u8 = null;

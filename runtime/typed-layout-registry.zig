@@ -46,7 +46,9 @@ pub const Registry = struct {
         };
         if (self.array_backings.items.len == 4096) return error.LayoutLimit;
         const owned = try backing.clone(allocator); errdefer owned.deinit(allocator);
-        try self.array_backings.append(allocator, .{ .type_id = id, .layout = owned });
+        try self.array_backings.ensureUnusedCapacity(allocator, 1);
+        try self.admitLayout(allocator, backing);
+        self.array_backings.appendAssumeCapacity(.{ .type_id = id, .layout = owned });
     }
     pub fn admitBacking(self: *Registry, allocator: std.mem.Allocator, declared: cells.Layout, backing: cells.Layout) Error!void {
         const entry = self.entries.items[self.index(declared.type_id) orelse return error.TypeMismatch];
