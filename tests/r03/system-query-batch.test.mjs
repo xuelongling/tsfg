@@ -5,7 +5,7 @@ import {readFileSync,mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {canonical} from '../../compiler/identity.mjs';
 import {coreQuote} from '../../compiler/mlir-strings.mjs';
 import {readSystemQueryFacts} from '../../compiler/system-query-facts.mjs';
@@ -73,6 +73,67 @@ test('Query CLI uses bounded owned JSON diagnostics before tool lookup',async t=
     assert.equal(child.status,2);
     assert.equal(child.stdout.length,0);
     assert.match(child.stderr.toString('utf8'),diagnostic);
+  });
+});
+
+test('Query CLI bounds both file reads before validation',async t=>{
+  const root=mkdtempSync(path.join(tmpdir(),'tsfg-query-cli-ingress-'));
+  const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
+  const fixture=name=>fileURLToPath(new URL('./testdata/system-query-views/view-parenthesized-'+name+'.json',import.meta.url));
+  const oversized=path.join(root,'oversized.json'),changed=path.join(root,'changing-request.json'),hook=path.join(root,'read-control.mjs');
+  writeFileSync(oversized,Buffer.alloc(8388609,0x20),{flag:'wx'});
+  writeFileSync(changed,readFileSync(fixture('request')),{flag:'wx'});
+  // Use real file handles. Control short reads and modify only the copied request.
+  writeFileSync(hook,`
+    import fs from 'node:fs/promises';
+    import {constants,writeFileSync} from 'node:fs';
+    import {syncBuiltinESMExports} from 'node:module';
+    const {TSFG_QUERY_TEST_FILE:file,TSFG_QUERY_TEST_MODE:mode,TSFG_QUERY_TEST_TRACE:trace}=process.env;
+    const readFile=fs.readFile,open=fs.open;
+    let reads=0;
+    fs.readFile=(name,...args)=>{
+      if(name===file&&mode==='oversized')throw new Error('whole-file read before the Query byte gate');
+      return readFile(name,...args);
+    };
+    fs.open=async(name,...args)=>{
+      if(name===file&&args[0]!==(constants.O_RDONLY|(constants.O_NONBLOCK??0)))
+        throw new Error('Query input must open read-only and nonblocking');
+      const input=await open(name,...args);
+      if(name!==file)return input;
+      const read=input.read.bind(input);
+      input.read=async(buffer,offset,length,position)=>{
+        if(mode==='oversized')throw new Error('body read before the Query byte gate');
+        const result=await read(buffer,offset,mode==='short'?Math.min(length,1024):length,position);
+        if(++reads===1&&mode==='changing')await fs.appendFile(file,' ');
+        return result;
+      };
+      return input;
+    };
+    syncBuiltinESMExports();
+    process.once('exit',()=>writeFileSync(trace,String(reads)));
+  `,{flag:'wx'});
+  const leaf=[
+    {name:'oversized facts',input:oversized,request:fixture('request'),file:oversized,mode:'oversized',diagnostic:/^generic-package-io-limit:/},
+    {name:'oversized request',input:fixture('facts'),request:oversized,file:oversized,mode:'oversized',diagnostic:/^generic-package-io-limit:/},
+    {name:'short facts reads',input:fixture('facts'),request:fixture('request'),file:fixture('facts'),mode:'short',diagnostic:/^r03-tool-core: formal executable is required/},
+    {name:'request changes during read',input:fixture('facts'),request:changed,file:changed,mode:'changing',diagnostic:/^r10-system-query-input: Query input changed while reading/},
+  ];
+  for(const [index,{name,input,request,file,mode,diagnostic}] of leaf.entries())await t.test(name,()=>{
+    const trace=path.join(root,index+'-reads.txt');
+    const args=['--import',pathToFileURL(hook).href,cli,'--input',input,'--query-request',request,'--emit','core'];
+    const env={...process.env,TSFG_QUERY_TEST_FILE:file,TSFG_QUERY_TEST_MODE:mode,TSFG_QUERY_TEST_TRACE:trace};
+    const child=spawnSync(process.execPath,args,{env,windowsHide:true,timeout:30000});
+    writeFileSync(path.join(root,index+'-stdout.bin'),child.stdout??Buffer.alloc(0));
+    writeFileSync(path.join(root,index+'-stderr.bin'),child.stderr??Buffer.alloc(0));
+    writeFileSync(path.join(root,index+'-child.json'),JSON.stringify({pid:child.pid,args,status:child.status,signal:child.signal,error:child.error?.message??null})+'\n');
+    assert.ifError(child.error);
+    assert.equal(child.signal,null);
+    assert.equal(child.status,2);
+    assert.equal(child.stdout.length,0);
+    assert.match(child.stderr.toString('utf8'),diagnostic);
+    const reads=Number(readFileSync(trace,'utf8'));
+    if(mode==='oversized')assert.equal(reads,0);
+    else assert.ok(reads>1);
   });
 });
 

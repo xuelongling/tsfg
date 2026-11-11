@@ -3,6 +3,7 @@
 import descriptor from '../contracts/system-query-facts.schema.json' with {type:'json'};
 import {canonical,sha256,own} from './identity.mjs';
 import {copyGenericJsonBytes,inspectGenericJson,readGenericJson} from './generic-json.mjs';
+import {genericJsonFailure} from './generic-json-budget.mjs';
 import {checkTypedArrayShape,sourceRange,originId,logicalPath,byteOrder} from './typed-array-schema.mjs';
 import {validateTypedArrayTypes} from './typed-array-types.mjs';
 import {commonSourceDescriptor} from './common-program-common.mjs';
@@ -18,6 +19,13 @@ import {commonSourceGrammar,commonTypeSyntax,commonSourceAccess} from './common-
 export const systemQueryFactsFormat=own({family:descriptor.family,version:descriptor.version,schemaHash:sha256(canonical(descriptor)+'\n')});
 const policy={...descriptor.limits,safeNonnegativeIntegers:true,allowNul:true,rejectPrototypeKeys:false};
 const receipts=new WeakMap();
+/** Reject an oversized Query file and return the exact metadata byte limit. @param {bigint} size */
+export function checkSystemQueryFileSize(size){
+  if(size>BigInt(policy.bytes))genericJsonFailure(policy,'limit');
+  return policy.bytes;
+}
+
+
 // Derive the CLI context from a bounded string probe. The full reader still
 // checks the canonical packet identity and the independently supplied request.
 /** @param {Uint8Array} bytes @param {Uint8Array} requestBytes */
