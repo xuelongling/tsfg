@@ -47,6 +47,15 @@ const fixtures = [
       'd8f06b054d8a1f7eaca2a786912c1afacca1d57b2450d04736d64f66acc9a049',
     ],
   },
+  {
+    folder: 'value-field-updates',
+    targets: ['valueCompoundRebind', 'valueFieldPostfix', 'valueFieldPrefix', 'valueCompoundRhsTrap'],
+    pins: [
+      '9463be0de2bbe1e78606eff851a496c1c0d6f88c4b4d72f0f3c4ceea40ed818d',
+      '35e5bd3271280ccea4108f06b8aa775fae8690f83aafcd5968f3423d9b600ffc',
+      'bd00980db296b85ff720ad5b932106d9d2d04e4949ffc1a6bea38dd5087d013a',
+    ],
+  },
 ];
 
 function controlFlow(graph) {
@@ -279,6 +288,102 @@ function verifyPresence(report, target, hir, module, oracle) {
   assert.equal(reaches(callback.block, normal.block), false);
 }
 
+function verifyFieldUpdate(report, target, hir, oracle) {
+  const id = hir.functions.find(row => row.name === target).id;
+  const original = oracle.fieldMutations[target];
+  const symbol = 'value_' + id.slice(7);
+  const graph = report.controlFlows.find(row => row.function === symbol);
+  const {instructions, values, blocks, dominates, reaches, origin, branchFor} = controlFlow(graph);
+  const fieldAddresses = instructions.filter(row => row.kind === 'getelementptr');
+  assert.ok(fieldAddresses.every(row => row.scalarOperands.slice(1).every(operand => operand.bits === '0')));
+  const reads = instructions.filter(row => row.kind === 'load' && fieldAddresses.includes(values.get(row.pointer)));
+  const writes = instructions.filter(row => row.kind === 'store' && fieldAddresses.includes(values.get(row.pointer)));
+  assert.equal(reads.length, 1);
+  const old = reads[0];
+  const readAddress = values.get(old.pointer);
+  const receiver = values.get(readAddress.pointer);
+  const input = graph.entryPlanes.find(row => row.argument === 2).allocation;
+  const checkpoint = span => instructions.find(row =>
+    row.eventKind === 2 && row.eventSource.start === span.start && row.eventSource.end === span.end);
+  const targetCheck = checkpoint(original.targetRange);
+  assert.ok(targetCheck && dominates(targetCheck, old));
+
+  if (target === 'valueCompoundRhsTrap') {
+    assert.equal(origin(receiver.id), input);
+    assert.equal(writes.length, 0);
+    const [trap] = report.numericTraps;
+    assert.equal(report.numericTraps.length, 1);
+    assert.deepEqual([trap.kind, trap.functionId, trap.source, trap.start, trap.end, trap.operator, trap.operandIndex, trap.trap, trap.rule],
+      [trapKind, id, '/src/main.ts', original.rightRange.start, original.rightRange.end, '-', 0, undefinedTrap, numericRule]);
+    const event = instructions.find(row => row.eventKind === trapKind);
+    const before = checkpoint(original.rightRange);
+    assert.ok(before && event && dominates(old, before) && dominates(before, event));
+    assert.equal(event.eventFunction, graph.sourceIndex);
+    assert.deepEqual(event.eventSource, original.rightRange);
+    assert.equal(event.scalarOperands[5].bits, String(trap.interval));
+    const leave = instructions.find(row => row.eventKind === 3);
+    assert.ok(leave);
+    assert.deepEqual(blocks.get(event.block).successors, [leave.block]);
+    assert.equal(instructions.some(row => row.eventKind === 4 || row.kind === 'add' || row.kind === 'sub'), false);
+    return;
+  }
+
+  assert.deepEqual(report.numericTraps, []);
+  assert.equal(writes.length, 1);
+  const write = writes[0];
+  assert.equal(values.get(write.pointer).pointer, receiver.id, 'retain the original receiver across evaluation');
+  const arithmetic = values.get(origin(write.value));
+  assert.deepEqual([arithmetic.kind, arithmetic.width, arithmetic.nsw, arithmetic.nuw],
+    [original.operator === '++' ? 'add' : 'sub', 32, false, false]);
+  assert.equal(origin(arithmetic.scalarOperands[0].id), old.id);
+  const beforeOperation = checkpoint(original.range);
+  assert.ok(beforeOperation && dominates(beforeOperation, arithmetic) && dominates(arithmetic, write));
+  const returned = instructions.find(row => row.kind === 'ret' && row.value >= 0);
+  assert.ok(returned && dominates(write, returned));
+  assert.equal(origin(returned.value), original.prefix === false ? old.id : arithmetic.id);
+
+  const right = arithmetic.scalarOperands[1];
+  if (target === 'valueCompoundRebind') {
+    assert.equal(receiver.kind, 'load');
+    assert.equal(receiver.pointerResult, true);
+    const assignments = instructions.filter(row => row.kind === 'store' && row.pointer === receiver.pointer);
+    assert.equal(assignments.length, 2);
+    const [bind, rebind] = assignments;
+    assert.ok(dominates(bind, receiver) && dominates(old, rebind));
+    const replacement = graph.entryPlanes.find(row => row.argument === 3).allocation;
+    function copiedFrom(plane) {
+      const copy = instructions.find(row => row.kind === 'store' && row.pointer === plane);
+      const loaded = values.get(copy.value);
+      assert.equal(loaded.kind, 'load');
+      return origin(loaded.pointer);
+    }
+    assert.notEqual(bind.value, rebind.value);
+    assert.equal(copiedFrom(bind.value), input);
+    assert.equal(copiedFrom(rebind.value), replacement);
+    const callee = hir.functions.find(row => row.name === 'mark');
+    const call = instructions.find(row => row.callee === 'value_' + callee.id.slice(7));
+    assert.ok(call && dominates(rebind, call) && dominates(call, arithmetic));
+    const supplied = values.get(origin(call.scalarOperands[2].id));
+    assert.equal(supplied.kind, 'load');
+    assert.equal(origin(supplied.pointer), replacement);
+    assert.equal(origin(right.id), call.id);
+    const after = instructions.find(row => row.eventKind === 2 && dominates(call, row) &&
+      row.eventSource.start === original.rightRange.start && row.eventSource.end === original.rightRange.end);
+    assert.ok(after && dominates(after, arithmetic));
+    const permitted = instructions.find(row => row.kind === 'icmp' && row.predicate === 'ne' &&
+      row.scalarOperands[0].id === after.id && row.scalarOperands[1].width === 32 && row.scalarOperands[1].bits === '0');
+    assert.ok(permitted);
+    const [continued, failed] = branchFor(permitted);
+    assert.ok(reaches(continued, arithmetic.block));
+    assert.equal(reaches(failed, write.block), false);
+    assert.equal(reaches(failed, returned.block), false);
+  } else {
+    assert.equal(origin(receiver.id), input);
+    const literals = right.id < 0 ? [right] : values.get(right.id).scalarOperands;
+    assert.ok(literals.length > 0 && literals.every(row => row.width === 32 && row.bits === '1'));
+  }
+}
+
 function verifyAbsenceCall(report, target, hir, module, oracle) {
   const entry = hir.functions.find(row => row.name === target);
   const callee = hir.functions.find(row => row.name === 'keepUndefined');
@@ -348,6 +453,7 @@ function verifyAbsenceCall(report, target, hir, module, oracle) {
 
 for (const fixture of fixtures) {
   const absenceCall = fixture.folder === 'value-numeric-absence-call';
+  const fieldUpdates = fixture.folder === 'value-field-updates';
   const data = await Promise.all(['package.json', 'official-oracle.json', 'source.ts'].map(file =>
     fs.readFile(new URL('./testdata/formal-value-llvm-v3/' + fixture.folder + '/' + file, import.meta.url))));
   assert.deepEqual(data.map(sha), fixture.pins);
@@ -374,6 +480,16 @@ for (const fixture of fixtures) {
     const delta = hir.types.find(row => row.name === 'Delta');
     const field = delta.fields.find(row => row.name === 'n');
     const binding = module.representation.bindings.find(row => row.id === field.sourceBinding);
+    if (fieldUpdates) {
+      assert.equal(binding.carrier, i32TypeId);
+      assert.deepEqual(Object.keys(oracle.fieldMutations).sort(), fixture.targets.slice().sort());
+      for (const row of Object.values(oracle.fieldMutations)) {
+        assert.equal(source.slice(row.operatorRange.start, row.operatorRange.end), row.operator);
+        assert.equal(source.slice(row.nameRange.start, row.nameRange.end), field.name);
+        assert.deepEqual([field.origin.start, field.origin.end], [row.fieldRange.start, row.fieldRange.end]);
+      }
+      return;
+    }
     const absence = module.representation.domains.find(row => row.representation === 'absence' &&
       row.actualTypes.length === 1 && row.actualTypes[0] === undefinedTypeId);
     assert.equal(field.type, i32TypeId);
@@ -410,6 +526,17 @@ for (const fixture of fixtures) {
       assert.equal(report.inputIdentity, hir.inputIdentity);
       assert.equal(report.executionAuthority, false);
       assert.equal(report.resourceProof, null);
+      if (fieldUpdates) {
+        verifyFieldUpdate(report, target, hir, oracle);
+        if (target === 'valueCompoundRebind') {
+          const changed = structuredClone(report);
+          const graph = changed.controlFlows.find(row => row.function === 'value_' + fn.id.slice(7));
+          const operation = graph.instructions.find(row => row.kind === 'sub');
+          operation.scalarOperands.reverse();
+          assert.throws(() => verifyFieldUpdate(changed, target, hir, oracle), 'reversed subtraction must fail');
+        }
+        return;
+      }
       if (absenceCall) {
         verifyAbsenceCall(report, target, hir, module, oracle);
         return;
