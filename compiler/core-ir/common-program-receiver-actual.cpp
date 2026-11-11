@@ -356,7 +356,29 @@ bool ActualCheck::join(ActualState &to,ActualState &&from){
   return changed;
 }
 bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
-  if(&into==&from)return true;auto owned=copyFrames(from);if(!e.message.empty()||!step(owned.size()))return false;
+  if(&into==&from)return true;
+  if(from.empty())return e.message.empty();
+  if(!step(2)||!e.message.empty())return false;
+  if(into.size()>1&&from.size()>1){
+    if(!step(from.size()+2))return false;
+    auto position=into.begin();
+    for(const auto &[id,value]:from){
+      const auto located=ownedJoinRow(*this,into,position,id,frameOrder);
+      if(!located)return false;
+      auto owned=copyFrame(value);
+      if(!e.message.empty())return false;
+      // Replacement can remove birth rows without changing key order.
+      if(located->present){
+        if(!step(2))return false;
+        located->position->second=std::move(owned);
+      }else{
+        if(!prepayFrameHint(*this,into,located->position,id))return false;
+        into.emplace_hint(located->position,id,std::move(owned));
+      }
+    }
+    return true;
+  }
+  auto owned=copyFrames(from);if(!e.message.empty()||!step(owned.size()))return false;
   for(auto &[id,value]:owned){const auto found=findFrame(*this,into,id.text());if(!found)return false;
     if(*found==into.end()){if(!receiverText(id.text())||!step(4))return false;into.emplace(id,std::move(value));}
     else {if(!step(2))return false;(*found)->second=std::move(value);}
