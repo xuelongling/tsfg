@@ -279,7 +279,8 @@ ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vec
 ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment &environment){
   Evaluation result;if(!step())return result;const auto kind=string(field(value,"kind")),type=string(field(value,"type"));
   if(!text(kind)||!text(type))return result;
-  result.owner=reference(type)?Refs{}:nonowning(type);if(reference(type))facet("managedReference",&value);
+  const bool managed=reference(type);if(!good())return result;
+  result.owner=managed?Refs{}:nonowning(type);if(managed)facet("managedReference",&value);
   const auto visit=[&](const Json &child){auto nested=expression(child,environment);inherit(result,nested);return std::move(nested.owner);};
   if(kind=="bindingReference"||kind=="bindingTarget"||kind=="thisReference"){
     const auto binding=kind=="thisReference"?string(field(fn,"receiverBinding")):string(field(value,"binding"));
