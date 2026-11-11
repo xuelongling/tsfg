@@ -675,11 +675,33 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
 }
 
 bool ReturnSource::initialize(ReturnSourceCatalogCache *saved){
-  if(!step()||!declarationMetadata(fn))return false;
-  direct=Effects{};functionId=string(field(fn,"id"));lexical=string(field(fn,"lexicalEnvironment"));activation=string(field(fn,"activationEnvironment"));
+  if(!step())return false;
+  const auto key=field(fn,"id").getAsString().value_or("");
+  if(!text(key))return false;functionId=key.str();
+  bool declarationScanned=false;
+  if(saved&&*saved){
+    const auto &functions=(*saved)->functions;
+    if(!lookup(functions.size(),functionId))return false;
+    const auto found=functions.find(functionId);
+    declarationScanned=found!=functions.end()&&found->second==&fn;
+  }
+  if(!declarationScanned&&!declarationMetadata(fn))return false;
+  direct=Effects{};
+  const auto lexicalId=field(fn,"lexicalEnvironment").getAsString().value_or("");
+  const auto activationId=field(fn,"activationEnvironment").getAsString().value_or("");
+  if(!text(lexicalId)||!text(activationId))return false;
+  lexical=lexicalId.str();activation=activationId.str();
   if(!step(2))return false;heaps.push_back(Object{{"kind","entry"}});controls.push_back(Object{{"kind","entry"}});
-  const auto load=[&](const Json &rows,auto &directory){if(!step(items(rows).size()))return;for(const auto &row:items(rows)){
-    if(!declarationMetadata(row))return;const auto id=string(field(row,"id"));if(!lookup(directory.size(),id)||!step())return;directory.emplace(id,&row);}};
+  const auto load=[&](const Json &rows,auto &directory,bool checkedChildren=false){
+    if(!step(items(rows).size()))return;
+    for(const auto &row:items(rows)){
+      const bool scanned=checkedChildren||&row==&fn;
+      if(scanned ? !step() : !declarationMetadata(row))return;
+      const auto id=field(row,"id").getAsString().value_or("");
+      if(!text(id)||!lookup(directory.size(),id)||!step())return;
+      directory.emplace(id.str(),&row);
+    }
+  };
   if(!step(4))return false;
   if(saved&&*saved)catalog=*saved;
   else{
@@ -697,12 +719,19 @@ bool ReturnSource::initialize(ReturnSourceCatalogCache *saved){
     // Only the enclosing publication proof can retain the borrowed catalog.
     if(saved){if(!step(4))return false;*saved=catalog;}
   }
-  load(field(fn,"parameters"),bindings);load(field(fn,"bindings"),bindings);
+  // The exact function declaration scan already visited these immutable children.
+  load(field(fn,"parameters"),bindings,true);load(field(fn,"bindings"),bindings,true);
   if(!good())return false;
   for(const auto &capture:items(field(fn,"captures"))){
-    if(!step()||!metadata(capture))return false;const auto binding=string(field(capture,"binding"));
-    if(!lookup(catalog->slots.size(),binding)||!need(catalog->slots.count(binding),"capture has no owned lexical slot")||!lookup(foreignCaptures.size(),binding)||!step())return false;foreignCaptures.insert(binding);
-    captureAccess(catalog->slots.at(binding),field(capture,"read").getAsBoolean()==true,field(capture,"write").getAsBoolean()==true);
+    if(!step(3))return false;
+    const auto key=field(capture,"binding").getAsString().value_or("");
+    if(!text(key))return false;const auto binding=key.str();
+    if(!lookup(catalog->slots.size(),binding))return false;
+    const auto slot=catalog->slots.find(binding);
+    if(!need(slot!=catalog->slots.end(),"capture has no owned lexical slot")||
+        !lookup(foreignCaptures.size(),binding)||!text(binding)||!step())return false;
+    foreignCaptures.insert(binding);
+    captureAccess(slot->second,field(capture,"read").getAsBoolean()==true,field(capture,"write").getAsBoolean()==true);
   }
   return good();
 }
@@ -718,8 +747,21 @@ bool ReturnSource::run(Json &raw,ReturnSourceCatalogCache *saved){
     facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");
   }
   const auto &ordinary=items(field(fn,"parameters"));if(!step(ordinary.size()+2))return false;parameters.reserve(ordinary.size()+1);
-  if(!field(fn,"ownerType").getAsNull())parameters.emplace_back(string(field(fn,"receiverBinding")),string(field(fn,"ownerType")));
-  for(const auto &parameter:ordinary){if(!metadata(parameter)||!step())return false;parameters.emplace_back(string(field(parameter,"id")),string(field(parameter,"type")));}
+  const auto &ownerType=field(fn,"ownerType");
+  if(!ownerType.getAsNull()){
+    if(!step(2))return false;
+    const auto receiver=field(fn,"receiverBinding").getAsString().value_or("");
+    const auto type=ownerType.getAsString().value_or("");
+    if(!text(receiver)||!text(type)||!step())return false;
+    parameters.emplace_back(receiver.str(),type.str());
+  }
+  for(const auto &parameter:ordinary){
+    if(!step(2))return false;
+    const auto id=field(parameter,"id").getAsString().value_or("");
+    const auto type=field(parameter,"type").getAsString().value_or("");
+    if(!text(id)||!text(type)||!step())return false;
+    parameters.emplace_back(id.str(),type.str());
+  }
   if(!step(parameters.size()))return false;direct.parameters.resize(parameters.size());Environment environment;
   for(size_t i=0;i<parameters.size();++i){const auto &[id,type]=parameters[i];auto value=root("parameter",type,{},i);
     if(!text(id)||!lookup(environment.size(),id)||!step())return false;environment.emplace(id,std::move(value));
