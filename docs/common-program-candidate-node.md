@@ -213,6 +213,14 @@ Counter always reads and writes both `runtime.counter.storage` and `runtime.coun
 
 An empty target array requests no kernel permission. It still validates the complete Program, Host context, fixed Published bounds, SSA, actual values and borrowing; its proof has empty accesses and pairs. Nonempty requests retain the original two-to-32 declared-kernel rule. Counter resource access makes a requested kernel ineligible, even when current data or a narrower body would appear harmless.
 
+On a strict comparison against literal null or undefined, each condition edge
+retains the corresponding actual tags of the tested value. When a direct
+private cell load, the literal, and the predicate immediately precede the
+branch, the same proof also applies to that cell's current contents. A later
+store replaces those contents. Distinct cells, captured slots and projected
+members keep their own facts. The Node producer and C++ verifier apply this
+proof independently when selecting the existing physical carriers.
+
 The initial genuine Counter Program has direct Host calls and an ordinary cross-module application call. Its separately produced complete extension adds genuine cross-module and finite-indirect kernel roots while retaining every original declaration and body. Node and C++ reject those requests from the propagated Host resources. The same complete extension independently accepts the pure left/right kernel pair; widening only the fixed right upper then rejects that otherwise valid pair. Normalized argument-zero and recursive controls test additional effect equations separately from complete Source evidence.
 
 The C++ entry regressions require an explicitly supplied production binary and output directory:

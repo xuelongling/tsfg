@@ -16,6 +16,7 @@ import {commonReceiverActual} from './common-program-receiver-actual.mjs';
 import {commonActualContextSnapshot,commonActualContextSame,commonActualContextValues} from './common-program-actual-context.mjs';
 import {commonPublicObservationContexts} from './common-program-observation-contexts.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
+const nullId=sha256('tsfg.type\0null');
 export function analyzeCommonGraphs({model,plans},records=null,options=/** @type {{borrowProof?:boolean,storageAuthoring?:boolean}} */({borrowProof:false})) {
   const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend),methods=commonMethods(model.hir,spend);
   spend(model.hir.functions.length+plans.length);const publicFunctions=new Set(model.hir.functions.map(fn=>fn.id)),internalFunctions=new Set();
@@ -479,16 +480,44 @@ export function analyzeCommonGraphs({model,plans},records=null,options=/** @type
               check(!args[0].unknown&&[...args[0].tags].every(tag=>tag===boolTypeId),'capability','condition has no proved boolean actual value');
               // The final selected edge owns this terminal state. Only a
               // coexisting branch needs a separate mutable snapshot.
-              const truth=args[0].truth||3,comparison=plan.graph.registers.get(op.operands[0])?.operation;
+              const truth=args[0].truth||3;
+              const definition=id=>plan.graph.registers.get(id)?.operation;
+              const comparison=definition(op.operands[0]);
               spend(comparison?.operands.length??0);
-              const absence=comparison?.name==='tsfg_program.strict_equal'?comparison.operands.findIndex(id=>plan.graph.registers.get(id)?.operation?.name==='tsfg_program.undefined'):-1;
+              const absence=comparison?.name==='tsfg_program.strict_equal'?comparison.operands.findIndex(id=>{
+                const name=definition(id)?.name;return name==='tsfg_program.undefined'||name==='tsfg_program.null';
+              }):-1;
+              const tested=absence<0?null:comparison.operands[1-absence];
+              const absenceOp=absence<0?null:definition(comparison.operands[absence]);
+              const absentType=absenceOp?.name==='tsfg_program.null'?nullId:undefinedId;
+              let cell=null;
+              if(tested!==null){
+                spend(4);
+                const load=definition(tested),[first,second,predicate]=block.instructions.slice(-4);
+                if(load?.name==='tsfg_program.load'&&predicate===comparison&&
+                  (first===load&&second===absenceOp||first===absenceOp&&second===load)){
+                  // A direct private cell load beside the literal and predicate
+                  // rules out a write or a call between the read and the split.
+                  const address=load.operands[0],actual=read(state,address);
+                  if(definition(address)?.name==='tsfg_program.cell'&&actual.cells.size===1)
+                    cell=[...actual.cells][0];
+                }
+              }
               const conditionEdge=(target,yes)=>{
                 spend();
                 const selected=truth===3&&yes?cloneWorld(state):state;
-                if(absence>=0){
-                  const id=comparison.operands[1-absence],equal=yes===(comparison.properties.operator==='==='),source=read(selected,id);
-                  if(equal)selected.values.set(id,a.literal(undefinedId));
-                  else{const value=a.copy(source);value.tags.delete(undefinedId);if(!value.tags.size&&!value.unknown)return;selected.values.set(id,value);}
+                if(tested!==null){
+                  const equal=yes===(comparison.properties.operator==='==='),source=read(selected,tested);
+                  if(equal&&!source.unknown&&!source.tags.has(absentType))return;
+                  const value=equal?a.literal(absentType):a.copy(source);
+                  if(!equal)value.tags.delete(absentType);
+                  if(!value.unknown&&!value.tags.size&&!value.refs.size&&!value.cells.size&&
+                    !value.pairs.size&&!value.frames.size&&!value.cursors.size)return;
+                  selected.values.set(tested,value);
+                  if(cell!==null){
+                    spend(Math.ceil(cell.length/8)+1);
+                    selected.heap.set(cell,a.copy(value));
+                  }
                 }
                 edge(target,selected,[],false,true);
               };

@@ -356,21 +356,50 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     const auto definition=[&](uint16_t reg)->const Operation *{
       for(const auto &candidate:fn.blocks)for(const auto &before:candidate.operations){if(!step())return nullptr;if(before.result==reg)return &before;}return nullptr;
     };
-    const auto *condition=definition(op.operands[0]);uint16_t tested=noRegister;bool equalUndefined=false;
+    const auto *condition=definition(op.operands[0]);uint16_t tested=noRegister;
+    const Operation *absence=nullptr;bool equalAbsence=false;
     if(condition&&condition->name=="strict_equal"&&condition->operands.size()==2){
-      const auto operation=string(field(condition->properties,"operator"));equalUndefined=operation=="===";
-      if(equalUndefined||operation=="!==")for(size_t index=0;index<2;++index){
-        const auto *literal=definition(condition->operands[index]);if(literal&&literal->name=="undefined")tested=condition->operands[1-index];
+      const auto operation=string(field(condition->properties,"operator"));equalAbsence=operation=="===";
+      if(equalAbsence||operation=="!==")for(size_t index=0;index<2;++index){
+        const auto *literal=definition(condition->operands[index]);
+        if(literal&&(literal->name=="undefined"||literal->name=="null")){
+          absence=literal;tested=condition->operands[1-index];break;
+        }
       }
     }
+    std::optional<std::string> cell;
+    if(tested!=noRegister){
+      const auto &ops=fn.blocks[block].operations;
+      if(!step(4))return false;
+      if(ops.size()>=4 && &ops[ops.size()-2]==condition){
+        const auto &first=ops[ops.size()-4],&second=ops[ops.size()-3];
+        const auto *load=&first==absence?&second:&second==absence?&first:nullptr;
+        // The immediate direct load identifies an unchanged private cell.
+        if(load&&load->name=="load"&&load->result==tested){
+          const auto address=load->operands[0];const auto *owner=definition(address);
+          const auto actual=state.values.find(address);
+          if(owner&&owner->name=="cell"&&actual!=state.values.end()&&actual->second.cells.size()==1){
+            const auto &id=*actual->second.cells.begin();
+            if(!step(id.size()/8+1))return false;
+            cell=id;
+          }
+        }
+      }
+    }
+    const auto absentType=absence?typeId(absence->name):std::string{};
     const auto selectedEdge=[&](size_t index,ActualState next){
       if(tested!=noRegister){
         auto found=next.values.find(tested);if(found!=next.values.end()){
-          const auto undefined=typeId("undefined");const bool same=equalUndefined==(index==0);auto &actual=found->second;
-          if(same){if(!actual.unknown&&!actual.tags.count(undefined))return true;actual=literal(undefined);}
+          const bool same=equalAbsence==(index==0);auto &actual=found->second;
+          if(same){if(!actual.unknown&&!actual.tags.count(absentType))return true;actual=literal(absentType);}
           else{
-            actual.tags.erase(undefined);
+            actual.tags.erase(absentType);
             if(!actual.unknown&&actual.tags.empty()&&actual.objects.empty()&&actual.cells.empty()&&actual.callables.empty()&&!actual.callableTop&&actual.frames.empty()&&actual.cursors.empty())return true;
+          }
+          if(cell){
+            if(!step(cell->size()/8+1))return false;
+            auto narrowed=copy(actual);if(!e.message.empty())return false;
+            next.heap.insert_or_assign(*cell,std::move(narrowed));
           }
         }
       }
