@@ -309,6 +309,37 @@ test "typed effects reject a changed Source call anchor" {
     try std.testing.expectError(error.InvalidEffects, E.decode(allocator, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
 }
 
+test "typed effects reject a field read on the other alias of the same component" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-shared-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-shared.tmeta"), receipt.value);
+    defer document.deinit();
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var report = document.effects.report;
+    try std.testing.expectEqual(@as(usize, 1), report.systems.len);
+    var system = report.systems[0];
+    try std.testing.expectEqual(@as(usize, 1), system.loops.len);
+    var loop = system.loops[0];
+    const operations = try allocator.dupe(E.Operation, loop.operations);
+    const read = &operations[1];
+    const other = loop.columns[0];
+    try std.testing.expectEqual(@as(u32, 1), read.tupleIndex);
+    try std.testing.expectEqualStrings(other.componentType, read.componentType);
+    try std.testing.expect(!std.mem.eql(u8, other.sourceBinding, read.sourceBinding));
+    read.tupleIndex = other.tupleIndex;
+    read.sourceBinding = other.sourceBinding;
+    loop.operations = operations;
+    system.loops = &.{loop};
+    report.systems = &.{system};
+    const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
+    const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
+    const current = document.payload;
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, current.sourcePacket, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+}
+
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();

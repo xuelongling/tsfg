@@ -39,11 +39,16 @@ const RawExpression = struct {
     calleeRange: ?layout.Range = null,
     expression: ?*const RawExpression = null,
     left: ?*const RawExpression = null,
+    operator: []const u8 = "",
+    property: []const u8 = "",
     range: layout.Range,
+    receiver: ?*const struct { binding: []const u8 } = null,
     right: ?*const RawExpression = null,
+    target: ?*const RawExpression = null,
     value: ?*const RawExpression = null,
 };
 const RawStatement = struct { initializer: ?*const RawExpression = null, value: ?*const RawExpression = null };
+const SourceBodyRows = struct { calls: []const Call, operations: ?[]const Operation = null };
 const RawLoop = struct { bindings: []const RawBinding, queryBinding: []const u8, range: layout.Range, statements: []const RawStatement };
 const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const SourceParameter, returnType: []const u8 };
 const RawHelperParameter = struct {
@@ -126,7 +131,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         try context.spend(1);
         const raw = source_helpers[index];
         if (raw.value == null and raw.statements.len == 0) return error.InvalidEffects;
-        try context.sourceCalls(raw.statements, raw.value, helper.calls, helper.source);
+        try context.sourceBody(raw.statements, raw.value, helper.source, .{ .calls = helper.calls });
         try context.fieldRows(helper.fieldEffects);
         var direct: std.ArrayList([]const u8) = .empty;
         for (helper.calls) |call| if (!contains(direct.items, call.functionId)) {
@@ -194,7 +199,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
             std.mem.sort(Capability, loop_caps.items, {}, lessCapability);
             try context.capabilities(loop.capabilities);
             if (!sameCapabilities(loop_caps.items, loop.capabilities)) return error.InvalidEffects;
-            try context.sourceCalls(original_loop.statements, null, loop.calls, loop.source);
+            try context.sourceBody(original_loop.statements, null, loop.source, .{ .calls = loop.calls, .operations = loop.operations });
             for (loop.operations) |operation| {
                 try context.spend(1);
                 if (operation.tupleIndex >= loop.columns.len) return error.InvalidEffects;
@@ -422,43 +427,77 @@ const Context = struct {
         try self.source(value.source, owner);
         try self.source(value.calleeSource, value.source);
     }
-    fn sourceCalls(self: *Context, statements: []const RawStatement, legacy_value: ?*const RawExpression, calls: []const Call, owner: Source) Error!void {
-        var remaining = calls;
+    fn sourceBody(self: *Context, statements: []const RawStatement, legacy_value: ?*const RawExpression, owner: Source, rows: SourceBodyRows) Error!void {
+        var remaining = rows;
         if (legacy_value) |expression| {
             if (statements.len != 0) return error.InvalidEffects;
-            try self.sourceExpressionCalls(expression, &remaining, owner);
+            try self.sourceExpression(expression, &remaining, owner);
         } else for (statements) |*statement| {
             try self.spend(1);
             const expression = statement.initializer orelse statement.value orelse return error.InvalidEffects;
-            try self.sourceExpressionCalls(expression, &remaining, owner);
+            try self.sourceExpression(expression, &remaining, owner);
         }
-        if (remaining.len != 0) return error.InvalidEffects;
+        if (remaining.calls.len != 0) return error.InvalidEffects;
+        if (remaining.operations) |*operations| {
+            if (try self.nextDirectOperation(operations) != null) return error.InvalidEffects;
+        }
     }
-    fn sourceExpressionCalls(self: *Context, expression: *const RawExpression, calls: *[]const Call, owner: Source) Error!void {
+    fn sourceExpression(self: *Context, expression: *const RawExpression, rows: *SourceBodyRows, owner: Source) Error!void {
         try self.spend(1);
         switch (expression.kind) {
+            .fieldAccess => if (rows.operations) |*operations|
+                try self.sourceFieldOperation(operations, .read, expression, expression.range),
             .call => {
                 // Direct calls in arguments precede the enclosing call in the report.
-                for (expression.arguments) |*argument| try self.sourceExpressionCalls(argument, calls, owner);
+                for (expression.arguments) |*argument| try self.sourceExpression(argument, rows, owner);
                 // Four range fields and fixed-width helper identity checks.
                 try self.spend(12);
                 const callee_range = expression.calleeRange orelse return error.InvalidEffects;
-                if (calls.*.len == 0 or !digestId(expression.callee)) return error.InvalidEffects;
-                const edge = &calls.*[0];
+                if (rows.calls.len == 0 or !digestId(expression.callee)) return error.InvalidEffects;
+                const edge = &rows.calls[0];
                 if (edge.source.start != expression.range.start or edge.source.end != expression.range.end or
                     edge.calleeSource.start != callee_range.start or edge.calleeSource.end != callee_range.end or
                     !same(edge.sourceHelperId, expression.callee)) return error.InvalidEffects;
                 try self.call(edge.*, owner);
-                calls.* = calls.*[1..];
+                rows.calls = rows.calls[1..];
             },
             .binary => {
-                try self.sourceExpressionCalls(expression.left orelse return error.InvalidEffects, calls, owner);
-                try self.sourceExpressionCalls(expression.right orelse return error.InvalidEffects, calls, owner);
+                try self.sourceExpression(expression.left orelse return error.InvalidEffects, rows, owner);
+                try self.sourceExpression(expression.right orelse return error.InvalidEffects, rows, owner);
             },
-            .bindingAssignment, .fieldAssignment => try self.sourceExpressionCalls(expression.value orelse return error.InvalidEffects, calls, owner),
-            .parentheses => try self.sourceExpressionCalls(expression.expression orelse return error.InvalidEffects, calls, owner),
+            .fieldAssignment => {
+                const target = if (rows.operations != null) expression.target orelse return error.InvalidEffects else null;
+                if (target) |field_target| {
+                    try self.spend(2);
+                    if (field_target.kind != .fieldTarget) return error.InvalidEffects;
+                    if (!same(expression.operator, "="))
+                        try self.sourceFieldOperation(&rows.operations.?, .read, field_target, field_target.range);
+                }
+                try self.sourceExpression(expression.value orelse return error.InvalidEffects, rows, owner);
+                if (target) |field_target|
+                    try self.sourceFieldOperation(&rows.operations.?, .write, field_target, expression.range);
+            },
+            .bindingAssignment => try self.sourceExpression(expression.value orelse return error.InvalidEffects, rows, owner),
+            .parentheses => try self.sourceExpression(expression.expression orelse return error.InvalidEffects, rows, owner),
             else => {},
         }
+    }
+    fn nextDirectOperation(self: *Context, operations: *[]const Operation) Error!?*const Operation {
+        while (operations.*.len != 0) {
+            try self.spend(2);
+            const operation = &operations.*[0];
+            operations.* = operations.*[1..];
+            if (operation.callPath.len == 0) return operation;
+        }
+        return null;
+    }
+    fn sourceFieldOperation(self: *Context, operations: *[]const Operation, kind: Access, field_expression: *const RawExpression, range: layout.Range) Error!void {
+        const operation = (try self.nextDirectOperation(operations)) orelse return error.InvalidEffects;
+        try self.spend(16);
+        const receiver = field_expression.receiver orelse return error.InvalidEffects;
+        if (!digestId(receiver.binding) or !digestId(field_expression.property) or operation.kind != kind or
+            operation.source.start != range.start or operation.source.end != range.end or
+            !same(operation.sourceBinding, receiver.binding) or !same(operation.sourceField, field_expression.property)) return error.InvalidEffects;
     }
     fn field(self: *Context, component: []const u8, id: []const u8, source_id: []const u8, writable: bool) Error!void {
         try self.spend(1);
