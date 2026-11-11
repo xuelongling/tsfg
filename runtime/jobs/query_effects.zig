@@ -3,6 +3,14 @@
 const std = @import("std");
 const layout = @import("layout.zig");
 const Access = @import("store.zig").Access;
+const Sha256 = std.crypto.hash.sha2.Sha256;
+const Identity = [71]u8;
+const scalar_types = std.StaticStringMap(void).initComptime(.{
+    .{ "i8", {} },    .{ "i16", {} },   .{ "i32", {} },  .{ "i64", {} },
+    .{ "u8", {} },    .{ "u16", {} },   .{ "u32", {} },  .{ "u64", {} },
+    .{ "isize", {} }, .{ "usize", {} }, .{ "bool", {} }, .{ "f32", {} },
+    .{ "f64", {} },
+});
 pub const Error = error{ InvalidEffects, EffectsLimit, UnknownSystem, InvalidPair };
 pub const Source = struct { end: u32, path: []const u8, start: u32 };
 pub const Capability = struct { componentType: []const u8, mode: Access, sourceComponentType: []const u8 };
@@ -19,14 +27,14 @@ pub const Report = struct { conflicts: []const Conflict, coreVersion: []const u8
 
 // Only the already-owned packet's declaration/type/loop facts directory is projected.
 // The full original packet remains in Document; no syntax AST or expression is interpreted.
-const Decl = struct { id: []const u8, range: layout.Range, sourcePath: []const u8 };
+const Decl = struct { id: []const u8, name: []const u8 = "", range: layout.Range, sourcePath: []const u8 };
 const RawField = struct { id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 } };
 const RawType = struct { id: []const u8, name: ?[]const u8 = null, sourcePath: ?[]const u8 = null, declarationRange: ?layout.Range = null, nominalKey: ?struct { category: []const u8 } = null, fields: []const RawField = &.{} };
 const RawItem = struct { componentType: []const u8, mode: Access };
 pub const SourceParameter = struct { binding: struct { id: []const u8 }, logicalType: []const u8, query: ?struct { items: []const RawItem } };
 const RawBinding = struct { componentType: []const u8, declaration: Decl, index: u32, mode: Access };
 const RawLoop = struct { bindings: []const RawBinding, queryBinding: []const u8, range: layout.Range };
-const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const SourceParameter };
+const RawSystem = struct { declaration: Decl, loops: []const RawLoop, parameters: []const SourceParameter, returnType: []const u8 };
 const Projection = struct { payload: struct { program: struct { files: []const SourceFile, rootFile: []const u8 }, scalarHelpers: []const struct { declaration: Decl, id: []const u8 }, systems: []const RawSystem, types: []const RawType } };
 
 pub const Analysis = struct {
@@ -126,9 +134,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         for (report.systems[0..index]) |previous| if (same(previous.sourceFunctionId, system.sourceFunctionId)) return error.InvalidEffects;
         try context.source(system.source, null);
         var declared: std.ArrayList(Capability) = .empty;
-        for (raw.parameters) |parameter| if (parameter.query) |query| for (query.items) |item| {
-            try context.addCapability(&declared, .{ .componentType = try context.componentId(item.componentType), .sourceComponentType = item.componentType, .mode = item.mode });
-        };
+        try context.systemIdentity(&raw, &system, &declared);
         std.mem.sort(Capability, declared.items, {}, lessCapability);
         try context.capabilities(system.capabilities);
         if (!sameCapabilities(declared.items, system.capabilities)) return error.InvalidEffects;
@@ -245,27 +251,75 @@ const Context = struct {
         }
         return selected orelse error.InvalidEffects;
     }
+    fn systemIdentity(self: *Context, raw: *const RawSystem, system: *const System, declared: *std.ArrayList(Capability)) !void {
+        try self.spend(4);
+        if (raw.declaration.name.len == 0 or !same(raw.returnType, "void")) return error.InvalidEffects;
+        var signature = Sha256.init(.{});
+        signature.update("tsfg.module-callable-signature.candidate.v1\x00{\"parameters\":[");
+        for (raw.parameters, 0..) |*parameter, index| {
+            try self.spend(4);
+            const id = if (parameter.query) |query| param: {
+                if (!same(parameter.logicalType, "Query")) return error.InvalidEffects;
+                var selection = selectionHasher();
+                for (query.items, 0..) |*item, item_index| {
+                    try self.spend(1);
+                    const component = try self.componentId(item.componentType);
+                    try self.selectionItem(&selection, item_index, component, item.mode);
+                    try self.addCapability(declared, .{ .componentType = component, .sourceComponentType = item.componentType, .mode = item.mode });
+                }
+                selection.update("]");
+                break :param finishIdentity(&selection);
+            } else param: {
+                if (!scalar_types.has(parameter.logicalType)) return error.InvalidEffects;
+                break :param hashIdentity("tsfg.type\x00", parameter.logicalType);
+            };
+            if (index != 0) signature.update(",");
+            signature.update("\"");
+            signature.update(&id);
+            signature.update("\"");
+        }
+        signature.update("],\"returns\":\"");
+        signature.update(&hashIdentity("tsfg.type\x00", "void"));
+        signature.update("\"}");
+        const signature_id = finishIdentity(&signature);
+        if (!same(system.signatureHash, &signature_id)) return error.InvalidEffects;
+
+        // Prepay both canonical JSON encodings and the final hash. The
+        // nested name is encoded once as an object and again as a string.
+        const source_bytes = raw.declaration.name.len + raw.declaration.sourcePath.len;
+        try self.spend(16 + 32 * (source_bytes / 64 + 1));
+        const name = try std.json.Stringify.valueAlloc(self.allocator, .{
+            .kind = "function",
+            .name = raw.declaration.name,
+            .path = [_]u32{},
+        }, .{});
+        defer self.allocator.free(name);
+        const preimage = try std.json.Stringify.valueAlloc(self.allocator, .{
+            .name = name,
+            .path = raw.declaration.sourcePath,
+            .signatureHash = @as([]const u8, &signature_id),
+        }, .{});
+        defer self.allocator.free(preimage);
+        if (!same(system.functionId, &hashIdentity("tsfg.module-callable-function.candidate.v1\x00", preimage))) return error.InvalidEffects;
+    }
+    fn selectionItem(self: *Context, hash: *Sha256, index: usize, component: []const u8, mode: Access) Error!void {
+        try self.spend(2);
+        if (!digestId(component)) return error.InvalidEffects;
+        // The fixed digest and the two Access tags need no JSON escaping.
+        hash.update(if (index == 0) "{\"componentType\":\"" else ",{\"componentType\":\"");
+        hash.update(component);
+        hash.update(switch (mode) {
+            .read => "\",\"mode\":\"read\"}",
+            .write => "\",\"mode\":\"write\"}",
+        });
+    }
     fn selectionIdentity(self: *Context, columns: []const Column, expected: []const u8) Error!void {
         try self.spend(2);
-        var hash = std.crypto.hash.sha2.Sha256.init(.{});
-        hash.update("tsfg.query.type.v1\x00[");
-        // Verified columns preserve the selected Query tuple order and repetitions.
-        // Component digests and the two Access tags need no JSON escaping.
-        for (columns, 0..) |column, index| {
-            try self.spend(2);
-            if (!digestId(column.componentType)) return error.InvalidEffects;
-            hash.update(if (index == 0) "{\"componentType\":\"" else ",{\"componentType\":\"");
-            hash.update(column.componentType);
-            hash.update(switch (column.mode) {
-                .read => "\",\"mode\":\"read\"}",
-                .write => "\",\"mode\":\"write\"}",
-            });
-        }
+        var hash = selectionHasher();
+        for (columns, 0..) |*column, index|
+            try self.selectionItem(&hash, index, column.componentType, column.mode);
         hash.update("]");
-        var value: [32]u8 = undefined;
-        hash.final(&value);
-        const encoded = std.fmt.bytesToHex(value, .lower);
-        if (!same(expected["sha256:".len..], &encoded)) return error.InvalidEffects;
+        if (!same(expected, &finishIdentity(&hash))) return error.InvalidEffects;
     }
     fn capabilities(self: *Context, rows: []const Capability) Error!void {
         for (rows, 0..) |row, index| {
@@ -375,6 +429,22 @@ fn sameFieldRows(a: []const FieldEffects, b: []const FieldEffects) bool {
 }
 fn sameCall(a: Call, b: Call) bool {
     return same(a.functionId, b.functionId) and same(a.signatureHash, b.signatureHash) and same(a.sourceHelperId, b.sourceHelperId) and sameSource(a.source, b.source) and sameSource(a.calleeSource, b.calleeSource);
+}
+fn selectionHasher() Sha256 {
+    var hash = Sha256.init(.{});
+    hash.update("tsfg.query.type.v1\x00[");
+    return hash;
+}
+fn finishIdentity(hash: *Sha256) Identity {
+    var value: [Sha256.digest_length]u8 = undefined;
+    hash.final(&value);
+    return "sha256:".* ++ std.fmt.bytesToHex(value, .lower);
+}
+fn hashIdentity(prefix: []const u8, text: []const u8) Identity {
+    var hash = Sha256.init(.{});
+    hash.update(prefix);
+    hash.update(text);
+    return finishIdentity(&hash);
 }
 fn digestId(value: []const u8) bool {
     if (value.len != 71 or !std.mem.startsWith(u8, value, "sha256:")) return false;

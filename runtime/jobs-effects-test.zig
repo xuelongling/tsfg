@@ -209,6 +209,37 @@ test "typed effects reject another genuine Query selection identity" {
     try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, document.payload.sourcePacket, document.payload.inputIdentity, document.payload.packageId, document.payload.target, &document.component_layout));
 }
 
+fn expectSystemIdentityRejection(comptime field: enum { function, signature }) !void {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multiple-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-multiple.tmeta"), receipt.value);
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 1), document.effects.report.systems.len);
+    try std.testing.expectEqual(@as(usize, 0), document.effects.report.conflicts.len);
+
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var report = document.effects.report;
+    var system = report.systems[0];
+    switch (field) {
+        .function => system.functionId = system.signatureHash,
+        .signature => system.signatureHash = system.functionId,
+    }
+    report.systems = &.{system};
+    const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
+    const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, document.payload.sourcePacket, document.payload.inputIdentity, document.payload.packageId, document.payload.target, &document.component_layout));
+}
+
+test "typed effects reject a system FunctionId inconsistent with Source" {
+    try expectSystemIdentityRejection(.function);
+}
+
+test "typed effects reject a system signature inconsistent with Source" {
+    try expectSystemIdentityRejection(.signature);
+}
+
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();
