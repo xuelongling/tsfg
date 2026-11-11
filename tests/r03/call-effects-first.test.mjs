@@ -8,9 +8,11 @@ import {verifyHir} from '../../compiler/hir.mjs';
 // remains valid without the explicit publication input. Its current pure leaf
 // cannot authorize the caller when that leaf's fixed Published bound is Top.
 const fixture=JSON.parse(await readFile(new URL('./call-effects-first.json',import.meta.url),'utf8'));
+const hir=JSON.parse(await readFile(new URL('./call-effects-pure-current.json',import.meta.url),'utf8'));
 test('fixed Published callee upper bound is consumed at the original call anchor',()=>{
- assert.deepEqual(verifyHir(fixture.hir),fixture.hir);
- assert.throws(()=>verifyHir(fixture.hir,undefined,fixture.context),error=>{
+ assert.deepEqual(hir.sources,fixture.hir.sources);
+ assert.deepEqual(verifyHir(hir),hir);
+ assert.throws(()=>verifyHir(hir,undefined,fixture.context),error=>{
   assert.ok(error instanceof TypeError);
   for(const key of ['code','message','ruleId','phase','primary'])
    assert.deepEqual(Reflect.get(error,key),fixture.expected[key]);

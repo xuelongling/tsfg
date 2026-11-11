@@ -6,11 +6,12 @@ import test from 'node:test';
 import {verifyHir,analyzeModuleCalls} from '../../compiler/hir.mjs';
 
 const oracle=JSON.parse(await readFile(new URL('./call-effects-oracle.json',import.meta.url),'utf8'));
-const first=JSON.parse(await readFile(new URL('./call-effects-first.json',import.meta.url),'utf8'));
-const currentInitial=new Map([
+const firstOracle=JSON.parse(await readFile(new URL('./call-effects-first.json',import.meta.url),'utf8'));
+const currentInputs=new Map([
  ['pure',JSON.parse(await readFile(new URL('./call-effects-pure-current.json',import.meta.url),'utf8'))],
  ...Object.entries(JSON.parse(await readFile(new URL('./call-effects-followup-current.json',import.meta.url),'utf8'))),
 ]);
+const first={...firstOracle,hir:currentHir(firstOracle.hir,'pure')};
 const clone=value=>structuredClone(value);
 const pure={reads:[],writes:[],unknownHost:false};
 const top={reads:[],writes:[],unknownHost:true};
@@ -42,30 +43,36 @@ function seal(context) {
  context.expectedDigest=digest('tsfg.module-call-publication.v1',context.contracts);return context;
 }
 const selected=(hir,context)=>verifyHir(hir,undefined,context);
-const initial=name=>oracle.initial.find(item=>item.name===name);
-const fixed=name=>oracle.fixed.find(item=>item.name===name);
+const initial=name=>currentInput(oracle.initial.find(item=>item.name===name));
+const fixed=name=>currentInput(oracle.fixed.find(item=>item.name===name));
 const fixedFrom=item=>({mode:'fixed',expectedDigest:item.expected.publishedDigest,contracts:clone(item.expected.contracts)});
 
-function currentInitialInput(item) {
- const hir=currentInitial.get(item.name);
- if(hir===undefined)return item;
- assert.deepEqual(hir.sources,item.hir.sources);
+function currentHir(old,name) {
+ const hir=currentInputs.get(name);
+ assert.ok(hir,name);
+ assert.deepEqual(hir.sources,old.sources);
+ return hir;
+}
+
+function currentInput(item) {
+ const hir=currentHir(item.hir,item.name);
  // Cold test DTOs retain the frozen report's semantic expectations.
  const expected={...item.expected,inputIdentity:hir.inputIdentity,
   hirDigest:'sha256:'+createHash('sha256').update(canonical(hir)).digest('hex')};
- return {hir,expected};
+ return {...item,hir,expected};
 }
 
 for(const item of oracle.initial)test('initial complete module analysis: '+item.name,()=>{
- const {hir,expected}=currentInitialInput(item);
+ const {hir,expected}=currentInput(item);
  assert.deepEqual(verifyHir(hir),hir);
  assert.deepEqual(analyzeModuleCalls(hir,item.context),expected);
  assert.deepEqual(selected(hir,item.context),hir);
  assert.deepEqual(analyzeModuleCalls(JSON.parse(JSON.stringify(hir)),JSON.parse(JSON.stringify(item.context))),expected);
 });
 for(const item of oracle.fixed)test('fixed complete module analysis: '+item.name,()=>{
- assert.deepEqual(analyzeModuleCalls(item.hir,item.context),item.expected);
- assert.deepEqual(selected(item.hir,item.context),item.hir);
+ const {hir,expected}=currentInput(item);
+ assert.deepEqual(analyzeModuleCalls(hir,item.context),expected);
+ assert.deepEqual(selected(hir,item.context),hir);
 });
 
 test('a narrowed implementation preserves the exact fixed table and all contract hashes',()=>{
@@ -86,18 +93,22 @@ test('unknown Host remains Top and cannot be reclassified as pure by a fixed tab
 });
 
 test('kernel reachability consumes the wider Published bound even when current bodies are pure',()=>{
- for(const item of [oracle.kernelWide,oracle.kernelOwnWide])for(const action of [
-  ()=>analyzeModuleCalls(item.hir,item.context),()=>selected(item.hir,item.context)])
-  assert.throws(action,error=>{
-   assert.ok(error instanceof TypeError);assert.equal(Reflect.get(error,'code'),'r03-d-kernel-call-effects');
-   assert.equal(error.message,'r03-d-kernel-call-effects: kernel call requires a known published effect upper bound');
-   assert.equal(Reflect.get(error,'ruleId'),'r01-kernel');assert.equal(Reflect.get(error,'phase'),'hir');
-   assert.deepEqual(Reflect.get(error,'primary'),item.expectedPrimary);return true;
-  });
+ for(const name of ['kernelWide','kernelOwnWide']){
+  const item=oracle[name],hir=currentHir(item.hir,name);
+  for(const action of [()=>analyzeModuleCalls(hir,item.context),()=>selected(hir,item.context)])
+   assert.throws(action,error=>{
+    assert.ok(error instanceof TypeError);assert.equal(Reflect.get(error,'code'),'r03-d-kernel-call-effects');
+    assert.equal(error.message,'r03-d-kernel-call-effects: kernel call requires a known published effect upper bound');
+    assert.equal(Reflect.get(error,'ruleId'),'r01-kernel');assert.equal(Reflect.get(error,'phase'),'hir');
+    assert.deepEqual(Reflect.get(error,'primary'),item.expectedPrimary);return true;
+   });
+ }
 });
 
 test('selected analysis retains the original real Host kernel diagnostic and call chain',()=>{
  const item=clone(initial('unknownHost'));item.hir.closure.roots[0].kind='kernel';
+ item.hir.inputScope.compilationClosure.roots[0].kind='kernel';
+ item.hir.inputIdentity='sha256:'+createHash('sha256').update(canonical(item.hir.inputScope)).digest('hex');
  const leaf=item.hir.functions.find(fn=>fn.name==='leaf');
  for(const action of [()=>verifyHir(item.hir),()=>selected(item.hir,item.context),()=>analyzeModuleCalls(item.hir,item.context)])
   assert.throws(action,error=>{
@@ -202,14 +213,15 @@ test('reports are owned immutable values and cold recomputation requires its sup
 
 const extra=JSON.parse(await readFile(new URL('./call-effects-extra.json',import.meta.url),'utf8'));
 for(const item of extra.initial)test('complete direct-call analysis: '+item.name,()=>{
- const {hir,expected}=currentInitialInput(item);
+ const {hir,expected}=currentInput(item);
  assert.deepEqual(verifyHir(hir),hir);
  assert.deepEqual(analyzeModuleCalls(hir,item.context),expected);
 });
 for(const item of extra.fixed)test('complete initializer analysis: '+item.name,()=>{
- assert.deepEqual(verifyHir(item.hir),item.hir);
- assert.deepEqual(analyzeModuleCalls(item.hir,item.context),item.expected);
- assert.deepEqual(selected(item.hir,item.context),item.hir);
+ const {hir,expected}=currentInput(item);
+ assert.deepEqual(verifyHir(hir),hir);
+ assert.deepEqual(analyzeModuleCalls(hir,item.context),expected);
+ assert.deepEqual(selected(hir,item.context),hir);
 });
 
 test('widened direct GlobalId effects reject at the original offending access',()=>{
