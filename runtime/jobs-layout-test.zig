@@ -56,6 +56,45 @@ test "actual nested component ABI is inline and enters the real column store" {
     try store.remove(entity);
 }
 
+test "equal storage size cannot substitute a different scalar identity" {
+    var original = try L.Layout.load(A, nested_bytes, nested_expected);
+    defer original.deinit();
+    const rows = try A.dupe(L.Type, original.payload.types);
+    defer A.free(rows);
+    for (rows) |*row| {
+        if (row.kind == .scalar and std.mem.eql(u8, row.scalar, "i32")) {
+            row.name = "f32";
+            row.scalar = "f32";
+            break;
+        }
+    } else return error.MissingI32Fixture;
+    var payload = original.payload;
+    payload.types = rows;
+    const payload_bytes = try std.json.Stringify.valueAlloc(A, payload, .{});
+    defer A.free(payload_bytes);
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("tsfg.component-layout.v1\x00");
+    hash.update(payload_bytes);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    const payload_hash = "sha256:" ++ std.fmt.bytesToHex(digest, .lower);
+    const envelope = try std.json.Stringify.valueAlloc(A, .{
+        .family = "tsfg.component-layout-candidate",
+        .payload = payload_bytes,
+        .payloadHash = &payload_hash,
+        .schemaHash = L.schema_hash,
+        .version = @as(u32, 1),
+    }, .{});
+    defer A.free(envelope);
+    const bytes = try std.fmt.allocPrint(A, "{s}\n", .{envelope});
+    defer A.free(bytes);
+    if (L.Layout.load(A, bytes, nested_expected)) |loaded| {
+        var unexpected = loaded;
+        unexpected.deinit();
+        return error.TestExpectedError;
+    } else |err| try std.testing.expectEqual(error.InvalidLayout, err);
+}
+
 test "actual complete32-node layout matches the independent extern chain ABI" {
     var source = try L.Layout.load(A, @embedFile("jobs/testdata/component-layout-depth32.json"), .{
         .inputIdentity = "sha256:73a4505ed88dd42599f6a18b34a19eca6f8df80659d9142cc1f925a7b3c4fb9b",

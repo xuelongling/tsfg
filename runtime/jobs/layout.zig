@@ -127,6 +127,13 @@ pub const Layout = struct {
                 if (row.fields.len != 0 or row.sourcePath.len != 0 or row.range.start != 0 or row.range.end != 0 or !std.mem.eql(u8, row.name, row.scalar)) return error.InvalidLayout;
                 const scalar = scalarLayout(row.scalar) orelse return error.InvalidLayout;
                 if (row.byteSize != scalar[0] or row.alignment != scalar[1]) return error.InvalidLayout;
+                try budget.charge(128 + row.scalar.len);
+                hash = std.crypto.hash.sha2.Sha256.init(.{});
+                hash.update("tsfg.type\x00");
+                hash.update(row.scalar);
+                hash.final(&digest);
+                const scalar_hex = std.fmt.bytesToHex(digest, .lower);
+                if (!std.mem.eql(u8, row.id[7..], &scalar_hex)) return error.InvalidLayout;
             } else {
                 if (row.scalar.len != 0 or !sourcePath(row.sourcePath)) return error.InvalidLayout;
                 if (row.kind == .component) component_count += 1;
