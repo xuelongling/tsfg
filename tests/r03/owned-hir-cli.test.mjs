@@ -8,7 +8,9 @@ import test from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {importCapturedFrontendResponse} from '../../compiler/frontend.mjs';
-import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,lowerFormalHir,printHir,readHir} from '../../compiler/hir.mjs';
+import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
+import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
 import {compileOwnedCore,compileOwnedHir,verifiedConsumer} from '../../compiler/pipeline.mjs';
 import {expectedHir} from './formal-exception-source-oracle.mjs';
 
@@ -30,6 +32,38 @@ async function runCli(value,args){
   assert.equal(child.signal,null);
   return child;
 }
+
+async function mixedCommonHir(){
+  const factsBytes=await readFile(new URL('./common-program-mixed.json',import.meta.url));
+  assert.equal(sha256(factsBytes),'sha256:520a692f14cbcb7632a13cc338d78ae46f7abdbdb62d1290fe40a81c645447f0');
+  const facts=readCommonProgramFacts(factsBytes);
+  const factsContext={family:'tsfg.common-program-context-candidate',version:2,factsBytes,expectedPackageId:facts.packageId};
+  return {mixed:buildCommonProgramHir(facts,factsContext),factsContext};
+}
+
+test('owned HIR CLI and reader preserve the complete mixed Common Program',async()=>{
+  const {mixed,factsContext}=await mixedCommonHir();
+  const bytes=Buffer.from(printHir(mixed));
+  assert.equal(sha256(bytes),'sha256:a50a8050c89e1eeb1b58f2f304f69a10642baf561932dfd86ebb000576fa2e90');
+  const cliResult=await runCli(mixed,['--input-kind','hir','--emit','hir']);
+  assert.equal(cliResult.status,0,cliResult.stderr.toString('utf8'));
+  assert.equal(cliResult.stderr.length,0);
+  assert.deepEqual(cliResult.stdout,bytes);
+  const cold=readHir(bytes);
+  assert.deepEqual(cold,mixed);
+  assert.equal(cold.functions.length,7);
+  assert.equal(cold.modules.length,4);
+  const statement=cold.functions.find(fn=>fn.name==='ordinary').body[1];
+  assert.equal(statement.kind,'try');
+  assert.ok(statement.finallyBlock);
+
+  assert.deepEqual(readHir(bytes,factsContext),cold);
+  assert.throws(()=>readHir(bytes,{...factsContext,expectedPackageId:'sha256:'+'0'.repeat(64)}),
+    {code:'r03-common-program-context'});
+  assert.throws(()=>readHir(Buffer.concat([bytes,Buffer.from('\n')])),{code:'r03-common-program-canonical'});
+  const foreign={...mixed,format:{...mixed.format,version:1}};
+  assert.throws(()=>readHir(Buffer.from(canonical(foreign)+'\n')),{code:'r03-common-program-identity'});
+});
 
 test('owned HIR CLI cold roundtrip preserves the complete actual Source result without a frontend',async()=>{
   const bytes=Buffer.from(canonical(hir)+'\n');
@@ -63,6 +97,13 @@ test('owned HIR CLI rejects corrupt identity and conflicting Source, Query or bo
 });
 
 if(process.env.TSFG_CORE_IR_EXE){
+  test('cold Common Core still requires fixed publication and request',async()=>{
+    const {mixed}=await mixedCommonHir();
+    const cold=readHir(Buffer.from(printHir(mixed)));
+    const result=await compileOwnedCore(cold,{core:process.env.TSFG_CORE_IR_EXE});
+    assert.deepEqual(result,{status:'tool-error',code:'r03-d-consumer',message:'r03-common-program-input: complete common Program differs'});
+  });
+
   test('owned HIR CLI uses the admitted static Core for real Core and R04 output',async()=>{
     const core=await runCli(hir,['--input-kind','hir','--emit','core','--core',process.env.TSFG_CORE_IR_EXE]);
     assert.equal(core.status,0,core.stdout.toString('utf8')+core.stderr.toString('utf8'));

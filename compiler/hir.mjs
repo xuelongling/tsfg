@@ -2,7 +2,7 @@ import {emitFormalExceptionCore} from './formal-exception-core.mjs';
 import {isProxy} from 'node:util/types';
 import {isCommonProgramContext,buildCommonProgramHir,readCommonProgramHir} from './common-program-hir.mjs';
 import {emitCommonProgramCore} from './common-program-core.mjs';
-import {commonRecord,commonBudget} from './common-program-common.mjs';
+import {commonHirFormat,commonRecord,commonBudget} from './common-program-common.mjs';
 export {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup,verifyCommonKernelProof} from './common-program-analysis.mjs';
 import { familyOf } from './module-callable-common.mjs';
 import { buildModuleCallableHir } from './module-callable-hir.mjs';
@@ -242,7 +242,10 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
   if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext,callPublicationContext);
   if (factsContext !== undefined) return readStringHir(bytes, factsContext);
   const { text, value } = readHirWire(bytes);
-  if (callPublicationContext === undefined && familyOf(value) === genericHirFormat.family) return value;
+  const family = familyOf(value);
+  if (family === commonHirFormat.family)
+    return callPublicationContext === undefined ? value : verifyHir(value, undefined, callPublicationContext);
+  if (callPublicationContext === undefined && family === genericHirFormat.family) return value;
   const hir = verifyHir(value, undefined, callPublicationContext);
   if (text !== printHir(hir, undefined, callPublicationContext)) {
     if (hir?.format?.family === "tsfg.exception-hir-candidate")
