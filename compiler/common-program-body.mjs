@@ -107,7 +107,16 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
       if(!target&&['scalar','string','undefined','null','void'].includes(type(value.type).kind))check(value.flowType===value.type,'flow');
       if(['bindingReference','bindingTarget'].includes(value.kind)) {
         const entry=inventory.get(value.binding)??globals.get(value.binding)?.binding??bindings.get(value.binding)?.row;
-        const spelling=staticBindingName(text(value.range));check(entry&&local.get(spelling)===value.binding&&entry.declaredType===value.type,'binding');
+        // Source keeps the original grouped occurrence on a single binding target.
+        let spellingRange=value.range;
+        if(target&&value.kind==='bindingTarget'&&g.text[value.range.start]==='('){
+          let {first,end}=g.indices(value.range);
+          while(end-first>2&&g.tokens[first].text==='('&&g.tokens[end-1].text===')'){
+            spend();first++;end--;
+          }
+          spellingRange={start:g.tokens[first].start,end:g.tokens[end-1].end};
+        }
+        const spelling=staticBindingName(text(spellingRange));check(entry&&local.get(spelling)===value.binding&&entry.declaredType===value.type,'binding');
         if(!globals.has(value.binding)&&!inventory.has(value.binding)){
           const owner=functions.get(entry.lexicalOwner),supported=commonCaptureType(entry.declaredType,types,spend);
           check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');

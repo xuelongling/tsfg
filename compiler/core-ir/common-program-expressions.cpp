@@ -97,7 +97,18 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
   const auto sequence=[&](std::vector<Json> parts){return source->sequence(field(v,"range"),parts);};
   const auto child=[&](llvm::StringRef key,bool write=false,const std::string &wanted=std::string()){return expression(field(v,key),write,wanted);};
   if(kind=="bindingReference"||kind=="bindingTarget"){
-    const auto id=string(field(v,"binding"));if(!model.need(bindings.count(id)&&resolve(field(v,"range"))==id,"original binding reference resolves to another symbol"))return false;
+    // Source keeps the original grouped occurrence on a single binding target.
+    size_t first=a,end=b;
+    if(target&&kind=="bindingTarget"){
+      while(end-first>2&&source->tokens[first].text=="("&&source->tokens[end-1].text==")"){
+        if(!model.spend())return false;
+        ++first;--end;
+      }
+    }
+    const auto id=string(field(v,"binding"));
+    const auto resolved=first==a?resolve(field(v,"range")):
+      resolve(Object{{"start",int64_t(source->tokens[first].start)},{"end",int64_t(source->tokens[end-1].end)}});
+    if(!model.need(bindings.count(id)&&resolved==id,"original binding reference resolves to another symbol"))return false;
     const auto &binding=*bindings.at(id);
     return capture(v,!target||readTarget,target)&&model.need(type==string(field(binding,"declaredType"))&&(!target||field(binding,"writable").getAsBoolean()==true)&&
       (model.globals.count(id)||initialized.count(id)),"binding view/mutability/initialization differs");
