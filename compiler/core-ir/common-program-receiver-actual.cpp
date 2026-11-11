@@ -348,9 +348,17 @@ bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,st
     if(!step(4))return false;ActualBirth row;row.reference=reference;
     if(repeated){if(!receiverText(*slot->spelling))return false;const auto old=heap.find(*slot->spelling);if(old!=heap.end())row.real=copy(old->second);}
     if(!e.message.empty())return false;rows.emplace(slot,std::move(row));}
-  for(auto current=id;!current.empty();){
-    if(!receiverText(current))return false;const auto row=world.find(current);const auto frame=row==world.end()?receiverFrames.end():receiverFrames.find(current);
-    if(!need(row!=world.end()&&frame!=receiverFrames.end(),"birth frame is absent"))return false;auto &binding=row->second;const auto &parent=frame->second.parent;
+  // Resolve the live World first, then query metadata with its owned key.
+  // Both directories stay structurally unchanged while journals are updated.
+  if(!step())return false;
+  for(const auto *current=&id;;){
+    if(!step(2))return false;
+    if(current->empty())break;
+    const auto row=findFrame(*this,world,*current);
+    if(!row||!need(*row!=world.end(),"birth frame is absent"))return false;
+    const auto frame=findFrame(*this,receiverFrames,(*row)->first.text());
+    if(!frame||!need(*frame!=receiverFrames.end(),"birth frame is absent")||!step(2))return false;
+    auto &binding=(*row)->second;const auto &parent=(*frame)->second.parent;
     // Earlier ancestors require independent journals. The final empty one
     // can take this complete pre-default snapshot without another deep copy.
     if(parent.empty()&&binding.births.empty()){
@@ -358,7 +366,7 @@ bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,st
     }
     if(!step(rows.size()))return false;for(const auto &[slot,row]:rows){if(!step())return false;auto owned=copyBirth(row);
       if(!e.message.empty())return false;binding.births.insert_or_assign(slot,std::move(owned));}
-    current=parent;
+    if(!step())return false;current=&parent;
   }
   return true;
 }
