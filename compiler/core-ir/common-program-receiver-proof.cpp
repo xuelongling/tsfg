@@ -330,29 +330,76 @@ bool BorrowTrace::Impl::orderCalls(){
     }return c.e.message.empty();
   }
 bool ActualCheck::preparePublicBorrowContexts(){
-  // Private roots still participate in the complete ActualCheck fixed point.
-  // Only the Source/public graph has printed call provenance and permission
-  // rows. A public callee reached exclusively from a private root is not a
-  // new published universal entry or a reason to invent such a proof row.
-  publicBorrowContexts.clear();std::map<std::string,std::vector<const std::string *>> successors;
-  std::vector<const std::string *> pending;if(!step(contexts.size()))return false;
-  for(const auto &[id,context]:contexts){
-    if(!step(1))return false;if(analysisFunctions.count(context.function->id))continue;
-    if(context.root){if(!receiverText(id)||!step(2))return false;publicBorrowContexts.insert(id);pending.push_back(&id);}
+  // Private roots participate in the ActualCheck fixed point. Borrow proofs
+  // start at the public roots and only follow public caller/callee edges.
+  publicBorrowContexts.clear();
+  using ContextKey=const decltype(contexts)::value_type *;
+  std::vector<ContextKey> directory,pending;
+  std::map<ContextKey,std::vector<ContextKey>> successors;
+  std::set<ContextKey> reached;
+  if(!step(2*contexts.size()+2))return false;
+  directory.reserve(contexts.size());pending.reserve(contexts.size());
+  for(const auto &entry:contexts){
+    if(!step())return false;
+    directory.push_back(&entry);
+  }
+  const auto findCaller=[&](const std::string &caller,ContextKey &found){
+    found=nullptr;
+    size_t first=0,last=directory.size();
+    while(first<last){
+      const auto middle=first+(last-first)/2;
+      const auto entry=directory[middle];
+      if(!step(entry->first.size()+caller.size()+6))return false;
+      const auto order=entry->first.compare(caller);
+      if(order==0){found=entry;return true;}
+      if(order<0)first=middle+1;else last=middle;
+    }
+    return true;
+  };
+  const auto pointerLookup=[&](size_t count){
+    size_t depth=1;
+    for(;count;count>>=1){if(!step())return false;depth+=2;}
+    return step(3*depth);
+  };
+  const auto enqueue=[&](ContextKey entry){
+    if(!pointerLookup(reached.size())||!step(2))return false;
+    if(reached.insert(entry).second)pending.push_back(entry);
+    return true;
+  };
+  for(const auto entry:directory){
+    if(!step())return false;
+    const auto &context=entry->second;
+    if(analysisFunctions.count(context.function->id))continue;
+    if(context.root&&!enqueue(entry))return false;
     if(!step(context.callers.size()))return false;
     for(const auto &caller:context.callers){
-      if(!step(1))return false;const auto found=contexts.find(caller);
-      if(!need(found!=contexts.end(),"solved actual caller has no owning context"))return false;
-      if(analysisFunctions.count(found->second.function->id))continue;
-      if(!receiverText(caller)||!step(2))return false;successors[caller].push_back(&id);
+      ContextKey source;
+      if(!findCaller(caller,source)||!need(source!=nullptr,"solved actual caller has no owning context"))return false;
+      if(analysisFunctions.count(source->second.function->id))continue;
+      if(!pointerLookup(successors.size())||!step())return false;
+      auto &targets=successors[source];
+      if(!step(targets.size()==targets.capacity()?targets.size()+1:1))return false;
+      targets.push_back(entry);
     }
   }
   for(size_t index=0;index<pending.size();++index){
-    if(!step(1))return false;auto found=successors.find(*pending[index]);if(found==successors.end())continue;
+    if(!pointerLookup(successors.size())||!step())return false;
+    const auto found=successors.find(pending[index]);if(found==successors.end())continue;
     if(!step(found->second.size()))return false;
-    for(const auto *target:found->second){
-      if(!receiverText(*target)||!step(2))return false;if(publicBorrowContexts.insert(*target).second)pending.push_back(target);
-    }
-  }return e.message.empty();
+    for(const auto target:found->second)if(!enqueue(target))return false;
+  }
+  ContextKey previous=nullptr;
+  for(const auto entry:directory){
+    if(!pointerLookup(reached.size())||!step())return false;
+    if(!reached.count(entry))continue;
+    const auto &id=entry->first;
+    // Directory order proves a strict end hint. Pay the neighbour check
+    // and the possible debug reverse comparison before copying the key.
+    if(previous&&!step(2*(previous->first.size()+id.size()+1)))return false;
+    if(!step(id.size()/64+4))return false;
+    publicBorrowContexts.emplace_hint(publicBorrowContexts.end(),id);
+    previous=entry;
+  }
+  return e.message.empty();
 }
 } // namespace tsfg::commonProgram
