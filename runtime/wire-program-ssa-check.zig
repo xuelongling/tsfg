@@ -641,22 +641,28 @@ const Graph = struct {
             else => null,
         };
     }
+    fn isEnvironmentForwarder(op: *const ins.Instruction) bool {
+        return switch (op.data) {
+            .domain_view, .domain_copy, .eh_carrier, .eh_assertion => true,
+            else => false,
+        };
+    }
+
     // Classify a typed definition once. All block-argument sources are owned by
     // the shared edge traversal below, including both edges of one cond_br.
     fn environmentIdentity(self: *Graph, receiver: t.RegisterRef) Error!EnvironmentIdentity {
         const c=self.c;
         try c.charge(2); const definition=self.definitions[@intFromEnum(receiver)];
         if(definition.position>=0) {
-            const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
-            switch(producer.data) {
-                .environment_alloc => |v| return .{.allocation=v.environment},
-                .domain_view,.domain_copy,.eh_carrier,.eh_assertion => {
-                    try c.charge(3); const source=producer.operands[0];
-                    if(!exact(self.carrierOf(receiver),self.carrierOf(source)))return .unknown;
-                    return .{.source=source};
-                },
-                else => return .unknown,
-            }
+            const producer = &self.f.blocks[definition.block].instructions[@intCast(definition.position)];
+            if (producer.data == .environment_alloc)
+                return .{ .allocation = producer.data.environment_alloc.environment };
+            try c.step();
+            if (!isEnvironmentForwarder(producer)) return .unknown;
+            try c.charge(3);
+            const source = producer.operands[0];
+            if (!exact(self.carrierOf(receiver), self.carrierOf(source))) return .unknown;
+            return .{ .source = source };
         }
         return if(definition.block==0).unknown else .{.parameter=definition.block};
     }
@@ -1146,7 +1152,7 @@ const Graph = struct {
                 const index = @intFromEnum(result);
                 if (!exact(target.registers[index].carrier, carrier)) continue;
                 try proof.need(result);
-                if (op.data == .domain_copy or op.data == .domain_view) {
+                if (isEnvironmentForwarder(op)) {
                     try c.charge(3);
                     const source = op.operands[0];
                     if (exact(target.registers[@intFromEnum(source)].carrier, carrier)) {
@@ -1268,9 +1274,11 @@ const Graph = struct {
                 for (block.instructions) |*op| {
                     try c.step();
                     const slot = switch (op.data) {
-                        .domain_copy, .domain_view => {
-                            try c.step();
+                        inline .environment_load, .environment_store => |v| v.slot,
+                        else => {
                             if (has_environment_parameters) continue;
+                            try c.step();
+                            if (!isEnvironmentForwarder(op)) continue;
                             try c.charge(2);
                             if (!try matchesDirectEnvironment(c, aliases, input, op.operands[0])) continue;
                             try c.charge(3);
@@ -1286,8 +1294,6 @@ const Graph = struct {
                             aliases.?.set(result);
                             continue;
                         },
-                        inline .environment_load, .environment_store => |v| v.slot,
-                        else => continue,
                     };
                     try c.charge(3);
                     if (!try matchesDirectEnvironment(c, aliases, input, op.operands[0]) or seen_slots[@intFromEnum(slot)]) continue;

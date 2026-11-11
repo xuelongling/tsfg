@@ -655,8 +655,8 @@ test "literal Env loop can observe an older initialized allocation after allocat
 }
 
 const CallerInit = enum { before, after, absent, other_only, before_with_other };
-const ChildAccess = enum { load, store, unreachable_load, copy_load, parameter_load, parameter_store, parallel_load, distinct_load, loop_load, dead_predecessor_load };
-const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward };
+const ChildAccess = enum { load, store, unreachable_load, copy_load, carrier_load, assertion_store, parameter_load, parameter_store, parallel_load, distinct_load, loop_load, dead_predecessor_load };
+const CallPath = enum { direct, forwarded, unreachable_forward, cycle, view_forward, parameter_forward, assertion_forward };
 
 const CallerTransport = enum { original, copied, viewed, block_parameter, same_edges, distinct_edges, repeated_copy };
 
@@ -721,6 +721,8 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     const child_copy: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{r(0)}, .data = copy.data };
     const child_copy_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(2)}, .data = child_load.data };
     const branch_hidden: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = child_jump.data };
+    const child_carrier: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{r(0)}, .data = carrier.data };
+    const child_assertion: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{r(0)}, .data = assertion.data };
     const parameter_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(2), r(1) }, .data = child_store.data };
     const boolean: ins.Instruction = .{ .source = at, .result = r(3), .operands = &.{}, .data = .{ .const_bool = true } };
     const second_environment: ins.Instruction = .{ .source = at, .result = r(2), .operands = &.{}, .data = alloc.data };
@@ -746,6 +748,12 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .copy_load => &.{
             .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], child_copy, child_jump } },
             .{ .parameters = &.{}, .instructions = &.{ child_copy_load, returned } },
+        },
+        .carrier_load => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], child_carrier, child_copy_load, returned } },
+        },
+        .assertion_store => &.{
+            .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], seed[1], child_assertion, parameter_store, returned } },
         },
         .parameter_load => &.{
             .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], branch_hidden } },
@@ -778,6 +786,9 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
     const branch_to_forward: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(0)}, .data = .{ .br = .{ .destination = b(3) } } };
     const parameter_view: ins.Instruction = .{ .source = at, .result = r(3), .operands = &.{r(2)}, .data = view.data };
     const call_with_parameter: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(3)}, .data = call_grandchild.data };
+    const parameter_carrier: ins.Instruction = .{ .source = at, .result = r(3), .operands = &.{r(2)}, .data = carrier.data };
+    const parameter_assertion: ins.Instruction = .{ .source = at, .result = r(4), .operands = &.{r(3)}, .data = assertion.data };
+    const call_with_assertion: ins.Instruction = .{ .source = at, .result = null, .operands = &.{r(4)}, .data = call_grandchild.data };
     const forwarding_entry: []const ins.Instruction = if (path == .view_forward)
         &.{ seed[0], child_view, call_with_view }
     else
@@ -787,11 +798,14 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         .{ .parameters = &.{}, .instructions = &.{returned} },
         .{ .parameters = &.{r(1)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(1)}, .data = .eh_raise }} },
         .{ .parameters = &.{}, .instructions = &.{call_grandchild} },
-    } else if (path == .parameter_forward) &.{
+    } else if (path == .parameter_forward or path == .assertion_forward) &.{
         .{ .parameters = &.{r(0)}, .instructions = &.{ seed[0], branch_to_forward } },
         .{ .parameters = &.{}, .instructions = &.{returned} },
         .{ .parameters = &.{r(1)}, .instructions = &.{.{ .source = at, .result = null, .operands = &.{r(1)}, .data = .eh_raise }} },
-        .{ .parameters = &.{r(2)}, .instructions = &.{ parameter_view, call_with_parameter } },
+        .{ .parameters = &.{r(2)}, .instructions = if (path == .assertion_forward)
+            &.{ parameter_carrier, parameter_assertion, call_with_assertion }
+        else
+            &.{ parameter_view, call_with_parameter } },
     } else &.{
         .{ .parameters = &.{r(0)}, .instructions = forwarding_entry },
         .{ .parameters = &.{}, .instructions = &.{returned} },
@@ -827,11 +841,12 @@ fn runDirectChild(comptime initialization: CallerInit, comptime access: ChildAcc
         functions[index].registers = if (forwarding) switch (path) {
             .view_forward => &.{ env_register, payload_register, env_register },
             .parameter_forward => &.{ env_register, payload_register, env_register, env_register },
+            .assertion_forward => &.{ env_register, payload_register, env_register, env_register, env_register },
             else => &.{ env_register, payload_register },
         } else if (recursive)
             &.{ env_register, value_register, payload_register }
         else switch (access) {
-            .copy_load, .parameter_load, .parameter_store => &.{ env_register, value_register, env_register },
+            .copy_load, .carrier_load, .assertion_store, .parameter_load, .parameter_store => &.{ env_register, value_register, env_register },
             .parallel_load, .distinct_load => &.{ env_register, value_register, env_register, base_registers[0], env_register },
             .loop_load => &.{ env_register, value_register, env_register, base_registers[0] },
             .dead_predecessor_load => &.{ env_register, value_register, env_register, env_register },
@@ -1015,4 +1030,23 @@ test "literal callee loop parameter retains its initialized entry Env" {
 }
 test "literal dead callee predecessor cannot obscure the reachable entry Env" {
     try runDirectChild(.absent, .dead_predecessor_load, .direct, .original, false);
+}
+
+test "literal child carrier alias requires the owned Env initialized before read" {
+    try runDirectChild(.absent, .carrier_load, .direct, .original, false);
+}
+test "literal child carrier alias reads the initialized owned Env" {
+    try runDirectChild(.before, .carrier_load, .direct, .original, true);
+}
+test "literal child same-carrier assertion requires the owned Env initialized before store" {
+    try runDirectChild(.absent, .assertion_store, .direct, .original, false);
+}
+test "literal child same-carrier assertion writes the initialized owned Env" {
+    try runDirectChild(.before, .assertion_store, .direct, .original, true);
+}
+test "literal callee CFG forwards carrier and assertion aliases before the caller can initialize" {
+    try runDirectChild(.after, .parameter_load, .assertion_forward, .block_parameter, false);
+}
+test "literal callee CFG forwards the same initialized Env through carrier and assertion aliases" {
+    try runDirectChild(.before, .parameter_load, .assertion_forward, .block_parameter, true);
 }
