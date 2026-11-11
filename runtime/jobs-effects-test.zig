@@ -370,6 +370,33 @@ test "typed effects reject a different field in a nested Source helper" {
     return error.MissingFixtureHelper;
 }
 
+test "typed effects reject a changed helper read count" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-f64-helper-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-f64-helper.tmeta"), receipt.value);
+    defer document.deinit();
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var report = document.effects.report;
+    const helpers = try allocator.dupe(E.Helper, report.scalarHelpers);
+    for (helpers) |*helper| {
+        if (helper.calls.len == 0) continue;
+        try std.testing.expectEqual(@as(usize, 1), helper.fieldEffects.len);
+        const fields = try allocator.dupe(E.FieldEffects, helper.fieldEffects);
+        try std.testing.expectEqual(@as(u32, 1), fields[0].readCount);
+        fields[0].readCount = 2;
+        helper.fieldEffects = fields;
+        break;
+    } else return error.MissingFixtureHelper;
+    report.scalarHelpers = helpers;
+    const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
+    const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
+    const current = document.payload;
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, current.sourcePacket, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+}
+
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();

@@ -15,6 +15,7 @@ const scalar_types = std.StaticStringMap(void).initComptime(.{
     .{ "f64", {} },
 });
 pub const Error = error{ InvalidEffects, EffectsLimit, UnknownSystem, InvalidPair };
+const SourceCheckError = Error || std.mem.Allocator.Error;
 pub const Source = struct { end: u32, path: []const u8, start: u32 };
 pub const Capability = struct { componentType: []const u8, mode: Access, sourceComponentType: []const u8 };
 pub const FieldEffects = struct { componentType: []const u8, field: []const u8, readCount: u32, sourceField: []const u8, writeCount: u32 };
@@ -232,6 +233,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         try context.fieldRows(system.fieldEffects);
         if (!sameFieldRows(try context.countFields(system_operations.items), system.fieldEffects)) return error.InvalidEffects;
     }
+    try context.spend(1);
+    if (@popCount(context.helper_effects_checked) != report.scalarHelpers.len) return error.InvalidEffects;
     var edge: usize = 0;
     for (report.systems, 0..) |left, i| for (report.systems[i + 1 ..]) |right| {
         try context.spend(1);
@@ -256,6 +259,7 @@ const Context = struct {
     facts: Projection,
     catalog: *const layout.Layout,
     source_helpers: [64]*const RawHelper = undefined,
+    helper_effects_checked: u64 = 0,
     remaining: usize = 1000000,
     fn spend(self: *Context, amount: usize) Error!void {
         if (amount > self.remaining) return error.EffectsLimit;
@@ -443,7 +447,7 @@ const Context = struct {
         try self.source(value.calleeSource, value.source);
         return index;
     }
-    fn sourceBody(self: *Context, statements: []const RawStatement, legacy_value: ?*const RawExpression, owner: Source, rows: SourceBodyRows) Error!void {
+    fn sourceBody(self: *Context, statements: []const RawStatement, legacy_value: ?*const RawExpression, owner: Source, rows: SourceBodyRows) SourceCheckError!void {
         var remaining = rows;
         if (legacy_value) |expression| {
             if (statements.len != 0) return error.InvalidEffects;
@@ -455,7 +459,7 @@ const Context = struct {
         }
         if (remaining.calls.len != 0) return error.InvalidEffects;
     }
-    fn sourceExpression(self: *Context, expression: *const RawExpression, rows: *SourceBodyRows, owner: Source, depth: usize) Error!void {
+    fn sourceExpression(self: *Context, expression: *const RawExpression, rows: *SourceBodyRows, owner: Source, depth: usize) SourceCheckError!void {
         try self.spend(1);
         if (depth >= max_expression_depth) return error.EffectsLimit;
         const next_depth = depth + 1;
@@ -530,7 +534,7 @@ const Context = struct {
         }
         return error.InvalidEffects;
     }
-    fn sourceHelperOperations(self: *Context, operations: *SourceOperations, call_edge: *const Call, target: usize, arguments: []const RawExpression) Error!void {
+    fn sourceHelperOperations(self: *Context, operations: *SourceOperations, call_edge: *const Call, target: usize, arguments: []const RawExpression) SourceCheckError!void {
         try self.spend(8);
         if (operations.depth >= operations.path.len) return error.EffectsLimit;
         const raw = self.source_helpers[target];
@@ -556,7 +560,18 @@ const Context = struct {
             operations.views = previous_views;
         }
         const helper_row = &self.report.scalarHelpers[target];
+        try self.spend(4);
+        const checked_bit = @as(u64, 1) << @as(u6, @intCast(target));
+        const before: ?[]const Operation = if (self.helper_effects_checked & checked_bit == 0) operations.remaining else null;
         try self.sourceBody(raw.statements, raw.value, helper_row.source, .{ .calls = helper_row.calls, .operations = operations });
+        if (before) |start| {
+            // The cursor enters after argument evaluation. Same-type view
+            // substitution preserves the helper's component-level counts.
+            try self.spend(3);
+            const consumed = start.len - operations.remaining.len;
+            try self.helperFieldSummary(helper_row.fieldEffects, start[0..consumed]);
+            self.helper_effects_checked |= checked_bit;
+        }
     }
     fn sourceFieldOperation(self: *Context, operations: *SourceOperations, kind: Access, field_expression: *const RawExpression, range: layout.Range, owner: Source) Error!void {
         try self.spend(16);
@@ -599,6 +614,45 @@ const Context = struct {
         for (rows, 0..) |row, index| {
             try self.field(row.componentType, row.field, row.sourceField, row.writeCount != 0);
             if ((row.readCount == 0 and row.writeCount == 0) or (index > 0 and !lessField({}, rows[index - 1], row))) return error.InvalidEffects;
+        }
+    }
+    fn helperFieldSummary(self: *Context, fields: []const FieldEffects, operations: []const Operation) SourceCheckError!void {
+        try self.spend(1);
+        if (fields.len > operations.len) return error.InvalidEffects;
+        const Counts = struct { reads: u32, writes: u32 };
+        try self.spend(2 + 3 * fields.len);
+        const remaining = try self.allocator.alloc(Counts, fields.len);
+        defer self.allocator.free(remaining);
+        for (fields, remaining) |*row, *counts| {
+            counts.* = .{ .reads = row.readCount, .writes = row.writeCount };
+        }
+        for (operations) |*operation| {
+            try self.spend(5);
+            const index = find: {
+                var low: usize = 0;
+                var high = fields.len;
+                while (low < high) {
+                    try self.spend(20);
+                    const mid = low + (high - low) / 2;
+                    switch (fieldOrder(&fields[mid], operation.componentType, operation.field, operation.sourceField)) {
+                        .lt => low = mid + 1,
+                        .gt => high = mid,
+                        .eq => break :find mid,
+                    }
+                }
+                return error.InvalidEffects;
+            };
+            const counts = &remaining[index];
+            const count = switch (operation.kind) {
+                .read => &counts.reads,
+                .write => &counts.writes,
+            };
+            if (count.* == 0) return error.InvalidEffects;
+            count.* -= 1;
+        }
+        for (remaining) |*counts| {
+            try self.spend(1);
+            if (counts.reads != 0 or counts.writes != 0) return error.InvalidEffects;
         }
     }
     fn countFields(self: *Context, operations: []const Operation) ![]const FieldEffects {
@@ -647,11 +701,14 @@ fn sameCapabilities(a: []const Capability, b: []const Capability) bool {
     return true;
 }
 fn lessField(_: void, a: FieldEffects, b: FieldEffects) bool {
-    const component = std.mem.order(u8, a.componentType, b.componentType);
-    if (component != .eq) return component == .lt;
-    const field = std.mem.order(u8, a.field, b.field);
-    if (field != .eq) return field == .lt;
-    return lessString({}, a.sourceField, b.sourceField);
+    return fieldOrder(&a, b.componentType, b.field, b.sourceField) == .lt;
+}
+fn fieldOrder(row: *const FieldEffects, component_type: []const u8, field_id: []const u8, source_field: []const u8) std.math.Order {
+    const component = std.mem.order(u8, row.componentType, component_type);
+    if (component != .eq) return component;
+    const field = std.mem.order(u8, row.field, field_id);
+    if (field != .eq) return field;
+    return std.mem.order(u8, row.sourceField, source_field);
 }
 fn sameFieldRows(a: []const FieldEffects, b: []const FieldEffects) bool {
     if (a.len != b.len) return false;
