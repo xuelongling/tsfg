@@ -333,6 +333,29 @@ const Graph = struct {
         const actual=v.domains[@intFromEnum(expected.domain)].actual_types;
         try c.require(actual.len==tags.count()); for(actual) |tag| { try c.step(); try c.require(tags.contains(tag)); }
     }
+    fn initializerCodeTarget(self: *Graph, receiver: t.RegisterRef) Error!?t.FunctionRef {
+        const c = self.c;
+        var current = receiver;
+        // The reachable call's SSA dominance proof orders each unary source.
+        while (true) {
+            try c.charge(3);
+            const definition = self.definitions[@intFromEnum(current)];
+            if (definition.position < 0) return null;
+            try c.charge(3);
+            const producer = &self.f.blocks[definition.block].instructions[@intCast(definition.position)];
+            switch (producer.data) {
+                .function_make => |v| return v.function,
+                .domain_copy, .domain_view => {
+                    try c.charge(3);
+                    const source = producer.operands[0];
+                    if (!exact(self.carrierOf(current), self.carrierOf(source))) return null;
+                    current = source;
+                },
+                else => return null,
+            }
+        }
+    }
+
     fn commonCall(self: *Graph, op: *const ins.Instruction, b: usize, position: usize, initializer_callee: ?*?t.FunctionRef) Error!void {
         const c=self.c; const v=c.program.tables.mode.common; const method=std.meta.activeTag(op.data)==.common_method_invoke;
         const normal=if(method)op.data.common_method_invoke.normal else op.data.eh_invoke_indirect.normal;
@@ -387,18 +410,17 @@ const Graph = struct {
         if(method and !valued) { try c.require(output.len==0); return; }
         if(voids!=0)try c.require(!method and voids==targets.items.len and output.len==0)
         else { try c.require(output.len==1); try self.joined(self.carrierOf(output[0]),carriers.items); }
-        if(initializer_callee) |record| if(targets.items.len==1) {
-            // Use the saved Code's actual SSA definition and the same fixed
-            // call row that supplied the checked argument and result ABI.
+        if (initializer_callee) |record| {
             try c.charge(3);
-            const definition=self.definitions[@intFromEnum(op.operands[0])];
-            if(definition.position>=0) {
-                try c.charge(3);
-                const producer=self.f.blocks[definition.block].instructions[@intCast(definition.position)];
-                if(producer.data==.function_make and @intFromEnum(producer.data.function_make.function)==targets.items[0])
-                    record.*=producer.data.function_make.function;
+            if (targets.items.len == 1 and self.facts[b].reachable) {
+                // Join the saved Code to the same fixed call row that checked
+                // the argument and result ABI.
+                if (try self.initializerCodeTarget(op.operands[0])) |target| {
+                    try c.step();
+                    if (@intFromEnum(target) == targets.items[0]) record.* = target;
+                }
             }
-        };
+        }
     }
     fn legacyCallable(self: *Graph, op: *const ins.Instruction, signature: t.TypeRef) Error!void {
         const v=self.c.program.tables.mode.legacy; const row=v.types[@intFromEnum(signature)];

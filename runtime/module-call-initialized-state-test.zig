@@ -309,7 +309,7 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
             try std.testing.expectEqual(f.id,contract.function_id); try std.testing.expectEqual(f.signature,contract.signature_hash);
             try std.testing.expectEqualSlices(t.Hash,&.{g0,g1},contract.upper.globals.reads);
         }
-        var defined=[_]bool{false} ** 4;
+        var defined=[_]bool{false} ** saved_registers.len;
         for(f.registers) |r| { try c.carrier(r.carrier); try c.maybeRef(r.view,c.counts().types); }
         for(f.blocks,0..) |block,b| {
             for(block.parameters) |r| { const n=try c.ref(r,f.registers.len); try std.testing.expect(!defined[n]); defined[n]=true; }
@@ -347,6 +347,11 @@ fn prerequisites(c: *context.Context, foreign: bool) !void {
                     },
                     .domain_copy => |v| {
                         try std.testing.expect(v.static_view==callable_type and op.result==r3 and op.operands.len==1 and op.operands[0]==r2);
+                    },
+                    .domain_view => |v| {
+                        try std.testing.expect(v.static_view==callable_type and op.operands.len==1);
+                        try std.testing.expect((op.result==r3 and op.operands[0]==r2) or
+                            (op.result==saved_tail and op.operands[0]==r3));
                     },
                     .eh_invoke_indirect => |v| {
                         _=try c.ref(v.normal,f.blocks.len); _=try c.ref(v.exceptional,f.blocks.len);
@@ -530,20 +535,25 @@ test "module callback leaves a foreign Global outside the caller initialization 
 
 const Concrete = @typeInfo(@FieldType(storage.CommonStorage,"concrete")).pointer.child;
 const FixedCall = @typeInfo(@FieldType(@FieldType(tables.CommonTables,"closures"),"calls")).pointer.child;
-const saved_registers = [_]wire.Register{caller_registers[0],caller_registers[1],
-    .{ .carrier=callable_carrier,.view=callable_type },.{ .carrier=callable_carrier,.view=callable_type }};
+const SavedCodeTransport = enum { literal, copy, view, copy_view };
+const saved_tail: t.RegisterRef = @enumFromInt(4);
+const code_register: wire.Register = .{ .carrier=callable_carrier,.view=callable_type };
+const saved_registers = [_]wire.Register{caller_registers[0],caller_registers[1],code_register,code_register,code_register};
 const make_saved: ins.Instruction = .{ .source=anchor,.result=r2,.operands=&empty,.data=.{ .function_make=.{ .function=@enumFromInt(1) } } };
 const forward_saved: ins.Instruction = .{ .source=anchor,.result=r3,.operands=&.{r2},.data=.{ .domain_copy=.{ .static_view=callable_type } } };
+const view_saved: ins.Instruction = .{ .source=anchor,.result=r3,.operands=&.{r2},.data=.{ .domain_view=.{ .static_view=callable_type } } };
+const view_copied: ins.Instruction = .{ .source=anchor,.result=saved_tail,.operands=&.{r3},.data=view_saved.data };
 const invoke_saved: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{r2},
     .data=.{ .eh_invoke_indirect=.{ .callable=callable_type,.normal=@enumFromInt(1),.exceptional=@enumFromInt(2) } } };
 const invoke_forwarded: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{r3},.data=invoke_saved.data };
+const invoke_copied_view: ins.Instruction = .{ .source=anchor,.result=null,.operands=&.{saved_tail},.data=invoke_saved.data };
 
 const SavedCodeFixture = struct {
     types: [4]tables.CommonType,
     concrete: [4]Concrete,
     calls: [1]FixedCall,
 
-    fn install(self: *SavedCodeFixture, base: *Fixture, caller: *wire.Function, initialized: bool, forwarded: bool) void {
+    fn install(self: *SavedCodeFixture, base: *Fixture, caller: *wire.Function, comptime initialized: bool, comptime transport: SavedCodeTransport) void {
         const common=&base.program.tables.mode.common;
         self.types=base.types ++ [_]tables.CommonType{
             .{ .id=@splat(0x13),.kind=.@"void",.name="void",.native_code=0,.base=null,.element=null,.members=&.{},.methods=null,.nominal_key=null,.runtime_key=null },
@@ -553,14 +563,16 @@ const SavedCodeFixture = struct {
             .{ .@"type"=void_type,.carrier=.{ .layout=.{ .byte_size=0,.alignment=1,.reference_count=0 },.field_offsets=&.{} },.body=null },
             .{ .@"type"=callable_type,.carrier=.{ .layout=.{ .byte_size=40,.alignment=8,.reference_count=1 },.field_offsets=&.{} },.body=null },
         };
-        const instructions: []const ins.Instruction=if(forwarded)
-            &.{constant,make_saved,forward_saved,invoke_forwarded}
-        else if(initialized)
-            &.{constant,init0,make_saved,invoke_saved}
-        else
-            &.{constant,make_saved,invoke_saved};
+        const prefix = if (initialized) [_]ins.Instruction{constant,init0,make_saved} else [_]ins.Instruction{constant,make_saved};
+        const suffix = switch (transport) {
+            .literal => [_]ins.Instruction{invoke_saved},
+            .copy => [_]ins.Instruction{forward_saved,invoke_forwarded},
+            .view => [_]ins.Instruction{view_saved,invoke_forwarded},
+            .copy_view => [_]ins.Instruction{forward_saved,view_copied,invoke_copied_view},
+        };
+        const instructions = &(prefix ++ suffix);
         base.blocks[0].instructions=instructions;
-        caller.registers=saved_registers[0..if(forwarded)4 else 3];
+        caller.registers=saved_registers[0..switch (transport) { .literal => 3, .copy,.view => 4, .copy_view => 5 }];
         self.calls=.{.{ .function=@enumFromInt(0),.block=@enumFromInt(0),.instruction=@intCast(instructions.len-1),
             .signature=signature,.targets=&.{@enumFromInt(1)} }};
         common.types=&self.types;
@@ -569,11 +581,11 @@ const SavedCodeFixture = struct {
     }
 };
 
-fn checkSavedCode(case: Case, initialized: bool, forwarded: bool, rejected: bool) !void {
+fn checkSavedCode(case: Case, comptime initialized: bool, comptime transport: SavedCodeTransport, rejected: bool) !void {
     var fixture: Fixture=undefined;
     fixture.init(case);
     var saved: SavedCodeFixture=undefined;
-    saved.install(&fixture,&fixture.functions[0],initialized,forwarded);
+    saved.install(&fixture,&fixture.functions[0],initialized,transport);
     var c=context.Context{ .program=&fixture.program,.allocator=std.testing.allocator };
     try prerequisites(&c,false);
     var fixed=try fixed_targets.analyze(&c);
@@ -581,18 +593,22 @@ fn checkSavedCode(case: Case, initialized: bool, forwarded: bool, rejected: bool
     if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
 }
 
-test "module fixed Code rejects a read before initialization" { try checkSavedCode(.before_init,false,false,true); }
-test "module fixed Code accepts an initialized read" { try checkSavedCode(.after_init,true,false,false); }
-test "module fixed Code rejects a write before initialization" { try checkSavedCode(.store_before_init,false,false,true); }
-test "module fixed Code accepts an initialized write" { try checkSavedCode(.store_after_init,true,false,false); }
-test "module fixed Code uses the saved FunctionRef over an uncalled same-name target" { try checkSavedCode(.other_callee,false,false,false); }
-test "module fixed Code keeps forwarded receivers outside this local proof" { try checkSavedCode(.before_init,false,true,false); }
+test "module fixed Code rejects a read before initialization" { try checkSavedCode(.before_init,false,.literal,true); }
+test "module fixed Code accepts an initialized read" { try checkSavedCode(.after_init,true,.literal,false); }
+test "module fixed Code rejects a write before initialization" { try checkSavedCode(.store_before_init,false,.literal,true); }
+test "module fixed Code accepts an initialized write" { try checkSavedCode(.store_after_init,true,.literal,false); }
+test "module fixed Code uses the saved FunctionRef over an uncalled same-name target" { try checkSavedCode(.other_callee,false,.literal,false); }
+test "module fixed Code copy still requires initialization before a read" { try checkSavedCode(.before_init,false,.copy,true); }
+test "module fixed Code copy allows an initialized read" { try checkSavedCode(.after_init,true,.copy,false); }
+test "module fixed Code view still requires initialization before a write" { try checkSavedCode(.store_before_init,false,.view,true); }
+test "module fixed Code view allows an initialized write" { try checkSavedCode(.store_after_init,true,.view,false); }
+test "module fixed Code copy followed by a view keeps the exact target" { try checkSavedCode(.before_init,false,.copy_view,true); }
 
 test "module fixed Code leaves foreign Globals to the verified module order" {
     var fixture: CrossFixture=undefined;
     fixture.init(.foreign_read);
     var saved: SavedCodeFixture=undefined;
-    saved.install(&fixture.base,&fixture.functions[0],false,false);
+    saved.install(&fixture.base,&fixture.functions[0],false,.literal);
     var c=context.Context{ .program=&fixture.base.program,.allocator=std.testing.allocator };
     try prerequisites(&c,true);
     try module_contracts.checkModules(&c);
