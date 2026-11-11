@@ -214,6 +214,132 @@ bool isolateReturnStorage(ActualCheck &check,const std::map<std::string,const Js
     if(kind!="numericLiteral"&&kind!="booleanLiteral"&&kind!="nullLiteral"&&kind!="undefinedLiteral")return false;
     std::string type;if(!copyId(field(*value,"type"),type)||!work(p,e))return false;const auto found=types.find(type);return found!=types.end()&&native(field(*found->second,"kind").getAsString().value());
   };
+  const auto atom=[](const Json &row,llvm::StringRef key){return field(row,key).getAsString().value_or(llvm::StringRef{});};
+  const auto view=[&](const Json &row,llvm::StringRef type){return atom(row,"type")==type&&atom(row,"declaredType")==type;};
+  const auto closedSource=[&](const Json &fn){
+    return atom(fn,"kind")=="source"&&atom(field(fn,"declKey"),"kind")=="function"&&
+      field(fn,"ownerType").getAsNull()&&field(fn,"lexicalParent").getAsNull()&&
+      field(fn,"lexicalEnvironment").getAsNull()&&field(fn,"activationEnvironment").getAsNull()&&
+      field(fn,"parameterInitialization").getAsNull()&&items(field(fn,"captures")).empty();
+  };
+  struct TransportBody {
+    std::map<llvm::StringRef,size_t> declarations;
+    std::map<llvm::StringRef,const Json *> locals;
+    std::map<llvm::StringRef,std::vector<const Json *>> reads;
+    std::set<llvm::StringRef> initializes;
+    std::set<const Json *> fieldReceivers;
+  };
+  const auto indexTransportBody=[&](const Json &fn,const std::vector<const Json *> &rows,TransportBody &index){
+    const auto &statements=items(field(fn,"body"));
+    for(size_t i=0;i<statements.size();++i){
+      if(!work(p,e))return false;
+      if(atom(statements[i],"kind")!="constDeclaration")continue;
+      const auto id=atom(statements[i],"binding");if(!work(p,e,id.size()/8+1))return false;
+      index.declarations.emplace(id,i);
+    }
+    for(const auto &binding:items(field(fn,"bindings"))){
+      const auto id=atom(binding,"id");if(!work(p,e,id.size()/8+1))return false;
+      if(index.declarations.count(id))index.locals.emplace(id,&binding);
+    }
+    for(const auto *row:rows){
+      if(!work(p,e))return false;
+      const auto kind=atom(*row,"kind");
+      if(kind=="fieldAccess"||kind=="fieldTarget")index.fieldReceivers.insert(&field(*row,"receiver"));
+      if(kind!="bindingReference"&&kind!="initialize")continue;
+      const auto id=atom(*row,"binding");if(!work(p,e,id.size()/8+1))return false;
+      if(!index.declarations.count(id))continue;
+      if(kind=="bindingReference")index.reads[id].push_back(row);
+      else index.initializes.insert(id);
+    }
+    return true;
+  };
+  const auto immutableLocal=[&](const TransportBody &index,const std::set<std::string> &writes,
+      llvm::StringRef id,llvm::StringRef owner,llvm::StringRef type,size_t before)->std::optional<size_t>{
+    if(id.empty()||!work(p,e,(id.size()+owner.size()+type.size())/8+2))return std::nullopt;
+    const auto declaration=index.declarations.find(id);
+    const auto local=index.locals.find(id);
+    if(declaration==index.declarations.end()||declaration->second>=before||local==index.locals.end()||
+        index.initializes.count(id)||writes.count(id.str()))return std::nullopt;
+    const auto &binding=*local->second;
+    if(atom(binding,"kind")!="local"||atom(binding,"lexicalOwner")!=owner||atom(binding,"type")!=type||
+        field(binding,"writable").getAsBoolean()!=false)return std::nullopt;
+    return declaration->second;
+  };
+  std::optional<std::set<std::string>> capturedBindings;
+  const auto uncaptured=[&](llvm::StringRef origin,llvm::StringRef returned,llvm::StringRef restored){
+    if(!capturedBindings){
+      capturedBindings.emplace();
+      for(const auto &[id,owner]:functions){
+        const auto &captures=items(field(*owner,"captures"));if(!work(p,e,captures.size()+1))return false;
+        for(const auto &capture:captures){
+          std::string binding;if(!copyId(field(capture,"binding"),binding))return false;
+          capturedBindings->insert(std::move(binding));
+        }
+      }
+    }
+    return work(p,e,(origin.size()+returned.size()+restored.size())/8+1)&&
+      !capturedBindings->count(origin.str())&&!capturedBindings->count(returned.str())&&!capturedBindings->count(restored.str());
+  };
+  // Seed only the original nominal type from the verified Source transport.
+  const auto closedTransport=[&](const Json &fn,const TransportBody &index,size_t restoreIndex,
+      const std::set<std::string> &writes,std::set<const Json *> &proven){
+    const auto &statements=items(field(fn,"body"));
+    const auto &restore=statements[restoreIndex];
+    const auto &back=field(restore,"initializer"),&backErasure=field(back,"expression"),&returnedRead=field(backErasure,"expression");
+    const auto nominal=atom(back,"type"),erased=atom(backErasure,"type"),scalar=atom(returnedRead,"type");
+    if(!work(p,e,(nominal.size()+erased.size()+scalar.size())/8+1)||nominal.empty()||erased.empty()||scalar.empty())return false;
+    const auto nominalType=types.find(nominal.str()),erasedType=types.find(erased.str()),scalarType=types.find(scalar.str());
+    if(nominalType==types.end()||erasedType==types.end()||scalarType==types.end()||
+        (atom(*nominalType->second,"kind")!="value"&&atom(*nominalType->second,"kind")!="reference")||
+        atom(*erasedType->second,"kind")!="unknown"||atom(*scalarType->second,"kind")!="scalar"||
+        atom(back,"kind")!="as"||!view(back,nominal)||atom(backErasure,"kind")!="as"||!view(backErasure,erased)||
+        atom(returnedRead,"kind")!="bindingReference"||!view(returnedRead,scalar))return false;
+    const auto owner=atom(fn,"id"),returnedId=atom(returnedRead,"binding"),restoreId=atom(restore,"binding");
+    if(immutableLocal(index,writes,restoreId,owner,nominal,restoreIndex+1)!=restoreIndex)return false;
+    const auto returnedIndex=immutableLocal(index,writes,returnedId,owner,scalar,restoreIndex);
+    if(!returnedIndex)return false;
+    const auto erasedUses=index.reads.find(returnedId);
+    if(erasedUses==index.reads.end()||erasedUses->second.size()!=1||erasedUses->second.front()!=&returnedRead)return false;
+    const auto &call=field(statements[*returnedIndex],"initializer");
+    const auto &arguments=items(field(call,"arguments"));const auto callee=atom(call,"callee");
+    if(!work(p,e,callee.size()/8+1)||callee.empty()||atom(call,"kind")!="call"||!field(call,"receiver").getAsNull()||
+        arguments.size()!=1||!view(call,scalar))return false;
+    const auto targetFunction=functions.find(callee.str());
+    if(targetFunction==functions.end())return false;
+    const auto &target=*targetFunction->second;
+    const auto &parameters=items(field(target,"parameters")),&targetBody=items(field(target,"body"));
+    if(!work(p,e,5)||!closedSource(target)||!items(field(target,"bindings")).empty()||parameters.size()!=1||targetBody.size()!=1||
+        atom(target,"returnType")!=scalar||atom(parameters.front(),"type")!=scalar)return false;
+    const auto &targetReturn=targetBody.front(),&returnedParameter=field(targetReturn,"value");
+    if(atom(targetReturn,"kind")!="return"||atom(returnedParameter,"kind")!="bindingReference"||!view(returnedParameter,scalar)||
+        atom(returnedParameter,"binding")!=atom(parameters.front(),"id"))return false;
+    const auto &toScalar=arguments.front(),&frontErasure=field(toScalar,"expression"),&originRead=field(frontErasure,"expression");
+    if(atom(toScalar,"kind")!="as"||!view(toScalar,scalar)||atom(frontErasure,"kind")!="as"||!view(frontErasure,erased)||
+        atom(originRead,"kind")!="bindingReference"||!view(originRead,nominal))return false;
+    const auto originId=atom(originRead,"binding");
+    const auto originIndex=immutableLocal(index,writes,originId,owner,nominal,*returnedIndex);
+    if(!originIndex)return false;
+    const auto &allocation=field(statements[*originIndex],"initializer"),&ctor=field(*nominalType->second,"construction");
+    const auto constructor=atom(ctor,"id");
+    if(!work(p,e,constructor.size()/8+1)||constructor.empty()||atom(allocation,"kind")!="new"||!view(allocation,nominal)||
+        atom(allocation,"callee")!=nominal||atom(allocation,"construction")!=constructor||!items(field(allocation,"arguments")).empty()||
+        !field(*nominalType->second,"base").getAsNull()||atom(ctor,"kind")!="implicit-base"||!field(ctor,"functionId").getAsNull()||
+        !field(ctor,"implicitForward").getAsNull()||!items(field(ctor,"parameters")).empty())return false;
+    const auto onlyFieldReceivers=[&](llvm::StringRef id,const Json *erasure){
+      if(!work(p,e,id.size()/8+1))return false;
+      const auto uses=index.reads.find(id);if(uses==index.reads.end())return true;
+      for(const auto *read:uses->second){
+        if(!work(p,e,nominal.size()/8+1))return false;
+        if(read!=erasure&&(!index.fieldReceivers.count(read)||!view(*read,nominal)))return false;
+      }
+      return true;
+    };
+    if(!onlyFieldReceivers(originId,&originRead)||!onlyFieldReceivers(restoreId,nullptr))return false;
+    if(!uncaptured(originId,returnedId,restoreId))return false;
+    if(!work(p,e,nominal.size()/8+5))return false;
+    for(const auto *assertion:{&toScalar,&frontErasure,&back,&backErasure})proven.insert(assertion);
+    seeds.insert(nominal.str());return true;
+  };
   const auto body=[&](const Json &initial,std::vector<std::string> signature){
     if(!work(p,e))return false;std::vector<const Json *> rows,pending{&initial};std::set<std::string> writes;
     const auto append=[&](const Json &value){std::string type;if(!copyId(value,type)||!work(p,e))return false;signature.push_back(std::move(type));return true;};
@@ -241,13 +367,29 @@ bool isolateReturnStorage(ActualCheck &check,const std::map<std::string,const Js
         if(!work(p,e,caught.size()/8+1))return false;catches.insert(std::move(caught));}
       if(!e.message.empty())return false;
     }
-    if(!work(p,e,rows.size()))return false;
+    if(!work(p,e,rows.size()))return false;std::set<const Json *> unresolved;
     for(const auto *row:rows){const auto kind=string(field(*row,"kind"));if(kind!="as"&&kind!="parentheses"&&kind!="nonNull")continue;
       std::string targetId,sourceId;if(!copyId(field(*row,"type"),targetId)||!copyId(field(field(*row,"expression"),"type"),sourceId)||!work(p,e))return false;
       const auto target=types.find(targetId),from=types.find(sourceId);if(target==types.end()||from==types.end()){uncertain=true;continue;}
       const auto targetKind=field(*target->second,"kind").getAsString().value(),sourceKind=field(*from->second,"kind").getAsString().value();
-      if((targetKind=="unknown"||sourceKind=="unknown")&&((!native(targetKind)&&targetKind!="unknown")||!nativePayload(field(*row,"expression"),catches)))uncertain=true;
+      if((targetKind=="unknown"||sourceKind=="unknown")&&((!native(targetKind)&&targetKind!="unknown")||!nativePayload(field(*row,"expression"),catches))){
+        if(!work(p,e))return false;unresolved.insert(row);}
       if(!e.message.empty())return false;
+    }
+    if(!uncertain&&!unresolved.empty()){
+      std::set<const Json *> proven;
+      if(closedSource(initial)){
+        const auto &statements=items(field(initial,"body"));
+        std::optional<TransportBody> bodyIndex;
+        for(size_t index=0;index<statements.size();++index){
+          if(!work(p,e))return false;const auto &row=statements[index];
+          if(atom(row,"kind")=="constDeclaration"&&unresolved.count(&field(row,"initializer"))){
+            if(!bodyIndex){bodyIndex.emplace();if(!indexTransportBody(initial,rows,*bodyIndex))return false;}
+            if(!closedTransport(initial,*bodyIndex,index,writes,proven)&&!e.message.empty())return false;
+          }
+        }
+      }
+      for(const auto *row:unresolved){if(!work(p,e))return false;if(!proven.count(row)){uncertain=true;break;}}
     }
     if(!work(p,e,signature.size()))return false;std::vector<std::string> relevant;
     for(auto &type:signature){if(!work(p,e,type.size()/8+1))return false;const auto found=types.find(type);if(found==types.end()){uncertain=true;continue;}

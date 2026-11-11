@@ -48,7 +48,90 @@ export function commonFixedStorageIsolation(hir,spend) {
     return ['numericLiteral','booleanLiteral','nullLiteral','undefinedLiteral'].includes(value.kind)&&native.has(types.get(value.type)?.kind);
   };
   const nativeCatches=commonNativeCatchBindings(hir,spend,nativePayload);
-  const body=(initial,signature)=>{const rows=[],pending=[initial],writes=new Set();
+  const closedSource=fn=>fn?.kind==='source'&&fn.declKey.kind==='function'&&fn.ownerType==null&&
+    fn.lexicalParent===null&&fn.lexicalEnvironment===null&&fn.activationEnvironment===null&&
+    !fn.parameterInitialization&&fn.captures.length===0;
+  const view=(value,type)=>value.type===type&&value.declaredType===type;
+  let capturedBindings;
+  const closedNominalCasts=(fn,rows,writes)=>{
+    const proved=new Set();
+    if(!closedSource(fn))return proved;
+    const declarations=new Map(),restores=[];
+    for(const [index,statement] of fn.body.entries()){
+      spend();
+      if(statement.kind!=='constDeclaration')continue;
+      const value=statement.initializer;
+      declarations.set(statement.binding,{index,value});
+      const nominal=types.get(value.type);
+      if((nominal?.kind==='value'||nominal?.kind==='reference')&&value.kind==='as'&&value.expression.kind==='as'&&
+        types.get(value.expression.type)?.kind==='unknown'&&value.expression.expression.kind==='bindingReference')
+        restores.push({binding:statement.binding,index,value,nominal});
+    }
+    if(!restores.length)return proved;
+    if(!capturedBindings){
+      capturedBindings=new Set();
+      for(const owner of functions.values()){
+        spend(owner.captures.length+1);
+        for(const capture of owner.captures)capturedBindings.add(capture.binding);
+      }
+    }
+    const locals=new Map(),uses=new Map(),fieldReceivers=new Set(),initializations=new Set();
+    spend(fn.bindings.length);
+    for(const binding of fn.bindings)locals.set(binding.id,binding);
+    for(const row of rows){
+      spend();
+      if(row.kind==='bindingReference'&&declarations.has(row.binding)){
+        let list=uses.get(row.binding);
+        if(!list){list=[];uses.set(row.binding,list);}
+        list.push(row);
+      }
+      if(row.kind==='fieldAccess'||row.kind==='fieldTarget')fieldReceivers.add(row.receiver);
+      if(row.kind==='initialize')initializations.add(row.binding);
+    }
+    const immutable=(id,type,before)=>{
+      spend();
+      const local=locals.get(id),declaration=declarations.get(id);
+      if(local?.kind==='local'&&local.lexicalOwner===fn.id&&local.writable===false&&local.type===type&&
+        declaration&&declaration.index<before&&!writes.has(id)&&!initializations.has(id)&&!capturedBindings.has(id))return declaration;
+    };
+    // The erased scalar travels only through the one verified identity body.
+    // Seed its original nominal component rather than making other types Open.
+    for(const {binding,index,value,nominal} of restores){
+      spend();
+      const restored=value.expression,read=restored.expression,scalar=read.type;
+      if(types.get(scalar)?.kind!=='scalar'||!view(read,scalar)||!view(value,nominal.id)||!view(restored,restored.type)||
+        !immutable(binding,nominal.id,index+1))continue;
+      const erased=immutable(read.binding,scalar,index),call=erased?.value;
+      const erasedUses=uses.get(read.binding);
+      if(!erased||call.kind!=='call'||!view(call,scalar)||call.receiver!=null||call.arguments.length!==1||
+        erasedUses?.length!==1||erasedUses[0]!==read)continue;
+      const callee=functions.get(call.callee);
+      if(!closedSource(callee)||callee.parameters.length!==1||callee.bindings.length||
+        callee.returnType!==scalar||callee.body.length!==1)continue;
+      const [formal]=callee.parameters,[exit]=callee.body;
+      if(formal.type!==scalar||exit.kind!=='return'||exit.value?.kind!=='bindingReference'||
+        exit.value.binding!==formal.id||!view(exit.value,scalar))continue;
+      const [argument]=call.arguments;
+      if(argument.kind!=='as'||!view(argument,scalar)||argument.expression.kind!=='as'||
+        !view(argument.expression,restored.type))continue;
+      const erase=argument.expression,origin=erase.expression;
+      if(origin.kind!=='bindingReference'||!view(origin,nominal.id)||origin.binding===binding)continue;
+      const original=immutable(origin.binding,nominal.id,erased.index),allocation=original?.value;
+      if(!allocation||allocation.kind!=='new'||!view(allocation,nominal.id)||allocation.callee!==nominal.id||
+        allocation.arguments.length||nominal.base||nominal.construction?.kind!=='implicit-base'||
+        nominal.construction.functionId!==null||nominal.construction.implicitForward!==null||nominal.construction.parameters.length||
+        allocation.construction!==nominal.construction.id)continue;
+      const originalUses=uses.get(origin.binding)??[],restoredUses=uses.get(binding)??[];
+      spend(originalUses.length+restoredUses.length);
+      const fieldReceiver=use=>fieldReceivers.has(use)&&view(use,nominal.id);
+      if(originalUses.some(use=>use!==origin&&!fieldReceiver(use))||
+        restoredUses.some(use=>!fieldReceiver(use)))continue;
+      seeds.add(nominal.id);
+      for(const cast of [argument,erase,value,restored])proved.add(cast);
+    }
+    return proved;
+  };
+  const body=(initial,signature,owner=null)=>{const rows=[],pending=[initial],writes=new Set();
     while(pending.length){spend();const row=pending.pop();if(row===null||typeof row!=='object')continue;
       if(Array.isArray(row)){spend(row.length);for(const child of row)pending.push(child);continue;}rows.push(row);
       if(row.type!==undefined){spend();signature.push(row.type);if(row.declaredType!==undefined)signature.push(row.declaredType);}
@@ -63,11 +146,16 @@ export function commonFixedStorageIsolation(hir,spend) {
     const catches=new Set();spend(rows.length);
     for(const row of rows)if(row.kind==='try'&&row.catchClause?.binding){spend();const caught=row.catchClause.binding.id,protectedRows=row.tryBlock.body;
       if(!writes.has(caught)&&(nativeCatches.has(caught)||protectedRows.length===1&&protectedRows[0].kind==='throw'&&nativePayload(protectedRows[0].value,new Set())))catches.add(caught);}
-    spend(rows.length);
+    spend(rows.length);let closedCasts;
     for(const row of rows)if(['as','parentheses','nonNull'].includes(row.kind)){spend();const target=types.get(row.type),from=types.get(row.expression.type);
       if(!target||!from){uncertain=true;continue;}
       if((target.kind==='unknown'||from.kind==='unknown')&&
-        (!native.has(target.kind)&&target.kind!=='unknown'||!nativePayload(row.expression,catches)))uncertain=true;
+        (!native.has(target.kind)&&target.kind!=='unknown'||!nativePayload(row.expression,catches))){
+        if(!uncertain){
+          closedCasts??=closedNominalCasts(owner,rows,writes);
+          if(!closedCasts.has(row))uncertain=true;
+        }
+      }
     }
     spend(signature.length);const relevant=signature.filter(id=>{const type=types.get(id);if(!type){uncertain=true;return false;}return type.kind!=='unknown'&&identity(id);});
     for(let index=1;index<relevant.length;index++)connect(relevant[0],relevant[index]);
@@ -78,7 +166,7 @@ export function commonFixedStorageIsolation(hir,spend) {
     spend(2);for(const initial of [fn.lexicalEnvironment,fn.activationEnvironment]){let environment=initial;const visited=new Set();
       while(environment){spend();if(visited.has(environment)){uncertain=true;break;}visited.add(environment);const layout=environments.get(environment);
         if(!layout){uncertain=true;break;}spend(layout.slots.length);for(const slot of layout.slots)signature.push(slot.type);environment=layout.parent;}}
-    spend(fn.bindings.length);for(const binding of fn.bindings)signature.push(binding.type);body(fn,signature);
+    spend(fn.bindings.length);for(const binding of fn.bindings)signature.push(binding.type);body(fn,signature,fn);
   }
   for(const type of hir.types){spend();for(const field of type.fields??[]){spend();if(field.initializer)body(field.initializer,[type.id,field.type]);}
     if(type.construction)body(type.construction.parameters,[type.id]);}

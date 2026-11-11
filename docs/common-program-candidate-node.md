@@ -172,6 +172,12 @@ tuple. Consumers cannot upgrade fixed TOP using narrower current observations,
 and actual data outside a known fixed bound is rejected. Reference identity can
 remain known while that reference body has no physical field route.
 
+A closed local round trip through an erased scalar can establish its nominal
+origin. The proof requires fresh implicit-base construction, a direct identity
+function, and one use that restores the same nominal type. The originating
+type and its connected types remain open. Unresolved or escaping erased
+values trigger package-wide storage uncertainty.
+
 Node metadata admission and publication identity retain their existing 100,000
 work allowance. Source, graph and body-effect analysis share the existing
 cumulative private Core7 physical allowance of 4,000,000, both at first publication and when

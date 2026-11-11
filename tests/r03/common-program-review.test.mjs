@@ -47,6 +47,7 @@ test('common cold boundary rejects noncanonical unknown IDs without changing Sou
 });
 test('real hidden-value whole package accepts the common unknown assertion boundary',async()=>{
   const bytes=await fs.readFile(new URL('./common-program-hidden-value-copy.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:2a1306853b1225d5d476fbc32e4a6ce0bd753bc405756543a016467fa3a6c4a8');
   const facts=readCommonProgramFacts(bytes),hir=buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId});
   assert.equal(hir.functions.length,7);assert.ok(hir.types.some(type=>type.name==='Carrier'));
   const physical=commonProgramPhysical(hir),relay=hir.functions.find(fn=>fn.name==='relayHidden'),id=hir.functions.find(fn=>fn.name==='id'),carrier=hir.types.find(t=>t.name==='Carrier');
@@ -58,6 +59,12 @@ test('real hidden-value whole package accepts the common unknown assertion bound
   const after=[...throughId.returned.refs].flatMap(ref=>[...throughId.normalHeap.get(ref+'/field/'+box.id).refs]).sort();assert.deepEqual(after,before);
   const abi=physical.carriers.functions.get(id.id),domain=physical.carriers.domains.get(abi.parameters[0]);assert.ok(domain.actualTypes.includes(carrier.id));assert.ok(domain.referenceCount>0);
   const publication=createCommonProgramPublication(hir),analysis=analyzeCommonProgram(hir,publication);
+  const delta=hir.types.find(type=>type.name==='Delta'),boxType=hir.types.find(type=>type.name==='Box');
+  const fixedFields=publication.scope.storage.fields;
+  assert.deepEqual(fixedFields.find(row=>row.fieldId===delta.fields[0].id),
+    {fieldId:delta.fields[0].id,unknown:false,actualTypes:[delta.fields[0].type]});
+  for(const type of [carrier,boxType])for(const field of type.fields)
+    assert.deepEqual(fixedFields.find(row=>row.fieldId===field.id),{fieldId:field.id,unknown:true,actualTypes:[]});
   assert.equal(analysis.functions.find(f=>f.functionId===id.id).effective.facets.managedReference,true);
   const positive={targets:hir.closure.roots.filter(r=>['left','right'].includes(r.name)).map(r=>r.target).sort()},negative={targets:hir.closure.roots.filter(r=>r.kind==='kernel').map(r=>r.target).sort()};
   const core=commonProgramCore(hir,publication,positive);assert.equal((core.text.match(/func\.func @/g)??[]).length,8);
