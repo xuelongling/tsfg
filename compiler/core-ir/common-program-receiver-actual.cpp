@@ -196,19 +196,164 @@ ActualFrameWorld ActualCheck::copyFrames(const ActualFrameWorld &world){
     if(!step(6))return {};auto owned=copyFrame(value);if(!e.message.empty())return {};
     result.emplace_hint(result.end(),id,std::move(owned));}return result;
 }
-bool ActualCheck::joinFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
-  if(&into==&from)return false;if(!step(from.size()))return false;bool changed=false;
-  for(const auto &[id,incoming]:from){const auto found=findFrame(*this,into,id.text());if(!found)return false;
-    if(*found==into.end()){if(!receiverText(id.text())||!step(8))return false;auto owned=copyFrame(incoming);if(!e.message.empty()||!step(4))return false;into.emplace(id,std::move(owned));changed=true;continue;}
-    auto &v=(*found)->second;changed=merge(v.bound,incoming.bound)||changed;if(!step(incoming.births.size()))return false;
-    for(const auto &[slot,row]:incoming.births){if(!step())return false;auto old=v.births.find(slot);
-      if(old==v.births.end()){auto owned=copyBirth(row);if(!e.message.empty())return false;v.births.emplace(slot,std::move(owned));changed=true;}
-      else {changed=merge(old->second.real,row.real)||changed;if(row.pending&&!old->second.pending){old->second.pending=true;changed=true;}}}
+namespace {
+bool prepayTreeAdvance(ActualCheck &check,size_t count,size_t passes=1){
+  if(!check.step())return false;
+  size_t height=2;
+  for(auto remaining=count;remaining;remaining>>=1){
+    if(!check.step())return false;
+    height+=2;
+  }
+  return check.step(height*passes);
+}
+std::optional<int> frameOrder(ActualCheck &check,const ActualFrameId &left,const ActualFrameId &right){
+  if(!check.step(4))return {};
+  if(left.owner()==right.owner())return 0;
+  if(!check.step(5))return {};
+  const auto a=left.view(),b=right.view();
+  const auto common=std::min(a.size(),b.size());
+  // The first different unsigned byte determines native FrameId order.
+  for(size_t index=0;index<common;){
+    if(!check.step(5))return {};
+    const auto width=std::min<size_t>(8,common-index);
+    if(!check.step(2*width+4))return {};
+    const auto order=a.substr(index,width).compare(b.substr(index,width));
+    if(order)return order;
+    index+=width;
+  }
+  if(!check.step(3))return {};
+  return a.size()==b.size()?0:a.size()<b.size()?-1:1;
+}
+constexpr size_t birthCompareWork=7;
+std::optional<int> birthOrder(ActualCheck &check,const ActualFieldSlot *left,const ActualFieldSlot *right){
+  if(!check.step(2))return {};
+  if(left==right)return 0;
+  if(!check.step(2*birthCompareWork))return {};
+  const ActualFieldSlotLess less;
+  return less(left,right)?-1:less(right,left)?1:0;
+}
+template<class Map>
+struct JoinRow {typename Map::iterator position;bool present;};
+template<class Map,class Key,class Order>
+std::optional<JoinRow<Map>> ownedJoinRow(ActualCheck &check,Map &into,typename Map::iterator &next,const Key &key,Order order){
+  // Both inputs have the same native order. Insertions occur before next,
+  // and an already matched row cannot match a subsequent incoming key.
+  while(true){
+    if(!check.step(3))return {};
+    if(next==into.end())return JoinRow<Map>{next,false};
+    const auto relation=order(check,next->first,key);
+    if(!relation)return {};
+    if(*relation>0)return JoinRow<Map>{next,false};
+    if(!prepayTreeAdvance(check,into.size()))return {};
+    const auto previous=next++;
+    if(*relation==0)return JoinRow<Map>{previous,true};
+  }
+}
+bool prepayFrameHint(ActualCheck &check,const ActualFrameWorld &world,ActualFrameWorld::iterator hint,const ActualFrameId &id){
+  if(!check.step(4)||!prepayTreeAdvance(check,world.size(),2))return false;
+  if(hint!=world.end()&&!check.step(2*(id.size()+hint->first.size()+1)))return false;
+  if(hint!=world.begin()){
+    if(!prepayTreeAdvance(check,world.size()))return false;
+    const auto previous=std::prev(hint);
+    if(!check.step(2*(id.size()+previous->first.size()+1)))return false;
+  }
+  return check.step(12);
+}
+template<class World>
+bool joinFrameWorld(ActualCheck &check,ActualFrameWorld &into,World &from){
+  if(&into==&from)return false;
+  constexpr bool take=!std::is_const_v<World>;
+  if constexpr(take){
+    if(!check.step(2))return false;
+    if(into.empty()&&!from.empty()){
+      if(!check.step(3))return false;
+      into=std::move(from);
+      return true;
+    }
+  }
+  if(!check.step(from.size()))return false;bool changed=false;
+  ActualFrameWorld::iterator next;
+  if constexpr(take){
+    if(!check.step(2))return false;
+    next=into.begin();
+  }
+  for(auto &[id,incoming]:from){
+    const auto found=[&]()->std::optional<JoinRow<ActualFrameWorld>>{
+      if constexpr(take)return ownedJoinRow(check,into,next,id,frameOrder);
+      const auto prior=findFrame(check,into,id.text());
+      if(!prior)return {};
+      return JoinRow<ActualFrameWorld>{*prior,*prior!=into.end()};
+    }();
+    if(!found)return false;
+    if(!found->present){
+      if constexpr(take){
+        if(!prepayFrameHint(check,into,found->position,id))return false;
+        into.emplace_hint(found->position,id,std::move(incoming));
+      }else{
+        if(!check.receiverText(id.text())||!check.step(8))return false;
+        auto owned=check.copyFrame(incoming);
+        if(!check.e.message.empty()||!check.step(4))return false;
+        into.emplace(id,std::move(owned));
+      }
+      changed=true;continue;
+    }
+    auto &v=found->position->second;changed=check.merge(v.bound,incoming.bound)||changed;if(!check.step(incoming.births.size()))return false;
+    ActualBirthJournal::iterator nextBirth;
+    if constexpr(take){
+      if(!check.step(2))return false;
+      nextBirth=v.births.begin();
+    }
+    for(auto &[slot,row]:incoming.births){
+      if(!check.step())return false;
+      const auto old=[&]()->std::optional<JoinRow<ActualBirthJournal>>{
+        if constexpr(take)return ownedJoinRow(check,v.births,nextBirth,slot,birthOrder);
+        const auto prior=v.births.find(slot);
+        return JoinRow<ActualBirthJournal>{prior,prior!=v.births.end()};
+      }();
+      if(!old)return false;
+      if(!old->present){
+        if constexpr(take){
+          // Debug can compare both adjacent keys in both directions.
+          if(!check.step(5+4*birthCompareWork)||!prepayTreeAdvance(check,v.births.size(),2))return false;
+          v.births.emplace_hint(old->position,slot,std::move(row));
+        }else{
+          auto owned=check.copyBirth(row);if(!check.e.message.empty())return false;
+          v.births.emplace(slot,std::move(owned));
+        }
+        changed=true;
+      }else{
+        auto &existing=old->position->second;
+        changed=check.merge(existing.real,row.real)||changed;
+        if(row.pending&&!existing.pending){existing.pending=true;changed=true;}
+      }
+    }
     const auto before=std::make_tuple(v.unbound,v.weak,v.pending,v.initializing,v.aborted,v.prefixMin,v.prefixMax);
     v.unbound|=incoming.unbound;v.weak|=incoming.weak;v.pending|=incoming.pending;v.initializing|=incoming.initializing;v.aborted|=incoming.aborted;
     v.prefixMin=std::min(v.prefixMin,incoming.prefixMin);v.prefixMax=std::max(v.prefixMax,incoming.prefixMax);
     changed|=before!=std::make_tuple(v.unbound,v.weak,v.pending,v.initializing,v.aborted,v.prefixMin,v.prefixMax);
-  }return e.message.empty()&&changed;
+  }return check.e.message.empty()&&changed;
+}
+}
+bool ActualCheck::joinFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
+  return joinFrameWorld(*this,into,from);
+}
+bool ActualCheck::join(ActualState &to,ActualState &&from){
+  // The edge owns its incoming state. Missing bindings and journal rows can
+  // move while existing rows, heap, SSA and relations retain their joins.
+  if(!e.message.empty())return false;
+  bool changed=joinFrameWorld(*this,to.frames,from.frames);
+  changed=mergeHeap(to.heap,std::move(from.heap))||changed;
+  changed=regionJoin(*this,to.regions,from.regions)||changed;
+  if(!step(from.values.size()))return false;
+  for(auto &[id,v]:from.values){
+    auto found=to.values.find(id);
+    if(found==to.values.end()){
+      if(!step())return false;
+      to.values.emplace(id,std::move(v));changed=true;
+    }else changed=merge(found->second,v)||changed;
+    if(!e.message.empty())return false;
+  }
+  return changed;
 }
 bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &from){
   if(&into==&from)return true;auto owned=copyFrames(from);if(!e.message.empty()||!step(owned.size()))return false;

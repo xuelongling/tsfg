@@ -278,15 +278,6 @@ ActualState ActualCheck::copyState(const ActualState &s){
   auto regions=regionCopy(*this,s.regions);if(!e.message.empty())return {};
   return copyStateWithOwnedStores(s.values,std::move(heap),std::move(regions),std::move(frames));
 }
-bool ActualCheck::join(ActualState &to,ActualState &&from){
-  // The caller transfers a private edge state. Moving its heap/value payloads
-  // leaves the independent relation plane available for the original join.
-  bool changed=joinFrames(to.frames,from.frames);changed=mergeHeap(to.heap,std::move(from.heap))||changed;changed=regionJoin(*this,to.regions,from.regions)||changed;if(!step(from.values.size()))return false;
-  for(auto &[id,v]:from.values){auto found=to.values.find(id);
-    if(found==to.values.end()){if(!step())return false;to.values.emplace(id,std::move(v));changed=true;}else changed=merge(found->second,v)||changed;
-    if(!e.message.empty())return false;
-  }return changed;
-}
 std::vector<const Json *> ActualCheck::allFields(const std::string &id){
   std::vector<const Json *> out;std::vector<const Json *> chain;std::set<std::string> seen;auto current=id;
   while(!current.empty()){
