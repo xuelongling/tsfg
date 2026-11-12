@@ -173,6 +173,16 @@ const fixtures=[
       "d642dcd060a5c242be4c62f04826966272604fbb8ea19a9b27bcce1822c71f4b",
       "1480d9ad385aa6964ae2985a534ef6ca2b7f612b8e9e26ab90b4bd90559cb88f"
     ]
+  },
+  {
+    "name": "composition",
+    "folder": "common-program-gpu-composed-i32-v3",
+    "fn": "constantKernel",
+    "pins": [
+      "d057748370efcf171b5f0bb77916d63b6f37b4b0ded24fcb12ff8c81b237067d",
+      "dcbf61b076fe3de3f9df141632c007bf35b2afd701f98b8d1e5a2cce41a131c2",
+      "109cea527bc48a0ad3394b8a315c0e44a3217fc3f54300e6c24ffefbb4bf50ec"
+    ]
   }
 ];
 
@@ -325,6 +335,7 @@ for(const fixture of fixtures){
   if(fixture.name!=='sink')bindings.push({kind:'return',id:fn.id,kernel:fn.id,set:0,binding:bindings.length,access:'write'});
   const request={family:'tsfg.gpu-logical-binding-request',version:2,target:'vulkan',kernels:[fn.id],bindings};
   const core=commonProgramCore(hir,publication,group,{borrowProof:true}),plan=createCommonGpuBindingPlan(hir,publication,group,request);
+  const composed=fixture.name==='composition';
   const arity=ast.literal===null&&(ast.operator==='-'||ast.operator==='~')?1:2;
   const row={fixture,ast,fn,plan,request,core,global,arity,source:{sourceId:'/src/main.ts',...(ast.range??ast.sourceRange)}};
   cases.push(row);
@@ -334,9 +345,18 @@ for(const fixture of fixtures){
   test('genuine '+fixture.name+' complete Source3 facts and independent low32 oracle',()=>{
     assert.ok(core.borrowProof);assert.equal(group.targets.length,2);assert.equal(plan.kernels[0].functionId,fn.id);
     assert.deepEqual(plan.bindings.map(binding=>[binding.kind,binding.access]),bindings.map(binding=>[binding.kind,binding.access]));
+    if(composed){
+      const text=raw[2].toString('utf8'),at=range=>text.slice(range.start,range.end);
+      assert.equal(fn.parameters[0].sourceBinding,ast.parameterId);
+      assert.deepEqual([at(ast.expression),at(ast.inner),at(ast.literal),at(ast.factor)],['(x + 7) * 3','x + 7','7','3']);
+      assert.deepEqual(inputValues.map(input=>low((input+7n)*3n)),[21n,0n,2147483669n,2147483666n]);
+      return;
+    }
     for(const input of inputValues){const result=global?low(input+input):expected(ast.operator,arity,ast.literalToken??null,input);
       assert.ok(result>=0n&&result<=4294967295n);assert.equal(low(BigInt.asIntN(32,result)),result);}
   });
+  // Composition has a qualified static fixture; the existing device matrix is fixed.
+  if(composed)continue;
   for(const input of inputValues)test('actual '+fixture.name+' input '+input+' device output and independent oracle',
     {skip:reports?false:'device NOT_RUN; no captured qualified acceptance report supplied'},async()=>{
       assert.match(reports,/^E:[/\\]/);
@@ -457,7 +477,7 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
 });
 
 test('independent arithmetic edge vectors and exact fixture coverage',()=>{
-  assert.equal(cases.length,16);assert.equal(cases.filter(row=>!row.global).length,14);
+  assert.equal(cases.length,17);assert.equal(cases.filter(row=>!row.global).length,15);
   assert.equal(expected('+',2,'7',2147483647n),2147483654n);
   assert.equal(expected('-',1,null,-2147483648n),2147483648n);
   assert.equal(expected('*',2,'7',2147483647n),2147483641n);
