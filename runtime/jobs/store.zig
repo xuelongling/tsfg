@@ -9,8 +9,13 @@ pub const Selection = struct { component: []const u8, access: Access };
 const Resolved = struct { component: u32, access: Access };
 const Component = struct { id: []const u8, size: usize, stride: usize, alignment: std.mem.Alignment };
 const Column = struct { component: u32, allocation: []u8, readers: u32 = 0, writer: bool = false };
-const Chunk = struct { columns: []Column, entities: []u32, len: usize = 0, active: usize = 0 };
-const Archetype = struct { components: []u32, chunks: std.ArrayListUnmanaged(*Chunk) = .empty };
+const Chunk = struct { columns: []Column, entities: []u32, archetype: u32, index: u32, len: usize = 0, active: usize = 0 };
+const Archetype = struct {
+    components: []u32,
+    chunks: std.ArrayListUnmanaged(*Chunk) = .empty,
+    // Every earlier chunk is full or has a live lease.
+    first_candidate: usize = 0,
+};
 const Slot = struct { generation: u32 = 1, live: bool = false, archetype: u32 = 0, chunk: u32 = 0, row: u32 = 0 };
 const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool, query: bool = false };
 const QueryState = struct { token: u64, selection: []Resolved, chunks: []*Chunk };
@@ -113,7 +118,7 @@ pub const Store = struct {
             try self.free_slots.ensureTotalCapacity(self.allocator, self.slots.items.len + 1);
             break :fresh @as(u32, @intCast(self.slots.items.len));
         };
-        var chunk_index: usize = 0;
+        var chunk_index = archetype.first_candidate;
         while (chunk_index < archetype.chunks.items.len) : (chunk_index += 1) {
             const chunk = archetype.chunks.items[chunk_index];
             if (chunk.len < self.capacity and chunk.active == 0) break;
@@ -121,7 +126,7 @@ pub const Store = struct {
         if (chunk_index == archetype.chunks.items.len) {
             if (chunk_index >= std.math.maxInt(u32)) return error.StorageLimit;
             try archetype.chunks.ensureUnusedCapacity(self.allocator, 1);
-            const chunk = try self.makeChunk(archetype.components);
+            const chunk = try self.makeChunk(archetype.components, archetype_id, @intCast(chunk_index));
             archetype.chunks.appendAssumeCapacity(chunk);
         }
         const chunk = archetype.chunks.items[chunk_index];
@@ -144,6 +149,7 @@ pub const Store = struct {
         slot.row = @intCast(row);
         chunk.entities[row] = slot_index;
         chunk.len += 1;
+        archetype.first_candidate = if (chunk.len == self.capacity) chunk_index + 1 else chunk_index;
         return .{ .index = slot_index, .generation = slot.generation };
     }
 
@@ -165,6 +171,7 @@ pub const Store = struct {
             self.slots.items[moved].row = slot.row;
         }
         chunk.len -= 1;
+        self.makeChunkAvailable(chunk);
         slot.live = false;
         slot.generation = if (slot.generation == std.math.maxInt(u32)) 0 else slot.generation + 1;
         if (slot.generation != 0) self.free_slots.push(self.allocator, entity.index) catch unreachable;
@@ -243,16 +250,21 @@ pub const Store = struct {
         defer self.mutex.unlock();
         for (self.leases.items, 0..) |lease, index| if (lease.token == token) {
             if (lease.query) return error.InvalidLease;
-            endLease(lease);
+            self.endLease(lease);
             _ = self.leases.swapRemove(index);
             return;
         };
         return error.InvalidLease;
     }
-    fn endLease(lease: Lease) void {
+    fn endLease(self: *Store, lease: Lease) void {
         const column = &lease.chunk.columns[lease.column];
         if (lease.writable) column.writer = false else column.readers -= 1;
         lease.chunk.active -= 1;
+        if (lease.chunk.active == 0 and lease.chunk.len < self.capacity) self.makeChunkAvailable(lease.chunk);
+    }
+    fn makeChunkAvailable(self: *Store, chunk: *const Chunk) void {
+        const archetype = &self.archetypes.items[chunk.archetype];
+        archetype.first_candidate = @min(archetype.first_candidate, chunk.index);
     }
 
     /// Query and Batch are aliases of one complete borrow session. Releasing either
@@ -398,7 +410,7 @@ pub const Store = struct {
                     index += 1;
                     continue;
                 }
-                endLease(lease);
+                self.endLease(lease);
                 _ = self.leases.swapRemove(index);
             }
             self.allocator.free(state.selection);
@@ -430,7 +442,7 @@ pub const Store = struct {
         if (!slot.live or slot.generation != entity.generation) return error.InvalidEntity;
         return slot;
     }
-    fn makeChunk(self: *Store, components: []const u32) !*Chunk {
+    fn makeChunk(self: *Store, components: []const u32, archetype_id: u32, chunk_index: u32) !*Chunk {
         const chunk = try self.allocator.create(Chunk);
         errdefer self.allocator.destroy(chunk);
         const entities = try self.allocator.alloc(u32, self.capacity);
@@ -449,7 +461,7 @@ pub const Store = struct {
             @memset(columns[index].allocation, 0);
             initialized += 1;
         }
-        chunk.* = .{ .columns = columns, .entities = entities };
+        chunk.* = .{ .columns = columns, .entities = entities, .archetype = archetype_id, .index = chunk_index };
         return chunk;
     }
     fn freeChunk(self: *Store, chunk: *Chunk) void {

@@ -201,6 +201,49 @@ test "no match sessions and safe external growth retain their acquisition snapsh
     try query.release();
 }
 
+test "creation reuses the earliest available chunk after removal and both lease kinds" {
+    var source = try load(A);
+    defer source.deinit();
+    const p = component(&source, "Position");
+    const s = component(&source, "Stats");
+    var store = try jobs.Store.init(A, &source, 2);
+    defer store.deinit() catch unreachable;
+    const both = try store.addArchetype(&.{ p, s });
+    const first = try store.create(both, &.{});
+    const second = try store.create(both, &.{});
+    const third = try store.create(both, &.{});
+    try store.remove(first);
+    const single = try store.borrowRead(second, p);
+    const earlier_column = @intFromPtr((try single.bytes()).ptr);
+    const fourth = try store.create(both, &.{});
+    const fifth = try store.create(both, &.{});
+    try single.release();
+    const reused_single = try store.create(both, &.{});
+    const reused_view = try store.borrowRead(reused_single, p);
+    const reused_column = @intFromPtr((try reused_view.bytes()).ptr);
+    try reused_view.release();
+    try std.testing.expectEqual(earlier_column, reused_column);
+    try store.remove(second);
+    const reused_removal = try store.create(both, &.{});
+    try store.remove(reused_single);
+
+    const selection: []const jobs.Selection = &.{ .{ .component = p, .access = .read }, .{ .component = s, .access = .read } };
+    const group = try store.query(selection);
+    const outside = try store.create(both, &.{});
+    try group.release();
+    const reused_group = try store.create(both, &.{});
+
+    const verify = try store.query(selection);
+    defer verify.release() catch unreachable;
+    try std.testing.expectEqual(@as(usize, 4), try verify.batchCount());
+    const expected: []const []const jobs.Entity = &.{ &.{ reused_removal, reused_group }, &.{ third, fourth }, &.{fifth}, &.{outside} };
+    for (expected, 0..) |entities, index| {
+        const batch = try verify.batch(index);
+        try std.testing.expectEqual(entities.len, try batch.rowCount());
+        for (entities, 0..) |entity, row| try std.testing.expectEqual(entity, try batch.entity(row));
+    }
+}
+
 fn allocationScenario(allocator: std.mem.Allocator, old_query: bool) !void {
     var source = try load(allocator);
     defer source.deinit();
