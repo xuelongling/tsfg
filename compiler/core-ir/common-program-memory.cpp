@@ -180,6 +180,29 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     ~Trace(){if(enabled)llvm::errs()<<"[DEBUG-23j-common-execute] "<<(conditional?"conditional":"final")<<" function="<<context.function->name
       <<" work="<<(before-program.remaining)<<" remaining="<<program.remaining<<'\n';}
   } trace{context,p,p.remaining,conditional,std::getenv("TSFG_COMMON_ACTUAL_TRACE")!=nullptr};
+  const std::vector<std::set<uint16_t>> *demand=nullptr;
+  // Conditional capacity and Borrow proof still observe the complete state.
+  // A strict comparison may use an older register or narrow its owning Cell.
+  if(!conditional&&!borrowTrace){
+    if(!step(fn.id.size()/64+2))return false;
+    const auto cuts=regions.cuts.find(fn.id);
+    if(cuts!=regions.cuts.end()&&!cuts->second.empty()){
+      bool explicitInputs=true;
+      for(const auto &block:fn.blocks){
+        if(!step())return false;
+        for(const auto &op:block.operations){
+          if(!step())return false;
+          if(op.name=="strict_equal"){explicitInputs=false;break;}
+        }
+        if(!explicitInputs)break;
+      }
+      if(explicitInputs){
+        if(!step(fn.id.size()/64+2))return false;
+        const auto found=regions.live.find(fn.id);
+        if(found!=regions.live.end())demand=&found->second;
+      }
+    }
+  }
   if(!step())return false;auto cached=singleExecution.find(&fn);
   if(cached==singleExecution.end()){
     if(!step(2*fn.blocks.size()))return false;
@@ -228,6 +251,21 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     if(borrowTrace&&(!observed||!borrowTrace->edge(context,*observed,observedBlock,to)))return false;
     for(size_t i=0;i<args.size();++i)next.values.insert_or_assign(fn.blocks[to].parameters[i],copy(args[i]));
     if(!regionEdge(*this,context,uint16_t(observedBlock),to,next))return false;
+    if(demand){
+      const auto &live=(*demand)[to];
+      const auto &parameters=fn.blocks[to].parameters;
+      if(!step(3*next.values.size()+2*live.size()+4))return false;
+      auto required=live.begin();
+      for(auto item=next.values.begin();item!=next.values.end();){
+        const auto reg=item->first;
+        while(required!=live.end()&&*required<reg)++required;
+        // Language completion also uses cursors outside explicit operands.
+        if((required!=live.end()&&*required==reg)||!item->second.cursors.empty()){++item;continue;}
+        if(!step(parameters.size()+1))return false;
+        if(std::find(parameters.begin(),parameters.end(),reg)!=parameters.end()){++item;continue;}
+        item=next.values.erase(item);
+      }
+    }
     auto old=states.find(to);bool update=false;
     if(old==states.end()){states.emplace(to,std::move(next));update=true;}else update=join(old->second,std::move(next));
     if(update&&queued.insert(to).second)queue.push_back(to);return e.message.empty();
