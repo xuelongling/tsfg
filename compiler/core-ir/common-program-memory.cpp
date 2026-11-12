@@ -233,7 +233,25 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     if(update&&queued.insert(to).second)queue.push_back(to);return e.message.empty();
   };
   for(size_t index=0;index<queue.size();++index){
-    if(!step())return false;const auto block=queue[index];queued.erase(block);auto state=single[block]?std::move(states.at(block)):copyState(states.at(block));
+    if(!step())return false;const auto block=queue[index];queued.erase(block);
+    bool take=single[block];
+    if(!take){
+      if(!step(3))return false;
+      if(queued.empty()){
+        // With no other work pending, only this block's descendants could
+        // supply a future input. A terminal tail has no route back here.
+        if(!step(5))return false;
+        const auto &targets=fn.blocks[block].operations.back().successors;
+        if(targets.size()<=2){
+          take=true;
+          for(const auto to:targets){
+            if(!step(6))return false;
+            if(!fn.blocks[to].operations.back().successors.empty()){take=false;break;}
+          }
+        }
+      }
+    }
+    auto state=take?std::move(states.at(block)):copyState(states.at(block));
     if(conditional)for(auto reg:fn.blocks[block].parameters)if(!recordCapacity(registerCapacity[fn.id+"/"+std::to_string(reg)],state.values[reg]))return false;
     for(const auto &op:fn.blocks[block].operations){
       observed=&op;observedBlock=block;
