@@ -85,9 +85,21 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
     const alignment=integer(row.alignment),stride=integer(row.stride),size=integer(row.byteSize);
     if(!alignment||alignment>65536||(alignment&(alignment-1))||size>65536||size%alignment||stride!==size)fail('layout extent differs');
     const members=array(row.fields);if(members.length!==fields.length)fail('layout field inventory differs');
-    members.forEach((value,index)=>{const row=record(value,layoutDescriptor.fieldRecord),{offset,...semantic}=row;equal(semantic,fields[index]);if(integer(offset)>size)fail('layout field offset differs');});
-    return [id,{alignment,stride}];
+    const placements=members.map((value,index)=>{
+      spend();const row=record(value,layoutDescriptor.fieldRecord),{offset,...semantic}=row;
+      equal(semantic,fields[index]);return {offset:integer(offset),type:fields[index].type};
+    });
+    return [id,{alignment,stride,size,placements}];
   }));
+  // Check the retained extents after indexing every type. DataLayout still owns exact ABI placement.
+  for(const {alignment,size,placements} of fixed.values()){
+    let end=0;
+    for(const {offset,type} of placements){
+      spend();const child=fixed.get(type);
+      if(!child||child.alignment>alignment||offset%child.alignment||offset<end||offset>size||child.size>size-offset)fail('layout field extent differs');
+      end=offset+child.size;
+    }
+  }
   const actual=array(payload.entries),entries=[];let cursor=0;
   for(const system of facts.systems){
     const effect=effects.systems.find(row=>row.sourceFunctionId===system.declaration.id);

@@ -49,6 +49,30 @@ for(const input of cases)test('actual Query .tmeta: '+input.name,{skip:!enabled}
   }
 });
 
+test('Query tmeta checks field extents against the retained catalog',{skip:!retained},()=>{
+  const input=cases.at(-1),facts=readSystemQueryFacts(input.bytes,input.context);
+  const prefix=retained+'/retained-'+input.name;
+  const original=readFileSync(prefix+'.tmeta'),checkedBatch=readFileSync(prefix+'-batch.mlir','utf8');
+  assert.equal(canonical(readSystemQueryTmeta(original,facts,input.context,checkedBatch).envelope)+'\n',original.toString('utf8'));
+  for(const [fieldIndex,offset] of [[0,4],[0,1],[1,8]]){
+    const envelope=JSON.parse(original.toString('utf8')),payload=JSON.parse(envelope.payload);
+    const layout=JSON.parse(payload.componentLayouts),catalog=JSON.parse(layout.payload);
+    const component=catalog.types.find(row=>row.kind==='component');
+    assert.deepEqual(component.fields.map(field=>field.offset),[0,4]);
+    component.fields[fieldIndex].offset=offset;
+    const {components,target,types}=catalog;
+    catalog.hirDigest=sha256(canonical({components,target,types})+'\n');
+    layout.payload=canonical(catalog);
+    layout.payloadHash=sha256('tsfg.component-layout.v1\0'+layout.payload);
+    payload.componentLayouts=canonical(layout)+'\n';
+    payload.layoutHash=sha256(payload.componentLayouts);
+    envelope.payload=canonical(payload);
+    envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);
+    const bytes=Buffer.from(canonical(envelope)+'\n');
+    assert.throws(()=>readSystemQueryTmeta(bytes,facts,input.context,checkedBatch),/r10-query-tmeta: layout field extent differs/,`field ${fieldIndex} at ${offset}`);
+  }
+});
+
 test('Query tmeta cold Source/identity/column/permission/signature/symbol rejection',{skip:!enabled},()=>{
   const input=cases.at(-1),facts=readSystemQueryFacts(input.bytes,input.context),original=readFileSync(retained+'/retained-'+input.name+'.tmeta','utf8'),payload=JSON.parse(JSON.parse(original).payload);
   const mutations=[
@@ -65,9 +89,7 @@ test('Query tmeta cold Source/identity/column/permission/signature/symbol reject
   mutations.forEach((mutate,index)=>{
     const changed=structuredClone(payload);mutate(changed);const envelope=JSON.parse(original);envelope.payload=canonical(changed);envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);const bytes=canonical(envelope)+'\n';
     run('bad-'+index,bytes,'--canonicalize-tmeta',3);
-    // The complete layout-offset mutant is checked by LLVM DataLayout in C++;
-    // Node deliberately does not duplicate that official ABI implementation.
-    if(index!==11)assert.throws(()=>readSystemQueryTmeta(Buffer.from(bytes),facts,input.context,payload.batch),/tmeta|effects/);
+    assert.throws(()=>readSystemQueryTmeta(Buffer.from(bytes),facts,input.context,payload.batch),/tmeta|effects/);
   });
   const wrongVersion=JSON.parse(original);wrongVersion.version=1;run('bad-version',canonical(wrongVersion)+'\n','--canonicalize-tmeta',3);
   assert.throws(()=>readSystemQueryTmeta(Buffer.from(canonical(wrongVersion)+'\n'),facts,input.context,payload.batch),/tmeta/);
