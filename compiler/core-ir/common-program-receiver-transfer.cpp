@@ -84,12 +84,23 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       // Snapshot real historical data before adding this birth's defaults.
       const auto members=allFields(info.newTarget);if(!step(members.size()+1))return false;std::vector<const ActualFieldSlot *> fieldSlots;fieldSlots.reserve(members.size());
       for(const auto *row:members){
-        if(!step(2))return false;const auto query=field(*row,"id").getAsString().value_or(llvm::StringRef{});
-        const auto count=fields.size();size_t height=0;
-        for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
-        height=std::min(height,count);
-        if(!step(1+height+(count?height+1:0)*(2*query.size()+1)))return false;
-        const auto member=fields.find(query);
+        auto member=fields.cend();
+        if(!conditional&&!borrowTrace){
+          if(!step(4))return false;
+          // The hierarchy and field catalogue borrow the same owned HIR rows.
+          if(fields.size()<=64)for(auto candidate=fields.cbegin();candidate!=fields.cend();++candidate){
+            if(!step(4))return false;
+            if(candidate->second==row){if(!step())return false;member=candidate;break;}
+          }
+        }
+        if(member==fields.cend()){
+          if(!step(2))return false;const auto query=field(*row,"id").getAsString().value_or(llvm::StringRef{});
+          const auto count=fields.size();size_t height=0;
+          for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
+          height=std::min(height,count);
+          if(!step(1+height+(count?height+1:0)*(2*query.size()+1)))return false;
+          member=fields.find(query);
+        }
         const auto slot=fieldSlot(object,member);if(!e.message.empty()||!step())return false;fieldSlots.push_back(slot);}
       if(!receiverBirth(state.frames,id,std::move(ref),fieldSlots,state.heap,repeated))return false;
       // Virtual missing properties are data, never define/write observations.
