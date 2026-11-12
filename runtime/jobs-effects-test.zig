@@ -437,7 +437,15 @@ test "typed effects reject a used field identity from the wrong declaring ordina
     try rejectLayoutField(.ordinal);
 }
 
-fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal }) !void {
+test "Query metadata rejects different Source readonly on an unaccessed layout field" {
+    try rejectLayoutField(.unused_readonly);
+}
+
+test "Query metadata rejects a different Source range on an unaccessed layout field" {
+    try rejectLayoutField(.unused_range);
+}
+
+fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal, unused_readonly, unused_range }) !void {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict-receipt.json"), .{});
     defer receipt.deinit();
     var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict.tmeta"), receipt.value);
@@ -452,8 +460,10 @@ fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal }) !void 
         const name = if (change == .readonly) "CopySource" else "CopyDestination";
         if (row.kind != .component or !std.mem.eql(u8, row.name, name)) continue;
         const fields = try own.dupe(jobs.layout.Field, row.fields);
-        const field = &fields[if (change == .readonly) 0 else 1];
-        try std.testing.expectEqualStrings("n", field.name);
+        const unaccessed = change == .unused_readonly or change == .unused_range;
+        const field = &fields[if (change == .readonly or unaccessed) 0 else 1];
+        try std.testing.expectEqualStrings(if (unaccessed) "pad" else "n", field.name);
+        if (unaccessed) try std.testing.expect(std.mem.indexOf(u8, payload.effects, field.id) == null);
         switch (change) {
             .scalar => {
                 try std.testing.expectEqualStrings("pad", fields[0].name);
@@ -471,6 +481,11 @@ fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal }) !void 
                 payload.effects = try std.mem.replaceOwned(u8, own, payload.effects, field.id, &wrong);
                 field.id = try own.dupe(u8, &wrong);
             },
+            .unused_readonly => {
+                try std.testing.expect(!field.readonly);
+                field.readonly = true;
+            },
+            .unused_range => field.range.end -= 1,
         }
         row.fields = fields;
         break;

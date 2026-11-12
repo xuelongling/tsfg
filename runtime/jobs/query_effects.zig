@@ -32,7 +32,7 @@ pub const Report = struct { conflicts: []const Conflict, coreVersion: []const u8
 // Project the Source declaration, type and call-anchor facts. Document owns the full packet.
 const Decl = struct { id: []const u8, name: []const u8 = "", range: layout.Range, sourcePath: []const u8 };
 const RawField = struct { id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 }, readonly: bool, type: []const u8 };
-const RawType = struct { id: []const u8, name: ?[]const u8 = null, sourcePath: ?[]const u8 = null, declarationRange: ?layout.Range = null, nominalKey: ?struct { category: []const u8 } = null, fields: []const RawField = &.{} };
+const RawType = struct { id: []const u8, name: ?[]const u8 = null, sourcePath: ?[]const u8 = null, declarationRange: ?layout.Range = null, nominalKey: ?struct { category: []const u8 } = null, base: ?[]const u8 = null, fields: []const RawField = &.{} };
 const RawItem = struct { componentType: []const u8, mode: Access };
 pub const SourceParameter = struct { binding: struct { id: []const u8 }, logicalType: []const u8, query: ?struct { items: []const RawItem } };
 const RawBinding = struct { componentType: []const u8, declaration: Decl, index: u32, mode: Access };
@@ -115,6 +115,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
     const projected = std.json.parseFromSlice(Projection, allocator, packet, .{ .allocate = .alloc_always, .max_value_len = 8388608, .ignore_unknown_fields = true }) catch |err| return if (err == error.OutOfMemory) err else error.InvalidEffects;
     var context: Context = .{ .allocator = allocator, .report = &report, .facts = projected.value, .catalog = catalog };
     if (report.systems.len != context.facts.payload.systems.len or report.scalarHelpers.len != context.facts.payload.scalarHelpers.len or report.systems.len > 4096 or report.scalarHelpers.len > 64) return error.InvalidEffects;
+    try context.verifyComponentFields();
     var primary: ?SourceFile = null;
     for (context.facts.payload.program.files) |file| if (same(file.path, context.facts.payload.program.rootFile)) {
         primary = file;
@@ -290,27 +291,80 @@ const Context = struct {
         }
         return error.InvalidEffects;
     }
-    fn componentId(self: *Context, raw: []const u8) Error![]const u8 {
+    fn sourceType(self: *Context, id: []const u8) Error!*const RawType {
         for (self.facts.payload.types) |*row| {
-            try self.spend(1 + @min(raw.len, row.id.len) / 64);
-            if (!same(row.id, raw)) continue;
-            if (try self.catalogComponent(row)) |id| return id;
+            try self.spend(1 + @min(id.len, row.id.len) / 64);
+            if (same(row.id, id)) return row;
         }
         return error.InvalidEffects;
     }
-    fn catalogComponent(self: *Context, row: *const RawType) Error!?[]const u8 {
-        const kind = row.nominalKey orelse return error.InvalidEffects;
+    fn componentId(self: *Context, id: []const u8) Error![]const u8 {
+        const row = try self.sourceType(id);
+        if (!same((row.nominalKey orelse return error.InvalidEffects).category, "component")) return error.InvalidEffects;
+        const component = (try self.catalogType(row, .component)) orelse return error.InvalidEffects;
+        return component.id;
+    }
+    fn catalogType(self: *Context, row: *const RawType, kind: layout.Kind) Error!?*const layout.Type {
         const range = row.declarationRange orelse return error.InvalidEffects;
-        if (!same(kind.category, "component")) return error.InvalidEffects;
         const name = row.name orelse return error.InvalidEffects;
         const path = row.sourcePath orelse return error.InvalidEffects;
-        for (self.catalog.payload.types) |*component| {
+        for (self.catalog.payload.types) |*candidate| {
             try self.spend(1);
-            if (component.kind != .component or component.range.start != range.start or component.range.end != range.end) continue;
-            try self.spend(2 + @min(name.len, component.name.len) / 64 + @min(path.len, component.sourcePath.len) / 64);
-            if (same(component.name, name) and same(component.sourcePath, path)) return component.id;
+            if (candidate.kind != kind or candidate.range.start != range.start or candidate.range.end != range.end) continue;
+            try self.spend(2 + @min(name.len, candidate.name.len) / 64 + @min(path.len, candidate.sourcePath.len) / 64);
+            if (same(candidate.name, name) and same(candidate.sourcePath, path)) return candidate;
         }
         return null;
+    }
+    fn verifyComponentFields(self: *Context) SourceCheckError!void {
+        var components: usize = 0;
+        for (self.facts.payload.types) |*raw| {
+            try self.spend(3);
+            const category = (raw.nominalKey orelse continue).category;
+            if (!same(category, "component")) continue;
+            const row = (try self.catalogType(raw, .component)) orelse return error.InvalidEffects;
+            try self.verifyTypeFields(raw, row);
+            components += 1;
+        }
+        if (components != self.catalog.payload.components.len) return error.InvalidEffects;
+    }
+    fn verifyTypeFields(self: *Context, raw: *const RawType, row: *const layout.Type) SourceCheckError!void {
+        // Layout flattens the Source base chain. Field identities still use
+        // the declaring owner's local ordinal.
+        var ancestors: [32]*const RawType = undefined;
+        var depth: usize = 0;
+        var current = raw;
+        while (true) {
+            try self.spend(3);
+            if (depth == ancestors.len) return error.InvalidEffects;
+            ancestors[depth] = current;
+            depth += 1;
+            current = try self.sourceType(current.base orelse break);
+        }
+        var fields = row.fields;
+        while (depth != 0) {
+            try self.spend(3);
+            depth -= 1;
+            const owner = ancestors[depth];
+            const owner_id = if (owner == raw) row.id else try self.componentId(owner.id);
+            if (owner.fields.len > fields.len) return error.InvalidEffects;
+            for (owner.fields, fields[0..owner.fields.len], 0..) |*original, *item, index| {
+                if (!try self.sameFieldDeclaration(original, item)) return error.InvalidEffects;
+                try self.verifyFieldIdentity(item.id, owner_id, original.name, index);
+                if (scalar_types.has(original.type)) {
+                    try self.spend(5);
+                    if (!same(item.type, &hashIdentity("tsfg.type\x00", original.type))) return error.InvalidEffects;
+                } else {
+                    const child = try self.sourceType(original.type);
+                    const category = (child.nominalKey orelse return error.InvalidEffects).category;
+                    const kind: layout.Kind = if (same(category, "component")) .component else if (same(category, "value")) .value else return error.InvalidEffects;
+                    const child_layout = (try self.catalogType(child, kind)) orelse return error.InvalidEffects;
+                    if (!same(item.type, child_layout.id)) return error.InvalidEffects;
+                }
+            }
+            fields = fields[owner.fields.len..];
+        }
+        if (fields.len != 0) return error.InvalidEffects;
     }
     fn queryItems(self: *Context, parameters: []const SourceParameter, binding: []const u8) Error![]const RawItem {
         var selected: ?[]const RawItem = null;
@@ -617,27 +671,30 @@ const Context = struct {
             if (writable and item.readonly) return error.InvalidEffects;
             for (self.facts.payload.types) |*raw| {
                 try self.spend(1);
-                for (raw.fields, 0..) |*original, index| {
+                for (raw.fields) |*original| {
                     try self.spend(1);
                     if (!same(original.id, source_id)) continue;
-                    try self.spend(3 + @min(original.name.len, item.name.len) / 64 + @min(original.origin.source.len, item.sourcePath.len) / 64);
-                    if (!same(original.name, item.name) or !same(original.origin.source, item.sourcePath) or original.origin.start != item.range.start or original.origin.end != item.range.end) continue;
-                    try self.spend(5);
-                    if (original.readonly != item.readonly or !scalar_types.has(original.type)) return error.InvalidEffects;
-                    const expected_type = hashIdentity("tsfg.type\x00", original.type);
-                    if (!same(item.type, &expected_type)) return error.InvalidEffects;
-                    // Common FieldId uses the original declaring type and local ordinal.
-                    try self.spend(12 + 16 * (original.name.len / 64 + 1));
-                    const owner = (try self.catalogComponent(raw)) orelse return error.InvalidEffects;
-                    const key = try std.json.Stringify.valueAlloc(self.allocator, .{ .index = index, .name = original.name, .owner = owner }, .{});
-                    defer self.allocator.free(key);
-                    if (!same(id, &hashIdentity("tsfg.common-program.field.v1\x00", key))) return error.InvalidEffects;
+                    if (!try self.sameFieldDeclaration(original, item)) continue;
+                    // Catalog validation already established the field type and
+                    // identity. Here the effect must name that exact Source field.
+                    if (!scalar_types.has(original.type)) return error.InvalidEffects;
                     return;
                 }
             }
             return error.InvalidEffects;
         }
         return error.InvalidEffects;
+    }
+    fn sameFieldDeclaration(self: *Context, original: *const RawField, field_row: *const layout.Field) Error!bool {
+        try self.spend(4 + @min(original.name.len, field_row.name.len) / 64 + @min(original.origin.source.len, field_row.sourcePath.len) / 64);
+        return original.readonly == field_row.readonly and original.origin.start == field_row.range.start and original.origin.end == field_row.range.end and
+            same(original.name, field_row.name) and same(original.origin.source, field_row.sourcePath);
+    }
+    fn verifyFieldIdentity(self: *Context, id: []const u8, owner: []const u8, name: []const u8, index: usize) SourceCheckError!void {
+        try self.spend(12 + 16 * (name.len / 64 + 1));
+        const key = try std.json.Stringify.valueAlloc(self.allocator, .{ .index = index, .name = name, .owner = owner }, .{});
+        defer self.allocator.free(key);
+        if (!same(id, &hashIdentity("tsfg.common-program.field.v1\x00", key))) return error.InvalidEffects;
     }
     fn fieldRows(self: *Context, rows: []const FieldEffects) SourceCheckError!void {
         for (rows, 0..) |row, index| {
