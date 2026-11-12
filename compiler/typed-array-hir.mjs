@@ -6,7 +6,7 @@ import {copyGenericJsonBytes,readGenericJson,checkGenericJsonValueBudget} from '
 import {typedArrayJsonPolicy as policy,check,hash} from './typed-array-schema.mjs';
 import {readTypedArrayFacts,writeTypedArrayFacts} from './typed-array-facts.mjs';
 import {projectTypedArrayFacts} from './typed-array-project.mjs';
-import {prepareArrayCalls,arrayCallFailure} from './array-call-context.mjs';
+import {prepareArrayCalls,arrayCallFailure,initialArrayPublication} from './array-call-context.mjs';
 import {createArrayOwnerTools} from './array-owner-trace.mjs';
 import {deriveReadSpanPlan,consumeReadSpanPlan} from './array-readspan-model.mjs';
 import {arrayProgramShape} from './array-analysis-types.mjs';
@@ -27,6 +27,10 @@ function context(value) {
   check(selected.family==='tsfg.array-facts-context-candidate'&&selected.version===2,'context');hash(selected.expectedPackageId);
   const bytes=copyGenericJsonBytes(selected.factsBytes,policy),facts=readTypedArrayFacts(bytes);
   check(facts.packageId===selected.expectedPackageId,'context');return {bytes,facts};
+}
+export function buildInitialArrayPublication(factsContext) {
+  const {facts}=context(factsContext);
+  return initialArrayPublication(projectTypedArrayFacts(facts));
 }
 function prepare(facts,publicationContext,analysis=false) {
   let work=0;const tools=createArrayOwnerTools(()=>{if(++work>16384)arrayCallFailure('limit');});

@@ -219,13 +219,28 @@ struct ArrayCalls {
         const size_t offset=name=="tsfg_core.domain.construct"?1:0;
         for(const auto &target:calls.at(op)) {
           if(!proof.charge())return false;
-          const auto &parameters=*proof.callable.at(target)->getArray("parameters");
+          const auto &targetContract=*proof.callable.at(target);
+          const auto &parameters=*targetContract.getArray("parameters");
           std::vector<ArrayCallFlow::Id> arguments(parameters.size(),ArrayCallFlow::none);
           for(size_t slot=offset;slot<parameters.size();++slot) {
             if(!proof.charge())return false;
             if(owner(string(*parameters[slot].getAsObject(),"type")))arguments[slot]=value(op->getOperand(slot-offset),id,true);
           }
-          if(!flow.call(definitions.at(id),definitions.at(target),arguments,result))return fail(flow.error());
+          auto callResult=result;
+          if(result!=ArrayCallFlow::none&&llvm::isa<mlir::func::CallOp>(op)) {
+            if(!proof.charge())return false;
+            const auto returnType=string(targetContract,"returnType");
+            // Ordinary Array identity has an independent SSA return proof.
+            // View returns still require their fixed origin and return equations.
+            if(arrays.count(returnType)&&!views.count(returnType)) {
+              const auto alias=proof.returnedParameters.find(target);
+              if(alias!=proof.returnedParameters.end()&&alias->second<arguments.size()&&arguments[alias->second]!=ArrayCallFlow::none) {
+                if(!flow.copy(arguments[alias->second],result))return fail(flow.error());
+                callResult=ArrayCallFlow::none;
+              }
+            }
+          }
+          if(!flow.call(definitions.at(id),definitions.at(target),arguments,callResult))return fail(flow.error());
         }
       }else if(op->getNumResults()==1) {
         const auto result=value(op->getResult(0),id);

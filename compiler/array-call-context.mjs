@@ -49,6 +49,36 @@ function shape(context) {
     }
   }
 }
+const scopeFor = (hir, functions) => ({profile:'typed-array-owner-relative-fixed-v5',rootFile:hir.rootFile,
+  functions:functions.map(fn => ({functionId:fn.id,name:fn.name,sourcePath:fn.sourcePath,
+    signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type),returnType:fn.returnType.id})),
+  exports:hir.exports.map(row => ({name:row.name,functionId:row.functionId}))});
+const scopeIdentity = (hir, functions) => sha256('tsfg.array-call-scope.v5\0' + canonical(scopeFor(hir,functions)));
+const contractIdentity = body => sha256('tsfg.array-published-contract.v5\0' + canonical(body));
+const publicationIdentity = (scopeDigest, contracts) => sha256('tsfg.array-publication.v5\0' + canonical({scopeDigest,contracts}));
+
+// First publication for an already selected Source closure uses declared
+// capability maxima. Borrowed results still require a selected exact origin.
+export function initialArrayPublication(hir) {
+  const type = arrayAnalysisTypes(hir), functions = finiteCallables(hir).sort((a,b) => compare(a.id,b.id));
+  check(functions.length >= 1 && functions.length <= 16,'identity');
+  const contracts = functions.map(fn => {
+    check(!type.isView(fn.returnType.id),'identity');
+    const parameters = fn.parameters.flatMap((parameter,index) => {
+      if (!type.isOwner(parameter.type)) return [];
+      const mutable = type.isArray(parameter.type);
+      return [{index,read:true,write:mutable,structural:mutable}];
+    });
+    const body = {functionId:fn.id,signatureHash:fn.signatureHash,
+      upper:{parameters,local:{read:true,write:true,structural:true},returnOrigin:null}};
+    return {...body,digest:contractIdentity(body)};
+  });
+  const scopeDigest = scopeIdentity(hir,functions);
+  const context = {family:'tsfg.array-publication-context-candidate',version:5,mode:'fixed',scopeDigest,
+    expectedDigest:publicationIdentity(scopeDigest,contracts),contracts};
+  publication(hir,context);
+  return own(context);
+}
 function publication(hir, context) {
   arrayCallBudget(context); shape(context);
   const type=arrayAnalysisTypes(hir);
@@ -67,16 +97,11 @@ function publication(hir, context) {
     check(type.isView(fn.returnType.id) ? origin === null
       || type.isOwner(fn.parameters[origin.index]?.type) : origin === null,'identity');
     const {digest,...body} = row;
-    check(digest === sha256('tsfg.array-published-contract.v5\0' + canonical(body)),'identity');
+    check(digest === contractIdentity(body),'identity');
     records.set(fn.id,row);
   }
-  const scope = {profile:'typed-array-owner-relative-fixed-v5',rootFile:hir.rootFile,
-    functions:functions.map(fn => ({functionId:fn.id,name:fn.name,sourcePath:fn.sourcePath,
-      signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type),
-      returnType:fn.returnType.id})),exports:hir.exports.map(row => ({name:row.name,functionId:row.functionId}))};
-  const scopeDigest = sha256('tsfg.array-call-scope.v5\0' + canonical(scope));
-  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v5\0'
-    + canonical({scopeDigest,contracts:context.contracts})),'identity');
+  const scopeDigest = scopeIdentity(hir,functions);
+  check(context.scopeDigest === scopeDigest && context.expectedDigest === publicationIdentity(scopeDigest,context.contracts),'identity');
   return {records,scopeDigest};
 }
 function returnEscape(fn,operation) {

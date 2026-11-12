@@ -33,6 +33,7 @@ import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
 import { emitFormalStringCore } from './string-formal-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
+export {buildInitialArrayPublication} from './typed-array-hir.mjs';
 import {isTypedArrayContext,buildTypedArrayHir,readTypedArrayHir} from './typed-array-hir.mjs';
 import {emitFiniteCore} from './finite-core-emitter.mjs';
 import {emitFormalClosureCore} from './formal-closure-core.mjs';
