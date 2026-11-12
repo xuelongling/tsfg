@@ -109,7 +109,7 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       const auto members=allFields(info.newTarget);if(!step(members.size()+1))return false;std::vector<const ActualFieldSlot *> fieldSlots;fieldSlots.reserve(members.size());
       for(const auto *row:members){
         auto member=fields.cend();
-        if(!conditional&&!borrowTrace){
+        if(!conditional){
           if(!step(4))return false;
           // The hierarchy and field catalogue borrow the same owned HIR rows.
           if(fields.size()<=64)for(auto candidate=fields.cbegin();candidate!=fields.cend();++candidate){

@@ -120,8 +120,9 @@ struct InheritedInput {
   std::size_t effectCount=0,boundHistoryRevision=0,boundReceiverCount=0;
 };
 struct Context {
-  enum class Sweep {Shared,Independent,Settled};
+  enum class Sweep {Shared,Independent,Settled,Environment,EnvironmentSettled};
   Sweep sweep=Sweep::Shared;
+  std::size_t settledParentRevision=0;
   Ref index=0,function=None,scope=0;
   const V4::Graph *graph=nullptr;
   const PublishedEffects *upper=nullptr;
@@ -173,6 +174,7 @@ class Solver {
   std::optional<std::map<Ref,bool>> inlineTypes_;
   std::vector<Address> addresses_;
   std::map<Ref,Set> environmentParents_;
+  std::size_t environmentRevision_;
   std::map<Ref,Ref> slotOwners_;
   enum class ClosedEnvironment {None,Incoming,Activation,Delegated};
   struct ClosedProof {
@@ -401,13 +403,21 @@ class Solver {
     if(!m_.lookup(callbacks_.environments->size(),name(id).size()))return nullptr;const auto found=callbacks_.environments->find(V4::Detail::view(name(id)));if(found==callbacks_.environments->end()){open("environment-layout-open");return nullptr;}return &found->second;
   }
   bool parents(Ref id,Set *&out){if(!numericLookup(environmentParents_.size()))return false;auto found=environmentParents_.find(id);if(found==environmentParents_.end()){if(!m_.spend())return false;found=environmentParents_.emplace(id,Set{}).first;}out=&found->second;return true;}
+  template<class Add>
+  bool growEnvironmentParents(Set &parents,Add addParents){
+    if(!m_.spend(4))return false;
+    const auto before=parents.size();
+    if(!addParents())return false;
+    if(before!=parents.size())++environmentRevision_;
+    return true;
+  }
   bool entryEnvironment(Ref id,Ref &out){const auto *row=layout(id);if(!row)return false;Key identity;Location value;value.kind=LocationKind::EnvironmentEntry;value.layout=id;
     if(!key(identity,{9,id})||!location(std::move(identity),value,out))return false;Set *selected;if(!parents(out,selected))return false;
-    if(row->parent){Ref parent,actual;if(!symbol(*row->parent,parent)||!entryEnvironment(parent,actual)||!insert(*selected,actual))return false;}return true;
+    if(row->parent){Ref parent,actual;if(!symbol(*row->parent,parent)||!entryEnvironment(parent,actual)||!growEnvironmentParents(*selected,[&]{return insert(*selected,actual);}))return false;}return true;
   }
   bool componentEnvironment(Ref source,Ref function,Ref id,Ref &out){const auto *row=layout(id);if(!row)return false;Key identity;Location value;value.kind=LocationKind::EnvironmentComponent;value.layout=id;value.function=function;value.source=source;value.owner=locations_[source].owner;
     if(!key(identity,{10,source,function,id})||!location(std::move(identity),value,out))return false;Set *selected;if(!parents(out,selected))return false;
-    if(row->parent){Ref parent,actual;if(!symbol(*row->parent,parent)||!componentEnvironment(source,function,parent,actual)||!insert(*selected,actual))return false;}return true;
+    if(row->parent){Ref parent,actual;if(!symbol(*row->parent,parent)||!componentEnvironment(source,function,parent,actual)||!growEnvironmentParents(*selected,[&]{return insert(*selected,actual);}))return false;}return true;
   }
   bool selectEnvironments(const Set &bases,Ref target,Set &out){std::vector<Ref> pending;Set seen;
     if(!V4::Detail::reserve(pending,bases.size(),m_))return false;for(auto id:bases)if(!V4::Detail::push(pending,id,m_))return false;
@@ -637,15 +647,18 @@ class Solver {
       bool acyclic;if(!V4::Detail::receiverActivations(*graph,m_,acyclic))return false;
       if(!acyclic)return open("repeated-receiver-frame-activation");if(!m_.spend())return false;checkedActivations_.insert(graph);
     }
-    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*5+9)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size()*6)||!m_.spend(arguments.size())||!m_.spend(18))return false;
+    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*5+9)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size()*6)||!m_.spend(arguments.size())||!m_.spend(19))return false;
     auto value=std::make_unique<Context>();value->index=contexts_.size();value->function=function;value->scope=scope;value->graph=graph;value->upper=upper;value->protocol=protocol;value->isolated=isolated;value->scopedCall=scopedCall;
     if(callbacks_.settleIndependentLeaves&&function!=None){
       if(!m_.spend(6))return false;
-      if(graph->calls.empty()&&!protocol->lexicalEnvironment&&!protocol->activationEnvironment){
-        value->sweep=Context::Sweep::Independent;
-        for(const auto &node:graph->nodes){
-          if(!m_.spend(3))return false;
-          if(environmentValue(node.kind)){value->sweep=Context::Sweep::Shared;break;}
+      if(graph->calls.empty()){
+        if(protocol->lexicalEnvironment||protocol->activationEnvironment)value->sweep=Context::Sweep::Environment;
+        else{
+          value->sweep=Context::Sweep::Independent;
+          for(const auto &node:graph->nodes){
+            if(!m_.spend(3))return false;
+            if(environmentValue(node.kind)){value->sweep=Context::Sweep::Environment;break;}
+          }
         }
       }
     }
@@ -1860,7 +1873,7 @@ class Solver {
       if(!m_.spend(context.environment.size()))return false;for(auto env:context.environment)if(!number(identity,env))return false;if(!number(identity,context.arguments.size())||!m_.spend(context.arguments.size()))return false;
       for(const auto &argument:context.arguments){if(!number(identity,argument.size())||!m_.spend(argument.size()))return false;for(auto value:argument)if(!number(identity,value))return false;}
       Location value;value.kind=LocationKind::EnvironmentLocal;value.layout=id;value.owner=owner;if(!m_.spend())return false;value.creator=context.index;if(!location(std::move(identity),value,result))return false;Set *selected;if(!parents(result,selected))return false;
-      if(!row->parent){if(node.parent)return open("unexpected-activation-parent");}else{if(!node.parent)return open("activation-parent-open");Ref parent;Set bases,actual;if(!symbol(*row->parent,parent)||!resolve(context,*node.parent,bases)||!selectEnvironments(bases,parent,actual)||!add(*selected,actual))return false;}return insert(output,result);
+      if(!row->parent){if(node.parent)return open("unexpected-activation-parent");}else{if(!node.parent)return open("activation-parent-open");Ref parent;Set bases,actual;if(!symbol(*row->parent,parent)||!resolve(context,*node.parent,bases)||!selectEnvironments(bases,parent,actual)||!growEnvironmentParents(*selected,[&]{return add(*selected,actual);}))return false;}return insert(output,result);
     }
     if(node.kind==V4::ValueKind::EnvironmentParent){Set bases,selected;return resolve(context,node.bases,bases)&&selectEnvironments(bases,id,selected)&&add(output,selected);}
     Ref function,type;if(!node.type)return open("code-source-view-open");if(!graphSymbol(node.functionId,function)||!graphSymbol(*node.type,type))return false;const auto *record=fixedProtocol(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;
@@ -2390,8 +2403,10 @@ public:
   Solver(const V4::Graph &root,const FixedFunctions &fixed,const Callbacks &callbacks,const V4::Charge &charge):root_(root),fixed_(fixed),callbacks_(callbacks),m_(charge){}
   SolveResult run(){
     result_.status=Status::Solved;result_.reason="ordinary-fixed-context-closure";
-    // Account for the initial empty memos alongside solver startup.
-    if(!m_.spend(4))return finish();callbackCharge_=[this](std::size_t n){return m_.spend(n);};
+    // Account for the initial empty memos and the Env parent revision.
+    if(!m_.spend(5))return finish();
+    environmentRevision_=0;
+    callbackCharge_=[this](std::size_t n){return m_.spend(n);};
     if(root_.version!=5){open("graph5-only");return finish();}if(!protocolReady(callbacks_.rootProtocol))return finish();
     // The global stable SlotKey directory belongs to this one admitted group.
     if(callbacks_.environments)for(const auto &row:*callbacks_.environments){Ref owner;if(!symbol(row.first,owner)||!m_.spend(row.second.slots.size()))return finish();
@@ -2406,7 +2421,7 @@ public:
     Set environment;if(callbacks_.rootProtocol.lexicalEnvironment){Ref layout,id;if(!symbol(*callbacks_.rootProtocol.lexicalEnvironment,layout)||!entryEnvironment(layout,id)||!insert(environment,id,false))return finish();}
     Ref rootScope;Key identity;if(!key(identity,{None})||!internKey(scopeIds_,std::move(identity),rootScope))return finish();
     Set receivers;if(callbacks_.rootProtocol.construction){
-      Ref id;if(!m_.spend(16))return finish();Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
+      Ref id;if(!m_.spend(17))return finish();Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
       if(!symbol(protocol.id,id)||!construction(id))return finish();
       for(const auto &[key,candidate]:*callbacks_.constructions){bool eligible;if(!m_.spend()||!derives(candidate,protocol.owner,eligible))return finish();if(!eligible)continue;
         Ref target,frame;if(!symbol(candidate.owner,target)||!frameIdentity(root,None,id,target,None,frame,true)||!insert(receivers,frame,false))return finish();}
@@ -2421,19 +2436,30 @@ public:
       for(Ref i=0;i<contexts_.size();++i){
         if(!m_.spend())return finish();
         auto &context=*contexts_[i];
-        bool independent=false,priorChange=false;
+        bool independent=false,priorChange=false,environment=false;
         if(callbacks_.settleIndependentLeaves){
-          if(!m_.spend(6))return finish();
+          if(!m_.spend(7))return finish();
           if(context.sweep==Context::Sweep::Settled)continue;
-          independent=context.sweep==Context::Sweep::Independent;
+          environment=context.sweep==Context::Sweep::Environment||context.sweep==Context::Sweep::EnvironmentSettled;
+          if(environment){
+            if(!m_.spend(4))return finish();
+            if(context.sweep==Context::Sweep::EnvironmentSettled&&context.settledParentRevision==environmentRevision_)continue;
+          }
+          independent=environment||context.sweep==Context::Sweep::Independent;
           if(independent){priorChange=changed_;changed_=false;}
         }
         if(!runCalls(context)||!runControls(context)||!runValues(context)||!runHeaps(context)||!finishContext(context))return finish();
         if(independent){
           if(!m_.spend(5))return finish();
-          // This complete sweep used immutable input and no other context or
-          // Env equation. A zero-change pass also interned no new origin IDs.
-          if(!changed_)context.sweep=Context::Sweep::Settled;
+          // These contexts have immutable inputs and no other context's
+          // completion equations. A changed Env parent reopens lexical work.
+          if(!changed_){
+            if(environment){
+              if(!m_.spend(2))return finish();
+              context.settledParentRevision=environmentRevision_;
+              context.sweep=Context::Sweep::EnvironmentSettled;
+            }else context.sweep=Context::Sweep::Settled;
+          }
           changed_|=priorChange;
         }
       }

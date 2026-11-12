@@ -21,6 +21,33 @@ auto findFrame(ActualCheck &c,Directory &directory,const std::string &query)->st
   }return directory.end();
 }
 bool data(const ActualValue &v){return v.unknown||v.callableTop||!v.tags.empty()||!v.objects.empty()||!v.callables.empty();}
+std::optional<int> retainedSlotOrder(ActualCheck &check,const std::shared_ptr<const std::string> &left,
+    const std::shared_ptr<const std::string> &right){
+  auto &memo=check.retainedSlotOrders;
+  if(check.cacheOperationMetadata){
+    if(!check.step(2))return {};
+    if(memo)for(const auto &row:memo->rows){
+      if(!check.step(5))return {};
+      if(row.left==left&&row.right==right)return row.order;
+    }
+  }
+  if(!check.step(left->size()+right->size()+1))return {};
+  const auto order=llvm::StringRef(*left).compare(*right);
+  if(check.cacheOperationMetadata){
+    if(!memo){
+      // Four units engage the optional and initialize its cursor. Each row
+      // initializes four empty owner words and its order result.
+      if(!check.step(4+5*ActualCheck::RetainedSlotOrders::capacity))return {};
+      memo.emplace();
+    }
+    // Own the two immutable spellings and the result. No archive row or
+    // execution payload survives through this bounded memo.
+    if(!check.step(17))return {};
+    memo->rows[memo->next]={left,right,order};
+    memo->next=(memo->next+1)%memo->rows.size();
+  }
+  return order;
+}
 template<class Retain>
 bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&retain){
   // The world is already selected. Preserve FrameId then complete slot order.
@@ -45,10 +72,9 @@ bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&r
           size_t position=size;
           while(position){
             if(!c.step(8))return false;
-            const auto &current=*entry.first->spelling;
-            const auto &prior=*ordered[position-1]->first->spelling;
-            if(!c.step(current.size()+prior.size()+1))return false;
-            if(llvm::StringRef(current).compare(prior)>=0)break;
+            const auto order=retainedSlotOrder(c,entry.first->spelling,ordered[position-1]->first->spelling);
+            if(!order)return false;
+            if(*order>=0)break;
             if(!c.step(3))return false;
             ordered[position]=ordered[position-1];
             --position;

@@ -317,6 +317,13 @@ struct ActualCheck {
   bool cacheOperationMetadata=false;
   std::optional<std::map<const Operation *,std::pair<ActualFieldDirectory::const_iterator,std::string>>> initializerFieldInputs;
   std::optional<std::map<const Operation *,std::string>> receiverSites;
+  struct RetainedSlotOrders {
+    struct Row {std::shared_ptr<const std::string> left,right;int order=0;};
+    static constexpr size_t capacity=8;
+    std::array<Row,capacity> rows;
+    size_t next=0;
+  };
+  std::optional<RetainedSlotOrders> retainedSlotOrders;
   const std::map<std::string,std::string> &implicitTargets=p.internalTargets;
   std::map<std::string,const Function *> printedConstructors;
   std::map<std::string,std::pair<std::string,size_t>> analysisParameterSources;
