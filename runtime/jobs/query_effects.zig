@@ -301,34 +301,43 @@ const Context = struct {
     fn componentId(self: *Context, id: []const u8) Error![]const u8 {
         const row = try self.sourceType(id);
         if (!same((row.nominalKey orelse return error.InvalidEffects).category, "component")) return error.InvalidEffects;
-        const component = (try self.catalogType(row, .component)) orelse return error.InvalidEffects;
-        return component.id;
+        const component = (try self.catalogTypeIndex(row, .component)) orelse return error.InvalidEffects;
+        return self.catalog.payload.types[component].id;
     }
-    fn catalogType(self: *Context, row: *const RawType, kind: layout.Kind) Error!?*const layout.Type {
+    fn catalogTypeIndex(self: *Context, row: *const RawType, kind: layout.Kind) Error!?usize {
         const range = row.declarationRange orelse return error.InvalidEffects;
         const name = row.name orelse return error.InvalidEffects;
         const path = row.sourcePath orelse return error.InvalidEffects;
-        for (self.catalog.payload.types) |*candidate| {
+        for (self.catalog.payload.types, 0..) |*candidate, index| {
             try self.spend(1);
             if (candidate.kind != kind or candidate.range.start != range.start or candidate.range.end != range.end) continue;
             try self.spend(2 + @min(name.len, candidate.name.len) / 64 + @min(path.len, candidate.sourcePath.len) / 64);
-            if (same(candidate.name, name) and same(candidate.sourcePath, path)) return candidate;
+            if (same(candidate.name, name) and same(candidate.sourcePath, path)) return index;
         }
         return null;
     }
     fn verifyComponentFields(self: *Context) SourceCheckError!void {
+        const types = self.catalog.payload.types;
+        try self.spend(2 * types.len + 1);
+        const checked_values = try self.allocator.alloc(bool, types.len);
+        defer self.allocator.free(checked_values);
+        @memset(checked_values, false);
         var components: usize = 0;
         for (self.facts.payload.types) |*raw| {
             try self.spend(3);
             const category = (raw.nominalKey orelse continue).category;
             if (!same(category, "component")) continue;
-            const row = (try self.catalogType(raw, .component)) orelse return error.InvalidEffects;
-            try self.verifyTypeFields(raw, row);
+            const index = (try self.catalogTypeIndex(raw, .component)) orelse return error.InvalidEffects;
+            try self.verifyTypeFields(raw, &types[index], checked_values);
             components += 1;
         }
         if (components != self.catalog.payload.components.len) return error.InvalidEffects;
+        for (types, checked_values) |row, checked| {
+            if (row.kind == .value and !checked) return error.InvalidEffects;
+        }
     }
-    fn verifyTypeFields(self: *Context, raw: *const RawType, row: *const layout.Type) SourceCheckError!void {
+    fn verifyTypeFields(self: *Context, raw: *const RawType, row: *const layout.Type, checked_values: []bool) SourceCheckError!void {
+        if (row.kind == .value and raw.base != null) return error.InvalidEffects;
         // Layout flattens the Source base chain. Field identities still use
         // the declaring owner's local ordinal.
         var ancestors: [32]*const RawType = undefined;
@@ -358,8 +367,15 @@ const Context = struct {
                     const child = try self.sourceType(original.type);
                     const category = (child.nominalKey orelse return error.InvalidEffects).category;
                     const kind: layout.Kind = if (same(category, "component")) .component else if (same(category, "value")) .value else return error.InvalidEffects;
-                    const child_layout = (try self.catalogType(child, kind)) orelse return error.InvalidEffects;
+                    const child_index = (try self.catalogTypeIndex(child, kind)) orelse return error.InvalidEffects;
+                    const child_layout = &self.catalog.payload.types[child_index];
                     if (!same(item.type, child_layout.id)) return error.InvalidEffects;
+                    // The layout reader already validates the acyclic depth bound.
+                    try self.spend(2);
+                    if (kind == .value and !checked_values[child_index]) {
+                        checked_values[child_index] = true;
+                        try self.verifyTypeFields(child, child_layout, checked_values);
+                    }
                 }
             }
             fields = fields[owner.fields.len..];
