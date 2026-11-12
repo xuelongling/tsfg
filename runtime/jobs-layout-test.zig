@@ -10,6 +10,7 @@ const nested_expected: L.Expected = .{
 };
 const Child = extern struct { x: i32 };
 const Parent = extern struct { child: Child, active: u8 };
+const InheritedPosition = extern struct { base_x: f32, base_y: f32, x: f32, y: f32 };
 
 fn Value(comptime level: usize) type {
     if (level == 0) return extern struct { leaf: i32 };
@@ -70,6 +71,45 @@ test "equal storage size cannot substitute a different scalar identity" {
     } else return error.MissingI32Fixture;
     var payload = original.payload;
     payload.types = rows;
+    try expectInvalidLayout(payload, nested_expected);
+}
+
+test "actual inherited layout preserves distinct shadowing field declarations" {
+    // Exact layout envelope from the official v6 loop-inheritance Query artifact.
+    const bytes = @embedFile("jobs/testdata/component-layout-inheritance.json");
+    const input = "sha256:e3e07cea503f25c01339fe209c03685b91278b3b28a07162b14da60e952db3f3";
+    const position_id = "sha256:cb824c755704becef7c0bf4673267f1fd3275acfb472b491dde070a54924363d";
+    var source = try L.Layout.loadCatalog(A, bytes, input);
+    defer source.deinit();
+    const position = source.find(position_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@sizeOf(InheritedPosition), position.byteSize);
+    try std.testing.expectEqual(@alignOf(InheritedPosition), position.alignment);
+    try std.testing.expectEqual(@as(usize, 4), position.fields.len);
+    inline for (std.meta.fields(InheritedPosition), .{ "x", "y", "x", "y" }, 0..) |field, name, index| {
+        const row = &position.fields[index];
+        try std.testing.expectEqualStrings(name, row.name);
+        try std.testing.expectEqual(@offsetOf(InheritedPosition, field.name), row.offset);
+    }
+    try std.testing.expect(!std.mem.eql(u8, position.fields[0].id, position.fields[2].id));
+    try std.testing.expect(position.fields[0].range.start < position.fields[2].range.start);
+
+    var payload = source.payload;
+    const rows = try A.dupe(L.Type, payload.types);
+    defer A.free(rows);
+    payload.types = rows;
+    var fields: [4]L.Field = position.fields[0..4].*;
+    for (rows) |*row| if (std.mem.eql(u8, row.id, position_id)) {
+        row.fields = &fields;
+    };
+    const expected: L.Expected = .{ .inputIdentity = input, .hirDigest = source.payload.hirDigest };
+    fields[2].id = fields[0].id;
+    try expectInvalidLayout(payload, expected);
+    fields[2].id = position.fields[2].id;
+    fields[2].range = fields[0].range;
+    try expectInvalidLayout(payload, expected);
+}
+
+fn expectInvalidLayout(payload: L.Payload, expected: L.Expected) !void {
     const payload_bytes = try std.json.Stringify.valueAlloc(A, payload, .{});
     defer A.free(payload_bytes);
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
@@ -88,7 +128,7 @@ test "equal storage size cannot substitute a different scalar identity" {
     defer A.free(envelope);
     const bytes = try std.fmt.allocPrint(A, "{s}\n", .{envelope});
     defer A.free(bytes);
-    if (L.Layout.load(A, bytes, nested_expected)) |loaded| {
+    if (L.Layout.load(A, bytes, expected)) |loaded| {
         var unexpected = loaded;
         unexpected.deinit();
         return error.TestExpectedError;

@@ -141,9 +141,13 @@ pub const Layout = struct {
                 var alignment: u32 = 1;
                 for (row.fields, 0..) |field, field_index| {
                     if (!digestId(field.id) or field.name.len == 0 or !sourcePath(field.sourcePath) or field.range.start > field.range.end) return error.InvalidLayout;
-                    for (row.fields[0..field_index]) |previous| {
+                    for (row.fields[0..field_index]) |*previous| {
                         try budget.charge(1);
-                        if (std.mem.eql(u8, previous.id, field.id) or std.mem.eql(u8, previous.name, field.name)) return error.InvalidLayout;
+                        if (std.mem.eql(u8, previous.id, field.id)) return error.InvalidLayout;
+                        // Flattening keeps distinct declarations that shadow the same name.
+                        if (previous.range.start != field.range.start or previous.range.end != field.range.end) continue;
+                        try budget.charge(1 + @min(previous.name.len, field.name.len) / 64 + @min(previous.sourcePath.len, field.sourcePath.len) / 64);
+                        if (std.mem.eql(u8, previous.name, field.name) and std.mem.eql(u8, previous.sourcePath, field.sourcePath)) return error.InvalidLayout;
                     }
                     const child = try result.findCharged(field.type, &budget);
                     if (child.alignment == 0 or child.alignment > 65536 or !std.math.isPowerOfTwo(child.alignment) or child.byteSize > 65536) return error.InvalidLayout;
