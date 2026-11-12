@@ -117,20 +117,13 @@ const nativeByteLength = nativeByteField("byteLength"), nativeByteOffset = nativ
 const nativeByteBuffer = nativeByteField("buffer");
 const nativeByteBrand = Object.getOwnPropertyDescriptor(nativeTypedArray, Symbol.toStringTag).get;
 
-/** Snapshot selected byte boundaries without caller property reads or prototype traversal.
- * @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy
- * @returns {Buffer}
- */
-export function copyGenericJsonBytes(bytes, policy) {
-  const check = (condition, category = "input") => { if (!condition) failure(policy, category); };
-  check(bytes && typeof bytes === "object" && !isProxy(bytes));
-  const prototype = Object.getPrototypeOf(bytes);
-  check(prototype === Uint8Array.prototype || prototype === Buffer.prototype);
+/** @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy */
+function nativeByteView(bytes, policy) {
   try {
-    check(nativeByteBrand.call(bytes) === "Uint8Array");
+    if (nativeByteBrand.call(bytes) !== "Uint8Array") failure(policy, "input");
     const length = nativeByteLength.call(bytes);
-    check(length <= policy.bytes, "limit");
-    return Buffer.from(new Uint8Array(nativeByteBuffer.call(bytes), nativeByteOffset.call(bytes), length));
+    if (length > policy.bytes) failure(policy, "limit");
+    return new Uint8Array(nativeByteBuffer.call(bytes), nativeByteOffset.call(bytes), length);
   } catch (cause) {
     if (typeof cause?.code === "string" && cause.code.startsWith("generic-package-")) throw cause;
     try { failure(policy, "input"); }
@@ -138,11 +131,20 @@ export function copyGenericJsonBytes(bytes, policy) {
   }
 }
 
+/** Snapshot selected byte boundaries without caller property reads or prototype traversal.
+ * @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy
+ * @returns {Buffer}
+ */
+export function copyGenericJsonBytes(bytes, policy) {
+  if (!bytes || typeof bytes !== "object" || isProxy(bytes)) failure(policy, "input");
+  const prototype = Object.getPrototypeOf(bytes);
+  if (prototype !== Uint8Array.prototype && prototype !== Buffer.prototype) failure(policy, "input");
+  return Buffer.from(nativeByteView(bytes, policy));
+}
+
 /** @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy */
 function textBytes(bytes, policy) {
-  if (!(bytes instanceof Uint8Array)) failure(policy, "input");
-  if (bytes.byteLength > policy.bytes) failure(policy, "limit");
-  const copy = Uint8Array.from(bytes);
+  const copy = new Uint8Array(nativeByteView(bytes, policy));
   let text;
   try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(copy); }
   catch { failure(policy, "utf8"); }

@@ -102,6 +102,26 @@ test('package frontend requires raw owned canonical bytes at both transport inpu
     assert.throws(() => readGenericPackageFrontendResponse(requestBytes(), input), rejected);
 });
 
+test('cold package readers and request identity use the native byte slice', async t => {
+  const { readGenericPackageFrontendResponse } = await frontend();
+  const guarded = raw => {
+    const backing = Buffer.alloc(raw.length + 4, 0xff);
+    const view = backing.subarray(2, 2 + raw.length);
+    view.set(raw);
+    const unexpected = () => { throw new Error('caller byte access must not run'); };
+    Object.defineProperty(view, 'byteLength', { get: unexpected });
+    Object.defineProperty(view, Symbol.iterator, { value: unexpected });
+    return view;
+  };
+  await t.test('request identity', () => {
+    assert.equal(genericPackageRequestId(guarded(requestBytes())), instantiate.response.requestId);
+  });
+  await t.test('cold request and response', () => {
+    const result = readGenericPackageFrontendResponse(guarded(requestBytes()), guarded(responseBytes()));
+    assert.deepEqual(result, readGenericPackageFrontendResponse(requestBytes(), responseBytes()));
+  });
+});
+
 test('package frontend maintains the distinct inner and outer byte budgets', async () => {
   const { readGenericPackageFrontendResponse, analyzeGenericPackage } = await frontend();
   assert.throws(() => readGenericPackageFrontendResponse(requestBytes(), new Uint8Array(16 * 1024 * 1024 + 1)),
