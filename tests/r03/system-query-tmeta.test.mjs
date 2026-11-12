@@ -34,6 +34,19 @@ test('Query tmeta original-context/current-manifest gates',async()=>{
   assert.match(queryTmetaSchema,/^sha256:[0-9a-f]{64}$/);
 });
 
+test('Query public pipeline owns its Source context before artifact admission',{skip:!enabled},async()=>{
+  const input=cases.at(-1),requestBytes=Buffer.from(input.context.requestBytes);
+  let reads=0;
+  const context={...input.context,get requestBytes(){reads++;return requestBytes;}};
+  const pending=compileSystemQuery(input.bytes,context,{core:tool,effects:true,cpuBatch:true,tmeta:true});
+  requestBytes.fill(0);
+  const result=await pending;
+  assert.equal(reads,1);
+  assert.equal(result.tmeta.payload.sourceRequest,input.context.requestBytes.toString('utf8'));
+  assert.equal(result.tmeta.payload.batch,result.cpuBatch);
+  assert.deepEqual(result.tmeta.effects,result.effects);
+});
+
 for(const input of cases)test('actual Query .tmeta: '+input.name,{skip:!enabled},()=>{
   const facts=readSystemQueryFacts(input.bytes,input.context),core=emitSystemQueryCore(facts,input.context),bytes=run(input.name,core),envelope=JSON.parse(bytes);
   const batch=JSON.parse(envelope.payload).batch,checkedBatch=run(input.name+'-batch',core,'--cpu-batch');

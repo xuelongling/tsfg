@@ -9,7 +9,7 @@ import { lowerGenericHir } from "./generic-hir.mjs";
 export { compilePackageHir };
 import { buildHir, lowerHir, lowerFormalHir, lowerOwnedHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
-import {readSystemQueryFacts} from './system-query-facts.mjs';
+import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
@@ -106,14 +106,14 @@ function consume(executable, args, input) {
  * @param {{core:string,optimize?:boolean,effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir',tmeta?:boolean}} options
  */
 export async function compileSystemQuery(bytes,context,options){
-  const facts=readSystemQueryFacts(bytes,context);
+  const {facts,context:sourceContext}=readSystemQueryFactsAndContext(bytes,context);
   const executable=await verifiedConsumer(options.core,'core');
-  const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,context)).toString('utf8');
-  const effects=options.effects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,context):undefined;
+  const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,sourceContext)).toString('utf8');
+  const effects=options.effects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,sourceContext):undefined;
   const checkedBatch=options.cpuBatch||options.tmeta?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):core;
   const cpuBatch=options.cpuBatch?checkedBatch:undefined;
   const cpuLLVM=options.cpuLLVM?consume(executable,['--system-query',options.cpuLLVM==='ir'?'--llvm-ir':'--cpu-llvm'],cpuBatch??core).toString('utf8'):undefined;
-  const tmeta=options.tmeta?readSystemQueryTmeta(consume(executable,['--system-query','--tmeta'],checkedBatch),facts,context,checkedBatch):undefined;
+  const tmeta=options.tmeta?readSystemQueryTmeta(consume(executable,['--system-query','--tmeta'],checkedBatch),facts,sourceContext,checkedBatch):undefined;
   return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch}),...(cpuLLVM===undefined?{}:{cpuLLVM}),...(tmeta===undefined?{}:{tmeta})};
 }
 

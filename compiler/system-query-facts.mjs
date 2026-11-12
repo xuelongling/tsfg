@@ -357,11 +357,22 @@ export function printSystemQueryFacts(facts,context){
   return Buffer.from(checkReceipt(facts,context).receipt.packetText);
 }
 
+function receiptContext(receipt,requestBytes){
+  return {family:'tsfg.system-query-context-candidate',version:descriptor.version,requestBytes,expectedPackageId:receipt.packageId};
+}
+
+/** Own the Source context for all stages of the asynchronous Query pipeline.
+ * @param {Uint8Array} bytes @param {unknown} context
+ */
+export function readSystemQueryFactsAndContext(bytes,context){
+  const facts=readSystemQueryFacts(bytes,context),receipt=receipts.get(facts);
+  return {facts,context:receiptContext(receipt,Buffer.from(receipt.requestText))};
+}
+
 /** The checked texts and private request bytes for a synchronous data consumer.
  * @param {SystemQueryFacts} facts @param {unknown} context
  */
 export function readSystemQuerySourceReceipt(facts,context){
   const {receipt,requestBytes}=checkReceipt(facts,context);
-  return {packetText:receipt.packetText,requestText:receipt.requestText,
-    context:{family:'tsfg.system-query-context-candidate',version:descriptor.version,requestBytes,expectedPackageId:receipt.packageId}};
+  return {packetText:receipt.packetText,requestText:receipt.requestText,context:receiptContext(receipt,requestBytes)};
 }
