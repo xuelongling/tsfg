@@ -75,6 +75,28 @@ test('M22 identity verification rejects tampering and matching arbitrary caller 
   });
 });
 
+test('M22 identity fields retain their exact JSON string types', async t => {
+  /** @type {Array<[string, (value: any) => void, RegExp]>} Non-string identity fields. */
+  const variants = [
+    ['numeric epoch', value => { value.buildIdentity.source_date_epoch = Number(value.buildIdentity.source_date_epoch); }, /unsupported identity/],
+    ['array epoch', value => { value.buildIdentity.source_date_epoch = [value.buildIdentity.source_date_epoch]; }, /unsupported identity/],
+    ['array toolchain digest', value => { value.buildIdentity.toolchainClosureDigest = [value.buildIdentity.toolchainClosureDigest]; }, /unsupported identity/],
+    ['array input digest', value => {
+      const entry = value.buildInputSet.entries[0];
+      entry.sha256 = [entry.sha256];
+    }, /input entry/],
+    ['array AOT program digest', value => {
+      value.buildIdentity.options.sourceTarget = 'tsfg-aot';
+      value.buildIdentity.options.programCore = [hash('complete program')];
+    }, /unsupported identity/],
+  ];
+  for (const [name, mutate, reason] of variants) await t.test(name, () => {
+    const value = structuredClone(oracle.identity);
+    mutate(value);
+    assert.throws(() => createCounterHostContract(rehashIdentity(value)), reason);
+  });
+});
+
 test('M22 identity changes force a different contract and reject the old claim', () => {
   const next = structuredClone(oracle.identity);
   next.buildIdentity.source_date_epoch = String(BigInt(next.buildIdentity.source_date_epoch) + 1n);

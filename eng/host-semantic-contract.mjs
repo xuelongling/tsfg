@@ -5,6 +5,7 @@ import { canonical, own, sha256 } from '../compiler/identity.mjs';
 // The issuer has one reviewed implementation profile, never caller safety flags.
 const profile = own(profileData);
 const digestPattern = /^sha256:[0-9a-f]{64}$/;
+function isDigest(value) { return typeof value === 'string' && digestPattern.test(value); }
 function reject(reason) { throw new TypeError('host-semantic-contract: ' + reason); }
 function exact(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -17,9 +18,9 @@ function checkedIdentity(identity) {
   const aot=bi.options?.sourceTarget==='tsfg-aot';
   exact(bi.options, aot?['sourceTarget','simdDispatch','programCore']:['sourceTarget','simdDispatch']);
   if (bi.target !== profile.abi.target || bi.profile !== 'debug' || !['tsfg-vm','tsfg-aot'].includes(bi.options.sourceTarget)
-      || bi.options.simdDispatch !== 'runtime-detected' || aot&&!digestPattern.test(bi.options.programCore)
-      || !/^[1-9][0-9]*$/.test(bi.source_date_epoch)
-      || !digestPattern.test(bi.toolchainClosureDigest) || inputs.schemaVersion !== '1'
+      || bi.options.simdDispatch !== 'runtime-detected' || (aot && !isDigest(bi.options.programCore))
+      || typeof bi.source_date_epoch !== 'string' || !/^[1-9][0-9]*$/.test(bi.source_date_epoch)
+      || !isDigest(bi.toolchainClosureDigest) || inputs.schemaVersion !== '1'
       || !Array.isArray(inputs.entries) || inputs.entries.length === 0 || inputs.entries.length > 4096)
     reject('unsupported identity');
   let previous = '';
@@ -28,7 +29,7 @@ function checkedIdentity(identity) {
     const name = entry.repositoryRelativePath;
     if (entry.projectId !== 'tsfg' || typeof name !== 'string' || !name.split('/').every(part => /^[A-Za-z0-9_.-]+$/.test(part))
         || name.split('/').some(part => part === '.' || part === '..') || name <= previous
-        || !['100644','100755'].includes(entry.normalizedMode) || !digestPattern.test(entry.sha256)) reject('input entry');
+        || !['100644','100755'].includes(entry.normalizedMode) || !isDigest(entry.sha256)) reject('input entry');
     previous = name;
   }
   const { digest, ...body } = bi;
