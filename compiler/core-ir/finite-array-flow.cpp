@@ -185,7 +185,19 @@ bool ArrayFlow::call(mlir::Operation *op,const std::string &target,size_t offset
   for(size_t i=offset;i<fn.getNumArguments();++i) {
     if(!proof.charge()||i-offset>=op->getNumOperands()||!copy(op->getOperand(i-offset),fn.getArgument(i),gate,selected))return false;
   }
-  if(forward&&op->getNumResults()&&returns.count(target))return edge(returns.at(target),value(op->getResult(0)),gate,selected);
+  if(forward&&op->getNumResults()&&returns.count(target)) {
+    // Substitute the actual operand for a proved direct return alias. The
+    // definition summary also includes prototype and other call-site owners.
+    if(llvm::isa<mlir::func::CallOp>(op)) {
+      if(!proof.charge())return false;
+      const auto alias=proof.returnedParameters.find(target);
+      if(alias!=proof.returnedParameters.end()) {
+        if(alias->second>=op->getNumOperands())return false;
+        return copy(op->getOperand(alias->second),op->getResult(0),gate,selected);
+      }
+    }
+    return edge(returns.at(target),value(op->getResult(0)),gate,selected);
+  }
   return true;
 }
 bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
