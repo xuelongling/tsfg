@@ -665,6 +665,7 @@ const ChildInvocation = enum {
     direct, saved, saved_extra_use, saved_copy, saved_view, saved_copy_view, saved_copy_view_extra_use,
     saved_parameter, saved_parallel_parameter, saved_parameter_extra_use,
     saved_copy_parameter, saved_parameter_view, saved_copy_parameter_view, saved_copy_parameter_view_extra_use,
+    saved_diamond_parameter, saved_diamond_parameter_extra_use,
 };
 const saved_code_type: t.TypeRef = @enumFromInt(types.len);
 const saved_code_register: model.Register = .{ .carrier = .{ .@"type" = saved_code_type }, .view = saved_code_type };
@@ -689,6 +690,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const parameter_code = switch (invocation) {
         .saved_parameter, .saved_parallel_parameter, .saved_parameter_extra_use,
         .saved_copy_parameter, .saved_parameter_view, .saved_copy_parameter_view, .saved_copy_parameter_view_extra_use,
+        .saved_diamond_parameter, .saved_diamond_parameter_extra_use,
         => true,
         else => false,
     };
@@ -758,14 +760,23 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         .after, .absent, .second_edge_only, .both_edges => [_]ins.Instruction{},
     };
     const carried_code = if (copy_before_parameter) r(code_index + 1) else code;
+    const diamond_code = invocation == .saved_diamond_parameter or invocation == .saved_diamond_parameter_extra_use;
     const branch_code: ins.Instruction = .{
         .source = at, .result = null,
-        .operands = if (invocation == .saved_parallel_parameter) &.{ r(0), code, code } else &.{carried_code},
-        .data = if (invocation == .saved_parallel_parameter)
-            .{ .cond_br = .{ .true_destination = b(4), .false_destination = b(4), .true_count = 1 } }
-        else
-            .{ .br = .{ .destination = b(4) } },
+        .operands = if (diamond_code) &.{r(0)} else if (invocation == .saved_parallel_parameter) &.{ r(0), code, code } else &.{carried_code},
+        .data = switch (invocation) {
+            .saved_parallel_parameter => .{ .cond_br = .{ .true_destination = b(4), .false_destination = b(4), .true_count = 1 } },
+            .saved_diamond_parameter, .saved_diamond_parameter_extra_use => .{ .cond_br = .{ .true_destination = b(5), .false_destination = b(6), .true_count = 0 } },
+            else => .{ .br = .{ .destination = b(4) } },
+        },
     };
+    const diamond_arm: ins.Instruction = .{
+        .source = at, .result = null, .operands = &.{code}, .data = .{ .br = .{ .destination = b(4) } },
+    };
+    const arm_extra: ins.Instruction = .{
+        .source = at, .result = r(parameter_index + 1), .operands = &.{code}, .data = copy_code.data,
+    };
+    const extra_arm_use = invocation == .saved_diamond_parameter_extra_use;
     const view_parameter: ins.Instruction = .{
         .source = at, .result = r(parameter_index + 1), .operands = &.{code_parameter}, .data = view_code.data,
     };
@@ -817,7 +828,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{}) ++
         (if (saves_code) [_]model.Register{saved_code_register} else [_]model.Register{}) ++
         ([_]model.Register{saved_code_register} **
-            (code_transport.len + parameter_transport.len + @as(usize, @intFromBool(parameter_code)) + parameter_use.len));
+            (code_transport.len + parameter_transport.len + @as(usize, @intFromBool(parameter_code)) + parameter_use.len + @as(usize, @intFromBool(extra_arm_use))));
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
@@ -830,7 +841,10 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         else => [_]model.Block{},
     } ++ if (parameter_code) [_]model.Block{.{
         .parameters = &.{code_parameter}, .instructions = &(parameter_use ++ before_call ++ [_]ins.Instruction{invoke_child}),
-    }} else [_]model.Block{};
+    }} ++ (if (diamond_code) [_]model.Block{
+        .{ .parameters = &.{}, .instructions = if (extra_arm_use) &.{ arm_extra, diamond_arm } else &.{diamond_arm} },
+        .{ .parameters = &.{}, .instructions = &.{diamond_arm} },
+    } else [_]model.Block{}) else [_]model.Block{};
     const child_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(0)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } };
     const child_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(0), r(1) }, .data = .{ .environment_store = .{ .slot = @enumFromInt(0) } } };
     const child_jump: ins.Instruction = .{ .source = at, .result = null, .operands = &.{}, .data = .{ .br = .{ .destination = b(1) } } };
@@ -1354,4 +1368,24 @@ test "saved Code copied before br and viewed after br sees selected Env init" {
 
 test "saved Code forwarded across br with a second parameter use stays outside the mixed Env proof" {
     try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_copy_parameter_view_extra_use, true);
+}
+
+test "saved Code through two predecessor blocks checks the uninitialized second Env edge" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_diamond_parameter, false);
+}
+
+test "saved Code through two predecessor blocks checks the uninitialized first Env edge" {
+    try runChild(.second_edge_only, .store, .direct, .distinct_edges, .saved_diamond_parameter, false);
+}
+
+test "saved Code through two predecessor blocks accepts two initialized Env edges" {
+    try runChild(.both_edges, .load, .direct, .distinct_edges, .saved_diamond_parameter, true);
+}
+
+test "saved Code through two predecessor blocks sees selected Env init at the join" {
+    try runChild(.before, .load, .direct, .distinct_edges, .saved_diamond_parameter, true);
+}
+
+test "saved Code with an extra predecessor use stays outside the mixed Env proof" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_diamond_parameter_extra_use, true);
 }

@@ -1069,7 +1069,12 @@ const Graph = struct {
         const terminator = &instructions[position];
         const first_argument: usize = switch (terminator.data) {
             .br => 0,
-            .cond_br => 1,
+            .cond_br => |conditional| first: {
+                try c.step();
+                if (conditional.true_destination != conditional.false_destination)
+                    return self.savedEnvironmentCallThroughDiamond(self.facts[block].successors, code, captured, calls);
+                break :first 1;
+            },
             else => return false,
         };
         var carried = code;
@@ -1093,6 +1098,48 @@ const Graph = struct {
             const arguments = environmentEdgeArguments(terminator, edge).?;
             if (argument >= arguments.len or arguments[argument] != carried) return false;
         }
+        return self.savedEnvironmentCallAtParameter(destination, argument, captured, calls);
+    }
+
+    fn savedEnvironmentCallThroughDiamond(
+        self: *Graph,
+        arms: [2]usize,
+        code: t.RegisterRef,
+        captured: t.RegisterRef,
+        calls: []const EnvironmentCall,
+    ) Error!bool {
+        const c = self.c;
+        try c.charge(5);
+        const use = &self.uses[@intFromEnum(code)];
+        if (use.count != arms.len or (use.block != arms[0] and use.block != arms[1])) return false;
+        try c.charge(6);
+        const instructions = self.f.blocks[use.block].instructions;
+        if (use.position != instructions.len - 1) return false;
+        const first_terminator = &instructions[use.position];
+        if (first_terminator.data != .br) return false;
+        const destination = @intFromEnum(first_terminator.data.br.destination);
+        if (self.facts[destination].predecessor_count != arms.len) return false;
+        // Both arms are reached only from the Code definition's block.
+        // Their branch arguments must account for every use of that Code.
+        for (arms) |arm| {
+            try c.charge(8);
+            if (self.facts[arm].predecessor_count != 1) return false;
+            const body = self.f.blocks[arm].instructions;
+            const terminator = &body[body.len - 1];
+            if (terminator.data != .br or @intFromEnum(terminator.data.br.destination) != destination or
+                use.operand >= terminator.operands.len or terminator.operands[use.operand] != code) return false;
+        }
+        return self.savedEnvironmentCallAtParameter(destination, use.operand, captured, calls);
+    }
+
+    fn savedEnvironmentCallAtParameter(
+        self: *Graph,
+        destination: usize,
+        argument: usize,
+        captured: t.RegisterRef,
+        calls: []const EnvironmentCall,
+    ) Error!bool {
+        const c = self.c;
         try c.charge(5);
         const target = &self.f.blocks[destination];
         const parameter = target.parameters[argument];
