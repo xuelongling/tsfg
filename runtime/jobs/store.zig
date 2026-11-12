@@ -14,6 +14,11 @@ const Archetype = struct { components: []u32, chunks: std.ArrayListUnmanaged(*Ch
 const Slot = struct { generation: u32 = 1, live: bool = false, archetype: u32 = 0, chunk: u32 = 0, row: u32 = 0 };
 const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool, query: bool = false };
 const QueryState = struct { token: u64, selection: []Resolved, chunks: []*Chunk };
+const FreeSlots = std.PriorityQueue(u32, void, compareSlotIndex);
+
+fn compareSlotIndex(_: void, a: u32, b: u32) std.math.Order {
+    return std.math.order(a, b);
+}
 
 /// A Store owns component metadata and columns. Its address must remain stable while views live.
 /// Raw slices obtained from a view remain borrowed only until that view is released.
@@ -25,6 +30,7 @@ pub const Store = struct {
     layout_identity: [71]u8,
     archetypes: std.ArrayListUnmanaged(Archetype) = .empty,
     slots: std.ArrayListUnmanaged(Slot) = .empty,
+    free_slots: FreeSlots = .empty,
     leases: std.ArrayListUnmanaged(Lease) = .empty,
     queries: std.ArrayListUnmanaged(QueryState) = .empty,
     next_token: u64 = 1,
@@ -59,6 +65,7 @@ pub const Store = struct {
         }
         self.archetypes.deinit(self.allocator);
         self.slots.deinit(self.allocator);
+        self.free_slots.deinit(self.allocator);
         self.leases.deinit(self.allocator);
         self.queries.deinit(self.allocator);
         self.metadata.deinit();
@@ -98,16 +105,14 @@ pub const Store = struct {
             if (value.bytes.len != self.components[component].size) return error.SizeMismatch;
             for (initial[0..index]) |previous| if (std.mem.eql(u8, previous.component, value.component)) return error.ComponentMissing;
         }
-        var free: ?u32 = null;
-        for (self.slots.items, 0..) |slot, index| if (!slot.live and slot.generation != 0) {
-            free = @intCast(index);
-            break;
-        };
-        if (free == null) {
+        const reusable = self.free_slots.peek();
+        const slot_index = reusable orelse fresh: {
             if (self.slots.items.len >= std.math.maxInt(u32)) return error.StorageLimit;
             try self.slots.ensureUnusedCapacity(self.allocator, 1);
-            free = @intCast(self.slots.items.len);
-        }
+            // Reserve a free entry for every slot so remove never needs to allocate.
+            try self.free_slots.ensureTotalCapacity(self.allocator, self.slots.items.len + 1);
+            break :fresh @as(u32, @intCast(self.slots.items.len));
+        };
         var chunk_index: usize = 0;
         while (chunk_index < archetype.chunks.items.len) : (chunk_index += 1) {
             const chunk = archetype.chunks.items[chunk_index];
@@ -130,15 +135,16 @@ pub const Store = struct {
                 break;
             };
         }
-        if (free.? == self.slots.items.len) self.slots.appendAssumeCapacity(.{});
-        const slot = &self.slots.items[free.?];
+        // Keep a reusable slot available until all fallible chunk work has finished.
+        if (reusable == null) self.slots.appendAssumeCapacity(.{}) else _ = self.free_slots.pop();
+        const slot = &self.slots.items[slot_index];
         slot.live = true;
         slot.archetype = archetype_id;
         slot.chunk = @intCast(chunk_index);
         slot.row = @intCast(row);
-        chunk.entities[row] = free.?;
+        chunk.entities[row] = slot_index;
         chunk.len += 1;
-        return .{ .index = free.?, .generation = slot.generation };
+        return .{ .index = slot_index, .generation = slot.generation };
     }
 
     pub fn remove(self: *Store, entity: Entity) !void {
@@ -161,6 +167,7 @@ pub const Store = struct {
         chunk.len -= 1;
         slot.live = false;
         slot.generation = if (slot.generation == std.math.maxInt(u32)) 0 else slot.generation + 1;
+        if (slot.generation != 0) self.free_slots.push(self.allocator, entity.index) catch unreachable;
     }
 
     pub fn write(self: *Store, entity: Entity, component_id: []const u8, bytes: []const u8) !void {

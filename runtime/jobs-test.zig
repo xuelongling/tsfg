@@ -128,6 +128,39 @@ test "swap removal updates moved handles and generations reject all stale handle
     try std.testing.expectEqual(@as(i32, 0), actual.count);
 }
 
+test "reuses the lowest available slot after a failed create and skips retired generations" {
+    var source = try L.Layout.load(A, source_layout, expected);
+    defer source.deinit();
+    var fault = std.testing.FailingAllocator.init(A, .{});
+    var world = try jobs.Store.init(fault.allocator(), &source, 4);
+    defer world.deinit() catch unreachable;
+    const position = try world.addArchetype(&.{named(&source, "Position").id});
+    const stats = try world.addArchetype(&.{named(&source, "Stats").id});
+    const first = try world.create(position, &.{});
+    var retired = try world.create(position, &.{});
+    _ = try world.create(position, &.{});
+    const last = try world.create(position, &.{});
+    retired.generation = std.math.maxInt(u32);
+    world.slots.items[retired.index].generation = retired.generation;
+
+    fault.fail_index = fault.alloc_index;
+    try world.remove(retired);
+    try world.remove(last);
+    try world.remove(first);
+    try std.testing.expect(!fault.has_induced_failure);
+    try std.testing.expectError(error.OutOfMemory, world.create(stats, &.{}));
+    fault.fail_index = std.math.maxInt(usize);
+
+    const lowest = try world.create(stats, &.{});
+    const next = try world.create(position, &.{});
+    const fresh = try world.create(position, &.{});
+    try std.testing.expectEqual(jobs.Entity{ .index = first.index, .generation = first.generation + 1 }, lowest);
+    try std.testing.expectEqual(jobs.Entity{ .index = last.index, .generation = last.generation + 1 }, next);
+    try std.testing.expectEqual(jobs.Entity{ .index = last.index + 1, .generation = 1 }, fresh);
+    try std.testing.expectError(error.InvalidEntity, world.remove(first));
+    try std.testing.expectError(error.InvalidEntity, world.remove(retired));
+}
+
 test "leases reject conflicting access and preserve live views across other chunk growth" {
     var source = try L.Layout.load(A, source_layout, expected);
     defer source.deinit();
