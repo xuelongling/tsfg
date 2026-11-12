@@ -424,6 +424,55 @@ fn digest(prefix: []const u8, bytes: []const u8) [71]u8 {
     @memcpy(out[7..], &hex);
     return out;
 }
+
+test "typed effects reject a used field with another same-size scalar type" {
+    try rejectLayoutField(true);
+}
+
+test "typed effects reject a used read field with different Source readonly" {
+    try rejectLayoutField(false);
+}
+
+fn rejectLayoutField(comptime type_change: bool) !void {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict.tmeta"), receipt.value);
+    defer document.deinit();
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const own = arena.allocator();
+    var catalog = document.component_layout.payload;
+    const types = try own.dupe(jobs.layout.Type, catalog.types);
+    for (types) |*row| {
+        const name = if (type_change) "CopyDestination" else "CopySource";
+        if (row.kind != .component or !std.mem.eql(u8, row.name, name)) continue;
+        const fields = try own.dupe(jobs.layout.Field, row.fields);
+        const field = &fields[if (type_change) 1 else 0];
+        try std.testing.expectEqualStrings("n", field.name);
+        if (type_change) {
+            try std.testing.expectEqualStrings("pad", fields[0].name);
+            field.type = fields[0].type;
+        } else {
+            try std.testing.expect(!field.readonly);
+            field.readonly = true;
+        }
+        row.fields = fields;
+        break;
+    } else return error.TestUnexpectedResult;
+    catalog.types = types;
+    const canonical = try std.json.Stringify.valueAlloc(own, .{ .components = catalog.components, .target = catalog.target, .types = catalog.types }, .{});
+    const catalog_digest = digest("", try std.mem.concat(own, u8, &.{ canonical, "\n" }));
+    catalog.hirDigest = &catalog_digest;
+    const body = try std.json.Stringify.valueAlloc(own, catalog, .{});
+    const hash = digest("tsfg.component-layout.v1\x00", body);
+    const envelope = try std.json.Stringify.valueAlloc(own, .{ .family = "tsfg.component-layout-candidate", .payload = body, .payloadHash = @as([]const u8, &hash), .schemaHash = jobs.layout.schema_hash, .version = @as(u32, 1) }, .{});
+    var payload = document.payload;
+    payload.componentLayouts = try std.mem.concat(own, u8, &.{ envelope, "\n" });
+    const layout_hash = digest("", payload.componentLayouts);
+    payload.layoutHash = &layout_hash;
+    try rejectPayload(payload);
+}
+
 fn rejectReport(document: *const T.Document, report: E.Report) !void {
     const effects_body = try std.json.Stringify.valueAlloc(A, report, .{});
     defer A.free(effects_body);
@@ -433,6 +482,10 @@ fn rejectReport(document: *const T.Document, report: E.Report) !void {
     payload.effects = effects_bytes;
     const effects_hash = digest("", effects_bytes);
     payload.effectsHash = &effects_hash;
+    try rejectPayload(payload);
+}
+
+fn rejectPayload(payload: T.Payload) !void {
     const body = try std.json.Stringify.valueAlloc(A, payload, .{});
     defer A.free(body);
     const identity = digest("tsfg.query-tmeta.v2\x00", body);
@@ -440,6 +493,10 @@ fn rejectReport(document: *const T.Document, report: E.Report) !void {
     defer A.free(envelope);
     const bytes = try std.mem.concat(A, u8, &.{ envelope, "\n" });
     defer A.free(bytes);
-    // This deliberately forged expected hash is only a structural negative, never a cold receipt.
-    try std.testing.expectError(error.InvalidEffects, T.Document.load(A, bytes, .{ .payloadHash = &identity, .inputIdentity = payload.inputIdentity, .packageId = payload.packageId }));
+    // This test recomputes identity to isolate the semantic check.
+    if (T.Document.load(A, bytes, .{ .payloadHash = &identity, .inputIdentity = payload.inputIdentity, .packageId = payload.packageId })) |loaded| {
+        var unexpected = loaded;
+        unexpected.deinit();
+        return error.TestExpectedError;
+    } else |err| try std.testing.expectEqual(error.InvalidEffects, err);
 }

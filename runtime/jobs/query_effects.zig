@@ -31,7 +31,7 @@ pub const Report = struct { conflicts: []const Conflict, coreVersion: []const u8
 
 // Project the Source declaration, type and call-anchor facts. Document owns the full packet.
 const Decl = struct { id: []const u8, name: []const u8 = "", range: layout.Range, sourcePath: []const u8 };
-const RawField = struct { id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 } };
+const RawField = struct { id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 }, readonly: bool, type: []const u8 };
 const RawType = struct { id: []const u8, name: ?[]const u8 = null, sourcePath: ?[]const u8 = null, declarationRange: ?layout.Range = null, nominalKey: ?struct { category: []const u8 } = null, fields: []const RawField = &.{} };
 const RawItem = struct { componentType: []const u8, mode: Access };
 pub const SourceParameter = struct { binding: struct { id: []const u8 }, logicalType: []const u8, query: ?struct { items: []const RawItem } };
@@ -607,14 +607,26 @@ const Context = struct {
         try self.spend(1);
         const row = self.catalog.find(component) orelse return error.InvalidEffects;
         if (row.kind != .component or !digestId(source_id)) return error.InvalidEffects;
-        for (row.fields) |item| if (same(item.id, id)) {
+        for (row.fields) |*item| {
+            try self.spend(1);
+            if (!same(item.id, id)) continue;
             if (writable and item.readonly) return error.InvalidEffects;
-            for (self.facts.payload.types) |raw| for (raw.fields) |original| {
+            for (self.facts.payload.types) |*raw| {
                 try self.spend(1);
-                if (same(original.id, source_id) and same(original.name, item.name) and same(original.origin.source, item.sourcePath) and original.origin.start == item.range.start and original.origin.end == item.range.end) return;
-            };
+                for (raw.fields) |*original| {
+                    try self.spend(1);
+                    if (!same(original.id, source_id)) continue;
+                    try self.spend(3 + @min(original.name.len, item.name.len) / 64 + @min(original.origin.source.len, item.sourcePath.len) / 64);
+                    if (!same(original.name, item.name) or !same(original.origin.source, item.sourcePath) or original.origin.start != item.range.start or original.origin.end != item.range.end) continue;
+                    try self.spend(5);
+                    if (original.readonly != item.readonly or !scalar_types.has(original.type)) return error.InvalidEffects;
+                    const expected_type = hashIdentity("tsfg.type\x00", original.type);
+                    if (!same(item.type, &expected_type)) return error.InvalidEffects;
+                    return;
+                }
+            }
             return error.InvalidEffects;
-        };
+        }
         return error.InvalidEffects;
     }
     fn fieldRows(self: *Context, rows: []const FieldEffects) Error!void {
