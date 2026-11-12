@@ -2,7 +2,6 @@
 // Independent first172B HIR relation and wire negatives; Root installs and runs this candidate.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import registry from '../../contracts/registry.json' with {type:'json'};
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { importCapturedFrontendResponse } from '../../compiler/frontend.mjs';
@@ -64,10 +63,6 @@ function once(text, anchor, replacement) {
 }
 
 
-// Independent scalar body; this dispatch control follows only the current
-// ordinary HIR header, not a new frozen wire/Source identity.
-const formalControl = {contractVersion:registry['tsfg.hir'].semver,schemaHash:registry['tsfg.hir'].schemaHash,"inputIdentity":"sha256:1784522b2da941a9e6db262bec31723f4d0d67e30984b7a1846d6d3d20f9db90","source":{"path":"/src/formal.ts","content":"function entry(): i32 { return 0; }","hash":"sha256:e6493af175ecd6467ee9b41b70ab3cd7af24560bef9802d053b3573471fcc708"},"target":{"llvmDataLayout":"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128","target":"windows-x86_64-msvc","triple":"x86_64-pc-windows-msvc"},"functions":[{"id":"sha256:072c0491b98615305be3cb2945b83e4380109b81a95daec8ac806fdcb77c9917","name":"entry","signatureHash":"sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9","returnType":{"kind":"scalar","name":"i32","id":"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"},"parameters":[],"range":{"start":0,"end":35},"body":[{"kind":"return","range":{"start":24,"end":33},"value":{"kind":"constant","type":"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727","range":{"start":31,"end":32},"decimal":"0","token":"0"}}]}]};
-
 // This seed is the actual first packet already checked against the unchanged
 // 1fcef118 full manual oracle. It supplies negative baselines, not a new oracle.
 test('first exception HIR rejects derived corruption and malformed cold input', async t => {
@@ -103,7 +98,17 @@ test('first exception HIR rejects derived corruption and malformed cold input', 
   });
   if (!controlPassed) return;
 
-  await t.test('currentOrdinaryFormalWithoutFormatStillRoundTrips', () => {
+  await t.test('currentOrdinaryFormalWithoutFormatStillRoundTrips', async () => {
+    const bytes = await readFile(new URL('./testdata/formal-cold-profile/owned-snapshot-hir.json', import.meta.url));
+    assert.equal(hash(bytes), '5f22b4e99e09737ef6d58c544fc44a107d8fc0b6dc9d0c00ea52a9f837af8ae7');
+    const {hir: formalControl, snapshot: formalSnapshot} = JSON.parse(bytes.toString('utf8'));
+    const built = buildHir(formalSnapshot);
+    assert.equal(built.status, 'ok', JSON.stringify(built));
+    assert.deepEqual(built.hir, formalControl);
+    const extended = buildHir({...formalSnapshot, modules: []});
+    assert.equal(extended.status, 'error');
+    assert.deepEqual(extended.diagnostics, [{code:'r03-d-snapshot',ruleId:'r01-input-boundary',phase:'hir',
+      message:'unsupported frontend snapshot contract'}]);
     assert.equal(Object.hasOwn(formalControl, 'format'), false);
     const text = canonical(formalControl) + '\n', before = canonical(formalControl);
     assert.deepEqual(verifyHir(formalControl), formalControl);
