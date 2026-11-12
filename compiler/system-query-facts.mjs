@@ -338,17 +338,30 @@ export function readSystemQueryFacts(bytes,context){
   const systems=decodeSystems(payload.systems,program,sources,ast,builtins,component,fields,grammars,scalars,spend);scalars.complete(systems);
   if(!systems.length||systems.length>4096)fail('complete system directory required','source');
   const result=own({format:systemQueryFactsFormat,inputIdentity:text(packet.requestId),packageId:expectedPackageId,program,nodes:ast.nodes,builtins:builtinRows,components,markerAliases,systems,scalarHelpers:scalars.helpers});
-  receipts.set(result,{bytes:Buffer.from(transport.text),requestText,packageId:expectedPackageId});return result;
+  receipts.set(result,{packetText:transport.text,requestText,packageId:expectedPackageId});return result;
+}
+
+/** @param {SystemQueryFacts} facts @param {unknown} context */
+function checkReceipt(facts,context){
+  const receipt=receipts.get(facts),expected=record(context,['family','version','requestBytes','expectedPackageId']);
+  if(!receipt||expected.family!=='tsfg.system-query-context-candidate'||expected.version!==descriptor.version||expected.expectedPackageId!==receipt.packageId)fail('owned Source receipt differs','identity');
+  const requestBytes=copyGenericJsonBytes(expected.requestBytes,policy),request=readGenericJson(requestBytes,policy);
+  if(request.text!==receipt.requestText)fail('owned Source request differs','identity');
+  return {receipt,requestBytes};
 }
 
 /** Only the immutable result owned by this reader can roundtrip its packet.
- * @param {SystemQueryFacts} facts
- * @param {unknown} context
+ * @param {SystemQueryFacts} facts @param {unknown} context
  */
 export function printSystemQueryFacts(facts,context){
-  const receipt=receipts.get(facts),expected=record(context,['family','version','requestBytes','expectedPackageId']);
-  if(!receipt||expected.family!=='tsfg.system-query-context-candidate'||expected.version!==descriptor.version||expected.expectedPackageId!==receipt.packageId)fail('owned Source receipt differs','identity');
-  const request=readGenericJson(copyGenericJsonBytes(expected.requestBytes,policy),policy);
-  if(request.text!==receipt.requestText||canonical(request.value)+'\n'!==receipt.requestText)fail('owned Source request differs','identity');
-  return Buffer.from(receipt.bytes);
+  return Buffer.from(checkReceipt(facts,context).receipt.packetText);
+}
+
+/** The checked texts and private request bytes for a synchronous data consumer.
+ * @param {SystemQueryFacts} facts @param {unknown} context
+ */
+export function readSystemQuerySourceReceipt(facts,context){
+  const {receipt,requestBytes}=checkReceipt(facts,context);
+  return {packetText:receipt.packetText,requestText:receipt.requestText,
+    context:{family:'tsfg.system-query-context-candidate',version:descriptor.version,requestBytes,expectedPackageId:receipt.packageId}};
 }

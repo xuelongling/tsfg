@@ -73,6 +73,33 @@ test('Query tmeta checks field extents against the retained catalog',{skip:!reta
   }
 });
 
+test('Query tmeta binds the original request byte view',{skip:!retained},()=>{
+  const input=cases.at(-1),facts=readSystemQueryFacts(input.bytes,input.context);
+  const prefix=retained+'/retained-'+input.name,original=readFileSync(prefix+'.tmeta');
+  const batch=readFileSync(prefix+'-batch.mlir','utf8');
+  const request=input.context.requestBytes;
+  const storage=Buffer.concat([Buffer.of(0),request,Buffer.of(0)]);
+  const requestBytes=new Uint8Array(storage.buffer,storage.byteOffset+1,request.byteLength);
+  Object.defineProperty(requestBytes,'valueOf',{value(){throw new Error('unexpected request byte conversion');}});
+  const context={...input.context,requestBytes};
+  const result=readSystemQueryTmeta(original,facts,context,batch);
+  assert.equal(result.payload.sourceRequest,request.toString('utf8'));
+  assert.equal(canonical(result.envelope)+'\n',original.toString('utf8'));
+});
+
+test('Query tmeta uses one checked context snapshot',{skip:!retained},()=>{
+  const input=cases.at(-1),facts=readSystemQueryFacts(input.bytes,input.context);
+  const prefix=retained+'/retained-'+input.name,original=readFileSync(prefix+'.tmeta');
+  const batch=readFileSync(prefix+'-batch.mlir','utf8');
+  let reads=0;
+  const context={...input.context,get requestBytes(){reads++;return input.context.requestBytes;}};
+  assert.equal(canonical(readSystemQueryTmeta(original,facts,context,batch).envelope)+'\n',original.toString('utf8'));
+  assert.equal(reads,1);
+  const other=cases.at(-2),wrongBatch=readFileSync(retained+'/retained-'+other.name+'-batch.mlir','utf8');
+  assert.throws(()=>readSystemQueryTmeta(original,facts,{...input.context,requestBytes:other.context.requestBytes},batch),/owned Source request differs/);
+  assert.throws(()=>readSystemQueryTmeta(original,facts,input.context,wrongBatch),/Source\/batch\/ABI binding differs/);
+});
+
 test('Query tmeta cold Source/identity/column/permission/signature/symbol rejection',{skip:!enabled},()=>{
   const input=cases.at(-1),facts=readSystemQueryFacts(input.bytes,input.context),original=readFileSync(retained+'/retained-'+input.name+'.tmeta','utf8'),payload=JSON.parse(JSON.parse(original).payload);
   const mutations=[

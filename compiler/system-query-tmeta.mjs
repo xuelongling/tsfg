@@ -5,7 +5,7 @@ import descriptor from '../contracts/query-tmeta-development.json' with {type:'j
 import layoutDescriptor from '../contracts/component-layout-development.json' with {type:'json'};
 import {canonical,sha256,own} from './identity.mjs';
 import {readGenericJson,copyGenericJsonBytes} from './generic-json.mjs';
-import {printSystemQueryFacts} from './system-query-facts.mjs';
+import {readSystemQuerySourceReceipt} from './system-query-facts.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {commonSemanticIdentities,commonFieldId} from './common-program-identities.mjs';
 
@@ -43,20 +43,19 @@ function json(value){const parsed=readGenericJson(copyGenericJsonBytes(Buffer.fr
  * @param {unknown} context @param {string} checkedBatch @returns {SystemQueryTmeta}
  */
 export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
-  const original=printSystemQueryFacts(facts,context).toString('utf8');
+  const receipt=readSystemQuerySourceReceipt(facts,context);
   const transport=readGenericJson(copyGenericJsonBytes(bytes,policy),policy);
   if(transport.text!==canonical(transport.value)+'\n')fail('canonical metadata required');
   const envelope=record(transport.value,descriptor.envelope);
   equal([envelope.family,envelope.version,envelope.schemaHash],['tsfg.query-tmeta',2,queryTmetaSchema]);
   const body=text(envelope.payload);equal(envelope.payloadHash,sha256('tsfg.query-tmeta.v2\0'+body));
   const payload=record(json(body+'\n'),descriptor.payload),packet=text(payload.sourcePacket),request=text(payload.sourceRequest),batch=text(payload.batch);
-  const sourceContext=/** @type {{requestBytes:Uint8Array}} */(context);
-  equal([packet,request,batch],[canonical(JSON.parse(original))+'\n',Buffer.from(sourceContext.requestBytes).toString('utf8'),checkedBatch]);
+  equal([packet,request,batch],[receipt.packetText,receipt.requestText,checkedBatch]);
   equal([payload.inputIdentity,payload.packageId,payload.target,payload.functionIdentityDomain],
     [facts.inputIdentity,facts.packageId,facts.program.target,descriptor.functionIdentityDomain]);
   const componentLayouts=text(payload.componentLayouts),effectText=text(payload.effects);
   equal([payload.batchHash,payload.layoutHash,payload.effectsHash],[sha256(batch),sha256(componentLayouts),sha256(effectText)]);
-  const effects=readSystemQueryEffects(Buffer.from(effectText),facts,context);
+  const effects=readSystemQueryEffects(Buffer.from(effectText),facts,receipt.context);
   const layoutEnvelope=record(json(componentLayouts),layoutDescriptor.envelope);
   equal([layoutEnvelope.family,layoutEnvelope.version,layoutEnvelope.schemaHash],[layoutDescriptor.family,1,sha256(canonical(layoutDescriptor))]);
   const layoutBody=text(layoutEnvelope.payload);equal(layoutEnvelope.payloadHash,sha256('tsfg.component-layout.v1\0'+layoutBody));
@@ -64,7 +63,7 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
   equal([layouts.hirDigest,layouts.inputIdentity,layouts.target],[sha256(canonical(catalog)+'\n'),facts.inputIdentity,facts.program.target]);
   // The Source receipt already owns this DTO. Reuse its semantic IDs and field
   // provenance; sizes/offsets remain the official independent DataLayout result.
-  const source=/** @type {{payload:{types:LayoutSourceType[],functions:unknown[]}}} */(JSON.parse(original));
+  const source=/** @type {{payload:{types:LayoutSourceType[],functions:unknown[]}}} */(JSON.parse(receipt.packetText));
   let work=0;const spend=()=>{if(++work>descriptor.limits.work)fail('metadata work exceeded');};
   const ids=commonSemanticIdentities({...source.payload,globals:[]},spend),types=new Map(source.payload.types.map(type=>[type.id,type]));
   /** @type {Map<string,{type:LayoutSourceType,fields:{id:string,name:string,type:string,readonly:boolean,sourcePath:string,range:{start:number,end:number}}[]}>} */
