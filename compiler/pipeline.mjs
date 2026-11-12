@@ -327,9 +327,14 @@ export function createCompilerSession(options) {
   };
 }
 
-export async function runBytecode(bytes, { vm, requests = [{}], command = "--requests" }) {
+/**
+ * @param {NodeJS.ArrayBufferView | string} bytes
+ * @param {{vm?: string, requests?: unknown, requestJson?: string, command?: string}} options
+ */
+export async function runBytecode(bytes, { vm, requests = [{}], requestJson, command = "--requests" }) {
   const executable = await verifiedConsumer(vm, "vm");
-  const args = command === "--requests" || command === "--module-requests" ? [command, JSON.stringify(requests)] : [command];
+  const args = command === "--requests" || command === "--module-requests"
+    ? [command, requestJson ?? JSON.stringify(requests)] : [command];
   const result = consume(executable, args, bytes);
   return command === "--roundtrip" ? result : JSON.parse(result.toString("utf8"));
 }

@@ -86,7 +86,9 @@ try {
     publication: commonJson(await readFile(options.get("--publication"))),
     request: commonJson(await readFile(options.get("--kernel-request"))),
   } : undefined;
-  const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
+  const requestJson = emit === "run" ? options.get("--requests") ?? "[{}]" : undefined;
+  // Check syntax here and let Runtime read exact integer tokens and field names.
+  if (requestJson !== undefined) JSON.parse(requestJson);
   const compile = inputKind === "hir"
     ? emit === "core" ? compileOwnedCore : emit === "program-object" ? compileOwnedStaticProgram : compileOwnedHir
     : emit === "hir" ? compileHir : emit === "program-object" ? compileStaticProgram : compileProgram;
@@ -102,7 +104,7 @@ try {
   else {
     try {
       process.stdout.write(`${JSON.stringify(await runBytecode(result.bytecode, {
-        vm: options.get("--vm"), requests }))}\n`);
+        vm: options.get("--vm"), requestJson }))}\n`);
     } catch (error) {
       // Preserve the formal VM's request-format diagnostics as CLI input errors.
       if (error.message.startsWith("r05-cli-")) throw error;
