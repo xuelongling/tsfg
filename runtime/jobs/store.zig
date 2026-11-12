@@ -25,6 +25,14 @@ fn compareSlotIndex(_: void, a: u32, b: u32) std.math.Order {
     return std.math.order(a, b);
 }
 
+fn columnIndex(columns: []const Column, component: u32) ?usize {
+    return std.sort.binarySearch(Column, columns, component, struct {
+        fn compare(index: u32, column: Column) std.math.Order {
+            return std.math.order(index, column.component);
+        }
+    }.compare);
+}
+
 /// A Store owns component metadata and columns. Its address must remain stable while views live.
 /// Raw slices obtained from a view remain borrowed only until that view is released.
 pub const Store = struct {
@@ -344,8 +352,11 @@ pub const Store = struct {
         var matches: std.ArrayListUnmanaged(*Chunk) = .empty;
         errdefer matches.deinit(self.allocator);
         for (self.archetypes.items) |archetype| {
+            if (archetype.chunks.items.len == 0) continue;
+            // Every chunk in this archetype has the same sorted column directory.
+            const columns = archetype.chunks.items[0].columns;
             var included = true;
-            for (resolved) |item| if (std.mem.indexOfScalar(u32, archetype.components, item.component) == null) {
+            for (resolved) |item| if (columnIndex(columns, item.component) == null) {
                 included = false;
                 break;
             };
@@ -354,7 +365,7 @@ pub const Store = struct {
                 if (chunk.len == 0) continue;
                 _ = std.math.add(usize, chunk.active, resolved.len) catch return error.StorageLimit;
                 for (resolved) |item| {
-                    const column = chunk.columns[std.mem.indexOfScalar(u32, archetype.components, item.component).?];
+                    const column = chunk.columns[columnIndex(chunk.columns, item.component).?];
                     if (column.writer or (item.access == .write and column.readers != 0)) return error.BorrowConflict;
                     if (item.access == .read and column.readers == std.math.maxInt(u32)) return error.StorageLimit;
                 }
@@ -367,12 +378,11 @@ pub const Store = struct {
         const chunks = try matches.toOwnedSlice(self.allocator);
         const token = self.next_token;
         for (chunks) |chunk| for (resolved) |item| {
-            for (chunk.columns, 0..) |*column, column_index| if (column.component == item.component) {
-                if (item.access == .write) column.writer = true else column.readers += 1;
-                chunk.active += 1;
-                self.leases.appendAssumeCapacity(.{ .token = token, .chunk = chunk, .column = column_index, .writable = item.access == .write, .query = true });
-                break;
-            };
+            const column_index = columnIndex(chunk.columns, item.component).?;
+            const column = &chunk.columns[column_index];
+            if (item.access == .write) column.writer = true else column.readers += 1;
+            chunk.active += 1;
+            self.leases.appendAssumeCapacity(.{ .token = token, .chunk = chunk, .column = column_index, .writable = item.access == .write, .query = true });
         };
         self.queries.appendAssumeCapacity(.{ .token = token, .selection = resolved, .chunks = chunks });
         self.next_token += 1;
@@ -396,8 +406,8 @@ pub const Store = struct {
         if (column_index >= state.selection.len) return error.ComponentMissing;
         const item = state.selection[column_index];
         if (writable and item.access != .write) return error.InvalidLease;
-        for (chunk.columns) |column| if (column.component == item.component) return column.allocation[0 .. chunk.len * self.components[item.component].stride];
-        unreachable;
+        const column = chunk.columns[columnIndex(chunk.columns, item.component).?];
+        return column.allocation[0 .. chunk.len * self.components[item.component].stride];
     }
     fn releaseQuery(self: *Store, token: u64) !void {
         self.lock();
@@ -425,12 +435,16 @@ pub const Store = struct {
         const slot = try self.entityAt(entity);
         const component = self.componentIndex(component_id) orelse return error.ComponentMissing;
         const chunk = self.archetypes.items[slot.archetype].chunks.items[slot.chunk];
-        for (chunk.columns, 0..) |*column, index| if (column.component == component) return .{ .chunk = chunk, .column = column, .index = index, .row = slot.row };
-        return error.ComponentMissing;
+        const index = columnIndex(chunk.columns, component) orelse return error.ComponentMissing;
+        return .{ .chunk = chunk, .column = &chunk.columns[index], .index = index, .row = slot.row };
     }
     fn componentIndex(self: *const Store, id: []const u8) ?u32 {
-        for (self.components, 0..) |component, index| if (std.mem.eql(u8, component.id, id)) return @intCast(index);
-        return null;
+        const index = std.sort.binarySearch(Component, self.components, id, struct {
+            fn compare(key: []const u8, component: Component) std.math.Order {
+                return std.mem.order(u8, key, component.id);
+            }
+        }.compare) orelse return null;
+        return @intCast(index);
     }
     fn archetypeAt(self: *Store, id: u32) Error!*Archetype {
         if (id >= self.archetypes.items.len) return error.InvalidArchetype;
