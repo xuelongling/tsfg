@@ -132,6 +132,38 @@ std::optional<std::pair<size_t,bool>> cursorPosition(ActualCheck &check,const Ac
   }
   return std::pair{first,false};
 }
+using SlotArchiveIterator=decltype(ActualCheck::fieldSlotArchive)::iterator;
+struct SlotArchivePosition {SlotArchiveIterator found,previous;bool present=false;};
+constexpr llvm::StringLiteral constructionSlotPrefix="construction/receiver:sha256:";
+std::optional<SlotArchivePosition> constructionSlotPosition(ActualCheck &check,llvm::StringRef query){
+  constexpr size_t discriminatorSize=4;
+  const auto digestPrefix=query.substr(constructionSlotPrefix.size(),discriminatorSize);
+  const auto suffix=query.drop_front(constructionSlotPrefix.size()+discriminatorSize);
+  const auto compare=[&](llvm::StringRef text)->std::optional<int>{
+    if(!check.step(8+2*constructionSlotPrefix.size()))return {};
+    const auto prefixOrder=text.take_front(constructionSlotPrefix.size()).compare(constructionSlotPrefix);
+    if(prefixOrder)return prefixOrder;
+    if(!check.step(14))return {};
+    const auto digestOrder=text.substr(constructionSlotPrefix.size(),discriminatorSize).compare(digestPrefix);
+    if(digestOrder)return digestOrder;
+    // The complete prefix and discriminator already match. Read all remaining
+    // bytes to resolve tied prefixes and complete spelling aliases.
+    const auto remainder=text.drop_front(constructionSlotPrefix.size()+discriminatorSize);
+    if(!check.step(remainder.size()+suffix.size()+1))return {};
+    return remainder.compare(suffix);
+  };
+  auto &archive=check.fieldSlotArchive;
+  if(!check.step(8+2*archive.size()))return {};
+  const auto end=archive.end();
+  auto previous=end;
+  for(auto row=archive.begin();row!=end;++row){
+    const auto order=compare(row->first);
+    if(!order)return {};
+    if(*order>=0)return SlotArchivePosition{row,previous,!*order};
+    previous=row;
+  }
+  return SlotArchivePosition{end,previous,false};
+}
 }
 ActualCursorId ActualCheck::ownedCursor(std::shared_ptr<const std::string> &&frame,size_t position){
   auto id="initialization:"+digest(canonical(Array{llvm::StringRef(*frame),int64_t(position)}));
@@ -196,8 +228,28 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   auto spelling=reference->text()+"/field/"+*member;
   if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
   bool previousKnown=false,present=false;auto previous=fieldSlotArchive.end();
-  if(!empty){
-    if(!step(2))return nullptr;const llvm::StringRef query(spelling);
+
+
+  const llvm::StringRef query(spelling);
+  const auto archiveSize=fieldSlotArchive.size();
+  bool searched=false;
+  // The production cache strategy starts after verifier catalogue validation.
+  // It also enables this stateless, bounded search of owned construction slots.
+  if(cacheOperationMetadata){
+    if(!step(5))return nullptr;
+    if(archiveSize>=3&&archiveSize<=64&&query.size()>=128){
+      if(!step(6+2*constructionSlotPrefix.size()))return nullptr;
+      if(query.starts_with(constructionSlotPrefix)){
+        const auto position=constructionSlotPosition(*this,query);
+        if(!position)return nullptr;
+        found=position->found;previous=position->previous;present=position->present;
+        previousKnown=previous!=fieldSlotArchive.end();
+        searched=true;
+      }
+    }
+  }
+  if(!empty&&!searched){
+    if(!step(2))return nullptr;
     // One complete order supplies both strict-head and equal-head results.
     // A singleton also supplies its strict-tail proof, without a second read.
     if(!step(3))return nullptr;const auto first=fieldSlotArchive.begin();

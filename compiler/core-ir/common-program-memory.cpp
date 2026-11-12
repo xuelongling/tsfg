@@ -181,9 +181,9 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
       <<" work="<<(before-program.remaining)<<" remaining="<<program.remaining<<'\n';}
   } trace{context,p,p.remaining,conditional,std::getenv("TSFG_COMMON_ACTUAL_TRACE")!=nullptr};
   const std::vector<std::set<uint16_t>> *demand=nullptr;
-  // Conditional capacity and Borrow proof still observe the complete state.
-  // A strict comparison may use an older register or narrow its owning Cell.
-  if(!conditional&&!borrowTrace){
+  // Conditional capacity still observes the complete state. A strict
+  // comparison may use an older register or narrow its owning Cell.
+  if(!conditional){
     if(!step(fn.id.size()/64+2))return false;
     const auto cuts=regions.cuts.find(fn.id);
     if(cuts!=regions.cuts.end()&&!cuts->second.empty()){
@@ -263,6 +263,15 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
         if((required!=live.end()&&*required==reg)||!item->second.cursors.empty()){++item;continue;}
         if(!step(parameters.size()+1))return false;
         if(std::find(parameters.begin(),parameters.end(),reg)!=parameters.end()){++item;continue;}
+        // Borrow call boundaries also see dead raw aliases and captures.
+        // A reference-free value cannot contribute to either implicit observer.
+        if(borrowTrace){
+          if(!step(5))return false;
+          const auto &value=item->second;
+          if(!value.objects.empty()||!value.cells.empty()||!value.callables.empty()||!value.frames.empty()){
+            ++item;continue;
+          }
+        }
         item=next.values.erase(item);
       }
     }

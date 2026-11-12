@@ -150,6 +150,8 @@ struct Context {
   Set normal,language;
   bool normalLive=false,languageLive=false,normalReady=false,languageReady=false;
   std::array<std::vector<ExitInput>,2> exitInputs;
+  std::array<std::size_t,2> returnCardinalities{None,None};
+  std::vector<std::size_t> accessCardinalities;
   std::array<Set,3> effects;
   Set facets,calls;
   std::unique_ptr<std::map<Ref,InheritedInput>> inheritedInputs;
@@ -635,7 +637,7 @@ class Solver {
       bool acyclic;if(!V4::Detail::receiverActivations(*graph,m_,acyclic))return false;
       if(!acyclic)return open("repeated-receiver-frame-activation");if(!m_.spend())return false;checkedActivations_.insert(graph);
     }
-    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*5+9)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size()*6)||!m_.spend(arguments.size())||!m_.spend(13))return false;
+    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*5+9)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size()*6)||!m_.spend(arguments.size())||!m_.spend(18))return false;
     auto value=std::make_unique<Context>();value->index=contexts_.size();value->function=function;value->scope=scope;value->graph=graph;value->upper=upper;value->protocol=protocol;value->isolated=isolated;value->scopedCall=scopedCall;
     if(callbacks_.settleIndependentLeaves&&function!=None){
       if(!m_.spend(6))return false;
@@ -657,6 +659,8 @@ class Solver {
     if(!m_.spend(2*(graph->exits.normal.size()+graph->exits.language.size())))return false;
     value->exitInputs[0].resize(graph->exits.normal.size());
     value->exitInputs[1].resize(graph->exits.language.size());
+    if(!m_.spend(2*graph->accesses.size()))return false;
+    value->accessCardinalities.resize(graph->accesses.size(),None);
     for(Ref i=0;i<arguments.size();++i)if(!m_.spend()||!add(value->arguments[i],arguments[i]))return false;
     if(!add(value->environment,environment)||!add(value->receivers,receivers)||!mergeFrames(value->inputFrames,frames)||!merge(value->input,input)||!remember(*value,caller,savedHeap)||!m_.spend()||!V4::Detail::room(contexts_,m_))return false;
     value->inputFrames.live=true;
@@ -1753,13 +1757,16 @@ class Solver {
   }
   bool runControls(Context &context){
     const auto &graph=*context.graph;if(!m_.spend(graph.controls.size()))return false;
-    for(Ref i=0;i<graph.controls.size();++i){if(!m_.spend())return false;const auto &control=graph.controls[i];bool live=false;
+    for(Ref i=0;i<graph.controls.size();++i){if(!m_.spend())return false;
+      // A control that became live has no further contribution.
+      if(context.controls[i])continue;
+      const auto &control=graph.controls[i];bool live=false;
       if(control.kind==V4::ControlKind::Entry)live=true;
       else if(control.kind==V4::ControlKind::Join){if(!m_.spend(control.inputs.size()))return false;for(auto input:control.inputs){if(!m_.spend())return false;live=live||context.controls[input];}}
       else if(control.kind==V4::ControlKind::Call){if(!m_.spend(context.targets[control.call].size()))return false;for(auto target:context.targets[control.call]){if(!m_.spend())return false;const auto &called=*contexts_[target];live=live||(control.completion==V4::Completion::Normal?called.normalLive:called.languageLive);}}
       else if(control.kind==V4::ControlKind::ReceiverCompletion)live=context.receiverLive[control.action];
       else return open("control-equation-open");
-      if(live&&!context.controls[i]){
+      if(live){
         if(!m_.spend())return false;
         ++context.captureTopologyRevision;
         context.controls[i]=true;
@@ -1920,6 +1927,35 @@ class Solver {
     previous={cardinality,revision};
     return true;
   }
+  bool callValue(Context &context,Ref index,const V4::Value &node,Set &output){
+    const auto &targets=context.targets[node.call];
+    const bool normal=node.completion==V4::Completion::Normal;
+    if(!m_.spend(3*targets.size()+3))return false;
+    std::size_t count=0;
+    for(auto target:targets){
+      const auto &called=*contexts_[target];
+      if(normal?called.normalLive:called.languageLive)count+=1+(normal?called.normal:called.language).size();
+    }
+    auto &previous=context.valueInputs[index].cardinality;
+    // Target sets, completion liveness and every contributed value set
+    // grow monotonically. Count empty live completions as contributions.
+    if(previous==count)return true;
+    if(!m_.spend(targets.size()))return false;
+    for(auto target:targets){
+      if(!m_.spend())return false;
+      const auto &called=*contexts_[target];
+      if(!(normal?called.normalLive:called.languageLive))continue;
+      if(!add(output,normal?called.normal:called.language))return false;
+      if(normal&&called.normal.empty()&&node.type){
+        bool isVoid;
+        if(!voidView(node.type,isVoid))return false;
+        if(isVoid){Ref id;if(!nonowning(node.type,id)||!insert(output,id))return false;}
+      }
+    }
+    if(!m_.spend())return false;
+    previous=count;
+    return true;
+  }
   bool runValues(Context &context){
     const auto &graph=*context.graph;if(!m_.spend(graph.nodes.size()))return false;
     for(Ref i=0;i<graph.nodes.size();++i){if(!m_.spend())return false;const auto &node=graph.nodes[i];auto &output=context.values[i];
@@ -1955,24 +1991,7 @@ class Solver {
           if(available){Ref id;if(!nonowning(node.type,id)||!insert(output,id))return false;}
         }
       }else if(node.kind==V4::ValueKind::Call){
-        if(!m_.spend(context.targets[node.call].size()))return false;
-        for(auto target:context.targets[node.call]){if(!m_.spend())return false;const auto &called=*contexts_[target];
-          if(node.completion==V4::Completion::Normal?called.normalLive:called.languageLive){
-            if(!add(output,node.completion==V4::Completion::Normal?called.normal:called.language))return false;
-            if(node.completion==V4::Completion::Normal&&called.normal.empty()&&node.type){
-              Ref type;if(!graphSymbol(*node.type,type))return false;bool isVoid=type==void_;
-              // This is a Source RETURN VIEW, not an asserted actual tag. An
-              // erased union/unknown view must not be rejected or reclassified
-              // as a local actual value merely to recognize native void data.
-              if(!isVoid&&callbacks_.actualType){
-                if(!m_.text(name(type).size())||!m_.spend())return false;
-                const auto *view=callbacks_.actualType(name(type),callbackCharge_);if(!m_.good)return false;
-                isVoid=view&&view->kind==V4::TypeKind::Void;
-              }
-              if(isVoid){Key identity;Ref id;if(!key(identity,{5,type})||!location(std::move(identity),{LocationKind::Nonowning,type,None,None,None},id)||!insert(output,id))return false;}
-            }
-          }
-        }
+        if(!callValue(context,i,node,output))return false;
       }else {Ref id;if(!rootLocation(context,i,node,id)||!insert(output,id))return false;}
       if(!valueReady(context,i,node))return false;
     }return true;
@@ -2171,9 +2190,36 @@ class Solver {
           previous={sourceHeap.revision,sourceFrames.revision};
         }
       }
-      if(live&&!resolve(context,normal?graph.normal:graph.language,values,true))return false;
+      if(live){
+        const auto &operands=normal?graph.normal:graph.language;
+        std::size_t count;
+        if(!operandCardinality(context,operands,count)||!m_.spend(2))return false;
+        auto &previous=context.returnCardinalities[channel];
+        if(previous!=count){
+          if(!resolve(context,operands,values,true)||!m_.spend())return false;
+          previous=count;
+        }
+      }
     }
-    if(!m_.spend(graph.accesses.size()))return false;for(const auto &access:graph.accesses){if(!m_.spend())return false;if(context.controls[access.control]){Set values;if(!resolve(context,access.values,values)||!valueEffects(context,access.flag,values))return false;}}
+    if(!m_.spend(graph.accesses.size()))return false;
+    for(Ref i=0;i<graph.accesses.size();++i){
+      if(!m_.spend())return false;
+      const auto &access=graph.accesses[i];
+      if(!context.controls[access.control])continue;
+      std::size_t count;
+      if(!operandCardinality(context,access.values,count)||!m_.spend(2))return false;
+      auto &previous=context.accessCardinalities[i];
+      // The value sets grow and an admitted Location's owner is immutable.
+      if(previous==count)continue;
+      if(access.values.size()==1){
+        if(!valueEffects(context,access.flag,context.values[access.values.front()]))return false;
+      }else{
+        Set selected;
+        if(!resolve(context,access.values,selected)||!valueEffects(context,access.flag,selected))return false;
+      }
+      if(!m_.spend())return false;
+      previous=count;
+    }
     if(!m_.spend(context.targets.size()))return false;for(const auto &targets:context.targets){if(!m_.spend(targets.size()))return false;for(auto target:targets)if(!inherit(context,*contexts_[target]))return false;}
     return true;
   }
@@ -2360,7 +2406,7 @@ public:
     Set environment;if(callbacks_.rootProtocol.lexicalEnvironment){Ref layout,id;if(!symbol(*callbacks_.rootProtocol.lexicalEnvironment,layout)||!entryEnvironment(layout,id)||!insert(environment,id,false))return finish();}
     Ref rootScope;Key identity;if(!key(identity,{None})||!internKey(scopeIds_,std::move(identity),rootScope))return finish();
     Set receivers;if(callbacks_.rootProtocol.construction){
-      Ref id;if(!m_.spend(11))return finish();Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
+      Ref id;if(!m_.spend(16))return finish();Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
       if(!symbol(protocol.id,id)||!construction(id))return finish();
       for(const auto &[key,candidate]:*callbacks_.constructions){bool eligible;if(!m_.spend()||!derives(candidate,protocol.owner,eligible))return finish();if(!eligible)continue;
         Ref target,frame;if(!symbol(candidate.owner,target)||!frameIdentity(root,None,id,target,None,frame,true)||!insert(receivers,frame,false))return finish();}
