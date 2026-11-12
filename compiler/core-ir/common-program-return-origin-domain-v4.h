@@ -188,7 +188,17 @@ class Solver {
     std::size_t next=0;
   };
   std::map<const FixedFunction *,ClosedProof> closedRoutines_;
-  struct CaptureSource {Ref context;std::optional<Ref> heap;const Set *bases;};
+  struct CaptureRead {
+    const CaptureAccess *access;
+    std::size_t heapRevision,baseCount;
+    Set values;
+  };
+  struct CaptureSource {
+    Ref context;
+    std::optional<Ref> heap;
+    const Set *bases;
+    std::unique_ptr<CaptureRead> read;
+  };
   struct CaptureSourceMemo {
     std::vector<CaptureSource> sources;
     std::vector<std::pair<Ref,std::size_t>> dependencies;
@@ -238,11 +248,15 @@ class Solver {
     std::string value;value.reserve(prefix.size()+text.size());value.append(prefix.data(),prefix.size());value.append(text.data(),text.size());return symbol(value,out);
   }
   bool parameterOwner(Ref index,Ref &out){if(!m_.spend(64))return false;const auto text=std::to_string(index);return prefixed("p:",text,out);}
-  bool insert(Set &target,Ref value,bool lattice=true){
+  bool insert(Set &target,Ref value,bool lattice=true,bool prepayRelease=false){
     if(!numericLookup(target.size()))return false;if(target.find(value)!=target.end())return true;
-    if(!m_.spend())return false;target.insert(value);if(lattice)changed_=true;return true;
+    if(!m_.spend(prepayRelease?2:1))return false;target.insert(value);if(lattice)changed_=true;return true;
   }
-  bool add(Set &target,const Set &source,bool lattice=true){if(!m_.spend(source.size()))return false;for(auto value:source)if(!insert(target,value,lattice))return false;return true;}
+  bool add(Set &target,const Set &source,bool lattice=true,bool prepayRelease=false){
+    if(!m_.spend(source.size()))return false;
+    for(auto value:source)if(!insert(target,value,lattice,prepayRelease))return false;
+    return true;
+  }
   bool growHeapRevision(Heap &heap){
     if(!m_.spend())return false;
     ++heap.revision;
@@ -399,7 +413,18 @@ class Solver {
     }return true;
   }
   bool environmentAlias(Ref left,Ref right,bool &answer){if(!m_.spend())return false;const auto a=locations_[left],b=locations_[right];answer=left==right||(environmentKind(a.kind)&&environmentKind(b.kind)&&a.layout==b.layout&&(a.kind!=LocationKind::EnvironmentLocal||b.kind!=LocationKind::EnvironmentLocal));return true;}
-  bool captureValues(const Heap &heap,const Set &bases,Ref layoutId,const std::string &key,Set &out){
+  bool directCaptureEnvironments(const Set &bases,Ref layoutId,bool &direct){
+    // Exact-layout bases never read the growing Env-parent relation.
+    if(!m_.spend(bases.size()+1))return false;
+    direct=true;
+    for(auto base:bases){
+      if(!m_.spend(3))return false;
+      const auto &value=locations_[base];
+      if(value.layout!=layoutId||!environmentKind(value.kind)){direct=false;break;}
+    }
+    return true;
+  }
+  bool captureValues(const Heap &heap,const Set &bases,Ref layoutId,const std::string &key,Set &out,bool prepayRelease=false){
     // SlotKey strings belong to immutable graph nodes, fixed upper effects,
     // or environment rows. Only their declaration lookup is reusable.
     if(!captureSlots_){
@@ -435,8 +460,8 @@ class Solver {
     const auto [label,type,selector,view]=found->second;
     for(auto base:selected){if(!m_.spend())return false;const auto node=locations_[base];
       if(node.kind==LocationKind::EnvironmentEntry||node.kind==LocationKind::EnvironmentComponent){Location value;value.kind=node.kind==LocationKind::EnvironmentEntry?LocationKind::CaptureEntry:LocationKind::EntryProjection;value.type=type;value.label=label;value.owner=node.owner;
-        if(node.kind==LocationKind::EnvironmentEntry&&!prefixed("c:",key,value.owner))return false;Key identity;Ref result;if(!this->key(identity,{11,base,label})||!location(std::move(identity),value,result)||!insert(out,result,false))return false;}
-      if(!m_.spend(heap.size()))return false;for(const auto &entry:heap){const auto stored=addresses_[entry.first];if(stored.selector!=selector||stored.view!=view)continue;bool alias;if(!environmentAlias(base,stored.base,alias))return false;if(alias&&!add(out,entry.second,false))return false;}
+        if(node.kind==LocationKind::EnvironmentEntry&&!prefixed("c:",key,value.owner))return false;Key identity;Ref result;if(!this->key(identity,{11,base,label})||!location(std::move(identity),value,result)||!insert(out,result,false,prepayRelease))return false;}
+      if(!m_.spend(heap.size()))return false;for(const auto &entry:heap){const auto stored=addresses_[entry.first];if(stored.selector!=selector||stored.view!=view)continue;bool alias;if(!environmentAlias(base,stored.base,alias))return false;if(alias&&!add(out,entry.second,false,prepayRelease))return false;}
     }return true;
   }
   bool readyRefs(const Context &context,const std::vector<Ref> &refs,bool &answer){answer=true;if(!m_.spend(refs.size()))return false;for(auto id:refs){if(!m_.spend())return false;if(!context.ready[id])answer=false;}return true;}
@@ -656,7 +681,7 @@ class Solver {
   // including a callee's own activation and descendants. Resolve each payload
   // in its actual saved context, never in a guessed immediate lexical Env.
   bool captureSources(const Context &called,const std::string &key,Ref &selected,
-      const std::vector<CaptureSource> *&out){
+      std::vector<CaptureSource> *&out){
     Ref slot;if(!graphSymbol(key,slot)||!numericLookup(slotOwners_.size()))return false;const auto owned=slotOwners_.find(slot);
     if(owned==slotOwners_.end())return open("fixed-capture-slot-unowned");selected=owned->second;
     if(!captureSourceMemo_){
@@ -685,8 +710,9 @@ class Solver {
     CaptureSourceMemo rebuilt;
     std::vector<Ref> pending;Set seen;if(!V4::Detail::push(pending,called.index,m_))return false;
     const auto append=[&](const Context &context,std::optional<Ref> heap,const Set &bases){
-      if(!m_.spend(3)||!V4::Detail::room(rebuilt.sources,m_))return false;
-      rebuilt.sources.push_back({context.index,heap,&bases});
+      // Pay this source row's release before it enters the topology memo.
+      if(!m_.spend(5)||!V4::Detail::room(rebuilt.sources,m_))return false;
+      rebuilt.sources.push_back({context.index,heap,&bases,{}});
       return true;
     };
     while(!pending.empty()){
@@ -715,6 +741,32 @@ class Solver {
     }
     if(!m_.spend())return false;
     out=&found->second.sources;
+    return true;
+  }
+  bool inheritCapture(Context &context,const CaptureAccess &capture,CaptureSource &source,Ref layoutId){
+    if(!m_.spend(8))return false;
+    const auto &saved=*contexts_[source.context];
+    const auto &heap=source.heap?saved.heaps[*source.heap]:saved.input;
+    const auto &bases=*source.bases;
+    const auto revision=heap.revision,count=bases.size();
+    const bool sameSlot=source.read&&source.read->access==&capture;
+    if(sameSlot&&source.read->heapRevision==revision&&source.read->baseCount==count)
+      return flagged(context,capture.flags,source.read->values);
+    Set values;
+    if(!captureValues(heap,bases,layoutId,capture.slot,values,/*prepayRelease=*/true)||!flagged(context,capture.flags,values))return false;
+    // The topology memo owns this source row. Share its first proven slot
+    // read across callers and keep each caller's effect transfer independent.
+    if(!source.read||sameSlot){
+      bool direct;
+      if(!directCaptureEnvironments(bases,layoutId,direct))return false;
+      if(direct){
+        // Values paid release on insertion. A new read record also pays its release.
+        if(!m_.spend(source.read?5:8))return false;
+        CaptureRead read{&capture,revision,count,std::move(values)};
+        if(source.read)*source.read=std::move(read);
+        else source.read=std::make_unique<CaptureRead>(std::move(read));
+      }
+    }
     return true;
   }
   bool inherit(Context &context,const Context &called){
@@ -757,10 +809,9 @@ class Solver {
     // Capture sources depend on live Env parents and reachable descendants.
     if(!m_.spend(upper.captures.size()))return false;
     for(const auto &capture:upper.captures){if(!m_.spend(3))return false;if(!capture.flags.read&&!capture.flags.write&&!capture.flags.structural)continue;
-      Ref selected;const std::vector<CaptureSource> *sources;
+      Ref selected;std::vector<CaptureSource> *sources;
       if(!captureSources(called,capture.slot,selected,sources)||!m_.spend(sources->size()))return false;
-      for(const auto &source:*sources){if(!m_.spend())return false;const auto &saved=*contexts_[source.context];Set values;
-        if(!captureValues(source.heap?saved.heaps[*source.heap]:saved.input,*source.bases,selected,capture.slot,values)||!flagged(context,capture.flags,values))return false;}
+      for(auto &source:*sources)if(!inheritCapture(context,capture,source,selected))return false;
     }
 
     if(first){
@@ -1507,9 +1558,26 @@ class Solver {
     previous=cardinality;
     return true;
   }
+  bool runCaptureValue(Context &context,Ref index,const V4::Value &node,Set &output){
+    std::size_t cardinality;
+    if(!operandCardinality(context,*node.environment,cardinality)||!m_.spend(4))return false;
+    const auto &heap=context.heaps[node.heap];
+    const auto revision=heap.revision;
+    auto &previous=context.valueInputs[index];
+    if(previous.cardinality==cardinality&&previous.heapRevision==revision)return true;
+    Ref layoutId;Set bases,values;
+    // The union cannot own more nodes than the sum of its input cardinalities.
+    if(!graphSymbol(node.layout,layoutId)||!m_.spend(cardinality)||!resolve(context,*node.environment,bases))return false;
+    bool direct;
+    if(!directCaptureEnvironments(bases,layoutId,direct))return false;
+    if(!captureValues(heap,bases,layoutId,node.id,values,/*prepayRelease=*/true)||!add(output,values))return false;
+    if(direct){if(!m_.spend(2))return false;previous={cardinality,revision};}
+    return true;
+  }
   bool runEnvironmentValue(Context &context,Ref index,const V4::Value &node,Set &output){
     if(node.kind!=V4::ValueKind::EnvironmentInput&&!context.controls[node.control])return true;
     if(node.kind==V4::ValueKind::EnvironmentComponent)return runEnvironmentComponent(context,index,node,output);
+    if(node.kind==V4::ValueKind::Capture)return runCaptureValue(context,index,node,output);
     Ref id=None;if(node.kind!=V4::ValueKind::Code&&!graphSymbol(node.layout,id))return false;
     if(node.kind==V4::ValueKind::EnvironmentInput){Ref expected=None;if(context.protocol->lexicalEnvironment&&!graphSymbol(*context.protocol->lexicalEnvironment,expected))return false;if(id!=expected)return open("entry-environment-layout-open");return add(output,context.environment);}
     if(node.kind==V4::ValueKind::EnvironmentCreate){Ref expected=None;if(context.protocol->activationEnvironment&&!graphSymbol(*context.protocol->activationEnvironment,expected))return false;if(id!=expected)return open("activation-environment-layout-open");const auto *row=layout(id);if(!row)return false;
@@ -1520,7 +1588,6 @@ class Solver {
       if(!row->parent){if(node.parent)return open("unexpected-activation-parent");}else{if(!node.parent)return open("activation-parent-open");Ref parent;Set bases,actual;if(!symbol(*row->parent,parent)||!resolve(context,*node.parent,bases)||!selectEnvironments(bases,parent,actual)||!add(*selected,actual))return false;}return insert(output,result);
     }
     if(node.kind==V4::ValueKind::EnvironmentParent){Set bases,selected;return resolve(context,node.bases,bases)&&selectEnvironments(bases,id,selected)&&add(output,selected);}
-    if(node.kind==V4::ValueKind::Capture){Set bases,values;return resolve(context,*node.environment,bases)&&captureValues(context.heaps[node.heap],bases,id,node.id,values)&&add(output,values);}
     Ref function,type;if(!node.type)return open("code-source-view-open");if(!graphSymbol(node.functionId,function)||!graphSymbol(*node.type,type))return false;const auto *record=fixedProtocol(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;
     const auto pack=[&](Ref env){Key identity;Location value;value.kind=LocationKind::Code;value.type=type;value.function=function;value.environment=env;value.owner=env==None?None:locations_[env].owner;value.categories=1;Ref code;return key(identity,{13,function,env,type})&&location(std::move(identity),value,code)&&insert(output,code);};
     if(expected==None){if(node.environment)return open("unexpected-code-environment");return pack(None);}if(!node.environment)return open("code-environment-open");Set bases,selected;if(!resolve(context,*node.environment,bases)||!selectEnvironments(bases,expected,selected))return false;for(auto env:selected)if(!pack(env))return false;return true;
@@ -1986,7 +2053,7 @@ class Solver {
         if(!covered)return open("permitted-code-env-target-unresolved");
       }
       for(auto target:context.targets[index]){auto &called=*contexts_[target];for(const auto &capture:called.upper->captures){if(!m_.spend())return false;if(!capture.flags.read&&!capture.flags.write&&!capture.flags.structural)continue;
-          Ref selected;const std::vector<CaptureSource> *sources;
+          Ref selected;std::vector<CaptureSource> *sources;
           if(!captureSources(called,capture.slot,selected,sources))return false;
           if(sources->empty())return open("fixed-capture-saved-environment-unresolved");
           if(!m_.spend(sources->size()))return false;for(const auto &source:*sources)if(!completeCapture(*contexts_[source.context],source.heap,*source.bases,selected,capture.slot))return false;}}
