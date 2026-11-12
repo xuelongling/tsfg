@@ -126,7 +126,9 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
           member=fields.find(query);
         }
         const auto slot=fieldSlot(object,member);if(!e.message.empty()||!step())return false;fieldSlots.push_back(slot);}
-      if(!receiverBirth(state.frames,id,std::move(ref),fieldSlots,state.heap,repeated))return false;
+      if(cacheOperationMetadata){
+        if(!receiverBirth(state.frames,id,object->first,fieldSlots,state.heap,repeated))return false;
+      }else if(!receiverBirth(state.frames,id,std::move(ref),fieldSlots,state.heap,repeated))return false;
       // Virtual missing properties are data, never define/write observations.
       for(const auto token:fieldSlots)if(!defaultField(state.heap,*token,repeated))return false;
       merge(value,allocated);if(!e.message.empty())return false;

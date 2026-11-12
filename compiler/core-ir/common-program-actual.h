@@ -405,6 +405,9 @@ struct ActualCheck {
   const ActualFieldSlot *fieldSlot(ActualObjectDirectory::const_iterator,ActualFieldDirectory::const_iterator);
   ActualFieldSlotMatch existingFieldSlot(const ActualObjectId &,ActualFieldDirectory::const_iterator);
   bool receiverBirth(ActualFrameWorld &,const std::string &,std::string &&,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
+  bool receiverBirth(ActualFrameWorld &,const std::string &,const ActualObjectId &,const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
+  bool receiverBirthRows(ActualFrameWorld &,const std::string &,std::string *,const ActualObjectId *,
+    const std::vector<const ActualFieldSlot *> &,const ActualHeap &,bool);
   ActualReceiverWrite receiverWrite(ActualFrameWorld &,const ActualFieldSlot &,const ActualValue &,bool);
   bool receiverDefine(ActualFrameWorld &,const ActualCursorInfo &,const ActualFieldSlot &);
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);

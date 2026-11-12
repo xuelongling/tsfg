@@ -545,10 +545,27 @@ bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &f
   return true;
 }
 namespace {
+using FrameEntry=ActualFrameWorld::value_type;
+struct FrameSelection {const FrameEntry *row;const ActualFrameInfo *info;};
+bool resolveSelectedFrameOwners(ActualCheck &check,const std::vector<FrameSelection *> &ancestry){
+  const auto count=check.receiverFrames.size();
+  if(!check.step(4))return false;
+  if(count>96)return true;
+  // Both sequences use the same full FrameId order. A complete forward map
+  // walk visits each tree link at most twice. Only shared owners resolve here.
+  if(!check.step(2*count+4))return false;
+  auto pending=ancestry.begin();
+  for(const auto &[id,info]:check.receiverFrames){
+    if(!check.step(5))return false;
+    if(&id.text()!=&(*pending)->row->first.text())continue;
+    if(!check.step(2))return false;
+    (*pending)->info=&info;
+    if(++pending==ancestry.end())break;
+  }
+  return true;
+}
 template<class Input,class World>
 ActualFrameWorld selectedInputFrames(ActualCheck &check,World &&world,const Input &values,const ActualHeap &heap){
-  using Entry=ActualFrameWorld::value_type;
-  struct Selection {const Entry *row;const ActualFrameInfo *info;};
   if(!check.step())return {};
   if(values.empty()&&world.empty())return {};
   if(!check.step(2))return {};
@@ -569,18 +586,25 @@ ActualFrameWorld selectedInputFrames(ActualCheck &check,World &&world,const Inpu
   if(pending.empty()&&world.empty())return {};
   // Keep borrowed rows stable while their index grows in full FrameId order.
   if(!check.step(5))return {};
-  std::deque<Selection> selections;std::vector<Selection *> selected;
-  const auto admit=[&](const std::string &id,const Entry *known,bool &fresh)->Selection *{
+  std::deque<FrameSelection> selections;std::vector<FrameSelection *> selected;
+  const auto admit=[&](const std::string &id,const FrameEntry *known,bool &fresh)->FrameSelection *{
     if(!check.step(2))return nullptr;fresh=false;size_t first=0,last=selected.size();
     while(first<last){
       if(!check.step(6))return nullptr;const auto middle=first+(last-first)/2;
       const auto &other=selected[middle]->row->first;
-      if(!check.step(other.size()+id.size()+1))return nullptr;
-      const auto order=other.view().compare(id);
+      int order;
+      if(known&&check.cacheOperationMetadata){
+        if(!check.step(2))return nullptr;
+        const auto compared=frameOrder(check,other,known->first);if(!compared)return nullptr;
+        order=*compared;
+      }else{
+        if(!check.step(other.size()+id.size()+1))return nullptr;
+        order=other.view().compare(id);
+      }
       if(!order)return selected[middle];
       if(order<0)first=middle+1;else last=middle;
     }
-    const Entry *row=known;
+    const FrameEntry *row=known;
     if(!row){const auto found=findFrame(check,world,id);
       if(!found||!check.need(*found!=world.end(),"selected frame is absent from completion"))return nullptr;row=&**found;}
     const ActualFrameInfo *info=nullptr;
@@ -623,18 +647,35 @@ ActualFrameWorld selectedInputFrames(ActualCheck &check,World &&world,const Inpu
           // Visit/load and length rejection precede any byte comparison. Equal
           // lengths still require the complete identity, including NUL bytes.
           if(!check.step(3))return {};const auto &ref=*refs[i];if(ref.size()!=reference.size())continue;
+          if(check.cacheOperationMetadata){
+            if(!check.step(4))return {};
+            if(&ref==row.reference.get()){matched=true;break;}
+            constexpr auto offset=constructionSlotPrefix.size();
+            if(ref.size()>=offset+4){
+              if(!check.step(12))return {};
+              if(llvm::StringRef(ref).substr(offset,4)!=reference.substr(offset,4))continue;
+            }
+          }
           if(!check.step(ref.size()+reference.size()+1)||!check.step(2))return {};
           if(llvm::StringRef(ref)==reference){if(!check.step())return {};matched=true;break;}
         }
         if(matched){bool fresh=false;if(!admit(entry.first.text(),&entry,fresh))return {};break;}}}
     // Direct roots already closed their parents. Birth discovery can add
     // rows with deferred metadata; visit just those in full-key order.
-    if(!check.step(selected.size()+1))return {};std::vector<Selection *> ancestry;
+    if(!check.step(selected.size()+1))return {};std::vector<FrameSelection *> ancestry;
     for(auto *row:selected){if(!check.step(2))return {};if(!row->info&&!append(ancestry,row))return {};}
+    if(check.cacheOperationMetadata){
+      if(!check.step(4))return {};
+      if(ancestry.size()>1&&selected.size()==world.size()&&!resolveSelectedFrameOwners(check,ancestry))return {};
+    }
     for(size_t i=0;i<ancestry.size();++i){if(!check.step())return {};const auto &row=*ancestry[i];
-      const auto frame=findFrame(check,check.receiverFrames,row.row->first.text());
-      if(!frame||!check.need(*frame!=check.receiverFrames.end(),"selected birth frame is absent")||!check.step())return {};
-      const auto &parent=(*frame)->second.parent;if(parent.empty())continue;
+      const auto *info=row.info;
+      if(!info){
+        const auto frame=findFrame(check,check.receiverFrames,row.row->first.text());
+        if(!frame||!check.need(*frame!=check.receiverFrames.end(),"selected birth frame is absent")||!check.step())return {};
+        info=&(*frame)->second;
+      }
+      const auto &parent=info->parent;if(parent.empty())continue;
       const auto found=findFrame(check,world,parent);
       if(!found||!check.need(*found!=world.end(),"selected birth parent is absent"))return {};bool fresh=false;
       const auto next=admit(parent,&**found,fresh);if(!next)return {};
@@ -694,10 +735,24 @@ std::vector<const ActualValue *> ActualCheck::retainedFrameRoots(const ActualFra
   }))return {};return result;
 }
 bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,std::string &&ref,const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
+  return receiverBirthRows(world,id,&ref,nullptr,fields,heap,repeated);
+}
+bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,const ActualObjectId &object,const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
+  return receiverBirthRows(world,id,nullptr,&object,fields,heap,repeated);
+}
+bool ActualCheck::receiverBirthRows(ActualFrameWorld &world,const std::string &id,std::string *ref,const ActualObjectId *object,
+  const std::vector<const ActualFieldSlot *> &fields,const ActualHeap &heap,bool repeated){
   if(!step(fields.size()))return false;ActualBirthJournal rows;
   if(!step(2))return false;std::shared_ptr<const std::string> reference;
   for(const auto slot:fields){if(!step()||!step())return false;
-    if(!reference){if(!step(8))return false;reference=std::make_shared<const std::string>(std::move(ref));}
+    if(!reference){
+      if(!step(8))return false;
+      if(object){
+        if(!step(3)||!need(bool(object->symbol_),"birth object has no immutable reference owner"))return false;
+        // Alias the owned text, so retained journals need no live object row.
+        reference=std::shared_ptr<const std::string>(object->symbol_,&object->text());
+      }else reference=std::make_shared<const std::string>(std::move(*ref));
+    }
     if(!step(4))return false;ActualBirth row;row.reference=reference;
     if(repeated){
       if(!step(6))return false;
