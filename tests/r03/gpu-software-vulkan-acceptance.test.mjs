@@ -244,17 +244,28 @@ function verifyRecovery(report){
   const final=report.final,transitions=report.transitions;
   assert.ok(transitions.length>0);
   assert.deepEqual(transitions.at(-1),final);
-  assert.ok(transitions.every(value=>value.deviceGeneration===final.deviceGeneration&&value.submissionId===final.submissionId&&canonical(value.identity)===canonical(report.identity)));
+  for(const value of transitions){
+    assert.deepEqual([value.deviceGeneration,value.submissionId,value.identity,value.functionId,value.source,value.resources],
+      [final.deviceGeneration,final.submissionId,report.identity,final.functionId,final.source,final.resources]);
+  }
   const [prepared,submitted]=transitions;
   if(prepared.state==='Prepared')
     assert.deepEqual([prepared.submitted,prepared.completionKnown,prepared.outputsAvailable],[false,false,false]);
   if(submitted?.state==='Submitted')
     assert.deepEqual([submitted.submitted,submitted.completionKnown,submitted.outputsAvailable],[true,false,false]);
-  if(final.completionKnown!==true)assert.equal(final.outputsAvailable,false);
-  for(const wait of transitions.slice(2,-1))
-    assert.ok(wait.state==='Unfinished'&&wait.vkResult===2&&wait.submitted===true&&wait.completionKnown===false&&wait.outputsAvailable===false,
-      'only an unresolved VK_TIMEOUT can precede another wait');
-  const firstTimeout=transitions.findIndex(value=>value.state==='Unfinished'&&value.vkResult===2);
+  if(final.outputsAvailable===true)
+    assert.deepEqual([final.state,final.stage,final.vkResult,final.failure,final.windowsError,final.submitted,final.completionKnown],
+      ['Completed','completed',0,'None',null,true,true]);
+  else assert.equal(final.outputsAvailable,false);
+  const isTimeout=value=>value.state==='Unfinished'&&value.vkResult===2;
+  for(const [index,wait] of transitions.entries()){
+    if(index>=2&&index<transitions.length-1)
+      assert.ok(isTimeout(wait),'only an unresolved VK_TIMEOUT can precede another wait');
+    if(isTimeout(wait))
+      assert.deepEqual([wait.stage,wait.failure,wait.windowsError,wait.submitted,wait.completionKnown,wait.outputsAvailable],
+        ['wait','None',null,true,false,false]);
+  }
+  const firstTimeout=transitions.findIndex(isTimeout);
   const timeoutObserved=firstTimeout!==-1;
   assert.equal(report.timeout,timeoutObserved?'OBSERVED':'NOT_OBSERVED');
   // A timeout followed by another wait required a successful retained resume.
@@ -335,12 +346,14 @@ for(const fixture of fixtures){
 }
 test('recovery follows only unresolved timeout waits in one session',()=>{
   const identity={session:'fixed-call'};
-  const snapshot=(state,submitted,completionKnown,vkResult)=>({
-    state,submitted,completionKnown,outputsAvailable:state==='Completed',vkResult,
-    identity,deviceGeneration:'1',submissionId:'1',failure:'None',
+  const source={sourceId:'/src/main.ts',start:15,end:20};
+  const resources=[{set:0,binding:0}];
+  const snapshot=(state,submitted,completionKnown,stage,vkResult)=>({
+    state,submitted,completionKnown,outputsAvailable:state==='Completed',stage,vkResult,windowsError:null,
+    functionId:'fixed-kernel',source,resources,identity,deviceGeneration:'1',submissionId:'1',failure:'None',
   });
-  const prepared=snapshot('Prepared',false,false,null),submitted=snapshot('Submitted',true,false,null);
-  const timeout=snapshot('Unfinished',true,false,2),completed=snapshot('Completed',true,true,0);
+  const prepared=snapshot('Prepared',false,false,'prepared',0),submitted=snapshot('Submitted',true,false,'submitted',0);
+  const timeout=snapshot('Unfinished',true,false,'wait',2),completed=snapshot('Completed',true,true,'completed',0);
   const report={
     identity,final:completed,transitions:[prepared,submitted,timeout,structuredClone(timeout),completed],
     timeout:'OBSERVED',retainedResumeObserved:true,recovery:'COMPLETED',
@@ -349,6 +362,13 @@ test('recovery follows only unresolved timeout waits in one session',()=>{
   verifyRecovery(report);
   verifyRecovery(retained(structuredClone(timeout)));
   verifyRecovery(retained({...timeout,vkResult:-1,failure:'Vulkan'}));
+  // Fence completion survives a subsequent output invalidation failure.
+  const invalidation={...completed,stage:'invalidate-output-memory',failure:'Vulkan',vkResult:-1,outputsAvailable:false};
+  const afterTimeout=final=>({...report,final,transitions:[prepared,submitted,timeout,final]});
+  verifyRecovery(afterTimeout(invalidation));
+  for(const outputsAvailable of [undefined,null,0,'false','true']){
+    assert.throws(()=>verifyRecovery(afterTimeout({...invalidation,outputsAvailable})),{name:'AssertionError'});
+  }
   for(const previous of [{...timeout,outputsAvailable:true},completed,{...timeout,submitted:false},{...timeout,completionKnown:true}]){
     assert.throws(()=>verifyRecovery({...report,transitions:[prepared,submitted,previous,timeout,completed]}),{name:'AssertionError'});
   }
@@ -358,6 +378,16 @@ test('recovery follows only unresolved timeout waits in one session',()=>{
   }
   assert.throws(()=>verifyRecovery(retained({...timeout,outputsAvailable:true})),{name:'AssertionError'});
   assert.throws(()=>verifyRecovery(retained({...timeout,state:'Prepared'})),{name:'AssertionError'});
+  for(const changes of [{vkResult:-4},{stage:'wait'},{windowsError:5}]){
+    const invalid={...completed,...changes};
+    assert.throws(()=>verifyRecovery({...report,final:invalid,transitions:[prepared,submitted,timeout,invalid]}),{name:'AssertionError'});
+  }
+  for(const changes of [{failure:'Vulkan'},{stage:'submitted'},{windowsError:5},{submitted:false}]){
+    assert.throws(()=>verifyRecovery(retained({...timeout,...changes})),{name:'AssertionError'});
+  }
+  for(const changes of [{functionId:'another-kernel'},{source:{...source,end:21}},{resources:[]}]){
+    assert.throws(()=>verifyRecovery({...report,transitions:[prepared,submitted,{...timeout,...changes},completed]}),{name:'AssertionError'});
+  }
 });
 
 test('independent arithmetic edge vectors and exact fixture coverage',()=>{
