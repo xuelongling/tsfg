@@ -646,6 +646,9 @@ bool scalarReturnOriginProof(Program &p,const std::string &root,Error &e){
   }
   return true;
 }
+static ProjectedReturnEffects deriveProjectedEffectsImpl(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,
+    EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses,bool completeTerminalRoot);
+
 ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out,Error &e,EffectDiagnostics *diagnostics,ReturnSourceCatalogCache *catalog){
   using Status=ProjectedReturnEffects;
   if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return Status::Invalid;auto &state=*p.returnOriginContracts;const auto id=string(field(fn,"id"));auto bound=state.graphs.find(id);
@@ -705,7 +708,9 @@ ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out
   if(!body){
     if(e.code!="core-ir-common-return-origin-open")return Status::Invalid;p.returnOriginPending.insert(id);e=Error{};return Status::Open;
   }
-  return deriveProjectedEffects(p,fn,raw,out,e,diagnostics,witnesses);
+  // A direct global write has an effect record but no stored-value equation.
+  // Keep the ordinary solver whenever that plane could retain a factory Code.
+  return deriveProjectedEffectsImpl(p,fn,raw,out,e,diagnostics,witnesses,out.writes.empty());
 }
 
 DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,const V4::Graph &current,const V4::Graph &fixed,Error &e){
@@ -765,7 +770,8 @@ DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,
   if(!direct(current)||!direct(fixed))return pending();return Status::Forwarded;
 }
 
-ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses){
+static ProjectedReturnEffects deriveProjectedEffectsImpl(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,
+    EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses,bool completeTerminalRoot){
   using Status=ProjectedReturnEffects;
   if(!need(bool(p.returnOriginContracts),e,"fixed return group is not admitted"))return Status::Invalid;
   auto &state=*p.returnOriginContracts;
@@ -795,6 +801,7 @@ ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Js
   auto protocol=state.bodyDirectories.protocol(id,charge);if(!need(protocol.status==Scope::BuildStatus::Ready,e,"body protocol unavailable"))return Status::Invalid;
   Domain::Callbacks callbacks;callbacks.rootProtocol=std::move(protocol.protocol);callbacks.environments=&state.fixedDirectories.interpretation().environments;callbacks.constructions=&state.fixedDirectories.interpretation().constructions;
   callbacks.settleIndependentLeaves=true;
+  callbacks.completeTerminalRoot=completeTerminalRoot;
   callbacks.actualType=[&](llvm::StringRef type,const V4::Charge &paid)->const Domain::ActualShape *{
     V4::Detail::Meter meter(paid);std::string key;if(!meter.lookup(state.shapes.size(),type.size())||!meter.copy(key,type))return nullptr;const auto found=state.shapes.find(key);if(found==state.shapes.end()||(found->second.kind==V4::TypeKind::Value&&!found->second.completePhysicalFields))return nullptr;return &found->second;
   };
@@ -865,5 +872,9 @@ ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Js
   }
   if(!p.returnOriginPending.count(id)){p.returnOriginVerified.insert(id);return Status::ReturnCertificateComplete;}
   return Status::Open;
+}
+ProjectedReturnEffects deriveProjectedEffects(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,
+    EffectDiagnostics *diagnostics,const std::vector<ReturnOriginAccessWitness> &witnesses){
+  return deriveProjectedEffectsImpl(p,fn,raw,out,e,diagnostics,witnesses,false);
 }
 } // namespace tsfg::commonProgram

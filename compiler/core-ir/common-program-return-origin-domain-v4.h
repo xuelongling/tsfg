@@ -66,6 +66,7 @@ struct Callbacks {
   // differing formal symbols alone do not establish actual non-aliasing.
   std::function<bool(const LocationView &,const LocationView &,const V4::Charge &)> mayAlias;
   bool settleIndependentLeaves=false;
+  bool completeTerminalRoot=false;
 };
 struct Summary {
   // owners[node] and live[control] are root-context queries. Empty data is not
@@ -176,6 +177,7 @@ class Solver {
     bool privateStorage=false;
     ClosedEnvironment returned=ClosedEnvironment::None;
     Ref scopedCall=None;
+    const FixedFunction *writableReader=nullptr;
   };
   struct ClosedCall {
     const FixedFunction *member=nullptr;
@@ -188,6 +190,7 @@ class Solver {
     std::size_t next=0;
   };
   std::map<const FixedFunction *,ClosedProof> closedRoutines_;
+  std::optional<std::map<const V4::Call *,bool>> terminalWritableCalls_;
   struct CaptureRead {
     const CaptureAccess *access;
     std::size_t heapRevision,baseCount;
@@ -904,6 +907,199 @@ class Solver {
     return true;
   }
 
+  bool terminalDependsOn(const V4::Graph &graph,Ref from,Ref target,bool &answer){
+    answer=false;
+    if(!m_.spend(graph.heaps.size()+graph.controls.size()+2))return false;
+    std::vector<bool> heaps(graph.heaps.size()),controls(graph.controls.size());
+    std::vector<std::pair<bool,Ref>> pending;
+    const auto push=[&](bool heap,Ref id){return V4::Detail::push(pending,std::make_pair(heap,id),m_);};
+    const auto input=[&](const V4::Call &call){return push(true,call.heap)&&push(false,call.control);};
+    if(from!=None){
+      if(!input(graph.calls[from]))return false;
+    }else for(const auto &call:graph.calls)if(!input(call))return false;
+    while(!pending.empty()){
+      if(!m_.spend(4))return false;
+      const auto [heap,id]=pending.back();pending.pop_back();
+      auto &seen=heap?heaps:controls;
+      if(seen[id])continue;
+      seen[id]=true;
+      Ref call=None;
+      if(heap){
+        const auto &row=graph.heaps[id];
+        switch(row.kind){
+          case V4::HeapKind::Entry:break;
+          case V4::HeapKind::Join:for(auto parent:row.inputs)if(!push(true,parent))return false;break;
+          case V4::HeapKind::Call:call=row.call;break;
+          case V4::HeapKind::Copy:if(!push(true,row.previous)||!push(false,graph.nodes[row.value].control))return false;break;
+          case V4::HeapKind::Store:case V4::HeapKind::ReceiverAction:
+            if(!push(true,row.previous)||!push(false,row.control))return false;
+            break;
+        }
+      }else{
+        const auto &row=graph.controls[id];
+        switch(row.kind){
+          case V4::ControlKind::Entry:break;
+          case V4::ControlKind::Join:for(auto parent:row.inputs)if(!push(false,parent))return false;break;
+          case V4::ControlKind::Call:call=row.call;break;
+          case V4::ControlKind::ReceiverCompletion:if(!push(true,row.action))return false;break;
+        }
+      }
+      if(call==target){answer=true;return true;}
+      if(call!=None&&!input(graph.calls[call]))return false;
+    }
+    return true;
+  }
+
+  // Certify the complete current graph. A single private element family feeds
+  // one terminal reader; neither old Code nor its array can escape this use.
+  bool terminalWritableReader(const V4::Graph &graph,Ref producer,const FixedFunction &reader,bool &answer){
+    using Kind=V4::ValueKind;
+    constexpr unsigned Produced=1,Array=2,Projected=4,Component=8;
+    answer=false;
+    // Prepay creation and disposal of each adjacency row and its role cell.
+    if(!m_.spend(3*graph.nodes.size()+3))return false;
+    std::vector<std::vector<Ref>> users(graph.nodes.size());
+    std::vector<unsigned> roles(graph.nodes.size());
+    std::vector<Ref> pending;
+    const auto push=[&](Ref id){return V4::Detail::push(pending,id,m_);};
+    for(Ref id=0;id<graph.nodes.size();++id){
+      if(!m_.spend(4))return false;
+      const auto &node=graph.nodes[id];
+      if(node.kind==Kind::Call&&node.completion==V4::Completion::Normal&&node.call==producer&&!push(id))return false;
+      const auto *inputs=node.kind==Kind::Copy?&node.bases:node.kind==Kind::Join||node.kind==Kind::Gate?&node.inputs:nullptr;
+      if(inputs)for(auto input:*inputs){
+        auto &row=users[input];
+        // Each newly allocated child buffer will also need to be released.
+        if(row.size()==row.capacity()&&!m_.spend())return false;
+        if(!V4::Detail::push(row,id,m_))return false;
+      }
+    }
+    const auto close=[&](unsigned role){
+      while(!pending.empty()){
+        if(!m_.spend(3))return false;
+        const auto id=pending.back();pending.pop_back();
+        if(roles[id]&role)continue;
+        roles[id]|=role;
+        for(auto user:users[id])if(!push(user))return false;
+      }
+      return true;
+    };
+    const auto uses=[&](const std::vector<Ref> &refs,unsigned role){
+      for(auto id:refs){if(!m_.spend())return false;if(roles[id]&role)return true;}
+      return false;
+    };
+    const auto from=[&](const std::vector<Ref> &refs,const std::vector<bool> &leaves,bool &exact){
+      return allClosedLeaves(graph,refs,[&](const V4::Value &node,bool &matches){
+        if(!m_.spend())return false;matches=leaves[&node-graph.nodes.data()];return true;
+      },exact);
+    };
+    if(!close(Produced))return false;
+    const V4::Value *local=nullptr;
+    llvm::StringRef arrayView;
+    const auto bindArray=[&](const std::vector<Ref> &refs,llvm::StringRef view,bool &owned){
+      return allClosedLeaves(graph,refs,[&](const V4::Value &node,bool &matches){
+        if(!m_.spend(3))return false;
+        matches=node.kind==Kind::Local&&node.type&&(!local||local==&node)&&m_.equal(*node.type,view);
+        if(matches)local=&node;
+        return m_.good;
+      },owned);
+    };
+    for(const auto &heap:graph.heaps){
+      if(!m_.spend())return false;
+      if(heap.kind!=V4::HeapKind::Store||!uses(heap.values,Produced))continue;
+      if(!m_.equal(heap.selector,"element")||(local&&!m_.equal(heap.view,arrayView)))return m_.good;
+      bool owned;
+      if(!bindArray(heap.bases,heap.view,owned))return false;
+      if(!owned)return true;
+      arrayView=heap.view;
+    }
+    if(!local||!callbacks_.actualType)return m_.good;
+    if(!m_.text(arrayView.size())||!m_.spend())return false;
+    const auto *arrayType=callbacks_.actualType(arrayView,callbackCharge_);
+    if(!m_.good)return false;
+    if(!arrayType||arrayType->kind!=V4::TypeKind::Array)return true;
+    if(!push(local-graph.nodes.data())||!close(Array)||!m_.spend(2*graph.nodes.size()))return false;
+    std::vector<bool> projections(graph.nodes.size()),components(graph.nodes.size());
+    for(Ref id=0;id<graph.nodes.size();++id){
+      if(!m_.spend())return false;
+      const auto &node=graph.nodes[id];
+      if(node.kind!=Kind::Projection)continue;
+      const bool element=m_.equal(node.selector,"element");
+      if(!element&&!uses(node.bases,Array))continue;
+      if(!element||!m_.equal(node.view,arrayView))return m_.good;
+      bool owned;
+      if(!bindArray(node.bases,arrayView,owned))return false;
+      if(!owned)return true;
+      projections[id]=true;
+      if(!push(id))return false;
+    }
+    if(pending.empty())return m_.good;
+    if(!close(Projected))return false;
+    for(Ref id=0;id<graph.nodes.size();++id){
+      if(!m_.spend(4))return false;
+      if((roles[id]&(Produced|Projected))==(Produced|Projected))return true;
+      const auto &node=graph.nodes[id];
+      if(node.kind==Kind::Copy||node.kind==Kind::Join||node.kind==Kind::Gate)continue;
+      if(node.kind==Kind::EnvironmentComponent&&uses(node.callee,Projected)){
+        const FixedFunction *target;
+        bool exact;
+        if(!closedMember(node.functionId,target)||!from(node.callee,projections,exact))return false;
+        if(target!=&reader||!exact)return true;
+        components[id]=true;
+        if(!push(id))return false;
+        continue;
+      }
+      const unsigned mask=(Produced|Projected)|(node.kind==Kind::Projection?0:Array);
+      if((node.parent&&uses(*node.parent,mask))||(node.environment&&uses(*node.environment,mask))||
+          uses(node.callee,mask)||uses(node.bases,mask))return m_.good;
+    }
+    if(!close(Component))return false;
+    for(const auto &node:graph.nodes){
+      if(!m_.spend(4))return false;
+      if((node.parent&&uses(*node.parent,Component))||(node.environment&&uses(*node.environment,Component))||
+          uses(node.callee,Component)||(node.kind!=Kind::Copy&&uses(node.bases,Component)))return m_.good;
+    }
+    constexpr unsigned Sensitive=Produced|Array|Projected|Component;
+    for(const auto &heap:graph.heaps){
+      if(!m_.spend())return false;
+      if(heap.kind==V4::HeapKind::ReceiverAction&&(uses(heap.frames,Sensitive)||uses(heap.operands,Sensitive)))return m_.good;
+      if(heap.kind!=V4::HeapKind::Store)continue;
+      const bool element=m_.equal(heap.selector,"element");
+      if(element||uses(heap.bases,Array)){
+        if(!element||!m_.equal(heap.view,arrayView))return m_.good;
+        bool owned;
+        if(!bindArray(heap.bases,arrayView,owned))return false;
+        if(!owned)return true;
+      }
+      if(uses(heap.values,Array|Projected|Component)||uses(heap.bases,Produced|Projected|Component))return m_.good;
+    }
+    if(uses(graph.normal,Sensitive)||uses(graph.language,Sensitive))return m_.good;
+    Ref terminal=None;
+    for(Ref id=0;id<graph.calls.size();++id){
+      if(!m_.spend(4))return false;
+      const auto &call=graph.calls[id];
+      if(call.receiver&&uses(*call.receiver,Sensitive))return m_.good;
+      for(const auto &argument:call.arguments){if(!m_.spend())return false;if(uses(argument,Sensitive))return m_.good;}
+      if((!call.callee||!uses(*call.callee,Sensitive))&&(!call.environment||!uses(*call.environment,Sensitive)))continue;
+      if(terminal!=None||!call.callee||!call.environment||call.receiver||!call.arguments.empty())return m_.good;
+      const FixedFunction *target;
+      bool exactCode,exactEnv;
+      if(!closedMember(call.functionId,target)||!from(*call.callee,projections,exactCode)||
+          !from(*call.environment,components,exactEnv))return false;
+      if(target!=&reader||!exactCode||!exactEnv)return true;
+      terminal=id;
+    }
+    if(terminal==None)return m_.good;
+    for(const auto &access:graph.accesses){
+      if(!m_.spend())return false;
+      if(uses(access.values,Produced|Projected|Component))return m_.good;
+    }
+    bool repeats,feedback;
+    if(!terminalDependsOn(graph,producer,producer,repeats)||!terminalDependsOn(graph,None,terminal,feedback))return false;
+    answer=repeats&&!feedback;
+    return true;
+  }
+
   bool closedActivation(ClosedWork &work,bool &accepted){
     accepted=false;
     const auto &graph=*work.member->graph;
@@ -1143,7 +1339,37 @@ class Solver {
     },answer);
   }
 
-  bool closedReadOnlyCode(const FixedFunction &member,bool &answer){
+  bool closedWritableReader(const FixedFunction &target,const CaptureAccess &capture,bool &answer){
+    answer=false;
+    const auto &protocol=target.protocol;
+    if(!callbacks_.completeTerminalRoot||!protocol.lexicalEnvironment||protocol.activationEnvironment||
+        target.upper->captures.size()!=1)return true;
+    Ref id;
+    if(!symbol(*protocol.lexicalEnvironment,id))return false;
+    const auto *env=layout(id);
+    if(!env)return false;
+    if(env->parent||env->slots.size()!=1)return true;
+    const auto &slot=env->slots.front();
+    if(!slot.writable||!m_.equal(slot.key,capture.slot))return m_.good;
+    ClosedWork work;
+    work.member=&target;
+    bool shaped;
+    if(!closedRoutineShape(work,shaped))return false;
+    if(!shaped)return true;
+    for(const auto &child:work.calls){
+      if(!m_.spend())return false;
+      if(!child.member->protocol.construction)return true;
+      const ClosedProof *proof;
+      if(!closedFactoryGraph(*child.member,proof))return false;
+      if(!proof->privateStorage)return true;
+    }
+    answer=true;return true;
+  }
+
+  bool closedReturnedCode(const FixedFunction &member,bool &answer,const FixedFunction *&writableReader){
+    writableReader=nullptr;
+    const FixedFunction *reader=nullptr;
+    bool multiple=false;
     return allClosedLeaves(*member.graph,member.graph->normal,[&](const V4::Value &node,bool &readonly){
       readonly=false;
       if(!m_.spend(4))return false;
@@ -1159,11 +1385,27 @@ class Solver {
       bool scalar;
       if(!closedScalar(type,scalar))return false;
       if(!scalar)return true;
+      bool writable=false;
       for(const auto &capture:upper.captures){
         if(!m_.spend(3))return false;
-        if(capture.flags.write||capture.flags.structural)return true;
+        if(capture.flags.structural)return true;
+        if(capture.flags.write){
+          if(!closedWritableReader(*target,capture,writable))return false;
+          if(!writable)return true;
+        }
       }
-      for(const auto &facet:upper.facets)if(!m_.equal(facet,"managedReference"))return m_.good;
+      if(!reader)reader=target;
+      else multiple=multiple||reader!=target;
+      if(writable){
+        if(multiple)return true;
+        writableReader=target;
+      }
+      if(writableReader&&writableReader!=target)return true;
+      for(const auto &facet:upper.facets){
+        if(m_.equal(facet,"managedReference"))continue;
+        if(writable&&(m_.equal(facet,"allocation")||m_.equal(facet,"escape")))continue;
+        return m_.good;
+      }
       return allClosedLeaves(*target->graph,target->graph->normal,[&](const V4::Value &value,bool &sameType){
         sameType=value.type&&m_.equal(*value.type,type);
         return m_.good;
@@ -1172,9 +1414,10 @@ class Solver {
   }
 
   bool closedDelegatedReturn(const ClosedWork &work,const V4::Value &node,const ClosedCall &call,
-      Ref selectedCall,bool &answer,Ref &scopedCall){
+      Ref selectedCall,bool &answer,Ref &scopedCall,const FixedFunction *&writableReader){
     answer=false;
     scopedCall=None;
+    writableReader=nullptr;
     if(!m_.spend(10))return false;
     const auto &signature=work.member->protocol.signature;
     const auto &childSignature=call.member->protocol.signature;
@@ -1186,7 +1429,7 @@ class Solver {
     if(!m_.spend(5))return false;
     const auto &arguments=graph.calls[node.call].arguments;
     if(arguments.empty()&&childSignature->parameterTypes.empty()&&call.member->upper->parameters.empty()){
-      if(!closedReadOnlyCode(*call.member,answer))return false;
+      if(!closedReturnedCode(*call.member,answer,writableReader))return false;
       if(answer)scopedCall=node.call;
       return true;
     }
@@ -1195,7 +1438,7 @@ class Solver {
       if(!m_.spend()||!allClosedLeaves(graph,argument,[&](const V4::Value &value,bool &own){
         return closedOwnReceiver(work,value,own);
       },owned))return false;
-      if(owned)return closedReadOnlyCode(*call.member,answer);
+      if(owned)return closedReturnedCode(*call.member,answer,writableReader);
     }
     return true;
   }
@@ -1218,9 +1461,11 @@ class Solver {
     return true;
   }
 
-  bool closedReturnEnvironment(const ClosedWork &work,ClosedEnvironment &role,Ref &scopedCall){
+  bool closedReturnEnvironment(const ClosedWork &work,ClosedEnvironment &role,Ref &scopedCall,
+      const FixedFunction *&writableReader){
     role=ClosedEnvironment::None;
     scopedCall=None;
+    writableReader=nullptr;
     if(work.member->protocol.construction)return true;
     bool exact;
     Ref delegatedCall=None;
@@ -1235,8 +1480,9 @@ class Solver {
           if(child->second.returned==ClosedEnvironment::Activation){
             bool delegated;
             Ref nested;
-            if(!closedDelegatedReturn(work,node,call,delegatedCall,delegated,nested))return false;
-            if(delegated){selected=ClosedEnvironment::Delegated;delegatedCall=node.call;scopedCall=nested;}
+            const FixedFunction *reader;
+            if(!closedDelegatedReturn(work,node,call,delegatedCall,delegated,nested,reader))return false;
+            if(delegated){selected=ClosedEnvironment::Delegated;delegatedCall=node.call;scopedCall=nested;writableReader=reader;}
           }
         }
       }else if(node.kind==V4::ValueKind::Code&&node.environment){
@@ -1249,11 +1495,11 @@ class Solver {
       if(matches)role=selected;
       return true;
     },exact))return false;
-    if(!exact){role=ClosedEnvironment::None;scopedCall=None;}
+    if(!exact){role=ClosedEnvironment::None;scopedCall=None;writableReader=nullptr;}
     if(role==ClosedEnvironment::Delegated){
       bool formals;
       if(!closedDelegatedFormals(*work.member,formals))return false;
-      if(!formals){role=ClosedEnvironment::None;scopedCall=None;}
+      if(!formals){role=ClosedEnvironment::None;scopedCall=None;writableReader=nullptr;}
     }
     return true;
   }
@@ -1279,9 +1525,13 @@ class Solver {
         auto &work=pending.back();
         if(work.next==work.calls.size()){
           const auto proof=closedRoutines_.find(work.member);
-          ClosedEnvironment returned;Ref scopedCall;
-          if(!closedReturnEnvironment(work,returned,scopedCall)||!m_.spend(2))return false;
+          ClosedEnvironment returned;Ref scopedCall;const FixedFunction *writableReader;
+          if(!closedReturnEnvironment(work,returned,scopedCall,writableReader)||!m_.spend(2))return false;
           proof->second={true,returned,scopedCall};
+          if(writableReader){
+            if(!m_.spend())return false;
+            proof->second.writableReader=writableReader;
+          }
           pending.pop_back();
           continue;
         }
@@ -1326,6 +1576,24 @@ class Solver {
     const ClosedProof *closed;
     if(!closedFactoryGraph(record,closed))return false;
     if(closed->returned!=ClosedEnvironment::Activation&&closed->returned!=ClosedEnvironment::Delegated)return true;
+    if(closed->writableReader){
+      if(!callbacks_.completeTerminalRoot||&graph!=&root_)return true;
+      if(!terminalWritableCalls_){
+        if(!m_.spend(2))return false;
+        terminalWritableCalls_.emplace();
+      }
+      auto &calls=*terminalWritableCalls_;
+      if(!numericLookup(calls.size()))return false;
+      auto found=calls.find(&call);
+      if(found==calls.end()){
+        bool eligible;
+        // Prepay the key/value, insertion and eventual node release.
+        if(!terminalWritableReader(graph,&call-graph.calls.data(),*closed->writableReader,eligible)||
+            !m_.spend(4)||!numericLookup(calls.size()))return false;
+        found=calls.emplace(&call,eligible).first;
+      }
+      if(!found->second)return true;
+    }
     const auto *expected=closed->returned==ClosedEnvironment::Delegated?&protocol.signature->parameterTypes:nullptr;
     if(expected&&(!m_.spend(3)||expected->size()!=arguments.size()||call.arguments.size()!=arguments.size()))return m_.good;
     for(Ref index=0;index<arguments.size();++index){
