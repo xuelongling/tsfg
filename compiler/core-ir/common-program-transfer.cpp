@@ -267,12 +267,35 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="invoke"||name=="invoke_method"||name=="invoke_indirect"){
     const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap,const RegionHeap &versions,const ActualFrameWorld &frames,bool language,ActualState after){
       if(!e.message.empty()||!overlayFrames(after.frames,frames)||(language&&!abortInitializers(after))||!step(heap.size()))return false;
-      size_t knownFields=0;
+      std::array<const ActualHeap::FieldNode *,4> pendingFields;
+      size_t pendingFieldCount=0;
+      bool hasPriorFields=false;
       if(scheduling||borrowTrace){
         if(!step(2))return false;
         if(!heap.fields_.empty()){
           if(!step(3))return false;
-          if(!after.frames.empty()&&after.heap.fields_.empty())knownFields=std::min<size_t>(4,heap.fields_.size());
+          if(!after.frames.empty()){
+            if(!step(7))return false;
+            const auto priorCount=after.heap.fields_.size();
+            if(priorCount<=2){
+              hasPriorFields=priorCount!=0;
+              const auto count=std::min(pendingFields.size(),heap.fields_.size());
+              // Retain only positive source associations whose exact owner
+              // is not already represented by this small destination index.
+              for(size_t index=0;index<count;++index){
+                if(!step(5))return false;
+                const auto &known=heap.fields_[index];
+                size_t prior=0;
+                for(;prior<priorCount;++prior){
+                  if(!step(4))return false;
+                  if(after.heap.fields_[prior].identity==known.identity)break;
+                }
+                if(prior!=priorCount)continue;
+                if(!step(2))return false;
+                pendingFields[pendingFieldCount++]=&known;
+              }
+            }
+          }
         }
       }
       for(const auto &[slot,value]:heap){
@@ -285,13 +308,19 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         if(!e.message.empty())return false;
         // Overlay has already found or installed the exact destination key.
         // Reconciliation can reuse the positive association without a search.
-        if(knownFields){
+        if(pendingFieldCount){
           if(!step(2))return false;
-          if(after.heap.fields_.size()<knownFields)for(size_t index=0;index<knownFields;++index){
+          for(size_t index=0;index<pendingFieldCount;++index){
             if(!step(4))return false;
-            const auto &known=heap.fields_[index];
+            const auto &known=*pendingFields[index];
             if(known.key!=&slot)continue;
-            if(!after.heap.appendField(*this,destination,known.identity))return false;
+            if(!step(5))return false;
+            // A different spelling owner can already name this same node.
+            // The exact destination iterator permits a bounded retarget.
+            if(hasPriorFields){
+              if(!after.heap.rememberField(*this,destination,known.identity))return false;
+            }else if(!after.heap.appendField(*this,destination,known.identity))return false;
+            pendingFields[index]=pendingFields[--pendingFieldCount];
             break;
           }
         }
