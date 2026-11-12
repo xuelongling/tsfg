@@ -49,6 +49,20 @@ for(const family of ['conditional','mapped']) test('owned HIR cold entry reprodu
  assert.throws(()=>lowerOwnedHir(foreign),/generic-hir-identity/);
 });
 
+for(const family of ['conditional','mapped']) test('owned HIR cold entry reads the native byte range for recursive '+family,async t=>{
+ const bytes=await fixture(`generic-recursive-${family}-hir-v7.json`);
+ const core=await fixture(`generic-recursive-${family}-core-v7.mlir`);
+ for(const key of ['byteLength',Symbol.iterator]) await t.test(String(key),()=>{
+  const backing=Buffer.alloc(bytes.length+4,0xff);
+  const view=backing.subarray(2,2+bytes.length);
+  view.set(bytes);
+  Object.defineProperty(view,key,{get(){assert.fail('caller byte property was read');}});
+  const hir=readHir(view);
+  assert.equal(printHir(hir),bytes.toString('utf8'));
+  assert.equal(lowerOwnedHir(hir),core.toString('utf8'));
+ });
+});
+
 for(const family of ['conditional','mapped']) test('recursive '+family+' facts reject broken cyclic edges, identities and budgets before HIR',async()=>{
  const bytes=await fixture(`generic-recursive-${family}-package-v7.json`);
  const original=JSON.parse((await fixture(`generic-recursive-${family}-record-v7.json`)).toString('utf8'));

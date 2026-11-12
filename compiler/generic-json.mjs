@@ -142,9 +142,16 @@ export function copyGenericJsonBytes(bytes, policy) {
   return Buffer.from(nativeByteView(bytes, policy));
 }
 
+/** Copy the native byte range under the supplied policy before any reader uses it.
+ * @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy
+ */
+export function snapshotGenericJsonBytes(bytes, policy) {
+  return new Uint8Array(nativeByteView(bytes, policy));
+}
+
 /** @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy */
 function textBytes(bytes, policy) {
-  const copy = new Uint8Array(nativeByteView(bytes, policy));
+  const copy = snapshotGenericJsonBytes(bytes, policy);
   let text;
   try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(copy); }
   catch { failure(policy, "utf8"); }

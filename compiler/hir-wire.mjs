@@ -1,6 +1,7 @@
 import { readJson as readModuleCallableJson } from './module-callable-common.mjs';
 // SPDX-License-Identifier: MIT
-import { inspectGenericJson } from './generic-json.mjs';
+import { isUint8Array } from 'node:util/types';
+import { inspectGenericJson, snapshotGenericJsonBytes } from './generic-json.mjs';
 import { readJson as readNullableJson } from './nullable-common.mjs';
 import { readJson as readClosureJson } from './closure-common.mjs';
 import { readExceptionHirJson } from './exception-hir-common.mjs';
@@ -16,8 +17,8 @@ const envelope = Object.freeze({ bytes: 16 * 1024 * 1024, depth: 16 * 1024 * 102
 export function readHirWire(bytes) {
   let input, ownedBytes;
   try {
-    if (!(bytes instanceof Uint8Array) || bytes.byteLength > envelope.bytes) throw new TypeError('HIR byte budget exceeded');
-    ownedBytes = Uint8Array.from(bytes);
+    if (!isUint8Array(bytes) || !(bytes instanceof Uint8Array)) throw new TypeError('HIR byte input required');
+    ownedBytes = snapshotGenericJsonBytes(bytes, envelope);
     input = inspectGenericJson(ownedBytes, envelope, ['format','family']);
   } catch (error) {
     if (error.jsonSelection?.kind === 'string' && error.jsonSelection.value === 'tsfg.exception-hir-candidate')
