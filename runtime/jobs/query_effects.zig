@@ -224,14 +224,14 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
                 try context.field(operation.componentType, operation.field, operation.sourceField, operation.kind == .write);
             }
             try context.fieldRows(loop.fieldEffects);
-            if (!sameFieldRows(try context.countFields(loop.operations), loop.fieldEffects)) return error.InvalidEffects;
+            try context.fieldSummary(loop.fieldEffects, loop.operations);
             try system_operations.appendSlice(allocator, loop.operations);
             try system_calls.appendSlice(allocator, loop.calls);
         }
         if (system_calls.items.len != system.calls.len) return error.InvalidEffects;
         for (system_calls.items, system.calls) |*left, *right| if (!sameCall(left, right)) return error.InvalidEffects;
         try context.fieldRows(system.fieldEffects);
-        if (!sameFieldRows(try context.countFields(system_operations.items), system.fieldEffects)) return error.InvalidEffects;
+        try context.fieldSummary(system.fieldEffects, system_operations.items);
     }
     try context.spend(1);
     if (@popCount(context.helper_effects_checked) != report.scalarHelpers.len) return error.InvalidEffects;
@@ -569,7 +569,7 @@ const Context = struct {
             // substitution preserves the helper's component-level counts.
             try self.spend(3);
             const consumed = start.len - operations.remaining.len;
-            try self.helperFieldSummary(helper_row.fieldEffects, start[0..consumed]);
+            try self.fieldSummary(helper_row.fieldEffects, start[0..consumed]);
             self.helper_effects_checked |= checked_bit;
         }
     }
@@ -616,7 +616,7 @@ const Context = struct {
             if ((row.readCount == 0 and row.writeCount == 0) or (index > 0 and !lessField({}, rows[index - 1], row))) return error.InvalidEffects;
         }
     }
-    fn helperFieldSummary(self: *Context, fields: []const FieldEffects, operations: []const Operation) SourceCheckError!void {
+    fn fieldSummary(self: *Context, fields: []const FieldEffects, operations: []const Operation) SourceCheckError!void {
         try self.spend(1);
         if (fields.len > operations.len) return error.InvalidEffects;
         const Counts = struct { reads: u32, writes: u32 };
@@ -654,21 +654,6 @@ const Context = struct {
             try self.spend(1);
             if (counts.reads != 0 or counts.writes != 0) return error.InvalidEffects;
         }
-    }
-    fn countFields(self: *Context, operations: []const Operation) ![]const FieldEffects {
-        var fields: std.ArrayList(FieldEffects) = .empty;
-        for (operations) |operation| {
-            try self.spend(1);
-            var found = false;
-            for (fields.items) |*row| if (same(row.componentType, operation.componentType) and same(row.field, operation.field) and same(row.sourceField, operation.sourceField)) {
-                if (operation.kind == .read) row.readCount = std.math.add(u32, row.readCount, 1) catch return error.EffectsLimit else row.writeCount = std.math.add(u32, row.writeCount, 1) catch return error.EffectsLimit;
-                found = true;
-                break;
-            };
-            if (!found) try fields.append(self.allocator, .{ .componentType = operation.componentType, .field = operation.field, .sourceField = operation.sourceField, .readCount = if (operation.kind == .read) 1 else 0, .writeCount = if (operation.kind == .write) 1 else 0 });
-        }
-        std.mem.sort(FieldEffects, fields.items, {}, lessField);
-        return fields.items;
     }
 };
 pub fn sameSource(a: Source, b: Source) bool {
@@ -709,11 +694,6 @@ fn fieldOrder(row: *const FieldEffects, component_type: []const u8, field_id: []
     const field = std.mem.order(u8, row.field, field_id);
     if (field != .eq) return field;
     return std.mem.order(u8, row.sourceField, source_field);
-}
-fn sameFieldRows(a: []const FieldEffects, b: []const FieldEffects) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |left, right| if (!same(left.componentType, right.componentType) or !same(left.field, right.field) or !same(left.sourceField, right.sourceField) or left.readCount != right.readCount or left.writeCount != right.writeCount) return false;
-    return true;
 }
 fn sameCall(a: *const Call, b: *const Call) bool {
     return same(a.functionId, b.functionId) and same(a.signatureHash, b.signatureHash) and same(a.sourceHelperId, b.sourceHelperId) and sameSource(a.source, b.source) and sameSource(a.calleeSource, b.calleeSource);
