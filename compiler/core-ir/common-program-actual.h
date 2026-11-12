@@ -271,6 +271,12 @@ struct ActualContext {
   std::map<std::string_view,const ActualContext *> callers;
   ActualFrameWorld normalFrames,languageFrames;
   std::string constructionNewTarget;
+  // A solved context and its operation plan fix the activation and site.
+  // These rows borrow the current solve's immutable Frame directory.
+  struct ChildFrame {
+    const Operation *site=nullptr;
+    const ActualFrameDirectory::value_type *parent=nullptr,*child=nullptr;
+  } lastChildFrame;
   // Root input refreshes each execution; called input is owned only by identity.
   // Mixed model consumers prepay route2 + const-reference borrow1 once before binding.
   // Admitted called contexts have a nonnull identity; no raw/default fallback exists.
@@ -403,6 +409,11 @@ struct ActualCheck {
   bool receiverDefine(ActualFrameWorld &,const ActualCursorInfo &,const ActualFieldSlot &);
   bool receiverReconcile(const ActualFrameWorld &,ActualHeap &,const ActualValue &);
   std::string createFrame(ActualFrameWorld &,const std::string &,const std::string &,const std::string &,const std::string &,const std::string &,bool,const std::string &parent={});
+  std::string createChildFrame(ActualContext &,const Operation &,ActualFrameWorld &,const std::string &site,const std::string &owner,
+    const std::string &construction,const ActualFrameDirectory::value_type &parent,bool repeated);
+  const ActualFrameDirectory::value_type *resolveFrameIdentity(const std::string &activation,const std::string &site,const std::string &owner,
+    const std::string &construction,const std::string &newTarget,const std::string &parent);
+  std::string admitFrameBinding(ActualFrameWorld &,const ActualFrameDirectory::value_type &,bool repeated);
   // Mutable pending owners cannot become canonical before ordered insertion succeeds; duplicate insertion returns the actual stored key.
   std::shared_ptr<ActualSymbolText> pendingSymbolText(std::string &&);
   ActualObjectDirectory::iterator admitObject(ActualObjectDirectory::iterator,std::string &&,ActualObject);
@@ -444,6 +455,8 @@ struct ActualCheck {
 ActualContext *conditionalContext(ActualCheck &,const std::string &,const ActualOperands &,const ActualHeap &,
   const std::string &activation,bool repeated,const ActualFrameWorld &);
 ActualFrameWorld selectOperandFrames(ActualCheck &,const ActualFrameWorld &,const ActualOperands &,const ActualHeap &);
+// The terminal caller owns the source World. Move only a fully selected World.
+ActualFrameWorld selectOperandFrames(ActualCheck &,ActualFrameWorld &&,const ActualOperands &,const ActualHeap &);
 template<class Directory>
 auto paidFrameLookup(ActualCheck &c,Directory &directory,llvm::StringRef query)->std::optional<decltype(directory.begin())>{
   const auto count=directory.size();size_t height=0;

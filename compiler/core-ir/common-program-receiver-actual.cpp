@@ -545,8 +545,8 @@ bool ActualCheck::overlayFrames(ActualFrameWorld &into,const ActualFrameWorld &f
   return true;
 }
 namespace {
-template<class Input>
-ActualFrameWorld selectedInputFrames(ActualCheck &check,const ActualFrameWorld &world,const Input &values,const ActualHeap &heap){
+template<class Input,class World>
+ActualFrameWorld selectedInputFrames(ActualCheck &check,World &&world,const Input &values,const ActualHeap &heap){
   using Entry=ActualFrameWorld::value_type;
   struct Selection {const Entry *row;const ActualFrameInfo *info;};
   if(!check.step())return {};
@@ -641,6 +641,17 @@ ActualFrameWorld selectedInputFrames(ActualCheck &check,const ActualFrameWorld &
       if(fresh&&!append(ancestry,next))return {};}
   }
   const auto count=selected.size();
+  if constexpr(std::is_rvalue_reference_v<World &&>){
+    if(count){
+      if(!check.step(4))return {};
+      // Selection has closed over every direct and birth-discovered ancestor.
+      // Every selected entry is a unique node of this unchanged World.
+      if(count==world.size()){
+        if(!check.step(4))return {};
+        return std::move(world);
+      }
+    }
+  }
   if(count>1){
     // The selected directory already proved unique members of this World.
     if(!check.step(2))return {};
@@ -664,6 +675,9 @@ ActualFrameWorld ActualCheck::selectFrames(const ActualFrameWorld &world,const s
 }
 ActualFrameWorld selectOperandFrames(ActualCheck &check,const ActualFrameWorld &world,const ActualOperands &values,const ActualHeap &heap){
   return selectedInputFrames(check,world,values,heap);
+}
+ActualFrameWorld selectOperandFrames(ActualCheck &check,ActualFrameWorld &&world,const ActualOperands &values,const ActualHeap &heap){
+  return selectedInputFrames(check,std::move(world),values,heap);
 }
 std::vector<ActualValue> ActualCheck::retainedFrames(const ActualFrameWorld &world){
   if(!step(world.size()))return {};std::vector<ActualValue> result;result.reserve(world.size());
@@ -767,8 +781,8 @@ bool ActualCheck::receiverReconcile(const ActualFrameWorld &world,ActualHeap &he
     if(!putOwnedField(heap,*slot,std::move(row.real)))return false;}
   return true;
 }
-std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &activation,const std::string &site,const std::string &owner,
-  const std::string &construction,const std::string &newTarget,bool repeated,const std::string &parent){
+const ActualFrameDirectory::value_type *ActualCheck::resolveFrameIdentity(const std::string &activation,const std::string &site,
+  const std::string &owner,const std::string &construction,const std::string &newTarget,const std::string &parent){
   const std::string *parts[]={&activation,&site,&owner,&construction,&newTarget,&parent};
   const ActualFrameDirectory::value_type *metadata=nullptr;
   // The solver and its borrow replay revisit these immutable inputs.
@@ -834,20 +848,64 @@ std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &
       frameIdentities.insert(frameIdentities.begin()+position,{{activation,site,owner,construction,newTarget,parent},metadata});
     }
   }
-  const auto &key=metadata->first;
+  return metadata;
+}
+std::string ActualCheck::createFrame(ActualFrameWorld &world,const std::string &activation,const std::string &site,const std::string &owner,
+  const std::string &construction,const std::string &newTarget,bool repeated,const std::string &parent){
+  const auto *metadata=resolveFrameIdentity(activation,site,owner,construction,newTarget,parent);
+  return metadata?admitFrameBinding(world,*metadata,repeated):std::string{};
+}
+std::string ActualCheck::createChildFrame(ActualContext &context,const Operation &op,ActualFrameWorld &world,const std::string &site,
+  const std::string &owner,const std::string &construction,const ActualFrameDirectory::value_type &parent,bool repeated){
+  if(!cacheOperationMetadata)return createFrame(world,context.activation,site,owner,construction,parent.second.newTarget,repeated,parent.first.text());
+  if(!step(6))return {};
+  auto &last=context.lastChildFrame;
+  if(last.site==&op&&last.parent==&parent)return admitFrameBinding(world,*last.child,repeated);
+  const auto *metadata=resolveFrameIdentity(context.activation,site,owner,construction,parent.second.newTarget,parent.first.text());
+  if(!metadata||!step(4))return {};
+  auto result=admitFrameBinding(world,*metadata,repeated);
+  if(e.message.empty())last={&op,&parent,metadata};
+  return result;
+}
+std::string ActualCheck::admitFrameBinding(ActualFrameWorld &world,const ActualFrameDirectory::value_type &metadata,bool repeated){
+  const auto &key=metadata.first;
   if(!step())return {};
   if(world.empty()){
     // The empty end hint shares the admitted key without a spelling comparison.
     if(!step(7)||!step(4))return {};ActualFrameBinding value;value.weak=repeated;
     world.emplace_hint(world.end(),key,std::move(value));
   }else{
-    const auto old=findFrame(*this,world,key.text());if(!old)return {};
-    if(*old!=world.end()&&repeated){
-      if(!step(3))return {};auto &value=(*old)->second;value.weak=true;value.unbound=true;value.prefixMin=0;
+    auto old=world.end(),hint=world.end();
+    bool positioned=false;
+    // Production metadata mode also enables the bounded singleton probe.
+    if(cacheOperationMetadata){
+      if(!step(4))return {};
+      if(world.size()==1){
+        const auto only=world.begin();
+        const auto comparison=key.size()+only->first.size()+1;
+        if(!step(comparison+6))return {};
+        const auto order=key.view().compare(only->first.view());
+        if(!order)old=only;
+        else {
+          // One neighbour proves the exact hint. Pay both possible native
+          // predicates before inserting its independently mutable binding.
+          if(!step(2*comparison+4))return {};
+          hint=order<0?only:world.end();
+        }
+        positioned=true;
+      }
+    }
+    if(!positioned){
+      const auto found=findFrame(*this,world,key.text());if(!found)return {};
+      old=*found;
+    }
+    if(old!=world.end()&&repeated){
+      if(!step(3))return {};auto &value=old->second;value.weak=true;value.unbound=true;value.prefixMin=0;
     }else{
       if(!step(8)||!step(4))return {};ActualFrameBinding value;value.weak=repeated;
-      if(*old==world.end()){if(!receiverText(key.text()))return {};world.emplace(key,std::move(value));}
-      else (*old)->second=std::move(value);
+      if(old!=world.end())old->second=std::move(value);
+      else if(positioned)world.emplace_hint(hint,key,std::move(value));
+      else {if(!receiverText(key.text()))return {};world.emplace(key,std::move(value));}
     }
   }
   // Returning the current string API still copies full bytes, even though its SSA consumer can move that result.

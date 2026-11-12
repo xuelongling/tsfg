@@ -41,6 +41,15 @@ bool fullProjection(){
   return expect(same(f.seeds.at("seed"),expected),"seed owns its result independently from input");
 }
 bool bottomAndNumbers(){
+  Fixture direct;ActualValue scalar;scalar.tags={"number"};scalar.number=9007199254740993LL;
+  scalar.region.known=true;scalar.region.empty=true;scalar.region.number=scalar.number;
+  const auto originalScalar=scalar;
+  if(!expect(!direct.check.merge(scalar,ActualValue{})&&same(scalar,originalScalar)&&direct.error.message.empty(),
+      "full Actual bottom is the identity for an existing tracked Region number"))return false;
+  ActualValue unknown;unknown.unknown=true;auto widened=originalScalar;
+  widened.unknown=true;widened.number.reset();widened.region.number.reset();widened.region.opaque=true;
+  if(!expect(direct.check.merge(scalar,unknown)&&same(scalar,widened)&&direct.error.message.empty(),
+      "explicit unknown still widens both exact numeric facets"))return false;
   Fixture f;f.seeds.emplace("seed",fullTarget());const auto input=excludedInput(),original=input;
   auto expected=fullTarget();expected.region.number.reset();bool changed=false;
   f.check.seedStorage(f.seeds,"seed",input,true,changed);

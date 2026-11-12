@@ -22,19 +22,18 @@ RegionValue regionValueInput(ActualCheck &c,const ActualValue &v,bool hasTags){
   for(const auto &[code,env]:v.callables){if(env.empty())out.empty=true;else out.opaque=true;}
   out.empty|=hasTags&&v.objects.empty()&&v.callables.empty();return out;
 }
-bool mergeInput(ActualCheck &c,ActualValue &to,const ActualValue &from,const std::set<std::string> &tags){
+bool mergeInput(ActualCheck &c,ActualValue &to,const ActualValue &from,const std::set<std::string> &tags,bool projectedSeed){
   // Visit incoming identities once; only the relation plane still projects
   // the old target. Internal change detection must retain exact int64 facts,
   // independently of the bounded JSON key's binary64 representation.
   if(!c.step(from.frames.size()+from.cursors.size()+1)||!c.step(weight(from,tags)+1+regionWeight(to.region)))return false;
-  // An absent relation is lazily unproved, not a runtime allocation fact.
-  // Capacity/tag-only values need no relation plane or spurious state change.
-  const bool tracked=to.region.known||from.region.known;RegionValue provenance;
-  if(tracked){provenance=regionValue(c,to);regionMerge(c,provenance,regionValueInput(c,from,!tags.empty()));}
   const bool bottom=to.tags.empty()&&to.objects.empty()&&to.cells.empty()&&to.callables.empty()&&to.frames.empty()&&to.cursors.empty()&&!to.unknown&&!to.callableTop;
-  // Only a completely empty incoming value is the numeric join identity.
-  // Code/Env, scalar uncertainty and every relation fact still widen it.
+  // A completely empty full value carries no Actual or Region evidence.
+  // A seed projection still joins the unknown relation number it projects.
   const bool incomingBottom=tags.empty()&&from.objects.empty()&&from.cells.empty()&&from.callables.empty()&&from.frames.empty()&&from.cursors.empty()&&!from.unknown&&!from.callableTop&&from.truth==0&&!from.number&&!from.region.known&&!from.region.opaque&&!from.region.empty&&!from.region.number&&from.region.roots.empty();
+  const bool tracked=(to.region.known||from.region.known)&&(!incomingBottom||projectedSeed);
+  RegionValue provenance;
+  if(tracked){provenance=regionValue(c,to);regionMerge(c,provenance,regionValueInput(c,from,!tags.empty()));}
   bool changed=false;
   for(const auto &id:tags)if(to.tags.insert(id).second)changed=true;
   for(const auto &id:from.objects)if(to.objects.insert(id).second)changed=true;
@@ -79,14 +78,14 @@ bool ActualCheck::arrayReceiver(const ActualValue &value){
   return step(actual.size()+value.tags.size())&&actual==value.tags&&e.message.empty();
 }
 bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
-  return mergeInput(*this,to,from,from.tags);
+  return mergeInput(*this,to,from,from.tags,false);
 }
 void ActualCheck::seedStorage(std::map<std::string,ActualValue> &seeds,const std::string &id,const ActualValue &v,bool conditional,bool &changed){
   if(!conditional||!step(v.tags.size()+1))return;
   // Borrow only the tag plane; the temporary metadata carries no payload,
   // number or relation facts. The shared merge owns the final seed copies.
   ActualValue metadata;metadata.unknown=v.unknown;metadata.truth=v.truth;
-  const bool grew=mergeInput(*this,seeds[id],metadata,v.tags);seedChanged|=grew;changed|=grew;
+  const bool grew=mergeInput(*this,seeds[id],metadata,v.tags,true);seedChanged|=grew;changed|=grew;
 }
 bool ActualCheck::recordCapacity(CapacityValue &to,const ActualValue &from){
   // The producer may be a freshly constructed value rather than merge's

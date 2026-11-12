@@ -498,7 +498,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     frameRoots.reserve(rootCount);
     for(const auto &arg:arguments)frameRoots.push_back(&arg);
     if(!args.empty())frameRoots.push_back(&args[0]);
-    auto selected=selectOperandFrames(*this,state.frames,ActualOperands{frameRoots},state.heap);
+    // The terminal Borrow observation already consumed the intact World.
+    // Its after-hook records only the completion point.
+    auto selected=selectOperandFrames(*this,std::move(state.frames),ActualOperands{frameRoots},state.heap);
     if(!e.message.empty())return false;
     // The empty summary can own this complete projection; a nonempty summary
     // must merge, while retained roots still come only from this return.

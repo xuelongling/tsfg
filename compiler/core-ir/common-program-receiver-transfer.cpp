@@ -16,7 +16,7 @@ int compareConstructionKey(const ActualConstructionKeyView &query,llvm::StringRe
     at+=count;if(count<segment.size())return 1;
   }return at<flat.size()?-1:0;
 }
-using ReceiverRows=std::pair<const ActualFrameInfo *,const ActualFrameBinding *>;
+using ReceiverRows=std::pair<const ActualFrameDirectory::value_type *,const ActualFrameBinding *>;
 std::optional<ReceiverRows> receiverRows(ActualCheck &check,const ActualFrameWorld &world,
     const std::string &id,const char *missing){
   if(!check.step(8))return std::nullopt;
@@ -34,11 +34,11 @@ std::optional<ReceiverRows> receiverRows(ActualCheck &check,const ActualFrameWor
       if(!check.step(2*length+2))return std::nullopt;
       ++compared;
       if(text!=id)continue;
-      for(const auto &[registered,metadata]:check.receiverFrames){
+      for(const auto &row:check.receiverFrames){
         if(!check.step(3))return std::nullopt;
-        if(&registered.text()==&text){
+        if(&row.first.text()==&text){
           if(!check.step(3))return std::nullopt;
-          return ReceiverRows{&metadata,&binding};
+          return ReceiverRows{&row,&binding};
         }
       }
       break;
@@ -50,7 +50,7 @@ std::optional<ReceiverRows> receiverRows(ActualCheck &check,const ActualFrameWor
   const auto binding=metadata==check.receiverFrames.end()?world.end():world.find(id);
   if(!check.need(metadata!=check.receiverFrames.end()&&binding!=world.end(),missing)||!check.step(3))
     return std::nullopt;
-  return ReceiverRows{&metadata->second,&binding->second};
+  return ReceiverRows{&*metadata,&binding->second};
 }
 }
 bool ActualConstructionKeyLess::operator()(const ActualConstructionKeyView &a,const std::string &b)const{return compareConstructionKey(a,b)<0;}
@@ -88,13 +88,14 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       if(!e.message.empty())return false;value.frames.insert(std::move(id));
     }else {if(!step(args[0].frames.size()))return false;for(const auto &parent:args[0].frames){
       const auto rows=receiverRows(*this,state.frames,parent,"child receiver parent missing");if(!rows)return false;
-      const auto &[info,binding]=*rows;auto id=createFrame(state.frames,context.activation,*site,owner,construction,info->newTarget,
-        repeated||binding->weak,parent);if(!e.message.empty())return false;value.frames.insert(std::move(id));}}
+      const auto &[metadata,binding]=*rows;
+      auto id=createChildFrame(context,op,state.frames,*site,owner,construction,*metadata,repeated||binding->weak);
+      if(!e.message.empty())return false;value.frames.insert(std::move(id));}}
   }else if(name=="receiver_allocate"){
     if(!step(args[0].frames.size()))return false;
     for(const auto &id:args[0].frames){
       const auto rows=receiverRows(*this,state.frames,id,"allocation frame missing");if(!rows)return false;
-      const auto &info=*rows->first;if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
+      const auto &info=rows->first->second;if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
       if(!receiverText(info.newTarget))return false;auto ref="construction/"+id+"/"+info.newTarget;
       const bool weak=rows->second->weak;auto old=objects.find(ref);
       if(old!=objects.end()&&!old->second.weak&&weak)weakChanged=true;

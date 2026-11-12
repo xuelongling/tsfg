@@ -159,7 +159,8 @@ ActualContext *contextInput(ActualCheck &check,const std::string &target,const I
   }
   incoming.heap=std::move(entry);incoming.frames=std::move(selected);incoming.regions=std::move(current);
   const auto id=target+"/context:"+std::to_string(check.contexts.size());
-  if(!check.step(id.size()/64+1))return nullptr;
+  // The empty child-frame cache initializes and moves three borrowed pointers.
+  if(!check.step(id.size()/64+1+6))return nullptr;
   ActualContext c;c.id=id;c.function=check.functions.at(target);c.root=root;c.called=!root;c.repeated=repeated;
   if(!check.step((physical.size()+region.size()+newTarget.size())/64+4))return nullptr;
   c.activation=physical;c.region=region;c.constructionNewTarget=newTarget;
