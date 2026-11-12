@@ -230,7 +230,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
           const receiver=evaluated(value.target.receiver),index=evaluated(value.target.index);
           const oldType=selected(value.domainNode+'/old-value').domainId;
-            const old=op(api,'array_read',[receiver,index],oldType,`view_type = ${quote(value.semanticType)}, array_node = ${quote(value.domainNode+'/old-value')}`,value.target.range);
+            const old=op(api,'array_read',[receiver,index],oldType,`${opAttrs({semanticType:value.target.type,type:oldType})}, array_node = ${quote(value.domainNode+'/old-value')}`,value.target.range);
           const domain=domains.get(oldType);if(domain.representation!=='native')pending('operation-domain-check mapping',value.range);
           const rhs=value.kind==='arrayUpdate'?{name:api.operation('tsfg_core.constant',[],[],oldType,
             domain.nativeType==='i32'?'value = 1 : i32':domain.nativeType==='f32'?'value = "3f800000"'

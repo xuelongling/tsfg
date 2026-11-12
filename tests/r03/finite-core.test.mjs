@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir,printHir,readHir} from '../../compiler/hir.mjs';
-import {buildFiniteActualDomains} from '../../compiler/finite-actual-domains.mjs';
+import {buildFiniteActualDomains,buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from '../../compiler/finite-field-phases.mjs';
 import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
 import {finiteCallables} from '../../compiler/finite-callables.mjs';
@@ -118,6 +118,14 @@ test('actual compound call lowers receiver/index once and checked old read prece
     read=core.indexOf('"tsfg_core.domain.array_read"',index),rhs=core.indexOf(callee('rhs')),
     store=core.indexOf('"tsfg_core.domain.array_store"',rhs);
   assert.ok(receiver<index&&index<read&&read<rhs&&rhs<store);
+  const update=hir.functions.find(fn=>fn.name==='update');
+  const oldNode=update.id+'/body/0/value/old-value';
+  const plan=buildFiniteCoreDomains(hir,context).definition;
+  const old=plan.carrierNodes.find(row=>row.id===oldNode);
+  assert.ok(old,'the checked target read has an owned representation domain');
+  const readLine=core.slice(read,core.indexOf('\n',read));
+  assert.ok(readLine.includes('array_node = "'+oldNode+'"'));
+  assert.ok(readLine.includes('domain = "'+old.domainId+'"'));
   assert.match(core.slice(rhs,store),/"tsfg_core.add"/);
 });
 
