@@ -14,7 +14,10 @@ pub const ScalarValue = union(enum) { float32: f32, float64: f64 };
 pub const Entry = struct { abiType: []const u8, columns: []const Column, entrySymbol: []const u8, logicalFunctionId: []const u8, loop: u32, queryBinding: []const u8, rowCountArgument: u32, scalars: []const Scalar, signatureHash: []const u8, source: Source, sourceFunctionId: []const u8, tupleOccurrences: []const Tuple };
 pub const Payload = struct { batch: []const u8, batchHash: []const u8, componentLayouts: []const u8, effects: []const u8, effectsHash: []const u8, entries: []const Entry, functionIdentityDomain: []const u8, inputIdentity: []const u8, layoutHash: []const u8, packageId: []const u8, sourcePacket: []const u8, sourceRequest: []const u8, target: layout.Target };
 const Envelope = struct { family: []const u8, payload: []const u8, payloadHash: []const u8, schemaHash: []const u8, version: u32 };
-const SourceRequestHeader = struct { family: []const u8, version: u32 };
+const SourceRequestHeader = struct { family: []const u8, schemaHash: []const u8, version: u32 };
+const SourceProfile = struct { version: u32, schema: []const u8, request_domain: []const u8, package_domain: []const u8 };
+const source_v5_schema = "sha256:a35185acc806a6095b3e80f6753bbf0cc314f4bde823b75ef5813843159ccce1";
+const source_v6_schema = "sha256:32326256ba49bb78f12118d211b520c0f84aa8001422004e8d17dce86d8b814e";
 /// Comes from the independent producer cold reader, never from the same untrusted envelope.
 /// Fixing identity grants no Store lease, executable address, publication or execution authority.
 pub const Expected = struct { payloadHash: []const u8, inputIdentity: []const u8, packageId: []const u8 };
@@ -47,7 +50,8 @@ pub const Document = struct {
         if (!std.mem.eql(u8, &digest("", payload.batch), payload.batchHash) or !std.mem.eql(u8, &digest("", payload.componentLayouts), payload.layoutHash) or !std.mem.eql(u8, &digest("", payload.effects), payload.effectsHash)) return error.InvalidMetadata;
         for ([_][]const u8{ payload.batch, payload.componentLayouts, payload.effects, payload.sourcePacket, payload.sourceRequest }) |text| if (text.len == 0 or text[text.len - 1] != '\n') return error.InvalidMetadata;
         var work: usize = 1000000;
-        try verifySourceRequest(own, payload.sourceRequest, payload.inputIdentity, &work);
+        const source_profile = try verifySourceRequest(own, payload.sourceRequest, payload.inputIdentity, &work);
+        try verifySourcePacket(payload.sourcePacket, payload.inputIdentity, payload.packageId, source_profile, &work);
         var component_layout = try layout.Layout.loadCatalog(allocator, payload.componentLayouts, payload.inputIdentity);
         errdefer component_layout.deinit();
         if (payload.entries.len > 4096) return error.MetadataLimit;
@@ -229,18 +233,33 @@ fn charge(remaining: *usize, count: usize) Error!void {
     if (count > remaining.*) return error.MetadataLimit;
     remaining.* -= count;
 }
-fn verifySourceRequest(allocator: std.mem.Allocator, bytes: []const u8, identity: []const u8, work: *usize) !void {
+fn verifySourceRequest(allocator: std.mem.Allocator, bytes: []const u8, identity: []const u8, work: *usize) !SourceProfile {
     // Prepay the depth scan, header parse and request hash.
     try charge(work, 3 * (bytes.len / 64 + 1));
     try jsonBudget(bytes);
     const header = std.json.parseFromSliceLeaky(SourceRequestHeader, allocator, bytes, .{ .ignore_unknown_fields = true, .max_value_len = 8388608 }) catch |err| return if (err == error.OutOfMemory) err else error.InvalidMetadata;
     if (!std.mem.eql(u8, header.family, "tsfg.system-query-facts-request-candidate")) return error.InvalidMetadata;
-    const domain = switch (header.version) {
-        5 => "tsfg.system-query.request.v5\x00",
-        6 => "tsfg.system-query.request.v6\x00",
+    const profile: SourceProfile = switch (header.version) {
+        5 => .{ .version = 5, .schema = source_v5_schema, .request_domain = "tsfg.system-query.request.v5\x00", .package_domain = "tsfg.system-query.package.v5\x00" ++ source_v5_schema ++ "\x00" },
+        6 => .{ .version = 6, .schema = source_v6_schema, .request_domain = "tsfg.system-query.request.v6\x00", .package_domain = "tsfg.system-query.package.v6\x00" ++ source_v6_schema ++ "\x00" },
         else => return error.InvalidMetadata,
     };
-    if (!std.mem.eql(u8, &digest(domain, bytes), identity)) return error.IdentityMismatch;
+    if (!std.mem.eql(u8, header.schemaHash, profile.schema) or !std.mem.eql(u8, &digest(profile.request_domain, bytes), identity)) return error.IdentityMismatch;
+    return profile;
+}
+fn verifySourcePacket(packet: []const u8, input_identity: []const u8, package_id: []const u8, profile: SourceProfile, work: *usize) Error!void {
+    // Prepay the envelope formatting and comparisons, domain hash and digest check.
+    try charge(work, 18 + packet.len / 64 + 1);
+    // Expected IDs have already been checked as fixed digests. The canonical
+    // envelope delimits the original payload bytes without copying its body.
+    var prefix_buffer: [192]u8 = undefined;
+    var suffix_buffer: [192]u8 = undefined;
+    const prefix = std.fmt.bufPrint(&prefix_buffer, "{{\"family\":\"tsfg.system-query-facts-package-candidate\",\"packageId\":\"{s}\",\"payload\":", .{package_id}) catch unreachable;
+    const suffix = std.fmt.bufPrint(&suffix_buffer, ",\"requestId\":\"{s}\",\"schemaHash\":\"{s}\",\"version\":{d}}}\n", .{ input_identity, profile.schema, profile.version }) catch unreachable;
+    if (packet.len <= prefix.len + suffix.len or !std.mem.startsWith(u8, packet, prefix) or !std.mem.endsWith(u8, packet, suffix)) return error.IdentityMismatch;
+    const source_payload = packet[prefix.len .. packet.len - suffix.len];
+    if (source_payload[0] != '{' or source_payload[source_payload.len - 1] != '}') return error.InvalidMetadata;
+    if (!std.mem.eql(u8, &digest(profile.package_domain, source_payload), package_id)) return error.IdentityMismatch;
 }
 fn digest(prefix: []const u8, bytes: []const u8) [71]u8 {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});

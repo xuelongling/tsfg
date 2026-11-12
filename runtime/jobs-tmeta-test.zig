@@ -246,6 +246,10 @@ fn structuralNegatives(document: *const T.Document, expected: T.Expected) !void 
 }
 
 fn expectStructuralRejection(payload: T.Payload, expected: T.Expected) !void {
+    try expectMetadataRejection(error.InvalidMetadata, payload, expected);
+}
+
+fn expectMetadataRejection(wanted: anyerror, payload: T.Payload, expected: T.Expected) !void {
     const negative = try encodePayload(payload);
     defer A.free(negative.bytes);
     var negative_expected = expected;
@@ -256,7 +260,7 @@ fn expectStructuralRejection(payload: T.Payload, expected: T.Expected) !void {
         unexpected.deinit();
         return error.TestExpectedError;
     } else |err| {
-        try std.testing.expectEqual(error.InvalidMetadata, err);
+        try std.testing.expectEqual(wanted, err);
     }
 }
 
@@ -406,16 +410,33 @@ test "Query metadata rejects the Source request from another genuine input" {
 
     var payload = document.payload;
     payload.sourceRequest = other.payload.sourceRequest;
-    const negative = try encodePayload(payload);
-    defer A.free(negative.bytes);
-    var expected = receipt.value;
-    // Recomputing the outer digest isolates the embedded Source request check.
-    expected.payloadHash = &negative.hash;
-    if (T.Document.load(A, negative.bytes, expected)) |loaded| {
-        var unexpected = loaded;
-        unexpected.deinit();
-        return error.TestExpectedError;
-    } else |err| try std.testing.expectEqual(error.IdentityMismatch, err);
+    try expectMetadataRejection(error.IdentityMismatch, payload, receipt.value);
+}
+
+test "Query metadata rejects a Source packet carrying another genuine package identity" {
+    try rejectSourcePacket(.identity);
+}
+
+test "Query metadata rejects a changed Source packet body with the original package identity" {
+    try rejectSourcePacket(.body);
+}
+
+fn rejectSourcePacket(comptime change: enum { identity, body }) !void {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-receipt.json"), .{});
+    defer receipt.deinit();
+    const other = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict-receipt.json"), .{});
+    defer other.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy.tmeta"), receipt.value);
+    defer document.deinit();
+    const needle = if (change == .identity) receipt.value.packageId else "\"positionUnit\":\"utf16\"";
+    const replacement = if (change == .identity) other.value.packageId else "\"positionUnit\":\"utf8\"";
+    try std.testing.expect(!std.mem.eql(u8, needle, replacement));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, document.payload.sourcePacket, needle));
+    const changed = try std.mem.replaceOwned(u8, A, document.payload.sourcePacket, needle, replacement);
+    defer A.free(changed);
+    var payload = document.payload;
+    payload.sourcePacket = changed;
+    try expectMetadataRejection(error.IdentityMismatch, payload, receipt.value);
 }
 
 test "actual producer Layout releases arena growth without resize" {
