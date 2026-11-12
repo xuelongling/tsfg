@@ -96,15 +96,27 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
     for(const auto &id:args[0].frames){
       const auto rows=receiverRows(*this,state.frames,id,"allocation frame missing");if(!rows)return false;
       const auto &info=rows->first->second;if(!need(!info.derived,"a derived frame cannot allocate its own this"))return false;
-      if(!receiverText(info.newTarget))return false;auto ref="construction/"+id+"/"+info.newTarget;
-      const bool weak=rows->second->weak;auto old=objects.find(ref);
+      std::string ref;auto old=objects.end();
+      if(cacheOperationMetadata){
+        if(!step(6))return false;
+        if(info.allocation)old=*info.allocation;
+      }
+      if(old==objects.end()){
+        if(!receiverText(info.newTarget))return false;
+        ref="construction/"+id+"/"+info.newTarget;
+        old=objects.find(ref);
+      }
+      const bool weak=rows->second->weak;
       if(old!=objects.end()&&!old->second.weak&&weak)weakChanged=true;
       const bool repeated=weak||(old!=objects.end()&&old->second.weak);
       if(!step())return false;auto object=old;
       if(object==objects.end()){if(!step(ref.size()/64+1))return false;object=admitObject(object,std::string(ref),ActualObject{info.newTarget,repeated});}
       else object->second={info.newTarget,repeated};if(!e.message.empty()||!step(4))return false;
+      if(cacheOperationMetadata&&!info.allocation){
+        if(!step(4))return false;info.allocation=object;
+      }
       ActualValue allocated;allocated.tags.insert(info.newTarget);allocated.objects.insert(object->first);
-      if(!conditional)allocated.region=regionAllocate(*this,context,ref,info.newTarget,state.regions);
+      if(!conditional)allocated.region=regionAllocate(*this,context,object->first.text(),info.newTarget,state.regions);
       // Snapshot real historical data before adding this birth's defaults.
       const auto members=allFields(info.newTarget);if(!step(members.size()+1))return false;std::vector<const ActualFieldSlot *> fieldSlots;fieldSlots.reserve(members.size());
       for(const auto *row:members){

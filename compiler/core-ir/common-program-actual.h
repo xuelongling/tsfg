@@ -177,9 +177,13 @@ public:
   size_t size()const{return fields_.size();}
   llvm::StringRef operator[](size_t index)const{return fields_[index].getAsString().value();}
 };
+struct ActualObject {std::string type;bool weak=false;};
+using ActualObjectDirectory=std::map<ActualObjectId,ActualObject,ActualObjectIdLess>;
 struct ActualFrameInfo {
   std::string owner,construction,newTarget,parent;bool derived=false;
   ActualInitializationFields fields=ActualInitializationFields::empty();
+  // A validated frame owns one immutable construction reference per solve.
+  mutable std::optional<ActualObjectDirectory::iterator> allocation;
 };
 using ActualFrameDirectory=std::map<ActualFrameId,ActualFrameInfo,ActualFrameIdLess>;
 // Full factory inputs own their bytes. The admitted directory row is immutable
@@ -210,7 +214,6 @@ struct ActualFieldSlotLess {
   }
 };
 using ActualBirthJournal=std::map<const ActualFieldSlot *,ActualBirth,ActualFieldSlotLess>;
-struct ActualObject;
 // Directory map nodes survive insert_or_assign. These views expire when the
 // association universe is cleared, before the owned object directory itself.
 struct ActualFieldSlotAssociation {const ActualObjectId *reference;const std::string *field;const ActualFieldSlot *slot;const ActualObject *object;};
@@ -246,8 +249,6 @@ struct ActualConstructionKeyLess {
   bool operator()(const std::string &,const ActualConstructionKeyView &)const;
 };
 struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;ActualFrameWorld frames;};
-struct ActualObject {std::string type;bool weak=false;};
-using ActualObjectDirectory=std::map<ActualObjectId,ActualObject,ActualObjectIdLess>;
 using ActualOwnedDirectory=std::map<std::string,const Json *>;
 // Only field lookup borrows an operation JSON key; directory keys stay owned.
 using ActualFieldDirectory=std::map<std::string,const Json *,std::less<>>;
