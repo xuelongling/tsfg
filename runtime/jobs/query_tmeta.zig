@@ -104,26 +104,30 @@ pub const Document = struct {
         var expected_entries: usize = 0;
         for (effects.report.systems) |system| expected_entries += system.loops.len;
         if (expected_entries != payload.entries.len) return error.InvalidEffects;
-        for (payload.entries) |entry| {
-            const system_index = effects.systemIndex(entry.logicalFunctionId) orelse return error.InvalidEffects;
+        var entry_index: usize = 0;
+        try charge(&work, effects.source_system_order.len);
+        for (effects.source_system_order) |system_index| {
             const system = &effects.report.systems[system_index];
-            if (!std.mem.eql(u8, system.sourceFunctionId, entry.sourceFunctionId) or !std.mem.eql(u8, system.signatureHash, entry.signatureHash) or entry.loop >= system.loops.len) return error.InvalidEffects;
-            // Compare the ordinary Source parameters in their original positions, skipping Queries.
             const parameters = effects.source_parameters[system_index];
-            try charge(&work, parameters.len);
-            var scalar_index: usize = 0;
-            for (parameters, 0..) |parameter, source_index| {
-                if (parameter.query != null) continue;
-                if (scalar_index == entry.scalars.len) return error.InvalidMetadata;
-                const scalar = entry.scalars[scalar_index];
-                if (scalar.sourceParameter != source_index or !std.mem.eql(u8, scalar.sourceBinding, parameter.binding.id) or !std.mem.eql(u8, scalar.type, parameter.logicalType)) return error.InvalidMetadata;
-                scalar_index += 1;
+            for (system.loops, 0..) |*loop, loop_index| {
+                try charge(&work, 1 + parameters.len);
+                const entry = &payload.entries[entry_index];
+                entry_index += 1;
+                if (entry.loop != loop_index or !std.mem.eql(u8, system.functionId, entry.logicalFunctionId) or !std.mem.eql(u8, system.sourceFunctionId, entry.sourceFunctionId) or !std.mem.eql(u8, system.signatureHash, entry.signatureHash)) return error.InvalidEffects;
+                // Ordinary Source parameters retain their original positions, skipping Queries.
+                var scalar_index: usize = 0;
+                for (parameters, 0..) |parameter, source_index| {
+                    if (parameter.query != null) continue;
+                    if (scalar_index == entry.scalars.len) return error.InvalidMetadata;
+                    const scalar = entry.scalars[scalar_index];
+                    if (scalar.sourceParameter != source_index or !std.mem.eql(u8, scalar.sourceBinding, parameter.binding.id) or !std.mem.eql(u8, scalar.type, parameter.logicalType)) return error.InvalidMetadata;
+                    scalar_index += 1;
+                }
+                if (scalar_index != entry.scalars.len) return error.InvalidMetadata;
+                if (!effects_module.sameSource(loop.source, entry.source) or !std.mem.eql(u8, loop.queryBinding, entry.queryBinding) or loop.capabilities.len != entry.columns.len or loop.columns.len != entry.tupleOccurrences.len) return error.InvalidEffects;
+                for (loop.capabilities, entry.columns) |capability, column| if (!std.mem.eql(u8, capability.componentType, column.componentType) or !std.mem.eql(u8, capability.sourceComponentType, column.sourceComponentType) or capability.mode != column.access) return error.InvalidEffects;
+                for (loop.columns, entry.tupleOccurrences) |column, tuple| if (column.tupleIndex != tuple.tupleIndex or !std.mem.eql(u8, column.sourceBinding, tuple.sourceBinding) or !std.mem.eql(u8, column.componentType, tuple.componentType) or column.mode != tuple.mode) return error.InvalidEffects;
             }
-            if (scalar_index != entry.scalars.len) return error.InvalidMetadata;
-            const loop = system.loops[entry.loop];
-            if (!effects_module.sameSource(loop.source, entry.source) or !std.mem.eql(u8, loop.queryBinding, entry.queryBinding) or loop.capabilities.len != entry.columns.len or loop.columns.len != entry.tupleOccurrences.len) return error.InvalidEffects;
-            for (loop.capabilities, entry.columns) |capability, column| if (!std.mem.eql(u8, capability.componentType, column.componentType) or !std.mem.eql(u8, capability.sourceComponentType, column.sourceComponentType) or capability.mode != column.access) return error.InvalidEffects;
-            for (loop.columns, entry.tupleOccurrences) |column, tuple| if (column.tupleIndex != tuple.tupleIndex or !std.mem.eql(u8, column.sourceBinding, tuple.sourceBinding) or !std.mem.eql(u8, column.componentType, tuple.componentType) or column.mode != tuple.mode) return error.InvalidEffects;
         }
         // Both metadata and typed effects allocations finish before this final arena transfer.
         return .{ .arena = arena, .payload = payload, .payload_hash = env.payloadHash, .component_layout = component_layout, .effects = effects };

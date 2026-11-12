@@ -370,6 +370,29 @@ test "actual i32 copy metadata binds original columns and preserves two-system c
         try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-" ++ name ++ ".tmeta"), receipt.value, false, index + 1);
     }
 }
+
+test "Query metadata rejects entry rows in a different Source system order" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict.tmeta"), receipt.value);
+    defer document.deinit();
+    var payload = document.payload;
+    try std.testing.expectEqual(@as(usize, 2), payload.entries.len);
+    try std.testing.expect(!std.mem.eql(u8, payload.entries[0].sourceFunctionId, payload.entries[1].sourceFunctionId));
+    const reversed = [_]T.Entry{ payload.entries[1], payload.entries[0] };
+    payload.entries = &reversed;
+    const negative = try encodePayload(payload);
+    defer A.free(negative.bytes);
+    var expected = receipt.value;
+    // Recomputing the outer digest isolates the entry directory check.
+    expected.payloadHash = &negative.hash;
+    if (T.Document.load(A, negative.bytes, expected)) |loaded| {
+        var unexpected = loaded;
+        unexpected.deinit();
+        return error.TestExpectedError;
+    } else |err| try std.testing.expectEqual(error.InvalidEffects, err);
+}
+
 test "actual producer Layout releases arena growth without resize" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-parenthesized-receipt.json"), .{});
     defer receipt.deinit();

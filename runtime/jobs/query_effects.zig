@@ -84,6 +84,7 @@ const Projection = struct { payload: struct { program: struct { files: []const S
 pub const Analysis = struct {
     report: Report,
     source_parameters: []const []const SourceParameter,
+    source_system_order: []const usize,
 
     pub fn systemIndex(self: *const Analysis, id: []const u8) ?usize {
         for (self.report.systems, 0..) |row, index| if (same(row.functionId, id)) return index;
@@ -169,26 +170,32 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         std.mem.sort([]const u8, transitive.items, {}, lessString);
         if (!sameStrings(transitive.items, helper.transitiveCallees)) return error.InvalidEffects;
     }
-    try context.spend(report.systems.len);
+    try context.spend(2 * report.systems.len);
     const source_parameters = try allocator.alloc([]const SourceParameter, report.systems.len);
+    const source_system_order = try allocator.alloc(usize, report.systems.len);
+    const unassigned = std.math.maxInt(usize);
+    @memset(source_system_order, unassigned);
     for (report.systems, 0..) |system, index| {
         try context.spend(1);
         if (!digestId(system.functionId) or !digestId(system.signatureHash) or (index > 0 and std.mem.order(u8, report.systems[index - 1].functionId, system.functionId) != .lt)) return error.InvalidEffects;
-        var original: ?RawSystem = null;
-        for (context.facts.payload.systems) |row| {
+        var original: ?usize = null;
+        for (context.facts.payload.systems, 0..) |*row, source_index| {
             try context.spend(1);
             if (same(row.declaration.id, system.sourceFunctionId)) {
                 if (original != null) return error.InvalidEffects;
-                original = row;
+                original = source_index;
             }
         }
-        const raw = original orelse return error.InvalidEffects;
+        const source_index = original orelse return error.InvalidEffects;
+        try context.spend(4);
+        if (source_system_order[source_index] != unassigned) return error.InvalidEffects;
+        source_system_order[source_index] = index;
+        const raw = &context.facts.payload.systems[source_index];
         source_parameters[index] = raw.parameters;
         if (!sameSource(system.source, declarationSource(raw.declaration)) or system.loops.len != raw.loops.len) return error.InvalidEffects;
-        for (report.systems[0..index]) |previous| if (same(previous.sourceFunctionId, system.sourceFunctionId)) return error.InvalidEffects;
         try context.source(system.source, null);
         var declared: std.ArrayList(Capability) = .empty;
-        try context.systemIdentity(&raw, &system, &declared);
+        try context.systemIdentity(raw, &system, &declared);
         std.mem.sort(Capability, declared.items, {}, lessCapability);
         try context.capabilities(system.capabilities);
         if (!sameCapabilities(declared.items, system.capabilities)) return error.InvalidEffects;
@@ -250,7 +257,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
         edge += 1;
     };
     if (edge != report.conflicts.len) return error.InvalidEffects;
-    return .{ .report = report, .source_parameters = source_parameters };
+    return .{ .report = report, .source_parameters = source_parameters, .source_system_order = source_system_order };
 }
 
 const Context = struct {
