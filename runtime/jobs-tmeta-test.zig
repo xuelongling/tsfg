@@ -393,6 +393,31 @@ test "Query metadata rejects entry rows in a different Source system order" {
     } else |err| try std.testing.expectEqual(error.InvalidEffects, err);
 }
 
+test "Query metadata rejects the Source request from another genuine input" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-receipt.json"), .{});
+    defer receipt.deinit();
+    const other_receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict-receipt.json"), .{});
+    defer other_receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy.tmeta"), receipt.value);
+    defer document.deinit();
+    var other = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict.tmeta"), other_receipt.value);
+    defer other.deinit();
+    try std.testing.expect(!std.mem.eql(u8, receipt.value.inputIdentity, other_receipt.value.inputIdentity));
+
+    var payload = document.payload;
+    payload.sourceRequest = other.payload.sourceRequest;
+    const negative = try encodePayload(payload);
+    defer A.free(negative.bytes);
+    var expected = receipt.value;
+    // Recomputing the outer digest isolates the embedded Source request check.
+    expected.payloadHash = &negative.hash;
+    if (T.Document.load(A, negative.bytes, expected)) |loaded| {
+        var unexpected = loaded;
+        unexpected.deinit();
+        return error.TestExpectedError;
+    } else |err| try std.testing.expectEqual(error.IdentityMismatch, err);
+}
+
 test "actual producer Layout releases arena growth without resize" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-parenthesized-receipt.json"), .{});
     defer receipt.deinit();

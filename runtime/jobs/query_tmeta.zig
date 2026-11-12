@@ -14,6 +14,7 @@ pub const ScalarValue = union(enum) { float32: f32, float64: f64 };
 pub const Entry = struct { abiType: []const u8, columns: []const Column, entrySymbol: []const u8, logicalFunctionId: []const u8, loop: u32, queryBinding: []const u8, rowCountArgument: u32, scalars: []const Scalar, signatureHash: []const u8, source: Source, sourceFunctionId: []const u8, tupleOccurrences: []const Tuple };
 pub const Payload = struct { batch: []const u8, batchHash: []const u8, componentLayouts: []const u8, effects: []const u8, effectsHash: []const u8, entries: []const Entry, functionIdentityDomain: []const u8, inputIdentity: []const u8, layoutHash: []const u8, packageId: []const u8, sourcePacket: []const u8, sourceRequest: []const u8, target: layout.Target };
 const Envelope = struct { family: []const u8, payload: []const u8, payloadHash: []const u8, schemaHash: []const u8, version: u32 };
+const SourceRequestHeader = struct { family: []const u8, version: u32 };
 /// Comes from the independent producer cold reader, never from the same untrusted envelope.
 /// Fixing identity grants no Store lease, executable address, publication or execution authority.
 pub const Expected = struct { payloadHash: []const u8, inputIdentity: []const u8, packageId: []const u8 };
@@ -45,10 +46,11 @@ pub const Document = struct {
         inline for (std.meta.fields(layout.Target)) |field| if (!std.mem.eql(u8, @field(payload.target, field.name), @field(layout.Target.native, field.name))) return error.WrongTarget;
         if (!std.mem.eql(u8, &digest("", payload.batch), payload.batchHash) or !std.mem.eql(u8, &digest("", payload.componentLayouts), payload.layoutHash) or !std.mem.eql(u8, &digest("", payload.effects), payload.effectsHash)) return error.InvalidMetadata;
         for ([_][]const u8{ payload.batch, payload.componentLayouts, payload.effects, payload.sourcePacket, payload.sourceRequest }) |text| if (text.len == 0 or text[text.len - 1] != '\n') return error.InvalidMetadata;
+        var work: usize = 1000000;
+        try verifySourceRequest(own, payload.sourceRequest, payload.inputIdentity, &work);
         var component_layout = try layout.Layout.loadCatalog(allocator, payload.componentLayouts, payload.inputIdentity);
         errdefer component_layout.deinit();
         if (payload.entries.len > 4096) return error.MetadataLimit;
-        var work: usize = 1000000;
         for (payload.entries, 0..) |entry, entry_index| {
             try charge(&work, 1 + entry.columns.len + entry.tupleOccurrences.len + entry.scalars.len);
             if (!digestId(entry.logicalFunctionId) or !digestId(entry.sourceFunctionId) or !digestId(entry.signatureHash) or !digestId(entry.queryBinding) or entry.rowCountArgument != 0 or entry.source.start > entry.source.end or !sourcePath(entry.source.path)) return error.InvalidMetadata;
@@ -226,6 +228,19 @@ pub const Plan = struct {
 fn charge(remaining: *usize, count: usize) Error!void {
     if (count > remaining.*) return error.MetadataLimit;
     remaining.* -= count;
+}
+fn verifySourceRequest(allocator: std.mem.Allocator, bytes: []const u8, identity: []const u8, work: *usize) !void {
+    // Prepay the depth scan, header parse and request hash.
+    try charge(work, 3 * (bytes.len / 64 + 1));
+    try jsonBudget(bytes);
+    const header = std.json.parseFromSliceLeaky(SourceRequestHeader, allocator, bytes, .{ .ignore_unknown_fields = true, .max_value_len = 8388608 }) catch |err| return if (err == error.OutOfMemory) err else error.InvalidMetadata;
+    if (!std.mem.eql(u8, header.family, "tsfg.system-query-facts-request-candidate")) return error.InvalidMetadata;
+    const domain = switch (header.version) {
+        5 => "tsfg.system-query.request.v5\x00",
+        6 => "tsfg.system-query.request.v6\x00",
+        else => return error.InvalidMetadata,
+    };
+    if (!std.mem.eql(u8, &digest(domain, bytes), identity)) return error.IdentityMismatch;
 }
 fn digest(prefix: []const u8, bytes: []const u8) [71]u8 {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
