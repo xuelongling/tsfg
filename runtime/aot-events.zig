@@ -79,7 +79,7 @@ pub const Context = struct {
         if (function.initializer == 0) self.depth -= 1;
         return true;
     }
-    fn notifyFailure(self: *Context, kind: u32, entity: u32, start: u32, end: u32) bool {
+    fn notifyFailure(self: *Context, kind: u32, entity: u32, source: u32, start: u32, end: u32) bool {
         const failure = self.invocation.failure;
         if (kind == 3) {
             if (!self.pop(entity)) self.invalid_event = true;
@@ -89,8 +89,11 @@ pub const Context = struct {
         // A conversion/arithmetic guard first stores its precise failure,
         // then emits its one mandatory notification. No later work is allowed.
         const reason: u32 = switch (kind) { 5 => 1, 6 => 2, 7 => 3, 9 => 4, 10 => 5, 11 => 15, else => 0 };
-        if (!self.failure_notified and reason != 0 and failure.reason == reason
-            and failure.function_index == entity and failure.start == start and failure.end == end)
+        const category: u32 = if (kind == 11) 3 else 1;
+        if (!self.failure_notified and reason != 0 and failure.kind == category and failure.reason == reason
+            and self.frames.getLastOrNull() == @as(?u32, entity)
+            and failure.function_index == entity and failure.source_index == source
+            and failure.start == start and failure.end == end)
         {
             self.failure_notified = true;
             return false;
@@ -111,7 +114,7 @@ pub const Context = struct {
             break :blk self.metadata.program.functions.?[entity].source;
         };
         const location = self.metadata.sourceForEntity(entity, source, start, end) orelse return self.bad(entity, source, start, end);
-        if (self.invocation.failure.kind != 0) return self.notifyFailure(kind, entity, start, end);
+        if (self.invocation.failure.kind != 0) return self.notifyFailure(kind, entity, source, start, end);
         if (kind == 8) return self.frames.items.len == 0;
         if (kind == 0) {
             if (is_host) return self.bad(entity, source, start, end);
@@ -303,5 +306,33 @@ test "fixed value undefined consumption records the original trap and unwinds th
         try std.testing.expect(context.invalid_event);
         try std.testing.expectEqual(@as(u32, 2), invocation.failure.kind);
         try std.testing.expectEqual(@as(u32, 9), invocation.failure.reason);
+    }
+
+    // The emitted guard records its first failure before notification. The
+    // callback must join that record to the active frame and exact category.
+    for ([_]struct { event_kind: u32, failure_kind: u32, reason: u32, source: u32, active: bool, valid: bool }{
+        .{ .event_kind = 5, .failure_kind = 1, .reason = 1, .source = 0, .active = true, .valid = true },
+        .{ .event_kind = 11, .failure_kind = 3, .reason = 15, .source = 0, .active = true, .valid = true },
+        .{ .event_kind = 5, .failure_kind = 3, .reason = 1, .source = 0, .active = true, .valid = false },
+        .{ .event_kind = 5, .failure_kind = 1, .reason = 1, .source = 1, .active = true, .valid = false },
+        .{ .event_kind = 5, .failure_kind = 1, .reason = 1, .source = 0, .active = false, .valid = false },
+    }) |candidate| {
+        const recorded: abi.Failure = .{ .kind = candidate.failure_kind, .reason = candidate.reason,
+            .function_index = entity, .source_index = candidate.source, .start = 287, .end = 289 };
+        invocation.failure = recorded;
+        context.failure_notified = false;
+        context.invalid_event = false;
+        context.frames.clearRetainingCapacity();
+        context.depth = @intFromBool(candidate.active);
+        if (candidate.active) context.frames.appendAssumeCapacity(entity);
+        try std.testing.expectEqual(@as(i32, 0), event(invocation.event_state, candidate.event_kind, entity, 287, 289, 12));
+        try std.testing.expectEqual(candidate.valid, context.failure_notified);
+        try std.testing.expectEqual(!candidate.valid, context.invalid_event);
+        try std.testing.expectEqualDeep(recorded, invocation.failure);
+        if (candidate.valid) {
+            try std.testing.expectEqual(@as(i32, 0), event(invocation.event_state, candidate.event_kind, entity, 287, 289, 13));
+            try std.testing.expect(context.invalid_event);
+            try std.testing.expectEqualDeep(recorded, invocation.failure);
+        }
     }
 }
