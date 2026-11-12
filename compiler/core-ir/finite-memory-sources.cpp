@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "finite-memory-sources.h"
 #include "finite-array-memory.h"
+#include "finite-domain.h"
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -216,6 +217,29 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       continue;
     }
     if(!op){
+      // The selected field version can contain an ancestor's actual Array
+      // argument. Reuse a query formal with that exact activation binding.
+      if(!item.owner&&!item.dependency&&llvm::isa<FiniteDomainType>(source.getType())){
+        if(!proof.charge()){valid=false;break;}
+        const auto *domain=valueDomain(proof,source.getType());
+        if(domain&&domain->alternatives.size()==1){
+          if(!proof.charge()){valid=false;break;}
+          const auto type=proof.catalog.find(domain->alternatives.front());
+          if(type!=proof.catalog.end()&&string(*type->second,"kind")=="array"){
+            mlir::Value formal;
+            for(auto input:rebase(origin,query)){
+              if(!proof.charge()){valid=false;break;}
+              if(input.getType()==source.getType()){formal=input;break;}
+            }
+            if(!good())break;
+            if(formal){
+              result.values.push_back(formal);result.value=result.values.size()==1?formal:mlir::Value();
+              result.retained=false;
+              continue;
+            }
+          }
+        }
+      }
       std::vector<MemoryFrames::Origin> inputs;
       if(!incoming(origin,inputs)){result.pending=true;continue;}
       for(const auto &input:inputs)add(sources[input.value],input.frame,item.owner,item.dependency);

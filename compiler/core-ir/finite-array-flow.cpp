@@ -2,6 +2,8 @@
 // Owner equations are deliberately distinct from concrete payload equations:
 // an allocation token is not a TypeId, value, initialized slot or GC root.
 #include "finite-array-flow.h"
+#include "finite-domain.h"
+#include "llvm/ADT/DenseSet.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 namespace tsfg::finite {
@@ -9,6 +11,62 @@ namespace {
 std::string attr(mlir::Operation *op,llvm::StringRef key) {
   const auto value=op->getAttrOfType<mlir::StringAttr>(key);
   return value?value.getValue().str():std::string();
+}
+// Flow contracts independently close the call graph and check argument slots.
+// Exact actual Array arguments can feed a private definition without giving
+// its representation prototype an extra invocation in the ordered graph.
+bool orderedArrayParameters(ModuleProof &proof,llvm::DenseSet<mlir::Value> &parameters,
+    std::vector<mlir::Value> &actualInputs) {
+  std::set<std::string> exported;
+  for(const auto &row:*proof.sourceExports.getAsArray()) {
+    if(!proof.charge())return false;
+    exported.insert(string(*row.getAsObject(),"functionId"));
+  }
+  struct Call {mlir::Operation *operation;size_t firstFormal;};
+  struct Entry {bool closed=true;std::vector<Call> calls;};
+  std::map<std::string,Entry> entries;
+  for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &operation:block) {
+    if(!proof.charge())return false;
+    auto *op=&operation;const auto selected=proof.selectedCallees.find(op);
+    if(selected==proof.selectedCallees.end())continue;
+    const auto &targets=selected->second;
+    const auto name=op->getName().getStringRef();
+    const bool construct=name=="tsfg_core.domain.construct";
+    const bool supported=targets.size()==1&&(construct||name=="tsfg_core.domain.super"||llvm::isa<mlir::func::CallOp>(op));
+    for(const auto &target:targets) {
+      if(!proof.charge())return false;
+      auto &entry=entries[target];
+      entry.closed&=supported;
+      if(supported&&proof.mayExecute(op))entry.calls.push_back({op,construct?1u:0u});
+    }
+  }
+  for(const auto &[id,entry]:entries) {
+    if(!proof.charge())return false;
+    if(!entry.closed||entry.calls.empty()||exported.count(id))continue;
+    const auto &contract=*proof.callable.at(id);const auto role=string(contract,"role");
+    if(role!="construction-body"&&(role!="function"||!string(contract,"ownerType").empty()))continue;
+    for(auto formal:proof.functions.at(id).getArguments()) {
+      if(!proof.charge())return false;
+      if(!llvm::isa<FiniteDomainType>(formal.getType()))continue;
+      const auto *domain=valueDomain(proof,formal.getType());
+      if(!domain||domain->alternatives.size()!=1)continue;
+      if(!proof.charge())return false;
+      const auto type=proof.catalog.find(domain->alternatives.front());
+      if(type==proof.catalog.end()||string(*type->second,"kind")!="array")continue;
+      const auto firstInput=actualInputs.size();
+      for(const auto &call:entry.calls) {
+        if(!proof.charge())return false;
+        const auto index=formal.getArgNumber();
+        if(index<call.firstFormal||index-call.firstFormal>=call.operation->getNumOperands())break;
+        const auto actual=call.operation->getOperand(index-call.firstFormal);
+        if(actual.getType()!=formal.getType())break;
+        actualInputs.push_back(actual);
+      }
+      if(actualInputs.size()-firstInput==entry.calls.size())parameters.insert(formal);
+      else actualInputs.resize(firstInput);
+    }
+  }
+  return true;
 }
 }
 ArrayFlow::ArrayFlow(ModuleProof &p,PayloadFlow &f,std::function<Id(mlir::Value)> resolve,Role r)
@@ -117,6 +175,17 @@ bool ArrayFlow::entrySeeds() {
          !edge(owner.nested,peer.nested)||!edge(peer.nested,owner.nested))return false;
     }
   }
+  llvm::DenseSet<mlir::Value> ordered;
+  if(role==Role::OrderedPayload) {
+    std::vector<mlir::Value> actualInputs;
+    if(!orderedArrayParameters(proof,ordered,actualInputs))return false;
+    // An empty owner origin from one actual call must not disappear behind
+    // another call's known owner when their formal owner nodes meet.
+    for(auto input:actualInputs) {
+      const auto actual=value(input);
+      if(!valid||actual==PayloadFlow::none||!flow.requireEvidence(actual))return false;
+    }
+  }
   for(const auto &[argument,types]:proof.definitionParameters) {
     const auto target=value(argument);if(!valid)return false;if(target==PayloadFlow::none)continue;
     auto parameter=argument;const auto function=attr(parameter.getParentBlock()->getParentOp(),"tsfg_core.function_id");
@@ -129,7 +198,7 @@ bool ArrayFlow::entrySeeds() {
     for(const auto &id:found->second) {
       if(!proof.charge()||!resources.count(id))return proof.reject("parameter owner has no verified entry resource");
       if(!owners[resources.at(id)].entry->aliasesComplete) {if(!unresolved())return false;continue;}
-      if(!flow.seed(target,owners[resources.at(id)].token))return false;
+      if(!ordered.count(argument)&&!flow.seed(target,owners[resources.at(id)].token))return false;
     }
   }
   if(role==Role::OrderedPayload) {
