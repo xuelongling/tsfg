@@ -236,16 +236,6 @@ ActualFrameBinding ActualCheck::copyFrame(const ActualFrameBinding &value){
   for(const auto &[slot,row]:value.births){if(!step())return {};auto copied=copyBirth(row);if(!e.message.empty())return {};
     owned.births.emplace(slot,std::move(copied));}return owned;
 }
-ActualFrameWorld ActualCheck::copyFrames(const ActualFrameWorld &world){
-  ActualFrameWorld result;if(!step(world.size()))return result;
-  for(const auto &[id,value]:world){
-    // Source key order proves an end hint; prepay the native predecessor and both debug predicate directions.
-    if(!step())return {};if(!result.empty()){if(!step(result.size()+1))return {};const auto previous=std::prev(result.end());
-      if(!step(2*(previous->first.size()+id.size()+1)))return {};}
-    // Shared immutable key retain/release4, new node1 and owned Binding move1; no Frame bytes are copied.
-    if(!step(6))return {};auto owned=copyFrame(value);if(!e.message.empty())return {};
-    result.emplace_hint(result.end(),id,std::move(owned));}return result;
-}
 namespace {
 bool prepayTreeAdvance(ActualCheck &check,size_t count,size_t passes=1){
   if(!check.step())return false;
@@ -524,7 +514,13 @@ ActualFrameWorld selectedInputFrames(ActualCheck &check,const ActualFrameWorld &
     if(!found||!check.need(*found!=world.end(),"selected birth parent is absent"))return {};bool fresh=false;
     const auto next=admit(parent,&**found,fresh);if(!next)return {};
     if(fresh&&!append(ancestry,next))return {};}
-  ActualFrameWorld result;if(!check.step(selected.size()))return {};
+  const auto count=selected.size();
+  if(count>1){
+    // The selected directory already proved unique members of this World.
+    if(!check.step(2))return {};
+    if(count==world.size())return check.copyFrames(world);
+  }
+  ActualFrameWorld result;if(!check.step(count))return {};
   for(const auto *row:selected){
     // The primary immutable key is shared: retain/release4, node1 and Binding move1.
     // Every mutable Binding and historical payload still goes through copyFrame.

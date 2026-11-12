@@ -12,6 +12,10 @@ size_t weight(const ActualValue &v,const std::set<std::string> &tags){
   for(const auto &[code,environment]:v.callables)cost+=(code.size()+environment.size())/64+1;
   return cost;
 }
+bool prepayValueCopy(ActualCheck &check,const ActualValue &value){
+  return check.step(value.tags.size()+value.objects.size()+value.cells.size()+value.frames.size()+
+    value.cursors.size()+value.callables.size()+1)&&check.step(weight(value,value.tags));
+}
 RegionValue regionValueInput(ActualCheck &c,const ActualValue &v,bool hasTags){
   if(!c.step(regionWeight(v.region)+v.callables.size()+1))return {};if(v.region.known)return v.region;RegionValue out;out.known=true;out.number=v.number;
   out.opaque=v.unknown||v.callableTop||!v.objects.empty();
@@ -64,7 +68,7 @@ std::string ActualCheck::key(const ActualValue &v){
     {"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)},{"region",regionKey(v.region)}});
 }
 ActualValue ActualCheck::copy(const ActualValue &v){
-  if(!step(v.tags.size()+v.objects.size()+v.cells.size()+v.frames.size()+v.cursors.size()+v.callables.size()+1)||!step(weight(v,v.tags)))return {};return v;
+  if(!prepayValueCopy(*this,v))return {};return v;
 }
 bool ActualCheck::arrayReceiver(const ActualValue &value){
   if(!step()||value.unknown||value.callableTop||!value.cells.empty()||!value.callables.empty()||value.objects.empty()||value.tags.empty())return false;
@@ -264,6 +268,29 @@ bool ActualCheck::mergeHeap(ActualHeap &into,ActualHeap &&from){
     if(found==into.end()){if(!step())return false;into.emplace(id,std::move(v));changed=true;}else changed=merge(found->second,v)||changed;
     if(!e.message.empty())return false;
   }return changed;
+}
+ActualFrameWorld ActualCheck::copyFrames(const ActualFrameWorld &world){
+  const auto count=world.size();
+  if(!step(count))return {};
+  if(count>1){
+    // A complete map copy clones the tree without re-inserting its keys.
+    // Pay the traversal, node/owner lifetimes and all mutable planes first.
+    if(!step(8))return {};
+    for(const auto &[id,binding]:world){
+      if(!step(22+binding.births.size())||!prepayValueCopy(*this,binding.bound))return {};
+      for(const auto &[slot,birth]:binding.births)
+        if(!step(14)||!prepayValueCopy(*this,birth.real))return {};
+    }
+    if(!e.message.empty())return {};
+    return world;
+  }
+  ActualFrameWorld result;
+  for(const auto &[id,binding]:world){
+    if(!step(7))return {};
+    auto owned=copyFrame(binding);if(!e.message.empty())return {};
+    result.emplace_hint(result.end(),id,std::move(owned));
+  }
+  return result;
 }
 ActualState ActualCheck::copyStateWithOwnedStores(const std::map<uint16_t,ActualValue> &values,ActualHeap &&heap,RegionHeap &&regions,ActualFrameWorld &&frames){
   ActualState out;if(!step(values.size()))return out;
