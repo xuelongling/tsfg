@@ -59,6 +59,47 @@ test('Query public pipeline owns output options before artifact admission',{skip
   assert.deepEqual(result.tmeta.effects,result.effects);
 });
 
+for(const kind of ['compound','literal'])test('Query public tmeta retains i32 '+kind+' layout and ordered effects',{skip:!enabled},async()=>{
+  const fixture=new URL('./testdata/system-query-i32-field-'+kind+'/',import.meta.url);
+  const original=name=>readFileSync(new URL(name,fixture));
+  const bytes=original('package.json'),packet=JSON.parse(bytes.toString('utf8')),requestBytes=original('request.json');
+  const oracle=JSON.parse(original('official-oracle.json').toString('utf8'));
+  assert.equal(sha256(original('source.ts')),'sha256:'+oracle.sourceSha256);
+  const context={family:'tsfg.system-query-context-candidate',version:6,requestBytes,expectedPackageId:packet.packageId};
+  const {tmeta,cpuBatch,effects}=await compileSystemQuery(bytes,context,{core:tool,cpuBatch:true,tmeta:true,effects:true});
+  assert.ok(tmeta&&cpuBatch&&effects);
+  assert.deepEqual([tmeta.payload.sourcePacket,tmeta.payload.sourceRequest,tmeta.payload.batch],
+    [bytes.toString('utf8'),requestBytes.toString('utf8'),cpuBatch]);
+  assert.deepEqual(tmeta.effects,effects);
+
+  const layout=JSON.parse(JSON.parse(tmeta.payload.componentLayouts).payload);
+  const scalar=layout.types.find(row=>row.kind==='scalar'&&row.name==='i32');
+  assert.deepEqual([scalar.byteSize,scalar.alignment,scalar.stride],[4,4,4]);
+  const destination=layout.types.find(row=>row.kind==='component'&&row.name==='CopyDestination');
+  const source=layout.types.find(row=>row.kind==='component'&&row.name==='CopySource');
+  for(const [type,offset] of [[destination,4],[source,0]]){
+    const field=type.fields.find(row=>row.name==='n');
+    assert.deepEqual([field.type,field.offset],[scalar.id,offset]);
+  }
+  assert.equal(tmeta.payload.entries.length,1);
+  const [entry]=tmeta.payload.entries;
+  assert.deepEqual(entry.tupleOccurrences.map(tuple=>{
+    const column=entry.columns[tuple.columnIndex];
+    return [tuple.tupleIndex,tuple.mode,column.componentType,column.alignment,column.stride];
+  }),[[0,'write',destination.id,4,8],[1,'read',source.id,4,4]]);
+  const operations=effects.systems[0].loops[0].operations;
+  const sourceRange=range=>({path:'/src/main.ts',...range});
+  const expected=kind==='compound'
+    ? [['read',0,sourceRange(oracle.fields[0].access)],['read',1,sourceRange(oracle.fields[1].access)],['write',0,sourceRange(oracle.expression)]]
+    : oracle.assignments.map(row=>['write',0,sourceRange(row.assignment)]);
+  assert.deepEqual(operations.map(row=>[row.kind,row.tupleIndex,row.source]),expected);
+  assert.ok(operations.every(row=>row.sourceBinding===entry.tupleOccurrences[row.tupleIndex].sourceBinding));
+  assert.deepEqual(effects.conflicts,[]);
+  const metadata=canonical(tmeta.envelope)+'\n';
+  assert.equal(run('i32-'+kind+'-tmeta-cold',metadata,'--canonicalize-tmeta'),metadata);
+  assert.equal(run('i32-'+kind+'-tmeta-from-batch',cpuBatch),metadata);
+});
+
 for(const input of cases)test('actual Query .tmeta: '+input.name,{skip:!enabled},()=>{
   const facts=readSystemQueryFacts(input.bytes,input.context),core=emitSystemQueryCore(facts,input.context),bytes=run(input.name,core),envelope=JSON.parse(bytes);
   const batch=JSON.parse(envelope.payload).batch,checkedBatch=run(input.name+'-batch',core,'--cpu-batch');
