@@ -89,7 +89,9 @@ bool ActualCheck::run(){
   // Public inventory, normalized instructions and registerViews were checked
   // above. Append only independently reconstructed private analysis plans;
   // the same solver now observes every owned constructor/newTarget root.
-  return callGraph()&&solve(true)&&representation()&&prepareReturnOriginStorage(*this)&&verifyPublication(p,e)&&effects()&&solve(false);
+  if(!callGraph()||!step(2))return false;
+  cacheOperationMetadata=true;
+  return solve(true)&&representation()&&prepareReturnOriginStorage(*this)&&verifyPublication(p,e)&&effects()&&solve(false);
 }
 bool verifyOperations(Program &p,Error &e){ActualCheck check{p,e};return check.run();}
 } // namespace tsfg::commonProgram

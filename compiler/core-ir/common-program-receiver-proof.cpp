@@ -73,7 +73,7 @@ void BorrowTrace::Impl::proofEntry(const ActualContext &context,const ActualHeap
   }
 bool BorrowTrace::Impl::projectEvents(Json &out){
     std::map<std::string,Array> paths;
-    for(const auto &[id,context]:c.contexts)if(context.root&&c.publicBorrowContexts.count(id))paths[id].push_back(Object{{"root",context.function->id},{"recursive",false},{"steps",Array{}}});
+    for(const auto &[id,context]:c.contexts)if(context.root&&c.publicBorrowContexts.count(&context))paths[id].push_back(Object{{"root",context.function->id},{"recursive",false},{"steps",Array{}}});
     bool changed=true;
     while(changed){changed=false;for(const auto &call:calls){
       if(!step())return false;const auto &target=c.contexts.at(call.callee).function->id;const auto &location=proofPoints.at(call.point);
@@ -333,53 +333,33 @@ bool ActualCheck::preparePublicBorrowContexts(){
   // Private roots participate in the ActualCheck fixed point. Borrow proofs
   // start at the public roots and only follow public caller/callee edges.
   publicBorrowContexts.clear();
-  using ContextKey=const decltype(contexts)::value_type *;
-  std::vector<ContextKey> directory,pending;
-  std::map<ContextKey,std::vector<ContextKey>> successors;
-  std::set<ContextKey> reached;
-  if(!step(2*contexts.size()+2))return false;
-  directory.reserve(contexts.size());pending.reserve(contexts.size());
-  for(const auto &entry:contexts){
-    if(!step())return false;
-    directory.push_back(&entry);
-  }
-  const auto findCaller=[&](const std::string &caller,ContextKey &found){
-    found=nullptr;
-    size_t first=0,last=directory.size();
-    while(first<last){
-      const auto middle=first+(last-first)/2;
-      const auto entry=directory[middle];
-      if(!step(entry->first.size()+caller.size()+6))return false;
-      const auto order=entry->first.compare(caller);
-      if(order==0){found=entry;return true;}
-      if(order<0)first=middle+1;else last=middle;
-    }
-    return true;
-  };
+  std::vector<const ActualContext *> pending;
+  std::map<const ActualContext *,std::vector<const ActualContext *>> successors;
+  if(!step(contexts.size()+2))return false;
+  pending.reserve(contexts.size());
   const auto pointerLookup=[&](size_t count){
     size_t depth=1;
     for(;count;count>>=1){if(!step())return false;depth+=2;}
     return step(3*depth);
   };
-  const auto enqueue=[&](ContextKey entry){
-    if(!pointerLookup(reached.size())||!step(2))return false;
-    if(reached.insert(entry).second)pending.push_back(entry);
+  const auto enqueue=[&](const ActualContext *entry){
+    if(!pointerLookup(publicBorrowContexts.size())||!step(2))return false;
+    if(publicBorrowContexts.insert(entry).second)pending.push_back(entry);
     return true;
   };
-  for(const auto entry:directory){
+  for(const auto &entry:contexts){
     if(!step())return false;
-    const auto &context=entry->second;
+    const auto &context=entry.second;
     if(analysisFunctions.count(context.function->id))continue;
-    if(context.root&&!enqueue(entry))return false;
-    if(!step(context.callers.size()))return false;
-    for(const auto &caller:context.callers){
-      ContextKey source;
-      if(!findCaller(caller,source)||!need(source!=nullptr,"solved actual caller has no owning context"))return false;
-      if(analysisFunctions.count(source->second.function->id))continue;
+    if(context.root&&!enqueue(&context))return false;
+    if(!step(2*context.callers.size()))return false;
+    for(const auto &edge:context.callers){
+      const auto *caller=edge.second;
+      if(analysisFunctions.count(caller->function->id))continue;
       if(!pointerLookup(successors.size())||!step())return false;
-      auto &targets=successors[source];
+      auto &targets=successors[caller];
       if(!step(targets.size()==targets.capacity()?targets.size()+1:1))return false;
-      targets.push_back(entry);
+      targets.push_back(&context);
     }
   }
   for(size_t index=0;index<pending.size();++index){
@@ -387,18 +367,6 @@ bool ActualCheck::preparePublicBorrowContexts(){
     const auto found=successors.find(pending[index]);if(found==successors.end())continue;
     if(!step(found->second.size()))return false;
     for(const auto target:found->second)if(!enqueue(target))return false;
-  }
-  ContextKey previous=nullptr;
-  for(const auto entry:directory){
-    if(!pointerLookup(reached.size())||!step())return false;
-    if(!reached.count(entry))continue;
-    const auto &id=entry->first;
-    // Directory order proves a strict end hint. Pay the neighbour check
-    // and the possible debug reverse comparison before copying the key.
-    if(previous&&!step(2*(previous->first.size()+id.size()+1)))return false;
-    if(!step(id.size()/64+4))return false;
-    publicBorrowContexts.emplace_hint(publicBorrowContexts.end(),id);
-    previous=entry;
   }
   return e.message.empty();
 }

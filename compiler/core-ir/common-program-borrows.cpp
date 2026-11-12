@@ -11,8 +11,9 @@ bool invocation(const Operation &op){return op.name=="invoke"||op.name=="invoke_
 BorrowTrace::Impl::Impl(ActualCheck &check,bool project):c(check),flow(check.p.remaining),project(project){
     // Only universal-entry arguments/globals are external authority. A local
     // allocation is never classified by a spelling prefix of its identity.
-    for(const auto &[id,context]:c.contexts){
-      if(!step())return;if(!context.root||!c.publicBorrowContexts.count(id))continue;
+    for(const auto &entry:c.contexts){
+      const auto &context=entry.second;
+      if(!step())return;if(!context.root||!c.publicBorrowContexts.count(&context))continue;
       for(const auto &value:context.rootArguments){entryObjects(value);if(!c.e.message.empty())return;}
       for(const auto &[slot,value]:context.rootEntry){if(!step())return;entryObjects(value);if(!c.e.message.empty())return;}
     }
@@ -453,7 +454,7 @@ bool verifyCommonBorrows(ActualCheck &check,Json *events){
   if(!check.preparePublicBorrowContexts())return false;
   BorrowTrace trace(check,events!=nullptr);check.borrowTrace=&trace;bool changed=false,ok=true;const auto size=check.contexts.size();
   for(auto it=check.contexts.begin();it!=check.contexts.end();++it){if(!check.step()){ok=false;break;}
-    if(check.publicBorrowContexts.count(it->first)&&!check.execute(it->second,false,changed)){ok=false;break;}}
+    if(check.publicBorrowContexts.count(&it->second)&&!check.execute(it->second,false,changed)){ok=false;break;}}
   check.borrowTrace=nullptr;if(!ok||!check.need(!changed&&!check.weakChanged&&!check.scheduling&&size==check.contexts.size(),"borrow observation changed the solved actual contexts"))return false;
   return trace.solve(events);
 }

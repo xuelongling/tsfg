@@ -6,6 +6,9 @@
 #include <iterator>
 namespace tsfg::commonProgram {
 namespace {
+std::string receiverSiteText(const Function &function,size_t block,const Operation &op){
+  return function.id+"/"+std::to_string(block)+"/"+std::to_string(&op-function.blocks[block].operations.data());
+}
 int compareConstructionKey(const ActualConstructionKeyView &query,llvm::StringRef flat){
   const llvm::StringRef segments[]={query.construction,"/",query.newTarget};size_t at=0;
   for(const auto &segment:segments){const auto count=std::min(segment.size(),flat.size()-at);
@@ -58,14 +61,34 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
   if(name=="receiver_create"||name=="receiver_child"){
     const auto owner=string(field(props,"owner"));if(!need(types.count(owner),"receiver owner is not owned"))return false;
     const auto construction=string(field(field(*types.at(owner),"construction"),"id"));
-    if(!receiverText(context.function->id)||!step(64))return false;
-    const auto site=context.function->id+"/"+std::to_string(block)+"/"+std::to_string(&op-context.function->blocks[block].operations.data());
+    const bool cacheSite=cacheOperationMetadata;
+    if(cacheSite){if(!step(10))return false;}
+    else if(!receiverText(context.function->id)||!step(64))return false;
+    const auto localSite=cacheSite?std::string{}:receiverSiteText(*context.function,block,op);
+    const auto *site=&localSite;
+    if(cacheSite){
+      if(!receiverSites){if(!step(12))return false;receiverSites.emplace();}
+      auto &sites=*receiverSites;size_t height=0;
+      for(auto remaining=sites.size();remaining;remaining>>=1){if(!step())return false;height+=2;}
+      height=std::min(height,sites.size());
+      // Map keys are operation pointers. Pay a bounded tree walk, including
+      // both predicate directions, before borrowing the immutable site.
+      if(!step(5+4*(height+1)))return false;
+      auto found=sites.lower_bound(&op);
+      if(found==sites.end()||found->first!=&op){
+        // The lower bound supplies a strict insertion hint. Pay its adjacent
+        // checks, new node and site move separately from the original spelling.
+        if(!step(18+4*(height+1))||!receiverText(context.function->id)||!step(64))return false;
+        found=sites.emplace_hint(found,&op,receiverSiteText(*context.function,block,op));
+      }
+      site=&found->second;
+    }
     if(name=="receiver_create"){
-      auto id=createFrame(state.frames,context.activation,site,owner,construction,string(field(props,"new_target")),repeated);
+      auto id=createFrame(state.frames,context.activation,*site,owner,construction,string(field(props,"new_target")),repeated);
       if(!e.message.empty())return false;value.frames.insert(std::move(id));
     }else {if(!step(args[0].frames.size()))return false;for(const auto &parent:args[0].frames){
       const auto rows=receiverRows(*this,state.frames,parent,"child receiver parent missing");if(!rows)return false;
-      const auto &[info,binding]=*rows;auto id=createFrame(state.frames,context.activation,site,owner,construction,info->newTarget,
+      const auto &[info,binding]=*rows;auto id=createFrame(state.frames,context.activation,*site,owner,construction,info->newTarget,
         repeated||binding->weak,parent);if(!e.message.empty())return false;value.frames.insert(std::move(id));}}
   }else if(name=="receiver_allocate"){
     if(!step(args[0].frames.size()))return false;
@@ -191,17 +214,53 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       if(!step(4))return false;const ActualCursorInfo first{(*found)->first.owner(),0};
       auto cursor=receiverCursor(first,0);if(!e.message.empty()||!step(3))return false;value.cursors.insert(std::move(cursor));}
   }else if(name=="initialize_field"){
-    const auto query=field(props,"field").getAsString().value_or(llvm::StringRef{});
-    const auto count=fields.size();size_t height=0;
-    for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
-    height=std::min(height,count);
-    // Prepay a red-black-tree height bound and its final equality check. The
-    // heterogeneous predicates read at most query.size() bytes on each side;
-    // unlike same-type debug predicates, they do not compare in reverse.
-    if(!step(1+height+(count?height+1:0)*(2*query.size()+1)))return false;
-    const auto member=fields.find(query);if(!need(member!=fields.end(),"initializer field is not owned"))return false;
+    const bool cacheEnabled=cacheOperationMetadata;
+    if(cacheEnabled&&!step(9))return false;
+    const auto findMember=[&]() -> ActualFieldDirectory::const_iterator {
+      const auto query=field(props,"field").getAsString().value_or(llvm::StringRef{});
+      const auto count=fields.size();size_t height=0;
+      for(auto remaining=count;remaining;remaining>>=1){if(!step())return fields.cend();height+=2;}
+      height=std::min(height,count);
+      // Prepay a red-black-tree height bound and its final equality check. The
+      // heterogeneous predicates read at most query.size() bytes on each side;
+      // unlike same-type debug predicates, they do not compare in reverse.
+      if(!step(1+height+(count?height+1:0)*(2*query.size()+1)))return fields.cend();
+      const auto member=fields.find(query);
+      if(!need(member!=fields.end(),"initializer field is not owned"))return fields.cend();
+      return member;
+    };
+    ActualFieldDirectory::const_iterator member;
+    std::optional<std::string> uncachedSource;
+    const std::string *sourceBinding;
+    if(cacheEnabled){
+      if(!step(2))return false;
+      if(!initializerFieldInputs){if(!step(12))return false;initializerFieldInputs.emplace();}
+      if(!step(3))return false;
+      auto &inputs=*initializerFieldInputs;const auto entries=inputs.size();size_t treeHeight=0;
+      for(auto remaining=entries;remaining;remaining>>=1){if(!step())return false;treeHeight+=2;}
+      treeHeight=std::min(treeHeight,entries);
+      // Each node visit reads one key and compares two operation pointers.
+      // The fixed charge covers lookup setup and the returned key/end checks.
+      if(!step(6+3*treeHeight))return false;
+      auto cached=inputs.lower_bound(&op);
+      if(cached==inputs.end()||cached->first!=&op){
+        const auto fieldMember=findMember();
+        if(fieldMember==fields.cend()||!step(4))return false;
+        const auto source=field(*fieldMember->second,"sourceBinding").getAsString().value_or(llvm::StringRef{});
+        // The lower bound supplies a strict insertion hint. Prepay its pointer
+        // checks, the node and owned binding lifetime, and the two field moves.
+        if(!step(24+source.size()/64))return false;
+        cached=inputs.emplace_hint(cached,&op,std::pair{fieldMember,source.str()});
+      }
+      if(!step(5))return false;
+      member=cached->second.first;sourceBinding=&cached->second.second;
+    }else{
+      member=findMember();if(member==fields.cend())return false;
+      uncachedSource.emplace(string(field(*member->second,"sourceBinding")));
+      sourceBinding=&*uncachedSource;
+    }
+    const auto &raw=*sourceBinding;
     const auto &fieldId=member->first;
-    const auto raw=string(field(*member->second,"sourceBinding"));
     if(conditional&&!recordCapacity(storageCapacity[raw],args[2]))return false;
     seedStorage(fieldSeeds,raw,args[2],conditional,changed);
     if(!step(args[1].objects.size()))return false;

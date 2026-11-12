@@ -412,6 +412,10 @@ bool CommonCold::actual(){
       }}
     }
   }
+  if(valid&&containsReceiverProtocol){
+    valid=check.step(2);
+    if(valid)check.cacheOperationMetadata=true;
+  }
   if(valid){valid=check.solve(true);phase("solve-conditional");}
   if(valid){valid=check.representation();phase("representation");}
   if(valid){valid=check.effects();phase("effects");}

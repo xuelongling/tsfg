@@ -902,7 +902,8 @@ bool conditionalInvokeBorrowedInputs(){
   };
   // Real factory + execute establish an existing summary before the measured
   // public instruction. This isolated graph is not the full Source901 payload.
-  for(const auto budget:{220,219,0,1,227,226,236,235,253}){
+  constexpr int required=184;
+  for(const auto budget:{253,required,required-1,0,1,220,219,227,226,236,235}){
     Fixture f;Function callee;callee.id="C";callee.blocks.resize(1);callee.blocks[0].parameters={0,1,2};
     Operation returned;returned.name="func.return";returned.operands={0};callee.blocks[0].operations.push_back(returned);
     f.check.functions.emplace("C",&callee);f.check.analysisFunctions.emplace("C",callee);f.program.fixedEffects.emplace("C",Effects{});
@@ -928,9 +929,11 @@ bool conditionalInvokeBorrowedInputs(){
         for(const auto &[reg,value]:original)edgeMatches&=after.values.count(reg)&&same(after.values.at(reg),value);
         after.values.at(0).unknown=true;continues=false;return edgeMatches;
       },continues);
-    if(budget<220){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&edges==0,
+    if(budget<required){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&f.program.remaining==0&&edges==0,
         "one-less and zero/one budgets remain hard errors before an invoke edge"))return false;continue;}
-    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-220)&&edges==1&&edgeMatches&&!continues&&
+    if(ok&&f.program.remaining!=size_t(budget-required))
+      llvm::errs()<<"conditional invoke consumed "<<budget-f.program.remaining<<" units, expected "<<required<<'\n';
+    if(!expect(ok&&f.error.message.empty()&&f.program.remaining==size_t(budget-required)&&edges==1&&edgeMatches&&!continues&&
         same(called->identity->arguments[0],actual[0])&&same(called->returned,actual[0])&&f.check.contexts.size()==1,
         "funded whole conditional invoke reuses its real summary, owns the edge and preserves immutable arguments"))return false;
   }
@@ -1068,6 +1071,10 @@ bool calleeDiscoverySummaryPropagation(){
     if(!f.check.callGraph())return false;
     const auto lookup=[&](const std::string &id)->ActualContext *{auto found=std::find_if(f.check.contexts.begin(),f.check.contexts.end(),[&](const auto &row){return row.second.function->id==id;});
       return found==f.check.contexts.end()?nullptr:&found->second;};
+    const auto hasCaller=[](const ActualContext &callee,const ActualContext &caller){
+      const auto found=callee.callers.find(caller.id);
+      return found!=callee.callers.end()&&found->second==&caller;
+    };
     bool heapWidened=false;
     const auto complete=[&](const ActualContext &context){
       if(mode=="language")return context.language&&!context.normal&&context.thrown.number==23;
@@ -1080,10 +1087,10 @@ bool calleeDiscoverySummaryPropagation(){
     f.check.scheduling=true;bool changed=false;
     if(!expect(f.check.execute(*caller,true,changed)&&!changed&&!caller->normal&&!caller->language&&f.error.message.empty(),
         "discovering middle does not report an unavailable caller completion as summary growth"))return false;
-    auto *middle=lookup("middle");if(!expect(middle&&middle->callers.count(caller->id)&&f.check.queuedContexts.count(middle->id),"discovered middle retains its real caller and queued work"))return false;
+    auto *middle=lookup("middle");if(!expect(middle&&hasCaller(*middle,*caller)&&f.check.queuedContexts.count(middle->id),"discovered middle retains its real caller and queued work"))return false;
     changed=false;if(!expect(f.check.execute(*middle,true,changed)&&!changed&&!middle->normal&&!middle->language&&middle->normalHeap.empty()&&middle->languageHeap.empty()&&f.error.message.empty(),
         "discovering pending leaf cannot invalidate the three-level caller through a nonexistent summary"))return false;
-    auto *called=lookup("leaf");if(!expect(called&&called->callers.count(middle->id)&&f.check.queuedContexts.count(called->id)&&!called->normal&&!called->language&&called->normalHeap.empty()&&called->languageHeap.empty(),
+    auto *called=lookup("leaf");if(!expect(called&&hasCaller(*called,*middle)&&f.check.queuedContexts.count(called->id)&&!called->normal&&!called->language&&called->normalHeap.empty()&&called->languageHeap.empty(),
         "new leaf remains scheduled with no invented normal language or Heap completion"))return false;
     for(auto *context:{called,middle,caller}){changed=false;
       if(!expect(f.check.execute(*context,true,changed)&&changed&&complete(*context)&&f.error.message.empty(),"real leaf completion and side effects grow summaries through middle to caller"))return false;}

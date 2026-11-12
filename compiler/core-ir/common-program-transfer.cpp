@@ -334,7 +334,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       return edge(target,std::move(after),values);
     };
 
-    const auto invoke=[&](const std::string &target,auto actual){
+    const auto invoke=[&](const std::string &target,auto actual,bool lastArm){
       bool repeated=false;const auto activation=callActivation(context,op,block,target,repeated);if(!e.message.empty())return false;
       ActualContext *call;
       if constexpr(std::is_same_v<decltype(actual),ActualOperands>){
@@ -346,17 +346,41 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         call=this->context(target,actual,state.heap,false,activation,repeated,conditional?nullptr:&state.regions,active,&state.frames);
       }
       if(!call)return false;
-      if(scheduling){if(!step(context.id.size()/64+1))return false;call->callers.insert(context.id);}
+      if(scheduling){
+        auto &callers=call->callers;
+        const std::string_view id=context.id;
+        if(!step(5))return false;
+        const auto count=callers.size();
+        if(count==0){
+          if(!step(12))return false;
+          callers.emplace_hint(callers.end(),id,&context);
+        }else if(count!=1||callers.begin()->second!=&context){
+          size_t height=0;
+          for(auto remaining=count;remaining;remaining>>=1){if(!step())return false;height+=2;}
+          height=std::min(height,count);
+          // Pay the contiguous string reads as in Actual context text equality,
+          // plus each native tree comparison and any debug reverse predicate.
+          const auto comparison=2*id.size()/64+3;
+          if(!step(4+(2*height+1)*comparison))return false;
+          const auto found=callers.lower_bound(id);
+          if(found==callers.end()||found->first!=id){
+            if(!step(12+4*comparison))return false;
+            callers.emplace_hint(found,id,&context);
+          }
+        }
+      }
       if(borrowTrace&&!borrowTrace->call(context,op,block,*call))return false;
+      // After call admission, the final live completion of the last arm
+      // can take the caller's state.
       if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap,call->normalRegions,call->normalFrames,false,
-        name=="invoke"&&!call->language?std::move(state):copyState(state)))return false;
+        lastArm&&!call->language?std::move(state):copyState(state)))return false;
       if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap,call->languageRegions,call->languageFrames,true,
-        name=="invoke"?std::move(state):copyState(state)))return false;return true;
+        lastArm?std::move(state):copyState(state)))return false;return true;
     };
     if(name=="invoke"){
       if(conditional){if(!step(6))return false; // Two-word view route/copy and borrowed admission bindings.
-        if(!invoke(string(field(props,"function_id")),args))return false;
-      }else if(!invoke(string(field(props,"function_id")),std::move(owned)))return false;
+        if(!invoke(string(field(props,"function_id")),args,true))return false;
+      }else if(!invoke(string(field(props,"function_id")),std::move(owned),true))return false;
     }
     else if(name=="invoke_indirect"){
       const auto site=fn.id+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);
@@ -368,6 +392,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         ActualValue unknown;unknown.unknown=true;for(const auto &arg:args)regionEscape(*this,regionValue(*this,arg),state.regions);
         if(!complete(op.successors[0],unknown,{},{},{},false,copyState(state))||!complete(op.successors[1],unknown,{},{},{},true,copyState(state)))return false;
       }
+      if(!step())return false;
+      auto remaining=args[0].callables.size();
       for(const auto &[code,environment]:args[0].callables){
         if(!step()||!need(sourceFunctions.count(code)&&(upper.top||upper.functions.count(code)),"indirect pair target exceeds fixed authority"))return false;
         if(!need(same(field(*sourceFunctions.at(code),"signatureHash"),field(props,"signature_hash")),"actual indirect code signature differs"))return false;
@@ -379,10 +405,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
           if(!conditional){auto version=regionValue(*this,args[0]);for(auto it=version.roots.begin();it!=version.roots.end();)if(regions.nodes.at(*it).reference!=environment)it=version.roots.erase(it);else ++it;selected.back().region=std::move(version);}
         }else if(!need(environment.empty(),"environment-free code acquired an activation"))return false;
         for(size_t i=1;i<args.size();++i){if(!step())return false;selected.push_back(copy(args[i]));}
-        if(!invoke(code,std::move(selected)))return false;
+        if(!step(2)||!invoke(code,std::move(selected),--remaining==0))return false;
       }
     }else{
       if(!need(!args.empty()&&!args[0].unknown,"method receiver has no finite actual nominal type")){e.path=fn.path;e.range=op.range;return false;}
+      if(!step())return false;
+      auto remaining=args[0].tags.size();
       for(const auto &tag:args[0].tags){
         const Json *arm=nullptr;for(const auto &row:items(field(props,"dispatch"))){if(!step())return false;if(string(field(row,"receiver_type"))==tag){arm=&row;break;}}
         if(!need(arm,"actual method receiver has no independently verified dispatch arm")){e.path=fn.path;e.range=op.range;return false;}
@@ -393,7 +421,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         for(const auto &ref:args[0].objects){if(!step(ref.size()/64+1))return false;const auto object=objects.find(ref);
           if(!need(object!=objects.end(),"method receiver object missing"))return false;if(object->second.type==tag){if(!step(4))return false;selected[0].objects.insert(object->first);}}
         if(!need(!selected[0].objects.empty(),"method receiver tag has no matching actual object"))return false;
-        if(!invoke(target,std::move(selected)))return false;
+        if(!step(2)||!invoke(target,std::move(selected),--remaining==0))return false;
       }
     }continues=false;
   }else if(name=="cf.br"||name=="route"){
@@ -464,9 +492,14 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!completed){completed=true;changed=true;}if(!args.empty())changed=merge(returned,args[0])||changed;
     if(!normal&&!abortInitializers(state))return false;
     if(!step(3))return false;const auto &arguments=context.inputArguments();
-    if(!step(arguments.size()+args.size()))return false;std::vector<ActualValue> frameRoots;frameRoots.reserve(arguments.size()+(args.empty()?0:1));
-    for(const auto &arg:arguments)frameRoots.push_back(copy(arg));if(!args.empty())frameRoots.push_back(copy(args[0]));
-    auto selected=selectFrames(state.frames,frameRoots,state.heap);if(!e.message.empty())return false;
+    const auto rootCount=arguments.size()+(args.empty()?0:1);
+    if(!step(rootCount+3))return false;
+    std::vector<const ActualValue *> frameRoots;
+    frameRoots.reserve(rootCount);
+    for(const auto &arg:arguments)frameRoots.push_back(&arg);
+    if(!args.empty())frameRoots.push_back(&args[0]);
+    auto selected=selectOperandFrames(*this,state.frames,ActualOperands{frameRoots},state.heap);
+    if(!e.message.empty())return false;
     // The empty summary can own this complete projection; a nonempty summary
     // must merge, while retained roots still come only from this return.
     if(!step(5))return false;auto &frameSummary=normal?context.normalFrames:context.languageFrames;
@@ -474,8 +507,13 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(adopted){if(!step())return false;
       if(!selected.empty()){if(!step(2))return false;changed=true;frameSummary=std::move(selected);}}
     else changed=joinFrames(frameSummary,selected)||changed;
-    auto retained=retainedFrameRoots(adopted?frameSummary:selected);if(!e.message.empty()||!step(4))return false;
-    const ActualRoots roots{frameRoots,retained};
+    auto retained=retainedFrameRoots(adopted?frameSummary:selected);
+    if(!e.message.empty()||!step(frameRoots.size()+retained.size()+4))return false;
+    // The argument, return and retained frame values stay owned by their
+    // original stores throughout the synchronous reachability queries.
+    frameRoots.reserve(frameRoots.size()+retained.size());
+    frameRoots.insert(frameRoots.end(),retained.begin(),retained.end());
+    const ActualRoots roots{{},frameRoots};
     auto live=reachable(roots,state.heap);changed=mergeHeap(heap,std::move(live))||changed;continues=false;
     if(!conditional){if(!args.empty()&&!regionObserveReturn(*this,context,args[0],state.regions))return false;
       auto projected=regionReachable(*this,roots,state.regions);auto &summary=normal?context.normalRegions:context.languageRegions;

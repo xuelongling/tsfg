@@ -8,6 +8,7 @@
 #include <array>
 #include <optional>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <type_traits>
@@ -265,7 +266,9 @@ struct ActualContext {
   // Physical invocation provenance excludes arguments and abstract heap state.
   std::string activation;bool repeated=true;
   std::string region;RegionHeap entryRegions,normalRegions,languageRegions;
-  std::set<std::string> callers;
+  // Borrow map nodes and immutable id text from this solve. Sorting the id
+  // views keeps caller scheduling in the original lexicographic order.
+  std::map<std::string_view,const ActualContext *> callers;
   ActualFrameWorld normalFrames,languageFrames;
   std::string constructionNewTarget;
   // Root input refreshes each execution; called input is owned only by identity.
@@ -303,11 +306,15 @@ struct ActualCheck {
   // and physical directory rows remain untouched and keep their original IDs.
   const std::map<std::string,Json> &analysisTypes=p.internalTypes,&analysisOwners=p.internalOwners,&analysisBindings=p.internalBindings;
   std::map<std::string,Function> analysisFunctions;
+  // Production enables these indexes after operation plans and field rows are
+  // fixed. Immutable entries outlive both solves and the final borrow replay.
+  bool cacheOperationMetadata=false;
+  std::optional<std::map<const Operation *,std::pair<ActualFieldDirectory::const_iterator,std::string>>> initializerFieldInputs;
+  std::optional<std::map<const Operation *,std::string>> receiverSites;
   const std::map<std::string,std::string> &implicitTargets=p.internalTargets;
   std::map<std::string,const Function *> printedConstructors;
   std::map<std::string,std::pair<std::string,size_t>> analysisParameterSources;
   bool analysisComplete=true;
-  std::set<std::string> publicBorrowContexts;
   std::map<std::string,const Json *> environments,environmentSlots;
   std::map<std::string,std::string> slotLayouts;
   // Immutable verified slot ownership, separate from current runtime payloads.
@@ -333,6 +340,7 @@ struct ActualCheck {
   // replay. Cache only the single-execution predecessor fact, never SSA state.
   std::map<const Function *,std::vector<bool>> singleExecution;
   std::map<std::string,ActualContext> contexts;
+  std::set<const ActualContext *> publicBorrowContexts;
   std::unordered_map<std::string,std::vector<ActualContext *>> contextBuckets;
   std::deque<std::string> pendingContexts;std::set<std::string> queuedContexts;
   bool scheduling=false,weakChanged=false,seedChanged=false;

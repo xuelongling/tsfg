@@ -304,7 +304,7 @@ bool ActualCheck::solve(bool conditional){
   symbolUniverse.reset(); // End proof before clearing any context, association or canonical node.
   scheduling=true;weakChanged=false;seedChanged=false;pendingContexts.clear();queuedContexts.clear();
   struct SchedulingGuard{ActualCheck &c;~SchedulingGuard(){c.scheduling=false;}} schedulingGuard{*this};
-  contextBuckets.clear();contexts.clear();fieldSlotAssociations.clear();fieldSlotArchive.clear();
+  contextBuckets.clear();publicBorrowContexts.clear();contexts.clear();fieldSlotAssociations.clear();fieldSlotArchive.clear();
   receiverCursorIndex.clear();objects.clear();frameIdentities.clear();receiverFrames.clear();receiverCursors.clear();receiverRouteOpen=false;
   regions.nodes.clear();regions.scopes.clear();
   if(conditional){
@@ -339,7 +339,7 @@ bool ActualCheck::solve(bool conditional){
       if(weakChanged||seedChanged){
         for(const auto &[next,c]:contexts)if(!step()||!schedule(next))return false;
       }else if(changed||current.requestTrap!=trapped){
-        for(const auto &caller:current.callers)if(!step()||!schedule(caller))return false;
+        for(const auto &caller:current.callers)if(!step(2)||!schedule(caller.second->id))return false;
       }
     }
   }else while(!pendingContexts.empty()){
@@ -351,7 +351,7 @@ bool ActualCheck::solve(bool conditional){
       // Revisit all strong puts; callee summaries alone cannot identify them.
       for(const auto &[next,c]:contexts)if(!step()||!schedule(next))return false;
     }else if(changed||current.requestTrap!=trapped){
-      for(const auto &caller:current.callers)if(!step()||!schedule(caller))return false;
+      for(const auto &caller:current.callers)if(!step(2)||!schedule(caller.second->id))return false;
     }
   }
   if(conditional){
