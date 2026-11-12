@@ -8,6 +8,14 @@ ActualHeap ActualCheck::reachable(const ActualRoots &values,const ActualHeap &he
   ActualHeap out;std::vector<const ActualValue *> pending;std::set<std::string> visited;
   if(!step())return out;const auto count=values.size();
   if(!step(count+heap.size()))return out;for(size_t i=0;i<count;++i){if(!step(2))return {};pending.push_back(&values[i]);}
+  size_t knownFields=0;
+  if(scheduling||borrowTrace){
+    if(!step(2))return {};
+    if(!heap.fields_.empty()){
+      if(!step(2))return {};
+      knownFields=std::min<size_t>(4,heap.fields_.size());
+    }
+  }
   for(const auto &[id,v]:heap)if(llvm::StringRef(id).starts_with("global:")){out.emplace(id,copy(v));pending.push_back(&v);}
   for(size_t index=0;index<pending.size();++index){
     // Pointees belong to the immutable inputs, so growing the work vector
@@ -21,7 +29,22 @@ ActualHeap ActualCheck::reachable(const ActualRoots &values,const ActualHeap &he
     if(!step(prefix.size()/64+1))return {};
     for(auto it=heap.lower_bound(prefix);it!=heap.end();++it){if(!step())return {};const auto &[id,v]=*it;
       if(!llvm::StringRef(id).starts_with(prefix))break;
-      auto inserted=out.emplace(id,copy(v));if(inserted.second)pending.push_back(&v);
+      auto inserted=out.emplace(id,copy(v));
+      if(inserted.second){
+        pending.push_back(&v);
+        // The selected source key's address identifies the already-checked
+        // association. Only its immutable spelling owner crosses the copy.
+        if(knownFields){
+          if(!e.message.empty()||!step(2))return {};
+          if(out.fields_.size()<knownFields)for(size_t index=0;index<knownFields;++index){
+            if(!step(4))return {};
+            const auto &known=heap.fields_[index];
+            if(known.key!=&id)continue;
+            if(!out.appendField(*this,inserted.first,known.identity))return {};
+            break;
+          }
+        }
+      }
     }
     }
   }return out;

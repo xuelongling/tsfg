@@ -263,10 +263,30 @@ ActualHeap ActualCheck::copyHeap(const ActualHeap &from){
 }
 bool ActualCheck::mergeHeap(ActualHeap &into,ActualHeap &&from){
   bool changed=false;if(!step(from.size()))return false;
+  size_t knownFields=0;
+  if(scheduling||borrowTrace){
+    if(!step(2))return false;
+    if(!from.fields_.empty()){
+      if(!step(3))return false;
+      if(&into!=&from&&into.fields_.size()<4)knownFields=std::min<size_t>(4,from.fields_.size());
+    }
+  }
   for(auto &[id,v]:from){
     if(!step(id.size()/64+1))return false;auto found=into.find(id);
-    if(found==into.end()){if(!step())return false;into.emplace(id,std::move(v));changed=true;}else changed=merge(found->second,v)||changed;
+    if(found==into.end()){if(!step())return false;found=into.emplace(id,std::move(v)).first;changed=true;}
+    else changed=merge(found->second,v)||changed;
     if(!e.message.empty())return false;
+    if(knownFields){
+      if(!step(2))return false;
+      if(into.fields_.size()<4)for(size_t index=0;index<knownFields;++index){
+        if(!step(4))return false;
+        const auto &known=from.fields_[index];
+        if(known.key!=&id)continue;
+        // An index-only update must not schedule a new value iteration.
+        if(!into.rememberField(*this,found,known.identity))return false;
+        break;
+      }
+    }
   }return changed;
 }
 ActualFrameWorld ActualCheck::copyFrames(const ActualFrameWorld &world){

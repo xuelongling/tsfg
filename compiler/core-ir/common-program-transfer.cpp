@@ -267,13 +267,34 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="invoke"||name=="invoke_method"||name=="invoke_indirect"){
     const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap,const RegionHeap &versions,const ActualFrameWorld &frames,bool language,ActualState after){
       if(!e.message.empty()||!overlayFrames(after.frames,frames)||(language&&!abortInitializers(after))||!step(heap.size()))return false;
+      size_t knownFields=0;
+      if(scheduling||borrowTrace){
+        if(!step(2))return false;
+        if(!heap.fields_.empty()){
+          if(!step(3))return false;
+          if(!after.frames.empty()&&after.heap.fields_.empty())knownFields=std::min<size_t>(4,heap.fields_.size());
+        }
+      }
       for(const auto &[slot,value]:heap){
         const bool summarized=summarizedSlot(*this,slot);if(!e.message.empty())return false;
-        auto old=after.heap.find(slot);
+        auto destination=after.heap.find(slot);
         // A callee summary may describe another runtime instance at the same
         // allocation/copy site. Keep aliases already owned by the caller.
-        if(summarized&&old!=after.heap.end())merge(old->second,value);else after.heap.insert_or_assign(slot,copy(value));
+        if(summarized&&destination!=after.heap.end())merge(destination->second,value);
+        else destination=after.heap.insert_or_assign(slot,copy(value)).first;
         if(!e.message.empty())return false;
+        // Overlay has already found or installed the exact destination key.
+        // Reconciliation can reuse the positive association without a search.
+        if(knownFields){
+          if(!step(2))return false;
+          if(after.heap.fields_.size()<knownFields)for(size_t index=0;index<knownFields;++index){
+            if(!step(4))return false;
+            const auto &known=heap.fields_[index];
+            if(known.key!=&slot)continue;
+            if(!after.heap.appendField(*this,destination,known.identity))return false;
+            break;
+          }
+        }
       }
       if(!receiverReconcile(after.frames,after.heap,literal(typeId("undefined"))))return false;
       auto current=regionCopy(*this,versions);for(auto &[id,slots]:current){if(!step())return false;after.regions.insert_or_assign(id,std::move(slots));}
