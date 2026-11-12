@@ -162,8 +162,17 @@ bool regionStore(ActualCheck &c,const RegionValue &receiver,const std::string &s
   }return c.e.message.empty();
 }
 RegionHeap regionReachable(ActualCheck &c,const ActualRoots &args,const RegionHeap &heap){
-  RegionHeap out;std::vector<std::string> pending;if(!c.step())return {};const auto count=args.size();
-  for(size_t i=0;i<count;++i){if(!c.step(2))return {};const auto &arg=args[i];const auto v=regionValue(c,arg);if(!c.step(regionWeight(v)))return {};pending.insert(pending.end(),v.roots.begin(),v.roots.end());}
+  // A missing input node contributes no projected slot. An empty heap has none.
+  if(!c.step()||heap.empty())return {};
+  RegionHeap out;std::vector<std::string> pending;const auto count=args.size();
+  for(size_t i=0;i<count;++i){
+    if(!c.step(3))return {};
+    const auto &region=args[i].region;
+    // The fallback relation for an untracked value has no current roots.
+    if(!region.known)continue;
+    if(!c.step(regionWeight(region)))return {};
+    pending.insert(pending.end(),region.roots.begin(),region.roots.end());
+  }
   for(size_t i=0;i<pending.size();++i){if(!c.step())return {};const auto root=pending[i];if(out.count(root))continue;auto node=heap.find(root);if(node==heap.end())continue;
     auto &slots=out[root];for(const auto &[slot,v]:node->second){if(!c.step(slot.size()/64+regionWeight(v)))return {};slots.emplace(slot,v);pending.insert(pending.end(),v.roots.begin(),v.roots.end());}
   }return out;

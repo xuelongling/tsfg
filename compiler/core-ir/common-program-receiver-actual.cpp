@@ -31,7 +31,41 @@ bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&r
     if(count==1){
       // A single owned journal entry is already in full spelling order.
       if(!c.step(3)||!retain(value.births.begin()->second.real)||!c.e.message.empty())return false;
-    }else if(count){size_t height=0;
+    }else if(count){
+      if(!c.step(3))return false;
+      // When the archive is wide relative to the bounded insertion sort,
+      // use this journal's immutable keys in the archive's full byte order.
+      if(count<=4&&c.fieldSlotArchive.size()>=3*count*count){
+        const ActualBirthJournal::value_type *ordered[4];
+        if(!c.step(6+2*count))return false;
+        size_t size=0;
+        for(const auto &entry:value.births){
+          if(!c.step(6))return false;
+          if(entry.first->owner!=&c)break;
+          size_t position=size;
+          while(position){
+            if(!c.step(8))return false;
+            const auto &current=*entry.first->spelling;
+            const auto &prior=*ordered[position-1]->first->spelling;
+            if(!c.step(current.size()+prior.size()+1))return false;
+            if(llvm::StringRef(current).compare(prior)>=0)break;
+            if(!c.step(3))return false;
+            ordered[position]=ordered[position-1];
+            --position;
+          }
+          if(!c.step(3))return false;
+          ordered[position]=&entry;
+          ++size;
+        }
+        if(!c.step(2))return false;
+        if(size==count){
+          for(size_t i=0;i<size;++i){
+            if(!c.step(3)||!retain(ordered[i]->second.real)||!c.e.message.empty())return false;
+          }
+          continue;
+        }
+      }
+      size_t height=0;
       for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return false;height+=2;}
       height=std::min(height,count);size_t retained=0;
       for(const auto &[spelling,slot]:c.fieldSlotArchive){
@@ -559,7 +593,36 @@ bool ActualCheck::receiverBirth(ActualFrameWorld &world,const std::string &id,st
   for(const auto slot:fields){if(!step()||!step())return false;
     if(!reference){if(!step(8))return false;reference=std::make_shared<const std::string>(std::move(ref));}
     if(!step(4))return false;ActualBirth row;row.reference=reference;
-    if(repeated){if(!receiverText(*slot->spelling))return false;const auto old=heap.find(*slot->spelling);if(old!=heap.end())row.real=copy(old->second);}
+    if(repeated){
+      if(!step(6))return false;
+      const auto &spelling=*slot->spelling;
+      const ActualValue *historical=nullptr;
+      bool scanned=false;
+      if(spelling.size()>=64&&heap.size()<=spelling.size()/4){
+        // This small, read-only probe also works after a heap copy discards
+        // its derived field index. Shape only rejects; equality is complete.
+        if(!step(6+2*heap.size()))return false;
+        const auto middle=spelling.size()/2;size_t compared=0;scanned=true;
+        for(const auto &[key,value]:heap){
+          if(!step(5))return false;
+          if(key.size()!=spelling.size())continue;
+          if(!step(8))return false;
+          if(key.front()!=spelling.front()||key.back()!=spelling.back()||key[middle]!=spelling[middle])continue;
+          if(!step(3))return false;
+          if(compared==2){scanned=false;break;}
+          ++compared;
+          if(!step(2*spelling.size()+2))return false;
+          if(key==spelling){historical=&value;break;}
+        }
+      }
+      if(!step(2))return false;
+      if(!scanned){
+        if(!receiverText(spelling))return false;
+        const auto old=heap.find(spelling);
+        if(old!=heap.end())historical=&old->second;
+      }
+      if(historical)row.real=copy(*historical);
+    }
     if(!e.message.empty())return false;rows.emplace(slot,std::move(row));}
   // Resolve the live World first, then query metadata with its owned key.
   // Both directories stay structurally unchanged while journals are updated.
