@@ -107,13 +107,14 @@ function consume(executable, args, input) {
  */
 export async function compileSystemQuery(bytes,context,options){
   const {facts,context:sourceContext}=readSystemQueryFactsAndContext(bytes,context);
-  const executable=await verifiedConsumer(options.core,'core');
-  const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,sourceContext)).toString('utf8');
-  const effects=options.effects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,sourceContext):undefined;
-  const checkedBatch=options.cpuBatch||options.tmeta?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):core;
-  const cpuBatch=options.cpuBatch?checkedBatch:undefined;
-  const cpuLLVM=options.cpuLLVM?consume(executable,['--system-query',options.cpuLLVM==='ir'?'--llvm-ir':'--cpu-llvm'],cpuBatch??core).toString('utf8'):undefined;
-  const tmeta=options.tmeta?readSystemQueryTmeta(consume(executable,['--system-query','--tmeta'],checkedBatch),facts,sourceContext,checkedBatch):undefined;
+  const {core:corePath,optimize,effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
+  const executable=await verifiedConsumer(corePath,'core');
+  const core=consume(executable,['--system-query',optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,sourceContext)).toString('utf8');
+  const effects=includeEffects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,sourceContext):undefined;
+  const checkedBatch=includeBatch||includeTmeta?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):core;
+  const cpuBatch=includeBatch?checkedBatch:undefined;
+  const cpuLLVM=llvmOutput?consume(executable,['--system-query',llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm'],cpuBatch??core).toString('utf8'):undefined;
+  const tmeta=includeTmeta?readSystemQueryTmeta(consume(executable,['--system-query','--tmeta'],checkedBatch),facts,sourceContext,checkedBatch):undefined;
   return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch}),...(cpuLLVM===undefined?{}:{cpuLLVM}),...(tmeta===undefined?{}:{tmeta})};
 }
 

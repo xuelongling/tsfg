@@ -47,6 +47,18 @@ test('Query public pipeline owns its Source context before artifact admission',{
   assert.deepEqual(result.tmeta.effects,result.effects);
 });
 
+test('Query public pipeline owns output options before artifact admission',{skip:!enabled},async()=>{
+  const input=cases.at(-1);
+  const options={core:tool,optimize:false,effects:true,cpuBatch:false,cpuLLVM:/** @type {'ir'|'dialect'} */('ir'),tmeta:true};
+  const pending=compileSystemQuery(input.bytes,input.context,options);
+  Object.assign(options,{optimize:true,effects:false,cpuBatch:true,cpuLLVM:'dialect',tmeta:false});
+  const result=await pending;
+  assert.equal(result.cpuBatch,undefined);
+  assert.match(result.cpuLLVM,/^target triple = /mu);
+  assert.equal(result.tmeta.payload.sourceRequest,input.context.requestBytes.toString('utf8'));
+  assert.deepEqual(result.tmeta.effects,result.effects);
+});
+
 for(const input of cases)test('actual Query .tmeta: '+input.name,{skip:!enabled},()=>{
   const facts=readSystemQueryFacts(input.bytes,input.context),core=emitSystemQueryCore(facts,input.context),bytes=run(input.name,core),envelope=JSON.parse(bytes);
   const batch=JSON.parse(envelope.payload).batch,checkedBatch=run(input.name+'-batch',core,'--cpu-batch');
