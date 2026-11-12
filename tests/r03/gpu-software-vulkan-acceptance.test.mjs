@@ -245,6 +245,15 @@ function verifyRecovery(report){
   assert.ok(transitions.length>0);
   assert.deepEqual(transitions.at(-1),final);
   assert.ok(transitions.every(value=>value.deviceGeneration===final.deviceGeneration&&value.submissionId===final.submissionId&&canonical(value.identity)===canonical(report.identity)));
+  const [prepared,submitted]=transitions;
+  if(prepared.state==='Prepared')
+    assert.deepEqual([prepared.submitted,prepared.completionKnown,prepared.outputsAvailable],[false,false,false]);
+  if(submitted?.state==='Submitted')
+    assert.deepEqual([submitted.submitted,submitted.completionKnown,submitted.outputsAvailable],[true,false,false]);
+  if(final.completionKnown!==true)assert.equal(final.outputsAvailable,false);
+  for(const wait of transitions.slice(2,-1))
+    assert.ok(wait.state==='Unfinished'&&wait.vkResult===2&&wait.submitted===true&&wait.completionKnown===false&&wait.outputsAvailable===false,
+      'only an unresolved VK_TIMEOUT can precede another wait');
   const firstTimeout=transitions.findIndex(value=>value.state==='Unfinished'&&value.vkResult===2);
   const timeoutObserved=firstTimeout!==-1;
   assert.equal(report.timeout,timeoutObserved?'OBSERVED':'NOT_OBSERVED');
@@ -254,7 +263,10 @@ function verifyRecovery(report){
   if(!resumed){assert.equal(report.recovery,'NOT_RUN');return;}
   if(final.state==='Completed'&&final.completionKnown)assert.equal(report.recovery,'COMPLETED');
   else if(final.state==='DeviceLost')assert.equal(report.recovery,'DEVICE_LOST');
-  else if(final.submitted&&!final.completionKnown)assert.equal(report.recovery,'RETAINED');
+  else if(final.submitted===true&&final.completionKnown===false){
+    assert.equal(final.state,'Unfinished');
+    assert.equal(report.recovery,'RETAINED');
+  }
   else assert.equal(report.recovery,final.failure!=='None'?'FAILED':'NOT_OBSERVED');
 }
 const cases=[];
@@ -321,6 +333,33 @@ for(const fixture of fixtures){
       report.outputs.forEach(value=>{assert.equal(value.bits,String(result));assert.equal(value.signed,String(BigInt.asIntN(32,result)));});
     });
 }
+test('recovery follows only unresolved timeout waits in one session',()=>{
+  const identity={session:'fixed-call'};
+  const snapshot=(state,submitted,completionKnown,vkResult)=>({
+    state,submitted,completionKnown,outputsAvailable:state==='Completed',vkResult,
+    identity,deviceGeneration:'1',submissionId:'1',failure:'None',
+  });
+  const prepared=snapshot('Prepared',false,false,null),submitted=snapshot('Submitted',true,false,null);
+  const timeout=snapshot('Unfinished',true,false,2),completed=snapshot('Completed',true,true,0);
+  const report={
+    identity,final:completed,transitions:[prepared,submitted,timeout,structuredClone(timeout),completed],
+    timeout:'OBSERVED',retainedResumeObserved:true,recovery:'COMPLETED',
+  };
+  const retained=final=>({...report,final,transitions:[prepared,submitted,timeout,final],recovery:'RETAINED'});
+  verifyRecovery(report);
+  verifyRecovery(retained(structuredClone(timeout)));
+  verifyRecovery(retained({...timeout,vkResult:-1,failure:'Vulkan'}));
+  for(const previous of [{...timeout,outputsAvailable:true},completed,{...timeout,submitted:false},{...timeout,completionKnown:true}]){
+    assert.throws(()=>verifyRecovery({...report,transitions:[prepared,submitted,previous,timeout,completed]}),{name:'AssertionError'});
+  }
+  for(const flag of ['submitted','completionKnown','outputsAvailable']){
+    assert.throws(()=>verifyRecovery({...report,transitions:[{...prepared,[flag]:!prepared[flag]},...report.transitions.slice(1)]}),{name:'AssertionError'});
+    assert.throws(()=>verifyRecovery({...report,transitions:[prepared,{...submitted,[flag]:!submitted[flag]},...report.transitions.slice(2)]}),{name:'AssertionError'});
+  }
+  assert.throws(()=>verifyRecovery(retained({...timeout,outputsAvailable:true})),{name:'AssertionError'});
+  assert.throws(()=>verifyRecovery(retained({...timeout,state:'Prepared'})),{name:'AssertionError'});
+});
+
 test('independent arithmetic edge vectors and exact fixture coverage',()=>{
   assert.equal(cases.length,16);assert.equal(cases.filter(row=>!row.global).length,14);
   assert.equal(expected('+',2,'7',2147483647n),2147483654n);
