@@ -31,6 +31,7 @@ struct Model {
   bool annotation(const std::string &,const Json &,const std::string &,unsigned=0);
   bool ownedMarker(const std::string &,const Json &,const Json &);
   bool scalarTarget(const std::string &,const Json &,const Json &);
+  bool constructorTarget(const std::string &,const Json &,const std::string &);
   bool scalars();bool scalarClosure();
   bool sourceName(const Json &,std::string &);
   bool expression(const Json &,const Json &,const std::map<std::string,const Json *> &,const std::string &,unsigned=0,const std::string &expected={});

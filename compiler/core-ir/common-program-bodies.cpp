@@ -66,6 +66,10 @@ bool SourceBodies::annotation(const Json &r,const std::string &expected,bool opt
   if(!model.spend())return false;
   const AnnotationKey key{source->path,{source->tokens[a].start,source->tokens[b-1].end}};
   auto cached=annotationTypes.find(key);if(cached!=annotationTypes.end())return model.need(cached->second==expected,"original annotation type changed between uses");
+  if(verifyAnnotation){
+    if(!verifyAnnotation(source->path,range(source->tokens[a],source->tokens[b-1]),expected))return false;
+    annotationTypes.emplace(key,expected);return true;
+  }
   std::vector<std::pair<std::string,std::string>> origins;
   // Optional syntax may contain a real annotation-only union whose effective
   // +undefined type is the sole owned catalogue row. Retain parsed members,

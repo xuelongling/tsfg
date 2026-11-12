@@ -15,12 +15,14 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
   const children=node=>ast.children.get(node.id)??[];
   const origin=node=>({id:originId(node.sourcePath,node.nameRange??node.range),sourcePath:node.sourcePath,kind:node.kind,name:node.name,range:node.range,nameRange:node.nameRange??node.range});
   const at=(path,span)=>{
+    spend(ast.nodes.length);
     const node=ast.nodes.find(node=>node.sourcePath===path&&canonical(node.range)===canonical(span)&&['KindTypeReference','KindTupleType','KindParenthesizedType'].includes(node.kind));
     if(!node)fail('original type syntax node missing','source');return node;
   };
-  const argumentsOf=node=>children(node).filter(child=>!['KindIdentifier','KindQualifiedName'].includes(child.kind));
+  const argumentsOf=node=>{const rows=children(node);spend(rows.length);return rows.filter(child=>!['KindIdentifier','KindQualifiedName'].includes(child.kind));};
   function exportedBinding(root,name,kinds,values){
-    const grammar=grammars.get(root.sourcePath),statements=children(root),declarations=statements.filter(row=>kinds.includes(row.kind)),found=[];
+    const grammar=grammars.get(root.sourcePath),statements=children(root);
+    spend(statements.length);const declarations=statements.filter(row=>kinds.includes(row.kind)),found=[];
     if(values)for(const statement of statements)if(statement.kind==='KindVariableStatement')for(const list of children(statement))if(list.kind==='KindVariableDeclarationList')declarations.push(...children(list).filter(row=>kinds.includes(row.kind)));
     for(const declaration of declarations){
       spend();let statement=declaration;while(statement.parent!==root.id){spend();statement=ast.directory.get(statement.parent);}
@@ -43,6 +45,7 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
       if(tokens[index]==='from')fail('module re-export has no selected binding proof','capability');
       if(tokens[index]===';')index++;if(index!==tokens.length)fail('original named export statement differs','source');
       for(const binding of bindings)if(binding.exported===name&&(!values||!binding.type)){
+        spend(declarations.length);
         const selected=declarations.filter(row=>row.name===binding.local);
         if(selected.length!==1)fail('local named export must select one original module declaration','capability');found.push(selected[0]);
       }
@@ -50,30 +53,34 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     if(found.length!==1)fail('original named import has no unique module export','source');return found[0];
   }
   function binding(node,values=false){
-    spend();const nameNode=values?node:children(node).find(child=>child.kind==='KindIdentifier'||child.kind==='KindQualifiedName');
+    spend(1+(values?0:children(node).length));const nameNode=values?node:children(node).find(child=>child.kind==='KindIdentifier'||child.kind==='KindQualifiedName');
     if(!nameNode||nameNode.kind!=='KindIdentifier')fail('original named type reference required','source');
     const name=identifierName(grammars.get(node.sourcePath).slice(nameNode.range));
     const kinds=values?['KindFunctionDeclaration','KindClassDeclaration','KindVariableDeclaration','KindBindingElement','KindParameter']:declarationKinds;
     let parent=ast.directory.get(node.parent);
     while(parent){
-      spend();const nested=children(parent),declarations=[...nested];
+      const nested=children(parent);spend(1+2*nested.length);const declarations=[...nested];
       if(values)for(const statement of nested)if(statement.kind==='KindVariableStatement')for(const list of children(statement))if(list.kind==='KindVariableDeclarationList')declarations.push(...children(list));
       if(values&&parent.kind==='KindForOfStatement')for(const list of nested.filter(node=>node.kind==='KindVariableDeclarationList'))for(const declaration of children(list))for(const pattern of children(declaration).filter(node=>node.kind==='KindArrayBindingPattern'))declarations.push(...children(pattern));
+      spend(declarations.length-nested.length);
       const local=declarations.filter(child=>kinds.includes(child.kind)&&child.name===name);
       if(local.length){if(local.length!==1)fail('ambiguous original type binding','source');return local[0];}
       parent=ast.directory.get(parent.parent);
     }
     const root=ast.directory.get(ast.roots.get(node.sourcePath));
     const imported=[];
+    spend(children(root).length);
     for(const declaration of children(root).filter(row=>row.kind==='KindImportDeclaration')){
-      spend();const literal=children(declaration).find(row=>row.kind==='KindStringLiteral');
+      spend(1+children(declaration).length+Math.ceil((declaration.range.end-declaration.range.start)/8));const literal=children(declaration).find(row=>row.kind==='KindStringLiteral');
       const tokens=sourceLexicalTokens(grammars.get(node.sourcePath).slice(declaration.range));
       const specifier=tokens?.find(token=>token.kind==='text')?.value;
       if(!literal||!specifier)fail('original import source required','source');
       const sourcePath=relativeModuleSource(node.sourcePath,specifier,sources);
       if(!sourcePath)fail('original import closure differs','source');
+      spend(ast.nodes.length);
       const specifiers=ast.nodes.filter(row=>row.sourcePath===node.sourcePath&&row.kind==='KindImportSpecifier'&&row.range.start>=declaration.range.start&&row.range.end<=declaration.range.end);
       for(const specifier of specifiers){
+        spend();
         const names=grammars.get(node.sourcePath).spelling(specifier.range).filter(value=>value!=='type');
         const local=identifierName(names.at(-1)),exported=identifierName(names[0]);
         if(local!==name)continue;
@@ -83,12 +90,14 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
       }
     }
     if(imported.length){if(imported.length!==1)fail('ambiguous original import binding','source');return imported[0];}
+    spend(ast.nodes.length);
     const globals=ast.nodes.filter(row=>[descriptor.profile.path,descriptor.profile.standardPath].includes(row.sourcePath)&&row.parent===ast.roots.get(row.sourcePath)&&kinds.includes(row.kind)&&row.name===name);
     if(globals.length!==1)fail('original type declaration is outside owned scope','source');return globals[0];
   }
   const target=node=>node.kind==='KindTypeReference'?origin(binding(node)):origin(node);
   function definition(declaration){
-    const members=children(declaration),parameters=members.filter(row=>row.kind==='KindTypeParameter'),rhs=members.at(-1);
+    const members=children(declaration);spend(members.length);
+    const parameters=members.filter(row=>row.kind==='KindTypeParameter'),rhs=members.at(-1);
     if(!rhs)fail('original alias definition missing','source');
     const grammar=grammars.get(declaration.sourcePath),bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange),prefix=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
     if(!['type','export type'].includes(prefix.join(' ')))fail('original alias declaration prefix differs','source');
@@ -97,14 +106,24 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
   }
   function verifyLogical(path,span,id,types,depth=0){
     spend();if(depth>64)fail('original annotation alias graph exceeded','limit');
-    const reference=ast.nodes.find(node=>node.sourcePath===path&&node.kind==='KindTypeReference'&&canonical(node.range)===canonical(span));
+    const reference=ast.typeReference(path,span);
     if(reference){
       const declaration=binding(reference),type=types.get(id);
-      if(declaration.kind==='KindTypeAliasDeclaration'&&(declaration.sourcePath!==type.sourcePath||canonical(declaration.nameRange)!==canonical(type.nameRange))){
+      if(!type)fail('original annotation type is outside the catalogue','source');
+      const sameDeclaration=declaration.sourcePath===type.sourcePath&&canonical(declaration.nameRange)===canonical(type.nameRange);
+      const grammar=grammars.get(path);
+      if(sameDeclaration&&(type.kind==='array'||type.kind==='readSpan'))return commonTypeSyntax(grammar,span,id,types,spend);
+      spend(children(reference).length);
+      const name=children(reference).find(child=>child.kind==='KindIdentifier');
+      if(!name||argumentsOf(reference).length)fail('concrete original annotation has type arguments','source');
+      grammar.sequence(span,[name.range]);
+      if(sameDeclaration)return;
+      if(declaration.kind==='KindTypeAliasDeclaration'){
         const {parameters,rhs}=definition(declaration);
-        if(parameters.length||argumentsOf(reference).length)fail('ordinary annotation requires concrete original alias','source');
+        if(parameters.length)fail('ordinary annotation requires concrete original alias','source');
         return verifyLogical(rhs.sourcePath,rhs.range,id,types,depth+1);
       }
+      fail('original annotation declaration target differs','source');
     }
     commonTypeSyntax(grammars.get(path),span,id,types,spend);
   }

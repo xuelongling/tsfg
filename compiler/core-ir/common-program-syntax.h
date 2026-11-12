@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "common-program-source.h"
+#include <functional>
 namespace tsfg::commonProgram {
 class SourceRelations;
 struct SourceToken {std::string text;uint32_t start=0,end=0;};
@@ -16,6 +17,7 @@ struct SourceSyntax {
 // Scalar/string token payload validation is independent of a Program relation
 // ledger; a caller checks its contextual type before entering this boundary.
 bool verifySourceLiteral(SourceSyntax &,const Json &);
+bool verifySourceConstruction(SourceModel &,SourceRelations *,const Json &);
 struct SourceBodies {
   SourceModel &model;std::map<std::string,SourceSyntax> &syntax;
   std::map<std::string,const Json *> bindings;
@@ -29,6 +31,8 @@ struct SourceBodies {
   using AnnotationKey=std::pair<std::string,std::pair<uint32_t,uint32_t>>;
   std::map<AnnotationKey,std::string> annotationTypes;
   std::map<std::string,std::string> callableOrigins;
+  using LexicalCheck=std::function<bool(const std::string &,const Json &,const std::string &)>;
+  LexicalCheck verifyAnnotation,verifyConstructorTarget;
   bool inventory();bool function(const Json &);bool module(const Json &);
   bool annotations();
   std::string resolve(const Json &);

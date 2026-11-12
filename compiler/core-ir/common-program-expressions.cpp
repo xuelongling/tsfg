@@ -173,7 +173,22 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
     const bool constructor=kind=="new"||kind=="superConstruct";const Json *selected=nullptr;
     if(constructor){
       if(!model.need(model.types.count(callee)&&same(field(field(*model.types.at(callee),"construction"),"signature"),sig),"construction source signature differs"))return false;
-      selected=model.constructionFunction(*model.types.at(callee));
+      const auto &constructed=*model.types.at(callee);
+      selected=model.constructionFunction(constructed);
+      if(verifyConstructorTarget){
+        if(!model.error.message.empty())return false;
+        const auto owner=string(field(*current,"ownerType"));
+        const auto access=string(field(field(constructed,"construction"),"access"));
+        const auto declaringOwner=selected?string(field(*selected,"ownerType")):std::string{};
+        if(!model.need(access=="public"||(!declaringOwner.empty()&&(owner==declaringOwner||
+          (access=="protected"&&assignment(model,owner,declaringOwner)))),"original construction access differs"))return false;
+        if(kind=="superConstruct"){
+          const auto ownerType=model.types.find(owner);
+          if(!model.need(ownerType!=model.types.end()&& &field(*ownerType->second,"constructor")==current&&
+            string(field(*ownerType->second,"base"))==callee&&type=="void"&&actual=="void","original super owner, direct base or result differs"))return false;
+        }else if(!model.need(type==callee&&actual==callee,"original construction result differs"))return false;
+        if(!verifyConstructorTarget(source->path,v,callee))return false;
+      }
     }
     const Json *ordinaryTarget=nullptr;const bool ordinaryLookup=kind=="call"&&field(model.facts,"version").getAsInteger()==3&&callee!=string(field(field(model.payload,"readSpanIntrinsic"),"id"));
     if(ordinaryLookup){size_t comparisons=1;for(size_t n=model.functions.size();n;n>>=1)comparisons+=2;
@@ -214,7 +229,9 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
         }
       }
       if(!model.need(type==string(field(sig,"returnType")),"call result differs from original signature"))return false;
-    }else if(kind=="new"&&!model.need(resolve(field(v,"calleeRange"))==callee&&type==callee,"construction spelling resolves to another nominal symbol"))return false;
+    }else if(kind=="new"&&!verifyConstructorTarget){
+      if(!model.need(type==callee&&resolve(field(v,"calleeRange"))==callee,"construction spelling resolves to another nominal symbol"))return false;
+    }
     return sequence(pieces);
   }
   return model.need(false,"unsupported complete common Source expression; no partial body admission");

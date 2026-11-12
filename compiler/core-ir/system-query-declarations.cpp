@@ -1,11 +1,92 @@
 // SPDX-License-Identifier: MIT
 #include "system-query-source.h"
+#include "common-program-relations.h"
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::systemQuery {
+bool verifyOriginalQueryBase(Model &,const Json &,const Json &,Json &);
 namespace {
 std::string hash(llvm::StringRef domain,const Json &value){return digest(domain.str()+std::string(1,'\0')+canonical(value));}
 Json range(const Json &origin){return Object{{"start",field(origin,"start")},{"end",field(origin,"end")}};}
-bool nominal(Model &m,const Json &t,std::set<const Json *> &used){
+struct CallableBodies {
+  Model &m;
+  SourceRelations relations;
+  SourceBodies bodies;
+  std::set<std::string> checked;
+
+  explicit CallableBodies(Model &model):m(model),relations(*m.source),bodies{*m.source,m.syntax}{}
+
+  bool prepare(){
+    // Only original, source-file-owned classes supply an outer value binding.
+    // The common verifier owns all parameter, local and nested binding rows.
+    for(const auto &[path,syntax]:m.syntax){
+      if(!m.spend(16+path.size()/8))return false;
+      bodies.visible.try_emplace(path);
+    }
+    for(const auto &[id,type]:m.source->types){
+      if(!m.spend())return false;
+      if(field(*type,"nominalKey").getAsNull())continue;
+      const auto path=string(field(*type,"sourcePath"));
+      const auto *node=m.at(path,field(*type,"declarationRange"),"KindClassDeclaration");
+      if(!node)return false;
+      const auto parent=string(field(*node,"parent"));
+      std::string name;
+      if(!m.spend(28+(path.size()+id.size()+parent.size())/8)||
+         !m.need(m.nodes.count(parent)&&string(field(*m.nodes.at(parent),"kind"))=="KindSourceFile"&&
+           string(field(*m.nodes.at(parent),"sourcePath"))==path,"callable class is outside the original file scope")||
+         !m.sourceName(*node,name)||!m.need(!name.empty()&&name==string(field(*type,"name"))&&
+           bodies.visible.at(path).emplace(name,id).second,"original callable class scope differs"))return false;
+    }
+    bodies.relations=&relations;
+    bodies.verifyAnnotation=[this](const auto &path,const auto &span,const auto &type){
+      return m.annotation(path,span,type);
+    };
+    bodies.verifyConstructorTarget=[this](const auto &path,const auto &call,const auto &type){
+      return m.constructorTarget(path,call,type);
+    };
+    return relations.read()&&bodies.inventory()&&bodies.annotations();
+  }
+
+  bool member(const Json &owner,const Json &node,const Json &fn,SourceSyntax &g,bool constructor){
+    const auto id=string(field(fn,"id"));
+    if(!m.spend(32+id.size()/4))return false;
+    const auto owned=m.source->functions.find(id);
+    if(!m.need(owned!=m.source->functions.end()&&owned->second==&fn&&checked.insert(id).second&&
+      same(field(fn,"ownerType"),field(owner,"id"))&&same(field(fn,"sourcePath"),field(owner,"sourcePath"))&&
+      field(fn,"lexicalParent").getAsNull(),"original callable directory/owner differs"))return false;
+    const auto &span=field(fn,"declarationRange");
+    const auto *member=m.at(g.path,span,constructor?"KindConstructor":"KindMethodDeclaration");
+    if(!member||!m.need(same(field(*member,"parent"),field(node,"id")),"callable is not an original direct class member"))return false;
+    size_t start,end,name,nameEnd;
+    if(!g.span(span,start,end))return false;
+    if(constructor){
+      name=start;
+      while(name<end&&g.tokens[name].text!="constructor"){
+        if(!m.spend())return false;
+        ++name;
+      }
+      if(!m.need(name<end&&string(field(fn,"name"))=="constructor","original constructor keyword differs"))return false;
+    }else if(!m.need(same(field(*member,"name"),field(fn,"name"))&&same(field(*member,"nameRange"),field(fn,"nameRange")),
+      "original method name/anchor differs")||!g.span(field(fn,"nameRange"),name,nameEnd))return false;
+    std::string access="public";
+    bool hasAccess=false;
+    for(auto cursor=start;cursor<name;++cursor){
+      if(!m.spend())return false;
+      const auto &word=g.tokens[cursor].text;
+      if(!constructor&&word=="override")continue;
+      if(!m.need(!hasAccess&&(word=="public"||word=="private"||word=="protected"),"original callable access modifier differs"))return false;
+      access=word;
+      hasAccess=true;
+    }
+    return m.need(access==string(field(fn,"access")),"original callable access differs")&&bodies.function(fn);
+  }
+
+  bool finish(){
+    if(!m.need(checked.size()==m.source->functions.size(),"unbound original callable declaration"))return false;
+    return relations.finish();
+  }
+};
+
+bool nominal(Model &m,const Json &t,std::set<const Json *> &used,CallableBodies *callables){
   const auto path=string(field(t,"sourcePath")),id=string(field(t,"id")),kind=string(field(t,"kind"));
   if(!m.need(m.syntax.count(path),"component original source missing"))return false;auto &g=m.grammar(path);const auto &key=field(t,"nominalKey");
   auto *declaration=m.at(path,field(t,"declarationRange"),"KindClassDeclaration");
@@ -14,19 +95,20 @@ bool nominal(Model &m,const Json &t,std::set<const Json *> &used){
   if(!m.need(id=="nominal:"+hash("tsfg.array-facts.nominal.v8",key).substr(7)&&string(field(key,"sourcePath"))==path&&
     same(field(key,"declarationPath"),Array{field(t,"name")})&&
     string(field(t,"runtimeKey"))==hash("tsfg.array-facts.runtime-class.v8",Object{{"files",std::move(files)},{"nominalKey",key}}),"original nominal/runtime identity differs"))return false;
-  // Constructor signatures participate in the shared TypeId even though this
-  // route executes no constructor. Derive the selected implicit metadata;
-  // never accept an arbitrary Node-supplied signature/access as type authority.
-  if(!m.need(field(t,"constructor").getAsNull()&&items(field(t,"methods")).empty(),"Query component callable bodies have no selected Source validation"))return false;
-  const auto baseType=string(field(t,"base"));const auto &construction=field(t,"construction");Array initialization;
-  for(const auto &f:items(field(t,"fields")))initialization.push_back(field(f,"id"));
-  const Json origin=Object{{"source",path},{"start",field(field(t,"declarationRange"),"start")},{"end",field(field(t,"declarationRange"),"end")}};
-  const Json signature=Object{{"id",hash("tsfg.array-facts.signature.v8",Object{{"sourcePath",path},{"declarationRange",field(t,"declarationRange")}})},
-    {"sourcePath",path},{"declarationRange",field(t,"declarationRange")},{"parameters",Array{}},{"returnType",id}};
-  const Json forwarding=baseType.empty()?Json(nullptr):Json(Object{{"target",baseType+".ctor"},{"baseSignature",Object{{"parameters",Array{}},{"return",baseType}}},{"parameters",Array{}},{"origin",origin}});
-  if(!m.need(same(construction,Object{{"id",id+".ctor"},{"kind",baseType.empty()?"implicit-base":"implicit-derived"},
-    {"access","public"},{"initializationPhase",baseType.empty()?"before-body":"after-successful-super"},{"initializationFields",std::move(initialization)},
-    {"parameters",Array{}},{"signature",signature},{"origin",origin},{"implicitForward",forwarding}}),"original implicit construction metadata differs"))return false;
+  if(callables){
+    if(!verifySourceConstruction(*m.source,&callables->relations,t))return false;
+  }else{
+    if(!m.need(field(t,"constructor").getAsNull()&&items(field(t,"methods")).empty(),"Query component callable bodies have no selected Source validation"))return false;
+    const auto baseType=string(field(t,"base"));const auto &construction=field(t,"construction");Array initialization;
+    for(const auto &f:items(field(t,"fields")))initialization.push_back(field(f,"id"));
+    const Json origin=Object{{"source",path},{"start",field(field(t,"declarationRange"),"start")},{"end",field(field(t,"declarationRange"),"end")}};
+    const Json signature=Object{{"id",hash("tsfg.array-facts.signature.v8",Object{{"sourcePath",path},{"declarationRange",field(t,"declarationRange")}})},
+      {"sourcePath",path},{"declarationRange",field(t,"declarationRange")},{"parameters",Array{}},{"returnType",id}};
+    const Json forwarding=baseType.empty()?Json(nullptr):Json(Object{{"target",baseType+".ctor"},{"baseSignature",Object{{"parameters",Array{}},{"return",baseType}}},{"parameters",Array{}},{"origin",origin}});
+    if(!m.need(same(construction,Object{{"id",id+".ctor"},{"kind",baseType.empty()?"implicit-base":"implicit-derived"},
+      {"access","public"},{"initializationPhase",baseType.empty()?"before-body":"after-successful-super"},{"initializationFields",std::move(initialization)},
+      {"parameters",Array{}},{"signature",signature},{"origin",origin},{"implicitForward",forwarding}}),"original implicit construction metadata differs"))return false;
+  }
   size_t a,b,n,z;if(!g.span(field(t,"declarationRange"),a,b)||!g.span(field(t,"nameRange"),n,z)||!g.name(field(t,"nameRange"),string(field(t,"name"))))return false;
   std::vector<Json> pieces;std::vector<std::string> header;
   for(auto i=a;i<n;++i){if(!m.spend())return false;pieces.push_back(g.tokens[i].text);header.push_back(g.tokens[i].text);}
@@ -55,11 +137,24 @@ bool nominal(Model &m,const Json &t,std::set<const Json *> &used){
   pieces.push_back(field(t,"nameRange"));const auto base=string(field(t,"base"));
   if(!base.empty()){
     if(!m.need(m.source->types.count(base)&&string(field(*m.source->types.at(base),"kind"))=="reference","unowned original nominal base"))return false;
-    pieces.push_back("extends");pieces.push_back(field(*m.source->types.at(base),"name"));
+    const auto &baseType=*m.source->types.at(base);
+    pieces.push_back("extends");
+    if(callables){
+      Json use=nullptr;
+      if(!verifyOriginalQueryBase(m,*declaration,baseType,use))return false;
+      pieces.push_back(std::move(use));
+    }else pieces.push_back(field(baseType,"name"));
   }
-  pieces.push_back("{");std::vector<Json> members;int64_t prior=-1;
+  pieces.push_back("{");std::vector<Json> members;int64_t prior=-1,priorProperty=-1;
   for(const auto &f:items(field(t,"fields"))){
     const auto &origin=field(f,"origin");const auto r=range(origin);size_t fa,fb;
+    if(!field(f,"parameterBinding").getAsNull()){
+      if(!m.spend()||!m.need(callables&&!field(t,"constructor").getAsNull()&&number(field(origin,"start"))>priorProperty,
+        "original constructor parameter field order differs"))return false;
+      priorProperty=number(field(origin,"start"));
+      continue;
+    }
+    if(!m.need(priorProperty==-1,"original field follows constructor parameter fields"))return false;
     if(!m.spend()||!m.need(string(field(origin,"source"))==path&&number(field(origin,"start"))>prior&&m.source->types.count(string(field(f,"type"))),"ordered original field source/type differs")||!g.span(r,fa,fb))return false;
     prior=number(field(origin,"start"));size_t cursor=fa;bool readonly=false;std::string access="public";std::vector<Json> fp;
     while(cursor<fb&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"readonly","public","private","protected","declare"},g.tokens[cursor].text)){
@@ -78,20 +173,42 @@ bool nominal(Model &m,const Json &t,std::set<const Json *> &used){
     if(!initializer.getAsNull()){fp.push_back("=");fp.push_back(field(initializer,"range"));}
     if(!g.sequence(r,fp,true))return false;members.push_back(r);
   }
+  if(callables){
+    const auto &ctor=field(t,"constructor");
+    if(!ctor.getAsNull()){
+      if(!callables->member(t,*declaration,ctor,g,true))return false;
+      members.push_back(field(ctor,"declarationRange"));
+    }
+    int64_t priorMethod=-1;
+    for(const auto &id:items(field(t,"methods"))){
+      if(!m.spend(16+string(id).size()/8))return false;
+      const auto fn=m.source->functions.find(string(id));
+      if(!m.need(fn!=m.source->functions.end(),"original method is missing"))return false;
+      const auto &span=field(*fn->second,"declarationRange");
+      if(!m.need(number(field(span,"start"))>priorMethod,"original method order differs")||
+        !callables->member(t,*declaration,*fn->second,g,false))return false;
+      priorMethod=number(field(span,"start"));
+      members.push_back(span);
+    }
+  }
   std::sort(members.begin(),members.end(),[](const Json &x,const Json &y){return number(field(x,"start"))<number(field(y,"start"));});
   for(const auto &r:members)pieces.push_back(r);pieces.push_back("}");return g.sequence(field(t,"declarationRange"),pieces);
 }
 }
 bool Model::declarations(){
-  if(!need(source->functions.empty(),"Query component callable metadata has no selected Source body validation"))return false;
   constexpr llvm::StringLiteral names[]={"component","system","Query","Read","Write"};
   const auto &rows=items(field(payload(),"builtins"));if(!need(field(payload(),"builtins").getAsArray()&&rows.size()==5,"complete builtin inventory differs"))return false;
   for(size_t i=0;i<5;++i){const auto &row=rows[i];if(!original(row)||!need(string(field(row,"name"))==names[i]&&string(field(row,"sourcePath"))=="/src/system-query-context.d.ts"&&
     string(field(row,"kind"))==(i==0?"KindVariableDeclaration":i==1?"KindFunctionDeclaration":i>=3?"KindTypeAliasDeclaration":"KindInterfaceDeclaration"),"owned builtin declaration differs"))return false;builtins.emplace(names[i].str(),&row);}
+  std::optional<CallableBodies> callables;
+  if(!source->functions.empty()){
+    callables.emplace(*this);
+    if(!callables->prepare())return false;
+  }
   std::set<const Json *> used;std::string previous;
   for(const auto &t:items(field(payload(),"types"))){const auto id=string(field(t,"id")),kind=string(field(t,"kind"));
     if(!spend()||!need(previous.empty()||previous<id,"original type order differs"))return false;previous=id;
-    if(kind=="value"||kind=="reference"){if(!nominal(*this,t,used))return false;}
+    if(kind=="value"||kind=="reference"){if(!nominal(*this,t,used,callables?&*callables:nullptr))return false;}
     else if(kind=="scalar"){
       if(!need(id==string(field(t,"name"))&&string(field(t,"sourcePath"))=="/src/minimal-arrays-v8.d.ts"&&field(t,"constructor").getAsNull(),"pinned scalar identity differs"))return false;
       auto *node=at(string(field(t,"sourcePath")),field(t,"declarationRange"));if(!node||!need(same(field(*node,"nameRange"),field(t,"nameRange")),"pinned scalar declaration differs"))return false;
@@ -99,7 +216,8 @@ bool Model::declarations(){
       if(!need(id==kind&&field(t,"constructor").getAsNull(),"absence type identity differs"))return false;
     }else return need(false,"Query type context has unsupported non-fixed declaration");
   }
-  return need(field(payload(),"markerAliases").getAsArray()&&used.size()==items(field(payload(),"markerAliases")).size(),"unbound original component marker alias");
+  return need(field(payload(),"markerAliases").getAsArray()&&used.size()==items(field(payload(),"markerAliases")).size(),"unbound original component marker alias")&&
+    (!callables||callables->finish());
 }
 bool Model::bodies(){
   const auto &rows=items(field(payload(),"systems"));if(!need(field(payload(),"systems").getAsArray()&&!rows.empty()&&rows.size()<=4096,"complete system inventory required"))return false;

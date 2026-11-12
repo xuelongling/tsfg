@@ -71,12 +71,12 @@ Read/Write views of a shared component, inherited shadowed fields, direct same-w
 field arithmetic, assignment and compound assignment, plus same-type i32 field
 copies and direct field assignments with wrapping arithmetic. Ordinary system
 parameters require a selected native scalar Core type and systems return void.
-Component metadata uses fixed fields with scalar literal initializers and
-implicit zero-argument construction. Explicit constructor/method metadata
-requires further Source validation and remains a capability error. This route
-does not execute initializers or constructors. Unsupported source
-shapes remain capability errors. Input/output and Source reconstruction have
-bounded bytes, depth and work.
+Component metadata uses fixed fields with scalar literal initializers. Selected
+constructors and methods contribute to TypeId after the independent consumer
+joins each declaration, lexical binding, access rule, body, and required
+compatibility relation to the original Source. Unsupported callable shapes
+remain capability errors. Initializers and constructors contribute metadata
+only. Input/output and Source reconstruction have bounded bytes, depth and work.
 
 The real static CLI accepts:
 

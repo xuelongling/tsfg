@@ -315,10 +315,52 @@ bool Model::scalarTarget(const std::string &path,const Json &range,const Json &e
   Json traces=Array{};Proof proof{*this,traces};auto *binding=proof.binding(*identifier,true);
   return binding&&need(same(proof.origin(*binding),expected),"scalar call does not bind the original helper declaration");
 }
+namespace {
+bool bindsOriginalClass(Model &m,const Json &use,const Json &type){
+  Json traces=Array{};Proof proof{m,traces};
+  const auto *binding=proof.binding(use,true);
+  return binding&&m.need(string(field(*binding,"kind"))=="KindClassDeclaration"&&
+    same(field(*binding,"sourcePath"),field(type,"sourcePath"))&&
+    same(field(*binding,"nameRange"),field(type,"nameRange"))&&
+    same(field(*binding,"range"),field(type,"declarationRange")),"construction does not bind the original nominal declaration");
+}
+}
+bool verifyOriginalQueryBase(Model &m,const Json &declaration,const Json &base,Json &use){
+  Json traces=Array{};Proof proof{m,traces};
+  const Json *heritage=nullptr;
+  for(const auto *child:proof.child(declaration)){
+    if(!m.spend())return false;
+    if(string(field(*child,"kind"))!="KindHeritageClause")continue;
+    if(!m.need(!heritage,"original class has more than one heritage clause"))return false;
+    heritage=child;
+  }
+  if(!m.need(heritage,"original class has no direct base clause"))return false;
+  const auto entries=proof.child(*heritage);
+  if(!m.need(entries.size()==1&&string(field(*entries[0],"kind"))=="KindExpressionWithTypeArguments","original direct base clause differs"))return false;
+  const auto names=proof.child(*entries[0]);
+  if(!m.need(names.size()==1&&string(field(*names[0],"kind"))=="KindIdentifier"&&
+    same(field(*entries[0],"range"),field(*names[0],"range")),"original base requires one named binding"))return false;
+  use=field(*names[0],"range");
+  const auto path=string(field(declaration,"sourcePath"));
+  return m.grammar(path).sequence(field(*heritage,"range"),{Json("extends"),use})&&bindsOriginalClass(m,*names[0],base);
+}
+bool Model::constructorTarget(const std::string &path,const Json &value,const std::string &id){
+  const bool super=string(field(value,"kind"))=="superConstruct";
+  const auto *call=at(path,field(value,"range"),super?"KindCallExpression":"KindNewExpression");
+  if(!call)return false;
+  const auto &range=field(value,"calleeRange");
+  const auto *target=at(path,range,super?"KindSuperKeyword":"KindIdentifier");
+  if(!target||!need(same(field(*target,"parent"),field(*call,"id")),"original constructor callee parent differs"))return false;
+  if(super)return grammar(path).sequence(range,{Json("super")});
+  return bindsOriginalClass(*this,*target,*source->types.at(id));
+}
 bool Model::annotation(const std::string &path,const Json &range,const std::string &id,unsigned depth){
   if(!spend()||!need(depth<=64&&source->types.count(id),"original logical annotation graph differs"))return false;
   Json traces=Array{};Proof proof{*this,traces};const Json *reference=nullptr;
-  for(const auto &[key,node]:nodes)if(string(field(*node,"kind"))=="KindTypeReference"&&string(field(*node,"sourcePath"))==path&&same(field(*node,"range"),range)){reference=node;break;}
+  for(const auto &[key,node]:nodes){
+    if(!spend())return false;
+    if(string(field(*node,"kind"))=="KindTypeReference"&&string(field(*node,"sourcePath"))==path&&same(field(*node,"range"),range)){reference=node;break;}
+  }
   const auto &type=*source->types.at(id);
   if(reference){auto *decl=proof.binding(*reference);if(!decl)return false;
     if(same(field(type,"sourcePath"),field(*decl,"sourcePath"))&&same(field(type,"nameRange"),field(*decl,"nameRange")))return need(proof.arguments(*reference).empty(),"concrete source type has type arguments");

@@ -33,7 +33,8 @@ bool primitive(SourceModel &m,const Json &t){
   }
   return false;
 }
-bool construction(SourceModel &m,SourceBodies &b,const Json &t){
+}
+bool verifySourceConstruction(SourceModel &m,SourceRelations *relations,const Json &t){
   const auto id=string(field(t,"id")),base=string(field(t,"base"));const auto &c=field(t,"construction"),&ctor=field(t,"constructor");
   const bool explicitBody=!ctor.getAsNull();const auto &originOwner=explicitBody?ctor:t;
   const Json origin=Object{{"source",field(originOwner,"sourcePath")},{"start",field(field(originOwner,"declarationRange"),"start")},{"end",field(field(originOwner,"declarationRange"),"end")}};
@@ -63,7 +64,7 @@ bool construction(SourceModel &m,SourceBodies &b,const Json &t){
   const auto &signatureOwner=field(*declaration,"constructor").getAsNull()?*declaration:field(*declaration,"constructor");
   if(!m.need(same(field(sig,"sourcePath"),field(signatureOwner,"sourcePath"))&&same(field(sig,"declarationRange"),field(signatureOwner,"declarationRange")),"construction signature does not join original declaration"))return false;
   if(!explicitBody&&!base.empty()){
-    return m.need(b.relations&&same(field(c,"access"),field(field(*m.types.at(base),"construction"),"access")),"implicit forwarding effective access differs")&&b.relations->forward(t);
+    return m.need(relations&&same(field(c,"access"),field(field(*m.types.at(base),"construction"),"access")),"implicit forwarding effective access differs")&&relations->forward(t);
   }
   if(!m.need(field(c,"implicitForward").getAsNull()&&params.size()==items(field(ctor,"parameters")).size()&&
     (explicitBody||string(field(c,"access"))=="public"),"base construction parameters/access/forwarding differs"))return false;
@@ -74,9 +75,10 @@ bool construction(SourceModel &m,SourceBodies &b,const Json &t){
   }
   return true;
 }
+namespace {
 bool nominal(SourceModel &m,SourceBodies &b,SourceSyntax &s,const Json &t){
   const auto id=string(field(t,"id")),kind=string(field(t,"kind")),path=string(field(t,"sourcePath"));const auto &key=field(t,"nominalKey");
-  if(!construction(m,b,t)){
+  if(!verifySourceConstruction(m,b.relations,t)){
     if(m.error.code=="core-ir-common-source"){const auto &o=field(field(t,"construction"),"origin");m.error.path=string(field(o,"source"));
       m.error.range={uint32_t(field(o,"start").getAsInteger().value_or(0)),uint32_t(field(o,"end").getAsInteger().value_or(0))};}return false;
   }

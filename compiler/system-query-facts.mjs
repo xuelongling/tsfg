@@ -11,7 +11,7 @@ import {querySourceProof} from './system-query-source-bindings.mjs';
 import {decodeScalarHelpers} from './system-query-scalars.mjs';
 import {decodeQueryStatements} from './system-query-statements.mjs';
 import {commonSemanticIdentities,commonFieldId} from './common-program-identities.mjs';
-import {commonSourceGrammar,commonTypeSyntax,commonSourceAccess} from './common-program-source.mjs';
+import {commonSourceGrammar,commonSourceAccess} from './common-program-source.mjs';
 
 
 
@@ -84,7 +84,8 @@ function decodeOrigin(value,sources){
 }
 
 function decodeNodes(value,sources,spend){
-  const directory=new Map(),roots=new Map(),children=new Map();
+  const directory=new Map(),roots=new Map(),children=new Map(),typeReferences=new Map();
+  const typeKey=(path,span)=>path+'\0'+span.start+':'+span.end;
   const nodes=array(value).map(value=>{
     spend();const row=record(value,['id','parent','sourcePath','kind','range','name','nameRange']);
     const node={id:hash(row.id),parent:text(row.parent),sourcePath:text(row.sourcePath),kind:text(row.kind),range:range(row.range),name:text(row.name),nameRange:row.nameRange===null?null:range(row.nameRange)};
@@ -99,6 +100,10 @@ function decodeNodes(value,sources,spend){
     if(node.nameRange){sourceRange(node.nameRange,source.content,node.range);if(source.content.slice(node.nameRange.start,node.nameRange.end)!==node.name)fail('AST declaration name differs','source');}
     else if(node.name!=='')fail('unnamed AST node has declaration name','source');
     if(node.id!==sha256('tsfg.system-query.node.v1\0'+canonical({sourcePath:node.sourcePath,kind:node.kind,range:node.range,parent:node.parent})))fail('original AST identity differs','identity');
+    if(node.kind==='KindTypeReference'){
+      spend();const key=typeKey(node.sourcePath,node.range);
+      if(typeReferences.has(key))fail('ambiguous original type reference','source');typeReferences.set(key,node);
+    }
     directory.set(node.id,node);const siblings=children.get(node.parent)??[];siblings.push(node);children.set(node.parent,siblings);return node;
   });
   if(roots.size!==sources.size||nodes.length>100000)fail('complete Program AST inventory differs','source');
@@ -108,7 +113,7 @@ function decodeNodes(value,sources,spend){
     return result;
   };
   const original=value=>match(decodeOrigin(value,sources));
-  return {nodes,directory,roots,original,match,children};
+  return {nodes,directory,roots,original,match,children,typeReference:(path,span)=>typeReferences.get(typeKey(path,span))};
 }
 
 function decodeProgram(value){
@@ -158,7 +163,7 @@ function componentIdentities(payload,functions,sources,spend){
   return {types,semantic,components};
 }
 
-function verifyComponentSource(types,functions,grammars,semantic,spend){
+function verifyComponentSource(types,functions,grammars,semantic,spend,sourceTypes){
   const callables=new Map([...functions,...[...types.values()].flatMap(type=>type.constructor?[type.constructor]:[])].map(row=>[row.id,row]));
   const fields=new Map();
   for(const type of types.values())if(type.nominalKey){
@@ -173,7 +178,7 @@ function verifyComponentSource(types,functions,grammars,semantic,spend){
       if(all[++cursor]?.text!==':')fail('component field annotation missing','source');
       const end=field.initializer?fieldGrammar.indices(field.initializer.range).first-1:bounds.end-(all[bounds.end-1].text===';'?1:0);
       if(field.initializer&&all[end].text!=='=')fail('component field initializer anchor differs','source');
-      commonTypeSyntax(fieldGrammar,{start:all[cursor+1].start,end:all[end-1].end},field.type,types,spend);
+      sourceTypes.verifyLogical(field.origin.source,{start:all[cursor+1].start,end:all[end-1].end},field.type,types);
       fields.set(field.id,{sourceField:field.id,fieldId:commonFieldId(semantic.typeIds.get(type.id),field.name,index),ownerSourceType:type.id,ownerType:semantic.typeIds.get(type.id),sourceType:field.type,type:semantic.typeIds.get(field.type),name:field.name,readonly:field.readonly,access:field.access,sourcePath:field.origin.source,range:{start:field.origin.start,end:field.origin.end},nameRange});
     }
     const members=[...type.fields.filter(field=>!field.parameterBinding).map(field=>field.origin),...(type.methods??[]).map(id=>callables.get(id)?.declarationRange),...(type.constructor?[type.constructor.declarationRange]:[])];
@@ -311,7 +316,8 @@ export function readSystemQueryFacts(bytes,context){
   const types=array(payload.types),functions=array(payload.functions);
   if(types.length>4096||functions.length>4096)fail('source type/function directory exceeded','limit');
   const component=componentIdentities({...program,types},functions,sources,spend);
-  const fields=verifyComponentSource(component.types,functions,grammars,component.semantic,spend);
+  const sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
+  const fields=verifyComponentSource(component.types,functions,grammars,component.semantic,spend,sourceTypes);
   const markerAliases=array(payload.markerAliases).map(value=>{
     const row=record(value,descriptor.objects.markerAlias),useSourcePath=text(row.useSourcePath),useRange=range(row.useRange),declaration=ast.original(row.declaration),target=ast.original(row.target),grammar=grammars.get(useSourcePath);
     if(!grammar||canonical(declaration)!==canonical(builtins.get('component'))||target.sourcePath!==descriptor.profile.standardPath||target.name!=='tsfgComponent'||target.kind!=='KindFunctionDeclaration')fail('owned component marker alias differs','source');
