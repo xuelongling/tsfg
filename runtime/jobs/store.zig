@@ -17,7 +17,8 @@ const Archetype = struct {
     first_candidate: usize = 0,
 };
 const Slot = struct { generation: u32 = 1, live: bool = false, archetype: u32 = 0, chunk: u32 = 0, row: u32 = 0 };
-const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool, query: bool = false };
+const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool };
+// A query owns the complete product of its admitted chunks and selection.
 const QueryState = struct { token: u64, selection: []Resolved, chunks: []*Chunk };
 const FreeSlots = std.PriorityQueue(u32, void, compareSlotIndex);
 
@@ -31,6 +32,14 @@ fn columnIndex(columns: []const Column, component: u32) ?usize {
             return std.math.order(index, column.component);
         }
     }.compare);
+}
+
+// Use the previous match for dense selections; sparse gaps still use binary search.
+fn nextColumnIndex(columns: []const Column, first: usize, component: u32) usize {
+    if (columns[first].component == component) return first;
+    const next = first + 1;
+    if (columns[next].component == component) return next;
+    return next + columnIndex(columns[next..], component).?;
 }
 
 /// A Store owns component metadata and columns. Its address must remain stable while views live.
@@ -247,7 +256,7 @@ pub const Store = struct {
         self.lock();
         defer self.mutex.unlock();
         for (self.leases.items) |lease| if (lease.token == token) {
-            if (lease.query or (writable and !lease.writable)) return error.InvalidLease;
+            if (writable and !lease.writable) return error.InvalidLease;
             const column = lease.chunk.columns[lease.column];
             return column.allocation[0 .. lease.chunk.len * self.components[column.component].stride];
         };
@@ -257,18 +266,16 @@ pub const Store = struct {
         self.lock();
         defer self.mutex.unlock();
         for (self.leases.items, 0..) |lease, index| if (lease.token == token) {
-            if (lease.query) return error.InvalidLease;
-            self.endLease(lease);
+            self.endLease(lease.chunk, &lease.chunk.columns[lease.column], lease.writable);
             _ = self.leases.swapRemove(index);
             return;
         };
         return error.InvalidLease;
     }
-    fn endLease(self: *Store, lease: Lease) void {
-        const column = &lease.chunk.columns[lease.column];
-        if (lease.writable) column.writer = false else column.readers -= 1;
-        lease.chunk.active -= 1;
-        if (lease.chunk.active == 0 and lease.chunk.len < self.capacity) self.makeChunkAvailable(lease.chunk);
+    fn endLease(self: *Store, chunk: *Chunk, column: *Column, writable: bool) void {
+        if (writable) column.writer = false else column.readers -= 1;
+        chunk.active -= 1;
+        if (chunk.active == 0 and chunk.len < self.capacity) self.makeChunkAvailable(chunk);
     }
     fn makeChunkAvailable(self: *Store, chunk: *const Chunk) void {
         const archetype = &self.archetypes.items[chunk.archetype];
@@ -364,26 +371,30 @@ pub const Store = struct {
             for (archetype.chunks.items) |chunk| {
                 if (chunk.len == 0) continue;
                 _ = std.math.add(usize, chunk.active, resolved.len) catch return error.StorageLimit;
+                var first: usize = 0;
                 for (resolved) |item| {
-                    const column = chunk.columns[columnIndex(chunk.columns, item.component).?];
+                    const index = nextColumnIndex(chunk.columns, first, item.component);
+                    first = index + 1;
+                    const column = chunk.columns[index];
                     if (column.writer or (item.access == .write and column.readers != 0)) return error.BorrowConflict;
                     if (item.access == .read and column.readers == std.math.maxInt(u32)) return error.StorageLimit;
                 }
                 try matches.append(self.allocator, chunk);
             }
         }
-        const count = std.math.mul(usize, matches.items.len, resolved.len) catch return error.StorageLimit;
-        try self.leases.ensureUnusedCapacity(self.allocator, count);
         try self.queries.ensureUnusedCapacity(self.allocator, 1);
         const chunks = try matches.toOwnedSlice(self.allocator);
         const token = self.next_token;
-        for (chunks) |chunk| for (resolved) |item| {
-            const column_index = columnIndex(chunk.columns, item.component).?;
-            const column = &chunk.columns[column_index];
-            if (item.access == .write) column.writer = true else column.readers += 1;
-            chunk.active += 1;
-            self.leases.appendAssumeCapacity(.{ .token = token, .chunk = chunk, .column = column_index, .writable = item.access == .write, .query = true });
-        };
+        for (chunks) |chunk| {
+            var first: usize = 0;
+            for (resolved) |item| {
+                const index = nextColumnIndex(chunk.columns, first, item.component);
+                first = index + 1;
+                const column = &chunk.columns[index];
+                if (item.access == .write) column.writer = true else column.readers += 1;
+                chunk.active += 1;
+            }
+        }
         self.queries.appendAssumeCapacity(.{ .token = token, .selection = resolved, .chunks = chunks });
         self.next_token += 1;
         return .{ .store = self, .token = token };
@@ -413,15 +424,13 @@ pub const Store = struct {
         self.lock();
         defer self.mutex.unlock();
         for (self.queries.items, 0..) |state, state_index| if (state.token == token) {
-            var index: usize = 0;
-            while (index < self.leases.items.len) {
-                const lease = self.leases.items[index];
-                if (lease.token != token) {
-                    index += 1;
-                    continue;
+            for (state.chunks) |chunk| {
+                var first: usize = 0;
+                for (state.selection) |item| {
+                    const index = nextColumnIndex(chunk.columns, first, item.component);
+                    first = index + 1;
+                    self.endLease(chunk, &chunk.columns[index], item.access == .write);
                 }
-                self.endLease(lease);
-                _ = self.leases.swapRemove(index);
             }
             self.allocator.free(state.selection);
             self.allocator.free(state.chunks);

@@ -130,9 +130,15 @@ test "late conflicting chunk refuses the whole new query and preserves old borro
     try old.release();
     const reader = try store.query(&.{.{ .component = p, .access = .read }});
     const another = try store.query(&.{.{ .component = p, .access = .read }});
+    const single = try store.borrowRead(last, p);
     try std.testing.expectError(error.BorrowConflict, store.query(&.{.{ .component = p, .access = .write }}));
     try another.release();
+    try std.testing.expectError(error.BorrowConflict, store.borrowWrite(first, p));
     try reader.release();
+    const released = try store.borrowWrite(first, p);
+    try released.release();
+    try std.testing.expectError(error.BorrowConflict, store.borrowWrite(last, p));
+    try single.release();
     const writer = try store.query(&.{.{ .component = p, .access = .write }});
     try std.testing.expectError(error.BorrowConflict, store.borrowRead(last, p));
     try std.testing.expectError(error.BorrowConflict, store.query(&.{.{ .component = p, .access = .read }}));
