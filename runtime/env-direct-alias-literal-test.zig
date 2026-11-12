@@ -664,6 +664,7 @@ const CallerTransport = enum { original, copied, viewed, block_parameter, same_e
 const ChildInvocation = enum {
     direct, saved, saved_extra_use, saved_copy, saved_view, saved_copy_view, saved_copy_view_extra_use,
     saved_parameter, saved_parallel_parameter, saved_parameter_extra_use,
+    saved_copy_parameter, saved_parameter_view, saved_copy_parameter_view, saved_copy_parameter_view_extra_use,
 };
 const saved_code_type: t.TypeRef = @enumFromInt(types.len);
 const saved_code_register: model.Register = .{ .carrier = .{ .@"type" = saved_code_type }, .view = saved_code_type };
@@ -686,9 +687,17 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const code = r(code_index);
     const saves_code = invocation != .direct;
     const parameter_code = switch (invocation) {
-        .saved_parameter, .saved_parallel_parameter, .saved_parameter_extra_use => true,
+        .saved_parameter, .saved_parallel_parameter, .saved_parameter_extra_use,
+        .saved_copy_parameter, .saved_parameter_view, .saved_copy_parameter_view, .saved_copy_parameter_view_extra_use,
+        => true,
         else => false,
     };
+    const copy_before_parameter = invocation == .saved_copy_parameter or
+        invocation == .saved_copy_parameter_view or invocation == .saved_copy_parameter_view_extra_use;
+    const view_after_parameter = invocation == .saved_parameter_view or
+        invocation == .saved_copy_parameter_view or invocation == .saved_copy_parameter_view_extra_use;
+    const parameter_index = code_index + 1 + @as(u16, @intFromBool(copy_before_parameter));
+    const code_parameter = r(parameter_index);
     const make_code: ins.Instruction = .{ .source = at, .result = code, .operands = &.{receiver}, .data = .{ .function_make = .{ .function = @enumFromInt(1) } } };
     const copy_code: ins.Instruction = .{
         .source = at, .result = r(code_index + 1), .operands = &.{code},
@@ -704,17 +713,21 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const extra_use: ins.Instruction = .{
         .source = at, .result = r(code_index + 3), .operands = &.{r(code_index + 1)}, .data = copy_code.data,
     };
-    const code_transport = switch (invocation) {
-        .direct, .saved, .saved_parameter, .saved_parallel_parameter, .saved_parameter_extra_use => [_]ins.Instruction{},
+    const code_transport = if (parameter_code) [_]ins.Instruction{} else switch (invocation) {
+        .direct, .saved => [_]ins.Instruction{},
         .saved_extra_use, .saved_copy => [_]ins.Instruction{copy_code},
         .saved_view => [_]ins.Instruction{view_code},
         .saved_copy_view => [_]ins.Instruction{ copy_code, view_copy },
         .saved_copy_view_extra_use => [_]ins.Instruction{ copy_code, view_copy, extra_use },
+        else => unreachable,
     };
-    const invoked_code = switch (invocation) {
+    const invoked_code = if (parameter_code)
+        r(parameter_index + @as(u16, @intFromBool(view_after_parameter)))
+    else switch (invocation) {
         .direct, .saved, .saved_extra_use => code,
-        .saved_copy, .saved_view, .saved_parameter, .saved_parallel_parameter, .saved_parameter_extra_use => r(code_index + 1),
+        .saved_copy, .saved_view => r(code_index + 1),
         .saved_copy_view, .saved_copy_view_extra_use => r(code_index + 2),
+        else => unreachable,
     };
     const invoke_child: ins.Instruction = .{
         .source = at, .result = null, .operands = if (invocation == .direct) &.{receiver} else &.{invoked_code},
@@ -744,19 +757,30 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         .first_edge_only => if (transport == .rotated_edges) [_]ins.Instruction{initialize} else [_]ins.Instruction{},
         .after, .absent, .second_edge_only, .both_edges => [_]ins.Instruction{},
     };
+    const carried_code = if (copy_before_parameter) r(code_index + 1) else code;
     const branch_code: ins.Instruction = .{
         .source = at, .result = null,
-        .operands = if (invocation == .saved_parallel_parameter) &.{ r(0), code, code } else &.{code},
+        .operands = if (invocation == .saved_parallel_parameter) &.{ r(0), code, code } else &.{carried_code},
         .data = if (invocation == .saved_parallel_parameter)
             .{ .cond_br = .{ .true_destination = b(4), .false_destination = b(4), .true_count = 1 } }
         else
             .{ .br = .{ .destination = b(4) } },
     };
-    const extra_parameter_use: ins.Instruction = .{
-        .source = at, .result = r(code_index + 2), .operands = &.{invoked_code}, .data = copy_code.data,
+    const view_parameter: ins.Instruction = .{
+        .source = at, .result = r(parameter_index + 1), .operands = &.{code_parameter}, .data = view_code.data,
     };
-    const parameter_use = if (invocation == .saved_parameter_extra_use) [_]ins.Instruction{extra_parameter_use} else [_]ins.Instruction{};
-    const call = if (parameter_code) [_]ins.Instruction{ make_code, branch_code } else
+    const extra_parameter_use: ins.Instruction = .{
+        .source = at, .result = r(parameter_index + 1 + @as(u16, @intFromBool(view_after_parameter))),
+        .operands = &.{code_parameter}, .data = copy_code.data,
+    };
+    const parameter_use = switch (invocation) {
+        .saved_parameter_extra_use => [_]ins.Instruction{extra_parameter_use},
+        .saved_parameter_view, .saved_copy_parameter_view => [_]ins.Instruction{view_parameter},
+        .saved_copy_parameter_view_extra_use => [_]ins.Instruction{ view_parameter, extra_parameter_use },
+        else => [_]ins.Instruction{},
+    };
+    const parameter_transport = if (copy_before_parameter) [_]ins.Instruction{copy_code} else [_]ins.Instruction{};
+    const call = if (parameter_code) [_]ins.Instruction{make_code} ++ parameter_transport ++ [_]ins.Instruction{branch_code} else
         (if (saves_code) [_]ins.Instruction{make_code} else [_]ins.Instruction{}) ++
         code_transport ++ before_call ++ [_]ins.Instruction{invoke_child};
     const to_call: ins.Instruction = .{ .source = at, .result = null,
@@ -792,7 +816,8 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
     const caller_registers = base_registers ++ ([_]model.Register{env_register} ** aliases_count) ++ [_]model.Register{payload_register} ++
         (if (has_other or transport == .repeated_previous) [_]model.Register{env_register} else [_]model.Register{}) ++
         (if (saves_code) [_]model.Register{saved_code_register} else [_]model.Register{}) ++
-        ([_]model.Register{saved_code_register} ** (code_transport.len + @as(usize, @intFromBool(parameter_code)) + parameter_use.len));
+        ([_]model.Register{saved_code_register} **
+            (code_transport.len + parameter_transport.len + @as(usize, @intFromBool(parameter_code)) + parameter_use.len));
     const caller_blocks = [_]model.Block{
         .{ .parameters = &.{r(0)}, .instructions = &caller_entry },
         .{ .parameters = &.{}, .instructions = caller_return },
@@ -804,7 +829,7 @@ fn runChild(comptime initialization: CallerInit, comptime access: ChildAccess, c
         .repeated_previous => [_]model.Block{.{ .parameters = &.{r(4)}, .instructions = &([_]ins.Instruction{ condition, alloc, init_copy } ++ call) }},
         else => [_]model.Block{},
     } ++ if (parameter_code) [_]model.Block{.{
-        .parameters = &.{invoked_code}, .instructions = &(parameter_use ++ before_call ++ [_]ins.Instruction{invoke_child}),
+        .parameters = &.{code_parameter}, .instructions = &(parameter_use ++ before_call ++ [_]ins.Instruction{invoke_child}),
     }} else [_]model.Block{};
     const child_load: ins.Instruction = .{ .source = at, .result = r(1), .operands = &.{r(0)}, .data = .{ .environment_load = .{ .slot = @enumFromInt(0) } } };
     const child_store: ins.Instruction = .{ .source = at, .result = null, .operands = &.{ r(0), r(1) }, .data = .{ .environment_store = .{ .slot = @enumFromInt(0) } } };
@@ -1309,4 +1334,24 @@ test "saved Code passed by br observes selected Env init in the call block" {
 
 test "saved Code block parameter with a second use stays outside the mixed Env proof" {
     try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_parameter_extra_use, true);
+}
+
+test "saved Code copy before br checks the uninitialized second Env edge" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_copy_parameter, false);
+}
+
+test "saved Code view after br checks the uninitialized first Env edge" {
+    try runChild(.second_edge_only, .store, .direct, .distinct_edges, .saved_parameter_view, false);
+}
+
+test "saved Code copied before br and viewed after br accepts two initialized Env edges" {
+    try runChild(.both_edges, .load, .direct, .distinct_edges, .saved_copy_parameter_view, true);
+}
+
+test "saved Code copied before br and viewed after br sees selected Env init" {
+    try runChild(.before, .load, .direct, .distinct_edges, .saved_copy_parameter_view, true);
+}
+
+test "saved Code forwarded across br with a second parameter use stays outside the mixed Env proof" {
+    try runChild(.first_edge_only, .load, .direct, .distinct_edges, .saved_copy_parameter_view_extra_use, true);
 }

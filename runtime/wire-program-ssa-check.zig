@@ -1037,6 +1037,24 @@ const Graph = struct {
         return blocked;
     }
 
+    fn lastLocalSavedCodeAlias(self: *Graph, block: usize, code: t.RegisterRef) Error!t.RegisterRef {
+        var current = code;
+        while (true) {
+            try self.c.charge(3);
+            const use = self.uses[@intFromEnum(current)];
+            if (use.count != 1 or use.block != block) return current;
+            try self.c.charge(3);
+            const consumer = &self.f.blocks[block].instructions[use.position];
+            const alias = switch (consumer.data) {
+                .domain_copy, .domain_view => consumer.result orelse return current,
+                else => return current,
+            };
+            const definition = try self.initializerCodeDefinition(alias);
+            if (definition != .source or definition.source != current) return current;
+            current = alias;
+        }
+    }
+
     fn savedEnvironmentCallThroughBranch(
         self: *Graph,
         block: usize,
@@ -1054,9 +1072,16 @@ const Graph = struct {
             .cond_br => 1,
             else => return false,
         };
-        const use = self.uses[@intFromEnum(code)];
+        var carried = code;
+        var use = self.uses[@intFromEnum(code)];
+        if (use.block != block or use.position != position) {
+            carried = try self.lastLocalSavedCodeAlias(block, code);
+            try c.charge(3);
+            use = self.uses[@intFromEnum(carried)];
+            if (use.block != block or use.position != position) return false;
+        }
         const facts = &self.facts[block];
-        if (use.block != block or use.position != position or use.count != facts.count or use.operand < first_argument) return false;
+        if (use.count != facts.count or use.operand < first_argument) return false;
         const argument = use.operand - first_argument;
         const destination = facts.successors[0];
         if (self.facts[destination].predecessor_count != 1) return false;
@@ -1066,13 +1091,16 @@ const Graph = struct {
             try c.charge(4);
             if (next != destination) return false;
             const arguments = environmentEdgeArguments(terminator, edge).?;
-            if (argument >= arguments.len or arguments[argument] != code) return false;
+            if (argument >= arguments.len or arguments[argument] != carried) return false;
         }
         try c.charge(5);
         const target = &self.f.blocks[destination];
         const parameter = target.parameters[argument];
         const invoke = &target.instructions[target.instructions.len - 1];
-        if (invoke.data != .eh_invoke_indirect or invoke.operands[0] != parameter or self.uses[@intFromEnum(parameter)].count != 1) return false;
+        if (invoke.data != .eh_invoke_indirect) return false;
+        const receiver = invoke.operands[0];
+        const consumed = if (receiver == parameter) parameter else try self.lastLocalSavedCodeAlias(destination, parameter);
+        if (receiver != consumed or self.uses[@intFromEnum(consumed)].count != 1) return false;
         for (calls) |*call| {
             try c.charge(2);
             if (call.block < destination) continue;
