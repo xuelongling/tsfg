@@ -72,7 +72,8 @@ try {
   }else{
   if(['query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit))throw new TypeError('r03-cli-options: Query output requires --query-request');
   const bytes = await readFile(options.get("--input"));
-  const input = inputKind === "hir" ? readHir(bytes) : JSON.parse(bytes.toString("utf8"));
+  const input = inputKind === "hir" ? readHir(bytes)
+    : JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
   if (inputKind === "hir") {
     const family = familyOf(input);
     if (fixedCommonCore && family !== commonHirFormat.family)

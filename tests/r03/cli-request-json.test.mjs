@@ -11,7 +11,7 @@ const cli = fileURLToPath(new URL("../../tooling/tsfgc.mjs", import.meta.url));
 
 /**
  * @param {string} name
- * @param {{emit?: string, requests?: string, inputText?: string}} [options]
+ * @param {{emit?: string, requests?: string, inputText?: string|Uint8Array}} [options]
  */
 async function runCli(name, { emit, requests, inputText } = {}) {
   const storage = process.env.TSFG_TEST_STORAGE;
@@ -73,4 +73,21 @@ test("input file JSON is parsed before request JSON", async () => {
   assert.equal(child.status, 2, child.stdout.toString() + child.stderr.toString());
   assert.equal(child.stdout.length, 0);
   assert.match(child.stderr.toString(), /invalid-input-json/);
+});
+
+// Owned Source JSON must fail at decoding before any frontend admission.
+test("source CLI rejects malformed UTF-8 in otherwise valid JSON", async () => {
+  const marker = "UTF8_SOURCE_MARKER";
+  const input = Buffer.from(JSON.stringify(await sourceInput(`// ${marker}\nexport function answer(): i32 { return 42; }`)));
+  const offset = input.indexOf(marker);
+  assert.ok(offset >= 0);
+  const replace = value => Buffer.concat([input.subarray(0, offset), value, input.subarray(offset + marker.length)]);
+  const invalid = await runCli("source-invalid-utf8", { emit: "hir", inputText: replace(Buffer.from([0xc3])) });
+  assert.equal(invalid.status, 2, invalid.stdout.toString() + invalid.stderr.toString());
+  assert.equal(invalid.stdout.length, 0);
+  assert.match(invalid.stderr.toString(), /utf-8/i);
+  const valid = await runCli("source-valid-utf8", { emit: "hir", inputText: replace(Buffer.from("中�")) });
+  assert.equal(valid.status, 11, valid.stdout.toString() + valid.stderr.toString());
+  assert.equal(valid.stderr.length, 0);
+  assert.equal(JSON.parse(valid.stdout.toString()).message, "frontend executable is required");
 });
