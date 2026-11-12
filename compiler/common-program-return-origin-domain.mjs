@@ -3,7 +3,7 @@
 // Actual object, Code/Env instance or Borrow proof. Heap contents and control
 // existence are separate lattices. Every call resumes its own saved context.
 import {canonical,commonCheck as check} from './common-program-common.mjs';
-import {commonReturnOriginReceivers,commonReceiverActivations} from './common-program-return-origin-receivers.mjs';
+import {commonReturnOriginReceivers,commonReceiverActivations,commonClosedReceiverFactory} from './common-program-return-origin-receivers.mjs';
 
 export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actualType,environments,constructions=new Map(),rootProtocol},spend) {
   const isGraph5=graph=>graph?.format?.family==='tsfg.return-origin-graph-candidate'&&graph.format.version===5;
@@ -42,6 +42,8 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
   const location=(identity,node,owner)=>{const encoded=key(identity);let id=locationIds.get(encoded);if(id!==undefined)return id;
     spend();check(locations.length<65536,'limit');id=locations.length;locationIds.set(encoded,id);locations.push({node,owner});changed=true;return id;};
   const receivers=commonReturnOriginReceivers({spend,constructions,location,locations});
+  const closedFactory=commonClosedReceiverFactory(fixed,environments,spend),closedInput=new Map();
+  let closedFrames;
   const address=(base,selector,view)=>{const encoded=key([base,selector,view]);let id=addressIds.get(encoded);if(id!==undefined)return id;
     spend();check(addresses.length<65536,'limit');id=addresses.length;addressIds.set(encoded,id);addresses.push({base,selector,view});changed=true;return id;};
   const put=(heap,base,selector,view,values)=>{if(!values.size)return;const id=address(base,selector,view);let stored=heap.get(id);
@@ -185,15 +187,19 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
     for(const field of ['reads','writes'])for(const id of upper.hostResources[field]){spend();effect(context,field==='reads'?'read':'write','h:'+id);}
     for(const flag in upper.facets){spend();if(flag!=='mayThrow'&&upper.facets[flag])add(context.facets,[flag]);}
   };
-  const ensure=(id,arguments_,environment,input,scope,source=null,receiver=new Set(),frameWorld=new Map())=>{
+  const ensure=(id,arguments_,environment,input,scope,source=null,receiver=new Set(),frameWorld=new Map(),isolation=null)=>{
     const remember=context=>{if(source!==null){const id=key([source.context.index,source.heap]);if(!context.entrySources.has(id)){context.entrySources.set(id,source);changed=true;}}return context;};
+    if(isolation){
+      input=closedInput;scope=key(['closed',scope]);source=null;
+      frameWorld=closedFrames??=receivers.world(new Set());
+    }
     spend(arguments_.length+1);const signature=key([id,scope,arguments_.map(ordered),ordered(environment),heapKey(input),ordered(receiver),receivers.snapshot(frameWorld)]);let index=contextIds.get(signature);if(index!==undefined)return remember(contexts[index]);
     const record=id===null?{graph:root,upper:null,protocol:rootProtocol}:fixed.get(id);check(record,'return-origins','fixed call member is absent');const graph=record.graph;check(graph,'return-origin-call-open','fixed callee return graph is unavailable');format(graph);
     if(!receiverGraphs.has(graph)){check(commonReceiverActivations(graph,spend),'return-origin-repeat-frame-open','repeated receiver-frame activation requires a fresh-cell model');receiverGraphs.add(graph);}
     check(record.protocol,'return-origin-environment-open','fixed function environment protocol is missing');
     spend(graph.nodes.length*3+graph.heaps.length*5+graph.controls.length+graph.calls.length+arguments_.length+environment.size+receiver.size+1);check(contexts.length<65536,'limit');
     const heap=new Map();mergeHeap(heap,input);const copiedArguments=arguments_.map(values=>{spend(values.size+1);return new Set(values);});
-    const context={index:contexts.length,id,scope,graph,protocol:record.protocol,environment:new Set(environment),upper:record.upper,arguments:copiedArguments,input:heap,values:graph.nodes.map(()=>new Set()),heaps:graph.heaps.map(()=>new Map()),
+    const context={index:contexts.length,id,scope,graph,isolation,protocol:record.protocol,environment:new Set(environment),upper:record.upper,arguments:copiedArguments,input:heap,values:graph.nodes.map(()=>new Set()),heaps:graph.heaps.map(()=>new Map()),
       controls:graph.controls.map(()=>false),ready:graph.nodes.map(()=>false),heapReady:graph.heaps.map(()=>false),targets:graph.calls.map(()=>new Set()),normal:new Set(),language:new Set(),normalHeap:new Map(),languageHeap:new Map(),normalLive:false,languageLive:false,normalReady:false,languageReady:false,
       effects:new Map(),facets:new Set(),calls:new Set(),entrySources:new Map(),receiver:new Set(receiver),inputReceivers:receivers.copy(frameWorld),receiverHeaps:graph.heaps.map(()=>new Map()),receiverValues:graph.heaps.map(()=>new Set()),receiverLive:graph.heaps.map(()=>false),normalReceivers:new Map(),languageReceivers:new Map(),boundReceivers:new Set()};
     index=contexts.length;contexts.push(context);contextIds.set(signature,index);changed=true;return remember(context);
@@ -217,7 +223,8 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
         const receiver=call.receiver===null?new Set():resolved(context,call.receiver);
         if(record.protocol.construction){check(call.receiver!==null,'return-origin-receiver','constructor frame is missing');args.unshift(new Set());}
         else check(call.receiver===null,'return-origin-receiver','ordinary call cannot receive a frame');
-        const expected=record.protocol.lexicalEnvironment,scope=key([context.id,call.site,index]),selected=[];
+        const expected=record.protocol.lexicalEnvironment,selected=[];
+        const scope=key(context.isolation?.scopedCall===index?[context.index,context.id,call.site,index]:[context.id,call.site,index]);
         if(call.callee!==null){
           const codes=resolved(context,call.callee);let otherCode=codes.size>0;
           for(const id of codes){spend();const node=locations[id].node;
@@ -245,9 +252,10 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
           }
         }else if(expected===null){check(call.environment===null,'return-origin-environment-open','unexpected direct environment');selected.push(new Set());}
         else{check(call.environment!==null,'return-origin-environment-open','direct environment is missing');const values=selectEnvironments(resolved(context,call.environment),expected);if(values.size)selected.push(values);}
+        const isolation=selected.length>0?closedFactory(graph,call,args,locations):null;
         for(const environment of selected){
           spend();if(!incomingCapturesReady(context.heaps[call.heap],environment,record))continue;
-          const called=ensure(call.functionId,args,environment,context.heaps[call.heap],scope,{context,heap:call.heap},receiver,context.receiverHeaps[call.heap]);
+          const called=ensure(call.functionId,args,environment,context.heaps[call.heap],scope,{context,heap:call.heap},receiver,context.receiverHeaps[call.heap],isolation);
           add(context.targets[index],[called.index]);
         }
       }
@@ -341,7 +349,14 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
             if(action.live){if(!context.receiverLive[index]){context.receiverLive[index]=true;changed=true;}mergeHeap(output,context.heaps[heap.previous]);
               add(context.receiverValues[index],action.result);add(context.boundReceivers,receivers.bound(action.world,context.receiver));changed=receivers.merge(context.receiverHeaps[index],action.world)||changed;}
           }
-        }else if(heap.kind==='call')for(const target of context.targets[heap.call]){spend();mergeHeap(output,contexts[target][heap.completion+'Heap']);if(contexts[target][heap.completion+'Ready'])changed=receivers.merge(context.receiverHeaps[index],contexts[target][heap.completion+'Receivers'])||changed;}
+        }else if(heap.kind==='call')for(const target of context.targets[heap.call]){
+          spend();const called=contexts[target],ready=called[heap.completion+'Ready'];
+          if(called.isolation){
+            if(!ready)continue;const saved=graph.calls[heap.call].heap;
+            mergeHeap(output,context.heaps[saved]);changed=receivers.merge(context.receiverHeaps[index],context.receiverHeaps[saved])||changed;
+          }else if(ready)changed=receivers.merge(context.receiverHeaps[index],called[heap.completion+'Receivers'])||changed;
+          mergeHeap(output,called[heap.completion+'Heap']);
+        }
         else check(false,'return-origins','unknown fixed heap equation');
         let defined=false;
         if(heap.kind==='entry')defined=true;
@@ -394,8 +409,13 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
         pending.push({context:current.context,heap:row.previous});continue;
       }
       if(row.kind==='copy'||row.kind==='receiverAction'){pending.push({context:current.context,heap:row.previous});continue;}
-      for(const target of current.context.targets[row.call]){spend();const called=contexts[target];
-        for(const state of called.graph.exits[row.completion]){spend();if(called.controls[state.control])pending.push({context:called,heap:state.heap});}}
+      for(const target of current.context.targets[row.call]){spend();const called=contexts[target];let live=false;
+        for(const state of called.graph.exits[row.completion]){spend();if(!called.controls[state.control])continue;
+          live=true;pending.push({context:called,heap:state.heap});}
+        // The private activation proves its own stores independently. The
+        // ambient path carries only cells that existed before that call.
+        if(live&&called.isolation){spend();pending.push({context:current.context,heap:current.context.graph.calls[row.call].heap});}
+      }
     }definitionMemo.set(signature,defined);return defined;
   };
   const completeCapture=(context,heap,bases,layoutId,slotKey)=>{
@@ -414,6 +434,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
   // an actually reached capture/parent/callee with no source be declared OPEN.
   let potentialLanguage=false;
   for(const context of contexts){const graph=context.graph;
+    if(context.isolation)check(!context.languageLive,'return-origin-environment-open','a closed factory reached a language completion');
     for(const completion of ['normal','language'])for(const state of graph.exits[completion]){spend();if(context.controls[state.control])returnedEnvironments(context,resolved(context,graph[completion]),state.heap);}
     for(let index=0;index<graph.nodes.length;index++){spend();const node=graph.nodes[index];if(!context.controls[node.control])continue;
       if(node.kind==='capture')completeCapture(context,node.heap,resolved(context,node.environment),node.layout,node.id);

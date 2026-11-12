@@ -95,6 +95,8 @@ public:
     if(!ready_){result.reason="scope-directories-unbuilt";return result;}const auto found=directory_.functions.find(V4::Detail::view(functionId));if(found==directory_.functions.end()){result.reason="scope-unowned-function";return result;}const auto &row=found->second;
     result.protocol.kind=row.kind==V4::FunctionKind::Source||row.kind==V4::FunctionKind::Method?Domain::ProtocolKind::Ordinary:row.kind==V4::FunctionKind::ConstructionBody?Domain::ProtocolKind::ConstructionFrame:Domain::ProtocolKind::Future;
     result.protocol.complete=row.environmentMetadataComplete;
+    if(!m.spend()){result.status=BuildStatus::BudgetError;return result;}
+    result.protocol.signature=&row;
     if(row.construction){V4::Constructor copy;
       if(!m.copy(copy.id,row.construction->id)||!m.copy(copy.owner,row.construction->owner)){result.status=BuildStatus::BudgetError;return result;}
       if(row.construction->base){std::string base;if(!m.copy(base,*row.construction->base)){result.status=BuildStatus::BudgetError;return result;}copy.base=std::move(base);}

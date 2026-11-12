@@ -12,7 +12,14 @@ using Ref=V4::Ref;
 constexpr Ref None=std::numeric_limits<Ref>::max();
 enum class Status {Solved,Open,BudgetError};
 enum class ProtocolKind {Ordinary,ConstructionFrame,Future};
-struct Protocol {ProtocolKind kind=ProtocolKind::Future;bool complete=false;std::optional<std::string> lexicalEnvironment,activationEnvironment;std::optional<V4::Constructor> construction;};
+struct Protocol {
+  ProtocolKind kind=ProtocolKind::Future;
+  bool complete=false;
+  std::optional<std::string> lexicalEnvironment,activationEnvironment;
+  std::optional<V4::Constructor> construction;
+  // The immutable admitted function row outlives its protocol and the solve.
+  const V4::FunctionRow *signature=nullptr;
+};
 struct Flags {bool read=false,write=false,structural=false;};
 struct CaptureAccess {std::string slot;Flags flags;};
 struct ResourceAccess {std::vector<std::string> reads,writes;};
@@ -20,7 +27,7 @@ struct PublishedEffects {
   std::vector<Flags> parameters;
   std::vector<CaptureAccess> captures;
   ResourceAccess globals,hostResources;
-  // True facet names only; mayThrow is derived from completion control instead.
+  // True fixed facets. Inferred mayThrow comes from completion control.
   std::vector<std::string> facets;
 };
 struct FixedFunction {
@@ -75,13 +82,39 @@ struct SolveResult {Status status=Status::Open;Summary summary;const char *reaso
 
 namespace Detail {
 using Set=std::set<Ref>;
-using Heap=std::map<Ref,Set>;
+struct Heap : std::map<Ref,Set> {
+  std::size_t revision=0;
+  std::map<const Heap *,std::size_t> incorporated;
+};
 using Key=std::vector<Ref>;
 using Meter=V4::Detail::Meter;
 struct Location {LocationKind kind=LocationKind::Unknown;Ref type=None,label=None,owner=None,site=None,layout=None,function=None,environment=None,source=None,creator=None;unsigned categories=7;bool receiverRoot=false;};
 struct Binding {bool unbound=true;Set values;};
-struct FrameWorld : std::map<Ref,Binding> {bool live=false;};
+struct FrameWorld : std::map<Ref,Binding> {
+  using Revisions=std::map<const FrameWorld *,std::size_t>;
+  bool live=false;
+  std::size_t revision=0;
+  std::unique_ptr<Revisions> incorporated;
+};
 struct Address {Ref base=0,selector=0,view=0;};
+struct CallInput {
+  std::size_t cardinality=0,heapRevision=0,frameRevision=0;
+  bool scheduled=false,isolated=false;
+};
+struct HeapInput {
+  std::size_t cardinality=0,heapRevision=0,frameRevision=0;
+  bool applied=false;
+  bool operator==(const HeapInput &other) const{
+    return applied==other.applied&&cardinality==other.cardinality&&
+      heapRevision==other.heapRevision&&frameRevision==other.frameRevision;
+  }
+};
+struct ExitInput {
+  std::size_t heapRevision=None,frameRevision=None;
+};
+struct ValueInput {
+  std::size_t cardinality=None,heapRevision=0;
+};
 struct InheritedInput {
   std::size_t effectCount=0,boundHistoryRevision=0,boundReceiverCount=0;
 };
@@ -92,6 +125,8 @@ struct Context {
   const V4::Graph *graph=nullptr;
   const PublishedEffects *upper=nullptr;
   const Protocol *protocol=nullptr;
+  bool isolated=false;
+  Ref scopedCall=None;
   Set environment;
   Set receivers,boundReceivers;
   // Keep each actual Frame's lifetime separate so child-call prefixes can be
@@ -100,8 +135,12 @@ struct Context {
   std::size_t boundHistoryRevision=0;
   std::set<std::pair<Ref,Ref>> entrySources;
   std::vector<Set> arguments,values,targets;
+  std::size_t captureTopologyRevision=0;
+  std::vector<CallInput> callInputs;
+  std::vector<ValueInput> valueInputs;
   Heap input,normalHeap,languageHeap;
   std::vector<Heap> heaps;
+  std::vector<HeapInput> heapInputs;
   std::vector<bool> controls,ready,heapReady;
   FrameWorld inputFrames,normalFrames,languageFrames;
   std::vector<FrameWorld> frames;
@@ -109,6 +148,7 @@ struct Context {
   std::vector<bool> receiverLive;
   Set normal,language;
   bool normalLive=false,languageLive=false,normalReady=false,languageReady=false;
+  std::array<std::vector<ExitInput>,2> exitInputs;
   std::array<Set,3> effects;
   Set facets,calls;
   std::unique_ptr<std::map<Ref,InheritedInput>> inheritedInputs;
@@ -127,9 +167,33 @@ class Solver {
   std::map<const std::string *,Ref> graphSymbols_;
   std::map<Key,Ref> locationIds_,addressIds_,scopeIds_,siteIds_,contextIds_;
   std::vector<Location> locations_;
+  std::optional<std::map<Ref,bool>> inlineTypes_;
   std::vector<Address> addresses_;
   std::map<Ref,Set> environmentParents_;
   std::map<Ref,Ref> slotOwners_;
+  enum class ClosedEnvironment {None,Incoming,Activation,Delegated};
+  struct ClosedProof {
+    bool privateStorage=false;
+    ClosedEnvironment returned=ClosedEnvironment::None;
+    Ref scopedCall=None;
+  };
+  struct ClosedCall {
+    const FixedFunction *member=nullptr;
+    ClosedEnvironment environment=ClosedEnvironment::None;
+  };
+  struct ClosedWork {
+    const FixedFunction *member=nullptr;
+    const V4::Value *activation=nullptr;
+    std::vector<ClosedCall> calls;
+    std::size_t next=0;
+  };
+  std::map<const FixedFunction *,ClosedProof> closedRoutines_;
+  struct CaptureSource {Ref context;std::optional<Ref> heap;const Set *bases;};
+  struct CaptureSourceMemo {
+    std::vector<CaptureSource> sources;
+    std::vector<std::pair<Ref,std::size_t>> dependencies;
+  };
+  std::optional<std::map<std::pair<Ref,Ref>,CaptureSourceMemo>> captureSourceMemo_;
   struct CaptureSlotKey {
     Ref layout;
     const std::string *key;
@@ -179,15 +243,67 @@ class Solver {
     if(!m_.spend())return false;target.insert(value);if(lattice)changed_=true;return true;
   }
   bool add(Set &target,const Set &source,bool lattice=true){if(!m_.spend(source.size()))return false;for(auto value:source)if(!insert(target,value,lattice))return false;return true;}
-  bool merge(Heap &target,const Heap &source){
-    if(!m_.spend(source.size()))return false;for(const auto &row:source){
-      if(!numericLookup(target.size()))return false;auto found=target.find(row.first);
-      if(found==target.end()){if(!m_.spend())return false;found=target.emplace(row.first,Set{}).first;changed_=true;}
-      if(!add(found->second,row.second))return false;
-    }return true;
+  bool growHeapRevision(Heap &heap){
+    if(!m_.spend())return false;
+    ++heap.revision;
+    return true;
   }
-  bool resolve(const Context &context,const std::vector<Ref> &refs,Set &out){
-    if(!m_.spend(refs.size()))return false;for(auto ref:refs)if(!add(out,context.values[ref],false))return false;return true;
+  bool merge(Heap &target,const Heap &source){
+    if(!m_.spend(source.size()))return false;
+    bool grew=false;
+    for(const auto &row:source){
+      if(!numericLookup(target.size()))return false;auto found=target.find(row.first);
+      if(found==target.end()){if(!m_.spend())return false;found=target.emplace(row.first,Set{}).first;changed_=true;grew=true;}
+      const auto size=found->second.size();
+      if(!add(found->second,row.second))return false;
+      grew=grew||found->second.size()!=size;
+    }
+    return !grew||growHeapRevision(target);
+  }
+  bool mergePersistentHeap(Heap &target,const Heap &source){
+    if(!m_.spend())return false;
+    if(&target==&source||source.empty())return true;
+    // These context heaps have stable addresses and only gain rows and values.
+    // Growth in the target cannot invalidate an already incorporated source.
+    if(!numericLookup(target.incorporated.size()))return false;
+    const auto found=target.incorporated.lower_bound(&source);
+    const bool recorded=found!=target.incorporated.end()&&found->first==&source;
+    if(recorded&&found->second==source.revision)return true;
+    if(!merge(target,source)||!m_.spend())return false;
+    if(recorded)found->second=source.revision;
+    else target.incorporated.emplace_hint(found,&source,source.revision);
+    return true;
+  }
+  bool resolve(const Context &context,const std::vector<Ref> &refs,Set &out,bool lattice=false){
+    if(!m_.spend(refs.size()))return false;
+    for(auto ref:refs){
+      const auto &source=context.values[ref];
+      if(&source!=&out&&!add(out,source,lattice))return false;
+    }
+    return true;
+  }
+  bool operandCardinality(const Context &context,const std::vector<Ref> &refs,std::size_t &count){
+    if(!m_.spend(2*refs.size()+1))return false;
+    count=0;
+    for(auto ref:refs)count+=context.values[ref].size();
+    return true;
+  }
+  bool joinValue(Context &context,Ref index,const std::vector<Ref> &refs,Set &output){
+    if(!m_.spend(2))return false;
+    if(refs.empty())return true;
+    if(refs.size()==1){
+      if(!m_.spend(5))return false;
+      const auto &source=context.values[refs.front()];
+      // This output is a subset of its sole source, including a self-edge.
+      return output.size()==source.size()||add(output,source);
+    }
+    std::size_t cardinality;
+    if(!operandCardinality(context,refs,cardinality)||!m_.spend(3))return false;
+    auto &previous=context.valueInputs[index].cardinality;
+    if(previous==cardinality)return true;
+    if(!resolve(context,refs,output,true)||!m_.spend())return false;
+    previous=cardinality;
+    return true;
   }
   bool internKey(std::map<Key,Ref> &rows,Key &&identity,Ref &out){
     if(!numericLookup(rows.size(),identity.size()))return false;auto found=rows.find(identity);
@@ -210,7 +326,10 @@ class Solver {
   }
   bool put(Heap &heap,Ref base,Ref selector,Ref view,const Set &values){
     if(!m_.spend())return false;if(values.empty())return true;Ref id;if(!address(base,selector,view,id)||!numericLookup(heap.size()))return false;
-    auto found=heap.find(id);if(found==heap.end()){if(!m_.spend())return false;found=heap.emplace(id,Set{}).first;changed_=true;}return add(found->second,values);
+    auto found=heap.find(id);if(found==heap.end()){if(!m_.spend())return false;found=heap.emplace(id,Set{}).first;changed_=true;}
+    const auto size=found->second.size();
+    if(!add(found->second,values))return false;
+    return found->second.size()==size||growHeapRevision(heap);
   }
   const ActualShape *shape(Ref type){
     if(type==None){open("actual-type-open");return nullptr;}
@@ -221,8 +340,30 @@ class Solver {
     if(answer->kind==V4::TypeKind::Future||answer->kind==V4::TypeKind::Unknown||answer->kind==V4::TypeKind::Union){open("actual-tag-open");return nullptr;}return answer;
   }
   bool inlineLocation(Ref id,bool &answer){
-    if(!m_.spend())return false;const auto value=locations_[id];answer=value.kind==LocationKind::CopiedValue;
-    if(value.kind==LocationKind::Local){const auto *actual=shape(value.type);if(!actual)return false;answer=actual->kind==V4::TypeKind::Value;}return true;
+    if(!m_.spend())return false;
+    const auto value=locations_[id];
+    answer=value.kind==LocationKind::CopiedValue;
+    if(value.kind!=LocationKind::Local)return true;
+    if(inlineTypes_){
+      if(!numericLookup(inlineTypes_->size()))return false;
+      const auto found=inlineTypes_->find(value.type);
+      if(found!=inlineTypes_->end()){
+        if(!m_.spend())return false;
+        answer=found->second;
+        return true;
+      }
+    }
+    // Keep the first authority check and retain only its immutable verdict.
+    const auto *actual=shape(value.type);
+    if(!actual)return false;
+    answer=actual->kind==V4::TypeKind::Value;
+    if(!inlineTypes_){
+      if(!m_.spend(2))return false;
+      inlineTypes_.emplace();
+    }
+    if(!numericLookup(inlineTypes_->size())||!m_.spend(3))return false;
+    inlineTypes_->emplace(value.type,answer);
+    return true;
   }
   LocationView locationView(Ref id)const{
     const auto &value=locations_[id];LocationView out;out.id=id;out.kind=value.kind;out.copySite=value.site;
@@ -345,35 +486,79 @@ class Solver {
   }
   bool mergeFrames(FrameWorld &out,const FrameWorld &source,bool lattice=true){
     if(!m_.spend())return false;if(!source.live)return true;const bool first=!out.live;
-    if(first){out.live=true;if(lattice)changed_=true;}
+    bool grew=first;
+    if(first)out.live=true;
     else for(auto &[frame,binding]:out){
       if(!m_.spend()||!numericLookup(source.size()))return false;
-      if(source.find(frame)==source.end()&&!binding.unbound){binding.unbound=true;if(lattice)changed_=true;}
+      if(source.find(frame)==source.end()&&!binding.unbound){binding.unbound=true;grew=true;}
     }
     if(!m_.spend(source.size()))return false;for(const auto &[frame,binding]:source){
       if(!numericLookup(out.size()))return false;auto found=out.find(frame);
-      if(found==out.end()){if(!m_.spend())return false;found=out.emplace(frame,Binding{first?binding.unbound:true,{}}).first;if(lattice)changed_=true;}
-      else if(binding.unbound&&!found->second.unbound){found->second.unbound=true;if(lattice)changed_=true;}
+      if(found==out.end()){if(!m_.spend())return false;found=out.emplace(frame,Binding{first?binding.unbound:true,{}}).first;grew=true;}
+      else if(binding.unbound&&!found->second.unbound){found->second.unbound=true;grew=true;}
+      const auto size=found->second.values.size();
       if(!add(found->second.values,binding.values,lattice))return false;
-    }return true;
+      grew=grew||size!=found->second.values.size();
+    }
+    // Call stamps read persistent context worlds after these joins.
+    if(lattice&&grew){
+      if(!m_.spend())return false;
+      ++out.revision;
+      changed_=true;
+    }
+    return true;
+  }
+  bool mergePersistentFrames(FrameWorld &out,const FrameWorld &source){
+    if(!m_.spend())return false;
+    if(&out==&source||!source.live)return true;
+    if(out.empty()&&source.empty())return out.live||mergeFrames(out,source);
+    // Only solver-owned worlds enter this table. A row added after the first
+    // live join is already maybe-unbound, so replaying an unchanged source
+    // cannot widen the destination after another source adds a row.
+    if(!out.incorporated){
+      if(!m_.spend(2))return false;
+      out.incorporated=std::make_unique<FrameWorld::Revisions>();
+    }
+    auto &revisions=*out.incorporated;
+    if(!numericLookup(revisions.size()))return false;
+    const auto found=revisions.find(&source);
+    const bool recorded=found!=revisions.end();
+    const auto revision=source.revision;
+    if(recorded&&found->second==revision)return true;
+    if(!mergeFrames(out,source)||!m_.spend())return false;
+    if(recorded)found->second=revision;
+    else{
+      if(!numericLookup(revisions.size()))return false;
+      revisions.emplace(&source,revision);
+    }
+    return true;
   }
   bool frameIdentity(const Context &context,Ref index,Ref construction,Ref target,Ref parent,Ref &out,bool root=false){
     Key identity;Location value;value.kind=LocationKind::ReceiverFrame;value.label=construction;value.type=target;value.source=parent;value.categories=0;
     value.receiverRoot=root;return key(identity,{20,context.index,context.function,context.scope,index,construction,target,parent,root})&&location(std::move(identity),value,out);
   }
   bool recordBoundReceiver(Context &context,Ref frame,const Set &values){
-    if(context.receivers.empty()||values.empty())return true;bool owned=false;
-    for(auto current=frame;current!=None;current=locations_[current].source){
-      if(!m_.spend()||!numericLookup(context.receivers.size()))return false;
-      if(locations_[current].kind!=LocationKind::ReceiverFrame)return open("receiver-history-frame-open");
-      if(context.receivers.count(current)){owned=true;break;}
+    if(context.receivers.empty()||values.empty())return true;
+    auto &history=context.boundHistory;
+    if(!numericLookup(history.size()))return false;
+    auto found=history.find(frame);
+    // An admitted row already proved ownership against the immutable frame
+    // ancestry and this context's immutable receiver set.
+    if(found==history.end()){
+      bool owned=false;
+      for(auto current=frame;current!=None;current=locations_[current].source){
+        if(!m_.spend()||!numericLookup(context.receivers.size()))return false;
+        if(locations_[current].kind!=LocationKind::ReceiverFrame)return open("receiver-history-frame-open");
+        if(context.receivers.count(current)){owned=true;break;}
+      }
+      if(!owned)return true;
+      if(!numericLookup(history.size())||!m_.spend(3))return false;
+      found=history.try_emplace(frame).first;
     }
-    if(!owned)return true;
-    if(!numericLookup(context.boundHistory.size())||!m_.spend(3))return false;
-    auto &history=context.boundHistory[frame];
-    const auto size=history.size();
-    if(!add(history,values))return false;
-    if(history.size()==size)return true;
+    if(!m_.spend(2))return false;
+    const auto size=found->second.size();
+    if(!add(found->second,values))return false;
+    if(found->second.size()==size)return true;
     if(!add(context.boundReceivers,values)||!m_.spend())return false;
     ++context.boundHistoryRevision;
     return true;
@@ -409,7 +594,7 @@ class Solver {
   bool remember(Context &context,Ref caller,Ref heap){if(caller==None)return true;const auto source=std::make_pair(caller,heap);
     if(!numericLookup(context.entrySources.size(),2))return false;if(context.entrySources.find(source)==context.entrySources.end()){if(!m_.spend())return false;context.entrySources.insert(source);changed_=true;}return true;
   }
-  bool ensure(Ref function,Ref scope,const std::vector<Set> &arguments,const Set &environment,const Heap &input,Ref &out,Ref caller=None,Ref savedHeap=0,const Set &receivers={},const FrameWorld &frames={}){
+  bool ensure(Ref function,Ref scope,const std::vector<Set> &arguments,const Set &environment,const Heap &input,Ref &out,Ref caller=None,Ref savedHeap=0,const Set &receivers={},const FrameWorld &frames={},bool isolated=false,Ref scopedCall=None){
     Key identity;if(!contextKey(function,scope,arguments,environment,input,receivers,frames,identity)||!numericLookup(contextIds_.size(),identity.size()))return false;
     const auto found=contextIds_.find(identity);if(found!=contextIds_.end()){out=found->second;return remember(*contexts_[out],caller,savedHeap);}
     const V4::Graph *graph=&root_;const PublishedEffects *upper=nullptr;const Protocol *protocol=&callbacks_.rootProtocol;
@@ -422,9 +607,8 @@ class Solver {
       bool acyclic;if(!V4::Detail::receiverActivations(*graph,m_,acyclic))return false;
       if(!acyclic)return open("repeated-receiver-frame-activation");if(!m_.spend())return false;checkedActivations_.insert(graph);
     }
-    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*2)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size())||!m_.spend(arguments.size())||!m_.spend(3))return false;
-    auto value=std::make_unique<Context>();value->index=contexts_.size();value->function=function;value->scope=scope;value->graph=graph;value->upper=upper;value->protocol=protocol;
-
+    if(!m_.spend(graph->nodes.size()*2)||!m_.spend(graph->heaps.size()*5+9)||!m_.spend(graph->controls.size())||!m_.spend(graph->calls.size()*6)||!m_.spend(arguments.size())||!m_.spend(13))return false;
+    auto value=std::make_unique<Context>();value->index=contexts_.size();value->function=function;value->scope=scope;value->graph=graph;value->upper=upper;value->protocol=protocol;value->isolated=isolated;value->scopedCall=scopedCall;
     if(callbacks_.settleIndependentLeaves&&function!=None){
       if(!m_.spend(6))return false;
       if(graph->calls.empty()&&!protocol->lexicalEnvironment&&!protocol->activationEnvironment){
@@ -436,7 +620,15 @@ class Solver {
       }
     }
     value->values.resize(graph->nodes.size());value->ready.resize(graph->nodes.size(),false);value->heaps.resize(graph->heaps.size());value->heapReady.resize(graph->heaps.size(),false);value->controls.resize(graph->controls.size(),false);value->targets.resize(graph->calls.size());value->arguments.resize(arguments.size());
-    if(!m_.spend(graph->heaps.size()*3))return false;value->frames.resize(graph->heaps.size());value->receiverValues.resize(graph->heaps.size());value->receiverLive.resize(graph->heaps.size(),false);
+    if(!m_.spend(graph->heaps.size()*4))return false;value->frames.resize(graph->heaps.size());value->receiverValues.resize(graph->heaps.size());value->receiverLive.resize(graph->heaps.size(),false);
+    if(!m_.spend(graph->heaps.size()*4))return false;
+    value->heapInputs.resize(graph->heaps.size());
+    value->callInputs.resize(graph->calls.size());
+    if(!m_.spend(2*graph->nodes.size()+1))return false;
+    value->valueInputs.resize(graph->nodes.size());
+    if(!m_.spend(2*(graph->exits.normal.size()+graph->exits.language.size())))return false;
+    value->exitInputs[0].resize(graph->exits.normal.size());
+    value->exitInputs[1].resize(graph->exits.language.size());
     for(Ref i=0;i<arguments.size();++i)if(!m_.spend()||!add(value->arguments[i],arguments[i]))return false;
     if(!add(value->environment,environment)||!add(value->receivers,receivers)||!mergeFrames(value->inputFrames,frames)||!merge(value->input,input)||!remember(*value,caller,savedHeap)||!m_.spend()||!V4::Detail::room(contexts_,m_))return false;
     value->inputFrames.live=true;
@@ -460,20 +652,47 @@ class Solver {
     for(const auto &id:resources.reads){Ref owner;if(!prefixed(prefix,id,owner)||!effect(context,V4::AccessFlag::Read,owner))return false;}
     for(const auto &id:resources.writes){Ref owner;if(!prefixed(prefix,id,owner)||!effect(context,V4::AccessFlag::Write,owner))return false;}return true;
   }
-  struct CaptureSource {Ref context;std::optional<Ref> heap;const Set *bases;};
   // Stable capture permissions summarize the entire fixed call closure,
   // including a callee's own activation and descendants. Resolve each payload
   // in its actual saved context, never in a guessed immediate lexical Env.
-  bool captureSources(const Context &called,llvm::StringRef key,Ref &selected,std::vector<CaptureSource> &out){
-    Ref slot;if(!symbol(key,slot)||!numericLookup(slotOwners_.size()))return false;const auto owned=slotOwners_.find(slot);
+  bool captureSources(const Context &called,const std::string &key,Ref &selected,
+      const std::vector<CaptureSource> *&out){
+    Ref slot;if(!graphSymbol(key,slot)||!numericLookup(slotOwners_.size()))return false;const auto owned=slotOwners_.find(slot);
     if(owned==slotOwners_.end())return open("fixed-capture-slot-unowned");selected=owned->second;
+    if(!captureSourceMemo_){
+      if(!m_.spend(2))return false;
+      captureSourceMemo_.emplace();
+    }
+    auto &memo=*captureSourceMemo_;
+    if(!m_.spend(2)||!numericLookup(memo.size(),2))return false;
+    const auto signature=std::make_pair(called.index,selected);
+    auto found=memo.find(signature);
+    if(found!=memo.end()){
+      bool current=true;
+      for(const auto &[index,revision]:found->second.dependencies){
+        if(!m_.spend(2))return false;
+        if(contexts_[index]->captureTopologyRevision!=revision){current=false;break;}
+      }
+      if(current){
+        if(!m_.spend())return false;
+        out=&found->second.sources;
+        return true;
+      }
+    }
+    // Only target edges and control reachability change the source list.
+    // Source sets and heap rows are still read at their current versions.
+    if(!m_.spend(2))return false;
+    CaptureSourceMemo rebuilt;
     std::vector<Ref> pending;Set seen;if(!V4::Detail::push(pending,called.index,m_))return false;
     const auto append=[&](const Context &context,std::optional<Ref> heap,const Set &bases){
-      if(!m_.spend(3)||!V4::Detail::room(out,m_))return false;out.push_back({context.index,heap,&bases});return true;
+      if(!m_.spend(3)||!V4::Detail::room(rebuilt.sources,m_))return false;
+      rebuilt.sources.push_back({context.index,heap,&bases});
+      return true;
     };
     while(!pending.empty()){
       if(!m_.spend())return false;const auto index=pending.back();pending.pop_back();if(!numericLookup(seen.size()))return false;
       if(seen.find(index)!=seen.end())continue;if(!insert(seen,index,false))return false;const auto &current=*contexts_[index];
+      if(!m_.spend()||!V4::Detail::push(rebuilt.dependencies,std::make_pair(index,current.captureTopologyRevision),m_))return false;
       Ref lexical=None;if(current.protocol->lexicalEnvironment&&!symbol(*current.protocol->lexicalEnvironment,lexical))return false;
       while(lexical!=None){if(!m_.spend())return false;if(lexical==selected){if(!append(current,std::nullopt,current.environment))return false;break;}
         const auto *row=layout(lexical);if(!row)return false;if(row->parent){if(!symbol(*row->parent,lexical))return false;}else lexical=None;}
@@ -487,6 +706,15 @@ class Solver {
       }
       if(!m_.spend(current.targets.size()))return false;for(const auto &targets:current.targets){if(!m_.spend(targets.size()))return false;for(auto target:targets)if(!V4::Detail::push(pending,target,m_))return false;}
     }
+    if(found==memo.end()){
+      if(!numericLookup(memo.size(),2)||!m_.spend(5))return false;
+      found=memo.emplace(signature,std::move(rebuilt)).first;
+    }else{
+      if(!m_.spend(2))return false;
+      found->second=std::move(rebuilt);
+    }
+    if(!m_.spend())return false;
+    out=&found->second.sources;
     return true;
   }
   bool inherit(Context &context,const Context &called){
@@ -529,8 +757,9 @@ class Solver {
     // Capture sources depend on live Env parents and reachable descendants.
     if(!m_.spend(upper.captures.size()))return false;
     for(const auto &capture:upper.captures){if(!m_.spend(3))return false;if(!capture.flags.read&&!capture.flags.write&&!capture.flags.structural)continue;
-      Ref selected;std::vector<CaptureSource> sources;if(!captureSources(called,capture.slot,selected,sources)||!m_.spend(sources.size()))return false;
-      for(const auto &source:sources){if(!m_.spend())return false;const auto &saved=*contexts_[source.context];Set values;
+      Ref selected;const std::vector<CaptureSource> *sources;
+      if(!captureSources(called,capture.slot,selected,sources)||!m_.spend(sources->size()))return false;
+      for(const auto &source:*sources){if(!m_.spend())return false;const auto &saved=*contexts_[source.context];Set values;
         if(!captureValues(source.heap?saved.heaps[*source.heap]:saved.input,*source.bases,selected,capture.slot,values)||!flagged(context,capture.flags,values))return false;}
     }
 
@@ -590,13 +819,561 @@ class Solver {
     covered=true;return true;
   }
 
+  template<class Accept>
+  bool allClosedLeaves(const V4::Graph &graph,const std::vector<Ref> &roots,Accept accept,bool &answer){
+    using Kind=V4::ValueKind;
+    answer=false;
+    if(!m_.spend(roots.size()))return false;
+    std::vector<Ref> pending=roots;
+    Set seen;
+    bool leaf=false;
+    while(!pending.empty()){
+      const auto id=pending.back();pending.pop_back();
+      if(!m_.spend()||!numericLookup(seen.size()))return false;
+      if(!seen.insert(id).second)continue;
+      const auto &node=graph.nodes[id];
+      const auto *inputs=node.kind==Kind::Join||node.kind==Kind::Gate?&node.inputs:node.kind==Kind::Copy?&node.bases:nullptr;
+      if(inputs){
+        if(inputs->empty())return true;
+        for(auto input:*inputs)if(!V4::Detail::push(pending,input,m_))return false;
+      }else{
+        bool accepted;
+        if(!accept(node,accepted))return false;
+        if(!accepted)return true;
+        leaf=true;
+      }
+    }
+    answer=leaf;return true;
+  }
+
+  bool closedMember(llvm::StringRef id,const FixedFunction *&member){
+    if(!m_.lookup(fixed_.size(),id.size()))return false;
+    const auto found=fixed_.find(V4::Detail::view(id));
+    member=found==fixed_.end()?nullptr:&found->second;
+    return true;
+  }
+
+  bool closedActivation(ClosedWork &work,bool &accepted){
+    accepted=false;
+    const auto &graph=*work.member->graph;
+    const auto &protocol=work.member->protocol;
+    for(const auto &node:graph.nodes){
+      if(!m_.spend())return false;
+      if(node.kind!=V4::ValueKind::EnvironmentCreate)continue;
+      if(work.activation||!protocol.activationEnvironment||
+          graph.controls[node.control].kind!=V4::ControlKind::Entry||
+          node.parent.has_value()!=protocol.lexicalEnvironment.has_value())return true;
+      if(!m_.equal(node.layout,*protocol.activationEnvironment))return m_.good;
+      if(!m_.lookup(callbacks_.environments->size(),node.layout.size()))return false;
+      const auto layout=callbacks_.environments->find(V4::Detail::view(node.layout));
+      if(layout==callbacks_.environments->end()||
+          layout->second.parent.has_value()!=protocol.lexicalEnvironment.has_value())return true;
+      if(node.parent){
+        const auto &lexical=*protocol.lexicalEnvironment;
+        if(!m_.equal(*layout->second.parent,lexical))return m_.good;
+        bool incoming;
+        if(!allClosedLeaves(graph,*node.parent,[&](const V4::Value &leaf,bool &matches){
+          matches=leaf.kind==V4::ValueKind::EnvironmentInput&&m_.equal(leaf.layout,lexical);
+          return m_.good;
+        },incoming))return false;
+        if(!incoming)return true;
+      }
+      work.activation=&node;
+    }
+    accepted=bool(work.activation)==protocol.activationEnvironment.has_value();
+    return true;
+  }
+
+  bool closedEnvironmentRole(const ClosedWork &work,const std::vector<Ref> &refs,
+      llvm::StringRef layout,ClosedEnvironment &role){
+    role=ClosedEnvironment::None;
+    const auto &lexical=work.member->protocol.lexicalEnvironment;
+    bool owned;
+    if(!allClosedLeaves(*work.member->graph,refs,[&](const V4::Value &node,bool &matches){
+      matches=false;
+      auto candidate=ClosedEnvironment::None;
+      if(&node==work.activation)candidate=ClosedEnvironment::Activation;
+      else if(node.kind==V4::ValueKind::EnvironmentInput&&lexical&&m_.equal(node.layout,*lexical))
+        candidate=ClosedEnvironment::Incoming;
+      if(candidate==ClosedEnvironment::None||(role!=ClosedEnvironment::None&&role!=candidate))return m_.good;
+      if(!m_.equal(node.layout,layout))return m_.good;
+      role=candidate;
+      matches=true;
+      return true;
+    },owned))return false;
+    if(!owned)role=ClosedEnvironment::None;
+    return true;
+  }
+
+  bool slotOwner(llvm::StringRef slot,Ref &owner){
+    Ref id;
+    if(!symbol(slot,id)||!numericLookup(slotOwners_.size()))return false;
+    const auto found=slotOwners_.find(id);
+    owner=found==slotOwners_.end()?None:found->second;
+    return true;
+  }
+
+  bool closedCapture(const ClosedWork &work,const std::vector<Ref> &refs,
+      llvm::StringRef layout,llvm::StringRef slot,bool &owned){
+    owned=false;
+    Ref owner;
+    if(!slotOwner(slot,owner))return false;
+    if(owner==None||!m_.equal(name(owner),layout))return m_.good;
+    ClosedEnvironment role;
+    if(!closedEnvironmentRole(work,refs,layout,role))return false;
+    owned=role!=ClosedEnvironment::None;
+    return true;
+  }
+
+  bool closedValueLeaves(const V4::Graph &graph,const std::vector<Ref> &refs,bool &owned){
+    using Kind=V4::ValueKind;
+    return allClosedLeaves(graph,refs,[](const V4::Value &node,bool &accepted){
+      accepted=node.kind==Kind::Parameter||node.kind==Kind::Literal||node.kind==Kind::Nonowning||
+        node.kind==Kind::ReceiverValue||node.kind==Kind::Capture||node.kind==Kind::Projection||
+        (node.kind==Kind::Call&&node.completion==V4::Completion::Normal);
+      return true;
+    },owned);
+  }
+
+  bool closedLocalGraph(const ClosedWork &work,bool &answer){
+    using Kind=V4::ValueKind;
+    answer=false;
+    const auto &record=*work.member;
+    const auto &protocol=record.protocol;
+    const bool constructor=protocol.construction.has_value();
+    const auto &upper=*record.upper;
+    if((constructor&&!upper.captures.empty())||!upper.globals.reads.empty()||!upper.globals.writes.empty()||
+        !upper.hostResources.reads.empty()||!upper.hostResources.writes.empty())return true;
+    for(const auto &facet:upper.facets){
+      if(m_.equal(facet,"unknownHost")||(!constructor&&m_.equal(facet,"mayThrow")))return true;
+      if(!m_.good)return false;
+    }
+    for(const auto &capture:upper.captures){
+      Ref owner;
+      if(!m_.spend()||!slotOwner(capture.slot,owner))return false;
+      if(owner==None)return true;
+      if(protocol.activationEnvironment&&m_.equal(name(owner),*protocol.activationEnvironment))continue;
+      if(!protocol.lexicalEnvironment||!m_.equal(name(owner),*protocol.lexicalEnvironment))return m_.good;
+    }
+    const auto &graph=*record.graph;
+    for(const auto &node:graph.nodes){
+      if(!m_.spend())return false;
+      switch(node.kind){
+        case Kind::Parameter:case Kind::Literal:case Kind::Nonowning:case Kind::Join:
+        case Kind::Gate:case Kind::Copy:case Kind::ReceiverValue:case Kind::ReceiverFrame:case Kind::Call:break;
+        case Kind::EnvironmentCreate:case Kind::Code:
+          if(constructor)return true;
+          break;
+        case Kind::ReceiverInput:
+          if(!constructor)return true;
+          break;
+        case Kind::EnvironmentInput:
+          if(constructor||!protocol.lexicalEnvironment||!m_.equal(node.layout,*protocol.lexicalEnvironment))return m_.good;
+          break;
+        case Kind::Capture:{
+          if(constructor||!node.environment)return true;
+          bool owned;
+          if(!closedCapture(work,*node.environment,node.layout,node.id,owned))return false;
+          if(!owned)return true;
+          break;
+        }
+        case Kind::Projection:{
+          if(constructor||!llvm::StringRef(node.selector).starts_with("field:"))return true;
+          bool owned;
+          if(!closedValueLeaves(graph,node.bases,owned))return false;
+          if(!owned)return true;
+          break;
+        }
+        default:return true;
+      }
+    }
+    for(const auto &heap:graph.heaps){
+      if(!m_.spend())return false;
+      if(heap.kind!=V4::HeapKind::Store)continue;
+      const llvm::StringRef selector=heap.selector;
+      bool owned;
+      if(selector.starts_with("capture:")){
+        const llvm::StringRef view=heap.view;
+        if(constructor||!view.starts_with("env:"))return true;
+        if(!closedCapture(work,heap.bases,view.drop_front(4),selector.drop_front(8),owned))return false;
+      }else{
+        if(!selector.starts_with("field:"))return true;
+        if(!allClosedLeaves(graph,heap.bases,[&](const V4::Value &node,bool &accepted){
+          accepted=node.kind==Kind::ReceiverValue&&graph.heaps[node.action].completion==V4::Completion::Normal;
+          return true;
+        },owned))return false;
+      }
+      if(!owned)return true;
+    }
+    answer=true;return true;
+  }
+
+  bool closedRoutineShape(ClosedWork &work,bool &answer){
+    answer=false;
+    const auto &record=*work.member;
+    const auto &protocol=record.protocol;
+    if(!record.graph||record.graph->version!=5||!record.upper||!protocol.complete)return true;
+    const bool constructor=protocol.construction.has_value();
+    if(constructor){
+      if(protocol.kind!=ProtocolKind::ConstructionFrame||protocol.construction->receiverIndex!=0||
+          protocol.lexicalEnvironment||protocol.activationEnvironment)return true;
+    }else{
+      if(protocol.kind!=ProtocolKind::Ordinary)return true;
+      bool activation;
+      if(!closedActivation(work,activation))return false;
+      if(!activation)return true;
+    }
+    bool local;
+    if(!closedLocalGraph(work,local))return false;
+    if(!local)return true;
+    const auto &graph=*record.graph;
+    if(!V4::Detail::reserve(work.calls,graph.calls.size(),m_))return false;
+    for(const auto &call:graph.calls){
+      if(!m_.spend())return false;
+      if(call.callee)return true;
+      ClosedCall edge;
+      if(!closedMember(call.functionId,edge.member))return false;
+      if(!edge.member)return true;
+      const auto &child=edge.member->protocol;
+      if(child.construction){
+        if(call.environment||!call.receiver)return true;
+        const auto &role=*child.construction;
+        if(constructor&&(!protocol.construction->base||!m_.equal(*protocol.construction->base,role.owner)))return m_.good;
+        bool frame;
+        if(!allClosedLeaves(graph,*call.receiver,[&](const V4::Value &node,bool &accepted){
+          accepted=false;
+          if(node.kind!=V4::ValueKind::ReceiverFrame||!m_.equal(node.construction,role.id))return m_.good;
+          if(!constructor){accepted=!node.parent;return true;}
+          if(!node.parent||node.newTarget)return true;
+          return allClosedLeaves(graph,*node.parent,[](const V4::Value &parent,bool &matches){
+            matches=parent.kind==V4::ValueKind::ReceiverInput;
+            return true;
+          },accepted);
+        },frame))return false;
+        if(!frame)return true;
+      }else{
+        if(constructor||call.receiver||call.environment.has_value()!=child.lexicalEnvironment.has_value())return true;
+        if(call.environment){
+          if(!closedEnvironmentRole(work,*call.environment,*child.lexicalEnvironment,edge.environment))return false;
+          if(edge.environment==ClosedEnvironment::None)return true;
+        }
+        for(const auto &argument:call.arguments){
+          bool owned;
+          if(!m_.spend()||!closedValueLeaves(graph,argument,owned))return false;
+          if(!owned)return true;
+        }
+      }
+      if(!V4::Detail::push(work.calls,edge,m_))return false;
+    }
+    answer=true;return true;
+  }
+
+  bool closedOwnReceiver(const ClosedWork &work,const V4::Value &node,bool &answer){
+    using Kind=V4::ValueKind;
+    answer=false;
+    if(!m_.spend(5))return false;
+    if(node.kind!=Kind::Call||node.completion!=V4::Completion::Normal)return true;
+    // The enclosing private routine has already proved this direct constructor
+    // call uses a matching root frame with no parent.
+    const auto &member=*work.calls[node.call].member;
+    if(!member.protocol.construction)return true;
+    const auto &graph=*member.graph;
+    return allClosedLeaves(graph,graph.normal,[&](const V4::Value &value,bool &own){
+      own=false;
+      if(!m_.spend(7))return false;
+      if(value.kind!=Kind::ReceiverValue)return true;
+      const auto &result=graph.heaps[value.action];
+      if(result.kind!=V4::HeapKind::ReceiverAction||result.action!=V4::ReceiverAction::Result||
+          result.completion!=V4::Completion::Normal||!result.operands.empty())return true;
+      return allClosedLeaves(graph,result.frames,[](const V4::Value &frame,bool &implicit){
+        implicit=frame.kind==Kind::ReceiverInput;
+        return true;
+      },own);
+    },answer);
+  }
+
+  bool closedReadOnlyCode(const FixedFunction &member,bool &answer){
+    return allClosedLeaves(*member.graph,member.graph->normal,[&](const V4::Value &node,bool &readonly){
+      readonly=false;
+      if(!m_.spend(4))return false;
+      if(node.kind!=V4::ValueKind::Code||!node.environment)return true;
+      const FixedFunction *target;
+      if(!closedMember(node.functionId,target)||!m_.spend(12))return false;
+      if(!target||!target->graph||target->graph->version!=5||!target->upper||!target->protocol.signature)return true;
+      const auto &type=target->protocol.signature->returnType;
+      const auto &upper=*target->upper;
+      if(!target->protocol.signature->parameterTypes.empty()||!upper.parameters.empty()||
+          !upper.globals.reads.empty()||!upper.globals.writes.empty()||
+          !upper.hostResources.reads.empty()||!upper.hostResources.writes.empty())return true;
+      bool scalar;
+      if(!closedScalar(type,scalar))return false;
+      if(!scalar)return true;
+      for(const auto &capture:upper.captures){
+        if(!m_.spend(3))return false;
+        if(capture.flags.write||capture.flags.structural)return true;
+      }
+      for(const auto &facet:upper.facets)if(!m_.equal(facet,"managedReference"))return m_.good;
+      return allClosedLeaves(*target->graph,target->graph->normal,[&](const V4::Value &value,bool &sameType){
+        sameType=value.type&&m_.equal(*value.type,type);
+        return m_.good;
+      },readonly);
+    },answer);
+  }
+
+  bool closedDelegatedReturn(const ClosedWork &work,const V4::Value &node,const ClosedCall &call,
+      Ref selectedCall,bool &answer,Ref &scopedCall){
+    answer=false;
+    scopedCall=None;
+    if(!m_.spend(10))return false;
+    const auto &signature=work.member->protocol.signature;
+    const auto &childSignature=call.member->protocol.signature;
+    const auto &graph=*work.member->graph;
+    if(!signature||!childSignature||!node.type||work.member->protocol.lexicalEnvironment||work.activation||
+        signature->parameterTypes.empty()||graph.calls.size()!=2||
+        call.environment!=ClosedEnvironment::None||(selectedCall!=None&&selectedCall!=node.call))return true;
+    if(!m_.equal(*node.type,signature->returnType)||!m_.equal(*node.type,childSignature->returnType))return m_.good;
+    if(!m_.spend(5))return false;
+    const auto &arguments=graph.calls[node.call].arguments;
+    if(arguments.empty()&&childSignature->parameterTypes.empty()&&call.member->upper->parameters.empty()){
+      if(!closedReadOnlyCode(*call.member,answer))return false;
+      if(answer)scopedCall=node.call;
+      return true;
+    }
+    for(const auto &argument:arguments){
+      bool owned;
+      if(!m_.spend()||!allClosedLeaves(graph,argument,[&](const V4::Value &value,bool &own){
+        return closedOwnReceiver(work,value,own);
+      },owned))return false;
+      if(owned)return closedReadOnlyCode(*call.member,answer);
+    }
+    return true;
+  }
+
+  bool closedDelegatedFormals(const FixedFunction &member,bool &answer){
+    answer=false;
+    const auto &types=member.protocol.signature->parameterTypes;
+    if(!m_.spend(3)||types.size()!=member.upper->parameters.size())return m_.good;
+    if(!m_.spend(types.size()+1))return false;
+    std::vector<bool> found(types.size(),false);
+    size_t matched=0;
+    for(const auto &node:member.graph->nodes){
+      if(!m_.spend())return false;
+      if(node.kind!=V4::ValueKind::Parameter)continue;
+      if(!m_.spend(5))return false;
+      if(node.index>=types.size()||!node.type||!m_.equal(*node.type,types[node.index]))return m_.good;
+      if(!found[node.index]){found[node.index]=true;++matched;}
+    }
+    answer=matched==types.size();
+    return true;
+  }
+
+  bool closedReturnEnvironment(const ClosedWork &work,ClosedEnvironment &role,Ref &scopedCall){
+    role=ClosedEnvironment::None;
+    scopedCall=None;
+    if(work.member->protocol.construction)return true;
+    bool exact;
+    Ref delegatedCall=None;
+    if(!allClosedLeaves(*work.member->graph,work.member->graph->normal,[&](const V4::Value &node,bool &matches){
+      auto selected=ClosedEnvironment::None;
+      if(node.kind==V4::ValueKind::Call&&node.completion==V4::Completion::Normal){
+        const auto &call=work.calls[node.call];
+        if(!numericLookup(closedRoutines_.size()))return false;
+        const auto child=closedRoutines_.find(call.member);
+        if(child!=closedRoutines_.end()){
+          if(child->second.returned==ClosedEnvironment::Incoming)selected=call.environment;
+          if(child->second.returned==ClosedEnvironment::Activation){
+            bool delegated;
+            Ref nested;
+            if(!closedDelegatedReturn(work,node,call,delegatedCall,delegated,nested))return false;
+            if(delegated){selected=ClosedEnvironment::Delegated;delegatedCall=node.call;scopedCall=nested;}
+          }
+        }
+      }else if(node.kind==V4::ValueKind::Code&&node.environment){
+        const FixedFunction *target;
+        if(!closedMember(node.functionId,target))return false;
+        if(target&&target->protocol.lexicalEnvironment&&
+            !closedEnvironmentRole(work,*node.environment,*target->protocol.lexicalEnvironment,selected))return false;
+      }
+      matches=selected!=ClosedEnvironment::None&&(role==ClosedEnvironment::None||role==selected);
+      if(matches)role=selected;
+      return true;
+    },exact))return false;
+    if(!exact){role=ClosedEnvironment::None;scopedCall=None;}
+    if(role==ClosedEnvironment::Delegated){
+      bool formals;
+      if(!closedDelegatedFormals(*work.member,formals))return false;
+      if(!formals){role=ClosedEnvironment::None;scopedCall=None;}
+    }
+    return true;
+  }
+
+  bool closedFactoryGraph(const FixedFunction &record,const ClosedProof *&closed){
+    if(!numericLookup(closedRoutines_.size()))return false;
+    auto found=closedRoutines_.find(&record);
+    if(found==closedRoutines_.end()){
+      std::vector<ClosedWork> pending;
+      const auto enter=[&](const FixedFunction &member){
+        // An unfinished proof rejects a backedge to an active ancestor.
+        if(!numericLookup(closedRoutines_.size())||!m_.spend())return false;
+        closedRoutines_.emplace(&member,ClosedProof{});
+        ClosedWork work;
+        work.member=&member;
+        bool accepted;
+        if(!closedRoutineShape(work,accepted))return false;
+        return !accepted||V4::Detail::push(pending,std::move(work),m_);
+      };
+      if(!enter(record))return false;
+      while(!pending.empty()){
+        if(!m_.spend()||!numericLookup(closedRoutines_.size()))return false;
+        auto &work=pending.back();
+        if(work.next==work.calls.size()){
+          const auto proof=closedRoutines_.find(work.member);
+          ClosedEnvironment returned;Ref scopedCall;
+          if(!closedReturnEnvironment(work,returned,scopedCall)||!m_.spend(2))return false;
+          proof->second={true,returned,scopedCall};
+          pending.pop_back();
+          continue;
+        }
+        const auto *child=work.calls[work.next].member;
+        const auto proof=closedRoutines_.find(child);
+        if(proof==closedRoutines_.end()){
+          if(!enter(*child))return false;
+        }else if(proof->second.privateStorage)++work.next;
+        else pending.pop_back();
+      }
+      if(!numericLookup(closedRoutines_.size()))return false;
+      found=closedRoutines_.find(&record);
+    }
+    closed=&found->second;
+    return true;
+  }
+
+  bool closedScalar(llvm::StringRef type,bool &answer){
+    answer=false;
+    if(!callbacks_.actualType)return true;
+    if(!m_.text(type.size())||!m_.spend())return false;
+    const auto *shape=callbacks_.actualType(type,callbackCharge_);
+    if(!m_.good)return false;
+    answer=shape&&shape->kind==V4::TypeKind::Scalar;
+    return true;
+  }
+
+  // The verified factory graph cannot inspect or mutate an ambient data root.
+  // Call-site leaves and resolved values both need an ownerless scalar proof.
+  bool closedFactoryCall(const V4::Graph &graph,const V4::Call &call,const FixedFunction &record,
+      const std::vector<Set> &arguments,bool &answer,Ref &scopedCall){
+    answer=false;
+    scopedCall=None;
+    const auto &protocol=record.protocol;
+    if(call.callee||call.environment||call.receiver||protocol.kind!=ProtocolKind::Ordinary||protocol.construction||
+        protocol.lexicalEnvironment||!callbacks_.environments||record.graph->calls.empty())return true;
+    if(!protocol.activationEnvironment){
+      if(record.graph->calls.size()!=2)return true;
+      if(!m_.spend(3))return false;
+      if(!protocol.signature||protocol.signature->parameterTypes.empty())return true;
+    }
+    const ClosedProof *closed;
+    if(!closedFactoryGraph(record,closed))return false;
+    if(closed->returned!=ClosedEnvironment::Activation&&closed->returned!=ClosedEnvironment::Delegated)return true;
+    const auto *expected=closed->returned==ClosedEnvironment::Delegated?&protocol.signature->parameterTypes:nullptr;
+    if(expected&&(!m_.spend(3)||expected->size()!=arguments.size()||call.arguments.size()!=arguments.size()))return m_.good;
+    for(Ref index=0;index<arguments.size();++index){
+      const auto &values=arguments[index];
+      if(!m_.spend())return false;
+      if(values.empty())return true;
+      bool scalar;
+      if(!allClosedLeaves(graph,call.arguments[index],[&](const V4::Value &node,bool &accepted){
+        using Kind=V4::ValueKind;
+        accepted=false;
+        if(!node.type||(node.kind!=Kind::Nonowning&&(node.kind!=Kind::Literal||node.category!=V4::Category::Other)))return true;
+        if(expected&&!m_.equal(*node.type,(*expected)[index]))return m_.good;
+        return closedScalar(*node.type,accepted);
+      },scalar))return false;
+      if(!scalar)return true;
+      for(auto id:values){
+        if(!m_.spend())return false;
+        const auto &value=locations_[id];
+        if(value.owner!=None||value.type==None||(value.kind!=LocationKind::Nonowning&&
+            (value.kind!=LocationKind::Literal||value.categories!=4)))return true;
+        if(expected&&!m_.equal(name(value.type),(*expected)[index]))return m_.good;
+        if(!closedScalar(name(value.type),scalar))return false;
+        if(!scalar)return true;
+      }
+    }
+    if(!m_.spend())return false;scopedCall=closed->scopedCall;
+    answer=true;return true;
+  }
+
+  // A selected Code may be available before the incoming heap has its exact
+  // local capture cells. Save only snapshots that contain those payloads.
+  bool incomingCapturesReady(const Heap &heap,const Set &environment,Ref incoming,
+      const PublishedEffects &upper,bool &available){
+    available=true;
+    if(incoming==None||environment.empty()||upper.captures.empty())return true;
+    bool local=false;
+    for(auto base:environment){
+      if(!m_.spend())return false;
+      if(locations_[base].kind==LocationKind::EnvironmentLocal){local=true;break;}
+    }
+    if(!local)return true;
+    Ref view=None;
+    for(const auto &capture:upper.captures){
+      if(!m_.spend())return false;
+      if(!capture.flags.read&&!capture.flags.write&&!capture.flags.structural)continue;
+      Ref owner,selector;
+      if(!slotOwner(capture.slot,owner))return false;
+      if(owner!=incoming)continue;
+      if(view==None&&!prefixed("env:",name(incoming),view))return false;
+      if(!prefixed("capture:",capture.slot,selector))return false;
+      for(auto base:environment){
+        if(!m_.spend())return false;
+        if(locations_[base].kind!=LocationKind::EnvironmentLocal)continue;
+        Key identity;
+        if(!key(identity,{base,selector,view})||!numericLookup(addressIds_.size(),identity.size()))return false;
+        const auto address=addressIds_.find(identity);
+        if(address==addressIds_.end()){available=false;return true;}
+        if(!numericLookup(heap.size()))return false;
+        const auto cell=heap.find(address->second);
+        if(cell==heap.end()||cell->second.empty()){available=false;return true;}
+      }
+    }
+    return true;
+  }
+
   bool runCalls(Context &context){const auto &graph=*context.graph;if(!m_.spend(graph.calls.size()))return false;
     for(Ref index=0;index<graph.calls.size();++index){if(!m_.spend())return false;const auto &call=graph.calls[index];if(!context.controls[call.control]||!context.heapReady[call.heap])continue;
       bool available=true;for(const auto &argument:call.arguments){bool value;if(!readyRefs(context,argument,value))return false;available=available&&value;}
       if(call.callee){bool value;if(!readyRefs(context,*call.callee,value))return false;available=available&&value;}if(call.environment){bool value;if(!readyRefs(context,*call.environment,value))return false;available=available&&value;}if(!available)continue;
       if(call.receiver){bool value;if(!readyRefs(context,*call.receiver,value))return false;if(!value)continue;}
+      std::size_t cardinality=0;
+      const bool settledIndirect=call.callee&&!context.targets[index].empty();
+      if(settledIndirect||(!call.callee&&!call.environment)){
+        // Each operand set only grows. An unchanged sum means every input is
+        // unchanged, including the settled indirect Code/Env selection.
+        const auto count=[&](const std::vector<Ref> &refs){
+          if(!m_.spend(refs.size()))return false;
+          for(auto ref:refs)cardinality+=context.values[ref].size();
+          return true;
+        };
+        if(!m_.spend(call.arguments.size()+3))return false;
+        for(const auto &argument:call.arguments)if(!count(argument))return false;
+        if(call.receiver&&!count(*call.receiver))return false;
+        if(call.callee&&!count(*call.callee))return false;
+        if(call.environment&&!count(*call.environment))return false;
+        const auto &previous=context.callInputs[index];
+        if(previous.scheduled&&previous.cardinality==cardinality&&
+           (previous.isolated||(previous.heapRevision==context.heaps[call.heap].revision&&
+                               previous.frameRevision==context.frames[call.heap].revision)))continue;
+      }
       if(!m_.spend(call.arguments.size()))return false;std::vector<Set> arguments(call.arguments.size());for(Ref i=0;i<call.arguments.size();++i)if(!resolve(context,call.arguments[i],arguments[i]))return false;
-      Ref function,label,scope;Key identity;if(!graphSymbol(call.functionId,function)||!graphSymbol(call.site,label)||!key(identity,{context.function,label,index})||!internKey(scopeIds_,std::move(identity),scope))return false;
+      Ref function,label,scope;Key identity;
+      if(!graphSymbol(call.functionId,function)||!graphSymbol(call.site,label)||!m_.spend(2))return false;
+      // A nullary helper has no argument to carry the private parent identity.
+      // Only its certified direct call gets the exact parent's context key.
+      if(context.scopedCall==index){
+        if(!key(identity,{context.function,label,index,context.index}))return false;
+      }else if(!key(identity,{context.function,label,index}))return false;
+      if(!internKey(scopeIds_,std::move(identity),scope))return false;
       const auto *record=fixedFunction(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;
       Set receivers;if(call.receiver&&!resolve(context,*call.receiver,receivers))return false;
       if(record->protocol.construction){
@@ -604,7 +1381,35 @@ class Solver {
         for(auto receiver:receivers)if(locations_[receiver].kind!=LocationKind::ReceiverFrame||locations_[receiver].label!=expected)return open("constructor-call-frame-owner-open");
         if(!m_.spend(arguments.size()+1))return false;arguments.insert(arguments.begin(),Set{});
       }
-      const auto schedule=[&](const Set &environment){Ref target;return ensure(function,scope,arguments,environment,context.heaps[call.heap],target,context.index,call.heap,receivers,context.frames[call.heap])&&insert(context.targets[index],target);};
+      bool isolated;Ref scopedCall;
+      if(!closedFactoryCall(graph,call,*record,arguments,isolated,scopedCall))return false;
+      if(isolated){
+        Key closedScope;
+        if(!key(closedScope,{None,scope})||!internKey(scopeIds_,std::move(closedScope),scope))return false;
+      }
+      const auto schedule=[&](const Set &environment){
+        const auto &input=context.heaps[call.heap];
+        bool ready;
+        if(!incomingCapturesReady(input,environment,expected,*record->upper,ready))return false;
+        if(!ready)return true;
+        Ref target;
+        if(isolated){
+          if(!m_.spend())return false;FrameWorld frames;frames.live=true;
+          if(!ensure(function,scope,arguments,environment,Heap{},target,None,0,receivers,frames,true,scopedCall))return false;
+        }else if(!ensure(function,scope,arguments,environment,input,target,context.index,call.heap,receivers,context.frames[call.heap]))return false;
+        if(!m_.spend(3))return false;
+        const auto previous=context.targets[index].size();
+        if(!insert(context.targets[index],target))return false;
+        if(previous!=context.targets[index].size())++context.captureTopologyRevision;
+        return true;
+      };
+      const auto rememberInput=[&](){
+        if(!m_.spend(5))return false;
+        // Record only after the target and saved input are established.
+        context.callInputs[index]={cardinality,context.heaps[call.heap].revision,
+          context.frames[call.heap].revision,true,isolated};
+        return true;
+      };
       if(call.callee){Set codes,components;if(!resolve(context,*call.callee,codes))return false;if(call.environment&&!resolve(context,*call.environment,components))return false;
         for(auto id:codes){if(!m_.spend())return false;const auto code=locations_[id];if(code.kind==LocationKind::Code){
           if(code.function!=function)continue;if((expected==None)!=(code.environment==None))return open("code-environment-protocol-open");
@@ -619,8 +1424,11 @@ class Solver {
           // Keep the full allowed upper on the effect lattice. Only a settled
           // same-site witness may leave this alternative out of the data path.
           if(readonly&&!inheritReadonlyAlternative(context,function,*record->upper,arguments))return false;
-        }
-      }else if(expected==None){if(call.environment)return open("unexpected-direct-environment");if(!schedule(Set{}))return false;}
+        }else if(settledIndirect&&!rememberInput())return false;
+      }else if(expected==None){
+        if(call.environment)return open("unexpected-direct-environment");
+        if(!schedule(Set{})||!rememberInput())return false;
+      }
       else{if(!call.environment)return open("missing-direct-environment");Set bases,selected;if(!resolve(context,*call.environment,bases)||!selectEnvironments(bases,expected,selected))return false;if(!selected.empty()&&!schedule(selected))return false;}
     }return true;
   }
@@ -632,7 +1440,12 @@ class Solver {
       else if(control.kind==V4::ControlKind::Call){if(!m_.spend(context.targets[control.call].size()))return false;for(auto target:context.targets[control.call]){if(!m_.spend())return false;const auto &called=*contexts_[target];live=live||(control.completion==V4::Completion::Normal?called.normalLive:called.languageLive);}}
       else if(control.kind==V4::ControlKind::ReceiverCompletion)live=context.receiverLive[control.action];
       else return open("control-equation-open");
-      if(live&&!context.controls[i]){context.controls[i]=true;changed_=true;}
+      if(live&&!context.controls[i]){
+        if(!m_.spend())return false;
+        ++context.captureTopologyRevision;
+        context.controls[i]=true;
+        changed_=true;
+      }
     }return true;
   }
   bool rootLocation(Context &context,Ref index,const V4::Value &node,Ref &out){
@@ -655,10 +1468,19 @@ class Solver {
       // This result receives values only from this growing receiver action.
       return output.size()==values.size()||add(output,values);
     }
-    if(!context.controls[node.control])return true;Ref id;if(!symbol(node.construction,id))return false;const auto *row=construction(id);if(!row)return false;
+    if(!context.controls[node.control])return true;
+    std::size_t cardinality;
+    if(node.parent){
+      if(!operandCardinality(context,*node.parent,cardinality)||!m_.spend(3))return false;
+      // Frame metadata is fixed. Measure before producing any child frame.
+      if(context.valueInputs[index].cardinality==cardinality)return true;
+    }
+    Ref id;if(!symbol(node.construction,id))return false;const auto *row=construction(id);if(!row)return false;
     const auto append=[&](Ref parent,Ref target){Ref value;return frameIdentity(context,index,id,target,parent,value,parent!=None&&locations_[parent].receiverRoot)&&insert(output,value);};
     if(node.parent){Set parents;if(!resolve(context,*node.parent,parents)||!m_.spend(parents.size()))return false;
       for(auto parent:parents){if(!m_.spend())return false;const auto &frame=locations_[parent];if(frame.kind!=LocationKind::ReceiverFrame)return open("receiver-parent-data-open");const auto *owner=construction(frame.label);if(!owner||!owner->base||!m_.equal(*owner->base,row->owner))return open("receiver-child-owner-open");if(!append(parent,frame.type))return false;}
+      if(!m_.spend(2))return false;
+      context.valueInputs[index].cardinality=cardinality;
     }else{Ref target;if(!node.newTarget||!symbol(*node.newTarget,target)||!m_.equal(row->owner,*node.newTarget))return open("receiver-new-target-open");if(!append(None,target))return false;}
     return true;
   }
@@ -667,8 +1489,27 @@ class Solver {
   bool voidView(const std::optional<std::string> &view,bool &answer){answer=false;if(!view)return true;Ref type;if(!graphSymbol(*view,type))return false;if(type==void_){answer=true;return true;}
     if(callbacks_.actualType){if(!m_.text(view->size())||!m_.spend())return false;const auto *shape=callbacks_.actualType(*view,callbackCharge_);if(!m_.good)return false;answer=shape&&shape->kind==V4::TypeKind::Void;}return true;
   }
+  bool runEnvironmentComponent(Context &context,Ref index,const V4::Value &node,Set &output){
+    std::size_t cardinality;
+    if(!operandCardinality(context,node.callee,cardinality)||!m_.spend(3))return false;
+    auto &previous=context.valueInputs[index].cardinality;
+    // An admitted Code has a fixed Env, and formal components follow the
+    // immutable layout chain. New operands still need the complete checks.
+    if(previous==cardinality)return true;
+    Ref id;
+    if(!graphSymbol(node.layout,id))return false;
+    bool available;if(!readyRefs(context,node.callee,available))return false;if(!available)return true;
+    Ref function;if(!graphSymbol(node.functionId,function))return false;const auto *record=fixedProtocol(function);if(!record)return false;
+    Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;if(expected!=id)return open("component-function-layout-open");if(!layout(id))return false;Set sources;if(!resolve(context,node.callee,sources))return false;
+    for(auto source:sources){if(!m_.spend())return false;const auto value=locations_[source];if(value.kind==LocationKind::Code){if(value.function!=function)continue;if(value.environment==None||locations_[value.environment].layout!=id)return open("selected-code-env-layout-open");if(!insert(output,value.environment))return false;}
+      else{if(!formalCode(source))return open("formal-code-component-owner-open");Ref env;if(!componentEnvironment(source,function,id,env)||!insert(output,env))return false;}}
+    if(!m_.spend())return false;
+    previous=cardinality;
+    return true;
+  }
   bool runEnvironmentValue(Context &context,Ref index,const V4::Value &node,Set &output){
     if(node.kind!=V4::ValueKind::EnvironmentInput&&!context.controls[node.control])return true;
+    if(node.kind==V4::ValueKind::EnvironmentComponent)return runEnvironmentComponent(context,index,node,output);
     Ref id=None;if(node.kind!=V4::ValueKind::Code&&!graphSymbol(node.layout,id))return false;
     if(node.kind==V4::ValueKind::EnvironmentInput){Ref expected=None;if(context.protocol->lexicalEnvironment&&!graphSymbol(*context.protocol->lexicalEnvironment,expected))return false;if(id!=expected)return open("entry-environment-layout-open");return add(output,context.environment);}
     if(node.kind==V4::ValueKind::EnvironmentCreate){Ref expected=None;if(context.protocol->activationEnvironment&&!graphSymbol(*context.protocol->activationEnvironment,expected))return false;if(id!=expected)return open("activation-environment-layout-open");const auto *row=layout(id);if(!row)return false;
@@ -679,18 +1520,15 @@ class Solver {
       if(!row->parent){if(node.parent)return open("unexpected-activation-parent");}else{if(!node.parent)return open("activation-parent-open");Ref parent;Set bases,actual;if(!symbol(*row->parent,parent)||!resolve(context,*node.parent,bases)||!selectEnvironments(bases,parent,actual)||!add(*selected,actual))return false;}return insert(output,result);
     }
     if(node.kind==V4::ValueKind::EnvironmentParent){Set bases,selected;return resolve(context,node.bases,bases)&&selectEnvironments(bases,id,selected)&&add(output,selected);}
-    if(node.kind==V4::ValueKind::EnvironmentComponent){bool available;if(!readyRefs(context,node.callee,available))return false;if(!available)return true;Ref function;if(!graphSymbol(node.functionId,function))return false;const auto *record=fixedProtocol(function);if(!record)return false;
-      Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;if(expected!=id)return open("component-function-layout-open");if(!layout(id))return false;Set sources;if(!resolve(context,node.callee,sources))return false;
-      for(auto source:sources){if(!m_.spend())return false;const auto value=locations_[source];if(value.kind==LocationKind::Code){if(value.function!=function)continue;if(value.environment==None||locations_[value.environment].layout!=id)return open("selected-code-env-layout-open");if(!insert(output,value.environment))return false;}
-        else{if(!formalCode(source))return open("formal-code-component-owner-open");Ref env;if(!componentEnvironment(source,function,id,env)||!insert(output,env))return false;}}
-      return true;
-    }
     if(node.kind==V4::ValueKind::Capture){Set bases,values;return resolve(context,*node.environment,bases)&&captureValues(context.heaps[node.heap],bases,id,node.id,values)&&add(output,values);}
     Ref function,type;if(!node.type)return open("code-source-view-open");if(!graphSymbol(node.functionId,function)||!graphSymbol(*node.type,type))return false;const auto *record=fixedProtocol(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;
     const auto pack=[&](Ref env){Key identity;Location value;value.kind=LocationKind::Code;value.type=type;value.function=function;value.environment=env;value.owner=env==None?None:locations_[env].owner;value.categories=1;Ref code;return key(identity,{13,function,env,type})&&location(std::move(identity),value,code)&&insert(output,code);};
     if(expected==None){if(node.environment)return open("unexpected-code-environment");return pack(None);}if(!node.environment)return open("code-environment-open");Set bases,selected;if(!resolve(context,*node.environment,bases)||!selectEnvironments(bases,expected,selected))return false;for(auto env:selected)if(!pack(env))return false;return true;
   }
-  bool valueReady(Context &context,Ref index,const V4::Value &node){bool defined=true;
+  bool valueReady(Context &context,Ref index,const V4::Value &node){
+    if(!m_.spend())return false;
+    if(context.ready[index])return true;
+    bool defined=true;
     if(node.kind==V4::ValueKind::ReceiverFrame){if(node.parent&&!readyRefs(context,*node.parent,defined))return false;defined=defined&&context.controls[node.control];}
     else if(node.kind==V4::ValueKind::ReceiverValue)defined=context.receiverLive[node.action]&&context.heapReady[node.action];
     else if(node.kind==V4::ValueKind::Join){defined=node.inputs.empty();for(auto id:node.inputs){if(!m_.spend())return false;defined=defined||context.ready[id];}}
@@ -714,6 +1552,39 @@ class Solver {
       default:return false;
     }
   }
+  bool projectValue(Context &context,Ref index,const V4::Value &node,Set &output){
+    if(!m_.spend(node.bases.size()+8))return false;
+    std::size_t cardinality=0;
+    for(auto ref:node.bases)cardinality+=context.values[ref].size();
+    const auto &source=context.heaps[node.heap];
+    const auto revision=source.revision;
+    auto &previous=context.valueInputs[index];
+    // Fixed operand sets only grow, and the physical source grows through
+    // versioned heap joins. This is the same read already added to output.
+    if(previous.cardinality==cardinality&&previous.heapRevision==revision)return true;
+    const auto readBases=[&](const Set &bases){
+      Ref selector,view;
+      Key origin;
+      if(!graphSymbol(node.selector,selector)||!graphSymbol(node.view,view)||
+          !key(origin,{context.function,index})||!m_.spend(bases.size()))return false;
+      for(auto base:bases){
+        Set values;
+        if(!read(source,base,selector,view,origin,values)||!add(output,values))return false;
+      }
+      return true;
+    };
+    if(!m_.spend(3))return false;
+    if(node.bases.size()==1&&node.bases.front()!=index){
+      if(!readBases(context.values[node.bases.front()]))return false;
+    }else{
+      // A self-edge needs the original snapshot, even for one operand.
+      Set bases;
+      if(!resolve(context,node.bases,bases)||!readBases(bases))return false;
+    }
+    if(!m_.spend(2))return false;
+    previous={cardinality,revision};
+    return true;
+  }
   bool runValues(Context &context){
     const auto &graph=*context.graph;if(!m_.spend(graph.nodes.size()))return false;
     for(Ref i=0;i<graph.nodes.size();++i){if(!m_.spend())return false;const auto &node=graph.nodes[i];auto &output=context.values[i];
@@ -722,16 +1593,32 @@ class Solver {
       if(environmentValue(node.kind)){if(!runEnvironmentValue(context,i,node,output))return false;}
       else if(node.kind==V4::ValueKind::ReceiverInput||node.kind==V4::ValueKind::ReceiverFrame||node.kind==V4::ValueKind::ReceiverValue){if(!receiverValue(context,i,node,output))return false;}
       else if(node.kind==V4::ValueKind::Parameter){const auto &args=context.function==None?rootArguments_:context.arguments;if(node.index>=args.size())return open("parameter-vector-open");if(!add(output,args[node.index]))return false;if(context.function!=None&&args[node.index].empty()){Ref id;if(!nonowning(node.type,id)||!insert(output,id))return false;}}
-      else if(node.kind==V4::ValueKind::Join){Set values;if(!resolve(context,node.inputs,values)||!add(output,values))return false;}
-      else if(node.kind==V4::ValueKind::Gate){if(context.controls[node.control]){Set values;if(!resolve(context,node.inputs,values)||!add(output,values))return false;}}
+      else if(node.kind==V4::ValueKind::Join){if(!joinValue(context,i,node.inputs,output))return false;}
+      else if(node.kind==V4::ValueKind::Gate){if(context.controls[node.control]&&!joinValue(context,i,node.inputs,output))return false;}
       else if(node.kind==V4::ValueKind::Projection){
-        if(!context.controls[node.control])continue;Set bases;Ref selector,view;Key origin;
-        if(!resolve(context,node.bases,bases)||!graphSymbol(node.selector,selector)||!graphSymbol(node.view,view)||!key(origin,{context.function,i})||!m_.spend(bases.size()))return false;
-        for(auto base:bases){Set values;if(!read(context.heaps[node.heap],base,selector,view,origin,values)||!add(output,values))return false;}
+        if(!context.controls[node.control])continue;
+        if(!projectValue(context,i,node,output))return false;
       }else if(node.kind==V4::ValueKind::Copy){
-        if(!context.controls[node.control])continue;Set sources;Ref selectedSite;if(!resolve(context,node.bases,sources)||!site(context,node.site,selectedSite)||!m_.spend(sources.size()))return false;
-        for(auto source:sources){Ref target;if(!copied(source,selectedSite,target)||!insert(output,target))return false;}
-        bool available;if(!readyRefs(context,node.bases,available))return false;if(output.empty()&&context.heapReady[node.heap]&&available){Ref id;if(!nonowning(node.type,id)||!insert(output,id))return false;}
+        if(!context.controls[node.control])continue;
+        if(!m_.spend(node.bases.size()+3))return false;
+        // The fixed operand sets only grow. Measure before adding output
+        // because a cyclic Copy may contribute to its own source set.
+        std::size_t cardinality=0;
+        for(auto ref:node.bases)cardinality+=context.values[ref].size();
+        auto &previous=context.valueInputs[i].cardinality;
+        if(previous!=cardinality){
+          Set sources;
+          Ref selectedSite;
+          if(!resolve(context,node.bases,sources)||!site(context,node.site,selectedSite)||!m_.spend(sources.size()))return false;
+          for(auto source:sources){Ref target;if(!copied(source,selectedSite,target)||!insert(output,target))return false;}
+          if(!m_.spend())return false;
+          previous=cardinality;
+        }
+        if(output.empty()&&context.heapReady[node.heap]){
+          bool available;
+          if(!readyRefs(context,node.bases,available))return false;
+          if(available){Ref id;if(!nonowning(node.type,id)||!insert(output,id))return false;}
+        }
       }else if(node.kind==V4::ValueKind::Call){
         if(!m_.spend(context.targets[node.call].size()))return false;
         for(auto target:context.targets[node.call]){if(!m_.spend())return false;const auto &called=*contexts_[target];
@@ -755,15 +1642,27 @@ class Solver {
       if(!valueReady(context,i,node))return false;
     }return true;
   }
-  bool copyHeap(Context &context,const V4::Heap &heap,Heap &output){
+  bool copyHeap(Context &context,Ref index,const V4::Heap &heap,Heap &output){
     const auto &operation=context.graph->nodes[heap.value];if(operation.kind!=V4::ValueKind::Copy)return open("copy-heap-equation-open");
-    if(!merge(output,context.heaps[heap.previous]))return false;if(!context.controls[operation.control])return true;
-    Ref selectedSite;Set roots;if(!site(context,operation.site,selectedSite)||!resolve(context,operation.bases,roots)||!m_.spend(roots.size()))return false;
-    std::vector<Ref> pending;Set seen;if(!V4::Detail::reserve(pending,roots.size(),m_))return false;for(auto root:roots)if(!V4::Detail::push(pending,root,m_))return false;
+    if(!mergePersistentHeap(output,context.heaps[heap.previous]))return false;if(!context.controls[operation.control])return true;
+    if(!m_.spend(operation.bases.size()+8))return false;
+    std::size_t cardinality=0;
+    for(auto ref:operation.bases)cardinality+=context.values[ref].size();
     const auto &source=context.heaps[operation.heap];
+    const auto revision=source.revision;
+    auto &previous=context.heapInputs[index];
+    // Each root set grows monotonically. An exact replay with no inline root
+    // reads no source fields, even if the source heap grows later.
+    if(previous.applied&&previous.cardinality==cardinality&&
+        (previous.heapRevision==None||previous.heapRevision==revision))return true;
+    Ref selectedSite=None;
+    Set roots;
+    if(!resolve(context,operation.bases,roots)||!m_.spend(roots.size()))return false;
+    std::vector<Ref> pending;Set seen;if(!V4::Detail::reserve(pending,roots.size(),m_))return false;for(auto root:roots)if(!V4::Detail::push(pending,root,m_))return false;
     while(!pending.empty()){
       if(!m_.spend())return false;const auto original=pending.back();pending.pop_back();if(!numericLookup(seen.size()))return false;if(seen.find(original)!=seen.end())continue;
       bool inlined;if(!inlineLocation(original,inlined))return false;if(!inlined)continue;if(!insert(seen,original,false))return false;
+      if(selectedSite==None&&!site(context,operation.site,selectedSite))return false;
       Ref target;if(!copied(original,selectedSite,target))return false;const auto type=locations_[original].type;const auto *actual=shape(type);
       if(!actual)return false;if(actual->kind!=V4::TypeKind::Value||!actual->completePhysicalFields)return open("complete-physical-copy-fields-open");
       if(!m_.spend(actual->fields.size()))return false;
@@ -774,16 +1673,59 @@ class Solver {
         for(auto child:values){Ref selected;bool childInline;if(!copied(child,selectedSite,selected)||!insert(children,selected,false)||!inlineLocation(child,childInline))return false;if(childInline&&!V4::Detail::push(pending,child,m_))return false;}
         if(!put(output,target,selector,view,children))return false;
       }
-    }return true;
+    }
+    if(!m_.spend(4))return false;
+    // Read the version from before the physical copy, including on a cycle.
+    previous={cardinality,selectedSite==None?None:revision,0,true};
+    return true;
   }
   bool selectCategory(Ref source,unsigned mask,Ref &out){
     const auto selected=locations_[source];if(selected.categories==mask){out=source;return true;}
     Key identity;Location value=selected;value.kind=LocationKind::CategorySelection;value.source=source;value.categories=mask;
     return key(identity,{24,source,mask})&&location(std::move(identity),value,out);
   }
+  bool heapInput(const Context &context,Ref previous,const std::vector<Ref> &bases,
+      const std::vector<Ref> &values,HeapInput &input){
+    if(!m_.spend(bases.size()+values.size()+8))return false;
+    // The fixed operand sets only grow. Save predecessor versions before the
+    // transfer in case its output is also an input of a cyclic equation.
+    for(auto id:bases)input.cardinality+=context.values[id].size();
+    for(auto id:values)input.cardinality+=context.values[id].size();
+    input.heapRevision=context.heaps[previous].revision;
+    input.frameRevision=context.frames[previous].revision;
+    input.applied=true;
+    return true;
+  }
+  bool runStore(Context &context,Ref index,const V4::Heap &heap,Heap &output){
+    HeapInput input;
+    if(!heapInput(context,heap.previous,heap.bases,heap.values,input))return false;
+    if(input==context.heapInputs[index])return true;
+    if(!mergePersistentHeap(output,context.heaps[heap.previous])||
+        !mergePersistentFrames(context.frames[index],context.frames[heap.previous]))return false;
+    if(!context.controls[heap.control])return true;
+    Set bases,values;
+    Ref selector,view;
+    if(!resolve(context,heap.bases,bases)||!resolve(context,heap.values,values)||
+        !graphSymbol(heap.selector,selector)||!graphSymbol(heap.view,view)||!m_.spend(bases.size()))return false;
+    const bool capture=llvm::StringRef(heap.selector).starts_with("capture:");
+    Ref expected=None;
+    if(capture&&(!llvm::StringRef(heap.view).starts_with("env:")||
+        !symbol(llvm::StringRef(heap.view).drop_front(4),expected)))return open("capture-store-view-open");
+    for(auto base:bases){
+      if(capture&&(!environmentKind(locations_[base].kind)||locations_[base].layout!=expected))
+        return open("capture-store-environment-layout-open");
+      if(!put(output,base,selector,view,values))return false;
+    }
+    if(!m_.spend(4))return false;
+    context.heapInputs[index]=input;
+    return true;
+  }
   bool runReceiverAction(Context &context,Ref index,const V4::Heap &heap,Heap &output){
     if(!context.controls[heap.control]||!context.heapReady[heap.previous])return true;
     bool framesReady,operandsReady;if(!readyRefs(context,heap.frames,framesReady)||!readyRefs(context,heap.operands,operandsReady))return false;if(!framesReady||!operandsReady)return true;
+    HeapInput input;
+    if(!heapInput(context,heap.previous,heap.frames,heap.operands,input))return false;
+    if(input==context.heapInputs[index])return true;
     Set frames,operands,objects;if(!resolve(context,heap.frames,frames)||!resolve(context,heap.operands,operands)||!m_.spend(operands.size()))return false;
     bool undefined=heap.operands.empty(),other=false;
     for(auto operand:operands){if(!m_.spend())return false;const auto mask=locations_[operand].categories;undefined|=bool(mask&2);other|=bool(mask&4);
@@ -804,21 +1746,27 @@ class Solver {
         if(row->base&&other)language=true;
       }
       const bool live=heap.completion==V4::Completion::Normal?normal:language;if(!live)continue;
-      FrameWorld world;if(!mergeFrames(world,previous,false))return false;
+      if(!m_.spend())return false;FrameWorld world;if(!mergeFrames(world,previous,false))return false;
       if(heap.completion==V4::Completion::Normal&&heap.action==V4::ReceiverAction::Bind){
         if(!numericLookup(world.size())||!m_.spend())return false;auto &bound=world[frame];bound.unbound=false;bound.values.clear();if(!add(bound.values,objects,false))return false;
       }
       if(!numericLookup(world.size()))return false;const auto bound=world.find(frame);
       if(bound!=world.end()&&!recordBoundReceiver(context,frame,bound->second.values))return false;
-      if(!merge(output,context.heaps[heap.previous])||!mergeFrames(context.frames[index],world))return false;
+      if(!mergePersistentHeap(output,context.heaps[heap.previous])||!mergeFrames(context.frames[index],world))return false;
       if(heap.completion==V4::Completion::Normal){if(!add(context.receiverValues[index],selected))return false;}
       else{Ref owner,error;Key identity;Location thrown;thrown.kind=LocationKind::ReceiverError;thrown.categories=1;
         if(!symbol("local:return-origin",owner)||!key(identity,{23,context.function,context.scope,index,frame}))return false;thrown.owner=owner;
         if(!location(std::move(identity),thrown,error)||!insert(context.receiverValues[index],error))return false;}
       if(!ready(context.receiverLive,index,true))return false;
-    }return true;
+    }
+    if(!m_.spend(4))return false;
+    context.heapInputs[index]=input;
+    return true;
   }
-  bool heapReady(Context &context,Ref index,const V4::Heap &heap){bool defined=false;
+  bool heapReady(Context &context,Ref index,const V4::Heap &heap){
+    if(!m_.spend())return false;
+    if(context.heapReady[index])return true;
+    bool defined=false;
     if(heap.kind==V4::HeapKind::Entry)defined=true;
     else if(heap.kind==V4::HeapKind::Join){for(auto input:heap.inputs){if(!m_.spend())return false;defined=defined||context.heapReady[input];}}
     else if(heap.kind==V4::HeapKind::Store){bool bases,values;if(!readyRefs(context,heap.bases,bases)||!readyRefs(context,heap.values,values))return false;defined=context.controls[heap.control]&&context.heapReady[heap.previous]&&bases&&values;}
@@ -833,40 +1781,106 @@ class Solver {
       if(heap.kind==V4::HeapKind::Entry&&context.heapReady[i])continue;
       if(heap.kind!=V4::HeapKind::ReceiverAction){if(!heapReady(context,i,heap))return false;if(!context.heapReady[i])continue;}
       if(heap.kind==V4::HeapKind::Entry){if(!merge(output,context.input)||!mergeFrames(context.frames[i],context.inputFrames))return false;}
-      else if(heap.kind==V4::HeapKind::Join){if(!m_.spend(heap.inputs.size()))return false;for(auto parent:heap.inputs){if(!m_.spend())return false;if(context.heapReady[parent]&&(!merge(output,context.heaps[parent])||!mergeFrames(context.frames[i],context.frames[parent])))return false;}}
-      else if(heap.kind==V4::HeapKind::Store){
-        if(!merge(output,context.heaps[heap.previous])||!mergeFrames(context.frames[i],context.frames[heap.previous]))return false;if(!context.controls[heap.control])continue;
-        Set bases,values;Ref selector,view;if(!resolve(context,heap.bases,bases)||!resolve(context,heap.values,values)||!graphSymbol(heap.selector,selector)||!graphSymbol(heap.view,view)||!m_.spend(bases.size()))return false;
-        const bool capture=llvm::StringRef(heap.selector).starts_with("capture:");Ref expected=None;if(capture){if(!llvm::StringRef(heap.view).starts_with("env:")||!symbol(llvm::StringRef(heap.view).drop_front(4),expected))return open("capture-store-view-open");}
-        for(auto base:bases){if(capture&&(!environmentKind(locations_[base].kind)||locations_[base].layout!=expected))return open("capture-store-environment-layout-open");if(!put(output,base,selector,view,values))return false;}
-      }else if(heap.kind==V4::HeapKind::Copy){if(!copyHeap(context,heap,output)||!mergeFrames(context.frames[i],context.frames[heap.previous]))return false;}
-      else if(heap.kind==V4::HeapKind::ReceiverAction){if(!runReceiverAction(context,i,heap,output))return false;}
+      else if(heap.kind==V4::HeapKind::Join){if(!m_.spend(heap.inputs.size()))return false;for(auto parent:heap.inputs){if(!m_.spend())return false;if(context.heapReady[parent]&&(!mergePersistentHeap(output,context.heaps[parent])||!mergePersistentFrames(context.frames[i],context.frames[parent])))return false;}}
+      else if(heap.kind==V4::HeapKind::Store){if(!runStore(context,i,heap,output))return false;}
+      else if(heap.kind==V4::HeapKind::Copy){if(!copyHeap(context,i,heap,output)||!mergePersistentFrames(context.frames[i],context.frames[heap.previous]))return false;}
+      else if(heap.kind==V4::HeapKind::ReceiverAction){if(!runReceiverAction(context,i,heap,output)||!heapReady(context,i,heap))return false;}
       else if(heap.kind==V4::HeapKind::Call){
-        if(!m_.spend(context.targets[heap.call].size()))return false;for(auto target:context.targets[heap.call]){if(!m_.spend())return false;const auto &called=*contexts_[target];if(!(heap.completion==V4::Completion::Normal?called.normalReady:called.languageReady))continue;if(!merge(output,heap.completion==V4::Completion::Normal?called.normalHeap:called.languageHeap)||!mergeFrames(context.frames[i],heap.completion==V4::Completion::Normal?called.normalFrames:called.languageFrames))return false;}
+        if(!m_.spend(context.targets[heap.call].size()))return false;
+        const bool normal=heap.completion==V4::Completion::Normal;
+        for(auto target:context.targets[heap.call]){
+          if(!m_.spend())return false;
+          const auto &called=*contexts_[target];
+          if(!(normal?called.normalReady:called.languageReady))continue;
+          if(called.isolated){
+            const auto saved=graph.calls[heap.call].heap;
+            if(!mergePersistentHeap(output,context.heaps[saved])||!mergePersistentFrames(context.frames[i],context.frames[saved]))return false;
+          }
+          if(!mergePersistentHeap(output,normal?called.normalHeap:called.languageHeap))return false;
+          if(!called.isolated&&!mergePersistentFrames(context.frames[i],normal?called.normalFrames:called.languageFrames))return false;
+        }
       }else return open("heap-equation-open");
-      if(!heapReady(context,i,heap))return false;
     }return true;
   }
   bool finishContext(Context &context){
     const auto &graph=*context.graph;
-    for(unsigned channel=0;channel<2;++channel){const bool normal=channel==0;auto &live=normal?context.normalLive:context.languageLive;auto &heap=normal?context.normalHeap:context.languageHeap;auto &values=normal?context.normal:context.language;
-      const auto &exits=normal?graph.exits.normal:graph.exits.language;if(!m_.spend(exits.size()))return false;
-      for(const auto &exit:exits){if(!m_.spend())return false;if(context.controls[exit.control]){if(!live){live=true;changed_=true;}auto &ready=normal?context.normalReady:context.languageReady;if(context.heapReady[exit.heap]&&!ready){ready=true;changed_=true;}if(context.heapReady[exit.heap]&&(!recordBoundWorld(context,context.frames[exit.heap])||!merge(heap,context.heaps[exit.heap])||!mergeFrames(normal?context.normalFrames:context.languageFrames,context.frames[exit.heap])))return false;}}
-      if(live){Set returned;if(!resolve(context,normal?graph.normal:graph.language,returned)||!add(values,returned))return false;}
+    for(unsigned channel=0;channel<2;++channel){
+      const bool normal=channel==0;
+      auto &live=normal?context.normalLive:context.languageLive;
+      auto &ready=normal?context.normalReady:context.languageReady;
+      auto &heap=normal?context.normalHeap:context.languageHeap;
+      auto &frames=normal?context.normalFrames:context.languageFrames;
+      auto &values=normal?context.normal:context.language;
+      const auto &exits=normal?graph.exits.normal:graph.exits.language;
+      if(!m_.spend(exits.size()))return false;
+      for(Ref index=0;index<exits.size();++index){
+        if(!m_.spend())return false;
+        const auto &exit=exits[index];
+        if(!context.controls[exit.control])continue;
+        if(!live){live=true;changed_=true;}
+        if(!context.heapReady[exit.heap])continue;
+        if(!ready){ready=true;changed_=true;}
+        // The fixed exit always refers to these same solver-owned worlds.
+        // Receiver history is a growing union over immutable frame ancestry.
+        const auto &sourceHeap=context.heaps[exit.heap];
+        const auto &sourceFrames=context.frames[exit.heap];
+        auto &previous=context.exitInputs[channel][index];
+        if(!m_.spend(2))return false;
+        const bool frameChanged=previous.frameRevision!=sourceFrames.revision;
+        const bool heapChanged=previous.heapRevision!=sourceHeap.revision;
+        if(frameChanged&&!recordBoundWorld(context,sourceFrames))return false;
+        if(heapChanged&&!mergePersistentHeap(heap,sourceHeap))return false;
+        if(frameChanged&&!mergePersistentFrames(frames,sourceFrames))return false;
+        if(frameChanged||heapChanged){
+          if(!m_.spend(2))return false;
+          previous={sourceHeap.revision,sourceFrames.revision};
+        }
+      }
+      if(live&&!resolve(context,normal?graph.normal:graph.language,values,true))return false;
     }
     if(!m_.spend(graph.accesses.size()))return false;for(const auto &access:graph.accesses){if(!m_.spend())return false;if(context.controls[access.control]){Set values;if(!resolve(context,access.values,values)||!valueEffects(context,access.flag,values))return false;}}
     if(!m_.spend(context.targets.size()))return false;for(const auto &targets:context.targets){if(!m_.spend(targets.size()))return false;for(auto target:targets)if(!inherit(context,*contexts_[target]))return false;}
     return true;
   }
-  template<class T> bool forkProof(const std::set<T> &source,std::set<T> &out){if(!m_.spend(source.size()))return false;for(const auto &key:source){if(!numericLookup(out.size(),4)||!m_.spend())return false;out.insert(key);}return true;}
-  bool possibleHeap(Context &context,Ref index,std::set<std::pair<Ref,Ref>> &active,bool &live){const auto key=std::make_pair(context.index,index);live=false;
-    if(!numericLookup(active.size(),2)||!m_.spend())return false;if(active.find(key)!=active.end())return true;active.insert(key);const auto &heap=context.graph->heaps[index];
-    if(heap.kind==V4::HeapKind::Entry)live=true;
-    else if(heap.kind==V4::HeapKind::Join){for(auto parent:heap.inputs){std::set<std::pair<Ref,Ref>> branch;bool value;if(!forkProof(active,branch)||!possibleHeap(context,parent,branch,value))return false;live=live||value;}}
-    else if(heap.kind==V4::HeapKind::Store){if(context.controls[heap.control]&&!possibleHeap(context,heap.previous,active,live))return false;}
-    else if(heap.kind==V4::HeapKind::Copy){if(context.controls[context.graph->nodes[heap.value].control]&&!possibleHeap(context,heap.previous,active,live))return false;}
-    else if(heap.kind==V4::HeapKind::ReceiverAction){if(context.receiverLive[index]&&!possibleHeap(context,heap.previous,active,live))return false;}
-    else for(auto target:context.targets[heap.call]){if(!m_.spend())return false;const auto &called=*contexts_[target];live=live||(heap.completion==V4::Completion::Normal?called.normalLive:called.languageLive);}return true;
+  // This existential query uses settled control and completion flags. A call
+  // is a terminal test, so every predecessor belongs to this same context.
+  bool possibleHeap(const Context &context,Ref index,bool &live){
+    live=false;
+    const auto &graph=*context.graph;
+    std::vector<Ref> pending;
+    Set visited;
+    if(!V4::Detail::push(pending,index,m_))return false;
+    while(!pending.empty()){
+      if(!m_.spend()||!numericLookup(visited.size()))return false;
+      const auto current=pending.back();pending.pop_back();
+      if(!visited.insert(current).second)continue;
+      const auto &heap=graph.heaps[current];
+      switch(heap.kind){
+        case V4::HeapKind::Entry:
+          live=true;return true;
+        case V4::HeapKind::Join:
+          for(auto parent=heap.inputs.rbegin();parent!=heap.inputs.rend();++parent)
+            if(!V4::Detail::push(pending,*parent,m_))return false;
+          break;
+        case V4::HeapKind::Store:
+          if(context.controls[heap.control]&&!V4::Detail::push(pending,heap.previous,m_))return false;
+          break;
+        case V4::HeapKind::Copy:
+          if(context.controls[graph.nodes[heap.value].control]&&!V4::Detail::push(pending,heap.previous,m_))return false;
+          break;
+        case V4::HeapKind::ReceiverAction:
+          if(context.receiverLive[current]&&!V4::Detail::push(pending,heap.previous,m_))return false;
+          break;
+        case V4::HeapKind::Call:
+          for(auto target:context.targets[heap.call]){
+            if(!m_.spend())return false;
+            const auto &called=*contexts_[target];
+            if(heap.completion==V4::Completion::Normal?called.normalLive:called.languageLive){live=true;return true;}
+          }
+          break;
+      }
+    }
+    return true;
   }
   // Data closure is immutable here. Memoize only a complete query; a path
   // fragment may depend on which creator/entry alternatives remain reachable.
@@ -889,7 +1903,7 @@ class Solver {
           if(!m_.spend(saved.entrySources.size()))return false;for(const auto &source:saved.entrySources)if(!append(source.first,source.second))return false;continue;
         }
         if(row->kind==V4::HeapKind::Join){if(!m_.spend(row->inputs.size()))return false;for(auto parent:row->inputs){
-            std::set<std::pair<Ref,Ref>> active;bool live;if(!possibleHeap(saved,parent,active,live))return false;if(live&&!append(saved.index,parent))return false;}continue;}
+            bool live;if(!possibleHeap(saved,parent,live))return false;if(live&&!append(saved.index,parent))return false;}continue;}
         if(row->kind==V4::HeapKind::Store){Ref selector,actual;if(!prefixed("capture:",name(slot),selector)||!symbol(row->selector,actual))return false;
           if(saved.controls[row->control]&&actual==selector){Set bases,values;
             if(!resolve(saved,row->bases,bases)||!resolve(saved,row->values,values)||!numericLookup(bases.size()))return false;
@@ -899,7 +1913,17 @@ class Solver {
         }
         if(row->kind==V4::HeapKind::Copy||row->kind==V4::HeapKind::ReceiverAction){if(!append(saved.index,row->previous))return false;continue;}
         if(!m_.spend(saved.targets[row->call].size()))return false;for(auto target:saved.targets[row->call]){const auto &called=*contexts_[target];
-          for(const auto &state:V4::Detail::exits(*called.graph,row->completion)){if(!m_.spend())return false;if(called.controls[state.control]&&!append(called.index,state.heap))return false;}}
+          bool live=false;
+          for(const auto &state:V4::Detail::exits(*called.graph,row->completion)){
+            if(!m_.spend())return false;
+            if(!called.controls[state.control])continue;
+            if(!append(called.index,state.heap))return false;
+            live=true;
+          }
+          // Private exits prove their own cells; the saved predecessor owns
+          // the ambient cells that pass unchanged through the factory.
+          if(live&&called.isolated&&!append(saved.index,saved.graph->calls[row->call].heap))return false;
+        }
       }
     }
     if(!m_.spend())return false;definitionMemo_.emplace(signature,defined);return true;
@@ -913,7 +1937,9 @@ class Solver {
       Ref selected=locations_[code.environment].layout;while(selected!=None){const auto *row=layout(selected);if(!row)return false;for(const auto &slot:row->slots){Set base;if(!m_.spend()||!insert(base,code.environment,false)||!completeCapture(context,heap,base,selected,slot.key))return false;}if(row->parent){if(!symbol(*row->parent,selected))return false;}else selected=None;}
     }return true;
   }
-  bool strict(Context &context){const auto &graph=*context.graph;
+  bool strict(Context &context){
+    if(context.isolated&&context.languageLive)return open("closed-factory-language-completion-open");
+    const auto &graph=*context.graph;
     for(auto completion:{V4::Completion::Normal,V4::Completion::Language}){Set values;if(!resolve(context,V4::Detail::returns(graph,completion),values))return false;for(const auto &state:V4::Detail::exits(graph,completion)){if(!m_.spend())return false;if(context.controls[state.control]&&!returnedEnvironments(context,values,state.heap))return false;}}
     for(Ref index=0;index<graph.nodes.size();++index){if(!m_.spend())return false;const auto &node=graph.nodes[index];if(node.kind!=V4::ValueKind::Capture&&node.kind!=V4::ValueKind::EnvironmentParent&&node.kind!=V4::ValueKind::EnvironmentCreate)continue;if(!context.controls[node.control])continue;
       if(node.kind==V4::ValueKind::Capture){Ref selected;Set bases;if(!symbol(node.layout,selected)||!resolve(context,*node.environment,bases)||!completeCapture(context,node.heap,bases,selected,node.id))return false;}
@@ -921,10 +1947,38 @@ class Solver {
       else if(node.kind==V4::ValueKind::EnvironmentCreate){Ref selected;if(!symbol(node.layout,selected))return false;const auto *row=layout(selected);if(!row)return false;if(row->parent)for(auto env:context.values[index]){if(!numericLookup(environmentParents_.size()))return false;const auto found=environmentParents_.find(env);if(found==environmentParents_.end()||found->second.empty())return open("activation-parent-unresolved");}}
     }
     for(Ref index=0;index<graph.calls.size();++index){if(!m_.spend())return false;const auto &call=graph.calls[index];if(!context.controls[call.control])continue;Ref function;if(!symbol(call.functionId,function))return false;const auto *record=fixedFunction(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!symbol(*record->protocol.lexicalEnvironment,expected))return false;
+      const auto checkIncoming=[&](const Set &environment){
+        bool ready;
+        if(!incomingCapturesReady(context.heaps[call.heap],environment,expected,*record->upper,ready))return false;
+        return ready||open("capture-payload-unresolved-on-reachable-path");
+      };
       Set codes;
-      if(call.callee){Set components;if(!resolve(context,*call.callee,codes))return false;if(call.environment&&!resolve(context,*call.environment,components))return false;
-        for(auto id:codes){if(!m_.spend())return false;const auto code=locations_[id];if(code.kind==LocationKind::Code&&code.function!=function)continue;
-          if(expected!=None){if(!call.environment)return open("selected-code-component-missing");bool matched=false;for(auto env:components){if(!m_.spend())return false;const auto component=locations_[env];matched=matched||(code.kind==LocationKind::Code?env==code.environment:component.kind==LocationKind::EnvironmentComponent&&component.source==id&&component.function==function&&component.layout==expected);}if(!matched)return open("selected-code-env-pair-unresolved");}}
+      if(call.callee){
+        Set components;
+        if(!resolve(context,*call.callee,codes))return false;
+        if(call.environment&&!resolve(context,*call.environment,components))return false;
+        for(auto id:codes){
+          if(!m_.spend())return false;
+          const auto code=locations_[id];
+          if(code.kind==LocationKind::Code&&code.function!=function)continue;
+          if(expected==None)continue;
+          if(!call.environment)return open("selected-code-component-missing");
+          bool matched=false;
+          for(auto env:components){
+            if(!m_.spend())return false;
+            const auto component=locations_[env];
+            const bool compatible=code.kind==LocationKind::Code?env==code.environment:
+              component.kind==LocationKind::EnvironmentComponent&&component.source==id&&component.function==function&&component.layout==expected;
+            if(!compatible)continue;
+            matched=true;
+            Set selected;
+            if(!insert(selected,env,false)||!checkIncoming(selected))return false;
+          }
+          if(!matched)return open("selected-code-env-pair-unresolved");
+        }
+      }else if(expected!=None&&call.environment){
+        Set bases,selected;
+        if(!resolve(context,*call.environment,bases)||!selectEnvironments(bases,expected,selected)||!checkIncoming(selected))return false;
       }
       if(context.targets[index].empty()){
         bool readonly,covered=false;
@@ -932,8 +1986,10 @@ class Solver {
         if(!covered)return open("permitted-code-env-target-unresolved");
       }
       for(auto target:context.targets[index]){auto &called=*contexts_[target];for(const auto &capture:called.upper->captures){if(!m_.spend())return false;if(!capture.flags.read&&!capture.flags.write&&!capture.flags.structural)continue;
-          Ref selected;std::vector<CaptureSource> sources;if(!captureSources(called,capture.slot,selected,sources))return false;if(sources.empty())return open("fixed-capture-saved-environment-unresolved");
-          if(!m_.spend(sources.size()))return false;for(const auto &source:sources)if(!completeCapture(*contexts_[source.context],source.heap,*source.bases,selected,capture.slot))return false;}}
+          Ref selected;const std::vector<CaptureSource> *sources;
+          if(!captureSources(called,capture.slot,selected,sources))return false;
+          if(sources->empty())return open("fixed-capture-saved-environment-unresolved");
+          if(!m_.spend(sources->size()))return false;for(const auto &source:*sources)if(!completeCapture(*contexts_[source.context],source.heap,*source.bases,selected,capture.slot))return false;}}
     }return true;
   }
   bool exportSet(V4::SymbolSet &out,const Set &source){
@@ -953,7 +2009,8 @@ public:
   Solver(const V4::Graph &root,const FixedFunctions &fixed,const Callbacks &callbacks,const V4::Charge &charge):root_(root),fixed_(fixed),callbacks_(callbacks),m_(charge){}
   SolveResult run(){
     result_.status=Status::Solved;result_.reason="ordinary-fixed-context-closure";
-    if(!m_.spend(2))return finish();callbackCharge_=[this](std::size_t n){return m_.spend(n);};
+    // Account for the initial empty memos alongside solver startup.
+    if(!m_.spend(4))return finish();callbackCharge_=[this](std::size_t n){return m_.spend(n);};
     if(root_.version!=5){open("graph5-only");return finish();}if(!protocolReady(callbacks_.rootProtocol))return finish();
     // The global stable SlotKey directory belongs to this one admitted group.
     if(callbacks_.environments)for(const auto &row:*callbacks_.environments){Ref owner;if(!symbol(row.first,owner)||!m_.spend(row.second.slots.size()))return finish();
@@ -968,13 +2025,13 @@ public:
     Set environment;if(callbacks_.rootProtocol.lexicalEnvironment){Ref layout,id;if(!symbol(*callbacks_.rootProtocol.lexicalEnvironment,layout)||!entryEnvironment(layout,id)||!insert(environment,id,false))return finish();}
     Ref rootScope;Key identity;if(!key(identity,{None})||!internKey(scopeIds_,std::move(identity),rootScope))return finish();
     Set receivers;if(callbacks_.rootProtocol.construction){
-      Ref id;if(!m_.spend(2))return finish();Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
+      Ref id;if(!m_.spend(11))return finish();Context root;root.scope=rootScope;const auto &protocol=*callbacks_.rootProtocol.construction;
       if(!symbol(protocol.id,id)||!construction(id))return finish();
       for(const auto &[key,candidate]:*callbacks_.constructions){bool eligible;if(!m_.spend()||!derives(candidate,protocol.owner,eligible))return finish();if(!eligible)continue;
         Ref target,frame;if(!symbol(candidate.owner,target)||!frameIdentity(root,None,id,target,None,frame,true)||!insert(receivers,frame,false))return finish();}
       if(rootArguments_.empty()){if(!m_.spend())return finish();rootArguments_.resize(1);}
     }
-    if(!ensure(None,rootScope,rootArguments_,environment,Heap{},initial_,None,0,receivers))return finish();
+    if(!m_.spend()||!ensure(None,rootScope,rootArguments_,environment,Heap{},initial_,None,0,receivers))return finish();
     changed_=true;
     while(changed_&&active()){
       changed_=false;

@@ -341,7 +341,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     result.returnOrigins=graph.snapshot(normalReturns,languageReturns,{normal:collections.array(normalExits),language:collections.array(languageExits)});
     result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};result.hostResources={reads:collections.sorted(hostRead),writes:collections.sorted(hostWrite)};return {upper:result,calls,hostCalls,completions:collections.sorted(completions),local,pendingReason:solved.potentialLanguage?'fixed-potential-language-open':null};
   }
-  function derived(dependencies=null) {
+  function derived(dependencies=null,effectUppers=null) {
     check(fixedRecords===null,'publication-mode','a fixed consumer cannot replace its admitted uppers with current-body derivation');
     // Availability has excluded recursive/unavailable call components. Author
     // each complete fixed target before its caller, once, without inventing
@@ -352,7 +352,15 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
       check(owner&&!active.has(id),'return-origin-call-open','authoring requires a complete nonrecursive fixed call component');active.add(id);
       const targets=calls.get(id);check(targets,'return-origin-call-open','authoring call membership is missing');
       for(const target of targets){spend();visit(target);}
-      rows.set(id,derive(owner,rows).upper);active.delete(id);
+      const projected=derive(owner,rows).upper;
+      // Callers must see the same upper here that they will consume after admission.
+      let upper=projected;
+      if(effectUppers!==null){
+        const effects=effectUppers.get(id);
+        check(effects,'publication','conservative effects are missing for a fixed callee');
+        upper={...commonJoinReturnOriginEffects(effects,projected,spend),returnOrigins:projected.returnOrigins};
+      }
+      rows.set(id,upper);active.delete(id);
     };for(const owner of owners){spend();visit(owner.id);}return rows;
   }
   function covers(upper,body,records) {

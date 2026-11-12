@@ -33,6 +33,18 @@ for(const name of names)test('complete official nominal reference original captu
   const core=emitCommonProgramCore(hir,publication,request),physical=commonProgramPhysical(hir,new Map(publication.contracts.map(r=>[r.functionId,r])));
   assert.match(core,/tsfg_program.env_load/);assert.match(core,/tsfg_program.field/);
   assert.equal(physical.carriers.layout(slot.type).referenceCount,1);assert.equal(physical.carriers.layout(slot.type).byteSize,8);
+  if(name==='local-const'||name==='parameter'||name==='shadow'){
+    const plan=physical.plans.find(plan=>plan.owner.name==='loopRead'),
+      invoke=plan.graph.blocks.flatMap(block=>block.instructions).find(op=>op.name==='tsfg_program.invoke_indirect'),
+      selected=physical.values.actual.observed.get(plan.owner.id+'/'+invoke.operands[0]),
+      reader=hir.functions.find(fn=>fn.name==='readOwned'),factory=hir.functions.find(fn=>fn.name==='makeOwnedReader'),
+      graph=publication.contracts.find(row=>row.functionId===plan.owner.id).returnOrigins;
+    assert.equal(selected.unknown,false);
+    assert.deepEqual([...new Set([...selected.pairs.values()].map(pair=>pair.functionId))],[reader.id]);
+    assert.equal(new Set([...selected.pairs.values()].map(pair=>pair.environment)).size,2);
+    assert.equal(graph.calls.filter(call=>call.functionId===factory.id).length,2);
+    assert.ok(graph.calls.some(call=>call.functionId===reader.id&&call.environment!==null));
+  }
   if(['array-span-readonly','array-span-inherited','inherited-throw'].includes(name)){
     assert.deepEqual(physical.carriers.bodies.get(slot.type),{byteSize:24,alignment:8,referenceCount:2});
     assert.ok(physical.values.actual.borrows);

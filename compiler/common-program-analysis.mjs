@@ -37,12 +37,11 @@ export function createCommonProgramPublication(input) {
   const hir=verifyCommonProgramHir(input),spend=commonMeter(),physical=commonProgramPhysical(hir),storage=commonFixedStorageProjection(hir,physical),
     projection=storage.status==='open'?null:storage,effects=commonEffects(hir,physical.model.spend,physical),derived=effects.derived(),
     availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection,physical),
-    source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,null,null,availability.selected),graphs=source.derived(availability.dependencies);
+    source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,null,null,availability.selected),graphs=source.derived(availability.dependencies,derived);
   spend(hir.functions.length);
   const contracts=hir.functions.map(fn=>{
-    spend();const projected=graphs.get(fn.id),body={functionId:fn.id,signatureHash:fn.signatureHash,
-      upper:projected?commonJoinReturnOriginEffects(derived.get(fn.id),projected,physical.model.spend):derived.get(fn.id),
-      callables:physical.model.callables.contracts.get(fn.id),returnOrigins:projected?.returnOrigins??null};
+    spend();const {returnOrigins=null,...upper}=graphs.get(fn.id)??derived.get(fn.id),body={functionId:fn.id,signatureHash:fn.signatureHash,
+      upper,callables:physical.model.callables.contracts.get(fn.id),returnOrigins};
     return {...body,digest:contractDigest(body,spend)};
   });
   const uppers=new Map(contracts.map(row=>[row.functionId,{returnOrigins:row.returnOrigins}])),

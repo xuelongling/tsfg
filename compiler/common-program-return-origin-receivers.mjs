@@ -2,6 +2,249 @@
 // Symbolic receiver activation state only. Initializer order/rights are owned
 // by the admitted normalized CFG; no Source, token cursor or Actual tag proof.
 import {commonCheck as check} from './common-program-common.mjs';
+import {scalarTypeIds} from './identity.mjs';
+
+const scalarIds=new Set(Object.values(scalarTypeIds));
+const isScalarOrigin=node=>scalarIds.has(node.type)&&(node.kind==='nonowning'||node.kind==='literal'&&node.category==='other');
+const localValues=new Set(['parameter','literal','nonowning','join','gate','copy','receiverValue']);
+const factoryValues=new Set([...localValues,'environmentInput','environmentCreate','capture','projection','receiverFrame','code','call']);
+const constructorValues=new Set([...localValues,'receiverInput','receiverFrame','call']);
+
+function everyOriginLeaf(graph,roots,accept,spend) {
+  if(!roots.length)return false;
+  spend(roots.length);
+  const pending=[...roots],seen=new Set();
+  let foundLeaf=false;
+  while(pending.length){
+    spend();
+    const id=pending.pop();
+    if(seen.has(id))continue;
+    seen.add(id);
+    const node=graph.nodes[id];
+    const inputs=node.kind==='gate'||node.kind==='join'?node.inputs:node.kind==='copy'?node.bases:null;
+    if(inputs===null){
+      if(!accept(node))return false;
+      foundLeaf=true;
+      continue;
+    }
+    if(!inputs.length)return false;
+    for(const input of inputs){
+      spend();
+      pending.push(input);
+    }
+  }
+  return foundLeaf;
+}
+
+// A closed factory can use only private values and environments, including
+// those passed to a direct helper. Its graph cannot obtain an ambient data root.
+export function commonClosedReceiverFactory(fixed,environments,spend) {
+  const checked=new Map();
+  const hasPrivateStorage=(record,allowed,ownsCapture=null)=>{
+    const {graph,upper}=record;
+    if(!graph||!upper||ownsCapture===null&&upper.captures.length||upper.globals.reads.length||upper.globals.writes.length||
+      upper.hostResources.reads.length||upper.hostResources.writes.length||upper.facets.unknownHost)return false;
+    for(const row of graph.nodes){
+      spend();
+      if(!allowed.has(row.kind))return false;
+    }
+    for(const row of graph.heaps){
+      spend();
+      if(row.kind!=='store')continue;
+      if(row.selector.startsWith('capture:')){
+        if(!ownsCapture?.(row))return false;
+      }else{
+        const isReceiverValue=node=>node.kind==='receiverValue'&&graph.heaps[node.action].completion==='normal';
+        if(!row.selector.startsWith('field:')||!everyOriginLeaf(graph,row.bases,isReceiverValue,spend))return false;
+      }
+    }
+    return true;
+  };
+  const callsWithFrame=(graph,call,role,isFrame)=>call.callee===null&&call.environment===null&&call.receiver!==null&&
+    everyOriginLeaf(graph,call.receiver,node=>node.kind==='receiverFrame'&&node.construction===role.id&&isFrame(node),spend);
+  const constructorShape=record=>{
+    const {graph,protocol:{construction,lexicalEnvironment,activationEnvironment}}=record;
+    if(lexicalEnvironment!==null||activationEnvironment!==null||!hasPrivateStorage(record,constructorValues))return null;
+    const isBaseFrame=node=>node.newTarget===null&&node.parent!==null&&
+      everyOriginLeaf(graph,node.parent,input=>input.kind==='receiverInput',spend);
+    const calls=[];
+    for(const call of graph.calls){
+      spend();
+      const child=fixed.get(call.functionId),role=child?.protocol.construction;
+      if(!role||role.owner!==construction.base||!callsWithFrame(graph,call,role,isBaseFrame))return null;
+      calls.push({child,environment:null});
+    }
+    return {calls,returnedEnvironment:null};
+  };
+  const readOnlyReturnedCode=child=>everyOriginLeaf(child.graph,child.graph.normal,node=>{
+    if(node.kind!=='code'||node.environment===null)return false;
+    const target=fixed.get(node.functionId),upper=target?.upper;
+    if(!target?.graph||!upper||!scalarIds.has(target.protocol.returnType)||upper.parameters.length||upper.globals.reads.length||upper.globals.writes.length||
+      upper.hostResources.reads.length||upper.hostResources.writes.length||upper.facets.mayThrow!==false)return false;
+    for(const capture of upper.captures){spend();if(capture.write||capture.structural)return false;}
+    for(const flag in upper.facets){spend();if(flag!=='managedReference'&&upper.facets[flag])return false;}
+    return everyOriginLeaf(target.graph,target.graph.normal,value=>value.type===target.protocol.returnType,spend);
+  },spend);
+  const ordinaryShape=record=>{
+    const {graph,upper,protocol:{lexicalEnvironment,activationEnvironment}}=record;
+    if(!graph||upper?.facets.mayThrow!==false)return null;
+    let activation=null;
+    const isIncoming=node=>lexicalEnvironment!==null&&node.kind==='environmentInput'&&node.layout===lexicalEnvironment;
+    for(const node of graph.nodes){
+      spend();
+      if(node.kind!=='environmentCreate')continue;
+      const layout=environments.get(node.layout);
+      if(activation!==null||node.layout!==activationEnvironment||graph.controls[node.control].kind!=='entry'||
+        layout?.parent!==lexicalEnvironment||(node.parent===null)!==(lexicalEnvironment===null)||
+        node.parent!==null&&!everyOriginLeaf(graph,node.parent,isIncoming,spend))return null;
+      activation=node;
+    }
+    if((activation===null)!==(activationEnvironment===null))return null;
+    const environmentRole=(refs,layout)=>{
+      let role=null;
+      const owned=everyOriginLeaf(graph,refs,node=>{
+        const selected=node===activation?'activation':isIncoming(node)?'incoming':null;
+        if(node.layout!==layout||selected===null||role!==null&&role!==selected)return false;
+        role=selected;
+        return true;
+      },spend);
+      return owned?role:null;
+    };
+    const ownsSlot=(layout,key)=>{
+      const slots=environments.get(layout)?.slots??[];
+      return slots.some(slot=>{spend();return slot.key===key;});
+    };
+    const ownsCapture=store=>{
+      const layout=store.view.slice(4),key=store.selector.slice(8);
+      return store.view.startsWith('env:')&&ownsSlot(layout,key)&&environmentRole(store.bases,layout)!==null;
+    };
+    if(!hasPrivateStorage(record,factoryValues,ownsCapture))return null;
+    for(const capture of upper.captures){
+      spend();
+      if(!ownsSlot(activationEnvironment,capture.slot)&&!ownsSlot(lexicalEnvironment,capture.slot))return null;
+    }
+    const isPrivateValue=node=>node.kind==='parameter'||node.kind==='literal'||node.kind==='nonowning'||
+      node.kind==='receiverValue'||node.kind==='capture'||node.kind==='projection'||node.kind==='call'&&node.completion==='normal';
+    for(const node of graph.nodes){
+      spend();
+      if(node.kind==='environmentInput'&&!isIncoming(node))return null;
+      if(node.kind==='capture'&&(!ownsSlot(node.layout,node.id)||environmentRole(node.environment,node.layout)===null))return null;
+      if(node.kind==='projection'&&(!node.selector.startsWith('field:')||!everyOriginLeaf(graph,node.bases,isPrivateValue,spend)))return null;
+    }
+    const calls=[];
+    for(const call of graph.calls){
+      spend();
+      const child=fixed.get(call.functionId);
+      if(!child||call.callee!==null)return null;
+      const {construction:role,lexicalEnvironment:incoming}=child.protocol;
+      if(role){
+        if(!callsWithFrame(graph,call,role,node=>node.parent===null))return null;
+        calls.push({child,environment:null});
+        continue;
+      }
+      if(call.receiver!==null||(call.environment===null)!==(incoming===null))return null;
+      const environment=call.environment===null?null:environmentRole(call.environment,incoming);
+      if(incoming!==null&&environment===null)return null;
+      for(const roots of call.arguments){
+        spend();
+        if(!everyOriginLeaf(graph,roots,isPrivateValue,spend))return null;
+      }
+      calls.push({child,environment});
+    }
+    const returnedEnvironment=()=>{
+      let role=null,delegatedCall=null,scopedCall=null;
+      const ownReceiver=node=>{
+        if(node.kind!=='call'||node.completion!=='normal')return false;
+        const child=calls[node.call].child,construction=child.protocol.construction;
+        return construction!==null&&callsWithFrame(graph,graph.calls[node.call],construction,frame=>frame.parent===null)&&
+          everyOriginLeaf(child.graph,child.graph.normal,value=>{
+            if(value.kind!=='receiverValue')return false;
+            const result=child.graph.heaps[value.action];
+            return result.action==='result'&&result.completion==='normal'&&result.operands.length===0&&
+              everyOriginLeaf(child.graph,result.frames,frame=>frame.kind==='receiverInput',spend);
+          },spend);
+      };
+      const exact=everyOriginLeaf(graph,graph.normal,node=>{
+        let selected=null;
+        if(node.kind==='call'&&node.completion==='normal'){
+          const call=calls[node.call];
+          const childResult=checked.get(call.child).environment;
+          if(childResult==='incoming')selected=call.environment;
+          if(childResult==='activation'&&node.type===record.protocol.returnType&&node.type===call.child.protocol.returnType&&
+            lexicalEnvironment===null&&activation===null&&call.environment===null&&
+            (delegatedCall===null||delegatedCall===node.call)){
+            const arguments_=graph.calls[node.call].arguments;
+            const scoped=arguments_.length===0&&call.child.upper.parameters.length===0;
+            // A fresh receiver carries the wrapper identity in the arguments.
+            // A closed nullary helper needs the exact parent scope explicitly.
+            if((scoped||arguments_.some(roots=>{spend();return everyOriginLeaf(graph,roots,ownReceiver,spend);}))&&readOnlyReturnedCode(call.child)){
+              delegatedCall=node.call;scopedCall=scoped?node.call:null;selected='delegated';
+            }
+          }
+        }else if(node.kind==='code'&&node.environment!==null){
+          selected=environmentRole(node.environment,fixed.get(node.functionId)?.protocol.lexicalEnvironment);
+        }
+        if(selected===null||role!==null&&role!==selected)return false;
+        role=selected;
+        return true;
+      },spend);
+      return exact?{environment:role,scopedCall}:null;
+    };
+    return {calls,returnedEnvironment};
+  };
+  const privateRoutine=record=>{
+    const pending=[{record,shape:null}];
+    while(pending.length){
+      spend();
+      const {record,shape}=pending.pop();
+      if(shape){
+        const valid=shape.calls.every(({child})=>{spend();return Boolean(checked.get(child));});
+        if(!valid)continue;
+        const {environment,scopedCall}=shape.returnedEnvironment?.()??{environment:null,scopedCall:null};
+        let parameters=null;
+        if(environment==='delegated'){
+          spend(record.upper.parameters.length+1);
+          parameters=Array(record.upper.parameters.length).fill(null);
+          for(const node of record.graph.nodes){spend();if(node.kind==='parameter'&&node.index<parameters.length)parameters[node.index]=node.type;}
+        }
+        checked.set(record,{environment,parameters,scopedCall});
+        continue;
+      }
+      if(checked.has(record))continue;
+      // A backedge sees the pending null and keeps its cycle unproven.
+      checked.set(record,null);
+      const candidate=record.protocol.construction?constructorShape(record):ordinaryShape(record);
+      if(!candidate)continue;
+      pending.push({record,shape:candidate});
+      for(const {child} of candidate.calls){
+        spend();
+        if(!checked.has(child))pending.push({record:child,shape:null});
+      }
+    }
+    return checked.get(record);
+  };
+  return (graph,call,args,locations)=>{
+    if(call.callee!==null||call.environment!==null||call.receiver!==null)return null;
+    const record=fixed.get(call.functionId);
+    if(record.protocol.lexicalEnvironment!==null||!record.graph?.calls.length||
+      record.protocol.activationEnvironment===null&&record.graph.calls.length<2)return null;
+    const result=privateRoutine(record);
+    if(result?.environment!=='activation'&&result?.environment!=='delegated')return null;
+    const {parameters}=result;
+    if(parameters&&(parameters.length!==args.length||call.arguments.length!==args.length))return null;
+    for(const [index,values]of args.entries()){
+      spend();
+      const type=parameters?.[index];
+      if(!values.size||!everyOriginLeaf(graph,call.arguments[index],node=>isScalarOrigin(node)&&(!parameters||node.type===type),spend))return null;
+      for(const value of values){
+        spend();
+        const {node,owner}=locations[value];
+        if(owner!==null||!isScalarOrigin(node)||parameters&&node.type!==type)return null;
+      }
+    }
+    return result;
+  };
+}
 
 export function commonReturnOriginReceivers({spend,constructions,location,locations}) {
   const frames=new Map(),liveWorlds=new WeakSet();
