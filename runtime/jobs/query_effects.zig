@@ -294,19 +294,23 @@ const Context = struct {
         for (self.facts.payload.types) |*row| {
             try self.spend(1 + @min(raw.len, row.id.len) / 64);
             if (!same(row.id, raw)) continue;
-            const kind = row.nominalKey orelse return error.InvalidEffects;
-            const range = row.declarationRange orelse return error.InvalidEffects;
-            if (!same(kind.category, "component")) return error.InvalidEffects;
-            const name = row.name orelse return error.InvalidEffects;
-            const path = row.sourcePath orelse return error.InvalidEffects;
-            for (self.catalog.payload.types) |*component| {
-                try self.spend(1);
-                if (component.kind != .component or component.range.start != range.start or component.range.end != range.end) continue;
-                try self.spend(2 + @min(name.len, component.name.len) / 64 + @min(path.len, component.sourcePath.len) / 64);
-                if (same(component.name, name) and same(component.sourcePath, path)) return component.id;
-            }
+            if (try self.catalogComponent(row)) |id| return id;
         }
         return error.InvalidEffects;
+    }
+    fn catalogComponent(self: *Context, row: *const RawType) Error!?[]const u8 {
+        const kind = row.nominalKey orelse return error.InvalidEffects;
+        const range = row.declarationRange orelse return error.InvalidEffects;
+        if (!same(kind.category, "component")) return error.InvalidEffects;
+        const name = row.name orelse return error.InvalidEffects;
+        const path = row.sourcePath orelse return error.InvalidEffects;
+        for (self.catalog.payload.types) |*component| {
+            try self.spend(1);
+            if (component.kind != .component or component.range.start != range.start or component.range.end != range.end) continue;
+            try self.spend(2 + @min(name.len, component.name.len) / 64 + @min(path.len, component.sourcePath.len) / 64);
+            if (same(component.name, name) and same(component.sourcePath, path)) return component.id;
+        }
+        return null;
     }
     fn queryItems(self: *Context, parameters: []const SourceParameter, binding: []const u8) Error![]const RawItem {
         var selected: ?[]const RawItem = null;
@@ -603,7 +607,7 @@ const Context = struct {
         try self.source(operation.source, owner);
         operations.remaining = operations.remaining[1..];
     }
-    fn field(self: *Context, component: []const u8, id: []const u8, source_id: []const u8, writable: bool) Error!void {
+    fn field(self: *Context, component: []const u8, id: []const u8, source_id: []const u8, writable: bool) SourceCheckError!void {
         try self.spend(1);
         const row = self.catalog.find(component) orelse return error.InvalidEffects;
         if (row.kind != .component or !digestId(source_id)) return error.InvalidEffects;
@@ -613,7 +617,7 @@ const Context = struct {
             if (writable and item.readonly) return error.InvalidEffects;
             for (self.facts.payload.types) |*raw| {
                 try self.spend(1);
-                for (raw.fields) |*original| {
+                for (raw.fields, 0..) |*original, index| {
                     try self.spend(1);
                     if (!same(original.id, source_id)) continue;
                     try self.spend(3 + @min(original.name.len, item.name.len) / 64 + @min(original.origin.source.len, item.sourcePath.len) / 64);
@@ -622,6 +626,12 @@ const Context = struct {
                     if (original.readonly != item.readonly or !scalar_types.has(original.type)) return error.InvalidEffects;
                     const expected_type = hashIdentity("tsfg.type\x00", original.type);
                     if (!same(item.type, &expected_type)) return error.InvalidEffects;
+                    // Common FieldId uses the original declaring type and local ordinal.
+                    try self.spend(12 + 16 * (original.name.len / 64 + 1));
+                    const owner = (try self.catalogComponent(raw)) orelse return error.InvalidEffects;
+                    const key = try std.json.Stringify.valueAlloc(self.allocator, .{ .index = index, .name = original.name, .owner = owner }, .{});
+                    defer self.allocator.free(key);
+                    if (!same(id, &hashIdentity("tsfg.common-program.field.v1\x00", key))) return error.InvalidEffects;
                     return;
                 }
             }
@@ -629,7 +639,7 @@ const Context = struct {
         }
         return error.InvalidEffects;
     }
-    fn fieldRows(self: *Context, rows: []const FieldEffects) Error!void {
+    fn fieldRows(self: *Context, rows: []const FieldEffects) SourceCheckError!void {
         for (rows, 0..) |row, index| {
             try self.field(row.componentType, row.field, row.sourceField, row.writeCount != 0);
             if ((row.readCount == 0 and row.writeCount == 0) or (index > 0 and !lessField({}, rows[index - 1], row))) return error.InvalidEffects;

@@ -426,14 +426,18 @@ fn digest(prefix: []const u8, bytes: []const u8) [71]u8 {
 }
 
 test "typed effects reject a used field with another same-size scalar type" {
-    try rejectLayoutField(true);
+    try rejectLayoutField(.scalar);
 }
 
 test "typed effects reject a used read field with different Source readonly" {
-    try rejectLayoutField(false);
+    try rejectLayoutField(.readonly);
 }
 
-fn rejectLayoutField(comptime type_change: bool) !void {
+test "typed effects reject a used field identity from the wrong declaring ordinal" {
+    try rejectLayoutField(.ordinal);
+}
+
+fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal }) !void {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict-receipt.json"), .{});
     defer receipt.deinit();
     var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict.tmeta"), receipt.value);
@@ -441,20 +445,32 @@ fn rejectLayoutField(comptime type_change: bool) !void {
     var arena = std.heap.ArenaAllocator.init(A);
     defer arena.deinit();
     const own = arena.allocator();
+    var payload = document.payload;
     var catalog = document.component_layout.payload;
     const types = try own.dupe(jobs.layout.Type, catalog.types);
     for (types) |*row| {
-        const name = if (type_change) "CopyDestination" else "CopySource";
+        const name = if (change == .readonly) "CopySource" else "CopyDestination";
         if (row.kind != .component or !std.mem.eql(u8, row.name, name)) continue;
         const fields = try own.dupe(jobs.layout.Field, row.fields);
-        const field = &fields[if (type_change) 1 else 0];
+        const field = &fields[if (change == .readonly) 0 else 1];
         try std.testing.expectEqualStrings("n", field.name);
-        if (type_change) {
-            try std.testing.expectEqualStrings("pad", fields[0].name);
-            field.type = fields[0].type;
-        } else {
-            try std.testing.expect(!field.readonly);
-            field.readonly = true;
+        switch (change) {
+            .scalar => {
+                try std.testing.expectEqualStrings("pad", fields[0].name);
+                field.type = fields[0].type;
+            },
+            .readonly => {
+                try std.testing.expect(!field.readonly);
+                field.readonly = true;
+            },
+            .ordinal => {
+                const key = try std.json.Stringify.valueAlloc(own, .{ .index = @as(u32, 0), .name = field.name, .owner = row.id }, .{});
+                const wrong = digest("tsfg.common-program.field.v1\x00", key);
+                try std.testing.expect(!std.mem.eql(u8, field.id, &wrong));
+                try std.testing.expect(std.mem.indexOf(u8, payload.effects, field.id) != null);
+                payload.effects = try std.mem.replaceOwned(u8, own, payload.effects, field.id, &wrong);
+                field.id = try own.dupe(u8, &wrong);
+            },
         }
         row.fields = fields;
         break;
@@ -466,10 +482,11 @@ fn rejectLayoutField(comptime type_change: bool) !void {
     const body = try std.json.Stringify.valueAlloc(own, catalog, .{});
     const hash = digest("tsfg.component-layout.v1\x00", body);
     const envelope = try std.json.Stringify.valueAlloc(own, .{ .family = "tsfg.component-layout-candidate", .payload = body, .payloadHash = @as([]const u8, &hash), .schemaHash = jobs.layout.schema_hash, .version = @as(u32, 1) }, .{});
-    var payload = document.payload;
     payload.componentLayouts = try std.mem.concat(own, u8, &.{ envelope, "\n" });
     const layout_hash = digest("", payload.componentLayouts);
+    const effects_hash = digest("", payload.effects);
     payload.layoutHash = &layout_hash;
+    payload.effectsHash = &effects_hash;
     try rejectPayload(payload);
 }
 
