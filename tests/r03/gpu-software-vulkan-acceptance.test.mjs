@@ -244,15 +244,42 @@ function verifyRecovery(report){
   const final=report.final,transitions=report.transitions;
   assert.ok(transitions.length>0);
   assert.deepEqual(transitions.at(-1),final);
+  for(const id of [final.deviceGeneration,final.submissionId]){
+    assert.equal(typeof id,'string');
+    assert.match(id,/^[1-9][0-9]{0,19}$/u);
+    const value=BigInt(id);
+    assert.ok(value<=0xffff_ffff_ffff_ffffn&&value.toString()===id);
+  }
   for(const value of transitions){
     assert.deepEqual([value.deviceGeneration,value.submissionId,value.identity,value.functionId,value.source,value.resources],
       [final.deviceGeneration,final.submissionId,report.identity,final.functionId,final.source,final.resources]);
   }
   const [prepared,submitted]=transitions;
   if(prepared.state==='Prepared')
-    assert.deepEqual([prepared.submitted,prepared.completionKnown,prepared.outputsAvailable],[false,false,false]);
-  if(submitted?.state==='Submitted')
-    assert.deepEqual([submitted.submitted,submitted.completionKnown,submitted.outputsAvailable],[true,false,false]);
+    assert.deepEqual([prepared.stage,prepared.vkResult,prepared.failure,prepared.windowsError,prepared.submitted,prepared.completionKnown,prepared.outputsAvailable],
+      ['prepared',0,'None',null,false,false,false]);
+  if(prepared.state==='Prepared'&&submitted?.state==='Submitted'){
+    assert.deepEqual([submitted.stage,submitted.vkResult,submitted.failure,submitted.windowsError,submitted.submitted,submitted.completionKnown,submitted.outputsAvailable],
+      ['submitted',0,'None',null,true,false,false]);
+    assert.ok(transitions.length>=3);
+    assert.ok(['Unfinished','Completed','DeviceLost'].includes(final.state));
+    assert.equal(final.submitted,true);
+    assert.equal(typeof final.completionKnown,'boolean');
+    if(final.state==='Completed')assert.equal(final.completionKnown,true);
+    if(final.state==='Unfinished')assert.equal(final.completionKnown,false);
+  }else{
+    assert.equal(transitions.length,prepared.state==='Prepared'?2:1);
+    if(prepared.state==='Prepared'){
+      const {vkResult}=final;
+      assert.ok(Number.isInteger(vkResult)&&vkResult!==0&&vkResult>=-0x8000_0000&&vkResult<=0x7fff_ffff);
+      assert.deepEqual([final.state,final.stage,final.failure,final.windowsError],
+        [vkResult===-4?'DeviceLost':'FailedBeforeSubmit','queue-submit','Vulkan',null]);
+    }else{
+      assert.ok(['FailedBeforeSubmit','DeviceLost'].includes(final.state));
+      assert.notEqual(final.stage,'queue-submit');
+    }
+    assert.deepEqual([final.submitted,final.completionKnown,final.outputsAvailable],[false,false,false]);
+  }
   if(final.outputsAvailable===true)
     assert.deepEqual([final.state,final.stage,final.vkResult,final.failure,final.windowsError,final.submitted,final.completionKnown],
       ['Completed','completed',0,'None',null,true,true]);
@@ -344,7 +371,7 @@ for(const fixture of fixtures){
       report.outputs.forEach(value=>{assert.equal(value.bits,String(result));assert.equal(value.signed,String(BigInt.asIntN(32,result)));});
     });
 }
-test('recovery follows only unresolved timeout waits in one session',()=>{
+test('recovery follows only unresolved timeout waits in one session',async t=>{
   const identity={session:'fixed-call'};
   const source={sourceId:'/src/main.ts',start:15,end:20};
   const resources=[{set:0,binding:0}];
@@ -388,6 +415,45 @@ test('recovery follows only unresolved timeout waits in one session',()=>{
   for(const changes of [{functionId:'another-kernel'},{source:{...source,end:21}},{resources:[]}]){
     assert.throws(()=>verifyRecovery({...report,transitions:[prepared,submitted,{...timeout,...changes},completed]}),{name:'AssertionError'});
   }
+  const withTransitions=transitions=>({...report,final:transitions.at(-1),transitions});
+  const neverWaited=rows=>({...withTransitions(rows),timeout:'NOT_OBSERVED',retainedResumeObserved:false,recovery:'NOT_RUN'});
+  await t.test('invocation identifiers use positive uint64 decimal strings',()=>{
+    for(const key of ['deviceGeneration','submissionId']){
+      for(const id of [undefined,0,'0','01','1\n','18446744073709551616']){
+        const rows=report.transitions.map(row=>({...row,[key]:id}));
+        assert.throws(()=>verifyRecovery(withTransitions(rows)),{name:'AssertionError'});
+      }
+    }
+    verifyRecovery(withTransitions(report.transitions.map(row=>({...row,deviceGeneration:'18446744073709551615'}))));
+  });
+  await t.test('recovery history begins with prepare and a single submission',()=>{
+    for(const rows of [[submitted,timeout,completed],[prepared,timeout,completed],[timeout,completed]])
+      assert.throws(()=>verifyRecovery(withTransitions(rows)),{name:'AssertionError'});
+    assert.throws(()=>verifyRecovery(neverWaited([prepared,submitted])),{name:'AssertionError'});
+  });
+  const submitLost={...prepared,state:'DeviceLost',failure:'Vulkan',stage:'queue-submit',vkResult:-4};
+  verifyRecovery(neverWaited([prepared,submitLost]));
+  verifyRecovery(neverWaited([{...submitLost,stage:'create-device'}]));
+  verifyRecovery(neverWaited([{...prepared,state:'FailedBeforeSubmit',failure:'Capability',stage:'physical-profile'}]));
+  verifyRecovery(neverWaited([{...prepared,state:'FailedBeforeSubmit',stage:'loader',failure:'Windows',windowsError:126,vkResult:null}]));
+  const invalidSuccess=[{vkResult:-4},{failure:'Vulkan'},{windowsError:5},{stage:'wait'}];
+  await t.test('prepared rows use the producer success tuple',()=>{
+    for(const changes of invalidSuccess)
+      assert.throws(()=>verifyRecovery(withTransitions([{...prepared,...changes},...report.transitions.slice(1)])),{name:'AssertionError'});
+  });
+  await t.test('submitted rows use the producer success tuple',()=>{
+    for(const changes of invalidSuccess)
+      assert.throws(()=>verifyRecovery(withTransitions([prepared,{...submitted,...changes},...report.transitions.slice(2)])),{name:'AssertionError'});
+  });
+  await t.test('queue submission failure uses the producer result tuple',()=>{
+    const submitFailed={...submitLost,state:'FailedBeforeSubmit',vkResult:-1};
+    verifyRecovery(neverWaited([prepared,submitFailed]));
+    for(const changes of [{failure:'Windows'},{windowsError:5},{stage:'create-device'},{state:'FailedBeforeSubmit'},
+      ...[0,null,'-4',-4.5,0x8000_0000,-0x8000_0001,-1].map(vkResult=>({vkResult}))])
+      assert.throws(()=>verifyRecovery(neverWaited([prepared,{...submitLost,...changes}])),{name:'AssertionError'});
+    assert.throws(()=>verifyRecovery(neverWaited([prepared,{...submitFailed,vkResult:-4}])),{name:'AssertionError'});
+    assert.throws(()=>verifyRecovery(neverWaited([submitLost])),{name:'AssertionError'});
+  });
 });
 
 test('independent arithmetic edge vectors and exact fixture coverage',()=>{
