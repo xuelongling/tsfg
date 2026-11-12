@@ -36,10 +36,129 @@ function everyOriginLeaf(graph,roots,accept,spend) {
   return foundLeaf;
 }
 
+// A writable returned cell may share a static factory summary only when all
+// its Code uses are one private element family and one terminal invocation.
+// No saved Code or array alias can observe a second activation's cell.
+function terminalWritableReader(graph,producer,reader,spend) {
+  const wrappers=new Map(),results=[];
+  let producerIndex=-1;
+  for(const [index,node] of graph.nodes.entries()){
+    spend();
+    if(node.kind==='call'&&node.completion==='normal'&&graph.calls[node.call]===producer){
+      results.push(index);producerIndex=node.call;
+    }
+    const inputs=node.kind==='copy'?node.bases:node.kind==='join'||node.kind==='gate'?node.inputs:[];
+    for(const input of inputs){spend();let users=wrappers.get(input);if(!users)wrappers.set(input,users=[]);users.push(index);}
+  }
+  const closure=roots=>{
+    spend(roots.length+1);const pending=[...roots],marked=new Set(pending);
+    for(const root of pending)for(const user of wrappers.get(root)??[]){
+      spend();if(!marked.has(user)){marked.add(user);pending.push(user);}
+    }
+    return marked;
+  };
+  const intersects=(refs,marked)=>{for(const id of refs??[]){spend();if(marked.has(id))return true;}return false;};
+  const produced=closure(results);
+  let local=null,view=null,stored=false;
+  const bindBase=(bases,candidate)=>everyOriginLeaf(graph,bases,node=>{
+    if(node.kind!=='local'||node.type!==candidate||local!==null&&node!==local)return false;
+    local=node;
+    return true;
+  },spend);
+  for(const heap of graph.heaps){
+    spend();
+    if(heap.kind!=='store'||!intersects(heap.values,produced))continue;
+    if(heap.selector!=='element'||view!==null&&view!==heap.view||!bindBase(heap.bases,heap.view))return false;
+    view=heap.view;stored=true;
+  }
+  if(!stored)return false;
+  spend(graph.nodes.length);
+  const array=closure([graph.nodes.indexOf(local)]);
+  const hasArray=refs=>intersects(refs,array);
+  const ownArray=bases=>bindBase(bases,view);
+  const projections=[];
+  for(const [index,node] of graph.nodes.entries()){
+    spend();
+    if(node.kind==='projection'&&(node.selector==='element'||hasArray(node.bases))){
+      if(node.selector!=='element'||node.view!==view||!ownArray(node.bases))return false;
+      projections.push(index);
+    }
+  }
+  if(!projections.length)return false;
+  const projected=closure(projections);
+  spend(produced.size+projected.size+projections.length+1);
+  const codes=new Set([...produced,...projected]),components=[];
+  const projectionNodes=new Set(projections.map(index=>graph.nodes[index]));
+  for(const id of projected){spend();if(produced.has(id))return false;}
+  const from=(refs,nodes)=>everyOriginLeaf(graph,refs,node=>nodes.has(node),spend);
+  for(const [index,node] of graph.nodes.entries()){
+    spend();
+    if(node.kind==='copy'||node.kind==='join'||node.kind==='gate')continue;
+    if(node.kind==='environmentComponent'&&intersects(node.callee,projected)){
+      if(node.functionId!==reader||!from(node.callee,projectionNodes))return false;
+      components.push(index);continue;
+    }
+    for(const refs of [node.parent,node.environment,node.callee,node.bases]){
+      if((node.kind!=='projection'&&hasArray(refs))||intersects(refs,codes))return false;
+    }
+  }
+  const env=closure(components),sensitive=refs=>hasArray(refs)||intersects(refs,codes)||intersects(refs,env);
+  for(const node of graph.nodes){
+    spend();
+    for(const refs of [node.parent,node.environment,node.callee,node.kind==='copy'?null:node.bases])
+      if(intersects(refs,env))return false;
+  }
+  for(const heap of graph.heaps){
+    spend();
+    if(heap.kind==='receiverAction'&&(sensitive(heap.frames)||sensitive(heap.operands)))return false;
+    if(heap.kind!=='store')continue;
+    if((heap.selector==='element'||hasArray(heap.bases))&&
+      (heap.selector!=='element'||heap.view!==view||!ownArray(heap.bases)))return false;
+    if(hasArray(heap.values)||intersects(heap.bases,codes)||intersects(heap.bases,env)||
+      intersects(heap.values,env)||intersects(heap.values,projected))return false;
+  }
+  if(sensitive(graph.normal)||sensitive(graph.language))return false;
+  spend(components.length+1);
+  const componentNodes=new Set(components.map(index=>graph.nodes[index]));
+  let terminal=-1;
+  for(const [index,call] of graph.calls.entries()){
+    spend();
+    if(sensitive(call.receiver)||call.arguments.some(argument=>{spend();return sensitive(argument);}))return false;
+    if(!sensitive(call.callee)&&!sensitive(call.environment))continue;
+    if(terminal!==-1||call.functionId!==reader||call.callee===null||call.environment===null||
+      !from(call.callee,projectionNodes)||!from(call.environment,componentNodes))return false;
+    terminal=index;
+  }
+  if(terminal===-1)return false;
+  for(const access of graph.accesses){spend();if(intersects(access.values,codes)||intersects(access.values,env))return false;}
+  // The single invocation must not return to any call input through either
+  // heap or control. In particular its normal/language stores stay off the
+  // factory's loop feedback.
+  const dependsOn=(calls,target)=>{
+    const work=[],seenHeaps=new Set(),seenControls=new Set();
+    for(const call of calls){spend();work.push([true,call.heap],[false,call.control]);}
+    while(work.length){
+      spend();const [heap,id]=work.pop(),seen=heap?seenHeaps:seenControls;
+      if(seen.has(id))continue;
+      seen.add(id);
+      const row=(heap?graph.heaps:graph.controls)[id];
+      if(row.kind==='call'){
+        if(row.call===target)return true;
+        const call=graph.calls[row.call];work.push([true,call.heap],[false,call.control]);
+      }else if(row.kind==='join')for(const input of row.inputs){spend();work.push([heap,input]);}
+      else if(row.kind==='copy')work.push([true,row.previous],[false,graph.nodes[row.value].control]);
+      else if(row.kind==='store'||row.kind==='receiverAction')work.push([true,row.previous],[false,row.control]);
+      else if(row.kind==='receiverCompletion')work.push([true,row.action]);
+    }
+    return false;
+  };
+  return dependsOn([producer],producerIndex)&&!dependsOn(graph.calls,terminal);
+}
+
 // A closed factory can use only private values and environments, including
 // those passed to a direct helper. Its graph cannot obtain an ambient data root.
 export function commonClosedReceiverFactory(fixed,environments,spend) {
-  const checked=new Map();
+  const checked=new Map(),terminalUses=new WeakMap();
   const hasPrivateStorage=(record,allowed,ownsCapture=null)=>{
     const {graph,upper}=record;
     if(!graph||!upper||ownsCapture===null&&upper.captures.length||upper.globals.reads.length||upper.globals.writes.length||
@@ -76,15 +195,37 @@ export function commonClosedReceiverFactory(fixed,environments,spend) {
     }
     return {calls,returnedEnvironment:null};
   };
-  const readOnlyReturnedCode=child=>everyOriginLeaf(child.graph,child.graph.normal,node=>{
+  const returnedCode=child=>{
+    let writableReader=null,reader=null;
+    const eligible=everyOriginLeaf(child.graph,child.graph.normal,node=>{
     if(node.kind!=='code'||node.environment===null)return false;
     const target=fixed.get(node.functionId),upper=target?.upper;
     if(!target?.graph||!upper||!scalarIds.has(target.protocol.returnType)||upper.parameters.length||upper.globals.reads.length||upper.globals.writes.length||
       upper.hostResources.reads.length||upper.hostResources.writes.length||upper.facets.mayThrow!==false)return false;
-    for(const capture of upper.captures){spend();if(capture.write||capture.structural)return false;}
-    for(const flag in upper.facets){spend();if(flag!=='managedReference'&&upper.facets[flag])return false;}
+    let writable=false;
+    for(const capture of upper.captures){
+      spend();if(capture.structural)return false;
+      if(capture.write){
+        if(writable||!environments.get(target.protocol.lexicalEnvironment)?.slots.some(slot=>{spend();return slot.key===capture.slot&&slot.writable;}))return false;
+        writable=true;
+      }
+    }
+    if(reader===null)reader=node.functionId;
+    else if(reader!==node.functionId)reader='';
+    if(writable){
+      if(reader!==node.functionId||upper.captures.length!==1||target.protocol.activationEnvironment!==null||
+        environments.get(target.protocol.lexicalEnvironment)?.parent!==null||!privateRoutine(target))return false;
+      writableReader=node.functionId;
+    }
+    if(writableReader!==null&&writableReader!==node.functionId)return false;
+    for(const flag in upper.facets){
+      spend();
+      if(flag!=='managedReference'&&upper.facets[flag]&&!(writable&&(flag==='allocation'||flag==='escape')))return false;
+    }
     return everyOriginLeaf(target.graph,target.graph.normal,value=>value.type===target.protocol.returnType,spend);
-  },spend);
+    },spend);
+    return eligible?{writableReader}:null;
+  };
   const ordinaryShape=record=>{
     const {graph,upper,protocol:{lexicalEnvironment,activationEnvironment}}=record;
     if(!graph||upper?.facets.mayThrow!==false)return null;
@@ -152,7 +293,7 @@ export function commonClosedReceiverFactory(fixed,environments,spend) {
       calls.push({child,environment});
     }
     const returnedEnvironment=()=>{
-      let role=null,delegatedCall=null,scopedCall=null;
+      let role=null,delegatedCall=null,scopedCall=null,writableReader=null;
       const ownReceiver=node=>{
         if(node.kind!=='call'||node.completion!=='normal')return false;
         const child=calls[node.call].child,construction=child.protocol.construction;
@@ -177,8 +318,9 @@ export function commonClosedReceiverFactory(fixed,environments,spend) {
             const scoped=arguments_.length===0&&call.child.upper.parameters.length===0;
             // A fresh receiver carries the wrapper identity in the arguments.
             // A closed nullary helper needs the exact parent scope explicitly.
-            if((scoped||arguments_.some(roots=>{spend();return everyOriginLeaf(graph,roots,ownReceiver,spend);}))&&readOnlyReturnedCode(call.child)){
-              delegatedCall=node.call;scopedCall=scoped?node.call:null;selected='delegated';
+            if(scoped||arguments_.some(roots=>{spend();return everyOriginLeaf(graph,roots,ownReceiver,spend);})){
+              const code=returnedCode(call.child);
+              if(code){delegatedCall=node.call;scopedCall=scoped?node.call:null;writableReader=code.writableReader;selected='delegated';}
             }
           }
         }else if(node.kind==='code'&&node.environment!==null){
@@ -188,7 +330,7 @@ export function commonClosedReceiverFactory(fixed,environments,spend) {
         role=selected;
         return true;
       },spend);
-      return exact?{environment:role,scopedCall}:null;
+      return exact?{environment:role,scopedCall,writableReader}:null;
     };
     return {calls,returnedEnvironment};
   };
@@ -200,14 +342,14 @@ export function commonClosedReceiverFactory(fixed,environments,spend) {
       if(shape){
         const valid=shape.calls.every(({child})=>{spend();return Boolean(checked.get(child));});
         if(!valid)continue;
-        const {environment,scopedCall}=shape.returnedEnvironment?.()??{environment:null,scopedCall:null};
+        const {environment,scopedCall,writableReader}=shape.returnedEnvironment?.()??{environment:null,scopedCall:null,writableReader:null};
         let parameters=null;
         if(environment==='delegated'){
           spend(record.upper.parameters.length+1);
           parameters=Array(record.upper.parameters.length).fill(null);
           for(const node of record.graph.nodes){spend();if(node.kind==='parameter'&&node.index<parameters.length)parameters[node.index]=node.type;}
         }
-        checked.set(record,{environment,parameters,scopedCall});
+        checked.set(record,{environment,parameters,scopedCall,writableReader});
         continue;
       }
       if(checked.has(record))continue;
@@ -223,13 +365,21 @@ export function commonClosedReceiverFactory(fixed,environments,spend) {
     }
     return checked.get(record);
   };
-  return (graph,call,args,locations)=>{
+  return (graph,call,args,locations,terminalGraph=graph)=>{
     if(call.callee!==null||call.environment!==null||call.receiver!==null)return null;
     const record=fixed.get(call.functionId);
     if(record.protocol.lexicalEnvironment!==null||!record.graph?.calls.length||
       record.protocol.activationEnvironment===null&&record.graph.calls.length<2)return null;
     const result=privateRoutine(record);
     if(result?.environment!=='activation'&&result?.environment!=='delegated')return null;
+    if(result.writableReader!==null){
+      if(terminalGraph===null)return null;
+      spend();let byCall=terminalUses.get(terminalGraph);
+      if(!byCall)terminalUses.set(terminalGraph,byCall=new WeakMap());
+      let selected=byCall.get(call);
+      if(selected===undefined){selected=terminalWritableReader(terminalGraph,call,result.writableReader,spend);byCall.set(call,selected);}
+      if(!selected)return null;
+    }
     const {parameters}=result;
     if(parameters&&(parameters.length!==args.length||call.arguments.length!==args.length))return null;
     for(const [index,values]of args.entries()){

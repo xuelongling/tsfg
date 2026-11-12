@@ -5,7 +5,7 @@
 import {canonical,commonCheck as check} from './common-program-common.mjs';
 import {commonReturnOriginReceivers,commonReceiverActivations,commonClosedReceiverFactory} from './common-program-return-origin-receivers.mjs';
 
-export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actualType,environments,constructions=new Map(),rootProtocol},spend) {
+export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actualType,environments,constructions=new Map(),rootProtocol,completedRootReturns=undefined},spend) {
   const isGraph5=graph=>graph?.format?.family==='tsfg.return-origin-graph-candidate'&&graph.format.version===5;
   const format=graph=>check(isGraph5(graph),'return-origins','one draft5 graph family is required');
   format(root);
@@ -43,6 +43,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
     spend();check(locations.length<65536,'limit');id=locations.length;locationIds.set(encoded,id);locations.push({node,owner});changed=true;return id;};
   const receivers=commonReturnOriginReceivers({spend,constructions,location,locations});
   const closedFactory=commonClosedReceiverFactory(fixed,environments,spend),closedInput=new Map();
+  const terminalRoot=completedRootReturns===undefined?root:completedRootReturns===null?null:{...root,...completedRootReturns};
   let closedFrames;
   const address=(base,selector,view)=>{const encoded=key([base,selector,view]);let id=addressIds.get(encoded);if(id!==undefined)return id;
     spend();check(addresses.length<65536,'limit');id=addresses.length;addressIds.set(encoded,id);addresses.push({base,selector,view});changed=true;return id;};
@@ -252,7 +253,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
           }
         }else if(expected===null){check(call.environment===null,'return-origin-environment-open','unexpected direct environment');selected.push(new Set());}
         else{check(call.environment!==null,'return-origin-environment-open','direct environment is missing');const values=selectEnvironments(resolved(context,call.environment),expected);if(values.size)selected.push(values);}
-        const isolation=selected.length>0?closedFactory(graph,call,args,locations):null;
+        const isolation=selected.length>0?closedFactory(graph,call,args,locations,graph===root?terminalRoot:graph):null;
         for(const environment of selected){
           spend();if(!incomingCapturesReady(context.heaps[call.heap],environment,record))continue;
           const called=ensure(call.functionId,args,environment,context.heaps[call.heap],scope,{context,heap:call.heap},receiver,context.receiverHeaps[call.heap],isolation);

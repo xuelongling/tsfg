@@ -331,6 +331,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     }
     const throws=local?new Map():null,languageReturns=new Set(),completions=body(fn.body,origins,throws,languageReturns,normalReturns,languageExits,normalExits);
     if(completions.has('normal'))normalExits.add(graph.checkpoint());
+    graph.selectReturnRoots(normalReturns,languageReturns);
     // Phi equations are complete now. Reproject every recorded access rather
     // than freezing permissions from only the first visit to a loop header.
     for(const {set,flag,value}of marks){spend();project(graph.owners(set),flag,value);}

@@ -15,7 +15,7 @@ const add=(target,source,spend)=>{for(const value of source){spend();target.add(
 
 export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>true,actualType=()=>null,contracts=new Map(),environments,constructions=new Map(),rootProtocol}) {
   const nodes=[],heaps=[{kind:'entry'}],controls=[{kind:'entry'}],calls=[],accesses=new Map(),interned=new Map(),valuePhis=new Map(),heapPhis=new Map(),controlPhis=new Map();
-  let state={heap:0,control:0},revision=0,solvedRevision=-1,solved;
+  let state={heap:0,control:0},revision=0,solvedRevision=-1,solved,selectedReturns=null;
   const key=value=>graphCanonical(value,spend);
   const ordered=values=>{spend((values.size??values.length)+1);const result=[...values];result.sort((a,b)=>{spend();return a-b;});return result;};
   const union=sets=>{const result=new Set();for(const values of sets)add(result,values,spend);return result;};
@@ -85,13 +85,23 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
     const normal=new Set([node({kind:'call',type,call:id,completion:'normal'})]),language=new Set([node({kind:'call',type:null,call:id,completion:'language'})]);
     state=normalState;return {normal,language,normalState,languageState};
   };
+  // Body queries can solve before the producer has selected real exits.
+  // Reuse a completed certificate only at the same graph revision and roots.
+  const selectReturnRoots=(normal,language)=>{
+    const same=(rows,values)=>rows.length===values.size&&rows.every(id=>{spend();return values.has(id);});
+    if(selectedReturns?.revision===revision&&same(selectedReturns.roots.normal,normal)&&same(selectedReturns.roots.language,language))return;
+    selectedReturns={revision,roots:{normal:ordered(normal),language:ordered(language)}};
+    solvedRevision=-1;
+  };
   const solve=()=>{if(solvedRevision===revision)return solved;spend(accesses.size+1);const graph={format,nodes,heaps,controls,calls,accesses:[...accesses.values()],normal:[],language:[],exits:{normal:[state],language:[]}};
-    solved=solveReturnOriginContexts(graph,contracts,{projectField,mayAlias,actualType,environments,constructions,rootProtocol},spend);solvedRevision=revision;return solved;};
+    const completedRootReturns=selectedReturns?.revision===revision?selectedReturns.roots:null;
+    solved=solveReturnOriginContexts(graph,contracts,{projectField,mayAlias,actualType,environments,constructions,rootProtocol,completedRootReturns},spend);solvedRevision=revision;return solved;};
   const owners=values=>solve().owners(values);
   const holdsEnvironment=values=>solve().holdsEnvironment(values);
   const effects=()=>{const result=solve();return {accesses:result.effects,facets:result.facets,calls:result.calls,potentialLanguage:result.potentialLanguage};};
   const live=selected=>solve().live(selected.control);
   const snapshot=(normal,language,exits={normal:[state],language:language.size?[state]:[]})=>{
+    selectReturnRoots(normal,language);
     const solution=solve();solution.validateReturns(normal,language,exits);
     const reachable=(kind,id)=>kind==='nodes'?solution.populated(id):kind==='heaps'?solution.heapReady(id):kind==='controls'?solution.live(id):solution.live(calls[id].control);
     spend(normal.size+language.size+exits.normal.length*2+exits.language.length*2+accesses.size+calls.length+1);
@@ -160,5 +170,5 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
     const exitRows=values=>{spend(values.length*3+1);const result=values.filter(value=>solution.live(value.control)).map(value=>({heap:maps.heaps.get(value.heap),control:maps.controls.get(value.control)}));result.sort((a,b)=>{spend();return a.heap-b.heap||a.control-b.control;});return result.filter((value,index)=>{spend();return index===0||value.heap!==result[index-1].heap||value.control!==result[index-1].control;});};
     return {format,nodes:valueRows,heaps:heapRows,controls:controlRows,calls:callRows,normal:refs('nodes',normal),language:refs('nodes',language),exits:{normal:exitRows(exits.normal),language:exitRows(exits.language)},accesses:decorated.map(item=>item.row)};
   };
-  return {root,literal,receiverInput,receiverFrame,receiverAction,select,gate,copy,write,access,call,environmentInput,environmentCreate,environmentParent,environmentComponent,capture,code,owners,holdsEnvironment,effects,live,snapshot,union,phi,checkpoint,restore,mergeStates};
+  return {root,literal,receiverInput,receiverFrame,receiverAction,select,gate,copy,write,access,call,environmentInput,environmentCreate,environmentParent,environmentComponent,capture,code,owners,holdsEnvironment,effects,live,selectReturnRoots,snapshot,union,phi,checkpoint,restore,mergeStates};
 }
