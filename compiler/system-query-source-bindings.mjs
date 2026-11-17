@@ -52,12 +52,12 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     }
     if(found.length!==1)fail('original named import has no unique module export','source');return found[0];
   }
-  function binding(node,values=false){
+  function binding(node,values=false,scope=ast.directory.get(node.parent)){
     spend(1+(values?0:children(node).length));const nameNode=values?node:children(node).find(child=>child.kind==='KindIdentifier'||child.kind==='KindQualifiedName');
     if(!nameNode||nameNode.kind!=='KindIdentifier')fail('original named type reference required','source');
     const name=identifierName(grammars.get(node.sourcePath).slice(nameNode.range));
     const kinds=values?['KindFunctionDeclaration','KindClassDeclaration','KindVariableDeclaration','KindBindingElement','KindParameter']:declarationKinds;
-    let parent=ast.directory.get(node.parent);
+    let parent=scope;
     while(parent){
       const nested=children(parent);spend(1+2*nested.length);const declarations=[...nested];
       if(values)for(const statement of nested)if(statement.kind==='KindVariableStatement')for(const list of children(statement))if(list.kind==='KindVariableDeclarationList')declarations.push(...children(list));
@@ -152,5 +152,5 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     if(canonical(trace.target)!==canonical(target(result.node)))fail('original alias definition/substitution target differs','source');
     return result;
   }
-  return {at,resolve,target,argumentsOf,verifyLogical,valueBinding:node=>origin(binding(node,true)),complete:()=>{if(cursor!==aliases.length)fail('unconsumed alias proof differs','source');}};
+  return {at,resolve,target,argumentsOf,verifyLogical,valueBinding:(node,scope=undefined)=>origin(binding(node,true,scope)),complete:()=>{if(cursor!==aliases.length)fail('unconsumed alias proof differs','source');}};
 }

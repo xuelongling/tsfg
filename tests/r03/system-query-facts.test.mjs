@@ -2,6 +2,7 @@
 // Positive packets/requests are complete, unmodified actual Go producer bytes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {originId} from '../../compiler/typed-array-schema.mjs';
 import {readSystemQueryFacts,printSystemQueryFacts,systemQueryFactsFormat} from '../../compiler/system-query-facts.mjs';
@@ -10,11 +11,60 @@ import {systemQueryFixture as fixture} from './system-query-fixtures.mjs';
 const actual=fixture('architecture');
 const query=facts=>facts.systems[0].parameters[0].query;
 const inputQuery=packet=>packet.payload.systems[0].parameters[0].query;
-const edit=mutate=>{
-  const packet=structuredClone(actual.packet);mutate(packet,packet.payload);
+const edit=(mutate,input=actual)=>{
+  const packet=structuredClone(input.packet);mutate(packet,packet.payload);
   packet.packageId=sha256('tsfg.system-query.package.v6\0'+packet.schemaHash+'\0'+canonical(packet.payload));
-  return {bytes:Buffer.from(canonical(packet)+'\n'),context:{...actual.context,expectedPackageId:packet.packageId}};
+  return {bytes:Buffer.from(canonical(packet)+'\n'),context:{...input.context,expectedPackageId:packet.packageId}};
 };
+
+function multiSystemInput(){
+  const read=name=>readFileSync(new URL('./testdata/system-query-effects/'+name,import.meta.url));
+  const bytes=read('multi-facts.json'),packet=JSON.parse(bytes.toString('utf8'));
+  return {bytes,packet,context:{...actual.context,requestBytes:read('multi-request.json'),expectedPackageId:packet.packageId}};
+}
+
+function omitDeclarationNodes(payload,{sourcePath,range}){
+  const nodes=payload.nodes.filter(node=>node.sourcePath!==sourcePath||node.range.start<range.start||node.range.end>range.end);
+  assert.ok(nodes.length<payload.nodes.length);
+  payload.nodes=nodes;
+}
+
+test('actual Source retains every marked system in order, including systems without loops',()=>{
+  const input=multiSystemInput(),facts=readSystemQueryFacts(input.bytes,input.context);
+  const oracle=JSON.parse(readFileSync(new URL('./testdata/system-query-effects/expected.json',import.meta.url),'utf8'));
+  assert.deepEqual(facts.systems.map(row=>[row.declaration.name,row.loops.length]),oracle.systems.map(row=>[row.name,row.loops]));
+  assert.deepEqual(printSystemQueryFacts(facts,input.context),input.bytes);
+});
+
+for(const name of ['readPosition2','writePositionY'])test('cold Source boundary rejects an omitted marked system: '+name,()=>{
+  const input=multiSystemInput(),changed=edit((_packet,payload)=>{
+    const systems=payload.systems.filter(row=>row.declaration.name!==name);
+    assert.equal(systems.length,payload.systems.length-1);
+    if(name==='writePositionY')omitDeclarationNodes(payload,payload.systems.find(row=>row.declaration.name===name).declaration);
+    payload.systems=systems;
+  },input);
+  const reason=name==='readPosition2'?/complete Source marked system inventory differs/:/r03-common-program-source/;
+  assert.throws(()=>readSystemQueryFacts(changed.bytes,changed.context),reason);
+});
+
+test('cold Source boundary requires the original decorator occurrence',()=>{
+  const input=multiSystemInput(),changed=edit((_packet,payload)=>{
+    const {markerRange}=payload.systems[0];
+    const decorator=payload.nodes.find(row=>row.kind==='KindDecorator'&&row.sourcePath===payload.program.rootFile&&row.range.start===markerRange.start&&row.range.end===markerRange.end);
+    assert.ok(decorator);
+    payload.nodes=payload.nodes.filter(row=>row.id!==decorator.id&&row.parent!==decorator.id);
+  },input);
+  assert.throws(()=>readSystemQueryFacts(changed.bytes,changed.context),/original system decorator occurrence differs/);
+});
+
+test('cold Source boundary keeps every original top-level AST declaration',()=>{
+  const input=fixture('complete'),changed=edit((_packet,payload)=>{
+    const declaration=payload.nodes.find(node=>node.kind==='KindFunctionDeclaration'&&node.name==='unrelated');
+    assert.ok(declaration);
+    omitDeclarationNodes(payload,declaration);
+  },input);
+  assert.throws(()=>readSystemQueryFacts(changed.bytes,changed.context),/r03-common-program-source/);
+});
 
 test('the private v6 owner rejects the removed v4 packet and context route',()=>{
   const packet=structuredClone(actual.packet);packet.version=4;

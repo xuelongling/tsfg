@@ -116,6 +116,16 @@ function decodeNodes(value,sources,spend){
   return {nodes,directory,roots,original,match,children,typeReference:(path,span)=>typeReferences.get(typeKey(path,span))};
 }
 
+function checkRootSourceTokens(ast,grammars,spend){
+  for(const [path,root] of ast.roots){
+    const children=ast.children.get(root)??[],grammar=grammars.get(path),{tokens}=grammar;
+    spend(children.length);
+    const pieces=children.map(node=>node.range).filter(range=>range.end>range.start);
+    if(tokens.length)grammar.sequence({start:tokens[0].start,end:tokens.at(-1).end},pieces);
+    else if(pieces.length)fail('nonempty AST for empty Source file','source');
+  }
+}
+
 function decodeProgram(value){
   const row=record(value,['sourceRoot','rootFile','positionUnit','config','declarations','target','files','diagnostics']);
   const sourceRoot=logicalPath(text(row.sourceRoot)),rootFile=logicalPath(text(row.rootFile));
@@ -222,16 +232,54 @@ function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fiel
   return loops;
 }
 
+/** @param {readonly SystemQuerySystem[]} systems */
+function checkSystemInventory(systems,grammars,spend){
+  const key=(path,start,end)=>path+'\0'+start+':'+end;
+  spend(systems.length);
+  const expected=new Set(systems.map(({declaration,markerRange})=>key(declaration.sourcePath,markerRange.start,markerRange.end)));
+  if(expected.size!==systems.length)fail('complete Source marked system inventory differs','source');
+  // Derive the complete inventory from original tokens, even when a packet
+  // leaves out a declaration and all its corresponding AST nodes.
+  for(const [path,{tokens}] of grammars){
+    if(path.endsWith('.d.ts'))continue;
+    let braces=0;
+    for(const [index,token] of tokens.entries()){
+      spend();
+      const name=tokens[index+1];
+      if(braces===0&&token.text==='@'&&name?.text==='system'&&!expected.delete(key(path,token.start,name.end)))
+        fail('complete Source marked system inventory differs','source');
+      if(token.text==='{')braces++;
+      else if(token.text==='}'&&--braces<0)fail('unbalanced complete Source braces','source');
+    }
+    if(braces!==0)fail('unbalanced complete Source braces','source');
+  }
+  if(expected.size)fail('complete Source marked system inventory differs','source');
+}
+
 /** @returns {SystemQuerySystem[]} */
 function decodeSystems(value,program,sources,ast,builtins,component,fields,grammars,scalars,spend){
-  const seen=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
-  return array(value).map(value=>{
+  const seen=new Set(),ownedMarkers=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
+  const systems=array(value).map(value=>{
     spend();const row=record(value,descriptor.objects.system);
     const declaration=ast.original(row.declaration),marker=ast.original(row.marker),signature=ast.original(row.signature),markerRange=range(row.markerRange),returnType=text(row.returnType);
     if(declaration.kind!=='KindFunctionDeclaration'||declaration.sourcePath.endsWith('.d.ts')||seen.has(declaration.id)||canonical(signature)!==canonical(declaration)||canonical(marker)!==canonical(builtins.get('system')))fail('original system declaration/signature differs','source');
     seen.add(declaration.id);const grammar=grammars.get(declaration.sourcePath);sourceRange(markerRange,grammar.text,declaration.range);grammar.sequence(markerRange,['@','system']);
     const functionNode=ast.nodes.find(node=>node.kind===declaration.kind&&node.sourcePath===declaration.sourcePath&&canonical(node.range)===canonical(declaration.range));
-    const originalParameters=ast.nodes.filter(node=>node.parent===functionNode.id&&node.kind==='KindParameter');
+    const rootId=ast.roots.get(declaration.sourcePath),root=ast.directory.get(rootId);
+    const functionChildren=ast.children.get(functionNode.id)??[];
+    const markerToken=grammar.tokens[grammar.indices(markerRange).end-1];
+    spend(functionChildren.length);
+    const decorator=functionChildren.find(node=>node.kind==='KindDecorator'&&node.range.start===markerRange.start&&node.range.end===markerRange.end);
+    const decoratorChildren=ast.children.get(decorator?.id)??[];
+    spend(decoratorChildren.length);
+    const use=decoratorChildren.find(node=>node.kind==='KindIdentifier'&&node.range.start===markerToken.start&&node.range.end===markerToken.end);
+    if(functionNode.parent!==rootId||root?.kind!=='KindSourceFile'||!use)fail('original system decorator occurrence differs','source');
+    // All of a module's @system markers share its module-scope value binding.
+    if(!ownedMarkers.has(root.id)){
+      if(canonical(sourceTypes.valueBinding(use,root))!==canonical(marker))fail('original system decorator value binding differs','source');
+      ownedMarkers.add(root.id);
+    }
+    const originalParameters=functionChildren.filter(node=>node.kind==='KindParameter');
     const parameters=array(row.parameters).map((value,index)=>{
       spend();const row=record(value,descriptor.objects.parameter),binding=ast.original(row.binding),annotationRange=range(row.annotationRange),logicalType=text(row.logicalType);
       if(row.view!==null||integer(row.index)!==index||binding.kind!=='KindParameter'||binding.sourcePath!==declaration.sourcePath||!originalParameters[index]||canonical(binding.range)!==canonical(originalParameters[index].range))fail('original system parameter order differs','source');
@@ -275,7 +323,7 @@ function decodeSystems(value,program,sources,ast,builtins,component,fields,gramm
       return {index,binding,annotationRange,logicalType,type:null,query:{declaration:queryDeclaration,tupleSourcePath,tupleRange,aliases,items},view:null};
     });
     if(parameters.length!==originalParameters.length||!parameters.some(row=>row.query)||!component.types.has(returnType))fail('system Query/return type missing','type');
-    const functionChildren=ast.children.get(functionNode.id)??[],body=functionChildren.find(node=>node.kind==='KindBlock'),returnSyntax=functionChildren.filter(node=>node.kind!=='KindParameter'&&node.range.start>=(originalParameters.at(-1)?.range.end??declaration.nameRange.end)&&node.range.end<=(body?.range.start??0)).at(-1);
+    const body=functionChildren.find(node=>node.kind==='KindBlock'),returnSyntax=functionChildren.filter(node=>node.kind!=='KindParameter'&&node.range.start>=(originalParameters.at(-1)?.range.end??declaration.nameRange.end)&&node.range.end<=(body?.range.start??0)).at(-1);
     if(!body||!returnSyntax)fail('original return annotation/body missing','source');
     const bodyRange=range(row.bodyRange);if(canonical(bodyRange)!==canonical(body.range))fail('original complete system body range differs','source');
     sourceTypes.verifyLogical(declaration.sourcePath,returnSyntax.range,returnType,component.types);
@@ -284,6 +332,8 @@ function decodeSystems(value,program,sources,ast,builtins,component,fields,gramm
     const loops=decodeLoops(row.loops,body,declaration.sourcePath,parameters,ast,grammar,component,fields,scalars,spend,sourceTypes);
     return {declaration,declKey:{sourcePath:declaration.sourcePath,path:[],kind:/** @type {'function'} */('function'),name:declaration.name},markerRange,marker,signature,parameters,sourceReturnType:returnType,returnType:text(component.semantic.typeIds.get(returnType)),bodyRange,loops};
   });
+  checkSystemInventory(systems,grammars,spend);
+  return systems;
 }
 
 /** Read one complete actual Source packet bound to its original request.
@@ -313,6 +363,7 @@ export function readSystemQueryFacts(bytes,context){
     builtins.set(row.name,row);return row;});
   if(builtinRows.length!==descriptor.builtins.length)fail('complete owned builtin directory differs','source');
   const grammars=new Map([...sources].map(([path,source])=>[path,commonSourceGrammar(source,spend)]));
+  checkRootSourceTokens(ast,grammars,spend);
   const types=array(payload.types),functions=array(payload.functions);
   if(types.length>4096||functions.length>4096)fail('source type/function directory exceeded','limit');
   const component=componentIdentities({...program,types},functions,sources,spend);
