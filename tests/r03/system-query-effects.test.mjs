@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {canonical,sha256} from '../../compiler/identity.mjs';
-import {readSystemQueryFacts} from '../../compiler/system-query-facts.mjs';
+import {readSystemQueryFacts,systemQueryRequestContext} from '../../compiler/system-query-facts.mjs';
 import {emitSystemQueryCore} from '../../compiler/system-query-core.mjs';
 import {readSystemQueryEffects} from '../../compiler/system-query-effects.mjs';
 import {systemQueryFixture} from './system-query-fixtures.mjs';
@@ -131,4 +131,24 @@ test('owning Query effects reader requires canonical producer bytes',{skip:!enab
     await t.test(name,()=>assert.throws(()=>readSystemQueryEffects(Buffer.from(alternate),facts,multi.context),
       /r10-query-effects-input: canonical analysis bytes required/));
   }
+});
+
+test('owning Query effects reader keeps the original report bytes when reading the request',()=>{
+  const metadata=new URL('../../runtime/jobs/testdata/query-tmeta-i32-copy.tmeta',import.meta.url);
+  const envelope=JSON.parse(readFileSync(metadata,'utf8')),payload=JSON.parse(envelope.payload);
+  const receipt=JSON.parse(readFileSync(new URL('query-tmeta-i32-copy-receipt.json',metadata),'utf8'));
+  const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
+  const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
+  assert.deepEqual([sha256('tsfg.query-tmeta.v2\0'+envelope.payload),facts.inputIdentity,facts.packageId],
+    [receipt.payloadHash,receipt.inputIdentity,receipt.packageId]);
+
+  const original=Buffer.from(payload.effects);
+  assert.equal(sha256(original),payload.effectsHash);
+  assert.equal(canonical(readSystemQueryEffects(original,facts,context))+'\n',payload.effects);
+
+  const supplied=Buffer.from(original);
+  let requestReads=0;
+  const withRequest={...context,get requestBytes(){requestReads++;supplied.fill(0);return request;}};
+  assert.equal(canonical(readSystemQueryEffects(supplied,facts,withRequest))+'\n',payload.effects);
+  assert.equal(requestReads,1);
 });
