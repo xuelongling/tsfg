@@ -221,3 +221,33 @@ test('shared JSON engine preserves old owning string and coreText policies',{ski
     assert.match(diagnostic,canonicalRejected?/core-ir-common-canonical/:/core-ir-query-source/);
   }
 });
+
+test('Query tmeta rejects a changed physical i32 scalar extent',()=>{
+  const metadata=new URL('../../runtime/jobs/testdata/query-tmeta-i32-copy.tmeta',import.meta.url);
+  const original=readFileSync(metadata),envelope=JSON.parse(original.toString('utf8')),payload=JSON.parse(envelope.payload);
+  const receipt=JSON.parse(readFileSync(new URL('query-tmeta-i32-copy-receipt.json',metadata),'utf8'));
+  const fixture=new URL('./testdata/system-query-i32-copy/',import.meta.url);
+  const packet=readFileSync(new URL('package.json',fixture)),requestBytes=readFileSync(new URL('request.json',fixture));
+  const context={family:'tsfg.system-query-context-candidate',version:6,requestBytes,expectedPackageId:receipt.packageId};
+  const facts=readSystemQueryFacts(packet,context),checkedBatch=payload.batch;
+  assert.equal(facts.inputIdentity,receipt.inputIdentity);
+  assert.equal(envelope.payloadHash,receipt.payloadHash);
+  assert.deepEqual(readSystemQueryTmeta(original,facts,context,checkedBatch).envelope,envelope);
+
+  const layout=JSON.parse(payload.componentLayouts),catalog=JSON.parse(layout.payload);
+  /** @type {{kind:string,scalar:string,byteSize:number,alignment:number,stride:number}[]} */
+  const types=catalog.types;
+  const scalar=types.find(row=>row.kind==='scalar'&&row.scalar==='i32');
+  assert.ok(scalar);
+  assert.deepEqual([scalar.byteSize,scalar.alignment,scalar.stride],[4,4,4]);
+  Object.assign(scalar,{byteSize:2,alignment:2,stride:2});
+  catalog.hirDigest=sha256(canonical({components:catalog.components,target:catalog.target,types})+'\n');
+  layout.payload=canonical(catalog);
+  layout.payloadHash=sha256('tsfg.component-layout.v1\0'+layout.payload);
+  payload.componentLayouts=canonical(layout)+'\n';
+  payload.layoutHash=sha256(payload.componentLayouts);
+  envelope.payload=canonical(payload);
+  envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);
+  const changed=Buffer.from(canonical(envelope)+'\n');
+  assert.throws(()=>readSystemQueryTmeta(changed,facts,context,checkedBatch),/scalar layout differs/);
+});

@@ -83,6 +83,11 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
       [scalar?'scalar':type.nominalKey?.category==='component'?'component':'value',type.name,scalar?type.name:'',scalar?'':type.sourcePath,scalar?{start:0,end:0}:type.declarationRange]);
     const alignment=integer(row.alignment),stride=integer(row.stride),size=integer(row.byteSize);
     if(!alignment||alignment>65536||(alignment&(alignment-1))||size>65536||size%alignment||stride!==size)fail('layout extent differs');
+    if(scalar){
+      const name=type.name,bits=name.endsWith('size')?Number(facts.program.target.pointerBits):Number(name.slice(1));
+      const width=name==='bool'?1:bits/8;
+      if(!layoutDescriptor.scalarNames.includes(name)||size!==width||alignment!==width)fail('scalar layout differs');
+    }
     const members=array(row.fields);if(members.length!==fields.length)fail('layout field inventory differs');
     const placements=members.map((value,index)=>{
       spend();const row=record(value,layoutDescriptor.fieldRecord),{offset,...semantic}=row;
