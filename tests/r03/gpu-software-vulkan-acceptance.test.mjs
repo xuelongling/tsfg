@@ -250,6 +250,10 @@ const reports=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_REPORTS;
 const metadata=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_READOBJ;
 const qualificationPath=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_QUALIFICATION;
 const qualificationSHA256=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_QUALIFICATION_SHA256;
+function verifyVulkanFailure({vkResult,failure,windowsError}){
+  assert.ok(Number.isInteger(vkResult)&&vkResult!==0&&vkResult>=-0x8000_0000&&vkResult<=0x7fff_ffff);
+  assert.deepEqual([failure,windowsError],['Vulkan',null]);
+}
 function verifyRecovery(report){
   const final=report.final,transitions=report.transitions;
   assert.ok(transitions.length>0);
@@ -264,6 +268,7 @@ function verifyRecovery(report){
     assert.deepEqual([value.deviceGeneration,value.submissionId,value.identity,value.functionId,value.source,value.resources],
       [final.deviceGeneration,final.submissionId,report.identity,final.functionId,final.source,final.resources]);
   }
+  const isTimeout=value=>value.state==='Unfinished'&&value.vkResult===2;
   const [prepared,submitted]=transitions;
   if(prepared.state==='Prepared')
     assert.deepEqual([prepared.stage,prepared.vkResult,prepared.failure,prepared.windowsError,prepared.submitted,prepared.completionKnown,prepared.outputsAvailable],
@@ -277,13 +282,17 @@ function verifyRecovery(report){
     assert.equal(typeof final.completionKnown,'boolean');
     if(final.state==='Completed')assert.equal(final.completionKnown,true);
     if(final.state==='Unfinished')assert.equal(final.completionKnown,false);
+    if(final.outputsAvailable===false&&!isTimeout(final)){
+      verifyVulkanFailure(final);
+      assert.equal(final.state==='DeviceLost',final.vkResult===-4);
+      assert.equal(final.stage,final.completionKnown?'invalidate-output-memory':'wait');
+    }
   }else{
     assert.equal(transitions.length,prepared.state==='Prepared'?2:1);
     if(prepared.state==='Prepared'){
-      const {vkResult}=final;
-      assert.ok(Number.isInteger(vkResult)&&vkResult!==0&&vkResult>=-0x8000_0000&&vkResult<=0x7fff_ffff);
-      assert.deepEqual([final.state,final.stage,final.failure,final.windowsError],
-        [vkResult===-4?'DeviceLost':'FailedBeforeSubmit','queue-submit','Vulkan',null]);
+      verifyVulkanFailure(final);
+      assert.deepEqual([final.state,final.stage],
+        [final.vkResult===-4?'DeviceLost':'FailedBeforeSubmit','queue-submit']);
     }else{
       assert.ok(['FailedBeforeSubmit','DeviceLost'].includes(final.state));
       assert.notEqual(final.stage,'queue-submit');
@@ -294,7 +303,6 @@ function verifyRecovery(report){
     assert.deepEqual([final.state,final.stage,final.vkResult,final.failure,final.windowsError,final.submitted,final.completionKnown],
       ['Completed','completed',0,'None',null,true,true]);
   else assert.equal(final.outputsAvailable,false);
-  const isTimeout=value=>value.state==='Unfinished'&&value.vkResult===2;
   for(const [index,wait] of transitions.entries()){
     if(index>=2&&index<transitions.length-1)
       assert.ok(isTimeout(wait),'only an unresolved VK_TIMEOUT can precede another wait');
@@ -408,11 +416,32 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
   const retained=final=>({...report,final,transitions:[prepared,submitted,timeout,final],recovery:'RETAINED'});
   verifyRecovery(report);
   verifyRecovery(retained(structuredClone(timeout)));
-  verifyRecovery(retained({...timeout,vkResult:-1,failure:'Vulkan'}));
   // Fence completion survives a subsequent output invalidation failure.
   const invalidation={...completed,stage:'invalidate-output-memory',failure:'Vulkan',vkResult:-1,outputsAvailable:false};
   const afterTimeout=final=>({...report,final,transitions:[prepared,submitted,timeout,final]});
-  verifyRecovery(afterTimeout(invalidation));
+  await t.test('wait failure uses the Vulkan wait result tuple',()=>{
+    const waitFailed={...timeout,vkResult:-1,failure:'Vulkan'};
+    verifyRecovery(retained(waitFailed));
+    for(const changes of [{vkResult:0},{vkResult:-4},{vkResult:null},{vkResult:0x8000_0000},
+      {failure:'None'},{stage:'invalidate-output-memory'},{windowsError:5}])
+      assert.throws(()=>verifyRecovery(retained({...waitFailed,...changes})),{name:'AssertionError'});
+  });
+  await t.test('completed without outputs uses the Vulkan invalidation tuple',()=>{
+    verifyRecovery(afterTimeout(invalidation));
+    for(const changes of [{vkResult:0},{vkResult:-4},{vkResult:'-1'},{vkResult:-0x8000_0001},
+      {failure:'None'},{stage:'wait'},{windowsError:5}])
+      assert.throws(()=>verifyRecovery(afterTimeout({...invalidation,...changes})),{name:'AssertionError'});
+  });
+  await t.test('device loss identifies the failed operation and Vulkan device-lost result',()=>{
+    for(const snapshot of [timeout,invalidation]){
+      const lost={...snapshot,state:'DeviceLost',vkResult:-4,failure:'Vulkan'};
+      const dropped=final=>({...afterTimeout(final),recovery:'DEVICE_LOST'});
+      verifyRecovery(dropped(lost));
+      for(const changes of [{vkResult:0},{vkResult:-1},{failure:'None'},{windowsError:5},
+        {stage:lost.completionKnown?'wait':'invalidate-output-memory'}])
+        assert.throws(()=>verifyRecovery(dropped({...lost,...changes})),{name:'AssertionError'});
+    }
+  });
   for(const outputsAvailable of [undefined,null,0,'false','true']){
     assert.throws(()=>verifyRecovery(afterTimeout({...invalidation,outputsAvailable})),{name:'AssertionError'});
   }
