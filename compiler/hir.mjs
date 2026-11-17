@@ -303,7 +303,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     if (callPublicationContext !== undefined) callEffectsFailure();
     return emitReferenceCore(hir);
   }
-  const verified = verifyHir(hir), moduleMode = !!verified.modules;
+  const verified = verifyHir(hir, undefined, callPublicationContext), moduleMode = !!verified.modules;
   const sourceView = source => ({ path: source.path, hash: source.hash, length: source.content.length });
   return emitScalarCore({ exchange: coreExchangeFormat,
     inputIdentity: verified.inputIdentity, source: sourceView(verified.source), target: verified.target,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
-import {verifyHir,analyzeModuleCalls} from '../../compiler/hir.mjs';
+import {verifyHir,analyzeModuleCalls,lowerHir,lowerOwnedHir} from '../../compiler/hir.mjs';
 
 const oracle=JSON.parse(await readFile(new URL('./call-effects-oracle.json',import.meta.url),'utf8'));
 const firstOracle=JSON.parse(await readFile(new URL('./call-effects-first.json',import.meta.url),'utf8'));
@@ -82,6 +82,12 @@ test('a narrowed implementation preserves the exact fixed table and all contract
  const report=analyzeModuleCalls(narrow.hir,narrow.context);
  assert.deepEqual(report,narrow.expected);assert.deepEqual(report.contracts,old.expected.contracts);
  assert.notDeepEqual(report.functions,old.expected.functions);
+});
+
+for(const lower of [lowerHir,lowerOwnedHir])test('ordinary module lowering checks fixed publication via '+lower.name,()=>{
+ const narrow=fixed('narrowedBodyRetainsFixedContract');
+ assert.equal(lower(narrow.hir,undefined,narrow.context),lower(narrow.hir));
+ rejects(()=>lower(first.hir,undefined,first.context),'bound',first.expected.primary);
 });
 
 test('unknown Host remains Top and cannot be reclassified as pure by a fixed table',()=>{
