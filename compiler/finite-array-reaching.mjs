@@ -25,7 +25,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
   const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
-    effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set()}])),writes=new Map(),reads=new Map(),contexts=new Map(),
+    effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set(),localSpanSlots:!fn.ownerType}])),
+    writes=new Map(),reads=new Map(),contexts=new Map(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
   let contextWrites=new Map(),terminalReads=null;
@@ -42,6 +43,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
     while(stack.length) {
       charge();const {value,path}=stack.pop();if(!value||typeof value!=='object')continue;
       if(['arrayStoreDenseChecked','arrayResizeChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind))effect.writes=true;
+      if(value.kind==='while'||value.kind==='construct'||value.kind==='superConstruct'||
+        value.kind==='call'&&value.target!==hir.intrinsics.readSpan.id)effect.localSpanSlots=false;
       if(value.kind==='call')for(const id of value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target]) {
         if(id!==hir.intrinsics.readSpan.id){effect.callees.add(id);contexts.set(path+'\0'+id,{target:id,possible:true,state:new Map(),constants:new Map(),truths:new Map()});}
       }
@@ -100,6 +103,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
   }
   function analyze(fn,initial,env,applyCalls,recordReads=true,collectAll=false) {
     const exits=[],mutated=new Set();let complete=true,invalidateAll=false;
+    // In a local acyclic transfer, a reaching version has one stored value.
+    // Keep view provenance out of interprocedural states and lexical versions.
+    const trackSpanSlots=recordReads&&!collectAll&&effects.get(fn.id).localSpanSlots;
+    let spans;
     const origin=value=>({source:fn.sourcePath,...value.range});
     const key=index=>index?.constant!==undefined?'c:'+index.constant:index?.symbol?'s:'+index.symbol:null;
     function version(path,value,node,owner,index,kind) {
@@ -109,7 +116,12 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       if(!writes.has(id))writes.set(id,{id,node,owner,index,kind,origin:origin(value)});return id;
     }
     function invalidate(state) {invalidateAll=true;for(const row of state.values()){charge();row.slots.clear();row.length=null;}}
-    function load(value,path,state,receiver,index) {
+    function rememberSpan(id,value,view) {
+      if(trackSpanSlots&&id!==undefined&&view.limit!==undefined&&types.get(value.type)?.kind==='readSpan'&&!view.owner.includes('/parameter/')) {
+        charge();(spans??=new Map()).set(id,{owner:view.owner,offset:view.offset,limit:view.limit});
+      }
+    }
+    function load(value,path,state,receiver,index,projectSpan=false) {
       const memory=state.get(receiver?.owner),slot=key(index),missing=memory?.length!==null&&memory?.length!==undefined&&
         index?.constant!==undefined&&index.constant>=memory.length,
         bounds=receiver?.limit!==undefined&&index?.constant!==undefined&&index.constant>=receiver.limit;
@@ -120,7 +132,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       const status=missing||bounds?'missing':versions?.size?'proven':'pending';
       if(recordReads)reads.set(path,{node:path,owner:receiver?.owner??null,index:slot,status,
         versions:status==='proven'?[...versions].sort():[],sources:status==='proven'?[...new Set([...versions].map(id=>writes.get(id).node))].sort():[],origin:origin(value)});
-      return status;
+      if(!spans||!projectSpan||status!=='proven'||versions.size!==1||index?.constant===undefined||receiver.owner.includes('/parameter/'))return {status};
+      charge();const span=spans.get(versions.values().next().value);
+      return {status,span:span&&state.has(span.owner)?span:undefined};
     }
     function store(value,path,node,state,receiver,index) {
       if(receiver?.owner){charge();mutated.add(receiver.owner);}
@@ -142,6 +156,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       if(index.constant===undefined)memory.slots.clear();
       else for(const other of memory.slots.keys())if(other.startsWith('s:'))memory.slots.delete(other);
       memory.slots.set(slot,new Set([id]));
+      return id;
     }
     function expression(value,path,state,bindings,terminalRoot=false,directStatement=false) {
       if(!value)return {};charge();
@@ -156,19 +171,23 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       }
       if(value.kind==='arrayCreate') {
         const slots=new Map();for(const [index,item] of value.elements.entries()) {
-          expression(item,path+'/elements/'+index,state,bindings);
-          slots.set('c:'+index,new Set([version(path+'/initial/'+index,item,path+'/elements/'+index,path,'c:'+index,'initial')]));
+          const element=expression(item,path+'/elements/'+index,state,bindings),
+            id=version(path+'/initial/'+index,item,path+'/elements/'+index,path,'c:'+index,'initial');
+          rememberSpan(id,item,element);
+          slots.set('c:'+index,new Set([id]));
         }
         state.set(path,{length:value.elements.length,slots});return {owner:path,symbol:path};
       }
       if(value.kind==='arrayReadChecked') {
-        const receiver=child('receiver'),index=child('index');load(value,path,state,receiver,index);return {symbol:path};
+        const receiver=child('receiver'),index=child('index'),
+          {span}=load(value,path,state,receiver,index,!!spans&&types.get(value.type)?.kind==='readSpan'&&types.get(value.receiver.type)?.kind==='array');
+        return span?{...span,symbol:path}:{symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings),
           index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings):null;
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
-          const old=path+'/old-value',status=load({...value,range:value.target.range},old,state,receiver,index);
+          const old=path+'/old-value',{status}=load({...value,range:value.target.range},old,state,receiver,index);
           // The lexical pass retains every original occurrence. Ordered
           // transfer stops only at a definite old-read trap on the current evaluation path.
           if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateCompound(directStatement&&!fn.ownerType)) {
@@ -186,8 +205,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
           }else {memory.slots.clear();memory.length=null;}
           return rhs;
         }
-        store(value,path,value.kind==='arrayStoreDenseChecked'?path+'/value':path,state,receiver,index);
-        return value.kind==='arrayStoreDenseChecked'?rhs:{symbol:path};
+        const id=store(value,path,value.kind==='arrayStoreDenseChecked'?path+'/value':path,state,receiver,index);
+        if(value.kind==='arrayStoreDenseChecked'){rememberSpan(id,value.value,rhs);return rhs;}
+        return {symbol:path};
       }
       if(value.kind==='assignment') {const rhs=child('value');bindings.set(value.target.binding,adapt(rhs,path+'/value',fn.id+'/binding/'+value.target.binding));return rhs;}
       if(value.kind==='arrayLength'||value.kind==='readSpanLength') {

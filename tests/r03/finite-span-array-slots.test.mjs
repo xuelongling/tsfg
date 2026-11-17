@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,verifyHir,readHir,printHir} from '../../compiler/hir.mjs';
+import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 const root=new URL('./testdata/typed-array-span-array-slots/',import.meta.url);
@@ -32,4 +33,19 @@ for(const [index,oracle]of expected.cases.entries())test('SLOT25v '+oracle.name+
   assert.notEqual(resize.owner.allocationSite,view.owner.allocationSite,'A resize remains present without reviving killed A slot');
   assert.deepEqual(verifyHir(built.hir,context,publication),built.hir);
   assert.deepEqual(readHir(Buffer.from(printHir(built.hir,context,publication)),context,publication),built.hir);
+  const {definition,reached}=buildFiniteCoreDomains(built.hir,context,{publicationContext:publication});
+  for(const plan of [definition,reached]){
+    const {reads,writes}=plan.arrayReaching;
+    const text=row=>source.content.slice(row.origin.start,row.origin.end);
+    const slot=reads.find(row=>text(row)==='slots[0]'),element=reads.find(row=>text(row)==='slots[0][0]');
+    assert.equal(slot.status,'proven');
+    assert.deepEqual(slot.versions,writes.filter(row=>row.kind==='store'&&text(row)==='alias[0]=readSpan(b,0,1)').map(row=>row.id));
+    assert.equal(element.status,'proven');
+    const backing=writes.find(row=>row.kind==='initial'&&row.origin.start===owner.initializer.elements[0].range.start);
+    assert.equal(element.owner,backing.owner);
+    assert.deepEqual(element.versions,[backing.id]);
+    const result=plan.nodes.find(row=>row.id===fn.id+'/return');
+    assert.deepEqual(result.pending,[]);
+    assert.deepEqual(plan.domains.find(row=>row.id===result.domainId).actualTypes,[fn.returnType.id]);
+  }
 });
