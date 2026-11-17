@@ -198,9 +198,12 @@ int main(int argc,char **argv){
       else if(auto *a=v.getAsArray())for(auto &child:*a)replace(child);
     };
     for(auto &f:rows)if(string(field(f,"name"))=="bump"){replace(*f.getAsObject()->get("body"));replace(*f.getAsObject()->get("captures"));}
-    rebind(p);Error e;SourceModel model(p,e);const bool accepted=model.directory()&&model.identities()&&model.sourceText();
-    ok&=check("same-owner block shadow is not lexical capture authority",!accepted&&e.message.find("function-body declaration")!=std::string::npos);
-    if(accepted||e.message.find("function-body declaration")==std::string::npos)llvm::errs()<<e.message<<"\n";
+    rebind(p);Error e;SourceModel model(p,e);
+    const bool identified=model.directory()&&model.identities();
+    const bool rejected=identified&&!model.sourceText()&&e.code=="core-ir-common-source"
+      &&e.message=="original binding reference resolves to another symbol";
+    ok&=check("same-owner block shadow is not lexical capture authority",rejected);
+    if(!rejected)llvm::errs()<<e.message<<"\n";
   }
   return ok?0:1;
 }
