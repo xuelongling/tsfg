@@ -364,6 +364,13 @@ function verifyRecovery(report){
       assert.deepEqual([wait.stage,wait.failure,wait.windowsError,wait.submitted,wait.completionKnown,wait.outputsAvailable],
         ['wait','None',null,true,false,false]);
   }
+  const sourceCompleted=final.state==='Completed'&&final.completionKnown;
+  const sourceCallExecution=sourceCompleted?'COMPLETED':final.submitted?'SUBMITTED_COMPLETION_UNKNOWN':'NOT_OBSERVED';
+  const device=final.state==='DeviceLost'?'DEVICE_LOST':sourceCallExecution;
+  assert.deepEqual(
+    [report.sourceCallExecution,report.device,report.numerical,report.consumerPrepareAttempted,report.cpuVmExecution,report.driverJIT],
+    [sourceCallExecution,device,final.outputsAvailable?'AVAILABLE':'NOT_RUN',true,false,'NOT_INSTRUMENTED'],
+    'recovery summary differs from the terminal state');
   const firstTimeout=transitions.findIndex(isTimeout);
   const timeoutObserved=firstTimeout!==-1;
   assert.equal(report.timeout,timeoutObserved?'OBSERVED':'NOT_OBSERVED');
@@ -424,8 +431,6 @@ for(const fixture of fixtures){
       assert.match(reports,/^E:[/\\]/);
       const report=JSON.parse(await fs.readFile(path.join(reports,fixture.name+'-'+input+'.json'),'utf8'));
       assert.equal(report.family,'tsfg.gpu-software-vulkan-acceptance');assert.equal(report.version,1);
-      assert.equal(report.consumerPrepareAttempted,true);assert.equal(report.cpuVmExecution,false);
-      assert.equal(report.driverJIT,'NOT_INSTRUMENTED');assert.equal(report.sourceCallExecution,'COMPLETED');
       assert.equal(report.coreSHA,'sha256:'+sha(core.text));assert.equal(report.requestSHA,digest(request));assert.equal(report.planSHA,digest(plan));
       assert.equal(report.functionId,fn.id);assert.deepEqual(report.source,row.source);
       assert.deepEqual(Object.keys(report.identity).sort(),identityKeys.toSorted());
@@ -444,9 +449,9 @@ for(const fixture of fixtures){
       assert.deepEqual(report.inputs.map(value=>value.descriptor),plan.bindings.filter(binding=>binding.access!=='write'));
       assert.ok(report.inputs.every(value=>value.actualType==='sha256:'+sha(Buffer.from('tsfg.type\0i32'))&&value.bits===String(low(input))));
       verifyRecovery(report);
-      const final=report.final;assert.equal(report.device,'COMPLETED');assert.equal(final.state,'Completed');
+      const final=report.final;assert.equal(final.state,'Completed');
       assert.deepEqual([final.submitted,final.completionKnown,final.outputsAvailable],[true,true,true]);assert.equal(final.failure,'None');
-      assert.equal(report.numerical,'AVAILABLE');assert.equal(final.functionId,fn.id);assert.deepEqual(final.identity,report.identity);
+      assert.equal(final.functionId,fn.id);assert.deepEqual(final.identity,report.identity);
       assert.deepEqual(final.resources,plan.bindings);
       const transitions=report.transitions;assert.equal(transitions[0].state,'Prepared');assert.equal(transitions[1].state,'Submitted');
       assert.equal(transitions.filter(value=>value.state==='Submitted').length,1);
@@ -505,10 +510,16 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
     identity,final:completed,transitions:[prepared,submitted,timeout,structuredClone(timeout),completed],
     outputs:[{descriptor:resources[1],bits:'0',signed:'0'}],
     timeout:'OBSERVED',retainedResumeObserved:true,recovery:'COMPLETED',
+    device:'COMPLETED',sourceCallExecution:'COMPLETED',numerical:'AVAILABLE',
+    consumerPrepareAttempted:true,cpuVmExecution:false,driverJIT:'NOT_INSTRUMENTED',
   };
   const withTransitions=transitions=>{
     const final=transitions.at(-1);
-    return {...report,final,transitions,outputs:final.outputsAvailable===true?report.outputs:[]};
+    const completed=final.state==='Completed'&&final.completionKnown;
+    const sourceCallExecution=completed?'COMPLETED':final.submitted?'SUBMITTED_COMPLETION_UNKNOWN':'NOT_OBSERVED';
+    const device=final.state==='DeviceLost'?'DEVICE_LOST':sourceCallExecution;
+    const numerical=final.outputsAvailable===true?'AVAILABLE':'NOT_RUN';
+    return {...report,final,transitions,sourceCallExecution,device,numerical,outputs:final.outputsAvailable===true?report.outputs:[]};
   };
   const retained=final=>({...withTransitions([prepared,submitted,timeout,final]),recovery:'RETAINED'});
   verifyRecovery(report);
@@ -591,6 +602,29 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
   });
   const submitLost={...prepared,state:'DeviceLost',failure:'Vulkan',stage:'queue-submit',vkResult:-4};
   verifyRecovery(neverWaited([prepared,submitLost]));
+  await t.test('recovery summary reflects the terminal device, call and output states',()=>{
+    const summaries=[
+      {row:report,summary:['COMPLETED','COMPLETED','AVAILABLE']},
+      {row:afterTimeout(invalidation),summary:['COMPLETED','COMPLETED','NOT_RUN']},
+      {row:retained(timeout),summary:['SUBMITTED_COMPLETION_UNKNOWN','SUBMITTED_COMPLETION_UNKNOWN','NOT_RUN']},
+      {row:neverWaited([prepared,submitLost]),summary:['NOT_OBSERVED','DEVICE_LOST','NOT_RUN']},
+    ];
+    for(const {row,summary} of summaries){
+      assert.deepEqual([row.sourceCallExecution,row.device,row.numerical],summary);
+      verifyRecovery(row);
+      const alternatives={
+        sourceCallExecution:row.sourceCallExecution==='COMPLETED'?'NOT_OBSERVED':'COMPLETED',
+        device:row.device==='DEVICE_LOST'?'COMPLETED':'DEVICE_LOST',
+        numerical:row.numerical==='AVAILABLE'?'NOT_RUN':'AVAILABLE',
+      };
+      for(const [field,change] of Object.entries(alternatives))
+        assert.throws(()=>verifyRecovery({...row,[field]:change}),{message:/^recovery summary differs from the terminal state\b/u});
+    }
+  });
+  await t.test('software consumer reports retain observed execution and instrumentation markers',()=>{
+    for(const changes of [{consumerPrepareAttempted:false},{cpuVmExecution:true},{driverJIT:'PASS'},{driverJIT:false}])
+      assert.throws(()=>verifyRecovery({...afterTimeout(invalidation),...changes}),{message:/^recovery summary differs from the terminal state\b/u});
+  });
   await t.test('preparation Vulkan failure has the native stage, result and state',()=>{
     const lost={...submitLost,stage:'create-device'};
     const error={...lost,state:'FailedBeforeSubmit',stage:'allocate-buffer-memory',vkResult:-1,resourceIndex:0};
