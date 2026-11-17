@@ -8,8 +8,9 @@ import {copyGenericJsonBytes,inspectGenericJson,readGenericJson} from './generic
 import {genericJsonFailure} from './generic-json-budget.mjs';
 import {checkTypedArrayShape,sourceRange,originId,logicalPath,byteOrder} from './typed-array-schema.mjs';
 import {validateTypedArrayTypes} from './typed-array-types.mjs';
+import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
 import {commonSourceDescriptor} from './common-program-common.mjs';
-import {querySourceProof} from './system-query-source-bindings.mjs';
+import {querySourceProof,verifyQueryConstructorSource} from './system-query-source-bindings.mjs';
 import {decodeScalarHelpers} from './system-query-scalars.mjs';
 import {decodeQueryStatements} from './system-query-statements.mjs';
 import {commonSemanticIdentities,commonFieldId} from './common-program-identities.mjs';
@@ -154,9 +155,19 @@ function decodeProgram(value){
 // These are the original, complete type DTOs. Query functions are not passed to
 // the common HIR identity algorithm as though Query were already a HIR type.
 function componentIdentities(payload,functions,sources,spend){
-  for(const row of payload.types)checkTypedArrayShape(row,'arrayGenericType',false,commonSourceDescriptor);
+  for(const row of payload.types){
+    checkTypedArrayShape(row,'arrayGenericType',false,commonSourceDescriptor);
+    if(!['reference','value','scalar','void','undefined','unknown','null'].includes(row.kind))
+      fail('Query type context has unsupported non-fixed declaration','capability');
+  }
   for(const row of functions)checkTypedArrayShape(row,'arrayGenericFunction',false,commonSourceDescriptor);
   const types=validateTypedArrayTypes(payload,sources);
+  validateTypedArrayConstruction({functions},types,sources);
+  for(const type of types.values())if(type.nominalKey){
+    spend();
+    const access=type.constructor?.access??(type.base?types.get(type.base).construction.access:'public');
+    if(type.construction.access!==access)fail('original component construction access differs','source');
+  }
   const semantic=commonSemanticIdentities({types:payload.types,functions,globals:[]},spend);
   const active=new Set(),heights=new Map();
   function fixed(id,depth=0){
@@ -205,13 +216,14 @@ function verifyFieldInitializer(value,type,grammar,spend){
   fail('original component field initializer literal differs','source');
 }
 
-function verifyComponentSource(types,functions,grammars,semantic,spend,sourceTypes){
+function verifyComponentSource(types,functions,grammars,semantic,spend,sourceTypes,ast){
   const callables=new Map([...functions,...[...types.values()].flatMap(type=>type.constructor?[type.constructor]:[])].map(row=>[row.id,row]));
   const fields=new Map();
   for(const type of types.values())if(type.nominalKey){
     const grammar=grammars.get(type.sourcePath),bounds=grammar.indices(type.declarationRange),name=grammar.indices(type.nameRange),header=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
     grammar.name(type.nameRange,type.name);
     if(header.at(-1)!=='class'||!header.every(token=>['@','component','tsfgComponent','tsfgValue','export','default','class'].includes(token)))fail('original nominal declaration differs','source');
+    if(type.constructor)verifyQueryConstructorSource(type,grammar,ast,fail);
     for(const [index,field]of type.fields.entries()){
       spend();
       if(field.origin.source!==type.sourcePath)fail('component field Source differs from its declaration','source');
@@ -426,7 +438,7 @@ export function readSystemQueryFacts(bytes,context){
   if(types.length>4096||functions.length>4096)fail('source type/function directory exceeded','limit');
   const component=componentIdentities({...program,types},functions,sources,spend);
   const sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
-  const fields=verifyComponentSource(component.types,functions,grammars,component.semantic,spend,sourceTypes);
+  const fields=verifyComponentSource(component.types,functions,grammars,component.semantic,spend,sourceTypes,ast);
   const markerAliases=array(payload.markerAliases).map(value=>{
     const row=record(value,descriptor.objects.markerAlias),useSourcePath=text(row.useSourcePath),useRange=range(row.useRange),declaration=ast.original(row.declaration),target=ast.original(row.target),grammar=grammars.get(useSourcePath);
     if(!grammar||canonical(declaration)!==canonical(builtins.get('component'))||target.sourcePath!==descriptor.profile.standardPath||target.name!=='tsfgComponent'||target.kind!=='KindFunctionDeclaration')fail('owned component marker alias differs','source');

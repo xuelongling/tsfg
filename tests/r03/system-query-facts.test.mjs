@@ -270,3 +270,43 @@ test('cold fields retain the original Source integer initializer decimal',()=>{
   },{bytes,packet,context});
   assert.throws(()=>readSystemQueryFacts(altered.bytes,altered.context),/component field initializer payload differs/);
 });
+
+test('cold component types derive implicit construction from the original declarations',async t=>{
+  const input=fixture('loop-inheritance');
+  const {types}=input.packet.payload;
+  const base=types.find(type=>type.name==='Base');
+  const position=types.find(type=>type.name==='Position');
+  assert.equal(base.construction.kind,'implicit-base');
+  assert.equal(position.construction.kind,'implicit-derived');
+  assert.equal(position.base,base.id);
+  assert.deepEqual(printSystemQueryFacts(readSystemQueryFacts(input.bytes,input.context),input.context),input.bytes);
+
+  for(const {name,change,message} of [
+    {name:'implicit base access',change:(_position,base)=>{base.construction.access='private';},message:/component construction access differs/},
+    {name:'implicit derived access',change:position=>{position.construction.access='protected';},message:/component construction access differs/},
+    {name:'constructor signature digest',change:position=>{position.construction.signature.id='sha256:'+'0'.repeat(64);},message:/r03-typed-array-construction/},
+    {name:'constructor initialization order',change:position=>{position.construction.initializationFields.reverse();},message:/r03-typed-array-field-initialization/},
+    {name:'constructor initialization phase',change:position=>{position.construction.initializationPhase='before-body';},message:/r03-typed-array-construction/},
+    {name:'implicit forwarding target',change:position=>{position.construction.implicitForward.target=position.construction.id;},message:/r03-typed-array-construction-forward/},
+  ])await t.test(name,()=>{
+    const altered=edit((_packet,payload)=>change(
+      payload.types.find(type=>type.id===position.id),payload.types.find(type=>type.id===base.id)
+    ),input);
+    assert.throws(()=>readSystemQueryFacts(altered.bytes,altered.context),message);
+  });
+});
+
+
+test('cold component catalogue rejects types outside the Query declaration profile',async t=>{
+  const input=fixture('loop-inheritance');
+  for(const [kind,name] of [['array','Array'],['readSpan','ReadSpan']])await t.test(name,()=>{
+    const altered=edit((_packet,payload)=>{
+      const declaration=payload.nodes.find(node=>node.kind==='KindInterfaceDeclaration'&&node.name===name&&node.sourcePath==='/src/minimal-arrays-v8.d.ts');
+      const index=payload.nodes.find(node=>node.parent===declaration.id&&node.kind==='KindIndexSignature');
+      payload.types.push({constructor:null,id:kind+'<f32>',kind,elementType:'f32',sourcePath:declaration.sourcePath,
+        declarationRange:declaration.range,nameRange:declaration.nameRange,indexSignatureRange:index.range});
+      payload.types.sort((left,right)=>Buffer.compare(Buffer.from(left.id),Buffer.from(right.id)));
+    },input);
+    assert.throws(()=>readSystemQueryFacts(altered.bytes,altered.context),/Query type context has unsupported non-fixed declaration/);
+  });
+});

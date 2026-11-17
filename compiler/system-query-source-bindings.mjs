@@ -1,12 +1,25 @@
 // SPDX-License-Identifier: MIT
 import descriptor from '../contracts/system-query-facts.schema.json' with {type:'json'};
-import {canonical} from './identity.mjs';
+import {canonical,sha256} from './identity.mjs';
 import {originId} from './typed-array-schema.mjs';
 import {commonTypeSyntax} from './common-program-source.mjs';
 import {sourceLexicalTokens} from './conversions.mjs';
 import {relativeModuleSource} from './module-hir-source.mjs';
 import {identifierName} from './module-facts.mjs';
 
+// Explicit construction access comes from the original direct class member.
+export function verifyQueryConstructorSource(type,grammar,ast,fail){
+  const ctor=type.constructor;
+  const at=(parent,kind,range)=>ast.directory.get(sha256('tsfg.system-query.node.v1\0'+canonical({sourcePath:type.sourcePath,kind,range,parent})));
+  const declaration=at(ast.roots.get(type.sourcePath),'KindClassDeclaration',type.declarationRange);
+  if(!declaration||declaration.name!==type.name||canonical(declaration.nameRange)!==canonical(type.nameRange)
+    ||ctor.sourcePath!==type.sourcePath||ctor.lexicalParent!=null||!at(declaration.id,'KindConstructor',ctor.declarationRange))
+    fail('component constructor is not an original direct class member','source');
+  const {first,end}=grammar.indices(ctor.declarationRange),prefix=grammar.tokens[first].text;
+  const modified=['public','protected','private'].includes(prefix),keyword=first+(modified?1:0);
+  if(keyword>=end||grammar.tokens[keyword].text!=='constructor'||ctor.access!==(modified?prefix:'public'))
+    fail('original component constructor access differs','source');
+}
 // Replay only the original type-reference/alias syntax and its recorded
 // substitutions. The facts never supply a spelling-to-target shortcut.
 export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
