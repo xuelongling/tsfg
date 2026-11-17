@@ -49,8 +49,19 @@ bool closure(SourceModel &m){
       previous=order;
       if(kind=="module-initialization"){
         if(!m.need(name=="$moduleInit"&&target==p&&same(field(r,"range"),Object{{"start",0},{"end",field(*m.sources.at(p),"utf16Length")}}),"module initialization root identity differs"))return false;
-      }else if(!m.need(m.functions.count(target)&&same(field(*m.functions.at(target),"sourcePath"),field(r,"sourcePath"))&&
-        same(field(*m.functions.at(target),"name"),field(r,"name"))&&same(field(*m.functions.at(target),"declarationRange"),field(r,"range")),"function root does not join original full declaration"))return false;
+      }else{
+        const auto function=m.functions.find(target);bool exported=false;
+        for(const auto &entry:items(field(*m.modules.at(p),"exports"))){
+          if(!m.spend())return false;
+          const auto publicName=field(entry,"name").getAsString().value();
+          if(publicName<name)continue;
+          exported=publicName==name&&string(field(entry,"kind"))=="function"&&
+            same(field(entry,"target"),field(r,"target"));
+          break;
+        }
+        if(!m.need(exported&&function!=m.functions.end()&&
+          same(field(*function->second,"declarationRange"),field(r,"range")),"function root does not join original public export and declaration"))return false;
+      }
       if(key=="roots")selected.insert(canonical(r));else if(!m.need(selected.count(canonical(r)),"required root missing from selected closure"))return false;
       out.push_back(Object{{"kind",kind},{"sourcePath",p},{"name",name}});
     }return true;
@@ -68,7 +79,7 @@ bool closure(SourceModel &m){
 }
 bool SourceModel::sourceText(){
   std::map<std::string,SourceSyntax> syntax;
-  if(!files(*this,syntax)||!verifyCommonHostDeclarations(*this)||!closure(*this))return false;
+  if(!files(*this,syntax)||!verifyCommonHostDeclarations(*this))return false;
   SourceRelations relations{*this};if(!relations.read())return false;
   SourceBodies bodies{*this,syntax};bodies.relations=&relations;if(!bodies.inventory()||!bodies.annotations())return false;
   std::set<std::pair<std::string,std::string>> entryParameters,expectedEntries;std::set<std::string> exported;Array expectedExports;
@@ -110,6 +121,6 @@ bool SourceModel::sourceText(){
   }
   if(!bodies.aliases(coverage))return false;
   if(!verifyCommonDeclarations(*this,bodies,syntax,coverage)||!verifyCommonModules(*this,bodies,coverage))return false;
-  return relations.finish();
+  return closure(*this)&&relations.finish();
 }
 } // namespace tsfg::commonProgram

@@ -3,6 +3,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <tuple>
 using namespace tsfg::commonProgram;
 namespace {
 bool prepare(const char *path,Program &p){
@@ -60,6 +61,61 @@ ModuleResult readModuleModel(Program &program){
   const bool directory=model.directory(),identities=directory&&model.identities();
   const bool accepted=identities&&model.sourceText();
   return {directory,identities,accepted,std::move(error)};
+}
+int rootSelectors(const char *mixedPath,const char *privatePath){
+  Program mixed,ordinary;
+  if(!prepare(mixedPath,mixed)||mixed.inputIdentity!="sha256:d874f6097cd20fdb0a3740634407e5c4b3408b3dadcc00c761a56d657b4ad457"||
+    !prepare(privatePath,ordinary)||ordinary.inputIdentity!="sha256:4bed72d826ddd0554b075abfd1690c29e30b3bf74deb88fa6a9b8bf9787f4f69")return 2;
+  auto unchanged=[](const char *label,Program program){
+    const auto result=readModuleModel(program);
+    return check(label,result.directory&&result.identities&&result.accepted);
+  };
+  bool ok=unchanged("retained mixed roots",mixed);
+  ok&=unchanged("retained direct roots",ordinary);
+  const auto selected=[&](const char *label,Program program,llvm::StringRef path,llvm::StringRef name,
+    llvm::StringRef definingPath,llvm::StringRef definingName,bool accept,llvm::StringRef diagnostic={}){
+    auto &snapshot=*program.hir.getAsObject()->get("snapshot");
+    auto &payload=*snapshot.getAsObject()->get("payload");
+    const auto &functions=items(field(payload,"functions"));
+    const auto function=std::find_if(functions.begin(),functions.end(),[&](const Json &fn){
+      return field(fn,"sourcePath").getAsString()==definingPath&&field(fn,"name").getAsString()==definingName;
+    });
+    if(function==functions.end()){ok&=check(label,false);return;}
+    const Json root=Object{{"kind","hot-function"},{"name",name},{"sourcePath",path},
+      {"target",field(*function,"id")},{"range",field(*function,"declarationRange")}};
+    auto &closure=*payload.getAsObject()->get("closure");
+    Object selectors;
+    for(const auto key:{"roots","requiredRoots"}){
+      auto &rows=*arrayMember(closure,key);rows.push_back(root);
+      const auto tuple=[](const Json &row){return std::tuple{field(row,"kind").getAsString().value(),
+        field(row,"sourcePath").getAsString().value(),field(row,"name").getAsString().value()};};
+      std::sort(rows.begin(),rows.end(),[&](const Json &a,const Json &b){return tuple(a)<tuple(b);});
+      Array original;
+      for(const auto &r:rows)original.push_back(Object{{"kind",field(r,"kind")},{"sourcePath",field(r,"sourcePath")},{"name",field(r,"name")}});
+      selectors[key]=std::move(original);
+    }
+    Array files;
+    for(const auto &f:items(field(payload,"files")))files.push_back(Object{{"path",field(f,"path")},{"content",field(f,"content")},{"sha256",field(f,"sha256")}});
+    if(!items(field(payload,"hostImports")).empty()){ok&=check(label,false);return;}
+    const Json request=Object{{"family","tsfg.program-facts-request-candidate"},{"version",2},{"schemaHash",sourceSchema},
+      {"input",Object{{"sourceRoot",field(payload,"sourceRoot")},{"rootFile",field(payload,"rootFile")},{"files",std::move(files)},
+      {"hostImports",Array{}},{"declarations",field(payload,"declarations")},{"config",field(payload,"config")},
+      {"target",field(payload,"target")},{"compilationClosure",std::move(selectors)}}}};
+    (*snapshot.getAsObject())["requestId"]=digest(std::string("tsfg.program-facts.request.v2")+'\0'+canonical(request)+"\n");
+    rebind(program);
+    const auto outcome=readModuleModel(program);
+    const bool expected=outcome.directory&&outcome.identities&&(accept?outcome.accepted:
+      !outcome.accepted&&outcome.error.code=="core-ir-common-source"&&
+      (diagnostic.empty()||outcome.error.message==diagnostic));
+    ok&=check(label,expected);
+    llvm::outs()<<"  directory="<<outcome.directory<<" identities="<<outcome.identities<<" accepted="<<outcome.accepted<<"\n";
+    if(!outcome.error.code.empty())llvm::outs()<<"  "<<outcome.error.code<<": "<<outcome.error.message<<"\n";
+  };
+  selected("barrel-selected function",mixed,"/src/barrel.ts","run","/src/data.ts","run",true);
+  selected("barrel selector with different function",mixed,"/src/barrel.ts","run","/src/state.ts","bump",false);
+  selected("private function selector",ordinary,"/src/main.ts","add","/src/main.ts","add",false,
+    "function root does not join original public export and declaration");
+  return ok?0:1;
 }
 int moduleExports(const char *path){
   Program original;
@@ -279,6 +335,10 @@ int nominalMarkers(const char *path){
 }
 }
 int main(int argc,char **argv){
+  if(argc>1&&llvm::StringRef(argv[1])=="--root-selectors"){
+    if(argc!=4){llvm::errs()<<"expected --root-selectors retained-mixed-hir retained-private-function-hir\n";return 2;}
+    return rootSelectors(argv[2],argv[3]);
+  }
   if(argc>1&&llvm::StringRef(argv[1])=="--nominal-markers"){
     if(argc!=3){llvm::errs()<<"expected --nominal-markers retained-hir\n";return 2;}
     return nominalMarkers(argv[2]);
