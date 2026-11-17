@@ -9,7 +9,7 @@ const unused_expected: T.Expected = .{
     .packageId = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 };
 
-const I32Fixture = enum { copy, copy_conflict, compound };
+const I32Fixture = enum { copy, copy_conflict, compound, literal };
 
 // Called only with whole actual producer fixtures and independently cold-verified expected identities.
 fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bool, i32_fixture: ?I32Fixture) !void {
@@ -150,13 +150,17 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         }
         const systems = document.effects.report.systems;
         try std.testing.expectEqual(system_count, systems.len);
-        if (fixture == .compound) {
+        if (fixture == .compound or fixture == .literal) {
             // Digests of the retained independent batch, original Source facts, and request.
             const inputs = [_][]const u8{ document.payload.batch, document.payload.sourcePacket, document.payload.sourceRequest };
-            const digests = [_][]const u8{
+            const digests = if (fixture == .compound) [_][]const u8{
                 "15b61f2629dc0a5f5b4cf236f5b584462481fe3d7eef5740f51aa3f3934a803a",
                 "8ec279d5f9a3887c0b3be3bd996461db38fd6ccdc4fd0e1563e6a6ed32867937",
                 "5276dc35b780e6f773f79a79ecccd81a4a5b8d1b3f76d1f56b8f53d9371c730e",
+            } else [_][]const u8{
+                "608871bee13bc30e7e4aec5d3ed8753f6b2312a7ebdaae432f02378df85d515b",
+                "7d0b17c43c908e2145c804935ab213acb9971b19b1ee588b3e2f911aa98e2a89",
+                "1f863b3cb80a83fc1c2659a2d10bced03c2715e2fc8e471cd219367b50269a7a",
             };
             for (inputs, digests) |input, expected_hash| {
                 var hash: [32]u8 = undefined;
@@ -166,11 +170,15 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
             try std.testing.expectEqual(@as(usize, 1), systems[0].loops.len);
             try std.testing.expectEqualStrings(systems[0].functionId, entry.logicalFunctionId);
             const operations = systems[0].loops[0].operations;
-            // UTF-16 ranges from the retained Source oracle: dst.n, src.n, then the assignment.
-            const order = [_]struct { kind: jobs.Access, tuple_index: u32, start: u32, end: u32 }{
+            // UTF-16 ranges from the respective retained Source oracles.
+            const Operation = struct { kind: jobs.Access, tuple_index: u32, start: u32, end: u32 };
+            const order: []const Operation = if (fixture == .compound) &.{
                 .{ .kind = .read, .tuple_index = 0, .start = 368, .end = 373 },
                 .{ .kind = .read, .tuple_index = 1, .start = 377, .end = 382 },
                 .{ .kind = .write, .tuple_index = 0, .start = 368, .end = 382 },
+            } else &.{
+                .{ .kind = .write, .tuple_index = 0, .start = 368, .end = 387 },
+                .{ .kind = .write, .tuple_index = 0, .start = 393, .end = 412 },
             };
             try std.testing.expectEqual(order.len, operations.len);
             for (operations, order) |operation, wanted| {
@@ -188,6 +196,7 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
                 try std.testing.expectEqual(wanted.end, operation.source.end);
                 try std.testing.expectEqual(@as(usize, 0), operation.callPath.len);
             }
+            if (fixture == .literal) try expectI32LiteralFacts(document.payload.sourcePacket);
         }
         if (system_count == 2) {
             try std.testing.expect(!std.mem.eql(u8, systems[0].functionId, systems[1].functionId));
@@ -244,6 +253,35 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     defer fresh.release() catch unreachable;
     try std.testing.expectError(error.InvalidLease, plan.argument(0));
     try std.testing.expectError(error.InvalidLease, plan.readTuple(0));
+}
+
+fn expectI32LiteralFacts(bytes: []const u8) !void {
+    const Literal = struct { decimal: []const u8, flowType: []const u8, kind: []const u8, range: jobs.layout.Range, token: []const u8, type: []const u8 };
+    const Statement = struct { value: struct { kind: []const u8, operator: []const u8, value: Literal } };
+    const Packet = struct { payload: struct { systems: []const struct { loops: []const struct { statements: []const Statement } } } };
+    const facts = try std.json.parseFromSlice(Packet, A, bytes, .{ .ignore_unknown_fields = true });
+    defer facts.deinit();
+    const systems = facts.value.payload.systems;
+    try std.testing.expectEqual(@as(usize, 1), systems.len);
+    try std.testing.expectEqual(@as(usize, 1), systems[0].loops.len);
+    const statements = systems[0].loops[0].statements;
+    const literals = [_]struct { token: []const u8, value: i32, range: jobs.layout.Range }{
+        .{ .token = "-2147483648", .value = std.math.minInt(i32), .range = .{ .start = 376, .end = 387 } },
+        .{ .token = "0X7fff_ffff", .value = std.math.maxInt(i32), .range = .{ .start = 401, .end = 412 } },
+    };
+    try std.testing.expectEqual(literals.len, statements.len);
+    for (statements, literals) |statement, expected| {
+        const assignment = statement.value;
+        try std.testing.expectEqualStrings("fieldAssignment", assignment.kind);
+        try std.testing.expectEqualStrings("=", assignment.operator);
+        const literal = assignment.value;
+        try std.testing.expectEqualStrings("numericLiteral", literal.kind);
+        try std.testing.expectEqualStrings("i32", literal.type);
+        try std.testing.expectEqualStrings("i32", literal.flowType);
+        try std.testing.expectEqualStrings(expected.token, literal.token);
+        try std.testing.expectEqual(expected.value, try std.fmt.parseInt(i32, literal.decimal, 10));
+        try std.testing.expectEqualDeep(expected.range, literal.range);
+    }
 }
 
 fn findTuple(entry: T.Entry, column: usize) usize {
@@ -421,6 +459,12 @@ test "actual i32 compound metadata binds original columns and retains ordered re
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-compound-receipt.json"), .{});
     defer receipt.deinit();
     try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-i32-compound.tmeta"), receipt.value, false, .compound);
+}
+
+test "actual i32 literal metadata binds original columns and retains two writes of exact Source literals" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-literal-receipt.json"), .{});
+    defer receipt.deinit();
+    try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-i32-literal.tmeta"), receipt.value, false, .literal);
 }
 
 test "Query metadata rejects entry rows in a different Source system order" {
