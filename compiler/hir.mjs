@@ -31,6 +31,7 @@ import { presenceIdentity, presenceSignature } from "./presence.mjs";
 import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
+import { referenceHirFormat, printReferenceHir } from './reference-hir.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
 import { emitFormalStringCore } from './string-formal-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
@@ -231,9 +232,14 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
   }
 }
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
-export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) =>
-  factsContext === undefined && callPublicationContext === undefined && familyOf(hir) === genericHirFormat.family
-    ? printGenericHir(hir) : `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
+export function printHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if (factsContext === undefined && callPublicationContext === undefined) {
+    const family = familyOf(hir);
+    if (family === genericHirFormat.family) return printGenericHir(hir);
+    if (family === referenceHirFormat.family) return printReferenceHir(hir);
+  }
+  return `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
+}
 /** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
   if(isCommonProgramContext(factsContext))return verifyHir(readCommonProgramHir(bytes),factsContext,callPublicationContext);
@@ -248,7 +254,7 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
   }
   const { text, value } = readHirWire(bytes);
   const family = familyOf(value);
-  if (family === commonHirFormat.family)
+  if (family === commonHirFormat.family || family === referenceHirFormat.family)
     return callPublicationContext === undefined ? value : verifyHir(value, undefined, callPublicationContext);
   if (callPublicationContext === undefined && family === genericHirFormat.family) return value;
   const hir = verifyHir(value, undefined, callPublicationContext);
@@ -285,7 +291,10 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     throw Object.assign(new TypeError("r03-d-capability: closure Core lowering is not implemented"),
       { code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "lowering" });
   }
-  if (hir?.format?.family === 'tsfg.reference-hir-candidate') return emitReferenceCore(hir);
+  if (familyOf(hir) === referenceHirFormat.family) {
+    if (callPublicationContext !== undefined) callEffectsFailure();
+    return emitReferenceCore(hir);
+  }
   const verified = verifyHir(hir), moduleMode = !!verified.modules;
   const sourceView = source => ({ path: source.path, hash: source.hash, length: source.content.length });
   return emitScalarCore({ exchange: coreExchangeFormat,

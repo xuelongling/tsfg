@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { decodeReferenceFacts } from '../../compiler/reference-facts.mjs';
 import { buildReferenceHir, printReferenceHir, readReferenceHir, verifyReferenceHir } from '../../compiler/reference-hir.mjs';
+import { lowerOwnedHir, printHir, readHir, verifyHir } from '../../compiler/hir.mjs';
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 async function officialCounter() {
@@ -120,6 +121,32 @@ test('official readonly conversions retain alias identity across distinct field 
   assert.equal(read.permission.writeUse, false);
   assert.deepEqual(readReferenceHir(Buffer.from(printReferenceHir(hir))), hir);
 });
+test('public owned HIR paths preserve the captured Reference format and static Core', async () => {
+  const { bytes, binding } = await officialCounter();
+  const hir = buildReferenceHir(decodeReferenceFacts(bytes, binding));
+  const persisted = Buffer.from(printReferenceHir(hir));
+  const reference = readReferenceHir(persisted);
+  assert.equal(printHir(hir), persisted.toString('utf8'));
+  assert.deepEqual(verifyHir(hir), reference);
+  const cold = readHir(persisted);
+  persisted.fill(0);
+  assert.deepEqual(cold, reference);
+  assert.equal(lowerOwnedHir(cold), lowerOwnedHir(reference));
+});
+
+test('public Reference HIR paths retain canonical identity and reject unrelated contexts', async () => {
+  const { bytes, binding } = await officialCounter();
+  const hir = buildReferenceHir(decodeReferenceFacts(bytes, binding));
+  const persisted = Buffer.from(printReferenceHir(hir));
+  rejects(() => readHir(Buffer.concat([persisted, Buffer.from('\n')])), 'canonical');
+  const changed = structuredClone(hir);
+  changed.context.factsDigest = 'sha256:' + '0'.repeat(64);
+  rejects(() => readHir(encode(changed)), 'identity');
+  rejects(() => printHir(changed), 'identity');
+  assert.throws(() => readHir(persisted, undefined, {}), /r03-d-call-effects/);
+  assert.throws(() => lowerOwnedHir(hir, undefined, {}), /r03-d-call-effects/);
+});
+
 test('Counter facts reject malformed numeric token representations', async () => {
   const { bytes, binding } = await officialCounter();
   for (const token of ['0x', '1abc']) {

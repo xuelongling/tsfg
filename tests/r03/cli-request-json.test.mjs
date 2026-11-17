@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { sourceInput } from "../../compiler/pipeline.mjs";
+import { decodeReferenceFacts } from "../../compiler/reference-facts.mjs";
+import { buildReferenceHir, printReferenceHir } from "../../compiler/reference-hir.mjs";
 
 const cli = fileURLToPath(new URL("../../tooling/tsfgc.mjs", import.meta.url));
 
 /**
  * @param {string} name
- * @param {{emit?: string, requests?: string, inputText?: string|Uint8Array, omitInput?: boolean, inputKind?: string}} [options]
+ * @param {{emit?: string, requests?: string, inputText?: string|Uint8Array, inputArgument?: string, omitInput?: boolean, inputKind?: string}} [options]
  */
-async function runCli(name, { emit, requests, inputText, omitInput = false, inputKind } = {}) {
+async function runCli(name, { emit, requests, inputText, inputArgument, omitInput = false, inputKind } = {}) {
   const storage = process.env.TSFG_TEST_STORAGE;
   assert.ok(storage, "TSFG_TEST_STORAGE must name an owned test directory");
   await mkdir(storage, { recursive: true });
@@ -21,7 +23,7 @@ async function runCli(name, { emit, requests, inputText, omitInput = false, inpu
   const input = path.join(root, "input.json");
   if (!omitInput) await writeFile(input, inputText ?? JSON.stringify(await sourceInput("export function answer(): i32 { return 42; }")));
   // Omitting every executable option stops valid inputs at the existing missing-frontend boundary.
-  const args = [cli, ...(omitInput ? [] : ["--input", input]),
+  const args = [cli, ...(omitInput ? [] : ["--input", inputArgument ?? input]),
     ...(inputKind === undefined ? [] : ["--input-kind", inputKind]),
     ...(emit === undefined ? [] : ["--emit", emit]),
     ...(requests === undefined ? [] : ["--requests", requests])];
@@ -37,6 +39,26 @@ async function runCli(name, { emit, requests, inputText, omitInput = false, inpu
   assert.equal(child.signal, null);
   return child;
 }
+
+test("cold Reference HIR keeps its exact bytes and accepts only text outputs", async () => {
+  const prefix = "./fixtures/reference-source/constructor";
+  const [facts, binding] = await Promise.all([
+    readFile(new URL(prefix + ".facts.json", import.meta.url)),
+    readFile(new URL(prefix + ".binding.json", import.meta.url), "utf8"),
+  ]);
+  const inputText = printReferenceHir(buildReferenceHir(decodeReferenceFacts(facts, JSON.parse(binding))));
+  const options = { inputKind: "hir", inputText };
+  const inspected = await runCli("reference-hir", { ...options, emit: "hir" });
+  assert.equal(inspected.status, 0, inspected.stderr.toString());
+  assert.equal(inspected.stderr.length, 0);
+  assert.deepEqual(inspected.stdout, Buffer.from(inputText));
+  for (const emit of ["bytecode", "run", "program-object"]) {
+    const rejected = await runCli("reference-" + emit, { ...options, emit });
+    assert.equal(rejected.status, 2);
+    assert.equal(rejected.stdout.length, 0);
+    assert.match(rejected.stderr.toString(), /private Reference HIR requires --emit hir\|core/);
+  }
+});
 
 test("run rejects malformed request JSON before the missing frontend", async () => {
   const child = await runCli("run-invalid-json", { emit: "run", requests: "[{" });
@@ -95,6 +117,8 @@ test("source CLI rejects malformed UTF-8 in otherwise valid JSON", async () => {
 
 for (const { name, options, diagnostic } of [
   { name: "missing-input", options: { omitInput: true }, diagnostic: /--input .* is required \(--emit defaults to run\)/ },
+  { name: "missing-input-value", options: { inputArgument: "--emit" }, diagnostic: /^r03-cli-options: --input requires a value\n$/ },
+  { name: "missing-emit-value", options: { emit: "--requests" }, diagnostic: /^r03-cli-options: --emit requires a value\n$/ },
   { name: "unsupported-emit", options: { emit: "query-invalid" }, diagnostic: /unsupported --emit .*query-tmeta\|borrow-proof/ },
   { name: "unsupported-emit-with-hir", options: { inputKind: "hir", emit: "query-invalid" }, diagnostic: /unsupported --emit .*query-tmeta\|borrow-proof/ },
   { name: "query-emit-with-hir", options: { inputKind: "hir", emit: "query-tmeta" }, diagnostic: /HIR requires --emit/ }

@@ -8,6 +8,7 @@ import { readExceptionHirJson } from './exception-hir-common.mjs';
 import { genericHirFormat, readGenericHir } from './generic-hir.mjs';
 import { commonHirFormat } from './common-program-common.mjs';
 import { readCommonProgramHir } from './common-program-hir.mjs';
+import { referenceHirFormat, readReferenceHir } from './reference-hir.mjs';
 
 // Classification uses only the old 16MiB envelope, never a candidate's narrower
 // policy. Iterative scanning adds no depth limit to an already-valid old family.
@@ -34,6 +35,7 @@ export function readHirWire(bytes) {
   if (family === 'tsfg.exception-hir-candidate') return readExceptionHirJson(input.bytes);
   if (family === genericHirFormat.family) return { text: input.text, value: readGenericHir(input.bytes) };
   if (family === commonHirFormat.family) return { text: input.text, value: readCommonProgramHir(input.bytes) };
+  if (family === referenceHirFormat.family) return { text: input.text, value: readReferenceHir(input.bytes) };
   try {
     if (family === 'tsfg.closure-hir-candidate') return readClosureJson(input.bytes);
     if (family === 'tsfg.nullable-hir-candidate') return readNullableJson(input.bytes, false);

@@ -6,6 +6,7 @@ import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {commonHirFormat,commonJson} from '../compiler/common-program-common.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
 import { genericHirFormat } from '../compiler/generic-hir.mjs';
+import { referenceHirFormat } from '../compiler/reference-hir.mjs';
 import { familyOf } from '../compiler/module-callable-common.mjs';
 import { checkSystemQueryFileSize, systemQueryRequestContext } from '../compiler/system-query-facts.mjs';
 import {canonical} from '../compiler/identity.mjs';
@@ -36,12 +37,14 @@ async function readSystemQueryFile(file){
 }
 
 try {
+  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request"];
   const options = new Map();
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i += 2) {
-    if (!["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request"].includes(args[i])
-        || options.has(args[i]) || !args[i + 1]) throw new TypeError("r03-cli-options: invalid or duplicate option");
-    options.set(args[i], args[i + 1]);
+    const option = args[i], value = args[i + 1];
+    if (!optionNames.includes(option) || options.has(option)) throw new TypeError("r03-cli-options: invalid or duplicate option");
+    if (!value || optionNames.includes(value)) throw new TypeError(`r03-cli-options: ${option} requires a value`);
+    options.set(option, value);
   }
   const emit = options.get("--emit") ?? "run";
   const inputKind = options.get("--input-kind") ?? "source";
@@ -85,6 +88,8 @@ try {
       throw new TypeError("r03-cli-options: Common HIR requires --emit hir or fixed publication and request for --emit core");
     if (family === genericHirFormat.family && ["run", "program-object"].includes(emit))
       throw new TypeError("r03-cli-options: private generic HIR requires --emit hir|core|bytecode");
+    if (family === referenceHirFormat.family && !["hir", "core"].includes(emit))
+      throw new TypeError("r03-cli-options: private Reference HIR requires --emit hir|core");
   }
   const callPublicationContext = fixedCommonCore ? {
     publication: commonJson(await readFile(options.get("--publication"))),
