@@ -88,13 +88,26 @@ export function analyzeVerifiedModuleCalls(hir, context) {
         : { reads: kind === 'read' ? [id] : [], writes: kind === 'write' ? [id] : [], unknownHost: false };
       merge(local, effect); operations.push({ kind, effect, range });
     };
+    // A checked mutation location may have parentheses, but evaluating the
+    // location does not read its payload for a plain assignment.
+    /** @param {any} operand @param {boolean} readsOld @param {any} [rhs] */
+    const mutation = (operand, readsOld, rhs) => {
+      let target = operand;
+      spend();
+      while (target.kind === 'group') { spend(); target = target.operand; }
+      if (readsOld && target.kind === 'global') operation('read', target.global, target.range);
+      if (rhs !== undefined) expression(rhs);
+      if (target.kind === 'global') operation('write', target.global, target.range);
+    };
     const expression = value => {
       spend();
       switch (value.kind) {
         case 'global': operation('read', value.global, value.range); break;
-        case 'constant': case 'floating': case 'boolean': case 'reference': break;
-        case 'group': case 'unary': expression(value.operand); break;
-        case 'binary': case 'shortCircuit': expression(value.left); expression(value.right); break;
+        case 'constant': case 'floating': case 'boolean': case 'reference': case 'absence': break;
+        case 'group': case 'unary': case 'conversion': expression(value.operand); break;
+        case 'binary': case 'shortCircuit': case 'presenceTest': expression(value.left); expression(value.right); break;
+        case 'write': mutation(value.left, value.operator !== '=', value.right); break;
+        case 'update': mutation(value.operand, true); break;
         case 'call': case 'host':
           if (++callSites > 65536) callEffectsFailure('r03-d-call-effects-limit');
           calls.push(value);
@@ -113,7 +126,7 @@ export function analyzeVerifiedModuleCalls(hir, context) {
             if (statement.target.kind === 'global') operation('write', statement.target.global, statement.target.range);
             expression(statement.value); break;
           case 'local': if (statement.initializer !== null) expression(statement.initializer); break;
-          case 'return': case 'expression': expression(statement.value); break;
+          case 'return': case 'expression': case 'evaluate': expression(statement.value); break;
           case 'block': body(statement.body); break;
           case 'if': expression(statement.condition); body(statement.thenBody); body(statement.elseBody); break;
           case 'while': expression(statement.condition); body(statement.body); break;
@@ -121,6 +134,10 @@ export function analyzeVerifiedModuleCalls(hir, context) {
         }
       }
     };
+    for (const initializer of fn.parameterInitializers) {
+      spend();
+      if (initializer !== null) expression(initializer);
+    }
     body(fn.body);
     operations.sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end
       || a.kind.localeCompare(b.kind));
@@ -253,6 +270,7 @@ export function verifyKernelHostSemantics(hir, verifiedEdges = undefined) {
   };
   for (const fn of verifiedEdges ? [] : hir.functions) {
     const found = [];
+    collect(fn.parameterInitializers, found);
     collect(fn.body, found);
     edges.set(fn.id, found);
   }

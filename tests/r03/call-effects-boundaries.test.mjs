@@ -4,6 +4,8 @@ import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {verifyHir,analyzeModuleCalls,lowerHir,lowerOwnedHir} from '../../compiler/hir.mjs';
+import {compilationClosure,initializerIdentity} from '../../compiler/modules.mjs';
+import {presenceIdentity,presenceSignature} from '../../compiler/presence.mjs';
 
 const oracle=JSON.parse(await readFile(new URL('./call-effects-oracle.json',import.meta.url),'utf8'));
 const firstOracle=JSON.parse(await readFile(new URL('./call-effects-first.json',import.meta.url),'utf8'));
@@ -236,4 +238,161 @@ test('widened direct GlobalId effects reject at the original offending access',(
  seal(context);rejects(()=>analyzeModuleCalls(item.hir,context),'bound',extra.widened.expectedPrimary);
  const readOnly=clone(context);readOnly.contracts.find(record=>record.functionId===leaf.id).upper.writes=[item.hir.globals.find(g=>g.name==='beta').id];
  seal(readOnly);rejects(()=>analyzeModuleCalls(item.hir,readOnly),'bound',extra.widened.readOnlyPrimary);
+});
+
+// Keep the retained ordinary module's declarations and public identities.
+// The new test-owned expressions replace only the named Source function body.
+function rebindSource(hir,content) {
+ const sourcePath=hir.source.path,hash='sha256:'+createHash('sha256').update(content).digest('hex');
+ const module=hir.modules.find(row=>row.sourcePath===sourcePath);
+ const initializer=hir.functions.find(fn=>fn.id===module.initializer);
+ hir.source={path:sourcePath,content,hash};
+ Object.assign(hir.sources.find(source=>source.path===sourcePath),hir.source);
+ hir.inputScope.files.find(file=>file.path===sourcePath).content=content;
+ hir.inputIdentity='sha256:'+createHash('sha256').update(canonical(hir.inputScope)).digest('hex');
+ initializer.id=module.initializer=initializerIdentity(sourcePath,hash);
+ initializer.range.end=content.length;
+ hir.closure=compilationClosure({modules:hir.modules,functions:hir.functions,
+  globals:hir.globals,configuration:hir.inputScope.compilationClosure});
+ return hir;
+}
+
+function literalRange(source,spelling,start=0) {
+ const at=source.indexOf(spelling,start);assert.ok(at>=0,spelling);
+ return {start:at,end:at+spelling.length};
+}
+
+function mutationBody(compound) {
+ const hir=clone(initial('globalPropagation').hir),leaf=hir.functions.find(fn=>fn.name==='leaf');
+ const spelling=compound?'beta += (beta = alpha)':'beta = alpha';
+ const source=hir.source.content.replace('beta = alpha; return 0;',`return ${spelling};`);
+ const range=literalRange(source,spelling,leaf.range.start);
+ const type=leaf.returnType.id;
+ const global=(name,start)=>({kind:'global',type,name,global:hir.globals.find(row=>row.name===name).id,
+  range:literalRange(source,name,start)});
+ const simpleRange=literalRange(source,'beta = alpha',range.start);
+ const simple={kind:'write',operator:'=',type,range:simpleRange,
+  left:global('beta',simpleRange.start),right:global('alpha',simpleRange.start)};
+ const value=compound?{kind:'write',operator:'+=',type,range,left:global('beta',range.start),
+  right:{kind:'group',type,range:literalRange(source,'(beta = alpha)',range.start),operand:simple}}:simple;
+ leaf.range.end=source.length;
+ leaf.body=[{kind:'return',range:literalRange(source,`return ${spelling};`,leaf.range.start),value}];
+ return rebindSource(hir,source);
+}
+
+test('ordinary module analysis keeps the old global read and nested writes',()=>{
+ for(const compound of [false,true]) {
+  const hir=mutationBody(compound),leaf=hir.functions.find(fn=>fn.name==='leaf');
+  const middle=hir.functions.find(fn=>fn.name==='middle');
+  const [alpha,beta]=['alpha','beta'].map(name=>hir.globals.find(global=>global.name===name).id);
+  const effects={reads:(compound?[alpha,beta]:[alpha]).sort(),writes:[beta],unknownHost:false};
+  assert.deepEqual(verifyHir(hir),hir);
+  const report=analyzeModuleCalls(hir,{mode:'initial'});
+  const bound=report.contracts.find(row=>row.functionId===leaf.id);
+  assert.deepEqual(bound.upper,effects);
+  assert.deepEqual(report.functions.find(row=>row.functionId===leaf.id),{
+   functionId:leaf.id,derived:effects,effective:effects,dependencies:[],
+  });
+  assert.deepEqual(report.functions.find(row=>row.functionId===middle.id),{
+   functionId:middle.id,derived:effects,effective:effects,dependencies:[{functionId:leaf.id,digest:bound.digest}],
+  });
+  const fixed=fixedFrom({expected:report});
+  assert.deepEqual(analyzeModuleCalls(hir,fixed),report);
+  assert.equal(lowerHir(hir,undefined,fixed),lowerHir(hir));
+  fixed.contracts.find(row=>row.functionId===leaf.id).upper.writes=[];
+  seal(fixed);
+  const primary={sourceId:leaf.sourcePath,...leaf.body[0].value.left.range};
+  assert.equal(hir.source.content.slice(primary.start,primary.end),'beta');
+  rejects(()=>analyzeModuleCalls(hir,fixed),'bound',primary);
+  rejects(()=>lowerHir(hir,undefined,fixed),'bound',primary);
+ }
+});
+
+function defaultCallBody() {
+ const hir=clone(initial('globalPropagation').hir);
+ const entry=hir.functions.find(fn=>fn.name==='entry'),middle=hir.functions.find(fn=>fn.name==='middle');
+ const leaf=hir.functions.find(fn=>fn.name==='leaf');
+ const original='function middle(): i32 { return leaf(); }';
+ const changed='function middle(x: i32 = leaf()): i32 { return x; }';
+ const source=hir.source.content.replace(original,changed);
+ const region=literalRange(source,changed);
+ const declaration=literalRange(source,'x: i32 = leaf()',region.start);
+ const type=middle.returnType.id;
+ const presence={undefined:true,null:false,optional:true,default:true,range:declaration,
+  annotation:literalRange(source,'i32',declaration.start)};
+ const parameter={id:'p0',name:'x',type,writable:true,range:literalRange(source,'x',declaration.start),presence};
+ const initializer={...middle.body[0].value,range:literalRange(source,'leaf()',declaration.start)};
+ const result=literalRange(source,'return x;',declaration.end);
+ const reference={kind:'reference',type,binding:parameter.id,range:literalRange(source,'x',result.start),
+  presenceFlow:{undefined:false,null:false}};
+ middle.range=region;
+ middle.parameters=[parameter];
+ middle.parameterInitializers=[initializer];
+ middle.body=[{kind:'return',range:result,value:reference}];
+ middle.id=presenceIdentity(middle.sourcePath,middle.name,middle.returnType.name,middle.parameters);
+ middle.signatureHash=presenceSignature(middle.returnType.name,middle.parameters);
+ Object.assign(entry.body[0].value,{target:middle.id,signatureHash:middle.signatureHash});
+ hir.modules[0].bindings.find(binding=>binding.name==='middle').target=middle.id;
+ const shift=changed.length-original.length;
+ const shiftRange=node=>{node.range.start+=shift;node.range.end+=shift;};
+ shiftRange(leaf);
+ for(const statement of leaf.body) {
+  shiftRange(statement);
+  shiftRange(statement.value);
+  if(statement.kind==='assign')shiftRange(statement.target);
+ }
+ return rebindSource(hir,source);
+}
+
+test('ordinary module publication includes effects and dependencies of callee defaults',()=>{
+ const hir=defaultCallBody();
+ const entry=hir.functions.find(fn=>fn.name==='entry'),middle=hir.functions.find(fn=>fn.name==='middle');
+ const leaf=hir.functions.find(fn=>fn.name==='leaf');
+ const [alpha,beta]=['alpha','beta'].map(name=>hir.globals.find(global=>global.name===name).id);
+ const effects={reads:[alpha],writes:[beta],unknownHost:false};
+ assert.deepEqual(verifyHir(hir),hir);
+ const report=analyzeModuleCalls(hir,{mode:'initial'});
+ const contract=fn=>report.contracts.find(row=>row.functionId===fn.id);
+ const dependency=fn=>({functionId:fn.id,digest:contract(fn).digest});
+ assert.deepEqual(report.functions.find(row=>row.functionId===middle.id),{
+  functionId:middle.id,derived:effects,effective:effects,dependencies:[dependency(leaf)],
+ });
+ assert.deepEqual(report.functions.find(row=>row.functionId===entry.id),{
+  functionId:entry.id,derived:effects,effective:effects,dependencies:[dependency(middle)],
+ });
+ const fixed=fixedFrom({expected:report});
+ assert.deepEqual(analyzeModuleCalls(hir,fixed),report);
+ assert.equal(lowerOwnedHir(hir,undefined,fixed),lowerOwnedHir(hir));
+ fixed.contracts.find(row=>row.functionId===middle.id).upper.writes=[];
+ seal(fixed);
+ const primary={sourceId:middle.sourcePath,...middle.parameterInitializers[0].range};
+ assert.equal(hir.source.content.slice(primary.start,primary.end),'leaf()');
+ rejects(()=>analyzeModuleCalls(hir,fixed),'bound',primary);
+ rejects(()=>lowerOwnedHir(hir,undefined,fixed),'bound',primary);
+});
+
+test('ordinary module analysis reads and writes a grouped update target',()=>{
+ const hir=clone(initial('globalPropagation').hir),leaf=hir.functions.find(fn=>fn.name==='leaf');
+ const source=hir.source.content.replace('beta = alpha;','(beta)++;');
+ const global=hir.globals.find(row=>row.name==='beta').id,type=leaf.returnType.id;
+ const update=literalRange(source,'(beta)++',leaf.range.start);
+ const payload={kind:'global',type,name:'beta',global,range:literalRange(source,'beta',update.start)};
+ const operand={kind:'group',type,range:literalRange(source,'(beta)',update.start),operand:payload};
+ leaf.body[0]={kind:'evaluate',range:literalRange(source,'(beta)++;',update.start),
+  value:{kind:'update',type,range:update,operator:'++',prefix:false,operand}};
+ const result=leaf.body[1];
+ result.range=literalRange(source,'return 0;',update.end);
+ result.value.range=literalRange(source,'0',result.range.start);
+ leaf.range.end=source.length;
+ rebindSource(hir,source);
+ assert.deepEqual(verifyHir(hir),hir);
+ const report=analyzeModuleCalls(hir,{mode:'initial'});
+ const expected={reads:[global],writes:[global],unknownHost:false};
+ assert.deepEqual(report.functions.find(row=>row.functionId===leaf.id),{
+  functionId:leaf.id,derived:expected,effective:expected,dependencies:[],
+ });
+ const fixed=fixedFrom({expected:report});
+ fixed.contracts.find(row=>row.functionId===leaf.id).upper.reads=[];
+ seal(fixed);
+ rejects(()=>analyzeModuleCalls(hir,fixed),'bound',{sourceId:leaf.sourcePath,...payload.range});
 });
