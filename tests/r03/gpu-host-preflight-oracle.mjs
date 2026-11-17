@@ -79,16 +79,28 @@ export function verifyGpuHostRecipe(module,plan,original,sourceText){
     assert.deepEqual(recorded[offset+1],{functionId,name:'numeric_use',obligationId,point,source});
     const obligation=module.obligations[obligationId],{operand}=obligation;
     assert.ok(Number.isSafeInteger(operand)&&operand>=0);
+    let dependsOn=[];
+    if(origin===null){
+      // The composed profile consumes the original inner add's result. Its
+      // first (binding) numeric check and the add itself establish the tag.
+      const inner={sourceId:source.sourceId,...original.inner};
+      const producers=module.sourceOperations.filter(row=>row.name==='binary'&&canonical(row.source)===canonical(inner));
+      assert.equal(producers.length,1);
+      const [producer]=producers,inputId=recorded[1].obligationId,producerId=producer.obligationId;
+      assert.equal(producer.functionId,functionId);
+      assert.ok(Number.isSafeInteger(producerId)&&producerId>recorded[2].obligationId&&producerId<obligationId);
+      assert.deepEqual(module.obligations[producerId],{id:producerId,kind:'i32-add',condition:'gpu-i32-numeric-relation',
+        functionId,point:producer.point,source:inner,operator:'+',semantics:'source-i32-modulo-2^32',dependsOn:[inputId],status:'unfulfilled'});
+      dependsOn=[inputId,producerId];
+    }
     assert.deepEqual(obligation,{id:obligationId,kind:'numeric-use',condition:'actual-initialized-i32',
-      functionId,point,source,operator,index,operand,dependsOn:origin===null?obligation.dependsOn:[],
+      functionId,point,source,operator,index,operand,dependsOn,
       status:origin===null?'conditional-i32':origin.kind==='binding'?'unfulfilled':'proven-i32'});
     if(origin===null){
-      assert.ok(Array.isArray(obligation.dependsOn)&&obligation.dependsOn.length>0);
-      assert.ok(obligation.dependsOn.every(id=>Number.isSafeInteger(id)&&id>=0&&id<obligationId));
       const discharged=module.discharges.filter(row=>row.obligationId===obligationId);
       assert.deepEqual(discharged,[{obligationId,functionId,point,source,status:'discharged',
         basis:'Source actual i32 result',operation:'numeric-use',relation:'computed-i32-is-numeric',
-        requires:obligation.dependsOn}]);
+        requires:dependsOn}]);
       continue;
     }
     steps.push({kind:'numeric-use',obligationId,functionId,point,source,status:'unfulfilled',

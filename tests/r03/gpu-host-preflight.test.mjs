@@ -126,6 +126,12 @@ for(const fixture of fixtures){
       ['wrong Source constant',out=>{out.hostPreflight.steps[2].origin.decimal='8';}],
     ]:composed?[
       ['missing computed-use discharge',out=>{out.discharges=out.discharges.filter(row=>row.relation!=='computed-i32-is-numeric');}],
+      ['computed-use depends on fuel instead of its input check',out=>{
+        const obligation=out.obligations.find(row=>row.status==='conditional-i32'&&row.kind==='numeric-use');
+        const discharge=out.discharges.find(row=>row.obligationId===obligation.id);
+        assert.deepEqual(obligation.dependsOn,[1,3]);assert.deepEqual(discharge.requires,[1,3]);
+        obligation.dependsOn=[0,3];discharge.requires=[0,3];
+      }],
     ]:[];
     for(const [name,change] of changes)await t.test('archived Host recipe rejects '+name,()=>{
       const altered=structuredClone(report.emittedModule);
