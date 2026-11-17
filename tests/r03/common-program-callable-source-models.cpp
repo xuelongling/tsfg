@@ -21,8 +21,124 @@ void rebind(Program &p){
   (*snapshot.getAsObject())["packageId"]=id;(*p.hir.getAsObject())["inputIdentity"]=id;p.inputIdentity=id;p.remaining=1000000;
 }
 bool check(const char *name,bool ok){llvm::outs()<<name<<": "<<(ok?"PASS":"FAIL")<<"\n";return ok;}
+
+Array *arrayMember(Json &owner,llvm::StringRef name){
+  auto *object=owner.getAsObject();
+  return object?object->getArray(name):nullptr;
+}
+Json *namedRow(Array *rows,llvm::StringRef key,llvm::StringRef value){
+  if(!rows)return nullptr;
+  for(auto &row:*rows)if(field(row,key).getAsString()==value)return &row;
+  return nullptr;
+}
+Array *moduleRows(Json &payload,llvm::StringRef source){
+  auto *module=namedRow(arrayMember(payload,"modules"),"sourcePath",source);
+  return module?arrayMember(*module,"exports"):nullptr;
+}
+bool moveOccurrence(Json &payload,llvm::StringRef source,llvm::StringRef name,llvm::StringRef sibling){
+  auto *rows=moduleRows(payload,source);
+  auto *row=namedRow(rows,"name",name),*other=namedRow(rows,"name",sibling);
+  if(!row||!other||same(field(*row,"range"),field(*other,"range")))return false;
+  (*row->getAsObject())["range"]=field(*other,"range");
+  return true;
+}
+bool removeRows(Array &rows,llvm::StringRef key,llvm::StringRef value){
+  bool removed=false;
+  for(auto it=rows.begin();it!=rows.end();){
+    if(field(*it,key).getAsString()==value){it=rows.erase(it);removed=true;}
+    else ++it;
+  }
+  return removed;
+}
+struct ModuleResult {
+  bool directory,identities,accepted;
+  Error error;
+};
+ModuleResult readModuleModel(Program &program){
+  Error error;SourceModel model(program,error);
+  const bool directory=model.directory(),identities=directory&&model.identities();
+  const bool accepted=identities&&model.sourceText();
+  return {directory,identities,accepted,std::move(error)};
+}
+int moduleExports(const char *path){
+  Program original;
+  if(!prepare(path,original)||original.inputIdentity!="sha256:d874f6097cd20fdb0a3740634407e5c4b3408b3dadcc00c761a56d657b4ad457")return 2;
+  Program control=original;
+  const auto baseline=readModuleModel(control);
+  if(!check("retained four-module input",baseline.directory&&baseline.identities&&baseline.accepted)){
+    llvm::errs()<<baseline.error.code<<": "<<baseline.error.message<<"\n";
+    return 1;
+  }
+  bool ok=true;
+  const auto negative=[&](const char *label,auto mutate,llvm::StringRef message,llvm::StringRef historicalMessage={}){
+    Program changed=original;
+    auto &snapshot=*changed.hir.getAsObject()->get("snapshot");
+    auto &payload=*snapshot.getAsObject()->get("payload");
+    if(!mutate(payload)){
+      ok&=check(label,false);llvm::errs()<<"expected retained export occurrence missing\n";return;
+    }
+    rebind(changed);
+    const auto outcome=readModuleModel(changed);
+    const bool expected=outcome.directory&&outcome.identities&&!outcome.accepted&&outcome.error.code=="core-ir-common-source"&&
+      (outcome.error.message==message||(!historicalMessage.empty()&&outcome.error.message==historicalMessage));
+    ok&=check(label,expected);
+    llvm::outs()<<"  directory="<<outcome.directory<<" identities="<<outcome.identities<<" accepted="<<outcome.accepted<<"\n";
+    if(!outcome.error.code.empty())llvm::outs()<<"  "<<outcome.error.code<<": "<<outcome.error.message<<"\n";
+  };
+  constexpr llvm::StringLiteral direct="direct export does not match its original declaration";
+  constexpr llvm::StringLiteral kind="export kind, occurrence or definition differs";
+  negative("direct function public name",[](Json &payload){
+    auto *row=namedRow(moduleRows(payload,"/src/main.ts"),"name","ordinary");
+    auto *root=namedRow(arrayMember(payload,"exports"),"name","ordinary");
+    if(!row||!root)return false;
+    (*row->getAsObject())["name"]="other";(*root->getAsObject())["name"]="other";
+    return true;
+  },direct);
+  negative("direct function target",[](Json &payload){
+    auto *rows=moduleRows(payload,"/src/main.ts");
+    auto *row=namedRow(rows,"name","ordinary"),*view=namedRow(rows,"name","view");
+    auto *root=namedRow(arrayMember(payload,"exports"),"name","ordinary");
+    auto *parameters=arrayMember(payload,"entryCompatibilityRoots");
+    if(!row||!view||!root||!parameters)return false;
+    const auto former=string(field(*row,"target"));
+    (*row->getAsObject())["target"]=field(*view,"target");
+    (*row->getAsObject())["definitionRange"]=field(*view,"definitionRange");
+    (*root->getAsObject())["functionId"]=field(*view,"target");
+    removeRows(*parameters,"functionId",former);
+    return true;
+  },direct);
+  negative("direct nominal occurrence",[](Json &payload){return moveOccurrence(payload,"/src/data.ts","Box","Delta");},direct);
+  negative("direct global occurrence",[](Json &payload){return moveOccurrence(payload,"/src/state.ts","leftTotal","rightTotal");},direct);
+  negative("direct nominal export kind",[](Json &payload){
+    auto *row=namedRow(moduleRows(payload,"/src/data.ts"),"name","Box");
+    if(!row||field(*row,"kind").getAsString()!="type")return false;
+    (*row->getAsObject())["kind"]="function";return true;
+  },kind);
+  negative("direct function omission",[](Json &payload){
+    auto *rows=moduleRows(payload,"/src/main.ts"),*root=arrayMember(payload,"exports");
+    auto *row=namedRow(rows,"name","ordinary");
+    auto *parameters=arrayMember(payload,"entryCompatibilityRoots");
+    if(!row||!root||!parameters)return false;
+    const auto former=string(field(*row,"target"));
+    removeRows(*parameters,"functionId",former);
+    return removeRows(*rows,"name","ordinary")&&removeRows(*root,"name","ordinary");
+  },direct);
+  negative("wrong named re-export occurrence",[](Json &payload){return moveOccurrence(payload,"/src/barrel.ts","add","bump");},
+    "named re-export differs from original alias");
+  negative("existing definition range control",[](Json &payload){
+    auto *rows=moduleRows(payload,"/src/data.ts");
+    auto *row=namedRow(rows,"name","Box"),*other=namedRow(rows,"name","Delta");
+    if(!row||!other)return false;
+    (*row->getAsObject())["definitionRange"]=field(*other,"definitionRange");return true;
+  },kind,"export occurrence/definition join differs");
+  return ok?0:1;
+}
 }
 int main(int argc,char **argv){
+  if(argc>1&&llvm::StringRef(argv[1])=="--module-exports"){
+    if(argc!=3){llvm::errs()<<"expected --module-exports retained-hir\n";return 2;}
+    return moduleExports(argv[2]);
+  }
   bool ok=argc>=3;Program original;
   for(int i=1;i<argc;++i){Program p;Error e;if(!prepare(argv[i],p))return 2;
     const bool accepted=verifySource(p,e);ok&=check(argv[i],accepted);if(!accepted)llvm::errs()<<e.code<<": "<<e.message<<"\n";
