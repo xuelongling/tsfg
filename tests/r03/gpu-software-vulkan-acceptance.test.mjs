@@ -303,6 +303,7 @@ function verifyRecovery(report){
   assert.ok(transitions.length>0);
   assert.deepEqual(transitions.at(-1),final);
   assert.ok(Array.isArray(final.resources));
+  assert.ok(Array.isArray(report.outputs),'recovery output payload must be an array');
   for(const id of [final.deviceGeneration,final.submissionId]){
     assert.equal(typeof id,'string');
     assert.match(id,/^[1-9][0-9]{0,19}$/u);
@@ -352,7 +353,10 @@ function verifyRecovery(report){
   if(final.outputsAvailable===true)
     assert.deepEqual([final.state,final.stage,final.vkResult,final.failure,final.windowsError,final.submitted,final.completionKnown],
       ['Completed','completed',0,'None',null,true,true]);
-  else assert.equal(final.outputsAvailable,false);
+  else{
+    assert.equal(final.outputsAvailable,false);
+    assert.ok(report.outputs.length===0,'unpublished recovery output payload must be empty');
+  }
   for(const [index,wait] of transitions.entries()){
     if(index>=2&&index<transitions.length-1)
       assert.ok(isTimeout(wait),'only an unresolved VK_TIMEOUT can precede another wait');
@@ -499,14 +503,32 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
   const timeout=snapshot('Unfinished',true,false,'wait',2),completed=snapshot('Completed',true,true,'completed',0);
   const report={
     identity,final:completed,transitions:[prepared,submitted,timeout,structuredClone(timeout),completed],
+    outputs:[{descriptor:resources[1],bits:'0',signed:'0'}],
     timeout:'OBSERVED',retainedResumeObserved:true,recovery:'COMPLETED',
   };
-  const retained=final=>({...report,final,transitions:[prepared,submitted,timeout,final],recovery:'RETAINED'});
+  const withTransitions=transitions=>{
+    const final=transitions.at(-1);
+    return {...report,final,transitions,outputs:final.outputsAvailable===true?report.outputs:[]};
+  };
+  const retained=final=>({...withTransitions([prepared,submitted,timeout,final]),recovery:'RETAINED'});
   verifyRecovery(report);
   verifyRecovery(retained(structuredClone(timeout)));
   // Fence completion survives a subsequent output invalidation failure.
   const invalidation={...completed,stage:'invalidate-output-memory',failure:'Vulkan',vkResult:-1,outputsAvailable:false,resourceIndex:1};
-  const afterTimeout=final=>({...report,final,transitions:[prepared,submitted,timeout,final]});
+  const afterTimeout=final=>withTransitions([prepared,submitted,timeout,final]);
+  await t.test('recovery reports carry an output array',()=>{
+    for(const outputs of [undefined,null,{},'[]'])
+      assert.throws(()=>verifyRecovery({...report,outputs}),{message:'recovery output payload must be an array'});
+  });
+  await t.test('an unresolved timeout carries no output payload',()=>{
+    const final=structuredClone(timeout);
+    assert.throws(()=>verifyRecovery({...retained(final),outputs:report.outputs}),
+      {message:'unpublished recovery output payload must be empty'});
+  });
+  await t.test('a failed output invalidation carries no output payload',()=>{
+    assert.throws(()=>verifyRecovery({...afterTimeout(invalidation),outputs:report.outputs}),
+      {message:'unpublished recovery output payload must be empty'});
+  });
   await t.test('wait failure uses the Vulkan wait result tuple',()=>{
     const waitFailed={...timeout,vkResult:-1,failure:'Vulkan'};
     verifyRecovery(retained(waitFailed));
@@ -552,7 +574,6 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
   for(const changes of [{functionId:'another-kernel'},{source:{...source,end:21}},{resources:[]}]){
     assert.throws(()=>verifyRecovery({...report,transitions:[prepared,submitted,{...timeout,...changes},completed]}),{name:'AssertionError'});
   }
-  const withTransitions=transitions=>({...report,final:transitions.at(-1),transitions});
   const neverWaited=rows=>({...withTransitions(rows),timeout:'NOT_OBSERVED',retainedResumeObserved:false,recovery:'NOT_RUN'});
   await t.test('invocation identifiers use positive uint64 decimal strings',()=>{
     for(const key of ['deviceGeneration','submissionId']){
