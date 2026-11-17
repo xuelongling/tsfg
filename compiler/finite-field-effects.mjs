@@ -2,7 +2,11 @@
 // Physical field writes over the existing owned callable graph. Preserving an
 // existing field needs absence of a write to that FieldId, never noalias or a
 // caller's value as a universal constructor-entry fact.
-export function finiteFieldEffects(hir,plan,callables,phases,charge) {
+export function finiteFieldWriteVersion(path,value,sourcePath,target) {
+  return {id:path+'/field-version/'+target.actualType+'/'+target.fieldId,node:path+'/value',
+    actualType:target.actualType,field:target.fieldId,origin:{source:sourcePath,...value.range}};
+}
+export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites=null) {
   const fields=new Map((plan.carrierFields??plan.fields).map(row=>{charge();return [row.id,row];})),
     calls=new Map(plan.calls.map(row=>{charge();return [row.id,row];})),types=new Map(hir.types.map(row=>{charge();return [row.id,row];})),
     constructors=new Map(),effects=new Map(),
@@ -20,7 +24,13 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge) {
         effect.writes=true;const selected=fields.get(path);
         if(!selected?.targets.length)effect.unknown=true;
         for(const row of selected?.targets??[]) {
-          charge();if(row.fieldId)effect.fields.add(row.fieldId);else effect.unknown=true;
+          charge();if(row.fieldId){
+            effect.fields.add(row.fieldId);
+            if(lexicalWrites&&value.kind==='fieldAssignment'){
+              charge();const version=finiteFieldWriteVersion(path,value,fn.sourcePath,row);
+              lexicalWrites.set(version.id,version);
+            }
+          }else effect.unknown=true;
         }
       }
       if(value.kind==='initializeOwnFields') {

@@ -143,7 +143,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       else for(const other of memory.slots.keys())if(other.startsWith('s:'))memory.slots.delete(other);
       memory.slots.set(slot,new Set([id]));
     }
-    function expression(value,path,state,bindings,terminalRoot=false) {
+    function expression(value,path,state,bindings,terminalRoot=false,directStatement=false) {
       if(!value)return {};charge();
       const child=(name,allowTerminal=false)=>expression(value[name],path+'/'+name,state,bindings,allowTerminal);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
@@ -171,7 +171,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
           const old=path+'/old-value',status=load({...value,range:value.target.range},old,state,receiver,index);
           // The lexical pass retains every original occurrence. Ordered
           // transfer stops only at a definite old-read trap on the current evaluation path.
-          if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateCompound()) {
+          if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateCompound(directStatement&&!fn.ownerType)) {
             if(recordReads){charge();(terminalReads??=new Set()).add(old);}
             return {terminal:true};
           }
@@ -313,7 +313,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
           if(value.terminal)return null;
           bindings.set(row.binding.id,adapt(value,p+'/initializer',fn.id+'/binding/'+row.binding.id));
         }else if(row.kind==='expression') {
-          if(expression(row.expression,p+'/expression',state,bindings,true).terminal)return null;
+          if(expression(row.expression,p+'/expression',state,bindings,true,true).terminal)return null;
         }
         else if(row.kind==='return'||row.kind==='constructorReturn') {
           if(row.value&&expression(row.value,p+'/value',state,bindings,row.kind==='return').terminal)return null;

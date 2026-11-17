@@ -152,12 +152,12 @@ function buildPlans(input,context,options,definitions) {
     let fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),controlInitial,charge);
     const carrierFieldReaching=fieldReaching.reads.some(row=>row.reaching.length)?fieldReaching:null;
     let result=carrierFieldReaching?solve(carrierFieldReaching):initial;
-    const canTerminateCompound=()=>{
-      // This ordered cut shares Array state only. A nominal field or method
-      // plan still uses its existing lexical/actual selection boundary.
+    const canTerminateCompound=directStatement=>{
       allowCompoundTermination??=!result.fields.length&&!result.calls.length&&
         !fieldReaching.effects.some(row=>{charge();return row.writesFields;});
-      return allowCompoundTermination;
+      // Mixed field state has a matching cut at this direct statement root.
+      // Method receiver selection retains its existing transfer boundary.
+      return allowCompoundTermination||directStatement&&!result.calls.length;
     };
     const hir=verifyHir(input,context,options.publicationContext);
     // The first control query must not inherit Array read alternatives from
@@ -171,7 +171,12 @@ function buildPlans(input,context,options,definitions) {
       const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateCompound);
       arrayReaching=array.reaching;terminalReads=array.terminalReads;
       if(!arrayReaching.reads.length)break;
-      fieldReaching=buildFiniteFieldReaching(hir,{...ordered,arrayReaching},charge);
+      const fieldPlan={...ordered,arrayReaching};
+      // The mixed cut keeps the carrier-authorized lexical write inventory
+      // apart from field versions selected by normal completion.
+      fieldReaching=terminalReads&&!allowCompoundTermination?
+        buildFiniteFieldReaching(hir,{...fieldPlan,carrierFields:result.fields},charge,terminalReads):
+        buildFiniteFieldReaching(hir,fieldPlan,charge);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
         for(const id of read.versions){charge();versions.push(id);}rows.push([read.node,read.status,versions]);}
       const fields=[];for(const read of fieldReaching.reads){charge();const targets=[];

@@ -146,3 +146,82 @@ for(const row of cases)test(row.name,async t=>{
     assert.deepEqual(optimized.stdout,canonicalized.stdout);
   });
 });
+
+for(const row of [
+  {fn:'fieldMissing',fixture:'field-tail-old-value-terminal',sha:'72338395d763abcaed19e6886b03f90849096e8a7a24fe137e82cfa62e7761ce',present:false,delta:0},
+  {fn:'fieldPresent',fixture:'field-tail-old-value-present',sha:'2fb8044049a7022e1d54520e70308202841a1240aee352a73e8f2cbdde930376',present:true,delta:3},
+  {fn:'fieldMissing',fixture:'field-write-tail-old-value-terminal',sha:'0ef476873a1b30b76238fdcb39de9a0d46c5fe2589b32c030f67b89f89a2769c',present:false,delta:0,write:true},
+  {fn:'fieldPresent',fixture:'field-write-tail-old-value-present',sha:'22e3d52a15925f440446bd49b7ff7b9381d904c8c449b7e17f6c89069701f2c7',present:true,delta:3,write:true},
+])test('a mixed compound old read preserves only normal field flow: '+row.fixture,async t=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-terminal-compound/'+row.fixture+'-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:'+row.sha);
+  const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const publication=buildInitialArrayPublication(context),built=buildHir(facts,context,publication);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const {hir}=built,fn=hir.functions.find(fn=>fn.name===row.fn),rhs=hir.functions.find(fn=>fn.name==='rhs');
+  const box=hir.types.find(type=>type.kind==='reference'&&type.nominalKey?.declarationPath[0]==='Box');
+  assert.ok(fn&&rhs&&box?.kind==='reference');
+  const field=box.fields.find(field=>field.name==='n'),constructor=hir.functions.find(fn=>fn.construction===box.construction.id);
+  assert.ok(field&&constructor);
+  const body=fn.id+'/body',target=body+'/3/expression',old=target+'/old-value',array=body+'/1/initializer';
+  const tail=body+(row.write?'/5/value':'/4/value');
+  const write=body+'/4/expression',writeValue=write+'/value',writeVersion=write+'/field-version/'+box.id+'/'+field.id;
+  const tailOffset=(row.write?282:267)+row.delta;
+  const f64=sha256('tsfg.actual-domain.v1\0'+canonical([fn.returnType.id])),bottom=sha256('tsfg.actual-domain.v1\0[]');
+  const normal=row.present?f64:bottom,proofs=buildFiniteCoreDomains(hir,context,{publicationContext:publication});
+  for(const plan of [proofs.reached,proofs.definition]){
+    const read=plan.arrayReaching.reads.find(read=>read.node===old);
+    assert.deepEqual([read.owner,read.index,read.status,read.versions,read.sources,read.origin],
+      [array,'c:0',row.present?'proven':'missing',row.present?[array+'/initial/0/array-version']:[],
+        row.present?[array+'/elements/0']:[],{source:'/src/main.ts',start:238+row.delta,end:243+row.delta}]);
+    const phase=plan.fieldReaching.phaseWrites.find(write=>write.field===field.id&&write.state==='initialized');
+    assert.ok(phase);
+    const parameter=constructor.id+'/binding/'+constructor.parameters[1].id;
+    assert.deepEqual([phase.node,phase.actualTypes],[parameter,[box.id]]);
+    if(row.write)assert.deepEqual(plan.fieldReaching.writes,[{id:writeVersion,node:writeValue,actualType:box.id,field:field.id,
+      origin:{source:'/src/main.ts',start:260+row.delta,end:271+row.delta}}]);
+    const successful=plan.fieldReaching.reads.find(read=>read.node===tail);
+    if(row.present)assert.deepEqual(successful.reaching,[{actualType:box.id,field:field.id,
+      versions:[row.write?writeVersion:phase.id],sources:[row.write?writeValue:parameter]}]);
+    else assert.equal(successful,undefined);
+    assert.deepEqual(plan.carrierFields.find(value=>value.id===tail).targets.map(value=>value.fieldId),[field.id]);
+    const actual=[array+'/elements',old,target+'/value',tail,fn.id+'/return'];
+    if(row.write)actual.push(writeValue);
+    if(!row.present&&plan===proofs.reached)actual.push(rhs.id+'/binding/'+rhs.parameters[0].id);
+    for(const id of actual){
+      const value=plan.nodes.find(node=>node.id===id);
+      assert.deepEqual([value.domainId,value.pending,value.arrayOwners],[normal,[],[]],id);
+    }
+    assert.deepEqual(plan.arrayReaching.writes.filter(write=>write.kind==='store').map(write=>write.id).sort(),
+      [rhs.id+'/body/0/expression/array-version',target+'/array-version'].sort());
+  }
+  // The terminal path keeps its lexical field dispatch and checked operation.
+  /** @param {string} text */
+  function check(text){
+    const lines=text.split(/\r?\n/);
+    /** @param {(line:string)=>boolean} matches */
+    const occurrence=matches=>{const found=lines.filter(matches);assert.equal(found.length,1);return found[0];};
+    const receiver=occurrence(line=>line.includes('"tsfg_core.domain.construct"'));
+    const oldRead=occurrence(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes('array_node = "'+old+'"'));
+    const call=occurrence(line=>line.includes('func.call')&&line.includes('tsfg_core.function_id = "'+rhs.id+'"'));
+    const store=occurrence(line=>line.includes('"tsfg_core.domain.array_store"')&&line.includes('array_node = "'+target+'"'));
+    const readField=occurrence(line=>line.includes('"tsfg_core.domain.field_read"'));
+    assert.ok(readField.includes('field_dispatch')&&readField.includes(field.id));
+    assert.ok(readField.includes('tsfg_source.start = '+tailOffset+' : i64')&&readField.includes('tsfg_source.end = '+(tailOffset+5)+' : i64'));
+    assert.equal(readField.includes('field_reaching'),row.present);
+    const operations=[receiver,oldRead,call,store];
+    if(row.write){
+      const fieldStore=occurrence(line=>line.includes('"tsfg_core.domain.field_store"'));
+      assert.ok(fieldStore.includes('field_versions')&&fieldStore.includes(writeVersion));
+      operations.push(fieldStore);
+    }
+    operations.push(readField);
+    const order=operations.map(line=>lines.indexOf(line));
+    assert.ok(order.every((index,position)=>position===0||index>order[position-1]));
+  }
+  const core=lowerFormalHir(hir,context,publication);check(core);
+  if(process.env.TSFG_CORE_IR_EXE)await t.test('static Core verifies original lexical order and field authority',async()=>{
+    const base=await invokeCore(core);accepted(base);check(base.stdout.toString('utf8'));
+    const optimized=await invokeCore(core,'--optimize');accepted(optimized);assert.deepEqual(optimized.stdout,base.stdout);
+  });
+});

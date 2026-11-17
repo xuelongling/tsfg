@@ -7,7 +7,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
-import {finiteFieldEffects} from './finite-field-effects.mjs';
+import {finiteFieldEffects,finiteFieldWriteVersion} from './finite-field-effects.mjs';
 
 // These are the production proof-state snapshots, not Source-value copies.
 function versionCopy(values,charge) {
@@ -21,7 +21,7 @@ export function copyFieldReachingAliases(env,charge) {
   const result=new Map();for(const [id,token] of env){charge();result.set(id,token);}return result;
 }
 
-export function buildFiniteFieldReaching(hir,plan,charge) {
+export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   const arrayReads=new Map();for(const row of plan.arrayReaching?.reads??[]){charge();if(row.status==='proven')arrayReads.set(row.node,row.sources);}
   const selections=new Map(plan.fields.map(row=>[row.id,row]));
   const calls=new Map(plan.calls.map(row=>[row.id,row]));
@@ -45,7 +45,8 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
   const storedTokens=new Map(),returnedFields=new Map();
   const projectedOutputs=new Map(),returnValueParameters=new Map(),returnGraphs=createFieldReturnGraphs(charge);
   const constructors=new Map();for(const fn of callables){charge();if(fn.role==='construction-body')constructors.set(fn.construction,fn);}
-  const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge);
+  const lexicalWrites=terminalReads?new Map():null;
+  const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites);
   for(const [site,target]of sites){charge();contexts.set(site,{target,fields:new Map()});}
   const clone=state=>copyFieldReachingState(state,charge);
   function join(left,right) {
@@ -181,13 +182,13 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           state.set(key(receiver,{actualType,fieldId:output.field}),new Set([output.id]));
       }
     }
-    function access(value,path,state,token,kind,source=null,payload=null) {
+    function access(value,path,state,token,kind,payload=null) {
       const selection=selections.get(path);if(!selection)return;
       if(kind==='store') {
         for(const target of selection.targets) {
-          charge();const id=path+'/field-version/'+target.actualType+'/'+target.fieldId;
-          writes.set(id,{id,node:source,actualType:target.actualType,field:target.fieldId,origin:{source:fn.sourcePath,...value.range}});
-          storedTokens.set(id,{function:fn.id,token:payload,fresh:value.value?.kind==='construct'});
+          charge();const version=finiteFieldWriteVersion(path,value,fn.sourcePath,target);
+          writes.set(version.id,version);
+          storedTokens.set(version.id,{function:fn.id,token:payload,fresh:value.value?.kind==='construct'});
         }
         if(!token){
           if(selection.targets.every(target=>types.get(target.actualType)?.kind==='reference')){
@@ -277,7 +278,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       if(value.kind==='fieldAssignment') {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env);
         const rhs=child('value'),payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
-        access(value,path,state,token,'store',path+'/value',payload);return rhs;
+        access(value,path,state,token,'store',payload);return rhs;
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
         const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
@@ -378,7 +379,15 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           const token=expression(value.initializer,p+'/initializer',state,env);
           env.set(value.binding.id,copiesValue(value.binding.type)?copyToken(token,p+'/copy',state):token);
         }
-        else if(value.kind==='expression')expression(value.expression,p+'/expression',state,env);
+        else if(value.kind==='expression') {
+          const expressionPath=p+'/expression',root=value.expression;
+          if(terminalReads&&(root.kind==='arrayCompoundAssignment'||root.kind==='arrayUpdate')&&terminalReads.has(expressionPath+'/old-value')) {
+            expression(root.target.receiver,expressionPath+'/target/receiver',state,env);
+            expression(root.target.index,expressionPath+'/target/index',state,env);
+            return null;
+          }
+          expression(root,expressionPath,state,env);
+        }
         else if(value.kind==='return'||value.kind==='constructorReturn') {
           const token=value.value?expression(value.value,p+'/value',state,env):null;
           if(value.value&&copiesValue(value.value.type)) {
@@ -459,8 +468,10 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
     }
   }
   }while(ledger()!==previous);
+  const writeOrder=(a,b)=>a.id<b.id?-1:1;
+  const compareWrites=lexicalWrites?(a,b)=>{charge();return writeOrder(a,b);}:writeOrder;
   return own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),
-    writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
+    writes:[...(lexicalWrites??writes).values()].sort(compareWrites),
     phaseWrites:[...phaseWrites.values()].sort((a,b)=>a.id<b.id?-1:1),
     allocationEntries:[...allocationEntries.values()].sort((a,b)=>a.id<b.id?-1:1),
     completions:[...completions].sort(([a],[b])=>a<b?-1:1).map(([construction,fields])=>({construction,fields})),
