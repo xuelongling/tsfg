@@ -92,7 +92,7 @@ export function formalExceptionFunction(model,owner){
     if(statement.elseRegion)region(statement.elseRegion,active,finish);else finish();
     state.cells=cells;
     if(joined.incoming)state.current=joined;
-    else graph.blocks.splice(graph.blocks.indexOf(joined),1);
+    else graph.discardBlock(joined);
   }
   function attempt(statement,active){
     const after=graph.newBlock(),caught=statement.catchClause?graph.newBlock([payload]):null,cells=copyCells(state.cells);
@@ -116,7 +116,7 @@ export function formalExceptionFunction(model,owner){
         ()=>finish('normal',null,statement.range),initial);}
     state.cells=cells;
     if(after.incoming)state.current=after;
-    else graph.blocks.splice(graph.blocks.indexOf(after),1);
+    else graph.discardBlock(after);
   }
   function loop(statement,active){
     const header=graph.newBlock(),body=graph.newBlock(),after=graph.newBlock(),cells=copyCells(state.cells);
@@ -143,7 +143,8 @@ export function formalExceptionFunction(model,owner){
     tasks[index]=undefined;
     task();
   }
-  const body=graph.blocks.map((block,index)=>{
+  publication.step(graph.blocks.length);
+  const body=graph.blocks.filter(block=>!block.discarded).map((block,index)=>{
     const label=index===0?'':publication.combine(['  ^',block.name,block.parameters.length?'(':'',
       ...block.parameters.flatMap((p,i)=>[i?', ':'',p.name,': ',coreType(p.type)]),block.parameters.length?')':'',':\n']);
     return label+block.lines.join('\n');

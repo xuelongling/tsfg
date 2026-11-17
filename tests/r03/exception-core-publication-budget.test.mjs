@@ -129,3 +129,19 @@ test('exception Core can reserve an exact bulk structural work amount',()=>{
   limit(()=>p.step());
   for (const count of [-1,0.5,NaN,Infinity]) limit(()=>publicationBudget().step(count));
 });
+
+test('discarded Core continuations preserve block ordinals and the live block limit',()=>{
+  const p=publicationBudget(),graph=createCoreSsaGraph(type=>type,p.budget);
+  const entry=graph.newBlock(),discarded=graph.newBlock();
+  for(let index=2;index<16_384;index++)graph.newBlock();
+  limit(()=>graph.newBlock());
+  graph.discardBlock(discarded);
+  const tail=graph.newBlock();
+  assert.equal(tail.name,'bb16384');
+  const live=graph.blocks.filter(block=>!block.discarded);
+  assert.equal(live.length,16_384);
+  assert.equal(live[0],entry);
+  assert.equal(live[1].name,'bb2');
+  assert.equal(live.at(-1),tail);
+  limit(()=>graph.newBlock());
+});
