@@ -41,10 +41,7 @@ export function verifyHir(hir, factsContext = undefined, callPublicationContext 
     if(callPublicationContext!==undefined){commonBudget(callPublicationContext);commonRecord(callPublicationContext,['publication','request']);analyzeCommonProgram(checked,callPublicationContext.publication);}
     return checked;
   }
-  if(isOptionalPropertyContext(factsContext)) {
-    if(callPublicationContext!==undefined)throw new TypeError('r03-optional-property-context: unexpected publication');
-    return verifyOptionalPropertyHir(hir,factsContext);
-  }
+  if(isOptionalPropertyContext(factsContext))return verifyOptionalPropertyHir(hir,factsContext,callPublicationContext);
   if (isSelectedNullableContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return verifyNullableHir(hir, factsContext);
   }

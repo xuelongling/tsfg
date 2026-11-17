@@ -15,7 +15,11 @@ export function isOptionalPropertyContext(value) {
   if(!value||typeof value!=='object'||isProxy(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value)))return false;
   return Object.getOwnPropertyDescriptor(value,'family')?.value==='tsfg.optional-property-facts-context-candidate';
 }
-function context(value) {
+/** @param {unknown} [callPublicationContext] */
+function context(value,callPublicationContext=undefined) {
+  if(callPublicationContext!==undefined)
+    throw Object.assign(new TypeError('r03-optional-property-context: unexpected publication'),
+      {code:'r03-optional-property-context',ruleId:'r01-input-boundary',phase:'hir'});
   check(value&&typeof value==='object'&&!isProxy(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value)),'context');
   const wanted=['family','version','factsBytes','expectedPackageId'],keys=Reflect.ownKeys(value);
   check(keys.length===wanted.length&&wanted.every(key=>keys.includes(key)),'context');
@@ -31,9 +35,10 @@ function project(facts) {
   const hir=projectTypedArrayFacts(facts,profile);
   checkGenericJsonValueBudget(hir,policy);return hir;
 }
-export function buildOptionalPropertyHir(input,factsContext) {
+/** @param {unknown} [callPublicationContext] */
+export function buildOptionalPropertyHir(input,factsContext,callPublicationContext=undefined) {
   try {
-    const selected=context(factsContext);
+    const selected=context(factsContext,callPublicationContext);
     check(writeOptionalPropertyFacts(input).equals(selected.bytes),'context');
     const result=Object.freeze({status:'ok',hir:own(project(selected.facts))});
     return /** @type {typeof result & {diagnostics?:undefined}} */(result);
@@ -43,14 +48,16 @@ export function buildOptionalPropertyHir(input,factsContext) {
     return /** @type {typeof result & {hir?:undefined}} */(result);
   }
 }
-export function verifyOptionalPropertyHir(hir,factsContext) {
-  const {facts}=context(factsContext);
+/** @param {unknown} [callPublicationContext] */
+export function verifyOptionalPropertyHir(hir,factsContext,callPublicationContext=undefined) {
+  const {facts}=context(factsContext,callPublicationContext);
   checkGenericJsonValueBudget(hir,policy);
   const expected=project(facts);check(canonical(hir)===canonical(expected),'hir-projection');return own(expected);
 }
-export function readOptionalPropertyHir(bytes,factsContext) {
+/** @param {unknown} [callPublicationContext] */
+export function readOptionalPropertyHir(bytes,factsContext,callPublicationContext=undefined) {
   // Bind the selected source packet before walking any caller HIR graph.
-  context(factsContext);
+  context(factsContext,callPublicationContext);
   const input=readGenericJson(copyGenericJsonBytes(bytes,policy),policy);
   const hir=verifyOptionalPropertyHir(input.value,factsContext);
   check(input.text===canonical(hir)+'\n','canonical');return hir;

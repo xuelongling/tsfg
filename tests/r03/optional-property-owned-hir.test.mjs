@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {canonical,sha256} from '../../compiler/identity.mjs';
+import {buildHir,verifyHir,printHir,readHir,lowerHir,lowerFormalHir,lowerOwnedHir} from '../../compiler/hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {typedArrayStringUnits} from '../../compiler/typed-array-literals.mjs';
 import {optionalPropertyProfile} from '../../compiler/optional-property-profile.mjs';
@@ -18,6 +19,30 @@ const type=(hir,name)=>hir.types.find(row=>row.sourceType===name||Object.hasOwn(
 const clone=()=>structuredClone(original);
 function reseal(packet){packet.packageId=sha256('tsfg.optional-property-facts.package.v1\0'+packet.schemaHash+'\0'+canonical(packet.payload));return packet;}
 function rejected(change){const packet=clone();change(packet);reseal(packet);assert.throws(()=>writeOptionalPropertyFacts(packet));}
+
+test('owned HIR entrypoints keep the selected OptionalProperty publication diagnostic',()=>{
+  const packet=readOptionalPropertyFacts(bytes),selected=context();
+  const built=buildHir(packet,selected);
+  assert.equal(built.status,'ok');
+  const hir=built.hir,printed=Buffer.from(printHir(hir,selected));
+  assert.equal(sha256(printed),'sha256:ddb62103bf9a21c766b781b1eebca627675822acf046d299e61096b6d13c4c6a');
+  assert.deepEqual(readHir(printed,selected),hir);
+
+  const publication={};
+  const diagnostic={code:'r03-optional-property-context',ruleId:'r01-input-boundary',phase:'hir',
+    message:'r03-optional-property-context: unexpected publication'};
+  const rejectedBuild=buildHir(packet,selected,publication);
+  assert.equal(rejectedBuild.status,'error');
+  assert.deepEqual(rejectedBuild.diagnostics,[diagnostic]);
+  for(const [name,run] of Object.entries({
+    verify:()=>verifyHir(hir,selected,publication),
+    print:()=>printHir(hir,selected,publication),
+    read:()=>readHir(printed,selected,publication),
+    lower:()=>lowerHir(hir,selected,publication),
+    formal:()=>lowerFormalHir(hir,selected,publication),
+    owned:()=>lowerOwnedHir(hir,selected,publication),
+  }))assert.throws(run,diagnostic,name);
+});
 
 test('the complete selected packet becomes owned typed HIR and canonical roundtrips',()=>{
   const packet=readOptionalPropertyFacts(bytes);

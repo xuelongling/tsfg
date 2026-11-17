@@ -60,7 +60,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
     }catch(error){const result={status:'error',diagnostics:[{code:error.code??'r03-common-program-context',ruleId:error.ruleId??'r01-input-boundary',
       phase:error.phase??'hir',message:error.message,...(error.primary?{primary:error.primary}:{})}]};return /** @type {typeof result & {status:'error',hir?:undefined}} */(result);}
   }
-  if(isOptionalPropertyContext(factsContext)&&callPublicationContext===undefined)return buildOptionalPropertyHir(snapshot,factsContext);
+  if(isOptionalPropertyContext(factsContext))return buildOptionalPropertyHir(snapshot,factsContext,callPublicationContext);
   if (isSelectedNullableContext(factsContext)) {
     try { nullableCheck(callPublicationContext === undefined, 'context'); return { status: 'ok', hir: buildNullableHir(snapshot, factsContext) }; }
     catch (error) { const result = { status: 'error', diagnostics: [{ code: error.code, ruleId: error.ruleId, phase: error.phase, message: error.message,
@@ -237,7 +237,7 @@ export const printHir = (hir, factsContext = undefined, callPublicationContext =
 /** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
   if(isCommonProgramContext(factsContext))return verifyHir(readCommonProgramHir(bytes),factsContext,callPublicationContext);
-  if(isOptionalPropertyContext(factsContext)&&callPublicationContext===undefined)return readOptionalPropertyHir(bytes,factsContext);
+  if(isOptionalPropertyContext(factsContext))return readOptionalPropertyHir(bytes,factsContext,callPublicationContext);
   if (isSelectedNullableContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return readNullableGroupsHir(bytes, factsContext);
   }
