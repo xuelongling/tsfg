@@ -394,6 +394,20 @@ bool ArrayFlow::finish() {
       const auto *computed=flow.evidence(payload(op->getResult(0)));if(!computed)return proof.reject(flow.error());
       if(!computed->pending&&!computed->alternatives.empty()){
         if(!proof.charge())return false;proof.checkedArrayReadSources.insert(op);
+        // The ordered memory pass can leave a Span receiver pending when it
+        // cannot resolve a preceding SSA cell. A closed checked-entry payload
+        // resolves a scalar result on the normal edge of the original checks.
+        // Managed results still need their existing projection/lifetime proof.
+        if(proof.unprovedMemoryReads.count(op)){
+          const auto *domain=valueDomain(proof,op->getResult(0).getType());if(!domain)return false;
+          bool scalar=true;
+          for(const auto &type:domain->alternatives){
+            if(!proof.charge())return false;
+            const auto kind=string(*proof.catalog.at(type),"kind");
+            if(kind!="scalar"&&kind!="undefined"&&kind!="null"){scalar=false;break;}
+          }
+          if(scalar)proof.unprovedMemoryReads.erase(op);
+        }
       }
       sources.emplace(op,std::move(origins));
     }

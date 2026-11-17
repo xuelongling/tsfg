@@ -75,6 +75,18 @@ for(const [name,status] of [
     assert.match(checkedRead(core),/ -> f64$/);
     assert.ok(!lines.some(line=>line.includes('"tsfg_core.domain.literal"')||line.includes('"tsfg_core.domain.array_store"')));
   }
+  if(process.env.TSFG_CORE_IR_EXE&&name==='after-last-use')await t.test('Static Core retains the checked Span read before the owner write',async()=>{
+    for(const mode of ['--canonicalize','--optimize']) {
+      const result=await invokeCore(core,mode);
+      accepted(result);
+      const text=result.stdout.toString('utf8'),readLine=checkedRead(text);
+      assert.ok(readLine);
+      const created=text.indexOf('"tsfg_core.domain.read_span"');
+      const loaded=text.indexOf(readLine);
+      const stored=text.indexOf('"tsfg_core.domain.array_store"');
+      assert.ok(created>=0&&created<loaded&&loaded<stored);
+    }
+  });
   if(process.env.TSFG_CORE_IR_EXE&&status==='missing')await t.test('Static Core admits the original checked read in both modes',async()=>{
     const canonicalized=await invokeCore(core);
     accepted(canonicalized);
