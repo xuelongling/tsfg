@@ -122,6 +122,10 @@ bool options(const llvm::json::Object &object) {
       || official->getInteger("target") != target || official->getInteger("module") != module) return false;
   for (auto field : {"noCheck","allowJs","skipLibCheck","skipDefaultLibCheck"}) if (!falseOrAbsent(*official, field)) return false;
   for (auto field : fields) if (official->get(field) && !trueField(*official, field)) return false;
+  // The fixed ESNext target defines class fields by default.
+  if (official->get("useDefineForClassFields")) {
+    if (official->getBoolean("useDefineForClassFields") != define) return false;
+  } else if (!*define) return false;
   return true;
 }
 } // namespace

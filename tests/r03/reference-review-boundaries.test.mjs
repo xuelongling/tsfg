@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { decodeReferenceFacts } from '../../compiler/reference-facts.mjs';
 import { canonical, sha256 } from '../../compiler/identity.mjs';
+import { printHir, readHir, lowerOwnedHir } from '../../compiler/hir.mjs';
+import { buildReferenceHir } from '../../compiler/reference-hir.mjs';
 async function actual(name, digest) {
   const fixture = suffix => new URL('./fixtures/reference-source/' + name + suffix, import.meta.url);
   const bytes = await readFile(fixture('.facts.json'));
@@ -46,4 +48,61 @@ test('embedded official options reject excessive JSON depth before canonicalizat
   for (const item of graph.classes) item.runtimeKey = sha256('tsfg.candidate.class-allocation-provenance.v2\0'
     + canonical({ environmentDigest, declaration: item.origin }));
   rejects(graph, binding, ['reference-facts-limit']);
+});
+
+const counter = () => actual('constructor', '024212e6f2c2b1e69cde17989f6edd7b1a7f71b16daa2dab9dc4c7c1e4bef16b');
+
+function fieldOptions(graph, binding, effective, specified) {
+  const raw = JSON.parse(graph.options.officialOptions);
+  assert.equal(raw.target, 99);
+  assert.equal(Object.hasOwn(raw, 'useDefineForClassFields'), false);
+  if (specified !== undefined) raw.useDefineForClassFields = specified;
+  graph.options.useDefineForClassFields = effective;
+  graph.options.officialOptions = canonical(raw);
+  graph.options.officialOptionsSha256 = sha256(graph.options.officialOptions);
+  binding.options = structuredClone(graph.options);
+  // Isolate semantic option correspondence from the existing identity checks.
+  const environmentDigest = sha256('tsfg.candidate.class-environment.v2\0' + canonical({
+    profile: graph.semanticProfile, scope: graph.scope, sources: graph.sources, options: graph.options
+  }));
+  for (const item of graph.classes) item.runtimeKey = sha256('tsfg.candidate.class-allocation-provenance.v2\0'
+    + canonical({ environmentDigest, declaration: item.origin }));
+}
+
+test('cold Reference keeps the genuine ESNext default and a matching explicit field option', async () => {
+  const {graph, binding} = await counter();
+  assert.equal(graph.options.useDefineForClassFields, true);
+  const original = buildReferenceHir(decodeReferenceFacts(Buffer.from(canonical(graph)), binding));
+  const bytes = Buffer.from(printHir(original));
+  assert.deepEqual(readHir(bytes), original);
+  assert.equal(sha256(lowerOwnedHir(original)), 'sha256:6c3f1efe27d53425ed7c38c87de62041c3347089989dc307d70879e138abf8bb');
+  for (const explicit of [true, false]) {
+    const changed = structuredClone(graph), changedBinding = structuredClone(binding);
+    fieldOptions(changed, changedBinding, explicit, explicit);
+    const hir = buildReferenceHir(decodeReferenceFacts(Buffer.from(canonical(changed)), changedBinding));
+    assert.deepEqual(readHir(Buffer.from(printHir(hir))), hir);
+  }
+});
+
+for (const [label, effective, specified] of [
+  ['wrong ESNext default', false, undefined],
+  ['wrong explicit disable', true, false],
+  ['wrong explicit enable', false, true],
+  ['nonboolean explicit value', true, null],
+]) test('cold Reference rejects ' + label + ' even with coherent input hashes', async () => {
+  const {graph, binding} = await counter();
+  const hir = structuredClone(buildReferenceHir(decodeReferenceFacts(Buffer.from(canonical(graph)), binding)));
+  fieldOptions(graph, binding, effective, specified);
+  hir.options = graph.options;
+  graph.classes.forEach((item, index) => { hir.classes[index].runtimeKey = item.runtimeKey; });
+  hir.context.factsDigest = sha256('tsfg:reference-facts-candidate:v5\n' + canonical(graph));
+  const actions = [
+    () => decodeReferenceFacts(Buffer.from(canonical(graph)), binding),
+    () => readHir(Buffer.from(canonical(hir))),
+  ];
+  const codes = actions.map(action => {
+    try { action(); return null; }
+    catch (error) { return error instanceof Error ? Reflect.get(error, 'code') : error; }
+  });
+  assert.deepEqual(codes, ['reference-facts-identity', 'reference-facts-identity']);
 });

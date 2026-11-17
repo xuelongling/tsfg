@@ -22,6 +22,10 @@ function configuration(options) {
     && raw.noLib === true && raw.target === options.target && raw.module === options.module
     && !raw.noCheck && !raw.allowJs && !raw.skipLibCheck && !raw.skipDefaultLibCheck
     && strictKeys.every(key => raw[key] === undefined || raw[key] === true), 'identity');
+  // The fixed ESNext target defines class fields by default.
+  const define = Object.hasOwn(raw, 'useDefineForClassFields') ? raw.useDefineForClassFields : true;
+  check(typeof define === 'boolean' && options.useDefineForClassFields === define, 'identity',
+    'effective class field option differs from official options');
 }
 export function verifyReferenceGraph(graph, binding) {
   budget(graph); budget(binding);
