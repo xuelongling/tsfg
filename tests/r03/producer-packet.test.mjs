@@ -16,3 +16,9 @@ test('normal producer rejects old/mixed identity, extent and checksum before pub
     assert.notDeepEqual(changed,packet);assert.throws(()=>verifyProducedPacket(changed),/r04-producer-identity/);
   }
 });
+
+test('normal producer requires the exact eight magic bytes',()=>{
+  const packet=expectedStringPacket(stringCases()[0].hir);
+  packet[0]^=0x80;
+  assert.throws(()=>verifyProducedPacket(packet),/r04-producer-identity/);
+});
