@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { decodeGenericPackage, encodeGenericPackage } from '../../compiler/generic-package.mjs';
 import { validateGenericInstanceResult } from '../../compiler/generic-instance.mjs';
 import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir, lowerGenericHir } from '../../compiler/generic-hir.mjs';
-import { readHir, printHir, lowerOwnedHir } from '../../compiler/hir.mjs';
+import { readHir, printHir, lowerFormalHir, lowerOwnedHir } from '../../compiler/hir.mjs';
 import { canonical } from '../../compiler/identity.mjs';
 
 const fixture=name=>readFile(new URL('./fixtures/'+name,import.meta.url));
@@ -40,6 +40,13 @@ for(const family of ['conditional','mapped']) test('owned HIR cold entry reprodu
  const hir=readHir(bytes);
  assert.equal(printHir(hir),bytes.toString('utf8'));
  assert.equal(lowerOwnedHir(hir),core.toString('utf8'));
+ const publication={};
+ const wrongContext={code:'r03-d-call-effects',ruleId:'r01-call-contract',phase:'hir',
+  message:'r03-d-call-effects: invalid module call publication context'};
+ assert.throws(()=>readHir(bytes,undefined,publication),wrongContext);
+ assert.throws(()=>printHir(hir,undefined,publication),wrongContext);
+ assert.throws(()=>lowerOwnedHir(hir,undefined,publication),wrongContext);
+ assert.throws(()=>lowerFormalHir(hir,undefined,publication),wrongContext);
  assert.throws(()=>readHir(Buffer.concat([bytes,Buffer.from('\n')])),/generic-hir-canonical/);
  const predecessor=structuredClone(hir);
  predecessor.format.version=6;

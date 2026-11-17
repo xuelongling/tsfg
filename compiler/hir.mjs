@@ -281,7 +281,9 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     if (callPublicationContext !== undefined) callEffectsFailure();
     return emitStringCore(hir, factsContext);
   }
-  if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
+  const family = familyOf(hir);
+  if (family === genericHirFormat.family && callPublicationContext !== undefined) callEffectsFailure();
+  if (family === 'tsfg.module-callable-hir-candidate') {
     return emitModuleCallableCore(hir);
   }
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitFormalExceptionCore(hir);
@@ -291,7 +293,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     throw Object.assign(new TypeError("r03-d-capability: closure Core lowering is not implemented"),
       { code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "lowering" });
   }
-  if (familyOf(hir) === referenceHirFormat.family) {
+  if (family === referenceHirFormat.family) {
     if (callPublicationContext !== undefined) callEffectsFailure();
     return emitReferenceCore(hir);
   }
