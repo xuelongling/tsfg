@@ -2,6 +2,12 @@
 // Independent finite factory boundaries from the current ordinary development descriptor; not large-Source/public-lowering/native credit.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {readFile} from 'node:fs/promises';
+import {importCapturedFrontendResponse} from '../../compiler/frontend.mjs';
+import {buildHir,lowerHir} from '../../compiler/hir.mjs';
+import {sha256} from '../../compiler/identity.mjs';
+import {formalExceptionModel} from '../../compiler/formal-exception-model.mjs';
+import {formalExceptionFunction} from '../../compiler/formal-exception-control.mjs';
 import { publicationBudget } from '../../compiler/exception-core-common.mjs';
 import { createCoreSsaGraph } from '../../compiler/core-ssa-graph.mjs';
 
@@ -90,4 +96,36 @@ test('exception Core publication budget enforces frozen finite limits',async t=>
     const next=publicationBudget();assert.equal(next.append('x'),'x');next.reserve(coreBytes-1);limit(()=>next.reserve(1));
   });
   t.diagnostic('Factory numeric reservations/small strings only; sourceBindings257/full-public allocation paths and native thresholds remain unqualified');
+});
+
+// The original While/Finally and indirect-call packets own complete scopes.
+test('real exception Core scopes charge entries before being copied',async()=>{
+  for (const [name,packet] of [
+    ['while-finally','sha256:4ecaea020dd8f165159207425065bab846be348b9f133df9a8bbc42afa7a39e7'],
+    ['indirect-current-rethrow','sha256:2c5e0f0de879b2bd5f1e284d3573d25459b35938cfcc68c7b367ca65adcf9b11'],
+  ]) {
+    const root=new URL('../fixtures/r03/m21-exception/controls/'+name+'/',import.meta.url);
+    const [request,response,origin]=await Promise.all(
+      ['request.json','response.json','origin.json'].map(file=>readFile(new URL(file,root))));
+    assert.equal(sha256(response),packet);
+    const imported=await importCapturedFrontendResponse(request,response,JSON.parse(origin.toString('utf8')));
+    assert.equal(imported.status,'ok');
+    const built=buildHir(imported.snapshot);
+    assert.equal(built.status,'ok');
+    const model=formalExceptionModel(built.hir),counts=[];
+    const step=model.publication.step;
+    model.publication.step=(count=1)=>{counts.push(count);step(count);};
+    const controls=model.hir.functions.map(owner=>formalExceptionFunction(model,owner)).join('\n');
+    assert.ok(lowerHir(built.hir).includes(controls));
+    assert.ok(counts.some(count=>count>1),name+' has more than one live scope entry');
+  }
+});
+
+test('exception Core can reserve an exact bulk structural work amount',()=>{
+  const p=publicationBudget();
+  p.step(999_999);
+  p.step(1);
+  p.step(0);
+  limit(()=>p.step());
+  for (const count of [-1,0.5,NaN,Infinity]) limit(()=>publicationBudget().step(count));
 });

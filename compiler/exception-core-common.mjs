@@ -5,7 +5,11 @@ const check=(condition,category,message)=>{if(!condition)throw Object.assign(new
 const limits=descriptor.limits;
 export function publicationBudget(policy = limits) {
   let bytes = 0, work = 0, instructions = 0;
-  const step = () => check(++work <= policy.structuralWork, 'limit', 'Core work budget exceeded');
+  const step = (count = 1) => {
+    check(Number.isSafeInteger(count) && count >= 0 && count <= policy.structuralWork - work,
+      'limit', 'Core work budget exceeded');
+    work += count;
+  };
   const reserve = count => { step(); check(Number.isSafeInteger(count) && count >= 0
     && count <= policy.coreTextBytes - bytes, 'limit', 'Core text byte budget exceeded'); bytes += count; };
   const append = text => { reserve(Buffer.byteLength(text)); return text; };

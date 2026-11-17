@@ -21,6 +21,10 @@ export function formalExceptionFunction(model,owner){
   const parameterTypes=[...signature.parameters,...captures.map(c=>model.cell(c.binding))];
   const graph=createCoreSsaGraph(coreType,publication.budget),entry=graph.newBlock(parameterTypes);
   const state={current:entry,cells:new Map()},tasks=[];let clones=0;
+  const copyCells=cells=>{
+    publication.step(cells.size);
+    return new Map(cells);
+  };
   const properties=record=>Object.entries(record).map(([k,v])=>k+' = '+(typeof v==='boolean'?String(v):quote(v))).join(', ');
   const terminator=(name,values,successors,record,range)=>{
     publication.step();graph.successors(successors.length);for(const successor of successors)successor.incoming++;graph.line(state.current,'    "'+name+'"('+values.map(v=>v.name).join(', ')+')'
@@ -41,10 +45,10 @@ export function formalExceptionFunction(model,owner){
     for(const capture of callee?.captures??[]){const value=state.cells.get(capture.binding);
       if(!value)exceptionCoreFailure('callee capture has no actual cell');args.push(value);}
     const normal=graph.newBlock([expression.type]),exceptional=graph.newBlock([payload]);
-    const cells=new Map(state.cells),currentHandlers=handlers;
+    const cells=copyCells(state.cells),currentHandlers=handlers;
     terminator(indirect?'tsfg_eh.invoke_indirect':'tsfg_eh.invoke',args,[normal,exceptional],indirect
       ?{callable_type:expression.callee.type}:{callee:model.symbol(callee.id),function_id:callee.id},expression.range);
-    tasks.push(()=>{state.current=exceptional;state.cells=new Map(cells);handlers=currentHandlers;
+    tasks.push(()=>{state.current=exceptional;state.cells=copyCells(cells);handlers=currentHandlers;
       currentHandlers.thrown({...exceptional.parameters[0]},expression.range);});
     state.current=normal;return {...normal.parameters[0]};
   };
@@ -58,7 +62,7 @@ export function formalExceptionFunction(model,owner){
     }
   }
   function region(node,active,onNormal,initial=new Map()){
-    publication.step();const inherited=new Map(state.cells),previous=handlers;handlers=active;enter(node,initial);
+    publication.step();const inherited=copyCells(state.cells),previous=handlers;handlers=active;enter(node,initial);
     for(let index=0;index<node.body.length&&!state.current.terminated;index++){
       const statement=node.body[index];publication.step();
       if(statement.kind==='local')values.store({binding:statement.binding},values.expression(statement.initializer),statement.range,true);
@@ -81,17 +85,17 @@ export function formalExceptionFunction(model,owner){
   }
   function conditional(statement,active){
     const condition=values.expression(statement.condition),left=graph.newBlock(),right=graph.newBlock(),joined=graph.newBlock();
-    const cells=new Map(state.cells);graph.conditional(state.current,condition.name,left,right,statement.range);
+    const cells=copyCells(state.cells);graph.conditional(state.current,condition.name,left,right,statement.range);
     const finish=()=>graph.branch(state.current,joined,[],statement.range);
-    state.current=left;state.cells=new Map(cells);region(statement.thenRegion,active,finish);
-    state.current=right;state.cells=new Map(cells);
+    state.current=left;state.cells=copyCells(cells);region(statement.thenRegion,active,finish);
+    state.current=right;state.cells=copyCells(cells);
     if(statement.elseRegion)region(statement.elseRegion,active,finish);else finish();
     state.cells=cells;
     if(joined.incoming)state.current=joined;
     else graph.blocks.splice(graph.blocks.indexOf(joined),1);
   }
   function attempt(statement,active){
-    const after=graph.newBlock(),caught=statement.catchClause?graph.newBlock([payload]):null,cells=new Map(state.cells);
+    const after=graph.newBlock(),caught=statement.catchClause?graph.newBlock([payload]):null,cells=copyCells(state.cells);
     const finish=(kind,value,range)=>{
       const resume=pending=>kind==='normal'?graph.branch(state.current,after,[],statement.range)
         :kind==='return'?active.returned(pending,range):active.thrown(pending,range);
@@ -100,13 +104,13 @@ export function formalExceptionFunction(model,owner){
       const final=graph.newBlock(value?[value.type]:[]);
       route(final,value?[value]:[],{completion:kind,finally_scope:statement.finallyRegion.scope},range);
       const pending=value?{...final.parameters[0]}:null;
-      state.current=final;state.cells=new Map(cells);
+      state.current=final;state.cells=copyCells(cells);
       region(statement.finallyRegion,active,()=>resume(pending));
     };
     const attempted={returned:(v,r)=>finish('return',v,r),
       thrown:(v,r)=>caught?route(caught,[v],{completion:'throw',catch_scope:statement.catchClause.region.scope},r):finish('throw',v,r)};
     region(statement.tryRegion,attempted,()=>finish('normal',null,statement.range));
-    if(caught){state.current=caught;state.cells=new Map(cells);const initial=new Map();
+    if(caught){state.current=caught;state.cells=copyCells(cells);const initial=new Map();
       if(statement.catchClause.binding)initial.set(statement.catchClause.binding,{...caught.parameters[0]});
       region(statement.catchClause.region,{returned:(v,r)=>finish('return',v,r),thrown:(v,r)=>finish('throw',v,r)},
         ()=>finish('normal',null,statement.range),initial);}
@@ -115,12 +119,12 @@ export function formalExceptionFunction(model,owner){
     else graph.blocks.splice(graph.blocks.indexOf(after),1);
   }
   function loop(statement,active){
-    const header=graph.newBlock(),body=graph.newBlock(),after=graph.newBlock(),cells=new Map(state.cells);
+    const header=graph.newBlock(),body=graph.newBlock(),after=graph.newBlock(),cells=copyCells(state.cells);
     graph.branch(state.current,header,[],statement.range);state.current=header;
     graph.fuel(header,2,statement.condition.range);
     const condition=values.expression(statement.condition);
     graph.conditional(state.current,condition.name,body,after,statement.condition.range);
-    state.current=body;state.cells=new Map(cells);
+    state.current=body;state.cells=copyCells(cells);
     region(statement.bodyRegion,active,()=>graph.branch(state.current,header,[],statement.range));
     state.current=after;state.cells=cells;
     if(statement.condition.kind==='boolean'&&statement.condition.value===true)
@@ -133,7 +137,12 @@ export function formalExceptionFunction(model,owner){
     if(signature.returnType!=='void')exceptionCoreFailure('unproved implicit successful function exit');
     else{values.op('tsfg_eh.publish',[],null,{module:owner.id},rootRange);graph.line(state.current,'    func.return');state.current.terminated=true;}
   },initial);
-  while(tasks.length)tasks.shift()();
+  for(let index=0;index<tasks.length;index++){
+    publication.step();
+    const task=tasks[index];
+    tasks[index]=undefined;
+    task();
+  }
   const body=graph.blocks.map((block,index)=>{
     const label=index===0?'':publication.combine(['  ^',block.name,block.parameters.length?'(':'',
       ...block.parameters.flatMap((p,i)=>[i?', ':'',p.name,': ',coreType(p.type)]),block.parameters.length?')':'',':\n']);
