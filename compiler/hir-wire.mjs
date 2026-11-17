@@ -15,6 +15,14 @@ import { referenceHirFormat, readReferenceHir } from './reference-hir.mjs';
 const envelope = Object.freeze({ bytes: 16 * 1024 * 1024, depth: 16 * 1024 * 1024,
   jsonTokens: 16 * 1024 * 1024, stringBytes: 16 * 1024 * 1024,
   allowNul: true, rejectPrototypeKeys: false, safeNonnegativeIntegers: false });
+
+/** Enforce the same transport limit before the CLI allocates an input buffer. @param {bigint} size */
+export function checkHirWireFileSize(size) {
+  if (size > BigInt(envelope.bytes))
+    throw new TypeError('r03-hir-invalid: HIR input file exceeds the wire byte limit');
+  return envelope.bytes;
+}
+
 export function readHirWire(bytes) {
   let input, ownedBytes;
   try {

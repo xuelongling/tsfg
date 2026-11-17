@@ -5,19 +5,21 @@ import { compileHir, compileProgram, compileOwnedCore, compileOwnedHir, compileO
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {commonHirFormat,commonJson} from '../compiler/common-program-common.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
+import { checkHirWireFileSize } from '../compiler/hir-wire.mjs';
 import { genericHirFormat } from '../compiler/generic-hir.mjs';
 import { referenceHirFormat } from '../compiler/reference-hir.mjs';
 import { familyOf } from '../compiler/module-callable-common.mjs';
 import { checkSystemQueryFileSize, systemQueryRequestContext } from '../compiler/system-query-facts.mjs';
 import {canonical} from '../compiler/identity.mjs';
 
-/** @param {string} file */
-async function readSystemQueryFile(file){
+/** @param {string} file @param {(size: bigint) => number} checkSize @param {'Query'|'HIR'} kind */
+async function readStableInputFile(file,checkSize,kind){
+  const diagnostic=kind==='Query'?'r10-system-query-input':'r03-hir-invalid';
   const handle=await open(file,constants.O_RDONLY|(constants.O_NONBLOCK??0));
   try {
     const before=await handle.stat({bigint:true});
-    if(!before.isFile())throw new TypeError('r10-system-query-input: regular Query input file required');
-    const limit=checkSystemQueryFileSize(before.size),size=Number(before.size);
+    if(!before.isFile())throw new TypeError(`${diagnostic}: regular ${kind} input file required`);
+    const limit=checkSize(before.size),size=Number(before.size);
     // Read one extra byte when within the cap so growth cannot produce a valid prefix.
     const bytes=Buffer.allocUnsafe(Math.min(size+1,limit));
     let offset=0;
@@ -27,9 +29,9 @@ async function readSystemQueryFile(file){
       offset+=bytesRead;
     }
     const after=await handle.stat({bigint:true});
-    checkSystemQueryFileSize(after.size);
+    checkSize(after.size);
     if(offset!==size||after.size!==before.size||after.mtimeNs!==before.mtimeNs||after.ctimeNs!==before.ctimeNs)
-      throw new TypeError('r10-system-query-input: Query input changed while reading');
+      throw new TypeError(`${diagnostic}: ${kind} input changed while reading`);
     return bytes.subarray(0,size);
   } finally {
     await handle.close();
@@ -71,15 +73,16 @@ try {
   else if(options.has('--query-request')){
     if(!['core','query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects|query-batch|query-llvm|query-llvm-ir|query-tmeta');
-    const bytes=await readSystemQueryFile(options.get('--input')),requestBytes=await readSystemQueryFile(options.get('--query-request'));
+    const bytes=await readStableInputFile(options.get('--input'),checkSystemQueryFileSize,'Query');
+    const requestBytes=await readStableInputFile(options.get('--query-request'),checkSystemQueryFileSize,'Query');
     const context=systemQueryRequestContext(bytes,requestBytes);
     const result=await compileSystemQuery(bytes,context,{core:options.get('--core'),effects:emit==='query-effects',cpuBatch:emit==='query-batch',cpuLLVM:emit==='query-llvm'?'dialect':emit==='query-llvm-ir'?'ir':undefined,tmeta:emit==='query-tmeta'});
     process.stdout.write(emit==='query-tmeta'?canonical(result.tmeta.envelope)+'\n':emit==='query-effects'?canonical(result.effects)+'\n':emit==='query-batch'?result.cpuBatch:emit==='query-llvm'||emit==='query-llvm-ir'?result.cpuLLVM:result.core);
   }else{
   if(['query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit))throw new TypeError('r03-cli-options: Query output requires --query-request');
-  const bytes = await readFile(options.get("--input"));
-  const input = inputKind === "hir" ? readHir(bytes)
-    : JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
+  const inputPath = options.get("--input");
+  const input = inputKind === "hir" ? readHir(await readStableInputFile(inputPath, checkHirWireFileSize, 'HIR'))
+    : JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await readFile(inputPath)));
   if (inputKind === "hir") {
     const family = familyOf(input);
     if (fixedCommonCore && family !== commonHirFormat.family)

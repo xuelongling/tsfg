@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -58,6 +58,30 @@ test("cold Reference HIR keeps its exact bytes and accepts only text outputs", a
     assert.equal(rejected.stdout.length, 0);
     assert.match(rejected.stderr.toString(), /private Reference HIR requires --emit hir\|core/);
   }
+});
+
+test("cold HIR CLI admits the transport boundary and rejects oversized files before JSON parsing", async () => {
+  const storage = process.env.TSFG_TEST_STORAGE;
+  assert.ok(storage);
+  await mkdir(storage, { recursive: true });
+  const directory = await mkdtemp(path.join(storage, "hir-wire-limit-"));
+  const input = path.join(directory, "hir.json");
+  const handle = await open(input, "wx");
+  const limit = 16 * 1024 * 1024;
+  try { await handle.truncate(limit); }
+  finally { await handle.close(); }
+  const options = { inputKind: "hir", emit: "hir", inputArgument: input };
+  const atLimit = await runCli("hir-at-limit", options);
+  assert.equal(atLimit.status, 2);
+  assert.equal(atLimit.stdout.length, 0);
+  assert.match(atLimit.stderr.toString(), /HIR must contain valid UTF-8 JSON/);
+  const overflow = await open(input, "r+");
+  try { await overflow.truncate(limit + 1); }
+  finally { await overflow.close(); }
+  const rejected = await runCli("hir-over-limit", options);
+  assert.equal(rejected.status, 2);
+  assert.equal(rejected.stdout.length, 0);
+  assert.match(rejected.stderr.toString(), /HIR input file exceeds the wire byte limit/);
 });
 
 test("run rejects malformed request JSON before the missing frontend", async () => {
