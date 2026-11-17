@@ -36,8 +36,19 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
     while(auto *span=owner.getDefiningOp()) {
       if(span->getName().getStringRef()!="tsfg_core.domain.read_span")break;
       if(!charge())return {};
-      const auto start=index(span->getOperand(1)),length=index(span->getOperand(2));
-      if(!selected.constant||!start.constant||!length.constant||*selected.constant>=*length.constant||uint64_t(*selected.constant)+*start.constant>UINT32_MAX)return {};
+      if(!selected.constant)return {};
+      const auto length=index(span->getOperand(2));if(!valid||!length.constant)return {};
+      if(*selected.constant>=*length.constant) {
+        // A successfully constructed Span keeps its relative length. This
+        // frontier belongs to the actual checked read, before rebasing the
+        // index to the owner. A synthetic cell ordinal has no SSA value.
+        Selection out;
+        out.definitelyMissing=!checkedSuccess&&!boundsOnly&&!activation&&selected.value&&
+          read->getName().getStringRef()=="tsfg_core.domain.array_read"&&receiver==read->getOperand(0);
+        return out;
+      }
+      const auto start=index(span->getOperand(1));
+      if(!valid||!start.constant||uint64_t(*selected.constant)+*start.constant>UINT32_MAX)return {};
       selected.constant=*selected.constant+*start.constant;owner=strip(span->getOperand(0));if(!valid)return {};
     }
     const auto result=at(read,owner,selected,0,activation!=nullptr);
