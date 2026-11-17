@@ -43,8 +43,9 @@ function json(value){const parsed=readGenericJson(copyGenericJsonBytes(Buffer.fr
  * @param {unknown} context @param {string} checkedBatch @returns {SystemQueryTmeta}
  */
 export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
+  const ownedBytes=copyGenericJsonBytes(bytes,policy);
   const receipt=readSystemQuerySourceReceipt(facts,context);
-  const transport=readGenericJson(copyGenericJsonBytes(bytes,policy),policy);
+  const transport=readGenericJson(ownedBytes,policy);
   if(transport.text!==canonical(transport.value)+'\n')fail('canonical metadata required');
   const envelope=record(transport.value,descriptor.envelope);
   equal([envelope.family,envelope.version,envelope.schemaHash],['tsfg.query-tmeta',2,queryTmetaSchema]);

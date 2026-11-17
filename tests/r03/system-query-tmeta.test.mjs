@@ -273,3 +273,27 @@ test('Query tmeta enforces exact nominal field placement and final extent',()=>{
     assert.throws(()=>readSystemQueryTmeta(changed,facts,context,checkedBatch),diagnostic,name);
   }
 });
+
+test('Query tmeta keeps the original metadata bytes when reading the request',()=>{
+  const metadata=new URL('../../runtime/jobs/testdata/query-tmeta-i32-copy.tmeta',import.meta.url);
+  const original=readFileSync(metadata),envelope=JSON.parse(original.toString('utf8')),payload=JSON.parse(envelope.payload);
+  const receipt=JSON.parse(readFileSync(new URL('query-tmeta-i32-copy-receipt.json',metadata),'utf8'));
+  const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
+  const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
+  assert.deepEqual([envelope.payloadHash,facts.inputIdentity,facts.packageId],
+    [receipt.payloadHash,receipt.inputIdentity,receipt.packageId]);
+
+  assert.equal(payload.entries[0].rowCountArgument,0);
+  payload.entries[0].rowCountArgument=1;
+  const body=canonical(payload);
+  const changed=Buffer.from(canonical({...envelope,payload:body,payloadHash:sha256('tsfg.query-tmeta.v2\0'+body)})+'\n');
+  assert.equal(changed.length,original.length);
+  assert.throws(()=>readSystemQueryTmeta(changed,facts,context,payload.batch),/Source\/batch\/ABI binding differs/);
+
+  const supplied=Buffer.from(original);
+  let requestReads=0;
+  const withRequest={...context,get requestBytes(){requestReads++;changed.copy(supplied);return request;}};
+  const result=readSystemQueryTmeta(supplied,facts,withRequest,payload.batch);
+  assert.deepEqual(result.envelope,envelope);
+  assert.equal(requestReads,1);
+});
