@@ -529,26 +529,27 @@ const Context = struct {
         defer graph_storage.deinit();
         var graph = try SourceTypeGraph.init(self, graph_storage.allocator());
         try self.spend(2 * types.len + 1);
-        const checked_values = try self.allocator.alloc(bool, types.len);
-        defer self.allocator.free(checked_values);
-        @memset(checked_values, false);
+        const checked_types = try self.allocator.alloc(bool, types.len);
+        defer self.allocator.free(checked_types);
+        @memset(checked_types, false);
         var components: usize = 0;
         for (self.facts.payload.types) |*raw| {
             try self.spend(3);
             const category = (raw.nominalKey orelse continue).category;
             if (!same(category, "component")) continue;
             const index = (try self.catalogTypeIndex(raw, .component)) orelse return error.InvalidEffects;
-            try self.verifyTypeFields(raw, &types[index], checked_values, &graph);
+            checked_types[index] = true;
+            try self.verifyTypeFields(raw, &types[index], checked_types, &graph);
             components += 1;
         }
         if (components != self.catalog.payload.components.len) return error.InvalidEffects;
-        for (types, checked_values) |row, checked| {
-            if (row.kind == .value and !checked) return error.InvalidEffects;
-        }
+        for (checked_types) |checked| if (!checked) return error.InvalidEffects;
     }
-    fn verifyTypeFields(self: *Context, raw: *const RawType, row: *const layout.Type, checked_values: []bool, graph: *SourceTypeGraph) SourceCheckError!void {
+    fn verifyTypeFields(self: *Context, raw: *const RawType, row: *const layout.Type, checked_types: []bool, graph: *SourceTypeGraph) SourceCheckError!void {
         if (row.kind == .value and raw.base != null) return error.InvalidEffects;
         try graph.verify(raw.id, row.id);
+        const types = self.catalog.payload.types;
+        const search_steps = @bitSizeOf(usize) - @clz(types.len);
         // Layout flattens the Source base chain. Field identities still use
         // the declaring owner's local ordinal.
         var ancestors: [32]*const RawType = undefined;
@@ -573,20 +574,25 @@ const Context = struct {
                 if (!try self.sameFieldDeclaration(original, item)) return error.InvalidEffects;
                 try self.verifyFieldIdentity(item.id, owner_id, original.name, index);
                 if (scalar_types.has(original.type)) {
-                    try self.spend(5);
+                    try self.spend(5 + 2 * search_steps);
                     if (!same(item.type, &hashIdentity("tsfg.type\x00", original.type))) return error.InvalidEffects;
+                    // Layout.find searches the same canonical slice as the reach marks.
+                    const scalar = self.catalog.find(item.type) orelse return error.InvalidEffects;
+                    if (scalar.kind != .scalar) return error.InvalidEffects;
+                    const scalar_index = (@intFromPtr(scalar) - @intFromPtr(types.ptr)) / @sizeOf(layout.Type);
+                    checked_types[scalar_index] = true;
                 } else {
                     const child = &graph.types[try graph.indexOf(original.type)];
                     const category = (child.nominalKey orelse return error.InvalidEffects).category;
                     const kind: layout.Kind = if (same(category, "component")) .component else if (same(category, "value")) .value else return error.InvalidEffects;
                     const child_index = (try self.catalogTypeIndex(child, kind)) orelse return error.InvalidEffects;
-                    const child_layout = &self.catalog.payload.types[child_index];
+                    const child_layout = &types[child_index];
                     if (!same(item.type, child_layout.id)) return error.InvalidEffects;
                     // The layout reader already validates the acyclic depth bound.
                     try self.spend(2);
-                    if (kind == .value and !checked_values[child_index]) {
-                        checked_values[child_index] = true;
-                        try self.verifyTypeFields(child, child_layout, checked_values, graph);
+                    if (kind == .value and !checked_types[child_index]) {
+                        checked_types[child_index] = true;
+                        try self.verifyTypeFields(child, child_layout, checked_types, graph);
                     }
                 }
             }

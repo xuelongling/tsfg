@@ -482,15 +482,43 @@ test "Query metadata derives an unselected component TypeId from its Source grap
         fn ids(_: void, a: []const u8, b: []const u8) bool {
             return std.mem.lessThan(u8, a, b);
         }
-        fn rows(_: void, a: jobs.layout.Type, b: jobs.layout.Type) bool {
-            return ids({}, a.id, b.id);
-        }
     };
     std.mem.sort([]const u8, components, {}, order.ids);
-    std.mem.sort(jobs.layout.Type, types, {}, order.rows);
+    std.mem.sort(jobs.layout.Type, types, {}, lessLayoutType);
     catalog.components = components;
     catalog.types = types;
     try rejectLayout(document.payload, catalog, own);
+}
+
+test "Query metadata rejects an unreachable scalar layout row from owned Source" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-shared-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-shared.tmeta"), receipt.value);
+    defer document.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, document.payload.sourcePacket, "\"id\":\"u32\",\"kind\":\"scalar\"") != null);
+
+    var source = try jobs.layout.Layout.load(A, @embedFile("jobs/testdata/component-layout-scalars.json"), .{
+        .inputIdentity = "sha256:6b1863b93d5b407b9685e63903276e9c3670725324c74156dabcdd891e5fc356",
+        .hirDigest = "sha256:a1fdc42e03cbd70883a95332f6e38c479170f66f4f40d65f8ad320faae0c4719",
+    });
+    defer source.deinit();
+    const id = digest("tsfg.type\x00", "u32");
+    const scalar = source.find(&id) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(jobs.layout.Kind.scalar, scalar.kind);
+    try std.testing.expect(document.component_layout.find(&id) == null);
+
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const own = arena.allocator();
+    var catalog = document.component_layout.payload;
+    const types = try std.mem.concat(own, jobs.layout.Type, &.{ catalog.types, &.{scalar.*} });
+    std.mem.sort(jobs.layout.Type, types, {}, lessLayoutType);
+    catalog.types = types;
+    try rejectLayout(document.payload, catalog, own);
+}
+
+fn lessLayoutType(_: void, a: jobs.layout.Type, b: jobs.layout.Type) bool {
+    return std.mem.lessThan(u8, a.id, b.id);
 }
 
 fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal, unused_readonly, unused_range }) !void {
