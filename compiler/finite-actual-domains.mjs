@@ -141,15 +141,21 @@ function buildPlans(input,context,options,definitions) {
   let remaining=options.work??100000;
   if(!Number.isInteger(remaining)||remaining<1||remaining>100000)fail('invalid work limit');
   const charge=()=>{if(options.cancelled?.())fail('cancelled');if(remaining--<=0)fail('work limit');};
+  let verified,layouts,views;
+  const projection={
+    hir:()=>verified??=verifyHir(input,context,options.publicationContext),
+    layouts:hir=>layouts??=buildTypedLayouts(hir,context,{publicationContext:options.publicationContext}),
+    views:hir=>views??=buildTypedReferenceViews(hir,context,{publicationContext:options.publicationContext})
+  };
   function build(mode) {
     let allowCompoundTermination;
     const solve=(field=null,array=null,terminalReads=null)=>
-      solveFiniteActualDomains(input,context,charge,field,mode,array,options.publicationContext,terminalReads);
-    const initial=solve();
+      solveFiniteActualDomains(projection,charge,field,mode,array,terminalReads);
+    const initial=solve(),hir=projection.hir();
     // Field short-circuit control also must not consume capacity-based Array
     // reads. This is the same conservative solver role as the ordered start.
     const controlInitial=solve(null,{reads:[]});
-    let fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),controlInitial,charge);
+    let fieldReaching=buildFiniteFieldReaching(hir,controlInitial,charge);
     const carrierFieldReaching=fieldReaching.reads.some(row=>row.reaching.length)?fieldReaching:null;
     let result=carrierFieldReaching?solve(carrierFieldReaching):initial;
     const canTerminateCompound=directStatement=>{
@@ -159,7 +165,6 @@ function buildPlans(input,context,options,definitions) {
       // Method receiver selection retains its existing transfer boundary.
       return allowCompoundTermination||directStatement&&!result.calls.length;
     };
-    const hir=verifyHir(input,context,options.publicationContext);
     // The first control query must not inherit Array read alternatives from
     // the carrier/capacity solution. A non-null empty reaching directory makes
     // every unproved read pending in this same solver, before any edge is cut.
@@ -206,12 +211,12 @@ function buildPlans(input,context,options,definitions) {
     ...(definition?{definition:{...definition,work:(options.work??100000)-remaining}}:{})});
 }
 
-function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null,publicationContext=undefined,terminalReads=null) {
+function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReaching=null,terminalReads=null) {
   const refinements=new Map((fieldReaching?.reads??[]).map(row=>[row.node,row.reaching]));
   const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status!=='pending').map(row=>[row.node,row]));
-  charge();const hir=verifyHir(input,context,publicationContext);
+  charge();const hir=projection.hir();
   const types=new Map(hir.types.map(type=>[type.id,type]));
-  const options={publicationContext},layouts=buildTypedLayouts(hir,context,options),physical=new Map(layouts.entries.map(row=>[row.typeId,row.layout]));
+  const physical=new Map(projection.layouts(hir).entries.map(row=>[row.typeId,row.layout]));
   const undefinedId=sha256('tsfg.type\0undefined'),intrinsics=[];
   if(!types.has(undefinedId)&&hir.types.some(type=>type.construction)) {
     charge();if(types.size>=4096)fail('formal type limit including intrinsic undefined');
@@ -221,7 +226,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),coalesces=[],
     representationOnly=!arrayReaching&&terminalReads?new Map():null;
   const reads=[],stores=[],fieldReads=[],fieldStores=[],presenceTests=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
-  const views=buildTypedReferenceViews(hir,context,options);
+  const views=projection.views(hir);
   const methodViews=new Map(),fieldViews=new Map(),fieldOwners=new Map();
   for(const type of hir.types)for(const field of type.fields??[]) {
     charge();fieldOwners.set(field.id,{owner:type.id,field});
