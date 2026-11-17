@@ -445,6 +445,54 @@ test "Query metadata rejects a different Source range on an unaccessed layout fi
     try rejectLayoutField(.unused_range);
 }
 
+test "Query metadata derives an unselected component TypeId from its Source graph" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-shared-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-shared.tmeta"), receipt.value);
+    defer document.deinit();
+    var arena = std.heap.ArenaAllocator.init(A);
+    defer arena.deinit();
+    const own = arena.allocator();
+    var catalog = document.component_layout.payload;
+    const types = try own.dupe(jobs.layout.Type, catalog.types);
+    const components = try own.dupe([]const u8, catalog.components);
+    for (types) |*row| {
+        if (row.kind != .component or !std.mem.eql(u8, row.name, "Velocity")) continue;
+        const previous = row.id;
+        try std.testing.expect(std.mem.indexOf(u8, document.payload.effects, previous) == null);
+        try std.testing.expect(std.mem.indexOf(u8, document.payload.batch, previous) != null);
+        const replacement = digest("test", "unselected Query component TypeId");
+        row.id = try own.dupe(u8, &replacement);
+        for (components) |*id| {
+            if (std.mem.eql(u8, id.*, previous)) {
+                id.* = row.id;
+                break;
+            }
+        } else return error.TestUnexpectedResult;
+        const fields = try own.dupe(jobs.layout.Field, row.fields);
+        for (fields, 0..) |*field, index| {
+            const key = try std.json.Stringify.valueAlloc(own, .{ .index = index, .name = field.name, .owner = row.id }, .{});
+            const identity = digest("tsfg.common-program.field.v1\x00", key);
+            field.id = try own.dupe(u8, &identity);
+        }
+        row.fields = fields;
+        break;
+    } else return error.TestUnexpectedResult;
+    const order = struct {
+        fn ids(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+        fn rows(_: void, a: jobs.layout.Type, b: jobs.layout.Type) bool {
+            return ids({}, a.id, b.id);
+        }
+    };
+    std.mem.sort([]const u8, components, {}, order.ids);
+    std.mem.sort(jobs.layout.Type, types, {}, order.rows);
+    catalog.components = components;
+    catalog.types = types;
+    try rejectLayout(document.payload, catalog, own);
+}
+
 fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal, unused_readonly, unused_range }) !void {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-conflict-receipt.json"), .{});
     defer receipt.deinit();
@@ -491,6 +539,12 @@ fn rejectLayoutField(comptime change: enum { scalar, readonly, ordinal, unused_r
         break;
     } else return error.TestUnexpectedResult;
     catalog.types = types;
+    try rejectLayout(payload, catalog, own);
+}
+
+fn rejectLayout(original: T.Payload, source_catalog: jobs.layout.Payload, own: std.mem.Allocator) !void {
+    var payload = original;
+    var catalog = source_catalog;
     const canonical = try std.json.Stringify.valueAlloc(own, .{ .components = catalog.components, .target = catalog.target, .types = catalog.types }, .{});
     const catalog_digest = digest("", try std.mem.concat(own, u8, &.{ canonical, "\n" }));
     catalog.hirDigest = &catalog_digest;

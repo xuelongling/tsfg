@@ -31,8 +31,23 @@ pub const Report = struct { conflicts: []const Conflict, coreVersion: []const u8
 
 // Project the Source declaration, type and call-anchor facts. Document owns the full packet.
 const Decl = struct { id: []const u8, name: []const u8 = "", range: layout.Range, sourcePath: []const u8 };
-const RawField = struct { id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 }, readonly: bool, type: []const u8 };
-const RawType = struct { id: []const u8, name: ?[]const u8 = null, sourcePath: ?[]const u8 = null, declarationRange: ?layout.Range = null, nominalKey: ?struct { category: []const u8 } = null, base: ?[]const u8 = null, fields: []const RawField = &.{} };
+const RawField = struct { access: []const u8, id: []const u8, name: []const u8, origin: struct { end: u32, source: []const u8, start: u32 }, readonly: bool, type: []const u8 };
+const RawNominalKey = struct { category: []const u8, declarationPath: []const []const u8, sourcePath: []const u8 };
+const RawCallable = struct { id: []const u8, access: []const u8, name: []const u8, parameters: []const struct { declaredType: []const u8 }, returnType: []const u8 };
+const RawConstruction = struct { access: []const u8, signature: struct { parameters: []const []const u8 } };
+const RawType = struct {
+    id: []const u8,
+    kind: []const u8,
+    name: ?[]const u8 = null,
+    sourcePath: ?[]const u8 = null,
+    declarationRange: ?layout.Range = null,
+    nominalKey: ?RawNominalKey = null,
+    base: ?[]const u8 = null,
+    fields: ?[]const RawField = null,
+    methods: ?[]const []const u8 = null,
+    construction: ?RawConstruction = null,
+    constructor: ?RawCallable = null,
+};
 const RawItem = struct { componentType: []const u8, mode: Access };
 pub const SourceParameter = struct { binding: struct { id: []const u8 }, logicalType: []const u8, query: ?struct { items: []const RawItem } };
 const RawBinding = struct { componentType: []const u8, declaration: Decl, index: u32, mode: Access };
@@ -79,7 +94,7 @@ const RawHelper = struct {
     statements: []const RawStatement = &.{},
     value: ?*const RawExpression = null,
 };
-const Projection = struct { payload: struct { program: struct { files: []const SourceFile, rootFile: []const u8 }, scalarHelpers: []const RawHelper, systems: []const RawSystem, types: []const RawType } };
+const Projection = struct { payload: struct { program: struct { files: []const SourceFile, rootFile: []const u8 }, scalarHelpers: []const RawHelper, systems: []const RawSystem, types: []const RawType, functions: []const RawCallable = &.{} } };
 
 pub const Analysis = struct {
     report: Report,
@@ -261,6 +276,198 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
     return .{ .report = report, .source_parameters = source_parameters, .source_system_order = source_system_order };
 }
 
+// Query v5 and v6 carry Common Source2 types. Shape edges use the same
+// declaration labels as the producer, independent of layout IDs and offsets.
+const SourceTypeGraph = struct {
+    const Label = struct { text: []const u8, sort_key: []const u16 };
+    const Shape = struct { text: []const u8, edges: []const usize };
+    const Entry = struct { label: ?Label = null, shape: ?Shape = null };
+    const FieldShape = struct { access: []const u8, index: usize, name: []const u8, readonly: bool, type: []const u8 };
+    const MethodShape = struct { access: []const u8, minimumArgumentCount: usize, name: []const u8, parameters: []const []const u8, returnType: []const u8 };
+
+    context: *Context,
+    allocator: std.mem.Allocator,
+    types: []const RawType,
+    by_id: std.StringHashMap(usize),
+    callables: std.StringHashMap(*const RawCallable),
+    entries: []Entry,
+    selected: []bool,
+    ordered: []usize,
+
+    fn init(context: *Context, allocator: std.mem.Allocator) SourceCheckError!SourceTypeGraph {
+        const source = context.facts.payload;
+        const types = source.types;
+        if (types.len > 4096 or source.functions.len > 4096) return error.EffectsLimit;
+        try context.spend(types.len * 5 + source.functions.len + 1);
+        var graph: SourceTypeGraph = .{
+            .context = context,
+            .allocator = allocator,
+            .types = types,
+            .by_id = std.StringHashMap(usize).init(allocator),
+            .callables = std.StringHashMap(*const RawCallable).init(allocator),
+            .entries = try allocator.alloc(Entry, types.len),
+            .selected = try allocator.alloc(bool, types.len),
+            .ordered = try allocator.alloc(usize, types.len),
+        };
+        @memset(graph.entries, .{});
+        @memset(graph.selected, false);
+        try graph.by_id.ensureTotalCapacity(@intCast(types.len));
+        for (types, 0..) |*row, index| {
+            try context.spend(2 + row.id.len / 32);
+            const slot = graph.by_id.getOrPutAssumeCapacity(row.id);
+            if (slot.found_existing) return error.InvalidEffects;
+            slot.value_ptr.* = index;
+            if (row.constructor) |*constructor| try graph.addCallable(constructor);
+        }
+        for (source.functions) |*callable| try graph.addCallable(callable);
+        return graph;
+    }
+
+    fn addCallable(self: *SourceTypeGraph, callable: *const RawCallable) SourceCheckError!void {
+        try self.context.spend(3 + callable.id.len / 32);
+        const slot = try self.callables.getOrPut(callable.id);
+        if (slot.found_existing) return error.InvalidEffects;
+        slot.value_ptr.* = callable;
+    }
+
+    fn indexOf(self: *SourceTypeGraph, id: []const u8) Error!usize {
+        try self.context.spend(2 + id.len / 32);
+        return self.by_id.get(id) orelse error.InvalidEffects;
+    }
+
+    fn label(self: *SourceTypeGraph, index: usize) SourceCheckError!Label {
+        if (self.entries[index].label) |cached| return cached;
+        const row = &self.types[index];
+        const text = if (same(row.kind, "value") or same(row.kind, "reference")) value: {
+            const key = row.nominalKey orelse return error.InvalidEffects;
+            try self.context.spend(5 + key.category.len / 32 + key.sourcePath.len / 32);
+            for (key.declarationPath) |part| try self.context.spend(1 + part.len / 32);
+            break :value try std.json.Stringify.valueAlloc(self.allocator, .{ .kind = row.kind, .nominal = key }, .{});
+        } else value: {
+            // The production Query declaration verifier closes this profile
+            // even for types reached solely through callable signatures.
+            if (!same(row.kind, "scalar") and !same(row.kind, "void") and
+                !same(row.kind, "undefined") and !same(row.kind, "null") and !same(row.kind, "unknown")) return error.InvalidEffects;
+            const name = row.name orelse row.kind;
+            try self.context.spend(3 + row.kind.len / 32 + name.len / 32);
+            break :value try std.json.Stringify.valueAlloc(self.allocator, .{ .kind = row.kind, .name = name }, .{});
+        };
+        try self.context.spend(2 + text.len / 16);
+        const sort_key = std.unicode.utf8ToUtf16LeAlloc(self.allocator, text) catch |err| switch (err) {
+            error.InvalidUtf8 => return error.InvalidEffects,
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        const result: Label = .{ .text = text, .sort_key = sort_key };
+        self.entries[index].label = result;
+        return result;
+    }
+
+    fn edge(self: *SourceTypeGraph, id: []const u8, edges: *std.ArrayList(usize)) SourceCheckError![]const u8 {
+        const child = try self.indexOf(id);
+        const key = try self.label(child);
+        try self.context.spend(2 + key.text.len / 16);
+        try edges.append(self.allocator, child);
+        return key.text;
+    }
+
+    fn shape(self: *SourceTypeGraph, index: usize) SourceCheckError!Shape {
+        if (self.entries[index].shape) |cached| return cached;
+        const row = &self.types[index];
+        const own_label = (try self.label(index)).text;
+        try self.context.spend(5 + own_label.len / 16);
+        var edges: std.ArrayList(usize) = .empty;
+        const base = if (row.base) |id| try self.edge(id, &edges) else null;
+        const fields = if (row.fields) |original| result: {
+            try self.context.spend(original.len + 1);
+            const values = try self.allocator.alloc(FieldShape, original.len);
+            for (original, values, 0..) |field, *value, ordinal| {
+                try self.context.spend(4 + field.name.len / 16 + field.access.len / 16);
+                value.* = .{ .access = field.access, .index = ordinal, .name = field.name, .readonly = field.readonly, .type = try self.edge(field.type, &edges) };
+            }
+            break :result values;
+        } else null;
+        const methods = if (row.methods) |ids| result: {
+            try self.context.spend(ids.len + 1);
+            const values = try self.allocator.alloc(MethodShape, ids.len);
+            for (ids, values) |id, *value| {
+                try self.context.spend(2 + id.len / 32);
+                const method = self.callables.get(id) orelse return error.InvalidEffects;
+                try self.context.spend(4 + method.parameters.len + method.name.len / 16 + method.access.len / 16);
+                const parameters = try self.allocator.alloc([]const u8, method.parameters.len);
+                for (method.parameters, parameters) |parameter, *parameter_label| parameter_label.* = try self.edge(parameter.declaredType, &edges);
+                value.* = .{ .access = method.access, .minimumArgumentCount = parameters.len, .name = method.name, .parameters = parameters, .returnType = try self.edge(method.returnType, &edges) };
+            }
+            break :result values;
+        } else null;
+        const ConstructionShape = struct { access: []const u8, parameters: []const []const u8, returnType: []const u8 };
+        const construction: ?ConstructionShape = if (row.construction) |constructor| result: {
+            const signature = constructor.signature.parameters;
+            try self.context.spend(4 + signature.len + constructor.access.len / 16 + own_label.len / 16);
+            const parameters = try self.allocator.alloc([]const u8, signature.len);
+            for (signature, parameters) |id, *parameter_label| parameter_label.* = try self.edge(id, &edges);
+            break :result .{ .access = constructor.access, .parameters = parameters, .returnType = own_label };
+        } else null;
+        const text = try std.json.Stringify.valueAlloc(self.allocator, .{
+            .base = base,
+            .construction = construction,
+            .fields = fields,
+            .kind = row.kind,
+            .label = own_label,
+            .methods = methods,
+        }, .{ .emit_null_optional_fields = false });
+        const result: Shape = .{ .text = text, .edges = edges.items };
+        self.entries[index].shape = result;
+        return result;
+    }
+
+    fn lessLabel(entries: []Entry, left: usize, right: usize) bool {
+        return std.mem.order(u16, entries[left].label.?.sort_key, entries[right].label.?.sort_key) == .lt;
+    }
+
+    fn verify(self: *SourceTypeGraph, id: []const u8, expected: []const u8) SourceCheckError!void {
+        const root = try self.indexOf(id);
+        self.selected[root] = true;
+        self.ordered[0] = root;
+        var length: usize = 1;
+        defer for (self.ordered[0..length]) |index| {
+            self.selected[index] = false;
+        };
+        var cursor: usize = 0;
+        var longest_label: usize = 0;
+        while (cursor < length) : (cursor += 1) {
+            const index = self.ordered[cursor];
+            const row = try self.shape(index);
+            longest_label = @max(longest_label, self.entries[index].label.?.sort_key.len);
+            try self.context.spend(row.edges.len + 2);
+            for (row.edges) |child| if (!self.selected[child]) {
+                self.selected[child] = true;
+                self.ordered[length] = child;
+                length += 1;
+            };
+        }
+        const ordered = self.ordered[0..length];
+        const rounds = @bitSizeOf(usize) - @clz(length);
+        try self.context.spend(length * (8 + rounds * (1 + longest_label / 16)));
+        std.mem.sort(usize, ordered, self.entries, lessLabel);
+        var hash = Sha256.init(.{});
+        hash.update("tsfg.common-program.type.v1\x00{\"graph\":[");
+        for (ordered, 0..) |index, ordinal| {
+            const text = self.entries[index].shape.?.text;
+            try self.context.spend(2 + text.len / 32);
+            if (ordinal != 0) hash.update(",");
+            hash.update(text);
+        }
+        const root_label = self.entries[root].label.?.text;
+        try self.context.spend(3 + root_label.len / 16);
+        const encoded = try std.json.Stringify.valueAlloc(self.allocator, root_label, .{});
+        defer self.allocator.free(encoded);
+        hash.update("],\"root\":");
+        hash.update(encoded);
+        hash.update("}");
+        if (!same(expected, &finishIdentity(&hash))) return error.InvalidEffects;
+    }
+};
+
 const Context = struct {
     allocator: std.mem.Allocator,
     report: *const Report,
@@ -318,6 +525,9 @@ const Context = struct {
     }
     fn verifyComponentFields(self: *Context) SourceCheckError!void {
         const types = self.catalog.payload.types;
+        var graph_storage = std.heap.ArenaAllocator.init(self.allocator);
+        defer graph_storage.deinit();
+        var graph = try SourceTypeGraph.init(self, graph_storage.allocator());
         try self.spend(2 * types.len + 1);
         const checked_values = try self.allocator.alloc(bool, types.len);
         defer self.allocator.free(checked_values);
@@ -328,7 +538,7 @@ const Context = struct {
             const category = (raw.nominalKey orelse continue).category;
             if (!same(category, "component")) continue;
             const index = (try self.catalogTypeIndex(raw, .component)) orelse return error.InvalidEffects;
-            try self.verifyTypeFields(raw, &types[index], checked_values);
+            try self.verifyTypeFields(raw, &types[index], checked_values, &graph);
             components += 1;
         }
         if (components != self.catalog.payload.components.len) return error.InvalidEffects;
@@ -336,8 +546,9 @@ const Context = struct {
             if (row.kind == .value and !checked) return error.InvalidEffects;
         }
     }
-    fn verifyTypeFields(self: *Context, raw: *const RawType, row: *const layout.Type, checked_values: []bool) SourceCheckError!void {
+    fn verifyTypeFields(self: *Context, raw: *const RawType, row: *const layout.Type, checked_values: []bool, graph: *SourceTypeGraph) SourceCheckError!void {
         if (row.kind == .value and raw.base != null) return error.InvalidEffects;
+        try graph.verify(raw.id, row.id);
         // Layout flattens the Source base chain. Field identities still use
         // the declaring owner's local ordinal.
         var ancestors: [32]*const RawType = undefined;
@@ -348,7 +559,7 @@ const Context = struct {
             if (depth == ancestors.len) return error.InvalidEffects;
             ancestors[depth] = current;
             depth += 1;
-            current = try self.sourceType(current.base orelse break);
+            current = &graph.types[try graph.indexOf(current.base orelse break)];
         }
         var fields = row.fields;
         while (depth != 0) {
@@ -356,15 +567,16 @@ const Context = struct {
             depth -= 1;
             const owner = ancestors[depth];
             const owner_id = if (owner == raw) row.id else try self.componentId(owner.id);
-            if (owner.fields.len > fields.len) return error.InvalidEffects;
-            for (owner.fields, fields[0..owner.fields.len], 0..) |*original, *item, index| {
+            const original_fields = owner.fields orelse &.{};
+            if (original_fields.len > fields.len) return error.InvalidEffects;
+            for (original_fields, fields[0..original_fields.len], 0..) |*original, *item, index| {
                 if (!try self.sameFieldDeclaration(original, item)) return error.InvalidEffects;
                 try self.verifyFieldIdentity(item.id, owner_id, original.name, index);
                 if (scalar_types.has(original.type)) {
                     try self.spend(5);
                     if (!same(item.type, &hashIdentity("tsfg.type\x00", original.type))) return error.InvalidEffects;
                 } else {
-                    const child = try self.sourceType(original.type);
+                    const child = &graph.types[try graph.indexOf(original.type)];
                     const category = (child.nominalKey orelse return error.InvalidEffects).category;
                     const kind: layout.Kind = if (same(category, "component")) .component else if (same(category, "value")) .value else return error.InvalidEffects;
                     const child_index = (try self.catalogTypeIndex(child, kind)) orelse return error.InvalidEffects;
@@ -374,11 +586,11 @@ const Context = struct {
                     try self.spend(2);
                     if (kind == .value and !checked_values[child_index]) {
                         checked_values[child_index] = true;
-                        try self.verifyTypeFields(child, child_layout, checked_values);
+                        try self.verifyTypeFields(child, child_layout, checked_values, graph);
                     }
                 }
             }
-            fields = fields[owner.fields.len..];
+            fields = fields[original_fields.len..];
         }
         if (fields.len != 0) return error.InvalidEffects;
     }
@@ -687,7 +899,7 @@ const Context = struct {
             if (writable and item.readonly) return error.InvalidEffects;
             for (self.facts.payload.types) |*raw| {
                 try self.spend(1);
-                for (raw.fields) |*original| {
+                for (raw.fields orelse &.{}) |*original| {
                     try self.spend(1);
                     if (!same(original.id, source_id)) continue;
                     if (!try self.sameFieldDeclaration(original, item)) continue;
