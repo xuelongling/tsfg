@@ -143,7 +143,7 @@ struct ArrayMemory {
   }
   struct Selection {
     std::set<std::string> versions;std::set<std::pair<mlir::Operation *,uint32_t>> captures;
-    bool proven=false,bounds=false,foreign=false;
+    bool proven=false,bounds=false,foreign=false,definitelyMissing=false;
   };
   enum class Purpose { Cells,ExistingSlot };
   Selection query(mlir::Operation *read,mlir::Value receiver,Index selected,bool checkedSuccess=false,
@@ -202,7 +202,17 @@ struct ArrayMemory {
       if(status!="proven"&&((status!="pending"&&status!="missing")||!expected.empty()))
         return proof.reject("unknown Array read state/claimed versions");
       if(!proof.mayReach(op.getBlock()))continue;
+      const bool executes=proof.mayExecute(&op);
+      if(!executes&&(!compareClaims||status!="proven"))continue;
       const auto selected=query(&op);if(!valid)return false;
+      if(selected.definitelyMissing) {
+        if(compareClaims&&status=="proven")return proof.reject("Array read versions claim a value on an independently missing slot");
+        if(executes) {
+          if(!charge())return false;
+          proof.trappingArrayReads.insert(&op);
+        }
+        continue;
+      }
       if(!compareClaims) {
         if(selected.proven) {
           for(const auto &version:selected.versions) {
@@ -228,7 +238,7 @@ struct ArrayMemory {
       }
       // A conservative producer claim cannot hide stronger independently
       // selected local writes behind a host boundary/capacity approximation.
-      if(selected.proven) {
+      if(executes&&selected.proven) {
         for(const auto &version:selected.versions)proof.arrayReadInputs[&op].push_back(versions.at(version).value);
         if(selected.bounds)proof.provedArrayReads.insert(&op);
       }

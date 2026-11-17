@@ -7,12 +7,13 @@ import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
+import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 import manifest from './testdata/typed-array-consumer-v8/manifest.json' with {type:'json'};
 
 for(const [name,status] of [
   ['empty-checked-read','missing'],['length-equal-checked-read','missing'],
   ['far-oob-checked-read','missing'],['dense-overwrite','proven'],['after-last-use','pending'],
-])test('actual '+name+' preserves '+status+' normal Array flow',async()=>{
+])test('actual '+name+' preserves '+status+' normal Array flow',async t=>{
   const row=manifest.find(entry=>entry.name===name);assert.ok(row);
   const bytes=await readFile(new URL('./testdata/typed-array-consumer-v8/'+row.file,import.meta.url));
   assert.equal(sha256(bytes),'sha256:'+row.sha256);
@@ -45,6 +46,16 @@ for(const [name,status] of [
   if(name!=='empty-checked-read') {
     const core=lowerFormalHir(hir,context,publication);
     const [read]=plans.definition.arrayReaching.reads;
-    assert.ok(core.split('\n').some(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes('array_node = "'+read.node+'"')));
+    /** @param {string} text */
+    const hasCheckedRead=text=>text.split('\n').some(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes('array_node = "'+read.node+'"'));
+    assert.ok(hasCheckedRead(core));
+    if(process.env.TSFG_CORE_IR_EXE&&status==='missing')await t.test('Static Core admits the original checked read in both modes',async()=>{
+      const canonical=await invokeCore(core);
+      accepted(canonical);
+      assert.ok(hasCheckedRead(canonical.stdout.toString('utf8')));
+      const optimized=await invokeCore(core,'--optimize');
+      accepted(optimized);
+      assert.deepEqual(optimized.stdout,canonical.stdout);
+    });
   }
 });

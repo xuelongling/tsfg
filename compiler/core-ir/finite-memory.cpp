@@ -115,8 +115,8 @@ struct Memory {
     return true;
   }
   bool read(mlir::Operation *op) {
-    const bool reachable=proof.mayReach(op->getBlock());
-    if (!op->hasAttr("field_reaching")) { if(reachable)proof.unprovedMemoryReads.insert(op); return true; }
+    const bool executes=proof.mayExecute(op),compare=compareClaims&&proof.mayReach(op->getBlock());
+    if (!op->hasAttr("field_reaching")) { if(executes)proof.unprovedMemoryReads.insert(op); return true; }
     Json evidence=nullptr,dispatch=nullptr;
     if(!document(op,"field_reaching",evidence)||!document(op,"field_dispatch",dispatch))return false;
     const auto *root=evidence.getAsObject();const auto *rows=root?root->getArray("reaching"):nullptr;
@@ -168,14 +168,15 @@ struct Memory {
         return proof.reject("native empty definition cannot become uninitialized storage or a native zero payload");
       llvm::json::Array expected;for(const auto &source:expectedSources)expected.emplace_back(source);
       std::string a,b;if(!canonical(std::move(expected),a)||!canonical(llvm::json::Array(*sources),b)||a!=b)return proof.reject("memory source nodes are detached from their SSA writes");
-      // Dead paths still validate every supplied identity and source document.
-      // Only the path-dependent first-write proof is conditional.
-      if(!reachable)continue;
+      // Keep source-document validation and final first-write comparison
+      // even after an earlier operation rules out this read's normal path.
+      if(!executes&&!compare)continue;
       if(!fieldCell){complete=false;continue;}
       auto selected=proveMemoryFirstWrites(proof,op,op->getOperand(0),actual,field,writes,origins,this->sources);
       if(selected.status==MemorySelection::Status::Invalid)return false;
-      if(compareClaims&&selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
+      if(compare&&selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
         return proof.reject("claimed field version is stale or not first on every successful CFG/callee path");
+      if(!executes)continue;
       if(selected.status==MemorySelection::Status::Proven)for(const auto &id:selected.versions) {
         if(!proof.charge())return false;
         const auto found=versions.find({id,actual});if(found==versions.end())return proof.reject("field identity has no independent write");
@@ -193,7 +194,7 @@ struct Memory {
       }
       complete &= selected.status==MemorySelection::Status::Proven;
     }
-    if(!reachable)return valid;
+    if(!executes)return valid;
     if (!complete || seenTargets!=expectedTargets) proof.unprovedMemoryReads.insert(op);
     else {
       proof.unprovedMemoryReads.erase(op);

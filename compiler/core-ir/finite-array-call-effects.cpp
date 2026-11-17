@@ -197,7 +197,7 @@ struct ArrayCalls {
       if(!proof.charge())return false;auto *op=&operation;const auto name=op->getName().getStringRef();
       // Global shape/authority checks precede this path-sensitive equation
       // consumer. Dead edges cannot contribute a productive normal return.
-      if(!proof.mayReach(&block))continue;
+      if(!proof.mayExecute(op))continue;
       if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
         if(!proof.mayTraverse(op,0))continue;
         for(size_t i=0;i<branch.getDestOperands().size();++i) {

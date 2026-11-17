@@ -227,7 +227,12 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
     if(!valid)return {};
     if(!graph.solve()){proof.reject(graph.error());valid=false;return {};}
     const auto *evidence=graph.evidence(result);Selection out;
-    if(!evidence||evidence->pending||evidence->alternatives.empty()||(!checkedSuccess&&evidence->alternatives.count("#missing"))||evidence->alternatives.count(input))return out;
+    if(!evidence||evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count(input))return out;
+    if(!checkedSuccess&&evidence->alternatives.count("#missing")) {
+      // Only a complete all-path absence proves the checked operation terminal.
+      out.definitelyMissing=!boundsOnly&&evidence->alternatives.size()==1;
+      return out;
+    }
     if(boundsOnly){
       // A distinct authority: no versions, captures, payload or extent leave
       // an ExistingSlot query, even when a real write supplied the witness.

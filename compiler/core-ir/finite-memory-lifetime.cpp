@@ -155,7 +155,7 @@ public:
   bool run(){
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block){
       if(!proof.charge())return false;auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(&op);
-      if(ret&&ret.getNumOperands()==1&&proof.mayReach(&block)&&!returns(&op,ret.getOperand(0)))return false;
+      if(ret&&ret.getNumOperands()==1&&proof.mayExecute(&op)&&!returns(&op,ret.getOperand(0)))return false;
     }
     return valid;
   }
@@ -270,11 +270,11 @@ struct StoredCalls {
   }
   bool run(){
     for(const auto &[call,targets]:proof.selectedCallees)for(const auto &target:targets){
-      if(!proof.charge())return false;if(proof.mayReach(call->getBlock()))callers[target].push_back(call);
+      if(!proof.charge())return false;if(proof.mayExecute(call))callers[target].push_back(call);
     }
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block){
       if(!proof.charge())return false;
-      if(op.getName().getStringRef()!="tsfg_core.domain.field_read"||!proof.mayReach(&block))continue;
+      if(op.getName().getStringRef()!="tsfg_core.domain.field_read"||!proof.mayExecute(&op))continue;
       const auto *domain=valueDomain(proof,op.getResult(0).getType());if(!domain)return false;bool span=false;
       for(const auto &type:domain->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
       if(!span)continue;
@@ -294,7 +294,7 @@ struct StoredCalls {
     }
     bool changed=true;while(changed){
       changed=false;for(const auto &[call,targets]:proof.selectedCallees){
-        if(!proof.charge())return false;if(!proof.mayReach(call->getBlock()))continue;
+        if(!proof.charge())return false;if(!proof.mayExecute(call))continue;
         for(const auto &target:targets){if(!proof.charge())return false;
           if(incomplete.count(target))changed|=incomplete.insert(function(call)).second;
         }
@@ -302,7 +302,7 @@ struct StoredCalls {
     }
     std::map<mlir::Operation *,std::vector<StoredFieldSource>> result;std::set<mlir::Operation *> pending;
     for(const auto &[call,targets]:proof.selectedCallees){
-      if(!proof.charge())return false;if(!proof.mayReach(call->getBlock()))continue;
+      if(!proof.charge())return false;if(!proof.mayExecute(call))continue;
       std::vector<StoredFieldSource> inputs;
       for(const auto &target:targets){
         if(!proof.charge())return false;if(incomplete.count(target))pending.insert(call);
@@ -331,7 +331,7 @@ bool proveArrayReadSources(ModuleProof &proof){
   std::map<mlir::Operation *,std::vector<StoredFieldSource>> result;
   for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block){
     if(!proof.charge())return false;
-    if(op.getName().getStringRef()!="tsfg_core.domain.array_read"||!proof.mayReach(&block))continue;
+    if(op.getName().getStringRef()!="tsfg_core.domain.array_read"||!proof.mayExecute(&op)||proof.trappingArrayReads.count(&op))continue;
     const auto *domain=valueDomain(proof,op.getResult(0).getType());if(!domain)return false;bool span=false;
     for(const auto &type:domain->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
     const auto *receiver=valueDomain(proof,op.getOperand(0).getType());if(!receiver)return false;

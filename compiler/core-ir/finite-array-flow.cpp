@@ -319,6 +319,7 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
     return valid;
   }
   if(name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_read") {
+    if(proof.trappingArrayReads.count(op))return true;
     const auto receiver=value(op->getOperand(0));const bool read=name=="tsfg_core.domain.array_read";
     const auto input=read?payload(op->getResult(0)):payload(op->getOperand(2));
     if(read) {

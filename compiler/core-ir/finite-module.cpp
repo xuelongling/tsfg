@@ -118,7 +118,7 @@ bool clearMemory(ModuleProof &proof) {
   for(const auto &[op,outcomes]:proof.memberOutcomes)if(!proof.charge(1+outcomes.size()))return false;
   proof.memberOutcomes.clear();
   // Every copied/rebuilt source occurrence is part of the one proof budget.
-  for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.checkedArrayReadSources,&proof.fieldReadUndefined,&proof.unprovedStoredReturns,&proof.unprovedStoredCalls})
+  for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.trappingArrayReads,&proof.checkedArrayReadSources,&proof.fieldReadUndefined,&proof.unprovedStoredReturns,&proof.unprovedStoredCalls})
     for(auto *op:*set)if(!proof.charge())return false;
   for(const auto &map:{&proof.fieldReadInputs,&proof.arrayReadInputs})for(const auto &[op,values]:*map) {
     if(!proof.charge())return false;for(const auto value:values)if(!proof.charge())return false;
@@ -140,7 +140,7 @@ bool clearMemory(ModuleProof &proof) {
     }
   }
   proof.unprovedMemoryReads.clear();proof.provedArrayReads.clear();proof.fieldReadUndefined.clear();
-  proof.checkedArrayReadSources.clear();
+  proof.trappingArrayReads.clear();proof.checkedArrayReadSources.clear();
   proof.storedCallSources.clear();proof.unprovedStoredCalls.clear();
   proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();proof.fieldReadSources.clear();
   proof.aggregateReturnSources.clear();proof.arrayReadSources.clear();proof.unprovedStoredReturns.clear();return true;
@@ -321,7 +321,7 @@ bool complete(ModuleProof &proof) {
   }
   for(const auto &[op,targets]:proof.selectedCallees) {
     if(!proof.charge())return false;
-    if(!proof.mayReach(op->getBlock()))continue;
+    if(!proof.mayExecute(op))continue;
     bool ownerCall=false,valid=true;
     const auto owner=[&](mlir::Type type) {
       const auto *domain=valueDomain(proof,type);if(!domain)return false;

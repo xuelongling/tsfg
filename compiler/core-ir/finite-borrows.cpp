@@ -23,6 +23,7 @@ struct Borrows {
   }
   bool outcome(bool result) {return result||proof.reject(flow.error());}
   bool borrowed(mlir::Value value) {
+    if(auto *definition=value.getDefiningOp();definition&&proof.trappingArrayReads.count(definition))return false;
     const auto *carrier=valueDomain(proof,value.getType());if(!carrier)return false;
     const auto found=proof.actualPayloads.find(value);
     if(found!=proof.actualPayloads.end()&&!found->second.pending&&!found->second.alternatives.empty()) {
@@ -239,7 +240,8 @@ struct Borrows {
         if(values.count(argument)&&!outcome(flow.parameter(first,values.at(argument))))return false;
       }
       for(auto &op:block) {
-        if(!proof.charge())return false;const auto point=points.at(&op);const auto name=op.getName().getStringRef();
+        if(!proof.charge())return false;if(!proof.mayExecute(&op))continue;
+        const auto point=points.at(&op);const auto name=op.getName().getStringRef();
         for(auto result:op.getResults()) {
           if(!proof.charge())return false;
           if(values.count(result)&&!outcome(flow.define(point,values.at(result))))return false;
@@ -250,7 +252,6 @@ struct Borrows {
             if(!proof.charge())return false;
             if(values.count(operand)&&!outcome(flow.use(point,values.at(operand))))return false;
           }
-        if(!proof.mayReach(&block))continue;
         if(!lifetime(&op))return false;
         if(name=="tsfg_core.domain.field_read"&&op.getNumResults()==1&&values.count(op.getResult(0))) {
           const auto found=proof.fieldReadInputs.find(&op);
@@ -292,8 +293,11 @@ struct Borrows {
   bool edges() {
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
       for(auto &op:block) {
-        if(!proof.charge())return false;if(!proof.mayReach(&block))continue;
-        if(auto *next=op.getNextNode()) {if(!outcome(flow.edge(points.at(&op),points.at(next))))return false;continue;}
+        if(!proof.charge())return false;if(!proof.mayExecute(&op))continue;
+        if(auto *next=op.getNextNode()) {
+          if(proof.mayExecute(next)&&!outcome(flow.edge(points.at(&op),points.at(next))))return false;
+          continue;
+        }
         const auto add=[&](mlir::Block *destination,mlir::ValueRange arguments)->bool {
           std::vector<BorrowFlow::Binding> bindings;
           for(size_t i=0;i<arguments.size();++i) {

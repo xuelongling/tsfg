@@ -144,6 +144,7 @@ struct ActualFlow {
       return true;
     }
     if(name=="tsfg_core.domain.array_read") {
+      if(proof.trappingArrayReads.count(op))return true;
       if(!controlOnly)return true; // Coupled owner/element equations below.
       const auto result=value(op->getResult(0));const auto sources=proof.arrayReadInputs.find(op);
       if(!memorySources||sources==proof.arrayReadInputs.end())return pending(result);
@@ -249,7 +250,9 @@ struct ActualFlow {
       }
       bool stopped=false;
       for(auto &op:block) {
-        if(!proof.charge())return false;const auto found=proof.selectedCallees.find(&op);
+        if(!proof.charge())return false;
+        if(proof.trappingArrayReads.count(&op)){stopped=true;break;}
+        const auto found=proof.selectedCallees.find(&op);
         if(found!=proof.selectedCallees.end()&&!found->second.empty()) {
           bool all=true;for(const auto &target:found->second)if(!proof.charge()||!proof.trapOnlyFunctions.count(target))all=false;
           stopped|=all;
@@ -271,7 +274,8 @@ struct ActualFlow {
     // Least fixed point of positively known trap frontiers. A cycle or an
     // empty recursive return equation has no seed and therefore stays unknown.
     auto trapped=proof.trapOnlyFunctions;std::set<mlir::Block *> dead;bool grew;
-    const auto stoppedCall=[&](mlir::Operation *op) {
+    const auto stops=[&](mlir::Operation *op) {
+      if(proof.trappingArrayReads.count(op))return true;
       const auto found=proof.selectedCallees.find(op);
       if(found==proof.selectedCallees.end()||found->second.empty())return false;
       for(const auto &target:found->second)if(!proof.charge()||!trapped.count(target))return false;
@@ -282,7 +286,7 @@ struct ActualFlow {
       for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
         if(!proof.charge())return false;if(dead.count(&block))continue;
         bool trap=false;
-        for(auto &op:block){if(!proof.charge())return false;trap|=stoppedCall(&op);}
+        for(auto &op:block){if(!proof.charge())return false;trap|=stops(&op);}
         auto *end=block.getTerminator();
         if(end->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
           const auto *input=flow.evidence(value(end->getOperand(0)));
@@ -299,7 +303,7 @@ struct ActualFlow {
     }while(grew);
     std::set<mlir::Operation *> operations;
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())if(possible.count(&block))for(auto &op:block) {
-      if(!proof.charge())return false;operations.insert(&op);if(stoppedCall(&op))break;
+      if(!proof.charge())return false;operations.insert(&op);if(stops(&op))break;
     }
     if(changed) {
       if(!proof.charge(possible.size()+selected.size()+operations.size()+trapped.size()))return false;
@@ -325,7 +329,8 @@ struct ActualFlow {
         if(!proof.charge())return false;
         normalInputs.emplace(&op,current);
         const auto found=proof.selectedCallees.find(&op);
-        if(found!=proof.selectedCallees.end()&&!found->second.empty()) {
+        if(proof.trappingArrayReads.count(&op))current=node();
+        else if(found!=proof.selectedCallees.end()&&!found->second.empty()) {
           const auto next=node();calls.push_back({current,next,&op});current=next;
         }
         normalResults.emplace(&op,current);

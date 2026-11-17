@@ -112,6 +112,8 @@ struct ModuleProof {
   // not the owner-wide capacity union. Bounds eligibility remains separate.
   std::map<mlir::Operation *,std::vector<mlir::Value>> arrayReadInputs;
   std::set<mlir::Operation *> provedArrayReads;
+  // The real checked operation executes and has no normal result.
+  std::set<mlir::Operation *> trappingArrayReads;
   std::set<mlir::Operation *> fieldReadUndefined;
   // Published only by the independent complete member/witness reconstruction.
   // Empty field identity means legitimate structural absence; no storage exists.
