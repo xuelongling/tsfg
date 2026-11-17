@@ -191,10 +191,13 @@ export function verifyGenericHir(hir) {
   check(hir.inputIdentity === inputIdentity(hir.context, instanceRoots, hir.target, hir.source), 'identity');
   return own(hir);
 }
-export function printGenericHir(hir) {
-  const text = canonical(verifyGenericHir(hir));
+function printVerifiedGenericHir(hir) {
+  const text = canonical(hir);
   check(Buffer.byteLength(text, 'utf8') + 1 <= genericPackageLimits.bytes, 'limit');
   return text + '\n';
+}
+export function printGenericHir(hir) {
+  return printVerifiedGenericHir(verifyGenericHir(hir));
 }
 export function readGenericHir(bytes) {
   let input;
@@ -206,7 +209,7 @@ export function readGenericHir(bytes) {
     fail('input');
   }
   const hir = verifyGenericHir(input.value);
-  check(input.text === printGenericHir(hir), 'canonical');
+  check(input.text === printVerifiedGenericHir(hir), 'canonical');
   return hir;
 }
 
