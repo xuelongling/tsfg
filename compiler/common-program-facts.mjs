@@ -187,9 +187,15 @@ export function verifyCommonProgramFacts(value) {
     for(const global of p.globals.filter(global=>global.sourcePath===row.sourcePath)){check(!scope.has(global.binding.name),'scope');scope.set(global.binding.name,global.binding.id);}
     visible.set(row.sourcePath,scope);}
   const target=id=>functions.get(id)??globals.get(id)??types.get(id)??modules.get(id);
-  const targetPath=row=>row.sourcePath;
+  const targetPath=row=>row.sourcePath,exportEvidence=new Map(),declaredExports=new Set(),namedSources=new Map();
+  function matchDirectExport(sourcePath,name,target,range){
+    spend();const {claims}=exportEvidence.get(sourcePath),claim=claims.get(name);
+    check(claim?.target===target&&same(claim.range,range),'export');
+    declaredExports.add(claim);claims.delete(name);
+  }
   for(const module of p.modules){const g=grammars.get(module.sourcePath),scope=visible.get(module.sourcePath);
-    const namedReexports=new Map(),namedReexportEdges=new Set();
+    const namedReexports=new Map(),namedReexportEdges=new Set(),claims=new Map(),exports=new Map(),starSources=[];
+    exportEvidence.set(module.sourcePath,{claims,exports,starSources});
     check(same(module.globals,p.globals.filter(row=>row.sourcePath===module.sourcePath).map(row=>row.binding.id)),'global');
     const initialized=module.initialization.filter(row=>row.kind==='initialize');check(same(initialized.map(row=>row.binding),module.globals),'global');
     for(const global of p.globals.filter(row=>row.sourcePath===module.sourcePath)){const row=global.binding;
@@ -207,6 +213,7 @@ export function verifyCommonProgramFacts(value) {
       const star=g.tokens[bounds.first+1].text==='*',parts=[keyword,...(star?(edge.kind==='import'?['*','as']:['*']):['{'])];let index=0;
       const namedReexport=edge.kind!=='import'&&!star;
       if(namedReexport)namedReexportEdges.add(edge);
+      if(edge.kind!=='import'&&star)starSources.push(edge.sourcePath);
       for(const alias of edge.bindings){spend();const definition=target(alias.target);check(definition&&targetPath(definition)===alias.targetSourcePath
         &&(alias.kind==='namespace'?modules.has(alias.target):alias.kind==='function'?functions.has(alias.target):alias.kind==='global'?globals.has(alias.target):alias.kind==='type'&&types.has(alias.target)),'module');
         check(alias.kind==='namespace'?alias.imported==='*'&&alias.target===edge.sourcePath&&alias.targetSourcePath===edge.sourcePath
@@ -219,7 +226,7 @@ export function verifyCommonProgramFacts(value) {
           check(!scope.has(alias.name),'scope');scope.set(alias.name,alias.target);
           if(alias.kind==='namespace')for(const exported of modules.get(edge.sourcePath).exports){spend();scope.set(alias.name+'.'+exported.name,exported.target);}}
         else check(edge.kind!=='import'&&alias.nameRange===null,'module');
-        if(namedReexport){check(!namedReexports.has(alias.name),'export');namedReexports.set(alias.name,alias);}
+        if(namedReexport){check(!namedReexports.has(alias.name),'export');namedReexports.set(alias.name,{alias,path:edge.sourcePath});}
       }
       if(!star)parts.push('}');parts.push('from',quoted);g.sequence(edge.range,parts,true);
     }
@@ -233,20 +240,30 @@ export function verifyCommonProgramFacts(value) {
       const defining=grammars.get(e.targetSourcePath);sourceRange(e.definitionRange,defining.text);
       check(same(e.definitionRange,definition.declarationRange??definition.binding.declarationRange),'export');
       const edge=module.imports.find(edge=>{spend();return e.range.start>=edge.range.start&&e.range.end<=edge.range.end;});
-      const alias=namedReexports.get(e.name);
+      exports.set(e.name,e);
+      const forward=namedReexports.get(e.name),alias=forward?.alias;
       if(alias||namedReexportEdges.has(edge)){
         check(alias&&alias.target===e.target&&same(alias.range,e.range),'export');
-        matchedReexports++;
+        namedSources.set(e,{path:forward.path,name:alias.imported});matchedReexports++;
       }
       const within=edge||p.functions.some(fn=>fn.sourcePath===module.sourcePath&&e.range.start>=fn.declarationRange.start&&e.range.end<=fn.declarationRange.end)
         ||p.types.some(type=>type.sourcePath===module.sourcePath&&['value','reference'].includes(type.kind)&&e.range.start>=type.declarationRange.start&&e.range.end<=type.declarationRange.end)
         ||module.initialization.some(row=>e.range.start>=row.range.start&&e.range.end<=row.range.end);
       if(!within)coverage.get(module.sourcePath).push(e.range);
+      else if(!edge)claims.set(e.name,e);
     }
     check(matchedReexports===namedReexports.size,'export');
+    let previousEnd=-1,exportedGroup=false;
     coverage.get(module.sourcePath).push(...module.initialization.map(row=>{
       if(row.kind!=='initialize')return row.range;const at=g.indices(row.range);let start=at.first-1;
-      if(g.tokens[start-1]?.text==='export')start--;
+      const hasExport=g.tokens[start-1]?.text==='export';
+      if(g.tokens[start]?.text!==','||start!==previousEnd)exportedGroup=hasExport;
+      if(hasExport)start--;
+      previousEnd=at.end;
+      if(exportedGroup){
+        const {binding,bindingKind}=globals.get(row.binding);
+        matchDirectExport(module.sourcePath,bindingKind==='default-export'?'default':binding.name,row.binding,binding.declarationRange);
+      }
       return {start:g.tokens[start].start,end:g.tokens[at.end]?.text===';'?g.tokens[at.end].end:row.range.end};
     }));
   }
@@ -268,7 +285,27 @@ export function verifyCommonProgramFacts(value) {
     }
   }
   validateCommonLexical(p,grammars,types,coverage,spend,visible);
-  validateCommonDeclarations(p,grammars,types,spend,visible);validateCommonBodies(p,sources,types,grammars,visible,spend);
+  validateCommonDeclarations(p,grammars,types,spend,visible,matchDirectExport);
+  // Match a defining-range claim through the verified named/star edges until
+  // it reaches an original declaration. Revisiting a row proves no origin.
+  function reachesDeclaration(path,claim){
+    const pending=[{path,name:claim.name}],seen=new Set();
+    for(let index=0;index<pending.length;index++){
+      spend();const step=pending[index],owner=exportEvidence.get(step.path),row=owner.exports.get(step.name);
+      if(row?.target!==claim.target||seen.has(row))continue;
+      if(declaredExports.has(row))return true;
+      seen.add(row);
+      const forward=namedSources.get(row);
+      if(forward)pending.push(forward);
+      else if(row.name!=='default'&&same(row.range,row.definitionRange)){
+        for(const source of owner.starSources){spend();pending.push({path:source,name:row.name});}
+      }
+    }
+    return false;
+  }
+  for(const [path,{claims}] of exportEvidence)for(const claim of claims.values())
+    check(reachesDeclaration(path,claim),'export');
+  validateCommonBodies(p,sources,types,grammars,visible,spend);
   for(const [path,segments]of coverage)grammars.get(path).complete(segments);
   const tuples=roots=>roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
   const closure=normalizeClosure({roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)});

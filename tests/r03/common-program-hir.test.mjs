@@ -6,8 +6,10 @@ import fs from 'node:fs/promises';
 import {readCommonProgramFacts,verifyCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir,verifyCommonProgramHir,printCommonProgramHir,readCommonProgramHir} from '../../compiler/common-program-hir.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
+import {byteOrder,originId} from '../../compiler/typed-array-schema.mjs';
 const names=['positive','reachable-managed','reference-value','mixed'];
 const bytes=new Map(await Promise.all(names.map(async name=>/** @type {[string,Buffer]} */([name,await fs.readFile(new URL('./common-program-'+name+'.json',import.meta.url))]))));
+assert.equal(sha256(bytes.get('mixed')),'sha256:520a692f14cbcb7632a13cc338d78ae46f7abdbdb62d1290fe40a81c645447f0');
 const facts=new Map([...bytes].map(([name,raw])=>[name,readCommonProgramFacts(raw)]));
 const context=name=>({family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes.get(name),expectedPackageId:facts.get(name).packageId});
 const hirs=new Map([...facts].map(([name,value])=>[name,buildCommonProgramHir(value,context(name))]));
@@ -112,4 +114,177 @@ const checkedExportMutations=[
 for (const [title,change] of checkedExportMutations) test('retained mixed module rejects '+title,()=>{
   const packet=mutated(change,'mixed');
   assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
+});
+const directExportMutations=[
+  ['wrong direct function export name',p=>{
+    const main=p.modules.find(module=>module.sourcePath==='/src/main.ts');
+    main.exports.find(row=>row.name==='ordinary').name='other';
+    p.exports.find(row=>row.name==='ordinary').name='other';
+  }],
+  ['wrong direct function export target',p=>{
+    const main=p.modules.find(module=>module.sourcePath==='/src/main.ts');
+    const other=main.exports.find(row=>row.name==='view');
+    Object.assign(main.exports.find(row=>row.name==='ordinary'),{target:other.target,definitionRange:other.definitionRange});
+    const entry=p.exports.find(row=>row.name==='ordinary');
+    p.entryCompatibilityRoots=p.entryCompatibilityRoots.filter(row=>row.functionId!==entry.functionId);
+    entry.functionId=other.target;
+  }],
+  ['wrong direct class export anchor',p=>{
+    const data=p.modules.find(module=>module.sourcePath==='/src/data.ts');
+    data.exports.find(row=>row.name==='Box').range=data.exports.find(row=>row.name==='Delta').range;
+  }],
+  ['wrong direct global export anchor',p=>{
+    const state=p.modules.find(module=>module.sourcePath==='/src/state.ts');
+    state.exports.find(row=>row.name==='leftTotal').range=state.exports.find(row=>row.name==='rightTotal').range;
+  }],
+  ['missing direct export',p=>{
+    const main=p.modules.find(module=>module.sourcePath==='/src/main.ts');
+    main.exports=main.exports.filter(row=>row.name!=='ordinary');
+    const entry=p.exports.find(row=>row.name==='ordinary');
+    p.entryCompatibilityRoots=p.entryCompatibilityRoots.filter(row=>row.functionId!==entry.functionId);
+    p.exports=p.exports.filter(row=>row!==entry);
+  }],
+];
+for (const [title,change] of directExportMutations) test('retained mixed module rejects '+title,()=>{
+  const packet=mutated(change,'mixed');
+  assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
+});
+
+function refreshVariantSource(payload,file) {
+  file.byteLength=Buffer.byteLength(file.content);file.utf16Length=file.content.length;file.sha256=sha256(file.content).slice(7);
+  const files=payload.files.map(({path,sha256})=>({path,sha256}));
+  for(const type of payload.types)if(type.nominalKey)
+    type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({files,nominalKey:type.nominalKey}));
+  for(const fn of payload.functions)if(fn.sourcePath===file.path&&fn.lexicalParent===null)
+    fn.declarationScope.end=file.utf16Length;
+  for(const roots of [payload.closure.roots,payload.closure.requiredRoots])for(const row of roots)
+    if(row.sourcePath===file.path&&row.kind==='module-initialization')row.range.end=file.utf16Length;
+}
+
+const byExportName=(left,right)=>byteOrder(left.name,right.name);
+const entryKey=row=>row.functionId+'\0'+row.parameterBinding;
+const byEntry=(left,right)=>byteOrder(entryKey(left),entryKey(right));
+
+test('derived mixed Source default export retains the original declaration and call',()=>{
+  // Insert the default modifier into the last declaration of the mixed root.
+  // Rebase its original ranges and the identities that depend on those ranges.
+  const packet=mutated(p=>{
+    const sourcePath=p.rootFile,file=p.files.find(row=>row.path===sourcePath);
+    const fn=p.functions.find(row=>row.sourcePath===sourcePath&&row.name==='view'),previousId=fn.id;
+    const argument=fn.parameters[0],statement=fn.body[0],call=statement.value,reference=call.arguments[0];
+    const modifier='default ',insertion=fn.declarationRange.start+'export '.length,units=modifier.length;
+    file.content=file.content.slice(0,insertion)+modifier+file.content.slice(insertion);
+    refreshVariantSource(p,file);
+    const shift=range=>({start:range.start+units,end:range.end+units});
+    fn.declarationRange.end+=units;
+    fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath,declarationRange:fn.declarationRange}));
+    fn.nameRange=shift(fn.nameRange);fn.returnAnnotationRange=shift(fn.returnAnnotationRange);
+    for(const key of ['nameRange','declarationRange','annotationRange'])argument[key]=shift(argument[key]);
+    argument.id=originId(sourcePath,argument.nameRange);argument.lexicalOwner=fn.id;
+    statement.range=shift(statement.range);call.range=shift(call.range);call.calleeRange=shift(call.calleeRange);
+    reference.range=shift(reference.range);reference.binding=argument.id;
+    const main=p.modules.find(row=>row.sourcePath===sourcePath);
+    const definitionRange=fn.declarationRange;
+    main.exports=main.exports.filter(row=>row.target!==previousId);
+    main.exports.unshift({name:'default',kind:'function',target:fn.id,targetSourcePath:sourcePath,range:definitionRange,definitionRange});
+    p.exports=p.exports.filter(row=>row.functionId!==previousId);
+    p.exports.unshift({name:'default',functionId:fn.id});
+    for(const entry of p.entryCompatibilityRoots)if(entry.functionId===previousId){
+      entry.functionId=fn.id;entry.parameterBinding=argument.id;entry.origin={source:sourcePath,...argument.declarationRange};
+    }
+    p.entryCompatibilityRoots.sort(byEntry);
+    for(const rows of [p.closure.roots,p.closure.requiredRoots])for(const row of rows)
+      if(row.target===previousId){row.target=fn.id;row.range=definitionRange;}
+  },'mixed');
+  const factsBytes=Buffer.from(canonical(packet)+'\n'),facts=readCommonProgramFacts(factsBytes);
+  const hir=buildCommonProgramHir(facts,{...context('mixed'),factsBytes,expectedPackageId:facts.packageId});
+  const main=hir.modules.find(row=>row.sourcePath===hir.rootFile),view=hir.functions.find(row=>row.name==='view');
+  const exported=main.exports.find(row=>row.name==='default'),source=hir.sources.find(row=>row.path===hir.rootFile);
+  assert.equal(exported.target,view.id);
+  assert.equal(view.id,hirs.get('mixed').functions.find(row=>row.name==='view').id);
+  assert.equal(view.body[0].value.callee,hir.functions.find(row=>row.name==='run').id);
+  assert.deepEqual(exported.range,view.range);
+  assert.match(source.content.slice(view.range.start,view.range.end),/^export default function view\b/);
+  assert.deepEqual(readCommonProgramHir(Buffer.from(printCommonProgramHir(hir))),hir);
+});
+
+function appendStar(module,file,origin,kind='export',trivia='') {
+  const text="export "+trivia+"* from '"+origin.specifier+"';",start=file.content.length;
+  module.imports.push({kind,specifier:origin.specifier,sourcePath:origin.sourcePath,range:{start,end:start+text.length},bindings:[]});
+  file.content+=text+'\n';
+}
+
+function appendShadowedStar(payload,module,file,sourcePath,residual=null) {
+  const barrel=payload.modules.find(row=>row.sourcePath==='/src/barrel.ts');
+  const origin=barrel.imports.find(row=>row.sourcePath===sourcePath);
+  const selected=origin.bindings.filter(alias=>alias.name!==residual);
+  const named="export { "+selected.map(alias=>alias.name).join(', ')+" } from '"+origin.specifier+"';";
+  const start=file.content.length;
+  const bindings=selected.map(alias=>{
+    const offset=start+named.indexOf(alias.name);
+    return {...alias,range:{start:offset,end:offset+alias.name.length}};
+  });
+  module.imports.push({...origin,range:{start,end:start+named.length},bindings});
+  file.content+=named+'\n';
+  appendStar(module,file,origin,residual?'export-star':'export');
+  const upstream=payload.modules.find(row=>row.sourcePath===sourcePath);
+  for(const alias of bindings)module.exports.push({...upstream.exports.find(row=>row.name===alias.name),range:alias.range});
+  if(residual){
+    const exportRow=upstream.exports.find(row=>row.name===residual);
+    module.exports.push({...exportRow,range:exportRow.definitionRange});
+  }
+  module.exports.sort(byExportName);
+  refreshVariantSource(payload,file);
+}
+
+function derivedStar(extraName,cycle=false) {
+  return mutated(p=>{
+    const root=p.rootFile,main=p.modules.find(row=>row.sourcePath===root),file=p.files.find(row=>row.path===root);
+    const dataPath='/src/data.ts';
+    appendShadowedStar(p,main,file,dataPath);
+    const run=p.functions.find(row=>row.sourcePath===dataPath&&row.name==='run'),parameter=run.parameters[0];
+    const view=main.exports.find(row=>row.name==='view');
+    const entry=p.entryCompatibilityRoots.find(row=>row.functionId===view.target);
+    p.exports.push({name:'run',functionId:run.id});
+    p.entryCompatibilityRoots.push({...entry,functionId:run.id,parameterBinding:parameter.id,origin:{source:run.sourcePath,...parameter.declarationRange}});
+    if(extraName){
+      const unbacked={...view,name:extraName};
+      main.exports.push(unbacked);
+      p.exports.push({name:extraName,functionId:view.target});
+      if(cycle){
+        const data=p.modules.find(row=>row.sourcePath===dataPath),other=p.files.find(row=>row.path===dataPath);
+        // Put the foreign defining offsets inside the opposing star's span.
+        appendStar(data,other,{specifier:'./main',sourcePath:root},'export','/*'+' '.repeat(370)+'*/ ');
+        data.exports.push(unbacked);data.exports.sort(byExportName);refreshVariantSource(p,other);
+      }
+    }
+    main.exports.sort(byExportName);p.exports.sort(byExportName);p.entryCompatibilityRoots.sort(byEntry);
+  },'mixed');
+}
+
+test('derived mixed Source accepts an explicit re-export shadowing a star',()=>{
+  const {payload:p}=readCommonProgramFacts(Buffer.from(canonical(derivedStar(null))+'\n'));
+  const main=p.modules.find(row=>row.sourcePath===p.rootFile),star=main.imports.at(-1);
+  const source=p.files.find(row=>row.path===p.rootFile).content;
+  assert.equal(source.slice(star.range.start,star.range.end),"export * from './data';");
+  assert.deepEqual(main.exports.map(row=>row.name),['Box','Delta','left','ordinary','right','run','view']);
+});
+
+for(const cycle of [false,true])test('a derived '+(cycle?'cyclic':'one-hop')+' star cannot authorize an unrelated direct export',()=>{
+  const packet=derivedStar('unbacked',cycle);
+  assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
+});
+
+test('a derived residual star resolves to the original upstream declaration',()=>{
+  const dataPath='/src/data.ts',statePath='/src/state.ts';
+  const packet=mutated(p=>{
+    const data=p.modules.find(row=>row.sourcePath===dataPath),file=p.files.find(row=>row.path===dataPath);
+    appendShadowedStar(p,data,file,statePath,'add');
+  },'mixed');
+  const {payload:p}=readCommonProgramFacts(Buffer.from(canonical(packet)+'\n'));
+  const data=p.modules.find(row=>row.sourcePath===dataPath),run=data.exports.find(row=>row.name==='run');
+  const state=p.modules.find(row=>row.sourcePath===statePath),add=state.exports.find(row=>row.name==='add');
+  const indirect=data.exports.find(row=>row.name==='add');
+  assert.ok(indirect.range.start>=run.range.start&&indirect.range.end<=run.range.end);
+  assert.deepEqual(indirect,add);
 });

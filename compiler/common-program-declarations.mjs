@@ -5,13 +5,17 @@ import {canonical,sha256} from './identity.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonTypeSyntax,commonCallableNameRange} from './common-program-source.mjs';
 
-export function validateCommonDeclarations(payload,grammars,types,spend,visible) {
+export function validateCommonDeclarations(payload,grammars,types,spend,visible,matchDirectExport) {
   const functions=new Map([...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])].map(fn=>[fn.id,fn]));
   for(const fn of functions.values()) {
     spend();const g=grammars.get(fn.sourcePath),all=g.tokens,bounds=g.indices(fn.declarationRange),nameRange=commonCallableNameRange(g,fn,types),name=g.indices(nameRange);
     const prefix=all.slice(bounds.first,name.first).map(token=>token.text);
     if(fn.ownerType)check(prefix.every(t=>['public','private','protected','override'].includes(t)),'capability');
-    else check(prefix.join(' ')==='function'||prefix.join(' ')==='export function'||prefix.join(' ')==='export default function','capability');
+    else {
+      check(prefix.join(' ')==='function'||prefix.join(' ')==='export function'||prefix.join(' ')==='export default function','capability');
+      if(fn.lexicalParent===null&&prefix[0]==='export')
+        matchDirectExport?.(fn.sourcePath,prefix[1]==='default'?'default':fn.name,fn.id,fn.declarationRange);
+    }
     const parameters=[];
     for(const [i,p]of fn.parameters.entries()) {
       spend();if(i)parameters.push(',');parameters.push(p.declarationRange);
@@ -46,6 +50,8 @@ export function validateCommonDeclarations(payload,grammars,types,spend,visible)
       check(header.includes('@')&&header.includes(expected),'source');
     }else check(type.kind==='reference'&&type.nominalKey.category==='reference','type');
     check(header.every(token=>['@','tsfgValue','tsfgComponent','export','default','class'].includes(token))&&header.at(-1)==='class','capability');
+    if(header.includes('export'))
+      matchDirectExport?.(type.sourcePath,header.includes('default')?'default':type.nominalKey.declarationPath[0],type.id,type.declarationRange);
     const members=[...(type.fields??[]).filter(field=>!field.parameterBinding).map(field=>field.origin),
       ...(type.methods??[]).map(id=>functions.get(id)?.declarationRange),...(type.constructor?[type.constructor.declarationRange]:[])];
     check(members.every(Boolean),'function');members.sort((a,b)=>a.start-b.start);
