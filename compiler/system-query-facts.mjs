@@ -323,27 +323,16 @@ const systemDeclarationPrefixes=[
 
 /** @returns {SystemQuerySystem[]} */
 function decodeSystems(value,program,sources,ast,builtins,component,fields,grammars,scalars,spend){
-  const seen=new Set(),ownedMarkers=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
+  const seen=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
   const systems=array(value).map(value=>{
     spend();const row=record(value,descriptor.objects.system);
     const declaration=ast.original(row.declaration),marker=ast.original(row.marker),signature=ast.original(row.signature),markerRange=range(row.markerRange),returnType=text(row.returnType);
     if(declaration.kind!=='KindFunctionDeclaration'||declaration.sourcePath.endsWith('.d.ts')||seen.has(declaration.id)||canonical(signature)!==canonical(declaration)||canonical(marker)!==canonical(builtins.get('system')))fail('original system declaration/signature differs','source');
-    seen.add(declaration.id);const grammar=grammars.get(declaration.sourcePath);sourceRange(markerRange,grammar.text,declaration.range);grammar.sequence(markerRange,['@','system']);
-    const functionNode=ast.nodes.find(node=>node.kind===declaration.kind&&node.sourcePath===declaration.sourcePath&&canonical(node.range)===canonical(declaration.range));
-    const rootId=ast.roots.get(declaration.sourcePath),root=ast.directory.get(rootId);
-    const functionChildren=ast.children.get(functionNode.id)??[];
-    const markerToken=grammar.tokens[grammar.indices(markerRange).end-1];
+    seen.add(declaration.id);const grammar=grammars.get(declaration.sourcePath);sourceRange(markerRange,grammar.text,declaration.range);
+    const decorated=sourceTypes.decorator(declaration,markerRange,'system');
+    if(canonical(decorated.binding)!==canonical(marker))fail('original system decorator value binding differs','source');
+    const functionChildren=ast.children.get(decorated.owner.id)??[];
     spend(functionChildren.length);
-    const decorator=functionChildren.find(node=>node.kind==='KindDecorator'&&node.range.start===markerRange.start&&node.range.end===markerRange.end);
-    const decoratorChildren=ast.children.get(decorator?.id)??[];
-    spend(decoratorChildren.length);
-    const use=decoratorChildren.find(node=>node.kind==='KindIdentifier'&&node.range.start===markerToken.start&&node.range.end===markerToken.end);
-    if(functionNode.parent!==rootId||root?.kind!=='KindSourceFile'||!use)fail('original system decorator occurrence differs','source');
-    // All of a module's @system markers share its module-scope value binding.
-    if(!ownedMarkers.has(root.id)){
-      if(canonical(sourceTypes.valueBinding(use,root))!==canonical(marker))fail('original system decorator value binding differs','source');
-      ownedMarkers.add(root.id);
-    }
     const originalParameters=functionChildren.filter(node=>node.kind==='KindParameter');
     const parameters=array(row.parameters).map((value,index)=>{
       spend();const row=record(value,descriptor.objects.parameter),binding=ast.original(row.binding),annotationRange=range(row.annotationRange),logicalType=text(row.logicalType);
@@ -446,12 +435,17 @@ export function readSystemQueryFacts(bytes,context){
   });
   const usedAliases=new Set();
   const components=component.components.map(type=>{
-    const declaration=ast.match({id:originId(type.sourcePath,type.nameRange),sourcePath:type.sourcePath,kind:'KindClassDeclaration',name:type.name,range:type.declarationRange,nameRange:type.nameRange}),marker=type.markerOrigin,grammar=grammars.get(type.sourcePath);
+    const declaration=ast.match({id:originId(type.sourcePath,type.nameRange),sourcePath:type.sourcePath,kind:'KindClassDeclaration',name:type.name,range:type.declarationRange,nameRange:type.nameRange}),marker=type.markerOrigin;
     if(!marker||marker.declarationPath!==descriptor.profile.standardPath||marker.declarationSha256!=='sha256:'+descriptor.profile.standardSha256||marker.version!=='minimal-arrays-v8'||marker.mode!=='standard'||marker.contextName!=='ClassDecoratorContext'||marker.contextArity!==1||marker.entryId!==sha256('tsfg.array-facts.marker.v8\0'+canonical({sourcePath:marker.declarationPath,declarationRange:marker.declarationRange})))fail('standard component marker target differs','source');
     const aliases=markerAliases.filter(alias=>alias.useSourcePath===type.sourcePath&&canonical(alias.useRange)===canonical(marker.range));
-    if(aliases.length===1){const alias=aliases[0];if(canonical(alias.target.range)!==canonical(marker.declarationRange))fail('component alias signature target differs','source');usedAliases.add(alias);}
-    else if(aliases.length===0)grammar.sequence(marker.range,['@','tsfgComponent']);
-    else fail('ambiguous component marker alias','source');
+    if(aliases.length>1)fail('ambiguous component marker alias','source');
+    const alias=aliases[0],binding=sourceTypes.decorator(declaration,marker.range,alias?'component':'tsfgComponent').binding;
+    if(alias){
+      if(canonical(alias.target.range)!==canonical(marker.declarationRange))fail('component alias signature target differs','source');
+      if(canonical(binding)!==canonical(alias.declaration))fail('original component decorator value binding differs','source');
+      usedAliases.add(alias);
+    }else if(binding.kind!=='KindFunctionDeclaration'||binding.sourcePath!==marker.declarationPath||binding.name!=='tsfgComponent'
+      ||canonical(binding.range)!==canonical(marker.declarationRange))fail('original component decorator value binding differs','source');
     return {typeId:text(component.semantic.typeIds.get(type.id)),sourceType:text(type.id),declaration};
   });
   if(usedAliases.size!==markerAliases.length)fail('unbound component marker alias','source');

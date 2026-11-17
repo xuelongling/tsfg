@@ -7,13 +7,16 @@ import {sourceLexicalTokens} from './conversions.mjs';
 import {relativeModuleSource} from './module-hir-source.mjs';
 import {identifierName} from './module-facts.mjs';
 
+function originalNode(ast,sourcePath,kind,range,parent){
+  return ast.directory.get(sha256('tsfg.system-query.node.v1\0'+canonical({sourcePath,kind,range,parent})));
+}
 // Explicit construction access comes from the original direct class member.
 export function verifyQueryConstructorSource(type,grammar,ast,fail){
   const ctor=type.constructor;
-  const at=(parent,kind,range)=>ast.directory.get(sha256('tsfg.system-query.node.v1\0'+canonical({sourcePath:type.sourcePath,kind,range,parent})));
-  const declaration=at(ast.roots.get(type.sourcePath),'KindClassDeclaration',type.declarationRange);
+  const {sourcePath}=type;
+  const declaration=originalNode(ast,sourcePath,'KindClassDeclaration',type.declarationRange,ast.roots.get(sourcePath));
   if(!declaration||declaration.name!==type.name||canonical(declaration.nameRange)!==canonical(type.nameRange)
-    ||ctor.sourcePath!==type.sourcePath||ctor.lexicalParent!=null||!at(declaration.id,'KindConstructor',ctor.declarationRange))
+    ||ctor.sourcePath!==sourcePath||ctor.lexicalParent!=null||!originalNode(ast,sourcePath,'KindConstructor',ctor.declarationRange,declaration.id))
     fail('component constructor is not an original direct class member','source');
   const {first,end}=grammar.indices(ctor.declarationRange),prefix=grammar.tokens[first].text;
   const modified=['public','protected','private'].includes(prefix),keyword=first+(modified?1:0);
@@ -65,6 +68,13 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     }
     if(found.length!==1)fail('original named import has no unique module export','source');return found[0];
   }
+  function scopeDeclarations(scope,values){
+    const nested=children(scope);spend(1+2*nested.length);const declarations=[...nested];
+    if(values)for(const statement of nested)if(statement.kind==='KindVariableStatement')for(const list of children(statement))if(list.kind==='KindVariableDeclarationList')declarations.push(...children(list));
+    if(values&&scope.kind==='KindForOfStatement')for(const list of nested.filter(node=>node.kind==='KindVariableDeclarationList'))for(const declaration of children(list))for(const pattern of children(declaration).filter(node=>node.kind==='KindArrayBindingPattern'))declarations.push(...children(pattern));
+    spend(declarations.length-nested.length);
+    return declarations;
+  }
   function binding(node,values=false,scope=ast.directory.get(node.parent)){
     spend(1+(values?0:children(node).length));const nameNode=values?node:children(node).find(child=>child.kind==='KindIdentifier'||child.kind==='KindQualifiedName');
     if(!nameNode||nameNode.kind!=='KindIdentifier')fail('original named type reference required','source');
@@ -72,11 +82,7 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     const kinds=values?['KindFunctionDeclaration','KindClassDeclaration','KindVariableDeclaration','KindBindingElement','KindParameter']:declarationKinds;
     let parent=scope;
     while(parent){
-      const nested=children(parent);spend(1+2*nested.length);const declarations=[...nested];
-      if(values)for(const statement of nested)if(statement.kind==='KindVariableStatement')for(const list of children(statement))if(list.kind==='KindVariableDeclarationList')declarations.push(...children(list));
-      if(values&&parent.kind==='KindForOfStatement')for(const list of nested.filter(node=>node.kind==='KindVariableDeclarationList'))for(const declaration of children(list))for(const pattern of children(declaration).filter(node=>node.kind==='KindArrayBindingPattern'))declarations.push(...children(pattern));
-      spend(declarations.length-nested.length);
-      const local=declarations.filter(child=>kinds.includes(child.kind)&&child.name===name);
+      const local=scopeDeclarations(parent,values).filter(child=>kinds.includes(child.kind)&&child.name===name);
       if(local.length){if(local.length!==1)fail('ambiguous original type binding','source');return local[0];}
       parent=ast.directory.get(parent.parent);
     }
@@ -103,11 +109,26 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
       }
     }
     if(imported.length){if(imported.length!==1)fail('ambiguous original import binding','source');return imported[0];}
-    spend(ast.nodes.length);
-    const globals=ast.nodes.filter(row=>[descriptor.profile.path,descriptor.profile.standardPath].includes(row.sourcePath)&&row.parent===ast.roots.get(row.sourcePath)&&kinds.includes(row.kind)&&row.name===name);
+    const globals=[descriptor.profile.path,descriptor.profile.standardPath].flatMap(path=>
+      scopeDeclarations(ast.directory.get(ast.roots.get(path)),values).filter(row=>kinds.includes(row.kind)&&row.name===name));
     if(globals.length!==1)fail('original type declaration is outside owned scope','source');return globals[0];
   }
   const target=node=>node.kind==='KindTypeReference'?origin(binding(node)):origin(node);
+  const decoratorBindings=new Map();
+  function decorator(declaration,markerRange,spelling){
+    spend();
+    const {sourcePath,kind,range}=declaration,grammar=grammars.get(sourcePath),rootId=ast.roots.get(sourcePath);
+    const root=ast.directory.get(rootId),owner=originalNode(ast,sourcePath,kind,range,rootId);
+    const marker=owner&&originalNode(ast,sourcePath,'KindDecorator',markerRange,owner.id);
+    const label=kind==='KindClassDeclaration'?'component':'system';
+    grammar.sequence(markerRange,['@',spelling]);
+    const {first,end}=grammar.indices(markerRange),token=grammar.tokens[first+1];
+    const use=marker&&end===first+2&&originalNode(ast,sourcePath,'KindIdentifier',{start:token.start,end:token.end},marker.id);
+    if(root?.kind!=='KindSourceFile'||!use)fail('original '+label+' decorator occurrence differs','source');
+    const key=sourcePath+'\0'+spelling;
+    if(!decoratorBindings.has(key))decoratorBindings.set(key,origin(binding(use,true,root)));
+    return {owner,binding:decoratorBindings.get(key)};
+  }
   function definition(declaration){
     const members=children(declaration);spend(members.length);
     const parameters=members.filter(row=>row.kind==='KindTypeParameter'),rhs=members.at(-1);
@@ -165,5 +186,5 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     if(canonical(trace.target)!==canonical(target(result.node)))fail('original alias definition/substitution target differs','source');
     return result;
   }
-  return {at,resolve,target,argumentsOf,verifyLogical,valueBinding:(node,scope=undefined)=>origin(binding(node,true,scope)),complete:()=>{if(cursor!==aliases.length)fail('unconsumed alias proof differs','source');}};
+  return {at,resolve,target,argumentsOf,verifyLogical,decorator,valueBinding:(node,scope=undefined)=>origin(binding(node,true,scope)),complete:()=>{if(cursor!==aliases.length)fail('unconsumed alias proof differs','source');}};
 }

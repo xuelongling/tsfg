@@ -310,3 +310,43 @@ test('cold component catalogue rejects types outside the Query declaration profi
     assert.throws(()=>readSystemQueryFacts(altered.bytes,altered.context),/Query type context has unsupported non-fixed declaration/);
   });
 });
+
+test('cold component markers keep the original lexical value binding',()=>{
+  const input=fixture('complete'),request=JSON.parse(input.context.requestBytes.toString('utf8'));
+  assert.deepEqual(printSystemQueryFacts(readSystemQueryFacts(input.bytes,input.context),input.context),input.bytes);
+  const changed=edit((packet,payload)=>{
+    const source=payload.program.files.find(file=>file.path==='/src/main.ts');
+    const before=source.content;
+    source.content=before.replace('function unrelated(','function component(');
+    assert.notEqual(source.content,before);
+    assert.equal(source.content.length,before.length);
+    assert.equal(Buffer.byteLength(source.content),Buffer.byteLength(before));
+    source.sha256=sha256(source.content).slice(7);
+    const declaration=payload.nodes.find(node=>node.sourcePath===source.path&&node.kind==='KindFunctionDeclaration'&&node.name==='unrelated');
+    assert.ok(declaration);
+    declaration.name='component';
+    const files=payload.program.files.map(({path,sha256})=>({path,sha256}));
+    for(const type of payload.types)if(type.nominalKey)
+      type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({files,nominalKey:type.nominalKey}));
+    Object.assign(request.input.files.find(file=>file.path===source.path),{content:source.content,sha256:source.sha256});
+    packet.requestId=sha256('tsfg.system-query.request.v6\0'+canonical(request)+'\n');
+  },input);
+  changed.context.requestBytes=Buffer.from(canonical(request)+'\n');
+  assert.throws(()=>readSystemQueryFacts(changed.bytes,changed.context),{
+    code:'r10-system-query-source',message:/component decorator value binding differs/,
+  });
+});
+
+test('cold component markers retain the owning class declaration',()=>{
+  const input=fixture('loop-inheritance');
+  assert.deepEqual(printSystemQueryFacts(readSystemQueryFacts(input.bytes,input.context),input.context),input.bytes);
+  const changed=edit((_packet,payload)=>{
+    const position=payload.types.find(type=>type.name==='Position');
+    const base=payload.types.find(type=>type.name==='Base');
+    assert.notDeepEqual(position.markerOrigin.range,base.markerOrigin.range);
+    [position.markerOrigin.range,base.markerOrigin.range]=[base.markerOrigin.range,position.markerOrigin.range];
+  },input);
+  assert.throws(()=>readSystemQueryFacts(changed.bytes,changed.context),{
+    code:'r10-system-query-source',message:/component decorator occurrence differs/,
+  });
+});
