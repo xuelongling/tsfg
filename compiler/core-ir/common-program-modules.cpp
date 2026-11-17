@@ -214,6 +214,7 @@ bool verifyCommonModules(SourceModel &m,SourceBodies &bodies,const std::map<std:
       const auto id=string(field(row,"binding"));const auto &binding=field(*m.globals.at(id),"binding");
       exports.originals.push_back({string(field(binding,"name")),id,&field(binding,"declarationRange")});
     }
+    uint32_t previousEdgeEnd=0;
     for(const auto &edge:items(field(module,"imports"))){
       const auto target=string(field(edge,"sourcePath")),specifier=string(field(edge,"specifier")),kind=string(field(edge,"kind"));
       if(!m.spend()||!m.need(m.modules.count(target)&&resolved(path,specifier)==target&&
@@ -223,6 +224,8 @@ bool verifyCommonModules(SourceModel &m,SourceBodies &bodies,const std::map<std:
       if(!m.need(from>=a+3&&(s.tokens[from-1].text=="'"+specifier+"'"||s.tokens[from-1].text=="\""+specifier+"\"")&&s.tokens[from-2].text=="from","original module specifier differs"))return false;
       const bool star=s.tokens[a+1].text=="*",namedExport=kind!="import"&&!star;
       SourceAnchor occurrence;if(!s.range(field(edge,"range"),occurrence))return false;
+      if(!m.need(occurrence.start>=previousEdgeEnd,"original module edge order differs"))return false;
+      previousEdgeEnd=occurrence.end;
       exports.edges.push_back({occurrence,namedExport});
       if(kind!="import"&&star)exports.stars.push_back(&evidence.at(target));
       std::vector<Json> parts{Json(kind=="import"?"import":"export")};

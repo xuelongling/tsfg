@@ -132,6 +132,17 @@ int moduleExports(const char *path){
     if(!row||!other)return false;
     (*row->getAsObject())["definitionRange"]=field(*other,"definitionRange");return true;
   },kind,"export occurrence/definition join differs");
+  const auto reverseEdges=[](Json &payload,llvm::StringRef path){
+    auto *module=namedRow(arrayMember(payload,"modules"),"sourcePath",path);
+    auto *edges=module?arrayMember(*module,"imports"):nullptr;
+    if(!edges||edges->size()!=2||same(field((*edges)[0],"sourcePath"),field((*edges)[1],"sourcePath")))return false;
+    std::swap((*edges)[0],(*edges)[1]);
+    return true;
+  };
+  negative("original named re-export edge order",[&](Json &payload){return reverseEdges(payload,"/src/barrel.ts");},
+    "original module edge order differs");
+  negative("original import edge order",[&](Json &payload){return reverseEdges(payload,"/src/main.ts");},
+    "original module edge order differs");
   return ok?0:1;
 }
 
