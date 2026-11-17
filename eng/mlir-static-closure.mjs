@@ -2,7 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { MlirBuildError } from './mlir-build-inputs.mjs';
-import { readMlirLegalRegistration } from './mlir-source-registration.mjs';
+import { readMlirLegalRegistration, selectMlirBuildLegalFiles } from './mlir-source-registration.mjs';
 import { readMlirStagedSourcePolicy, mlirStagedSourceDescriptor } from './mlir-source-legal.mjs';
 
 const reject = message => { throw new MlirBuildError(message, 'mlir-source-integrity'); };
@@ -40,7 +40,7 @@ export async function readMlirDirectSourceSelection(identity, command) {
   if (build.lock.role !== 'compiler-side-M01') reject('Static source registration has another source role');
   const stagedPolicy = await readMlirStagedSourcePolicy(identity);
   const selected = new Map();
-  for (const row of [...build.lock.files, ...build.lock.licenseMaterials, ...file.lock.files,
+  for (const row of [...selectMlirBuildLegalFiles(build.lock), ...build.lock.licenseMaterials, ...file.lock.files,
     ...notices.files, ...identity.inspectedFiles]) {
     if (!isStaticCoreSourcePath(row.path)) continue;
     const entry = { repositoryRelativePath: row.path, blob: row.blob, sha256: row.sha256 };

@@ -599,3 +599,38 @@ test("M39 external Mesa mandatory private inputs reader retains exact19 Git iden
   assert.equal(lock.externalMesa.changedFiles.length, 1);
   assert.equal(lock.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
 });
+
+test("M39 external-only source declarations remain outside compiler-side M01 consumption", async t => {
+  t.diagnostic(`actual role-selection reader PID ${process.pid}`);
+  const { lock } = await readMlirLegalRegistration("build");
+  const externalOnly = lock.files.filter(file => file.use?.startsWith("exact source declaration only; actual external-Mesa-LLVM "));
+  assert.equal(externalOnly.length, 20);
+  for (const name of ["llvm/lib/Target/X86/MCA/X86CustomBehaviour.cpp", "llvm/lib/Linker/LinkDiagnosticInfo.h"]) {
+    const file = externalOnly.find(file => file.path === name);
+    assert.ok(file);
+    await t.test(name, async () => {
+      await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+        git: process.env.TSFG_GIT, paths: [name] }), { issueCode: "mlir-source-license" });
+    });
+  }
+  await t.test("static M01 source selection preserves the same declared boundary", async () => {
+    const { readMlirDirectSourceSelection } = await import("../../eng/mlir-static-closure.mjs");
+    const result = await readMlirDirectSourceSelection({ sourceCommit: lock.sourceCommit, baseCommit: lock.baseCommit,
+      sourceTree: "1ad1b903614825daa3ca3a5258fbb21e08d3c580", inspectedFiles: [] }, { role: "static" });
+    const selected = new Set(result.entries.map(file => file.repositoryRelativePath));
+    assert.ok(externalOnly.every(file => !selected.has(file.path)));
+    assert.ok(selected.has("llvm/lib/Analysis/AliasAnalysis.cpp"));
+  });
+  await t.test("SDK metadata admission preserves the same declared boundary", async () => {
+    const { verifyMlirSdkSourceRegistration } = await import("../../eng/mlir-sdk-admission.mjs");
+    const json = async name => JSON.parse(await readFile(new URL("../../eng/"+name, import.meta.url), "utf8"));
+    const sourceLock = await json("mlir-source.lock.json"), sdkLock = await json("mlir-sdk.lock.json");
+    const { lock: fileLegal } = await readMlirLegalRegistration("file");
+    const fixed = { sdkLock, sourceLock, buildLegal: lock, fileLegal };
+    verifyMlirSdkSourceRegistration(fixed);
+    const changed = { ...sdkLock, files: [...sdkLock.files, ...externalOnly.map(file => ({ path: "source/"+file.path, sha256: file.sha256 }))] };
+    assert.throws(() => verifyMlirSdkSourceRegistration({ ...fixed, sdkLock: changed }),
+      /** @param {any} error */ error => error.issueCode === "mlir-source-license" &&
+        error.sdkBodyRead === false && error.missingPaths.length === 20 && error.mismatchedPaths.length === 0);
+  });
+});

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { IntakeLedgerError, sourceGitEnvironment } from "./intake-ledger.mjs";
 import { readMlirSourceIdentity } from "./mlir-source.mjs";
 import { inspectMlirSdkProvenance, verifyMlirSdkLicenseMaterial, verifyMlirSdkNoticeRecord } from "./mlir-sdk.mjs";
-import { readMlirLegalRegistration } from "./mlir-source-registration.mjs";
+import { readMlirLegalRegistration, selectMlirBuildLegalFiles } from "./mlir-source-registration.mjs";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const reject = message => { throw new IntakeLedgerError("mlir-source-license", message); };
@@ -130,7 +130,7 @@ export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, r
     if (role === "external-Mesa-LLVM" && external?.role !== role) reject("External Mesa source role is not registered");
     if (!Array.isArray(paths) || paths.length === 0 || new Set(paths).size !== paths.length)
       reject("Actual build dependencies require distinct explicit paths");
-    const entries = new Map([...lock.files, ...(external?.changedFiles ?? [])].map(file => [file.path, file]));
+    const entries = new Map([...selectMlirBuildLegalFiles(lock, role), ...(external?.changedFiles ?? [])].map(file => [file.path, file]));
     const selected = paths.map(name => {
       const file = entries.get(name);
       if (!file) reject(`No qualified mandatory build input: ${name}`);

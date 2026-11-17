@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { readFile } from "node:fs/promises";
 import { IntakeLedgerError } from "./intake-ledger.mjs";
-import { readMlirLegalRegistration } from "./mlir-source-registration.mjs";
+import { readMlirLegalRegistration, selectMlirBuildLegalFiles } from "./mlir-source-registration.mjs";
 
 /** Metadata comparison only. A locked derived library cannot supersede current source admission. */
 export function verifyMlirSdkSourceRegistration({ sdkLock, sourceLock, buildLegal, fileLegal }) {
@@ -10,7 +10,7 @@ export function verifyMlirSdkSourceRegistration({ sdkLock, sourceLock, buildLega
       [buildLegal, fileLegal].some(lock => lock.sourceCommit !== sdkLock.sourceCommit ||
         lock.baseCommit !== sourceLock.baseCommit || lock.role !== "compiler-side-M01"))
     reject("SDK and current finite source registrations have different source identities");
-  const known = new Map([...buildLegal.files, ...buildLegal.licenseMaterials, ...fileLegal.files,
+  const known = new Map([...selectMlirBuildLegalFiles(buildLegal), ...buildLegal.licenseMaterials, ...fileLegal.files,
     ...sourceLock.files].map(file => [file.path, file]));
   const missingPaths = [], mismatchedPaths = [];
   for (const file of sdkLock.files) {

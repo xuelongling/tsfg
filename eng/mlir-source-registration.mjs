@@ -18,3 +18,15 @@ export async function readMlirLegalRegistration(kind) {
     throw new IntakeLedgerError("mlir-source-license", "The committed finite legal registration or original materials changed");
   return { lock: JSON.parse(bytes.toString("utf8")), sha256 };
 }
+
+const mesaDeclarationUses = new Set([
+  "exact source declaration only; actual external-Mesa-LLVM source-only target use is bound by ECP2026-0008 and the role-specific source identity; execution boundaries remain unchanged",
+  "exact source declaration only; actual external-Mesa-LLVM source-only target use bound by ECP2026-0008 and immutable e2 role; execution boundaries unchanged"
+]);
+
+/** Select consumption from the pinned declaration records for the caller's existing role. */
+export function selectMlirBuildLegalFiles(lock, role = "compiler-side-M01") {
+  if (role !== "compiler-side-M01" && (role !== "external-Mesa-LLVM" || lock.externalMesa?.role !== role))
+    throw new IntakeLedgerError("mlir-source-license", "Unknown build legal source role");
+  return lock.files.filter(file => role === "external-Mesa-LLVM" || !mesaDeclarationUses.has(file.use));
+}
