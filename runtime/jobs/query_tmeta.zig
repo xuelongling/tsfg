@@ -143,11 +143,25 @@ pub const Document = struct {
         self.arena.deinit();
         self.* = undefined;
     }
-    pub fn bind(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, entry_index: usize, scalars: []const ScalarValue) !Plan {
-        if (batch.store != store) return error.WrongStore;
+    fn entryForStore(self: *const Document, store: *const storage.Store, entry_index: usize) Error!*const Entry {
         if (!std.mem.eql(u8, &store.layout_identity, &self.component_layout.payload_hash)) return error.IdentityMismatch;
         if (entry_index >= self.payload.entries.len) return error.BindingMismatch;
-        const entry = self.payload.entries[entry_index];
+        return &self.payload.entries[entry_index];
+    }
+
+    /// Opens the Store's complete borrow session for the checked entry columns.
+    pub fn query(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, entry_index: usize) !storage.Store.Query {
+        const entry = try self.entryForStore(store, entry_index);
+        const selection = try allocator.alloc(storage.Selection, entry.columns.len);
+        defer allocator.free(selection);
+        for (entry.columns, selection) |column, *item|
+            item.* = .{ .component = column.componentType, .access = column.access };
+        return store.query(selection);
+    }
+
+    pub fn bind(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, entry_index: usize, scalars: []const ScalarValue) !Plan {
+        if (batch.store != store) return error.WrongStore;
+        const entry = try self.entryForStore(store, entry_index);
         if (scalars.len != entry.scalars.len or try batch.columnCount() != entry.columns.len) return error.BindingMismatch;
         for (entry.scalars, scalars) |formal, actual| {
             const width = switch (actual) {

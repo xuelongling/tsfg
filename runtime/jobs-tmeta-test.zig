@@ -27,10 +27,7 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     defer store.deinit() catch unreachable;
     const archetype = try store.addArchetype(document.component_layout.payload.components);
     for (0..3) |_| _ = try store.create(archetype, &.{});
-    const selection = try A.alloc(jobs.Selection, entry.columns.len);
-    defer A.free(selection);
-    for (selection, entry.columns) |*item, column| item.* = .{ .component = column.componentType, .access = column.access };
-    const query = try store.query(selection);
+    const query = try document.query(A, &store, 0);
     var released = false;
     defer if (!released) query.release() catch unreachable;
     try std.testing.expectEqual(@as(usize, 2), try query.batchCount());
@@ -219,12 +216,15 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     try std.testing.expectError(error.WrongStore, document.bind(A, &other_store, batch, 0, scalars));
     const other_archetype = try other_store.addArchetype(document.component_layout.payload.components);
     _ = try other_store.create(other_archetype, &.{});
-    var changed = try A.dupe(jobs.Selection, selection);
-    defer A.free(changed);
-    changed[0].access = if (changed[0].access == .read) .write else .read;
-    const wrong_access = try other_store.query(changed);
+    const selection = try A.alloc(jobs.Selection, plan.columns.len);
+    defer A.free(selection);
+    for (selection, plan.columns) |*item, column| item.* = .{ .component = column.component, .access = column.access };
+    const correct_access = selection[0].access;
+    selection[0].access = if (correct_access == .read) .write else .read;
+    const wrong_access = try other_store.query(selection);
     defer wrong_access.release() catch unreachable;
     try std.testing.expectError(error.BindingMismatch, document.bind(A, &other_store, try wrong_access.batch(0), 0, scalars));
+    selection[0].access = correct_access;
     var old_layout = try jobs.layout.Layout.load(A, @embedFile("jobs/testdata/component-layout.json"), .{
         .inputIdentity = "sha256:99a382a6b51842afce62faaecb7a14631aba5f82a7757582e5a7720bcfb1177e",
         .hirDigest = "sha256:d347ff9a236976c1b537870ca2eaade5da668b996be5be06d00dc1b80b45a6e4",
@@ -238,7 +238,6 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     defer old_query.release() catch unreachable;
     try std.testing.expectError(error.IdentityMismatch, document.bind(A, &wrong_layout, try old_query.batch(0), 0, scalars));
     try structuralNegatives(&document, expected);
-    for (selection, plan.columns) |*item, column| item.component = column.component;
     document.deinit();
     document_live = false;
     try std.testing.expectEqualStrings(expected.inputIdentity, plan.input_identity);
@@ -435,6 +434,51 @@ test "Query metadata rejects malformed and wrong-version unknown bytes before bi
     try std.testing.expectError(error.MetadataLimit, T.Document.load(A, deep, unused_expected));
 }
 
+test "actual Query metadata opens its checked Store selection" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-v6-f32-view-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-v6-f32-view.tmeta"), receipt.value);
+    defer document.deinit();
+    const other_receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-literal-receipt.json"), .{});
+    defer other_receipt.deinit();
+    var other_document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-literal.tmeta"), other_receipt.value);
+    defer other_document.deinit();
+    var other_store = try jobs.Store.init(A, &other_document.component_layout, 2);
+    defer other_store.deinit() catch unreachable;
+    try std.testing.expectError(error.IdentityMismatch, document.query(A, &other_store, 0));
+
+    var store = try jobs.Store.init(A, &document.component_layout, 2);
+    defer store.deinit() catch unreachable;
+    try std.testing.expectError(error.BindingMismatch, document.query(A, &store, document.payload.entries.len));
+    var failing = std.testing.FailingAllocator.init(A, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, document.query(failing.allocator(), &store, 0));
+    {
+        const empty = try document.query(A, &store, 0);
+        defer empty.release() catch unreachable;
+        try std.testing.expectEqual(@as(usize, 0), try empty.batchCount());
+        try std.testing.expectError(error.BorrowConflict, store.deinit());
+    }
+    const archetype = try store.addArchetype(document.component_layout.payload.components);
+    for (0..3) |_| _ = try store.create(archetype, &.{});
+    {
+        const query = try document.query(A, &store, 0);
+        defer query.release() catch unreachable;
+        try std.testing.expectEqual(@as(usize, 2), try query.batchCount());
+        try std.testing.expectError(error.BorrowConflict, document.query(A, &store, 0));
+        const first = try query.batch(0);
+        const last = try query.batch(1);
+        try std.testing.expectEqual(@as(usize, 2), try first.rowCount());
+        try std.testing.expectEqual(@as(usize, 1), try last.rowCount());
+        const entry = document.payload.entries[0];
+        try std.testing.expectEqual(entry.columns.len, try first.columnCount());
+        for (entry.columns, 0..) |column, index| {
+            const actual = try first.column(index);
+            try std.testing.expectEqualStrings(column.componentType, actual.component);
+            try std.testing.expectEqual(column.access, actual.access);
+            try std.testing.expectEqual(@as(usize, column.stride), actual.stride);
+        }
+    }
+}
 test "actual parenthesized producer metadata binds its original Store batch and scalars" {
     try exerciseFixture("parenthesized", false);
 }
