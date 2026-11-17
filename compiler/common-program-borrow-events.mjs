@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // A projection of verified physical provenance families, never alias authority.
 import {canonical,commonCheck as check} from './common-program-common.mjs';
+import {commonActualHeapPrefixes} from './common-program-abstract.mjs';
 
 /** @typedef {Readonly<{path:string,start:number,end:number}>} BorrowSource */
 /** @typedef {Readonly<{functionId:string,block:number,index:number,name:string,source:BorrowSource}>} BorrowSite */
@@ -21,22 +22,36 @@ export function commonBorrowEvents({model,objects,cyclicFunctions}){
     }return operations.get(op);
   }
   function addOrigin(ref,origin){spend();check(objects.has(ref),'borrow-proof','proof reference lacks an actual object');const rows=origins.get(ref)??[];rows.push(origin);check(rows.length<=4096,'limit');origins.set(ref,rows);}
-  function seed(value,heap,base){
+  function seed(value,heap,base,children){
     const pending=[{value,path:[]}],seen=new Set();
     for(let i=0;i<pending.length;i++){
-      spend();const {value,path}=pending[i],roots=new Set(value.refs);for(const pair of value.pairs.values())if(pair.environment)roots.add(pair.environment);
-      for(const ref of roots){spend();if(seen.has(ref))continue;seen.add(ref);addOrigin(ref,{...base,path});
-        for(const [slot,child]of [...heap].sort(([a],[b])=>a<b?-1:a>b?1:0))if(slot.startsWith(ref+'/')){spend();pending.push({value:child,path:[...path,slot.slice(ref.length+1)]});}
+      spend();const {value,path}=pending[i];
+      spend(value.refs.size+value.pairs.size);const roots=new Set(value.refs);
+      for(const pair of value.pairs.values())if(pair.environment)roots.add(pair.environment);
+      for(const ref of roots){
+        spend();if(seen.has(ref))continue;seen.add(ref);addOrigin(ref,{...base,path});
+        for(const [slot,child]of children(ref)){
+          spend(path.length+1);pending.push({value:child,path:[...path,slot.slice(ref.length+1)]});
+        }
       }
-      for(const cell of value.cells){spend();if(seen.has(cell))continue;seen.add(cell);const child=heap.get(cell);if(child)pending.push({value:child,path:[...path,'cell']});}
+      for(const cell of value.cells){
+        spend();if(seen.has(cell))continue;seen.add(cell);const child=heap.get(cell);
+        if(child){spend(path.length+1);pending.push({value:child,path:[...path,'cell']});}
+      }
       check(pending.length<=65536,'limit');
     }
   }
   function begin(c,heap){
     contexts.set(c.id,c);locations.set(c.id+'/entry',{context:c.id,site:entry(c),kind:'entry',completion:null});
     if(!c.root)return;
-    c.args.forEach((value,index)=>seed(value,heap,{kind:'parameter',functionId:c.plan.owner.id,binding:c.plan.parameters[index].id,index,site:null,activation:null}));
-    for(const [slot,value]of heap)if(slot.startsWith('global:'))seed(value,heap,{kind:'global',functionId:null,binding:slot.slice(7),index:null,site:null,activation:null});
+    // All input origins share this unchanged root heap and its key order.
+    let prefixes;
+    const children=ref=>(prefixes??=commonActualHeapPrefixes(heap,spend)).range(ref);
+    spend(c.args.length);
+    c.args.forEach((value,index)=>seed(value,heap,{kind:'parameter',functionId:c.plan.owner.id,binding:c.plan.parameters[index].id,index,site:null,activation:null},children));
+    for(const [slot,value]of heap){
+      spend();if(slot.startsWith('global:'))seed(value,heap,{kind:'global',functionId:null,binding:slot.slice(7),index:null,site:null,activation:null},children);
+    }
   }
   const before=(c,op,at)=>locations.set(at,{context:c.id,site:site(c,op),kind:'operation',completion:null});
   function after(c,op,value,at){

@@ -7,6 +7,8 @@ import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
+import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
+import {commonBorrowEvents} from '../../compiler/common-program-borrow-events.mjs';
 import {createCommonBorrowProof,readCommonBorrowProof,writeCommonBorrowProof} from '../../compiler/common-program-borrow-proof.mjs';
 import {canonical} from '../../compiler/identity.mjs';
 import {compileCommonBorrowProof} from '../../compiler/pipeline.mjs';
@@ -55,6 +57,24 @@ test('owning proof read/write binds the full fixed input and rejects changed rel
     // @ts-expect-error Source/operation identities are readonly.
     proof.events.definitions[0].at.source.start=0;
   }
+});
+
+test('genuine Borrow root evidence charges heap visits and indexes each root heap once',()=>{
+  const {hir,publication}=completed;
+  const records=new Map(publication.contracts.map(row=>[row.functionId,row]));
+  const {values:{actual}}=commonProgramPhysical(hir,records);
+  const roots=[...actual.contexts.values()].filter(row=>row.root);
+  const measure=name=>{
+    const root=roots.find(row=>row.plan.owner.name===name);assert.ok(root);
+    const heap=new Map(root.entryHeap),entries=heap.entries.bind(heap);let work=0,passes=0;
+    heap[Symbol.iterator]=()=>{passes++;return entries();};
+    const events=commonBorrowEvents({model:{spend:(amount=1)=>{work+=amount;}},objects:actual.objects,cyclicFunctions:new Set()});
+    events.begin(root,heap);
+    return {work,passes,minimum:heap.size+root.args.length+[...heap.keys()].filter(key=>key.startsWith('global:')).length};
+  };
+  const scalar=measure('borrowCompletions'),span=measure('relayBorrowCompletion');
+  assert.deepEqual({scalarVisitsPaid:scalar.work>=scalar.minimum,spanHeapPasses:span.passes},
+    {scalarVisitsPaid:true,spanHeapPasses:2});
 });
 for(const field of ['publication','request'])test('public Common Borrow proof owns '+field+' before artifact admission',{skip:!tool},async()=>{
   const publication=structuredClone(safe.publication),request=structuredClone(safe.request);
