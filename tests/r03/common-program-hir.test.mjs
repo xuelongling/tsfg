@@ -363,3 +363,15 @@ for(const [name,change] of localExportMutations)test('derived local export rejec
   const packet=localExportVariant(change);
   assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
 });
+
+for(const path of ['/src/barrel.ts','/src/main.ts'])test('cold verifier binds module edges to original order: '+path,()=>{
+  const original=facts.get('mixed').payload.modules.find(module=>module.sourcePath===path);
+  assert.equal(original.imports.length,2);
+  assert.ok(original.imports[0].range.end<=original.imports[1].range.start);
+  assert.notEqual(original.imports[0].sourcePath,original.imports[1].sourcePath);
+  const value=mutated(p=>p.modules.find(module=>module.sourcePath===path).imports.reverse(),'mixed');
+  assert.throws(()=>verifyCommonProgramFacts(value),{
+    code:'r03-common-program-module',
+    message:/original module edge order differs/
+  });
+});

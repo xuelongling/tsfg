@@ -202,7 +202,10 @@ export function verifyCommonProgramFacts(value) {
     const initialized=module.initialization.filter(row=>row.kind==='initialize');check(same(initialized.map(row=>row.binding),module.globals),'global');
     for(const global of p.globals.filter(row=>row.sourcePath===module.sourcePath)){const row=global.binding;
       check(['let','const','default-export'].includes(global.bindingKind)&&row.kind==='global'&&row.writable===(global.bindingKind==='let'),'global');}
-    for(const edge of module.imports){spend();check(modules.has(edge.sourcePath)&&['import','export','export-star'].includes(edge.kind),'module');sourceRange(edge.range,g.text);coverage.get(module.sourcePath).push(edge.range);
+    let previousEdgeEnd=0;
+    for(const edge of module.imports){spend();check(modules.has(edge.sourcePath)&&['import','export','export-star'].includes(edge.kind),'module');sourceRange(edge.range,g.text);
+      check(edge.range.start>=previousEdgeEnd,'module','original module edge order differs');previousEdgeEnd=edge.range.end;
+      coverage.get(module.sourcePath).push(edge.range);
       check(edge.specifier.startsWith('./')||edge.specifier.startsWith('../'),'module');
       const resolved=module.sourcePath.split('/').slice(0,-1);
       for(const part of edge.specifier.split('/')){spend();if(!part||part==='.')continue;if(part==='..'){check(resolved.length>1,'module');resolved.pop();}else resolved.push(part);}
