@@ -49,3 +49,28 @@ for(const [index,oracle]of expected.cases.entries())test('SLOT25v '+oracle.name+
     assert.deepEqual(plan.domains.find(row=>row.id===result.domainId).actualTypes,[fn.returnType.id]);
   }
 });
+
+test('a stored local Array keeps its owner through a checked slot read and dense writes',async()=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-source514/9068b0b5e16dd0715dc9bc165c9d067a6594b1ce67d21d2477cbe5df560146de-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:29e6c213c43c012abe71cba8869fc7339f73ce74327ebed4f2c5ad9297520f6f');
+  const facts=readTypedArrayFacts(bytes),source=facts.payload.files.find(file=>file.path===facts.payload.rootFile);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const publication=staticPublication(facts),built=buildHir(facts,context,publication);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const {definition,reached}=buildFiniteCoreDomains(built.hir,context,{publicationContext:publication});
+  for(const plan of [definition,reached]){
+    const {reads,writes}=plan.arrayReaching;
+    const text=row=>source.content.slice(row.origin.start,row.origin.end);
+    const slot=reads.find(row=>text(row)==='outer[0]'),stored=writes.find(row=>text(row)==='a');
+    assert.equal(slot.status,'proven');
+    assert.equal(slot.owner,stored.owner);
+    assert.deepEqual(slot.versions,[stored.id]);
+    const backing=writes.find(row=>text(row)==='1');
+    assert.ok(backing.owner);
+    assert.notEqual(backing.owner,slot.owner);
+    assert.deepEqual(writes.filter(row=>row.kind==='store').map(row=>[text(row),row.owner,row.index]),[
+      ['b[1]=2',backing.owner,'c:1'],
+      ['a[2]=3',backing.owner,'c:2'],
+    ]);
+  }
+});
