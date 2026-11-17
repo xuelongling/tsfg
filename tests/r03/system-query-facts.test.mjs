@@ -17,6 +17,39 @@ const edit=(mutate,input=actual)=>{
   return {bytes:Buffer.from(canonical(packet)+'\n'),context:{...input.context,expectedPackageId:packet.packageId}};
 };
 
+
+test('cold Source boundary rejects an unsupported system declaration prefix',()=>{
+  const request=JSON.parse(actual.context.requestBytes.toString());
+  const changed=edit((packet,payload)=>{
+    const {declaration}=payload.systems[0];
+    const modifier=payload.nodes.find(node=>node.sourcePath===declaration.sourcePath
+      && node.kind==='KindExportKeyword' && node.range.start>=declaration.range.start
+      && node.range.end<=declaration.nameRange.start);
+    assert.ok(modifier);
+    assert.ok(!payload.nodes.some(node=>node.parent===modifier.id));
+    const source=payload.program.files.find(file=>file.path===declaration.sourcePath);
+    const {start,end}=modifier.range;
+    assert.equal(source.content.slice(start,end),'export');
+    source.content=source.content.slice(0,start)+'async '+source.content.slice(end);
+    source.sha256=sha256(source.content).slice(7);
+    const files=payload.program.files.map(({path,sha256})=>({path,sha256}));
+    for(const type of payload.types)if(type.runtimeKey){
+      type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({files,nominalKey:type.nominalKey}));
+    }
+    const requestFile=request.input.files.find(file=>file.path===source.path);
+    Object.assign(requestFile,{content:source.content,sha256:source.sha256});
+    packet.requestId=sha256('tsfg.system-query.request.v6\0'+canonical(request)+'\n');
+    modifier.kind='KindAsyncKeyword';
+    modifier.range.end=start+'async'.length;
+    const {sourcePath,kind,range,parent}=modifier;
+    modifier.id=sha256('tsfg.system-query.node.v1\0'+canonical({sourcePath,kind,range,parent}));
+  });
+  changed.context.requestBytes=Buffer.from(canonical(request)+'\n');
+  assert.throws(()=>readSystemQueryFacts(changed.bytes,changed.context),{
+    code:'r10-system-query-source',message:/system declaration prefix has unsupported semantics/,
+  });
+});
+
 function multiSystemInput(){
   const read=name=>readFileSync(new URL('./testdata/system-query-effects/'+name,import.meta.url));
   const bytes=read('multi-facts.json'),packet=JSON.parse(bytes.toString('utf8'));
@@ -72,6 +105,7 @@ test('the private v6 owner rejects the removed v4 packet and context route',()=>
 });
 
 test('actual architecture Source packet owns complete original context and ordered component accesses',()=>{
+  assert.match(actual.packet.payload.program.files.find(file=>file.path==='/src/main.ts').content,/@system\s+export function integrate\(/);
   const facts=readSystemQueryFacts(actual.bytes,actual.context),system=facts.systems[0],access=query(facts);
   assert.deepEqual(printSystemQueryFacts(facts,actual.context),actual.bytes);
   assert.deepEqual(facts.program,actual.packet.payload.program);

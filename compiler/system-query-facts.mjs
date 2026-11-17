@@ -256,6 +256,12 @@ function checkSystemInventory(systems,grammars,spend){
   if(expected.size)fail('complete Source marked system inventory differs','source');
 }
 
+const systemDeclarationPrefixes=[
+  ['@','system','function'],
+  ['@','system','export','function'],
+  ['@','system','export','default','function'],
+];
+
 /** @returns {SystemQuerySystem[]} */
 function decodeSystems(value,program,sources,ast,builtins,component,fields,grammars,scalars,spend){
   const seen=new Set(),ownedMarkers=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
@@ -327,7 +333,12 @@ function decodeSystems(value,program,sources,ast,builtins,component,fields,gramm
     if(!body||!returnSyntax)fail('original return annotation/body missing','source');
     const bodyRange=range(row.bodyRange);if(canonical(bodyRange)!==canonical(body.range))fail('original complete system body range differs','source');
     sourceTypes.verifyLogical(declaration.sourcePath,returnSyntax.range,returnType,component.types);
-    const bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange),prefix=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
+    const bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange);
+    const prefix=systemDeclarationPrefixes[name.first-bounds.first-3];
+    if(!prefix||prefix.some((token,index)=>{
+      spend();
+      return grammar.tokens[bounds.first+index].text!==token;
+    }))fail('system declaration prefix has unsupported semantics','source');
     grammar.sequence(declaration.range,[...prefix,declaration.nameRange,'(',...parameters.flatMap((row,index)=>index?[',',row.binding.range]:[row.binding.range]),')',':',returnSyntax.range,body.range]);
     const loops=decodeLoops(row.loops,body,declaration.sourcePath,parameters,ast,grammar,component,fields,scalars,spend,sourceTypes);
     return {declaration,declKey:{sourcePath:declaration.sourcePath,path:[],kind:/** @type {'function'} */('function'),name:declaration.name},markerRange,marker,signature,parameters,sourceReturnType:returnType,returnType:text(component.semantic.typeIds.get(returnType)),bodyRange,loops};
