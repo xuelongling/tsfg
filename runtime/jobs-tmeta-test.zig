@@ -244,13 +244,19 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     try std.testing.expectEqualStrings(expected.inputIdentity, plan.input_identity);
     try std.testing.expectEqual(@as(usize, 2), (try plan.argument(0)).row_count);
     _ = try plan.readTuple(0);
+    try std.testing.expectError(error.BindingMismatch, plan.readTuple(plan.tuples.len));
+    try std.testing.expectError(error.BindingMismatch, plan.writeTuple(plan.tuples.len));
     try query.release();
     released = true;
     const fresh = try store.query(selection);
     defer fresh.release() catch unreachable;
     try std.testing.expectError(error.InvalidLease, plan.argument(0));
-    try std.testing.expectError(error.InvalidLease, plan.readTuple(0));
-    if (producer_fixture == .f32_view) try std.testing.expectError(error.InvalidLease, plan.readTuple(1));
+    for (0..plan.tuples.len) |index| {
+        try std.testing.expectError(error.InvalidLease, plan.writeTuple(index));
+        try std.testing.expectError(error.InvalidLease, plan.readTuple(index));
+    }
+    try std.testing.expectError(error.InvalidLease, plan.readTuple(plan.tuples.len));
+    try std.testing.expectError(error.InvalidLease, plan.writeTuple(plan.tuples.len));
 }
 
 // Digests are from the independently retained batch, Source facts and Source request.

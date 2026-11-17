@@ -220,13 +220,21 @@ pub const Plan = struct {
         return .{ .scalar = self.scalars[scalar] };
     }
     pub fn readTuple(self: *const Plan, index: usize) ![]const u8 {
-        if (index >= self.tuples.len) return error.BindingMismatch;
-        return self.batch.read(self.tuples[index].column);
+        const tuple = try self.tupleBinding(index);
+        return self.batch.read(tuple.column);
     }
     pub fn writeTuple(self: *const Plan, index: usize) ![]u8 {
-        if (index >= self.tuples.len) return error.BindingMismatch;
-        if (self.tuples[index].access != .write) return error.ReadOnly;
-        return self.batch.write(self.tuples[index].column);
+        const tuple = try self.tupleBinding(index);
+        if (tuple.access != .write) {
+            _ = try self.batch.rowCount();
+            return error.ReadOnly;
+        }
+        return self.batch.write(tuple.column);
+    }
+    fn tupleBinding(self: *const Plan, index: usize) !TupleBinding {
+        if (index < self.tuples.len) return self.tuples[index];
+        _ = try self.batch.rowCount();
+        return error.BindingMismatch;
     }
 };
 fn charge(remaining: *usize, count: usize) Error!void {
