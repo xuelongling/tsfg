@@ -117,9 +117,41 @@ bool CommonTableVerifier::moduleJoins(){
       !hash("tsfg.common-program.host-import.v1",Object{{"sourcePath",(*sources)[at(h,"source")].getAsObject()->getString("path")->str()},{"name",h.getString("name")->str()},
         {"capabilityId",*h.getInteger("capability")},{"signatureHash",h.getString("signature")->str()}},*h.getString("id")))return false;
   }
-  for(const auto key:{"roots","requiredRoots"})for(const auto &value:*roots->getArray(key)){if(!charge())return false;const auto &r=*value.getAsObject();const auto found=functionIds.find(r.getString("target")->str());
-    if(found==functionIds.end()||program.functions[found->second].source!=at(r,"source")||
-      (r.getString("kind")=="module-initialization")!=(program.functions[found->second].role==2))return reject("Common root complete function/Source role join");}
+  for(const auto key:{"roots","requiredRoots"})for(const auto &value:*roots->getArray(key)){
+    if(!charge())return false;
+    const auto &root=*value.getAsObject();
+    const auto targetId=*root.getString("target");
+    const auto found=functionIds.find(targetId.str());
+    const auto source=at(root,"source");
+    const bool initialize=root.getString("kind")=="module-initialization";
+    if(found==functionIds.end()||initialize!=(program.functions[found->second].role==2)||
+      (initialize&&(program.functions[found->second].source!=source||root.getString("name")!="$moduleInit")))
+      return reject("Common root complete function/Source role join");
+    if(initialize)continue;
+
+    // Source selects a public name in the exporting module. The validated
+    // export already joins its target to the function's defining Source.
+    const auto module=sourceModule[source];
+    if(module==UINT32_MAX)return reject("Common root actual Module function export join");
+    const auto &exports=*(*modules)[module].getAsObject()->getArray("exports");
+    const auto name=*root.getString("name");
+    size_t first=0,last=exports.size();
+    bool matches=false;
+    while(first<last){
+      const auto middle=first+(last-first)/2;
+      const auto &entry=*exports[middle].getAsObject();
+      const auto publicName=*entry.getString("name");
+      if(!charge(std::min(publicName.size(),name.size())/64+1))return false;
+      const int order=publicName.compare(name);
+      if(order==0){
+        matches=entry.getString("kind")=="function"&&entry.getString("target")==targetId;
+        break;
+      }
+      if(order<0)first=middle+1;
+      else last=middle;
+    }
+    if(!matches)return reject("Common root actual Module function export join");
+  }
   for(const auto &required:*roots->getArray("requiredRoots")){bool found=false;for(const auto &root:*roots->getArray("roots")){if(!charge())return false;if(exception::equal(required,root)){found=true;break;}}if(!found)return reject("Common required root omission");}
   return true;
 }

@@ -212,12 +212,33 @@ const Checker = struct {
         const c = self.c; const rows = self.common.modules.roots;
         inline for (.{ rows.roots, rows.required_roots }) |group| for (group) |root| {
             try c.step(); const ref = self.functions.get(root.target) orelse return error.InvalidReference;
-            const function = c.program.functions[@intFromEnum(ref)];
-            try c.require(self.source_modules[@intFromEnum(root.source)] != null and function.source == root.source);
-            try c.require((root.kind == .@"module-initialization") == (function.role == .module_initializer));
-            // The original Common root contract names the actual declaration,
-            // not an export alias or an independently self-consistent label.
-            try c.require(try textEqual(c, root.name, function.name));
+            const module_ref = self.source_modules[@intFromEnum(root.source)] orelse return error.InvalidShape;
+            const module = self.common.modules.modules[@intFromEnum(module_ref)];
+            if (root.kind == .@"module-initialization") {
+                try c.require(ref == module.initializer);
+                try c.require(try textEqual(c, root.name, "$moduleInit"));
+                continue;
+            }
+            // The selector names this module's public binding. moduleRows
+            // already joined each function export to its defining Source.
+            var low: usize = 0;
+            var high = module.exports.len;
+            var found = false;
+            while (low < high) {
+                const middle = low + (high - low) / 2;
+                const exported = module.exports[middle];
+                try c.charge(1 + @min(exported.name.len, root.name.len) / 64);
+                switch (std.mem.order(u8, exported.name, root.name)) {
+                    .lt => low = middle + 1,
+                    .gt => high = middle,
+                    .eq => {
+                        try c.require(exported.kind == .function and std.mem.eql(u8, &exported.target, &root.target));
+                        found = true;
+                        break;
+                    },
+                }
+            }
+            try c.require(found);
         };
         for (rows.required_roots) |required| {
             try c.step(); var found = false;
