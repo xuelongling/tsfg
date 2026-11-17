@@ -173,6 +173,16 @@ struct ArrayCalls {
     const auto source=value(from,fn);
     return source==ArrayCallFlow::none?flow.unknown(target):flow.copy(source,target);
   }
+  bool returnsLocalArray(const std::string &target) {
+    if(!proof.charge(3))return false;
+    auto &body=proof.functions.at(target).getBody();
+    if(!body.hasOneBlock())return false;
+    auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(body.front().getTerminator());
+    if(!returned||returned.getNumOperands()!=1||!proof.mayExecute(returned.getOperation()))return false;
+    auto *birth=returned.getOperand(0).getDefiningOp();
+    return birth&&birth->getBlock()==&body.front()&&
+      birth->getName().getStringRef()=="tsfg_core.domain.array_create"&&proof.mayExecute(birth);
+  }
   bool coverage() {
     for(const auto &[id,row]:contracts) {
       if(!proof.charge())return false;const auto &upper=*row->getObject("upper");ArrayCallFlow::Bound bound;
@@ -237,7 +247,13 @@ struct ArrayCalls {
               if(alias!=proof.returnedParameters.end()&&alias->second<arguments.size()&&arguments[alias->second]!=ArrayCallFlow::none) {
                 if(!flow.copy(arguments[alias->second],result))return fail(flow.error());
                 callResult=ArrayCallFlow::none;
+              }else if(string(targetContract,"ownerType").empty()&&returnsLocalArray(target)) {
+                // The caller result is the local effect root for its new
+                // Array. The call still owes the selected definition's upper.
+                if(!flow.local(result))return fail(flow.error());
+                callResult=ArrayCallFlow::none;
               }
+              if(proof.failed)return false;
             }
           }
           if(!flow.call(definitions.at(id),definitions.at(target),arguments,callResult))return fail(flow.error());

@@ -8,6 +8,7 @@ import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 import {arrayAnalysisTypes} from '../../compiler/array-analysis-types.mjs';
 import {createSpanPlanes} from '../../compiler/array-span-planes.mjs';
+import {accepted,invokeCore,rejected} from './generic-core-package-capture.mjs';
 const oracle=JSON.parse(await readFile(new URL('./testdata/typed-array-span-array-return/source-expected.json',import.meta.url),'utf8'));
 const hashes=['e735995e1640f6b6bd34b5e4d9ac55102553aef425229759002b2f11976f28ed',
   '3d4b83649392ec38b99c1d7f3c4fa89a2113af8b0e5f00ab60c22ac4fd58008d'];
@@ -19,7 +20,7 @@ async function actual(index){
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   return {facts,source,context,publication:staticPublication(facts)};
 }
-test('actual returned Span Array retains the complete current overwritten slot and original B owner',async()=>{
+test('actual returned Span Array retains the complete current overwritten slot and original B owner',async t=>{
   const {facts,context,publication}=await actual(0),built=buildHir(facts,context,publication);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));const hir=built.hir;
   const wrap=hir.functions.find(row=>row.name==='wrap'),caller=hir.functions.find(row=>row.name==='run');
@@ -37,6 +38,15 @@ test('actual returned Span Array retains the complete current overwritten slot a
   assert.ok(core.includes('"tsfg_core.domain.array_store"'));
   assert.ok(core.includes('"tsfg_core.domain.array_resize"'));
   assert.ok(core.includes('"tsfg_core.domain.array_read"'));
+  if(process.env.TSFG_CORE_IR_EXE)await t.test('the independent consumer admits the actual returned Array and its current Span',async()=>{
+    const canonicalized=await invokeCore(core);accepted(canonicalized);
+    const optimized=await invokeCore(core,'--optimize');accepted(optimized);
+    assert.deepEqual(optimized.stdout,canonicalized.stdout);
+    const withoutAuthority=core.replace(/tsfg_core\.array_call_authority = "(?:\\.|[^"\\])*", /,'');
+    assert.notEqual(withoutAuthority,core);
+    const missing=await invokeCore(withoutAuthority);rejected(missing);
+    assert.match(missing.stderr.toString('utf8'),/whole admission requires complete Array call definition authority/);
+  });
 });
 test('actual returned Span Array keeps its live A slot through the callee resize',async()=>{
   const {facts,source,context,publication}=await actual(1),built=buildHir(facts,context,publication);
