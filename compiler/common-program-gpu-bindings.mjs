@@ -90,7 +90,11 @@ export function createCommonGpuBindingPlan(input,publication,kernelRequest,value
   });
   const bindings=request.bindings.map(row=>{
     const resource=available.get(resourceKey(row));
-    check(resource!==undefined,'resource','logical GPU resource is outside the selected fixed access set',{primary,resourceId:row.id});
+    if(resource===undefined){
+      const owner=row.kernel!==null&&selected.has(row.kernel)?functions.get(row.kernel):undefined;
+      check(false,'resource','logical GPU resource is outside the selected fixed access set',
+        {primary:owner?source(owner):primary,resourceId:row.id});
+    }
     const admitted=/** @type {GpuResource} */(resource);
     check(admitted.access===row.access,'access','logical GPU resource access differs from its fixed contract',{primary:admitted.source,resourceId:row.id});
     return {...row,type:'i32',source:admitted.source};

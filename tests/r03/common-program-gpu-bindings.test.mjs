@@ -182,6 +182,31 @@ test('genuine Source3 extra void return resource identifies its owner function',
     error.primary.sourceId===voidOwner.sourceId&&error.primary.start===voidOwner.start&&error.primary.end===voidOwner.end);
 });
 
+test('logical GPU full group anchors an extra void return at its selected owner',()=>{
+  const right=voidDeclarations.find(row=>row.original.name==='right');assert.ok(right);
+  assert.deepEqual(voidGroup.targets,[right.fn.id,voidSink.fn.id]);
+  const at=range=>({sourceId:'/src/main.ts',...range});
+  const globalText='rightTotal: i32 = 0',globalStart=voidSource.toString('utf8').indexOf(globalText);
+  assert.ok(globalStart>=0);
+  const rightOwner=at(right.original.sourceRange);
+  const bindings=[...voidExpected.bindings,
+    {kind:'global',id:right.global.id,kernel:null,set:0,binding:2,access:'read-write',type:'i32',
+      source:at({start:globalStart,end:globalStart+globalText.length})},
+    {kind:'parameter',id:right.parameter.id,kernel:right.fn.id,set:0,binding:3,access:'read',type:'i32',
+      source:at(right.original.parameterRange)},
+    {kind:'return',id:right.fn.id,kernel:right.fn.id,set:0,binding:4,access:'write',type:'i32',source:rightOwner},
+  ];
+  const request={...voidRequest,kernels:voidGroup.targets,bindings:bindings.map(({type,source,...binding})=>binding)};
+  const expected={...voidExpected,kernels:[{functionId:right.fn.id,source:rightOwner},...voidExpected.kernels],
+    bindings,requestDigest:digest(request)};
+  assert.deepEqual(createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,request),expected);
+  assert.deepEqual(readCommonGpuBindingPlan(Buffer.from(canonical(expected)+'\n'),voidHir,voidPublication,voidGroup,request),expected);
+  const extra={...request,bindings:[...request.bindings,{...voidExtraReturn.bindings[2],binding:5}]};
+  assert.throws(()=>createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,extra),error=>
+    sourceDiagnostic(error)&&error.code==='r03-common-program-gpu-resource'&&error.ruleId==='r01-gpu'&&
+    error.primary.sourceId===voidOwner.sourceId&&error.primary.start===voidOwner.start&&error.primary.end===voidOwner.end);
+});
+
 // This original public-v3 Source returns bare x+7. Its nonnull fixed return
 // contract must be reconstructed by C++ without inventing literal provenance.
 const [constantRaw,constantOracleRaw,constantSource]=await Promise.all(['package.json','official-oracle.json','source.ts']
