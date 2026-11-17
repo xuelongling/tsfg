@@ -28,7 +28,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
     effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set()}])),writes=new Map(),reads=new Map(),contexts=new Map(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
-  let contextWrites=new Map();
+  let contextWrites=new Map(),terminalReads=null;
   function arrayCarrier(id) {
     const stack=[id],seen=new Set();while(stack.length) {
       charge();const current=stack.pop();if(seen.has(current))continue;seen.add(current);const type=types.get(current);
@@ -143,7 +143,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       else for(const other of memory.slots.keys())if(other.startsWith('s:'))memory.slots.delete(other);
       memory.slots.set(slot,new Set([id]));
     }
-    function expression(value,path,state,bindings,statement=false) {
+    function expression(value,path,state,bindings,terminalRoot=false) {
       if(!value)return {};charge();const child=name=>expression(value[name],path+'/'+name,state,bindings);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
       if(['group','nonNull','assertType'].includes(value.kind)) {const {truth,...result}=child('operand');return result;}
@@ -165,10 +165,13 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings),
           index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings):null;
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
-          const status=load({...value,range:value.target.range},path+'/old-value',state,receiver,index);
-          // The lexical pass keeps every original occurrence. Only a direct
-          // statement's ordered transfer closes at a definite old-read trap.
-          if(!collectAll&&statement&&status==='missing'&&canTerminateCompound())return {terminal:true};
+          const old=path+'/old-value',status=load({...value,range:value.target.range},old,state,receiver,index);
+          // The lexical pass retains every original occurrence. Ordered
+          // transfer stops only at a definite old-read trap at a statement root.
+          if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateCompound()) {
+            if(recordReads){charge();(terminalReads??=new Set()).add(old);}
+            return {terminal:true};
+          }
         }
         const rhs=value.value?child('value'):{symbol:path};
         if(value.kind==='arrayResizeChecked') {
@@ -299,8 +302,11 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
     function statements(body,path,state,bindings) {
       for(const [index,row] of body.entries()) {
         charge();const p=path+'/'+index;
-        if(row.kind==='local')bindings.set(row.binding.id,adapt(expression(row.initializer,p+'/initializer',state,bindings),p+'/initializer',fn.id+'/binding/'+row.binding.id));
-        else if(row.kind==='expression') {
+        if(row.kind==='local') {
+          const value=expression(row.initializer,p+'/initializer',state,bindings,true);
+          if(value.terminal)return null;
+          bindings.set(row.binding.id,adapt(value,p+'/initializer',fn.id+'/binding/'+row.binding.id));
+        }else if(row.kind==='expression') {
           if(expression(row.expression,p+'/expression',state,bindings,true).terminal)return null;
         }
         else if(row.kind==='return'||row.kind==='constructorReturn') {
@@ -359,7 +365,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
   }
   let before;
   do {
-    charge();before=ledger();reads.clear();contextWrites=new Map();
+    charge();before=ledger();reads.clear();contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of functions) {
       const incoming=[];for(const row of contexts.values()){charge();if(row.target===fn.id&&row.possible)incoming.push(row);}
@@ -369,6 +375,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
     }
     for(const [site,row] of contexts){charge();contexts.set(site,contextWrites.get(site)??{target:row.target,possible:false,state:new Map(),constants:new Map(),truths:new Map()});}
   }while(before!==ledger());
-  return own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
+  const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
+  return {reaching,terminalReads};
 }

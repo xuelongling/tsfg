@@ -8,15 +8,21 @@ import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
-test('a terminal compound old read blocks the RHS sink write and the target writeback',async t=>{
-  const bytes=await readFile(new URL('./testdata/typed-array-terminal-compound/old-value-terminal-package.json',import.meta.url));
-  assert.equal(sha256(bytes),'sha256:6a33970814041f757694f14cb3750e8553593de9cf4f77bef2aefa75c150aaca');
+const cases=[
+  {name:'a terminal compound old read blocks the RHS sink write and the target writeback',
+    fixture:'old-value-terminal',sha:'6a33970814041f757694f14cb3750e8553593de9cf4f77bef2aefa75c150aaca',fn:'compound',position:'expression'},
+  {name:'a terminal compound initializer blocks its RHS, local binding and later return',
+    fixture:'initializer-old-value-terminal',sha:'a9318de78658057189a4900d6ba7ffc0930a21f13a0b1a06ccb48696e8b6cd4e',fn:'nestedCompound',position:'initializer'},
+];
+for(const row of cases)test(row.name,async t=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-terminal-compound/'+row.fixture+'-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:'+row.sha);
   const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const publication=buildInitialArrayPublication(context),built=buildHir(facts,context,publication);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
-  const {hir}=built,compound=hir.functions.find(fn=>fn.name==='compound'),mark=hir.functions.find(fn=>fn.name==='mark');
+  const {hir}=built,compound=hir.functions.find(fn=>fn.name===row.fn),mark=hir.functions.find(fn=>fn.name==='mark');
   assert.ok(compound&&mark);
-  const target=compound.id+'/body/2/expression',old=target+'/old-value',elements=compound.id+'/body/0/initializer/elements';
+  const target=compound.id+'/body/2/'+row.position,old=target+'/old-value',elements=compound.id+'/body/0/initializer/elements';
   const sink=mark.id+'/binding/'+mark.parameters[0].id;
   const bottom=sha256('tsfg.actual-domain.v1\0[]'),scalar=sha256('tsfg.actual-domain.v1\0'+canonical([compound.returnType.id]));
   const source=facts.payload.files.find(row=>row.path===compound.sourcePath).content;
@@ -27,6 +33,12 @@ test('a terminal compound old read blocks the RHS sink write and the target writ
     assert.deepEqual([read.node,read.index,read.status,read.versions,read.sources],[old,'c:0','missing',[],[]]);
     assert.equal(source.slice(read.origin.start,read.origin.end),'a[at]');
     const normal=[old,target,target+'/value',elements,compound.id+'/return'];
+    if(row.position==='initializer'){
+      assert.deepEqual(read.origin,{source:'/src/main.ts',start:184,end:189});
+      const local=compound.body[2];
+      assert.ok(local.kind==='local'&&local.binding.name==='result');
+      normal.push(compound.id+'/binding/'+local.binding.id,compound.id+'/body/3/value');
+    }
     if(plan===proofs.reached)normal.push(sink);
     for(const id of normal){
       const row=plan.nodes.find(node=>node.id===id);assert.ok(row);

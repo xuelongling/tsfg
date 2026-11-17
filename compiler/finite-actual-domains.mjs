@@ -136,11 +136,6 @@ export function buildFiniteCoreDomains(input,context,options={}) {
   return buildPlans(input,context,options,true);
 }
 
-function terminalOldRead(read) {
-  // The final path segment before /old-value belongs to a direct statement,
-  // the same ordered cut used by finite-array-reaching.
-  return read?.status==='missing'&&read.node.endsWith('/expression/old-value');
-}
 
 function buildPlans(input,context,options,definitions) {
   let remaining=options.work??100000;
@@ -148,8 +143,8 @@ function buildPlans(input,context,options,definitions) {
   const charge=()=>{if(options.cancelled?.())fail('cancelled');if(remaining--<=0)fail('work limit');};
   function build(mode) {
     let allowCompoundTermination;
-    const solve=(field=null,array=null,terminalStores=null)=>
-      solveFiniteActualDomains(input,context,charge,field,mode,array,options.publicationContext,terminalStores,allowCompoundTermination);
+    const solve=(field=null,array=null,terminalReads=null)=>
+      solveFiniteActualDomains(input,context,charge,field,mode,array,options.publicationContext,terminalReads);
     const initial=solve();
     // Field short-circuit control also must not consume capacity-based Array
     // reads. This is the same conservative solver role as the ordered start.
@@ -168,18 +163,16 @@ function buildPlans(input,context,options,definitions) {
     // The first control query must not inherit Array read alternatives from
     // the carrier/capacity solution. A non-null empty reaching directory makes
     // every unproved read pending in this same solver, before any edge is cut.
-    let arrayReaching,ordered=solve(fieldReaching,{reads:[]}),previous;
-    const terminalStores=new Set();
+    let arrayReaching,terminalReads,ordered=solve(fieldReaching,{reads:[]}),previous;
     // Memory-dependent presence may remove an incoming call edge only after
     // its actual read sources are proved. Iterate the same solver, sharing the
     // original budget; representation maxima never become memory witnesses.
     for(;;) {
-      arrayReaching=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateCompound);
+      const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateCompound);
+      arrayReaching=array.reaching;terminalReads=array.terminalReads;
       if(!arrayReaching.reads.length)break;
       fieldReaching=buildFiniteFieldReaching(hir,{...ordered,arrayReaching},charge);
-      terminalStores.clear();
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
-        if(terminalOldRead(read)&&canTerminateCompound()){charge();terminalStores.add(read.node);}
         for(const id of read.versions){charge();versions.push(id);}rows.push([read.node,read.status,versions]);}
       const fields=[];for(const read of fieldReaching.reads){charge();const targets=[];
         for(const target of read.reaching){charge();const versions=[],sources=[],intrinsics=[];
@@ -191,11 +184,11 @@ function buildPlans(input,context,options,definitions) {
       // later Array owner. Close both existing constraints with one budget;
       // neither carrier maxima nor successful bounds become alias witnesses.
       const current=canonical([rows,fields,aliases]);if(current===previous)break;previous=current;
-      ordered=arrayReaching.reads.length?solve(fieldReaching,arrayReaching):result;
+      ordered=solve(fieldReaching,arrayReaching,terminalReads);
     }
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
-    if(terminalStores.size)result=solve(carrierFieldReaching,null,terminalStores);
+    if(terminalReads)result=solve(carrierFieldReaching,null,terminalReads);
     const domains=new Map([...result.domains,...ordered.domains].map(row=>[row.id,row]));
     const calls=ordered.calls.map(call=>({...call,targets:call.targets.map(target=>({...target,
       abi:result.abi.find(row=>row.functionId===target.functionId).id}))}));
@@ -208,8 +201,7 @@ function buildPlans(input,context,options,definitions) {
     ...(definition?{definition:{...definition,work:(options.work??100000)-remaining}}:{})});
 }
 
-function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null,publicationContext=undefined,terminalStores=null,
-  allowCompoundTermination=false) {
+function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null,publicationContext=undefined,terminalReads=null) {
   const refinements=new Map((fieldReaching?.reads??[]).map(row=>[row.node,row.reaching]));
   const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status!=='pending').map(row=>[row.node,row]));
   charge();const hir=verifyHir(input,context,publicationContext);
@@ -222,7 +214,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     physical.set(undefinedId,{alignment:1,byteSize:0,referenceCount:0});
   }
   const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),coalesces=[],
-    representationOnly=terminalStores?new Map():null;
+    representationOnly=!arrayReaching&&terminalReads?new Map():null;
   const reads=[],stores=[],fieldReads=[],fieldStores=[],presenceTests=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
   const views=buildTypedReferenceViews(hir,context,options);
   const methodViews=new Map(),fieldViews=new Map(),fieldOwners=new Map();
@@ -474,12 +466,12 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       at(v.target.index,p+'/target/index');
       const old=node(p+'/old-value',v.target.type).id;
       reads.push({receiver,result:old});
-      if(allowCompoundTermination&&terminalOldRead(arrayReads.get(old))) {
+      if(arrayReaching&&terminalReads?.has(old)) {
         flow.entry(old,continuation);flow.finish(old,[]);
         continuation=flow.normal(old);dependencies.push(continuation);
       }
       if(v.kind==='arrayCompoundAssignment')child('value');
-      if(terminalStores?.has(old)&&types.get(v.target.type)?.kind==='scalar'){
+      if(representationOnly&&terminalReads.has(old)&&types.get(v.target.type)?.kind==='scalar'){
         // Keep the dead read's declared SSA carrier outside the value/owner
         // worklist. Its impossible writeback contributes no backing capacity.
         charge();representationOnly.set(old,v.target.type);
