@@ -131,7 +131,11 @@ export function verifyReferenceGraph(graph, binding) {
       && same(constructor.initializationFields, item.fields.map(field => field.id))
       && constructor.signature.return === item.instanceType, 'initialization');
     signature(constructor.signature, constructor.id, constructor.origin, constructor.kind === 'implicit-derived');
-    check(constructor.kind !== 'implicit-base' || !constructor.signature.parameters.length && !constructor.body.length, 'initialization');
+    if (constructor.kind === 'implicit-base') {
+      check(same(constructor.origin, item.origin), 'initialization',
+        'implicit base constructor must keep its original class range', item.origin);
+      check(!constructor.signature.parameters.length && !constructor.body.length, 'initialization');
+    }
     for (const [index, method] of array(item.methods, 4096).entries()) {
       record(method, ['access','body','id','name','origin','overrideTarget','signature','symbol']);
       check(method.id === item.id + '.m' + index && !methods.has(method.id)

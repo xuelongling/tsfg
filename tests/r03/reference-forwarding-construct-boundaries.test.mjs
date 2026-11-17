@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { decodeReferenceFacts } from '../../compiler/reference-facts.mjs';
-import { buildReferenceHir, verifyReferenceHir } from '../../compiler/reference-hir.mjs';
+import { buildReferenceHir, readReferenceHir, verifyReferenceHir } from '../../compiler/reference-hir.mjs';
+import { factsIdentity } from '../../compiler/reference-common.mjs';
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 async function actual(name, digest) {
   const fixture = suffix => new URL('./fixtures/reference-source/' + name + suffix, import.meta.url);
@@ -57,4 +58,26 @@ test('cold construct HIR rejects extra view and operation references and class-v
   changedHir(hir, value => { value.classes[1].fields[0].initializer.extraReference = 'foreign'; }, 'schema', 'unknown view reference');
   changedHir(hir, value => { value.classes[1].fields[0].initializer.value.extraReference = 'foreign'; }, 'schema', 'unknown construct reference');
   changedHir(hir, value => { value.classes[1].fields[0].initializer.value.receiver.kind = 'ref.parameter'; }, 'closure', 'class constructor reclassified as parameter');
+});
+
+function substituteFactoryOrigin(value) {
+  const factory = value.classes[1];
+  assert.equal(factory.name, 'Factory');
+  assert.equal(factory.constructor.kind, 'implicit-base');
+  assert.deepEqual(factory.constructor.origin, factory.origin);
+  assert.notDeepEqual(factory.fields[0].origin, factory.origin);
+  factory.constructor.origin = factory.fields[0].origin;
+}
+test('actual implicit base facts cannot substitute a field range for the class anchor', async () => {
+  const data = await construct();
+  changedFacts(data, substituteFactoryOrigin, 'initialization', 'implicit base source anchor');
+});
+test('resealed cold implicit base HIR still requires its original class anchor', async () => {
+  const data = await construct();
+  const graph = structuredClone(data.graph);
+  const hir = structuredClone(buildReferenceHir(decodeReferenceFacts(data.bytes, data.binding)));
+  substituteFactoryOrigin(graph);
+  substituteFactoryOrigin(hir);
+  hir.context.factsDigest = factsIdentity(graph);
+  rejection(() => readReferenceHir(Buffer.from(canonical(hir))), 'initialization', 'implicit base HIR anchor');
 });
