@@ -41,9 +41,9 @@ function representationDomain(id,alternatives,types,physical) {
     referenceCount:Math.max(0,...alternatives.map(id=>physical.get(id).referenceCount))};
 }
 
-// The checked read remains in Core. Its unreachable SSA result and the
-// callable ABI use the declared native representation; no ordered node,
-// Array element domain or successful value is added to either solver.
+// The original checked read and calls remain in Core. Only the lexical
+// return chain needs a native SSA type. Neither successful values nor Array
+// element capacities are added to the ordered domain analysis.
 export function addFiniteTerminalReturnCarriers(hir,plan,layouts,charge) {
   if(!plan.arrayReaching.reads.length)return plan;
   const bottom=domainId([]),eligible=new Set();
@@ -54,31 +54,52 @@ export function addFiniteTerminalReturnCarriers(hir,plan,layouts,charge) {
     charge();if(read.status==='missing')missing.add(read.node);
   }
   if(!missing.size)return plan;
-  // The field solver inventories lexical direct call sites even on dead paths.
-  // Called leaves retain the existing unresolved ABI until call SSA can also
-  // represent their unreachable result.
-  for(const call of plan.fieldReaching.callContexts){charge();eligible.delete(call.target);}
-  if(!eligible.size)return plan;
   const indexById=rows=>new Map(rows.map(row=>{charge();return [row.id,row];}));
-  const types=indexById(hir.types),domains=indexById(plan.domains);
-  const maximum=indexById(plan.carrierNodes),normal=indexById(plan.nodes);
-  const carriers=new Map(),results=new Map();
-  let physical;
+  const types=indexById(hir.types),maximum=indexById(plan.carrierNodes),normal=indexById(plan.nodes);
+  const tails=new Map();
   for(const fn of hir.functions) {
-    charge();const index=fn.body.length-1,statement=fn.body[index];
-    const read=fn.id+'/body/'+index+'/value',returned=fn.id+'/return',type=types.get(fn.returnType.id);
-    if(!eligible.has(fn.id)||fn.ownerType||!missing.has(read)||statement?.kind!=='return'||statement.value?.kind!=='arrayReadChecked'||
-        statement.value.type!==fn.returnType.id||type?.kind!=='scalar')continue;
-    // A single direct return gives this representation no live successor use.
+    charge();if(!eligible.has(fn.id)||fn.ownerType)continue;
+    const index=fn.body.length-1,statement=fn.body[index],value=statement?.value;
+    const expression=fn.id+'/body/'+index+'/value',returned=fn.id+'/return',type=types.get(fn.returnType.id);
+    if(statement?.kind!=='return'||value?.type!==fn.returnType.id||type?.kind!=='scalar')continue;
+    const target=value.kind==='call'&&!value.receiver?value.target:null;
+    if(!target&&(value.kind!=='arrayReadChecked'||!missing.has(expression)))continue;
     let direct=true;
     for(let i=0;i<index;++i){charge();if(fn.body[i].kind!=='local'){direct=false;break;}}
     if(!direct)continue;
-    const rows=[maximum.get(read),maximum.get(returned),normal.get(read),normal.get(returned)];
+    const rows=[maximum.get(expression),maximum.get(returned),normal.get(expression),normal.get(returned)];
     if(!rows.every(row=>row?.domainId===bottom&&!row.pending.length))continue;
-    physical??=new Map(layouts.entries.map(row=>{charge();return [row.typeId,row.layout];}));
-    const alternatives=[type.id],id=domainId(alternatives);
-    const carrier=domains.get(id)??representationDomain(id,alternatives,types,physical);
-    domains.set(carrier.id,carrier);carriers.set(read,carrier.id);carriers.set(returned,carrier.id);results.set(fn.id,carrier.id);
+    tails.set(fn.id,{expression,returned,type:type.id,target});
+  }
+  const sites=new Set(),callers=new Map();
+  for(const [id,tail] of tails) {
+    charge();if(!tail.target||tails.get(tail.target)?.type!==tail.type)continue;
+    sites.add(tail.expression+'\0'+tail.target);
+    if(!callers.has(tail.target))callers.set(tail.target,[]);
+    callers.get(tail.target).push(id);
+  }
+  // The field inventory includes every lexical call, including dead paths.
+  // Keep the previous bottom ABI whenever a call site would still use it.
+  const blocked=new Set(),blockedWork=[];
+  for(const call of plan.fieldReaching.callContexts) {
+    charge();if(tails.has(call.target)&&!sites.has(call.site)&&!blocked.has(call.target)){
+      blocked.add(call.target);blockedWork.push(call.target);
+    }
+  }
+  for(let i=0;i<blockedWork.length;++i) {
+    charge();const id=blockedWork[i],target=tails.get(id).target;
+    if(tails.has(target)&&!blocked.has(target)){blocked.add(target);blockedWork.push(target);}
+  }
+  const terminal=[];
+  for(const [id,tail] of tails){charge();if(!tail.target&&!blocked.has(id))terminal.push(id);}
+  if(!terminal.length)return plan;
+  const domains=indexById(plan.domains),carriers=new Map(),results=new Map();
+  const physical=new Map(layouts.entries.map(row=>{charge();return [row.typeId,row.layout];}));
+  for(let i=0;i<terminal.length;++i) {
+    charge();const id=terminal[i],tail=tails.get(id),alternatives=[tail.type],domain=domainId(alternatives);
+    const carrier=domains.get(domain)??representationDomain(domain,alternatives,types,physical);
+    domains.set(domain,carrier);carriers.set(tail.expression,domain);carriers.set(tail.returned,domain);results.set(id,domain);
+    for(const caller of callers.get(id)??[]){charge();if(!blocked.has(caller))terminal.push(caller);}
   }
   if(!results.size)return plan;
   const changedAbis=new Map();
