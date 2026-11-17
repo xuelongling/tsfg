@@ -254,6 +254,37 @@ function verifyVulkanFailure({vkResult,failure,windowsError}){
   assert.ok(Number.isInteger(vkResult)&&vkResult!==0&&vkResult>=-0x8000_0000&&vkResult<=0x7fff_ffff);
   assert.deepEqual([failure,windowsError],['Vulkan',null]);
 }
+const preparationVulkanStages=new Set([
+  'create-instance','enumerate-physical-devices','create-device','create-buffer','allocate-buffer-memory',
+  'bind-buffer-memory','map-buffer-memory','flush-input-memory','create-descriptor-layout','create-descriptor-pool',
+  'allocate-descriptor-sets','create-pipeline-layout','create-shader-module','create-compute-pipeline',
+  'create-command-pool','allocate-command-buffer','begin-command-buffer','end-command-buffer','create-fence',
+]);
+const preparationCapabilities=new Map([
+  ['ownership',null],['process-integrity',null],['loader',null],['loader-interface',null],
+  ['instance-interface',0],['physical-device',0],['descriptor-set',0],['physical-profile',0],
+  ['compute-queue',0],['device-interface',0],['buffer-memory',0],
+]);
+function verifyPreparationFailure(final){
+  const {failure,stage,vkResult,windowsError}=final;
+  if(failure==='Vulkan'){
+    assert.ok(preparationVulkanStages.has(stage));
+    verifyVulkanFailure(final);
+    assert.equal(final.state,vkResult===-4?'DeviceLost':'FailedBeforeSubmit');
+    return;
+  }
+  assert.equal(final.state,'FailedBeforeSubmit');
+  if(failure==='Windows'){
+    assert.ok(['process-integrity','loader-environment','loader'].includes(stage));
+    assert.equal(vkResult,null);
+    assert.ok(Number.isInteger(windowsError)&&windowsError>=0&&windowsError<=0xffff_ffff);
+  }else if(failure==='Capability'){
+    assert.ok(preparationCapabilities.has(stage));
+    assert.deepEqual([vkResult,windowsError],[preparationCapabilities.get(stage),null]);
+  }else{
+    assert.deepEqual([failure,stage,vkResult,windowsError],['Input','configuration',null,null]);
+  }
+}
 function verifyRecovery(report){
   const final=report.final,transitions=report.transitions;
   assert.ok(transitions.length>0);
@@ -293,10 +324,7 @@ function verifyRecovery(report){
       verifyVulkanFailure(final);
       assert.deepEqual([final.state,final.stage],
         [final.vkResult===-4?'DeviceLost':'FailedBeforeSubmit','queue-submit']);
-    }else{
-      assert.ok(['FailedBeforeSubmit','DeviceLost'].includes(final.state));
-      assert.notEqual(final.stage,'queue-submit');
-    }
+    }else verifyPreparationFailure(final);
     assert.deepEqual([final.submitted,final.completionKnown,final.outputsAvailable],[false,false,false]);
   }
   if(final.outputsAvailable===true)
@@ -482,9 +510,35 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
   });
   const submitLost={...prepared,state:'DeviceLost',failure:'Vulkan',stage:'queue-submit',vkResult:-4};
   verifyRecovery(neverWaited([prepared,submitLost]));
-  verifyRecovery(neverWaited([{...submitLost,stage:'create-device'}]));
-  verifyRecovery(neverWaited([{...prepared,state:'FailedBeforeSubmit',failure:'Capability',stage:'physical-profile'}]));
-  verifyRecovery(neverWaited([{...prepared,state:'FailedBeforeSubmit',stage:'loader',failure:'Windows',windowsError:126,vkResult:null}]));
+  await t.test('preparation Vulkan failure has the native stage, result and state',()=>{
+    const lost={...submitLost,stage:'create-device'};
+    const error={...lost,state:'FailedBeforeSubmit',stage:'allocate-buffer-memory',vkResult:-1};
+    verifyRecovery(neverWaited([lost]));
+    verifyRecovery(neverWaited([error]));
+    for(const changes of [{vkResult:0},{vkResult:-1},{vkResult:null},{vkResult:-0x8000_0001},
+      {failure:'Capability'},{windowsError:5},{stage:'wait'}])
+      assert.throws(()=>verifyRecovery(neverWaited([{...lost,...changes}])),{name:'AssertionError'});
+    assert.throws(()=>verifyRecovery(neverWaited([{...error,vkResult:-4}])),{name:'AssertionError'});
+  });
+  await t.test('preparation capability failure preserves the last Vulkan result',()=>{
+    const early={...prepared,state:'FailedBeforeSubmit',failure:'Capability',stage:'loader-interface',vkResult:null};
+    const late={...early,stage:'physical-profile',vkResult:0};
+    verifyRecovery(neverWaited([early]));
+    verifyRecovery(neverWaited([late]));
+    for(const [snapshot,changes] of [[early,{vkResult:0}],[late,{vkResult:null}],[late,{vkResult:-4}],
+      [late,{windowsError:5}],[late,{stage:'create-device'}],[late,{failure:'None'}]])
+      assert.throws(()=>verifyRecovery(neverWaited([{...snapshot,...changes}])),{name:'AssertionError'});
+  });
+  await t.test('preparation input and Windows failures keep their own status values',()=>{
+    const windows={...prepared,state:'FailedBeforeSubmit',failure:'Windows',stage:'loader',vkResult:null,windowsError:126};
+    const config={...windows,failure:'Input',stage:'configuration',windowsError:null};
+    verifyRecovery(neverWaited([windows]));
+    verifyRecovery(neverWaited([config]));
+    for(const changes of [{windowsError:null},{windowsError:-1},{windowsError:0x1_0000_0000},
+      {windowsError:'126'},{stage:'create-instance'},{vkResult:0}])
+      assert.throws(()=>verifyRecovery(neverWaited([{...windows,...changes}])),{name:'AssertionError'});
+    assert.throws(()=>verifyRecovery(neverWaited([{...config,stage:'wait-parameters'}])),{name:'AssertionError'});
+  });
   const invalidSuccess=[{vkResult:-4},{failure:'Vulkan'},{windowsError:5},{stage:'wait'}];
   await t.test('prepared rows use the producer success tuple',()=>{
     for(const changes of invalidSuccess)
