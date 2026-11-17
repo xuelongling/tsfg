@@ -144,9 +144,12 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       memory.slots.set(slot,new Set([id]));
     }
     function expression(value,path,state,bindings,terminalRoot=false) {
-      if(!value)return {};charge();const child=name=>expression(value[name],path+'/'+name,state,bindings);
+      if(!value)return {};charge();
+      const child=(name,allowTerminal=false)=>expression(value[name],path+'/'+name,state,bindings,allowTerminal);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
-      if(['group','nonNull','assertType'].includes(value.kind)) {const {truth,...result}=child('operand');return result;}
+      if(['group','nonNull','assertType'].includes(value.kind)) {
+        const {truth,...result}=child('operand',terminalRoot&&value.kind==='group');return result;
+      }
       if(value.kind==='boolean')return {truth:value.value,symbol:path};
       if(value.kind==='constant') {
         const number=Number(value.decimal);return Number.isInteger(number)&&number>=0&&number<=4294967295?{constant:number,symbol:path}:{symbol:path};
@@ -167,7 +170,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
           const old=path+'/old-value',status=load({...value,range:value.target.range},old,state,receiver,index);
           // The lexical pass retains every original occurrence. Ordered
-          // transfer stops only at a definite old-read trap at a statement root.
+          // transfer stops only at a definite old-read trap on the current evaluation path.
           if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateCompound()) {
             if(recordReads){charge();(terminalReads??=new Set()).add(old);}
             return {terminal:true};
@@ -268,8 +271,11 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         meetBindings(bindings,bindings,branchBindings);
         return resultValue(value.operator==='??'&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path});
       }
-      if(value.kind==='binary'&&['===','!=='].includes(value.operator)) {
-        child('left');child('right');return {symbol:path,truth:predicateTruth(value,path)};
+      if(value.kind==='binary') {
+        // An ordinary binary uses the normal completion of each operand in order.
+        const left=child('left',terminalRoot);if(left.terminal)return left;
+        const right=child('right',terminalRoot);if(right.terminal)return right;
+        return ['===','!=='].includes(value.operator)?{symbol:path,truth:predicateTruth(value,path)}:{symbol:path};
       }
       // Unmodeled aliases never acquire an owner identity. Still traverse all
       // real evaluation children and conservatively discard mutating effects.
@@ -310,7 +316,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
           if(expression(row.expression,p+'/expression',state,bindings,true).terminal)return null;
         }
         else if(row.kind==='return'||row.kind==='constructorReturn') {
-          if(row.value)expression(row.value,p+'/value',state,bindings);exits.push(clone(state));return null;
+          if(row.value&&expression(row.value,p+'/value',state,bindings,row.kind==='return').terminal)return null;
+          exits.push(clone(state));return null;
         }
         else if(row.kind==='block') {state=statements(row.body,p+'/body',state,bindings);if(!state)return null;}
         else if(row.kind==='if') {
