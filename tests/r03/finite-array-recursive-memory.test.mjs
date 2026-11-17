@@ -8,6 +8,7 @@ import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {sha256,scalarTypeIds} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
+import {accepted,invokeCore,rejected} from './generic-core-package-capture.mjs';
 const bytes=await readFile(new URL('./testdata/typed-array-entry/88978983a7a1dd667efd74bf9c47e4def5b881f925fd08c006cfccadcf297305-package.json',import.meta.url));
 assert.equal(sha256(bytes),'sha256:49827c7493c6f37f8178f10d452b12165a36368f9875cbab42d43e933ddd637f');
 const facts=readTypedArrayFacts(bytes),source=facts.payload.files.find(row=>row.path===facts.payload.rootFile).content;
@@ -44,7 +45,7 @@ for(const [name,readStart,helper,storeStart]of cases)test('actual recursive Arra
     assert.deepEqual(domain(actual.domainId).actualTypes,[undefinedType]);
   }
 });
-test('recursive Array closure retains real checked operations and fails transactionally',()=>{
+test('recursive Array closure retains real checked operations and fails transactionally',async t=>{
   const core=lowerFormalHir(hir,context,publication);
   assert.equal(core.split('"tsfg_core.domain.array_read"').length-1,5);
   assert.equal(core.split('"tsfg_core.domain.array_store"').length-1,2);
@@ -52,4 +53,40 @@ test('recursive Array closure retains real checked operations and fails transact
   let published;assert.throws(()=>{published=buildFiniteCoreDomains(hir,context,{work:32,publicationContext:publication});},/work limit/);
   assert.equal(published,undefined);assert.throws(()=>{published=buildFiniteCoreDomains(hir,context,{cancelled:()=>true,publicationContext:publication});},/cancelled/);
   assert.equal(published,undefined);
+  if(process.env.TSFG_CORE_IR_EXE)await t.test('the divergent entry supplies no checked read proof',async()=>{
+    const cycle=hir.functions.find(row=>row.name==='runCycle');assert.ok(cycle);
+    const node=plans.reached.arrayReaching.reads.find(row=>row.node.startsWith(cycle.id+'/'));assert.ok(node);
+    const line=core.split('\n').findIndex(text=>text.includes('array_node = "'+node.node+'"'))+1;
+    assert.ok(line>1);
+    for(const mode of ['--canonicalize','--optimize']){
+      const result=await invokeCore(core,mode);rejected(result);
+      const error=result.stderr.toString('utf8');
+      assert.ok(error.includes('loc("-":'+line+':'),error);
+      assert.match(error,/whole admission requires independently proved memory source and bounds/);
+    }
+  });
+});
+
+test('productive recursive Array writes prove three separate callers in both static modes',async t=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-entry/7f5b13024a6b5a77027391c8b01e7c339ec7e3a8aeb554a316d565cfc5f0b2bb-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:3b539cfb3c32c11b8f6c929b588333b1a08a5f79fdb33bf2416e65f10e76594a');
+  const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const publication=staticPublication(facts),built=buildHir(facts,context,publication);assert.equal(built.status,'ok');
+  const {hir}=built,plans=buildFiniteCoreDomains(hir,context,{publicationContext:publication});
+  for(const plan of [plans.reached,plans.definition]){
+    const directory=new Map(hir.functions.map(row=>[row.id,row.name]));
+    const write=plan.arrayReaching.writes.find(row=>row.origin.start===90&&row.origin.end===104);assert.ok(write);
+    assert.deepEqual(plan.arrayReaching.reads.map(row=>directory.get(row.node.split('/body/')[0])).sort(),['runFalse','runTrue','runUnknown']);
+    for(const read of plan.arrayReaching.reads){
+      const functionId=read.node.split('/body/')[0];
+      assert.deepEqual([read.status,read.owner,read.versions,read.sources],['proven',functionId+'/body/0/initializer',[write.id],[write.node]]);
+    }
+  }
+  const core=lowerFormalHir(hir,context,publication);
+  assert.equal(core.split('"tsfg_core.domain.array_read"').length-1,3);
+  if(process.env.TSFG_CORE_IR_EXE)await t.test('same owned facts give the same independently accepted Core',async()=>{
+    const canonicalized=await invokeCore(core);accepted(canonicalized);
+    const optimized=await invokeCore(core,'--optimize');accepted(optimized);
+    assert.deepEqual(optimized.stdout,canonicalized.stdout);
+  });
 });

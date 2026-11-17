@@ -14,8 +14,13 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
     const bool boundsOnly=purpose==Purpose::ExistingSlot;
     const std::string checkedSlot="#checked-existing-array-slot";
     struct Task {mlir::Operation *before;mlir::Value owner;Index index;Id node;size_t scope;bool foreign;size_t level;};
-    std::vector<std::set<size_t>> scopes(1);
-    std::map<std::tuple<std::string,std::vector<size_t>,std::string>,std::pair<size_t,Id>> summaries;
+    struct Condition {mlir::Operation *branch=nullptr;mlir::Value formal;std::optional<bool> truth;};
+    struct Scope {
+      std::set<size_t> aliases;Condition condition;std::set<mlir::Block *> reachable;
+      llvm::DenseMap<mlir::Value,mlir::Value> forwardedOwners;
+    };
+    std::vector<Scope> scopes(1);
+    std::map<std::tuple<std::string,std::vector<size_t>,std::string,std::optional<bool>>,std::pair<size_t,Id>> summaries;
     std::vector<Task> tasks;std::map<std::tuple<mlir::Operation *,size_t,std::string,size_t,bool,size_t>,Id> nodes;
     std::map<std::pair<mlir::Operation *,uint32_t>,size_t> captures;std::vector<ArrayCellCapture> captureSites;
     const auto indexKey=[&](Index selected){return selected.constant?
@@ -27,9 +32,91 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
       const auto node=graph.node();if(node==PayloadFlow::none){valid=false;proof.reject(graph.error());return node;}
       nodes.emplace(key,node);tasks.push_back({before,owner,selected,node,scope,foreign,level});return node;
     };
+    const auto mayTraverse=[&](const Scope &scope,mlir::Operation *terminator,unsigned index) {
+      const auto &condition=scope.condition;
+      if(condition.truth&&condition.branch==terminator&&index!=(*condition.truth?0u:1u))return false;
+      return proof.mayTraverse(terminator,index);
+    };
+    const auto mayReach=[&](const Scope &scope,mlir::Block *block) {
+      return scope.condition.truth?scope.reachable.count(block)!=0:proof.mayReach(block);
+    };
+    const auto forwardedOwner=[&](Scope &scope,mlir::Value value) {
+      value=strip(value);if(!valid)return value;
+      const auto found=scope.forwardedOwners.find(value);
+      if(found!=scope.forwardedOwners.end())return found->second;
+      auto current=value;std::set<size_t> visited;
+      while(auto argument=llvm::dyn_cast<mlir::BlockArgument>(current)){
+        auto *block=argument.getOwner();if(block==&block->getParent()->front())break;
+        if(!charge())return value;
+        if(!visited.insert(identity(current)).second||!valid)return value;
+        mlir::Value selected;
+        const auto join=[&](mlir::Operation *term,unsigned position,mlir::Block *target,mlir::ValueRange operands){
+          if(target!=block||!mayTraverse(scope,term,position))return true;
+          const auto index=argument.getArgNumber();if(index>=operands.size())return false;
+          const auto incoming=strip(operands[index]);
+          if(!valid||(selected&&selected!=incoming))return false;
+          selected=incoming;return true;
+        };
+        for(auto *predecessor:block->getPredecessors()){
+          if(!charge())return value;
+          if(!mayReach(scope,predecessor))continue;
+          auto *term=predecessor->getTerminator();
+          if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(term)){
+            if(!join(term,0,branch.getDest(),branch.getDestOperands()))return value;
+          }else if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(term)){
+            if(!join(term,0,branch.getTrueDest(),branch.getTrueDestOperands())||
+                !join(term,1,branch.getFalseDest(),branch.getFalseDestOperands()))return value;
+          }else return value;
+        }
+        if(!selected||selected==current)return value;
+        current=selected;
+      }
+      if(current!=value){if(!charge())return value;scope.forwardedOwners.try_emplace(value,current);}
+      return current;
+    };
     const auto sameOwner=[&](const Task &task,mlir::Value receiver) {
-      const auto actual=identity(receiver),owner=identity(task.owner);
-      return actual==owner||(task.scope&&scopes[task.scope].count(owner)&&scopes[task.scope].count(actual));
+      if(task.scope&&receiver&&receiver.getType().isIntOrFloat())return false;
+      auto &scope=scopes[task.scope];
+      const auto ownerId=[&](mlir::Value value){
+        if(!task.scope)return identity(value);
+        value=forwardedOwner(scope,value);if(!valid)return SIZE_MAX;
+        const auto found=identities.find(value);
+        return found!=identities.end()?found->second:identity(value);
+      };
+      const auto actual=ownerId(receiver),owner=ownerId(task.owner);
+      return actual==owner||(scope.aliases.count(owner)&&scope.aliases.count(actual));
+    };
+    const auto callCondition=[&](mlir::Operation *call,mlir::func::FuncOp callee,const Object &contract,const Scope &caller) -> Condition {
+      if(!llvm::isa<mlir::func::CallOp>(call)||string(contract,"role")!="function"||!string(contract,"ownerType").empty())return {};
+      auto &entry=callee.getBody().front();
+      auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(entry.getTerminator());
+      if(!branch)return {};
+      const auto parameter=llvm::dyn_cast<mlir::BlockArgument>(branch.getCondition());
+      if(!parameter||parameter.getOwner()!=&entry||parameter.getArgNumber()>=call->getNumOperands())return {};
+      const auto actual=call->getOperand(parameter.getArgNumber());
+      if(!actual.getType().isInteger(1))return {};
+      if(caller.condition.truth&&caller.condition.formal==actual)
+        return {branch.getOperation(),parameter,caller.condition.truth};
+      auto *constant=actual.getDefiningOp();
+      if(!constant||constant->getName().getStringRef()!="tsfg_core.constant")return {};
+      const auto literal=constant->getAttrOfType<mlir::IntegerAttr>("value");
+      if(!literal||literal.getValue().getBitWidth()!=1)return {};
+      return {branch.getOperation(),parameter,literal.getValue().getBoolValue()};
+    };
+    const auto closeScope=[&](Scope &scope,mlir::Block *entry) {
+      if(!scope.condition.truth)return true;
+      // The locally selected edge cannot seed input at an unreachable return.
+      std::vector<mlir::Block *> pending{entry};scope.reachable.insert(entry);
+      for(size_t i=0;i<pending.size();++i){
+        if(!charge())return false;
+        auto *terminator=pending[i]->getTerminator();
+        for(unsigned index=0;index<terminator->getNumSuccessors();++index){
+          if(!charge())return false;
+          auto *successor=terminator->getSuccessor(index);
+          if(mayTraverse(scope,terminator,index)&&scope.reachable.insert(successor).second)pending.push_back(successor);
+        }
+      }
+      return true;
     };
     auto owner=strip(receiver);
     if(!valid)return {};
@@ -59,11 +146,11 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
       // the same SSA in a recursive activation is a different stored source.
       const auto version=[&](const std::string &id){return seed(task.node,boundsOnly?checkedSlot:task.foreign?"#foreign-array-version/"+id:id);};
       if(!previous) {
-        auto *block=task.before->getBlock();bool predecessor=false;
+        auto *block=task.before->getBlock();bool predecessor=false;const auto &scope=scopes[task.scope];
         for(auto *parent:block->getPredecessors()) {
-          if(!charge())return {};auto *term=parent->getTerminator();
+          if(!charge())return {};if(scope.condition.truth&&!mayReach(scope,parent))continue;auto *term=parent->getTerminator();
           bool possible=false;for(unsigned i=0;i<term->getNumSuccessors();++i) {
-            if(!charge())return {};possible|=term->getSuccessor(i)==block&&proof.mayTraverse(term,i);
+            if(!charge())return {};possible|=term->getSuccessor(i)==block&&mayTraverse(scope,term,i);
           }
           if(!possible)continue;predecessor=true;
           auto connect=[&](mlir::ValueRange inputs) {
@@ -73,8 +160,8 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
           };
           if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(term)) {if(!connect(branch.getDestOperands()))return {};}
           else if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(term)) {
-            if(branch.getTrueDest()==block&&proof.mayTraverse(term,0)&&!connect(branch.getTrueDestOperands()))return {};
-            if(branch.getFalseDest()==block&&proof.mayTraverse(term,1)&&!connect(branch.getFalseDestOperands()))return {};
+            if(branch.getTrueDest()==block&&mayTraverse(scope,term,0)&&!connect(branch.getTrueDestOperands()))return {};
+            if(branch.getFalseDest()==block&&mayTraverse(scope,term,1)&&!connect(branch.getFalseDestOperands()))return {};
           }else if(!unknown(task.node))return {};
         }
         if(!predecessor) {
@@ -216,17 +303,21 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
             }
             if(!valid)return {};
             if(!formal){if(!unknown(task.node))return {};continue;}
-            const auto key=std::make_tuple(target,aliases,indexKey(slot));auto found=summaries.find(key);
+            const auto condition=callCondition(previous,fn,*proof.callable.at(target),scopes[task.scope]);
+            const auto key=std::make_tuple(target,aliases,indexKey(slot),condition.truth);auto found=summaries.find(key);
             if(found==summaries.end()) {
               if(!charge())return {};const auto scope=scopes.size(),summary=graph.node();
               if(summary==PayloadFlow::none){valid=false;proof.reject(graph.error());return {};}
               if(!outcome(graph.requireEvidence(summary)))return {};
-              scopes.emplace_back();for(const auto alias:aliases){if(!charge())return {};scopes.back().insert(alias);}
+              auto &selectedScope=scopes.emplace_back();selectedScope.condition=condition;
+              for(const auto alias:aliases){if(!charge())return {};selectedScope.aliases.insert(alias);}
+              if(!closeScope(selectedScope,&fn.getBody().front()))return {};
               summaries.emplace(key,std::make_pair(scope,summary));
               for(auto &block:fn.getBody()) {
                 if(!charge())return {};
-                if(!proof.mayReach(&block))continue;
+                if(!mayReach(selectedScope,&block))continue;
                 if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator())) {
+                  if(selectedScope.condition.truth&&!proof.mayExecute(returned.getOperation()))continue;
                   const auto origin=at(returned,formal,slot,scope,true);
                   if(!valid||!connect({origin,summary}))return {};
                 }
