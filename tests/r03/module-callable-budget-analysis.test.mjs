@@ -33,7 +33,17 @@ test('public solver growth: unknown callback observes each of 124 finite argumen
   const {bundle,hir}=await capture('solver-growth-top-'+sites),context=publication(bundle,hir),growth=138+498*sites;
   assert.equal(hir.functions.filter(f=>f.kind==='source').length,127);assert.equal(bundle.official.symbols,626);assert.equal(bundle.official.calls,sites+1);
   console.log('TSFG_MODULE_CALLABLE_23D_BUDGET_FORMULA solver-growth '+JSON.stringify({sites,growth}));
-  if(sites===401){assert.ok(growth<=200000);const report=analyzeModuleCalls(hir,context);assert.equal(report.effectiveTargets.calls.length,402);assert.equal(report.functions.length,126);within(report,'legal solver-growth report');}
+  if(sites===401){
+   assert.ok(growth<=200000);
+   const report=analyzeModuleCalls(hir,context);
+   assert.equal(report.effectiveTargets.calls.length,402);assert.equal(report.functions.length,126);
+   const entry=hir.functions.find(fn=>fn.name==='entry'),invoke=hir.functions.find(fn=>fn.name==='invoke');
+   const first={functionId:invoke.id,expressionPath:['body',0,'value'],kind:'indirectCall',range:invoke.body[0].value.range,target:null};
+   const edge={functionId:entry.id,expressionPath:['body',0,'value'],kind:'call',range:entry.body[0].value.range,target:invoke.id};
+   assert.deepEqual(report.unknownChains.find(row=>row.functionId===invoke.id),{functionId:invoke.id,reason:'unknown-call',chain:[first]});
+   assert.deepEqual(report.unknownChains.find(row=>row.functionId===entry.id),{functionId:entry.id,reason:'unknown-call',chain:[edge,first]});
+   within(report,'legal solver-growth report');
+  }
   else {assert.ok(growth>200000);assert.throws(()=>analyzeModuleCalls(hir,context),analysisLimit);}
  }
 });

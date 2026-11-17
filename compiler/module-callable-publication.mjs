@@ -61,26 +61,83 @@ function effectsFor(flow,records,count){
   return new Map([...rows].map(([id,row])=>[id,row.unknown?top():{reads:[...row.reads].sort(compare),writes:[...row.writes].sort(compare),unknown:false}]));
 }
 function unknownChains(hir,flow,effects,records,count){
-  const sites=new Map();for(const site of flow.report.calls){if(!sites.has(site.functionId))sites.set(site.functionId,[]);sites.get(site.functionId).push(site);}
-  const functions=new Map(hir.functions.map(f=>[f.id,f])),out=[];
-  const key=chain=>canonical(chain);
-  const order=(a,b)=>a.chain.length-b.chain.length||compare(key(a.chain),key(b.chain));
-  for(const row of flow.report.functions){
-    const id=row.functionId;if(!effects.get(id).unknown&&!records.get(id)?.upper.unknown)continue;
-    const pending=[{id,chain:[]}],seen=new Set(),actual=[],publications=[];
-    while(pending.length){
-      count.step();pending.sort(order);const current=pending.shift();if(seen.has(current.id))continue;seen.add(current.id);
-      const fn=functions.get(current.id);
-      if(records.get(current.id)?.upper.unknown)publications.push({chain:[...current.chain,{functionId:fn.id,expressionPath:null,kind:'publication',range:fn.range,target:null}],reason:'published-upper'});
-      for(const site of sites.get(current.id)??[]){
-        const edge={functionId:site.functionId,expressionPath:site.expressionPath,kind:site.kind,range:site.range};
-        if(site.targets.top)actual.push({chain:[...current.chain,{...edge,target:null}],reason:'unknown-call'});
-        for(const target of site.targets.functions)pending.push({id:target,chain:[...current.chain,{...edge,target}]});
+  const starts=flow.report.functions.filter(({functionId})=>{
+    count.step();
+    return effects.get(functionId).unknown||records.get(functionId)?.upper.unknown;
+  });
+  if(!starts.length)return [];
+
+  const successors=new Map(),predecessors=new Map(),actual=new Map(),publication=new Map();
+  for(const fn of hir.functions){
+    count.step();
+    if(records.get(fn.id)?.upper.unknown)
+      publication.set(fn.id,{edge:{functionId:fn.id,expressionPath:null,kind:'publication',range:fn.range,target:null}});
+  }
+
+  // A call site's canonical key orders its wire edge before the target field.
+  // For the same site, the target ID breaks ties.
+  const before=(left,right)=>Buffer.compare(left.key,right.key)||compare(left.edge.target,right.edge.target);
+  for(const site of flow.report.calls){
+    count.step();
+    for(const _ of site.expressionPath)count.step();
+    const at={functionId:site.functionId,expressionPath:site.expressionPath,kind:site.kind,range:site.range};
+    const key=Buffer.from(canonical(at));
+    if(site.targets.top){
+      const first=actual.get(site.functionId);
+      if(!first||Buffer.compare(key,first.key)<0)actual.set(site.functionId,{key,edge:{...at,target:null}});
+    }
+    if(!successors.has(site.functionId))successors.set(site.functionId,new Map());
+    const byTarget=successors.get(site.functionId);
+    for(const target of site.targets.functions){
+      count.step();
+      const edge={key,edge:{...at,target}},old=byTarget.get(target);
+      if(!old){
+        if(!predecessors.has(target))predecessors.set(target,[]);
+        predecessors.get(target).push(site.functionId);
+      }
+      if(!old||before(edge,old)<0)byTarget.set(target,edge);
+    }
+  }
+
+  function traces(terminals){
+    // Distances are shared by all starts. Each reverse walk queues each
+    // function once, and each shortest next edge is computed at most once.
+    const distance=new Map(),pending=[],preferred=new Map();
+    for(const id of terminals.keys()){count.step();distance.set(id,0);pending.push(id);}
+    for(let i=0;i<pending.length;i++){
+      count.step();const id=pending[i],next=distance.get(id)+1;
+      for(const caller of predecessors.get(id)??[]){
+        count.step();
+        if(!distance.has(caller)){distance.set(caller,next);pending.push(caller);}
       }
     }
-    const candidates=actual.length?actual:publications;candidates.sort(order);assert(candidates.length>0);
-    out.push({functionId:id,...candidates[0]});
-  }return out;
+    return start=>{
+      if(!distance.has(start))return;
+      const chain=[];let id=start;
+      while(distance.get(id)>0){
+        count.step();
+        let first=preferred.get(id);
+        if(!first){
+          const next=distance.get(id)-1;
+          for(const candidate of successors.get(id)?.values()??[]){
+            count.step();
+            if(distance.get(candidate.edge.target)===next&&(!first||before(candidate,first)<0))first=candidate;
+          }
+          assert(first);preferred.set(id,first);
+        }
+        chain.push(first.edge);id=first.edge.target;
+      }
+      count.step();chain.push(terminals.get(id).edge);return chain;
+    };
+  }
+
+  const actualTrace=traces(actual);let publicationTrace;
+  return starts.map(({functionId})=>{
+    const call=actualTrace(functionId);
+    if(call)return {functionId,chain:call,reason:'unknown-call'};
+    const chain=(publicationTrace??=traces(publication))(functionId);
+    assert(chain);return {functionId,chain,reason:'published-upper'};
+  });
 }
 export function verifyModuleCallablePublication(hir,context){
   const input=prepare(hir,context),{records,count}=input;
