@@ -253,7 +253,7 @@ export function verifyCommonProgramFacts(value) {
         ||p.types.some(type=>type.sourcePath===module.sourcePath&&['value','reference'].includes(type.kind)&&e.range.start>=type.declarationRange.start&&e.range.end<=type.declarationRange.end)
         ||module.initialization.some(row=>e.range.start>=row.range.start&&e.range.end<=row.range.end);
       if(!within)localRows.set(e.name,e);
-      else if(!edge)claims.set(e.name,e);
+      else if(!alias)claims.set(e.name,e);
     }
     check(matchedReexports===namedReexports.size,'export');
     let previousEnd=-1,exportedGroup=false;

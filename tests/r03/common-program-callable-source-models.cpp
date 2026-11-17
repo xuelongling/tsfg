@@ -2,6 +2,7 @@
 #include "common-program-source.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 using namespace tsfg::commonProgram;
 namespace {
 bool prepare(const char *path,Program &p){
@@ -195,8 +196,53 @@ int localExports(const char *path){
   });
   return ok?0:1;
 }
+int moduleEdgeExports(const char *path){
+  Program original;
+  if(!prepare(path,original)||original.inputIdentity!="sha256:26c04c87f9b1945967a8d62f748e94fc6285be2b602fcb577ad8c97e5d9ced18")return 2;
+  Program control=original;
+  const auto baseline=readModuleModel(control);
+  bool ok=check("retained named exports shadow the adjacent star",baseline.directory&&baseline.identities&&baseline.accepted);
+  for(const auto *kind:{"import","star"}){
+    Program changed=original;
+    auto &snapshot=*changed.hir.getAsObject()->get("snapshot");
+    auto &payload=*snapshot.getAsObject()->get("payload");
+    auto *main=namedRow(arrayMember(payload,"modules"),"sourcePath","/src/main.ts");
+    auto *root=arrayMember(payload,"exports");
+    auto *exports=main?arrayMember(*main,"exports"):nullptr;
+    auto *imports=main?arrayMember(*main,"imports"):nullptr;
+    auto *view=namedRow(exports,"name","view");
+    const auto selected=llvm::StringRef(kind);
+    const Json *edge=nullptr;
+    if(imports)for(const auto &row:*imports){
+      const auto role=field(row,"kind").getAsString();
+      if(selected=="import"?role=="import":role=="export"&&field(row,"specifier").getAsString()=="./data"&&items(field(row,"bindings")).empty()){
+        edge=&row;break;
+      }
+    }
+    const auto *label=selected=="import"?"unrelated export cannot claim the import span":"unrelated export cannot claim the star span";
+    if(!root||!view||!edge||same(field(*edge,"range"),field(*view,"definitionRange"))){ok&=check(label,false);continue;}
+    Json unbacked=*view,target=field(*view,"target");
+    (*unbacked.getAsObject())["name"]="unbacked";
+    (*unbacked.getAsObject())["range"]=field(*edge,"range");
+    exports->push_back(std::move(unbacked));
+    root->push_back(Object{{"name","unbacked"},{"functionId",std::move(target)}});
+    const auto byName=[](const Json &a,const Json &b){return string(field(a,"name"))<string(field(b,"name"));};
+    std::sort(exports->begin(),exports->end(),byName);std::sort(root->begin(),root->end(),byName);
+    rebind(changed);
+    const auto result=readModuleModel(changed);
+    ok&=check(label,result.directory&&result.identities&&!result.accepted&&result.error.code=="core-ir-common-source"&&
+      result.error.message=="export occurrence has no original declaration");
+    llvm::outs()<<"  directory="<<result.directory<<" identities="<<result.identities<<" accepted="<<result.accepted<<"\n";
+    if(!result.error.code.empty())llvm::outs()<<"  "<<result.error.code<<": "<<result.error.message<<"\n";
+  }
+  return ok?0:1;
+}
 }
 int main(int argc,char **argv){
+  if(argc>1&&llvm::StringRef(argv[1])=="--module-edge-exports"){
+    if(argc!=3){llvm::errs()<<"expected --module-edge-exports retained-hir\n";return 2;}
+    return moduleEdgeExports(argv[2]);
+  }
   if(argc>1&&llvm::StringRef(argv[1])=="--local-exports"){
     if(argc!=3){llvm::errs()<<"expected --local-exports retained-hir\n";return 2;}
     return localExports(argv[2]);

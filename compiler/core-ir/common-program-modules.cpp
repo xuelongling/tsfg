@@ -277,7 +277,10 @@ bool verifyCommonModules(SourceModel &m,SourceBodies &bodies,const std::map<std:
           same(field(*forward->second.alias,"range"),field(e,"range")),"named re-export differs from original alias"))return false;
         named.emplace(&e,ExportLink{forward->second.upstream,field(*forward->second.alias,"imported").getAsString().value_or("")});++matchedNamed;
       }
-      if(enclosing)continue;
+      if(enclosing){
+        if(forward==exports.named.end())exports.claims.emplace(name,&e);
+        continue;
+      }
       bool withinDeclaration=false;
       for(const auto &range:exports.declarations){
         if(!m.spend())return false;

@@ -237,7 +237,7 @@ function appendShadowedStar(payload,module,file,sourcePath,residual=null) {
   refreshVariantSource(payload,file);
 }
 
-function derivedStar(extraName,cycle=false) {
+function derivedStar(extraName,cycle=false,change=undefined) {
   return mutated(p=>{
     const root=p.rootFile,main=p.modules.find(row=>row.sourcePath===root),file=p.files.find(row=>row.path===root);
     const dataPath='/src/data.ts';
@@ -258,6 +258,7 @@ function derivedStar(extraName,cycle=false) {
         data.exports.push(unbacked);data.exports.sort(byExportName);refreshVariantSource(p,other);
       }
     }
+    change?.(main);
     main.exports.sort(byExportName);p.exports.sort(byExportName);p.entryCompatibilityRoots.sort(byEntry);
   },'mixed');
 }
@@ -272,6 +273,14 @@ test('derived mixed Source accepts an explicit re-export shadowing a star',()=>{
 
 for(const cycle of [false,true])test('a derived '+(cycle?'cyclic':'one-hop')+' star cannot authorize an unrelated direct export',()=>{
   const packet=derivedStar('unbacked',cycle);
+  assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
+});
+
+for(const edgeKind of ['import','star'])test('a derived star cannot use the '+edgeKind+' edge as an original export',()=>{
+  const packet=derivedStar('unbacked',false,main=>{
+    const edge=edgeKind==='import'?main.imports.find(row=>row.kind==='import'):main.imports.at(-1);
+    main.exports.find(row=>row.name==='unbacked').range=edge.range;
+  });
   assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
 });
 
