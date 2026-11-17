@@ -31,6 +31,7 @@ const cases=[
  ['wrong-field-order',(e,p)=>{component(p).fields.reverse();}],['wrong-field-type',(e,p)=>{component(p).fields[0].type='sha256:'+'0'.repeat(64);}],
  ['wrong-utf16-anchor',(e,p)=>{component(p).fields[0].range.start++;}],['wrong-original-path',(e,p)=>{component(p).fields[0].sourcePath='/foreign.ts';}],
  ['wrong-readonly',(e,p)=>{component(p).fields[0].readonly=true;}],['bad-alignment',(e,p)=>{component(p).alignment=3;}],
+ ['zero-sized-bool',(e,p)=>{const row=p.types.find(t=>t.scalar==='bool');row.byteSize=0;row.stride=0;}],
  ['bad-stride',(e,p)=>{component(p).stride++;}],['overlap',(e,p)=>{component(p).fields[1].offset=0;}],
  ['unaligned-member',(e,p)=>{component(p).fields[1].offset++;}],['outside-member',(e,p)=>{component(p).fields[0].offset=65536;}],
 ];
