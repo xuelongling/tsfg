@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,readFile,truncate,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,14 +19,16 @@ assert.equal(sha256(fixture),'sha256:5f22b4e99e09737ef6d58c544fc44a107d8fc0b6dc9
 const {hir}=JSON.parse(fixture.toString('utf8'));
 const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
 
-async function runCli(value,args,documents={}){
+async function runCli(value,args,documents={},oversized=undefined){
   const directory=await mkdtemp(path.join(tmpdir(),'tsfg-owned-hir-cli-'));
   const input=path.join(directory,'owned-hir.json');
   await writeFile(input,canonical(value)+'\n');
+  if(oversized==='input')await truncate(input,8388609);
   const command=[cli,'--input',input,...args];
   for(const [option,document] of Object.entries(documents)){
     const file=path.join(directory,option+'.json');
     await writeFile(file,canonical(document)+'\n');
+    if(option===oversized)await truncate(file,8388609);
     command.push('--'+option,file);
   }
   const child=spawnSync(process.execPath,command,{windowsHide:true,maxBuffer:16*1024*1024,timeout:30000});
@@ -99,6 +101,35 @@ test('owned HIR CLI rejects corrupt identity and conflicting Source, Query or bo
     assert.equal(rejected.stdout.length,0);
     assert.match(rejected.stderr.toString('utf8'),/r03-cli-options/);
   }
+});
+
+test('persisted Common Core and borrow proof bound their complete file triplet before consumer admission',async()=>{
+  const directory=new URL('../fixtures/r03/common-fixed-publication/',import.meta.url);
+  const [factsBytes,publicationBytes,historicalBytes]=await Promise.all([
+    readFile(new URL('../fixtures/r03/common-self-held-storage/self-held-external-store-safe-package.json',import.meta.url)),
+    readFile(new URL('self-held-safe.publication-v6.json',directory)),
+    readFile(new URL('self-held-safe.owned.json',directory)),
+  ]);
+  const owned=projectCommonProgram(readCommonProgramFacts(factsBytes));
+  const publication=JSON.parse(publicationBytes.toString('utf8'));
+  const {request}=JSON.parse(historicalBytes.toString('utf8'));
+  const documents={publication,'kernel-request':request};
+  const temp=await mkdtemp(path.join(tmpdir(),'tsfg-common-file-budget-'));
+  const core=path.join(temp,'missing-core','unused.exe');
+  for(const mode of [['--input-kind','hir','--emit','core'],['--emit','borrow-proof']]){
+    const args=[...mode,'--core',core];
+    for(const role of ['input','publication','kernel-request']){
+      const rejected=await runCli(owned,args,documents,role);
+      const diagnostic=rejected.stderr.toString('utf8');
+      assert.equal(rejected.status,2,role);
+      assert.equal(rejected.stdout.length,0,role);
+      assert.match(diagnostic,/^r03-common-program-limit: Common JSON input file exceeds the wire byte limit/,role);
+    }
+  }
+  const valid=await runCli(owned,['--emit','borrow-proof','--core',core],documents);
+  assert.equal(valid.status,2);
+  assert.equal(valid.stdout.length,0);
+  assert.match(valid.stderr.toString('utf8'),/ENOENT:.*artifact-manifest\.json/);
 });
 
 if(process.env.TSFG_CORE_IR_EXE){

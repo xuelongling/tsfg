@@ -26,6 +26,11 @@ export function commonFailure(kind,message='complete common Program differs',det
 export const commonCheck=(condition,kind='input',message=undefined,details=undefined)=>{
   if(!condition)commonFailure(kind,message,details);
 };
+/** @param {bigint} size */
+export function checkCommonJsonFileSize(size) {
+  commonCheck(size <= BigInt(commonJsonPolicy.bytes), 'limit', 'Common JSON input file exceeds the wire byte limit');
+  return commonJsonPolicy.bytes;
+}
 /** @param {((units:number)=>void)} [spend] */
 export function commonBudget(value,spend=undefined) {
   let charging=false;

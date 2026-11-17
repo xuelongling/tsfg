@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { open, readFile } from "node:fs/promises";
 import { compileHir, compileProgram, compileOwnedCore, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
-import {commonHirFormat,commonJson} from '../compiler/common-program-common.mjs';
+import {checkCommonJsonFileSize,commonHirFormat,commonJson} from '../compiler/common-program-common.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
 import { checkHirWireFileSize } from '../compiler/hir-wire.mjs';
 import { genericHirFormat } from '../compiler/generic-hir.mjs';
@@ -12,9 +12,9 @@ import { familyOf } from '../compiler/module-callable-common.mjs';
 import { checkSystemQueryFileSize, systemQueryRequestContext } from '../compiler/system-query-facts.mjs';
 import {canonical} from '../compiler/identity.mjs';
 
-/** @param {string} file @param {(size: bigint) => number} checkSize @param {'Query'|'HIR'} kind */
+/** @param {string} file @param {(size: bigint) => number} checkSize @param {'Query'|'HIR'|'Common'} kind */
 async function readStableInputFile(file,checkSize,kind){
-  const diagnostic=kind==='Query'?'r10-system-query-input':'r03-hir-invalid';
+  const diagnostic={Query:'r10-system-query-input',HIR:'r03-hir-invalid',Common:'r03-common-program-input'}[kind];
   const handle=await open(file,constants.O_RDONLY|(constants.O_NONBLOCK??0));
   try {
     const before=await handle.stat({bigint:true});
@@ -37,6 +37,9 @@ async function readStableInputFile(file,checkSize,kind){
     await handle.close();
   }
 }
+
+/** @param {string} file */
+const readCommonInputFile = file => readStableInputFile(file,checkCommonJsonFileSize,'Common');
 
 try {
   const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request"];
@@ -67,7 +70,9 @@ try {
   if(emit==='borrow-proof'){
     if(!options.has('--publication')||!options.has('--kernel-request')||!options.has('--core')||['--frontend','--vm','--requests','--query-request'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: borrow-proof requires complete Common HIR, fixed --publication, --kernel-request and --core');
-    const hir=readCommonProgramHir(await readFile(options.get('--input'))),publication=commonJson(await readFile(options.get('--publication'))),request=commonJson(await readFile(options.get('--kernel-request')));
+    const hir=readCommonProgramHir(await readCommonInputFile(options.get('--input')));
+    const publication=commonJson(await readCommonInputFile(options.get('--publication')));
+    const request=commonJson(await readCommonInputFile(options.get('--kernel-request')));
     const result=await compileCommonBorrowProof(hir,publication,request,{core:options.get('--core')});process.stdout.write(canonical(result.proof)+'\n');
   }else if(hasFixedCommon&&!fixedCommonCore)throw new TypeError('r03-cli-options: fixed Common publication/request require --emit borrow-proof or --input-kind hir --emit core');
   else if(options.has('--query-request')){
@@ -81,7 +86,8 @@ try {
   }else{
   if(['query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit))throw new TypeError('r03-cli-options: Query output requires --query-request');
   const inputPath = options.get("--input");
-  const input = inputKind === "hir" ? readHir(await readStableInputFile(inputPath, checkHirWireFileSize, 'HIR'))
+  const input = inputKind === "hir" ? readHir(await (fixedCommonCore ? readCommonInputFile(inputPath)
+    : readStableInputFile(inputPath, checkHirWireFileSize, 'HIR')))
     : JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await readFile(inputPath)));
   if (inputKind === "hir") {
     const family = familyOf(input);
@@ -95,8 +101,8 @@ try {
       throw new TypeError("r03-cli-options: private Reference HIR requires --emit hir|core");
   }
   const callPublicationContext = fixedCommonCore ? {
-    publication: commonJson(await readFile(options.get("--publication"))),
-    request: commonJson(await readFile(options.get("--kernel-request"))),
+    publication: commonJson(await readCommonInputFile(options.get("--publication"))),
+    request: commonJson(await readCommonInputFile(options.get("--kernel-request"))),
   } : undefined;
   const requestJson = emit === "run" ? options.get("--requests") ?? "[{}]" : undefined;
   // Check syntax here and let Runtime read exact integer tokens and field names.
