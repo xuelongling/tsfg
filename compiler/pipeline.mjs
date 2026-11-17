@@ -8,7 +8,7 @@ import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { lowerGenericHir } from "./generic-hir.mjs";
 export { compilePackageHir };
 import { buildHir, lowerHir, lowerFormalHir, lowerOwnedHir } from "./hir.mjs";
-import { canonical, sha256 } from "./identity.mjs";
+import { canonical, own, sha256 } from "./identity.mjs";
 import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
@@ -122,9 +122,11 @@ export async function compileSystemQuery(bytes,context,options){
  * @param {{core:string}} options
  */
 export async function compileCommonBorrowProof(hir,publication,request,options){
-  const product=commonProgramCore(hir,publication,request,{borrowProof:true}),executable=await verifiedConsumer(options.core,'core');
+  const product=commonProgramCore(hir,publication,request,{borrowProof:true});
+  const fixed=own({publication,request});
+  const executable=await verifiedConsumer(options.core,'core');
   const core=consume(executable,['--common-program','--canonicalize'],product.text).toString('utf8');
-  const proof=readCommonBorrowProof(consume(executable,['--common-program','--borrow-proof'],core),product.hir,publication,request);
+  const proof=readCommonBorrowProof(consume(executable,['--common-program','--borrow-proof'],core),product.hir,fixed.publication,fixed.request);
   return {status:'ok',hir:product.hir,core,proof};
 }
 

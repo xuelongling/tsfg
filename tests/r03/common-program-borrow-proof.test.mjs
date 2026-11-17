@@ -9,6 +9,7 @@ import {createCommonProgramPublication} from '../../compiler/common-program-anal
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {createCommonBorrowProof,readCommonBorrowProof,writeCommonBorrowProof} from '../../compiler/common-program-borrow-proof.mjs';
 import {canonical} from '../../compiler/identity.mjs';
+import {compileCommonBorrowProof} from '../../compiler/pipeline.mjs';
 const cases=['safe-lastuse','later-use-conflict','borrow-completions'].map(name=>{
   const facts=readCommonProgramFacts(readFileSync(new URL('./testdata/common-borrow-proof/'+name+'-facts.json',import.meta.url))),hir=projectCommonProgram(facts),publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
   return {name,hir,publication,request};
@@ -55,6 +56,16 @@ test('owning proof read/write binds the full fixed input and rejects changed rel
     proof.events.definitions[0].at.source.start=0;
   }
 });
+for(const field of ['publication','request'])test('public Common Borrow proof owns '+field+' before artifact admission',{skip:!tool},async()=>{
+  const publication=structuredClone(safe.publication),request=structuredClone(safe.request);
+  const pending=compileCommonBorrowProof(safe.hir,publication,request,{core:tool});
+  if(field==='publication')assert.ok(Reflect.set(publication,'expectedDigest','sha256:'+'0'.repeat(64)));
+  else request.targets.splice(0,request.targets.length,'sha256:'+'0'.repeat(64));
+  const result=await pending;
+  assert.deepEqual(result.proof,proofOf(safe));
+  assert.deepEqual(result.hir,safe.hir);
+});
+
 const run=(name,command,input,status=0)=>{
   mkdirSync(output,{recursive:true});const prefix=output+'/'+String(children.length).padStart(3,'0')+'-'+name;
   const child=spawnSync(tool,['--common-program',command],{input,windowsHide:true,maxBuffer:8388608,timeout:60000});
