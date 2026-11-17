@@ -12,6 +12,7 @@ import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {createCommonGpuBindingPlan} from '../../compiler/common-program-gpu-bindings.mjs';
 import {canonical} from '../../compiler/common-program-common.mjs';
 import {verifyGpuI32Words} from './gpu-binding-i32-oracle.mjs';
+import {verifyEmittedHostBoundary,verifyGpuHostRecipe} from './gpu-host-preflight-oracle.mjs';
 
 const fixtures=[
   {
@@ -259,13 +260,6 @@ function verifyReportedKernel(module,plan){
   assert.equal(module.hostPreflight.functionId,functionId);
   assert.equal(module.hostPreflight.planDigest,module.planDigest);
 }
-function verifyEmittedHostBoundary(module){
-  assert.equal(module.scope,'host-preflight-required');
-  assert.equal(module.hostPreflightFulfilled,false);
-  const recipe=module.hostPreflight;
-  assert.deepEqual([recipe.family,recipe.version,recipe.status,recipe.scope],
-    ['tsfg.gpu-host-preflight',1,'unfulfilled','reached-linear-prefix-before-first-visible-write']);
-}
 function verifyVulkanFailure({vkResult,failure,windowsError}){
   assert.ok(Number.isInteger(vkResult)&&vkResult!==0&&vkResult>=-0x8000_0000&&vkResult<=0x7fff_ffff);
   assert.deepEqual([failure,windowsError],['Vulkan',null]);
@@ -440,7 +434,7 @@ for(const fixture of fixtures){
       assert.deepEqual(module.bindings,plan.bindings);assert.equal(module.launchAuthorized,false);assert.equal(module.deviceExecution,false);
       assert.deepEqual(module.profile.dispatch,[1,1,1]);assert.equal(module.profile.activeSourceInstances,1);
       verifyReportedKernel(module,plan);
-      verifyEmittedHostBoundary(module);
+      verifyGpuHostRecipe(module,plan,ast,raw[2].toString('utf8'));
       if(!global)verifyGpuI32Words(module.words,module.entryPoint,ast.operator,arity,ast.literalToken??null);
       assert.equal(report.ownedAfterInputRelease,true);assert.deepEqual([report.fuelBefore,report.fuelAfter,report.depthLimit],['2','1',1]);
       assert.deepEqual(report.inputs.map(value=>value.descriptor),plan.bindings.filter(binding=>binding.access!=='write'));

@@ -11,6 +11,7 @@ import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {createCommonGpuBindingPlan} from '../../compiler/common-program-gpu-bindings.mjs';
 import {canonical} from '../../compiler/common-program-common.mjs';
 import {verifyGpuI32Words} from './gpu-binding-i32-oracle.mjs';
+import {verifyGpuHostRecipe} from './gpu-host-preflight-oracle.mjs';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const digest=value=>'sha256:'+sha(canonical(value)+'\n');
@@ -57,16 +58,20 @@ for(const fixture of fixtures){
       assert.equal(fn.parameters[0].sourceBinding,original.parameterId);
     }
   });
-  test('actual '+fixture.name+' sealed Host preflight and Source failure post-state',{skip:reports?false:'TSFG_GPU_HOST_PREFLIGHT_REPORTS is not supplied'},async()=>{
+  test('actual '+fixture.name+' sealed Host preflight and Source failure post-state',{skip:reports?false:'TSFG_GPU_HOST_PREFLIGHT_REPORTS is not supplied'},async t=>{
     const report=JSON.parse(await fs.readFile(path.join(reports,'green-'+fixture.name+'01/raw/stdout.bin'),'utf8'));
     assert.equal(report.family,'tsfg.gpu-host-preflight-checks');assert.equal(report.coreSHA,'sha256:'+sha(core.text));
     assert.equal(report.requestSHA,digest(request));assert.equal(report.planSHA,digest(plan));
     assert.equal(report.ownedAfterInputRelease,true);assert.equal(report.oldArtifactBytesUnchanged,true);
     assert.equal(report.oldReaderPending,true);assert.equal(report.compilerBudgetUnchanged,true);assert.equal(report.checks,global?30:29);
     assert.deepEqual([report.sourceExecution,report.vm,report.jit,report.device],[false,false,false,false]);
+    verifyGpuHostRecipe(report.emittedModule,plan,original,raw[2].toString('utf8'));
     const proof=report.proof;assert.deepEqual([proof.hostPreflightFulfilled,proof.launchAuthorized,proof.deviceExecutionAuthorized],[true,false,false]);
     assert.deepEqual([proof.fuelBefore,proof.fuelAfter],['2','1']);assert.equal(proof.artifactDigest,report.emittedModule.artifactDigest);
-    assert.ok(proof.bindings.every(row=>row.bits==='4294967289'));
+    const i32='sha256:'+sha(Buffer.from('tsfg.type\0i32'));
+    assert.deepEqual(proof.bindings,plan.bindings.filter(row=>row.access!=='write').map(({id,binding})=>({
+      actualType:i32,id,binding,bits:'4294967289',
+    })));
     const failure=name=>{const rows=report.failures.filter(row=>row.name===name);assert.equal(rows.length,1);return rows[0].failure;};
     const depth=failure('depth-before-fuel'),fuel=failure('fuel-exhausted'),numeric=failure('first-undefined-source-order');
     assert.deepEqual([depth.code,depth.ruleId,depth.fuelRemaining],['r01-t-depth','r01-depth','0']);
@@ -92,10 +97,6 @@ for(const fixture of fixtures){
       assert.throws(()=>verifyGpuI32Words(badWords,out.entryPoint,'+',2,'7',[{operator:'*',literalToken:'3'}]));
       assert.equal(out.wordsDigest,digest(out.words));
       const {artifactDigest,...body}=out;assert.equal(artifactDigest,digest(body));
-      assert.deepEqual(out.hostPreflight.steps.map(row=>[row.obligationId,row.kind,row.origin?.kind,row.origin?.decimal]),[
-        [0,'entry-budget',undefined,undefined],[1,'numeric-use','binding',undefined],
-        [2,'numeric-use','constant-i32','7'],[5,'numeric-use','constant-i32','3'],
-      ]);
       assert.deepEqual(out.obligations.map(row=>[row.kind,row.source,row.dependsOn]),[
         ['fuel',at(original.range),undefined],['numeric-use',at(original.inner),[]],
         ['numeric-use',at(original.inner),[]],['i32-add',at(original.inner),[1]],
@@ -107,5 +108,32 @@ for(const fixture of fixtures){
       ]);
       assert.equal(report.derivedReaderRejectedMissingPrerequisites,true);
     }
+    /** @type {[string,(out:any)=>void][]} */
+    const changes=fixture.name==='right'?[
+      ['contradictory launch authority',out=>{out.launchAuthorized=true;}],
+      ['entry budget omitted',out=>out.hostPreflight.steps.shift()],
+      ['missing numeric obligation ordinal',out=>{
+        out.sourceOperations.find(row=>row.name==='numeric_use').obligationId=out.obligations.length;
+      }],
+      ['fuel before depth',out=>out.hostPreflight.steps[0].checkOrder.reverse()],
+      ['numeric use omitted',out=>out.hostPreflight.steps.pop()],
+      ['Source uses reordered',out=>out.hostPreflight.steps.push(out.hostPreflight.steps.splice(1,1)[0])],
+      ['wrong owned binding',out=>{out.hostPreflight.steps[1].origin=out.hostPreflight.steps[2].origin;}],
+      ['wrong original Source anchor',out=>{out.hostPreflight.steps[1].source=out.hostPreflight.steps[0].source;}],
+      ['untied input snapshot',out=>{out.hostPreflight.requirements.actualState='unrelated-input-snapshot';}],
+      ['device failure channel',out=>{out.hostPreflight.semanticFailure.deviceFailureProtocol=true;}],
+    ]:fixture.name==='plus'?[
+      ['wrong Source constant',out=>{out.hostPreflight.steps[2].origin.decimal='8';}],
+    ]:composed?[
+      ['missing computed-use discharge',out=>{out.discharges=out.discharges.filter(row=>row.relation!=='computed-i32-is-numeric');}],
+    ]:[];
+    for(const [name,change] of changes)await t.test('archived Host recipe rejects '+name,()=>{
+      const altered=structuredClone(report.emittedModule);
+      change(altered);
+      const {artifactDigest,...content}=altered;
+      altered.artifactDigest=digest(content);
+      assert.notEqual(altered.artifactDigest,artifactDigest);
+      assert.throws(()=>verifyGpuHostRecipe(altered,plan,original,raw[2].toString('utf8')),{name:'AssertionError'});
+    });
   });
 }
