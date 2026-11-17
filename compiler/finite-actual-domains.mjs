@@ -424,15 +424,15 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       stores.push({receiver,value});copy(value,id);
     }else if(v.kind==='assignment') {const value=child('value');copy(value,binding(fn,v.target.binding,v.target.type));copy(value,id);}
     else if(v.kind==='call') {
-      const target=functions.get(v.target),arguments_=children('arguments');
-      const receiver=v.receiver?child('receiver'):null;
+      const target=functions.get(v.target),receiver=v.receiver?child('receiver'):null;
+      const arguments_=children('arguments');
       if(v.target===hir.intrinsics.readSpan.id) {
         insert(id,'actual',v.type);copy(arguments_[0],id,{ownerOnly:true});flow.finish(id,dependencies);continue;
       }
       if(!target){insert(id,'pending','unresolved-call:'+id);flow.finish(id,dependencies);continue;}
       if(receiver) {
         methodCalls.push({id,receiver,arguments:arguments_,member:v.target,
-          viewType:types.get(v.receiver.type).kind==='reference'?v.receiver.type:target.ownerType,targets:new Map()});
+          viewType:types.get(v.receiver.type).kind==='reference'?v.receiver.type:target.ownerType,targets:new Map(),receivers:new Set()});
         flow.finish(id,dependencies);continue;
       }
       arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index].id,target.parameters[index].type)));
@@ -527,21 +527,23 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     for(const {to,predicate} of edges.get(current).values())propagate(current,to,predicate);
     for(const edge of gates.get(current)??[]){charge();propagate(edge.from,edge.to,edge.predicate);}
     for(const call of methodCalls)if(call.receiver===current)for(const actual of nodes.get(current).actual) {
-      charge();if(call.targets.has(actual))continue;const target=actualMethod(actual,call);
-      if(!target){insert(call.id,'pending','unresolved-actual-method:'+actual+':'+call.member);continue;}
-      call.targets.set(actual,target.id);
-      // Each dispatch arm receives only its selected actual receiver. Copying
-      // the entire static-view union into every arm would lose this authority.
-      insert(binding(target,target.parameters[0].id,target.parameters[0].type),'actual',actual);
-      // Source evaluates all arguments, including extras, before dispatch. Only
-      // real selected-callee parameters receive slots; ignored extras retain
-      // their expression/effect nodes and are never copied into invented binds.
-      target.parameters.slice(1).forEach((parameter,index)=>{
-        if(index<call.arguments.length)copy(call.arguments[index],binding(target,parameter.id,parameter.type));
-        else insert(call.id,'pending','method-argument-default-domain:'+target.id+':'+index);
+      charge();if(call.receivers.has(actual))continue;
+      call.receivers.add(actual);
+      // Receiver facts precede argument evaluation. Dispatch requires normal
+      // completion of all operands, including ignored extra arguments.
+      flow.publish(call.id,()=>{
+        const target=actualMethod(actual,call);
+        if(!target){insert(call.id,'pending','unresolved-actual-method:'+actual+':'+call.member);return;}
+        call.targets.set(actual,target.id);
+        // Each dispatch arm receives only its selected actual receiver.
+        insert(binding(target,target.parameters[0].id,target.parameters[0].type),'actual',actual);
+        target.parameters.slice(1).forEach((parameter,index)=>{
+          if(index<call.arguments.length)copy(call.arguments[index],binding(target,parameter.id,parameter.type));
+          else insert(call.id,'pending','method-argument-default-domain:'+target.id+':'+index);
+        });
+        if(types.get(target.returnType.id).kind==='void')flow.when(flow.returned(target.id),()=>insert(call.id,'actual',target.returnType.id));
+        else copy(returned(target),call.id);
       });
-      if(types.get(target.returnType.id).kind==='void')flow.when(flow.returned(target.id),()=>insert(call.id,'actual',target.returnType.id));
-      else copy(returned(target),call.id);
     }
     for(const read of reads)if(read.receiver===current) {
       if(!arrayReaching)for(const allocation of nodes.get(current).owners)copy(owners.get(allocation),read.result);
