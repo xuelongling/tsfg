@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {importNullableCapturedResponse,verifyNullableSnapshot} from '../../compiler/nullable-frontend.mjs';
-import {buildHir,verifyHir,printHir,readHir,lowerHir} from '../../compiler/hir.mjs';
+import {buildHir,verifyHir,printHir,readHir,lowerHir,lowerOwnedHir} from '../../compiler/hir.mjs';
 import {compileOwnedCore} from '../../compiler/pipeline.mjs';
 import {raw,data,expected,fresh,sha,jcs,packetAttack,spliceSource,groupedContinuationAttack} from './nullable-typeof-fixtures.mjs';
 
@@ -30,6 +30,16 @@ test('typeof undefined actual complete capture cold snapshot HIR read print Core
  const text=printHir(fresh(built.hir),c);assert.equal(text,jcs(expected.hir)+'\n');
  const cold=readHir(Buffer.from(text),c);assert.deepEqual(cold,expected.hir);
  assert.equal(lowerHir(cold,c),raw('core.mlir').toString());
+});
+
+test('owned Nullable text lowering preserves the selected context',()=>{
+ for(const name of ['nullable-groups-v5','nullable-typeof-v6']){
+  const {hir,context}=JSON.parse(readFileSync(new URL(`./testdata/${name}/expected.json`,import.meta.url),'utf8'));
+  const cold=readHir(Buffer.from(jcs(hir)+'\n'),context);
+  assert.equal(lowerOwnedHir(cold,context),lowerHir(cold,context),name);
+  assert.throws(()=>lowerOwnedHir(cold,{...context,expectedPackageId:'sha256:'+'0'.repeat(64)}),{code:'r03-nullable-identity'});
+  assert.throws(()=>lowerOwnedHir(cold,context,{}),{code:'r03-nullable-context'});
+ }
 });
 
 const coreExecutable=process.env.TSFG_CORE_IR_EXE;
