@@ -2,9 +2,69 @@
 const std = @import("std");
 const managed = @import("managed-heap.zig");
 const backing = @import("typed-field-backing.zig");
+const finite = @import("finite-backing-domain.zig");
+const codec = @import("typed-backing-value.zig");
 const allocator = std.testing.allocator;
 const file = "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/typed-field-backing-captures/wide-backing.bin";
 fn bytes() ![]u8 { return std.Io.Dir.cwd().readFileAlloc(std.testing.io, file, allocator, .limited(2097152)); }
+
+fn referenceDomain(arena: std.mem.Allocator, module: backing.Module, pair: [2][32]u8) !finite.Domain {
+    var members = pair;
+    if (std.mem.order(u8, &members[0], &members[1]) == .gt)
+        std.mem.swap([32]u8, &members[0], &members[1]);
+    var raw: [98]u8 = undefined;
+    std.mem.writeInt(u16, raw[32..34], members.len, .little);
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("tsfg.actual-domain.v1\x00[");
+    for (members, 0..) |id, index| {
+        if (index != 0) hash.update(",");
+        hash.update("\"sha256:");
+        hash.update(&std.fmt.bytesToHex(id, .lower));
+        hash.update("\"");
+        @memcpy(raw[34 + 32 * index ..][0..32], &id);
+    }
+    hash.update("]");
+    @memcpy(raw[0..32], &hash.finalResult());
+    var reader = finite.Reader{ .bytes = &raw, .allocator = arena };
+    return reader.domain(module.authority);
+}
+
+test "all-reference backing decodes only concrete members of its own domain" {
+    const raw = try std.Io.Dir.cwd().readFileAlloc(std.testing.io,
+        "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/typed-field-backing-captures/references.bin", allocator, .limited(2097152));
+    defer allocator.free(raw);
+    var module = try backing.load(allocator, raw);
+    defer module.deinit();
+    var ids: [3][32]u8 = undefined;
+    var count: usize = 0;
+    for (module.authority.layouts.entries) |entry| {
+        const cell = entry.cell orelse continue;
+        if (cell.kind != .reference) continue;
+        ids[count] = cell.type_id;
+        count += 1;
+        if (count == ids.len) break;
+    }
+    try std.testing.expectEqual(ids.len, count);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const source = try referenceDomain(arena.allocator(), module, .{ ids[0], ids[1] });
+    const other = try referenceDomain(arena.allocator(), module, .{ ids[1], ids[2] });
+    var heap = managed.ManagedHeap.init(allocator);
+    defer heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.authority.layouts);
+    const cell = (try module.authority.layouts.find(ids[0])).cell.?;
+    const handle = try heap.createTypedCell(cell, .persistent);
+    defer heap.release(handle) catch unreachable;
+    var encoded = try codec.pack(&heap, module.authority, source, .{
+        .type_id = ids[0], .input = .{ .bytes = &.{}, .references = &.{handle} },
+    });
+    defer encoded.deinit(allocator);
+    try heap.collect();
+    const active = try codec.unpack(&heap, source, encoded);
+    try std.testing.expectEqual(ids[0], active.type_id);
+    try std.testing.expect(try heap.sameObject(handle, active.input.references[0].?));
+    try std.testing.expectError(error.InvalidArrayElement, codec.unpack(&heap, other, encoded));
+}
 
 test "Source field value copy uses static i32 provenance while retaining active undefined" {
     const raw = try std.Io.Dir.cwd().readFileAlloc(std.testing.io,

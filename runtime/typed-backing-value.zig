@@ -7,6 +7,10 @@ const element = @import("array-element.zig");
 const managed = @import("managed-heap.zig");
 const Id = views.Id;
 fn same(a: Id, b: Id) bool { return std.mem.eql(u8, &a, &b); }
+fn memberIndex(members: []const Id, type_id: Id) ?usize {
+    for (members, 0..) |id, index| if (same(id, type_id)) return index;
+    return null;
+}
 pub const Active = struct { type_id: Id, input: element.Input };
 pub fn assignment(authority: views.Module, from: Id, to: Id) views.Error!bool {
     var work: usize = 100000; return relation(authority, from, to, 0, &work);
@@ -53,9 +57,8 @@ pub fn pack(heap: *managed.ManagedHeap, authority: views.Module, domain: finite.
     const source = try finite.concrete(authority, active.type_id);
     _ = try source.checkBytes(active.input.tag, active.input.bytes);
     if (active.input.references.len != source.reference_count) return error.TypeMismatch;
-    var selected: ?usize = null;
-    for (domain.members, 0..) |id, index| if (same(id, active.type_id)) { selected = index; break; };
-    const index = selected orelse return error.TypeMismatch; const layout = domain.layout;
+    const index = memberIndex(domain.members, active.type_id) orelse return error.TypeMismatch;
+    const layout = domain.layout;
     const bytes = try heap.allocator.alloc(u8, layout.byte_size); errdefer heap.allocator.free(bytes); @memset(bytes, 0);
     const references = try heap.allocator.alloc(?managed.Handle, layout.reference_count); errdefer heap.allocator.free(references); @memset(references, null);
     var tag: u16 = @intCast(index);
@@ -78,8 +81,10 @@ pub fn pack(heap: *managed.ManagedHeap, authority: views.Module, domain: finite.
 pub fn unpack(heap: *managed.ManagedHeap, domain: finite.Domain, value: element.Value) managed.Error!Active {
     if (domain.members.len == 1) return .{ .type_id = domain.members[0], .input = .{ .tag = value.tag, .bytes = value.bytes, .references = value.references } };
     if (domain.layout.variants.len == 1) {
+        if (value.references.len != 1) return error.InvalidArrayElement;
         const handle = value.references[0] orelse return error.InvalidArrayElement;
         const header = try heap.copyTypedCellLayout(handle); defer header.deinit(heap.allocator);
+        if (memberIndex(domain.members, header.type_id) == null) return error.InvalidArrayElement;
         return .{ .type_id = header.type_id, .input = .{ .bytes = &.{}, .references = value.references } };
     }
     const variant = try domain.layout.selectVariant(value.tag);
