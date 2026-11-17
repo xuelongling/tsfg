@@ -181,12 +181,13 @@ pub const Document = struct {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
         const own = arena.allocator();
+        const loop_effects = try ownEffectValue(own, self.effects.system(entry.logicalFunctionId).?.loops[entry.loop]);
         const tuples = try own.alloc(Plan.TupleBinding, entry.tupleOccurrences.len);
         for (entry.tupleOccurrences, tuples) |tuple, *binding| binding.* = .{ .column = tuple.columnIndex, .access = tuple.mode };
         const columns = try own.alloc(Plan.ColumnBinding, entry.columns.len);
         for (entry.columns, columns) |column, *binding| binding.* = .{ .component = try own.dupe(u8, column.componentType), .stride = column.stride, .access = column.access };
         // Transfer the final allocator state after all owned allocations, including new arena blocks.
-        var result: Plan = .{ .arena = undefined, .batch = batch, .rows = rows, .columns = columns, .tuples = tuples, .scalars = try own.dupe(ScalarValue, scalars), .entry_symbol = try own.dupe(u8, entry.entrySymbol), .logical_function_id = try own.dupe(u8, entry.logicalFunctionId), .source_function_id = try own.dupe(u8, entry.sourceFunctionId), .signature_hash = try own.dupe(u8, entry.signatureHash), .entry_index = entry_index, .loop = entry.loop, .source = .{ .path = try own.dupe(u8, entry.source.path), .start = entry.source.start, .end = entry.source.end }, .query_binding = try own.dupe(u8, entry.queryBinding), .metadata_hash = try own.dupe(u8, self.payload_hash), .input_identity = try own.dupe(u8, self.payload.inputIdentity), .package_id = try own.dupe(u8, self.payload.packageId), .effects = try own.dupe(u8, self.payload.effects), .effects_hash = try own.dupe(u8, self.payload.effectsHash) };
+        var result: Plan = .{ .arena = undefined, .batch = batch, .rows = rows, .columns = columns, .tuples = tuples, .scalars = try own.dupe(ScalarValue, scalars), .entry_symbol = try own.dupe(u8, entry.entrySymbol), .logical_function_id = try own.dupe(u8, entry.logicalFunctionId), .source_function_id = try own.dupe(u8, entry.sourceFunctionId), .signature_hash = try own.dupe(u8, entry.signatureHash), .entry_index = entry_index, .loop = entry.loop, .source = .{ .path = try own.dupe(u8, entry.source.path), .start = entry.source.start, .end = entry.source.end }, .query_binding = try own.dupe(u8, entry.queryBinding), .metadata_hash = try own.dupe(u8, self.payload_hash), .input_identity = try own.dupe(u8, self.payload.inputIdentity), .package_id = try own.dupe(u8, self.payload.packageId), .effects = try own.dupe(u8, self.payload.effects), .effects_hash = try own.dupe(u8, self.payload.effectsHash), .loop_effects = loop_effects };
         result.arena = arena;
         return result;
     }
@@ -194,6 +195,7 @@ pub const Document = struct {
 
 /// The Store must outlive this plan, exactly as it must outlive its Query/Batch.
 /// A plan owns metadata/scalars; original component columns remain borrowed without copying.
+/// The selected typed loop effects live in the Plan arena.
 pub const Plan = struct {
     const TupleBinding = struct { column: usize, access: storage.Access };
     const ColumnBinding = struct { component: []const u8, stride: usize, access: storage.Access };
@@ -217,6 +219,7 @@ pub const Plan = struct {
     package_id: []const u8,
     effects: []const u8,
     effects_hash: []const u8,
+    loop_effects: effects_module.Loop,
 
     pub fn deinit(self: *Plan) void {
         self.arena.deinit();
@@ -251,6 +254,27 @@ pub const Plan = struct {
         return error.BindingMismatch;
     }
 };
+// The checked Loop's value tree contains immutable slices, records and scalar values.
+fn ownEffectValue(allocator: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!@TypeOf(value) {
+    const Value = @TypeOf(value);
+    switch (@typeInfo(Value)) {
+        .@"struct" => {
+            var result: Value = undefined;
+            inline for (std.meta.fields(Value)) |field|
+                @field(result, field.name) = try ownEffectValue(allocator, @field(value, field.name));
+            return result;
+        },
+        .pointer => |pointer| {
+            if (pointer.size != .slice) @compileError("Query loop metadata must own a slice");
+            if (pointer.child == u8) return allocator.dupe(u8, value);
+            const items = try allocator.alloc(pointer.child, value.len);
+            for (items, value) |*item, original| item.* = try ownEffectValue(allocator, original);
+            return items;
+        },
+        .int, .@"enum" => return value,
+        else => @compileError("unsupported checked Query loop metadata field"),
+    }
+}
 fn charge(remaining: *usize, count: usize) Error!void {
     if (count > remaining.*) return error.MetadataLimit;
     remaining.* -= count;

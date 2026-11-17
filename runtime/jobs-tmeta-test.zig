@@ -35,6 +35,9 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     const scalars = try A.alloc(T.ScalarValue, entry.scalars.len);
     defer A.free(scalars);
     for (scalars, entry.scalars, 0..) |*scalar, formal, index| scalar.* = if (std.mem.eql(u8, formal.type, "f64")) .{ .float64 = @as(f64, @floatFromInt(index)) + 16777217.25 } else .{ .float32 = @as(f32, @floatFromInt(index)) + 0.5 };
+    const checked_system = document.effects.system(entry.logicalFunctionId) orelse return error.TestUnexpectedResult;
+    const original_loop = try std.json.Stringify.valueAlloc(A, checked_system.loops[entry.loop], .{});
+    defer A.free(original_loop);
     var plan = try document.bind(A, &store, batch, 0, scalars);
     defer plan.deinit();
     try std.testing.expectEqual(@as(usize, 2), (try plan.argument(0)).row_count);
@@ -240,6 +243,9 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     try structuralNegatives(&document, expected);
     document.deinit();
     document_live = false;
+    const owned_loop = try std.json.Stringify.valueAlloc(A, plan.loop_effects, .{});
+    defer A.free(owned_loop);
+    try std.testing.expectEqualStrings(original_loop, owned_loop);
     try std.testing.expectEqualStrings(expected.inputIdentity, plan.input_identity);
     try std.testing.expectEqual(@as(usize, 2), (try plan.argument(0)).row_count);
     _ = try plan.readTuple(0);
@@ -434,6 +440,44 @@ test "Query metadata rejects malformed and wrong-version unknown bytes before bi
     try std.testing.expectError(error.MetadataLimit, T.Document.load(A, deep, unused_expected));
 }
 
+test "actual second Query loop keeps typed effects after Document release" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-double-loop-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-double-loop.tmeta"), receipt.value);
+    var document_live = true;
+    defer if (document_live) document.deinit();
+    const entry = document.payload.entries[1];
+    const system = document.effects.system(entry.logicalFunctionId) orelse return error.TestUnexpectedResult;
+    const expected = system.loops[1];
+    try std.testing.expectEqual(@as(u32, 1), entry.loop);
+    try std.testing.expectEqual(@as(usize, 6), expected.operations.len);
+    try std.testing.expectEqualDeep(T.Source{ .path = "/src/main.ts", .start = 333, .end = 396 }, expected.source);
+    const canonical_loop = try std.json.Stringify.valueAlloc(A, expected, .{});
+    defer A.free(canonical_loop);
+
+    var store = try jobs.Store.init(A, &document.component_layout, 2);
+    defer store.deinit() catch unreachable;
+    const archetype = try store.addArchetype(document.component_layout.payload.components);
+    _ = try store.create(archetype, &.{});
+    const query = try document.query(A, &store, 1);
+    var released = false;
+    defer if (!released) query.release() catch unreachable;
+    var plan = try document.bind(A, &store, try query.batch(0), 1, &.{.{ .float32 = 0.5 }});
+    defer plan.deinit();
+    try std.testing.expect(plan.loop_effects.operations.ptr != expected.operations.ptr);
+    try std.testing.expect(plan.loop_effects.source.path.ptr != expected.source.path.ptr);
+    document.deinit();
+    document_live = false;
+
+    try std.testing.expectEqual(@as(usize, 1), (try plan.argument(0)).row_count);
+    _ = try plan.readTuple(0);
+    try query.release();
+    released = true;
+    try std.testing.expectError(error.InvalidLease, plan.readTuple(0));
+    const retained_loop = try std.json.Stringify.valueAlloc(A, plan.loop_effects, .{});
+    defer A.free(retained_loop);
+    try std.testing.expectEqualStrings(canonical_loop, retained_loop);
+}
 test "actual Query metadata opens its checked Store selection" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-v6-f32-view-receipt.json"), .{});
     defer receipt.deinit();
