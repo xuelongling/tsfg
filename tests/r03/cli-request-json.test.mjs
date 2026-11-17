@@ -11,17 +11,18 @@ const cli = fileURLToPath(new URL("../../tooling/tsfgc.mjs", import.meta.url));
 
 /**
  * @param {string} name
- * @param {{emit?: string, requests?: string, inputText?: string|Uint8Array}} [options]
+ * @param {{emit?: string, requests?: string, inputText?: string|Uint8Array, omitInput?: boolean, inputKind?: string}} [options]
  */
-async function runCli(name, { emit, requests, inputText } = {}) {
+async function runCli(name, { emit, requests, inputText, omitInput = false, inputKind } = {}) {
   const storage = process.env.TSFG_TEST_STORAGE;
   assert.ok(storage, "TSFG_TEST_STORAGE must name an owned test directory");
   await mkdir(storage, { recursive: true });
   const root = await mkdtemp(path.join(storage, `${name}-`));
   const input = path.join(root, "input.json");
-  await writeFile(input, inputText ?? JSON.stringify(await sourceInput("export function answer(): i32 { return 42; }")));
+  if (!omitInput) await writeFile(input, inputText ?? JSON.stringify(await sourceInput("export function answer(): i32 { return 42; }")));
   // Omitting every executable option stops valid inputs at the existing missing-frontend boundary.
-  const args = [cli, "--input", input,
+  const args = [cli, ...(omitInput ? [] : ["--input", input]),
+    ...(inputKind === undefined ? [] : ["--input-kind", inputKind]),
     ...(emit === undefined ? [] : ["--emit", emit]),
     ...(requests === undefined ? [] : ["--requests", requests])];
   const child = spawnSync(process.execPath, args, { windowsHide: true });
@@ -91,3 +92,18 @@ test("source CLI rejects malformed UTF-8 in otherwise valid JSON", async () => {
   assert.equal(valid.stderr.length, 0);
   assert.equal(JSON.parse(valid.stdout.toString()).message, "frontend executable is required");
 });
+
+for (const { name, options, diagnostic } of [
+  { name: "missing-input", options: { omitInput: true }, diagnostic: /--input .* is required \(--emit defaults to run\)/ },
+  { name: "unsupported-emit", options: { emit: "query-invalid" }, diagnostic: /unsupported --emit .*query-tmeta\|borrow-proof/ },
+  { name: "unsupported-emit-with-hir", options: { inputKind: "hir", emit: "query-invalid" }, diagnostic: /unsupported --emit .*query-tmeta\|borrow-proof/ },
+  { name: "query-emit-with-hir", options: { inputKind: "hir", emit: "query-tmeta" }, diagnostic: /HIR requires --emit/ }
+]) {
+  test(name + " reports the applicable CLI usage error", async () => {
+    const child = await runCli(name, options);
+    assert.equal(child.status, 2, child.stdout.toString() + child.stderr.toString());
+    assert.equal(child.stdout.length, 0);
+    assert.match(child.stderr.toString(), /r03-cli-options:/);
+    assert.match(child.stderr.toString(), diagnostic);
+  });
+}

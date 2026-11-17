@@ -47,12 +47,15 @@ try {
   const inputKind = options.get("--input-kind") ?? "source";
   const hasFixedCommon = options.has("--publication") || options.has("--kernel-request");
   const fixedCommonCore = inputKind === "hir" && emit === "core" && hasFixedCommon;
+  const emitModes = ["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof"];
+  if (!emitModes.includes(emit))
+    throw new TypeError("r03-cli-options: unsupported --emit (expected " + emitModes.join("|") + ")");
   if (!["source", "hir"].includes(inputKind) || inputKind === "hir" &&
       (!["hir", "core", "bytecode", "program-object", "run"].includes(emit) ||
         ["--frontend", "--query-request"].some(key => options.has(key)) || hasFixedCommon && !fixedCommonCore))
     throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|program-object|run without Source, Query or borrow inputs");
-  if (!["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof"].includes(emit) || !options.has("--input"))
-    throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|program-object|run are required");
+  if (!options.has("--input"))
+    throw new TypeError("r03-cli-options: --input <owned-input.json> is required (--emit defaults to run)");
   if (fixedCommonCore && (!options.has("--publication") || !options.has("--kernel-request") || !options.has("--core") ||
       ["--vm", "--requests"].some(key => options.has(key))))
     throw new TypeError("r03-cli-options: Common Core requires --publication, --kernel-request and --core without Runtime inputs");
