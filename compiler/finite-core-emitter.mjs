@@ -3,7 +3,7 @@
 // existing SSA/CFG emitter. No source evaluator or executable private profile.
 import descriptor from '../contracts/finite-core-development.json' with {type:'json'};
 import {verifyHir} from './module-hir.mjs';
-import {buildFiniteCoreDomains} from './finite-actual-domains.mjs';
+import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from './finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
 import {finiteNumericUse} from './finite-numeric-use.mjs';
@@ -39,15 +39,20 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
   if(roots.length!==1||!root.path.endsWith('.ts')||root.path.endsWith('.d.ts')
     ||Buffer.byteLength(root.path)>4096||root.content.length>0xffffffff||sha256(root.content)!==root.hash)
     pending('formal root Source identity');
-  const proofs=buildFiniteCoreDomains(hir,context,options),plan=proofs.definition;
+  let work=100000,bytes=0;
+  const budget={step(){if(--work<0)pending('work limit');},register(count){if(count>4096)pending('register limit');},
+    block(count){if(count>4096)pending('block limit');},parameters(count){if(count>256)pending('parameter limit');},
+    line(line){bytes+=Buffer.byteLength(line)+1;if(bytes>8388608)pending('Core byte limit');}};
+  const proofs=buildFiniteCoreDomains(hir,context,options),layouts=buildTypedLayouts(hir,context,options),
+    plan=addFiniteTerminalReturnCarriers(hir,proofs.definition,layouts,budget.step);
   const fieldPhases=buildFiniteFieldPhases(hir,context,options);
   const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
   const arrayWrites=new Map(plan.arrayReaching.writes.map(row=>[row.id,row]));
   const types=new Map([...hir.types,...plan.intrinsics].map(type=>[type.id,type]));
-  const selected=id=>{const row=nodes.get(id);if(!row)pending('missing domain '+id);
+  const selected=(id,allowBottom=false)=>{const row=nodes.get(id);if(!row)pending('missing domain '+id);
     if(row.pending.length)pending(row.pending.join(', '));
-    if(!domains.get(row.domainId).actualTypes.length)pending('unreached domain '+id);return row;};
+    if(!allowBottom&&!domains.get(row.domainId).actualTypes.length)pending('unreached domain '+id);return row;};
   const coreType=id=>{
     const scalar=scalarName(id),domain=domains.get(id);
     const native=scalar??domain?.nativeType;
@@ -89,10 +94,6 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
     });
   }
   const symbol=fn=>'f'+fn.id.slice(7);
-  let work=100000,bytes=0;
-  const budget={step(){if(--work<0)pending('work limit');},register(count){if(count>4096)pending('register limit');},
-    block(count){if(count>4096)pending('block limit');},parameters(count){if(count>256)pending('parameter limit');},
-    line(line){bytes+=Buffer.byteLength(line)+1;if(bytes>8388608)pending('Core byte limit');}};
   const members=memberPresence(hir,()=>budget.step());
   // Every definition consumes its quantified ABI upper bound. The reached
   // ledger remains separate; no definition seed is a runtime instance claim.
@@ -214,7 +215,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
         }
         if(['undefined','null'].includes(value.kind))return op(api,'literal',[],value.type,opAttrs(value),value.range);
         if(value.kind==='arrayCreate')return op(api,'array_create',value.elements.map(element=>copy(api,evaluated(element),element.semanticType,element.range)),value.type,
-            opAttrs(value)+', owner = '+quote(value.domainNode)+', element_domain = '+quote(selected(value.domainNode+'/elements').domainId)
+            opAttrs(value)+', owner = '+quote(value.domainNode)+', element_domain = '+quote(selected(value.domainNode+'/elements',value.elements.length===0).domainId)
               +', array_versions = '+quote(canonical(value.elements.map((_,index)=>arrayWrites.get(value.domainNode+'/initial/'+index+'/array-version')))),value.range);
           if(value.kind==='arrayReadChecked')return op(api,'array_read',[evaluated(value.receiver),evaluated(value.index)],value.type,opAttrs(value)+', array_node = '+quote(value.domainNode),value.range);
         if(value.kind==='arrayLength'||value.kind==='readSpanLength')return op(api,'array_length',[evaluated(value.receiver)],value.type,opAttrs(value),value.range);
@@ -352,7 +353,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
     finite_contract:sha256(canonical(descriptor)+'\n'),finite_domains:canonical(plan),semantic_types:canonical(hir.types),
     reached_domains:canonical(proofs.reached),
     language_intrinsics:canonical(plan.intrinsics),
-    source_closure:canonical(hir.sources),canonical_layouts:canonical(buildTypedLayouts(hir,context,options)),
+    source_closure:canonical(hir.sources),canonical_layouts:canonical(layouts),
     callable_contracts:canonical(finiteCallableContracts(hir)),
     ...(publicationContext===undefined?{}:{array_call_authority:canonical({rootFile:hir.rootFile,publicationContext})}),
     source_exports:canonical(hir.exports),

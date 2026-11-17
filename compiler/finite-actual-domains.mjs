@@ -16,6 +16,93 @@ import {selectReferenceMethod} from './reference-methods.mjs';
 function fail(message) {throw Object.assign(new TypeError('r03-finite-domain: '+message),
   {code:'r03-finite-domain',ruleId:'r01-input-boundary',phase:'lowering'});}
 
+function boundId(parameters,result) {
+  return sha256('tsfg.finite-abi.v1\0'+canonical({parameters,result}));
+}
+
+function publishedId(value) {
+  return sha256('tsfg.published-call.v1\0'+canonical(value));
+}
+
+function domainId(alternatives) {
+  return sha256('tsfg.actual-domain.v1\0'+canonical(alternatives));
+}
+
+function representationDomain(id,alternatives,types,physical) {
+  const selected=alternatives.map(id=>types.get(id)),native=selected.length===1&&selected[0].kind==='scalar';
+  const reference=selected.length>0&&selected.every(type=>type.kind==='reference');
+  const alignment=Math.max(1,...alternatives.map(id=>physical.get(id).alignment));
+  const bytes=Math.max(0,...alternatives.map(id=>physical.get(id).byteSize));
+  const union=alternatives.length>1&&!reference;
+  return {id,actualTypes:alternatives,representation:alternatives.length===0?'bottom':native?'native':reference?'reference':selected.length===1
+    ?['undefined','null','void'].includes(selected[0].kind)?'absence':'inline':'finite-union',
+    nativeType:native?selected[0].name:null,alignment:union?Math.max(2,alignment):alignment,
+    tagBytes:union?2:0,byteSize:union?Math.ceil((Math.ceil(2/alignment)*alignment+bytes)/Math.max(2,alignment))*Math.max(2,alignment):bytes,
+    referenceCount:Math.max(0,...alternatives.map(id=>physical.get(id).referenceCount))};
+}
+
+// The checked read remains in Core. Its unreachable SSA result and the
+// callable ABI use the declared native representation; no ordered node,
+// Array element domain or successful value is added to either solver.
+export function addFiniteTerminalReturnCarriers(hir,plan,layouts,charge) {
+  if(!plan.arrayReaching.reads.length)return plan;
+  const bottom=domainId([]),eligible=new Set();
+  for(const row of plan.abi){charge();if(row.result===bottom)eligible.add(row.functionId);}
+  if(!eligible.size)return plan;
+  const missing=new Set();
+  for(const read of plan.arrayReaching.reads) {
+    charge();if(read.status==='missing')missing.add(read.node);
+  }
+  if(!missing.size)return plan;
+  // The field solver inventories lexical direct call sites even on dead paths.
+  // Called leaves retain the existing unresolved ABI until call SSA can also
+  // represent their unreachable result.
+  for(const call of plan.fieldReaching.callContexts){charge();eligible.delete(call.target);}
+  if(!eligible.size)return plan;
+  const indexById=rows=>new Map(rows.map(row=>{charge();return [row.id,row];}));
+  const types=indexById(hir.types),domains=indexById(plan.domains);
+  const maximum=indexById(plan.carrierNodes),normal=indexById(plan.nodes);
+  const carriers=new Map(),results=new Map();
+  let physical;
+  for(const fn of hir.functions) {
+    charge();const index=fn.body.length-1,statement=fn.body[index];
+    const read=fn.id+'/body/'+index+'/value',returned=fn.id+'/return',type=types.get(fn.returnType.id);
+    if(!eligible.has(fn.id)||fn.ownerType||!missing.has(read)||statement?.kind!=='return'||statement.value?.kind!=='arrayReadChecked'||
+        statement.value.type!==fn.returnType.id||type?.kind!=='scalar')continue;
+    // A single direct return gives this representation no live successor use.
+    let direct=true;
+    for(let i=0;i<index;++i){charge();if(fn.body[i].kind!=='local'){direct=false;break;}}
+    if(!direct)continue;
+    const rows=[maximum.get(read),maximum.get(returned),normal.get(read),normal.get(returned)];
+    if(!rows.every(row=>row?.domainId===bottom&&!row.pending.length))continue;
+    physical??=new Map(layouts.entries.map(row=>{charge();return [row.typeId,row.layout];}));
+    const alternatives=[type.id],id=domainId(alternatives);
+    const carrier=domains.get(id)??representationDomain(id,alternatives,types,physical);
+    domains.set(carrier.id,carrier);carriers.set(read,carrier.id);carriers.set(returned,carrier.id);results.set(fn.id,carrier.id);
+  }
+  if(!results.size)return plan;
+  const changedAbis=new Map();
+  const abi=plan.abi.map(row=>{
+    charge();const result=results.get(row.functionId);
+    if(!result)return row;
+    const id=boundId(row.parameters,result);
+    changedAbis.set(row.functionId,id);
+    return {...row,result,id};
+  });
+  const published=plan.published.map(row=>{
+    charge();const result=results.get(row.functionId);
+    if(!result)return row;
+    const value={functionId:row.functionId,sourceSignature:row.sourceSignature,closureIdentity:row.closureIdentity,
+      parameterBounds:row.parameterBounds,resultBound:result,abi:changedAbis.get(row.functionId)};
+    return {...value,id:publishedId(value)};
+  });
+  const domainRows=Array.from(domains.values(),row=>{charge();return row;});
+  domainRows.sort((a,b)=>{charge();return a.id<b.id?-1:1;});
+  return {...plan,abi,published,domains:domainRows,carrierNodes:plan.carrierNodes.map(row=>{
+    charge();const domainId=carriers.get(row.id);return domainId?{...row,domainId}:row;
+  })};
+}
+
 /** @param {any} input @param {any} context
  * @param {{work?:number,cancelled?:()=>boolean,publicationContext?:any}} [options] */
 export function buildFiniteActualDomains(input,context,options={}) {
@@ -444,19 +531,9 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   }
   const domains=new Map();
   function domain(actual) {
-    const alternatives=[...actual].sort(),id=sha256('tsfg.actual-domain.v1\0'+canonical(alternatives));
-    if(!domains.has(id)) {
-      const selected=alternatives.map(id=>types.get(id)),native=selected.length===1&&selected[0].kind==='scalar';
-      const reference=selected.length>0&&selected.every(type=>type.kind==='reference');
-      const alignment=Math.max(1,...alternatives.map(id=>physical.get(id).alignment));
-      const bytes=Math.max(0,...alternatives.map(id=>physical.get(id).byteSize));
-      const union=alternatives.length>1&&!reference;
-      domains.set(id,{id,actualTypes:alternatives,representation:alternatives.length===0?'bottom':native?'native':reference?'reference':selected.length===1
-        ?['undefined','null','void'].includes(selected[0].kind)?'absence':'inline':'finite-union',
-        nativeType:native?selected[0].name:null,alignment:union?Math.max(2,alignment):alignment,
-        tagBytes:union?2:0,byteSize:union?Math.ceil((Math.ceil(2/alignment)*alignment+bytes)/Math.max(2,alignment))*Math.max(2,alignment):bytes,
-        referenceCount:Math.max(0,...alternatives.map(id=>physical.get(id).referenceCount))});
-    }return id;
+    const alternatives=[...actual].sort(),id=domainId(alternatives);
+    if(!domains.has(id))domains.set(id,representationDomain(id,alternatives,types,physical));
+    return id;
   }
   const resultNodes=[...nodes.values()].map(row=>({id:row.id,viewType:row.viewType,domainId:domain(row.actual),
     arrayOwners:[...row.owners].sort(),pending:[...row.pending].sort()})).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
@@ -468,13 +545,13 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   const abi=callables.map(fn=>{
     const parameters=fn.parameters.map(parameter=>byId.get(binding(fn,parameter.id,parameter.type)).domainId);
     const result=fn.role==='construction-body'||types.get(fn.returnType.id).kind==='void'?null:byId.get(returned(fn)).domainId;
-    return {functionId:fn.id,parameters,result,id:sha256('tsfg.finite-abi.v1\0'+canonical({parameters,result}))};
+    return {functionId:fn.id,parameters,result,id:boundId(parameters,result)};
   });
   const published=hir.exports.map(row=>{
     const fn=functions.get(row.functionId),contract=abi.find(value=>value.functionId===fn.id);
     const value={functionId:fn.id,sourceSignature:fn.signatureHash,closureIdentity:hir.inputIdentity,
       parameterBounds:contract.parameters,resultBound:contract.result,abi:contract.id};
-    return {...value,id:sha256('tsfg.published-call.v1\0'+canonical(value))};
+    return {...value,id:publishedId(value)};
   });
   const calls=methodCalls.map(call=>({id:call.id,member:call.member,viewType:call.viewType,
     targets:[...call.targets].sort(([a],[b])=>a<b?-1:1).map(([actualType,functionId])=>({actualType,functionId,
