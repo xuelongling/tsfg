@@ -332,7 +332,12 @@ export function verifyCommonProgramFacts(value) {
   check(same(closure,{roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)}),'closure');
   for(const roots of [p.closure.roots,p.closure.requiredRoots])for(const root of roots){spend();const module=modules.get(root.sourcePath);check(module,'closure');
     if(root.kind==='module-initialization')check(root.name==='$moduleInit'&&root.target===root.sourcePath&&same(root.range,{start:0,end:sources.get(root.sourcePath).content.length}),'closure');
-    else {const fn=functions.get(root.target);check(fn&&fn.sourcePath===root.sourcePath&&fn.name===root.name&&same(root.range,fn.declarationRange),'closure');}}
+    else {
+      const exported=exportEvidence.get(root.sourcePath).exports.get(root.name),fn=functions.get(root.target);
+      check(exported?.kind==='function'&&exported.target===root.target&&fn&&!fn.ownerType&&fn.lexicalParent===null
+        &&same(root.range,fn.declarationRange),'closure','function root differs from original module export');
+    }
+  }
   check(p.closure.requiredRoots.every(root=>p.closure.roots.some(candidate=>same(candidate,root))),'closure');
   const request={family:'tsfg.program-facts-request-candidate',version:selected.version,schemaHash:selected.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:p.declarations,config:p.config,target:p.target,compilationClosure:closure,hostImports:p.hostImports.map(({sourcePath,name,capabilityId,parameterTypes,returnType})=>({sourcePath,name,capabilityId,parameterTypes,returnType}))}};

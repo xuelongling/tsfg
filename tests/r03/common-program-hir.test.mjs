@@ -164,6 +164,8 @@ function refreshVariantSource(payload,file) {
 const byExportName=(left,right)=>byteOrder(left.name,right.name);
 const entryKey=row=>row.functionId+'\0'+row.parameterBinding;
 const byEntry=(left,right)=>byteOrder(entryKey(left),entryKey(right));
+const closureRootKey=row=>[row.kind,row.sourcePath,row.name].join('\0');
+const byClosureRoot=(left,right)=>byteOrder(closureRootKey(left),closureRootKey(right));
 
 test('derived mixed Source default export retains the original declaration and call',()=>{
   // Insert the default modifier into the last declaration of the mixed root.
@@ -193,14 +195,17 @@ test('derived mixed Source default export retains the original declaration and c
       entry.functionId=fn.id;entry.parameterBinding=argument.id;entry.origin={source:sourcePath,...argument.declarationRange};
     }
     p.entryCompatibilityRoots.sort(byEntry);
-    for(const rows of [p.closure.roots,p.closure.requiredRoots])for(const row of rows)
-      if(row.target===previousId){row.target=fn.id;row.range=definitionRange;}
+    for(const rows of [p.closure.roots,p.closure.requiredRoots]){
+      for(const row of rows)if(row.target===previousId){row.name='default';row.target=fn.id;row.range=definitionRange;}
+      rows.sort(byClosureRoot);
+    }
   },'mixed');
   const factsBytes=Buffer.from(canonical(packet)+'\n'),facts=readCommonProgramFacts(factsBytes);
   const hir=buildCommonProgramHir(facts,{...context('mixed'),factsBytes,expectedPackageId:facts.packageId});
   const main=hir.modules.find(row=>row.sourcePath===hir.rootFile),view=hir.functions.find(row=>row.name==='view');
   const exported=main.exports.find(row=>row.name==='default'),source=hir.sources.find(row=>row.path===hir.rootFile);
   assert.equal(exported.target,view.id);
+  assert.equal(hir.closure.roots.find(row=>row.kind==='application'&&row.name==='default').target,view.id);
   assert.equal(view.id,hirs.get('mixed').functions.find(row=>row.name==='view').id);
   assert.equal(view.body[0].value.callee,hir.functions.find(row=>row.name==='run').id);
   assert.deepEqual(exported.range,view.range);
@@ -374,4 +379,35 @@ for(const path of ['/src/barrel.ts','/src/main.ts'])test('cold verifier binds mo
     code:'r03-common-program-module',
     message:/original module edge order differs/
   });
+});
+
+function addRequiredRoot(payload,root){
+  for(const list of [payload.closure.roots,payload.closure.requiredRoots]){
+    list.push(root);list.sort(byClosureRoot);
+  }
+}
+test('closure rejects a retained private declaration selected as a public root',()=>{
+  const value=mutated(payload=>{
+    const fn=payload.functions.find(row=>row.name==='add');
+    const module=payload.modules.find(row=>row.sourcePath===fn.sourcePath);
+    assert.ok(!module.exports.some(row=>row.name===fn.name||row.target===fn.id));
+    addRequiredRoot(payload,{kind:'hot-function',sourcePath:fn.sourcePath,name:fn.name,target:fn.id,range:fn.declarationRange});
+  });
+  assert.throws(()=>verifyCommonProgramFacts(value),{code:'r03-common-program-closure',message:/function root differs from original module export/});
+});
+test('closure joins a selected named re-export to its defining function',()=>{
+  const sourcePath='/src/barrel.ts',name='run';
+  const value=mutated(payload=>{
+    const module=payload.modules.find(row=>row.sourcePath===sourcePath);
+    const exported=module.exports.find(row=>row.name===name);
+    assert.equal(exported.kind,'function');assert.equal(exported.targetSourcePath,'/src/data.ts');
+    addRequiredRoot(payload,{kind:'hot-function',sourcePath,name,target:exported.target,range:exported.definitionRange});
+  },'mixed');
+  const packet=Buffer.from(canonical(value)+'\n'),verified=readCommonProgramFacts(packet);
+  const hir=buildCommonProgramHir(verified,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:packet,expectedPackageId:verified.packageId});
+  const target=hir.functions.find(row=>row.sourcePath==='/src/data.ts'&&row.name===name);
+  const root={kind:'hot-function',sourcePath,name,target:target.id,range:target.range};
+  assert.deepEqual(hir.closure.roots.find(row=>row.kind==='hot-function'),root);
+  assert.deepEqual(hir.closure.requiredRoots.find(row=>row.kind==='hot-function'),root);
+  assert.deepEqual(readCommonProgramHir(Buffer.from(printCommonProgramHir(hir))),hir);
 });
