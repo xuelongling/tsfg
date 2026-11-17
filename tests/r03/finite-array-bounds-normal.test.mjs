@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
-import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compiler/hir.mjs';
 import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
 import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
@@ -11,18 +11,28 @@ import {staticPublication} from './typed-array-publication-fixtures.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 import manifest from './testdata/typed-array-consumer-v8/manifest.json' with {type:'json'};
 
+const spanEndpoint={
+  name:'span-relative-endpoint',file:'typed-array-checked-bounds/span-relative-endpoint-package.json',
+  sha256:'435d3a093f662ea3dec90b2369461b244fd4de600bf0b86b8db01d4779dff852',
+  packageId:'sha256:b424e43f1d1b2b620274cf4bb3cc76b09566418d1fb15ee0524689702f8c2344',
+  requestId:'sha256:5d12866e8ccc5ebd35c58ab51dd12d53621fc0bfd43db44b12d79527ed402f53',
+};
+
 for(const [name,status] of [
   ['empty-checked-read','missing'],['length-equal-checked-read','missing'],
   ['far-oob-checked-read','missing'],['dense-overwrite','proven'],['after-last-use','pending'],
+  [spanEndpoint.name,'missing'],
 ])test('actual '+name+' preserves '+status+' normal Array flow',async t=>{
-  const row=manifest.find(entry=>entry.name===name);assert.ok(row);
-  const bytes=await readFile(new URL('./testdata/typed-array-consumer-v8/'+row.file,import.meta.url));
+  const relativeSpan=name===spanEndpoint.name;
+  const row=relativeSpan?spanEndpoint:manifest.find(entry=>entry.name===name);assert.ok(row);
+  const file=relativeSpan?row.file:'typed-array-consumer-v8/'+row.file;
+  const bytes=await readFile(new URL('./testdata/'+file,import.meta.url));
   assert.equal(sha256(bytes),'sha256:'+row.sha256);
   const facts=readTypedArrayFacts(bytes);
   assert.equal(facts.packageId,row.packageId);
   assert.equal(facts.requestId,row.requestId);
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
-  const publication=staticPublication(facts);
+  const publication=relativeSpan?buildInitialArrayPublication(context):staticPublication(facts);
   const built=buildHir(facts,context,publication);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
   const {hir}=built,plans=buildFiniteCoreDomains(hir,context,{publicationContext:publication});
@@ -90,7 +100,13 @@ for(const [name,status] of [
   if(process.env.TSFG_CORE_IR_EXE&&status==='missing')await t.test('Static Core admits the original checked read in both modes',async()=>{
     const canonicalized=await invokeCore(core);
     accepted(canonicalized);
-    assert.ok(checkedRead(canonicalized.stdout.toString('utf8')));
+    const text=canonicalized.stdout.toString('utf8'),readLine=checkedRead(text);
+    assert.ok(readLine);
+    if(relativeSpan) {
+      const span=text.match(/^ +(%\S+) = "tsfg_core\.domain\.read_span"\(/m);
+      assert.ok(span&&text.indexOf(span[0])<text.indexOf(readLine));
+      assert.ok(readLine.includes('"tsfg_core.domain.array_read"('+span[1]+', '));
+    }
     const optimized=await invokeCore(core,'--optimize');
     accepted(optimized);
     assert.deepEqual(optimized.stdout,canonicalized.stdout);
