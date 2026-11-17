@@ -9,10 +9,10 @@ const unused_expected: T.Expected = .{
     .packageId = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 };
 
-const I32Fixture = enum { copy, copy_conflict, compound, literal };
+const ProducerFixture = enum { copy, copy_conflict, compound, literal, f32_view, inheritance };
 
 // Called only with whole actual producer fixtures and independently cold-verified expected identities.
-fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bool, i32_fixture: ?I32Fixture) !void {
+fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bool, producer_fixture: ?ProducerFixture) !void {
     var document = try T.Document.load(A, bytes, expected);
     var document_live = true;
     defer if (document_live) document.deinit();
@@ -78,7 +78,11 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         }
     }
     if (shared_required) try std.testing.expect(shared);
-    if (i32_fixture) |fixture| {
+    if (producer_fixture == .f32_view) {
+        try expectF32ViewBinding(&document, entry, &plan);
+    } else if (producer_fixture == .inheritance) {
+        try expectInheritanceBinding(&document, &plan, batch);
+    } else if (producer_fixture) |fixture| {
         const system_count: usize = if (fixture == .copy_conflict) 2 else 1;
         var destination: ?*const jobs.layout.Type = null;
         var source: ?*const jobs.layout.Type = null;
@@ -151,22 +155,15 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         const systems = document.effects.report.systems;
         try std.testing.expectEqual(system_count, systems.len);
         if (fixture == .compound or fixture == .literal) {
-            // Digests of the retained independent batch, original Source facts, and request.
-            const inputs = [_][]const u8{ document.payload.batch, document.payload.sourcePacket, document.payload.sourceRequest };
-            const digests = if (fixture == .compound) [_][]const u8{
+            try expectProducerInputs(document.payload, if (fixture == .compound) .{
                 "15b61f2629dc0a5f5b4cf236f5b584462481fe3d7eef5740f51aa3f3934a803a",
                 "8ec279d5f9a3887c0b3be3bd996461db38fd6ccdc4fd0e1563e6a6ed32867937",
                 "5276dc35b780e6f773f79a79ecccd81a4a5b8d1b3f76d1f56b8f53d9371c730e",
-            } else [_][]const u8{
+            } else .{
                 "608871bee13bc30e7e4aec5d3ed8753f6b2312a7ebdaae432f02378df85d515b",
                 "7d0b17c43c908e2145c804935ab213acb9971b19b1ee588b3e2f911aa98e2a89",
                 "1f863b3cb80a83fc1c2659a2d10bced03c2715e2fc8e471cd219367b50269a7a",
-            };
-            for (inputs, digests) |input, expected_hash| {
-                var hash: [32]u8 = undefined;
-                std.crypto.hash.sha2.Sha256.hash(input, &hash, .{});
-                try std.testing.expectEqualStrings(expected_hash, &std.fmt.bytesToHex(hash, .lower));
-            }
+            });
             try std.testing.expectEqual(@as(usize, 1), systems[0].loops.len);
             try std.testing.expectEqualStrings(systems[0].functionId, entry.logicalFunctionId);
             const operations = systems[0].loops[0].operations;
@@ -253,6 +250,68 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     defer fresh.release() catch unreachable;
     try std.testing.expectError(error.InvalidLease, plan.argument(0));
     try std.testing.expectError(error.InvalidLease, plan.readTuple(0));
+    if (producer_fixture == .f32_view) try std.testing.expectError(error.InvalidLease, plan.readTuple(1));
+}
+
+// Digests are from the independently retained batch, Source facts and Source request.
+fn expectProducerInputs(payload: T.Payload, digests: [3][]const u8) !void {
+    const inputs = [_][]const u8{ payload.batch, payload.sourcePacket, payload.sourceRequest };
+    for (inputs, digests) |input, expected_hash| {
+        var hash: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(input, &hash, .{});
+        try std.testing.expectEqualStrings(expected_hash, &std.fmt.bytesToHex(hash, .lower));
+    }
+}
+
+fn expectF32ViewBinding(document: *const T.Document, entry: T.Entry, plan: *const T.Plan) !void {
+    try expectProducerInputs(document.payload, .{
+        "33de722b859c08d84e08669333eca9084641be6a8ac7e14f157e80cfd8910e4b",
+        "379d840fbe0cba553731af74927211fec6e9802b87a86aa7392e60f3decbc291",
+        "375fcf0db5d43d591462d6b0f98e4aa0c8f518cbe8ae0cc33396ff58ce235001",
+    });
+    try std.testing.expectEqual(@as(usize, 1), document.payload.entries.len);
+    try std.testing.expectEqual(@as(usize, 2), entry.tupleOccurrences.len);
+    try std.testing.expectEqual(@as(usize, 1), entry.scalars.len);
+    const dt = entry.scalars[0];
+    try std.testing.expectEqual(@as(u32, 1), dt.sourceParameter);
+    try std.testing.expectEqualStrings("sha256:e36773f38a1f006954680546e7196037668a45b0e8ef3f9dc2c1f3e6e08f8b9f", dt.sourceBinding);
+    try std.testing.expectEqual(@as(u32, 5), dt.argument);
+    try std.testing.expectEqual(@as(f32, 0.5), (try plan.argument(5)).scalar.float32);
+
+    const systems = document.effects.report.systems;
+    try std.testing.expectEqual(@as(usize, 1), systems.len);
+    try std.testing.expectEqual(@as(usize, 1), systems[0].loops.len);
+    const loop = systems[0].loops[0];
+    try std.testing.expectEqual(@as(usize, 1), loop.calls.len);
+    const call = loop.calls[0];
+    try std.testing.expectEqualDeep(T.Source{ .path = "/src/main.ts", .start = 323, .end = 337 }, call.source);
+    try std.testing.expectEqualDeep(T.Source{ .path = "/src/main.ts", .start = 323, .end = 329 }, call.calleeSource);
+    // update reads p.x, reads v.x, then writes p.x on the original bound tuples.
+    const position_x = "sha256:229cc76f801c19a2e92c8318a81b7ddc139a6199dd1c3732d01daa45b15dd95b";
+    const velocity_x = "sha256:cfb4509e0896869ec005947fe723d03e7f37c4cfc00dc4c987d301a65b36a4a6";
+    const order = [_]struct { kind: jobs.Access, tuple_index: u32, start: u32, end: u32, field: []const u8 }{
+        .{ .kind = .read, .tuple_index = 0, .start = 592, .end = 595, .field = position_x },
+        .{ .kind = .read, .tuple_index = 1, .start = 611, .end = 614, .field = velocity_x },
+        .{ .kind = .write, .tuple_index = 0, .start = 634, .end = 643, .field = position_x },
+    };
+    try std.testing.expect(loop.operations.len >= 1 + order.len);
+    for (loop.operations[1..][0..order.len], order) |operation, wanted| {
+        try std.testing.expectEqual(@as(usize, 1), operation.callPath.len);
+        try std.testing.expectEqualDeep(call, operation.callPath[0]);
+        try std.testing.expectEqualDeep(T.Source{ .path = "/src/main.ts", .start = wanted.start, .end = wanted.end }, operation.source);
+        try std.testing.expectEqual(wanted.kind, operation.kind);
+        try std.testing.expectEqual(wanted.tuple_index, operation.tupleIndex);
+        try std.testing.expectEqualStrings(wanted.field, operation.field);
+        const tuple = entry.tupleOccurrences[wanted.tuple_index];
+        const column = (try plan.argument(tuple.bufferArgument)).column;
+        try std.testing.expectEqualStrings(operation.sourceBinding, tuple.sourceBinding);
+        try std.testing.expectEqualStrings(operation.componentType, column.component);
+        const expected_access: jobs.Access = if (wanted.tuple_index == 0) .write else .read;
+        try std.testing.expectEqual(expected_access, tuple.mode);
+        try std.testing.expectEqual(expected_access, column.access);
+    }
+    // The writable helper receiver still reaches the same Store bytes.
+    try std.testing.expectEqual(@intFromPtr((try plan.readTuple(0)).ptr), @intFromPtr((try plan.writeTuple(0)).ptr));
 }
 
 fn expectI32LiteralFacts(bytes: []const u8) !void {
@@ -447,6 +506,12 @@ test "Query metadata rejects an incomplete Source scalar sequence" {
 test "actual f64 view helper metadata retains its original borrowed batch" {
     try exerciseFixture("f64-helper", false);
 }
+test "actual v6 f32 view helper binds original column permissions and scalar" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-v6-f32-view-receipt.json"), .{});
+    defer receipt.deinit();
+    try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-v6-f32-view.tmeta"), receipt.value, false, .f32_view);
+}
+
 test "actual i32 copy metadata binds original columns and preserves two-system conflicts" {
     inline for (.{ "i32-copy", "i32-copy-conflict" }, 0..) |name, index| {
         const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-" ++ name ++ "-receipt.json"), .{});
@@ -590,6 +655,75 @@ test "Store batch directory and release retain the original borrowed session" {
     const fresh = try store.query(&.{.{ .component = selected, .access = .write }});
     defer fresh.release() catch unreachable;
     try std.testing.expectError(error.InvalidLease, batch.columnCount());
+}
+
+fn expectInheritanceBinding(document: *const T.Document, plan: *const T.Plan, batch: jobs.Store.Batch) !void {
+    try expectProducerInputs(document.payload, .{
+        "d8c6c3f4a243e4c77c363fc6c6a33c062d570ca84f3be161b746f294e4992e05",
+        "69d722c999c4d37d745685a0d2388553c8d127a7e4fdc4c551a51bbfa7b9a986",
+        "7477dbeef54e48316b531084be9e622025e641616b4a1d70f97b522f4d8393de",
+    });
+    var effects_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(document.payload.effects, &effects_hash, .{});
+    try std.testing.expectEqualStrings("0607efdd19138b02d6c599c81a28e3e2f71fcbbd8ac87d5e5faa4b8ad8487e4a", &std.fmt.bytesToHex(effects_hash, .lower));
+
+    const position_id = "sha256:cb824c755704becef7c0bf4673267f1fd3275acfb472b491dde070a54924363d";
+    const velocity_id = "sha256:aee79d3f99577389544c923954b4ee58a29cb090974ec9a6cf7516ef91af3963";
+    const position = document.component_layout.find(position_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 4), position.fields.len);
+    for (position.fields, [_]u32{ 0, 4, 8, 12 }) |field, offset| try std.testing.expectEqual(offset, field.offset);
+    for (position.fields[0..2], position.fields[2..4]) |base, derived| {
+        try std.testing.expectEqualStrings(base.name, derived.name);
+        try std.testing.expect(!std.mem.eql(u8, base.id, derived.id));
+    }
+
+    const velocity = (try plan.argument(1)).column;
+    const destination = (try plan.argument(3)).column;
+    try std.testing.expectEqualStrings(velocity_id, velocity.component);
+    try std.testing.expectEqualStrings(position_id, destination.component);
+    try std.testing.expectEqual(jobs.Access.read, velocity.access);
+    try std.testing.expectEqual(jobs.Access.write, destination.access);
+    try std.testing.expectEqual(@as(usize, 8), (try plan.argument(2)).stride);
+    try std.testing.expectEqual(@as(usize, 16), (try plan.argument(4)).stride);
+    try std.testing.expectEqual(@as(f32, 0.5), (try plan.argument(5)).scalar.float32);
+
+    const borrowed_position = try batch.read(1);
+    const writable = try plan.writeTuple(0);
+    const readonly = try plan.readTuple(1);
+    try std.testing.expectEqual(@intFromPtr(borrowed_position.ptr), @intFromPtr(writable.ptr));
+    try std.testing.expectEqual(@intFromPtr((try batch.read(0)).ptr), @intFromPtr(readonly.ptr));
+    try std.testing.expectEqual(@as(usize, 32), writable.len);
+    try std.testing.expectEqual(@as(usize, 16), readonly.len);
+
+    const operations = document.effects.report.systems[0].loops[0].operations;
+    try std.testing.expectEqual(@as(usize, 6), operations.len);
+    // Mark only the selected derived lanes in row zero.
+    const writes = [_]struct { index: usize, anchor: jobs.layout.Range, marker: [4]u8 }{
+        .{ .index = 2, .anchor = .{ .start = 337, .end = 352 }, .marker = .{ 1, 2, 3, 4 } },
+        .{ .index = 5, .anchor = .{ .start = 356, .end = 371 }, .marker = .{ 5, 6, 7, 8 } },
+    };
+    for (position.fields[2..4], writes) |field, write| {
+        const operation = operations[write.index];
+        try std.testing.expectEqual(jobs.Access.write, operation.kind);
+        try std.testing.expectEqual(@as(u32, 0), operation.tupleIndex);
+        try std.testing.expectEqualStrings(position_id, operation.componentType);
+        try std.testing.expectEqualStrings(field.id, operation.field);
+        try std.testing.expectEqualStrings("/src/main.ts", operation.source.path);
+        try std.testing.expectEqual(write.anchor.start, operation.source.start);
+        try std.testing.expectEqual(write.anchor.end, operation.source.end);
+        const offset: usize = field.offset;
+        @memcpy(writable[offset .. offset + write.marker.len], &write.marker);
+    }
+    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 8), borrowed_position[0..8]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 }, borrowed_position[8..16]);
+    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 16), borrowed_position[16..32]);
+    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 16), readonly);
+}
+
+test "actual inherited Query binds shadow field offsets to the original borrowed columns" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-inheritance-receipt.json"), .{});
+    defer receipt.deinit();
+    try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-inheritance.tmeta"), receipt.value, false, .inheritance);
 }
 
 test {
