@@ -181,6 +181,7 @@ export function verifyCommonProgramFacts(value) {
   const functions=new Map(p.functions.map(fn=>[fn.id,fn])),globals=new Map(p.globals.map(row=>[row.binding.id,row]));
   check(functions.size===p.functions.length&&globals.size===p.globals.length,'identity');
   const modules=new Map(),visible=new Map(),coverage=new Map([...grammars.keys()].map(path=>[path,[]]));
+  const nominalBindings=new Map([...grammars.keys()].map(path=>[path,new Map()]));
   check(p.modules.length===grammars.size&&p.modules.length<=64,'module');
   for(const row of p.modules){spend();check(grammars.has(row.sourcePath)&&!modules.has(row.sourcePath)&&row.external===true,'module');modules.set(row.sourcePath,row);
     const scope=new Map();for(const fn of p.functions.filter(fn=>fn.sourcePath===row.sourcePath&&!fn.ownerType&&fn.lexicalParent===null)){check(!scope.has(fn.name),'scope');scope.set(fn.name,fn.id);}
@@ -195,7 +196,8 @@ export function verifyCommonProgramFacts(value) {
   }
   for(const module of p.modules){const g=grammars.get(module.sourcePath),scope=visible.get(module.sourcePath);
     const namedReexports=new Map(),namedReexportEdges=new Set(),claims=new Map(),exports=new Map(),starSources=[];
-    exportEvidence.set(module.sourcePath,{claims,exports,starSources});
+    const localRows=new Map(),importSources=new Map();
+    exportEvidence.set(module.sourcePath,{claims,exports,starSources,localRows,importSources});
     check(same(module.globals,p.globals.filter(row=>row.sourcePath===module.sourcePath).map(row=>row.binding.id)),'global');
     const initialized=module.initialization.filter(row=>row.kind==='initialize');check(same(initialized.map(row=>row.binding),module.globals),'global');
     for(const global of p.globals.filter(row=>row.sourcePath===module.sourcePath)){const row=global.binding;
@@ -224,6 +226,7 @@ export function verifyCommonProgramFacts(value) {
         if(alias.localBinding!==null){check(edge.kind==='import'&&alias.nameRange&&alias.localBinding===originId(module.sourcePath,alias.nameRange),'identity');sourceRange(alias.nameRange,g.text,edge.range);
           g.name(alias.nameRange,alias.name);
           check(!scope.has(alias.name),'scope');scope.set(alias.name,alias.target);
+          importSources.set(alias.name,{path:edge.sourcePath,name:alias.imported});
           if(alias.kind==='namespace')for(const exported of modules.get(edge.sourcePath).exports){spend();scope.set(alias.name+'.'+exported.name,exported.target);}}
         else check(edge.kind!=='import'&&alias.nameRange===null,'module');
         if(namedReexport){check(!namedReexports.has(alias.name),'export');namedReexports.set(alias.name,{alias,path:edge.sourcePath});}
@@ -249,7 +252,7 @@ export function verifyCommonProgramFacts(value) {
       const within=edge||p.functions.some(fn=>fn.sourcePath===module.sourcePath&&e.range.start>=fn.declarationRange.start&&e.range.end<=fn.declarationRange.end)
         ||p.types.some(type=>type.sourcePath===module.sourcePath&&['value','reference'].includes(type.kind)&&e.range.start>=type.declarationRange.start&&e.range.end<=type.declarationRange.end)
         ||module.initialization.some(row=>e.range.start>=row.range.start&&e.range.end<=row.range.end);
-      if(!within)coverage.get(module.sourcePath).push(e.range);
+      if(!within)localRows.set(e.name,e);
       else if(!edge)claims.set(e.name,e);
     }
     check(matchedReexports===namedReexports.size,'export');
@@ -270,7 +273,9 @@ export function verifyCommonProgramFacts(value) {
   for(const fn of p.functions)if(!fn.ownerType&&fn.lexicalParent===null){check(coverage.has(fn.sourcePath),'source');coverage.get(fn.sourcePath).push(fn.declarationRange);}
   for(const row of types.values())if(['value','reference'].includes(row.kind)) {
     const g=grammars.get(row.sourcePath);check(g&&row.nominalKey.sourcePath===row.sourcePath&&row.nominalKey.declarationPath.length===1,'type');
-    g.name(row.nameRange,row.nominalKey.declarationPath[0]);coverage.get(row.sourcePath).push(row.declarationRange);
+    const name=row.nominalKey.declarationPath[0];
+    g.name(row.nameRange,name);coverage.get(row.sourcePath).push(row.declarationRange);
+    nominalBindings.get(row.sourcePath).set(name,row.id);
     for(const [index,field]of row.fields.entries()) {
       spend();const tokens=g.spelling(field.origin),prefix=[];let next=0;
       while(['public','private','protected','readonly','declare'].includes(tokens[next]))prefix.push(tokens[next++]);
@@ -303,10 +308,22 @@ export function verifyCommonProgramFacts(value) {
     }
     return false;
   }
+  validateCommonBodies(p,sources,types,grammars,visible,spend);
+  for(const [path,segments]of coverage){
+    const {localRows,claims,importSources}=exportEvidence.get(path);
+    const scope=visible.get(path),nominals=nominalBindings.get(path);
+    grammars.get(path).complete(segments,(local,exported,range)=>{
+      spend();const row=localRows.get(exported),binding=scope.get(local)??nominals.get(local);
+      check(row&&row.target===binding&&same(row.range,range),'export','local export differs from its original binding');
+      localRows.delete(exported);
+      const forward=importSources.get(local);
+      if(forward){namedSources.set(row,forward);claims.set(exported,row);}
+      else declaredExports.add(row);
+    });
+    check(localRows.size===0,'export','module export has no original local specifier');
+  }
   for(const [path,{claims}] of exportEvidence)for(const claim of claims.values())
     check(reachesDeclaration(path,claim),'export');
-  validateCommonBodies(p,sources,types,grammars,visible,spend);
-  for(const [path,segments]of coverage)grammars.get(path).complete(segments);
   const tuples=roots=>roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
   const closure=normalizeClosure({roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)});
   check(same(closure,{roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)}),'closure');

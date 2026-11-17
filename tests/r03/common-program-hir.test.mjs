@@ -288,3 +288,69 @@ test('a derived residual star resolves to the original upstream declaration',()=
   assert.ok(indirect.range.start>=run.range.start&&indirect.range.end<=run.range.end);
   assert.deepEqual(indirect,add);
 });
+
+function localExportVariant(change=undefined) {
+  return mutated(p=>{
+    const main=p.modules.find(row=>row.sourcePath===p.rootFile),file=p.files.find(row=>row.path===p.rootFile);
+    const barrel=p.modules.find(row=>row.sourcePath==='/src/barrel.ts');
+    const view=main.exports.find(row=>row.name==='view'),run=barrel.exports.find(row=>row.name==='run');
+    const box=barrel.exports.find(row=>row.name==='Box');
+    const clause='export { view as alias, readLocal as importedRun, Box };';
+    const start=file.content.length;
+    const local=[
+      {specifier:'view as alias',name:'alias',original:view},
+      {specifier:'readLocal as importedRun',name:'importedRun',original:run},
+      {specifier:'Box',name:'Box',original:box},
+    ];
+    for(const {specifier,name,original} of local){
+      const specifierStart=start+clause.indexOf(specifier);
+      main.exports.push({...original,name,range:{start:specifierStart,end:specifierStart+specifier.length}});
+    }
+    p.exports.push({name:'alias',functionId:view.target},{name:'importedRun',functionId:run.target});
+    const parameter=p.functions.find(row=>row.id===run.target).parameters[0];
+    p.entryCompatibilityRoots.push({...p.entryCompatibilityRoots.find(row=>row.functionId===view.target),
+      functionId:run.target,parameterBinding:parameter.id,origin:{source:run.targetSourcePath,...parameter.declarationRange}});
+    file.content+=clause+'\n';
+    change?.(p,main,file);
+    main.exports.sort(byExportName);p.exports.sort(byExportName);p.entryCompatibilityRoots.sort(byEntry);
+    refreshVariantSource(p,file);
+  },'mixed');
+}
+
+test('derived local export rows cover each exact Go ExportSpecifier and resolve original bindings',()=>{
+  const packet=localExportVariant(),factsBytes=Buffer.from(canonical(packet)+'\n');
+  const verified=readCommonProgramFacts(factsBytes);
+  const hir=buildCommonProgramHir(verified,{...context('mixed'),factsBytes,expectedPackageId:verified.packageId});
+  const main=hir.modules.find(row=>row.sourcePath===hir.rootFile),source=hir.sources.find(row=>row.path===hir.rootFile).content;
+  const alias=main.exports.find(row=>row.name==='alias'),imported=main.exports.find(row=>row.name==='importedRun');
+  const nominal=main.exports.find(row=>row.name==='Box');
+  assert.deepEqual([alias,imported,nominal].map(row=>source.slice(row.range.start,row.range.end)),
+    ['view as alias','readLocal as importedRun','Box']);
+  assert.equal(alias.target,hir.functions.find(row=>row.name==='view').id);
+  assert.equal(imported.target,hir.functions.find(row=>row.name==='run').id);
+  assert.equal(nominal.target,hir.types.find(row=>row.name==='Box').id);
+  assert.deepEqual(readCommonProgramHir(Buffer.from(printCommonProgramHir(hir))),hir);
+});
+
+const localExportMutations=[
+  ['retargeting a local binding',(p,main)=>{
+    const imported=main.exports.find(row=>row.name==='importedRun');
+    const {target,targetSourcePath,definitionRange}=imported;
+    Object.assign(main.exports.find(row=>row.name==='alias'),{target,targetSourcePath,definitionRange});
+    p.exports.find(row=>row.name==='alias').functionId=target;
+  }],
+  ['omitting an original specifier',(p,main)=>{
+    main.exports=main.exports.filter(row=>row.name!=='alias');p.exports=p.exports.filter(row=>row.name!=='alias');
+  }],
+  ['using an unowned public name',(p,main)=>{
+    main.exports.find(row=>row.name==='alias').name='other';p.exports.find(row=>row.name==='alias').name='other';
+  }],
+  ['changing a clause token',(p,main,file)=>{file.content=file.content.replace('view as alias','view of alias');}],
+  ['using the enclosing clause as the specifier span',(p,main,file)=>{
+    main.exports.find(row=>row.name==='alias').range={start:file.content.lastIndexOf('export {'),end:file.content.length-1};
+  }],
+];
+for(const [name,change] of localExportMutations)test('derived local export rejects '+name,()=>{
+  const packet=localExportVariant(change);
+  assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
+});

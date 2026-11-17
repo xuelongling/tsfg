@@ -48,12 +48,34 @@ export function commonSourceGrammar(source,spend) {
   function body(range,rows) {
     const pieces=['{',...rows.map(row=>row.range),'}'];sequence(range,pieces);
   }
-  function complete(segments) {
+  function complete(segments,matchLocalExport=undefined) {
     let cursor=0;
+    function localExports(limit) {
+      while(cursor+1<limit&&tokens[cursor].text==='export'&&tokens[cursor+1].text==='{'){
+        spend(2);cursor+=2;
+        const identifier=()=>{
+          check(cursor<limit,'export');spend();
+          try{return identifierName(tokens[cursor++].text);}
+          catch{check(false,'export','local export requires an original identifier');}
+        };
+        while(cursor<limit&&tokens[cursor].text!=='}'){
+          const start=tokens[cursor].start,local=identifier();let exported=local;
+          if(cursor<limit&&tokens[cursor].text==='as'){spend();cursor++;exported=identifier();}
+          matchLocalExport(local,exported,{start,end:tokens[cursor-1].end});
+          if(cursor>=limit||tokens[cursor].text!==',')break;
+          spend();cursor++;
+        }
+        check(cursor<limit&&tokens[cursor].text==='}','export','original local export clause differs');spend();cursor++;
+        if(cursor<limit&&tokens[cursor].text===';'){spend();cursor++;}
+      }
+    }
     for(const segment of [...segments].sort((a,b)=>a.start-b.start)) {
-      spend();const selected=indices(segment);check(selected.first===cursor,'source','unrepresented or overlapping top-level declaration');cursor=selected.end;
+      spend();const selected=indices(segment);
+      if(matchLocalExport)localExports(selected.first);
+      check(selected.first===cursor,'source','unrepresented or overlapping top-level declaration');cursor=selected.end;
       while(tokens[cursor]?.text===';')cursor++;
     }
+    if(matchLocalExport)localExports(tokens.length);
     check(cursor===tokens.length,'source','complete source declaration coverage differs');
   }
   return {source,text,tokens,indices,sequence,spelling,name,body,complete,
