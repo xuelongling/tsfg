@@ -288,7 +288,10 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     return emitStringCore(hir, factsContext);
   }
   const family = familyOf(hir);
-  if (family === genericHirFormat.family && callPublicationContext !== undefined) callEffectsFailure();
+  if (family === genericHirFormat.family) {
+    if (callPublicationContext !== undefined) callEffectsFailure();
+    return lowerGenericHir(hir);
+  }
   if (family === 'tsfg.module-callable-hir-candidate') {
     return emitModuleCallableCore(hir, callPublicationContext);
   }
@@ -332,7 +335,5 @@ export function lowerFormalHir(hir, factsContext = undefined, callPublicationCon
  * @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerOwnedHir(hir, factsContext = undefined, callPublicationContext = undefined) {
   if (isSelectedNullableContext(factsContext)) return lowerHir(hir, factsContext, callPublicationContext);
-  if (factsContext === undefined && callPublicationContext === undefined && familyOf(hir) === genericHirFormat.family)
-    return lowerGenericHir(hir);
   return lowerFormalHir(hir, factsContext, callPublicationContext);
 }
