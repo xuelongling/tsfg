@@ -67,6 +67,19 @@ for(const [name,mutate]of Object.entries({
 }))test('actual HSC boundary rejects wrong '+name,()=>{
   const changed=structuredClone(context);mutate(changed);assert.throws(()=>buildCommonProgramHir(facts,inputContext,changed),/host-semantic-contract/);
 });
+test('missing Host input inventory fails before metering it',()=>{
+  const changed=structuredClone(context);changed.identity.buildInputSet=null;
+  assert.throws(()=>buildCommonProgramHir(facts,inputContext,changed),{code:'r03-common-program-host-context'});
+});
+test('malformed Host inventory rows reach the semantic identity check',()=>{
+  const changed=structuredClone(context);changed.identity.buildInputSet.entries[0]=null;
+  assert.throws(()=>buildCommonProgramHir(facts,inputContext,changed),{message:'host-semantic-contract: identity shape'});
+});
+test('the Host inventory meter counts only actual path characters',()=>{
+  const changed=structuredClone(context);
+  changed.identity.buildInputSet.entries[0].repositoryRelativePath={length:4000001};
+  assert.throws(()=>buildCommonProgramHir(facts,inputContext,changed),{message:'host-semantic-contract: input entry'});
+});
 test('normalized argument0, recursive and full finite-indirect effects retain both Host resources',()=>{
   const model=structuredClone(hir),scalar=hir.hostImports[0].returnType,range={start:0,end:1},
     zero={kind:'numericLiteral',type:scalar,token:'0',decimal:'0',range},

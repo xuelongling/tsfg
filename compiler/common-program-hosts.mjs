@@ -43,9 +43,13 @@ export function commonOwnedHostImports(payload,type,spend) {
 export function commonHostContext(input,imports,spend) {
   if(!imports.length){check(input===null,'host-context','a Host-free Program has no Host semantics context');return null;}
   commonBudget(input);record(input,['contract','identity']);record(input.identity,['buildIdentity','buildInputSet']);
-  const entries=input.identity.buildInputSet.entries;check(Array.isArray(entries)&&entries.length<=4096,'host-context');
+  const entries=input.identity.buildInputSet?.entries;check(Array.isArray(entries)&&entries.length<=4096,'host-context');
   // Charge the complete identity before the verifier scans/copies it.
-  spend(entries.length+1);for(const entry of entries){spend(entry.repositoryRelativePath?.length??0);}
+  spend(entries.length+1);
+  for(const entry of entries){
+    const relativePath=entry?.repositoryRelativePath;
+    if(typeof relativePath==='string')spend(relativePath.length);
+  }
   const contractBytes=Buffer.from(canonical(input.contract)+'\n');spend(contractBytes.length);
   const contract=verifyCounterHostContract(contractBytes,input.identity);
   for(const host of imports){spend();check(host.capabilityId===contract.binding.id,'host-context');}
