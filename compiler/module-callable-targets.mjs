@@ -5,7 +5,7 @@ import {callableTargetDomain,fixedCallableTransfer} from './callable-target-doma
 export function solveModuleTargets(hir,records,fail){
   const functions=new Map(hir.functions.map(f=>[f.id,f])),types=new Map(hir.types.map(t=>[t.id,t]));
   const callable=t=>types.get(t)?.kind==='function';
-  const summaries=new Map(),sites=new Map(),observations=new Map(),forced=new Set();let work=0,growth=0,dirty=false;
+  const summaries=new Map(),sites=new Map(),observations=new Map(),forced=new Set();let work=0,growth=0,siteCount=0,dirty=false;
   const step=(amount=1)=>{work+=amount;if(work>1000000)fail('limit');};
   const grew=()=>{if(++growth>200000)fail('limit');dirty=true;};
   const domain=callableTargetDomain(functions,step,fail,compare),{bottom,top,wire,from,join,equal}=domain;
@@ -31,7 +31,11 @@ export function solveModuleTargets(hir,records,fail){
   }
   function note(summary,value,path,t){
     const key=summary.fn.id+'\0'+canonical(path);
-    if(!sites.has(key)){if(sites.size>=16384)fail('limit');sites.set(key,{functionId:summary.fn.id,expressionPath:path,kind:value.kind,range:value.range,targets:bottom()});grew();}
+    if(!sites.has(key)){
+      if(siteCount>=16384)fail('limit');
+      siteCount++;
+      sites.set(key,{functionId:summary.fn.id,expressionPath:path,kind:value.kind,range:value.range,targets:bottom()});grew();
+    }
     const row=sites.get(key),n=join(row.targets,t);if(!equal(row.targets,n)){row.targets=n;grew();}return key;
   }
   function expression(s,state,v,path){
@@ -152,18 +156,43 @@ export function solveModuleTargets(hir,records,fail){
   }
   const roots=new Set([...hir.closure.roots.map(r=>r.target),...hir.closure.initialization]);
   for(const id of roots){const s=reach(id);s.fn.parameters.forEach((p,i)=>{if(callable(p.type)){merge(s.parameters,i,top());if(records)observe(id,i,top(),id,null,p.range,true);}});}
-  while(true){
-    do{
-      dirty=false;
-      for(const s of summaries.values())if(s.reached){step();const state=new Map();for(const [i,t]of s.parameters){step();state.set(s.fn.parameters[i].id,t);}body(s,state,s.fn.body,['body']);}
-    }while(dirty);
-    let added=false;
-    for(const [key,site]of sites)if(!site.targets.top&&site.targets.ids.size===0&&!forced.has(key)){forced.add(key);added=true;}
-    if(!added)break;
+  function solve(active=summaries){
+    while(true){
+      do{
+        dirty=false;
+        for(const s of active.values())if(s.reached){step();const state=new Map();for(const [i,t]of s.parameters){step();state.set(s.fn.parameters[i].id,t);}body(s,state,s.fn.body,['body']);}
+      }while(dirty);
+      let added=false;
+      for(const [key,site]of sites){
+        if(active!==summaries)step();
+        if(!site.targets.top&&site.targets.ids.size===0&&!forced.has(key)){forced.add(key);added=true;}
+      }
+      if(!added)break;
+    }
   }
-  const fnRows=[...summaries.values()].filter(s=>s.reached).sort((a,b)=>compare(a.fn.id,b.fn.id)).map(s=>({functionId:s.fn.id,parameters:[...s.parameters].map(([index,t])=>({index,targets:wire(t)})),returns:s.returns===null?null:wire(s.returns),unknownEffects:s.unknownEffects}));
-  const calls=[...sites.values()].sort((a,b)=>compare(a.functionId,b.functionId)||compare(canonical(a.expressionPath),canonical(b.expressionPath))).map(s=>({...s,targets:wire(s.targets)}));
-  const closed=t=>!t.top&&t.functions.length>0;
-  const report={complete:fnRows.every(f=>!f.unknownEffects&&f.parameters.every(p=>closed(p.targets))&&(f.returns===null||closed(f.returns)))&&calls.every(c=>closed(c.targets)),functions:fnRows,calls};
-  return {report,summaries,observations:[...observations.values()].map(o=>({...o,targets:wire(o.targets)}))};
+  function result(selected=summaries){
+    const fnRows=[...selected.values()].filter(s=>s.reached).sort((a,b)=>compare(a.fn.id,b.fn.id)).map(s=>({functionId:s.fn.id,parameters:[...s.parameters].map(([index,t])=>({index,targets:wire(t)})),returns:s.returns===null?null:wire(s.returns),unknownEffects:s.unknownEffects}));
+    const calls=[...sites.values()].sort((a,b)=>{
+      if(selected!==summaries)step();
+      return compare(a.functionId,b.functionId)||compare(canonical(a.expressionPath),canonical(b.expressionPath));
+    }).map(s=>({...s,targets:wire(s.targets)}));
+    const closed=t=>!t.top&&t.functions.length>0;
+    const report={complete:fnRows.every(f=>!f.unknownEffects&&f.parameters.every(p=>closed(p.targets))&&(f.returns===null||closed(f.returns)))&&calls.every(c=>closed(c.targets)),functions:fnRows,calls};
+    const selectedObservations=[...observations.values()].map(o=>({...o,targets:wire(o.targets)}));
+    return {report,summaries:selected,observations:selectedObservations};
+  }
+  function inspectRemaining(){
+    const remaining=new Map();
+    for(const summary of summaries.values())if(!summary.reached&&summary.fn.kind==='source'){
+      step();remaining.set(summary.fn.id,reach(summary.fn.id));
+    }
+    if(!remaining.size)return null;
+    // Fixed parameters seed these bodies without adding input roots. Selected
+    // result rows are already materialized, so only new sites belong here.
+    sites.clear();observations.clear();forced.clear();
+    solve(remaining);
+    return result(remaining);
+  }
+  solve();
+  return {...result(),inspectRemaining};
 }

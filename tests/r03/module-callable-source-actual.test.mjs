@@ -5,7 +5,7 @@ import test from 'node:test';
 import {importCapturedFrontendResponse} from '../../compiler/frontend-response.mjs';
 import {validateFrontendSnapshot} from '../../compiler/frontend.mjs';
 import {buildHir,verifyHir,printHir,readHir,analyzeModuleCalls,verifyModuleCalls,printModuleCalls,readModuleCalls,verifyKernelParallelGroup} from '../../compiler/hir.mjs';
-import {cases,bytes,canonical,clone,hash,assertError,assertFrozen} from './module-callable-fixtures.mjs';
+import {cases,bytes,canonical,clone,hash,assertError,assertFrozen,repairContext} from './module-callable-fixtures.mjs';
 const actual=JSON.parse(await readFile(new URL('./module-callable-source-actual.json',import.meta.url),'utf8'));
 assert.equal(actual.manifestSha256,'sha256:277c4e8863fe7ec98927e15030424c0e0b3b5bdb2ebb0f091c2db84516a4a6fb');
 assert.deepEqual(actual.captures.map(x=>x.name).sort(),cases.map(x=>x.name).sort());
@@ -44,4 +44,27 @@ for(const frozen of cases)test('actual public Source packet to whole Product '+f
  assert.deepEqual(verifyHir(clone(expected.hir)),expected.hir);assert.equal(printHir(clone(expected.hir)),bytes(expected.hir).toString());assert.deepEqual(readHir(bytes(expected.hir)),expected.hir);
  if(expected.analysisError){assert.throws(()=>analyzeModuleCalls(clone(expected.hir),clone(expected.context)),error=>assertError(error,expected.analysisError));return;}
  checkAnalysis(expected,expected);if(expected.ownFixedTop)checkAnalysis(expected,expected.ownFixedTop);
+});
+
+test('fixed effect validation includes retained unselected implementations',async()=>{
+ const frozen=cases.find(row=>row.name==='fixed-wide');
+ const capture=actual.captures.find(row=>row.name===frozen.name);
+ const origin=actual.origins[frozen.name],packetBytes=Buffer.from(capture.bytes);
+ assert.equal(hash(packetBytes),capture.sha256);assert.equal(origin.responseSha256,capture.sha256);
+ assert.deepEqual(packetBytes,bytes(frozen.packet));
+ const imported=await importCapturedFrontendResponse(bytes(frozen.request),packetBytes,clone(origin));
+ assert.equal(imported.status,'ok');
+ const built=buildHir(imported.snapshot);assert.equal(built.status,'ok');
+ const {hir}=built,fn=hir.functions.find(row=>row.name==='escape');
+ assert.equal(fn.sourcePath,'/src/state.ts');
+ const original=analyzeModuleCalls(hir,frozen.context);
+ assert.ok(!original.effectiveTargets.functions.some(row=>row.functionId===fn.id));
+ const context=clone(frozen.context),contract=context.contracts.find(row=>row.functionId===fn.id);
+ assert.deepEqual(contract.upper.writes,[fn.body[0].target.global]);
+ contract.upper.writes=[];
+ repairContext(context);
+ assert.throws(()=>analyzeModuleCalls(hir,context),{
+  code:'r03-d-module-call-effects-contract',functionId:fn.id,facet:'effects',
+  primary:{sourceId:fn.sourcePath,...fn.range}
+ });
 });

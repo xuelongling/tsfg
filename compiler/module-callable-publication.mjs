@@ -144,15 +144,22 @@ export function verifyModuleCallablePublication(hir,context){
   const derived=solveModuleTargets(input.hir,null,moduleCallFailure),effective=solveModuleTargets(input.hir,records,moduleCallFailure);
   const de=effectsFor(derived,null,count),ee=effectsFor(effective,records,count);
   const violation=(fn,facet,primary)=>moduleCallFailure('contract',{functionId:fn.id,facet,primary});
-  const observations=effective.observations.sort((a,b)=>compare(a.callee,b.callee)||Number(b.root)-Number(a.root)||compare(canonical(a.path),canonical(b.path))||a.index-b.index);
-  for(const row of effective.report.functions){
-    const fn=input.functions.get(row.functionId);if(fn.kind!=='source')continue;const upper=records.get(fn.id);
-    for(const o of observations.filter(x=>x.callee===fn.id)){
-      const allowed=upper.parameters.find(p=>p.index===o.index).allowed;
-      if(!coversTargets(allowed,o.targets))violation(fn,'parameters',{sourceId:input.functions.get(o.caller).sourcePath,...o.range});
-    }
+  function verifyParameter(o){
+    const fn=input.functions.get(o.callee),allowed=records.get(fn.id).parameters.find(p=>p.index===o.index).allowed;
+    if(!coversTargets(allowed,o.targets))violation(fn,'parameters',{sourceId:input.functions.get(o.caller).sourcePath,...o.range});
+  }
+  const orderObservations=(a,b)=>compare(a.callee,b.callee)||Number(b.root)-Number(a.root)||
+    compare(canonical(a.path),canonical(b.path))||a.index-b.index;
+  function verifyImplementation(fn,row,effect,observed,charge=undefined){
+    const upper=records.get(fn.id);
+    for(const observation of observed){charge?.();verifyParameter(observation);}
     if(row.returns&&!coversTargets(upper.returns,row.returns))violation(fn,'returns',{sourceId:fn.sourcePath,...fn.range});
-    if(!coversEffects(upper.upper,ee.get(fn.id)))violation(fn,'effects',{sourceId:fn.sourcePath,...fn.range});
+    if(!coversEffects(upper.upper,effect))violation(fn,'effects',{sourceId:fn.sourcePath,...fn.range});
+  }
+  const observations=effective.observations.sort(orderObservations);
+  for(const row of effective.report.functions){
+    const fn=input.functions.get(row.functionId);
+    if(fn.kind==='source')verifyImplementation(fn,row,ee.get(fn.id),observations.filter(o=>o.callee===fn.id));
   }
   const rows=effective.report.functions.map(row=>{
     const deps=new Set(effective.report.calls.filter(c=>c.functionId===row.functionId).flatMap(c=>c.targets.functions));
@@ -160,6 +167,25 @@ export function verifyModuleCallablePublication(hir,context){
   });
   const report={format:format('tsfg.module-calls-candidate'),inputIdentity:input.hir.inputIdentity,hirDigest:sha256(canonical(input.hir)+'\n'),scopeDigest:input.scopeDigest,publishedDigest:context.expectedDigest,contracts:context.contracts,derivedTargets:derived.report,effectiveTargets:effective.report,functions:rows.filter(r=>input.functions.get(r.functionId).kind==='source'),initializers:rows.filter(r=>input.functions.get(r.functionId).kind==='module-initialization'),initializationOrder:input.hir.closure.initialization,unknownChains:unknownChains(input.hir,effective,ee,records,count)};
   budget(report,moduleCallFailure);
+  const remaining=effective.inspectRemaining();
+  if(remaining){
+    const effects=effectsFor(remaining,records,count),byCallee=new Map();
+    remaining.observations.sort((a,b)=>{count.step();return orderObservations(a,b);});
+    for(const observation of remaining.observations){
+      count.step();
+      const id=observation.callee;
+      if(!byCallee.has(id))byCallee.set(id,[]);
+      byCallee.get(id).push(observation);
+    }
+    for(const row of remaining.report.functions){
+      count.step();
+      const fn=input.functions.get(row.functionId);
+      verifyImplementation(fn,row,effects.get(fn.id),byCallee.get(fn.id)??[],count.step);
+      byCallee.delete(fn.id);
+    }
+    // Remaining callers can also exercise the fixed parameters of selected functions.
+    for(const group of byCallee.values())for(const observation of group){count.step();verifyParameter(observation);}
+  }
   return {hir:input.hir,analysis:own(JSON.parse(canonical(report)))};
 }
 export function verifyModuleCalls(report,hir,context){
