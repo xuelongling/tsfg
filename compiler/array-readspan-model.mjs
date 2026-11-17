@@ -206,15 +206,15 @@ function loopBackedge(event,last,view,state) {
   const origin=view.origin.kind==='parameter'?null:state.events[view.origin.createEvent].expressionPath;
   return loops.some(loop=>prefix(last.expressionPath,loop)&&(!origin||!prefix(origin,loop)));
 }
-function conflict(fn,state,event,view,owner,sourceKind,fixed={}) {
-  const at=(kind,range,sourceId=fn.sourcePath)=>({kind,sourceId,...range}),last=state.events[view.lastUseEvent];
+function conflict(fn,state,event,view,last,owner,sourceKind,fixed={}) {
+  const at=(kind,range,sourceId=fn.sourcePath)=>({kind,sourceId,...range});
   const origin=view.origin.kind==='parameter'?view.origin.range:state.events[view.origin.createEvent].range;
   const related=[at('borrow-origin',origin)];
   const chain=[],visited=new Set();
   let binding=last.kind==='view-call-complete'?last.uses.find(use=>use.viewId===view.viewId).binding:last.binding;
   while(binding!==null&&binding!==view.binding&&!visited.has(binding)) {
     visited.add(binding);
-    const alias=view.aliases.findLast(row=>row.binding===binding&&row.event<=view.lastUseEvent);
+    const alias=view.aliases.findLast(row=>row.binding===binding&&row.event<=last.sequence);
     if(!alias)break;chain.push(alias);binding=alias.initializerBinding;
   }
   for(const alias of chain.reverse())related.push(at('borrow-alias',state.events[alias.event].range));
@@ -240,10 +240,22 @@ export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
           // this very activation. Nested uppers are projected at their entry.
           if(inside)continue;
         }
-        const last=state.events[view.lastUseEvent],backedge=loopBackedge(event,last,view,state);
-        if(!(event.sequence<view.lastUseEvent)&&!backedge)continue;
-        if(!backedge&&mutuallyExclusive(event.expressionPath,last.expressionPath))continue;
-        if(++work>1024)limit();if(prepared.ownerTools.mayAlias(view.owner,owner))conflict(fn,state,event,view,owner,sourceKind,fixed);
+        let last=state.events[view.lastUseEvent];
+        const backedge=loopBackedge(event,last,view,state);
+        if(event.sequence>=last.sequence&&!backedge)continue;
+        if(!backedge&&mutuallyExclusive(event.expressionPath,last.expressionPath)){
+          // A later occurrence in a different branch cannot hide this
+          // branch's last use. Keep the complete serialized use order.
+          last=null;
+          for(let i=view.useEvents.length-2;i>=0;i--){
+            if(++work>1024)limit();const use=state.events[view.useEvents[i]];
+            if(loopBackedge(event,use,view,state)||event.sequence<use.sequence&&!mutuallyExclusive(event.expressionPath,use.expressionPath)){
+              last=use;break;
+            }
+          }
+          if(!last)continue;
+        }
+        if(++work>1024)limit();if(prepared.ownerTools.mayAlias(view.owner,owner))conflict(fn,state,event,view,last,owner,sourceKind,fixed);
       }
     };
     for(const event of state.events) {

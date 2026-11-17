@@ -5,6 +5,8 @@ import {readFile} from 'node:fs/promises';
 import {buildHir,verifyHir,printHir,readHir,analyzeArrayCalls,printArrayCalls,readArrayCalls} from '../../compiler/hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
+import {prepareTypedArrayAnalysis} from '../../compiler/typed-array-hir.mjs';
+import {consumeReadSpanPlan} from '../../compiler/array-readspan-model.mjs';
 import {createHash} from 'node:crypto';
 
 // Actual Source publication, preserved unchanged: string|undefined is a valid T.
@@ -59,4 +61,39 @@ test('fixed publication identity, exact owner slots and Derived coverage reject 
     assert.equal(result.hir,undefined,name+' cannot publish partial HIR');
     assert.ok(result.diagnostics[0].code.startsWith('r03-d-array-call-effects'),name);
   }
+});
+
+test('a different branch last use cannot hide a live ReadSpan use in the modifying branch',async()=>{
+  // Reuse the real owner, original anchors and checked fixed input. Only this
+  // component unit's branch paths and event order are derived.
+  const bytes=await readFile(new URL('./testdata/typed-array-consumer-v8/after-last-use-package.json',import.meta.url));
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),'7bffd1f4ad1a03db258b70be4e24014f7fc3cb144db2a85b6fc1fc9e4a26c15a');
+  const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,
+    factsBytes:bytes,expectedPackageId:facts.packageId};
+  const publication=staticPublication(facts),built=buildHir(facts,context,publication);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const verified=prepareTypedArrayAnalysis(built.hir,context,publication);
+  const [state]=built.hir.readSpanPlan.functions,[create,read,store]=state.events;
+  assert.deepEqual([create.kind,read.kind,store.kind],['view-create-complete','view-read-complete','array-store-effect']);
+  assert.deepEqual(store.owner,state.views[0].owner);
+  assert.equal(store.nonStructural,false);
+  const thenRead=['body',1,'then',1,'expression'];
+  const plan=withThenRead=>{
+    const hir=structuredClone(built.hir),[state]=hir.readSpanPlan.functions,[view]=state.views;
+    state.events=[create,{...store,sequence:1,expressionPath:['body',1,'then',0,'expression']}];
+    if(withThenRead)state.events.push({...read,sequence:2,expressionPath:thenRead});
+    state.events.push({...read,sequence:state.events.length,expressionPath:['body',1,'else',0,'expression']});
+    view.useEvents=state.events.slice(2).map(event=>event.sequence);
+    view.lastUseEvent=view.useEvents.at(-1);
+    return hir;
+  };
+  consumeReadSpanPlan(plan(false),verified.prepared,0);
+  assert.throws(()=>consumeReadSpanPlan(plan(true),verified.prepared,0),error=>{
+    assert.ok(error instanceof Error);
+    assert.equal(Reflect.get(error,'code'),'r03-d-readspan-structural-conflict');
+    assert.deepEqual(Reflect.get(error,'conflict').lastUsePath,thenRead);
+    assert.deepEqual(Reflect.get(error,'primary'),{sourceId:built.hir.functions[0].sourcePath,...store.range});
+    assert.deepEqual(Reflect.get(error,'related').at(-1),{kind:'borrow-last-use',sourceId:built.hir.functions[0].sourcePath,...read.range});
+    return true;
+  });
 });
