@@ -6,6 +6,7 @@ import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, writ
 import path from "node:path";
 import { readMlirSourceIdentity } from "./mlir-source.mjs";
 import { readMlirSourceBuildLegalInputs, readMlirSourceLegalFiles } from "./mlir-source-legal.mjs";
+import { selectMlirBuildLegalFiles } from "./mlir-source-registration.mjs";
 import { readMlirPythonTool } from "./mlir-python.mjs";
 import { readMlirSourceSdk, describeMlirSdkSourceIdentity, inspectMlirSdkProvenance,
   projectMlirSdkBuildIdentity, verifyMlirSdkBuildInputSet, verifyMlirSdkSourceInputs } from "./mlir-sdk.mjs";
@@ -400,7 +401,8 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     // Ninja's initial input graph alone does not contain those discovered edges.
     const legalInventory = JSON.parse(await readFile(path.join(productRoot, "eng/mlir-source-build-legal.lock.json"), "utf8"));
     const visible = new Set(sourceEntries.map(entry => entry.repositoryRelativePath));
-    const files = sourceSelection ? legalInventory.files.filter(file => visible.has(file.path)) : legalInventory.files;
+    const legalFiles = selectMlirBuildLegalFiles(legalInventory);
+    const files = sourceSelection ? legalFiles.filter(file => visible.has(file.path)) : legalFiles;
     const precompilePaths = sdk ? selectMlirSdkPrecompilePaths({ files, sdk, productRoot }) : selectMlirPrecompilePaths({ files });
     const precompileLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: precompilePaths, sdk, canonicalize: serialize });
     if(command.role==="static")await verifyMlirStagedSourceInputs({source,sourceEntries,files:precompileLegal.files,identity});
