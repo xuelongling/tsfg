@@ -250,6 +250,15 @@ const reports=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_REPORTS;
 const metadata=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_READOBJ;
 const qualificationPath=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_QUALIFICATION;
 const qualificationSHA256=process.env.TSFG_GPU_SOFTWARE_ACCEPTANCE_QUALIFICATION_SHA256;
+function verifyReportedKernel(module,plan){
+  assert.equal(plan.kernels.length,1);
+  const [{functionId,source}]=plan.kernels;
+  const symbol='gpu_function_'+functionId.slice(7);
+  assert.deepEqual(module.functions,[{functionId,source,symbol}]);
+  assert.equal(module.entryPoint,symbol);
+  assert.equal(module.hostPreflight.functionId,functionId);
+  assert.equal(module.hostPreflight.planDigest,module.planDigest);
+}
 function verifyVulkanFailure({vkResult,failure,windowsError}){
   assert.ok(Number.isInteger(vkResult)&&vkResult!==0&&vkResult>=-0x8000_0000&&vkResult<=0x7fff_ffff);
   assert.deepEqual([failure,windowsError],['Vulkan',null]);
@@ -423,6 +432,7 @@ for(const fixture of fixtures){
       assert.equal(module.wordsDigest,digest(module.words));const {artifactDigest,...content}=module;assert.equal(artifactDigest,digest(content));
       assert.deepEqual(module.bindings,plan.bindings);assert.equal(module.launchAuthorized,false);assert.equal(module.deviceExecution,false);
       assert.deepEqual(module.profile.dispatch,[1,1,1]);assert.equal(module.profile.activeSourceInstances,1);
+      verifyReportedKernel(module,plan);
       if(!global)verifyGpuI32Words(module.words,module.entryPoint,ast.operator,arity,ast.literalToken??null);
       assert.equal(report.ownedAfterInputRelease,true);assert.deepEqual([report.fuelBefore,report.fuelAfter,report.depthLimit],['2','1',1]);
       assert.deepEqual(report.inputs.map(value=>value.descriptor),plan.bindings.filter(binding=>binding.access!=='write'));
@@ -439,6 +449,28 @@ for(const fixture of fixtures){
       report.outputs.forEach(value=>{assert.equal(value.bits,String(result));assert.equal(value.signed,String(BigInt.asIntN(32,result)));});
     });
 }
+test('reported GPU entry and Host recipe name the selected Source kernel',()=>{
+  const right=cases.find(row=>row.fixture.name==='right'),sink=cases.find(row=>row.fixture.name==='sink');
+  assert.ok(right&&sink);
+  const {plan}=right,[selected]=plan.kernels,[other]=sink.plan.kernels;
+  assert.ok(plan.groupTargets.includes(other.functionId));assert.notEqual(other.functionId,selected.functionId);
+  // Exercise the reported identity fields with an offline fixture.
+  const symbol='gpu_function_0de954af1dcdd4d55cab1e92db5ec1e7e4a2af709b91ea6eb4f51af916ae7769';
+  const planDigest=digest(plan),entry={...selected,symbol};
+  const metadata={planDigest,functions:[entry],entryPoint:symbol,hostPreflight:{functionId:selected.functionId,planDigest}};
+  verifyReportedKernel(metadata,plan);
+  const foreignSymbol='gpu_function_'+other.functionId.slice(7);
+  const bad=[
+    {functions:[{...entry,functionId:other.functionId}]},
+    {functions:[{...entry,source:other.source}]},
+    {functions:[{...entry,symbol:foreignSymbol}]},
+    {entryPoint:foreignSymbol},
+    {hostPreflight:{...metadata.hostPreflight,functionId:other.functionId}},
+    {hostPreflight:{...metadata.hostPreflight,planDigest:digest(sink.plan)}},
+  ];
+  for(const fields of bad)assert.throws(()=>verifyReportedKernel({...metadata,...fields},plan),{name:'AssertionError'});
+});
+
 test('recovery follows only unresolved timeout waits in one session',async t=>{
   const identity={session:'fixed-call'};
   const source={sourceId:'/src/main.ts',start:15,end:20};
