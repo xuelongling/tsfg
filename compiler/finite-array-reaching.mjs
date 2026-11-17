@@ -21,7 +21,7 @@ export function copyArrayReachingState(state,charge) {
   }return result;
 }
 
-export function buildFiniteArrayReaching(hir,plan,charge) {
+export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
   const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
@@ -120,7 +120,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       const status=missing||bounds?'missing':versions?.size?'proven':'pending';
       if(recordReads)reads.set(path,{node:path,owner:receiver?.owner??null,index:slot,status,
         versions:status==='proven'?[...versions].sort():[],sources:status==='proven'?[...new Set([...versions].map(id=>writes.get(id).node))].sort():[],origin:origin(value)});
-      return {symbol:path};
+      return status;
     }
     function store(value,path,node,state,receiver,index) {
       if(receiver?.owner){charge();mutated.add(receiver.owner);}
@@ -143,7 +143,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       else for(const other of memory.slots.keys())if(other.startsWith('s:'))memory.slots.delete(other);
       memory.slots.set(slot,new Set([id]));
     }
-    function expression(value,path,state,bindings) {
+    function expression(value,path,state,bindings,statement=false) {
       if(!value)return {};charge();const child=name=>expression(value[name],path+'/'+name,state,bindings);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
       if(['group','nonNull','assertType'].includes(value.kind)) {const {truth,...result}=child('operand');return result;}
@@ -159,12 +159,17 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         state.set(path,{length:value.elements.length,slots});return {owner:path,symbol:path};
       }
       if(value.kind==='arrayReadChecked') {
-        const receiver=child('receiver'),index=child('index');return load(value,path,state,receiver,index);
+        const receiver=child('receiver'),index=child('index');load(value,path,state,receiver,index);return {symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings),
           index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings):null;
-        if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate')load({...value,range:value.target.range},path+'/old-value',state,receiver,index);
+        if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
+          const status=load({...value,range:value.target.range},path+'/old-value',state,receiver,index);
+          // The lexical pass keeps every original occurrence. Only a direct
+          // statement's ordered transfer closes at a definite old-read trap.
+          if(!collectAll&&statement&&status==='missing'&&canTerminateCompound())return {terminal:true};
+        }
         const rhs=value.value?child('value'):{symbol:path};
         if(value.kind==='arrayResizeChecked') {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
@@ -295,7 +300,9 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       for(const [index,row] of body.entries()) {
         charge();const p=path+'/'+index;
         if(row.kind==='local')bindings.set(row.binding.id,adapt(expression(row.initializer,p+'/initializer',state,bindings),p+'/initializer',fn.id+'/binding/'+row.binding.id));
-        else if(row.kind==='expression')expression(row.expression,p+'/expression',state,bindings);
+        else if(row.kind==='expression') {
+          if(expression(row.expression,p+'/expression',state,bindings,true).terminal)return null;
+        }
         else if(row.kind==='return'||row.kind==='constructorReturn') {
           if(row.value)expression(row.value,p+'/value',state,bindings);exits.push(clone(state));return null;
         }

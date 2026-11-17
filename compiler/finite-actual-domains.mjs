@@ -136,32 +136,50 @@ export function buildFiniteCoreDomains(input,context,options={}) {
   return buildPlans(input,context,options,true);
 }
 
+function terminalOldRead(read) {
+  // The final path segment before /old-value belongs to a direct statement,
+  // the same ordered cut used by finite-array-reaching.
+  return read?.status==='missing'&&read.node.endsWith('/expression/old-value');
+}
+
 function buildPlans(input,context,options,definitions) {
   let remaining=options.work??100000;
   if(!Number.isInteger(remaining)||remaining<1||remaining>100000)fail('invalid work limit');
   const charge=()=>{if(options.cancelled?.())fail('cancelled');if(remaining--<=0)fail('work limit');};
   function build(mode) {
-    const solve=(field=null,array=null)=>solveFiniteActualDomains(input,context,charge,field,mode,array,options.publicationContext);
+    let allowCompoundTermination;
+    const solve=(field=null,array=null,terminalStores=null)=>
+      solveFiniteActualDomains(input,context,charge,field,mode,array,options.publicationContext,terminalStores,allowCompoundTermination);
     const initial=solve();
     // Field short-circuit control also must not consume capacity-based Array
     // reads. This is the same conservative solver role as the ordered start.
     const controlInitial=solve(null,{reads:[]});
     let fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),controlInitial,charge);
-    const result=fieldReaching.reads.some(row=>row.reaching.length)
-      ?solve(fieldReaching):initial;
+    const carrierFieldReaching=fieldReaching.reads.some(row=>row.reaching.length)?fieldReaching:null;
+    let result=carrierFieldReaching?solve(carrierFieldReaching):initial;
+    const canTerminateCompound=()=>{
+      // This ordered cut shares Array state only. A nominal field or method
+      // plan still uses its existing lexical/actual selection boundary.
+      allowCompoundTermination??=!result.fields.length&&!result.calls.length&&
+        !fieldReaching.effects.some(row=>{charge();return row.writesFields;});
+      return allowCompoundTermination;
+    };
     const hir=verifyHir(input,context,options.publicationContext);
     // The first control query must not inherit Array read alternatives from
     // the carrier/capacity solution. A non-null empty reaching directory makes
     // every unproved read pending in this same solver, before any edge is cut.
     let arrayReaching,ordered=solve(fieldReaching,{reads:[]}),previous;
+    const terminalStores=new Set();
     // Memory-dependent presence may remove an incoming call edge only after
     // its actual read sources are proved. Iterate the same solver, sharing the
     // original budget; representation maxima never become memory witnesses.
     for(;;) {
-      arrayReaching=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge);
+      arrayReaching=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateCompound);
       if(!arrayReaching.reads.length)break;
       fieldReaching=buildFiniteFieldReaching(hir,{...ordered,arrayReaching},charge);
+      terminalStores.clear();
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
+        if(terminalOldRead(read)&&canTerminateCompound()){charge();terminalStores.add(read.node);}
         for(const id of read.versions){charge();versions.push(id);}rows.push([read.node,read.status,versions]);}
       const fields=[];for(const read of fieldReaching.reads){charge();const targets=[];
         for(const target of read.reaching){charge();const versions=[],sources=[],intrinsics=[];
@@ -177,6 +195,7 @@ function buildPlans(input,context,options,definitions) {
     }
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
+    if(terminalStores.size)result=solve(carrierFieldReaching,null,terminalStores);
     const domains=new Map([...result.domains,...ordered.domains].map(row=>[row.id,row]));
     const calls=ordered.calls.map(call=>({...call,targets:call.targets.map(target=>({...target,
       abi:result.abi.find(row=>row.functionId===target.functionId).id}))}));
@@ -189,7 +208,8 @@ function buildPlans(input,context,options,definitions) {
     ...(definition?{definition:{...definition,work:(options.work??100000)-remaining}}:{})});
 }
 
-function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null,publicationContext=undefined) {
+function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null,publicationContext=undefined,terminalStores=null,
+  allowCompoundTermination=false) {
   const refinements=new Map((fieldReaching?.reads??[]).map(row=>[row.node,row.reaching]));
   const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status!=='pending').map(row=>[row.node,row]));
   charge();const hir=verifyHir(input,context,publicationContext);
@@ -201,7 +221,8 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     const value={id:undefinedId,kind:'undefined',name:'undefined'};types.set(undefinedId,value);intrinsics.push(value);
     physical.set(undefinedId,{alignment:1,byteSize:0,referenceCount:0});
   }
-  const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),coalesces=[];
+  const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),coalesces=[],
+    representationOnly=terminalStores?new Map():null;
   const reads=[],stores=[],fieldReads=[],fieldStores=[],presenceTests=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
   const views=buildTypedReferenceViews(hir,context,options);
   const methodViews=new Map(),fieldViews=new Map(),fieldOwners=new Map();
@@ -453,8 +474,16 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       at(v.target.index,p+'/target/index');
       const old=node(p+'/old-value',v.target.type).id;
       reads.push({receiver,result:old});
+      if(allowCompoundTermination&&terminalOldRead(arrayReads.get(old))) {
+        flow.entry(old,continuation);flow.finish(old,[]);
+        continuation=flow.normal(old);dependencies.push(continuation);
+      }
       if(v.kind==='arrayCompoundAssignment')child('value');
-      stores.push({receiver,value:id});
+      if(terminalStores?.has(old)&&types.get(v.target.type)?.kind==='scalar'){
+        // Keep the dead read's declared SSA carrier outside the value/owner
+        // worklist. Its impossible writeback contributes no backing capacity.
+        charge();representationOnly.set(old,v.target.type);
+      }else stores.push({receiver,value:id});
       for(const type of leaves(v.type))insert(id,'actual',type);
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength',
       'arrayResizeChecked','update','fieldUpdate','stringConcat'].includes(v.kind)) {
@@ -556,8 +585,11 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     if(!domains.has(id))domains.set(id,representationDomain(id,alternatives,types,physical));
     return id;
   }
-  const resultNodes=[...nodes.values()].map(row=>({id:row.id,viewType:row.viewType,domainId:domain(row.actual),
-    arrayOwners:[...row.owners].sort(),pending:[...row.pending].sort()})).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+  const resultNodes=[...nodes.values()].map(row=>{
+    const carrier=representationOnly?.get(row.id);
+    return {id:row.id,viewType:row.viewType,domainId:domain(carrier&&!row.actual.size?new Set([carrier]):row.actual),
+      arrayOwners:[...row.owners].sort(),pending:[...row.pending].sort()};
+  }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
   // These canonical intermediate carriers serve compiler-derived presence
   // tests/refinements, not new actual seeds or fabricated Source literals.
   for(const left of coalesces){let remaining=[...nodes.get(left).actual].sort();
