@@ -104,7 +104,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     if(!context&&models.has(fn.id))return;
     if(!context&&active.has(fn.id))return;
     if(!context)active.add(fn.id);
-    const base=empty(),bindings=new Map(),calls=[],lengths=new Map(),contents=new Map(),expressions=new Map(),operations=[];
+    const base=empty(),bindings=new Map(),calls=[],lengths=new Map(),contents=new Map(),operations=[];
     let callCount=0,conditionalDepth=0;
     const truthBindings=new Map(),truthValues=new Map();
     const meetTruth=states=>{
@@ -124,7 +124,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(typeof left==='boolean'&&typeof right==='boolean')return value.operator==='==='?left===right:left!==right;
       }return null;
     };
-    const stored=storage.begin(fn,!!context,context?.aliases),model={bindings,expressions,operations,loops:[],storage:stored.model};
+    const stored=storage.begin(fn,!!context,context?.aliases),model={bindings,operations,loops:[],storage:stored.model};
     if(!context){models.set(fn.id,model);bases.set(fn.id,base);callSites.set(fn.id,calls);}
     fn.parameters.forEach((p,index)=>{
       charge();truthBindings.set(p.id,context?.facts[index]??null);
@@ -176,9 +176,11 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
               owner:values[slot]??unknownArrayOwner});
           }
           if(!context)for(const arm of targets)trace(functions.get(arm.target));
-          const scalarArguments=callee.ownerType?[value.receiver,...value.arguments]:value.arguments;
-          for(const [i]of scalarArguments.entries()){charge();facts.push(truthValues.get(canonical(
-            callee.ownerType&&i===0?[...path,'receiver']:[...path,'arguments',i-(callee.ownerType?1:0)]))??null);}
+          if(stored.model){
+            const scalarArguments=callee.ownerType?[value.receiver,...value.arguments]:value.arguments;
+            for(const [i]of scalarArguments.entries()){charge();facts.push(truthValues.get(canonical(
+              callee.ownerType&&i===0?[...path,'receiver']:[...path,'arguments',i-(callee.ownerType?1:0)]))??null);}
+          }
           const call={functionId:fn.id,expressionPath:path,range:{...value.range},target:targetId,
             signatureHash:callee.signatureHash,arguments:args,consumedDigest:contract.digest,targets,
             publishedLocal:targets.some(arm=>Object.values(contracts.get(arm.target).upper.local).some(Boolean))
@@ -201,10 +203,10 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(target.index)expression(target.index,[...path,'target','index'],index);
         // Compound/update read precedes the RHS; the target receiver/index occur once.
         if(['arrayCompoundAssignment','arrayUpdate'].includes(value.kind))read(receiver);
-        if(value.value)expression(value.value,[...path,'value'],index);
+        const rhs=value.value?expression(value.value,[...path,'value'],index):null;
         mutate(value,path,receiver??unknownArrayOwner,index,value.kind==='arrayResizeChecked');
         if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type))contents.set(canonical(receiver),
-          mergeArrayOwners([contents.get(canonical(receiver)),expressions.get(canonical([...path,'value']))]));
+          mergeArrayOwners([contents.get(canonical(receiver)),rhs]));
       }else if(hasConditionalArrayRhs(value)) {
         const left=expression(value.left,[...path,'left'],index),before=snapshot(bindings);
         const storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
@@ -246,7 +248,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       }
       truthValues.set(canonical(path),truth);
       owner=stored.record(value,path,owner,storageCall,operations.at(-1)?.proof,facts);
-      owner=own(value,owner);expressions.set(canonical(path),owner);return owner;
+      return own(value,owner);
     };
     const returns=[];
     const body=(rows,path=['body'])=>{

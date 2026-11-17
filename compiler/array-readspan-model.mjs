@@ -14,11 +14,9 @@ function limit() {
 export function deriveReadSpanPlan(hir,prepared) {
   let work=0;const charge=()=>{if(++work>1024)limit();},type=arrayAnalysisTypes(hir);
   const callables=finiteCallables(hir),calls=prepared.flow.calls,targets=new Map(callables.map(fn=>[fn.id,fn]));
-  const exported=new Set(hir.exports.map(row=>{charge();return row.functionId;}));
+  let exported;
   const indices=new Map(calls.map((call,index)=>[canonical([call.functionId,call.expressionPath]),index]));
   const functions=callables.map(fn=>{
-    // A known caller cannot discharge the independent host entry of a method.
-    const unknownEntry=exported.has(fn.id)||Boolean(fn.ownerType&&fn.role!=='construction-body');
     const model=prepared.ownerModel.functions.get(fn.id),families=new Map(),results=new Map(),storedFamilies=new Map(),views=[],events=[];
     for(const dependency of model.storage?.dependencies??[]){
       charge();failure({code:'r03-d-readspan-context-pending',ruleId:'r01-span',phase:'hir',functionId:fn.id,
@@ -27,7 +25,10 @@ export function deriveReadSpanPlan(hir,prepared) {
         primary:{sourceId:dependency.sourcePath,...dependency.range}});
     }
     for(const demand of model.storage?.demands??[]){
-      charge();if(demand.failed||!demand.contexts||demand.formal&&unknownEntry)
+      charge();
+      // A formal storage demand must hold at independent exported and method entries.
+      if(demand.failed||!demand.contexts||demand.formal&&(
+        fn.ownerType&&fn.role!=='construction-body'||(exported??=new Set(hir.exports.map(row=>{charge();return row.functionId;}))).has(fn.id)))
         failure({code:'r03-d-readspan-origin',ruleId:'r01-span',phase:'hir',message:'Stored parameter Span has no complete actual caller field context',
           primary:{sourceId:fn.sourcePath,...demand.range}});
     }

@@ -31,8 +31,15 @@ export function analyzeArrayOwnerAccesses(hir,contracts,fail,selectedTools=undef
   const scan=id=>{
     let grew=false;const target=derived.get(id);
     for(const site of callSites.get(id))for(const call of arms.get(site))for(const key of facets) {
-      const snapshot=entries(derived.get(call.target)[key],false);
-      for(const [,owner]of snapshot) {
+      const source=derived.get(call.target)[key];
+      // Only a self-edge can add entries to the map being read during this visit.
+      let owners=source.values();
+      if(call.target===id) {
+        const snapshot=[];
+        for(const owner of owners){charge();snapshot.push(owner);}
+        owners=snapshot.values();
+      }
+      for(const owner of owners) {
         const mapped=mapArrayOwner(owner,call,id,fail),keyId=ownerKey(mapped);
         if(!target[key].has(keyId))grew=true;charge();target[key].set(keyId,mapped);
       }
