@@ -214,9 +214,15 @@ export function readGenericHir(bytes) {
 // Its concrete scalars cross exactly the ordinary HIR's Core/R04 exchange.
 export const genericCoreFormat = own({ version: coreExchangeFormat.version,
   bytecodeSchema: registry['tsfg.bytecode'].schemaHash });
-export function lowerGenericHir(hir) {
-  const verified = verifyGenericHir(hir);
+function emitVerifiedGenericCore(verified) {
   return emitScalarCore({ exchange: genericCoreFormat, inputIdentity: verified.inputIdentity,
     source: { path: verified.source.path, hash: 'sha256:' + verified.source.digest, length: verified.source.length },
     target: verified.target, functions: verified.functions.map(fn => ({ ...fn, symbol: fn.linkageName })) });
+}
+export function prepareGenericCore(hir) {
+  const verified = verifyGenericHir(hir);
+  return { hir: verified, emit: () => emitVerifiedGenericCore(verified) };
+}
+export function lowerGenericHir(hir) {
+  return emitVerifiedGenericCore(verifyGenericHir(hir));
 }

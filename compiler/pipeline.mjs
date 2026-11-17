@@ -5,9 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeFrontend } from "./frontend.mjs";
 import { compilePackageHir } from "./generic-package-frontend.mjs";
-import { lowerGenericHir } from "./generic-hir.mjs";
+import { genericHirFormat, lowerGenericHir, prepareGenericCore } from "./generic-hir.mjs";
 export { compilePackageHir };
-import { buildHir, lowerHir, lowerFormalHir, lowerOwnedHir } from "./hir.mjs";
+import { buildHir, lowerHir, lowerFormalHir } from "./hir.mjs";
 import { canonical, own, sha256 } from "./identity.mjs";
 import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
@@ -140,7 +140,7 @@ export async function compileHir(input, options) {
 /** Compile only through official checking, owned HIR and the real C++ SSA consumer. */
 export async function compileProgram(input, options) {
   const highLevel = await compileHir(input, options);
-  return highLevel.status === "ok" ? produceBytecode(highLevel.hir, options) : highLevel;
+  return highLevel.status === "ok" ? produceBytecode(() => produceCore(highLevel.hir, options)) : highLevel;
 }
 
 /** Candidate package route; Source and formal Core manifest admission remain independent. */
@@ -150,27 +150,27 @@ export async function compilePackage(packageBytes, roots, options) {
   // Only an instantiated owned-HIR result can enter concrete Core lowering.
   if (!("hir" in highLevel)) return { status: "tool-error", requestId: highLevel.requestId,
     code: "r03-d-consumer", message: "r03-package-result: instantiation returned no owned HIR" };
-  return { ...highLevel, ...await produceBytecode(highLevel.hir, options, lowerGenericHir) };
+  return { ...highLevel, ...await produceBytecode(() => produceCore(highLevel.hir, options, lowerGenericHir)) };
 }
 
 async function compileSnapshot(snapshot, options) {
   const highLevel = buildHir(snapshot);
   if (highLevel.status !== "ok") return /** @type {typeof highLevel & {bytecode?:undefined}} */ (highLevel);
-  return produceBytecode(highLevel.hir, options);
+  return produceBytecode(() => produceCore(highLevel.hir, options));
 }
 
-async function produceCore(hir, options, lower) {
+async function produceCore(hir, options, lower = value => lowerFormalHir(value, options.factsContext, options.callPublicationContext), context = undefined) {
   const executable = await verifiedConsumer(options.core, "core");
   const lowered = lower(hir);
-  const common = isCommonProgramContext(options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate';
+  const common = isCommonProgramContext(context ? context.factsContext : options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate';
   const prefix = common ? ['--common-program'] : [];
   const core = consume(executable, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered).toString("utf8");
-  return { executable, prefix, common, core };
+  return { hir, executable, prefix, common, core };
 }
 
-async function produceBytecode(hir, options, lower = value => lowerFormalHir(value, options.factsContext, options.callPublicationContext)) {
+async function produceBytecode(buildCore) {
   try {
-    const { executable, prefix, common, core } = await produceCore(hir, options, lower);
+    const { hir, executable, prefix, common, core } = await buildCore();
     const bytecode = consume(executable, [...prefix, "--emit-bytecode"], core);
     (common ? verifyCommonProducedPacket : verifyProducedPacket)(bytecode);
     return { status: "ok", hir, core, bytecode };
@@ -179,13 +179,30 @@ async function produceBytecode(hir, options, lower = value => lowerFormalHir(val
   }
 }
 
+function produceOwnedCore(hir, options, selected = undefined) {
+  let generic = false;
+  try {
+    generic = familyOf(hir) === genericHirFormat.family;
+  } catch {
+    // Keep malformed inputs on the existing formal validation path.
+  }
+  if (!generic) return produceCore(hir, options, selected?.lower);
+  const { factsContext, callPublicationContext } = selected ?? options;
+  if (factsContext !== undefined || callPublicationContext !== undefined)
+    return produceCore(hir, options, selected?.lower ?? (value => lowerFormalHir(value, factsContext, callPublicationContext)), { factsContext });
+  const prepared = prepareGenericCore(hir);
+  return produceCore(prepared.hir, { core: options.core, optimize: options.optimize }, prepared.emit);
+}
+
 /** Produce verified Core text from complete persisted owned HIR. */
 export async function compileOwnedCore(hir, options) {
   try {
     const { factsContext, callPublicationContext } = options;
-    const lower = isSelectedNullableContext(factsContext) ? lowerHir : lowerOwnedHir;
-    const { core } = await produceCore(hir, options, value => lower(value, factsContext, callPublicationContext));
-    return { status: "ok", hir, core };
+    const lower = isSelectedNullableContext(factsContext) ? lowerHir : lowerFormalHir;
+    const result = await produceOwnedCore(hir, options, {
+      factsContext, callPublicationContext, lower: value => lower(value, factsContext, callPublicationContext),
+    });
+    return { status: "ok", hir: result.hir, core: result.core };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };
   }
@@ -195,14 +212,14 @@ export async function compileOwnedCore(hir, options) {
  * Facts and fixed publication context are verified by lowering; Source admission is independent.
  */
 export async function compileOwnedHir(hir, options) {
-  return produceBytecode(hir, options, value => lowerOwnedHir(value, options.factsContext, options.callPublicationContext));
+  return produceBytecode(() => produceOwnedCore(hir, options));
 }
 
 /** Produce one whole statically linked program object from complete owned HIR.
  * Existing Source admission is independent; no frontend lock is relaxed here.
  */
 export async function compileOwnedStaticProgram(hir, options) {
-  const result = await produceBytecode(hir, options);
+  const result = await produceBytecode(() => produceCore(hir, options));
   if (result.status !== "ok") return result;
   try {
     const executable = await verifiedConsumer(options.nativeCore ?? options.core, "core-native");
