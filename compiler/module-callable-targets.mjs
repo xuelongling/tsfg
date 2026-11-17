@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Two runs of this real module value-flow solver keep current bodies and fixed transfer separate.
-import {canonical,compare,same} from './module-callable-common.mjs';
+import {canonical,compare} from './module-callable-common.mjs';
 import {callableTargetDomain,fixedCallableTransfer} from './callable-target-domain.mjs';
 export function solveModuleTargets(hir,records,fail){
   const functions=new Map(hir.functions.map(f=>[f.id,f])),types=new Map(hir.types.map(t=>[t.id,t]));
@@ -8,7 +8,14 @@ export function solveModuleTargets(hir,records,fail){
   const summaries=new Map(),sites=new Map(),observations=new Map(),forced=new Set();let work=0,growth=0,dirty=false;
   const step=(amount=1)=>{work+=amount;if(work>1000000)fail('limit');};
   const grew=()=>{if(++growth>200000)fail('limit');dirty=true;};
-  const domain=callableTargetDomain(functions,step,fail,compare),{bottom,top,copy,wire,from,join,equal}=domain;
+  const domain=callableTargetDomain(functions,step,fail,compare),{bottom,top,wire,from,join,equal}=domain;
+  // Target values are immutable inside this solver. A transfer may replace a
+  // binding, but it never edits the targets saved by another binding or branch.
+  const singletons=new Map();
+  function singleton(id){
+    if(!singletons.has(id))singletons.set(id,domain.single(id));
+    return singletons.get(id);
+  }
   function merge(map,key,t){const old=map.get(key)??bottom(),n=join(old,t);if(!map.has(key)||!equal(n,old)){map.set(key,n);grew();}}
   for(const fn of functions.values())summaries.set(fn.id,{fn,reached:false,parameters:new Map(fn.parameters.flatMap((p,i)=>callable(p.type)?[[i,records?from(records.get(fn.id).parameters.find(x=>x.index===i).allowed):bottom()]]:[])),returns:callable(fn.returnType)?bottom():null,unknownEffects:false,reads:new Set(),writes:new Set()});
   function reach(id){const s=summaries.get(id);if(!s)fail('identity');if(!s.reached){s.reached=true;grew();}return s;}
@@ -29,12 +36,12 @@ export function solveModuleTargets(hir,records,fail){
   }
   function expression(s,state,v,path){
     step();
-    if(v.kind==='functionReference')return {top:false,ids:new Set([v.target])};
-    if(v.kind==='reference')return callable(v.type)?copy(state.get(v.binding)??bottom()):null;
+    if(v.kind==='functionReference')return singleton(v.target);
+    if(v.kind==='reference')return callable(v.type)?(state.get(v.binding)??bottom()):null;
     if(v.kind==='global'){if(!s.reads.has(v.global)){s.reads.add(v.global);grew();}return null;}
     if(v.kind==='call'||v.kind==='indirectCall'){
-      let saved=v.kind==='call'?{top:false,ids:new Set([v.target])}:expression(s,state,v.callee,[...path,'callee']);
-      if(!saved)fail('identity');saved=copy(saved);
+      let saved=v.kind==='call'?singleton(v.target):expression(s,state,v.callee,[...path,'callee']);
+      if(!saved)fail('identity');
       const args=v.arguments.map((a,i)=>expression(s,state,a,[...path,'arguments',i]));
       const key=s.fn.id+'\0'+canonical(path);if(forced.has(key))saved=join(saved,top());note(s,v,path,saved);
       let result=callable(v.type)?bottom():null;
@@ -53,30 +60,93 @@ export function solveModuleTargets(hir,records,fail){
     if(v.kind==='binary'||v.kind==='shortCircuit'){expression(s,state,v.left,[...path,'left']);expression(s,state,v.right,[...path,'right']);return null;}
     return null;
   }
-  const clone=s=>new Map([...s].map(([k,v])=>[k,copy(v)]));
-  function mergeStates(a,b){const out=clone(a);for(const [k,v]of b)out.set(k,join(out.get(k)??bottom(),v));return out;}
-  const equalStates=(a,b)=>a.size===b.size&&[...a].every(([k,v])=>b.has(k)&&equal(v,b.get(k)));
+  function cloneState(state){
+    step(state.size);
+    return new Map(state);
+  }
+  function mergeStates(a,b){
+    const out=cloneState(a);
+    for(const [key,right]of b){
+      step();
+      const left=out.get(key);
+      out.set(key,left===undefined||left===right?right:join(left,right));
+    }
+    return out;
+  }
+  function joinLoopTargets(unions,left,right){
+    if(left===undefined||left===right)return right;
+    let byRight=unions.get(left);
+    const cached=byRight?.get(right);
+    if(cached!==undefined)return cached;
+    step();
+    if(!byRight){byRight=new WeakMap();unions.set(left,byRight);}
+    const joined=join(left,right);
+    let result=joined;
+    if(joined.top===left.top&&joined.ids.size===left.ids.size)result=left;
+    else if(joined.top===right.top&&joined.ids.size===right.ids.size){
+      // Reuse an operand only if it keeps the union's left-to-right iteration order.
+      const rightIds=right.ids.values();
+      let sameOrder=true;
+      for(const id of joined.ids){step();if(id!==rightIds.next().value){sameOrder=false;break;}}
+      if(sameOrder)result=right;
+    }
+    byRight.set(right,result);
+    return result;
+  }
   function location(v){return v.kind==='group'?location(v.operand):v;}
   function body(s,state,items,path){
     let live=true;
     for(const [i,item]of items.entries()){
       if(!live)break;step();const here=[...path,i];
-      if(item.kind==='local'){const v=expression(s,state,item.initializer,[...here,'initializer']);if(v)state.set(item.binding.id,copy(v));}
+      if(item.kind==='local'){const v=expression(s,state,item.initializer,[...here,'initializer']);if(v)state.set(item.binding.id,v);}
       else if(item.kind==='initialize'){expression(s,state,item.value,[...here,'value']);if(!s.writes.has(item.global)){s.writes.add(item.global);grew();}}
       else if(item.kind==='assign'){
         const v=expression(s,state,item.value,[...here,'value']),target=location(item.target);
-        if(target.kind==='global'){if(!s.writes.has(target.global)){s.writes.add(target.global);grew();}}else if(v)state.set(target.binding,copy(v));
+        if(target.kind==='global'){if(!s.writes.has(target.global)){s.writes.add(target.global);grew();}}else if(v)state.set(target.binding,v);
       }else if(item.kind==='return'||item.kind==='expression'){
         const v=expression(s,state,item.value,[...here,'value']);
         if(item.kind==='return'){if(s.returns){const n=join(s.returns,v);if(!equal(s.returns,n)){s.returns=n;grew();}}live=false;}
       }else if(item.kind==='block'){const out=body(s,state,item.body,[...here,'body']);state=out.state;live=out.live;}
       else if(item.kind==='if'){
         expression(s,state,item.condition,[...here,'condition']);
-        const a=body(s,clone(state),item.thenBody,[...here,'thenBody']),b=body(s,clone(state),item.elseBody,[...here,'elseBody']);
+        const a=body(s,cloneState(state),item.thenBody,[...here,'thenBody']),b=body(s,cloneState(state),item.elseBody,[...here,'elseBody']);
         live=a.live||b.live;state=a.live&&b.live?mergeStates(a.state,b.state):a.live?a.state:b.state;
       }else if(item.kind==='while'){
-        const incoming=clone(state);let head=clone(state);
-        while(true){step();const condition=clone(head);expression(s,condition,item.condition,[...here,'condition']);const out=body(s,clone(condition),item.body,[...here,'body']);const next=out.live?mergeStates(incoming,out.state):clone(incoming);state=condition;if(equalStates(head,next))break;head=next;}
+        const incoming=state,headChanges=new Map(),unions=new WeakMap();
+        let working=cloneState(incoming);
+        while(true){
+          step();expression(s,working,item.condition,[...here,'condition']);
+          const out=body(s,working,item.body,[...here,'body']);
+          // Statement liveness is structural. A body with no normal successor
+          // contributes no backedge, so the head stays at its first input.
+          if(!out.live){state=incoming;break;}
+          working=out.state;
+          let changed=false,orderedRestores;
+          // The body only replaces or adds keys. Read the previous head from
+          // its overlay and merge back into the writable map in one paid pass.
+          for(const [key,value]of working){
+            step();
+            const entry=incoming.get(key),previous=headChanges.get(key)??entry;
+            const joined=joinLoopTargets(unions,entry,value);
+            working.set(key,joined);
+            if(joined===previous)continue;
+            if(!changed){
+              if(previous===undefined||previous.top!==joined.top||previous.ids.size!==joined.ids.size||!equal(previous,joined))
+                changed=true;
+              else {
+                step();
+                (orderedRestores??=[]).push([key,previous]);
+              }
+            }
+            if(joined===entry)headChanges.delete(key);
+            else headChanges.set(key,joined);
+          }
+          if(!changed){
+            // With semantic equality, keep the old head's target iteration order.
+            for(const [key,value]of orderedRestores??[]){step();working.set(key,value);}
+            state=working;break;
+          }
+        }
       }
     }return {state,live};
   }
@@ -85,7 +155,7 @@ export function solveModuleTargets(hir,records,fail){
   while(true){
     do{
       dirty=false;
-      for(const s of summaries.values())if(s.reached){step();const state=new Map();for(const [i,t]of s.parameters)state.set(s.fn.parameters[i].id,copy(t));body(s,state,s.fn.body,['body']);}
+      for(const s of summaries.values())if(s.reached){step();const state=new Map();for(const [i,t]of s.parameters){step();state.set(s.fn.parameters[i].id,t);}body(s,state,s.fn.body,['body']);}
     }while(dirty);
     let added=false;
     for(const [key,site]of sites)if(!site.targets.top&&site.targets.ids.size===0&&!forced.has(key)){forced.add(key);added=true;}
