@@ -499,7 +499,7 @@ test "Query metadata rejects an unreachable scalar layout row from owned Source"
 
     var source = try jobs.layout.Layout.load(A, @embedFile("jobs/testdata/component-layout-scalars.json"), .{
         .inputIdentity = "sha256:6b1863b93d5b407b9685e63903276e9c3670725324c74156dabcdd891e5fc356",
-        .hirDigest = "sha256:a1fdc42e03cbd70883a95332f6e38c479170f66f4f40d65f8ad320faae0c4719",
+        .hirDigest = "sha256:9176da3cdf164e55bad17742b6d2d2d7bbf004a326752a168bf6d3d88e52c0cf",
     });
     defer source.deinit();
     const id = digest("tsfg.type\x00", "u32");

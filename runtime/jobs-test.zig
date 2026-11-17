@@ -6,7 +6,7 @@ const A = std.testing.allocator;
 const source_layout = @embedFile("jobs/testdata/component-layout.json");
 const expected: L.Expected = .{
     .inputIdentity = "sha256:99a382a6b51842afce62faaecb7a14631aba5f82a7757582e5a7720bcfb1177e",
-    .hirDigest = "sha256:9566fbc77c052dbfbc2d9fc5d69ccb626c6399b564c6ba34eb683a102a0d2654",
+    .hirDigest = "sha256:d347ff9a236976c1b537870ca2eaade5da668b996be5be06d00dc1b80b45a6e4",
 };
 const Vec = extern struct { x: f32, y: f32 };
 const Position = extern struct { x: f32, y: f32, active: u8, count: i32 };
@@ -39,7 +39,7 @@ test "actual LLVM DataLayout agrees with independent Zig extern types field by f
 test "actual thirteen scalar layouts and empty component agree with independent Zig extern ABI" {
     var source = try L.Layout.load(A, @embedFile("jobs/testdata/component-layout-scalars.json"), .{
         .inputIdentity = "sha256:6b1863b93d5b407b9685e63903276e9c3670725324c74156dabcdd891e5fc356",
-        .hirDigest = "sha256:a1fdc42e03cbd70883a95332f6e38c479170f66f4f40d65f8ad320faae0c4719",
+        .hirDigest = "sha256:9176da3cdf164e55bad17742b6d2d2d7bbf004a326752a168bf6d3d88e52c0cf",
     });
     defer source.deinit();
     inline for (.{ .{ "ScalarEdges", ScalarEdges }, .{ "Empty", Empty } }) |item| {

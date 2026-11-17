@@ -6,7 +6,7 @@ const A = std.testing.allocator;
 const nested_bytes = @embedFile("jobs/testdata/component-layout-nested.json");
 const nested_expected: L.Expected = .{
     .inputIdentity = "sha256:a46f4d6d8f0e6647989a0d2a26d34fb1c4fc05326d209c0fb35e142fbd279658",
-    .hirDigest = "sha256:d42d1f2dc2d13af016711ccc3a7ade06c0c8f2cc0d54c4ac4f5f6ea3e3ff6d3e",
+    .hirDigest = "sha256:fce783c3ed6ea798418e8de62376e52b9d89045c5e280dea326f8c2978895c41",
 };
 const Child = extern struct { x: i32 };
 const Parent = extern struct { child: Child, active: u8 };
@@ -138,7 +138,7 @@ fn expectInvalidLayout(payload: L.Payload, expected: L.Expected) !void {
 test "actual complete32-node layout matches the independent extern chain ABI" {
     var source = try L.Layout.load(A, @embedFile("jobs/testdata/component-layout-depth32.json"), .{
         .inputIdentity = "sha256:73a4505ed88dd42599f6a18b34a19eca6f8df80659d9142cc1f925a7b3c4fb9b",
-        .hirDigest = "sha256:f64f28284e9a520f637c854798ce8154bc5e60724c764c3ca60618de4408aea0",
+        .hirDigest = "sha256:0f6ae37ea69562865442c332ca38a89c813bb7fc72c3351de4e108a766166206",
     });
     defer source.deinit();
     try std.testing.expectEqual(@as(usize, 32), source.payload.types.len);

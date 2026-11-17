@@ -179,7 +179,7 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
     try std.testing.expectError(error.BindingMismatch, document.bind(A, &other_store, try wrong_access.batch(0), 0, scalars));
     var old_layout = try jobs.layout.Layout.load(A, @embedFile("jobs/testdata/component-layout.json"), .{
         .inputIdentity = "sha256:99a382a6b51842afce62faaecb7a14631aba5f82a7757582e5a7720bcfb1177e",
-        .hirDigest = "sha256:9566fbc77c052dbfbc2d9fc5d69ccb626c6399b564c6ba34eb683a102a0d2654",
+        .hirDigest = "sha256:d347ff9a236976c1b537870ca2eaade5da668b996be5be06d00dc1b80b45a6e4",
     });
     defer old_layout.deinit();
     var wrong_layout = try jobs.Store.init(A, &old_layout, 2);
@@ -480,7 +480,7 @@ test "Query metadata explicitly admits strings above1MiB up to its own boundary 
 test "Store batch directory and release retain the original borrowed session" {
     var source = try jobs.layout.Layout.load(A, @embedFile("jobs/testdata/component-layout.json"), .{
         .inputIdentity = "sha256:99a382a6b51842afce62faaecb7a14631aba5f82a7757582e5a7720bcfb1177e",
-        .hirDigest = "sha256:9566fbc77c052dbfbc2d9fc5d69ccb626c6399b564c6ba34eb683a102a0d2654",
+        .hirDigest = "sha256:d347ff9a236976c1b537870ca2eaade5da668b996be5be06d00dc1b80b45a6e4",
     });
     defer source.deinit();
     var store = try jobs.Store.init(A, &source, 2);

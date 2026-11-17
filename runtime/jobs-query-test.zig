@@ -7,7 +7,7 @@ const Stats = extern struct { p: extern struct { x: f32, y: f32 }, mass: f64, ta
 fn load(allocator: std.mem.Allocator) !jobs.layout.Layout {
     return jobs.layout.Layout.load(allocator, @embedFile("jobs/testdata/component-layout.json"), .{
         .inputIdentity = "sha256:99a382a6b51842afce62faaecb7a14631aba5f82a7757582e5a7720bcfb1177e",
-        .hirDigest = "sha256:9566fbc77c052dbfbc2d9fc5d69ccb626c6399b564c6ba34eb683a102a0d2654",
+        .hirDigest = "sha256:d347ff9a236976c1b537870ca2eaade5da668b996be5be06d00dc1b80b45a6e4",
     });
 }
 fn component(source: *const jobs.layout.Layout, name: []const u8) []const u8 {
