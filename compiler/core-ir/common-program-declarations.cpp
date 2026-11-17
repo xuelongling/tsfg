@@ -97,8 +97,11 @@ bool nominal(SourceModel &m,SourceBodies &b,SourceSyntax &s,const Json &t){
       string(field(marker,"declarationSha256"))=="sha256:0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e"&&
       string(field(marker,"version"))=="minimal-arrays-v8"&&string(field(marker,"contextName"))=="ClassDecoratorContext"&&field(marker,"contextArity").getAsInteger()==1&&
       string(field(marker,"mode"))=="standard"&&string(field(marker,"entryId"))==digest(std::string("tsfg.array-facts.marker.v8")+std::string(1,'\0')+
-        canonical(Object{{"sourcePath",dts},{"declarationRange",field(marker,"declarationRange")}})),"official nominal marker authority differs")||
-      !s.sequence(field(marker,"range"),{Json("@"),Json(expected)}))return false;
+        canonical(Object{{"sourcePath",dts},{"declarationRange",field(marker,"declarationRange")}})),"official nominal marker authority differs"))return false;
+    const auto &markerRange=field(marker,"range");
+    if(!s.sequence(markerRange,{Json("@"),Json(expected)})||
+      !m.need(*field(markerRange,"start").getAsInteger()>=s.tokens[a].start&&
+        *field(markerRange,"end").getAsInteger()<=s.tokens[n].start,"nominal marker is outside its declaring class header"))return false;
   }else if(!m.need(kind=="reference"&&string(field(key,"category"))=="reference","nominal value marker missing"))return false;
   pieces.push_back(field(t,"nameRange"));
   const auto base=string(field(t,"base"));

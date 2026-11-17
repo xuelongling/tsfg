@@ -74,3 +74,14 @@ test('real hidden-value whole package accepts the common unknown assertion bound
   narrow.expectedDigest=commonIdentity('publication',{scopeDigest:narrow.scopeDigest,contracts:narrow.contracts});
   assert.throws(()=>analyzeCommonProgram(hir,narrow),/** @param {any} e */e=>e.code==='r03-common-program-contract'&&e.functionId===id.id);
 });
+
+for(const [owner,other] of [['Delta','Carrier'],['Carrier','Delta']])test('value marker for '+owner+' cannot use '+other+' source range',async()=>{
+  const bytes=await fs.readFile(new URL('./common-program-hidden-value-copy.json',import.meta.url));
+  const mutant=structuredClone(readCommonProgramFacts(bytes));
+  const first=mutant.payload.types.find(type=>type.name===owner),second=mutant.payload.types.find(type=>type.name===other);
+  assert.ok(first?.markerOrigin&&second?.markerOrigin);
+  assert.notDeepEqual(first.markerOrigin.range,second.markerOrigin.range);
+  first.markerOrigin.range=second.markerOrigin.range;
+  mutant.packageId=sha256('tsfg.program-facts.package.v2\0'+mutant.schemaHash+'\0'+canonical(mutant.payload));
+  assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(mutant)+'\n')),{code:'r03-common-program-source'});
+});

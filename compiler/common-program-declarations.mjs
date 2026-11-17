@@ -46,8 +46,9 @@ export function validateCommonDeclarations(payload,grammars,types,spend,visible,
       check(marker.declarationPath===payload.sourceRoot+'/minimal-arrays-v8.d.ts'&&marker.declarationSha256==='sha256:0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e'
         &&marker.version==='minimal-arrays-v8'&&marker.contextName==='ClassDecoratorContext'&&marker.contextArity===1&&marker.mode==='standard','declaration');
       check(marker.entryId===sha256('tsfg.array-facts.marker.v8\0'+canonical({sourcePath:marker.declarationPath,declarationRange:marker.declarationRange})),'identity');
+      check(marker.range.start>=type.declarationRange.start&&marker.range.end<=type.nameRange.start,
+        'source','nominal marker is outside its declaring class header');
       g.sequence(marker.range,['@',expected]);
-      check(header.includes('@')&&header.includes(expected),'source');
     }else check(type.kind==='reference'&&type.nominalKey.category==='reference','type');
     check(header.every(token=>['@','tsfgValue','tsfgComponent','export','default','class'].includes(token))&&header.at(-1)==='class','capability');
     if(header.includes('export'))

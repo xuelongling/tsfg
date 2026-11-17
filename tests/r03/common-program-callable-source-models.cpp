@@ -237,8 +237,41 @@ int moduleEdgeExports(const char *path){
   }
   return ok?0:1;
 }
+int nominalMarkers(const char *path){
+  Program original;
+  if(!prepare(path,original))return 2;
+  Error primary;
+  bool ok=check("original nominal marker provenance",verifySource(original,primary));
+  if(!ok){llvm::errs()<<primary.code<<": "<<primary.message<<"\n";return 1;}
+  for(bool reverse:{false,true}){
+    Program changed;
+    changed.hir=original.hir;changed.sourceHash=original.sourceHash;
+    changed.sourceLength=original.sourceLength;changed.sourcePath=original.sourcePath;
+    auto &payload=*changed.hir.getAsObject()->getObject("snapshot")->get("payload");
+    auto *rows=arrayMember(payload,"types");
+    auto *target=namedRow(rows,"name",reverse?"Carrier":"Delta");
+    auto *other=namedRow(rows,"name",reverse?"Delta":"Carrier");
+    if(!target||!other)return 2;
+    auto *marker=target->getAsObject()->getObject("markerOrigin");
+    const auto &otherRange=field(field(*other,"markerOrigin"),"range");
+    if(!marker||!otherRange.getAsObject()||same(field(field(*target,"markerOrigin"),"range"),otherRange))return 2;
+    (*marker)["range"]=otherRange;
+    rebind(changed);
+    const auto result=readModuleModel(changed);
+    const bool rejected=result.directory&&result.identities&&!result.accepted&&result.error.code=="core-ir-common-source"&&
+      result.error.message=="nominal marker is outside its declaring class header";
+    ok&=check(reverse?"Carrier cannot claim the Delta marker":"Delta cannot claim the Carrier marker",rejected);
+    llvm::outs()<<"  directory="<<result.directory<<" identities="<<result.identities<<" accepted="<<result.accepted<<"\n";
+    if(!result.error.code.empty())llvm::outs()<<"  "<<result.error.code<<": "<<result.error.message<<"\n";
+  }
+  return ok?0:1;
+}
 }
 int main(int argc,char **argv){
+  if(argc>1&&llvm::StringRef(argv[1])=="--nominal-markers"){
+    if(argc!=3){llvm::errs()<<"expected --nominal-markers retained-hir\n";return 2;}
+    return nominalMarkers(argv[2]);
+  }
   if(argc>1&&llvm::StringRef(argv[1])=="--module-edge-exports"){
     if(argc!=3){llvm::errs()<<"expected --module-edge-exports retained-hir\n";return 2;}
     return moduleEdgeExports(argv[2]);
