@@ -3,6 +3,7 @@
 import { writeStringFactsCandidate } from './string-facts.mjs';
 import { writeStringFactsV2Candidate } from './string-facts-v2.mjs';
 import { functionIdentity, signatureHash } from './identity.mjs';
+import { callEffectsFailure } from './call-effects.mjs';
 import { readStringFactsContext, stringHirFailure, stringHirFormat, stringHirType,
   stringHirTarget, verifyStringHir } from './string-hir-model.mjs';
 
@@ -15,9 +16,10 @@ function stringValue(value, factsVersion) {
     left: stringLeaf(value.left), right: stringLeaf(value.right) };
 }
 
-export function buildStringHir(input, context) {
+export function buildStringHir(input, context, callPublicationContext = undefined) {
   try {
     const { facts, bytes, factsVersion } = readStringFactsContext(context);
+    if (callPublicationContext !== undefined) callEffectsFailure();
     let inputBytes;
     try { inputBytes = factsVersion === 2 ? writeStringFactsV2Candidate(input) : writeStringFactsCandidate(input); }
     catch (cause) { stringHirFailure(cause?.code === 'r03-string-facts-limit' ? 'limit' : 'invalid', cause); }

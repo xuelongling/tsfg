@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { readStringFactsCandidate, writeStringFactsCandidate } from "../../compiler/string-facts.mjs";
 import { readStringFactsV2Candidate, writeStringFactsV2Candidate } from "../../compiler/string-facts-v2.mjs";
-import { buildHir, verifyHir, printHir, readHir, lowerHir } from "../../compiler/hir.mjs";
+import { buildHir, verifyHir, printHir, readHir, lowerHir, lowerFormalHir, lowerOwnedHir } from "../../compiler/hir.mjs";
 
 /** @param {string | Uint8Array} bytes */
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -23,7 +23,7 @@ test("24g FIRST: every frozen whole String HIR lowers to independently fixed com
   const oracle = JSON.parse(oracleBytes.toString("utf8"));
   assert.equal(oracle.provenance.newOutputSampled, false);
   assert.equal(oracle.provenance.lowerHirCalled, false);
-  /** @type {Array<{hir:any,context:any,expected:any}>} */
+  /** @type {Array<{facts:any,hir:any,hirBytes:Buffer,context:any,expected:any}>} */
   const prepared = [];
   // Finish ALL six immutable input checks and complete public controls first.
   for (const c of oracle.cases) {
@@ -46,7 +46,7 @@ test("24g FIRST: every frozen whole String HIR lowers to independently fixed com
     assert.deepEqual(readHir(hirBytes, context), expectedHir);
     assert.equal(Buffer.byteLength(c.core), c.coreBytes);
     assert.equal(sha(c.core), c.coreSHA256);
-    prepared.push({ hir: expectedHir, context, expected: c });
+    prepared.push({ facts, hir: expectedHir, hirBytes, context, expected: c });
   }
   assert.equal(prepared.length, 3);
   t.diagnostic("24g complete frozen facts/HIR controls passed: lossless14, ASI1, concat6; first lowerHir follows");
@@ -54,5 +54,23 @@ test("24g FIRST: every frozen whole String HIR lowers to independently fixed com
   // Do not catch it as expected success or claim later calls were reached in RED.
   for (const { hir, context, expected } of prepared) {
     assert.equal(lowerHir(hir, context), expected.core, expected.name + " whole Core output");
+  }
+  const publication = {};
+  for (const { facts, hir, hirBytes, context, expected } of prepared) {
+    assert.deepEqual(buildHir(facts, context, publication), {
+      status: "error",
+      diagnostics: [{ code: "r03-d-call-effects", ruleId: "r01-call-contract", phase: "hir",
+        message: "r03-d-call-effects: invalid module call publication context" }],
+    });
+    for (const [name, call] of Object.entries({
+      verify: () => verifyHir(hir, context, publication),
+      print: () => printHir(hir, context, publication),
+      read: () => readHir(hirBytes, context, publication),
+      "private Core": () => lowerHir(hir, context, publication),
+      "formal Core": () => lowerFormalHir(hir, context, publication),
+      "owned Core": () => lowerOwnedHir(hir, context, publication),
+    })) {
+      assert.throws(call, { code: "r03-d-call-effects" }, expected.name + " " + name + " rejects unrelated publication");
+    }
   }
 });

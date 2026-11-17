@@ -22,6 +22,7 @@ import { emitNullableCore } from "./nullable-core-emitter.mjs";
 import { validateFrontendSnapshot, resolveType, resolveSymbol } from './frontend.mjs';
 import { validateModuleFacts, sourceTrivia } from './module-facts.mjs';
 import { verifyHir, KernelHostSemanticError, scalarOperations as operations } from './module-hir.mjs';
+import { callEffectsFailure } from './call-effects.mjs';
 import { moduleIdentity, globalIdentity, defaultBindingIdentity, compilationClosure, initializerIdentity, hostIdentity } from './modules.mjs';
 import { canonical, functionIdentity, signatureHash, i32TypeId, scalarTypeIds, sha256 } from './identity.mjs';
 import registry from '../contracts/registry.json' with {type:'json'};
@@ -67,7 +68,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
       return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result); }
   }
   if(isTypedArrayContext(factsContext))return buildTypedArrayHir(snapshot,factsContext,callPublicationContext);
-  if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
+  if (factsContext !== undefined) return buildStringHir(snapshot, factsContext, callPublicationContext);
   try {
     if (familyOf(snapshot) === 'tsfg.frontend-module-callable-candidate') return {status:'ok',hir:buildModuleCallableHir(snapshot)};
   } catch (error) { const result = {status:'error',diagnostics:[{code:error.code,ruleId:error.ruleId,phase:error.phase,message:error.message,...(error.primary?{primary:error.primary}:{})}]};
@@ -241,7 +242,10 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
     nullableCheck(callPublicationContext === undefined, 'context'); return readNullableGroupsHir(bytes, factsContext);
   }
   if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext,callPublicationContext);
-  if (factsContext !== undefined) return readStringHir(bytes, factsContext);
+  if (factsContext !== undefined) {
+    if (callPublicationContext !== undefined) callEffectsFailure();
+    return readStringHir(bytes, factsContext);
+  }
   const { text, value } = readHirWire(bytes);
   const family = familyOf(value);
   if (family === commonHirFormat.family)
@@ -267,7 +271,10 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     nullableCheck(callPublicationContext === undefined, 'context'); return emitNullableCore(hir, factsContext);
   }
   if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
-  if (factsContext !== undefined) return emitStringCore(hir, factsContext);
+  if (factsContext !== undefined) {
+    if (callPublicationContext !== undefined) callEffectsFailure();
+    return emitStringCore(hir, factsContext);
+  }
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
     return emitModuleCallableCore(hir);
   }
@@ -295,8 +302,10 @@ export function lowerFormalHir(hir, factsContext = undefined, callPublicationCon
   if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate'))return lowerHir(hir,factsContext,callPublicationContext);
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
-  if (factsContext !== undefined)
+  if (factsContext !== undefined) {
+    if (callPublicationContext !== undefined) callEffectsFailure();
     return emitFormalStringCore(hir, factsContext);
+  }
   if(hir?.format?.family==='tsfg.closure-hir-candidate')return emitFormalClosureCore(hir);
   if(hir?.format?.family==='tsfg.exception-hir-candidate')return emitFormalExceptionCore(hir);
   return lowerHir(hir, factsContext,callPublicationContext);
