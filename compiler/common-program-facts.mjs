@@ -189,6 +189,7 @@ export function verifyCommonProgramFacts(value) {
   const target=id=>functions.get(id)??globals.get(id)??types.get(id)??modules.get(id);
   const targetPath=row=>row.sourcePath;
   for(const module of p.modules){const g=grammars.get(module.sourcePath),scope=visible.get(module.sourcePath);
+    const namedReexports=new Map(),namedReexportEdges=new Set();
     check(same(module.globals,p.globals.filter(row=>row.sourcePath===module.sourcePath).map(row=>row.binding.id)),'global');
     const initialized=module.initialization.filter(row=>row.kind==='initialize');check(same(initialized.map(row=>row.binding),module.globals),'global');
     for(const global of p.globals.filter(row=>row.sourcePath===module.sourcePath)){const row=global.binding;
@@ -204,6 +205,8 @@ export function verifyCommonProgramFacts(value) {
       const quoted=g.tokens[from-1].text;
       check(g.tokens[from-2].text==='from'&&(quoted==='"'+edge.specifier+'"'||quoted==="'"+edge.specifier+"'"),'module','original module specifier differs');
       const star=g.tokens[bounds.first+1].text==='*',parts=[keyword,...(star?(edge.kind==='import'?['*','as']:['*']):['{'])];let index=0;
+      const namedReexport=edge.kind!=='import'&&!star;
+      if(namedReexport)namedReexportEdges.add(edge);
       for(const alias of edge.bindings){spend();const definition=target(alias.target);check(definition&&targetPath(definition)===alias.targetSourcePath
         &&(alias.kind==='namespace'?modules.has(alias.target):alias.kind==='function'?functions.has(alias.target):alias.kind==='global'?globals.has(alias.target):alias.kind==='type'&&types.has(alias.target)),'module');
         check(alias.kind==='namespace'?alias.imported==='*'&&alias.target===edge.sourcePath&&alias.targetSourcePath===edge.sourcePath
@@ -216,21 +219,31 @@ export function verifyCommonProgramFacts(value) {
           check(!scope.has(alias.name),'scope');scope.set(alias.name,alias.target);
           if(alias.kind==='namespace')for(const exported of modules.get(edge.sourcePath).exports){spend();scope.set(alias.name+'.'+exported.name,exported.target);}}
         else check(edge.kind!=='import'&&alias.nameRange===null,'module');
+        if(namedReexport){check(!namedReexports.has(alias.name),'export');namedReexports.set(alias.name,alias);}
       }
       if(!star)parts.push('}');parts.push('from',quoted);g.sequence(edge.range,parts,true);
     }
     for(const host of p.hostImports){spend();if(!scope.has(host.name))scope.set(host.name,host.id);}
-    let previous;
-    for(const e of module.exports){spend();const definition=target(e.target);check(definition&&targetPath(definition)===e.targetSourcePath
-      &&(!previous||byteOrder(previous,e.name)<0),'export');previous=e.name;sourceRange(e.range,g.text);
+    let previous,matchedReexports=0;
+    for(const e of module.exports){spend();const definition=target(e.target);
+      const kind=functions.has(e.target)?'function':globals.has(e.target)?'global':
+        ['value','reference'].includes(definition?.kind)?'type':null;
+      check(kind===e.kind&&targetPath(definition)===e.targetSourcePath
+        &&(!previous||byteOrder(previous,e.name)<0),'export');previous=e.name;sourceRange(e.range,g.text);
       const defining=grammars.get(e.targetSourcePath);sourceRange(e.definitionRange,defining.text);
       check(same(e.definitionRange,definition.declarationRange??definition.binding.declarationRange),'export');
-      const within=p.functions.some(fn=>fn.sourcePath===module.sourcePath&&e.range.start>=fn.declarationRange.start&&e.range.end<=fn.declarationRange.end)
+      const edge=module.imports.find(edge=>{spend();return e.range.start>=edge.range.start&&e.range.end<=edge.range.end;});
+      const alias=namedReexports.get(e.name);
+      if(alias||namedReexportEdges.has(edge)){
+        check(alias&&alias.target===e.target&&same(alias.range,e.range),'export');
+        matchedReexports++;
+      }
+      const within=edge||p.functions.some(fn=>fn.sourcePath===module.sourcePath&&e.range.start>=fn.declarationRange.start&&e.range.end<=fn.declarationRange.end)
         ||p.types.some(type=>type.sourcePath===module.sourcePath&&['value','reference'].includes(type.kind)&&e.range.start>=type.declarationRange.start&&e.range.end<=type.declarationRange.end)
-        ||module.initialization.some(row=>e.range.start>=row.range.start&&e.range.end<=row.range.end)
-        ||module.imports.some(edge=>e.range.start>=edge.range.start&&e.range.end<=edge.range.end);
+        ||module.initialization.some(row=>e.range.start>=row.range.start&&e.range.end<=row.range.end);
       if(!within)coverage.get(module.sourcePath).push(e.range);
     }
+    check(matchedReexports===namedReexports.size,'export');
     coverage.get(module.sourcePath).push(...module.initialization.map(row=>{
       if(row.kind!=='initialize')return row.range;const at=g.indices(row.range);let start=at.first-1;
       if(g.tokens[start-1]?.text==='export')start--;

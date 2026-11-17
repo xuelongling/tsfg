@@ -27,6 +27,7 @@ test('one mixed Program preserves namespace, re-export, ReadSpan and finally joi
   assert.equal(hir.functions.find(fn=>fn.name==='view').body[0].value.callee,hir.functions.find(fn=>fn.name==='run').id);
   assert.ok(hir.types.some(type=>type.kind==='array'));assert.ok(hir.types.some(type=>type.kind==='readSpan'));
   assert.equal(hir.functions.find(fn=>fn.name==='run').body[1].initializer.callee,'intrinsic:readSpan');
+  assert.equal(sha256(printCommonProgramHir(hir)),'sha256:a50a8050c89e1eeb1b58f2f304f69a10642baf561932dfd86ebb000576fa2e90');
 });
 
 test('body edits preserve stable declarations, signatures, GlobalIds and semantic shape',()=>{
@@ -49,12 +50,13 @@ test('semantic HIR is reconstructed independently of retained raw snapshot',()=>
   assert.throws(()=>verifyCommonProgramHir(changed),/** @param {any} error */ error=>error.code==='r03-common-program-reconstruct');
 });
 
-function mutated(change) {
-  const value=structuredClone(facts.get('positive'));change(value.payload);
+function mutated(change,name='positive') {
+  const value=structuredClone(facts.get(name));change(value.payload);
   const p=value.payload,tuples=rows=>rows.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
   const request={family:'tsfg.program-facts-request-candidate',version:2,schemaHash:value.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:p.declarations,config:p.config,target:p.target,
-    compilationClosure:{roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)}}};
+    compilationClosure:{roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)},
+    hostImports:p.hostImports.map(({sourcePath,name,capabilityId,parameterTypes,returnType})=>({sourcePath,name,capabilityId,parameterTypes,returnType}))}};
   value.requestId=sha256('tsfg.program-facts.request.v2\0'+canonical(request)+'\n');
   value.packageId=sha256('tsfg.program-facts.package.v2\0'+value.schemaHash+'\0'+canonical(p));return value;
 }
@@ -86,4 +88,28 @@ test('behavioral and over-budget objects are rejected before any getter or clone
   assert.throws(()=>verifyCommonProgramFacts(value),/** @param {any} error */ error=>error.code==='r03-common-program-input');assert.equal(read,0);
   const cyclic={};cyclic.self=cyclic;assert.throws(()=>verifyCommonProgramFacts(cyclic));
   assert.throws(()=>verifyCommonProgramFacts({payload:'a'.repeat(2097153)}),/** @param {any} error */ error=>error.code==='r03-common-program-limit');
+});
+const checkedExportMutations=[
+  ['retargeted named re-export',p=>{
+    const barrel=p.modules.find(module=>module.sourcePath==='/src/barrel.ts');
+    const original=barrel.exports.find(row=>row.name==='add');
+    const other=barrel.exports.find(row=>row.name==='bump');
+    Object.assign(original,{target:other.target,definitionRange:other.definitionRange});
+  }],
+  ['additional name at a named re-export',p=>{
+    const barrel=p.modules.find(module=>module.sourcePath==='/src/barrel.ts');
+    const run=barrel.exports.find(row=>row.name==='run');
+    barrel.exports.splice(barrel.exports.length-1,0,{...run,name:'root'});
+  }],
+  ['misclassified nominal export',p=>{
+    p.modules.find(module=>module.sourcePath==='/src/data.ts').exports.find(row=>row.name==='Box').kind='function';
+  }],
+  ['missing named re-export',p=>{
+    const barrel=p.modules.find(module=>module.sourcePath==='/src/barrel.ts');
+    barrel.exports=barrel.exports.filter(row=>row.name!=='bump');
+  }],
+];
+for (const [title,change] of checkedExportMutations) test('retained mixed module rejects '+title,()=>{
+  const packet=mutated(change,'mixed');
+  assert.throws(()=>readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')),{code:'r03-common-program-export'});
 });
