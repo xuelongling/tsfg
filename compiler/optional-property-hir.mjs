@@ -48,18 +48,21 @@ export function buildOptionalPropertyHir(input,factsContext,callPublicationConte
     return /** @type {typeof result & {hir?:undefined}} */(result);
   }
 }
-/** @param {unknown} [callPublicationContext] */
-export function verifyOptionalPropertyHir(hir,factsContext,callPublicationContext=undefined) {
-  const {facts}=context(factsContext,callPublicationContext);
+function checkedHir(hir,facts) {
   checkGenericJsonValueBudget(hir,policy);
   const expected=project(facts);check(canonical(hir)===canonical(expected),'hir-projection');return own(expected);
 }
 /** @param {unknown} [callPublicationContext] */
+export function verifyOptionalPropertyHir(hir,factsContext,callPublicationContext=undefined) {
+  const {facts}=context(factsContext,callPublicationContext);
+  return checkedHir(hir,facts);
+}
+/** @param {unknown} [callPublicationContext] */
 export function readOptionalPropertyHir(bytes,factsContext,callPublicationContext=undefined) {
   // Bind the selected source packet before walking any caller HIR graph.
-  context(factsContext,callPublicationContext);
+  const {facts}=context(factsContext,callPublicationContext);
   const input=readGenericJson(copyGenericJsonBytes(bytes,policy),policy);
-  const hir=verifyOptionalPropertyHir(input.value,factsContext);
+  const hir=checkedHir(input.value,facts);
   check(input.text===canonical(hir)+'\n','canonical');return hir;
 }
 export function writeOptionalPropertyHir(hir,factsContext) {
