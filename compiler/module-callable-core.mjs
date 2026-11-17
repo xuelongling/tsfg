@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { verifyModuleCallableHir } from './module-callable-hir.mjs';
+import { verifyModuleCallablePublication } from './module-callable-publication.mjs';
 import { check } from './module-callable-common.mjs';
 import { functionIdentity, signatureHash, own } from './identity.mjs';
 import { coreExchangeFormat } from './core-ssa-emitter.mjs';
@@ -7,8 +8,9 @@ import { emitScalarCore } from './scalar-core-emitter.mjs';
 
 // This boundary consumes the complete reconstructed candidate. Its private
 // function/signature domain must never leak into the formal scalar exchange.
-export function moduleCallableCoreView(hir) {
-  const verified = verifyModuleCallableHir(hir);
+export function moduleCallableCoreView(hir, callPublicationContext = undefined) {
+  const verified = callPublicationContext === undefined ? verifyModuleCallableHir(hir)
+    : verifyModuleCallablePublication(hir, callPublicationContext).hir;
   const types = new Map(verified.types.map(type => [type.id, type]));
   const identities = new Map(), signatures = new Map();
   function unsupported(kind, owner, range = owner.range) {
@@ -91,6 +93,6 @@ export function moduleCallableCoreView(hir) {
       hostImports: verified.hostImports, closure}});
 }
 
-export function emitModuleCallableCore(hir) {
-  return emitScalarCore(moduleCallableCoreView(hir));
+export function emitModuleCallableCore(hir, callPublicationContext = undefined) {
+  return emitScalarCore(moduleCallableCoreView(hir, callPublicationContext));
 }

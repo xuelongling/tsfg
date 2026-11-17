@@ -290,7 +290,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
   const family = familyOf(hir);
   if (family === genericHirFormat.family && callPublicationContext !== undefined) callEffectsFailure();
   if (family === 'tsfg.module-callable-hir-candidate') {
-    return emitModuleCallableCore(hir);
+    return emitModuleCallableCore(hir, callPublicationContext);
   }
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitFormalExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);

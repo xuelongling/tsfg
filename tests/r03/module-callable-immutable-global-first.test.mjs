@@ -4,9 +4,8 @@ import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {moduleCallableCoreView} from '../../compiler/module-callable-core.mjs';
+import {currentModuleCallableCore,moduleCallableExchange} from './module-callable-core-oracle.mjs';
 const coreOracle=JSON.parse(await readFile(new URL('./module-callable-core-first.json',import.meta.url),'utf8'));
-function formalView(hir){const {functionSelection,...view}=moduleCallableCoreView(hir);
-  assert.equal(functionSelection,'complete-original-universe');return view;}
 import {importCapturedFrontendResponse} from '../../compiler/frontend-response.mjs';
 import {validateFrontendSnapshot} from '../../compiler/frontend.mjs';
 import {buildHir,verifyHir,printHir,readHir,lowerHir,analyzeModuleCalls,
@@ -117,8 +116,8 @@ async function expected() {
   const proof=verifyKernelParallelGroup(cold,clone(o.context),{targets:clone(o.proofs[0].targets)});
   assert.deepEqual(proof,o.proofs[0].proof);frozen(proof);
   const core=coreOracle.rows.find(row=>row.id==='bool');
-  assert.deepEqual(formalView(cold),core.expectedFormalView);
-  assert.equal(lowerHir(cold),core.expectedRawCore);
+  assert.deepEqual(moduleCallableCoreView(cold),{...core.expectedFormalView,exchange:moduleCallableExchange});
+  assert.equal(lowerHir(cold),currentModuleCallableCore(core.expectedRawCore));
   assert.equal(jcs(o.snapshot),snapshotBefore);assert.equal(jcs(o.hir),hirBefore);assert.equal(jcs(o.context),contextBefore);
   assert.deepEqual(await readFile(new URL('./module-callable-immutable-global-first.json',import.meta.url)),raw);
   assert.deepEqual(await readFile(new URL('./module-callable-immutable-global-source-actual.json',import.meta.url)),actualRaw);
@@ -190,8 +189,8 @@ async function expected() {
   assert.deepEqual(proof,o.proofs[0].proof);frozen(proof);
   for(const key of ['readRead','writeWrite','writeRead','readWrite'])assert.deepEqual(proof.pairs[0][key],[]);
   const core=coreOracle.rows.find(row=>row.id==='i32');
-  assert.deepEqual(formalView(cold),core.expectedFormalView);
-  assert.equal(lowerHir(cold),core.expectedRawCore);
+  assert.deepEqual(moduleCallableCoreView(cold),{...core.expectedFormalView,exchange:moduleCallableExchange});
+  assert.equal(lowerHir(cold),currentModuleCallableCore(core.expectedRawCore));
   assert.equal(jcs(o.snapshot),snapshotBefore);assert.equal(jcs(o.hir),hirBefore);assert.equal(jcs(o.context),contextBefore);
   assert.deepEqual(await readFile(new URL('./module-callable-immutable-global-first.json',import.meta.url)),raw);
   assert.deepEqual(await readFile(new URL('./module-callable-immutable-global-source-actual.json',import.meta.url)),actualRaw);

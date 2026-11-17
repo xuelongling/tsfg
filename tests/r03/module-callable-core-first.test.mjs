@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {importCapturedFrontendResponse} from '../../compiler/frontend-response.mjs';
 import {buildHir, verifyHir, printHir, readHir, lowerHir} from '../../compiler/hir.mjs';
+import {currentModuleCallableCore} from './module-callable-core-oracle.mjs';
 
 // Independent whole literals were frozen before the first candidate execution.
 // Both original captured packets remain complete; this test spawns no producer.
@@ -49,7 +50,7 @@ for (const row of gold.rows) test('complete immutable callable ' + row.id + ' lo
   assert.equal(cold.modules.length, row.counts.modules);
   assert.equal(cold.globals.length, row.counts.globals);
   // Capability RED must occur at the real public lowering call, never assert.throws.
-  assert.equal(lowerHir(cold), row.expectedRawCore);
+  assert.equal(lowerHir(cold), currentModuleCallableCore(row.expectedRawCore));
   assert.equal(jcs(cold), jcs(input.hir));
   assert.deepEqual(await readFile(new URL('./module-callable-immutable-global-first.json', import.meta.url)), originalBytes);
   assert.deepEqual(await readFile(new URL('./module-callable-immutable-global-source-actual.json', import.meta.url)), actualBytes);

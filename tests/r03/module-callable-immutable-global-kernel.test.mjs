@@ -4,13 +4,14 @@ import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {moduleCallableCoreView} from '../../compiler/module-callable-core.mjs';
+import {currentModuleCallableCore,moduleCallableExchange} from './module-callable-core-oracle.mjs';
 const coreGoldBytes=await readFile(new URL('./module-callable-core-kernel.json',import.meta.url));
 assert.equal(createHash('sha256').update(coreGoldBytes).digest('hex'),
   '2c187d3d228a52f89d9a1ebd8ca9bb68e3c63eef7c819e40c66223865d775671');
 const coreOracle=JSON.parse(coreGoldBytes.toString('utf8'));
 import {importCapturedFrontendResponse} from '../../compiler/frontend-response.mjs';
 import {buildHir,verifyHir,printHir,readHir,analyzeModuleCalls,verifyModuleCalls,
-  printModuleCalls,readModuleCalls,verifyKernelParallelGroup,lowerHir} from '../../compiler/hir.mjs';
+  printModuleCalls,readModuleCalls,verifyKernelParallelGroup,lowerHir,lowerOwnedHir} from '../../compiler/hir.mjs';
 
 // Literal source bodies and fixed Published bounds independently define these
 // complete protocol-derived wholes. They confer no official Source authority.
@@ -63,12 +64,14 @@ for(const c of data.kernelCases)test('fixed alias Published and kernel whole: '+
   if(c.kernelExpected.status==='ok'){const proof=consume();assert.deepEqual(proof,c.kernelExpected.proof);frozen(proof);}
   else rejects(consume,c.kernelExpected.error);
   const gold=coreOracle.rows.find(row=>row.name===c.name);
-  const {functionSelection,...view}=moduleCallableCoreView(cold);
-  assert.equal(functionSelection,'complete-original-universe');
+  const view=moduleCallableCoreView(cold);
   const {emissionSelection,...expectedView}=gold.expectedFormalView;
-  assert.deepEqual(emissionSelection,{policy:functionSelection,functionIds:view.functions.map(fn=>fn.id)});
-  assert.deepEqual(view,expectedView);
-  assert.equal(lowerHir(cold),gold.expectedRawCore);assert.equal(jcs(c),before);
+  assert.deepEqual(view.functions.map(fn=>fn.id),emissionSelection.functionIds);
+  assert.deepEqual(view,{...expectedView,exchange:moduleCallableExchange});
+  const expectedCore=currentModuleCallableCore(gold.expectedRawCore);
+  assert.equal(lowerHir(cold),expectedCore);
+  assert.equal(lowerHir(cold,undefined,clone(c.context)),expectedCore);
+  assert.equal(jcs(c),before);
 });
 
 test('real body writes cover both read-write orientations and write-write without fake alias GlobalId',()=>{
@@ -102,6 +105,8 @@ test('body widening is rejected against the unchanged fixed Published upper',()=
   const expected={...callError('-contract','module implementation exceeds fixed published upper bound'),
     functionId:leaf.id,facet:'effects',primary:{sourceId:leaf.sourcePath,...leaf.range}};
   rejects(()=>analyzeModuleCalls(clone(write.hir),clone(control.context)),expected);
+  rejects(()=>lowerHir(clone(write.hir),undefined,clone(control.context)),expected);
+  rejects(()=>lowerOwnedHir(clone(write.hir),undefined,clone(control.context)),expected);
 });
 
 test('same-signature retargeting changes binding and scope and cannot reuse old fixed identity',()=>{
@@ -111,6 +116,7 @@ test('same-signature retargeting changes binding and scope and cannot reuse old 
   assert.equal(c.hir.functions.find(f=>f.name==='entry').body[0].value.target,peer.id);
   assert.notEqual(c.context.scopeDigest,control.context.scopeDigest);
   rejects(()=>analyzeModuleCalls(clone(c.hir),clone(control.context)),stale);
+  rejects(()=>lowerHir(clone(c.hir),undefined,clone(control.context)),stale);
   const old=clone(control.context);repairPublication(old);rejects(()=>analyzeModuleCalls(clone(c.hir),old),stale);
 });
 

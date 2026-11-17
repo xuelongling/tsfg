@@ -82,7 +82,7 @@ function unknownChains(hir,flow,effects,records,count){
     out.push({functionId:id,...candidates[0]});
   }return out;
 }
-export function analyzeModuleCallableCalls(hir,context){
+export function verifyModuleCallablePublication(hir,context){
   const input=prepare(hir,context),{records,count}=input;
   const derived=solveModuleTargets(input.hir,null,moduleCallFailure),effective=solveModuleTargets(input.hir,records,moduleCallFailure);
   const de=effectsFor(derived,null,count),ee=effectsFor(effective,records,count);
@@ -102,10 +102,12 @@ export function analyzeModuleCallableCalls(hir,context){
     return {functionId:row.functionId,derived:de.get(row.functionId)??top(),effective:ee.get(row.functionId),dependencies:[...deps].sort(compare).map(functionId=>({functionId,digest:records.get(functionId).digest}))};
   });
   const report={format:format('tsfg.module-calls-candidate'),inputIdentity:input.hir.inputIdentity,hirDigest:sha256(canonical(input.hir)+'\n'),scopeDigest:input.scopeDigest,publishedDigest:context.expectedDigest,contracts:context.contracts,derivedTargets:derived.report,effectiveTargets:effective.report,functions:rows.filter(r=>input.functions.get(r.functionId).kind==='source'),initializers:rows.filter(r=>input.functions.get(r.functionId).kind==='module-initialization'),initializationOrder:input.hir.closure.initialization,unknownChains:unknownChains(input.hir,effective,ee,records,count)};
-  budget(report,moduleCallFailure);return own(JSON.parse(canonical(report)));
+  budget(report,moduleCallFailure);
+  return {hir:input.hir,analysis:own(JSON.parse(canonical(report)))};
 }
 export function verifyModuleCalls(report,hir,context){
-  budget(report,moduleCallFailure);const rebuilt=analyzeModuleCallableCalls(hir,context);assert(same(report,rebuilt),'report');return rebuilt;
+  budget(report,moduleCallFailure);const rebuilt=verifyModuleCallablePublication(hir,context).analysis;
+  assert(same(report,rebuilt),'report');return rebuilt;
 }
 export function printModuleCalls(report,hir,context){return canonical(verifyModuleCalls(report,hir,context))+'\n';}
 export function readModuleCalls(bytes,hir,context){return verifyModuleCalls(readJson(bytes,moduleCallFailure).value,hir,context);}

@@ -3,7 +3,7 @@ import {verifyCommonProgramHir,buildCommonProgramHir,isCommonProgramContext} fro
 import {analyzeCommonProgram} from './common-program-analysis.mjs';
 import {commonCheck,commonRecord,commonBudget,commonSame} from './common-program-common.mjs';
 import { verifyModuleCallableHir } from './module-callable-hir.mjs';
-import { analyzeModuleCallableCalls } from './module-callable-publication.mjs';
+import { verifyModuleCallablePublication } from './module-callable-publication.mjs';
 // SPDX-License-Identifier: MIT
 import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure, verifyKernelHostSemantics } from './call-effects.mjs';
 export { KernelHostSemanticError } from './call-effects.mjs';
@@ -64,8 +64,7 @@ export function analyzeModuleCalls(hir, context) {
 /** @param {any} hir @param {any} context */
 function selectedModuleCalls(hir, context) {
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
-    const analysis = analyzeModuleCallableCalls(hir, context);
-    return { hir: verifyModuleCallableHir(hir), analysis };
+    return verifyModuleCallablePublication(hir, context);
   }
   checkCallEffectsInputs(hir, context);
   if (hir?.modules === undefined || hir?.format !== undefined)
