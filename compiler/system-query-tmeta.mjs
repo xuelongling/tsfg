@@ -61,8 +61,7 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
   const layoutBody=text(layoutEnvelope.payload);equal(layoutEnvelope.payloadHash,sha256('tsfg.component-layout.v1\0'+layoutBody));
   const layouts=record(json(layoutBody+'\n'),layoutDescriptor.payload),catalog={components:layouts.components,target:layouts.target,types:layouts.types};
   equal([layouts.hirDigest,layouts.inputIdentity,layouts.target],[sha256(canonical(catalog)+'\n'),facts.inputIdentity,facts.program.target]);
-  // The Source receipt already owns this DTO. Reuse its semantic IDs and field
-  // provenance; sizes/offsets remain the official independent DataLayout result.
+  // Reuse the semantic IDs and field provenance from the owned Source receipt.
   const source=/** @type {{payload:{types:LayoutSourceType[],functions:unknown[]}}} */(JSON.parse(receipt.packetText));
   let work=0;const spend=()=>{if(++work>descriptor.limits.work)fail('metadata work exceeded');};
   const ids=commonSemanticIdentities({...source.payload,globals:[]},spend),types=new Map(source.payload.types.map(type=>[type.id,type]));
@@ -93,16 +92,20 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
       spend();const row=record(value,layoutDescriptor.fieldRecord),{offset,...semantic}=row;
       equal(semantic,fields[index]);return {offset:integer(offset),type:fields[index].type};
     });
-    return [id,{alignment,stride,size,placements}];
+    return [id,{alignment,stride,size,placements,scalar}];
   }));
-  // Check the retained extents after indexing every type. DataLayout still owns exact ABI placement.
-  for(const {alignment,size,placements} of fixed.values()){
-    let end=0;
+  // Recheck the producer's unpacked struct extents after indexing all child layouts.
+  const alignUp=(size,alignment)=>Math.ceil(size/alignment)*alignment;
+  for(const {alignment,size,placements,scalar} of fixed.values()){
+    if(scalar)continue;
+    spend();let end=0,maximumAlignment=1;
     for(const {offset,type} of placements){
       spend();const child=fixed.get(type);
-      if(!child||child.alignment>alignment||offset%child.alignment||offset<end||offset>size||child.size>size-offset)fail('layout field extent differs');
+      if(!child||child.alignment>alignment||offset!==alignUp(end,child.alignment)||offset>size||child.size>size-offset)fail('layout field extent differs');
+      maximumAlignment=Math.max(maximumAlignment,child.alignment);
       end=offset+child.size;
     }
+    if(alignment!==maximumAlignment||size!==alignUp(end,alignment))fail('nominal layout extent differs');
   }
   const actual=array(payload.entries),entries=[];let cursor=0;
   for(const system of facts.systems){

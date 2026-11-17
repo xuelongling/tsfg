@@ -5,7 +5,7 @@ import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {coreQuote} from '../../compiler/mlir-strings.mjs';
-import {readSystemQueryFacts} from '../../compiler/system-query-facts.mjs';
+import {readSystemQueryFacts,systemQueryRequestContext} from '../../compiler/system-query-facts.mjs';
 import {emitSystemQueryCore} from '../../compiler/system-query-core.mjs';
 import {readSystemQueryTmeta,queryTmetaSchema} from '../../compiler/system-query-tmeta.mjs';
 import {compileSystemQuery} from '../../compiler/pipeline.mjs';
@@ -26,6 +26,17 @@ const run=(name,input,command='--tmeta',status=0)=>{
   if(status!==0){assert.equal(child.stdout.length,0);assert.match(child.stderr.toString('utf8'),/core-ir-query-tmeta|core-ir-query-(?:batch|source|op)|core-ir-program-budget|core-ir-common-canonical/);}
   return child.stdout.toString('utf8');
 };
+function repackLayout(envelope,payload,layout,catalog){
+  const {components,target,types}=catalog;
+  catalog.hirDigest=sha256(canonical({components,target,types})+'\n');
+  layout.payload=canonical(catalog);
+  layout.payloadHash=sha256('tsfg.component-layout.v1\0'+layout.payload);
+  payload.componentLayouts=canonical(layout)+'\n';
+  payload.layoutHash=sha256(payload.componentLayouts);
+  envelope.payload=canonical(payload);
+  envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);
+  return Buffer.from(canonical(envelope)+'\n');
+}
 
 test('Query tmeta original-context/current-manifest gates',async()=>{
   const input=cases.at(-1);
@@ -126,15 +137,7 @@ test('Query tmeta checks field extents against the retained catalog',{skip:!reta
     const component=catalog.types.find(row=>row.kind==='component');
     assert.deepEqual(component.fields.map(field=>field.offset),[0,4]);
     component.fields[fieldIndex].offset=offset;
-    const {components,target,types}=catalog;
-    catalog.hirDigest=sha256(canonical({components,target,types})+'\n');
-    layout.payload=canonical(catalog);
-    layout.payloadHash=sha256('tsfg.component-layout.v1\0'+layout.payload);
-    payload.componentLayouts=canonical(layout)+'\n';
-    payload.layoutHash=sha256(payload.componentLayouts);
-    envelope.payload=canonical(payload);
-    envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);
-    const bytes=Buffer.from(canonical(envelope)+'\n');
+    const bytes=repackLayout(envelope,payload,layout,catalog);
     assert.throws(()=>readSystemQueryTmeta(bytes,facts,input.context,checkedBatch),/r10-query-tmeta: layout field extent differs/,`field ${fieldIndex} at ${offset}`);
   }
 });
@@ -241,13 +244,32 @@ test('Query tmeta rejects a changed physical i32 scalar extent',()=>{
   assert.ok(scalar);
   assert.deepEqual([scalar.byteSize,scalar.alignment,scalar.stride],[4,4,4]);
   Object.assign(scalar,{byteSize:2,alignment:2,stride:2});
-  catalog.hirDigest=sha256(canonical({components:catalog.components,target:catalog.target,types})+'\n');
-  layout.payload=canonical(catalog);
-  layout.payloadHash=sha256('tsfg.component-layout.v1\0'+layout.payload);
-  payload.componentLayouts=canonical(layout)+'\n';
-  payload.layoutHash=sha256(payload.componentLayouts);
-  envelope.payload=canonical(payload);
-  envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);
-  const changed=Buffer.from(canonical(envelope)+'\n');
+  const changed=repackLayout(envelope,payload,layout,catalog);
   assert.throws(()=>readSystemQueryTmeta(changed,facts,context,checkedBatch),/scalar layout differs/);
+});
+
+test('Query tmeta enforces exact nominal field placement and final extent',()=>{
+  const metadata=new URL('../../runtime/jobs/testdata/query-effects-shared.tmeta',import.meta.url);
+  const original=readFileSync(metadata),envelope=JSON.parse(original.toString('utf8')),payload=JSON.parse(envelope.payload);
+  const receipt=JSON.parse(readFileSync(new URL('query-effects-shared-receipt.json',metadata),'utf8'));
+  const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
+  const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context),checkedBatch=payload.batch;
+  assert.equal(facts.inputIdentity,receipt.inputIdentity);
+  assert.equal(facts.packageId,receipt.packageId);
+  assert.equal(envelope.payloadHash,receipt.payloadHash);
+  assert.deepEqual(readSystemQueryTmeta(original,facts,context,checkedBatch).envelope,envelope);
+  const edits=[
+    {name:'extra field gap',apply:row=>{row.fields[1].offset=8;row.byteSize=row.stride=12;},diagnostic:/layout field extent differs/},
+    {name:'extra tail padding',apply:row=>{row.byteSize=row.stride=12;},diagnostic:/nominal layout extent differs/},
+    {name:'extra struct alignment',apply:row=>{row.alignment=8;},diagnostic:/nominal layout extent differs/},
+  ];
+  for(const {name,apply,diagnostic} of edits){
+    const layout=JSON.parse(payload.componentLayouts),catalog=JSON.parse(layout.payload);
+    const row=catalog.types.find(row=>row.kind==='component'&&row.name==='Velocity');
+    assert.deepEqual([row.byteSize,row.alignment,row.stride,row.fields.map(field=>field.offset)],[8,4,8,[0,4]]);
+    assert.ok(!payload.entries.some(entry=>entry.columns.some(column=>column.componentType===row.id)));
+    apply(row);
+    const changed=repackLayout({...envelope},{...payload},layout,catalog);
+    assert.throws(()=>readSystemQueryTmeta(changed,facts,context,checkedBatch),diagnostic,name);
+  }
 });
