@@ -58,7 +58,12 @@ export function createCommonGpuBindingPlan(input,publication,kernelRequest,value
   const checked=commonProgramCore(input,publication,kernelRequest,{borrowProof:true}),{hir,proof,borrowProof}=checked;
   const request=requestInput(value),functions=new Map(hir.functions.map(fn=>[fn.id,fn]));
   const first=functions.get(request.kernels[0])??functions.get(proof.targets[0])??hir.functions[0],primary=first?source(first):undefined;
-  check(request.kernels.every(id=>proof.targets.includes(id)),'kernel','logical GPU target is outside the verified kernel group',{primary});
+  const unverifiedKernel=request.kernels.find(id=>!proof.targets.includes(id));
+  if(unverifiedKernel!==undefined){
+    const rejected=functions.get(unverifiedKernel);
+    check(false,'kernel','logical GPU target is outside the verified kernel group',
+      {primary:rejected?source(rejected):primary});
+  }
   const selected=new Set(request.kernels),accesses=proof.accesses.filter(row=>selected.has(row.functionId));
   const reads=new Set(accesses.flatMap(row=>row.reads)),writes=new Set(accesses.flatMap(row=>row.writes));
   const types=new Map(hir.types.map(row=>[row.id,row])),globals=new Map(hir.globals.map(row=>[row.id,row]));

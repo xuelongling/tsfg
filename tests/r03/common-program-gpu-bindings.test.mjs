@@ -86,6 +86,27 @@ test('logical GPU target and declared kernel selection are explicit',()=>{
   fails(changed(value=>{value.target='d3d12';}),'target');
   fails(changed(value=>{value.kernels=[hir.functions.find(row=>row.name==='ordinary').id];}),'kernel');
 });
+test('logical GPU group rejects the first unverified kernel at its own Source range',()=>{
+  const unverified=hir.functions.find(row=>row.name==='add');
+  assert.ok(unverified);
+  assert.ok(right.id<unverified.id&&!group.targets.includes(unverified.id));
+  const invalid=changed(value=>{value.kernels=[right.id,unverified.id];});
+  assert.throws(()=>plan(invalid),error=>{
+    assert.ok(sourceDiagnostic(error));
+    assert.equal(error.code,'r03-common-program-gpu-kernel');
+    assert.equal(error.ruleId,'r01-gpu');
+    assert.deepEqual(error.primary,{sourceId:'/src/main.ts',start:175,end:246});
+    return true;
+  });
+
+  const unknown=changed(value=>{value.kernels=[right.id,'sha256:'+'f'.repeat(64)];});
+  assert.throws(()=>plan(unknown),error=>{
+    assert.ok(sourceDiagnostic(error));
+    assert.equal(error.code,'r03-common-program-gpu-kernel');
+    assert.deepEqual(error.primary,expected.kernels[0].source);
+    return true;
+  });
+});
 test('logical GPU resources exactly cover fixed globals and scalar parameters',()=>{
   assert.throws(()=>plan(changed(value=>{value.bindings.splice(1,1);})),error=>
     sourceDiagnostic(error)&&error.code==='r03-common-program-gpu-coverage'&&error.primary.sourceId==='/src/main.ts'&&error.primary.start===328&&error.primary.end===334);
