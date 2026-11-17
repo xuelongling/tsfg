@@ -265,6 +265,9 @@ const preparationCapabilities=new Map([
   ['instance-interface',0],['physical-device',0],['descriptor-set',0],['physical-profile',0],
   ['compute-queue',0],['device-interface',0],['buffer-memory',0],
 ]);
+const bufferPreparationStages=new Set([
+  'create-buffer','allocate-buffer-memory','bind-buffer-memory','map-buffer-memory','flush-input-memory','buffer-memory',
+]);
 function verifyPreparationFailure(final){
   const {failure,stage,vkResult,windowsError}=final;
   if(failure==='Vulkan'){
@@ -289,6 +292,7 @@ function verifyRecovery(report){
   const final=report.final,transitions=report.transitions;
   assert.ok(transitions.length>0);
   assert.deepEqual(transitions.at(-1),final);
+  assert.ok(Array.isArray(final.resources));
   for(const id of [final.deviceGeneration,final.submissionId]){
     assert.equal(typeof id,'string');
     assert.match(id,/^[1-9][0-9]{0,19}$/u);
@@ -298,6 +302,14 @@ function verifyRecovery(report){
   for(const value of transitions){
     assert.deepEqual([value.deviceGeneration,value.submissionId,value.identity,value.functionId,value.source,value.resources],
       [final.deviceGeneration,final.submissionId,report.identity,final.functionId,final.source,final.resources]);
+    const {stage,resourceIndex}=value;
+    const invalidatingOutput=stage==='invalidate-output-memory';
+    if(bufferPreparationStages.has(stage)||invalidatingOutput){
+      assert.ok(Number.isInteger(resourceIndex)&&resourceIndex>=0&&resourceIndex<final.resources.length,
+        'indexed failure must refer to an existing resource');
+      if(invalidatingOutput)
+        assert.ok(['write','read-write'].includes(final.resources[resourceIndex]?.access),'output invalidation requires a writable resource');
+    }else assert.equal(resourceIndex,null);
   }
   const isTimeout=value=>value.state==='Unfinished'&&value.vkResult===2;
   const [prepared,submitted]=transitions;
@@ -430,9 +442,9 @@ for(const fixture of fixtures){
 test('recovery follows only unresolved timeout waits in one session',async t=>{
   const identity={session:'fixed-call'};
   const source={sourceId:'/src/main.ts',start:15,end:20};
-  const resources=[{set:0,binding:0}];
+  const resources=[{set:0,binding:0,access:'read'},{set:0,binding:4,access:'write'}];
   const snapshot=(state,submitted,completionKnown,stage,vkResult)=>({
-    state,submitted,completionKnown,outputsAvailable:state==='Completed',stage,vkResult,windowsError:null,
+    state,submitted,completionKnown,outputsAvailable:state==='Completed',stage,vkResult,windowsError:null,resourceIndex:null,
     functionId:'fixed-kernel',source,resources,identity,deviceGeneration:'1',submissionId:'1',failure:'None',
   });
   const prepared=snapshot('Prepared',false,false,'prepared',0),submitted=snapshot('Submitted',true,false,'submitted',0);
@@ -445,7 +457,7 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
   verifyRecovery(report);
   verifyRecovery(retained(structuredClone(timeout)));
   // Fence completion survives a subsequent output invalidation failure.
-  const invalidation={...completed,stage:'invalidate-output-memory',failure:'Vulkan',vkResult:-1,outputsAvailable:false};
+  const invalidation={...completed,stage:'invalidate-output-memory',failure:'Vulkan',vkResult:-1,outputsAvailable:false,resourceIndex:1};
   const afterTimeout=final=>({...report,final,transitions:[prepared,submitted,timeout,final]});
   await t.test('wait failure uses the Vulkan wait result tuple',()=>{
     const waitFailed={...timeout,vkResult:-1,failure:'Vulkan'};
@@ -512,7 +524,7 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
   verifyRecovery(neverWaited([prepared,submitLost]));
   await t.test('preparation Vulkan failure has the native stage, result and state',()=>{
     const lost={...submitLost,stage:'create-device'};
-    const error={...lost,state:'FailedBeforeSubmit',stage:'allocate-buffer-memory',vkResult:-1};
+    const error={...lost,state:'FailedBeforeSubmit',stage:'allocate-buffer-memory',vkResult:-1,resourceIndex:0};
     verifyRecovery(neverWaited([lost]));
     verifyRecovery(neverWaited([error]));
     for(const changes of [{vkResult:0},{vkResult:-1},{vkResult:null},{vkResult:-0x8000_0001},
@@ -556,6 +568,33 @@ test('recovery follows only unresolved timeout waits in one session',async t=>{
       assert.throws(()=>verifyRecovery(neverWaited([prepared,{...submitLost,...changes}])),{name:'AssertionError'});
     assert.throws(()=>verifyRecovery(neverWaited([prepared,{...submitFailed,vkResult:-4}])),{name:'AssertionError'});
     assert.throws(()=>verifyRecovery(neverWaited([submitLost])),{name:'AssertionError'});
+  });
+  await t.test('only buffer preparation stages carry a preparation resource index',()=>{
+    const stages=['create-buffer','allocate-buffer-memory','bind-buffer-memory','map-buffer-memory','flush-input-memory','buffer-memory'];
+    for(const stage of stages){
+      const [failure,vkResult]=stage==='buffer-memory'?['Capability',0]:['Vulkan',-1];
+      const failed={...prepared,state:'FailedBeforeSubmit',stage,failure,vkResult,resourceIndex:1};
+      verifyRecovery(neverWaited([failed]));
+      for(const resourceIndex of [null,undefined,-1,0.5,2,4,'1']){
+        assert.throws(()=>verifyRecovery(neverWaited([{...failed,resourceIndex}])),{name:'AssertionError'});
+      }
+    }
+    const deviceLost={...submitLost,stage:'create-device',resourceIndex:0};
+    assert.throws(()=>verifyRecovery(neverWaited([deviceLost])),{name:'AssertionError'});
+  });
+  await t.test('an output invalidation failure refers to a writable resource',()=>{
+    for(const resourceIndex of [0,null,2,4,'1']){
+      assert.throws(()=>verifyRecovery(afterTimeout({...invalidation,resourceIndex})),{name:'AssertionError'});
+    }
+    const shared=[resources[0],{...resources[1],access:'read-write'}];
+    verifyRecovery(withTransitions(afterTimeout(invalidation).transitions.map(row=>({...row,resources:shared}))));
+  });
+  await t.test('timeout and non-buffer transitions carry a null index',()=>{
+    for(const [index,row] of report.transitions.entries()){
+      const transitions=report.transitions.with(index,{...row,resourceIndex:0});
+      assert.throws(()=>verifyRecovery(withTransitions(transitions)),{name:'AssertionError'});
+    }
+    assert.throws(()=>verifyRecovery(neverWaited([prepared,{...submitLost,resourceIndex:0}])),{name:'AssertionError'});
   });
 });
 
