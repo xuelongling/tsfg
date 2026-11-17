@@ -83,7 +83,7 @@ function buildPlans(input,context,options,definitions) {
 
 function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null,publicationContext=undefined) {
   const refinements=new Map((fieldReaching?.reads??[]).map(row=>[row.node,row.reaching]));
-  const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status==='proven').map(row=>[row.node,row.sources]));
+  const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status!=='pending').map(row=>[row.node,row]));
   charge();const hir=verifyHir(input,context,publicationContext);
   const types=new Map(hir.types.map(type=>[type.id,type]));
   const options={publicationContext},layouts=buildTypedLayouts(hir,context,options),physical=new Map(layouts.entries.map(row=>[row.typeId,row.layout]));
@@ -410,9 +410,13 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       else copy(returned(target),call.id);
     }
     for(const read of reads)if(read.receiver===current) {
-      if(arrayReads.has(read.result))for(const source of arrayReads.get(read.result))copy(source,read.result);
-      else if(arrayReaching)insert(read.result,'pending','unproved-ordered-array-read:'+read.result);
-      else for(const allocation of nodes.get(current).owners)copy(owners.get(allocation),read.result);
+      if(!arrayReaching)for(const allocation of nodes.get(current).owners)copy(owners.get(allocation),read.result);
+      else {
+        const ordered=arrayReads.get(read.result);
+        if(ordered?.status==='proven')for(const source of ordered.sources)copy(source,read.result);
+        // A definite bounds failure has no normal payload or unresolved source.
+        else if(ordered?.status!=='missing')insert(read.result,'pending','unproved-ordered-array-read:'+read.result);
+      }
     }
     for(const store of stores)if(store.receiver===current)for(const allocation of nodes.get(current).owners)
       copy(store.value,owners.get(allocation));
