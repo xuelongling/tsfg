@@ -121,3 +121,14 @@ test('versioned owning output reader rejects identity, effect and conflict mutat
   assert.throws(()=>readSystemQueryEffects(Buffer.from('{"version":1,"version":1}'),facts,multi.context));
   assert.throws(()=>readSystemQueryEffects(Buffer.alloc(8388609,32),facts,multi.context));
 });
+
+test('owning Query effects reader requires canonical producer bytes',{skip:!enabled&&!reports},async t=>{
+  const facts=readSystemQueryFacts(multi.bytes,multi.context);
+  const raw=reports?report('reader'):run('reader','--effects',emitSystemQueryCore(facts,multi.context));
+  const effects=readSystemQueryEffects(raw,facts,multi.context),text=canonical(effects);
+  assert.equal(raw.toString('utf8'),text+'\n');
+  for(const [name,alternate] of [['missing final LF',text],['CRLF terminator',text+'\r\n'],['pretty printing',JSON.stringify(effects,null,2)+'\n']]){
+    await t.test(name,()=>assert.throws(()=>readSystemQueryEffects(Buffer.from(alternate),facts,multi.context),
+      /r10-query-effects-input: canonical analysis bytes required/));
+  }
+});

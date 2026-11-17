@@ -45,6 +45,7 @@ export function readSystemQueryEffects(bytes,facts,context){
   printSystemQueryFacts(facts,context);
   const transport=readGenericJson(copyGenericJsonBytes(bytes,genericPackageJsonPolicy),genericPackageJsonPolicy);
   const root=record(transport.value,['family','version','queryVersion','coreVersion','inputIdentity','packageId','target','source','systems','conflicts','scalarHelpers']);
+  if(transport.text!==canonical(root)+'\n')fail('canonical analysis bytes required');
   if(root.family!=='tsfg.system-query-effects-candidate'||root.version!==3||root.queryVersion!==3||root.coreVersion!=='0.12.0')fail('analysis format differs');
   equal([root.inputIdentity,root.packageId,root.target],[facts.inputIdentity,facts.packageId,facts.program.target]);
   const primary=facts.program.files.find(row=>row.path===facts.program.rootFile);
