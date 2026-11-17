@@ -9,8 +9,10 @@ const unused_expected: T.Expected = .{
     .packageId = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 };
 
+const I32Fixture = enum { copy, copy_conflict, compound };
+
 // Called only with whole actual producer fixtures and independently cold-verified expected identities.
-fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bool, i32_copy_systems: ?usize) !void {
+fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bool, i32_fixture: ?I32Fixture) !void {
     var document = try T.Document.load(A, bytes, expected);
     var document_live = true;
     defer if (document_live) document.deinit();
@@ -76,7 +78,8 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         }
     }
     if (shared_required) try std.testing.expect(shared);
-    if (i32_copy_systems) |system_count| {
+    if (i32_fixture) |fixture| {
+        const system_count: usize = if (fixture == .copy_conflict) 2 else 1;
         var destination: ?*const jobs.layout.Type = null;
         var source: ?*const jobs.layout.Type = null;
         var integer: ?*const jobs.layout.Type = null;
@@ -104,19 +107,19 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         try std.testing.expectEqual(@as(u32, 4), dst.fields[1].offset);
         try std.testing.expectEqual(@as(u32, 0), src.fields[0].offset);
         try std.testing.expectEqual(system_count, document.payload.entries.len);
-        for (document.payload.entries, 0..) |copy_entry, entry_index| {
-            try std.testing.expectEqual(@as(usize, 0), copy_entry.scalars.len);
-            try std.testing.expectEqual(@as(usize, 2), copy_entry.columns.len);
-            try std.testing.expectEqual(@as(usize, 2), copy_entry.tupleOccurrences.len);
-            var copy_plan = try document.bind(A, &store, batch, entry_index, &.{});
-            defer copy_plan.deinit();
-            try std.testing.expectEqualStrings(copy_entry.logicalFunctionId, copy_plan.logical_function_id);
+        for (document.payload.entries, 0..) |i32_entry, entry_index| {
+            try std.testing.expectEqual(@as(usize, 0), i32_entry.scalars.len);
+            try std.testing.expectEqual(@as(usize, 2), i32_entry.columns.len);
+            try std.testing.expectEqual(@as(usize, 2), i32_entry.tupleOccurrences.len);
+            var i32_plan = try document.bind(A, &store, batch, entry_index, &.{});
+            defer i32_plan.deinit();
+            try std.testing.expectEqualStrings(i32_entry.logicalFunctionId, i32_plan.logical_function_id);
             var writes: usize = 0;
             var reads: usize = 0;
-            for (copy_entry.tupleOccurrences, 0..) |tuple, tuple_index| {
-                const column = copy_entry.columns[tuple.columnIndex];
+            for (i32_entry.tupleOccurrences, 0..) |tuple, tuple_index| {
+                const column = i32_entry.columns[tuple.columnIndex];
                 const backing = try batch.read(tuple.columnIndex);
-                const borrowed = try copy_plan.readTuple(tuple_index);
+                const borrowed = try i32_plan.readTuple(tuple_index);
                 try std.testing.expectEqual(@intFromPtr(backing.ptr), @intFromPtr(borrowed.ptr));
                 try std.testing.expectEqual(backing.len, borrowed.len);
                 if (std.mem.eql(u8, column.componentType, dst.id)) {
@@ -124,9 +127,9 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
                     try std.testing.expectEqual(jobs.Access.write, tuple.mode);
                     try std.testing.expectEqual(@as(u32, 8), column.stride);
                     try std.testing.expectEqual(@as(usize, 16), borrowed.len);
-                    const writable = try copy_plan.writeTuple(tuple_index);
+                    const writable = try i32_plan.writeTuple(tuple_index);
                     try std.testing.expectEqual(@intFromPtr(backing.ptr), @intFromPtr(writable.ptr));
-                    // Store data only: this sentinel is not the result of executing dst.n = src.n.
+                    // The sentinel checks write access at the nonzero field offset.
                     const sentinel = [_]u8{ 0x81, 0x00, 0xfe, 0x7f };
                     @memcpy(writable[4..8], &sentinel);
                     try std.testing.expectEqualSlices(u8, &sentinel, borrowed[4..8]);
@@ -139,7 +142,7 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
                     try std.testing.expectEqual(@as(u32, 4), column.stride);
                     try std.testing.expectEqual(@as(usize, 8), borrowed.len);
                     try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 8), borrowed);
-                    try std.testing.expectError(error.ReadOnly, copy_plan.writeTuple(tuple_index));
+                    try std.testing.expectError(error.ReadOnly, i32_plan.writeTuple(tuple_index));
                 }
             }
             try std.testing.expectEqual(@as(usize, 1), writes);
@@ -147,6 +150,45 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         }
         const systems = document.effects.report.systems;
         try std.testing.expectEqual(system_count, systems.len);
+        if (fixture == .compound) {
+            // Digests of the retained independent batch, original Source facts, and request.
+            const inputs = [_][]const u8{ document.payload.batch, document.payload.sourcePacket, document.payload.sourceRequest };
+            const digests = [_][]const u8{
+                "15b61f2629dc0a5f5b4cf236f5b584462481fe3d7eef5740f51aa3f3934a803a",
+                "8ec279d5f9a3887c0b3be3bd996461db38fd6ccdc4fd0e1563e6a6ed32867937",
+                "5276dc35b780e6f773f79a79ecccd81a4a5b8d1b3f76d1f56b8f53d9371c730e",
+            };
+            for (inputs, digests) |input, expected_hash| {
+                var hash: [32]u8 = undefined;
+                std.crypto.hash.sha2.Sha256.hash(input, &hash, .{});
+                try std.testing.expectEqualStrings(expected_hash, &std.fmt.bytesToHex(hash, .lower));
+            }
+            try std.testing.expectEqual(@as(usize, 1), systems[0].loops.len);
+            try std.testing.expectEqualStrings(systems[0].functionId, entry.logicalFunctionId);
+            const operations = systems[0].loops[0].operations;
+            // UTF-16 ranges from the retained Source oracle: dst.n, src.n, then the assignment.
+            const order = [_]struct { kind: jobs.Access, tuple_index: u32, start: u32, end: u32 }{
+                .{ .kind = .read, .tuple_index = 0, .start = 368, .end = 373 },
+                .{ .kind = .read, .tuple_index = 1, .start = 377, .end = 382 },
+                .{ .kind = .write, .tuple_index = 0, .start = 368, .end = 382 },
+            };
+            try std.testing.expectEqual(order.len, operations.len);
+            for (operations, order) |operation, wanted| {
+                const destination_tuple = wanted.tuple_index == 0;
+                const component = if (destination_tuple) dst else src;
+                const field_index: usize = if (destination_tuple) 1 else 0;
+                const field = component.fields[field_index];
+                try std.testing.expectEqual(wanted.kind, operation.kind);
+                try std.testing.expectEqual(wanted.tuple_index, operation.tupleIndex);
+                try std.testing.expectEqualStrings(component.id, operation.componentType);
+                try std.testing.expectEqualStrings(field.id, operation.field);
+                try std.testing.expectEqualStrings(entry.tupleOccurrences[wanted.tuple_index].sourceBinding, operation.sourceBinding);
+                try std.testing.expectEqualStrings("/src/main.ts", operation.source.path);
+                try std.testing.expectEqual(wanted.start, operation.source.start);
+                try std.testing.expectEqual(wanted.end, operation.source.end);
+                try std.testing.expectEqual(@as(usize, 0), operation.callPath.len);
+            }
+        }
         if (system_count == 2) {
             try std.testing.expect(!std.mem.eql(u8, systems[0].functionId, systems[1].functionId));
             try std.testing.expectEqual(@as(usize, 1), document.effects.report.conflicts.len);
@@ -371,8 +413,14 @@ test "actual i32 copy metadata binds original columns and preserves two-system c
     inline for (.{ "i32-copy", "i32-copy-conflict" }, 0..) |name, index| {
         const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-" ++ name ++ "-receipt.json"), .{});
         defer receipt.deinit();
-        try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-" ++ name ++ ".tmeta"), receipt.value, false, index + 1);
+        try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-" ++ name ++ ".tmeta"), receipt.value, false, if (index == 0) .copy else .copy_conflict);
     }
+}
+
+test "actual i32 compound metadata binds original columns and retains ordered read read write" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-compound-receipt.json"), .{});
+    defer receipt.deinit();
+    try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-i32-compound.tmeta"), receipt.value, false, .compound);
 }
 
 test "Query metadata rejects entry rows in a different Source system order" {
