@@ -340,7 +340,15 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
       const left=child('left'),right=child('right');coalesces.push(left);
       copy(left,id,{presentOnly:true});copy(right,id,{gate:left});dependencies.splice(1);
-    }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength','arrayCompoundAssignment','arrayUpdate',
+    }else if(v.kind==='arrayCompoundAssignment'||v.kind==='arrayUpdate') {
+      const receiver=at(v.target.receiver,p+'/target/receiver');
+      at(v.target.index,p+'/target/index');
+      const old=node(p+'/old-value',v.target.type).id;
+      reads.push({receiver,result:old});
+      if(v.kind==='arrayCompoundAssignment')child('value');
+      stores.push({receiver,value:id});
+      for(const type of leaves(v.type))insert(id,'actual',type);
+    }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength',
       'arrayResizeChecked','update','fieldUpdate','stringConcat'].includes(v.kind)) {
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
@@ -350,10 +358,6 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
         requirements.push({node:p+'/'+key,type:i32TypeId,possible:true});
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))dependencies.splice(1);
       for(const type of leaves(v.type))insert(id,'actual',type);
-      if(v.kind==='arrayCompoundAssignment'||v.kind==='arrayUpdate') {
-        const old=node(p+'/old-value',v.target.type).id;
-        stores.push({receiver:p+'/target/receiver',value:id});reads.push({receiver:p+'/target/receiver',result:old});
-      }
     }else insert(id,'pending','unsupported-expression:'+v.kind+':'+id);
     flow.finish(id,dependencies,requirements);
   }

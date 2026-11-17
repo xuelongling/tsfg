@@ -119,8 +119,11 @@ test('actual compound call lowers receiver/index once and checked old read prece
     store=core.indexOf('"tsfg_core.domain.array_store"',rhs);
   assert.ok(receiver<index&&index<read&&read<rhs&&rhs<store);
   const update=hir.functions.find(fn=>fn.name==='update');
-  const oldNode=update.id+'/body/0/value/old-value';
+  const target=update.id+'/body/0/value';
+  const oldNode=target+'/old-value';
   const plan=buildFiniteCoreDomains(hir,context).definition;
+  const operands=[target+'/target/receiver',target+'/target/index',target+'/value'];
+  assert.deepEqual(plan.expressions.filter(row=>operands.includes(row.id)).map(row=>row.id),operands);
   const old=plan.carrierNodes.find(row=>row.id===oldNode);
   assert.ok(old,'the checked target read has an owned representation domain');
   const readLine=core.slice(read,core.indexOf('\n',read));
