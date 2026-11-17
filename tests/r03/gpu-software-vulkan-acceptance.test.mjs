@@ -259,6 +259,13 @@ function verifyReportedKernel(module,plan){
   assert.equal(module.hostPreflight.functionId,functionId);
   assert.equal(module.hostPreflight.planDigest,module.planDigest);
 }
+function verifyEmittedHostBoundary(module){
+  assert.equal(module.scope,'host-preflight-required');
+  assert.equal(module.hostPreflightFulfilled,false);
+  const recipe=module.hostPreflight;
+  assert.deepEqual([recipe.family,recipe.version,recipe.status,recipe.scope],
+    ['tsfg.gpu-host-preflight',1,'unfulfilled','reached-linear-prefix-before-first-visible-write']);
+}
 function verifyVulkanFailure({vkResult,failure,windowsError}){
   assert.ok(Number.isInteger(vkResult)&&vkResult!==0&&vkResult>=-0x8000_0000&&vkResult<=0x7fff_ffff);
   assert.deepEqual([failure,windowsError],['Vulkan',null]);
@@ -433,6 +440,7 @@ for(const fixture of fixtures){
       assert.deepEqual(module.bindings,plan.bindings);assert.equal(module.launchAuthorized,false);assert.equal(module.deviceExecution,false);
       assert.deepEqual(module.profile.dispatch,[1,1,1]);assert.equal(module.profile.activeSourceInstances,1);
       verifyReportedKernel(module,plan);
+      verifyEmittedHostBoundary(module);
       if(!global)verifyGpuI32Words(module.words,module.entryPoint,ast.operator,arity,ast.literalToken??null);
       assert.equal(report.ownedAfterInputRelease,true);assert.deepEqual([report.fuelBefore,report.fuelAfter,report.depthLimit],['2','1',1]);
       assert.deepEqual(report.inputs.map(value=>value.descriptor),plan.bindings.filter(binding=>binding.access!=='write'));
@@ -469,6 +477,20 @@ test('reported GPU entry and Host recipe name the selected Source kernel',()=>{
     {hostPreflight:{...metadata.hostPreflight,planDigest:digest(sink.plan)}},
   ];
   for(const fields of bad)assert.throws(()=>verifyReportedKernel({...metadata,...fields},plan),{name:'AssertionError'});
+});
+
+test('emitted GPU module keeps an unfulfilled Host recipe',()=>{
+  const hostPreflight={family:'tsfg.gpu-host-preflight',version:1,status:'unfulfilled',scope:'reached-linear-prefix-before-first-visible-write'};
+  const module={scope:'host-preflight-required',hostPreflightFulfilled:false,hostPreflight};
+  verifyEmittedHostBoundary(module);
+  for(const changes of [
+    {scope:'non-launchable'},
+    {hostPreflightFulfilled:true},
+    {hostPreflight:{...hostPreflight,family:'tsfg.gpu-binding-module'}},
+    {hostPreflight:{...hostPreflight,version:2}},
+    {hostPreflight:{...hostPreflight,status:'fulfilled'}},
+    {hostPreflight:{...hostPreflight,scope:'host-preflight-required'}},
+  ])assert.throws(()=>verifyEmittedHostBoundary({...module,...changes}),{name:'AssertionError'});
 });
 
 test('recovery follows only unresolved timeout waits in one session',async t=>{
