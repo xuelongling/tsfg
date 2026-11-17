@@ -47,5 +47,5 @@ struct SourceBodies {
 };
 bool verifyCommonDeclarations(SourceModel &,SourceBodies &,std::map<std::string,SourceSyntax> &,
   std::map<std::string,std::vector<Json>> &);
-bool verifyCommonModules(SourceModel &,std::map<std::string,SourceSyntax> &);
+bool verifyCommonModules(SourceModel &,SourceBodies &,const std::map<std::string,std::vector<Json>> &);
 } // namespace tsfg::commonProgram

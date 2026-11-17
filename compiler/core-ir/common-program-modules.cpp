@@ -45,8 +45,9 @@ struct OriginalExport {
   const Json *range;
 };
 struct ModuleExports {
-  std::map<llvm::StringRef,const Json *> rows,claims;
+  std::map<llvm::StringRef,const Json *> rows,claims,localRows;
   std::map<llvm::StringRef,NamedExport> named;
+  std::map<llvm::StringRef,ExportLink> imports;
   std::vector<const ModuleExports *> stars;
   std::vector<SourceAnchor> declarations;
   std::vector<OriginalExport> originals;
@@ -110,8 +111,63 @@ bool reachesDeclaration(SourceModel &m,const std::set<const Json *> &direct,cons
   }
   return m.need(false,"export occurrence has no original declaration");
 }
+
+bool completeModuleSource(SourceModel &m,SourceSyntax &source,const std::vector<Json> &coverage,
+  const std::map<std::string,std::string> &scope,ModuleExports &exports,
+  std::set<const Json *> &declared,std::map<const Json *,ExportLink> &named){
+  std::vector<std::pair<size_t,size_t>> spans;
+  for(const auto &range:coverage){
+    size_t first,end;if(!m.spend()||!source.span(range,first,end))return false;
+    spans.emplace_back(first,end);
+  }
+  std::sort(spans.begin(),spans.end());
+  const auto &tokens=source.tokens;size_t at=0;
+  const auto localClauses=[&](size_t limit){
+    while(at+1<limit&&tokens[at].text=="export"&&tokens[at+1].text=="{"){
+      if(!m.spend(2))return false;
+      at+=2;
+      while(at<limit&&tokens[at].text!="}"){
+        const auto start=tokens[at].start;
+        std::string local,publicName;
+        if(!source.cookedIdentifier(at++,local))return false;
+        if(at<limit&&tokens[at].text=="as"){
+          if(!m.spend()||!m.need(++at<limit,"local export alias name missing")||
+            !source.cookedIdentifier(at++,publicName))return false;
+        }
+        const llvm::StringRef exported=publicName.empty()?llvm::StringRef(local):llvm::StringRef(publicName);
+        if(!m.spend())return false;
+        const auto occurrence=exports.localRows.find(exported);
+        const auto binding=scope.find(local);
+        const Json range=Object{{"start",int64_t(start)},{"end",int64_t(tokens[at-1].end)}};
+        if(!m.need(occurrence!=exports.localRows.end()&&binding!=scope.end()&&
+          field(*occurrence->second,"target").getAsString()==llvm::StringRef(binding->second)&&
+          same(field(*occurrence->second,"range"),range),"local export differs from its original binding"))return false;
+        const auto *row=occurrence->second;
+        const auto forward=exports.imports.find(local);
+        if(forward!=exports.imports.end()){
+          named.emplace(row,forward->second);exports.claims.emplace(occurrence->first,row);
+        }else declared.insert(row);
+        exports.localRows.erase(occurrence);
+        if(at>=limit||tokens[at].text!=",")break;
+        if(!m.spend())return false;
+        ++at;
+      }
+      if(!m.spend()||!m.need(at<limit&&tokens[at].text=="}","original local export clause differs"))return false;
+      ++at;
+      if(at<limit&&tokens[at].text==";"){if(!m.spend())return false;++at;}
+    }
+    return true;
+  };
+  for(auto [first,end]:spans){
+    if(!localClauses(first)||!m.need(at==first,"missing, overlapping or repeated complete Source declaration"))return false;
+    at=end;
+  }
+  return localClauses(tokens.size())&&m.need(at==tokens.size(),"unrepresented ordinary Source top-level tokens")&&
+    m.need(exports.localRows.empty(),"module export has no original local specifier");
 }
-bool verifyCommonModules(SourceModel &m,std::map<std::string,SourceSyntax> &syntax){
+}
+bool verifyCommonModules(SourceModel &m,SourceBodies &bodies,const std::map<std::string,std::vector<Json>> &coverage){
+  auto &syntax=bodies.syntax;
   std::map<std::string,ModuleExports> evidence;
   std::set<const Json *> direct;
   std::map<const Json *,ExportLink> named;
@@ -180,6 +236,8 @@ bool verifyCommonModules(SourceModel &m,std::map<std::string,SourceSyntax> &synt
         if(!field(alias,"localBinding").getAsNull()){
           if(!m.need(kind=="import"&&string(field(alias,"localBinding"))==digest(std::string("tsfg.array-facts.binding.v1")+std::string(1,'\0')+
             canonical(Object{{"sourcePath",path},{"nameRange",field(alias,"nameRange")}})),"local alias original binding identity differs")||!s.name(field(alias,"nameRange"),string(field(alias,"name"))))return false;
+          if(aliasKind!="namespace")exports.imports.emplace(field(alias,"name").getAsString().value_or(""),
+            ExportLink{&evidence.at(target),field(alias,"imported").getAsString().value_or("")});
         }else if(!m.need(kind!="import"&&field(alias,"nameRange").getAsNull(),"re-export fabricates a local declaration"))return false;
         if(index++&&!star)parts.push_back(",");
         if(star){if(kind=="import")parts.push_back(field(alias,"nameRange"));}
@@ -220,14 +278,22 @@ bool verifyCommonModules(SourceModel &m,std::map<std::string,SourceSyntax> &synt
         named.emplace(&e,ExportLink{forward->second.upstream,field(*forward->second.alias,"imported").getAsString().value_or("")});++matchedNamed;
       }
       if(enclosing)continue;
+      bool withinDeclaration=false;
       for(const auto &range:exports.declarations){
         if(!m.spend())return false;
-        if(contains(range,occurrence)){exports.claims.emplace(name,&e);break;}
+        if(contains(range,occurrence)){withinDeclaration=true;break;}
       }
+      (withinDeclaration?exports.claims:exports.localRows).emplace(name,&e);
     }
     if(!m.need(matchedNamed==exports.named.size(),"original named re-export directory is incomplete"))return false;
     for(const auto &original:exports.originals)
       if(!directExport(m,exports,direct,original.name,original.target,*original.range))return false;
+  }
+  const std::vector<Json> emptyCoverage;
+  for(auto &[path,exports]:evidence){
+    const auto spans=coverage.find(path);
+    const auto &segments=spans==coverage.end()?emptyCoverage:spans->second;
+    if(!completeModuleSource(m,syntax.at(path),segments,bodies.visible.at(path),exports,direct,named))return false;
   }
   for(const auto &module:evidence){
     const auto &exports=module.second;

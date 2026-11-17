@@ -133,8 +133,74 @@ int moduleExports(const char *path){
   },kind,"export occurrence/definition join differs");
   return ok?0:1;
 }
+
+int localExports(const char *path){
+  Program original;
+  if(!prepare(path,original)||original.inputIdentity!="sha256:5d908acb3d7157f07854abdd22d6e027cebaa68c9d31d42096804069db46b423")return 2;
+  const auto report=[](const ModuleResult &outcome){
+    llvm::outs()<<"  directory="<<outcome.directory<<" identities="<<outcome.identities<<" accepted="<<outcome.accepted<<"\n";
+    if(!outcome.error.code.empty())llvm::outs()<<"  "<<outcome.error.code<<": "<<outcome.error.message<<"\n";
+  };
+  Program control=original;
+  const auto baseline=readModuleModel(control);
+  bool ok=check("retained local binding, imported function and imported nominal",baseline.directory&&baseline.identities&&baseline.accepted);
+  report(baseline);
+  const auto negative=[&](const char *label,auto mutate){
+    Program changed=original;
+    auto &snapshot=*changed.hir.getAsObject()->get("snapshot");
+    auto &payload=*snapshot.getAsObject()->get("payload");
+    if(!mutate(payload)){ok&=check(label,false);return;}
+    rebind(changed);
+    const auto outcome=readModuleModel(changed);
+    ok&=check(label,outcome.directory&&outcome.identities&&!outcome.accepted&&outcome.error.code=="core-ir-common-source"&&
+      outcome.error.message=="local export differs from its original binding");
+    report(outcome);
+  };
+  negative("local alias references another visible function",[](Json &payload){
+    auto *rows=moduleRows(payload,"/src/main.ts");
+    auto *row=namedRow(rows,"name","alias"),*other=namedRow(rows,"name","importedRun");
+    auto *root=namedRow(arrayMember(payload,"exports"),"name","alias");
+    if(!row||!other||!root)return false;
+    for(const auto *key:{"target","targetSourcePath","definitionRange"}) (*row->getAsObject())[key]=field(*other,key);
+    (*root->getAsObject())["functionId"]=field(*other,"target");
+    return true;
+  });
+  negative("local alias omitted from both directories",[](Json &payload){
+    auto *rows=moduleRows(payload,"/src/main.ts"),*root=arrayMember(payload,"exports");
+    return rows&&root&&removeRows(*rows,"name","alias")&&removeRows(*root,"name","alias");
+  });
+  negative("local alias name absent from original Source",[](Json &payload){
+    auto *row=namedRow(moduleRows(payload,"/src/main.ts"),"name","alias");
+    auto *root=namedRow(arrayMember(payload,"exports"),"name","alias");
+    if(!row||!root)return false;
+    (*row->getAsObject())["name"]="also";(*root->getAsObject())["name"]="also";
+    return true;
+  });
+  negative("clause span differs from local specifier span",[](Json &payload){
+    auto *row=namedRow(moduleRows(payload,"/src/main.ts"),"name","alias");
+    auto *raw=namedRow(arrayMember(payload,"files"),"path","/src/main.ts");
+    if(!row||!raw)return false;
+    const auto start=field(field(*row,"range"),"start").getAsInteger().value_or(0);
+    const auto length=field(*raw,"utf16Length").getAsInteger().value_or(0);
+    if(start<9||length<=start)return false;
+    (*row->getAsObject())["range"]=Object{{"start",start-9},{"end",length-1}};
+    return true;
+  });
+  negative("local nominal row references another exported type",[](Json &payload){
+    auto *row=namedRow(moduleRows(payload,"/src/main.ts"),"name","Box");
+    auto *other=namedRow(moduleRows(payload,"/src/data.ts"),"name","Delta");
+    if(!row||!other)return false;
+    for(const auto *key:{"target","targetSourcePath","definitionRange"}) (*row->getAsObject())[key]=field(*other,key);
+    return true;
+  });
+  return ok?0:1;
+}
 }
 int main(int argc,char **argv){
+  if(argc>1&&llvm::StringRef(argv[1])=="--local-exports"){
+    if(argc!=3){llvm::errs()<<"expected --local-exports retained-hir\n";return 2;}
+    return localExports(argv[2]);
+  }
   if(argc>1&&llvm::StringRef(argv[1])=="--module-exports"){
     if(argc!=3){llvm::errs()<<"expected --module-exports retained-hir\n";return 2;}
     return moduleExports(argv[2]);

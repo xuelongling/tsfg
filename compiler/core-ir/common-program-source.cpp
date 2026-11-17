@@ -109,14 +109,7 @@ bool SourceModel::sourceText(){
     }
   }
   if(!bodies.aliases(coverage))return false;
-  if(!verifyCommonDeclarations(*this,bodies,syntax,coverage)||!verifyCommonModules(*this,syntax))return false;
-  for(auto &[path,text]:syntax){
-    std::vector<std::pair<size_t,size_t>> spans;
-    for(const auto &r:coverage[path]){if(!spend())return false;size_t a,b;if(!text.span(r,a,b))return false;spans.emplace_back(a,b);}
-    std::sort(spans.begin(),spans.end());size_t at=0;
-    for(auto [a,b]:spans){if(!need(a==at,"missing, overlapping or repeated complete Source declaration"))return false;at=b;}
-    if(!need(at==text.tokens.size(),"unrepresented ordinary Source top-level tokens"))return false;
-  }
+  if(!verifyCommonDeclarations(*this,bodies,syntax,coverage)||!verifyCommonModules(*this,bodies,coverage))return false;
   return relations.finish();
 }
 } // namespace tsfg::commonProgram
