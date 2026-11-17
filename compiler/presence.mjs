@@ -69,7 +69,9 @@ export function validParameterPresence(shape, parameter, initializer, source, pa
       || !contained(shape.annotation,shape.range) || parameter.range.end > shape.annotation.start
       || shape.default !== Boolean(initializer)) return false;
   const prefix=tokens(source.slice(parameter.range.end,shape.annotation.start));
-  if (![":","?:"].includes(prefix) || shape.optional !== (prefix === "?:" || shape.default)) return false;
+  const optionalMarker=prefix === "?:";
+  if ((!optionalMarker && prefix !== ":") || (optionalMarker && shape.default)
+      || shape.optional !== (optionalMarker || shape.default)) return false;
   const members=annotationMembers(source.slice(shape.annotation.start,shape.annotation.end)) ?? [];
   const payload=scalarName(parameter.type) ?? parameter.type;
   if (new Set(members).size !== members.length || !members.includes(payload)

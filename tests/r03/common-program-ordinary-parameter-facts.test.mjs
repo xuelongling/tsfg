@@ -70,6 +70,12 @@ test('default facts retain the original initializer and widen only the incoming 
   value.fn.parameterInitialization=initialization;verify(value);
 });
 
+test('the parameter bridge rejects an explicit optional marker with a default initializer',()=>{
+  const value=defaulted();
+  value.source.content=value.source.content.replace('x: i32','x?:i32');
+  rejects(()=>bridge(value));
+});
+
 test('required undefined-union facts preserve the existing required-only representation',()=>{
   const value=optional();
   value.source.content='function f(x: i32 | undefined): i32 { return 0; }';
