@@ -143,7 +143,11 @@ struct Lengths {
       }
       if(const auto selected=proof.selectedCallees.find(previous);selected!=proof.selectedCallees.end()){
         bool modifies=false;for(const auto &target:selected->second){if(!charge())return false;modifies|=effects.at(target);}
-        if(modifies){if(!outcome(graph.unknown(task.node)))return false;continue;}
+        if(modifies){
+          bool preserved=false;
+          if(!proveArrayCallPreservesFreshOwner(proof,previous,task.owner,normalize,preserved)){valid=false;return false;}
+          if(!preserved){if(!outcome(graph.unknown(task.node)))return false;continue;}
+        }
       }
       if(!pass(previous,task.owner))return false;
     }
@@ -164,6 +168,36 @@ struct Lengths {
     std::optional<uint32_t> length;return query(resize,resize->getOperand(0),&requested,length);
   }
 };
+}
+bool proveArrayCallPreservesFreshOwner(ModuleProof &proof,mlir::Operation *call,mlir::Value owner,
+    const std::function<mlir::Value(mlir::Value)> &normalize,bool &preserved){
+  preserved=false;
+  if(!proof.charge())return false;
+  auto *allocation=owner.getDefiningOp();
+  if(!llvm::isa<mlir::func::CallOp>(call)||!allocation||allocation->getBlock()!=call->getBlock()||
+      allocation->getName().getStringRef()!="tsfg_core.domain.array_create"||!allocation->isBeforeInBlock(call))return true;
+  const auto selected=proof.selectedCallees.find(call);
+  if(selected==proof.selectedCallees.end()||selected->second.size()!=1)return true;
+  const auto &id=*selected->second.begin();
+  const auto &contract=*proof.callable.at(id);auto callee=proof.functions.at(id);
+  if(string(contract,"role")!="function"||!string(contract,"ownerType").empty()||
+      !callee.getBody().hasOneBlock()||callee.getNumArguments()!=call->getNumOperands())return true;
+  auto caller=call->getParentOfType<mlir::func::FuncOp>();
+  if(!caller)return true;
+  auto &entry=callee.getBody().front();
+  for(auto &op:entry){
+    if(!proof.charge())return false;
+    const auto name=op.getName().getStringRef();
+    if(name=="tsfg_core.fuel"||name=="tsfg_core.constant"||name=="func.return")continue;
+    if(name!="tsfg_core.domain.array_store"&&name!="tsfg_core.domain.array_resize")return true;
+    const auto receiver=normalize(op.getOperand(0));if(!receiver)return false;
+    const auto formal=llvm::dyn_cast<mlir::BlockArgument>(receiver);
+    if(!formal||formal.getOwner()!=&entry)return true;
+    const auto argument=normalize(call->getOperand(formal.getArgNumber()));if(!argument)return false;
+    const auto incoming=llvm::dyn_cast<mlir::BlockArgument>(argument);
+    if(!incoming||incoming.getOwner()!=&caller.getBody().front())return true;
+  }
+  preserved=true;return true;
 }
 bool proveArrayLength(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
     const std::function<mlir::Value(mlir::Value)> &normalize,std::optional<uint32_t> &length){

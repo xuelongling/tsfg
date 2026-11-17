@@ -189,6 +189,13 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
       }
       if(callees!=proof.selectedCallees.end()) {
         bool modifies=false;for(const auto &target:callees->second){if(!charge())return {};modifies|=effects.at(target);}
+        if(modifies&&!activation&&!task.scope&&!task.foreign){
+          bool preserved=false;
+          if(!proveArrayCallPreservesFreshOwner(proof,previous,task.owner,[&](mlir::Value value){return strip(value);},preserved)){
+            valid=false;return {};
+          }
+          modifies=!preserved;
+        }
         if(modifies) {
           if(boundsOnly){if(!unknown(task.node))return {};continue;}
           // No alias or effect summary alone identifies a foreign local cell.

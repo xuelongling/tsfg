@@ -5,6 +5,10 @@
 #include <optional>
 
 namespace tsfg::finite {
+// A closed direct callee can preserve current-activation local storage when
+// every Array write targets a preexisting argument of the same caller.
+bool proveArrayCallPreservesFreshOwner(ModuleProof &proof,mlir::Operation *call,mlir::Value owner,
+    const std::function<mlir::Value(mlir::Value)> &normalize,bool &preserved);
 // Reuse the ArrayMemory consumer's exact SSA identity normalizer. It resolves
 // checked view/copy and independently proved returned-parameter identities;
 // it supplies no length, initialization, allocation or permission flag.
