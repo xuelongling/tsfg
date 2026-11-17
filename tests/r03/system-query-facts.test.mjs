@@ -229,3 +229,44 @@ test('context, digest, canonical bytes and ownership cannot be substituted',()=>
   const output=printSystemQueryFacts(facts,actual.context);output.fill(0);
   assert.deepEqual(printSystemQueryFacts(facts,actual.context),actual.bytes);
 });
+
+test('cold fields retain the original Source initializer type and literal payload',async t=>{
+  const input=fixture('loop-inheritance');
+  const original=input.packet.payload.types.find(type=>type.name==='Base').fields.find(field=>field.name==='x');
+  const source=input.packet.payload.program.files.find(file=>file.path===original.origin.source);
+  const {start,end}=original.initializer.range;
+  assert.equal(source.content.slice(start,end),'0');
+  assert.equal(original.type,'f32');
+  assert.equal(original.initializer.bits,'00000000');
+  assert.deepEqual(printSystemQueryFacts(readSystemQueryFacts(input.bytes,input.context),input.context),input.bytes);
+
+  for(const {name,change,message} of [
+    {name:'different floating payload',change:{bits:'3f800000'},message:/component field initializer payload differs/},
+    {name:'different literal spelling',change:{token:'1',bits:'3f800000'},message:/original field initializer spelling differs/},
+    {name:'different flow type',change:{flowType:'i32'},message:/component field initializer type or relation differs/},
+    {name:'different logical type',change:{type:'f64',flowType:'f64',bits:'0000000000000000'},message:/component field initializer type or relation differs/},
+  ])await t.test(name,()=>{
+    const altered=edit((_packet,payload)=>{
+      Object.assign(payload.types.find(type=>type.name==='Base').fields.find(field=>field.name==='x').initializer,change);
+    },input);
+    assert.throws(()=>readSystemQueryFacts(altered.bytes,altered.context),message);
+  });
+});
+
+
+test('cold fields retain the original Source integer initializer decimal',()=>{
+  const directory=new URL('./testdata/system-query-i32-field-compound/',import.meta.url);
+  const bytes=readFileSync(new URL('package.json',directory));
+  const requestBytes=readFileSync(new URL('request.json',directory));
+  const packet=JSON.parse(bytes.toString());
+  const context={family:'tsfg.system-query-context-candidate',version:6,requestBytes,expectedPackageId:packet.packageId};
+  assert.deepEqual(printSystemQueryFacts(readSystemQueryFacts(bytes,context),context),bytes);
+
+  const altered=edit((_packet,payload)=>{
+    const initializer=payload.types.find(type=>type.name==='Box').fields[0].initializer;
+    assert.equal(initializer.token,'7');
+    assert.equal(initializer.decimal,'7');
+    initializer.decimal='8';
+  },{bytes,packet,context});
+  assert.throws(()=>readSystemQueryFacts(altered.bytes,altered.context),/component field initializer payload differs/);
+});

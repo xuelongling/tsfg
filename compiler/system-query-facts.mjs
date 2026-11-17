@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // An owning cold boundary for checked source data. No execution admission.
 import descriptor from '../contracts/system-query-facts.schema.json' with {type:'json'};
-import {canonical,sha256,own} from './identity.mjs';
+import {canonical,sha256,own,integerNames,integerRange} from './identity.mjs';
+import {floatBits} from './float.mjs';
+import {typedArrayInteger,typedArrayStringUnits} from './typed-array-literals.mjs';
 import {copyGenericJsonBytes,inspectGenericJson,readGenericJson} from './generic-json.mjs';
 import {genericJsonFailure} from './generic-json-budget.mjs';
 import {checkTypedArrayShape,sourceRange,originId,logicalPath,byteOrder} from './typed-array-schema.mjs';
@@ -173,6 +175,36 @@ function componentIdentities(payload,functions,sources,spend){
   return {types,semantic,components};
 }
 
+function verifyFieldInitializer(value,type,grammar,spend){
+  if(value.type!==type||value.flowType!==type||value.compatibilityRoots!=null)fail('component field initializer type or relation differs','source');
+  spend(value.range.end-value.range.start);
+  if(value.kind==='numericLiteral'){
+    const integer=integerNames.includes(type),token=value.token;
+    let matches=grammar.slice(value.range)===token;
+    if(integer&&token.startsWith('-')){
+      const parts=grammar.spelling(value.range);
+      matches=parts.length===2&&parts[0]==='-'&&parts[1]===token.slice(1);
+    }
+    if(!matches)fail('original field initializer spelling differs','source');
+    if(token.length>65536)fail('component field initializer literal exceeds limit','limit');
+    if(integer){
+      if(!/^-?(?:[0-9][0-9_]*|0[xXbBoO].+)$/u.test(token))fail('component field initializer integer spelling differs','source');
+      const decimal=typedArrayInteger(token),[min,max]=integerRange(type);
+      if(decimal.toString()!==value.decimal||decimal<min||decimal>max)fail('component field initializer payload differs','source');
+      return;
+    }
+    if(!['f32','f64'].includes(type)||floatBits(token,type)!==value.bits)fail('component field initializer payload differs','source');
+    return;
+  }
+  const original=grammar.spelling(value.range);
+  if(original.length!==1)fail('original field initializer spelling differs','source');
+  const [token]=original;
+  if(value.kind==='booleanLiteral'&&type==='bool'&&['true','false'].includes(token)&&value.token===token)return;
+  if(value.kind==='stringLiteral'&&type==='string'&&canonical(typedArrayStringUnits(token))===canonical(value.codeUnits))return;
+  if((value.kind==='undefinedLiteral'&&type==='undefined'||value.kind==='nullLiteral'&&type==='null')&&token===type)return;
+  fail('original component field initializer literal differs','source');
+}
+
 function verifyComponentSource(types,functions,grammars,semantic,spend,sourceTypes){
   const callables=new Map([...functions,...[...types.values()].flatMap(type=>type.constructor?[type.constructor]:[])].map(row=>[row.id,row]));
   const fields=new Map();
@@ -181,14 +213,29 @@ function verifyComponentSource(types,functions,grammars,semantic,spend,sourceTyp
     grammar.name(type.nameRange,type.name);
     if(header.at(-1)!=='class'||!header.every(token=>['@','component','tsfgComponent','tsfgValue','export','default','class'].includes(token)))fail('original nominal declaration differs','source');
     for(const [index,field]of type.fields.entries()){
-      spend();const fieldGrammar=grammars.get(field.origin.source),all=fieldGrammar.tokens,bounds=fieldGrammar.indices(field.origin);let cursor=bounds.first;
-      const modifiers=[];while(['public','private','protected','readonly','declare'].includes(all[cursor]?.text))modifiers.push(all[cursor++].text);
-      const nameRange={start:all[cursor].start,end:all[cursor].end};fieldGrammar.name(nameRange,field.name);commonSourceAccess(fieldGrammar,field.origin,nameRange,field.access);
+      spend();
+      if(field.origin.source!==type.sourcePath)fail('component field Source differs from its declaration','source');
+      const all=grammar.tokens,bounds=grammar.indices(field.origin);let cursor=bounds.first;
+      const modifiers=[];
+      while(cursor<bounds.end&&['public','private','protected','readonly','declare'].includes(all[cursor].text)){
+        spend();modifiers.push(all[cursor++].text);
+      }
+      if(cursor===bounds.end)fail('component field name missing','source');
+      const nameRange={start:all[cursor].start,end:all[cursor].end};grammar.name(nameRange,field.name);commonSourceAccess(grammar,field.origin,nameRange,field.access);
       if(field.readonly!==modifiers.includes('readonly')||field.id!==sha256('tsfg.array-facts.field.v8\0'+canonical({sourcePath:field.origin.source,nameRange}))||index>0&&type.fields[index-1].origin.start>=field.origin.start)fail('original component field identity/order differs','source');
       if(all[++cursor]?.text!==':')fail('component field annotation missing','source');
-      const end=field.initializer?fieldGrammar.indices(field.initializer.range).first-1:bounds.end-(all[bounds.end-1].text===';'?1:0);
-      if(field.initializer&&all[end].text!=='=')fail('component field initializer anchor differs','source');
-      sourceTypes.verifyLogical(field.origin.source,{start:all[cursor+1].start,end:all[end-1].end},field.type,types);
+      const initializer=field.initializer;
+      let end=bounds.end-(all[bounds.end-1].text===';'?1:0);
+      if(initializer){
+        sourceRange(initializer.range,grammar.text,field.origin);
+        end=grammar.indices(initializer.range).first-1;
+        if(all[end]?.text!=='=')fail('component field initializer anchor differs','source');
+        verifyFieldInitializer(initializer,field.type,grammar,spend);
+      }
+      if(cursor+1>=end)fail('component field annotation missing','source');
+      const annotation={start:all[cursor+1].start,end:all[end-1].end};
+      sourceTypes.verifyLogical(field.origin.source,annotation,field.type,types);
+      grammar.sequence(field.origin,[...modifiers,nameRange,':',annotation,...(initializer?['=',initializer.range]:[])],true);
       fields.set(field.id,{sourceField:field.id,fieldId:commonFieldId(semantic.typeIds.get(type.id),field.name,index),ownerSourceType:type.id,ownerType:semantic.typeIds.get(type.id),sourceType:field.type,type:semantic.typeIds.get(field.type),name:field.name,readonly:field.readonly,access:field.access,sourcePath:field.origin.source,range:{start:field.origin.start,end:field.origin.end},nameRange});
     }
     const members=[...type.fields.filter(field=>!field.parameterBinding).map(field=>field.origin),...(type.methods??[]).map(id=>callables.get(id)?.declarationRange),...(type.constructor?[type.constructor.declarationRange]:[])];
