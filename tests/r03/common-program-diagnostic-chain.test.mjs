@@ -9,6 +9,7 @@ import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup} from '../../compiler/common-program-analysis.mjs';
 import {commonIdentity} from '../../compiler/common-program-identities.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
+import {compileOwnedCore} from '../../compiler/pipeline.mjs';
 import {canonical} from '../../compiler/identity.mjs';
 import {coreQuote} from '../../compiler/mlir-strings.mjs';
 const bytes=readFileSync(new URL('./testdata/common-counter-host/counter-extended.json',import.meta.url)),facts=readCommonProgramFacts(bytes),
@@ -44,6 +45,66 @@ const diagnostic=(name,fixed=publication)=>{
     assert.ok(error instanceof Error&&'callChain' in error);chain=error.callChain;return true;
   });return chain;
 };
+test('fixed Common Core preserves the kernel diagnostic before consumer admission',async()=>{
+  const compile=request=>compileOwnedCore(hir,{callPublicationContext:{publication,request:{targets:targets(request)}}});
+  const rejected=await compile(['cross','right']);
+  assert.equal(rejected.status,'tool-error');
+  assert.equal(rejected.code,'r03-d-consumer');
+  assert.match(rejected.message,/^r03-common-program-kernel-host:/);
+  assert.ok('callChain' in rejected);
+  assert.deepEqual(rejected.callChain,diagnostic('cross'));
+  assert.deepEqual(await compile(['left','right']),{
+    status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required',
+  });
+});
+test('fixed Common Core preparation owns the HIR used by its text', async()=>{
+  const {prepareCommonCore}=await import('../../compiler/hir.mjs');
+  const input=structuredClone(hir),request={targets:targets(['left','right'])};
+  const prepared=prepareCommonCore(input,undefined,{publication,request});
+  assert.notEqual(prepared.hir,input);
+  assert.ok(Object.isFrozen(prepared.hir));
+  assert.ok(Object.isFrozen(prepared.hir.format));
+  Object.assign(input.format,{version:0});
+  assert.deepEqual(prepared.hir,hir);
+  assert.equal(prepared.text,commonProgramCore(hir,publication,request).text);
+  const next=structuredClone(hir);
+  const result=await compileOwnedCore(next,{
+    callPublicationContext:{publication,request},
+    get optimize(){Object.assign(next.format,{version:0});return false;},
+  });
+  assert.deepEqual(result,{
+    status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required',
+  });
+});
+test('fixed Common Core retains the published Host bound for official Source v3 HIR',async()=>{
+  const v3Bytes=readFileSync(new URL('./testdata/common-program-escaped-identifiers-v3/host-label/package.json',import.meta.url));
+  const v3Facts=readCommonProgramFacts(v3Bytes);
+  assert.equal(v3Facts.version,3);
+  const v3Hir=buildCommonProgramHir(v3Facts,{family:'tsfg.common-program-context-candidate',version:3,
+    factsBytes:v3Bytes,expectedPackageId:v3Facts.packageId},host);
+  const original=createCommonProgramPublication(v3Hir);
+  const left=v3Hir.functions.find(fn=>fn.name==='leftKernel');
+  const right=v3Hir.functions.find(fn=>fn.name==='rightKernel');
+  const request={targets:[left.id,right.id].sort()};
+  const widened=structuredClone(original);
+  const row=widened.contracts.find(entry=>entry.functionId===right.id);
+  row.upper.hostResources={reads:['runtime.counter.events'],writes:[]};
+  const {digest,...body}=row;
+  row.digest=commonIdentity('published-contract',body);
+  widened.expectedDigest=commonIdentity('publication',{scopeDigest:widened.scopeDigest,contracts:widened.contracts});
+
+  const control=await compileOwnedCore(v3Hir,{callPublicationContext:{publication:original,request}});
+  assert.equal(control.message,'r03-tool-core: formal executable is required');
+  const rejected=await compileOwnedCore(v3Hir,{callPublicationContext:{publication:widened,request}});
+  assert.equal(rejected.status,'tool-error');
+  assert.match(rejected.message,/^r03-common-program-kernel-host:/);
+  assert.ok('callChain' in rejected);
+  const chain=/** @type {import('../../compiler/common-program-diagnostics.mjs').KernelCallChain} */(rejected.callChain);
+  assert.equal(chain.root.functionId,right.id);
+  assert.deepEqual(chain.edges,[]);
+  assert.deepEqual(chain.origin,{kind:'fixed-upper',functionId:right.id,
+    source:{sourceId:right.sourcePath,...right.range},contractDigest:row.digest});
+});
 test('direct Host endpoint is the ambient original operation, not an invented callee',()=>{
   const direct=byName.get('direct'),chain=diagnostic('direct');assert.equal(chain.edges.length,0);assert.equal(chain.origin.kind,'operation');
   assert.equal(chain.origin.functionId,direct.id);assert.equal(chain.origin.operation,'hostCall');

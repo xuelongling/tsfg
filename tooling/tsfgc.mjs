@@ -106,7 +106,10 @@ try {
     : emit === "hir" ? compileHir : emit === "program-object" ? compileStaticProgram : compileProgram;
   const result = inputKind === "hir" && emit === "hir" ? { status: "ok", hir: input }
     : await compile(input, { frontend: options.get("--frontend"), core: options.get("--core"), callPublicationContext });
-  if (result.status !== "ok") {
+  if (fixedCommonCore && result.status === "tool-error" && "callChain" in result) {
+    process.stderr.write(`${result.message}; callChain=${canonical(result.callChain)}\n`);
+    process.exitCode = 2;
+  } else if (result.status !== "ok") {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = result.status === "tool-error" ? 11 : 3;
   } else if (emit === "hir") process.stdout.write(printHir(result.hir));

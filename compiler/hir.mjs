@@ -1,7 +1,7 @@
 import {emitFormalExceptionCore} from './formal-exception-core.mjs';
 import {isProxy} from 'node:util/types';
 import {isCommonProgramContext,buildCommonProgramHir,readCommonProgramHir} from './common-program-hir.mjs';
-import {emitCommonProgramCore} from './common-program-core.mjs';
+import {commonProgramCore} from './common-program-core.mjs';
 import {commonHirFormat,commonRecord,commonBudget} from './common-program-common.mjs';
 export {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup,verifyCommonKernelProof} from './common-program-analysis.mjs';
 import { familyOf } from './module-callable-common.mjs';
@@ -266,12 +266,18 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
   return hir;
 }
 
+/** @param {any} hir @param {any} factsContext @param {any} callPublicationContext */
+export function prepareCommonCore(hir, factsContext, callPublicationContext) {
+  const checked = verifyHir(hir, factsContext);
+  commonBudget(callPublicationContext);
+  commonRecord(callPublicationContext, ['publication', 'request']);
+  return commonProgramCore(checked, callPublicationContext.publication, callPublicationContext.request);
+}
+
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerHir(hir, factsContext = undefined, callPublicationContext = undefined) {
-  if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate')){
-    const checked=verifyHir(hir,factsContext);commonBudget(callPublicationContext);commonRecord(callPublicationContext,['publication','request']);
-    return emitCommonProgramCore(checked,callPublicationContext.publication,callPublicationContext.request);
-  }
+  if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate'))
+    return prepareCommonCore(hir, factsContext, callPublicationContext).text;
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if (isSelectedNullableContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return emitNullableCore(hir, factsContext);

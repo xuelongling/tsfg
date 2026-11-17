@@ -7,7 +7,7 @@ import { analyzeFrontend } from "./frontend.mjs";
 import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { genericHirFormat, lowerGenericHir, prepareGenericCore } from "./generic-hir.mjs";
 export { compilePackageHir };
-import { buildHir, lowerHir, lowerFormalHir } from "./hir.mjs";
+import { buildHir, lowerHir, lowerFormalHir, prepareCommonCore } from "./hir.mjs";
 import { canonical, own, sha256 } from "./identity.mjs";
 import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
@@ -15,6 +15,7 @@ import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
 import {isCommonProgramContext} from './common-program-hir.mjs';
+import {commonHirFormat} from './common-program-common.mjs';
 import {isSelectedNullableContext} from './nullable-common.mjs';
 import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
@@ -180,13 +181,20 @@ async function produceBytecode(buildCore) {
 }
 
 function produceOwnedCore(hir, options, selected = undefined) {
-  let generic = false;
+  let family;
   try {
-    generic = familyOf(hir) === genericHirFormat.family;
+    family = familyOf(hir);
   } catch {
     // Keep malformed inputs on the existing formal validation path.
   }
-  if (!generic) return produceCore(hir, options, selected?.lower);
+  if (family === commonHirFormat.family && selected?.callPublicationContext !== undefined &&
+      selected.factsContext === undefined) {
+    // Check and own the Common input before admitting the static consumer.
+    const prepared = prepareCommonCore(hir, undefined, selected.callPublicationContext);
+    const fixedOptions = { core: options.core, optimize: options.optimize };
+    return produceCore(prepared.hir, fixedOptions, () => prepared.text);
+  }
+  if (family !== genericHirFormat.family) return produceCore(hir, options, selected?.lower);
   const { factsContext, callPublicationContext } = selected ?? options;
   if (factsContext !== undefined || callPublicationContext !== undefined)
     return produceCore(hir, options, selected?.lower ?? (value => lowerFormalHir(value, factsContext, callPublicationContext)), { factsContext });
@@ -204,7 +212,8 @@ export async function compileOwnedCore(hir, options) {
     });
     return { status: "ok", hir: result.hir, core: result.core };
   } catch (error) {
-    return { status: "tool-error", code: "r03-d-consumer", message: error.message };
+    const result = { status: "tool-error", code: "r03-d-consumer", message: error.message };
+    return error instanceof Error && "callChain" in error ? { ...result, callChain: error.callChain } : result;
   }
 }
 
