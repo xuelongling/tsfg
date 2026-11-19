@@ -77,6 +77,28 @@ test('literal Boolean short circuit keeps lexical field writes and selects the r
   }
 });
 
+test('literal if keeps both field stores and selects the reached version',async()=>{
+  const {hir,context}=await actual(expected.cases.find(row=>row.memory==='field'));
+  const plan=buildFiniteCoreDomains(hir,context).definition,run=hir.functions.find(fn=>fn.name==='run');
+  const [initial,conditional,returned]=run.body,original=conditional.expression,root=run.id+'/body/';
+  const oldPath=root+'1/expression/right',rhsWrite=plan.fieldReaching.writes.find(row=>row.node.startsWith(oldPath));
+  assert.ok(rhsWrite);
+  for(const arm of ['then','else']) {
+    const rhsPath=root+'1/'+arm+'/0/expression',first=root+'0/expression/value',second=rhsPath+rhsWrite.node.slice(oldPath.length);
+    const move=rows=>rows.map(row=>row.id.startsWith(oldPath+'/')?{...row,id:rhsPath+row.id.slice(oldPath.length)}:row);
+    const modelPlan={...plan,fields:move(plan.fields),carrierFields:move(plan.carrierFields)};
+    for(const taken of [false,true]) {
+      const condition={kind:'boolean',value:taken===(arm==='then'),type:scalarTypeIds.bool,range:original.left.range};
+      const branch={kind:'if',range:conditional.range,condition,then:[],else:[],[arm]:[{...conditional,expression:original.right}]};
+      const fn={...run,body:[initial,branch,returned]},model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
+      const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
+      assert.deepEqual(reaching.writes.filter(row=>row.id.startsWith(root)).map(row=>row.node),[first,second]);
+      const read=reaching.reads.find(row=>row.node===root+'2/value');
+      assert.deepEqual(read?.reaching.flatMap(row=>row.sources),[taken?second:first]);
+    }
+  }
+});
+
 test('finite presence charges its proof snapshot and preserves missing/pending as two possible paths',()=>{
   // A bounded proof-state component, not a synthesized Source program.
   const plan={nodes:[{id:'left',domainId:'D',pending:[]}],domains:[{id:'D',actualTypes:['I']}]},

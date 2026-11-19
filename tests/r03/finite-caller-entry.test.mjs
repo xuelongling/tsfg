@@ -58,3 +58,22 @@ test('a literally skipped caller stays in the inventory without erasing another 
     assert.deepEqual(access?.reaching.flatMap(row=>row.sources),takesRhs?[]:[write]);
   }
 });
+
+test('a literal if return cuts off later field writes and call input without removing their inventory',async()=>{
+  const {hir,context}=await callerEntry(),read=hir.functions.find(fn=>fn.name==='read'),run=hir.functions.find(fn=>fn.name==='run');
+  const [store,returned]=run.body,plan=buildFiniteCoreDomains(hir,context).definition,prefix=run.id+'/body/',
+    first=prefix+'0/expression/value',second=prefix+'2/expression/value',
+    duplicate=rows=>[...rows,...rows.filter(row=>row.id.startsWith(prefix+'0/')).map(row=>({...row,id:prefix+'2'+row.id.slice(prefix.length+1)}))],
+    modelPlan={...plan,fields:duplicate(plan.fields),carrierFields:duplicate(plan.carrierFields)};
+  for(const early of [true,false]) {
+    const condition={kind:'boolean',value:early,type:scalarTypeIds.bool,range:returned.range};
+    const branch={kind:'if',range:returned.range,condition,then:[returned],else:[]};
+    const fn={...run,body:[store,branch,store,returned]},model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
+    const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
+    const access=reaching.reads.find(row=>row.node.startsWith(read.id+'/'));
+    assert.deepEqual(access?.reaching.flatMap(row=>row.sources),[early?first:second]);
+    assert.deepEqual(reaching.writes.filter(row=>row.id.startsWith(prefix)).map(row=>row.node),[first,second]);
+    const skipped=prefix+(early?'3/value':'1/then/0/value')+'\0'+read.id;
+    assert.deepEqual(reaching.callContexts.find(row=>row.site===skipped)?.fields,[]);
+  }
+});

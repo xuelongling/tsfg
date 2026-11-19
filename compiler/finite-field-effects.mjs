@@ -12,11 +12,24 @@ export function literalBooleanRhs(value) {
     return value.left.value===(value.operator==='&&');
   return null;
 }
+export function literalIfArm(value) {
+  return value.kind==='if'&&value.condition.kind==='boolean'?(value.condition.value?'then':'else'):null;
+}
 export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepAllWrites) {
   const fields=new Map((plan.carrierFields??plan.fields).map(row=>{charge();return [row.id,row];})),
     calls=new Map(plan.calls.map(row=>{charge();return [row.id,row];})),types=new Map(hir.types.map(row=>{charge();return [row.id,row];})),
     constructors=new Map(),effects=new Map(),
     sites=new Map(),cyclicFunctions=new Set(),recursive=new Set();
+  const terminal=new WeakMap();
+  const endsBody=body=>body?.some(row=>{charge();return endsStatement(row);})??false;
+  function endsStatement(statement) {
+    if(statement.kind==='return'||statement.kind==='constructorReturn')return true;
+    if(statement.kind!=='block'&&statement.kind!=='if')return false;
+    if(terminal.has(statement))return terminal.get(statement);
+    const arm=literalIfArm(statement),ends=statement.kind==='block'?endsBody(statement.body):
+      arm?endsBody(statement[arm]):endsBody(statement.then)&&endsBody(statement.else);
+    terminal.set(statement,ends);return ends;
+  }
   for(const fn of callables) {
     charge();effects.set(fn.id,{writes:false,fields:new Set(),callees:new Set(),unknown:false});
     if(fn.role==='construction-body')constructors.set(fn.construction,fn.id);
@@ -26,6 +39,15 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
     const target=id=>{charge();if(id)effect.callees.add(id);if(!effects.has(id))effect.unknown=true;};
     while(stack.length) {
       charge();const {value,path,mayExecute}=stack.pop();if(!value||typeof value!=='object')continue;
+      if(Array.isArray(value)) {
+        // A terminated sequence still contributes its lexical writes and calls.
+        let live=mayExecute;
+        for(const [index,child]of value.entries())if(child&&typeof child==='object') {
+          charge();stack.push({value:child,path:path+'/'+index,mayExecute:live});
+          if(live&&endsStatement(child))live=false;
+        }
+        continue;
+      }
       if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
         effect.writes=true;const selected=fields.get(path);
         if(!selected?.targets.length)effect.unknown=true;
@@ -58,9 +80,10 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
           target(id);sites.set(path+'\0'+id,{target:id,mayExecute});
         }
       }
-      const skipRight=literalBooleanRhs(value)===false;
+      const skipRight=literalBooleanRhs(value)===false,arm=literalIfArm(value);
       for(const [key,child]of Object.entries(value))if(child&&typeof child==='object') {
-        charge();stack.push({value:child,path:path+'/'+key,mayExecute:mayExecute&&!(key==='right'&&skipRight)});
+        const skipped=key==='right'&&skipRight||key==='then'&&arm==='else'||key==='else'&&arm==='then';
+        charge();stack.push({value:child,path:path+'/'+key,mayExecute:mayExecute&&!skipped});
       }
     }
   }

@@ -7,7 +7,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
-import {finiteFieldEffects,finiteFieldWriteVersion,literalBooleanRhs} from './finite-field-effects.mjs';
+import {finiteFieldEffects,finiteFieldWriteVersion,literalBooleanRhs,literalIfArm} from './finite-field-effects.mjs';
 
 // These are the production proof-state snapshots, not Source-value copies.
 function versionCopy(values,charge) {
@@ -408,6 +408,12 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           exits.push(value.value&&value.kind==='constructorReturn'?new Map():clone(state));return null;
         }else if(value.kind==='if') {
           expression(value.condition,p+'/condition',state,env);
+          const arm=literalIfArm(value);
+          if(arm) {
+            state=statements(value[arm]??[],p+'/'+arm,state,env);
+            if(!state)return null;
+            continue;
+          }
           const leftEnv=copyFieldReachingAliases(env,charge),rightEnv=copyFieldReachingAliases(env,charge),
             left=statements(value.then,p+'/then',clone(state),leftEnv),
             right=statements(value.else??[],p+'/else',clone(state),rightEnv),merged=join(left,right);
