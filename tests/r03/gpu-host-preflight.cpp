@@ -168,6 +168,13 @@ bool checkBoundSourceInstance(const GpuPendingCall &call){
             observed.reads==1&&observed.reservations==1&&observed.destructions==1,
             "read the input and reserve the output bindings before releasing on configuration failure"))return false;
   const auto &proof=device->hostProof();
+  const auto completion=device->finishSourceRequest(1);
+  if(!check(completion.device.stage=="configuration"&&
+            completion.device.state==GpuSoftwareState::FailedBeforeSubmit&&
+            completion.device.identity==call.identity()&&completion.device.deviceGeneration==8&&
+            completion.device.submissionId==9&&completion.budget.fuelRemaining==6&&
+            completion.budget.depthLimit==3&&!completion.writeBack&&!completion.operationError,
+            "finish returns the original device failure and remaining Source budget"))return false;
   return check(proof.bindings().size()==2&&proof.bindings()[0].value.bits==23&&proof.bindings()[1].value.bits==11&&
                proof.budgetAfter().fuelRemaining==6&&device->writeBackSource()==GpuSoftwareWriteBack::OutputsUnavailable&&
                observed.publications==0,"keep admitted values and leave Source state untouched on device failure");
@@ -184,6 +191,10 @@ bool checkSoftwareOperationRejection(const GpuPendingCall &call){
   auto *device=std::get_if<GpuSoftwareVulkanCall>(&prepared);
   if(!check(device&&device->report().state==GpuSoftwareState::FailedBeforeSubmit&&
             device->report().stage=="configuration","original rejection comes from device configuration"))return false;
+  const auto unbound=device->finishSourceRequest(1);
+  if(!check(unbound.device.stage=="configuration"&&!unbound.writeBack&&
+            unbound.operationError&&unbound.operationError->stage=="source-request"&&
+            device->report().stage=="configuration","finish rejects an unbound call without replacing its report"))return false;
   const auto rejected=[&](const GpuSoftwareReport &attempt,llvm::StringRef stage){
     const auto &result=device->report();
     return check(attempt.failure==GpuSoftwareFailure::Input&&attempt.stage==stage&&
@@ -195,6 +206,8 @@ bool checkSoftwareOperationRejection(const GpuPendingCall &call){
   const bool submitRejected=rejected(device->submit(),"submit-order");
   const bool waitRejected=rejected(device->wait(1),"wait-parameters");
   return submitRejected&&waitRejected&&
+    check(unbound.operationError->stage=="source-request"&&unbound.device.stage=="configuration",
+          "owned results survive a later operation rejection")&&
     check(device->writeBack(8,9,{})==GpuSoftwareWriteBack::OutputsUnavailable,
           "a failed call cannot write back");
 }

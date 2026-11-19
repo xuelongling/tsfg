@@ -15,6 +15,7 @@
 namespace tsfg::commonProgram {
 namespace {
 std::atomic_flag activeSoftwareCall=ATOMIC_FLAG_INIT;
+bool finiteWait(uint64_t nanoseconds){return nanoseconds!=0&&nanoseconds!=UINT64_MAX;}
 // Windows/x86-64 is the fixed external acceptance target. Payloads and the
 // already-owned SPIR-V words use that target's little-endian 32-bit pattern.
 static_assert(sizeof(void *)==8&&sizeof(uint32_t)==4);
@@ -63,7 +64,7 @@ struct GpuSoftwareVulkanCall::Impl {
   VkCommandPool commandPool=VK_NULL_HANDLE;VkCommandBuffer command=VK_NULL_HANDLE;VkFence fence=VK_NULL_HANDLE;
   std::vector<Buffer> buffers;std::vector<VkDescriptorSetLayout> layouts;std::vector<VkDescriptorSet> sets;
   std::vector<std::pair<std::wstring,std::optional<std::wstring>>> environment;
-  bool lease=false,outputsCommitted=false,publishingSource=false;
+  bool lease=false,sourceBound=false,outputsCommitted=false,publishingSource=false;
   Impl(const GpuHostProof &value,uint64_t generation,uint64_t submission):proof(value){
     const auto &call=proof.call();report.identity=call.identity();report.functionId=call.functionId();
     report.deviceGeneration=generation;report.submissionId=submission;report.resources=call.descriptors();
@@ -311,6 +312,7 @@ GpuSoftwareHostAdmission GpuSoftwareVulkanCall::prepareSourceInstance(
   if(auto *failure=std::get_if<GpuHostFailure>(&checked))return std::move(*failure);
   if(!outputs.empty()&&!lease->reserveOutputs(outputs))return rejected("core-ir-common-gpu-host-outputs");
   auto impl=std::make_unique<Impl>(std::get<GpuHostProof>(checked),deviceGeneration,submissionId);
+  impl->sourceBound=true;
   if(impl->prepare(paths))impl->sourceLease=std::move(lease);
   return GpuSoftwareVulkanCall(std::move(impl));
 }
@@ -381,6 +383,24 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBackSource() {
   impl_->sourceLease.reset();
   return GpuSoftwareWriteBack::Committed;
 }
+GpuSoftwareSourceCompletion GpuSoftwareVulkanCall::finishSourceRequest(uint64_t timeoutNanoseconds) {
+  auto &state=*impl_;
+  const auto budget=state.proof.budgetAfter();
+  const auto rejected=[&](const char *stage,const char *reason)->GpuSoftwareSourceCompletion {
+    return {state.report,budget,{},state.rejectOperation(stage,reason)};
+  };
+  if(!state.sourceBound)
+    return rejected("source-request","completion requires a request bound to a Source instance");
+  const bool prepared=state.report.state==GpuSoftwareState::Prepared;
+  if(prepared||state.inFlight()){
+    if(!finiteWait(timeoutNanoseconds))
+      return rejected("wait-parameters","an explicit positive finite timeout is required");
+    if(prepared&&submit().state!=GpuSoftwareState::Submitted)return {state.report,budget,{},{}};
+    wait(timeoutNanoseconds);
+  }
+  if(!state.report.outputsAvailable)return {state.report,budget,{},{}};
+  return {state.report,budget,writeBackSource(),{}};
+}
 const GpuSoftwareReport &GpuSoftwareVulkanCall::submit(){
   auto &state=*impl_;auto &report=state.report;
   if(report.state!=GpuSoftwareState::Prepared)
@@ -392,7 +412,7 @@ const GpuSoftwareReport &GpuSoftwareVulkanCall::submit(){
 }
 const GpuSoftwareReport &GpuSoftwareVulkanCall::wait(uint64_t timeoutNanoseconds){
   auto &state=*impl_;auto &report=state.report;
-  if((report.state!=GpuSoftwareState::Submitted&&report.state!=GpuSoftwareState::Unfinished)||!timeoutNanoseconds||timeoutNanoseconds==UINT64_MAX)
+  if((report.state!=GpuSoftwareState::Submitted&&report.state!=GpuSoftwareState::Unfinished)||!finiteWait(timeoutNanoseconds))
     return state.rejectOperation("wait-parameters","an outstanding call and an explicit positive finite timeout are required");
   const auto result=state.vk.WaitForFences(state.device,1,&state.fence,VK_TRUE,timeoutNanoseconds);report.vkResult=int32_t(result);
   if(result==VK_TIMEOUT){report.state=GpuSoftwareState::Unfinished;report.failure=GpuSoftwareFailure::None;report.stage="wait";report.reason="fence is still outstanding; no output publication or resource retirement";return report;}

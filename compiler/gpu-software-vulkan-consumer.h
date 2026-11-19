@@ -45,6 +45,12 @@ struct GpuSoftwareReport {
   bool submitted=false,completionKnown=false,outputsAvailable=false;
   std::vector<GpuDescriptor> resources;
 };
+struct GpuSoftwareSourceCompletion {
+  GpuSoftwareReport device;
+  GpuHostBudget budget;
+  std::optional<GpuSoftwareWriteBack> writeBack;
+  std::optional<GpuSoftwareReport> operationError;
+};
 
 // Permanent external software-device consumer, outside the product Runtime.
 // prepare/submit/wait invoke the fixed Windows/Vulkan implementation and require
@@ -76,6 +82,10 @@ public:
                                 llvm::MutableArrayRef<GpuSoftwareOutput> destinations);
   // A bound call can publish only to its original lease, including after resume.
   GpuSoftwareWriteBack writeBackSource();
+  // Submit a prepared Source request, wait once and publish available outputs.
+  // Call again after an unfinished wait to wait on the same submission.
+  // Operation errors and writeback status never replace the device report.
+  GpuSoftwareSourceCompletion finishSourceRequest(uint64_t timeoutNanoseconds);
   // A rejected submit or wait returns the operation error. report() keeps
   // the call's last real outcome; the next rejection replaces the operation error.
   const GpuSoftwareReport &submit();
