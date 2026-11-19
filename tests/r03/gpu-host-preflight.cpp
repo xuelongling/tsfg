@@ -292,7 +292,13 @@ bool checkSourceCompletion(const GpuPendingCall &call){
         !pending.operationError&&accepted.global==23&&accepted.returned==0&&
         accepted.publications==0&&accepted.destructions==0,"timeout preserves the request and original values"))return false;
   }
-  auto resumed=GpuSoftwareVulkanCall::resumeRetained(8,9);
+  auto otherIdentity=call.identity();
+  otherIdentity.artifactDigest.clear();
+  if(!check(!GpuSoftwareVulkanCall::resumeRetained(8,9)&&
+      !GpuSoftwareVulkanCall::resumeRetainedSource(8,9,otherIdentity)&&
+      !GpuSoftwareVulkanCall::resumeRetainedSource(8,10,call.identity()),
+      "a Source request requires its original program identity to resume"))return false;
+  auto resumed=GpuSoftwareVulkanCall::resumeRetainedSource(8,9,call.identity());
   if(!check(resumed.has_value(),"resume the original request"))return false;
   Device::waitResult=VK_SUCCESS;
   const auto completed=resumed->finishSourceRequest(1);

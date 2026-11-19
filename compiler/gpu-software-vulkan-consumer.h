@@ -67,6 +67,8 @@ public:
       uint64_t deviceGeneration,uint64_t submissionId);
   static const GpuSoftwareReport *retainedReport();
   static std::optional<GpuSoftwareVulkanCall> resumeRetained(uint64_t deviceGeneration,uint64_t submissionId);
+  static std::optional<GpuSoftwareVulkanCall> resumeRetainedSource(uint64_t deviceGeneration,
+      uint64_t submissionId,const GpuCallIdentity &identity);
   GpuSoftwareVulkanCall(GpuSoftwareVulkanCall &&)noexcept;
   GpuSoftwareVulkanCall &operator=(GpuSoftwareVulkanCall &&)noexcept;
   GpuSoftwareVulkanCall(const GpuSoftwareVulkanCall &)=delete;
@@ -98,6 +100,7 @@ private:
   friend struct GpuSoftwareCompletionTest;
   struct Impl;
   static std::unique_ptr<Impl> &retained();
+  static std::optional<GpuSoftwareVulkanCall> takeRetained(uint64_t,uint64_t,const GpuCallIdentity *);
   void retainOutstanding();
   explicit GpuSoftwareVulkanCall(std::unique_ptr<Impl>);
   std::unique_ptr<Impl> impl_;
@@ -123,4 +126,5 @@ GpuSoftwareHostAdmission prepareGpuSoftwareSourceRequest(
 // and same-fence finite wait accessible. That slot blocks another prepare until
 // retirement; it never publishes or replays. Process exit leaves OS teardown in
 // charge of a still-outstanding slot. Completed/lost/pre-submit calls retire.
+// Source-bound calls resume through resumeRetainedSource with their full identity.
 } // namespace tsfg::commonProgram

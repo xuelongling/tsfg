@@ -384,7 +384,18 @@ std::unique_ptr<GpuSoftwareVulkanCall::Impl> &GpuSoftwareVulkanCall::retained(){
 void GpuSoftwareVulkanCall::retainOutstanding(){if(impl_&&impl_->inFlight())retained()=std::move(impl_);}
 const GpuSoftwareReport *GpuSoftwareVulkanCall::retainedReport(){const auto &slot=retained();return slot?&slot->report:nullptr;}
 std::optional<GpuSoftwareVulkanCall> GpuSoftwareVulkanCall::resumeRetained(uint64_t generation,uint64_t submission){
-  auto &slot=retained();if(!slot||slot->report.deviceGeneration!=generation||slot->report.submissionId!=submission)return std::nullopt;
+  return takeRetained(generation,submission,nullptr);
+}
+std::optional<GpuSoftwareVulkanCall> GpuSoftwareVulkanCall::resumeRetainedSource(
+    uint64_t generation,uint64_t submission,const GpuCallIdentity &identity){
+  return takeRetained(generation,submission,&identity);
+}
+std::optional<GpuSoftwareVulkanCall> GpuSoftwareVulkanCall::takeRetained(
+    uint64_t generation,uint64_t submission,const GpuCallIdentity *identity){
+  auto &slot=retained();
+  if(!slot||slot->report.deviceGeneration!=generation||slot->report.submissionId!=submission||
+     slot->sourceBound!=(identity!=nullptr)||(identity&&!(slot->report.identity==*identity)))
+    return std::nullopt;
   return GpuSoftwareVulkanCall(std::move(slot));
 }
 GpuSoftwareVulkanCall &GpuSoftwareVulkanCall::operator=(GpuSoftwareVulkanCall &&other)noexcept{
