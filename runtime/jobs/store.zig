@@ -2,7 +2,8 @@
 const std = @import("std");
 const layout = @import("layout.zig");
 pub const Error = error{ InvalidEntity, InvalidArchetype, ComponentMissing, InvalidLease, BorrowConflict, SizeMismatch, StorageLimit };
-pub const Entity = struct { index: u32, generation: u32 };
+/// A process-local handle valid only in the Store lifetime that issued it.
+pub const Entity = struct { index: u32, generation: u32, store_id: u64 };
 pub const ComponentValue = struct { component: []const u8, bytes: []const u8 };
 pub const Access = enum { read, write };
 pub const Selection = struct { component: []const u8, access: Access };
@@ -17,11 +18,23 @@ const Archetype = struct {
     first_candidate: usize = 0,
 };
 const Slot = struct { generation: u32 = 1, live: bool = false, archetype: u32 = 0, chunk: u32 = 0, row: u32 = 0 };
+const LeaseToken = struct { store_id: u64, sequence: u64 };
 const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool };
 // A query owns the complete product of its admitted chunks and selection.
 const QueryChunk = struct { chunk: *Chunk, active_call: bool = false };
 const QueryState = struct { token: u64, selection: []Resolved, chunks: []QueryChunk };
 const FreeSlots = std.PriorityQueue(u32, void, compareSlotIndex);
+var next_store_id = std.atomic.Value(u64).init(1);
+
+fn reserveStoreId() Error!u64 {
+    var candidate = next_store_id.load(.monotonic);
+    while (candidate != std.math.maxInt(u64)) {
+        if (next_store_id.cmpxchgWeak(candidate, candidate + 1, .monotonic, .monotonic)) |observed| {
+            candidate = observed;
+        } else return candidate;
+    }
+    return error.StorageLimit;
+}
 
 fn compareSlotIndex(_: void, a: u32, b: u32) std.math.Order {
     return std.math.order(a, b);
@@ -51,6 +64,7 @@ pub const Store = struct {
     components: []Component,
     capacity: usize,
     layout_identity: [71]u8,
+    id: u64,
     archetypes: std.ArrayListUnmanaged(Archetype) = .empty,
     slots: std.ArrayListUnmanaged(Slot) = .empty,
     free_slots: FreeSlots = .empty,
@@ -69,7 +83,7 @@ pub const Store = struct {
             const row = source.find(id).?;
             components[index] = .{ .id = try own.dupe(u8, row.id), .size = row.byteSize, .stride = row.stride, .alignment = .fromByteUnits(row.alignment) };
         }
-        return .{ .allocator = allocator, .metadata = metadata, .components = components, .capacity = chunk_capacity, .layout_identity = source.payload_hash };
+        return .{ .allocator = allocator, .metadata = metadata, .components = components, .capacity = chunk_capacity, .layout_identity = source.payload_hash, .id = try reserveStoreId() };
     }
     fn lock(self: *Store) void {
         while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
@@ -168,7 +182,7 @@ pub const Store = struct {
         chunk.entities[row] = slot_index;
         chunk.len += 1;
         archetype.first_candidate = if (chunk.len == self.capacity) chunk_index + 1 else chunk_index;
-        return .{ .index = slot_index, .generation = slot.generation };
+        return self.handleAt(slot_index);
     }
 
     pub fn remove(self: *Store, entity: Entity) !void {
@@ -216,7 +230,7 @@ pub const Store = struct {
 
     pub const ReadView = struct {
         store: *Store,
-        token: u64,
+        token: LeaseToken,
         pub fn bytes(self: ReadView) ![]const u8 {
             return self.store.viewBytes(self.token, false);
         }
@@ -226,7 +240,7 @@ pub const Store = struct {
     };
     pub const WriteView = struct {
         store: *Store,
-        token: u64,
+        token: LeaseToken,
         pub fn bytes(self: WriteView) ![]u8 {
             return self.store.viewBytes(self.token, true);
         }
@@ -240,7 +254,7 @@ pub const Store = struct {
     pub fn borrowWrite(self: *Store, entity: Entity, component: []const u8) !WriteView {
         return .{ .store = self, .token = try self.borrow(entity, component, true) };
     }
-    fn borrow(self: *Store, entity: Entity, component_id: []const u8, writable: bool) !u64 {
+    fn borrow(self: *Store, entity: Entity, component_id: []const u8, writable: bool) !LeaseToken {
         self.lock();
         defer self.mutex.unlock();
         const location = try self.locate(entity, component_id);
@@ -251,22 +265,24 @@ pub const Store = struct {
         self.next_token += 1;
         if (writable) location.column.writer = true else location.column.readers += 1;
         location.chunk.active += 1;
-        return token;
+        return .{ .store_id = self.id, .sequence = token };
     }
-    fn viewBytes(self: *Store, token: u64, writable: bool) ![]u8 {
+    fn viewBytes(self: *Store, token: LeaseToken, writable: bool) ![]u8 {
         self.lock();
         defer self.mutex.unlock();
-        for (self.leases.items) |lease| if (lease.token == token) {
+        if (token.store_id != self.id) return error.InvalidLease;
+        for (self.leases.items) |lease| if (lease.token == token.sequence) {
             if (writable and !lease.writable) return error.InvalidLease;
             const column = lease.chunk.columns[lease.column];
             return column.allocation[0 .. lease.chunk.len * self.components[column.component].stride];
         };
         return error.InvalidLease;
     }
-    fn release(self: *Store, token: u64) !void {
+    fn release(self: *Store, token: LeaseToken) !void {
         self.lock();
         defer self.mutex.unlock();
-        for (self.leases.items, 0..) |lease, index| if (lease.token == token) {
+        if (token.store_id != self.id) return error.InvalidLease;
+        for (self.leases.items, 0..) |lease, index| if (lease.token == token.sequence) {
             self.endLease(lease.chunk, &lease.chunk.columns[lease.column], lease.writable);
             _ = self.leases.swapRemove(index);
             return;
@@ -287,7 +303,7 @@ pub const Store = struct {
     /// releases the entire set; component slices are valid only while that session lives.
     pub const Query = struct {
         store: *Store,
-        token: u64,
+        token: LeaseToken,
         pub fn batchCount(self: Query) !usize {
             self.store.lock();
             defer self.store.mutex.unlock();
@@ -305,7 +321,7 @@ pub const Store = struct {
     };
     pub const Batch = struct {
         store: *Store,
-        token: u64,
+        token: LeaseToken,
         index: usize,
         pub fn rowCount(self: Batch) !usize {
             self.store.lock();
@@ -337,8 +353,7 @@ pub const Store = struct {
             defer self.store.mutex.unlock();
             const chunk = (try self.store.queryBatch(self.token, self.index)).chunk;
             if (row >= chunk.len) return error.InvalidEntity;
-            const index = chunk.entities[row];
-            return .{ .index = index, .generation = self.store.slots.items[index].generation };
+            return self.store.handleAt(chunk.entities[row]);
         }
         pub fn release(self: Batch) !void {
             try self.store.releaseQuery(self.token);
@@ -417,19 +432,20 @@ pub const Store = struct {
         }
         self.queries.appendAssumeCapacity(.{ .token = token, .selection = resolved, .chunks = chunks });
         self.next_token += 1;
-        return .{ .store = self, .token = token };
+        return .{ .store = self, .token = .{ .store_id = self.id, .sequence = token } };
     }
-    fn queryAt(self: *Store, token: u64) Error!*QueryState {
-        for (self.queries.items) |*state| if (state.token == token) return state;
+    fn queryAt(self: *Store, token: LeaseToken) Error!*QueryState {
+        if (token.store_id != self.id) return error.InvalidLease;
+        for (self.queries.items) |*state| if (state.token == token.sequence) return state;
         return error.InvalidLease;
     }
-    fn queryBatch(self: *Store, token: u64, batch_index: usize) Error!struct { state: *QueryState, chunk: *Chunk, batch_state: *QueryChunk } {
+    fn queryBatch(self: *Store, token: LeaseToken, batch_index: usize) Error!struct { state: *QueryState, chunk: *Chunk, batch_state: *QueryChunk } {
         const state = try self.queryAt(token);
         if (batch_index >= state.chunks.len) return error.InvalidLease;
         const batch_state = &state.chunks[batch_index];
         return .{ .state = state, .chunk = batch_state.chunk, .batch_state = batch_state };
     }
-    fn queryBytes(self: *Store, token: u64, batch_index: usize, column_index: usize, writable: bool) ![]u8 {
+    fn queryBytes(self: *Store, token: LeaseToken, batch_index: usize, column_index: usize, writable: bool) ![]u8 {
         self.lock();
         defer self.mutex.unlock();
         const bound = try self.queryBatch(token, batch_index);
@@ -441,10 +457,11 @@ pub const Store = struct {
         const column = chunk.columns[columnIndex(chunk.columns, item.component).?];
         return column.allocation[0 .. chunk.len * self.components[item.component].stride];
     }
-    fn releaseQuery(self: *Store, token: u64) !void {
+    fn releaseQuery(self: *Store, token: LeaseToken) !void {
         self.lock();
         defer self.mutex.unlock();
-        for (self.queries.items, 0..) |state, state_index| if (state.token == token) {
+        if (token.store_id != self.id) return error.InvalidLease;
+        for (self.queries.items, 0..) |state, state_index| if (state.token == token.sequence) {
             for (state.chunks) |matching| if (matching.active_call) return error.BorrowConflict;
             for (state.chunks) |matching| {
                 const chunk = matching.chunk;
@@ -482,8 +499,11 @@ pub const Store = struct {
         if (id >= self.archetypes.items.len) return error.InvalidArchetype;
         return &self.archetypes.items[id];
     }
+    fn handleAt(self: *const Store, index: u32) Entity {
+        return .{ .index = index, .generation = self.slots.items[index].generation, .store_id = self.id };
+    }
     fn entityAt(self: *Store, entity: Entity) Error!*Slot {
-        if (entity.index >= self.slots.items.len) return error.InvalidEntity;
+        if (entity.store_id != self.id or entity.index >= self.slots.items.len) return error.InvalidEntity;
         const slot = &self.slots.items[entity.index];
         if (!slot.live or slot.generation != entity.generation) return error.InvalidEntity;
         return slot;

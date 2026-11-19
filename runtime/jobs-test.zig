@@ -128,6 +128,78 @@ test "swap removal updates moved handles and generations reject all stale handle
     try std.testing.expectEqual(@as(i32, 0), actual.count);
 }
 
+test "query entities belong to their original Store lifetime" {
+    var source = try L.Layout.load(A, source_layout, expected);
+    defer source.deinit();
+    const position = named(&source, "Position").id;
+    var first_store = try jobs.Store.init(A, &source, 2);
+    defer first_store.deinit() catch unreachable;
+    const first_archetype = try first_store.addArchetype(&.{position});
+    const first = try first_store.create(first_archetype, &.{});
+
+    const from_query = handle: {
+        const query = try first_store.query(&.{.{ .component = position, .access = .read }});
+        defer query.release() catch unreachable;
+        break :handle try (try query.batch(0)).entity(0);
+    };
+    try std.testing.expectEqual(first, from_query);
+    var value: Position = undefined;
+    try first_store.read(from_query, position, std.mem.asBytes(&value));
+    var other_store: jobs.Store = undefined;
+    const old_entity = handle: {
+        other_store = try jobs.Store.init(A, &source, 2);
+        defer other_store.deinit() catch unreachable;
+        const archetype = try other_store.addArchetype(&.{position});
+        const other = try other_store.create(archetype, &.{});
+        try std.testing.expectEqual(first.index, other.index);
+        try std.testing.expectEqual(first.generation, other.generation);
+        try std.testing.expectError(error.InvalidEntity, other_store.read(from_query, position, std.mem.asBytes(&value)));
+        break :handle other;
+    };
+    other_store = try jobs.Store.init(A, &source, 2);
+    defer other_store.deinit() catch unreachable;
+    const replacement_archetype = try other_store.addArchetype(&.{position});
+    const new_entity = try other_store.create(replacement_archetype, &.{});
+    try std.testing.expectEqual(old_entity.index, new_entity.index);
+    try std.testing.expectEqual(old_entity.generation, new_entity.generation);
+    try std.testing.expectError(error.InvalidEntity, other_store.read(old_entity, position, std.mem.asBytes(&value)));
+    try other_store.read(new_entity, position, std.mem.asBytes(&value));
+}
+
+test "released queries and views cannot attach to a replacement Store" {
+    var source = try L.Layout.load(A, source_layout, expected);
+    defer source.deinit();
+    const position = named(&source, "Position").id;
+    const selection = &[_]jobs.Selection{.{ .component = position, .access = .read }};
+    var world: jobs.Store = undefined;
+    const old = previous: {
+        world = try jobs.Store.init(A, &source, 2);
+        defer world.deinit() catch unreachable;
+        const archetype = try world.addArchetype(&.{position});
+        const entity = try world.create(archetype, &.{});
+        const view = try world.borrowRead(entity, position);
+        defer view.release() catch unreachable;
+        const query = try world.query(selection);
+        defer query.release() catch unreachable;
+        break :previous .{ .view = view, .query = query, .batch = try query.batch(0) };
+    };
+
+    world = try jobs.Store.init(A, &source, 2);
+    defer world.deinit() catch unreachable;
+    const archetype = try world.addArchetype(&.{position});
+    const entity = try world.create(archetype, &.{});
+    const view = try world.borrowRead(entity, position);
+    defer view.release() catch unreachable;
+    const query = try world.query(selection);
+    defer query.release() catch unreachable;
+    try std.testing.expectError(error.InvalidLease, old.view.bytes());
+    try std.testing.expectError(error.InvalidLease, old.view.release());
+    try std.testing.expectError(error.InvalidLease, old.query.release());
+    try std.testing.expectError(error.InvalidLease, old.batch.entity(0));
+    try std.testing.expectEqual(@sizeOf(Position), (try view.bytes()).len);
+    try std.testing.expectEqual(entity, try (try query.batch(0)).entity(0));
+}
+
 test "reuses the lowest available slot after a failed create and skips retired generations" {
     var source = try L.Layout.load(A, source_layout, expected);
     defer source.deinit();
@@ -154,9 +226,9 @@ test "reuses the lowest available slot after a failed create and skips retired g
     const lowest = try world.create(stats, &.{});
     const next = try world.create(position, &.{});
     const fresh = try world.create(position, &.{});
-    try std.testing.expectEqual(jobs.Entity{ .index = first.index, .generation = first.generation + 1 }, lowest);
-    try std.testing.expectEqual(jobs.Entity{ .index = last.index, .generation = last.generation + 1 }, next);
-    try std.testing.expectEqual(jobs.Entity{ .index = last.index + 1, .generation = 1 }, fresh);
+    try std.testing.expectEqual(jobs.Entity{ .index = first.index, .generation = first.generation + 1, .store_id = first.store_id }, lowest);
+    try std.testing.expectEqual(jobs.Entity{ .index = last.index, .generation = last.generation + 1, .store_id = last.store_id }, next);
+    try std.testing.expectEqual(jobs.Entity{ .index = last.index + 1, .generation = 1, .store_id = last.store_id }, fresh);
     try std.testing.expectError(error.InvalidEntity, world.remove(first));
     try std.testing.expectError(error.InvalidEntity, world.remove(retired));
 }
