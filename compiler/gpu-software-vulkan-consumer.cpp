@@ -64,7 +64,7 @@ struct GpuSoftwareVulkanCall::Impl {
   VkCommandPool commandPool=VK_NULL_HANDLE;VkCommandBuffer command=VK_NULL_HANDLE;VkFence fence=VK_NULL_HANDLE;
   std::vector<Buffer> buffers;std::vector<VkDescriptorSetLayout> layouts;std::vector<VkDescriptorSet> sets;
   std::vector<std::pair<std::wstring,std::optional<std::wstring>>> environment;
-  bool lease=false,sourceBound=false,outputsCommitted=false,publishingSource=false;
+  bool lease=false,sourceBound=false,outputsCommitted=false,publishingSource=false,sourcePublicationRejected=false;
   Impl(const GpuHostProof &value,uint64_t generation,uint64_t submission):proof(value){
     const auto &call=proof.call();report.identity=call.identity();report.functionId=call.functionId();
     report.deviceGeneration=generation;report.submissionId=submission;report.resources=call.descriptors();
@@ -358,7 +358,7 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(
   if(deviceReport.deviceGeneration!=deviceGeneration||deviceReport.submissionId!=submissionId)
     return GpuSoftwareWriteBack::SubmissionMismatch;
   if(auto rejected=impl_->writeBackRejection())return *rejected;
-  if(impl_->sourceLease)return GpuSoftwareWriteBack::BindingMismatch;
+  if(impl_->sourceBound)return GpuSoftwareWriteBack::BindingMismatch;
 
   const auto &values=outputs();
   if(destinations.size()!=values.size())
@@ -373,15 +373,16 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(
 }
 GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBackSource() {
   if(auto rejected=impl_->writeBackRejection())return *rejected;
+  if(impl_->sourcePublicationRejected)return GpuSoftwareWriteBack::SourceRejected;
   if(!impl_->sourceLease)return GpuSoftwareWriteBack::BindingMismatch;
   if(impl_->publishingSource)return GpuSoftwareWriteBack::SourceRejected;
   impl_->publishingSource=true;
   const bool published=impl_->sourceLease->publish(impl_->outputs);
   impl_->publishingSource=false;
-  if(!published)return GpuSoftwareWriteBack::SourceRejected;
-  impl_->outputsCommitted=true;
+  impl_->outputsCommitted=published;
+  impl_->sourcePublicationRejected=!published;
   impl_->sourceLease.reset();
-  return GpuSoftwareWriteBack::Committed;
+  return published?GpuSoftwareWriteBack::Committed:GpuSoftwareWriteBack::SourceRejected;
 }
 GpuSoftwareSourceCompletion GpuSoftwareVulkanCall::finishSourceRequest(uint64_t timeoutNanoseconds) {
   auto &state=*impl_;

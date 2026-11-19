@@ -1,8 +1,43 @@
 // SPDX-License-Identifier: MIT
 // Genuine compiler data -> complete Core/plan -> owned reader -> Host checks.
+#if defined(TSFG_GPU_SOFTWARE_COMPLETION_CHECK) && !defined(TSFG_GPU_SOFTWARE_HOST_CHECK)
+#define TSFG_GPU_SOFTWARE_HOST_CHECK
+#endif
+#if defined(TSFG_GPU_SOFTWARE_COMPLETION_CHECK) && defined(TSFG_GPU_PREFLIGHT_BASELINE)
+#error The software completion check requires the current Host preflight implementation.
+#endif
 #include "common-program-gpu-lowering.h"
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
 #include "gpu-software-vulkan-consumer.h"
+#endif
+#ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
+// Build this test instead of linking the consumer separately. The fake completion
+// callbacks exercise host state only and never prepare a platform device.
+#include "../../compiler/gpu-software-vulkan-consumer.cpp"
+namespace tsfg::commonProgram {
+struct GpuSoftwareCompletionTest {
+  static inline size_t submissions=0,waits=0;
+  static inline VkResult waitResult=VK_SUCCESS;
+  static VkResult VKAPI_CALL submit(VkQueue,uint32_t,const VkSubmitInfo *,VkFence){
+    ++submissions;return VK_SUCCESS;
+  }
+  static VkResult VKAPI_CALL wait(VkDevice,uint32_t,const VkFence *,VkBool32,uint64_t){
+    ++waits;return waitResult;
+  }
+  static GpuSoftwareVulkanCall prepared(const GpuHostProof &proof,
+      std::unique_ptr<GpuSoftwareSourceLease> source,llvm::MutableArrayRef<uint32_t> values){
+    auto state=std::make_unique<GpuSoftwareVulkanCall::Impl>(proof,8,9);
+    state->sourceBound=true;
+    state->sourceLease=std::move(source);
+    state->vk.QueueSubmit=submit;
+    state->vk.WaitForFences=wait;
+    state->report.state=GpuSoftwareState::Prepared;
+    state->report.stage="prepared";
+    for(auto &value:values)state->buffers.push_back({VK_NULL_HANDLE,VK_NULL_HANDLE,&value,true});
+    return GpuSoftwareVulkanCall(std::move(state));
+  }
+};
+}
 #endif
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -94,7 +129,11 @@ bool checkSourceArguments(const GpuPendingCall &call){
   return rejected(call.identity(),arguments,globals,"core-ir-common-gpu-host-globals");
 }
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
-struct SourceLeaseObservation {size_t reads=0,reservations=0,publications=0,destructions=0;};
+struct SourceLeaseObservation {
+  size_t reads=0,reservations=0,publications=0,destructions=0;
+  bool acceptOutputs=false;
+  uint32_t global=23,returned=0;
+};
 class ObservedSourceLease final : public GpuSoftwareSourceLease {
   GpuCallIdentity deviceIdentity;
   std::string globalId;
@@ -118,9 +157,13 @@ public:
       outputs[1]->kind==GpuResourceKind::Return&&outputs[1]->access==GpuResourceAccess::Write&&
       outputs[1]->id==returnId;
   }
-  bool publish(llvm::ArrayRef<GpuSoftwareOutput>) noexcept override {
+  bool publish(llvm::ArrayRef<GpuSoftwareOutput> outputs) noexcept override {
     ++observed.publications;
-    return false;
+    if(!observed.acceptOutputs||outputs.size()!=2||
+       outputs[0].descriptor.id!=globalId||outputs[1].descriptor.id!=returnId)return false;
+    observed.global=outputs[0].bits;
+    observed.returned=outputs[1].bits;
+    return true;
   }
 };
 bool checkBoundSourceInstance(const GpuPendingCall &call){
@@ -211,6 +254,61 @@ bool checkSoftwareOperationRejection(const GpuPendingCall &call){
     check(device->writeBack(8,9,{})==GpuSoftwareWriteBack::OutputsUnavailable,
           "a failed call cannot write back");
 }
+#ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
+bool checkSourceCompletion(const GpuPendingCall &call){
+  using Device=GpuSoftwareCompletionTest;
+  const auto &descriptors=call.descriptors();
+  if(!check(descriptors.size()==3&&descriptors[0].kind==GpuResourceKind::Global&&
+      descriptors[1].kind==GpuResourceKind::Parameter&&descriptors[2].kind==GpuResourceKind::Return,
+      "completion fixture has a global, an argument and a return"))return false;
+  const auto i32=tsfg::exception::i32Id.str();
+  const GpuHostValue arguments[]={{i32,11}};
+  const GpuHostGlobalValue globals[]={{descriptors[0].id,{i32,23}}};
+  auto checked=preflightGpuSourceCall(call,call.identity(),arguments,globals,{7,3});
+  const auto *proof=std::get_if<GpuHostProof>(&checked);
+  if(!check(proof,"completion fixture admits independent input values"))return false;
+  const auto lease=[&](SourceLeaseObservation &observed){
+    return std::make_unique<ObservedSourceLease>(call.identity(),descriptors[0].id,descriptors[2].id,observed);
+  };
+  // Distinct output words catch a swap between the global and return cells.
+  uint32_t data[]={34,11,57};
+  SourceLeaseObservation accepted;
+  accepted.acceptOutputs=true;
+  {
+    auto device=Device::prepared(*proof,lease(accepted),data);
+    const auto invalid=device.finishSourceRequest(0);
+    if(!check(invalid.operationError&&invalid.device.state==GpuSoftwareState::Prepared&&
+        Device::submissions==0&&Device::waits==0,"invalid wait does not submit"))return false;
+    Device::waitResult=VK_TIMEOUT;
+    const auto pending=device.finishSourceRequest(1);
+    if(!check(pending.device.state==GpuSoftwareState::Unfinished&&!pending.writeBack&&
+        !pending.operationError&&accepted.global==23&&accepted.returned==0&&
+        accepted.publications==0&&accepted.destructions==0,"timeout preserves the request and original values"))return false;
+  }
+  auto resumed=GpuSoftwareVulkanCall::resumeRetained(8,9);
+  if(!check(resumed.has_value(),"resume the original request"))return false;
+  Device::waitResult=VK_SUCCESS;
+  const auto completed=resumed->finishSourceRequest(1);
+  const auto repeated=resumed->finishSourceRequest(1);
+  if(!check(completed.device.state==GpuSoftwareState::Completed&&completed.device.identity==call.identity()&&
+      completed.device.deviceGeneration==8&&completed.device.submissionId==9&&completed.budget.fuelRemaining==6&&
+      completed.writeBack==GpuSoftwareWriteBack::Committed&&repeated.writeBack==GpuSoftwareWriteBack::AlreadyCommitted&&
+      Device::submissions==1&&Device::waits==2&&accepted.global==34&&accepted.returned==57&&
+      accepted.publications==1&&accepted.destructions==1,"resume waits again and publishes once"))return false;
+
+  SourceLeaseObservation rejected;
+  auto device=Device::prepared(*proof,lease(rejected),data);
+  const auto failed=device.finishSourceRequest(1);
+  auto foreign=device.outputs();
+  for(auto &output:foreign)output.bits=0;
+  return check(failed.device.state==GpuSoftwareState::Completed&&failed.device.outputsAvailable&&
+      failed.writeBack==GpuSoftwareWriteBack::SourceRejected&&!failed.operationError&&
+      device.finishSourceRequest(1).writeBack==GpuSoftwareWriteBack::SourceRejected&&
+      device.writeBack(8,9,foreign)==GpuSoftwareWriteBack::BindingMismatch&&
+      rejected.global==23&&rejected.returned==0&&rejected.publications==1&&rejected.destructions==1,
+      "rejected writeback retires the original lease and cannot publish to another destination");
+}
+#endif
 #endif
 #endif
 }
@@ -220,6 +318,9 @@ int main(int argc,char **argv){
      mode!="--check-source-arguments"
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
      &&mode!="--check-software-operation-rejection"&&mode!="--check-bound-source-instance"
+#endif
+#ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
+     &&mode!="--check-source-completion"
 #endif
      )return 2;
   const bool checkDerived=mode=="--check-derived-numeric-use";
@@ -273,6 +374,9 @@ int main(int argc,char **argv){
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
   if(mode=="--check-software-operation-rejection")return checkSoftwareOperationRejection(call)?0:3;
   if(mode=="--check-bound-source-instance")return checkBoundSourceInstance(call)?0:3;
+#endif
+#ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
+  if(mode=="--check-source-completion")return checkSourceCompletion(call)?0:3;
 #endif
   std::vector<const GpuNumericUseStep *> uses;
   for(const auto &row:call.hostSteps())if(const auto *use=std::get_if<GpuNumericUseStep>(&row))

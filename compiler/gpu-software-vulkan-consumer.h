@@ -81,6 +81,7 @@ public:
   GpuSoftwareWriteBack writeBack(uint64_t deviceGeneration,uint64_t submissionId,
                                 llvm::MutableArrayRef<GpuSoftwareOutput> destinations);
   // A bound call can publish only to its original lease, including after resume.
+  // Source rejection retires the lease and remains the call's writeback result.
   GpuSoftwareWriteBack writeBackSource();
   // Submit a prepared Source request, wait once and publish available outputs.
   // Call again after an unfinished wait to wait on the same submission.
@@ -93,6 +94,7 @@ public:
   // in-flight resources and permits another explicit wait, never resubmission.
   const GpuSoftwareReport &wait(uint64_t timeoutNanoseconds);
 private:
+  friend struct GpuSoftwareCompletionTest;
   struct Impl;
   static std::unique_ptr<Impl> &retained();
   void retainOutstanding();
