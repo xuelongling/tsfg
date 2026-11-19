@@ -95,6 +95,7 @@ public:
   const GpuSoftwareReport &submit();
   // Nanoseconds must be positive and below UINT64_MAX. Timeout preserves all
   // in-flight resources and permits another explicit wait, never resubmission.
+  // Known completion or device loss retires the device before returning.
   const GpuSoftwareReport &wait(uint64_t timeoutNanoseconds);
 private:
   friend struct GpuSoftwareCompletionTest;

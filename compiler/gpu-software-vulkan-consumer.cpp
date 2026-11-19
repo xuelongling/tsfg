@@ -85,10 +85,8 @@ struct GpuSoftwareVulkanCall::Impl {
   }
   bool fail(GpuSoftwareFailure kind,const char *stage,const char *reason){
     report.failure=kind;report.stage=stage;report.reason=reason;
-    if(!report.submitted){
-      if(report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::FailedBeforeSubmit;
-      releaseDevice();
-    }
+    if(!report.submitted&&report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::FailedBeforeSubmit;
+    if(!inFlight())releaseDevice();
     return false;
   }
   const GpuSoftwareReport &rejectOperation(const char *stage,const char *reason){
@@ -455,7 +453,6 @@ GpuSoftwareSourceCompletion GpuSoftwareVulkanCall::finishSourceRequest(uint64_t 
       return rejected("wait-parameters","an explicit positive finite timeout is required");
     if(!prepared||submit().state==GpuSoftwareState::Submitted)wait(timeoutNanoseconds);
   }
-  if(!state.inFlight())state.releaseDevice();
   if(!state.report.outputsAvailable)return {state.report,budget,{},{}};
   return {state.report,budget,writeBackSource(),{}};
 }
@@ -490,7 +487,8 @@ const GpuSoftwareReport &GpuSoftwareVulkanCall::wait(uint64_t timeoutNanoseconds
       }}
     uint32_t bits;std::memcpy(&bits,buffer.mapped,sizeof(bits));outputs.push_back({descriptors[index],bits});
   }
-  state.outputs=std::move(outputs);report.outputsAvailable=true;report.resourceIndex.reset();report.failure=GpuSoftwareFailure::None;report.stage="completed";report.reason.clear();return report;
+  state.outputs=std::move(outputs);report.outputsAvailable=true;report.resourceIndex.reset();report.failure=GpuSoftwareFailure::None;report.stage="completed";report.reason.clear();
+  state.releaseDevice();return report;
 }
 #undef TSFG_DEVICE_FUNCTIONS
 } // namespace tsfg::commonProgram
