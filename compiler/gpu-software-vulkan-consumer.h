@@ -85,6 +85,7 @@ public:
   GpuSoftwareWriteBack writeBackSource();
   // Submit a prepared Source request, wait once and publish available outputs.
   // Call again after an unfinished wait to wait on the same submission.
+  // Terminal outcomes release the device while keeping the report and outputs.
   // Operation errors and writeback status never replace the device report.
   GpuSoftwareSourceCompletion finishSourceRequest(uint64_t timeoutNanoseconds);
   // A rejected submit or wait returns the operation error. report() keeps

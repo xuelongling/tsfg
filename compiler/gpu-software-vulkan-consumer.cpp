@@ -261,7 +261,8 @@ struct GpuSoftwareVulkanCall::Impl {
     if(!checked(vk.CreateFence(device,&fenceInfo,nullptr,&fence),"create-fence"))return false;
     report.state=GpuSoftwareState::Prepared;report.stage="prepared";report.failure=GpuSoftwareFailure::None;report.reason.clear();return true;
   }
-  ~Impl(){
+  void releaseDevice(){
+    if(!std::exchange(lease,false))return;
     if(device&&vk.DestroyDevice){
       if(fence&&vk.DestroyFence)vk.DestroyFence(device,fence,nullptr);
       if(commandPool&&vk.DestroyCommandPool)vk.DestroyCommandPool(device,commandPool,nullptr);
@@ -280,8 +281,9 @@ struct GpuSoftwareVulkanCall::Impl {
     if(instance&&vk.DestroyInstance)vk.DestroyInstance(instance,nullptr);
     if(loader)FreeLibrary(loader);
     for(auto entry=environment.rbegin();entry!=environment.rend();++entry)SetEnvironmentVariableW(entry->first.c_str(),entry->second?entry->second->c_str():nullptr);
-    if(lease)activeSoftwareCall.clear(std::memory_order_release);
+    activeSoftwareCall.clear(std::memory_order_release);
   }
+  ~Impl(){releaseDevice();}
 };
 
 GpuSoftwareVulkanCall::GpuSoftwareVulkanCall(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
@@ -396,9 +398,9 @@ GpuSoftwareSourceCompletion GpuSoftwareVulkanCall::finishSourceRequest(uint64_t 
   if(prepared||state.inFlight()){
     if(!finiteWait(timeoutNanoseconds))
       return rejected("wait-parameters","an explicit positive finite timeout is required");
-    if(prepared&&submit().state!=GpuSoftwareState::Submitted)return {state.report,budget,{},{}};
-    wait(timeoutNanoseconds);
+    if(!prepared||submit().state==GpuSoftwareState::Submitted)wait(timeoutNanoseconds);
   }
+  if(!state.inFlight())state.releaseDevice();
   if(!state.report.outputsAvailable)return {state.report,budget,{},{}};
   return {state.report,budget,writeBackSource(),{}};
 }

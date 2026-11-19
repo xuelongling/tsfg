@@ -17,9 +17,9 @@
 namespace tsfg::commonProgram {
 struct GpuSoftwareCompletionTest {
   static inline size_t submissions=0,waits=0;
-  static inline VkResult waitResult=VK_SUCCESS;
+  static inline VkResult submitResult=VK_SUCCESS,waitResult=VK_SUCCESS;
   static VkResult VKAPI_CALL submit(VkQueue,uint32_t,const VkSubmitInfo *,VkFence){
-    ++submissions;return VK_SUCCESS;
+    ++submissions;return submitResult;
   }
   static VkResult VKAPI_CALL wait(VkDevice,uint32_t,const VkFence *,VkBool32,uint64_t){
     ++waits;return waitResult;
@@ -27,6 +27,7 @@ struct GpuSoftwareCompletionTest {
   static GpuSoftwareVulkanCall prepared(const GpuHostProof &proof,
       std::unique_ptr<GpuSoftwareSourceLease> source,llvm::MutableArrayRef<uint32_t> values){
     auto state=std::make_unique<GpuSoftwareVulkanCall::Impl>(proof,8,9);
+    state->lease=!activeSoftwareCall.test_and_set(std::memory_order_acquire);
     state->sourceBound=true;
     state->sourceLease=std::move(source);
     state->vk.QueueSubmit=submit;
@@ -35,6 +36,11 @@ struct GpuSoftwareCompletionTest {
     state->report.stage="prepared";
     for(auto &value:values)state->buffers.push_back({VK_NULL_HANDLE,VK_NULL_HANDLE,&value,true});
     return GpuSoftwareVulkanCall(std::move(state));
+  }
+  static bool ownsDevice(const GpuSoftwareVulkanCall &call){return call.impl_->lease;}
+  static bool deviceReserved(){
+    if(activeSoftwareCall.test_and_set(std::memory_order_acquire))return true;
+    activeSoftwareCall.clear(std::memory_order_release);return false;
   }
 };
 }
@@ -282,6 +288,7 @@ bool checkSourceCompletion(const GpuPendingCall &call){
     Device::waitResult=VK_TIMEOUT;
     const auto pending=device.finishSourceRequest(1);
     if(!check(pending.device.state==GpuSoftwareState::Unfinished&&!pending.writeBack&&
+        Device::ownsDevice(device)&&
         !pending.operationError&&accepted.global==23&&accepted.returned==0&&
         accepted.publications==0&&accepted.destructions==0,"timeout preserves the request and original values"))return false;
   }
@@ -289,6 +296,7 @@ bool checkSourceCompletion(const GpuPendingCall &call){
   if(!check(resumed.has_value(),"resume the original request"))return false;
   Device::waitResult=VK_SUCCESS;
   const auto completed=resumed->finishSourceRequest(1);
+  if(!check(!Device::ownsDevice(*resumed),"completion retires device ownership with the report retained"))return false;
   const auto repeated=resumed->finishSourceRequest(1);
   if(!check(completed.device.state==GpuSoftwareState::Completed&&completed.device.identity==call.identity()&&
       completed.device.deviceGeneration==8&&completed.device.submissionId==9&&completed.budget.fuelRemaining==6&&
@@ -298,15 +306,29 @@ bool checkSourceCompletion(const GpuPendingCall &call){
 
   SourceLeaseObservation rejected;
   auto device=Device::prepared(*proof,lease(rejected),data);
+  resumed.reset();
+  if(!check(Device::ownsDevice(device)&&Device::deviceReserved(),
+      "retiring the old handle preserves the next request's ownership"))return false;
   const auto failed=device.finishSourceRequest(1);
   auto foreign=device.outputs();
   for(auto &output:foreign)output.bits=0;
-  return check(failed.device.state==GpuSoftwareState::Completed&&failed.device.outputsAvailable&&
+  if(!check(failed.device.state==GpuSoftwareState::Completed&&failed.device.outputsAvailable&&
+      !Device::ownsDevice(device)&&
       failed.writeBack==GpuSoftwareWriteBack::SourceRejected&&!failed.operationError&&
       device.finishSourceRequest(1).writeBack==GpuSoftwareWriteBack::SourceRejected&&
       device.writeBack(8,9,foreign)==GpuSoftwareWriteBack::BindingMismatch&&
       rejected.global==23&&rejected.returned==0&&rejected.publications==1&&rejected.destructions==1,
-      "rejected writeback retires the original lease and cannot publish to another destination");
+      "rejected writeback retires the original lease and cannot publish to another destination"))return false;
+
+  SourceLeaseObservation submitFailure;
+  auto unableToSubmit=Device::prepared(*proof,lease(submitFailure),data);
+  Device::submitResult=VK_ERROR_OUT_OF_HOST_MEMORY;
+  const auto submission=unableToSubmit.finishSourceRequest(1);
+  return check(submission.device.state==GpuSoftwareState::FailedBeforeSubmit&&
+      submission.device.vkResult==VK_ERROR_OUT_OF_HOST_MEMORY&&submission.device.stage=="queue-submit"&&
+      !submission.writeBack&&!submission.operationError&&!Device::ownsDevice(unableToSubmit)&&
+      submitFailure.publications==0&&submitFailure.destructions==1,
+      "failed submission keeps its report and retires device ownership");
 }
 #endif
 #endif
