@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Genuine compiler data -> complete Core/plan -> owned reader -> Host checks.
 #include "common-program-gpu-lowering.h"
+#ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
+#include "gpu-software-vulkan-consumer.h"
+#endif
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
@@ -90,12 +93,44 @@ bool checkSourceArguments(const GpuPendingCall &call){
   globals[0].globalId=descriptors[1].id;
   return rejected(call.identity(),arguments,globals,"core-ir-common-gpu-host-globals");
 }
+#ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
+bool checkSoftwareOperationRejection(const GpuPendingCall &call){
+  const auto &descriptors=call.descriptors();
+  if(!check(descriptors.size()==3&&descriptors[0].kind==GpuResourceKind::Global&&
+            call.argumentBindings()==std::vector<uint32_t>{1},"fixture has one global and one argument"))return false;
+  const auto i32=tsfg::exception::i32Id.str();
+  const GpuHostValue arguments[]={{i32,11}};
+  const GpuHostGlobalValue globals[]={{descriptors[0].id,{i32,23}}};
+  // Empty paths force a configuration error before loading any device API.
+  auto prepared=prepareGpuSoftwareSourceRequest(call,call.identity(),arguments,globals,{7,3},{},8,9);
+  auto *device=std::get_if<GpuSoftwareVulkanCall>(&prepared);
+  if(!check(device&&device->report().state==GpuSoftwareState::FailedBeforeSubmit&&
+            device->report().stage=="configuration","original rejection comes from device configuration"))return false;
+  const auto rejected=[&](const GpuSoftwareReport &attempt,llvm::StringRef stage){
+    const auto &result=device->report();
+    return check(attempt.failure==GpuSoftwareFailure::Input&&attempt.stage==stage&&
+                 attempt.identity==call.identity()&&attempt.deviceGeneration==8&&attempt.submissionId==9&&
+                 result.state==GpuSoftwareState::FailedBeforeSubmit&&result.stage=="configuration"&&
+                 result.failure==GpuSoftwareFailure::Input&&!result.outputsAvailable,
+                 "invalid operation does not overwrite the call's true failure");
+  };
+  const bool submitRejected=rejected(device->submit(),"submit-order");
+  const bool waitRejected=rejected(device->wait(1),"wait-parameters");
+  return submitRejected&&waitRejected&&
+    check(device->writeBack(8,9,{})==GpuSoftwareWriteBack::OutputsUnavailable,
+          "a failed call cannot write back");
+}
+#endif
 #endif
 }
 int main(int argc,char **argv){
   const auto mode=argc==3?llvm::StringRef(argv[2]):llvm::StringRef{};
   if(argc!=2&&mode!="--check-derived-numeric-use"&&mode!="--check-unwritten-global"&&
-     mode!="--check-source-arguments")return 2;
+     mode!="--check-source-arguments"
+#ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
+     &&mode!="--check-software-operation-rejection"
+#endif
+     )return 2;
   const bool checkDerived=mode=="--check-derived-numeric-use";
   std::string coreBytes,requestBytes,planBytes;
   if(!read(argv[1],"common-program.mlir",coreBytes)||!read(argv[1],"gpu-binding-request.json",requestBytes)||
@@ -144,6 +179,9 @@ int main(int argc,char **argv){
 #else
   const auto &call=*pending;const auto &entry=std::get<GpuEntryBudgetStep>(call.hostSteps().front());
   if(mode=="--check-source-arguments")return checkSourceArguments(call)?0:3;
+#ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
+  if(mode=="--check-software-operation-rejection")return checkSoftwareOperationRejection(call)?0:3;
+#endif
   std::vector<const GpuNumericUseStep *> uses;
   for(const auto &row:call.hostSteps())if(const auto *use=std::get_if<GpuNumericUseStep>(&row))
     if(std::holds_alternative<GpuBindingOrigin>(use->origin))uses.push_back(use);

@@ -53,6 +53,7 @@ bool privateAbsolute(const std::wstring &path){
 
 struct GpuSoftwareVulkanCall::Impl {
   GpuHostProof proof;GpuSoftwareReport report;std::vector<GpuSoftwareOutput> outputs;
+  std::optional<GpuSoftwareReport> operationRejection;
   Vulkan vk;HMODULE loader=nullptr;VkInstance instance=VK_NULL_HANDLE;
   VkPhysicalDevice physical=VK_NULL_HANDLE;VkDevice device=VK_NULL_HANDLE;VkQueue queue=VK_NULL_HANDLE;
   VkDescriptorPool descriptorPool=VK_NULL_HANDLE;VkPipelineLayout pipelineLayout=VK_NULL_HANDLE;
@@ -71,6 +72,17 @@ struct GpuSoftwareVulkanCall::Impl {
     report.failure=kind;report.stage=stage;report.reason=reason;
     if(!report.submitted&&report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::FailedBeforeSubmit;
     return false;
+  }
+  const GpuSoftwareReport &rejectOperation(const char *stage,const char *reason){
+    auto &rejected=operationRejection.emplace(report);
+    rejected.failure=GpuSoftwareFailure::Input;
+    rejected.stage=stage;
+    rejected.reason=reason;
+    rejected.vkResult.reset();
+    rejected.windowsError.reset();
+    rejected.resourceIndex.reset();
+    rejected.outputsAvailable=false;
+    return rejected;
   }
   bool checked(VkResult result,const char *stage){
     report.vkResult=int32_t(result);
@@ -327,7 +339,8 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(
 }
 const GpuSoftwareReport &GpuSoftwareVulkanCall::submit(){
   auto &state=*impl_;auto &report=state.report;
-  if(report.state!=GpuSoftwareState::Prepared){state.fail(GpuSoftwareFailure::Input,"submit-order","only a prepared call can be submitted once");return report;}
+  if(report.state!=GpuSoftwareState::Prepared)
+    return state.rejectOperation("submit-order","only a prepared call can be submitted once");
   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&state.command;
   const auto result=state.vk.QueueSubmit(state.queue,1,&submit,state.fence);
   if(!state.checked(result,"queue-submit"))return report;
@@ -335,9 +348,8 @@ const GpuSoftwareReport &GpuSoftwareVulkanCall::submit(){
 }
 const GpuSoftwareReport &GpuSoftwareVulkanCall::wait(uint64_t timeoutNanoseconds){
   auto &state=*impl_;auto &report=state.report;
-  if((report.state!=GpuSoftwareState::Submitted&&report.state!=GpuSoftwareState::Unfinished)||!timeoutNanoseconds||timeoutNanoseconds==UINT64_MAX){
-    state.fail(GpuSoftwareFailure::Input,"wait-parameters","an outstanding call and an explicit positive finite timeout are required");return report;
-  }
+  if((report.state!=GpuSoftwareState::Submitted&&report.state!=GpuSoftwareState::Unfinished)||!timeoutNanoseconds||timeoutNanoseconds==UINT64_MAX)
+    return state.rejectOperation("wait-parameters","an outstanding call and an explicit positive finite timeout are required");
   const auto result=state.vk.WaitForFences(state.device,1,&state.fence,VK_TRUE,timeoutNanoseconds);report.vkResult=int32_t(result);
   if(result==VK_TIMEOUT){report.state=GpuSoftwareState::Unfinished;report.failure=GpuSoftwareFailure::None;report.stage="wait";report.reason="fence is still outstanding; no output publication or resource retirement";return report;}
   if(!state.checked(result,"wait")){if(report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::Unfinished;return report;}

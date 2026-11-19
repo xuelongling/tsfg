@@ -53,6 +53,8 @@ public:
   // the named submission. A successful publication consumes the writeback.
   GpuSoftwareWriteBack writeBack(uint64_t deviceGeneration,uint64_t submissionId,
                                 llvm::MutableArrayRef<GpuSoftwareOutput> destinations);
+  // A rejected submit or wait returns the operation error. report() keeps
+  // the call's last real outcome; the next rejection replaces the operation error.
   const GpuSoftwareReport &submit();
   // Nanoseconds must be positive and below UINT64_MAX. Timeout preserves all
   // in-flight resources and permits another explicit wait, never resubmission.
