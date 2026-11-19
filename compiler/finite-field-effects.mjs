@@ -2,6 +2,8 @@
 // Physical field writes over the existing owned callable graph. Preserving an
 // existing field needs absence of a write to that FieldId, never noalias or a
 // caller's value as a universal constructor-entry fact.
+import {callComponentsInDependencyOrder} from './array-call-graph.mjs';
+
 export function finiteFieldWriteVersion(path,value,sourcePath,target) {
   return {id:path+'/field-version/'+target.actualType+'/'+target.fieldId,node:path+'/value',
     actualType:target.actualType,field:target.fieldId,origin:{source:sourcePath,...value.range}};
@@ -22,7 +24,7 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
   const fields=new Map((plan.carrierFields??plan.fields).map(row=>{charge();return [row.id,row];})),
     calls=new Map(plan.calls.map(row=>{charge();return [row.id,row];})),types=new Map(hir.types.map(row=>{charge();return [row.id,row];})),
     constructors=new Map(),effects=new Map(),
-    sites=new Map(),cyclicFunctions=new Set(),recursive=new Set();
+    sites=new Map(),cyclicFunctions=new Set();
   const terminal=new WeakMap();
   const endsBody=body=>body?.some(row=>{charge();return endsStatement(row);})??false;
   function endsStatement(statement) {
@@ -92,25 +94,48 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
       }
     }
   }
-  for(const [id,effect]of effects) {
-    const work=[],seen=new Set();for(const target of effect.callees){charge();work.push(target);}
-    for(let cursor=0;cursor<work.length;++cursor) {
-      charge();const target=work[cursor];if(target===id){recursive.add(id);effect.unknown=true;break;}
-      if(seen.has(target))continue;seen.add(target);
-      for(const child of effects.get(target)?.callees??[]){charge();work.push(child);}
+  const recursive=summarizeFieldCalls(effects,charge);
+  return {effects,sites,recursive,cyclicFunctions};
+}
+
+function summarizeFieldCalls(effects,charge) {
+  const targets=new Map(),recursive=new Set();
+  for(const [id,effect] of effects) {
+    charge();
+    const known=new Set();
+    for(const target of effect.callees) {
+      charge();
+      if(effects.has(target))known.add(target);
+      else {effect.writes=true;effect.unknown=true;}
     }
+    targets.set(id,known);
   }
-  let changed;
-  do {
-    changed=false;
-    for(const effect of effects.values())for(const id of effect.callees) {
-      charge();const child=effects.get(id),unknown=!child||child.unknown;
-      if(unknown&&!effect.unknown){effect.unknown=true;changed=true;}
-      if((!child||child.writes)&&!effect.writes){effect.writes=true;changed=true;}
-      for(const field of child?.fields??[]) {
-        charge();if(!effect.fields.has(field)){effect.fields.add(field);changed=true;}
+  for(const {members,cyclic} of callComponentsInDependencyOrder(targets,charge)) {
+    charge();
+    const ownMembers=new Set(members),fields=new Set();
+    let writes=false,unknown=cyclic;
+    const merge=effect=>{
+      charge();
+      writes||=effect.writes;
+      unknown||=effect.unknown;
+      for(const field of effect.fields){charge();fields.add(field);}
+    };
+    for(const id of members) {
+      charge();
+      if(cyclic)recursive.add(id);
+      merge(effects.get(id));
+      for(const target of targets.get(id)) {
+        charge();
+        if(!ownMembers.has(target))merge(effects.get(target));
       }
     }
-  }while(changed);
-  return {effects,sites,recursive,cyclicFunctions};
+    for(const id of members) {
+      charge();
+      const effect=effects.get(id);
+      effect.writes=writes;
+      effect.unknown=unknown;
+      for(const field of fields){charge();effect.fields.add(field);}
+    }
+  }
+  return recursive;
 }

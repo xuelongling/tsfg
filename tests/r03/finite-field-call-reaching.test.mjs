@@ -7,6 +7,7 @@ import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {copyFieldReachingState,copyFieldReachingAliases} from '../../compiler/finite-field-reaching.mjs';
+import {finiteFieldEffects} from '../../compiler/finite-field-effects.mjs';
 import capture from './testdata/typed-array-entry/field-call.json' with {type:'json'};
 
 test('actual read-before-call capture stays SSA while a later read follows the real field-writing callee',async()=>{
@@ -51,4 +52,35 @@ test('production Field snapshots charge versions and alias bindings before publi
   assert.deepEqual([...aliases],[['a','one'],['b','two']]);
   count=0;assert.throws(()=>copyFieldReachingState(state,()=>{if(++count===2)throw cancelled;}),error=>error===cancelled);
   const copy=copyFieldReachingState(state,()=>{});copy.get('location').clear();assert.equal(state.get('location').size,2);
+});
+
+test('Field call summaries share long-chain and recursive dependencies',t=>{
+  const call=target=>({kind:'call',target});
+  const store={kind:'fieldAssignment',range:{start:0,end:1}};
+  const chainLength=64;
+  /** @type {{id:string,body:(ReturnType<typeof call>|typeof store)[]}[]} */
+  const rows=Array.from({length:chainLength},(_,i)=>({
+    id:'chain-'+i,body:[call(i+1===chainLength?'loop-a':'chain-'+(i+1))],
+  }));
+  rows.push({id:'loop-a',body:[store,call('loop-b')]},{id:'loop-b',body:[store,call('loop-a')]},
+    {id:'self',body:[call('self')]},{id:'external',body:[call('missing')]},
+    {id:'external-caller',body:[call('external')]},{id:'pure',body:[]});
+  const fields=[['loop-a','left'],['loop-b','right']].map(([fn,fieldId])=>({
+    id:fn+'/body/0',targets:[{actualType:'box',fieldId}],
+  }));
+  let work=0;
+  const {effects,recursive}=finiteFieldEffects({types:[],intrinsics:{readSpan:{id:'read-span'}}},
+    {fields,calls:[]},rows,new Map(),()=>{work++;},new Map(),false);
+  assert.deepEqual([...recursive].sort(),['loop-a','loop-b','self']);
+  for(const {id} of rows.slice(0,chainLength+2)) {
+    const effect=effects.get(id);
+    assert.equal(effect.writes,true,id);
+    assert.equal(effect.unknown,true,id);
+    assert.deepEqual([...effect.fields].sort(),['left','right'],id);
+  }
+  assert.deepEqual([effects.get('self').writes,effects.get('self').unknown],[false,true]);
+  assert.deepEqual([effects.get('external-caller').writes,effects.get('external-caller').unknown],[true,true]);
+  assert.deepEqual([effects.get('pure').writes,effects.get('pure').unknown],[false,false]);
+  assert.ok(work<=32*rows.length,`field call summary visits used ${work} work units`);
+  t.diagnostic(`${work} work units for ${rows.length} callables`);
 });
