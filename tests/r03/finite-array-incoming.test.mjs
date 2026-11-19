@@ -6,11 +6,12 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
 import {sha256,scalarName} from '../../compiler/identity.mjs';
 const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-entry/49e8a3038cfca9e6b979e6c759b77cf054183509b682fd04be86d5f0a454e3c1-expected.json',import.meta.url),'utf8'));
 const actualPacket=new URL('./testdata/typed-array-entry/49e8a3038cfca9e6b979e6c759b77cf054183509b682fd04be86d5f0a454e3c1-package.json',import.meta.url);
 
-test('internal Array read meets every real caller entry without using capacity as memory',async()=>{
+test('internal Array read meets every real caller entry without using capacity as memory',async t=>{
   const bytes=await readFile(actualPacket),facts=readTypedArrayFacts(bytes);
   assert.equal(bytes.length,11225);assert.equal(sha256(bytes).slice(7),'7ae483041419ff870213e415a30eb1458bcd7d8f048992a22ce8e73078fab685');
   assert.equal(facts.payload.files.find(row=>row.path==='/src/main.ts').content,expected.source.text);
@@ -53,4 +54,17 @@ test('internal Array read meets every real caller entry without using capacity a
   assert.equal(published,undefined);
   assert.throws(()=>{published=buildFiniteCoreDomains(hir,context,{work:charges-1});},/work limit/);
   assert.equal(published,undefined);
+
+  // Measure the Array analysis with the same checked calls and unrelated declarations.
+  const measure=functions=>{
+    let work=0;
+    const {reaching}=buildFiniteArrayReaching({...hir,functions},plan,()=>{work++;},()=>false);
+    return {work,reaching};
+  };
+  const unrelated=Array.from({length:64},(_,index)=>({...fn,id:'unrelated/'+index,parameters:[],body:[]}));
+  const small=measure(hir.functions),large=measure([...hir.functions,...unrelated]);
+  const extraWork=large.work-small.work;
+  assert.deepEqual(large.reaching,small.reaching);
+  t.diagnostic('64 unrelated functions add '+extraWork+' work units');
+  assert.ok(extraWork<500,'unrelated functions should not scan the caller contexts');
 });

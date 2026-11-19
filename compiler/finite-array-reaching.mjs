@@ -49,7 +49,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
     effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set(),localSlots:!fn.ownerType}])),
-    writes=new Map(),reads=new Map(),contexts=new Map(),
+    writes=new Map(),reads=new Map(),contextsByTarget=new Map(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
   let contextWrites=new Map(),terminalReads=null;
@@ -69,7 +69,11 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       if(value.kind==='while'||value.kind==='construct'||value.kind==='superConstruct'||
         value.kind==='call'&&value.target!==hir.intrinsics.readSpan.id)effect.localSlots=false;
       if(value.kind==='call')for(const id of value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target]) {
-        if(id!==hir.intrinsics.readSpan.id){effect.callees.add(id);contexts.set(path+'\0'+id,{target:id,possible:true,state:new Map(),constants:new Map(),truths:new Map()});}
+        if(id===hir.intrinsics.readSpan.id)continue;
+        effect.callees.add(id);
+        let sites=contextsByTarget.get(id);
+        if(!sites)contextsByTarget.set(id,sites=new Map());
+        sites.set(path+'\0'+id,{possible:true,state:new Map(),constants:new Map(),truths:new Map()});
       }
       if(value.kind==='construct'||value.kind==='superConstruct')effect.writes=true;
       for(const [key,child] of Object.entries(value))if(child&&typeof child==='object')stack.push({value:child,path:path+'/'+key});
@@ -291,7 +295,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
             }
             incoming.set(id+'/parameter/'+parameter.id,{length:memory.length,slots});
           }
-          contextWrites.set(path+'\0'+id,{target:id,possible:true,state:incoming,constants,truths});
+          contextWrites.set(path+'\0'+id,{possible:true,state:incoming,constants,truths});
         }
         if(!targets.length||unknown){complete=false;invalidate(state);}
         // Even a read-only recursive target needs a real normal continuation;
@@ -415,7 +419,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
   const canonicalReads=new Map();for(const [id,row] of reads){charge();canonicalReads.set(id,{...row,status:'pending',versions:[],sources:[]});}
   const exported=new Set(hir.exports.map(row=>row.functionId));
   function ledger() {
-    const snapshot=[];for(const [site,row] of contexts) {
+    const snapshot=[];for(const [target,sites] of contextsByTarget)for(const [site,row] of sites) {
       charge();const state=[];for(const [owner,memory] of row.state) {
         charge();const slots=[];for(const [key,versions] of memory.slots) {
           charge();const values=[];for(const version of versions){charge();values.push(version);}values.sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});slots.push([key,values]);
@@ -423,7 +427,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       }state.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
       const constants=[];for(const pair of row.constants){charge();constants.push(pair);}constants.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
       const truths=[];for(const pair of row.truths??[]){charge();truths.push(pair);}truths.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
-      snapshot.push([site,row.target,row.possible,state,constants,truths]);
+      snapshot.push([site,target,row.possible,state,constants,truths]);
     }return canonical(snapshot);
   }
   let before;
@@ -431,12 +435,15 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
     charge();before=ledger();reads.clear();contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of functions) {
-      const incoming=[];for(const row of contexts.values()){charge();if(row.target===fn.id&&row.possible)incoming.push(row);}
+      const incoming=[];
+      for(const row of contextsByTarget.get(fn.id)?.values()??[]){charge();if(row.possible)incoming.push(row);}
       if(exported.has(fn.id)||fn.ownerType||!incoming.length)incoming.push({state:new Map(),constants:new Map()});
       let state;for(const row of incoming){charge();state=state?join(state,row.state):clone(row.state);}
       analyze(fn,state,parameters(fn,incoming),true);
     }
-    for(const [site,row] of contexts){charge();contexts.set(site,contextWrites.get(site)??{target:row.target,possible:false,state:new Map(),constants:new Map(),truths:new Map()});}
+    for(const sites of contextsByTarget.values())for(const site of sites.keys()){
+      charge();sites.set(site,contextWrites.get(site)??{possible:false,state:new Map(),constants:new Map(),truths:new Map()});
+    }
   }while(before!==ledger());
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
