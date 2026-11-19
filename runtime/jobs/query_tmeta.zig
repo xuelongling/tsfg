@@ -187,7 +187,30 @@ pub const Document = struct {
         const columns = try own.alloc(Plan.ColumnBinding, entry.columns.len);
         for (entry.columns, columns) |column, *binding| binding.* = .{ .component = try own.dupe(u8, column.componentType), .stride = column.stride, .access = column.access };
         // Transfer the final allocator state after all owned allocations, including new arena blocks.
-        var result: Plan = .{ .arena = undefined, .batch = batch, .rows = rows, .columns = columns, .tuples = tuples, .scalars = try own.dupe(ScalarValue, scalars), .entry_symbol = try own.dupe(u8, entry.entrySymbol), .logical_function_id = try own.dupe(u8, entry.logicalFunctionId), .source_function_id = try own.dupe(u8, entry.sourceFunctionId), .signature_hash = try own.dupe(u8, entry.signatureHash), .entry_index = entry_index, .loop = entry.loop, .source = .{ .path = try own.dupe(u8, entry.source.path), .start = entry.source.start, .end = entry.source.end }, .query_binding = try own.dupe(u8, entry.queryBinding), .metadata_hash = try own.dupe(u8, self.payload_hash), .input_identity = try own.dupe(u8, self.payload.inputIdentity), .package_id = try own.dupe(u8, self.payload.packageId), .effects = try own.dupe(u8, self.payload.effects), .effects_hash = try own.dupe(u8, self.payload.effectsHash), .loop_effects = loop_effects };
+        var result: Plan = .{
+            .arena = undefined,
+            .batch = batch,
+            .rows = rows,
+            .columns = columns,
+            .tuples = tuples,
+            .scalars = try own.dupe(ScalarValue, scalars),
+            .entry_symbol = try own.dupe(u8, entry.entrySymbol),
+            .logical_function_id = try own.dupe(u8, entry.logicalFunctionId),
+            .source_function_id = try own.dupe(u8, entry.sourceFunctionId),
+            .signature_hash = try own.dupe(u8, entry.signatureHash),
+            .entry_index = entry_index,
+            .loop = entry.loop,
+            .source = .{ .path = try own.dupe(u8, entry.source.path), .start = entry.source.start, .end = entry.source.end },
+            .query_binding = try own.dupe(u8, entry.queryBinding),
+            .metadata_hash = try own.dupe(u8, self.payload_hash),
+            .batch_hash = try own.dupe(u8, self.payload.batchHash),
+            .abi_type = try own.dupe(u8, entry.abiType),
+            .input_identity = try own.dupe(u8, self.payload.inputIdentity),
+            .package_id = try own.dupe(u8, self.payload.packageId),
+            .effects = try own.dupe(u8, self.payload.effects),
+            .effects_hash = try own.dupe(u8, self.payload.effectsHash),
+            .loop_effects = loop_effects,
+        };
         result.arena = arena;
         return result;
     }
@@ -200,6 +223,14 @@ pub const Plan = struct {
     const TupleBinding = struct { column: usize, access: storage.Access };
     const ColumnBinding = struct { component: []const u8, stride: usize, access: storage.Access };
     pub const Argument = union(enum) { row_count: usize, column: ColumnBinding, stride: usize, scalar: ScalarValue };
+    pub const CodeIdentity = struct {
+        metadata_hash: []const u8,
+        batch_hash: []const u8,
+        entry_symbol: []const u8,
+        logical_function_id: []const u8,
+        signature_hash: []const u8,
+        abi_type: []const u8,
+    };
     arena: std.heap.ArenaAllocator,
     batch: storage.Store.Batch,
     rows: usize,
@@ -215,6 +246,8 @@ pub const Plan = struct {
     source: Source,
     query_binding: []const u8,
     metadata_hash: []const u8,
+    batch_hash: []const u8,
+    abi_type: []const u8,
     input_identity: []const u8,
     package_id: []const u8,
     effects: []const u8,
@@ -224,6 +257,13 @@ pub const Plan = struct {
     pub fn deinit(self: *Plan) void {
         self.arena.deinit();
         self.* = undefined;
+    }
+    /// Compare checked entry and batch identities supplied by a code owner.
+    /// The code owner's executable lease and the Store borrow remain separate.
+    pub fn verifyCodeIdentity(self: *const Plan, candidate: CodeIdentity) Error!void {
+        inline for (std.meta.fields(CodeIdentity)) |field| {
+            if (!std.mem.eql(u8, @field(self, field.name), @field(candidate, field.name))) return error.IdentityMismatch;
+        }
     }
     pub fn argument(self: *const Plan, index: usize) !Argument {
         _ = try self.batch.rowCount();

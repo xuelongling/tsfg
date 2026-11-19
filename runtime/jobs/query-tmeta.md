@@ -8,7 +8,9 @@ Query component layouts retain the existing layout envelope. Their `hirDigest` b
 
 `Document.bind(allocator, store, batch, entry_index, scalars)` checks the actual Store owner, layout identity, live session, row count, complete unique column selection, strides, alignment, access and buffer lengths. It creates an owned plan of row-count, column, stride and f32 scalar arguments. Repeated tuple occurrences select the same original column; a read occurrence returns a const slice even when a write occurrence shares that backing. Component data is never copied.
 
-The plan owns its metadata and scalar values, so the document can be released after binding. The Store must outlive the plan and its Query/Batch, as required by the existing Store owner contract. Releasing either Query or Batch invalidates the complete session; subsequent plan access uses the existing token check and fails. Tokens do not recover when another session is opened within that Store lifetime. Calling a plan after destroying its Store violates the owner lifetime contract.
+The plan owns its metadata and scalar values, so the document can be released after binding. The Store must outlive the plan and its Query/Batch, as required by the existing Store owner contract. Releasing either Query or Batch invalidates the complete session. Later argument and column access fails the existing token check. Tokens do not recover when another session is opened within that Store lifetime. Calling a plan after destroying its Store violates the owner lifetime contract.
+
+`Plan.verifyCodeIdentity` compares a code owner's metadata and batch digests, selected entry symbol, logical function and signature identities, and exact argument ABI with the values retained by the plan. The check remains available after the document is released. The code owner supplies the independent identities and its executable lease.
 
 Plans contain no executable address. They do not access FunctionCell, a loader, State, Guest or a scheduler, and do not claim CPU execution or entry publication. The entry symbol and logical function/signature identities remain in the explicit development candidate domain.
 

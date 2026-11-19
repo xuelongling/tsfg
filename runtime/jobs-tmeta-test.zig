@@ -454,6 +454,18 @@ test "actual second Query loop keeps typed effects after Document release" {
     try std.testing.expectEqualDeep(T.Source{ .path = "/src/main.ts", .start = 333, .end = 396 }, expected.source);
     const canonical_loop = try std.json.Stringify.valueAlloc(A, expected, .{});
     defer A.free(canonical_loop);
+    const logical_function_id = try A.dupe(u8, entry.logicalFunctionId);
+    defer A.free(logical_function_id);
+    const signature_hash = try A.dupe(u8, entry.signatureHash);
+    defer A.free(signature_hash);
+    const code_identity: T.Plan.CodeIdentity = .{
+        .metadata_hash = receipt.value.payloadHash,
+        .batch_hash = "sha256:2b1b6c5b3772283c7311e3ec48296b23a4c56fe4546c28652958d58485ffb6d1",
+        .entry_symbol = "batch_63f739f624e4c62125bfac010a40bdd62add8bc09ce0149b365d26c0551e1ecd_1",
+        .logical_function_id = logical_function_id,
+        .signature_hash = signature_hash,
+        .abi_type = "(index, memref<?xi8>, index, f32) -> ()",
+    };
 
     var store = try jobs.Store.init(A, &document.component_layout, 2);
     defer store.deinit() catch unreachable;
@@ -468,6 +480,17 @@ test "actual second Query loop keeps typed effects after Document release" {
     try std.testing.expect(plan.loop_effects.source.path.ptr != expected.source.path.ptr);
     document.deinit();
     document_live = false;
+
+    try plan.verifyCodeIdentity(code_identity);
+    var wrong_code = code_identity;
+    wrong_code.batch_hash = unused_expected.payloadHash;
+    try std.testing.expectError(error.IdentityMismatch, plan.verifyCodeIdentity(wrong_code));
+    wrong_code = code_identity;
+    wrong_code.abi_type = "(index, memref<?xi8>, index, f64) -> ()";
+    try std.testing.expectError(error.IdentityMismatch, plan.verifyCodeIdentity(wrong_code));
+    wrong_code = code_identity;
+    wrong_code.entry_symbol = "batch_63f739f624e4c62125bfac010a40bdd62add8bc09ce0149b365d26c0551e1ecd_0";
+    try std.testing.expectError(error.IdentityMismatch, plan.verifyCodeIdentity(wrong_code));
 
     try std.testing.expectEqual(@as(usize, 1), (try plan.argument(0)).row_count);
     _ = try plan.readTuple(0);
