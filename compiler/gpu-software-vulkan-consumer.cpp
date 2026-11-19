@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include "gpu-software-vulkan-consumer.h"
+#include "core-ir/dialect.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/Parser/Parser.h"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -325,6 +330,42 @@ GpuSoftwareHostAdmission prepareGpuSoftwareHostRequest(
   if(auto *failure=std::get_if<GpuHostFailure>(&checked))
     return std::move(*failure);
   return GpuSoftwareVulkanCall::prepare(std::get<GpuHostProof>(checked),paths,deviceGeneration,submissionId);
+}
+std::optional<GpuPendingCall> readGpuSoftwareSourceCall(llvm::StringRef core,
+    llvm::StringRef request,llvm::StringRef artifact,Error &error) {
+  constexpr size_t coreByteLimit=8388608;
+  if(core.size()>coreByteLimit){
+    reject(error,"core-ir-common-gpu-budget","GPU Core input exceeds the byte budget");
+    return std::nullopt;
+  }
+  if(core.empty()||core.contains('\0')||!llvm::json::isUTF8(core)){
+    reject(error,"core-ir-common-gpu-core-format","GPU Core input requires nonempty UTF-8 text");
+    return std::nullopt;
+  }
+  if(!request.ends_with("\n")){
+    reject(error,"core-ir-common-gpu-canonical","GPU request requires canonical JSON plus one LF");
+    return std::nullopt;
+  }
+  mlir::DialectRegistry registry;
+  tsfg::registerCoreDialect(registry);
+  registerDialect(registry);
+  registry.insert<mlir::func::FuncDialect,mlir::cf::ControlFlowDialect,mlir::spirv::SPIRVDialect>();
+  mlir::MLIRContext context(registry);
+  context.disableMultithreading();
+  auto module=mlir::parseSourceString<mlir::ModuleOp>(core,&context);
+  if(!module){
+    reject(error,"core-ir-common-gpu-core","complete Common Core parse or verification failed");
+    return std::nullopt;
+  }
+  Program program;
+  Json requestJson=nullptr,plan=nullptr;
+  std::optional<GpuPendingCall> pending;
+  if(!readCore(*module,program,error)||
+     !readJson(request.drop_back(),requestJson,program,error)||
+     !createGpuBindingPlan(program,requestJson,plan,error)||
+     !readGpuBindingModule(artifact,program,plan,"single-source-call-v1",context,pending,error))
+    return std::nullopt;
+  return pending;
 }
 GpuSoftwareHostAdmission prepareGpuSoftwareSourceRequest(
     const GpuPendingCall &pending,const GpuCallIdentity &identity,

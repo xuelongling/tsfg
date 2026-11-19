@@ -106,6 +106,11 @@ private:
 // A preflight failure returns its original Source diagnostic and post-budget.
 // A prepared call retains both the proof and the device submission report.
 using GpuSoftwareHostAdmission=std::variant<GpuSoftwareVulkanCall,GpuHostFailure>;
+// Admit persisted single-source-call-v1 compiler data for the external Host.
+// The owning result keeps the rebuilt identities, bindings, and shader.
+// No Source state, Host budget, or device execution is admitted here.
+std::optional<GpuPendingCall> readGpuSoftwareSourceCall(llvm::StringRef core,
+    llvm::StringRef request,llvm::StringRef artifact,Error &);
 GpuSoftwareHostAdmission prepareGpuSoftwareHostRequest(
     const GpuPendingCall &,const GpuHostInputs &,GpuHostBudget,const GpuSoftwarePaths &,
     uint64_t deviceGeneration,uint64_t submissionId);

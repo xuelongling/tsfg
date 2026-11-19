@@ -86,7 +86,11 @@ Request, plan and input envelope v1 are rejected directly. This unpublished,
 same-product development format is atomically replaced, with no compatibility
 reader. Existing Common/Graph/wire identities and input membership are unchanged.
 
-This interface emits no shader or SPIR-V. It does not infer GPU ABI from CPU
-DataLayout, adopt Vulkan tools, invoke an API/device or define numeric, dispatch,
-synchronization, failure or recovery behavior. Software-device execution and
-the rest of task 39 remain unverified.
+The plan command produces logical binding metadata for a later GPU module.
+
+The external software Vulkan Host can reopen a persisted module with
+`readGpuSoftwareSourceCall`. It takes complete Common Core text, the original
+canonical GPU request, and its canonical `single-source-call-v1` module.
+The reader rebuilds the binding plan and checks the saved module against it.
+The returned call owns the verified shader and bindings. The initialized
+Source instance supplies its values and remaining budget at request time.
