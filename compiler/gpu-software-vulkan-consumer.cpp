@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "gpu-software-vulkan-consumer.h"
+#include "llvm/ADT/SmallVector.h"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -298,7 +299,9 @@ GpuSoftwareHostAdmission GpuSoftwareVulkanCall::prepareSourceInstance(
   if(arguments.size()!=pending.argumentBindings().size())return rejected("core-ir-common-gpu-host-arguments");
 
   std::vector<GpuHostGlobalValue> globals;
+  llvm::SmallVector<const GpuDescriptor *,4> outputs;
   for(const auto &descriptor:pending.descriptors()){
+    if(descriptor.access!=GpuResourceAccess::Read)outputs.push_back(&descriptor);
     if(descriptor.kind!=GpuResourceKind::Global||descriptor.access==GpuResourceAccess::Write)continue;
     auto value=lease->readGlobal(descriptor.id);
     if(!value)return rejected("core-ir-common-gpu-host-globals");
@@ -306,6 +309,7 @@ GpuSoftwareHostAdmission GpuSoftwareVulkanCall::prepareSourceInstance(
   }
   auto checked=preflightGpuSourceCall(pending,lease->identity(),arguments,globals,budget);
   if(auto *failure=std::get_if<GpuHostFailure>(&checked))return std::move(*failure);
+  if(!outputs.empty()&&!lease->reserveOutputs(outputs))return rejected("core-ir-common-gpu-host-outputs");
   auto impl=std::make_unique<Impl>(std::get<GpuHostProof>(checked),deviceGeneration,submissionId);
   if(impl->prepare(paths))impl->sourceLease=std::move(lease);
   return GpuSoftwareVulkanCall(std::move(impl));

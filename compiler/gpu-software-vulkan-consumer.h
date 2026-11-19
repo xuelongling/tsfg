@@ -22,6 +22,10 @@ public:
   virtual ~GpuSoftwareSourceLease()=default;
   virtual const GpuCallIdentity &identity() const noexcept=0;
   virtual std::optional<GpuHostValue> readGlobal(llvm::StringRef globalId) const=0;
+  // Resolve every writable destination together, including the return cell.
+  // They must be distinct and remain writable until the lease is released.
+  // The descriptor views are borrowed for this call only.
+  virtual bool reserveOutputs(llvm::ArrayRef<const GpuDescriptor *> outputs) noexcept=0;
   // Publish together to this instance, including its return cell. False leaves
   // every destination unchanged. The borrowed output rows expire on return.
   // The caller retains its call handle through the callback.
