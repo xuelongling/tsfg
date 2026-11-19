@@ -21,6 +21,29 @@ export function copyArrayReachingState(state,charge) {
   }return result;
 }
 
+export function propagateArrayWrites(effects,charge) {
+  const callers=new Map(),pending=[];
+  for(const [id,effect] of effects) {
+    charge();
+    if(!effect.writes)for(const callee of effect.callees) {
+      charge();
+      if(!effects.has(callee)){effect.writes=true;break;}
+      if(!callers.has(callee))callers.set(callee,[]);
+      callers.get(callee).push(id);
+    }
+    if(effect.writes)pending.push(id);
+  }
+  // Each write-capable function publishes to its callers once, including cycles.
+  for(let index=0;index<pending.length;index++) {
+    charge();
+    for(const caller of callers.get(pending[index])??[]) {
+      charge();const effect=effects.get(caller);
+      if(effect.writes)continue;
+      effect.writes=true;pending.push(caller);
+    }
+  }
+}
+
 export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
   const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
@@ -52,10 +75,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       for(const [key,child] of Object.entries(value))if(child&&typeof child==='object')stack.push({value:child,path:path+'/'+key});
     }
   }
-  let changed=true;
-  while(changed) {changed=false;for(const row of effects.values())if(!row.writes)for(const id of row.callees) {
-    charge();if(!effects.has(id)||effects.get(id).writes){row.writes=true;changed=true;break;}
-  }}
+  propagateArrayWrites(effects,charge);
   const clone=state=>copyArrayReachingState(state,charge);
   const transfers=createArrayCallContexts(charge,clone,(fn,state,bindings)=>analyze(fn,state,bindings,true,false));
   function copyBindings(bindings) {

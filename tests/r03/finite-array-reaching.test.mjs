@@ -10,7 +10,7 @@ import {scalarTypeIds,sha256,canonical} from '../../compiler/identity.mjs';
 import descriptor from '../../contracts/finite-core-development.json' with {type:'json'};
 import {writeTypedArrayBacking} from '../../compiler/typed-array-backing.mjs';
 import {writeTypedFieldBacking} from '../../compiler/typed-field-backing.mjs';
-import {copyArrayReachingState} from '../../compiler/finite-array-reaching.mjs';
+import {copyArrayReachingState,propagateArrayWrites} from '../../compiler/finite-array-reaching.mjs';
 for(const [source,local,expected,hash] of [
   ['02cb93fb62134ecce20dbe13233dcee5f170e2bd2f756831009dc34709a1f618','before',scalarTypeIds.i32,'be6d9d8c'],
   ['87d0326f6f0e3e1eb887a77b7eb207a938c3ca173f094f8cdb21f1820284a4ad','copied',sha256('tsfg.type\0undefined'),'042eee48'],
@@ -54,6 +54,21 @@ test('production state copy charges each bounded slot/version before publishing 
   used=0;assert.throws(()=>copyArrayReachingState(original,()=>{if(++used===2)throw cancelled;}),error=>error===cancelled);
   const copied=copyArrayReachingState(original,()=>{});copied.get('owner').slots.get('c:0').clear();
   assert.equal(original.get('owner').slots.get('c:0').size,2,'successful copies retain independent version sets');
+});
+
+test('Array write effects cross a long call chain once and leave pure recursion read-only',()=>{
+  // This is the finite effect graph consumed by the pass, independent of Source execution.
+  const effects=new Map(),chainLength=64;
+  const add=(id,callees,writes=false)=>effects.set(id,{callees:new Set(callees),writes});
+  for(let index=0;index<chainLength-1;index++)add('chain-'+index,['chain-'+(index+1)]);
+  add('chain-'+(chainLength-1),[],true);
+  add('loop-a',['loop-b']);add('loop-b',['loop-a','chain-0']);
+  add('unknown-caller',['external']);add('through-unknown',['unknown-caller']);
+  add('pure-a',['pure-b']);add('pure-b',['pure-a']);
+  let work=0;
+  propagateArrayWrites(effects,()=>{work++;});
+  for(const [id,effect] of effects)assert.equal(effect.writes,!id.startsWith('pure-'),id);
+  assert.ok(work<=4*effects.size,'only rows and reverse edges should consume work');
 });
 
 test('actual Array initialized from an ordered read keeps a wider physical carrier without inventing actual elements',async()=>{
