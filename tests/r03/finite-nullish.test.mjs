@@ -7,7 +7,8 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
-import {sha256,scalarName} from '../../compiler/identity.mjs';
+import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
+import {sha256,scalarName,scalarTypeIds} from '../../compiler/identity.mjs';
 import {finitePresence} from '../../compiler/finite-presence.mjs';
 const expected=JSON.parse(await readFile('E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/finite-nullish-expected.json','utf8'));
 async function actual(row) {
@@ -50,6 +51,31 @@ for(const row of expected.cases) {
     assert.match(body,row.memory==='array'?/"tsfg_core.domain.array_read"/:/"tsfg_core.domain.field_read"/);
   });
 }
+
+test('literal Boolean short circuit keeps lexical field writes and selects the reached version',async()=>{
+  const {hir,context}=await actual(expected.cases.find(row=>row.memory==='field'));
+  const plan=buildFiniteCoreDomains(hir,context).definition,run=hir.functions.find(fn=>fn.name==='run');
+  const [initial,conditional,returned]=run.body,original=conditional.expression;
+  assert.equal(original.operator,'??');assert.equal(initial.expression.kind,'fieldAssignment');
+  const rhsPath=run.id+'/body/1/expression/right',rhsOperand=rhsPath+'/left';
+  const rhsWrite=plan.fieldReaching.writes.find(row=>row.node.startsWith(rhsPath));
+  assert.ok(rhsWrite);
+  const first=run.id+'/body/0/expression/value',second=rhsOperand+rhsWrite.node.slice(rhsPath.length);
+  const moveFields=rows=>rows.map(row=>row.id.startsWith(rhsPath+'/')?{...row,id:rhsOperand+row.id.slice(rhsPath.length)}:row);
+  const modelPlan={...plan,fields:moveFields(plan.fields),carrierFields:moveFields(plan.carrierFields)};
+  // Component analysis of checked field operations under a literal Boolean guard.
+  for(const [operator,literal,takesRhs] of [['&&',false,false],['||',true,false],['&&',true,true],['||',false,true]]){
+    const left={kind:'boolean',value:literal,type:scalarTypeIds.bool,range:original.left.range};
+    const right={kind:'binary',operator:'===',left:original.right,right:initial.expression.value,type:scalarTypeIds.bool,range:original.right.range};
+    const expression={...original,kind:'shortCircuit',operator,left,right,type:scalarTypeIds.bool};
+    const fn={...run,body:[initial,{...conditional,expression},returned]};
+    const model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
+    const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
+    assert.deepEqual(reaching.writes.filter(row=>row.id.startsWith(run.id+'/')).map(row=>row.node),[first,second]);
+    const read=reaching.reads.find(row=>row.node===run.id+'/body/2/value');
+    assert.deepEqual(read?.reaching.flatMap(row=>row.sources),[takesRhs?second:first]);
+  }
+});
 
 test('finite presence charges its proof snapshot and preserves missing/pending as two possible paths',()=>{
   // A bounded proof-state component, not a synthesized Source program.

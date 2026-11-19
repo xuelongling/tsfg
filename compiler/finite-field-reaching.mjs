@@ -7,7 +7,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
-import {finiteFieldEffects,finiteFieldWriteVersion} from './finite-field-effects.mjs';
+import {finiteFieldEffects,finiteFieldWriteVersion,literalBooleanRhs} from './finite-field-effects.mjs';
 
 // These are the production proof-state snapshots, not Source-value copies.
 function versionCopy(values,charge) {
@@ -45,9 +45,10 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   const storedTokens=new Map(),returnedFields=new Map();
   const projectedOutputs=new Map(),returnValueParameters=new Map(),returnGraphs=createFieldReturnGraphs(charge);
   const constructors=new Map();for(const fn of callables){charge();if(fn.role==='construction-body')constructors.set(fn.construction,fn);}
-  const lexicalWrites=terminalReads?new Map():null;
-  const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites);
-  for(const [site,target]of sites){charge();contexts.set(site,{target,fields:new Map()});}
+  const lexicalWrites=new Map();
+  const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,!!terminalReads);
+  if(!terminalReads)for(const [id,version]of lexicalWrites){charge();writes.set(id,version);}
+  for(const [site,row]of sites){charge();contexts.set(site,{...row,fields:new Map()});}
   const clone=state=>copyFieldReachingState(state,charge);
   function join(left,right) {
     if(!left)return right;if(!right)return left;
@@ -144,7 +145,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
     function completed(construction,token,state,actualTypes=receiverTypes,tokens=null,path=null) {
       const callee=constructors.get(construction),continuation=new Map();
       if(callee&&tokens){
-        contexts.set(path+'\0'+callee.id,{target:callee.id,fields:contextFields(callee,tokens,state)});
+        contexts.set(path+'\0'+callee.id,{target:callee.id,fields:contextFields(callee,tokens,state),mayExecute:true});
         for(const output of outputs.get(callee.id)??[]){charge();if(!output.parameter||!tokens[output.parameter])continue;
           const location=key(tokens[output.parameter],{actualType:output.actualType,fieldId:output.field});
           if(location)continuation.set(location,versionCopy(output.versions,charge));}
@@ -284,6 +285,8 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
         if(!possibilities.absent)return left;
         if(!possibilities.present)return child('right');
+        const rightReached=literalBooleanRhs(value);
+        if(rightReached!==null){if(rightReached)child('right');return null;}
         const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge),
           result=expression(value.right,path+'/right',right,rightEnv);
         const merged=join(state,right);state.clear();for(const pair of merged){charge();state.set(...pair);}
@@ -305,7 +308,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         for(const target of targets) {
           const callee=functions.get(target);if(!callee){returned.push(null);continuations.push(new Map());continue;}
           const fields=contextFields(callee,tokens,state);
-          contexts.set(path+'\0'+target,{target,fields});
+          contexts.set(path+'\0'+target,{target,fields,mayExecute:true});
           const returnedState=new Map();
           for(const row of returnedFields.get(target)??[]) {
             charge();returnedState.set(row.location,versionCopy(row.versions,charge));
@@ -422,7 +425,8 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       }
       return state;
     }
-    const incoming=[...contexts.values()].filter(row=>row.target===fn.id).map(row=>row.fields);
+    // Skipped sites stay in the lexical ABI inventory without entering the value meet.
+    const incoming=[...contexts.values()].filter(row=>row.mayExecute&&row.target===fn.id).map(row=>row.fields);
     if(exports.has(fn.id)||receiver||!incoming.length)incoming.push(new Map());
     const initial=incoming.reduce((left,right)=>join(left,right));
     if(receiver)for(const row of fresh){charge();initial.set(...row);}
@@ -469,9 +473,9 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   }
   }while(ledger()!==previous);
   const writeOrder=(a,b)=>a.id<b.id?-1:1;
-  const compareWrites=lexicalWrites?(a,b)=>{charge();return writeOrder(a,b);}:writeOrder;
+  const compareWrites=terminalReads?(a,b)=>{charge();return writeOrder(a,b);}:writeOrder;
   return own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),
-    writes:[...(lexicalWrites??writes).values()].sort(compareWrites),
+    writes:[...(terminalReads?lexicalWrites:writes).values()].sort(compareWrites),
     phaseWrites:[...phaseWrites.values()].sort((a,b)=>a.id<b.id?-1:1),
     allocationEntries:[...allocationEntries.values()].sort((a,b)=>a.id<b.id?-1:1),
     completions:[...completions].sort(([a],[b])=>a<b?-1:1).map(([construction,fields])=>({construction,fields})),

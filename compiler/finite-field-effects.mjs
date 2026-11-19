@@ -6,7 +6,13 @@ export function finiteFieldWriteVersion(path,value,sourcePath,target) {
   return {id:path+'/field-version/'+target.actualType+'/'+target.fieldId,node:path+'/value',
     actualType:target.actualType,field:target.fieldId,origin:{source:sourcePath,...value.range}};
 }
-export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites=null) {
+export function literalBooleanRhs(value) {
+  if((value.kind==='shortCircuit'||value.kind==='binary')&&
+      (value.operator==='&&'||value.operator==='||')&&value.left.kind==='boolean')
+    return value.left.value===(value.operator==='&&');
+  return null;
+}
+export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepAllWrites) {
   const fields=new Map((plan.carrierFields??plan.fields).map(row=>{charge();return [row.id,row];})),
     calls=new Map(plan.calls.map(row=>{charge();return [row.id,row];})),types=new Map(hir.types.map(row=>{charge();return [row.id,row];})),
     constructors=new Map(),effects=new Map(),
@@ -16,17 +22,17 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
     if(fn.role==='construction-body')constructors.set(fn.construction,fn.id);
   }
   for(const fn of callables) {
-    const effect=effects.get(fn.id),stack=[{value:fn.body,path:fn.id+'/body'}];
+    const effect=effects.get(fn.id),stack=[{value:fn.body,path:fn.id+'/body',mayExecute:true}];
     const target=id=>{charge();if(id)effect.callees.add(id);if(!effects.has(id))effect.unknown=true;};
     while(stack.length) {
-      charge();const {value,path}=stack.pop();if(!value||typeof value!=='object')continue;
+      charge();const {value,path,mayExecute}=stack.pop();if(!value||typeof value!=='object')continue;
       if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
         effect.writes=true;const selected=fields.get(path);
         if(!selected?.targets.length)effect.unknown=true;
         for(const row of selected?.targets??[]) {
           charge();if(row.fieldId){
             effect.fields.add(row.fieldId);
-            if(lexicalWrites&&value.kind==='fieldAssignment'){
+            if((keepAllWrites||!mayExecute)&&value.kind==='fieldAssignment'){
               charge();const version=finiteFieldWriteVersion(path,value,fn.sourcePath,row);
               lexicalWrites.set(version.id,version);
             }
@@ -38,7 +44,7 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
         if(!phase)effect.unknown=true;
         for(const event of phase?.events??[]){charge();effect.fields.add(event.output.field);}
         for(const init of owner?.construction?.initialization??[])if(init.value) {
-          charge();stack.push({value:init.value,path:'construction/'+value.construction+'/initialization/'+init.field});
+          charge();stack.push({value:init.value,path:'construction/'+value.construction+'/initialization/'+init.field,mayExecute});
         }
       }
       if(['construct','superConstruct','forwardBaseConstruction'].includes(value.kind)) {
@@ -48,10 +54,13 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
       if(value.kind==='call') {
         const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
         if(!targets.length)effect.unknown=true;
-        for(const id of targets)if(id!==hir.intrinsics.readSpan.id){target(id);sites.set(path+'\0'+id,id);}
+        for(const id of targets)if(id!==hir.intrinsics.readSpan.id){
+          target(id);sites.set(path+'\0'+id,{target:id,mayExecute});
+        }
       }
+      const skipRight=literalBooleanRhs(value)===false;
       for(const [key,child]of Object.entries(value))if(child&&typeof child==='object') {
-        charge();stack.push({value:child,path:path+'/'+key});
+        charge();stack.push({value:child,path:path+'/'+key,mayExecute:mayExecute&&!(key==='right'&&skipRight)});
       }
     }
   }

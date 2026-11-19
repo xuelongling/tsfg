@@ -6,14 +6,19 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
 import {scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 
-test('internal field read uses the actual caller-before write, not the official union flow',async()=>{
+async function callerEntry() {
   const bytes=await readFile(new URL('./testdata/typed-array-entry/4ba3371076ddd76ce6bec0c842ebff1881a826afcb81800a32914570eb4e9874-package.json',import.meta.url));
   assert.equal(bytes.length,9760);assert.equal(sha256(bytes),'sha256:f133f8c23e44e1ca3672069ab11c19d0277f9c3cabd1b4a156ae7b2f58836f05');
   const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,
     factsBytes:bytes,expectedPackageId:facts.packageId},built=buildHir(facts,context);assert.equal(built.status,'ok');
-  const hir=built.hir,read=hir.functions.find(fn=>fn.name==='read'),run=hir.functions.find(fn=>fn.name==='run');
+  return {hir:built.hir,context};
+}
+
+test('internal field read uses the actual caller-before write, not the official union flow',async()=>{
+  const {hir,context}=await callerEntry(),read=hir.functions.find(fn=>fn.name==='read'),run=hir.functions.find(fn=>fn.name==='run');
   assert.ok(read);assert.ok(run);
   const plan=buildFiniteCoreDomains(hir,context).definition,core=lowerFormalHir(hir,context),
     access=plan.fieldReaching.reads.find(row=>row.node.startsWith(read.id+'/')),
@@ -30,4 +35,26 @@ test('internal field read uses the actual caller-before write, not the official 
     field=callee.split('\n').find(line=>line.includes('"tsfg_core.domain.field_read"'));
   assert.ok(field);assert.ok(field.includes(write.id),'read version binds the real write in another callable');
   assert.equal(callee.split('\n').filter(line=>line.includes('"tsfg_core.domain.field_read"')).length,1);
+});
+
+test('a literally skipped caller stays in the inventory without erasing another caller’s field proof',async()=>{
+  const {hir,context}=await callerEntry(),read=hir.functions.find(fn=>fn.name==='read'),run=hir.functions.find(fn=>fn.name==='run');
+  const [store,returned]=run.body,call=returned.value,scalar=store.expression.value;
+  assert.equal(store.expression.kind,'fieldAssignment');assert.equal(call.kind,'call');
+  const plan=buildFiniteCoreDomains(hir,context).definition,prefix=run.id+'/body/',
+    site=prefix+'0/expression/right/left\0'+read.id,
+    write=prefix+'1/expression/value',shift=rows=>rows.map(row=>row.id.startsWith(prefix+'0/')?
+      {...row,id:prefix+'1'+row.id.slice(prefix.length+1)}:row),
+    modelPlan={...plan,fields:shift(plan.fields),carrierFields:shift(plan.carrierFields)};
+  const right={kind:'binary',operator:'===',left:call,right:scalar,type:scalarTypeIds.bool,range:call.range};
+  for(const takesRhs of [false,true]) {
+    const left={kind:'boolean',value:takesRhs,type:scalarTypeIds.bool,range:call.range};
+    const guard={kind:'shortCircuit',operator:'&&',left,right,type:scalarTypeIds.bool,range:call.range};
+    const fn={...run,body:[{...store,expression:guard},store,returned]};
+    const model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
+    const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
+    assert.deepEqual(reaching.callContexts.find(row=>row.site===site)?.fields,[]);
+    const access=reaching.reads.find(row=>row.node.startsWith(read.id+'/'));
+    assert.deepEqual(access?.reaching.flatMap(row=>row.sources),takesRhs?[]:[write]);
+  }
 });
