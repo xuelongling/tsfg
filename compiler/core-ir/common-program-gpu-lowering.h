@@ -2,6 +2,7 @@
 #pragma once
 #include "common-program.h"
 #include <optional>
+#include <tuple>
 #include <variant>
 
 namespace tsfg::commonProgram {
@@ -38,6 +39,13 @@ struct GpuDescriptor {
   GpuResourceKind kind;GpuResourceAccess access;GpuScalarType type;
   std::string id;std::optional<std::string> kernel;
   uint32_t set=0,binding=0;GpuSourceRange source;
+  bool operator==(const GpuDescriptor &other) const {
+    const auto fields=[](const GpuDescriptor &row) {
+      return std::tie(row.kind,row.access,row.type,row.id,row.kernel,row.set,row.binding,
+                      row.source.sourceId,row.source.range.start,row.source.range.end);
+    };
+    return fields(*this)==fields(other);
+  }
 };
 struct GpuBindingOrigin {uint32_t descriptorIndex=0;};
 struct GpuI32ConstantOrigin {uint32_t bits=0;std::string decimal;};

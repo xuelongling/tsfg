@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "core-ir/common-program-gpu-lowering.h"
+#include "llvm/ADT/ArrayRef.h"
 #include <memory>
 
 namespace tsfg::commonProgram {
@@ -11,6 +12,9 @@ struct GpuSoftwarePaths {std::wstring loaderAbsolute,icdAbsolute;};
 enum class GpuSoftwareState {Ready,Prepared,Submitted,Completed,FailedBeforeSubmit,Unfinished,DeviceLost};
 enum class GpuSoftwareFailure {None,Input,Capability,Vulkan,Windows};
 struct GpuSoftwareOutput {GpuDescriptor descriptor;uint32_t bits=0;};
+enum class GpuSoftwareWriteBack {
+  Committed, OutputsUnavailable, SubmissionMismatch, BindingMismatch, AlreadyCommitted
+};
 struct GpuSoftwareReport {
   GpuSoftwareState state=GpuSoftwareState::Ready;
   GpuSoftwareFailure failure=GpuSoftwareFailure::None;
@@ -45,6 +49,10 @@ public:
   const GpuSoftwareReport &report()const;
   const GpuHostProof &hostProof()const;
   const std::vector<GpuSoftwareOutput> &outputs()const;
+  // The Host owns the destination cells, in writable descriptor order, for
+  // the named submission. A successful publication consumes the writeback.
+  GpuSoftwareWriteBack writeBack(uint64_t deviceGeneration,uint64_t submissionId,
+                                llvm::MutableArrayRef<GpuSoftwareOutput> destinations);
   const GpuSoftwareReport &submit();
   // Nanoseconds must be positive and below UINT64_MAX. Timeout preserves all
   // in-flight resources and permits another explicit wait, never resubmission.
@@ -56,6 +64,13 @@ private:
   explicit GpuSoftwareVulkanCall(std::unique_ptr<Impl>);
   std::unique_ptr<Impl> impl_;
 };
+// The Host supplies its original evaluated snapshot and semantic budget.
+// A preflight failure returns its original Source diagnostic and post-budget.
+// A prepared call retains both the proof and the device submission report.
+using GpuSoftwareHostAdmission=std::variant<GpuSoftwareVulkanCall,GpuHostFailure>;
+GpuSoftwareHostAdmission prepareGpuSoftwareHostRequest(
+    const GpuPendingCall &,const GpuHostInputs &,GpuHostBudget,const GpuSoftwarePaths &,
+    uint64_t deviceGeneration,uint64_t submissionId);
 // Dropping an unfinished call transfers its complete owner to the process's
 // single retained slot. retainedReport/resumeRetained keep the original identity
 // and same-fence finite wait accessible. That slot blocks another prepare until

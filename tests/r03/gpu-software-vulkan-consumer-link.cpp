@@ -13,6 +13,10 @@ using Submit = const GpuSoftwareReport &(GpuSoftwareVulkanCall::*)();
 using Wait = const GpuSoftwareReport &(GpuSoftwareVulkanCall::*)(uint64_t);
 using RetainedReport = const GpuSoftwareReport *(*)();
 using ResumeRetained = std::optional<GpuSoftwareVulkanCall> (*)(uint64_t,uint64_t);
+using PrepareHostRequest = GpuSoftwareHostAdmission (*)(const GpuPendingCall &,const GpuHostInputs &,
+    GpuHostBudget,const GpuSoftwarePaths &,uint64_t,uint64_t);
+using WriteBack = GpuSoftwareWriteBack (GpuSoftwareVulkanCall::*)(uint64_t,uint64_t,
+    llvm::MutableArrayRef<GpuSoftwareOutput>);
 
 static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::prepare),Prepare>);
 static_assert(!std::is_invocable_v<Prepare,const GpuPendingCall &,const GpuSoftwarePaths &,uint64_t,uint64_t>);
@@ -29,6 +33,8 @@ static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::submit),Submit>);
 static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::wait),Wait>);
 static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::retainedReport),RetainedReport>);
 static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::resumeRetained),ResumeRetained>);
+static_assert(std::is_same_v<decltype(&prepareGpuSoftwareHostRequest),PrepareHostRequest>);
+static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::writeBack),WriteBack>);
 static_assert(std::is_same_v<decltype(GpuSoftwareReport::vkResult),std::optional<int32_t>>);
 static_assert(std::is_same_v<decltype(GpuSoftwareReport::windowsError),std::optional<uint32_t>>);
 static_assert(std::is_same_v<decltype(GpuSoftwareReport::deviceGeneration),uint64_t>);
@@ -47,6 +53,8 @@ struct SoftwareVulkanInterface {
   Wait wait;
   RetainedReport retainedReport;
   ResumeRetained resumeRetained;
+  PrepareHostRequest prepareHostRequest;
+  WriteBack writeBack;
 };
 
 // Exported constant-initialized addresses keep every implementation symbol in
@@ -54,7 +62,8 @@ struct SoftwareVulkanInterface {
 extern "C" __declspec(dllexport) SoftwareVulkanInterface tsfg_gpu_software_interface = {
   &GpuSoftwareVulkanCall::prepare,&GpuSoftwareVulkanCall::report,&GpuSoftwareVulkanCall::hostProof,
   &GpuSoftwareVulkanCall::outputs,&GpuSoftwareVulkanCall::submit,&GpuSoftwareVulkanCall::wait,
-  &GpuSoftwareVulkanCall::retainedReport,&GpuSoftwareVulkanCall::resumeRetained
+  &GpuSoftwareVulkanCall::retainedReport,&GpuSoftwareVulkanCall::resumeRetained,
+  &prepareGpuSoftwareHostRequest,&GpuSoftwareVulkanCall::writeBack
 };
 
 // This never-invoked link entry retains move/destruction definitions.

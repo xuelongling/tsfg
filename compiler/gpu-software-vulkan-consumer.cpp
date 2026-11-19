@@ -60,7 +60,7 @@ struct GpuSoftwareVulkanCall::Impl {
   VkCommandPool commandPool=VK_NULL_HANDLE;VkCommandBuffer command=VK_NULL_HANDLE;VkFence fence=VK_NULL_HANDLE;
   std::vector<Buffer> buffers;std::vector<VkDescriptorSetLayout> layouts;std::vector<VkDescriptorSet> sets;
   std::vector<std::pair<std::wstring,std::optional<std::wstring>>> environment;
-  bool lease=false;
+  bool lease=false,outputsCommitted=false;
   Impl(const GpuHostProof &value,uint64_t generation,uint64_t submission):proof(value){
     const auto &call=proof.call();report.identity=call.identity();report.functionId=call.functionId();
     report.deviceGeneration=generation;report.submissionId=submission;report.resources=call.descriptors();
@@ -90,6 +90,9 @@ struct GpuSoftwareVulkanCall::Impl {
   bool prepare(const GpuSoftwarePaths &paths){
     if(!report.deviceGeneration||!report.submissionId||!privateAbsolute(paths.loaderAbsolute)||!privateAbsolute(paths.icdAbsolute))
       return fail(GpuSoftwareFailure::Input,"configuration","qualified private E-drive paths and nonzero generation/submission are required");
+    for(const auto &binding:proof.bindings())
+      if(binding.value.actualType!=tsfg::exception::i32Id)
+        return fail(GpuSoftwareFailure::Capability,"input-payload","software storage buffers require actual i32 values");
     if(activeSoftwareCall.test_and_set(std::memory_order_acquire))
       return fail(GpuSoftwareFailure::Capability,"ownership","another software call still owns the private-loader process environment");
     lease=true;
@@ -263,6 +266,14 @@ GpuSoftwareVulkanCall::GpuSoftwareVulkanCall(std::unique_ptr<Impl> impl):impl_(s
 GpuSoftwareVulkanCall GpuSoftwareVulkanCall::prepare(const GpuHostProof &proof,const GpuSoftwarePaths &paths,uint64_t generation,uint64_t submission){
   auto impl=std::make_unique<Impl>(proof,generation,submission);impl->prepare(paths);return GpuSoftwareVulkanCall(std::move(impl));
 }
+GpuSoftwareHostAdmission prepareGpuSoftwareHostRequest(
+    const GpuPendingCall &pending,const GpuHostInputs &inputs,GpuHostBudget budget,
+    const GpuSoftwarePaths &paths,uint64_t deviceGeneration,uint64_t submissionId) {
+  auto checked=preflightGpuBindingCall(pending,inputs,budget);
+  if(auto *failure=std::get_if<GpuHostFailure>(&checked))
+    return std::move(*failure);
+  return GpuSoftwareVulkanCall::prepare(std::get<GpuHostProof>(checked),paths,deviceGeneration,submissionId);
+}
 GpuSoftwareVulkanCall::GpuSoftwareVulkanCall(GpuSoftwareVulkanCall &&)noexcept=default;
 std::unique_ptr<GpuSoftwareVulkanCall::Impl> &GpuSoftwareVulkanCall::retained(){
   // The named process owner survives C++ shutdown: an outstanding GPU job must
@@ -282,6 +293,30 @@ GpuSoftwareVulkanCall::~GpuSoftwareVulkanCall(){retainOutstanding();}
 const GpuSoftwareReport &GpuSoftwareVulkanCall::report()const{return impl_->report;}
 const GpuHostProof &GpuSoftwareVulkanCall::hostProof()const{return impl_->proof;}
 const std::vector<GpuSoftwareOutput> &GpuSoftwareVulkanCall::outputs()const{return impl_->outputs;}
+GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(
+    uint64_t deviceGeneration,uint64_t submissionId,
+    llvm::MutableArrayRef<GpuSoftwareOutput> destinations) {
+  const auto &deviceReport=report();
+  if(deviceReport.deviceGeneration!=deviceGeneration||deviceReport.submissionId!=submissionId)
+    return GpuSoftwareWriteBack::SubmissionMismatch;
+  if(impl_->outputsCommitted)
+    return GpuSoftwareWriteBack::AlreadyCommitted;
+  if(deviceReport.state!=GpuSoftwareState::Completed||
+     deviceReport.failure!=GpuSoftwareFailure::None||!deviceReport.completionKnown||
+     !deviceReport.outputsAvailable)
+    return GpuSoftwareWriteBack::OutputsUnavailable;
+
+  const auto &values=outputs();
+  if(destinations.size()!=values.size())
+    return GpuSoftwareWriteBack::BindingMismatch;
+  for(size_t index=0;index<values.size();++index)
+    if(!(destinations[index].descriptor==values[index].descriptor))
+      return GpuSoftwareWriteBack::BindingMismatch;
+  for(size_t index=0;index<values.size();++index)
+    destinations[index].bits=values[index].bits;
+  impl_->outputsCommitted=true;
+  return GpuSoftwareWriteBack::Committed;
+}
 const GpuSoftwareReport &GpuSoftwareVulkanCall::submit(){
   auto &state=*impl_;auto &report=state.report;
   if(report.state!=GpuSoftwareState::Prepared){state.fail(GpuSoftwareFailure::Input,"submit-order","only a prepared call can be submitted once");return report;}

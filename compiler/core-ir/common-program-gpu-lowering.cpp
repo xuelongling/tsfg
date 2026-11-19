@@ -561,10 +561,6 @@ GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &call,
   };
   if(identity(inputs.identity)!=identity(call.identity()))
     return fail(GpuHostFailureKind::Input,"core-ir-common-gpu-host-context","r01-gpu",entry.site);
-  const auto descriptor=[](const GpuDescriptor &row){
-    return std::tie(row.kind,row.access,row.type,row.id,row.kernel,row.set,row.binding,
-      row.source.sourceId,row.source.range.start,row.source.range.end);
-  };
   const auto undefinedType=digest(llvm::StringRef("tsfg.type\0undefined",19));
   const auto actualBits=[](llvm::StringRef type)->std::optional<uint32_t>{
     for(const auto &[name,width]:std::initializer_list<std::pair<llvm::StringRef,uint32_t>>{
@@ -577,7 +573,7 @@ GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &call,
   size_t input=0;
   for(size_t index=0;index<call.descriptors().size();++index){
     const auto &row=call.descriptors()[index];if(row.access==GpuResourceAccess::Write)continue;
-    if(input==inputs.bindings.size()||descriptor(inputs.bindings[input].descriptor)!=descriptor(row))
+    if(input==inputs.bindings.size()||!(inputs.bindings[input].descriptor==row))
       return fail(GpuHostFailureKind::Input,"core-ir-common-gpu-host-binding","r01-gpu",entry.site);
     const auto &value=inputs.bindings[input++].value;
     const auto width=actualBits(value.actualType);
