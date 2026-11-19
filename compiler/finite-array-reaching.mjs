@@ -139,7 +139,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       if(!stored||projectKind!==(stored.limit===undefined?'array':'readSpan')||!state.has(stored.owner))return {status};
       return {status,stored};
     }
-    function store(value,path,node,state,receiver,index) {
+    function store(value,path,node,state,receiver,index,overwrite) {
       if(receiver?.owner){charge();mutated.add(receiver.owner);}
       const id=version(path,value,node,receiver?.owner??null,key(index),'store');
       if(!receiver?.owner){invalidate(state);return;}
@@ -152,11 +152,11 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         if(owner!==receiver.owner&&owner.includes('/parameter/')){charge();row.slots.clear();row.length=null;}
       if(index.constant!==undefined&&memory.length!==null) {
         if(index.constant>memory.length){memory.slots.clear();memory.length=null;return;}
-        if(index.constant===memory.length)memory.length++;
+        if(index.constant===memory.length){if(overwrite)return;memory.length++;}
       }
-      // A symbolic index can alias any constant/other symbolic slot. Keep the
-      // definitely just-written index; discard unsupported separation facts.
-      if(index.constant===undefined)memory.slots.clear();
+      // A symbolic store can overwrite or append at the current endpoint.
+      // Only the definitely just-written index keeps its version.
+      if(index.constant===undefined){memory.slots.clear();if(!overwrite)memory.length=null;}
       else for(const other of memory.slots.keys())if(other.startsWith('s:'))memory.slots.delete(other);
       memory.slots.set(slot,new Set([id]));
       return id;
@@ -190,8 +190,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings),
           index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings):null;
+        let oldLength=null;
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
           const old=path+'/old-value',{status}=load({...value,range:value.target.range},old,state,receiver,index);
+          oldLength=state.get(receiver.owner)?.length??null;
           // The lexical pass retains every original occurrence. Ordered
           // transfer stops only at a definite old-read trap on the current evaluation path.
           if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateCompound(directStatement&&!fn.ownerType)) {
@@ -204,12 +206,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
           const memory=state.get(receiver.owner);
           if(!memory){invalidate(state);return rhs;}
-          if(rhs.constant!==undefined&&memory.length!==null&&rhs.constant<=memory.length) {
+          if(rhs.constant!==undefined&&(memory.length===null||rhs.constant<=memory.length)) {
             memory.length=rhs.constant;for(const slot of memory.slots.keys())if(!slot.startsWith('c:')||Number(slot.slice(2))>=rhs.constant)memory.slots.delete(slot);
           }else {memory.slots.clear();memory.length=null;}
           return rhs;
         }
-        const id=store(value,path,value.kind==='arrayStoreDenseChecked'?path+'/value':path,state,receiver,index);
+        // The old-read check makes an append impossible if the RHS kept or grew the backing.
+        const length=state.get(receiver.owner)?.length,overwrite=oldLength!==null&&length!=null&&length>=oldLength;
+        const id=store(value,path,value.kind==='arrayStoreDenseChecked'?path+'/value':path,state,receiver,index,overwrite);
         if(value.kind==='arrayStoreDenseChecked'){rememberSlotValue(id,value.value,rhs);return rhs;}
         return {symbol:path};
       }
