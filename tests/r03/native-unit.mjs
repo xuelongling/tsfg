@@ -8,15 +8,18 @@ import { fileURLToPath } from 'node:url';
 /**
  * Run one named pure suite. The invoking harness must supply the verified
  * locked TSFG_ZIG_EXE; the path assertion does not establish tool identity.
- * @param {{source: string, prefix: string, expectedPasses: number}} options
+ * @param {{source: string, prefix: string, expectedPasses: number,
+ *   stageSource?: (productRoot: string, testRoot: string) => Promise<void>}} options
  */
-export async function nativeUnit({ source, prefix, expectedPasses }) {
+export async function nativeUnit({ source, prefix, expectedPasses, stageSource }) {
   const executable = process.env.TSFG_ZIG_EXE;
   const temp = process.env.TSFG_MLIR_TEST_TEMP_ROOT;
   assert.match(executable, /^E:[\\/]/i, 'TSFG_ZIG_EXE must identify the verified locked Zig tool');
   assert.match(temp, /^E:[\\/]/i);
   const root = await mkdtemp(path.join(temp, prefix));
-  const cwd = fileURLToPath(new URL('../../', import.meta.url));
+  const productRoot = fileURLToPath(new URL('../../', import.meta.url));
+  if (stageSource) await stageSource(productRoot, root);
+  const cwd = stageSource ? root : productRoot;
   const args = ['test', source, `-femit-bin=${path.join(root, 'test.exe')}`,
     '--zig-lib-dir', path.join(path.dirname(executable), 'lib'),
     '--cache-dir', path.join(root, 'zig-local'), '--global-cache-dir', path.join(root, 'zig-global'),
