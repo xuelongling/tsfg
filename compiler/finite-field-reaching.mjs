@@ -7,7 +7,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
-import {finiteFieldEffects,finiteFieldWriteVersion,literalBooleanRhs,literalIfArm} from './finite-field-effects.mjs';
+import {finiteFieldEffects,finiteFieldWriteVersion,literalBooleanRhs,literalIfArm,skipsLiteralLoopBody} from './finite-field-effects.mjs';
 
 // These are the production proof-state snapshots, not Source-value copies.
 function versionCopy(values,charge) {
@@ -420,6 +420,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           if(!merged)return null;state=merged;
           meetAliases(env,leftEnv,rightEnv,!!left,!!right);
         }else if(value.kind==='while') {
+          if(skipsLiteralLoopBody(value)){expression(value.condition,p+'/condition',state,env);continue;}
           // A loop-carried write or alias is not a proof for its first turn.
           state.clear();for(const id of env.keys()){charge();env.set(id,null);}
           expression(value.condition,p+'/condition',state,env);

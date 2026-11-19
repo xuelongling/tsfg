@@ -15,6 +15,9 @@ export function literalBooleanRhs(value) {
 export function literalIfArm(value) {
   return value.kind==='if'&&value.condition.kind==='boolean'?(value.condition.value?'then':'else'):null;
 }
+export function skipsLiteralLoopBody(value) {
+  return value.kind==='while'&&value.condition.kind==='boolean'&&value.condition.value===false;
+}
 export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepAllWrites) {
   const fields=new Map((plan.carrierFields??plan.fields).map(row=>{charge();return [row.id,row];})),
     calls=new Map(plan.calls.map(row=>{charge();return [row.id,row];})),types=new Map(hir.types.map(row=>{charge();return [row.id,row];})),
@@ -72,7 +75,8 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
       if(['construct','superConstruct','forwardBaseConstruction'].includes(value.kind)) {
         effect.writes=true;target(constructors.get(value.construction));
       }
-      if(value.kind==='while'){cyclicFunctions.add(fn.id);effect.unknown=true;}
+      const skipLoop=skipsLiteralLoopBody(value);
+      if(value.kind==='while'&&mayExecute&&!skipLoop){cyclicFunctions.add(fn.id);effect.unknown=true;}
       if(value.kind==='call') {
         const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
         if(!targets.length)effect.unknown=true;
@@ -82,7 +86,8 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
       }
       const skipRight=literalBooleanRhs(value)===false,arm=literalIfArm(value);
       for(const [key,child]of Object.entries(value))if(child&&typeof child==='object') {
-        const skipped=key==='right'&&skipRight||key==='then'&&arm==='else'||key==='else'&&arm==='then';
+        const skipped=key==='right'&&skipRight||key==='then'&&arm==='else'||key==='else'&&arm==='then'
+          ||key==='body'&&skipLoop;
         charge();stack.push({value:child,path:path+'/'+key,mayExecute:mayExecute&&!skipped});
       }
     }

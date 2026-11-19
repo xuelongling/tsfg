@@ -77,3 +77,20 @@ test('a literal if return cuts off later field writes and call input without rem
     assert.deepEqual(reaching.callContexts.find(row=>row.site===skipped)?.fields,[]);
   }
 });
+
+test('literal false while keeps an unexecuted call in the inventory without contributing a field input',async()=>{
+  const {hir,context}=await callerEntry(),read=hir.functions.find(fn=>fn.name==='read'),run=hir.functions.find(fn=>fn.name==='run');
+  const [store,returned]=run.body,plan=buildFiniteCoreDomains(hir,context).definition,prefix=run.id+'/body/';
+  assert.equal(returned.value.kind,'call');
+  const shift=rows=>rows.map(row=>row.id.startsWith(prefix+'0/')?{...row,id:prefix+'1'+row.id.slice(prefix.length+1)}:row);
+  const modelPlan={...plan,fields:shift(plan.fields),carrierFields:shift(plan.carrierFields)};
+  const condition={kind:'boolean',value:false,type:scalarTypeIds.bool,range:returned.range};
+  const loop={kind:'while',range:returned.range,condition,
+    body:[{kind:'expression',range:returned.range,expression:returned.value}]};
+  const fn={...run,body:[loop,store,returned]},model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
+  const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
+  const access=reaching.reads.find(row=>row.node.startsWith(read.id+'/'));
+  assert.deepEqual(access?.reaching.flatMap(row=>row.sources),[prefix+'1/expression/value']);
+  const skipped=prefix+'0/body/0/expression\0'+read.id;
+  assert.deepEqual(reaching.callContexts.find(row=>row.site===skipped)?.fields,[]);
+});

@@ -7,6 +7,7 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {finiteFieldEffects} from '../../compiler/finite-field-effects.mjs';
 import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
 import {sha256,scalarName,scalarTypeIds} from '../../compiler/identity.mjs';
 import {finitePresence} from '../../compiler/finite-presence.mjs';
@@ -96,6 +97,34 @@ test('literal if keeps both field stores and selects the reached version',async(
       const read=reaching.reads.find(row=>row.node===root+'2/value');
       assert.deepEqual(read?.reaching.flatMap(row=>row.sources),[taken?second:first]);
     }
+  }
+});
+
+test('literal false while preserves the reached field version and records the lexical loop store',async()=>{
+  const {hir,context}=await actual(expected.cases.find(row=>row.memory==='field'));
+  const plan=buildFiniteCoreDomains(hir,context).definition,run=hir.functions.find(fn=>fn.name==='run');
+  const [initial,conditional,returned]=run.body,original=conditional.expression,root=run.id+'/body/';
+  const oldPath=root+'1/expression/right',loopPath=root+'1/body/0/expression',
+    rhsWrite=plan.fieldReaching.writes.find(row=>row.node.startsWith(oldPath));
+  assert.ok(rhsWrite);
+  const first=root+'0/expression/value',second=loopPath+rhsWrite.node.slice(oldPath.length);
+  const move=rows=>rows.map(row=>row.id.startsWith(oldPath+'/')?{...row,id:loopPath+row.id.slice(oldPath.length)}:row);
+  const modelPlan={...plan,fields:move(plan.fields),carrierFields:move(plan.carrierFields)};
+  const literalFalse={kind:'boolean',value:false,type:scalarTypeIds.bool,range:original.left.range},
+    unknown={kind:'binary',operator:'===',left:original.left,right:initial.expression.value,type:scalarTypeIds.bool,range:original.left.range};
+  for(const condition of [literalFalse,unknown]) {
+    const loop={kind:'while',range:conditional.range,condition,body:[{...conditional,expression:original.right}]};
+    const fn={...run,body:[initial,loop,returned]},model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
+    const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
+    assert.deepEqual(reaching.writes.filter(row=>row.id.startsWith(root)).map(row=>row.node),[first,second]);
+    const read=reaching.reads.find(row=>row.node===root+'2/value');
+    assert.deepEqual(read?.reaching.flatMap(row=>row.sources),condition===literalFalse?[first]:[]);
+    const nestedLoop={...loop,condition:unknown,body:[]};
+    const loopOnly={...fn,body:[{kind:'block',range:initial.range,body:[]},{...loop,body:[...loop.body,nestedLoop]}]};
+    const {effects,cyclicFunctions}=finiteFieldEffects(model,modelPlan,[loopOnly],new Map(),()=>{},new Map(),false);
+    assert.equal(cyclicFunctions.has(run.id),condition===unknown);
+    assert.equal(effects.get(run.id).unknown,condition===unknown);
+    assert.equal(effects.get(run.id).writes,true,'the lexical write summary stays conservative');
   }
 });
 
