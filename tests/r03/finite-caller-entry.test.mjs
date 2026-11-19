@@ -7,6 +7,7 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
+import {createFieldCallContexts} from '../../compiler/finite-field-effects.mjs';
 import {scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 
 async function callerEntry() {
@@ -93,4 +94,22 @@ test('literal false while keeps an unexecuted call in the inventory without cont
   assert.deepEqual(access?.reaching.flatMap(row=>row.sources),[prefix+'1/expression/value']);
   const skipped=prefix+'0/body/0/expression\0'+read.id;
   assert.deepEqual(reaching.callContexts.find(row=>row.site===skipped)?.fields,[]);
+});
+
+test('Each field callee inspects only its own incoming call records',()=>{
+  let work=0;
+  const contexts=createFieldCallContexts(()=>{work++;});
+  const fields=version=>new Map([['slot',new Set([version])]]);
+  for(let index=0;index<64;++index)contexts.set('other-'+index+'\0other-target-'+index,{
+    target:'other-target-'+index,fields:fields('unrelated'),mayExecute:true,
+  });
+  contexts.set('first\0read',{target:'read',fields:fields('old'),mayExecute:true});
+  contexts.set('skipped\0read',{target:'read',fields:fields('unused'),mayExecute:false});
+  contexts.set('second\0read',{target:'read',fields:fields('two'),mayExecute:true});
+  contexts.set('first\0read',{target:'read',fields:fields('one'),mayExecute:true});
+  assert.equal([...contexts].length,67);
+  assert.equal([...contexts].find(([site])=>site==='skipped\0read')?.[1].mayExecute,false);
+  work=0;
+  assert.deepEqual(contexts.incoming('read'),[fields('one'),fields('two')]);
+  assert.equal(work,3,'one visit per record for the selected callee');
 });

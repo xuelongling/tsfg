@@ -20,6 +20,36 @@ export function literalIfArm(value) {
 export function skipsLiteralLoopBody(value) {
   return value.kind==='while'&&value.condition.kind==='boolean'&&value.condition.value===false;
 }
+
+/** @typedef {{target:string,fields:Map<string,Set<string>>,mayExecute:boolean}} FieldCallContext */
+/** @param {()=>void} charge */
+export function createFieldCallContexts(charge) {
+  /** @type {Map<string,Map<string,FieldCallContext>>} */
+  const byTarget=new Map();
+  return {
+    // Site identities include the target, so an update stays in the same bucket.
+    /** @param {string} site @param {FieldCallContext} row */
+    set(site,row) {
+      charge();
+      let rows=byTarget.get(row.target);
+      if(!rows)byTarget.set(row.target,rows=new Map());
+      rows.set(site,row);
+    },
+    /** @param {string} target */
+    incoming(target) {
+      const fields=[];
+      for(const row of byTarget.get(target)?.values()??[]) {
+        charge();
+        if(row.mayExecute)fields.push(row.fields);
+      }
+      return fields;
+    },
+    *[Symbol.iterator]() {
+      for(const rows of byTarget.values())yield* rows;
+    },
+  };
+}
+
 export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepAllWrites) {
   const fields=new Map((plan.carrierFields??plan.fields).map(row=>{charge();return [row.id,row];})),
     calls=new Map(plan.calls.map(row=>{charge();return [row.id,row];})),types=new Map(hir.types.map(row=>{charge();return [row.id,row];})),
