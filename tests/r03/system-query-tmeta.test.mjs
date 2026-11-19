@@ -2,13 +2,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {coreQuote} from '../../compiler/mlir-strings.mjs';
 import {readSystemQueryFacts,systemQueryRequestContext} from '../../compiler/system-query-facts.mjs';
 import {emitSystemQueryCore} from '../../compiler/system-query-core.mjs';
 import {readSystemQueryTmeta,queryTmetaSchema} from '../../compiler/system-query-tmeta.mjs';
-import {compileSystemQuery} from '../../compiler/pipeline.mjs';
+import {compileSystemQuery,readQueryCompilerOutputs} from '../../compiler/pipeline.mjs';
 
 const cases=[...['architecture','aliases','duplicate','complete','wrapper-alias','loop-architecture','loop-aliases','loop-multiple','loop-shared-component','loop-inheritance'].map(name=>['system-query',name]),
   ['system-query-effects','multi'],...['direct','imported','local-export'].map(name=>['system-query-scalars',name]),
@@ -223,6 +224,36 @@ test('shared JSON engine preserves old owning string and coreText policies',{ski
     const diagnostic=children.at(-1).stderr;
     assert.match(diagnostic,canonicalRejected?/core-ir-common-canonical/:/core-ir-query-source/);
   }
+});
+
+test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
+  {skip:!process.env.TSFG_QUERY_PAIRED_CAPTURE},()=>{
+  const capture=process.env.TSFG_QUERY_PAIRED_CAPTURE;
+  assert.ok(path.isAbsolute(capture));
+  const bytes=name=>readFileSync(path.join(capture,name));
+  const core=bytes('001-bound-cold-stdout.bin').toString('utf8');
+  const batch=bytes('003-batch-cold-stdout.bin');
+  const llvm=bytes('007-llvm-ir-stdout.bin');
+  assert.deepEqual(llvm,bytes('008-llvm-ir-cold-stdout.bin'));
+  assert.equal(sha256(llvm),'sha256:0efe58d6f77b590396dc2ac1181f1774b2778537c29fc584ba5883d78376211e');
+  const meta=readFileSync(new URL('../../runtime/jobs/testdata/query-tmeta-i32-copy.tmeta',import.meta.url));
+  const envelope=JSON.parse(meta.toString('utf8')),payload=JSON.parse(envelope.payload);
+  const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
+  const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
+  /** @type {Array<[string,string,Buffer]>} */
+  const steps=[['--cpu-batch',core,batch],['--llvm-ir',batch.toString('utf8'),llvm],['--tmeta',batch.toString('utf8'),meta]];
+  const product=readQueryCompilerOutputs(facts,context,core,{cpuLLVM:'ir',tmeta:true},(command,input)=>{
+    const step=steps.shift();
+    assert.ok(step);
+    const [expectedCommand,expectedInput,output]=step;
+    assert.equal(command,expectedCommand);
+    assert.equal(sha256(input),sha256(expectedInput),'each producer uses the original checked batch');
+    return output;
+  });
+  assert.deepEqual(steps,[]);
+  assert.equal(product.cpuBatch,undefined);
+  assert.equal(product.cpuLLVM,llvm.toString('utf8'));
+  assert.deepEqual(product.llvmArtifact,{llvmHash:sha256(llvm),batchHash:sha256(batch),metadataHash:envelope.payloadHash});
 });
 
 test('Query tmeta rejects a changed physical i32 scalar extent',()=>{

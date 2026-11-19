@@ -108,15 +108,34 @@ function consume(executable, args, input) {
  */
 export async function compileSystemQuery(bytes,context,options){
   const {facts,context:sourceContext}=readSystemQueryFactsAndContext(bytes,context);
-  const {core:corePath,optimize,effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
+  const {core:corePath,optimize,effects,cpuBatch,cpuLLVM,tmeta}=options;
   const executable=await verifiedConsumer(corePath,'core');
-  const core=consume(executable,['--system-query',optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,sourceContext)).toString('utf8');
-  const effects=includeEffects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,sourceContext):undefined;
-  const checkedBatch=includeBatch||includeTmeta?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):core;
+  const consumeQuery=(command,input)=>consume(executable,['--system-query',command],input);
+  const core=consumeQuery(optimize?'--optimize':'--canonicalize',emitSystemQueryCore(facts,sourceContext)).toString('utf8');
+  return readQueryCompilerOutputs(facts,sourceContext,core,{effects,cpuBatch,cpuLLVM,tmeta},consumeQuery);
+}
+
+/** Collect outputs from the same verified static Query consumer.
+ * @internal
+ * @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} sourceContext
+ * @param {string} core @param {{effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir',tmeta?:boolean}} options
+ * @param {(command:string,input:string)=>Buffer} consumeQuery
+ */
+export function readQueryCompilerOutputs(facts,sourceContext,core,options,consumeQuery){
+  const {effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
+  const effects=includeEffects?readSystemQueryEffects(consumeQuery('--effects',core),facts,sourceContext):undefined;
+  const checkedBatch=includeBatch||includeTmeta?consumeQuery('--cpu-batch',core).toString('utf8'):core;
   const cpuBatch=includeBatch?checkedBatch:undefined;
-  const cpuLLVM=llvmOutput?consume(executable,['--system-query',llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm'],cpuBatch??core).toString('utf8'):undefined;
-  const tmeta=includeTmeta?readSystemQueryTmeta(consume(executable,['--system-query','--tmeta'],checkedBatch),facts,sourceContext,checkedBatch):undefined;
-  return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch}),...(cpuLLVM===undefined?{}:{cpuLLVM}),...(tmeta===undefined?{}:{tmeta})};
+  const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
+  const cpuLLVM=llvmBytes?.toString('utf8');
+  const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
+  const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
+    llvmHash:sha256(llvmBytes),
+    batchHash:tmeta.payload.batchHash,
+    metadataHash:tmeta.envelope.payloadHash,
+  }):undefined;
+  return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch}),...(cpuLLVM===undefined?{}:{cpuLLVM}),
+    ...(tmeta===undefined?{}:{tmeta}),...(llvmArtifact===undefined?{}:{llvmArtifact})};
 }
 
 /** Existing complete Common HIR/fixed bounds to the independent static proof.

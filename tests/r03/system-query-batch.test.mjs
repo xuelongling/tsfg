@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {canonical} from '../../compiler/identity.mjs';
+import {canonical,sha256} from '../../compiler/identity.mjs';
 import {coreQuote} from '../../compiler/mlir-strings.mjs';
 import {readSystemQueryFacts} from '../../compiler/system-query-facts.mjs';
 import {emitSystemQueryCore} from '../../compiler/system-query-core.mjs';
@@ -141,13 +141,18 @@ test('Query CLI accepts the current owned facts and exact request for all static
   const input=cases.find(row=>row.name==='view-parenthesized');
   const fixture=base=>fileURLToPath(new URL('./testdata/system-query-views/'+base+'.json',import.meta.url));
   const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
-  const product=await compileSystemQuery(input.bytes,input.context,{core:tool,effects:true,cpuBatch:true,tmeta:true});
+  const product=await compileSystemQuery(input.bytes,input.context,{core:tool,effects:true,cpuLLVM:'ir',tmeta:true});
+  assert.deepEqual(product.llvmArtifact,{
+    llvmHash:sha256(product.cpuLLVM),
+    batchHash:product.tmeta.payload.batchHash,
+    metadataHash:product.tmeta.envelope.payloadHash,
+  });
   const expected=new Map([
     ['core',product.core],
     ['query-effects',canonical(product.effects)+'\n'],
-    ['query-batch',product.cpuBatch],
+    ['query-batch',product.tmeta.payload.batch],
     ['query-llvm',run('cli-reference-llvm',product.core,'--cpu-llvm')],
-    ['query-llvm-ir',run('cli-reference-llvm-ir',product.core,'--llvm-ir')],
+    ['query-llvm-ir',product.cpuLLVM],
     ['query-tmeta',canonical(product.tmeta.envelope)+'\n'],
   ]);
   const invoke=(name,mode,request)=>{

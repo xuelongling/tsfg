@@ -20,6 +20,10 @@ the selected text in `cpuLLVM`. The current factory manifest and original
 Query context checks remain the owning public entry boundary. The CLI exposes
 `--emit query-llvm` and `--emit query-llvm-ir` with the original `--query-request`.
 
+Requesting both `cpuLLVM: 'ir'` and `tmeta: true` uses one checked batch for
+both outputs. The returned `llvmArtifact` binds the emitted LLVM bytes, batch,
+and metadata by their hashes for the eventual code owner.
+
 The static Core consumer accepts `--system-query --cpu-llvm` and `--llvm-ir`
 from complete owned Query Core or checked standard batch. LLVM dialect output
 also accepts the existing canonical/effects consumers. LLVM IR has a separate
