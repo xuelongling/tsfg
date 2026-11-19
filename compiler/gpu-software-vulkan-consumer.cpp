@@ -274,6 +274,14 @@ GpuSoftwareHostAdmission prepareGpuSoftwareHostRequest(
     return std::move(*failure);
   return GpuSoftwareVulkanCall::prepare(std::get<GpuHostProof>(checked),paths,deviceGeneration,submissionId);
 }
+GpuSoftwareHostAdmission prepareGpuSoftwareSourceRequest(
+    const GpuPendingCall &pending,const GpuCallIdentity &identity,
+    llvm::ArrayRef<GpuHostValue> arguments,llvm::ArrayRef<GpuHostGlobalValue> globals,
+    GpuHostBudget budget,const GpuSoftwarePaths &paths,uint64_t deviceGeneration,uint64_t submissionId){
+  auto checked=preflightGpuSourceCall(pending,identity,arguments,globals,budget);
+  if(auto *failure=std::get_if<GpuHostFailure>(&checked))return std::move(*failure);
+  return GpuSoftwareVulkanCall::prepare(std::get<GpuHostProof>(checked),paths,deviceGeneration,submissionId);
+}
 GpuSoftwareVulkanCall::GpuSoftwareVulkanCall(GpuSoftwareVulkanCall &&)noexcept=default;
 std::unique_ptr<GpuSoftwareVulkanCall::Impl> &GpuSoftwareVulkanCall::retained(){
   // The named process owner survives C++ shutdown: an outstanding GPU job must

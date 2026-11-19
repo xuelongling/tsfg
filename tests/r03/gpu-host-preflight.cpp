@@ -57,11 +57,45 @@ Json inputs(const std::vector<GpuHostBindingValue> &rows){Array out;for(const au
 static_assert(!std::is_default_constructible_v<GpuHostProof>);
 static_assert(!std::is_aggregate_v<GpuHostProof>);
 static_assert(!std::is_constructible_v<GpuHostProof,const GpuPendingCall &,const GpuHostInputs &,GpuHostBudget,GpuHostBudget>);
+
+bool checkSourceArguments(const GpuPendingCall &call){
+  const auto &descriptors=call.descriptors();
+  if(!check(descriptors.size()==3&&descriptors[0].kind==GpuResourceKind::Global&&
+            descriptors[1].kind==GpuResourceKind::Parameter&&descriptors[2].kind==GpuResourceKind::Return&&
+            call.argumentBindings()==std::vector<uint32_t>{1},"fixture has a global before the argument"))return false;
+  const auto i32=tsfg::exception::i32Id.str();
+  std::vector<GpuHostValue> arguments{{i32,0xfffffff9u}};
+  std::vector<GpuHostGlobalValue> globals{{descriptors[0].id,{i32,23}}};
+  const GpuHostBudget budget{7,3};
+  auto actual=preflightGpuSourceCall(call,call.identity(),arguments,globals,budget);
+  const auto *proof=std::get_if<GpuHostProof>(&actual);
+  arguments[0].bits=1;globals[0].value.bits=2;
+  if(!check(proof&&proof->bindings().size()==2&&proof->bindings()[0].value.bits==23&&
+            proof->bindings()[1].value.bits==0xfffffff9u&&proof->budgetAfter().fuelRemaining==6&&
+            proof->budgetAfter().depthLimit==3,"copy the two actual values into their original bindings"))return false;
+
+  auto identity=call.identity();
+  identity.requestDigest.clear();
+  const auto rejected=[&](const GpuCallIdentity &id,llvm::ArrayRef<GpuHostValue> positional,
+                          llvm::ArrayRef<GpuHostGlobalValue> snapshot,llvm::StringRef code){
+    const auto result=preflightGpuSourceCall(call,id,positional,snapshot,budget);
+    const auto *failure=std::get_if<GpuHostFailure>(&result);
+    return check(failure&&failure->kind==GpuHostFailureKind::Input&&failure->code==code&&
+                 failure->site.functionId==call.functionId()&&failure->budget.fuelRemaining==7,
+                 "bad Source input fails before spending fuel");
+  };
+  if(!rejected(identity,arguments,globals,"core-ir-common-gpu-host-context")||
+     !rejected(call.identity(),{},globals,"core-ir-common-gpu-host-arguments")||
+     !rejected(call.identity(),arguments,{},"core-ir-common-gpu-host-globals"))return false;
+  globals[0].globalId=descriptors[1].id;
+  return rejected(call.identity(),arguments,globals,"core-ir-common-gpu-host-globals");
+}
 #endif
 }
 int main(int argc,char **argv){
   const auto mode=argc==3?llvm::StringRef(argv[2]):llvm::StringRef{};
-  if(argc!=2&&mode!="--check-derived-numeric-use"&&mode!="--check-unwritten-global")return 2;
+  if(argc!=2&&mode!="--check-derived-numeric-use"&&mode!="--check-unwritten-global"&&
+     mode!="--check-source-arguments")return 2;
   const bool checkDerived=mode=="--check-derived-numeric-use";
   std::string coreBytes,requestBytes,planBytes;
   if(!read(argv[1],"common-program.mlir",coreBytes)||!read(argv[1],"gpu-binding-request.json",requestBytes)||
@@ -109,6 +143,7 @@ int main(int argc,char **argv){
   return 0;
 #else
   const auto &call=*pending;const auto &entry=std::get<GpuEntryBudgetStep>(call.hostSteps().front());
+  if(mode=="--check-source-arguments")return checkSourceArguments(call)?0:3;
   std::vector<const GpuNumericUseStep *> uses;
   for(const auto &row:call.hostSteps())if(const auto *use=std::get_if<GpuNumericUseStep>(&row))
     if(std::holds_alternative<GpuBindingOrigin>(use->origin))uses.push_back(use);

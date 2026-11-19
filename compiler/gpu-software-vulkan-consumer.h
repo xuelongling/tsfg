@@ -71,6 +71,10 @@ using GpuSoftwareHostAdmission=std::variant<GpuSoftwareVulkanCall,GpuHostFailure
 GpuSoftwareHostAdmission prepareGpuSoftwareHostRequest(
     const GpuPendingCall &,const GpuHostInputs &,GpuHostBudget,const GpuSoftwarePaths &,
     uint64_t deviceGeneration,uint64_t submissionId);
+GpuSoftwareHostAdmission prepareGpuSoftwareSourceRequest(
+    const GpuPendingCall &,const GpuCallIdentity &,llvm::ArrayRef<GpuHostValue> arguments,
+    llvm::ArrayRef<GpuHostGlobalValue> globals,GpuHostBudget,const GpuSoftwarePaths &,
+    uint64_t deviceGeneration,uint64_t submissionId);
 // Dropping an unfinished call transfers its complete owner to the process's
 // single retained slot. retainedReport/resumeRetained keep the original identity
 // and same-fence finite wait accessible. That slot blocks another prepare until

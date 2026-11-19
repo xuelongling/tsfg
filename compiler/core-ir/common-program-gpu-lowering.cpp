@@ -530,6 +530,20 @@ bool readGpuBindingModule(llvm::StringRef bytes,Program &p,const Json &alreadyVe
     descriptorIndexes.emplace(Key{kind,kernel,id},uint32_t(pending.descriptors_.size()));
     pending.descriptors_.push_back(std::move(descriptor));
   }
+  const auto &declarations=items(field(p.hir,"functions"));
+  if(!p.charge(declarations.size()))return fail("budget","GPU argument projection work exceeded");
+  const auto declaration=std::find_if(declarations.begin(),declarations.end(),[&](const Json &row){
+    return field(row,"id").getAsString()==pending.functionId_;
+  });
+  if(declaration==declarations.end())return fail("context","GPU call has no Source declaration");
+  const auto &parameters=items(field(*declaration,"parameters"));
+  if(!p.charge(parameters.size()))return fail("budget","GPU argument projection work exceeded");
+  pending.argumentBindings_.reserve(parameters.size());
+  for(const auto &parameter:parameters){
+    const auto binding=descriptorIndexes.find(Key{"parameter",pending.functionId_,string(field(parameter,"id"))});
+    if(binding==descriptorIndexes.end())return fail("context","GPU Source parameter has no descriptor");
+    pending.argumentBindings_.push_back(binding->second);
+  }
   for(const auto &row:knownSteps){
     const auto site=projectedGpuSite(row);
     if(string(field(row,"kind"))=="entry-budget"){
@@ -565,11 +579,7 @@ GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &call,
                       const GpuObligationSite &site)->GpuHostPreflightResult{
     return GpuHostFailure{kind,code.str(),rule.str(),site,budget};
   };
-  const auto identity=[](const GpuCallIdentity &id){
-    return std::tie(id.inputIdentity,id.hirDigest,id.scopeDigest,id.publishedDigest,
-      id.kernelProofDigest,id.borrowProofDigest,id.requestDigest,id.planDigest,id.wordsDigest,id.artifactDigest);
-  };
-  if(identity(inputs.identity)!=identity(call.identity()))
+  if(!(inputs.identity==call.identity()))
     return fail(GpuHostFailureKind::Input,"core-ir-common-gpu-host-context","r01-gpu",entry.site);
   const auto undefinedType=digest(llvm::StringRef("tsfg.type\0undefined",19));
   const auto actualBits=[](llvm::StringRef type)->std::optional<uint32_t>{
@@ -612,5 +622,40 @@ GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &call,
     }
   }
   return GpuHostProof(call,inputs,before,budget);
+}
+
+GpuHostPreflightResult preflightGpuSourceCall(const GpuPendingCall &call,const GpuCallIdentity &identity,
+    llvm::ArrayRef<GpuHostValue> arguments,llvm::ArrayRef<GpuHostGlobalValue> globals,GpuHostBudget budget){
+  const auto &entry=std::get<GpuEntryBudgetStep>(call.hostSteps().front());
+  const auto fail=[&](const char *code){
+    return GpuHostFailure{GpuHostFailureKind::Input,code,"r01-gpu",entry.site,budget};
+  };
+  if(!(identity==call.identity()))return fail("core-ir-common-gpu-host-context");
+  const auto &order=call.argumentBindings();
+  const auto &descriptors=call.descriptors();
+  if(arguments.size()!=order.size())return fail("core-ir-common-gpu-host-arguments");
+  const auto requiredGlobals=std::count_if(descriptors.begin(),descriptors.end(),[](const GpuDescriptor &row){
+    return row.kind==GpuResourceKind::Global&&row.access!=GpuResourceAccess::Write;
+  });
+  if(globals.size()!=size_t(requiredGlobals))return fail("core-ir-common-gpu-host-globals");
+
+  std::map<llvm::StringRef,const GpuHostValue *> globalsById;
+  for(const auto &global:globals)
+    if(!globalsById.emplace(global.globalId,&global.value).second)return fail("core-ir-common-gpu-host-globals");
+  std::vector<const GpuHostValue *> values(descriptors.size(),nullptr);
+  for(size_t index=0;index<order.size();++index)values[order[index]]=&arguments[index];
+  GpuHostInputs inputs{identity,{}};
+  inputs.bindings.reserve(arguments.size()+globals.size());
+  for(size_t index=0;index<descriptors.size();++index){
+    const auto &descriptor=descriptors[index];
+    if(descriptor.access==GpuResourceAccess::Write)continue;
+    if(descriptor.kind==GpuResourceKind::Global){
+      const auto found=globalsById.find(descriptor.id);
+      if(found==globalsById.end())return fail("core-ir-common-gpu-host-globals");
+      values[index]=found->second;
+    }
+    inputs.bindings.push_back({descriptor,*values[index]});
+  }
+  return preflightGpuBindingCall(call,inputs,budget);
 }
 } // namespace tsfg::commonProgram

@@ -15,6 +15,8 @@ using RetainedReport = const GpuSoftwareReport *(*)();
 using ResumeRetained = std::optional<GpuSoftwareVulkanCall> (*)(uint64_t,uint64_t);
 using PrepareHostRequest = GpuSoftwareHostAdmission (*)(const GpuPendingCall &,const GpuHostInputs &,
     GpuHostBudget,const GpuSoftwarePaths &,uint64_t,uint64_t);
+using PrepareSourceRequest = GpuSoftwareHostAdmission (*)(const GpuPendingCall &,const GpuCallIdentity &,
+    llvm::ArrayRef<GpuHostValue>,llvm::ArrayRef<GpuHostGlobalValue>,GpuHostBudget,const GpuSoftwarePaths &,uint64_t,uint64_t);
 using WriteBack = GpuSoftwareWriteBack (GpuSoftwareVulkanCall::*)(uint64_t,uint64_t,
     llvm::MutableArrayRef<GpuSoftwareOutput>);
 
@@ -34,6 +36,7 @@ static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::wait),Wait>);
 static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::retainedReport),RetainedReport>);
 static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::resumeRetained),ResumeRetained>);
 static_assert(std::is_same_v<decltype(&prepareGpuSoftwareHostRequest),PrepareHostRequest>);
+static_assert(std::is_same_v<decltype(&prepareGpuSoftwareSourceRequest),PrepareSourceRequest>);
 static_assert(std::is_same_v<decltype(&GpuSoftwareVulkanCall::writeBack),WriteBack>);
 static_assert(std::is_same_v<decltype(GpuSoftwareReport::vkResult),std::optional<int32_t>>);
 static_assert(std::is_same_v<decltype(GpuSoftwareReport::windowsError),std::optional<uint32_t>>);
@@ -54,6 +57,7 @@ struct SoftwareVulkanInterface {
   RetainedReport retainedReport;
   ResumeRetained resumeRetained;
   PrepareHostRequest prepareHostRequest;
+  PrepareSourceRequest prepareSourceRequest;
   WriteBack writeBack;
 };
 
@@ -63,7 +67,7 @@ extern "C" __declspec(dllexport) SoftwareVulkanInterface tsfg_gpu_software_inter
   &GpuSoftwareVulkanCall::prepare,&GpuSoftwareVulkanCall::report,&GpuSoftwareVulkanCall::hostProof,
   &GpuSoftwareVulkanCall::outputs,&GpuSoftwareVulkanCall::submit,&GpuSoftwareVulkanCall::wait,
   &GpuSoftwareVulkanCall::retainedReport,&GpuSoftwareVulkanCall::resumeRetained,
-  &prepareGpuSoftwareHostRequest,&GpuSoftwareVulkanCall::writeBack
+  &prepareGpuSoftwareHostRequest,&prepareGpuSoftwareSourceRequest,&GpuSoftwareVulkanCall::writeBack
 };
 
 // This never-invoked link entry retains move/destruction definitions.

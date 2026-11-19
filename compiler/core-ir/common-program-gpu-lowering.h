@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "common-program.h"
+#include "llvm/ADT/ArrayRef.h"
 #include <optional>
 #include <tuple>
 #include <variant>
@@ -68,6 +69,14 @@ struct GpuCallIdentity {
   std::string inputIdentity,hirDigest,scopeDigest,publishedDigest;
   std::string kernelProofDigest,borrowProofDigest,requestDigest,planDigest;
   std::string wordsDigest,artifactDigest;
+  bool operator==(const GpuCallIdentity &other) const {
+    const auto fields=[](const GpuCallIdentity &id) {
+      return std::tie(id.inputIdentity,id.hirDigest,id.scopeDigest,id.publishedDigest,
+                      id.kernelProofDigest,id.borrowProofDigest,id.requestDigest,id.planDigest,
+                      id.wordsDigest,id.artifactDigest);
+    };
+    return fields(*this)==fields(other);
+  }
 };
 
 // Owns only admitted compiler data. Construction grants no Host fulfillment or
@@ -89,6 +98,7 @@ public:
   const GpuScalarBufferLayout &layout()const{return layout_;}
   const std::vector<uint32_t> &words()const{return words_;}
   const std::vector<GpuDescriptor> &descriptors()const{return descriptors_;}
+  const std::vector<uint32_t> &argumentBindings()const{return argumentBindings_;}
   const std::vector<GpuPendingHostStep> &hostSteps()const{return hostSteps_;}
   const std::vector<GpuI32Discharge> &discharges()const{return discharges_;}
 private:
@@ -96,6 +106,7 @@ private:
   GpuCallIdentity identity_;std::string functionId_,entryPoint_;
   GpuScalarBufferLayout layout_;std::vector<uint32_t> words_;
   std::vector<GpuDescriptor> descriptors_;
+  std::vector<uint32_t> argumentBindings_;
   std::vector<GpuPendingHostStep> hostSteps_;std::vector<GpuI32Discharge> discharges_;
   friend bool readGpuBindingModule(llvm::StringRef,Program &,const Json &,
     llvm::StringRef,mlir::MLIRContext &,std::optional<GpuPendingCall> &,Error &);
@@ -115,6 +126,7 @@ bool readGpuBindingModule(llvm::StringRef bytes,Program &,const Json &alreadyVer
 struct GpuHostValue {std::string actualType;uint64_t bits=0;};
 struct GpuHostBindingValue {GpuDescriptor descriptor;GpuHostValue value;};
 struct GpuHostInputs {GpuCallIdentity identity;std::vector<GpuHostBindingValue> bindings;};
+struct GpuHostGlobalValue {llvm::StringRef globalId;GpuHostValue value;};
 // One original Source call, with no caller frame in single-source-call-v1.
 // Compiler Program.remaining and physical execution budgets are separate.
 struct GpuHostBudget {uint64_t fuelRemaining=4097;uint32_t depthLimit=1;};
@@ -155,4 +167,8 @@ private:
 // retains the reached original operation and the Source fuel post-state.
 GpuHostPreflightResult preflightGpuBindingCall(const GpuPendingCall &,
                                               const GpuHostInputs &,GpuHostBudget);
+// Positional arguments follow Source declaration order. The caller supplies
+// exactly the readable globals of the same call, identified by GlobalId.
+GpuHostPreflightResult preflightGpuSourceCall(const GpuPendingCall &,const GpuCallIdentity &,
+    llvm::ArrayRef<GpuHostValue> arguments,llvm::ArrayRef<GpuHostGlobalValue> globals,GpuHostBudget);
 } // namespace tsfg::commonProgram
