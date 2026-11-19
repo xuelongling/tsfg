@@ -193,7 +193,9 @@ struct Lowering {
             // Preserve the physical reload. A preceding Source store can prove
             // its Source value kind on this normal path, never equality to old
             // bits or GPU coherence/dispatch guarantees.
-            auto state=globalValues[global];state.bits=load.getResult();
+            const auto stored=globalValues.find(global);
+            auto state=stored==globalValues.end()?Scalar{}:stored->second;
+            state.bits=load.getResult();
             if(!state.actualI32)state.origin=Object{{"kind","binding"},{"binding",resources.at(Key{"global","",global}).binding}};
             values[op.result]=std::move(state);
           }else if(op.name=="global_store"){
@@ -314,6 +316,14 @@ struct Lowering {
       }
       if(visited.size()!=fn.blocks.size())return fail("cfg","GPU lowering must cover the complete selected function CFG",entrySite);
       if(emittingModule&&!entryBudget)return fail("capability","single-call module requires its original entry fuel/depth event",entrySite);
+      if(emittingModule)for(const auto &row:items(field(plan,"bindings"))){
+        if(!spend(1,entrySite))return false;
+        // A write-only buffer starts with no Source value. The consumer
+        // publishes every writable buffer, so this path must define it.
+        if(string(field(row,"kind"))=="global"&&string(field(row,"access"))=="write"&&
+           !globalValues.count(string(field(row,"id"))))
+          return fail("capability","single-call write-only global has no store on the normal path",entrySite);
+      }
       functions.push_back(Object{{"functionId",id},{"symbol",symbol},{"source",field(selection,"source")}});
     }
     (*module)->setAttr("tsfg_gpu.scope",b.getStringAttr("non-launchable"));

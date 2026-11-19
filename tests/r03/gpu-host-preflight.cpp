@@ -26,6 +26,28 @@ Json source(const GpuSourceRange &row){return Object{{"sourceId",row.sourceId},{
 Json site(const GpuObligationSite &row){return Object{{"obligationId",row.obligationId},{"functionId",row.functionId},
   {"source",source(row.source)},{"point",Object{{"block",row.point.block},{"operation",row.point.operation}}}};}
 bool sameSite(const GpuObligationSite &a,const GpuObligationSite &b){return same(site(a),site(b));}
+bool checkUnwrittenGlobal(Program &program,Json plan,mlir::MLIRContext &context){
+  auto &bindings=*plan.getAsObject()->getArray("bindings");
+  for(const auto &global:items(field(program.hir,"globals"))){
+    const auto id=string(field(global,"id"));
+    if(std::any_of(bindings.begin(),bindings.end(),[&](const Json &row){return field(row,"id").getAsString()==id;}))
+      continue;
+    const auto &range=field(global,"range");
+    // Isolate the executable lowerer. The extra permission models a fixed
+    // upper that allows a write the selected body does not use.
+    bindings.push_back(Object{{"kind","global"},{"id",id},{"kernel",nullptr},{"set",1},{"binding",0},
+      {"access","write"},{"type","i32"},{"source",Object{{"sourceId",field(global,"sourcePath")},
+        {"start",field(range,"start")},{"end",field(range,"end")}}}});
+    Error error;Json artifact=nullptr;
+    const bool accepted=emitGpuBindingModule(program,plan,"single-source-call-v1",context,artifact,error);
+    const auto &source=field(items(field(plan,"kernels")).front(),"source");
+    return check(!accepted&&artifact.getAsNull()&&error.code=="core-ir-common-gpu-lowering-capability"&&
+      error.message=="single-call write-only global has no store on the normal path"&&
+      error.path==field(source,"sourceId").getAsString()&&error.range.start==field(source,"start").getAsInteger()&&
+      error.range.end==field(source,"end").getAsInteger(),"unwritten write-only buffer must never reach publication");
+  }
+  return check(false,"selected fixture needs a global outside the selected body's binding plan");
+}
 #ifndef TSFG_GPU_PREFLIGHT_BASELINE
 Json failure(const GpuHostFailure &row){return Object{{"kind",row.kind==GpuHostFailureKind::Trap?"trap":row.kind==GpuHostFailureKind::Input?"input":"capability"},
   {"code",row.code},{"ruleId",row.ruleId},{"site",site(row.site)},{"fuelRemaining",std::to_string(row.budget.fuelRemaining)},
@@ -38,8 +60,9 @@ static_assert(!std::is_constructible_v<GpuHostProof,const GpuPendingCall &,const
 #endif
 }
 int main(int argc,char **argv){
-  if(argc!=2&&(argc!=3||llvm::StringRef(argv[2])!="--check-derived-numeric-use"))return 2;
-  const bool checkDerived=argc==3;
+  const auto mode=argc==3?llvm::StringRef(argv[2]):llvm::StringRef{};
+  if(argc!=2&&mode!="--check-derived-numeric-use"&&mode!="--check-unwritten-global")return 2;
+  const bool checkDerived=mode=="--check-derived-numeric-use";
   std::string coreBytes,requestBytes,planBytes;
   if(!read(argv[1],"common-program.mlir",coreBytes)||!read(argv[1],"gpu-binding-request.json",requestBytes)||
      !read(argv[1],"gpu-binding-plan.json",planBytes))return 2;
@@ -52,6 +75,7 @@ int main(int argc,char **argv){
   if(!readJson(llvm::StringRef(requestBytes).drop_back(),request,program,error)||
      !readJson(llvm::StringRef(planBytes).drop_back(),savedPlan,program,error)||
      !createGpuBindingPlan(program,request,plan,error)||!check(same(plan,savedPlan),"actual complete plan"))return 3;
+  if(mode=="--check-unwritten-global")return checkUnwrittenGlobal(program,std::move(plan),context)?0:3;
   Json artifact=nullptr;
   if(!emitGpuBindingModule(program,plan,"single-source-call-v1",context,artifact,error)){
     llvm::errs()<<error.code<<": "<<error.message<<" ("<<error.path<<":"<<error.range.start<<":"<<error.range.end<<")\n";return 3;}
