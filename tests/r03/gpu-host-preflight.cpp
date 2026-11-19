@@ -329,12 +329,12 @@ bool checkSourceCompletion(const GpuPendingCall &call){
   SourceLeaseObservation submitFailure;
   auto unableToSubmit=Device::prepared(*proof,lease(submitFailure),data);
   Device::submitResult=VK_ERROR_OUT_OF_HOST_MEMORY;
-  const auto submission=unableToSubmit.finishSourceRequest(1);
-  return check(submission.device.state==GpuSoftwareState::FailedBeforeSubmit&&
-      submission.device.vkResult==VK_ERROR_OUT_OF_HOST_MEMORY&&submission.device.stage=="queue-submit"&&
-      !submission.writeBack&&!submission.operationError&&!Device::ownsDevice(unableToSubmit)&&
+  const auto &submission=unableToSubmit.submit();
+  return check(submission.state==GpuSoftwareState::FailedBeforeSubmit&&
+      submission.vkResult==VK_ERROR_OUT_OF_HOST_MEMORY&&submission.stage=="queue-submit"&&
+      !submission.submitted&&!submission.outputsAvailable&&!Device::deviceReserved()&&
       submitFailure.publications==0&&submitFailure.destructions==1,
-      "failed submission keeps its report and retires device ownership");
+      "failed direct submission keeps its report and frees ownership for the next request");
 }
 #endif
 #endif

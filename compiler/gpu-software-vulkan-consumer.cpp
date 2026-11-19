@@ -85,7 +85,10 @@ struct GpuSoftwareVulkanCall::Impl {
   }
   bool fail(GpuSoftwareFailure kind,const char *stage,const char *reason){
     report.failure=kind;report.stage=stage;report.reason=reason;
-    if(!report.submitted&&report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::FailedBeforeSubmit;
+    if(!report.submitted){
+      if(report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::FailedBeforeSubmit;
+      releaseDevice();
+    }
     return false;
   }
   const GpuSoftwareReport &rejectOperation(const char *stage,const char *reason){
