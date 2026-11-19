@@ -94,6 +94,61 @@ bool checkSourceArguments(const GpuPendingCall &call){
   return rejected(call.identity(),arguments,globals,"core-ir-common-gpu-host-globals");
 }
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
+struct SourceLeaseObservation {size_t reads=0,publications=0,destructions=0;};
+class ObservedSourceLease final : public GpuSoftwareSourceLease {
+  GpuCallIdentity deviceIdentity;
+  std::string globalId;
+  SourceLeaseObservation &observed;
+public:
+  ObservedSourceLease(GpuCallIdentity identity,llvm::StringRef global,SourceLeaseObservation &observation)
+      :deviceIdentity(std::move(identity)),globalId(global.str()),observed(observation){}
+  ~ObservedSourceLease() override{++observed.destructions;}
+  const GpuCallIdentity &identity() const noexcept override{return deviceIdentity;}
+  std::optional<GpuHostValue> readGlobal(llvm::StringRef id) const override {
+    ++observed.reads;
+    if(id!=globalId)return std::nullopt;
+    return GpuHostValue{tsfg::exception::i32Id.str(),23};
+  }
+  bool publish(llvm::ArrayRef<GpuSoftwareOutput>) noexcept override {
+    ++observed.publications;
+    return false;
+  }
+};
+bool checkBoundSourceInstance(const GpuPendingCall &call){
+  const auto &descriptors=call.descriptors();
+  if(!check(descriptors.size()==3&&descriptors[0].kind==GpuResourceKind::Global&&
+            call.argumentBindings()==std::vector<uint32_t>{1},"fixture has one global and one argument"))return false;
+  const GpuHostValue arguments[]={{tsfg::exception::i32Id.str(),11}};
+  const GpuHostBudget budget{7,3};
+  const auto rejected=[&](const GpuCallIdentity &identity,llvm::StringRef global,llvm::ArrayRef<GpuHostValue> values,
+                          llvm::StringRef code,size_t reads){
+    SourceLeaseObservation observed;
+    auto lease=std::make_unique<ObservedSourceLease>(identity,global,observed);
+    auto result=GpuSoftwareVulkanCall::prepareSourceInstance(call,values,std::move(lease),budget,{},8,9);
+    const auto *failure=std::get_if<GpuHostFailure>(&result);
+    return check(failure&&failure->kind==GpuHostFailureKind::Input&&failure->code==code&&
+                 failure->site.functionId==call.functionId()&&failure->budget.fuelRemaining==7&&
+                 observed.reads==reads&&observed.publications==0&&observed.destructions==1,
+                 "rejected instance releases its lease without publishing");
+  };
+  auto wrongIdentity=call.identity();
+  wrongIdentity.artifactDigest.clear();
+  if(!rejected(wrongIdentity,descriptors[0].id,arguments,"core-ir-common-gpu-host-context",0)||
+     !rejected(call.identity(),descriptors[0].id,{},"core-ir-common-gpu-host-arguments",0)||
+     !rejected(call.identity(),"",arguments,"core-ir-common-gpu-host-globals",1))return false;
+
+  SourceLeaseObservation observed;
+  auto lease=std::make_unique<ObservedSourceLease>(call.identity(),descriptors[0].id,observed);
+  // An empty configuration fails before looking up Vulkan.
+  auto result=GpuSoftwareVulkanCall::prepareSourceInstance(call,arguments,std::move(lease),budget,{},8,9);
+  auto *device=std::get_if<GpuSoftwareVulkanCall>(&result);
+  if(!check(device&&device->report().stage=="configuration"&&device->report().identity==call.identity()&&
+            observed.reads==1&&observed.destructions==1,"read the real input binding then release on configuration failure"))return false;
+  const auto &proof=device->hostProof();
+  return check(proof.bindings().size()==2&&proof.bindings()[0].value.bits==23&&proof.bindings()[1].value.bits==11&&
+               proof.budgetAfter().fuelRemaining==6&&device->writeBackSource()==GpuSoftwareWriteBack::OutputsUnavailable&&
+               observed.publications==0,"keep admitted values and leave Source state untouched on device failure");
+}
 bool checkSoftwareOperationRejection(const GpuPendingCall &call){
   const auto &descriptors=call.descriptors();
   if(!check(descriptors.size()==3&&descriptors[0].kind==GpuResourceKind::Global&&
@@ -128,7 +183,7 @@ int main(int argc,char **argv){
   if(argc!=2&&mode!="--check-derived-numeric-use"&&mode!="--check-unwritten-global"&&
      mode!="--check-source-arguments"
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
-     &&mode!="--check-software-operation-rejection"
+     &&mode!="--check-software-operation-rejection"&&mode!="--check-bound-source-instance"
 #endif
      )return 2;
   const bool checkDerived=mode=="--check-derived-numeric-use";
@@ -181,6 +236,7 @@ int main(int argc,char **argv){
   if(mode=="--check-source-arguments")return checkSourceArguments(call)?0:3;
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
   if(mode=="--check-software-operation-rejection")return checkSoftwareOperationRejection(call)?0:3;
+  if(mode=="--check-bound-source-instance")return checkBoundSourceInstance(call)?0:3;
 #endif
   std::vector<const GpuNumericUseStep *> uses;
   for(const auto &row:call.hostSteps())if(const auto *use=std::get_if<GpuNumericUseStep>(&row))

@@ -54,6 +54,7 @@ bool privateAbsolute(const std::wstring &path){
 struct GpuSoftwareVulkanCall::Impl {
   GpuHostProof proof;GpuSoftwareReport report;std::vector<GpuSoftwareOutput> outputs;
   std::optional<GpuSoftwareReport> operationRejection;
+  std::unique_ptr<GpuSoftwareSourceLease> sourceLease;
   Vulkan vk;HMODULE loader=nullptr;VkInstance instance=VK_NULL_HANDLE;
   VkPhysicalDevice physical=VK_NULL_HANDLE;VkDevice device=VK_NULL_HANDLE;VkQueue queue=VK_NULL_HANDLE;
   VkDescriptorPool descriptorPool=VK_NULL_HANDLE;VkPipelineLayout pipelineLayout=VK_NULL_HANDLE;
@@ -61,13 +62,20 @@ struct GpuSoftwareVulkanCall::Impl {
   VkCommandPool commandPool=VK_NULL_HANDLE;VkCommandBuffer command=VK_NULL_HANDLE;VkFence fence=VK_NULL_HANDLE;
   std::vector<Buffer> buffers;std::vector<VkDescriptorSetLayout> layouts;std::vector<VkDescriptorSet> sets;
   std::vector<std::pair<std::wstring,std::optional<std::wstring>>> environment;
-  bool lease=false,outputsCommitted=false;
+  bool lease=false,outputsCommitted=false,publishingSource=false;
   Impl(const GpuHostProof &value,uint64_t generation,uint64_t submission):proof(value){
     const auto &call=proof.call();report.identity=call.identity();report.functionId=call.functionId();
     report.deviceGeneration=generation;report.submissionId=submission;report.resources=call.descriptors();
     if(!call.hostSteps().empty())report.source=std::visit([](const auto &step){return step.site.source;},call.hostSteps().front());
   }
   bool inFlight()const{return report.submitted&&!report.completionKnown&&report.state!=GpuSoftwareState::DeviceLost;}
+  std::optional<GpuSoftwareWriteBack> writeBackRejection() const {
+    if(outputsCommitted)return GpuSoftwareWriteBack::AlreadyCommitted;
+    if(report.state!=GpuSoftwareState::Completed||report.failure!=GpuSoftwareFailure::None||
+       !report.completionKnown||!report.outputsAvailable)
+      return GpuSoftwareWriteBack::OutputsUnavailable;
+    return std::nullopt;
+  }
   bool fail(GpuSoftwareFailure kind,const char *stage,const char *reason){
     report.failure=kind;report.stage=stage;report.reason=reason;
     if(!report.submitted&&report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::FailedBeforeSubmit;
@@ -278,6 +286,30 @@ GpuSoftwareVulkanCall::GpuSoftwareVulkanCall(std::unique_ptr<Impl> impl):impl_(s
 GpuSoftwareVulkanCall GpuSoftwareVulkanCall::prepare(const GpuHostProof &proof,const GpuSoftwarePaths &paths,uint64_t generation,uint64_t submission){
   auto impl=std::make_unique<Impl>(proof,generation,submission);impl->prepare(paths);return GpuSoftwareVulkanCall(std::move(impl));
 }
+GpuSoftwareHostAdmission GpuSoftwareVulkanCall::prepareSourceInstance(
+    const GpuPendingCall &pending,llvm::ArrayRef<GpuHostValue> arguments,
+    std::unique_ptr<GpuSoftwareSourceLease> lease,GpuHostBudget budget,
+    const GpuSoftwarePaths &paths,uint64_t deviceGeneration,uint64_t submissionId) {
+  const auto &entry=std::get<GpuEntryBudgetStep>(pending.hostSteps().front());
+  const auto rejected=[&](const char *code){
+    return GpuHostFailure{GpuHostFailureKind::Input,code,"r01-gpu",entry.site,budget};
+  };
+  if(!lease||!(lease->identity()==pending.identity()))return rejected("core-ir-common-gpu-host-context");
+  if(arguments.size()!=pending.argumentBindings().size())return rejected("core-ir-common-gpu-host-arguments");
+
+  std::vector<GpuHostGlobalValue> globals;
+  for(const auto &descriptor:pending.descriptors()){
+    if(descriptor.kind!=GpuResourceKind::Global||descriptor.access==GpuResourceAccess::Write)continue;
+    auto value=lease->readGlobal(descriptor.id);
+    if(!value)return rejected("core-ir-common-gpu-host-globals");
+    globals.push_back({descriptor.id,std::move(*value)});
+  }
+  auto checked=preflightGpuSourceCall(pending,lease->identity(),arguments,globals,budget);
+  if(auto *failure=std::get_if<GpuHostFailure>(&checked))return std::move(*failure);
+  auto impl=std::make_unique<Impl>(std::get<GpuHostProof>(checked),deviceGeneration,submissionId);
+  if(impl->prepare(paths))impl->sourceLease=std::move(lease);
+  return GpuSoftwareVulkanCall(std::move(impl));
+}
 GpuSoftwareHostAdmission prepareGpuSoftwareHostRequest(
     const GpuPendingCall &pending,const GpuHostInputs &inputs,GpuHostBudget budget,
     const GpuSoftwarePaths &paths,uint64_t deviceGeneration,uint64_t submissionId) {
@@ -319,12 +351,8 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(
   const auto &deviceReport=report();
   if(deviceReport.deviceGeneration!=deviceGeneration||deviceReport.submissionId!=submissionId)
     return GpuSoftwareWriteBack::SubmissionMismatch;
-  if(impl_->outputsCommitted)
-    return GpuSoftwareWriteBack::AlreadyCommitted;
-  if(deviceReport.state!=GpuSoftwareState::Completed||
-     deviceReport.failure!=GpuSoftwareFailure::None||!deviceReport.completionKnown||
-     !deviceReport.outputsAvailable)
-    return GpuSoftwareWriteBack::OutputsUnavailable;
+  if(auto rejected=impl_->writeBackRejection())return *rejected;
+  if(impl_->sourceLease)return GpuSoftwareWriteBack::BindingMismatch;
 
   const auto &values=outputs();
   if(destinations.size()!=values.size())
@@ -337,13 +365,25 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(
   impl_->outputsCommitted=true;
   return GpuSoftwareWriteBack::Committed;
 }
+GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBackSource() {
+  if(auto rejected=impl_->writeBackRejection())return *rejected;
+  if(!impl_->sourceLease)return GpuSoftwareWriteBack::BindingMismatch;
+  if(impl_->publishingSource)return GpuSoftwareWriteBack::SourceRejected;
+  impl_->publishingSource=true;
+  const bool published=impl_->sourceLease->publish(impl_->outputs);
+  impl_->publishingSource=false;
+  if(!published)return GpuSoftwareWriteBack::SourceRejected;
+  impl_->outputsCommitted=true;
+  impl_->sourceLease.reset();
+  return GpuSoftwareWriteBack::Committed;
+}
 const GpuSoftwareReport &GpuSoftwareVulkanCall::submit(){
   auto &state=*impl_;auto &report=state.report;
   if(report.state!=GpuSoftwareState::Prepared)
     return state.rejectOperation("submit-order","only a prepared call can be submitted once");
   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&state.command;
   const auto result=state.vk.QueueSubmit(state.queue,1,&submit,state.fence);
-  if(!state.checked(result,"queue-submit"))return report;
+  if(!state.checked(result,"queue-submit")){state.sourceLease.reset();return report;}
   report.submitted=true;report.state=GpuSoftwareState::Submitted;report.stage="submitted";report.failure=GpuSoftwareFailure::None;report.reason.clear();return report;
 }
 const GpuSoftwareReport &GpuSoftwareVulkanCall::wait(uint64_t timeoutNanoseconds){
@@ -352,13 +392,20 @@ const GpuSoftwareReport &GpuSoftwareVulkanCall::wait(uint64_t timeoutNanoseconds
     return state.rejectOperation("wait-parameters","an outstanding call and an explicit positive finite timeout are required");
   const auto result=state.vk.WaitForFences(state.device,1,&state.fence,VK_TRUE,timeoutNanoseconds);report.vkResult=int32_t(result);
   if(result==VK_TIMEOUT){report.state=GpuSoftwareState::Unfinished;report.failure=GpuSoftwareFailure::None;report.stage="wait";report.reason="fence is still outstanding; no output publication or resource retirement";return report;}
-  if(!state.checked(result,"wait")){if(report.state!=GpuSoftwareState::DeviceLost)report.state=GpuSoftwareState::Unfinished;return report;}
+  if(!state.checked(result,"wait")){
+    if(report.state==GpuSoftwareState::DeviceLost)state.sourceLease.reset();
+    else report.state=GpuSoftwareState::Unfinished;
+    return report;
+  }
   report.completionKnown=true;report.state=GpuSoftwareState::Completed;
   std::vector<GpuSoftwareOutput> outputs;const auto &descriptors=state.proof.call().descriptors();
   for(size_t index=0;index<descriptors.size();++index)if(descriptors[index].access!=GpuResourceAccess::Read){
     report.resourceIndex=uint32_t(index);auto &buffer=state.buffers[index];
     if(!buffer.coherent){VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};range.memory=buffer.memory;range.offset=0;range.size=VK_WHOLE_SIZE;
-      if(!state.checked(state.vk.InvalidateMappedMemoryRanges(state.device,1,&range),"invalidate-output-memory"))return report;}
+      if(!state.checked(state.vk.InvalidateMappedMemoryRanges(state.device,1,&range),"invalidate-output-memory")){
+        state.sourceLease.reset();
+        return report;
+      }}
     uint32_t bits;std::memcpy(&bits,buffer.mapped,sizeof(bits));outputs.push_back({descriptors[index],bits});
   }
   state.outputs=std::move(outputs);report.outputsAvailable=true;report.resourceIndex.reset();report.failure=GpuSoftwareFailure::None;report.stage="completed";report.reason.clear();return report;

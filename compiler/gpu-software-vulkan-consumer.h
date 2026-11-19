@@ -13,7 +13,19 @@ enum class GpuSoftwareState {Ready,Prepared,Submitted,Completed,FailedBeforeSubm
 enum class GpuSoftwareFailure {None,Input,Capability,Vulkan,Windows};
 struct GpuSoftwareOutput {GpuDescriptor descriptor;uint32_t bits=0;};
 enum class GpuSoftwareWriteBack {
-  Committed, OutputsUnavailable, SubmissionMismatch, BindingMismatch, AlreadyCommitted
+  Committed, OutputsUnavailable, SubmissionMismatch, BindingMismatch, AlreadyCommitted, SourceRejected
+};
+// An exclusive lease supplied by the owner of an actual Source instance.
+// Keep that instance and its snapshot stable until this lease is destroyed.
+class GpuSoftwareSourceLease {
+public:
+  virtual ~GpuSoftwareSourceLease()=default;
+  virtual const GpuCallIdentity &identity() const noexcept=0;
+  virtual std::optional<GpuHostValue> readGlobal(llvm::StringRef globalId) const=0;
+  // Publish together to this instance, including its return cell. False leaves
+  // every destination unchanged. The borrowed output rows expire on return.
+  // The caller retains its call handle through the callback.
+  virtual bool publish(llvm::ArrayRef<GpuSoftwareOutput> outputs) noexcept=0;
 };
 struct GpuSoftwareReport {
   GpuSoftwareState state=GpuSoftwareState::Ready;
@@ -39,6 +51,10 @@ class GpuSoftwareVulkanCall {
 public:
   static GpuSoftwareVulkanCall prepare(const GpuHostProof &,const GpuSoftwarePaths &,
                                      uint64_t deviceGeneration,uint64_t submissionId);
+  static std::variant<GpuSoftwareVulkanCall,GpuHostFailure> prepareSourceInstance(
+      const GpuPendingCall &,llvm::ArrayRef<GpuHostValue> arguments,
+      std::unique_ptr<GpuSoftwareSourceLease>,GpuHostBudget,const GpuSoftwarePaths &,
+      uint64_t deviceGeneration,uint64_t submissionId);
   static const GpuSoftwareReport *retainedReport();
   static std::optional<GpuSoftwareVulkanCall> resumeRetained(uint64_t deviceGeneration,uint64_t submissionId);
   GpuSoftwareVulkanCall(GpuSoftwareVulkanCall &&)noexcept;
@@ -48,11 +64,14 @@ public:
   ~GpuSoftwareVulkanCall();
   const GpuSoftwareReport &report()const;
   const GpuHostProof &hostProof()const;
+  // Inspection only for calls bound to a Source lease.
   const std::vector<GpuSoftwareOutput> &outputs()const;
   // The Host owns the destination cells, in writable descriptor order, for
   // the named submission. A successful publication consumes the writeback.
   GpuSoftwareWriteBack writeBack(uint64_t deviceGeneration,uint64_t submissionId,
                                 llvm::MutableArrayRef<GpuSoftwareOutput> destinations);
+  // A bound call can publish only to its original lease, including after resume.
+  GpuSoftwareWriteBack writeBackSource();
   // A rejected submit or wait returns the operation error. report() keeps
   // the call's last real outcome; the next rejection replaces the operation error.
   const GpuSoftwareReport &submit();
