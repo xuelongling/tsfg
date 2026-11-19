@@ -125,6 +125,42 @@ test('a normally returning read-only call preserves the caller’s unpassed Arra
   }
 });
 
+test('a call writing one Array preserves disjoint writes and forgets possible parameter aliases',async()=>{
+  const fixture={file:'binary-right-old-value-present-package.json',
+    sha256:'5ad521e5a988cbccb3cad4ff12f22425121dee8c67e3019e9836587f005c2c23',
+    packageId:'sha256:c79f052802216268c121f70d72d5990fc4342649c3442e535f6d1dd22f36b734',
+    requestId:'sha256:88d71f4b62ad6973ab216ec2f4a1851543b05ff14cf0169bbcc1f920d9a068f0'};
+  const [{hir},{hir:writerHir}]=await Promise.all([
+    checkedFixture(manifest.find(row=>row.name==='dynamic-owner-aliases')),
+    checkedFixture(fixture,'typed-array-terminal-compound/'),
+  ]);
+  const caller=hir.functions.find(fn=>fn.name==='alpha'),writer=writerHir.functions.find(fn=>fn.name==='earlier');
+  assert.ok(caller&&writer);
+  const [local,store,returned]=caller.body,parameter=writer.parameters[0];
+  const [written,kept]=['destination','unwritten'].map(id=>({...parameter,id}));
+  const helper={...writer,parameters:[parameter,{...parameter,id:'independent-input'}]};
+  const range=returned.range,reference=binding=>({...returned.value.receiver,binding:binding.id});
+  const call={kind:'expression',range,expression:{kind:'call',type:writer.returnType.id,target:writer.id,
+    arguments:[reference(written),reference(kept)],range}};
+  const write={...store,expression:{...store.expression,target:{...store.expression.target,receiver:reference(kept)}}};
+  const observe={kind:'expression',range,expression:{...returned.value,receiver:reference(kept)}};
+  const returnWritten={...returned,value:{...returned.value,receiver:reference(written),index:writer.body[0].expression.target.index}};
+  const plan={nodes:[],domains:[],calls:[]};
+
+  // These are component projections of separately checked Array operations.
+  for(const disjoint of [true,false]){
+    const initializers=disjoint?[written,kept].map(binding=>({...local,binding:{...local.binding,id:binding.id}})):[];
+    const parameters=disjoint?caller.parameters:[...caller.parameters,written,kept];
+    const body=[...initializers,write,call,observe,returnWritten];
+    const {reaching}=buildFiniteArrayReaching({...hir,functions:[{...caller,parameters,body},helper]},plan,()=>{},()=>false);
+    const site=caller.id+'/body/',read=reaching.reads.find(row=>row.node===site+(body.length-2)+'/expression');
+    assert.equal(read?.status,disjoint?'proven':'pending');
+    assert.deepEqual(read.sources,disjoint?[site+'2/expression/value']:[]);
+    const changed=reaching.reads.find(row=>row.node===site+(body.length-1)+'/value');
+    assert.deepEqual(changed?.sources,[writer.id+'/body/0/expression/value']);
+  }
+});
+
 test('a returning branch does not carry its local Array binding into the normal merge',async()=>{
   const fixture={file:'636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571-package.json',
     sha256:'7732a541fe22955a8a4a3a4449a6117e793f5807e58cf527fd65f3148d1c5657',

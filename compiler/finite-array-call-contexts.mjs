@@ -47,16 +47,22 @@ export function createArrayCallContexts(charge,clone,replay) {
     const symbols=new Map();
     for(const [actual,relative]of request.symbols){charge();symbols.set(relative,actual);}
     if(summary.invalidateAll)for(const row of result.values()){charge();row.length=null;row.slots.clear();}
+    let mutatedParameter=false;
     for(const [actual,relative]of request.owners) {
       charge();if(!summary.mutated.has(relative))continue;mutated.add(actual);
       // Unpassed host parameters may still alias an affected actual parameter.
       // A formal template must not hide that invalidation from its caller.
-      if(actual.includes('/parameter/'))for(const [owner,row]of result) {
-        charge();if(owner!==actual&&owner.includes('/parameter/')){row.length=null;row.slots.clear();}
+      if(actual.includes('/parameter/')){
+        mutatedParameter=true;
+        for(const [owner,row]of result) {
+          charge();if(owner!==actual&&owner.includes('/parameter/')){row.length=null;row.slots.clear();}
+        }
       }
     }
     for(const [actual,relative]of request.owners) {
-      charge();const row=summary.state.get(relative);
+      charge();
+      if(!summary.invalidateAll&&!mutated.has(actual)&&!(mutatedParameter&&actual.includes('/parameter/')))continue;
+      const row=summary.state.get(relative);
       if(!row){result.delete(actual);continue;}
       const slots=new Map();for(const [slot,versions]of row.slots) {
         charge();const mapped=slot.startsWith('s:')?symbols.get(slot.slice(2)):slot;
