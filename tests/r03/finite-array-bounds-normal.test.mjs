@@ -98,6 +98,28 @@ test('shrinking through a parameter invalidates the length of another possibly a
   assert.equal(readAt(zero).status,'proven','the private fresh Array retains its original element');
 });
 
+test('a returning branch does not carry its local Array binding into the normal merge',async()=>{
+  const fixture={file:'636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571-package.json',
+    sha256:'7732a541fe22955a8a4a3a4449a6117e793f5807e58cf527fd65f3148d1c5657',
+    packageId:'sha256:1c15ccfce665452c422635ba21cac5cfa657a296c32e5d234126c218b4bfacf8',
+    requestId:'sha256:e68b201086d40beec104c396ba1a497f0191ef19f000cbcdc3d9bf7222735f72'};
+  const {hir}=await checkedFixture(fixture,'typed-array-entry/');
+  const fn=hir.functions.find(row=>row.name==='runUnknown'),read=hir.functions.find(row=>row.name==='read').body[0].value;
+  const [early,branch,live,returned]=fn.body;
+  assert.equal(branch.kind,'if');assert.equal(read.kind,'arrayReadChecked');
+  const returnRead=call=>({...returned,value:{...read,receiver:call.arguments[0],index:call.arguments[1]}});
+  // Component analysis of a branch-local declaration and return, with the checked Array operations.
+  const terminal=[early,returnRead(branch.then[0].expression)];
+  for(const [then,otherwise] of [[terminal,[]],[[],terminal]]){
+    const body=[{...branch,then,else:otherwise},live,returnRead(returned.value)];
+    const model={...hir,functions:[{...fn,body}]};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>false);
+    const result=reaching.reads.find(row=>row.node===fn.id+'/body/2/value');
+    assert.equal(result?.status,'proven');
+    assert.deepEqual(result.sources,[fn.id+'/body/1/initializer/elements/0']);
+  }
+});
+
 for(const [name,status] of [
   ['empty-checked-read','missing'],['length-equal-checked-read','missing'],
   ['far-oob-checked-read','missing'],['dense-overwrite','proven'],['after-last-use','pending'],

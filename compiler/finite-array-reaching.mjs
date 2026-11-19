@@ -69,7 +69,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         ['owner','constant','symbol','offset','limit','truth'].every(key=>a[key]===b[key]);
       result.set(id,!leftLive?b:!rightLive?a:same?a:{});
     }
-    target.clear();for(const [id,value] of result){charge();target.set(id,value);}
+    // A branch that returned may be the sole owner of a lexical binding.
+    target.clear();for(const [id,value] of result){charge();if(value!==undefined)target.set(id,value);}
   }
   function join(left,right) {
     if(!left)return right;if(!right)return left;const out=new Map();
