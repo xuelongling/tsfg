@@ -314,7 +314,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         return ordinal!==null&&ordinal!==undefined&&consistent?actual[ordinal]??{}:{symbol:path};
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const left=child('left'),possibilities=collectAll?{present:true,absent:true}:value.operator==='??'?presence(path+'/left'):
+        const left=child('left',terminalRoot);if(left.terminal)return left;
+        const possibilities=collectAll?{present:true,absent:true}:value.operator==='??'?presence(path+'/left'):
           {present:left.truth===undefined||left.truth===(value.operator==='||'),absent:left.truth===undefined||left.truth===(value.operator==='&&')};
         const resultValue=result=>{if(value.operator!=='??')forgetAssignedTruth(value.right,bindings);
           return value.operator==='??'?adapt(result,result.symbol,path):{symbol:path};};

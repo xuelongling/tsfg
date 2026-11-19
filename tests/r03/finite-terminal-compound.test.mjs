@@ -5,7 +5,8 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
-import {canonical,sha256} from '../../compiler/identity.mjs';
+import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
+import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
 /** @type {{name:string,fixture:string,sha:string,fn:string,position:string,range?:[number,number],binary?:'left'|'right',productive?:boolean}[]} */
@@ -97,6 +98,29 @@ for(const row of cases)test(row.name,async t=>{
     if(sibling){
       const siblingWrite=writes.find(row=>row.id.startsWith(sibling.id));
       assert.equal(source.slice(siblingWrite.origin.start,siblingWrite.origin.end),earlier?'sink[0] = 7.0':'sink[1] = 9.0');
+    }
+  }
+
+  if(row.binary==='left') {
+    const local=compound.body[2],original=local.initializer,returned=compound.body[3];
+    assert.equal(original.left.operand.kind,'arrayCompoundAssignment');
+    const {receiver,index,type,range}=original.left.operand.target;
+    // Component exercise using the same checked array operand and source range.
+    const tail={kind:'arrayReadChecked',receiver,index,type,range};
+    const compare={...original,operator:'===',type:scalarTypeIds.bool};
+    const flag={kind:'boolean',value:true,type:scalarTypeIds.bool,range:original.range};
+    for(const operator of ['&&','||','??']){
+      const numeric=operator==='??',base=compound.id+'/body/2/expression';
+      const expression={...original,kind:'shortCircuit',operator,left:numeric?original.left:compare,
+        right:numeric?original.right:flag,type:numeric?type:scalarTypeIds.bool};
+      const fn={...compound,body:[...compound.body.slice(0,2),{kind:'expression',expression,range:local.range},{...returned,value:tail}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const site=base+(numeric?'/left/operand':'/left/left/operand'),terminal=site+'/old-value';
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[terminal],operator);
+      assert.equal(reaching.reads.find(read=>read.node===terminal)?.status,row.productive?'proven':'missing',operator);
+      assert.equal(reaching.reads.find(read=>read.node===compound.id+'/body/3/value')?.status,row.productive?'proven':'pending',operator);
+      assert.ok(reaching.writes.some(write=>write.id===site+'/array-version'),operator);
     }
   }
 
