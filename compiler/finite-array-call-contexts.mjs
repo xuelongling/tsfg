@@ -41,7 +41,10 @@ export function createArrayCallContexts(charge,clone,replay) {
     return {key:canonical([fn.id,argumentsRelative,identity]),argumentsRelative,memory,owners,symbols};
   }
   function instantiate(summary,request,state) {
-    const result=clone(state),symbols=new Map(),mutated=new Set();
+    const result=clone(state),mutated=new Set();
+    // The callee's input projection omits indices that only the caller knows.
+    if(!summary.invalidateAll&&!summary.mutated.size)return {state:result,invalidateAll:false,mutated};
+    const symbols=new Map();
     for(const [actual,relative]of request.symbols){charge();symbols.set(relative,actual);}
     if(summary.invalidateAll)for(const row of result.values()){charge();row.length=null;row.slots.clear();}
     for(const [actual,relative]of request.owners) {

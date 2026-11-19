@@ -98,6 +98,33 @@ test('shrinking through a parameter invalidates the length of another possibly a
   assert.equal(readAt(zero).status,'proven','the private fresh Array retains its original element');
 });
 
+test('a normally returning read-only call preserves the caller’s unpassed Array index',async()=>{
+  const [{hir},{hir:readerHir},{hir:constantHir}]=await Promise.all([
+    checkedFixture(manifest.find(row=>row.name==='dynamic-owner-aliases')),
+    checkedFixture(actualManifest.find(row=>row.sourceIdentity==='ef37f9372bf3611c8d6fb98090975753ba0cd55d13add934d833002fbe0ba59f'),
+      'typed-array-actual-v8/'),
+    checkedFixture(manifest.find(row=>row.name==='empty-append-rhs-shrink')),
+  ]);
+  const caller=hir.functions.find(fn=>fn.name==='alpha'),reader=readerHir.functions.find(fn=>fn.name==='read');
+  assert.ok(caller&&reader);
+  const [local,store,returned]=caller.body,zero=constantHir.functions[0].body.at(-1).value.index;
+  assert.equal(store.expression.kind,'arrayStoreDenseChecked');
+  assert.equal(reader.body[0].value.kind,'arrayReadChecked');
+  assert.equal(zero.decimal,'0');
+  const plan={nodes:[],domains:[],calls:[]};
+  const range=returned.range,call={kind:'expression',range,expression:{
+    kind:'call',target:reader.id,arguments:[returned.value.receiver,zero],type:reader.returnType.id,range,
+  }};
+  for(const calls of [[],[call]]){
+    // Component projection of two authentic, separately checked Array functions.
+    const body=[local,store,...calls,returned],model={...hir,functions:[{...caller,body},reader]};
+    const {reaching}=buildFiniteArrayReaching(model,plan,()=>{},()=>false);
+    const read=reaching.reads.find(row=>row.node===caller.id+'/body/'+(body.length-1)+'/value');
+    assert.equal(read?.status,'proven');
+    assert.deepEqual(read.sources,[caller.id+'/body/1/expression/value']);
+  }
+});
+
 test('a returning branch does not carry its local Array binding into the normal merge',async()=>{
   const fixture={file:'636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571-package.json',
     sha256:'7732a541fe22955a8a4a3a4449a6117e793f5807e58cf527fd65f3148d1c5657',
