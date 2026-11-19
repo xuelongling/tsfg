@@ -4,6 +4,7 @@ import { open, readFile } from "node:fs/promises";
 import { compileHir, compileProgram, compileOwnedCore, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {checkCommonJsonFileSize,commonHirFormat,commonJson} from '../compiler/common-program-common.mjs';
+import {createCommonGpuBindingPlan} from '../compiler/common-program-gpu-bindings.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
 import { checkHirWireFileSize } from '../compiler/hir-wire.mjs';
 import { genericHirFormat } from '../compiler/generic-hir.mjs';
@@ -42,7 +43,7 @@ async function readStableInputFile(file,checkSize,kind){
 const readCommonInputFile = file => readStableInputFile(file,checkCommonJsonFileSize,'Common');
 
 try {
-  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request"];
+  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request", "--gpu-request"];
   const options = new Map();
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i += 2) {
@@ -54,11 +55,14 @@ try {
   const emit = options.get("--emit") ?? "run";
   const inputKind = options.get("--input-kind") ?? "source";
   const hasFixedCommon = options.has("--publication") || options.has("--kernel-request");
+  const gpuBindingPlan = emit === "gpu-binding-plan";
   const fixedCommonCore = inputKind === "hir" && emit === "core" && hasFixedCommon;
-  const emitModes = ["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof"];
+  const emitModes = ["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof", "gpu-binding-plan"];
   if (!emitModes.includes(emit))
     throw new TypeError("r03-cli-options: unsupported --emit (expected " + emitModes.join("|") + ")");
-  if (!["source", "hir"].includes(inputKind) || inputKind === "hir" &&
+  if (options.has("--gpu-request") && !gpuBindingPlan)
+    throw new TypeError("r03-cli-options: --gpu-request requires --emit gpu-binding-plan");
+  if (!["source", "hir"].includes(inputKind) || inputKind === "hir" && !gpuBindingPlan &&
       (!["hir", "core", "bytecode", "program-object", "run"].includes(emit) ||
         ["--frontend", "--query-request"].some(key => options.has(key)) || hasFixedCommon && !fixedCommonCore))
     throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|program-object|run without Source, Query or borrow inputs");
@@ -67,14 +71,25 @@ try {
   if (fixedCommonCore && (!options.has("--publication") || !options.has("--kernel-request") || !options.has("--core") ||
       ["--vm", "--requests"].some(key => options.has(key))))
     throw new TypeError("r03-cli-options: Common Core requires --publication, --kernel-request and --core without Runtime inputs");
-  if(emit==='borrow-proof'){
-    if(!options.has('--publication')||!options.has('--kernel-request')||!options.has('--core')||['--frontend','--vm','--requests','--query-request'].some(key=>options.has(key)))
+  if (gpuBindingPlan || emit === "borrow-proof") {
+    const hasCommonInputs = options.has("--publication") && options.has("--kernel-request") &&
+      !["--frontend", "--vm", "--requests", "--query-request"].some(key => options.has(key));
+    if (gpuBindingPlan && (!hasCommonInputs || inputKind !== "hir" || !options.has("--gpu-request") || options.has("--core")))
+      throw new TypeError("r03-cli-options: gpu-binding-plan requires --input-kind hir, --publication, --kernel-request and --gpu-request");
+    if (!gpuBindingPlan && (!hasCommonInputs || !options.has("--core")))
       throw new TypeError('r03-cli-options: borrow-proof requires complete Common HIR, fixed --publication, --kernel-request and --core');
     const hir=readCommonProgramHir(await readCommonInputFile(options.get('--input')));
     const publication=commonJson(await readCommonInputFile(options.get('--publication')));
     const request=commonJson(await readCommonInputFile(options.get('--kernel-request')));
-    const result=await compileCommonBorrowProof(hir,publication,request,{core:options.get('--core')});process.stdout.write(canonical(result.proof)+'\n');
-  }else if(hasFixedCommon&&!fixedCommonCore)throw new TypeError('r03-cli-options: fixed Common publication/request require --emit borrow-proof or --input-kind hir --emit core');
+    if (gpuBindingPlan) {
+      const gpuRequest = commonJson(await readCommonInputFile(options.get("--gpu-request")));
+      const plan = createCommonGpuBindingPlan(hir, publication, request, gpuRequest);
+      process.stdout.write(canonical(plan) + "\n");
+    } else {
+      const result = await compileCommonBorrowProof(hir, publication, request, {core: options.get("--core")});
+      process.stdout.write(canonical(result.proof) + "\n");
+    }
+  }else if(hasFixedCommon&&!fixedCommonCore)throw new TypeError('r03-cli-options: fixed Common publication/request require --emit borrow-proof, --emit gpu-binding-plan or --input-kind hir --emit core');
   else if(options.has('--query-request')){
     if(!['core','query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects|query-batch|query-llvm|query-llvm-ir|query-tmeta');

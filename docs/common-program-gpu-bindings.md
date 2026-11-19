@@ -67,6 +67,13 @@ member and result addressing, rather
 than independently inventing layout. This remains a compiler artifact; no
 shader or device consumer has been qualified by producing it.
 
+The product compiler can produce the same canonical plan from persisted owned
+Common HIR, its fixed publication, and the original kernel and GPU requests:
+
+```powershell
+node tooling/tsfgc.mjs --input-kind hir --input owned-hir.json --publication published.json --kernel-request kernels.json --gpu-request gpu.json --emit gpu-binding-plan
+```
+
 The independent C++ command is `--common-program --gpu-binding-plan`. Standard
 input is canonical JSON plus one LF with exact fields `family`, `version`,
 `core`, `request`, `plan`. Family is `tsfg.gpu-logical-binding-input`, version is

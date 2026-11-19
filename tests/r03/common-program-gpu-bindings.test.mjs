@@ -2,7 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
@@ -57,6 +59,58 @@ const fails=(value,code)=>assert.throws(()=>plan(value),error=>diagnostic(error)
 test('logical GPU binding keeps whole-Program proof and fixed Source anchors',()=>{
   assert.deepEqual(plan(request),expected);assert.equal(hir.functions.length,4);assert.equal(group.targets.length,2);
   assert.ok(core.borrowProof);assert.equal(Object.isFrozen(plan(request)),true);
+});
+
+test('compiler CLI emits the verified GPU plan from owned HIR and bounded input files',async t=>{
+  const directory=await fs.mkdtemp(path.join(tmpdir(),'tsfg-gpu-plan-'));
+  const save=async (name,value)=>{
+    const file=path.join(directory,name+'.json');
+    await fs.writeFile(file,canonical(value)+'\n');
+    return file;
+  };
+  const files=await Promise.all([save('owned-hir',hir),save('publication',publication),
+    save('kernel-request',group),save('gpu-request',request)]);
+  const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
+  const args=['--input-kind','hir','--input',files[0],'--publication',files[1],
+    '--kernel-request',files[2],'--emit','gpu-binding-plan'];
+  const run=(options)=>spawnSync(process.execPath,[cli,...options],{
+    encoding:'utf8',windowsHide:true,maxBuffer:8388608,timeout:30000,
+  });
+  const full=[...args,'--gpu-request',files[3]];
+  await t.test('the complete compiler plan matches the independent expected bindings',()=>{
+    const accepted=run(full);
+    assert.equal(accepted.error,undefined);
+    assert.equal(accepted.status,0,accepted.stderr);
+    assert.equal(accepted.stdout,canonical(expected)+'\n');
+    assert.equal(accepted.stderr,'');
+  });
+  await t.test('GPU input stays in the GPU plan command',()=>{
+    for(const options of [args,[...full,'--vm','unused'],[...full,'--core','unused'],
+      ['--input-kind','hir','--input',files[0],'--emit','hir','--gpu-request',files[3]]]){
+      const rejected=run(options);
+      assert.equal(rejected.error,undefined);
+      assert.equal(rejected.status,2);
+      assert.equal(rejected.stdout,'');
+      assert.match(rejected.stderr,/^r03-cli-options:/);
+    }
+  });
+  await t.test('a missing GPU binding is rejected before output',async()=>{
+    const invalid=await save('missing-binding',changed(value=>{value.bindings.pop();}));
+    const rejected=run([...args,'--gpu-request',invalid]);
+    assert.equal(rejected.error,undefined);
+    assert.equal(rejected.status,2);
+    assert.equal(rejected.stdout,'');
+    assert.match(rejected.stderr,/^r03-common-program-gpu-coverage:/);
+  });
+  await t.test('oversize GPU request is rejected at the file boundary',async()=>{
+    const invalid=await save('oversized',request);
+    await fs.truncate(invalid,8388609);
+    const rejected=run([...args,'--gpu-request',invalid]);
+    assert.equal(rejected.error,undefined);
+    assert.equal(rejected.status,2);
+    assert.equal(rejected.stdout,'');
+    assert.match(rejected.stderr,/^r03-common-program-limit:/);
+  });
 });
 test('whole-Program borrow flow crosses local receiver completions before the caught return',()=>{
   const ordinary=hir.functions.find(row=>row.name==='ordinary');
