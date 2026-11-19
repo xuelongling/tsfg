@@ -17,8 +17,8 @@ export function literalBooleanRhs(value) {
 export function literalIfArm(value) {
   return value.kind==='if'&&value.condition.kind==='boolean'?(value.condition.value?'then':'else'):null;
 }
-export function skipsLiteralLoopBody(value) {
-  return value.kind==='while'&&value.condition.kind==='boolean'&&value.condition.value===false;
+export function literalLoopCondition(value) {
+  return value.kind==='while'&&value.condition.kind==='boolean'?value.condition.value:null;
 }
 
 /** @typedef {{target:string,fields:Map<string,Set<string>>,mayExecute:boolean}} FieldCallContext */
@@ -59,6 +59,7 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
   const endsBody=body=>body?.some(row=>{charge();return endsStatement(row);})??false;
   function endsStatement(statement) {
     if(statement.kind==='return'||statement.kind==='constructorReturn')return true;
+    if(literalLoopCondition(statement)===true)return true;
     if(statement.kind!=='block'&&statement.kind!=='if')return false;
     if(terminal.has(statement))return terminal.get(statement);
     const arm=literalIfArm(statement),ends=statement.kind==='block'?endsBody(statement.body):
@@ -107,7 +108,7 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
       if(['construct','superConstruct','forwardBaseConstruction'].includes(value.kind)) {
         effect.writes=true;target(constructors.get(value.construction));
       }
-      const skipLoop=skipsLiteralLoopBody(value);
+      const skipLoop=literalLoopCondition(value)===false;
       if(value.kind==='while'&&mayExecute&&!skipLoop){cyclicFunctions.add(fn.id);effect.unknown=true;}
       if(value.kind==='call') {
         const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];

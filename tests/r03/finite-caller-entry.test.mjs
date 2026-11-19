@@ -96,6 +96,27 @@ test('literal false while keeps an unexecuted call in the inventory without cont
   assert.deepEqual(reaching.callContexts.find(row=>row.site===skipped)?.fields,[]);
 });
 
+test('A literal true loop excludes its normal successor from field inputs',async()=>{
+  const {hir,context}=await callerEntry(),read=hir.functions.find(fn=>fn.name==='read'),run=hir.functions.find(fn=>fn.name==='run');
+  const [store,returned]=run.body,plan=buildFiniteCoreDomains(hir,context).definition;
+  const original=run.id+'/body/0',other=run.id+'/other',prefix=other+'/body/';
+  const duplicate=rows=>[...rows,...rows.filter(row=>row.id.startsWith(original+'/'))
+    .map(row=>({...row,id:prefix+'1'+row.id.slice(original.length)}))];
+  const modelPlan={...plan,fields:duplicate(plan.fields),carrierFields:duplicate(plan.carrierFields)};
+  const condition={kind:'boolean',value:true,type:scalarTypeIds.bool,range:returned.range};
+  for(const reachedBodyCall of [false,true]) {
+    const loop={kind:'while',range:returned.range,condition,body:reachedBodyCall?[returned]:[]};
+    const fn={...run,id:other,body:[loop,store,returned]},model={...hir,functions:[...hir.functions,fn]};
+    const result=buildFiniteFieldReaching(model,modelPlan,()=>{});
+    const access=result.reads.find(row=>row.node.startsWith(read.id+'/'));
+    assert.deepEqual(access?.reaching.flatMap(row=>row.sources),
+      reachedBodyCall?[]:[original+'/expression/value']);
+    assert.deepEqual(result.writes.filter(row=>row.id.startsWith(prefix)).map(row=>row.node),[prefix+'1/expression/value']);
+    const skipped=prefix+'2/value\0'+read.id;
+    assert.deepEqual(result.callContexts.find(row=>row.site===skipped)?.fields,[]);
+  }
+});
+
 test('Each field callee inspects only its own incoming call records',()=>{
   let work=0;
   const contexts=createFieldCallContexts(()=>{work++;});
