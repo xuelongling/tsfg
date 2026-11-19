@@ -116,7 +116,7 @@ pub const Layout = struct {
         inline for (std.meta.fields(Target)) |field| {
             if (!std.mem.eql(u8, @field(payload.target, field.name), @field(target, field.name)) or !std.mem.eql(u8, @field(payload.target, field.name), @field(Target.native, field.name))) return error.WrongTarget;
         }
-        if (payload.types.len == 0 or payload.types.len > 4096 or payload.components.len > 4096) return error.LayoutLimit;
+        if (payload.types.len > 4096 or payload.components.len > 4096) return error.LayoutLimit;
         var result: Layout = .{ .arena = arena, .payload = payload, .payload_hash = rendered };
         var component_count: usize = 0;
         for (payload.types, 0..) |row, index| {
@@ -159,18 +159,28 @@ pub const Layout = struct {
             }
         }
         if (component_count != payload.components.len) return error.InvalidLayout;
-        for (payload.components, 0..) |id, index| {
-            try budget.charge(1);
-            if (index > 0 and std.mem.order(u8, payload.components[index - 1], id) != .lt) return error.InvalidLayout;
-            if ((try result.findCharged(id, &budget)).kind != .component) return error.InvalidLayout;
-        }
         const states = try owned.alloc(u8, payload.types.len);
         @memset(states, 0);
         const heights = try owned.alloc(u8, payload.types.len);
-        for (payload.types, 0..) |_, index| _ = try result.visit(index, states, heights, &budget, 0);
+        // Common verifies the closure from the listed components here. Query
+        // checks reachability against its owned Source graph in the effects reader.
+        for (payload.components, 0..) |id, index| {
+            try budget.charge(1);
+            if (index > 0 and std.mem.order(u8, payload.components[index - 1], id) != .lt) return error.InvalidLayout;
+            const root = try result.findCharged(id, &budget);
+            if (root.kind != .component) return error.InvalidLayout;
+            if (identity == .external) {
+                const root_index = (@intFromPtr(root) - @intFromPtr(payload.types.ptr)) / @sizeOf(Type);
+                _ = try result.visit(root_index, states, heights, &budget, 0);
+            }
+        }
         switch (identity) {
-            .external => {},
+            .external => {
+                try budget.charge(states.len);
+                if (std.mem.indexOfScalar(u8, states, 0) != null) return error.InvalidLayout;
+            },
             .catalog => {
+                for (payload.types, 0..) |_, index| _ = try result.visit(index, states, heights, &budget, 0);
                 const catalog = try std.json.Stringify.valueAlloc(owned, .{ .components = payload.components, .target = payload.target, .types = payload.types }, .{});
                 var catalog_hash = std.crypto.hash.sha2.Sha256.init(.{});
                 catalog_hash.update(catalog);

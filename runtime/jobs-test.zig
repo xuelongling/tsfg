@@ -234,6 +234,36 @@ fn encoded(allocator: std.mem.Allocator, payload: L.Payload) ![]u8 {
     return std.mem.concat(allocator, u8, &.{ json, "\n" });
 }
 
+test "component catalog accepts no roots and no types" {
+    const bytes = try encoded(A, .{
+        .components = &.{},
+        .hirDigest = expected.hirDigest,
+        .inputIdentity = expected.inputIdentity,
+        .target = expected.target,
+        .types = &.{},
+    });
+    defer A.free(bytes);
+    var layout = try L.Layout.load(A, bytes, expected);
+    defer layout.deinit();
+    try std.testing.expectEqual(@as(usize, 0), layout.payload.components.len);
+    try std.testing.expectEqual(@as(usize, 0), layout.payload.types.len);
+}
+
+test "component catalog rejects a valid scalar outside its root closure" {
+    var source = try L.Layout.load(A, source_layout, expected);
+    defer source.deinit();
+    var payload = source.payload;
+    payload.components = &.{};
+    payload.types = &.{named(&source, "i32").*};
+    const bytes = try encoded(A, payload);
+    defer A.free(bytes);
+    if (L.Layout.load(A, bytes, expected)) |loaded| {
+        var unexpected = loaded;
+        unexpected.deinit();
+        return error.TestUnexpectedResult;
+    } else |err| try std.testing.expectEqual(error.InvalidLayout, err);
+}
+
 test "self-consistent checksums never allow malformed field ABI or unclosed type graphs" {
     for (0..7) |mutation| {
         var source = try L.Layout.load(A, source_layout, expected);
