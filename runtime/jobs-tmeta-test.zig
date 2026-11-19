@@ -57,6 +57,11 @@ fn exerciseProducer(bytes: []const u8, expected: T.Expected, shared_required: bo
         try std.testing.expect(std.meta.eql(original, (try plan.argument(scalar.argument)).scalar));
         scalars[index] = if (std.mem.eql(u8, scalar.type, "f64")) .{ .float64 = -100 } else .{ .float32 = -100 };
         try std.testing.expect(std.meta.eql(original, (try plan.argument(scalar.argument)).scalar));
+        const native_scalar = try plan.llvmArgument(1 + 6 * entry.columns.len + index);
+        switch (original) {
+            .float32 => |value| try std.testing.expectEqual(T.Plan.LLVMArgument{ .float32 = value }, native_scalar),
+            .float64 => |value| try std.testing.expectEqual(T.Plan.LLVMArgument{ .float64 = value }, native_scalar),
+        }
         const wrong: T.ScalarValue = if (std.mem.eql(u8, scalar.type, "f64")) .{ .float32 = 1 } else .{ .float64 = 1 };
         const saved = scalars[index];
         scalars[index] = wrong;
@@ -505,6 +510,8 @@ test "actual second Query loop keeps typed effects after Document release" {
         fn read(plan_to_read: *const T.Plan, rows: usize) !void {
             try std.testing.expectEqual(rows, (try plan_to_read.argument(0)).row_count);
             _ = try plan_to_read.readTuple(0);
+            try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = rows }, try plan_to_read.llvmArgument(0));
+            try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = 8 * rows }, try plan_to_read.llvmArgument(4));
         }
         fn checkPinned(active: *const T.Plan, context: @This()) !void {
             try std.testing.expectError(error.BorrowConflict, context.query.release());
@@ -524,6 +531,8 @@ test "actual second Query loop keeps typed effects after Document release" {
     try query.release();
     released = true;
     try std.testing.expectError(error.InvalidLease, plan.readTuple(0));
+    try std.testing.expectError(error.InvalidLease, plan.llvmArgument(1));
+    try std.testing.expectError(error.InvalidLease, plan.llvmArgument(7));
     try std.testing.expectError(error.InvalidLease, plan.withCheckedBatch(code_identity, {}, Call.unexpected));
     const retained_loop = try std.json.Stringify.valueAlloc(A, plan.loop_effects, .{});
     defer A.free(retained_loop);
@@ -839,6 +848,25 @@ fn expectInheritanceBinding(document: *const T.Document, plan: *const T.Plan, ba
     try std.testing.expectEqual(@intFromPtr((try batch.read(0)).ptr), @intFromPtr(readonly.ptr));
     try std.testing.expectEqual(@as(usize, 32), writable.len);
     try std.testing.expectEqual(@as(usize, 16), readonly.len);
+    // LLVM lowers each byte memref to five arguments before the separate row stride.
+    const llvm_arguments = [_]T.Plan.LLVMArgument{
+        .{ .index = 2 },
+        .{ .read_pointer = readonly.ptr },
+        .{ .read_pointer = readonly.ptr },
+        .{ .index = 0 },
+        .{ .index = 16 },
+        .{ .index = 1 },
+        .{ .index = 8 },
+        .{ .write_pointer = writable.ptr },
+        .{ .write_pointer = writable.ptr },
+        .{ .index = 0 },
+        .{ .index = 32 },
+        .{ .index = 1 },
+        .{ .index = 16 },
+        .{ .float32 = 0.5 },
+    };
+    for (llvm_arguments, 0..) |expected, index| try std.testing.expectEqual(expected, try plan.llvmArgument(index));
+    try std.testing.expectError(error.BindingMismatch, plan.llvmArgument(llvm_arguments.len));
 
     const operations = document.effects.report.systems[0].loops[0].operations;
     try std.testing.expectEqual(@as(usize, 6), operations.len);

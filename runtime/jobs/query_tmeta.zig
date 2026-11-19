@@ -223,6 +223,13 @@ pub const Plan = struct {
     const TupleBinding = struct { column: usize, access: storage.Access };
     const ColumnBinding = struct { component: []const u8, stride: usize, access: storage.Access };
     pub const Argument = union(enum) { row_count: usize, column: ColumnBinding, stride: usize, scalar: ScalarValue };
+    pub const LLVMArgument = union(enum) {
+        index: u64,
+        read_pointer: [*]const u8,
+        write_pointer: [*]u8,
+        float32: f32,
+        float64: f64,
+    };
     pub const CodeIdentity = struct {
         metadata_hash: []const u8,
         batch_hash: []const u8,
@@ -281,6 +288,37 @@ pub const Plan = struct {
         const scalar = index - (1 + 2 * self.columns.len);
         if (scalar >= self.scalars.len) return error.BindingMismatch;
         return .{ .scalar = self.scalars[scalar] };
+    }
+    /// Flatten the checked batch's arguments in the emitted LLVM entry order.
+    /// Pointer values borrow a live column. For a call, use them during withCheckedBatch.
+    pub fn llvmArgument(self: *const Plan, index: usize) !LLVMArgument {
+        _ = try self.batch.rowCount();
+        if (index == 0) return .{ .index = self.rows };
+        // A one-dimensional byte memref expands to two pointers, offset,
+        // byte length and unit stride. The row stride follows the memref.
+        const column_arguments = self.columns.len * 6;
+        const position = index - 1;
+        if (position >= column_arguments) {
+            const scalar = position - column_arguments;
+            if (scalar >= self.scalars.len) return error.BindingMismatch;
+            return switch (self.scalars[scalar]) {
+                .float32 => |value| .{ .float32 = value },
+                .float64 => |value| .{ .float64 = value },
+            };
+        }
+        const column_index = position / 6;
+        const column = self.columns[column_index];
+        return switch (position % 6) {
+            0, 1 => switch (column.access) {
+                .read => .{ .read_pointer = (try self.batch.read(column_index)).ptr },
+                .write => .{ .write_pointer = (try self.batch.write(column_index)).ptr },
+            },
+            2 => .{ .index = 0 },
+            3 => .{ .index = (try self.batch.read(column_index)).len },
+            4 => .{ .index = 1 },
+            5 => .{ .index = column.stride },
+            else => unreachable,
+        };
     }
     pub fn readTuple(self: *const Plan, index: usize) ![]const u8 {
         const tuple = try self.tupleBinding(index);
