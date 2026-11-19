@@ -265,6 +265,12 @@ pub const Plan = struct {
             if (!std.mem.eql(u8, @field(self, field.name), @field(candidate, field.name))) return error.IdentityMismatch;
         }
     }
+    /// Keep this plan and the code version alive through the synchronous call.
+    /// The callback must not retain argument or column views after returning.
+    pub fn withCheckedBatch(self: *const Plan, candidate: CodeIdentity, context: anytype, comptime call: anytype) !void {
+        try self.verifyCodeIdentity(candidate);
+        return self.batch.withActiveCall(.{self, context}, call);
+    }
     pub fn argument(self: *const Plan, index: usize) !Argument {
         _ = try self.batch.rowCount();
         if (index == 0) return .{ .row_count = self.rows };

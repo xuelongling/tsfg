@@ -470,12 +470,14 @@ test "actual second Query loop keeps typed effects after Document release" {
     var store = try jobs.Store.init(A, &document.component_layout, 2);
     defer store.deinit() catch unreachable;
     const archetype = try store.addArchetype(document.component_layout.payload.components);
-    _ = try store.create(archetype, &.{});
+    for (0..3) |_| _ = try store.create(archetype, &.{});
     const query = try document.query(A, &store, 1);
     var released = false;
     defer if (!released) query.release() catch unreachable;
     var plan = try document.bind(A, &store, try query.batch(0), 1, &.{.{ .float32 = 0.5 }});
     defer plan.deinit();
+    var other_batch = try document.bind(A, &store, try query.batch(1), 1, &.{.{ .float32 = 0.5 }});
+    defer other_batch.deinit();
     try std.testing.expect(plan.loop_effects.operations.ptr != expected.operations.ptr);
     try std.testing.expect(plan.loop_effects.source.path.ptr != expected.source.path.ptr);
     document.deinit();
@@ -492,11 +494,37 @@ test "actual second Query loop keeps typed effects after Document release" {
     wrong_code.entry_symbol = "batch_63f739f624e4c62125bfac010a40bdd62add8bc09ce0149b365d26c0551e1ecd_0";
     try std.testing.expectError(error.IdentityMismatch, plan.verifyCodeIdentity(wrong_code));
 
-    try std.testing.expectEqual(@as(usize, 1), (try plan.argument(0)).row_count);
+    const Call = struct {
+        query: jobs.Store.Query,
+        other: *const T.Plan,
+        identity: T.Plan.CodeIdentity,
+
+        fn unexpected(_: *const T.Plan, _: void) !void {
+            return error.TestUnexpectedResult;
+        }
+        fn read(plan_to_read: *const T.Plan, rows: usize) !void {
+            try std.testing.expectEqual(rows, (try plan_to_read.argument(0)).row_count);
+            _ = try plan_to_read.readTuple(0);
+        }
+        fn checkPinned(active: *const T.Plan, context: @This()) !void {
+            try std.testing.expectError(error.BorrowConflict, context.query.release());
+            try std.testing.expectError(error.BorrowConflict, active.batch.release());
+            try std.testing.expectError(error.BorrowConflict, active.withCheckedBatch(context.identity, {}, unexpected));
+            try context.other.withCheckedBatch(context.identity, @as(usize, 1), read);
+            try read(active, 2);
+            return error.TestCallFailed;
+        }
+    };
+    try std.testing.expectError(error.IdentityMismatch, plan.withCheckedBatch(wrong_code, {}, Call.unexpected));
+    try std.testing.expectError(error.TestCallFailed, plan.withCheckedBatch(code_identity,
+        Call{ .query = query, .other = &other_batch, .identity = code_identity }, Call.checkPinned));
+    try plan.withCheckedBatch(code_identity, @as(usize, 2), Call.read);
+    try std.testing.expectEqual(@as(usize, 2), (try plan.argument(0)).row_count);
     _ = try plan.readTuple(0);
     try query.release();
     released = true;
     try std.testing.expectError(error.InvalidLease, plan.readTuple(0));
+    try std.testing.expectError(error.InvalidLease, plan.withCheckedBatch(code_identity, {}, Call.unexpected));
     const retained_loop = try std.json.Stringify.valueAlloc(A, plan.loop_effects, .{});
     defer A.free(retained_loop);
     try std.testing.expectEqualStrings(canonical_loop, retained_loop);

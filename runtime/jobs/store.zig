@@ -19,7 +19,8 @@ const Archetype = struct {
 const Slot = struct { generation: u32 = 1, live: bool = false, archetype: u32 = 0, chunk: u32 = 0, row: u32 = 0 };
 const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool };
 // A query owns the complete product of its admitted chunks and selection.
-const QueryState = struct { token: u64, selection: []Resolved, chunks: []*Chunk };
+const QueryChunk = struct { chunk: *Chunk, active_call: bool = false };
+const QueryState = struct { token: u64, selection: []Resolved, chunks: []QueryChunk };
 const FreeSlots = std.PriorityQueue(u32, void, compareSlotIndex);
 
 fn compareSlotIndex(_: void, a: u32, b: u32) std.math.Order {
@@ -342,6 +343,24 @@ pub const Store = struct {
         pub fn release(self: Batch) !void {
             try self.store.releaseQuery(self.token);
         }
+        /// Keep this batch and its query alive through one synchronous call.
+        /// A second call on the same batch or release through any alias fails.
+        pub fn withActiveCall(self: Batch, arguments: anytype, comptime call: anytype) !void {
+            {
+                self.store.lock();
+                defer self.store.mutex.unlock();
+                const bound = try self.store.queryBatch(self.token, self.index);
+                if (bound.batch_state.active_call) return error.BorrowConflict;
+                bound.batch_state.active_call = true;
+            }
+            defer {
+                self.store.lock();
+                defer self.store.mutex.unlock();
+                const bound = self.store.queryBatch(self.token, self.index) catch unreachable;
+                bound.batch_state.active_call = false;
+            }
+            return @call(.auto, call, arguments);
+        }
     };
 
     pub fn query(self: *Store, selection: []const Selection) !Query {
@@ -356,7 +375,7 @@ pub const Store = struct {
             resolved[index] = .{ .component = component, .access = item.access };
         }
         if (self.next_token == std.math.maxInt(u64)) return error.StorageLimit;
-        var matches: std.ArrayListUnmanaged(*Chunk) = .empty;
+        var matches: std.ArrayListUnmanaged(QueryChunk) = .empty;
         errdefer matches.deinit(self.allocator);
         for (self.archetypes.items) |archetype| {
             if (archetype.chunks.items.len == 0) continue;
@@ -379,13 +398,14 @@ pub const Store = struct {
                     if (column.writer or (item.access == .write and column.readers != 0)) return error.BorrowConflict;
                     if (item.access == .read and column.readers == std.math.maxInt(u32)) return error.StorageLimit;
                 }
-                try matches.append(self.allocator, chunk);
+                try matches.append(self.allocator, .{ .chunk = chunk });
             }
         }
         try self.queries.ensureUnusedCapacity(self.allocator, 1);
         const chunks = try matches.toOwnedSlice(self.allocator);
         const token = self.next_token;
-        for (chunks) |chunk| {
+        for (chunks) |matching| {
+            const chunk = matching.chunk;
             var first: usize = 0;
             for (resolved) |item| {
                 const index = nextColumnIndex(chunk.columns, first, item.component);
@@ -403,10 +423,11 @@ pub const Store = struct {
         for (self.queries.items) |*state| if (state.token == token) return state;
         return error.InvalidLease;
     }
-    fn queryBatch(self: *Store, token: u64, batch_index: usize) Error!struct { state: *QueryState, chunk: *Chunk } {
+    fn queryBatch(self: *Store, token: u64, batch_index: usize) Error!struct { state: *QueryState, chunk: *Chunk, batch_state: *QueryChunk } {
         const state = try self.queryAt(token);
         if (batch_index >= state.chunks.len) return error.InvalidLease;
-        return .{ .state = state, .chunk = state.chunks[batch_index] };
+        const batch_state = &state.chunks[batch_index];
+        return .{ .state = state, .chunk = batch_state.chunk, .batch_state = batch_state };
     }
     fn queryBytes(self: *Store, token: u64, batch_index: usize, column_index: usize, writable: bool) ![]u8 {
         self.lock();
@@ -424,7 +445,9 @@ pub const Store = struct {
         self.lock();
         defer self.mutex.unlock();
         for (self.queries.items, 0..) |state, state_index| if (state.token == token) {
-            for (state.chunks) |chunk| {
+            for (state.chunks) |matching| if (matching.active_call) return error.BorrowConflict;
+            for (state.chunks) |matching| {
+                const chunk = matching.chunk;
                 var first: usize = 0;
                 for (state.selection) |item| {
                     const index = nextColumnIndex(chunk.columns, first, item.component);
