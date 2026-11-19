@@ -116,6 +116,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       if(!writes.has(id))writes.set(id,{id,node,owner,index,kind,origin:origin(value)});return id;
     }
     function invalidate(state) {invalidateAll=true;for(const row of state.values()){charge();row.slots.clear();row.length=null;}}
+    function invalidateOtherParameters(state,owner) {
+      // Distinct parameter identities can still refer to the same backing Array.
+      if(!owner.includes('/parameter/'))return;
+      for(const [other,row] of state) {
+        charge();
+        if(other!==owner&&other.includes('/parameter/')){row.slots.clear();row.length=null;}
+      }
+    }
     function rememberSlotValue(id,value,stored) {
       if(!trackLocalSlots||id===undefined||!stored.owner||stored.owner.includes('/parameter/'))return;
       const view=stored.limit!==undefined,kind=view?'readSpan':'array';
@@ -146,10 +154,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       if(!state.has(receiver.owner))state.set(receiver.owner,{length:null,slots:new Map()});
       const memory=state.get(receiver.owner),slot=key(index);
       if(!slot){invalidate(state);return;}
-      // Distinct parameters are not noalias evidence. A fresh allocation is
-      // distinct until it is exposed to an unknown modifying call.
-      if(receiver.owner.includes('/parameter/'))for(const [owner,row] of state)
-        if(owner!==receiver.owner&&owner.includes('/parameter/')){charge();row.slots.clear();row.length=null;}
+      invalidateOtherParameters(state,receiver.owner);
       if(index.constant!==undefined&&memory.length!==null) {
         if(index.constant>memory.length){memory.slots.clear();memory.length=null;return;}
         if(index.constant===memory.length){if(overwrite)return;memory.length++;}
@@ -206,6 +211,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
           const memory=state.get(receiver.owner);
           if(!memory){invalidate(state);return rhs;}
+          if(rhs.constant!==memory.length)invalidateOtherParameters(state,receiver.owner);
           if(rhs.constant!==undefined&&(memory.length===null||rhs.constant<=memory.length)) {
             memory.length=rhs.constant;for(const slot of memory.slots.keys())if(!slot.startsWith('c:')||Number(slot.slice(2))>=rhs.constant)memory.slots.delete(slot);
           }else {memory.slots.clear();memory.length=null;}

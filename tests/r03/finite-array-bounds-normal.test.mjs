@@ -72,6 +72,32 @@ test('a symbolic dense write leaves the former Array endpoint possibly initializ
   assert.equal(analyze([store,prefixWrite,shrink],two).read?.status,'missing');
 });
 
+test('shrinking through a parameter invalidates the length of another possibly aliased parameter',async()=>{
+  const {hir}=await checkedFixture(manifest.find(row=>row.name==='empty-append-rhs-shrink'));
+  const [fn]=hir.functions,[array,,store,,shrink,returned]=fn.body;
+  const a={...array.binding,id:'a'},b={...array.binding,id:'b'},zero=returned.value.index,one=shrink.expression.value;
+  assert.equal(zero.decimal,'0');assert.equal(one.decimal,'1');
+  const reference=binding=>({...returned.value.receiver,binding:binding.id});
+  const retarget=(statement,binding)=>({...statement.expression,target:{...statement.expression.target,receiver:reference(binding)}});
+  const storeTo=binding=>({...store,expression:retarget(store,binding)});
+  const shrinkTo=(binding,value)=>({...shrink,expression:{...retarget(shrink,binding),value}});
+  const lengthOf=binding=>({kind:'arrayLength',type:zero.type,range:zero.range,receiver:reference(binding)});
+  // Component analysis of checked operations with two external Array parameters.
+  const fresh={...array,initializer:{...array.initializer,elements:[store.expression.value]}};
+  const readAt=index=>{
+    const result={...returned,value:{...returned.value,index}};
+    const body=[fresh,storeTo(a),storeTo(b),shrinkTo(b,one),shrinkTo(a,zero),result];
+    const model={...hir,functions:[{...fn,parameters:[a,b],body}]};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>false);
+    const read=reaching.reads.find(row=>row.node===fn.id+'/body/'+(body.length-1)+'/value');
+    assert.ok(read);return read;
+  };
+  const maybeAlias=readAt(lengthOf(b));
+  assert.equal(maybeAlias.status,'pending');assert.deepEqual(maybeAlias.versions,[]);
+  assert.equal(readAt(lengthOf(a)).status,'proven','the shrunk receiver has exact length zero');
+  assert.equal(readAt(zero).status,'proven','the private fresh Array retains its original element');
+});
+
 for(const [name,status] of [
   ['empty-checked-read','missing'],['length-equal-checked-read','missing'],
   ['far-oob-checked-read','missing'],['dense-overwrite','proven'],['after-last-use','pending'],
