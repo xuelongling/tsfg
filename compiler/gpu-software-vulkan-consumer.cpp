@@ -296,9 +296,8 @@ GpuSoftwareVulkanCall GpuSoftwareVulkanCall::prepare(const GpuHostProof &proof,c
   auto impl=std::make_unique<Impl>(proof,generation,submission);impl->prepare(paths);return GpuSoftwareVulkanCall(std::move(impl));
 }
 GpuSoftwareHostAdmission GpuSoftwareVulkanCall::prepareSourceInstance(
-    const GpuPendingCall &pending,llvm::ArrayRef<GpuHostValue> arguments,
-    std::unique_ptr<GpuSoftwareSourceLease> lease,GpuHostBudget expectedBudget,
-    const GpuSoftwarePaths &paths,uint64_t deviceGeneration,uint64_t submissionId) {
+    const GpuPendingCall &pending,std::unique_ptr<GpuSoftwareSourceLease> lease,
+    GpuHostBudget expectedBudget,const GpuSoftwarePaths &paths,uint64_t deviceGeneration,uint64_t submissionId) {
   const auto &entry=std::get<GpuEntryBudgetStep>(pending.hostSteps().front());
   const auto rejected=[&](const char *code,GpuHostBudget budget){
     return GpuHostFailure{GpuHostFailureKind::Input,code,"r01-gpu",entry.site,budget};
@@ -307,6 +306,7 @@ GpuSoftwareHostAdmission GpuSoftwareVulkanCall::prepareSourceInstance(
   const auto budget=lease->remainingBudget();
   if(budget.fuelRemaining!=expectedBudget.fuelRemaining||budget.depthLimit!=expectedBudget.depthLimit)
     return rejected("core-ir-common-gpu-host-budget",budget);
+  const auto arguments=lease->evaluatedArguments();
   if(arguments.size()!=pending.argumentBindings().size())return rejected("core-ir-common-gpu-host-arguments",budget);
   std::vector<GpuHostGlobalValue> globals;
   llvm::SmallVector<const GpuDescriptor *,4> outputs;

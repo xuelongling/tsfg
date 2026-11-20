@@ -22,6 +22,8 @@ public:
   virtual ~GpuSoftwareSourceLease()=default;
   virtual const GpuCallIdentity &identity() const noexcept=0;
   virtual GpuHostBudget remainingBudget() const noexcept=0;
+  // Already evaluated values in Source parameter order, borrowed through preflight.
+  virtual llvm::ArrayRef<GpuHostValue> evaluatedArguments() const noexcept=0;
   virtual std::optional<GpuHostValue> readGlobal(llvm::StringRef globalId) const=0;
   // Resolve every writable destination together, including the return cell.
   // They must be distinct and remain writable until the lease is released.
@@ -65,8 +67,7 @@ public:
   static GpuSoftwareVulkanCall prepare(const GpuHostProof &,const GpuSoftwarePaths &,
                                      uint64_t deviceGeneration,uint64_t submissionId);
   static std::variant<GpuSoftwareVulkanCall,GpuHostFailure> prepareSourceInstance(
-      const GpuPendingCall &,llvm::ArrayRef<GpuHostValue> arguments,
-      std::unique_ptr<GpuSoftwareSourceLease>,GpuHostBudget,const GpuSoftwarePaths &,
+      const GpuPendingCall &,std::unique_ptr<GpuSoftwareSourceLease>,GpuHostBudget expectedBudget,const GpuSoftwarePaths &,
       uint64_t deviceGeneration,uint64_t submissionId);
   static const GpuSoftwareReport *retainedReport();
   static std::optional<GpuSoftwareVulkanCall> resumeRetained(uint64_t deviceGeneration,uint64_t submissionId);
