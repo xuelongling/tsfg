@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { constants } from "node:fs";
 import { open, readFile } from "node:fs/promises";
-import { compileHir, compileProgram, compileOwnedCore, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
+import { compileHir, compileProgram, compileSourceCore, compileOwnedCore, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {checkCommonJsonFileSize,commonHirFormat,commonJson} from '../compiler/common-program-common.mjs';
 import {createCommonGpuBindingPlan} from '../compiler/common-program-gpu-bindings.mjs';
@@ -125,7 +125,7 @@ try {
   if (requestJson !== undefined) JSON.parse(requestJson);
   const compile = inputKind === "hir"
     ? emit === "core" ? compileOwnedCore : emit === "program-object" ? compileOwnedStaticProgram : compileOwnedHir
-    : emit === "hir" ? compileHir : emit === "program-object" ? compileStaticProgram : compileProgram;
+    : emit === "hir" ? compileHir : emit === "core" ? compileSourceCore : emit === "program-object" ? compileStaticProgram : compileProgram;
   const result = inputKind === "hir" && emit === "hir" ? { status: "ok", hir: input }
     : await compile(input, { frontend: options.get("--frontend"), core: options.get("--core"), callPublicationContext });
   if (fixedCommonCore && result.status === "tool-error" && "callChain" in result) {

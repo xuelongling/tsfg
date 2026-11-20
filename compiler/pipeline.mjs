@@ -176,6 +176,12 @@ export async function compileProgram(input, options) {
   return highLevel.status === "ok" ? produceBytecode(() => produceCore(highLevel.hir, options)) : highLevel;
 }
 
+/** Produce verified Core text from officially checked Source. */
+export async function compileSourceCore(input, options) {
+  const highLevel = await compileHir(input, options);
+  return highLevel.status === "ok" ? compileOwnedCore(highLevel.hir, options) : highLevel;
+}
+
 /** Candidate package route; Source and formal Core manifest admission remain independent. */
 export async function compilePackage(packageBytes, roots, options) {
   const highLevel = await compilePackageHir(packageBytes, roots, options);
