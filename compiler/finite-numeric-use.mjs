@@ -82,7 +82,7 @@ function stableGuards(guards,body,charge) {
 }
 
 /** The domain solver's single statement traversal. Normal continuation gates
- * prevent an earlier numeric trap from publishing later assignments/returns. */
+ * preserve lexical nodes while excluding assignments and returns on dead paths. */
 export function finiteNormalBody(statements,path,fn,{flow,expression,binding,copy,charge,voidResult,requirements=[]}) {
   const returns=[],root={body:statements,path,guards:new Map(),gate:flow.always,index:0},stack=[root];
   while(stack.length) {
@@ -105,8 +105,10 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
     }else if(s.kind==='if'||s.kind==='while') {
       const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition);
       if(s.kind==='while') {
-        frame.gate=incoming;
-        stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),gate:incoming,index:0});
+        const literal=s.condition.kind==='boolean'?s.condition.value:null;
+        frame.gate=literal===true?flow.never:incoming;
+        stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),
+          gate:literal===false?flow.never:incoming,index:0});
       }else {
         const exits=[];let remaining=2;
         const complete=gate=>{exits.push(gate);if(--remaining===0)frame.gate=flow.any(exits);};

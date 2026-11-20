@@ -6,6 +6,7 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {finiteNormalBody,finiteNormalFlow} from '../../compiler/finite-numeric-use.mjs';
 import {sha256,scalarName} from '../../compiler/identity.mjs';
 const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-entry/636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571-expected.json',import.meta.url),'utf8'));
 const packet=new URL('./testdata/typed-array-entry/'+expected.source.sha256+'-package.json',import.meta.url);
@@ -15,7 +16,7 @@ test('only feasible incoming call occurrences supply Array versions; unproductiv
   assert.equal(facts.payload.files.find(row=>row.path==='/src/main.ts').content,expected.source.text);
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
-  const hir=built.hir,plan=buildFiniteCoreDomains(hir,context).definition;
+  const hir=built.hir,plans=buildFiniteCoreDomains(hir,context),plan=plans.definition;
   const read=name=>plan.arrayReaching.reads.find(row=>row.node.startsWith(hir.functions.find(fn=>fn.name===name).id+'/'));
   const version=row=>{
     const fn=hir.functions.find(fn=>fn.name===row.caller),matches=plan.arrayReaching.writes.filter(write=>
@@ -39,4 +40,48 @@ test('only feasible incoming call occurrences supply Array versions; unproductiv
   const text=lowerFormalHir(hir,context);
   assert.equal(text.split('"func.call"').length-1,expected.staticCallOccurrences);
   assert.equal(text.split('"tsfg_core.domain.array_create"').length-1,expected.globalInitials.length);
+  const whileFn=hir.functions.find(fn=>fn.name==='runWhile');
+  const deadCall=whileFn.id+'/body/1/body/0/expression',liveCall=whileFn.id+'/body/3/value';
+  for(const selectedPlan of [plans.reached,plans.definition]) {
+    const domain=node=>selectedPlan.domains.find(row=>row.id===node.domainId).representation;
+    const dead=selectedPlan.nodes.find(row=>row.id===deadCall);
+    assert.equal(domain(dead),'bottom','literal false cannot publish an ordered call result');
+    assert.deepEqual(dead.pending,[]);
+    assert.equal(domain(selectedPlan.nodes.find(row=>row.id===deadCall+'/arguments/0')),'bottom');
+    assert.notEqual(domain(selectedPlan.carrierNodes.find(row=>row.id===deadCall)),'bottom');
+    assert.notEqual(domain(selectedPlan.nodes.find(row=>row.id===liveCall)),'bottom');
+  }
+});
+
+test('normal loop exits retain reachable return sites and carrier inventory',async t=>{
+  const bytes=await readFile(packet),facts=readTypedArrayFacts(bytes);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const fn=built.hir.functions.find(fn=>fn.name==='runWhile'),condition=fn.body[1].condition;
+  const unknown=built.hir.functions.find(fn=>fn.name==='runUnknown').body[1].condition;
+  const charge=()=>{},base=fn.id+'/body',loopReturn=base+'/1/body/0/value',suffixReturn=base+'/3/value';
+  for(const {label,predicate,enabled,loopLive,suffixLive} of [
+    {label:'false',predicate:condition,enabled:true,loopLive:false,suffixLive:true},
+    {label:'true',predicate:{...condition,value:true},enabled:true,loopLive:true,suffixLive:false},
+    {label:'unknown',predicate:unknown,enabled:true,loopLive:true,suffixLive:true},
+    {label:'carrier',predicate:condition,enabled:false,loopLive:true,suffixLive:true}
+  ]) await t.test(label,()=>{
+    const nodes=new Map(),observed=new Set(),flow=finiteNormalFlow(enabled,charge,nodes);
+    const body=fn.body.slice(),observedReturn={...body[3],value:body[1].body[0].expression};
+    body[1]={...body[1],condition:predicate,body:[observedReturn]};
+    const expression=(_value,id,_fn,_guards,gate)=>{
+      flow.entry(id,gate);
+      nodes.set(id,{actual:new Set(),pending:new Set()});
+      flow.finish(id,[]);
+      flow.publish(id,()=>{observed.add(id);nodes.get(id).actual.add('observed');flow.changed(id);});
+      return id;
+    };
+    finiteNormalBody(body,base,fn,{flow,expression,binding:(_fn,id)=>id,copy:()=>{},charge,voidResult:false});
+    let returned=false;flow.when(flow.returned(fn.id),()=>{returned=true;});
+    flow.seal();
+    assert.ok(nodes.has(loopReturn)&&nodes.has(suffixReturn),'lexical inventory');
+    assert.equal(observed.has(loopReturn),loopLive,'body return');
+    assert.equal(observed.has(suffixReturn),suffixLive,'following return');
+    assert.equal(returned,true,'function result');
+  });
 });
