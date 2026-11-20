@@ -140,7 +140,11 @@ export function readQueryCompilerOutputs(facts,sourceContext,core,options,consum
   const checkedBatch=includeBatch||includeTmeta?consumeQuery('--cpu-batch',core).toString('utf8'):core;
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
-  const cpuLLVM=llvmBytes?.toString('utf8');
+  let cpuLLVM;
+  if(llvmBytes){
+    try{cpuLLVM=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(llvmBytes);}
+    catch{throw new TypeError('r10-system-query-llvm: invalid UTF-8 in compiler output');}
+  }
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),

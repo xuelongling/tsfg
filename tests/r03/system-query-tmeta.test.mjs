@@ -254,6 +254,19 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
   assert.equal(product.cpuBatch,undefined);
   assert.equal(product.cpuLLVM,llvm.toString('utf8'));
   assert.deepEqual(product.llvmArtifact,{llvmHash:sha256(llvm),batchHash:sha256(batch),metadataHash:envelope.payloadHash});
+  assert.equal(sha256(product.cpuLLVM),product.llvmArtifact.llvmHash);
+
+  const malformed=Buffer.from(llvm);
+  malformed[0]=0xff;
+  let requestedMetadata=false;
+  assert.throws(()=>readQueryCompilerOutputs(facts,context,core,{cpuLLVM:'ir',tmeta:true},command=>{
+    if(command==='--cpu-batch')return batch;
+    if(command==='--llvm-ir')return malformed;
+    assert.equal(command,'--tmeta');
+    requestedMetadata=true;
+    return meta;
+  }),/r10-system-query-llvm: invalid UTF-8 in compiler output/);
+  assert.equal(requestedMetadata,false);
 });
 
 test('Query tmeta rejects a changed physical i32 scalar extent',()=>{
