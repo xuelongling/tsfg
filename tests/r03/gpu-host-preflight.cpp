@@ -143,8 +143,9 @@ bool checkSourceArguments(const GpuPendingCall &call){
 }
 #ifdef TSFG_GPU_SOFTWARE_HOST_CHECK
 struct SourceLeaseObservation {
-  size_t reads=0,reservations=0,publications=0,destructions=0;
+  size_t reads=0,reservations=0,publications=0,destructions=0,budgetReads=0;
   bool acceptOutputs=false;
+  GpuHostBudget budget{7,3};
   uint32_t global=23,returned=0;
 };
 class ObservedSourceLease final : public GpuSoftwareSourceLease {
@@ -158,6 +159,9 @@ public:
       :deviceIdentity(std::move(identity)),globalId(global.str()),returnId(result.str()),observed(observation){}
   ~ObservedSourceLease() override{++observed.destructions;}
   const GpuCallIdentity &identity() const noexcept override{return deviceIdentity;}
+  GpuHostBudget remainingBudget() const noexcept override {
+    ++observed.budgetReads;return observed.budget;
+  }
   std::optional<GpuHostValue> readGlobal(llvm::StringRef id) const override {
     ++observed.reads;
     if(id!=globalId)return std::nullopt;
@@ -187,14 +191,16 @@ bool checkBoundSourceInstance(const GpuPendingCall &call){
   const GpuHostValue arguments[]={{tsfg::exception::i32Id.str(),11}};
   const GpuHostBudget budget{7,3};
   const auto rejected=[&](const GpuCallIdentity &identity,llvm::StringRef global,llvm::StringRef resultId,
-                          llvm::ArrayRef<GpuHostValue> values,llvm::StringRef code,size_t reads,size_t reservations){
+                          llvm::ArrayRef<GpuHostValue> values,llvm::StringRef code,
+                          size_t budgetReads,size_t reads,size_t reservations){
     SourceLeaseObservation observed;
     auto lease=std::make_unique<ObservedSourceLease>(identity,global,resultId,observed);
     auto result=GpuSoftwareVulkanCall::prepareSourceInstance(call,values,std::move(lease),budget,{},8,9);
     const auto *failure=std::get_if<GpuHostFailure>(&result);
     return check(failure&&failure->kind==GpuHostFailureKind::Input&&failure->code==code&&
                  failure->site.functionId==call.functionId()&&failure->budget.fuelRemaining==7&&
-                 failure->budget.depthLimit==3&&observed.reads==reads&&observed.reservations==reservations&&
+                 failure->budget.depthLimit==3&&observed.budgetReads==budgetReads&&
+                 observed.reads==reads&&observed.reservations==reservations&&
                  observed.publications==0&&observed.destructions==1,
                  "rejected instance releases its lease without publishing");
   };
@@ -202,12 +208,24 @@ bool checkBoundSourceInstance(const GpuPendingCall &call){
   wrongIdentity.artifactDigest.clear();
   const auto &globalId=descriptors[0].id;
   const auto &returnId=descriptors[2].id;
-  if(!rejected(wrongIdentity,globalId,returnId,arguments,"core-ir-common-gpu-host-context",0,0)||
-     !rejected(call.identity(),globalId,returnId,{},"core-ir-common-gpu-host-arguments",0,0)||
-     !rejected(call.identity(),"",returnId,arguments,"core-ir-common-gpu-host-globals",1,0)||
-     !rejected(call.identity(),globalId,"",arguments,"core-ir-common-gpu-host-outputs",1,1))return false;
+  for(const GpuHostBudget claimed:{GpuHostBudget{8,3},GpuHostBudget{7,4}}){
+    SourceLeaseObservation observed;
+    auto lease=std::make_unique<ObservedSourceLease>(call.identity(),globalId,returnId,observed);
+    auto result=GpuSoftwareVulkanCall::prepareSourceInstance(call,arguments,std::move(lease),claimed,{},8,9);
+    const auto *failure=std::get_if<GpuHostFailure>(&result);
+    if(!check(failure&&failure->kind==GpuHostFailureKind::Input&&failure->code=="core-ir-common-gpu-host-budget"&&
+        failure->budget.fuelRemaining==budget.fuelRemaining&&failure->budget.depthLimit==budget.depthLimit&&
+        observed.budgetReads==1&&observed.reads==0&&observed.reservations==0&&
+        observed.publications==0&&observed.destructions==1,
+        "a mismatched caller budget is rejected before reading Source bindings"))return false;
+  }
+  if(!rejected(wrongIdentity,globalId,returnId,arguments,"core-ir-common-gpu-host-context",0,0,0)||
+     !rejected(call.identity(),globalId,returnId,{},"core-ir-common-gpu-host-arguments",1,0,0)||
+     !rejected(call.identity(),"",returnId,arguments,"core-ir-common-gpu-host-globals",1,1,0)||
+     !rejected(call.identity(),globalId,"",arguments,"core-ir-common-gpu-host-outputs",1,1,1))return false;
 
   SourceLeaseObservation exhausted;
+  exhausted.budget={0,3};
   auto missingReturn=std::make_unique<ObservedSourceLease>(call.identity(),globalId,"",exhausted);
   auto trapResult=GpuSoftwareVulkanCall::prepareSourceInstance(call,arguments,std::move(missingReturn),{0,3},{},8,9);
   const auto *trap=std::get_if<GpuHostFailure>(&trapResult);

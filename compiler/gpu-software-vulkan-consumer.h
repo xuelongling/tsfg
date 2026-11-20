@@ -21,6 +21,7 @@ class GpuSoftwareSourceLease {
 public:
   virtual ~GpuSoftwareSourceLease()=default;
   virtual const GpuCallIdentity &identity() const noexcept=0;
+  virtual GpuHostBudget remainingBudget() const noexcept=0;
   virtual std::optional<GpuHostValue> readGlobal(llvm::StringRef globalId) const=0;
   // Resolve every writable destination together, including the return cell.
   // They must be distinct and remain writable until the lease is released.

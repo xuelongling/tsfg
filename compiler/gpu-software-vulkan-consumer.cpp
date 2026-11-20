@@ -291,34 +291,35 @@ struct GpuSoftwareVulkanCall::Impl {
   }
   ~Impl(){releaseDevice();}
 };
-
 GpuSoftwareVulkanCall::GpuSoftwareVulkanCall(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
 GpuSoftwareVulkanCall GpuSoftwareVulkanCall::prepare(const GpuHostProof &proof,const GpuSoftwarePaths &paths,uint64_t generation,uint64_t submission){
   auto impl=std::make_unique<Impl>(proof,generation,submission);impl->prepare(paths);return GpuSoftwareVulkanCall(std::move(impl));
 }
 GpuSoftwareHostAdmission GpuSoftwareVulkanCall::prepareSourceInstance(
     const GpuPendingCall &pending,llvm::ArrayRef<GpuHostValue> arguments,
-    std::unique_ptr<GpuSoftwareSourceLease> lease,GpuHostBudget budget,
+    std::unique_ptr<GpuSoftwareSourceLease> lease,GpuHostBudget expectedBudget,
     const GpuSoftwarePaths &paths,uint64_t deviceGeneration,uint64_t submissionId) {
   const auto &entry=std::get<GpuEntryBudgetStep>(pending.hostSteps().front());
-  const auto rejected=[&](const char *code){
+  const auto rejected=[&](const char *code,GpuHostBudget budget){
     return GpuHostFailure{GpuHostFailureKind::Input,code,"r01-gpu",entry.site,budget};
   };
-  if(!lease||!(lease->identity()==pending.identity()))return rejected("core-ir-common-gpu-host-context");
-  if(arguments.size()!=pending.argumentBindings().size())return rejected("core-ir-common-gpu-host-arguments");
-
+  if(!lease||!(lease->identity()==pending.identity()))return rejected("core-ir-common-gpu-host-context",expectedBudget);
+  const auto budget=lease->remainingBudget();
+  if(budget.fuelRemaining!=expectedBudget.fuelRemaining||budget.depthLimit!=expectedBudget.depthLimit)
+    return rejected("core-ir-common-gpu-host-budget",budget);
+  if(arguments.size()!=pending.argumentBindings().size())return rejected("core-ir-common-gpu-host-arguments",budget);
   std::vector<GpuHostGlobalValue> globals;
   llvm::SmallVector<const GpuDescriptor *,4> outputs;
   for(const auto &descriptor:pending.descriptors()){
     if(descriptor.access!=GpuResourceAccess::Read)outputs.push_back(&descriptor);
     if(descriptor.kind!=GpuResourceKind::Global||descriptor.access==GpuResourceAccess::Write)continue;
     auto value=lease->readGlobal(descriptor.id);
-    if(!value)return rejected("core-ir-common-gpu-host-globals");
+    if(!value)return rejected("core-ir-common-gpu-host-globals",budget);
     globals.push_back({descriptor.id,std::move(*value)});
   }
   auto checked=preflightGpuSourceCall(pending,lease->identity(),arguments,globals,budget);
   if(auto *failure=std::get_if<GpuHostFailure>(&checked))return std::move(*failure);
-  if(!outputs.empty()&&!lease->reserveOutputs(outputs))return rejected("core-ir-common-gpu-host-outputs");
+  if(!outputs.empty()&&!lease->reserveOutputs(outputs))return rejected("core-ir-common-gpu-host-outputs",budget);
   auto impl=std::make_unique<Impl>(std::get<GpuHostProof>(checked),deviceGeneration,submissionId);
   impl->sourceBound=true;
   if(impl->prepare(paths))impl->sourceLease=std::move(lease);
@@ -414,7 +415,6 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(
     return GpuSoftwareWriteBack::SubmissionMismatch;
   if(auto rejected=impl_->writeBackRejection())return *rejected;
   if(impl_->sourceBound)return GpuSoftwareWriteBack::BindingMismatch;
-
   const auto &values=outputs();
   if(destinations.size()!=values.size())
     return GpuSoftwareWriteBack::BindingMismatch;
