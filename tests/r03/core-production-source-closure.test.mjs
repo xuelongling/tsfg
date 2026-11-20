@@ -70,13 +70,23 @@ test(role+' production source copy rejects changed source bytes',async()=>{
  await writeFile(path.join(source,omitted),'// SPDX-License-Identifier: MIT\n// changed source data\n');
  await assert.rejects(stageMlirProductSources({productRoot:source,product,identity,command}),/input|changed|identity/i);
 });
-async function artifact(label,rows){const root=await fixture(label),file=path.join(root,'not-executed.artifact');
+async function artifact(label,rows,duplicateOutput=false){const root=await fixture(label),file=path.join(root,'not-executed.artifact');
  const bytes=Buffer.from('data-only admission fixture; not a compiler result\n');await writeFile(file,bytes);
- await writeFile(path.join(root,'artifact-manifest.json'),JSON.stringify({coreCommandRole:role,outputs:[{path:path.basename(file),sha256:hash(bytes)}],
+ const output={path:path.basename(file),sha256:hash(bytes)};
+ await writeFile(path.join(root,'artifact-manifest.json'),JSON.stringify({coreCommandRole:role,outputs:duplicateOutput?[output,output]:[output],
  buildIdentity:{target:'windows-x86_64-msvc',profile:'debug',options:{coreCommandRole:role}},buildInputSet:{entries:rows}}));return file;
 }
 test(role+' actual Core consumer input gate admits a complete current data-only manifest',async()=>{
  const file=await artifact('manifest-whole',entries);assert.equal(await verifiedConsumer(file,'core'),file);
+});
+test(role+' actual Core consumer gate rejects ambiguous manifest rows',async()=>{
+ const output=await artifact('duplicate-output',entries,true);
+ await assert.rejects(verifiedConsumer(output,'core'),/executable differs from its source-build manifest/);
+ const required='eng/mlir-command.mjs';
+ const row=entries.find(entry=>entry.repositoryRelativePath===required);
+ assert.ok(row);
+ const input=await artifact('duplicate-input',[...entries,row]);
+ await assert.rejects(verifiedConsumer(input,'core'),error=>error instanceof Error&&error.message.includes(required));
 });
 test(role+' actual Core consumer gate rejects every missing source member, including formerly omitted families',async()=>{
  for(const name of coreFiles){const file=await artifact('manifest-missing',entries.filter(row=>row.repositoryRelativePath!==name));

@@ -28,13 +28,25 @@ import {verifyCommonProducedPacket} from './common-program-packet.mjs';
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
 
+/**
+ * @template Row
+ * @param {Row[] | undefined} rows
+ * @param {(row: Row) => boolean} matches
+ */
+function uniqueManifestRow(rows, matches) {
+  const selected = Array.isArray(rows) ? rows.filter(matches) : [];
+  return selected.length === 1 ? selected[0] : undefined;
+}
+
 /** Verify the actual source-built consumer admission boundary without executing it. */
 export async function verifiedConsumer(executable, role) {
   if (!["core", "core-native", "vm", "aot"].includes(role)) throw new TypeError("r03-tool-role: unsupported consumer");
   if (!executable) throw new TypeError(`r03-tool-${role}: formal executable is required`);
   const manifest = JSON.parse(await readFile(path.join(path.dirname(executable), "artifact-manifest.json"), "utf8"));
-  const output = manifest.outputs?.find(output => output.path === path.basename(executable));
-  if (output?.sha256 !== sha256(await readFile(executable)))
+  /** @param {string} name */
+  const artifactRow = name => uniqueManifestRow(manifest.outputs, row => row?.path === name);
+  const output = artifactRow(path.basename(executable));
+  if (!output || output.sha256 !== sha256(await readFile(executable)))
     throw new TypeError(`r03-tool-${role}: executable differs from its source-build manifest`);
   if (manifest.buildIdentity?.target !== "windows-x86_64-msvc"
       || manifest.buildIdentity?.profile !== "debug")
@@ -57,16 +69,17 @@ export async function verifiedConsumer(executable, role) {
   if (role === "aot") required.push("runtime/aot-main.zig", "runtime/aot-program.zig", "runtime/aot-program.h",
     "runtime/aot-request.zig", "runtime/aot-events.zig", "runtime/request-json.zig", "runtime/module-outcome-writer.zig", "eng/aot-build.mjs");
   for (const name of required) {
-    const entry = manifest.buildInputSet?.entries?.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
-    if (entry?.sha256 !== sha256(await readFile(path.join(productRoot, name))))
+    const entry = uniqueManifestRow(manifest.buildInputSet?.entries,
+      row => row?.projectId === "tsfg" && row.repositoryRelativePath === name);
+    if (!entry || entry.sha256 !== sha256(await readFile(path.join(productRoot, name))))
       throw new TypeError(`r03-tool-${role}: compiled input differs from current ${name}`);
   }
   if(role==="vm") {
-    const contractOutput=manifest.outputs?.find(output=>output.path==="host-semantic-contract.json");
+    const contractOutput=artifactRow("host-semantic-contract.json");
     const contractBytes=await readFile(path.join(path.dirname(executable),"host-semantic-contract.json"));
     if(contractOutput?.sha256!==sha256(contractBytes))throw new TypeError("r03-tool-vm: semantic contract differs from formal build");
     verifyCounterHostContract(contractBytes,manifest);
-    const entry=manifest.outputs?.find(output=>output.path==="host-cost-summary.json");
+    const entry=artifactRow("host-cost-summary.json");
     const bytes=await readFile(path.join(path.dirname(executable),"host-cost-summary.json"));
     if(entry?.sha256!==sha256(bytes))throw new TypeError("r03-tool-vm: host summary differs from formal build");
     const summary=JSON.parse(bytes.toString("utf8"));
@@ -78,7 +91,7 @@ export async function verifiedConsumer(executable, role) {
       throw new TypeError("r03-tool-aot: not a statically compiled ordinary program");
     const artifact = async name => {
       const bytes = await readFile(path.join(path.dirname(executable), name));
-      if (manifest.outputs?.find(output => output.path === name)?.sha256 !== sha256(bytes))
+      if (artifactRow(name)?.sha256 !== sha256(bytes))
         throw new TypeError(`r03-tool-aot: changed ${name}`);
       return bytes;
     };
