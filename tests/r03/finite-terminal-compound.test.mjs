@@ -219,7 +219,7 @@ for(const row of cases)test(row.name,async t=>{
       for(const version of [inner+'/array-version',outer+'/array-version'])
         assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
     });
-    for(const kind of ['read','store'])for(const failed of ['receiver','index'])
+    for(const kind of ['read','store','compound','update'])for(const failed of ['receiver','index'])
       await t.test(`an Array ${kind} stops after its ${failed} fails`,()=>{
         const created=compound.body[0].initializer,constant=mark.body[1].value;
         assert.ok(created.kind==='arrayCreate'&&constant.kind==='floating');
@@ -227,24 +227,56 @@ for(const row of cases)test(row.name,async t=>{
         const operandReceiver=literal(failed==='receiver'?[original.left,tail]:[constant,constant]);
         const operandIndex={kind:'arrayLength',receiver:literal(failed==='receiver'?[tail]:[original.left]),
           type:index.type,range:index.range};
-        const expression=kind==='read'?{...tail,receiver:operandReceiver,index:operandIndex}:
-          {kind:'arrayStoreDenseChecked',target:{...original.left.operand.target,receiver:operandReceiver,index:operandIndex},
-            value:tail,type,range:original.range};
+        const targetOperand={...original.left.operand.target,receiver:operandReceiver,index:operandIndex};
+        const expression={
+          read:{...tail,receiver:operandReceiver,index:operandIndex},
+          store:{kind:'arrayStoreDenseChecked',target:targetOperand,value:tail,type,range:original.range},
+          compound:{...original.left.operand,target:targetOperand,value:tail},
+          update:{kind:'arrayUpdate',target:targetOperand,operator:'++',prefix:true,type,range:original.range},
+        }[kind];
         const fn={...compound,body:[...compound.body.slice(0,2),{kind:'expression',expression,range:local.range},{...returned,value:tail}]};
         const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
         const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
-        const root=compound.id+'/body',outer=root+'/2/expression',target=outer+(kind==='store'?'/target':''),
+        const root=compound.id+'/body',outer=root+'/2/expression',target=outer+(kind==='read'?'':'/target'),
           left=target+'/receiver',right=target+'/index/receiver',inner=(failed==='receiver'?left:right)+'/elements/0/operand',
           old=inner+'/old-value';
         assert.deepEqual([...terminalReads??[]],row.productive?[]:[old]);
         assert.equal(reaching.reads.find(read=>read.node===old)?.status,row.productive?'proven':'missing');
-        for(const path of [kind==='read'?outer:outer+'/value',root+'/3/value',
+        const afterOperands={read:[outer],store:[outer+'/value'],compound:[outer+'/old-value',outer+'/value'],
+          update:[outer+'/old-value']}[kind];
+        for(const path of [...afterOperands,root+'/3/value',
           ...(failed==='receiver'?[left+'/elements/1',right+'/elements/0']:[])]) {
           assert.equal(reaching.reads.find(read=>read.node===path)?.status,row.productive?'proven':'pending',path);
         }
         const versions=[inner+'/array-version',left+'/initial/0/array-version',left+'/initial/1/array-version',right+'/initial/0/array-version'];
-        if(kind==='store')versions.push(outer+'/array-version');
+        if(kind!=='read')versions.push(outer+'/array-version');
         for(const version of versions)assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+      });
+    for(const outerHasValue of [false,true])await t.test(
+      outerHasValue?'a compound RHS failure prevents the outer write':'a compound old read failure precedes its RHS',()=>{
+        const created=compound.body[0].initializer,constant=mark.body[1].value;
+        assert.ok(created.kind==='arrayCreate'&&constant.kind==='floating'&&receiver.kind==='reference');
+        const initialized={...created,elements:outerHasValue?[constant]:[]};
+        const stored={...local,binding:{...local.binding,type:created.type},initializer:initialized};
+        const targetReceiver={...receiver,binding:stored.binding.id,type:created.type};
+        const operation=original.left.operand,target={...operation.target,receiver:targetReceiver};
+        const expression={...operation,target,value:original.left};
+        const assignment={kind:'expression',expression,range:local.range};
+        const fn={...compound,body:[...compound.body.slice(0,2),stored,assignment,{...returned,value:{...tail,receiver:targetReceiver}}]};
+        const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+        const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+        const root=compound.id+'/body',outer=root+'/3/expression',inner=outer+'/value/operand';
+        const outerOld=outer+'/old-value',innerOld=inner+'/old-value';
+        const expectedTerminal=outerHasValue?(row.productive?[]:[innerOld]):[outerOld];
+        assert.deepEqual([...terminalReads??[]],expectedTerminal);
+        assert.equal(reaching.reads.find(read=>read.node===outerOld)?.status,outerHasValue?'proven':'missing');
+        assert.equal(reaching.reads.find(read=>read.node===innerOld)?.status,
+          outerHasValue?(row.productive?'proven':'missing'):'pending');
+        const suffix=reaching.reads.find(read=>read.node===root+'/4/value');
+        assert.equal(suffix?.status,expectedTerminal.length?'pending':'proven');
+        assert.deepEqual(suffix?.versions,expectedTerminal.length?[]:[outer+'/array-version']);
+        for(const version of [outer+'/array-version',inner+'/array-version'])
+          assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
       });
     for(const side of ['receiver','value'])await t.test(`Array resize preserves the first failure in its ${side}`,()=>{
       const created=compound.body[0].initializer,constant=mark.body[1].value;

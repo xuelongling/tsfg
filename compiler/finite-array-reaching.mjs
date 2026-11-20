@@ -220,10 +220,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         return stored?{...stored,symbol:path}:{symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
-        const required=terminalRoot&&(value.kind==='arrayStoreDenseChecked'||value.kind==='arrayResizeChecked');
-        const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,required);
+        const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,terminalRoot);
         if(receiver.terminal)return receiver;
-        const index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings,required):null;
+        const index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings,terminalRoot):null;
         if(index?.terminal)return index;
         let oldLength=null;
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
@@ -236,7 +235,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
             return {terminal:true};
           }
         }
-        const rhs=value.value?child('value',required):{symbol:path};
+        const rhs=value.value?child('value',terminalRoot):{symbol:path};
         if(rhs.terminal)return rhs;
         if(value.kind==='arrayResizeChecked') {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
