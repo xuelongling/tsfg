@@ -180,21 +180,24 @@ export async function prepareFrontendInput(input, captured = false) {
 }
 
 /** Shared owned conversion for the locked transport and captured Go responses.
- * @param {any} prepared @param {string} response @param {any} frontendSource
+ * @param {any} prepared @param {string | Uint8Array} response @param {any} frontendSource
  */
 export function materializeFrontendResponse(prepared, response, frontendSource) {
   const { ownedInput, identityInput, inputIdentity, rootFile, files, seen,
     declarationVersion, declarationPaths, moduleInput } = prepared;
-  let output;
+  const invalid = { status: "tool-error", inputIdentity, message: "invalid frontend response" };
+  let output, responseText;
   try {
-    output = JSON.parse(response);
+    responseText = typeof response === "string" ? response : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(response);
+    output = JSON.parse(responseText);
   } catch {
-    return { status: "tool-error", inputIdentity, message: "invalid frontend response" };
+    return invalid;
   }
-  if (frontendSource?.kind === "owned-go-response") return ownClosureSnapshot(prepared, output, frontendSource, response);
+  if (output === null || typeof output !== "object" || Array.isArray(output)) return invalid;
+  if (frontendSource?.kind === "owned-go-response") return ownClosureSnapshot(prepared, output, frontendSource, responseText);
   if (output.status === "error") {
     if (!Array.isArray(output.diagnostics) || output.diagnostics.length === 0
-        || output.diagnostics.some(diagnostic => typeof diagnostic.code !== "string"
+        || output.diagnostics.some(diagnostic => typeof diagnostic?.code !== "string"
           || typeof diagnostic.primary?.sourceId !== "string")) {
       return { status: "tool-error", inputIdentity, message: "incomplete frontend diagnostics" };
     }

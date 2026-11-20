@@ -11,27 +11,9 @@ import registry from '../contracts/registry.json' with { type: 'json' };
 /** @typedef {{status: 'tool-error', message: string}} ExecutionFailure */
 /** @typedef {{forkOid: string, binarySha256: string}} FrontendSource */
 /**
- * @overload
- * @param {string} input
- * @param {{executable?: string, mode?: 'snapshot'}} [options]
- * @returns {Promise<ExecutionFailure | {status: 'ok', frontendSource: FrontendSource, stdout: string}>}
- */
-/**
- * @overload
- * @param {Uint8Array} input
- * @param {{executable?: string, mode: 'generic-package-io-candidate-v1'}} options
+ * @param {string | Uint8Array} input
+ * @param {{executable?: string, mode?: string}} [options]
  * @returns {Promise<ExecutionFailure | {status: 'ok', frontendSource: FrontendSource, stdout: Buffer}>}
- */
-/**
- * @overload
- * @param {string | Uint8Array} input
- * @param {{executable?: string, mode?: string}} [options]
- * @returns {Promise<ExecutionFailure | {status: 'ok', frontendSource: FrontendSource, stdout: string | Buffer}>}
- */
-/**
- * @param {string | Uint8Array} input
- * @param {{executable?: string, mode?: string}} [options]
- * @returns {Promise<ExecutionFailure | {status: 'ok', frontendSource: FrontendSource, stdout: string | Buffer}>}
  */
 export async function runLockedFrontend(input, { executable, mode = 'snapshot' } = {}) {
   if (!['snapshot', 'generic-package-io-candidate-v1'].includes(mode))
@@ -51,12 +33,9 @@ export async function runLockedFrontend(input, { executable, mode = 'snapshot' }
   if (sourceLock.contractVersion !== registry['tsfg.frontend-snapshot'].semver)
     return { status: 'tool-error', message: 'frontend source and snapshot contracts differ' };
   const frontendSource = { forkOid: sourceLock.forkOid, binarySha256 };
-  /** @type {import('node:child_process').SpawnSyncOptions} */
-  const executionOptions = { input: ownedInput, encoding: packageIo ? undefined : 'utf8',
-    windowsHide: true, timeout: 300000, maxBuffer: 16 * 1024 * 1024 };
+  const executionOptions = { input: ownedInput, windowsHide: true, timeout: 300000, maxBuffer: 16 * 1024 * 1024 };
   const child = spawnSync(executable, packageIo ? ['--generic-package-io-v1'] : [], executionOptions);
   if (child.error || child.status !== 0)
-    return { status: 'tool-error', message: child.error?.message
-      ?? (typeof child.stderr === 'string' ? child.stderr : child.stderr.toString('utf8')) };
+    return { status: 'tool-error', message: child.error?.message ?? child.stderr.toString('utf8') };
   return { status: 'ok', frontendSource, stdout: child.stdout };
 }
