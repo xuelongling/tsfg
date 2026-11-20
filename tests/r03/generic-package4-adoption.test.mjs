@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from 'node:assert/strict';
+import { expectedGenericCore } from './generic-core-package-capture.mjs';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -152,7 +153,7 @@ for (const [family, oracle] of Object.entries(cases)) test('package6 composition
 
   const golden = await fixture(expected.golden.file); assert.equal(golden.length, expected.golden.bytes); assert.equal(sha(golden), expected.golden.sha256);
   const core = lowerGenericHir(cold);
-  assert.deepEqual(Buffer.from(core), golden,
+  assert.equal(core, expectedGenericCore(golden.toString('utf8'), cold.closure.roots[0]),
     'complete independently hand-worked private7 identity, function order and scalar SSA text');
   assert.equal(lowerGenericHir(readGenericHir(Buffer.from(text))), core);
   assert.equal(printGenericHir(cold), text); assert.equal(JSON.stringify({ pkg, record }), before);

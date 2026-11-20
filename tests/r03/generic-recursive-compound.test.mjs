@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedGenericCore } from './generic-core-package-capture.mjs';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { decodeGenericPackage, encodeGenericPackage } from '../../compiler/generic-package.mjs';
@@ -27,8 +28,9 @@ for(const family of ['conditional','mapped']) test('official cold '+family+' cha
  const cold=readGenericHir(Buffer.from(printGenericHir(hir)));
  assert.deepEqual(cold,oracle.hir);
  assert.deepEqual(printGenericHir(cold),await fixture(`generic-recursive-${family}-hir-v7.json`).then(b=>b.toString('utf8')));
- assert.equal(lowerGenericHir(cold),oracle.core);
- assert.equal(lowerGenericHir(cold),await fixture(`generic-recursive-${family}-core-v7.mlir`).then(b=>b.toString('utf8')));
+ const original=(await fixture(`generic-recursive-${family}-core-v7.mlir`)).toString('utf8');
+ assert.equal(original,oracle.core);
+ assert.equal(lowerGenericHir(cold),expectedGenericCore(original,cold.closure.roots[0]));
  assert.equal(cold.functions.length,12);assert.equal(new Set(cold.functions.map(f=>f.id)).size,12);
  assert.equal((oracle.core.match(/"func.call"/g)??[]).length,10);
  assert.equal((oracle.core.match(/"tsfg_core.fuel"/g)??[]).length,12);
@@ -39,9 +41,10 @@ for(const family of ['conditional','mapped']) test('owned HIR cold entry reprodu
  const core=await fixture(`generic-recursive-${family}-core-v7.mlir`);
  const hir=readHir(bytes);
  assert.equal(printHir(hir),bytes.toString('utf8'));
- assert.equal(lowerOwnedHir(hir),core.toString('utf8'));
- assert.equal(lowerFormalHir(hir),core.toString('utf8'));
- assert.equal(lowerHir(hir),core.toString('utf8'));
+ const expected=expectedGenericCore(core.toString('utf8'),hir.closure.roots[0]);
+ assert.equal(lowerOwnedHir(hir),expected);
+ assert.equal(lowerFormalHir(hir),expected);
+ assert.equal(lowerHir(hir),expected);
  const publication={};
  const wrongContext={code:'r03-d-call-effects',ruleId:'r01-call-contract',phase:'hir',
   message:'r03-d-call-effects: invalid module call publication context'};
@@ -68,7 +71,7 @@ for(const family of ['conditional','mapped']) test('owned HIR cold entry reads t
   Object.defineProperty(view,key,{get(){assert.fail('caller byte property was read');}});
   const hir=readHir(view);
   assert.equal(printHir(hir),bytes.toString('utf8'));
-  assert.equal(lowerOwnedHir(hir),core.toString('utf8'));
+  assert.equal(lowerOwnedHir(hir),expectedGenericCore(core.toString('utf8'),hir.closure.roots[0]));
  });
 });
 

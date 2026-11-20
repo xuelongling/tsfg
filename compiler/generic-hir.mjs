@@ -218,9 +218,13 @@ export function readGenericHir(bytes) {
 export const genericCoreFormat = own({ version: coreExchangeFormat.version,
   bytecodeSchema: registry['tsfg.bytecode'].schemaHash });
 function emitVerifiedGenericCore(verified) {
+  // Scalar R04 exposes the first function record as the default request.
+  const defaultId = verified.closure.roots[0];
+  const index = verified.functions.findIndex(fn => fn.id === defaultId);
+  const functions = [verified.functions[index], ...verified.functions.slice(0, index), ...verified.functions.slice(index + 1)];
   return emitScalarCore({ exchange: genericCoreFormat, inputIdentity: verified.inputIdentity,
     source: { path: verified.source.path, hash: 'sha256:' + verified.source.digest, length: verified.source.length },
-    target: verified.target, functions: verified.functions.map(fn => ({ ...fn, symbol: fn.linkageName })) });
+    target: verified.target, functions: functions.map(fn => ({ ...fn, symbol: fn.linkageName })) });
 }
 export function prepareGenericCore(hir) {
   const verified = verifyGenericHir(hir);

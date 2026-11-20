@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from 'node:assert/strict';
+import { expectedGenericCore } from './generic-core-package-capture.mjs';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -209,7 +210,11 @@ test('actual private7 mapped calls roundtrip complete owned HIR and preserve fou
 
   const core = lowerGenericHir(cold);
   assert.equal(typeof core, 'string');
-  assert.deepEqual(Buffer.from(core), data.coreBytes, 'entire independent four-function Core literal');
+  const firstDeclaration = core.split('\n')[1];
+  assert.ok(firstDeclaration.includes('tsfg_core.function_id = "' + cold.closure.roots[0] + '"'),
+    'the first requested root owns the scalar packet default slot');
+  assert.equal(core, expectedGenericCore(data.coreBytes.toString('utf8'), cold.closure.roots[0]),
+    'entire independent four-function Core literal with its requested default');
   assert.equal((core.match(/^  func\.func @/gm) ?? []).length, 4);
   assert.equal((core.match(/%v1 = "func.call"\(%v0\)/g) ?? []).length, 2);
   assert.equal((core.match(/"func.return"\(%v1\)/g) ?? []).length, 2);

@@ -24,8 +24,10 @@ test('qualified owned response cold HIR uses the real same-version scalar Core a
   assert.equal(result.wire.functions.length, 6);
   assert.equal(result.wire.sourcePath, hir.source.path);
   assert.equal(result.wire.sourceHash, hir.source.digest);
-  assert.deepEqual(result.wire.functions.map(fn => 'sha256:' + fn.id), hir.functions.map(fn => fn.id));
-  assert.deepEqual(result.wire.functions.map(fn => [fn.start, fn.end]), hir.functions.map(fn => [fn.range.start, fn.range.end]));
+  const defaultId = hir.closure.roots[0];
+  const ordered = [hir.functions.find(fn => fn.id === defaultId), ...hir.functions.filter(fn => fn.id !== defaultId)];
+  assert.deepEqual(result.wire.functions.map(fn => ['sha256:' + fn.id, fn.start, fn.end]),
+    ordered.map(fn => [fn.id, fn.range.start, fn.range.end]));
   assert.equal(result.wire.functions.filter(fn => fn.instructions.some(op => op.opcode === 27)).length, 2);
 });
 
@@ -41,7 +43,9 @@ for (const count of [256, 257, 512]) test('complete structural concrete closure 
   const hir = structuralClosure(count), result = await compiled(lowerGenericHir(hir));
   assert.equal(result.wire.functions.length, count);
   assert.equal(result.wire.sourcePath, '/structural/owned:scalar.ts');
-  assert.deepEqual(result.wire.functions.map(fn => 'sha256:' + fn.id), hir.functions.map(fn => fn.id));
+  const defaultId = hir.closure.roots[0];
+  assert.deepEqual(result.wire.functions.map(fn => 'sha256:' + fn.id),
+    [defaultId, ...hir.functions.filter(fn => fn.id !== defaultId).map(fn => fn.id)]);
   const calls = result.wire.functions.flatMap(fn => fn.instructions.filter(op => op.opcode === 27));
   assert.ok(calls.length > 0);
   if (count === 512) assert.ok(calls.some(op => op.immediate > 255), 'u16 high function indices survive');

@@ -4,6 +4,17 @@ import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 let sequence = 0;
+// Preserve the historical independent Core literal, projecting only its
+// default declaration into the first scalar R04 function slot.
+export function expectedGenericCore(core, defaultId) {
+  assert.ok(core.endsWith('}\n'));
+  const [header, ...declarations] = core.slice(0, -2).split(/(?<=\n)(?=  func\.func @)/);
+  const matches = declarations.filter(body =>
+    body.split('\n', 1)[0].includes('tsfg_core.function_id = "' + defaultId + '"'));
+  assert.equal(matches.length, 1);
+  return header + matches[0] + declarations.filter(body => body !== matches[0]).join('') + '}\n';
+}
+
 // Real CLI only. Root supplies one qualified executable and owned storage root.
 // Preserve each raw stream and separate exit/close events even when assertions fail.
 export async function invokeCore(input, command = '--canonicalize') {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from 'node:assert/strict';
+import { expectedGenericCore } from './generic-core-package-capture.mjs';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -108,7 +109,8 @@ test('actual private7 conditional calls preserve four cold functions and origina
   assert.equal(new Set(cold.functions.map(fn => fn.id)).size, 4);
   assert.equal(new Set(cold.functions.map(fn => fn.signatureHash)).size, 2);
   const core = lowerGenericHir(cold);
-  assert.deepEqual(Buffer.from(core), coreOracle, 'complete hand-worked call(p0) -> leaf -> return SSA example');
+  assert.equal(core, expectedGenericCore(coreOracle.toString('utf8'), cold.closure.roots[0]),
+    'complete hand-worked call(p0) -> leaf -> return SSA example with its requested default');
   assert.equal((core.match(/"func.call"/g) ?? []).length, 2);
   assert.equal((core.match(/"func.return"/g) ?? []).length, 4);
   assert.equal((core.match(/"tsfg_core.fuel"/g) ?? []).length, 4);
