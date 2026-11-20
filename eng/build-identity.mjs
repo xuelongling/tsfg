@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { canonicalize, digest, digestFile, readCanonicalJson, readRegularFile } from "./build-data.mjs";
 import { BuildFailureError, PackageFailureError } from "./build-errors.mjs";
-import { gitOutput } from "./build-git.mjs";
+import { gitOutput, regularTrackedModes } from "./build-git.mjs";
 import { repositoryRoot } from "./build-product.mjs";
 
 export async function createProducerEvidence(identity, target, profile, workspacePath, compilationRoot) {
@@ -100,6 +100,7 @@ async function buildInputSet(workspaceRoot) {
   const identities = new Set();
   const entries = [];
   const epochs = [];
+  const trackedModes = regularTrackedModes(workspaceRoot);
   for (const declared of declaration.entries) {
     if (
       declared?.projectId !== "tsfg" ||
@@ -115,14 +116,8 @@ async function buildInputSet(workspaceRoot) {
       throw new PackageFailureError("duplicate Build Input declaration entry");
     }
     identities.add(identity);
-    const indexLine = gitOutput(workspaceRoot, [
-      "ls-files",
-      "--stage",
-      "--",
-      declared.path,
-    ]).trim();
-    const match = /^(100644|100755) [0-9a-f]{40} 0\t/.exec(indexLine);
-    if (!match) {
+    const normalizedMode = trackedModes.get(path.posix.normalize(declared.path));
+    if (!normalizedMode) {
       throw new PackageFailureError(`Build Input is not a regular tracked file: ${declared.path}`);
     }
     const epoch = gitOutput(workspaceRoot, [
@@ -139,7 +134,7 @@ async function buildInputSet(workspaceRoot) {
     entries.push({
       projectId: declared.projectId,
       repositoryRelativePath: declared.path,
-      normalizedMode: match[1],
+      normalizedMode,
       sha256: await digestFile(path.join(workspaceRoot, ...declared.path.split("/"))),
     });
   }

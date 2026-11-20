@@ -101,6 +101,21 @@ function splitNullTerminated(bytes) {
   return entries;
 }
 
+export function regularTrackedModes(repositoryRoot) {
+  const records = gitOutput(repositoryRoot, ["ls-files", "--stage", "-z"], "buffer");
+  const modes = new Map();
+  for (const record of splitNullTerminated(records)) {
+    const separator = record.indexOf(0x09);
+    if (separator < 0) continue;
+    const mode = /^(100644|100755) [0-9a-f]{40} 0$/.exec(record.subarray(0, separator).toString("ascii"))?.[1];
+    if (!mode) continue;
+    const bytes = record.subarray(separator + 1);
+    const name = bytes.toString("utf8");
+    if (Buffer.from(name).equals(bytes)) modes.set(name, mode);
+  }
+  return modes;
+}
+
 export function committedTree(repositoryRoot, revision, allowGitlinks = false) {
   const output = gitOutput(
     repositoryRoot,
