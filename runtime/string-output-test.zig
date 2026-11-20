@@ -121,6 +121,10 @@ test "actual CLI result writer emits byte length and reports strict failure" {
     var failure = try std.json.parseFromSlice(std.json.Value, a, writer.written(), .{});
     defer failure.deinit();
     try std.testing.expectEqualStrings("r05-string-invalid-utf8", failure.value.object.get("code").?.string);
+    try std.testing.expectEqualStrings("string-output", failure.value.object.get("category").?.string);
+    const rules = failure.value.object.get("ruleIds").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), rules.len);
+    try std.testing.expectEqualStrings("r01-strings", rules[0].string);
     writer.clearRetainingCapacity();
     try @import("outcome-writer.zig").writeOutcome(&writer.writer, &result, &host, .lossy);
     const lossy = try std.json.parseFromSlice(std.json.Value, a, writer.written(), .{});
@@ -192,6 +196,39 @@ test "actual writer allocation failure does not consume its returned root" {
     var writer: std.Io.Writer.Allocating = .init(failing.allocator());
     defer writer.deinit();
     try std.testing.expectError(error.WriteFailed, @import("outcome-writer.zig").writeOutcome(&writer.writer, &result, &host, .strict));
+    try result.returned.result.string.owner.heap.collect();
+    try std.testing.expectEqual(@as(usize, 2), try result.returned.result.string.owner.heap.stringLength(result.returned.result.string.handle));
+}
+
+test "output lease allocation failure reports an execution abort without a language rule" {
+    const request = @import("request-values.zig");
+    var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    var host = @import("runtime-state.zig").Runtime.init(failing.allocator());
+    defer host.deinit() catch unreachable;
+    var result: request.RequestOutcome = .{ .returned = .{
+        .result = .{ .string = try owned(a, &.{ 0x41, 0x42 }) },
+        .function_id = [_]u8{1} ** 32,
+        .source = .{ .path = "/string.ts", .hash = [_]u8{2} ** 32, .start = 4, .end = 8 },
+        .fuel_remaining = 7,
+        .fuel_consumed = 3,
+    } };
+    defer request.deinitOutcome(&result);
+    var writer: std.Io.Writer.Allocating = .init(a);
+    defer writer.deinit();
+    try @import("outcome-writer.zig").writeOutcome(&writer.writer, &result, &host, .strict);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, writer.written(), .{});
+    defer parsed.deinit();
+    const body = parsed.value.object;
+    try std.testing.expectEqualStrings("failed", body.get("status").?.string);
+    try std.testing.expectEqualStrings("r05-execution-abort", body.get("code").?.string);
+    try std.testing.expectEqualStrings("execution-abort", body.get("category").?.string);
+    try std.testing.expectEqual(@as(usize, 0), body.get("ruleIds").?.array.items.len);
+    try std.testing.expectEqualStrings("7", body.get("fuelRemaining").?.string);
+    try std.testing.expectEqualStrings("3", body.get("fuelConsumed").?.string);
+    const source = body.get("source").?.object;
+    try std.testing.expectEqualStrings("/string.ts", source.get("path").?.string);
+    try std.testing.expectEqualStrings("4", source.get("start").?.string);
+    try std.testing.expectEqualStrings("8", source.get("end").?.string);
     try result.returned.result.string.owner.heap.collect();
     try std.testing.expectEqual(@as(usize, 2), try result.returned.result.string.owner.heap.stringLength(result.returned.result.string.handle));
 }

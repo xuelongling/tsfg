@@ -34,8 +34,10 @@ pub fn writeOutcome(writer: *std.Io.Writer, outcome: *const request.RequestOutco
                 .string => |value| {
                     var lease: @import("string-output.zig").Lease = .{};
                     const token = lease.begin(host.allocator, value, mode, contract.max_bytes) catch |err| {
-                        const code = if (err == error.InvalidUtf8) "r05-string-invalid-utf8" else "r05-execution-abort";
-                        try std.json.Stringify.value(.{ .status = "failed", .code = code, .category = if (err == error.InvalidUtf8) "string-output" else "execution-abort", .ruleIds = [_][]const u8{"r01-strings"}, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer);
+                        const invalid_utf8 = err == error.InvalidUtf8;
+                        const code = if (invalid_utf8) "r05-string-invalid-utf8" else "r05-execution-abort";
+                        const rules: []const []const u8 = if (invalid_utf8) &.{"r01-strings"} else &.{};
+                        try std.json.Stringify.value(.{ .status = "failed", .code = code, .category = if (invalid_utf8) "string-output" else "execution-abort", .ruleIds = rules, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer);
                         return;
                     };
                     defer lease.end() catch unreachable;
