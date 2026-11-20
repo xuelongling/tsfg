@@ -122,6 +122,25 @@ for(const row of cases)test(row.name,async t=>{
       assert.equal(reaching.reads.find(read=>read.node===compound.id+'/body/3/value')?.status,row.productive?'proven':'pending',operator);
       assert.ok(reaching.writes.some(write=>write.id===site+'/array-version'),operator);
     }
+    const sinkArgument=original.left.operand.value.arguments[0];
+    const unknown={...compare,left:{kind:'arrayLength',receiver:sinkArgument,type:index.type,range:index.range},right:index};
+    const base=compound.id+'/body/2/expression',site=base+'/right/left/operand',old=site+'/old-value';
+    for(const operator of ['&&','||'])for(const route of ['required','skipped','possible'])
+      await t.test(operator+' RHS '+route,()=>{
+        const left=route==='possible'?unknown:{...flag,value:(operator==='&&')===(route==='required')};
+        const expression={...original,kind:'shortCircuit',type:scalarTypeIds.bool,operator,left,right:compare};
+        const fn={...compound,body:[...compound.body.slice(0,2),{kind:'expression',expression,range:local.range},{...returned,value:tail}]};
+        const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+        const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+        assert.deepEqual([...terminalReads??[]],route==='required'&&!row.productive?[old]:[]);
+        const oldRead=reaching.reads.find(read=>read.node===old),after=reaching.reads.find(read=>read.node===compound.id+'/body/3/value');
+        assert.equal(oldRead?.status,route==='skipped'?'pending':row.productive?'proven':'missing');
+        assert.equal(after?.status,row.productive?'proven':route==='required'?'pending':'missing');
+        if(row.productive)assert.deepEqual(after?.versions,
+          (route==='required'?[site+'/array-version']:route==='skipped'?[initial]:[initial,site+'/array-version']).sort());
+        for(const version of [site+'/array-version',mark.id+'/body/0/expression/array-version',sibling.id+'/body/0/expression/array-version'])
+          assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+      });
   }
 
   /** @param {string} text */
