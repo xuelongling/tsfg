@@ -183,14 +183,25 @@ const Checker = struct {
         }
     }
 
-    fn globalStores(self: *Checker) Error!void {
+    fn checkScalarGlobalCarrier(self: *Checker, id: t.GlobalRef, actual: t.Carrier) Error!void {
+        const carrier = self.common.modules.globals[@intFromEnum(id)].carrier;
+        if (carrier == .@"type" and self.common.types[@intFromEnum(carrier.@"type")].kind == .scalar) {
+            try self.c.require(std.meta.eql(actual, carrier));
+        }
+    }
+
+    fn globalAccesses(self: *Checker) Error!void {
         const c = self.c;
         for (c.program.functions, 0..) |function, index| {
             try c.step();
             for (function.blocks) |block| for (block.instructions) |op| {
                 try c.step();
                 switch (op.data) {
+                    .global_load => |load| {
+                        try self.checkScalarGlobalCarrier(load.global, function.registers[@intFromEnum(op.result.?)].carrier);
+                    },
                     .global_store => |store| {
+                        try self.checkScalarGlobalCarrier(store.global, function.registers[@intFromEnum(op.operands[0])].carrier);
                         const global = self.common.modules.globals[@intFromEnum(store.global)];
                         // Inlined defining-module code can store from another
                         // function. Core binding permission uses mutability;
@@ -301,5 +312,5 @@ pub fn checkModules(c: *Context) Error!void {
     @memset(source_modules, null);
     var checker = Checker{ .c = c, .common = common, .source_modules = source_modules };
     defer checker.deinit();
-    try checker.catalogue(); try checker.moduleRows(); try checker.globalStores(); try checker.roots(); try checker.initialization();
+    try checker.catalogue(); try checker.moduleRows(); try checker.globalAccesses(); try checker.roots(); try checker.initialization();
 }

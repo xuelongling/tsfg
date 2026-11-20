@@ -586,6 +586,16 @@ const Engine = struct {
     fn literal(self: *Engine, id: t.TypeRef) Error!V {
         var value: V=.{}; errdefer value.deinit(self.c.allocator); _=try value.tag(self.c,id); return value;
     }
+    fn unknownScalar(self: *Engine, carrier: t.Carrier) Error!?V {
+        try self.c.step();
+        if (carrier != .@"type") return null;
+        const id = carrier.@"type";
+        const row = self.c.program.tables.mode.common.types[@intFromEnum(id)];
+        if (row.kind != .scalar) return null;
+        var value = try self.literal(id);
+        if (self.primitives.get("bool") == id) value.truth = 3;
+        return value;
+    }
     fn logical(self: *Engine, function: t.FunctionRef, r: t.RegisterRef) ?t.TypeRef {
         const row=self.c.program.functions[@intFromEnum(function)].registers[@intFromEnum(r)];
         return row.view orelse if(std.meta.activeTag(row.carrier)==.@"type")row.carrier.@"type" else null;
@@ -786,9 +796,8 @@ const Engine = struct {
     }
     fn abi(self: *Engine, function: t.FunctionRef) usize { return @intFromEnum(self.c.program.functions[@intFromEnum(function)].abi); }
     fn declared(self: *Engine, id: t.TypeRef) Error!V {
-        // This declared-value recipe belongs only to legacy/EH. Common keeps
-        // actual storage semantics: its explicit exported Array roles use the
-        // separate entry boundary; missing roles never use a carrier maximum.
+        // This declared-value recipe belongs only to legacy/EH. Common
+        // handles exported Array roles and native scalar slots at entry.
         try self.c.step(); var result: V=.{}; errdefer result.deinit(self.c.allocator);
         switch(self.c.program.tables.mode) {
             .common => return error.WrongMode,
@@ -2135,9 +2144,20 @@ const Engine = struct {
                                 continue;
                             }
                         }
+                        // The raw Source argument and physical entry slot
+                        // agree. Numeric contents stay unknown.
+                        const carrier = abi_row.physical_parameters[index];
+                        if (function.role == .ordinary and carrier == .@"type" and
+                            carrier.@"type" == abi_row.argument_types[index-hidden])
+                        {
+                            if (try self.unknownScalar(carrier)) |scalar| {
+                                argument.* = scalar;
+                                continue;
+                            }
+                        }
                     }
-                    // Uncovered entries and all internal transports retain the
-                    // actual-storage unknown; a Source view is not a conversion.
+                    // Uncovered entries and internal transports retain the
+                    // actual-storage unknown independently of the Source view.
                     argument.*=.{.unknown=true,.callable_unknown=true};
                 },
                 .exception => |v| {
@@ -2173,7 +2193,15 @@ const Engine = struct {
         switch(self.c.program.tables.mode) {
             .common => |v| {
                 self.entry_roles=try entry_contracts.projectEntries(self.c);
-                for(v.modules.globals,0..) |_,i| { try self.c.step(); _=try self.initial_globals.put(self.c,.{.global=@enumFromInt(i)},.{.unknown=true,.callable_unknown=true},true); }
+                for (v.modules.globals, 0..) |global, i| {
+                    // Module validation connects scalar loads and stores to
+                    // this layout. The module's initial contents stay unknown.
+                    var initial = (try self.unknownScalar(global.carrier)) orelse
+                        V{ .unknown = true, .callable_unknown = true };
+                    defer initial.deinit(self.c.allocator);
+                    _ = try self.initial_globals.put(self.c, .{ .global = @enumFromInt(i) }, initial.view(), true);
+                    self.result.unresolved = self.result.unresolved or initial.unknown;
+                }
                 for(self.c.program.functions,0..) |function,i| {
                     try self.c.step(); const ref: t.FunctionRef=@enumFromInt(i); var is_root=function.role==.module_initializer;
                     for(v.closures.functions) |row| { try self.c.step(); if(row.function==ref) { is_root=row.parent==null; break; } }
@@ -2191,9 +2219,6 @@ const Engine = struct {
                         }
                     } else if(is_root)try self.seedRoot(ref,null);
                 }
-                // Global initial values are missing external actual facts as
-                // well. A declared type or capacity is not their actual seed.
-                if(v.modules.globals.len!=0)self.result.unresolved=true;
             },
             .exception => |v| for(self.c.program.functions,0..) |function,i| { try self.c.step(); if(function.role==.module_initializer or v.exceptions.functions[i].parent==null)try self.seedRoot(@enumFromInt(i),null); },
             .legacy => |v| {
