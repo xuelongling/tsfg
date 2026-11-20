@@ -453,8 +453,14 @@ GpuSoftwareSourceCompletion GpuSoftwareVulkanCall::finishSourceRequest(uint64_t 
       return rejected("wait-parameters","an explicit positive finite timeout is required");
     if(!prepared||submit().state==GpuSoftwareState::Submitted)wait(timeoutNanoseconds);
   }
-  if(!state.report.outputsAvailable)return {state.report,budget,{},{}};
-  return {state.report,budget,writeBackSource(),{}};
+  GpuSoftwareSourceCompletion completion{state.report,budget,{},{}};
+  if(!state.report.outputsAvailable)return completion;
+  completion.writeBack=writeBackSource();
+  if(completion.writeBack==GpuSoftwareWriteBack::Committed){
+    for(const auto &output:state.outputs)
+      if(output.descriptor.kind==GpuResourceKind::Return)completion.returnBits=output.bits;
+  }
+  return completion;
 }
 const GpuSoftwareReport &GpuSoftwareVulkanCall::submit(){
   auto &state=*impl_;auto &report=state.report;

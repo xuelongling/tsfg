@@ -172,10 +172,11 @@ public:
   }
   bool publish(llvm::ArrayRef<GpuSoftwareOutput> outputs) noexcept override {
     ++observed.publications;
-    if(!observed.acceptOutputs||outputs.size()!=2||
-       outputs[0].descriptor.id!=globalId||outputs[1].descriptor.id!=returnId)return false;
+    const size_t outputCount=returnId.empty()?1:2;
+    if(!observed.acceptOutputs||outputs.size()!=outputCount||
+       outputs[0].descriptor.id!=globalId||(outputCount==2&&outputs[1].descriptor.id!=returnId))return false;
     observed.global=outputs[0].bits;
-    observed.returned=outputs[1].bits;
+    if(outputCount==2)observed.returned=outputs[1].bits;
     return true;
   }
 };
@@ -281,7 +282,7 @@ int main(int argc,char **argv){
      &&mode!="--check-software-operation-rejection"&&mode!="--check-bound-source-instance"
 #endif
 #ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
-     &&mode!="--check-source-completion"
+     &&mode!="--check-source-completion"&&mode!="--check-void-source-completion"
 #endif
      )return 2;
   const bool checkDerived=mode=="--check-derived-numeric-use";
@@ -338,6 +339,7 @@ int main(int argc,char **argv){
 #endif
 #ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
   if(mode=="--check-source-completion")return checkSourceCompletion(call)?0:3;
+  if(mode=="--check-void-source-completion")return checkVoidSourceCompletion(call)?0:3;
 #endif
   std::vector<const GpuNumericUseStep *> uses;
   for(const auto &row:call.hostSteps())if(const auto *use=std::get_if<GpuNumericUseStep>(&row))

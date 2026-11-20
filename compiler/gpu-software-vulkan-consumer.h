@@ -50,6 +50,8 @@ struct GpuSoftwareSourceCompletion {
   GpuHostBudget budget;
   std::optional<GpuSoftwareWriteBack> writeBack;
   std::optional<GpuSoftwareReport> operationError;
+  // The i32 bit pattern of this completion's successfully published return.
+  std::optional<uint32_t> returnBits{};
 };
 
 // Permanent external software-device consumer, outside the product Runtime.

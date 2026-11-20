@@ -1,5 +1,25 @@
 // SPDX-License-Identifier: MIT
 // Private completion cases included inside the Host preflight test namespace.
+bool checkVoidSourceCompletion(const GpuPendingCall &call){
+  const auto &descriptors=call.descriptors();
+  if(!check(descriptors.size()==2&&descriptors[0].kind==GpuResourceKind::Global&&
+      descriptors[1].kind==GpuResourceKind::Parameter,"void fixture has no return binding"))return false;
+  const auto i32=tsfg::exception::i32Id.str();
+  const GpuHostValue arguments[]={{i32,11}};
+  const GpuHostGlobalValue globals[]={{descriptors[0].id,{i32,23}}};
+  auto checked=preflightGpuSourceCall(call,call.identity(),arguments,globals,{7,3});
+  const auto *proof=std::get_if<GpuHostProof>(&checked);
+  if(!check(proof,"void fixture admits independent input values"))return false;
+  SourceLeaseObservation observed;
+  observed.acceptOutputs=true;
+  auto lease=std::make_unique<ObservedSourceLease>(call.identity(),descriptors[0].id,"",observed);
+  uint32_t data[]={34,11};
+  auto device=GpuSoftwareCompletionTest::prepared(*proof,std::move(lease),data);
+  const auto completed=device.finishSourceRequest(1);
+  return check(completed.writeBack==GpuSoftwareWriteBack::Committed&&!completed.returnBits&&
+      observed.global==34&&observed.publications==1,"void completion publishes the global without a return value");
+}
+
 bool checkSourceCompletion(const GpuPendingCall &call){
   using Device=GpuSoftwareCompletionTest;
   const auto &descriptors=call.descriptors();
@@ -22,11 +42,11 @@ bool checkSourceCompletion(const GpuPendingCall &call){
   {
     auto device=Device::prepared(*proof,lease(accepted),data);
     const auto invalid=device.finishSourceRequest(0);
-    if(!check(invalid.operationError&&invalid.device.state==GpuSoftwareState::Prepared&&
+    if(!check(invalid.operationError&&!invalid.returnBits&&invalid.device.state==GpuSoftwareState::Prepared&&
         Device::submissions==0&&Device::waits==0,"invalid wait does not submit"))return false;
     Device::waitResult=VK_TIMEOUT;
     const auto pending=device.finishSourceRequest(1);
-    if(!check(pending.device.state==GpuSoftwareState::Unfinished&&!pending.writeBack&&
+    if(!check(pending.device.state==GpuSoftwareState::Unfinished&&!pending.writeBack&&!pending.returnBits&&
         Device::ownsDevice(device)&&
         !pending.operationError&&accepted.global==23&&accepted.returned==0&&
         accepted.publications==0&&accepted.destructions==0,"timeout preserves the request and original values"))return false;
@@ -55,6 +75,8 @@ bool checkSourceCompletion(const GpuPendingCall &call){
       completed.writeBack==GpuSoftwareWriteBack::Committed&&repeated.writeBack==GpuSoftwareWriteBack::AlreadyCommitted&&
       Device::submissions==1&&Device::waits==3&&accepted.global==34&&accepted.returned==57&&
       accepted.publications==1&&accepted.destructions==1,"resume waits again and publishes once"))return false;
+  if(!check(completed.returnBits==57&&!repeated.returnBits,
+      "only the successful completion reports the published return value"))return false;
 
   SourceLeaseObservation rejected;
   auto device=Device::prepared(*proof,lease(rejected),data);
@@ -62,12 +84,13 @@ bool checkSourceCompletion(const GpuPendingCall &call){
   if(!check(Device::ownsDevice(device)&&Device::deviceReserved(),
       "retiring the old handle preserves the next request's ownership"))return false;
   const auto failed=device.finishSourceRequest(1);
+  const auto failedAgain=device.finishSourceRequest(1);
   auto foreign=device.outputs();
   for(auto &output:foreign)output.bits=0;
   if(!check(failed.device.state==GpuSoftwareState::Completed&&failed.device.outputsAvailable&&
       !Device::ownsDevice(device)&&
-      failed.writeBack==GpuSoftwareWriteBack::SourceRejected&&!failed.operationError&&
-      device.finishSourceRequest(1).writeBack==GpuSoftwareWriteBack::SourceRejected&&
+      failed.writeBack==GpuSoftwareWriteBack::SourceRejected&&!failed.operationError&&!failed.returnBits&&
+      failedAgain.writeBack==GpuSoftwareWriteBack::SourceRejected&&!failedAgain.returnBits&&
       device.writeBack(8,9,foreign)==GpuSoftwareWriteBack::BindingMismatch&&
       rejected.global==23&&rejected.returned==0&&rejected.publications==1&&rejected.destructions==1,
       "rejected writeback retires the original lease and cannot publish to another destination"))return false;
@@ -76,9 +99,10 @@ bool checkSourceCompletion(const GpuPendingCall &call){
   auto unableToSubmit=Device::prepared(*proof,lease(submitFailure),data);
   Device::submitResult=VK_ERROR_OUT_OF_HOST_MEMORY;
   const auto &submission=unableToSubmit.submit();
+  const auto submitCompletion=unableToSubmit.finishSourceRequest(1);
   if(!check(submission.state==GpuSoftwareState::FailedBeforeSubmit&&
       submission.vkResult==VK_ERROR_OUT_OF_HOST_MEMORY&&submission.stage=="queue-submit"&&
-      !submission.submitted&&!submission.outputsAvailable&&!Device::deviceReserved()&&
+      !submission.submitted&&!submission.outputsAvailable&&!submitCompletion.returnBits&&!Device::deviceReserved()&&
       submitFailure.publications==0&&submitFailure.destructions==1,
       "failed direct submission keeps its report and frees ownership for the next request"))return false;
 
@@ -89,11 +113,12 @@ bool checkSourceCompletion(const GpuPendingCall &call){
     if(!check(failing.submit().submitted,"submit before testing a terminal wait failure"))return false;
     Device::waitResult=readbackFailure?VK_SUCCESS:VK_ERROR_DEVICE_LOST;
     const auto &failure=failing.wait(1);
+    const auto failureCompletion=failing.finishSourceRequest(1);
     const auto expectedState=readbackFailure?GpuSoftwareState::Completed:GpuSoftwareState::DeviceLost;
     const auto expectedResult=readbackFailure?VK_ERROR_OUT_OF_HOST_MEMORY:VK_ERROR_DEVICE_LOST;
     if(!check(failure.state==expectedState&&failure.vkResult==expectedResult&&failure.completionKnown==readbackFailure&&
         failure.stage==(readbackFailure?"invalidate-output-memory":"wait")&&failure.failure==GpuSoftwareFailure::Vulkan&&
-        !failure.outputsAvailable&&failing.outputs().empty()&&!Device::deviceReserved()&&
+        !failure.outputsAvailable&&!failureCompletion.returnBits&&failing.outputs().empty()&&!Device::deviceReserved()&&
         observed.destructions==1&&observed.publications==0&&observed.global==23&&observed.returned==0,
         "terminal wait failure preserves its report, retires ownership and publishes nothing"))return false;
   }
