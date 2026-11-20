@@ -445,7 +445,10 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
           viewType:types.get(v.receiver.type).kind==='reference'?v.receiver.type:target.ownerType,targets:new Map(),receivers:new Set()});
         flow.finish(id,dependencies);continue;
       }
-      arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index].id,target.parameters[index].type)));
+      // Publish arguments at invocation, independently of the callee's return.
+      flow.when(flow.all([flow.incoming(id),...dependencies]),()=>{
+        arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index].id,target.parameters[index].type)));
+      });
       requirements.push(flow.returned(target.id));
       if(types.get(target.returnType.id).kind==='void')insert(id,'actual',target.returnType.id);else copy(returned(target),id);
     }else if(v.kind==='construct') {
