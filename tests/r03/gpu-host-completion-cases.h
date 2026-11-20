@@ -39,15 +39,17 @@ bool checkSourceCompletion(const GpuPendingCall &call){
   uint32_t data[]={34,11,57};
   SourceLeaseObservation accepted;
   accepted.acceptOutputs=true;
+  std::optional<GpuSoftwareSourceResumeKey> originalKey;
   {
     auto device=Device::prepared(*proof,lease(accepted),data);
     const auto invalid=device.finishSourceRequest(0);
     if(!check(invalid.operationError&&!invalid.returnBits&&invalid.device.state==GpuSoftwareState::Prepared&&
-        Device::submissions==0&&Device::waits==0,"invalid wait does not submit"))return false;
+        Device::submissions==0&&Device::waits==0&&!device.sourceResumeKey(),"invalid wait does not submit"))return false;
     Device::waitResult=VK_TIMEOUT;
     const auto pending=device.finishSourceRequest(1);
+    originalKey=device.sourceResumeKey();
     if(!check(pending.device.state==GpuSoftwareState::Unfinished&&!pending.writeBack&&!pending.returnBits&&
-        Device::ownsDevice(device)&&
+        Device::ownsDevice(device)&&originalKey&&
         !pending.operationError&&accepted.global==23&&accepted.returned==0&&
         accepted.publications==0&&accepted.destructions==0,"timeout preserves the request and original values"))return false;
     Device::waitResult=VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -59,10 +61,10 @@ bool checkSourceCompletion(const GpuPendingCall &call){
   auto otherIdentity=call.identity();
   otherIdentity.artifactDigest.clear();
   if(!check(!GpuSoftwareVulkanCall::resumeRetained(8,9)&&
-      !GpuSoftwareVulkanCall::resumeRetainedSource(8,9,otherIdentity)&&
-      !GpuSoftwareVulkanCall::resumeRetainedSource(8,10,call.identity()),
+      !GpuSoftwareVulkanCall::resumeRetainedSource(8,9,otherIdentity,*originalKey)&&
+      !GpuSoftwareVulkanCall::resumeRetainedSource(8,10,call.identity(),*originalKey),
       "a Source request requires its original program identity to resume"))return false;
-  auto resumed=GpuSoftwareVulkanCall::resumeRetainedSource(8,9,call.identity());
+  auto resumed=GpuSoftwareVulkanCall::resumeRetainedSource(8,9,call.identity(),*originalKey);
   if(!check(resumed.has_value(),"resume the original request"))return false;
   Device::waitResult=VK_SUCCESS;
   const auto &finished=resumed->wait(1);
@@ -79,19 +81,30 @@ bool checkSourceCompletion(const GpuPendingCall &call){
       "only the successful completion reports the published return value"))return false;
 
   SourceLeaseObservation rejected;
-  auto device=Device::prepared(*proof,lease(rejected),data);
+  std::optional<GpuSoftwareVulkanCall> device=Device::prepared(*proof,lease(rejected),data);
   resumed.reset();
-  if(!check(Device::ownsDevice(device)&&Device::deviceReserved(),
+  if(!check(Device::ownsDevice(*device)&&Device::deviceReserved(),
       "retiring the old handle preserves the next request's ownership"))return false;
-  const auto failed=device.finishSourceRequest(1);
-  const auto failedAgain=device.finishSourceRequest(1);
-  auto foreign=device.outputs();
+  Device::waitResult=VK_TIMEOUT;
+  if(!check(device->finishSourceRequest(1).device.state==GpuSoftwareState::Unfinished,
+      "later request with the same report IDs times out"))return false;
+  const auto laterKey=device->sourceResumeKey();
+  if(!check(laterKey.has_value(),"outstanding later request exposes its resume key"))return false;
+  device.reset();
+  if(!check(!GpuSoftwareVulkanCall::resumeRetainedSource(8,9,completed.device.identity,*originalKey),
+      "a retired request cannot resume a later request with the same report IDs"))return false;
+  device=GpuSoftwareVulkanCall::resumeRetainedSource(8,9,call.identity(),*laterKey);
+  if(!check(device.has_value(),"the later request keeps its own retained submission"))return false;
+  Device::waitResult=VK_SUCCESS;
+  const auto failed=device->finishSourceRequest(1);
+  const auto failedAgain=device->finishSourceRequest(1);
+  auto foreign=device->outputs();
   for(auto &output:foreign)output.bits=0;
   if(!check(failed.device.state==GpuSoftwareState::Completed&&failed.device.outputsAvailable&&
-      !Device::ownsDevice(device)&&
+      !Device::ownsDevice(*device)&&
       failed.writeBack==GpuSoftwareWriteBack::SourceRejected&&!failed.operationError&&!failed.returnBits&&
       failedAgain.writeBack==GpuSoftwareWriteBack::SourceRejected&&!failedAgain.returnBits&&
-      device.writeBack(8,9,foreign)==GpuSoftwareWriteBack::BindingMismatch&&
+      device->writeBack(8,9,foreign)==GpuSoftwareWriteBack::BindingMismatch&&
       rejected.global==23&&rejected.returned==0&&rejected.publications==1&&rejected.destructions==1,
       "rejected writeback retires the original lease and cannot publish to another destination"))return false;
 

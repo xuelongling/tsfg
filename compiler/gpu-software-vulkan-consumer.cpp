@@ -61,7 +61,7 @@ bool privateAbsolute(const std::wstring &path){
 struct GpuSoftwareVulkanCall::Impl {
   GpuHostProof proof;GpuSoftwareReport report;std::vector<GpuSoftwareOutput> outputs;
   std::optional<GpuSoftwareReport> operationRejection;
-  std::unique_ptr<GpuSoftwareSourceLease> sourceLease;
+  std::shared_ptr<GpuSoftwareSourceLease> sourceLease;
   Vulkan vk;HMODULE loader=nullptr;VkInstance instance=VK_NULL_HANDLE;
   VkPhysicalDevice physical=VK_NULL_HANDLE;VkDevice device=VK_NULL_HANDLE;VkQueue queue=VK_NULL_HANDLE;
   VkDescriptorPool descriptorPool=VK_NULL_HANDLE;VkPipelineLayout pipelineLayout=VK_NULL_HANDLE;
@@ -386,17 +386,20 @@ std::unique_ptr<GpuSoftwareVulkanCall::Impl> &GpuSoftwareVulkanCall::retained(){
 void GpuSoftwareVulkanCall::retainOutstanding(){if(impl_&&impl_->inFlight())retained()=std::move(impl_);}
 const GpuSoftwareReport *GpuSoftwareVulkanCall::retainedReport(){const auto &slot=retained();return slot?&slot->report:nullptr;}
 std::optional<GpuSoftwareVulkanCall> GpuSoftwareVulkanCall::resumeRetained(uint64_t generation,uint64_t submission){
-  return takeRetained(generation,submission,nullptr);
+  return takeRetained(generation,submission,nullptr,nullptr);
 }
 std::optional<GpuSoftwareVulkanCall> GpuSoftwareVulkanCall::resumeRetainedSource(
-    uint64_t generation,uint64_t submission,const GpuCallIdentity &identity){
-  return takeRetained(generation,submission,&identity);
+    uint64_t generation,uint64_t submission,const GpuCallIdentity &identity,const GpuSoftwareSourceResumeKey &key){
+  return takeRetained(generation,submission,&identity,&key);
 }
 std::optional<GpuSoftwareVulkanCall> GpuSoftwareVulkanCall::takeRetained(
-    uint64_t generation,uint64_t submission,const GpuCallIdentity *identity){
+    uint64_t generation,uint64_t submission,const GpuCallIdentity *identity,const GpuSoftwareSourceResumeKey *key){
   auto &slot=retained();
   if(!slot||slot->report.deviceGeneration!=generation||slot->report.submissionId!=submission||
      slot->sourceBound!=(identity!=nullptr)||(identity&&!(slot->report.identity==*identity)))
+    return std::nullopt;
+  if(key&&(!slot->sourceLease||key->source_.owner_before(slot->sourceLease)||
+      slot->sourceLease.owner_before(key->source_)))
     return std::nullopt;
   return GpuSoftwareVulkanCall(std::move(slot));
 }
@@ -405,6 +408,10 @@ GpuSoftwareVulkanCall &GpuSoftwareVulkanCall::operator=(GpuSoftwareVulkanCall &&
 }
 GpuSoftwareVulkanCall::~GpuSoftwareVulkanCall(){retainOutstanding();}
 const GpuSoftwareReport &GpuSoftwareVulkanCall::report()const{return impl_->report;}
+std::optional<GpuSoftwareSourceResumeKey> GpuSoftwareVulkanCall::sourceResumeKey()const{
+  if(!impl_||!impl_->inFlight()||!impl_->sourceLease)return std::nullopt;
+  return GpuSoftwareSourceResumeKey(impl_->sourceLease);
+}
 const GpuHostProof &GpuSoftwareVulkanCall::hostProof()const{return impl_->proof;}
 const std::vector<GpuSoftwareOutput> &GpuSoftwareVulkanCall::outputs()const{return impl_->outputs;}
 GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBack(

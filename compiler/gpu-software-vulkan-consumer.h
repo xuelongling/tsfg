@@ -34,6 +34,12 @@ public:
   // The caller retains its call handle through the callback.
   virtual bool publish(llvm::ArrayRef<GpuSoftwareOutput> outputs) noexcept=0;
 };
+// Tied to one outstanding Source request without extending the lease lifetime.
+class GpuSoftwareSourceResumeKey {
+  explicit GpuSoftwareSourceResumeKey(const std::shared_ptr<GpuSoftwareSourceLease> &source):source_(source){}
+  std::weak_ptr<GpuSoftwareSourceLease> source_;
+  friend class GpuSoftwareVulkanCall;
+};
 struct GpuSoftwareReport {
   GpuSoftwareState state=GpuSoftwareState::Ready;
   GpuSoftwareFailure failure=GpuSoftwareFailure::None;
@@ -72,13 +78,15 @@ public:
   static const GpuSoftwareReport *retainedReport();
   static std::optional<GpuSoftwareVulkanCall> resumeRetained(uint64_t deviceGeneration,uint64_t submissionId);
   static std::optional<GpuSoftwareVulkanCall> resumeRetainedSource(uint64_t deviceGeneration,
-      uint64_t submissionId,const GpuCallIdentity &identity);
+      uint64_t submissionId,const GpuCallIdentity &identity,const GpuSoftwareSourceResumeKey &);
   GpuSoftwareVulkanCall(GpuSoftwareVulkanCall &&)noexcept;
   GpuSoftwareVulkanCall &operator=(GpuSoftwareVulkanCall &&)noexcept;
   GpuSoftwareVulkanCall(const GpuSoftwareVulkanCall &)=delete;
   GpuSoftwareVulkanCall &operator=(const GpuSoftwareVulkanCall &)=delete;
   ~GpuSoftwareVulkanCall();
   const GpuSoftwareReport &report()const;
+  // Save this key before releasing an outstanding Source-bound call.
+  std::optional<GpuSoftwareSourceResumeKey> sourceResumeKey()const;
   const GpuHostProof &hostProof()const;
   // Inspection only for calls bound to a Source lease.
   const std::vector<GpuSoftwareOutput> &outputs()const;
@@ -105,7 +113,8 @@ private:
   friend struct GpuSoftwareCompletionTest;
   struct Impl;
   static std::unique_ptr<Impl> &retained();
-  static std::optional<GpuSoftwareVulkanCall> takeRetained(uint64_t,uint64_t,const GpuCallIdentity *);
+  static std::optional<GpuSoftwareVulkanCall> takeRetained(uint64_t,uint64_t,const GpuCallIdentity *,
+      const GpuSoftwareSourceResumeKey *);
   void retainOutstanding();
   explicit GpuSoftwareVulkanCall(std::unique_ptr<Impl>);
   std::unique_ptr<Impl> impl_;
@@ -131,5 +140,5 @@ GpuSoftwareHostAdmission prepareGpuSoftwareSourceRequest(
 // and same-fence finite wait accessible. That slot blocks another prepare until
 // retirement; it never publishes or replays. Process exit leaves OS teardown in
 // charge of a still-outstanding slot. Completed/lost/pre-submit calls retire.
-// Source-bound calls resume through resumeRetainedSource with their full identity.
+// Source-bound calls resume with their full identity and original resume key.
 } // namespace tsfg::commonProgram

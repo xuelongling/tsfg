@@ -94,7 +94,9 @@ canonical GPU request, and its canonical `single-source-call-v1` module.
 The reader rebuilds the binding plan and checks the saved module against it.
 The returned call owns the verified shader and bindings. The initialized
 Source instance supplies its values and remaining budget at request time.
-If the Host drops a Source-bound request after a finite wait, it can resume the
-original submission with `resumeRetainedSource` using the same device
-generation, submission number, and full GPU call identity. A mismatch leaves
-the request in the retained slot. The original Source lease controls writeback.
+Before dropping an outstanding Source-bound request, the Host saves its
+`sourceResumeKey()`. It resumes the original submission with
+`resumeRetainedSource` using that key, the device generation, the submission
+number, and the full GPU call identity. The key belongs to one request even
+when report numbers and program identity are reused. A mismatch leaves the
+request in the retained slot. The original Source lease controls writeback.
