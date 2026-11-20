@@ -1,8 +1,60 @@
 // SPDX-License-Identifier: MIT
 import process from "node:process";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { WorkspaceMismatchError } from "./build-errors.mjs";
+
+const execGit = promisify(execFile);
+const gitMaxBuffer = 256 * 1024 * 1024;
+
+function gitCommand() {
+  const gitExecutable = process.env.TSFG_GIT;
+  if (!gitExecutable || !path.isAbsolute(gitExecutable)) {
+    throw new WorkspaceMismatchError(
+      "git-state",
+      "Git inspection requires an absolute TSFG_GIT selected by the verified launcher",
+    );
+  }
+  /** @type {NodeJS.ProcessEnv} */
+  const environment = {};
+  const allowed = [
+    "PATH",
+    "SystemRoot",
+    "ComSpec",
+    "PATHEXT",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+  ];
+  for (const requested of allowed) {
+    const actual = Object.keys(process.env).find(
+      (name) => name.toLowerCase() === requested.toLowerCase(),
+    );
+    if (actual && process.env[actual] !== undefined) {
+      environment[requested] = process.env[actual];
+    }
+  }
+  environment.GIT_CONFIG_NOSYSTEM = "1";
+  environment.GIT_CONFIG_GLOBAL = process.platform === "win32" ? "NUL" : "/dev/null";
+  environment.GIT_OPTIONAL_LOCKS = "0";
+  environment.GIT_TERMINAL_PROMPT = "0";
+  return { gitExecutable, environment };
+}
+
+function gitCommandError(cwd, error, fallbackOnEmpty = false) {
+  const detail = Buffer.isBuffer(error.stderr)
+    ? error.stderr.toString("utf8").trim()
+    : String(error.stderr ?? error.message).trim();
+  const reason = !detail && fallbackOnEmpty ? error.message : detail;
+  return new WorkspaceMismatchError("git-state", `cannot inspect Git state at ${cwd}: ${reason}`);
+}
 
 /**
  * @param {string} cwd
@@ -11,59 +63,32 @@ import { WorkspaceMismatchError } from "./build-errors.mjs";
  * @returns {any}
  */
 export function gitOutput(cwd, arguments_, encoding = "utf8", input = undefined) {
-  const gitExecutable = process.env.TSFG_GIT;
-  if (!gitExecutable || !path.isAbsolute(gitExecutable)) {
-    throw new WorkspaceMismatchError(
-      "git-state",
-      "Git inspection requires an absolute TSFG_GIT selected by the verified launcher",
-    );
-  }
+  const { gitExecutable, environment } = gitCommand();
   try {
-    /** @type {NodeJS.ProcessEnv} */
-    const environment = {};
-    const allowed = [
-      "PATH",
-      "SystemRoot",
-      "ComSpec",
-      "PATHEXT",
-      "HOME",
-      "USERPROFILE",
-      "HOMEDRIVE",
-      "HOMEPATH",
-      "TEMP",
-      "TMP",
-      "TMPDIR",
-      "LANG",
-      "LC_ALL",
-    ];
-    for (const requested of allowed) {
-      const actual = Object.keys(process.env).find(
-        (name) => name.toLowerCase() === requested.toLowerCase(),
-      );
-      if (actual && process.env[actual] !== undefined) {
-        environment[requested] = process.env[actual];
-      }
-    }
-    environment.GIT_CONFIG_NOSYSTEM = "1";
-    environment.GIT_CONFIG_GLOBAL = process.platform === "win32" ? "NUL" : "/dev/null";
-    environment.GIT_OPTIONAL_LOCKS = "0";
-    environment.GIT_TERMINAL_PROMPT = "0";
     const bytes = execFileSync(gitExecutable, arguments_, {
       cwd,
       env: environment,
       input,
-      maxBuffer: 256 * 1024 * 1024,
+      maxBuffer: gitMaxBuffer,
       stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     return encoding === "buffer" ? bytes : bytes.toString(encoding);
   } catch (error) {
-    const detail = Buffer.isBuffer(error.stderr)
-      ? error.stderr.toString("utf8").trim()
-      : String(error.stderr ?? error.message).trim();
-    throw new WorkspaceMismatchError(
-      "git-state",
-      `cannot inspect Git state at ${cwd}: ${detail}`,
-    );
+    throw gitCommandError(cwd, error);
+  }
+}
+
+/** @param {string} cwd @param {string[]} arguments_ */
+export async function gitOutputAsync(cwd, arguments_) {
+  const { gitExecutable, environment } = gitCommand();
+  try {
+    const invocation = execGit(gitExecutable, arguments_, {
+      cwd, env: environment, encoding: "buffer", maxBuffer: gitMaxBuffer, windowsHide: true,
+    });
+    invocation.child.stdin?.end();
+    return (await invocation).stdout.toString("utf8");
+  } catch (error) {
+    throw gitCommandError(cwd, error, true);
   }
 }
 

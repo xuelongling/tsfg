@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { canonicalize, digest, digestFile, readCanonicalJson, readRegularFile } from "./build-data.mjs";
 import { BuildFailureError, PackageFailureError } from "./build-errors.mjs";
-import { gitOutput, regularTrackedModes } from "./build-git.mjs";
+import { gitOutputAsync, regularTrackedModes } from "./build-git.mjs";
 import { repositoryRoot } from "./build-product.mjs";
 
 export async function createProducerEvidence(identity, target, profile, workspacePath, compilationRoot) {
@@ -101,7 +101,7 @@ async function buildInputSet(workspaceRoot) {
   const entries = [];
   const epochs = [];
   const trackedModes = regularTrackedModes(workspaceRoot);
-  for (const declared of declaration.entries) {
+  const inspectInput = async (declared) => {
     if (
       declared?.projectId !== "tsfg" ||
       typeof declared.path !== "string" ||
@@ -120,23 +120,36 @@ async function buildInputSet(workspaceRoot) {
     if (!normalizedMode) {
       throw new PackageFailureError(`Build Input is not a regular tracked file: ${declared.path}`);
     }
-    const epoch = gitOutput(workspaceRoot, [
+    const epoch = (await gitOutputAsync(workspaceRoot, [
       "log",
       "-1",
       "--format=%ct",
       "--",
       declared.path,
-    ]).trim();
+    ])).trim();
     if (!/^[1-9][0-9]*$/.test(epoch)) {
       throw new PackageFailureError(`Build Input has no last-touch commit: ${declared.path}`);
     }
-    epochs.push(BigInt(epoch));
-    entries.push({
-      projectId: declared.projectId,
-      repositoryRelativePath: declared.path,
-      normalizedMode,
-      sha256: await digestFile(path.join(workspaceRoot, ...declared.path.split("/"))),
-    });
+    return {
+      epoch: BigInt(epoch),
+      entry: {
+        projectId: declared.projectId,
+        repositoryRelativePath: declared.path,
+        normalizedMode,
+        sha256: await digestFile(path.join(workspaceRoot, ...declared.path.split("/"))),
+      },
+    };
+  };
+  // Keep each path's exact Git history query and report failures in declaration order.
+  const batchSize = 8;
+  for (let offset = 0; offset < declaration.entries.length; offset += batchSize) {
+    const batch = declaration.entries.slice(offset, offset + batchSize);
+    const inspected = await Promise.allSettled(batch.map(inspectInput));
+    for (const result of inspected) {
+      if (result.status === "rejected") throw result.reason;
+      epochs.push(result.value.epoch);
+      entries.push(result.value.entry);
+    }
   }
   const payload = { entries, schemaVersion: "1" };
   return {
