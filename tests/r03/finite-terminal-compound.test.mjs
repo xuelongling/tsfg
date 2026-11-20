@@ -183,6 +183,47 @@ for(const row of cases)test(row.name,async t=>{
       for(const version of [...initialized,mark.id+'/body/0/expression/array-version',sibling.id+'/body/0/expression/array-version'])
         assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
     });
+    await t.test('local assignment publishes its new Array only after the RHS completes',()=>{
+      const created=compound.body[0].initializer;
+      assert.ok(created.kind==='arrayCreate'&&receiver.kind==='reference');
+      const declared={...local,binding:{...local.binding,type:created.type,writable:true},initializer:receiver};
+      const target={...receiver,binding:declared.binding.id};
+      const value={...created,elements:[original.left,tail],range:original.range};
+      const assignment={kind:'expression',expression:{kind:'assignment',target,value,type:created.type,range:original.range},range:local.range};
+      const fn={...compound,body:[...compound.body.slice(0,2),declared,assignment,{...returned,value:{...tail,receiver:target}}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      const root=compound.id+'/body',rhs=root+'/3/expression/value',old=rhs+'/elements/0/operand/old-value';
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[old]);
+      assert.equal(reaching.reads.find(read=>read.node===old)?.status,row.productive?'proven':'missing');
+      assert.equal(reaching.reads.find(read=>read.node===rhs+'/elements/1')?.status,row.productive?'proven':'pending');
+      const after=reaching.reads.find(read=>read.node===root+'/4/value');
+      assert.equal(after?.status,row.productive?'proven':'pending');
+      assert.deepEqual(after?.versions,row.productive?[rhs+'/initial/0/array-version']:[]);
+      for(const version of [rhs+'/elements/0/operand/array-version',rhs+'/initial/0/array-version',rhs+'/initial/1/array-version'])
+        assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+    });
+    await t.test('a failed call input prevents later input reads and the caller continuation',()=>{
+      const call=original.right;
+      assert.equal(call.kind,'call');
+      const parameters=[...sibling.parameters,...['first','second'].map(name=>({...local.binding,id:local.binding.id+'/'+name,name}))];
+      const callee={...sibling,parameters};
+      const expression={...call,arguments:[...call.arguments,original.left,tail]};
+      const fn={...compound,body:[...compound.body.slice(0,2),{kind:'expression',expression,range:local.range},{...returned,value:tail}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item===sibling?callee:item)};
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      const root=compound.id+'/body',callPath=root+'/2/expression';
+      const site=callPath+'/arguments/'+call.arguments.length+'/operand',old=site+'/old-value';
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[old]);
+      assert.equal(reaching.reads.find(read=>read.node===old)?.status,row.productive?'proven':'missing');
+      for(const path of [callPath+'/arguments/'+(call.arguments.length+1),root+'/3/value']) {
+        const read=reaching.reads.find(item=>item.node===path);
+        assert.equal(read?.status,row.productive?'proven':'pending',path);
+        assert.deepEqual(read?.versions,row.productive?[site+'/array-version']:[],path);
+      }
+      for(const version of [site+'/array-version',sibling.id+'/body/0/expression/array-version'])
+        assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+    });
   }
 
   /** @param {string} text */

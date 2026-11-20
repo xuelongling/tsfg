@@ -249,13 +249,22 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         if(value.kind==='arrayStoreDenseChecked'){rememberSlotValue(id,value.value,rhs);return rhs;}
         return {symbol:path};
       }
-      if(value.kind==='assignment') {const rhs=child('value');bindings.set(value.target.binding,adapt(rhs,path+'/value',fn.id+'/binding/'+value.target.binding));return rhs;}
+      if(value.kind==='assignment') {
+        const rhs=child('value',terminalRoot);if(rhs.terminal)return rhs;
+        bindings.set(value.target.binding,adapt(rhs,path+'/value',fn.id+'/binding/'+value.target.binding));return rhs;
+      }
       if(value.kind==='arrayLength'||value.kind==='readSpanLength') {
         const receiver=child('receiver'),length=receiver.limit??state.get(receiver.owner)?.length;
         return length!==undefined&&length!==null?{constant:length,symbol:path}:{symbol:path};
       }
       if(value.kind==='call') {
-        const receiver=value.receiver?child('receiver'):null,args=(value.arguments??[]).map((item,index)=>expression(item,path+'/arguments/'+index,state,bindings));
+        const receiver=value.receiver?child('receiver',terminalRoot):null,args=[];
+        if(receiver?.terminal)return receiver;
+        for(const [index,item] of (value.arguments??[]).entries()) {
+          const argument=expression(item,path+'/arguments/'+index,state,bindings,terminalRoot);
+          if(argument.terminal)return argument;
+          args.push(argument);
+        }
         if(value.target===hir.intrinsics.readSpan.id) {
           const [owner,start,length]=args;
           const available=owner?.limit??state.get(owner?.owner)?.length;
