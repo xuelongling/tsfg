@@ -232,3 +232,38 @@ test "output lease allocation failure reports an execution abort without a langu
     try result.returned.result.string.owner.heap.collect();
     try std.testing.expectEqual(@as(usize, 2), try result.returned.result.string.owner.heap.stringLength(result.returned.result.string.handle));
 }
+
+test "persistent output preserves a lease allocation abort and its module accounting" {
+    const request = @import("request-values.zig");
+    var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    var host = @import("runtime-state.zig").Runtime.init(failing.allocator());
+    defer host.deinit() catch unreachable;
+    var result: request.RequestOutcome = .{ .returned = .{
+        .result = .{ .string = try owned(a, &.{0x41}) },
+        .function_id = [_]u8{1} ** 32,
+        .source = .{ .path = "/string.ts", .hash = [_]u8{2} ** 32, .start = 4, .end = 8 },
+        .fuel_remaining = 7,
+        .fuel_consumed = 3,
+    } };
+    defer request.deinitOutcome(&result);
+    var writer: std.Io.Writer.Allocating = .init(a);
+    defer writer.deinit();
+    try @import("module-outcome-writer.zig").write(&writer.writer, a, &result, &host, "initialized", 9, 5, 12, .strict);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, writer.written(), .{});
+    defer parsed.deinit();
+    const fields = parsed.value.object;
+    try std.testing.expectEqualStrings("failed", fields.get("status").?.string);
+    try std.testing.expectEqualStrings("r05-execution-abort", fields.get("code").?.string);
+    try std.testing.expectEqualStrings("execution-abort", fields.get("category").?.string);
+    try std.testing.expectEqual(@as(usize, 0), fields.get("ruleIds").?.array.items.len);
+    try std.testing.expectEqualStrings("7", fields.get("fuelRemaining").?.string);
+    try std.testing.expectEqualStrings("3", fields.get("fuelConsumed").?.string);
+    const source = fields.get("source").?.object;
+    try std.testing.expectEqualStrings("/string.ts", source.get("path").?.string);
+    try std.testing.expectEqualStrings("4", source.get("start").?.string);
+    try std.testing.expectEqualStrings("8", source.get("end").?.string);
+    try std.testing.expectEqualStrings("initialized", fields.get("moduleStatus").?.string);
+    try std.testing.expectEqual(@as(i64, 9), fields.get("hostEvents").?.integer);
+    try std.testing.expectEqual(@as(i64, 4), fields.get("requestHostEvents").?.integer);
+    try std.testing.expectEqual(@as(i64, 12), fields.get("hostCounter").?.integer);
+}

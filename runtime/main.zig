@@ -8,9 +8,9 @@ const ParsedRequest = request_json.ParsedRequest;
 
 const writeOutcome = @import("outcome-writer.zig").writeOutcome;
 
-fn writeModuleOutcome(writer: *std.Io.Writer, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: *const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64, mode: @import("string-output.zig").Mode) !void {
-    try @import("module-outcome-writer.zig").write(writer, outcome, host,
-        @tagName(instance.status()), counter, events_before, mode);
+fn writeModuleOutcome(writer: *std.Io.Writer, output_allocator: std.mem.Allocator, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: *const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64, mode: @import("string-output.zig").Mode) !void {
+    try @import("module-outcome-writer.zig").write(writer, output_allocator, outcome, host,
+        @tagName(instance.status()), counter.events, events_before, counter.storage, mode);
 }
 
 // JSON/transport retain Init.gpa; guest storage uses the private allocator below.
@@ -223,7 +223,9 @@ fn runMode(init: *const std.process.Init, mode: Mode, bytes: []const u8, request
         var outcome: runtime.RequestOutcome = undefined;
         try evaluateRequest(&host, module, request, instance, &counter, &outcome);
         defer runtime.deinitOutcome(&outcome);
-        if (mode == .module_requests) try writeModuleOutcome(&output.writer, &outcome, &host, instance.?, &counter, events_before, request.stringOutput) else try writeOutcome(&output.writer, &outcome, &host, request.stringOutput);
+        if (mode == .module_requests) {
+            try writeModuleOutcome(&output.writer, init.gpa, &outcome, &host, instance.?, &counter, events_before, request.stringOutput);
+        } else try writeOutcome(&output.writer, &outcome, &host, request.stringOutput);
     }
     try output.writer.writeAll("]\n");
     try std.Io.File.stdout().writeStreamingAll(init.io, output.written());
