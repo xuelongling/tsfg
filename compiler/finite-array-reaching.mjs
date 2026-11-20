@@ -204,8 +204,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
       }
       if(value.kind==='arrayCreate') {
         const slots=new Map();for(const [index,item] of value.elements.entries()) {
-          const element=expression(item,path+'/elements/'+index,state,bindings),
-            id=version(path+'/initial/'+index,item,path+'/elements/'+index,path,'c:'+index,'initial');
+          const element=expression(item,path+'/elements/'+index,state,bindings,terminalRoot);
+          if(element.terminal)return element;
+          const id=version(path+'/initial/'+index,item,path+'/elements/'+index,path,'c:'+index,'initial');
           rememberSlotValue(id,item,element);
           slots.set('c:'+index,new Set([id]));
         }

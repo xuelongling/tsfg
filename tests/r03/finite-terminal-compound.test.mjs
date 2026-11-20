@@ -160,6 +160,29 @@ for(const row of cases)test(row.name,async t=>{
       for(const version of [target+'/array-version',mark.id+'/body/0/expression/array-version',sibling.id+'/body/0/expression/array-version'])
         assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
     });
+    await t.test('a terminal Array element prevents later elements and the resulting Array',()=>{
+      const created=compound.body[0].initializer;
+      assert.ok(created.kind==='arrayCreate'&&receiver.kind==='reference');
+      const later={...original,left:original.right,right:tail};
+      const literal={...created,elements:[original.left,later],range:original.range};
+      const stored={...local,binding:{...local.binding,type:literal.type},initializer:literal};
+      const resultRead={...tail,receiver:{...receiver,binding:stored.binding.id,type:literal.type}};
+      const fn={...compound,body:[...compound.body.slice(0,2),stored,{...returned,value:resultRead}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      const root=compound.id+'/body',literalPath=root+'/2/initializer';
+      const old=literalPath+'/elements/0/operand/old-value';
+      const initialized=[0,1].map(index=>literalPath+'/initial/'+index+'/array-version');
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[old]);
+      assert.equal(reaching.reads.find(read=>read.node===old)?.status,row.productive?'proven':'missing');
+      const laterRead=reaching.reads.find(read=>read.node===literalPath+'/elements/1/right');
+      assert.equal(laterRead?.status,row.productive?'proven':'pending');
+      const after=reaching.reads.find(read=>read.node===root+'/3/value');
+      assert.equal(after?.status,row.productive?'proven':'pending');
+      assert.deepEqual(after?.versions,row.productive?[initialized[0]]:[]);
+      for(const version of [...initialized,mark.id+'/body/0/expression/array-version',sibling.id+'/body/0/expression/array-version'])
+        assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+    });
   }
 
   /** @param {string} text */
