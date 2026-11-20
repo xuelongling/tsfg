@@ -481,8 +481,6 @@ test "actual second Query loop keeps typed effects after Document release" {
     defer if (!released) query.release() catch unreachable;
     var plan = try document.bind(A, &store, try query.batch(0), 1, &.{.{ .float32 = 0.5 }});
     defer plan.deinit();
-    var other_batch = try document.bind(A, &store, try query.batch(1), 1, &.{.{ .float32 = 0.5 }});
-    defer other_batch.deinit();
     try std.testing.expect(plan.loop_effects.operations.ptr != expected.operations.ptr);
     try std.testing.expect(plan.loop_effects.source.path.ptr != expected.source.path.ptr);
     document.deinit();
@@ -500,32 +498,11 @@ test "actual second Query loop keeps typed effects after Document release" {
     try std.testing.expectError(error.IdentityMismatch, plan.verifyCodeIdentity(wrong_code));
 
     const Call = struct {
-        query: jobs.Store.Query,
-        other: *const T.Plan,
-        identity: T.Plan.CodeIdentity,
-
         fn unexpected(_: *const T.Plan, _: void) !void {
             return error.TestUnexpectedResult;
         }
-        fn read(plan_to_read: *const T.Plan, rows: usize) !void {
-            try std.testing.expectEqual(rows, (try plan_to_read.argument(0)).row_count);
-            _ = try plan_to_read.readTuple(0);
-            try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = rows }, try plan_to_read.llvmArgument(0));
-            try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = 8 * rows }, try plan_to_read.llvmArgument(4));
-        }
-        fn checkPinned(active: *const T.Plan, context: @This()) !void {
-            try std.testing.expectError(error.BorrowConflict, context.query.release());
-            try std.testing.expectError(error.BorrowConflict, active.batch.release());
-            try std.testing.expectError(error.BorrowConflict, active.withCheckedBatch(context.identity, {}, unexpected));
-            try context.other.withCheckedBatch(context.identity, @as(usize, 1), read);
-            try read(active, 2);
-            return error.TestCallFailed;
-        }
     };
-    try std.testing.expectError(error.IdentityMismatch, plan.withCheckedBatch(wrong_code, {}, Call.unexpected));
-    try std.testing.expectError(error.TestCallFailed, plan.withCheckedBatch(code_identity,
-        Call{ .query = query, .other = &other_batch, .identity = code_identity }, Call.checkPinned));
-    try plan.withCheckedBatch(code_identity, @as(usize, 2), Call.read);
+    try std.testing.expectError(error.IdentityMismatch, plan.withCheckedBatch(code_identity, "", {}, Call.unexpected));
     try std.testing.expectEqual(@as(usize, 2), (try plan.argument(0)).row_count);
     _ = try plan.readTuple(0);
     try query.release();
@@ -533,7 +510,6 @@ test "actual second Query loop keeps typed effects after Document release" {
     try std.testing.expectError(error.InvalidLease, plan.readTuple(0));
     try std.testing.expectError(error.InvalidLease, plan.llvmArgument(1));
     try std.testing.expectError(error.InvalidLease, plan.llvmArgument(7));
-    try std.testing.expectError(error.InvalidLease, plan.withCheckedBatch(code_identity, {}, Call.unexpected));
     const retained_loop = try std.json.Stringify.valueAlloc(A, plan.loop_effects, .{});
     defer A.free(retained_loop);
     try std.testing.expectEqualStrings(canonical_loop, retained_loop);
@@ -672,6 +648,107 @@ test "actual i32 copy metadata binds original columns and preserves two-system c
         defer receipt.deinit();
         try exerciseProducer(@embedFile("jobs/testdata/query-tmeta-" ++ name ++ ".tmeta"), receipt.value, false, if (index == 0) .copy else .copy_conflict);
     }
+}
+
+test "paired Query dispatch checks the original LLVM bytes before reserving its Store batch" {
+    const ir = @embedFile("jobs/testdata/query-tmeta-i32-copy-retained.ll");
+    const metadata = @embedFile("jobs/testdata/query-tmeta-i32-copy.tmeta");
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-receipt.json"), .{});
+    defer receipt.deinit();
+    var expected = receipt.value;
+    var llvm_hash = "sha256:0efe58d6f77b590396dc2ac1181f1774b2778537c29fc584ba5883d78376211e".*;
+    expected.llvmArtifact = .{
+        .llvmHash = &llvm_hash,
+        .batchHash = "sha256:f3af95122d7d1e423c4448b3256980f572ff527d2ae408cc2c688ff912e1856d",
+        .metadataHash = receipt.value.payloadHash,
+    };
+    var wrong_pair = expected;
+    wrong_pair.llvmArtifact.?.batchHash = unused_expected.payloadHash;
+    try std.testing.expectError(error.IdentityMismatch, T.Document.load(A, metadata, wrong_pair));
+    wrong_pair = expected;
+    wrong_pair.llvmArtifact.?.metadataHash = unused_expected.payloadHash;
+    try std.testing.expectError(error.IdentityMismatch, T.Document.load(A, metadata, wrong_pair));
+
+    var document = try T.Document.load(A, metadata, expected);
+    var document_live = true;
+    defer if (document_live) document.deinit();
+    llvm_hash[7] = '1';
+    const entry = document.payload.entries[0];
+    const code_identity: T.Plan.CodeIdentity = .{
+        .metadata_hash = expected.llvmArtifact.?.metadataHash,
+        .batch_hash = expected.llvmArtifact.?.batchHash,
+        .entry_symbol = entry.entrySymbol,
+        .logical_function_id = entry.logicalFunctionId,
+        .signature_hash = entry.signatureHash,
+        .abi_type = entry.abiType,
+    };
+    // This code owner keeps its own copy through Document release.
+    const code = try std.json.Stringify.valueAlloc(A, code_identity, .{});
+    defer A.free(code);
+    const candidate = try std.json.parseFromSlice(T.Plan.CodeIdentity, A, code, .{});
+    defer candidate.deinit();
+    var store = try jobs.Store.init(A, &document.component_layout, 2);
+    defer store.deinit() catch unreachable;
+    const archetype = try store.addArchetype(document.component_layout.payload.components);
+    for (0..3) |_| _ = try store.create(archetype, &.{});
+    const query = try document.query(A, &store, 0);
+    var released = false;
+    defer if (!released) query.release() catch unreachable;
+    var plan = try document.bind(A, &store, try query.batch(0), 0, &.{});
+    defer plan.deinit();
+    var other = try document.bind(A, &store, try query.batch(1), 0, &.{});
+    defer other.deinit();
+    document.deinit();
+    document_live = false;
+
+    const Call = struct {
+        query: jobs.Store.Query,
+        other: *const T.Plan,
+        candidate: T.Plan.CodeIdentity,
+
+        fn unexpected(_: *const T.Plan, _: void) !void {
+            return error.TestUnexpectedResult;
+        }
+
+        fn inspect(active: *const T.Plan, rows: usize) !void {
+            try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = rows }, try active.llvmArgument(0));
+            const column = (try active.argument(1)).column;
+            const bytes = try active.batch.read(0);
+            const pointer = try active.llvmArgument(1);
+            try std.testing.expectEqual(@intFromPtr(bytes.ptr), switch (pointer) {
+                .read_pointer => |p| @intFromPtr(p),
+                .write_pointer => |p| @intFromPtr(p),
+                else => return error.TestUnexpectedResult,
+            });
+            try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = rows * column.stride }, try active.llvmArgument(4));
+        }
+
+        fn checkPinned(active: *const T.Plan, state: @This()) !void {
+            try std.testing.expectError(error.BorrowConflict, state.query.release());
+            try std.testing.expectError(error.BorrowConflict, active.batch.release());
+            try std.testing.expectError(error.BorrowConflict, active.withCheckedBatch(state.candidate, ir, {}, unexpected));
+            try state.other.withCheckedBatch(state.candidate, ir, @as(usize, 1), inspect);
+            try inspect(active, 2);
+            return error.TestCallFailed;
+        }
+    };
+    const changed = try A.dupe(u8, ir);
+    defer A.free(changed);
+    changed[0] ^= 1;
+    try std.testing.expectError(error.IdentityMismatch, plan.withCheckedBatch(candidate.value, changed, {}, Call.unexpected));
+    {
+        var old_document = try T.Document.load(A, metadata, receipt.value);
+        defer old_document.deinit();
+        var unpaired = try old_document.bind(A, &store, try query.batch(0), 0, &.{});
+        defer unpaired.deinit();
+        try std.testing.expectError(error.IdentityMismatch, unpaired.withCheckedBatch(candidate.value, ir, {}, Call.unexpected));
+    }
+    try std.testing.expectError(error.TestCallFailed, plan.withCheckedBatch(candidate.value, ir,
+        Call{ .query = query, .other = &other, .candidate = candidate.value }, Call.checkPinned));
+    try plan.withCheckedBatch(candidate.value, ir, @as(usize, 2), Call.inspect);
+    try query.release();
+    released = true;
+    try std.testing.expectError(error.InvalidLease, plan.withCheckedBatch(candidate.value, ir, {}, Call.unexpected));
 }
 
 test "actual i32 compound metadata binds original columns and retains ordered read read write" {

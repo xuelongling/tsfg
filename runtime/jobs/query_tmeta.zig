@@ -20,12 +20,18 @@ const source_v5_schema = "sha256:a35185acc806a6095b3e80f6753bbf0cc314f4bde823b75
 const source_v6_schema = "sha256:32326256ba49bb78f12118d211b520c0f84aa8001422004e8d17dce86d8b814e";
 /// Comes from the independent producer cold reader, never from the same untrusted envelope.
 /// Fixing identity grants no Store lease, executable address, publication or execution authority.
-pub const Expected = struct { payloadHash: []const u8, inputIdentity: []const u8, packageId: []const u8 };
+pub const Expected = struct {
+    payloadHash: []const u8,
+    inputIdentity: []const u8,
+    packageId: []const u8,
+    llvmArtifact: ?struct { llvmHash: []const u8, batchHash: []const u8, metadataHash: []const u8 } = null,
+};
 
 pub const Document = struct {
     arena: std.heap.ArenaAllocator,
     payload: Payload,
     payload_hash: []const u8,
+    llvm_hash: ?[71]u8,
     component_layout: layout.Layout,
     effects: effects_module.Analysis,
 
@@ -48,6 +54,11 @@ pub const Document = struct {
         if (!std.mem.eql(u8, payload.inputIdentity, expected.inputIdentity) or !std.mem.eql(u8, payload.packageId, expected.packageId) or !std.mem.eql(u8, payload.functionIdentityDomain, "tsfg.module-callable-function.candidate.v1")) return error.IdentityMismatch;
         inline for (std.meta.fields(layout.Target)) |field| if (!std.mem.eql(u8, @field(payload.target, field.name), @field(layout.Target.native, field.name))) return error.WrongTarget;
         if (!std.mem.eql(u8, &digest("", payload.batch), payload.batchHash) or !std.mem.eql(u8, &digest("", payload.componentLayouts), payload.layoutHash) or !std.mem.eql(u8, &digest("", payload.effects), payload.effectsHash)) return error.InvalidMetadata;
+        const llvm_hash: ?[71]u8 = if (expected.llvmArtifact) |artifact| paired: {
+            if (!digestId(artifact.llvmHash) or !std.mem.eql(u8, artifact.batchHash, payload.batchHash) or
+                !std.mem.eql(u8, artifact.metadataHash, env.payloadHash)) return error.IdentityMismatch;
+            break :paired artifact.llvmHash[0..71].*;
+        } else null;
         for ([_][]const u8{ payload.batch, payload.componentLayouts, payload.effects, payload.sourcePacket, payload.sourceRequest }) |text| if (text.len == 0 or text[text.len - 1] != '\n') return error.InvalidMetadata;
         var work: usize = 1000000;
         const source_profile = try verifySourceRequest(own, payload.sourceRequest, payload.inputIdentity, &work);
@@ -136,7 +147,7 @@ pub const Document = struct {
             }
         }
         // Both metadata and typed effects allocations finish before this final arena transfer.
-        return .{ .arena = arena, .payload = payload, .payload_hash = env.payloadHash, .component_layout = component_layout, .effects = effects };
+        return .{ .arena = arena, .payload = payload, .payload_hash = env.payloadHash, .llvm_hash = llvm_hash, .component_layout = component_layout, .effects = effects };
     }
     pub fn deinit(self: *Document) void {
         self.component_layout.deinit();
@@ -204,6 +215,7 @@ pub const Document = struct {
             .query_binding = try own.dupe(u8, entry.queryBinding),
             .metadata_hash = try own.dupe(u8, self.payload_hash),
             .batch_hash = try own.dupe(u8, self.payload.batchHash),
+            .llvm_hash = self.llvm_hash,
             .abi_type = try own.dupe(u8, entry.abiType),
             .input_identity = try own.dupe(u8, self.payload.inputIdentity),
             .package_id = try own.dupe(u8, self.payload.packageId),
@@ -254,6 +266,7 @@ pub const Plan = struct {
     query_binding: []const u8,
     metadata_hash: []const u8,
     batch_hash: []const u8,
+    llvm_hash: ?[71]u8,
     abi_type: []const u8,
     input_identity: []const u8,
     package_id: []const u8,
@@ -274,8 +287,11 @@ pub const Plan = struct {
     }
     /// Keep this plan and the code version alive through the synchronous call.
     /// The callback must not retain argument or column views after returning.
-    pub fn withCheckedBatch(self: *const Plan, candidate: CodeIdentity, context: anytype, comptime call: anytype) !void {
+    pub fn withCheckedBatch(self: *const Plan, candidate: CodeIdentity, llvm_ir: []const u8, context: anytype, comptime call: anytype) !void {
         try self.verifyCodeIdentity(candidate);
+        const llvm_hash = self.llvm_hash orelse return error.IdentityMismatch;
+        if (llvm_ir.len > 8 * 1024 * 1024) return error.MetadataLimit;
+        if (llvm_ir.len == 0 or !std.mem.eql(u8, &digest("", llvm_ir), &llvm_hash)) return error.IdentityMismatch;
         return self.batch.withActiveCall(.{self, context}, call);
     }
     pub fn argument(self: *const Plan, index: usize) !Argument {
