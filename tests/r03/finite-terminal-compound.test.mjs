@@ -219,6 +219,33 @@ for(const row of cases)test(row.name,async t=>{
       for(const version of [inner+'/array-version',outer+'/array-version'])
         assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
     });
+    for(const kind of ['read','store'])for(const failed of ['receiver','index'])
+      await t.test(`an Array ${kind} stops after its ${failed} fails`,()=>{
+        const created=compound.body[0].initializer,constant=mark.body[1].value;
+        assert.ok(created.kind==='arrayCreate'&&constant.kind==='floating');
+        const literal=elements=>({...created,elements,range:original.range});
+        const operandReceiver=literal(failed==='receiver'?[original.left,tail]:[constant,constant]);
+        const operandIndex={kind:'arrayLength',receiver:literal(failed==='receiver'?[tail]:[original.left]),
+          type:index.type,range:index.range};
+        const expression=kind==='read'?{...tail,receiver:operandReceiver,index:operandIndex}:
+          {kind:'arrayStoreDenseChecked',target:{...original.left.operand.target,receiver:operandReceiver,index:operandIndex},
+            value:tail,type,range:original.range};
+        const fn={...compound,body:[...compound.body.slice(0,2),{kind:'expression',expression,range:local.range},{...returned,value:tail}]};
+        const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+        const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+        const root=compound.id+'/body',outer=root+'/2/expression',target=outer+(kind==='store'?'/target':''),
+          left=target+'/receiver',right=target+'/index/receiver',inner=(failed==='receiver'?left:right)+'/elements/0/operand',
+          old=inner+'/old-value';
+        assert.deepEqual([...terminalReads??[]],row.productive?[]:[old]);
+        assert.equal(reaching.reads.find(read=>read.node===old)?.status,row.productive?'proven':'missing');
+        for(const path of [kind==='read'?outer:outer+'/value',root+'/3/value',
+          ...(failed==='receiver'?[left+'/elements/1',right+'/elements/0']:[])]) {
+          assert.equal(reaching.reads.find(read=>read.node===path)?.status,row.productive?'proven':'pending',path);
+        }
+        const versions=[inner+'/array-version',left+'/initial/0/array-version',left+'/initial/1/array-version',right+'/initial/0/array-version'];
+        if(kind==='store')versions.push(outer+'/array-version');
+        for(const version of versions)assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+      });
     await t.test('a failed call input prevents later input reads and the caller continuation',()=>{
       const call=original.right;
       assert.equal(call.kind,'call');
