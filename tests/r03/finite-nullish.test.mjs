@@ -11,6 +11,7 @@ import {finiteFieldEffects} from '../../compiler/finite-field-effects.mjs';
 import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
 import {sha256,scalarName,scalarTypeIds} from '../../compiler/identity.mjs';
 import {finitePresence} from '../../compiler/finite-presence.mjs';
+import {finiteNormalCoalesce,finiteNormalFlow} from '../../compiler/finite-numeric-use.mjs';
 const expected=JSON.parse(await readFile('E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/finite-nullish-expected.json','utf8'));
 async function actual(row) {
   const bytes=await readFile(row.packet.path);assert.equal(bytes.length,row.packet.bytes);
@@ -23,7 +24,7 @@ async function actual(row) {
 }
 for(const row of expected.cases) {
   test(row.name+' preserves possible preceding writes and the original payload',async()=>{
-    const {hir,context}=await actual(row),plan=buildFiniteCoreDomains(hir,context).definition,
+    const {hir,context}=await actual(row),plans=buildFiniteCoreDomains(hir,context),plan=plans.definition,
       run=hir.functions.find(fn=>fn.name==='run'),expressions=new Map(plan.expressions.map(item=>[item.id,item])),
       reads=row.memory==='array'?plan.arrayReaching.reads:plan.fieldReaching.reads,
       read=reads.find(item=>item.node.startsWith(run.id+'/')&&expressions.get(item.node)?.range.start===row.read[0]);
@@ -35,6 +36,17 @@ for(const row of expected.cases) {
     const node=plan.nodes.find(item=>item.id===read.node),domain=plan.domains.find(item=>item.id===node.domainId);
     assert.deepEqual(domain.actualTypes.map(id=>scalarName(id)??hir.types.find(type=>type.id===id)?.kind).sort(),row.types);
     assert.deepEqual(node.pending,[],'only genuinely proved finite read sources publish actuals');
+
+    const rhs=run.id+'/body/1/expression/right';
+    for(const ordered of [plans.reached,plans.definition]) {
+      const actualRhs=ordered.nodes.find(item=>item.id===rhs);
+      const carrier=ordered.carrierNodes.find(item=>item.id===rhs);
+      assert.ok(actualRhs&&carrier,'the original RHS stays in the lexical inventory');
+      const domainOf=item=>ordered.domains.find(value=>value.id===item.domainId);
+      assert.ok(domainOf(carrier).actualTypes.length,'the RHS retains its carrier');
+      assert.equal(domainOf(actualRhs).actualTypes.length>0,row.nullable,'only possible absence reaches the RHS');
+      assert.deepEqual(actualRhs.pending,[]);
+    }
   });
   test(row.name+' lowers nullish effects through real presence control, not eager scalar binary',async()=>{
     const {hir,context}=await actual(row),core=lowerFormalHir(hir,context),run=hir.functions.find(fn=>fn.name==='run'),
@@ -137,6 +149,37 @@ test('finite presence charges its proof snapshot and preserves missing/pending a
   assert.equal(published,undefined);
   const presence=finitePresence(plan,types,()=>{});assert.deepEqual(presence('left'),{present:true,absent:false});
   assert.deepEqual(presence('missing'),{present:true,absent:true});
+});
+
+test('nullish completion waits for the fallback only on absent paths',()=>{
+  for(const row of [
+    {left:['present'],pending:false,fallback:false,right:false,normal:true},
+    {left:['undefined'],pending:false,fallback:false,right:true,normal:false},
+    {left:['null'],pending:false,fallback:true,right:true,normal:true},
+    {left:['undefined','present'],pending:false,fallback:false,right:true,normal:true},
+    {left:[],pending:true,fallback:false,right:true,normal:true},
+  ]) {
+    const nodes=new Map(),flow=finiteNormalFlow(true,()=>{},nodes),reached=new Set();
+    const emit=(id,gate,types,dependencies=[],pending=false)=>{
+      flow.entry(id,gate);nodes.set(id,{actual:new Set(),pending:new Set()});flow.finish(id,dependencies);
+      flow.publish(id,()=>{
+        reached.add(id);
+        const value=nodes.get(id);
+        for(const type of types)value.actual.add(type);
+        if(pending)value.pending.add('unresolved');
+        flow.changed(id);
+      });
+      return id;
+    };
+    const result=finiteNormalCoalesce(flow,flow.always,(id,gate)=>id==='left'?
+      emit(id,gate,row.left,[],row.pending):emit(id,gate,row.fallback?['present']:[]),
+      type=>type==='null'||type==='undefined');
+    emit('result',flow.always,['present'],result.dependencies);
+    flow.seal();
+    assert.ok(nodes.has('right'),'lexical fallback');
+    assert.equal(reached.has('right'),row.right,'fallback reachability');
+    assert.equal(reached.has('result'),row.normal,'normal continuation');
+  }
 });
 
 test('the actual coalesce solver preserves cancellation/work first failure and publishes no partial plan',async()=>{

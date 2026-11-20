@@ -18,6 +18,14 @@ export function finiteNormalLogical(value,flow,incoming,emit) {
   return takesRight===true?[left,right]:[left];
 }
 
+export function finiteNormalCoalesce(flow,incoming,emit,absent) {
+  const left=emit('left',incoming,true),normal=flow.normal(left);
+  const missing=flow.all([normal,flow.actualWhere(left,absent)]);
+  const right=emit('right',missing,false);
+  const present=flow.actualWhere(left,type=>!absent(type));
+  return {left,right,dependencies:[normal,flow.any([present,flow.normal(right)])]};
+}
+
 /** Positive normal-completion constraints share the enclosing domain worklist.
  * Carrier bounds disable these constraints; they remain conditional ABI capacity.
  * This graph carries only completion facts, never Source values or truthiness. */
@@ -31,7 +39,12 @@ export function finiteNormalFlow(enabled,charge,nodes) {
       charge();const id=queue[cursor],rule=rules.get(id);if(ready.has(id)||!rule)continue;
       const values=rule.conditions.map(condition=>{
         charge();if(typeof condition==='string')return ready.has(condition);
-        const node=nodes.get(condition.node);return condition.type?Boolean(node?.actual.has(condition.type)||condition.possible&&node?.pending.size)
+        const node=nodes.get(condition.node);
+        if(condition.match) {
+          for(const type of node?.actual??[]){charge();if(condition.match(type))return true;}
+          return Boolean(node?.pending.size);
+        }
+        return condition.type?Boolean(node?.actual.has(condition.type)||condition.possible&&node?.pending.size)
           :Boolean(node?.actual.size||node?.pending.size);
       });
       if(!(rule.any?values.some(Boolean):values.every(Boolean)))continue;
@@ -55,6 +68,7 @@ export function finiteNormalFlow(enabled,charge,nodes) {
   return {
     always:'always',never:define('normal/never',[],true),all,
     any:conditions=>define('normal/any/'+serial++,conditions,true),
+    actualWhere:(id,match)=>all([{node:id,match}]),
     normal:id=>enabled?'normal/value/'+id:'always',
     returned:id=>enabled?'normal/return/'+id:'always',
     entry(id,gate){entries.set(id,gate);},

@@ -8,7 +8,7 @@ import {buildFiniteFieldReaching} from './finite-field-reaching.mjs';
 import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
-import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical} from './finite-numeric-use.mjs';
+import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {actualFieldResolver} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
@@ -474,8 +474,9 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       fieldStores.push({id,receiver,field:v.target.property,value,
         viewType:['reference','value'].includes(types.get(v.target.receiver.type).kind)?v.target.receiver.type:fieldOwners.get(v.target.property).owner,targets:new Map()});copy(value,id);
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
-      const left=child('left'),right=child('right');coalesces.push(left);
-      copy(left,id,{presentOnly:true});copy(right,id,{gate:left});dependencies.splice(1);
+      const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),absent);
+      coalesces.push(selected.left);dependencies.push(...selected.dependencies);
+      copy(selected.left,id,{presentOnly:true});copy(selected.right,id,{gate:selected.left});
     }else if(v.kind==='arrayCompoundAssignment'||v.kind==='arrayUpdate') {
       const receiver=at(v.target.receiver,p+'/target/receiver');
       at(v.target.index,p+'/target/index');
