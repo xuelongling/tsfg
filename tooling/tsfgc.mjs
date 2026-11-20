@@ -56,13 +56,14 @@ try {
   const inputKind = options.get("--input-kind") ?? "source";
   const hasFixedCommon = options.has("--publication") || options.has("--kernel-request");
   const gpuBindingPlan = emit === "gpu-binding-plan";
+  const borrowProof = emit === "borrow-proof";
   const fixedCommonCore = inputKind === "hir" && emit === "core" && hasFixedCommon;
   const emitModes = ["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof", "gpu-binding-plan"];
   if (!emitModes.includes(emit))
     throw new TypeError("r03-cli-options: unsupported --emit (expected " + emitModes.join("|") + ")");
   if (options.has("--gpu-request") && !gpuBindingPlan)
     throw new TypeError("r03-cli-options: --gpu-request requires --emit gpu-binding-plan");
-  if (!["source", "hir"].includes(inputKind) || inputKind === "hir" && !gpuBindingPlan &&
+  if (!["source", "hir"].includes(inputKind) || inputKind === "hir" && !gpuBindingPlan && !borrowProof &&
       (!["hir", "core", "bytecode", "program-object", "run"].includes(emit) ||
         ["--frontend", "--query-request"].some(key => options.has(key)) || hasFixedCommon && !fixedCommonCore))
     throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|program-object|run without Source, Query or borrow inputs");
@@ -71,7 +72,7 @@ try {
   if (fixedCommonCore && (!options.has("--publication") || !options.has("--kernel-request") || !options.has("--core") ||
       ["--vm", "--requests"].some(key => options.has(key))))
     throw new TypeError("r03-cli-options: Common Core requires --publication, --kernel-request and --core without Runtime inputs");
-  if (gpuBindingPlan || emit === "borrow-proof") {
+  if (gpuBindingPlan || borrowProof) {
     const hasCommonInputs = options.has("--publication") && options.has("--kernel-request") &&
       !["--frontend", "--vm", "--requests", "--query-request"].some(key => options.has(key));
     if (gpuBindingPlan && (!hasCommonInputs || inputKind !== "hir" || !options.has("--gpu-request") || options.has("--core")))

@@ -116,7 +116,8 @@ test('persisted Common Core and borrow proof bound their complete file triplet b
   const documents={publication,'kernel-request':request};
   const temp=await mkdtemp(path.join(tmpdir(),'tsfg-common-file-budget-'));
   const core=path.join(temp,'missing-core','unused.exe');
-  for(const mode of [['--input-kind','hir','--emit','core'],['--emit','borrow-proof']]){
+  const borrowModes=[['--emit','borrow-proof'],['--input-kind','hir','--emit','borrow-proof']];
+  for(const mode of [['--input-kind','hir','--emit','core'],...borrowModes]){
     const args=[...mode,'--core',core];
     for(const role of ['input','publication','kernel-request']){
       const rejected=await runCli(owned,args,documents,role);
@@ -126,10 +127,13 @@ test('persisted Common Core and borrow proof bound their complete file triplet b
       assert.match(diagnostic,/^r03-common-program-limit: Common JSON input file exceeds the wire byte limit/,role);
     }
   }
-  const valid=await runCli(owned,['--emit','borrow-proof','--core',core],documents);
-  assert.equal(valid.status,2);
-  assert.equal(valid.stdout.length,0);
-  assert.match(valid.stderr.toString('utf8'),/ENOENT:.*artifact-manifest\.json/);
+  const [implicit,explicit]=await Promise.all(borrowModes.map(mode=>runCli(owned,[...mode,'--core',core],documents)));
+  for(const child of [implicit,explicit]){
+    assert.equal(child.status,2);
+    assert.equal(child.stdout.length,0);
+    assert.match(child.stderr.toString('utf8'),/ENOENT:.*artifact-manifest\.json/);
+  }
+  assert.deepEqual(explicit.stderr,implicit.stderr);
 });
 
 if(process.env.TSFG_CORE_IR_EXE){
