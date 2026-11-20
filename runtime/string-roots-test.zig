@@ -118,14 +118,20 @@ test "UTF16 argument takes its only free root after allocation failures" {
 test "invalid UTF16 argument preserves the owner slot and prior limit" {
     const fixture = try std.json.parseFromSlice(std.json.Value, a, "[65536]", .{});
     defer fixture.deinit();
+    const valid = try std.json.parseFromSlice(std.json.Value, a, "[65]", .{});
+    defer valid.deinit();
     var slot: ?*values.Owner = null;
     defer if (slot) |owner| owner.release();
     try std.testing.expectError(error.InvalidStringArgument, arguments.read(a, &slot, fixture.value, 65536));
+    try std.testing.expectError(error.InvalidStringArgument, arguments.read(a, &slot, fixture.value, 0));
+    var unavailable = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    try std.testing.expectError(error.InvalidStringArgument, arguments.read(unavailable.allocator(), &slot, fixture.value, 65536));
     try std.testing.expect(slot == null);
     const existing = try values.Owner.create(a);
     defer existing.release();
     var reused: ?*values.Owner = existing;
-    try std.testing.expectError(error.InvalidStringArgument, arguments.read(a, &reused, fixture.value, 65536));
+    try std.testing.expectError(error.InvalidStringArgument, arguments.read(a, &reused, fixture.value, 0));
+    try std.testing.expectError(error.OutOfMemory, arguments.read(a, &reused, valid.value, 0));
     try std.testing.expectEqual(existing, reused.?);
     try std.testing.expectEqual(std.math.maxInt(usize), existing.budget.limit);
     try std.testing.expectEqual(@as(usize, 1), existing.references);
