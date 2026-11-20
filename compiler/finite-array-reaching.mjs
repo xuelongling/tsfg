@@ -232,7 +232,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
             return {terminal:true};
           }
         }
-        const rhs=value.value?child('value'):{symbol:path};
+        const rhs=value.value?child('value',terminalRoot&&value.kind==='arrayStoreDenseChecked'):{symbol:path};
+        if(rhs.terminal)return rhs;
         if(value.kind==='arrayResizeChecked') {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
           const memory=state.get(receiver.owner);

@@ -203,6 +203,22 @@ for(const row of cases)test(row.name,async t=>{
       for(const version of [rhs+'/elements/0/operand/array-version',rhs+'/initial/0/array-version',rhs+'/initial/1/array-version'])
         assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
     });
+    await t.test('a dense Array store publishes its slot only after the RHS completes',()=>{
+      const dense={kind:'arrayStoreDenseChecked',target:original.left.operand.target,
+        value:original.left,type,range:original.range};
+      const assignment={kind:'expression',expression:dense,range:local.range};
+      const fn={...compound,body:[...compound.body.slice(0,2),assignment,{...returned,value:tail}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      const root=compound.id+'/body',outer=root+'/2/expression',inner=outer+'/value/operand',old=inner+'/old-value';
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[old]);
+      assert.equal(reaching.reads.find(read=>read.node===old)?.status,row.productive?'proven':'missing');
+      const after=reaching.reads.find(read=>read.node===root+'/3/value');
+      assert.equal(after?.status,row.productive?'proven':'pending');
+      assert.deepEqual(after?.versions,row.productive?[outer+'/array-version']:[]);
+      for(const version of [inner+'/array-version',outer+'/array-version'])
+        assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+    });
     await t.test('a failed call input prevents later input reads and the caller continuation',()=>{
       const call=original.right;
       assert.equal(call.kind,'call');
