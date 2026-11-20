@@ -5,12 +5,13 @@ const runtime = @import("root.zig");
 const request_json = @import("request-json.zig");
 const Request = request_json.Request;
 const ParsedRequest = request_json.ParsedRequest;
+const request_outcome = @import("request.zig");
 
 const writeOutcome = @import("outcome-writer.zig").writeOutcome;
 
-fn writeModuleOutcome(writer: *std.Io.Writer, output_allocator: std.mem.Allocator, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: *const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64, mode: @import("string-output.zig").Mode) !void {
+fn writeModuleOutcome(writer: *std.Io.Writer, output_allocator: std.mem.Allocator, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: ?*const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64, mode: @import("string-output.zig").Mode) !void {
     try @import("module-outcome-writer.zig").write(writer, output_allocator, outcome, host,
-        @tagName(instance.status()), counter.events, events_before, counter.storage, mode);
+        if (instance) |value| @tagName(value.status()) else "uninitialized", counter.events, events_before, counter.storage, mode);
 }
 
 // JSON/transport retain Init.gpa; guest storage uses the private allocator below.
@@ -18,7 +19,12 @@ fn writeModuleOutcome(writer: *std.Io.Writer, output_allocator: std.mem.Allocato
 // Page rounding, backing calls and heap lifetime remain part of resource qualification.
 const guest_allocator = std.heap.page_allocator;
 
-fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule, request: *const Request, instance: ?*runtime.ModuleInstance, counter: *runtime.Counter, result_out: *runtime.RequestOutcome) !void {
+const PersistentInstance = struct {
+    instance: runtime.ModuleInstance = undefined,
+    prepared: bool = false,
+};
+
+fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule, request: *const Request, persistent: ?*PersistentInstance, counter: *runtime.Counter, result_out: *runtime.RequestOutcome) !void {
     var parsed: ParsedRequest = undefined;
     parsed.argument_count = 0;
     parsed.argument_owner = null;
@@ -26,7 +32,8 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
         for (parsed.argument_storage[0..parsed.argument_count]) |*argument| if (argument.* == .string) argument.string.deinit();
         if (parsed.argument_owner) |owner| owner.release();
     }
-    if (!try @call(.never_inline, request_json.parseRequest, .{ host.allocator, request_json.VmMetadata{ .module = module }, request, counter, &parsed, result_out })) return;
+    const metadata: request_json.VmMetadata = .{ .module = module };
+    if (!try @call(.never_inline, request_json.parseRequest, .{ host.allocator, metadata, request, counter, &parsed, result_out })) return;
     var fresh: runtime.ModuleInstance = undefined;
     var owns_fresh = false;
     var active = false;
@@ -37,22 +44,20 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
         if (active) host.active_requests -= 1;
         if (owns_fresh and parsed.init_only) fresh.deinit();
     }
-    var selected_instance = instance;
-    if (selected_instance == null) {
+    const selected = if (persistent) |state| &state.instance else &fresh;
+    if (persistent == null or !persistent.?.prepared) {
         // Ordinary eval counts the request before State allocation; fresh
         // initialization-only counts only after successful allocation.
-        if (!parsed.init_only) { host.active_requests += 1; active = true; }
-        @call(.never_inline, initializeFreshInto, .{ host.allocator, module, &fresh }) catch |err| {
-            if (parsed.init_only) return err;
-            result_out.* = .{ .failed = .{ .code = "r05-execution-abort", .category = "execution-abort", .function_id = parsed.function_id,
-                .source = @import("bytecode.zig").moduleInfoView(module).source, .fuel_remaining = parsed.limits.semantic_fuel } };
+        if (persistent == null and !parsed.init_only) { host.active_requests += 1; active = true; }
+        @call(.never_inline, initializeFreshInto, .{ host.allocator, module, selected }) catch {
+            const info = metadata.find(parsed.function_id).?;
+            request_outcome.storeRequestFailure(result_out, "r05-execution-abort", &info.function_id, &info.source);
+            request_outcome.finish(result_out, parsed.limits, parsed.limits.semantic_fuel);
             return;
         };
-        owns_fresh = true;
-        selected_instance = &fresh;
+        if (persistent) |state| state.prepared = true else owns_fresh = true;
     }
     if (!active) { host.active_requests += 1; active = true; }
-    const selected = selected_instance.?;
     if (parsed.init_only) @call(.never_inline, invokeInitialize, .{ selected, &parsed, result_out })
         else @call(.never_inline, invokeEvaluate, .{ selected, &parsed, result_out });
 }
@@ -210,21 +215,17 @@ fn runMode(init: *const std.process.Init, mode: Mode, bytes: []const u8, request
     var output: std.Io.Writer.Allocating = .init(init.gpa);
     defer output.deinit();
     try output.writer.writeByte('[');
-    var instance_storage: runtime.ModuleInstance = undefined;
-    var instance: ?*runtime.ModuleInstance = null;
-    if (mode == .module_requests) {
-        try @call(.never_inline, initializeFreshInto, .{ host.allocator, module, &instance_storage });
-        instance = &instance_storage;
-    }
-    defer if (instance) |value| value.deinit();
+    var persistent: PersistentInstance = .{};
+    defer if (persistent.prepared) persistent.instance.deinit();
     for (requests.value, 0..) |*request, index| {
         if (index != 0) try output.writer.writeByte(',');
         const events_before = counter.events;
         var outcome: runtime.RequestOutcome = undefined;
-        try evaluateRequest(&host, module, request, instance, &counter, &outcome);
+        try evaluateRequest(&host, module, request, if (mode == .module_requests) &persistent else null, &counter, &outcome);
         defer runtime.deinitOutcome(&outcome);
         if (mode == .module_requests) {
-            try writeModuleOutcome(&output.writer, init.gpa, &outcome, &host, instance.?, &counter, events_before, request.stringOutput);
+            const instance = if (persistent.prepared) &persistent.instance else null;
+            try writeModuleOutcome(&output.writer, init.gpa, &outcome, &host, instance, &counter, events_before, request.stringOutput);
         } else try writeOutcome(&output.writer, &outcome, &host, request.stringOutput);
     }
     try output.writer.writeAll("]\n");
