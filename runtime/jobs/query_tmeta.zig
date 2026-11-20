@@ -66,19 +66,21 @@ pub const Document = struct {
         var component_layout = try layout.Layout.loadCatalog(allocator, payload.componentLayouts, payload.inputIdentity);
         errdefer component_layout.deinit();
         if (payload.entries.len > 4096) return error.MetadataLimit;
+        var logical_functions = std.StringHashMap(void).init(allocator);
+        defer logical_functions.deinit();
+        var source_functions = std.StringHashMap(void).init(allocator);
+        defer source_functions.deinit();
         for (payload.entries, 0..) |entry, entry_index| {
             try charge(&work, 1 + entry.columns.len + entry.tupleOccurrences.len + entry.scalars.len);
             if (!digestId(entry.logicalFunctionId) or !digestId(entry.sourceFunctionId) or !digestId(entry.signatureHash) or !digestId(entry.queryBinding) or entry.rowCountArgument != 0 or entry.source.start > entry.source.end or !sourcePath(entry.source.path)) return error.InvalidMetadata;
             const previous = if (entry_index > 0) payload.entries[entry_index - 1] else null;
-            if (previous) |row| {
-                if (std.mem.eql(u8, row.logicalFunctionId, entry.logicalFunctionId)) {
-                    if (entry.loop != row.loop + 1 or !std.mem.eql(u8, row.sourceFunctionId, entry.sourceFunctionId) or !std.mem.eql(u8, row.signatureHash, entry.signatureHash) or !std.mem.eql(u8, row.source.path, entry.source.path) or row.source.end > entry.source.start) return error.InvalidMetadata;
-                } else if (entry.loop != 0) return error.InvalidMetadata;
-            } else if (entry.loop != 0) return error.InvalidMetadata;
-            if (previous == null or !std.mem.eql(u8, previous.?.logicalFunctionId, entry.logicalFunctionId)) for (payload.entries[0..entry_index]) |row| {
-                try charge(&work, 1);
-                if (std.mem.eql(u8, row.logicalFunctionId, entry.logicalFunctionId) or std.mem.eql(u8, row.sourceFunctionId, entry.sourceFunctionId)) return error.InvalidMetadata;
-            };
+            if (previous != null and std.mem.eql(u8, previous.?.logicalFunctionId, entry.logicalFunctionId)) {
+                const row = previous.?;
+                if (entry.loop != row.loop + 1 or !std.mem.eql(u8, row.sourceFunctionId, entry.sourceFunctionId) or !std.mem.eql(u8, row.signatureHash, entry.signatureHash) or !std.mem.eql(u8, row.source.path, entry.source.path) or row.source.end > entry.source.start) return error.InvalidMetadata;
+            } else {
+                if (entry.loop != 0 or (try logical_functions.getOrPut(entry.logicalFunctionId)).found_existing or
+                    (try source_functions.getOrPut(entry.sourceFunctionId)).found_existing) return error.InvalidMetadata;
+            }
             if (!std.mem.eql(u8, entry.entrySymbol, try std.fmt.allocPrint(own, "batch_{s}_{d}", .{ entry.logicalFunctionId[7..], entry.loop }))) return error.InvalidMetadata;
             if (entry.columns.len == 0 or entry.columns.len > 4096 or entry.tupleOccurrences.len == 0 or entry.tupleOccurrences.len > 4096 or entry.scalars.len > 4096) return error.MetadataLimit;
             // Each occurrence contributes once to its column's access and has a unique Source binding.
