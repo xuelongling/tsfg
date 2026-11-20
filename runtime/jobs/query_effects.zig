@@ -117,8 +117,8 @@ pub const Analysis = struct {
     }
 };
 
-/// Allocations belong to the metadata owner's arena. No local allocator/context escapes.
-pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u8, input_identity: []const u8, package_id: []const u8, target: layout.Target, catalog: *const layout.Layout) !Analysis {
+/// The returned analysis belongs to the metadata arena. The Source index uses scratch storage.
+pub fn decode(allocator: std.mem.Allocator, scratch: std.mem.Allocator, bytes: []const u8, packet: []const u8, input_identity: []const u8, package_id: []const u8, target: layout.Target, catalog: *const layout.Layout) !Analysis {
     if (bytes.len == 0 or bytes.len > 8388608 or bytes[bytes.len - 1] != '\n') return error.InvalidEffects;
     try jsonBudget(bytes);
     const parsed = std.json.parseFromSlice(Report, allocator, bytes, .{ .allocate = .alloc_always, .max_value_len = 8388608 }) catch |err| return if (err == error.OutOfMemory) err else error.InvalidEffects;
@@ -191,18 +191,20 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
     const source_system_order = try allocator.alloc(usize, report.systems.len);
     const unassigned = std.math.maxInt(usize);
     @memset(source_system_order, unassigned);
+    var source_ordinals = std.StringHashMap(usize).init(scratch);
+    defer source_ordinals.deinit();
+    try context.spend(context.facts.payload.systems.len);
+    try source_ordinals.ensureTotalCapacity(@intCast(context.facts.payload.systems.len));
+    for (context.facts.payload.systems, 0..) |row, source_index| {
+        const entry = source_ordinals.getOrPutAssumeCapacity(row.declaration.id);
+        if (entry.found_existing) return error.InvalidEffects;
+        entry.value_ptr.* = source_index;
+    }
     for (report.systems, 0..) |system, index| {
         try context.spend(1);
         if (!digestId(system.functionId) or !digestId(system.signatureHash) or (index > 0 and std.mem.order(u8, report.systems[index - 1].functionId, system.functionId) != .lt)) return error.InvalidEffects;
-        var original: ?usize = null;
-        for (context.facts.payload.systems, 0..) |*row, source_index| {
-            try context.spend(1);
-            if (same(row.declaration.id, system.sourceFunctionId)) {
-                if (original != null) return error.InvalidEffects;
-                original = source_index;
-            }
-        }
-        const source_index = original orelse return error.InvalidEffects;
+        try context.spend(1);
+        const source_index = source_ordinals.get(system.sourceFunctionId) orelse return error.InvalidEffects;
         try context.spend(4);
         if (source_system_order[source_index] != unassigned) return error.InvalidEffects;
         source_system_order[source_index] = index;
@@ -261,15 +263,32 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, packet: []const u
     var edge: usize = 0;
     for (report.systems, 0..) |left, i| for (report.systems[i + 1 ..]) |right| {
         try context.spend(1);
-        var components: std.ArrayList([]const u8) = .empty;
-        for (left.capabilities) |a| for (right.capabilities) |b| {
+        // Both directories have already been checked against strictly ordered Source capabilities.
+        const actual = if (edge < report.conflicts.len) &report.conflicts[edge] else null;
+        var left_index: usize = 0;
+        var right_index: usize = 0;
+        var component_index: usize = 0;
+        while (left_index < left.capabilities.len and right_index < right.capabilities.len) {
             try context.spend(1);
-            if (same(a.componentType, b.componentType) and (a.mode == .write or b.mode == .write)) try components.append(allocator, a.componentType);
-        };
-        if (components.items.len == 0) continue;
-        if (edge >= report.conflicts.len) return error.InvalidEffects;
-        const actual = report.conflicts[edge];
-        if (!same(actual.left, left.functionId) or !same(actual.right, right.functionId) or !sameStrings(actual.components, components.items)) return error.InvalidEffects;
+            const a = left.capabilities[left_index];
+            const b = right.capabilities[right_index];
+            switch (std.mem.order(u8, a.componentType, b.componentType)) {
+                .lt => left_index += 1,
+                .gt => right_index += 1,
+                .eq => {
+                    if (a.mode == .write or b.mode == .write) {
+                        const conflict = actual orelse return error.InvalidEffects;
+                        if (component_index == 0 and (!same(conflict.left, left.functionId) or !same(conflict.right, right.functionId))) return error.InvalidEffects;
+                        if (component_index >= conflict.components.len or !same(conflict.components[component_index], a.componentType)) return error.InvalidEffects;
+                        component_index += 1;
+                    }
+                    left_index += 1;
+                    right_index += 1;
+                },
+            }
+        }
+        if (component_index == 0) continue;
+        if (actual.?.components.len != component_index) return error.InvalidEffects;
         edge += 1;
     };
     if (edge != report.conflicts.len) return error.InvalidEffects;

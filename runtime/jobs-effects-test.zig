@@ -206,7 +206,7 @@ test "typed effects reject another genuine Query selection identity" {
     (original orelse return error.MissingQuerySelection).selectionId = other_selection orelse return error.MissingOtherQuerySelection;
     const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
     const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
-    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, document.payload.sourcePacket, document.payload.inputIdentity, document.payload.packageId, document.payload.target, &document.component_layout));
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, A, bytes, document.payload.sourcePacket, document.payload.inputIdentity, document.payload.packageId, document.payload.target, &document.component_layout));
 }
 
 fn expectSystemIdentityRejection(comptime field: enum { function, signature }) !void {
@@ -229,7 +229,7 @@ fn expectSystemIdentityRejection(comptime field: enum { function, signature }) !
     report.systems = &.{system};
     const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
     const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
-    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, document.payload.sourcePacket, document.payload.inputIdentity, document.payload.packageId, document.payload.target, &document.component_layout));
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, A, bytes, document.payload.sourcePacket, document.payload.inputIdentity, document.payload.packageId, document.payload.target, &document.component_layout));
 }
 
 test "typed effects reject a system FunctionId inconsistent with Source" {
@@ -267,7 +267,7 @@ fn expectHelperIdentityRejection(comptime field: enum { scalar_width, view_mode,
         change[0].* = .{ .string = change[2] };
         const source = try std.json.Stringify.valueAlloc(allocator, packet, .{});
         const current = document.payload;
-        try std.testing.expectError(error.InvalidEffects, E.decode(allocator, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+        try std.testing.expectError(error.InvalidEffects, E.decode(allocator, A, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
         return;
     }
     return error.MissingFixtureHelper;
@@ -306,7 +306,7 @@ test "typed effects reject a changed Source call anchor" {
     try std.testing.expectEqual(@as(i64, 492), callee_end.integer);
     callee_end.* = call.object.get("range").?.object.get("end").?;
     const source = try std.json.Stringify.valueAlloc(allocator, packet, .{});
-    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, A, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
 }
 
 test "typed effects reject a field read on the other alias of the same component" {
@@ -337,7 +337,7 @@ test "typed effects reject a field read on the other alias of the same component
     const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
     const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
     const current = document.payload;
-    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, current.sourcePacket, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, A, bytes, current.sourcePacket, current.inputIdentity, current.packageId, current.target, &document.component_layout));
 }
 
 test "typed effects reject a different field in a nested Source helper" {
@@ -364,7 +364,7 @@ test "typed effects reject a different field in a nested Source helper" {
         try std.testing.expectEqualStrings(nested.sourceField, property.string);
         property.* = .{ .string = other.sourceField };
         const source = try std.json.Stringify.valueAlloc(allocator, packet, .{});
-        try std.testing.expectError(error.InvalidEffects, E.decode(allocator, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+        try std.testing.expectError(error.InvalidEffects, E.decode(allocator, A, current.effects, source, current.inputIdentity, current.packageId, current.target, &document.component_layout));
         return;
     }
     return error.MissingFixtureHelper;
@@ -394,7 +394,7 @@ test "typed effects reject a changed helper read count" {
     const body = try std.json.Stringify.valueAlloc(allocator, report, .{});
     const bytes = try std.mem.concat(allocator, u8, &.{ body, "\n" });
     const current = document.payload;
-    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, bytes, current.sourcePacket, current.inputIdentity, current.packageId, current.target, &document.component_layout));
+    try std.testing.expectError(error.InvalidEffects, E.decode(allocator, A, bytes, current.sourcePacket, current.inputIdentity, current.packageId, current.target, &document.component_layout));
 }
 
 test "typed effects data ownership survives standard allocator growth and invalid-input cleanup" {

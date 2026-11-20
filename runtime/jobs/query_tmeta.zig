@@ -116,7 +116,7 @@ pub const Document = struct {
             const joined = try std.mem.join(own, ", ", arguments.items);
             if (!std.mem.eql(u8, entry.abiType, try std.fmt.allocPrint(own, "({s}) -> ()", .{joined}))) return error.InvalidMetadata;
         }
-        const effects = try effects_module.decode(own, payload.effects, payload.sourcePacket, payload.inputIdentity, payload.packageId, payload.target, &component_layout);
+        const effects = try effects_module.decode(own, allocator, payload.effects, payload.sourcePacket, payload.inputIdentity, payload.packageId, payload.target, &component_layout);
         var expected_entries: usize = 0;
         for (effects.report.systems) |system| expected_entries += system.loops.len;
         if (expected_entries != payload.entries.len) return error.InvalidEffects;
