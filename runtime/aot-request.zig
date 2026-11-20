@@ -83,9 +83,9 @@ pub fn evaluate(host: *Runtime, metadata: *program.Metadata, original: *const js
     }
     if (storage.* == null) {
         if (!parsed.init_only) { host.active_requests += 1; active = true; }
-        storage.* = abi.Instance.init(host.allocator, capabilities) catch |err| {
-            if (parsed.init_only) return err;
-            request.storeRequestFailure(out, "r05-execution-abort", &info.function_id, &metadata.defaultInfo().source); return;
+        storage.* = abi.Instance.init(host.allocator, capabilities) catch {
+            request.storeRequestFailure(out, "r05-execution-abort", &info.function_id, &info.source);
+            return;
         };
     }
     if (!active) { host.active_requests += 1; active = true; }
@@ -102,7 +102,8 @@ pub fn evaluate(host: *Runtime, metadata: *program.Metadata, original: *const js
     defer environment.restore();
     const time_limit = parsed.limits.host_time_ns orelse if (instance.hosts.len != 0) @as(?u64, 1_000_000_000) else null;
     const deadline = clock.Deadline.init(time_limit) catch {
-        request.storeRequestFailure(out, "r05-execution-abort", &info.function_id, &metadata.defaultInfo().source); return;
+        request.storeRequestFailure(out, "r05-execution-abort", &info.function_id, &info.source);
+        return;
     };
     var invocation: abi.Request = undefined;
     var context: events.Context = .{ .allocator = host.allocator, .metadata = metadata,
