@@ -220,7 +220,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         return stored?{...stored,symbol:path}:{symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
-        const required=terminalRoot&&value.kind==='arrayStoreDenseChecked';
+        const required=terminalRoot&&(value.kind==='arrayStoreDenseChecked'||value.kind==='arrayResizeChecked');
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,required);
         if(receiver.terminal)return receiver;
         const index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings,required):null;

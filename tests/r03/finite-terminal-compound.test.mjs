@@ -246,6 +246,26 @@ for(const row of cases)test(row.name,async t=>{
         if(kind==='store')versions.push(outer+'/array-version');
         for(const version of versions)assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
       });
+    for(const side of ['receiver','value'])await t.test(`Array resize preserves the first failure in its ${side}`,()=>{
+      const created=compound.body[0].initializer,constant=mark.body[1].value;
+      assert.ok(created.kind==='arrayCreate'&&constant.kind==='floating');
+      const literal=elements=>({...created,elements,range:original.range});
+      const marker={...tail,receiver:literal([constant])};
+      const first=literal(side==='receiver'?[original.left,constant]:[original.right,marker]);
+      const second=literal(side==='value'?[original.left]:[original.right,marker]);
+      const value={kind:'arrayLength',receiver:second,type:index.type,range:index.range};
+      const expression={kind:'arrayResizeChecked',target:{receiver:first,type:index.type,range:local.range},
+        value,type:index.type,range:original.range};
+      const fn={...compound,body:[...compound.body.slice(0,2),{kind:'expression',expression,range:local.range},{...returned,value:tail}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      const root=compound.id+'/body',outer=root+'/2/expression',target=outer+'/target/receiver',rhs=outer+'/value/receiver';
+      const inner=(side==='receiver'?target:rhs)+'/elements/0/operand',markerPath=(side==='receiver'?rhs:target)+'/elements/1';
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[inner+'/old-value']);
+      assert.equal(reaching.reads.find(read=>read.node===markerPath)?.status,row.productive||side==='value'?'proven':'pending');
+      assert.equal(reaching.reads.find(read=>read.node===root+'/3/value')?.status,row.productive?'proven':'pending');
+      assert.ok(reaching.writes.some(write=>write.id===inner+'/array-version'));
+    });
     await t.test('a failed call input prevents later input reads and the caller continuation',()=>{
       const call=original.right;
       assert.equal(call.kind,'call');

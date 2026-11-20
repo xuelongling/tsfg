@@ -493,8 +493,12 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
         charge();representationOnly.set(old,v.target.type);
       }else stores.push({receiver,value:id});
       for(const type of leaves(v.type))insert(id,'actual',type);
+    }else if(v.kind==='arrayResizeChecked') {
+      at(v.target.receiver,p+'/target/receiver');
+      child('value');
+      for(const type of leaves(v.type))insert(id,'actual',type);
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength',
-      'arrayResizeChecked','update','fieldUpdate','stringConcat'].includes(v.kind)) {
+      'update','fieldUpdate','stringConcat'].includes(v.kind)) {
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))
