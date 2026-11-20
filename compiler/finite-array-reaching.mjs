@@ -44,7 +44,7 @@ export function propagateArrayWrites(effects,charge) {
   }
 }
 
-export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
+export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) {
   const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
@@ -216,7 +216,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         const receiver=child('receiver',terminalRoot);if(receiver.terminal)return receiver;
         const index=child('index',terminalRoot);if(index.terminal)return index;
         const projectKind=slotValues&&types.get(value.receiver.type)?.kind==='array'?types.get(value.type)?.kind:undefined,
-          {stored}=load(value,path,state,receiver,index,projectKind);
+          {status,stored}=load(value,path,state,receiver,index,projectKind);
+        if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateArrayRead(false))return {terminal:true};
         return stored?{...stored,symbol:path}:{symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
@@ -230,7 +231,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
           oldLength=state.get(receiver.owner)?.length??null;
           // The lexical pass retains every original occurrence. Ordered
           // transfer stops only at a definite old-read trap on the current evaluation path.
-          if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateCompound(directStatement&&!fn.ownerType)) {
+          if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateArrayRead(directStatement&&!fn.ownerType)) {
             if(recordReads){charge();(terminalReads??=new Set()).add(old);}
             return {terminal:true};
           }

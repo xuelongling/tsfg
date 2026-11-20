@@ -219,6 +219,24 @@ for(const row of cases)test(row.name,async t=>{
       for(const version of [inner+'/array-version',outer+'/array-version'])
         assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
     });
+    await t.test('a definite checked Array read failure blocks a later dense store',()=>{
+      const value=mark.body[1].value;
+      assert.ok(value.kind==='floating');
+      const dense={kind:'arrayStoreDenseChecked',target:original.left.operand.target,value,type,range:original.range};
+      const first={kind:'expression',expression:tail,range:tail.range};
+      const store={kind:'expression',expression:dense,range:local.range};
+      const fn={...compound,body:[...compound.body.slice(0,2),first,store,{...returned,value:tail}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      const root=compound.id+'/body',written=root+'/3/expression/array-version';
+      const before=reaching.reads.find(read=>read.node===root+'/2/expression');
+      const after=reaching.reads.find(read=>read.node===root+'/4/value');
+      assert.ok(before&&after);
+      assert.deepEqual([before.status,before.versions],row.productive?['proven',[initial]]:['missing',[]]);
+      assert.deepEqual([after.status,after.versions],row.productive?['proven',[written]]:['pending',[]]);
+      assert.ok(reaching.writes.some(write=>write.id===written),'lexical write remains recorded');
+      assert.equal(terminalReads,null,'ordinary reads do not add a compound old-value record');
+    });
     for(const kind of ['read','store','compound','update'])for(const failed of ['receiver','index'])
       await t.test(`an Array ${kind} stops after its ${failed} fails`,()=>{
         const created=compound.body[0].initializer,constant=mark.body[1].value;

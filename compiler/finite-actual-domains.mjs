@@ -158,7 +158,7 @@ function buildPlans(input,context,options,definitions) {
     let fieldReaching=buildFiniteFieldReaching(hir,controlInitial,charge);
     const carrierFieldReaching=fieldReaching.reads.some(row=>row.reaching.length)?fieldReaching:null;
     let result=carrierFieldReaching?solve(carrierFieldReaching):initial;
-    const canTerminateCompound=directStatement=>{
+    const canTerminateArrayRead=directStatement=>{
       allowCompoundTermination??=!result.fields.length&&!result.calls.length&&
         !fieldReaching.effects.some(row=>{charge();return row.writesFields;});
       // Mixed field state has a matching cut at this direct statement root.
@@ -173,7 +173,7 @@ function buildPlans(input,context,options,definitions) {
     // its actual read sources are proved. Iterate the same solver, sharing the
     // original budget; representation maxima never become memory witnesses.
     for(;;) {
-      const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateCompound);
+      const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateArrayRead);
       arrayReaching=array.reaching;terminalReads=array.terminalReads;
       if(!arrayReaching.reads.length)break;
       const fieldPlan={...ordered,arrayReaching};
