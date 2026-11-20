@@ -81,6 +81,21 @@ pub const Document = struct {
             };
             if (!std.mem.eql(u8, entry.entrySymbol, try std.fmt.allocPrint(own, "batch_{s}_{d}", .{ entry.logicalFunctionId[7..], entry.loop }))) return error.InvalidMetadata;
             if (entry.columns.len == 0 or entry.columns.len > 4096 or entry.tupleOccurrences.len == 0 or entry.tupleOccurrences.len > 4096 or entry.scalars.len > 4096) return error.MetadataLimit;
+            // Each occurrence contributes once to its column's access and has a unique Source binding.
+            const column_access = try allocator.alloc(?storage.Access, entry.columns.len);
+            defer allocator.free(column_access);
+            @memset(column_access, null);
+            var source_bindings = std.StringHashMap(void).init(allocator);
+            defer source_bindings.deinit();
+            try source_bindings.ensureTotalCapacity(@intCast(entry.tupleOccurrences.len));
+            for (entry.tupleOccurrences, 0..) |tuple, index| {
+                if (tuple.tupleIndex != index or tuple.columnIndex >= entry.columns.len or !digestId(tuple.sourceBinding)) return error.InvalidMetadata;
+                const column = entry.columns[tuple.columnIndex];
+                if (tuple.bufferArgument != column.bufferArgument or !std.mem.eql(u8, tuple.componentType, column.componentType)) return error.InvalidMetadata;
+                if (source_bindings.getOrPutAssumeCapacity(tuple.sourceBinding).found_existing) return error.InvalidMetadata;
+                const access = &column_access[tuple.columnIndex];
+                if (access.* == null or tuple.mode == .write) access.* = tuple.mode;
+            }
             var arguments: std.ArrayList([]const u8) = .empty;
             try arguments.append(own, "index");
             for (entry.columns, 0..) |column, index| {
@@ -89,26 +104,8 @@ pub const Document = struct {
                 if (index > 0 and std.mem.order(u8, entry.columns[index - 1].componentType, column.componentType) != .lt) return error.InvalidMetadata;
                 const row = component_layout.find(column.componentType) orelse return error.InvalidMetadata;
                 if (row.kind != .component or column.stride != row.stride or column.alignment != row.alignment) return error.InvalidMetadata;
-                var found = false;
-                var access: storage.Access = .read;
-                for (entry.tupleOccurrences) |tuple| {
-                    try charge(&work, 1);
-                    if (tuple.columnIndex == index) {
-                        found = true;
-                        if (tuple.mode == .write) access = .write;
-                    }
-                }
-                if (!found or column.access != access) return error.InvalidMetadata;
+                if (column_access[index] != column.access) return error.InvalidMetadata;
                 try arguments.appendSlice(own, &.{ "memref<?xi8>", "index" });
-            }
-            for (entry.tupleOccurrences, 0..) |tuple, index| {
-                if (tuple.tupleIndex != index or tuple.columnIndex >= entry.columns.len or !digestId(tuple.sourceBinding)) return error.InvalidMetadata;
-                const column = entry.columns[tuple.columnIndex];
-                if (tuple.bufferArgument != column.bufferArgument or !std.mem.eql(u8, tuple.componentType, column.componentType) or (tuple.mode == .write and column.access != .write)) return error.InvalidMetadata;
-                for (entry.tupleOccurrences[0..index]) |row| {
-                    try charge(&work, 1);
-                    if (std.mem.eql(u8, row.sourceBinding, tuple.sourceBinding)) return error.InvalidMetadata;
-                }
             }
             for (entry.scalars, 0..) |scalar, index| {
                 if (scalar.argument != 1 + 2 * entry.columns.len + index or !digestId(scalar.sourceBinding) or (!std.mem.eql(u8, scalar.type, "f32") and !std.mem.eql(u8, scalar.type, "f64")) or (index > 0 and entry.scalars[index - 1].sourceParameter >= scalar.sourceParameter)) return error.InvalidMetadata;
