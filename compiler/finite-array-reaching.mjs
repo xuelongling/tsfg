@@ -384,7 +384,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateCompound) {
         }
         else if(row.kind==='block') {state=statements(row.body,p+'/body',state,bindings);if(!state)return null;}
         else if(row.kind==='if') {
-          const condition=expression(row.condition,p+'/condition',state,bindings),a=copyBindings(bindings),b=copyBindings(bindings),
+          const condition=expression(row.condition,p+'/condition',state,bindings,true);
+          if(condition.terminal)return null;
+          const a=copyBindings(bindings),b=copyBindings(bindings),
             left=!collectAll&&condition.truth===false?null:statements(row.then,p+'/then',clone(state),a),
             right=!collectAll&&condition.truth===true?null:statements(row.else??[],p+'/else',clone(state),b);
           state=join(left,right);if(!state)return null;

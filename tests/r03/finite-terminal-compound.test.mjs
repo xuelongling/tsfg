@@ -141,6 +141,25 @@ for(const row of cases)test(row.name,async t=>{
         for(const version of [site+'/array-version',mark.id+'/body/0/expression/array-version',sibling.id+'/body/0/expression/array-version'])
           assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
       });
+    await t.test('a required if condition controls both arms and the suffix',()=>{
+      const arm=[{kind:'expression',expression:tail,range:tail.range}];
+      const branch={kind:'if',condition:compare,then:arm,else:arm,range:local.range};
+      const fn={...compound,body:[...compound.body.slice(0,2),branch,{...returned,value:tail}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      const root=compound.id+'/body',target=root+'/2/condition/left/operand',failed=target+'/old-value';
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[failed]);
+      const oldRead=reaching.reads.find(read=>read.node===failed);
+      assert.equal(oldRead?.status,row.productive?'proven':'missing');
+      assert.equal(source.slice(oldRead.origin.start,oldRead.origin.end),'a[at]');
+      for(const path of ['/2/then/0/expression','/2/else/0/expression','/3/value']) {
+        const read=reaching.reads.find(read=>read.node===root+path);
+        assert.equal(read?.status,row.productive?'proven':'pending',path);
+        assert.deepEqual(read?.versions,row.productive?[target+'/array-version']:[],path);
+      }
+      for(const version of [target+'/array-version',mark.id+'/body/0/expression/array-version',sibling.id+'/body/0/expression/array-version'])
+        assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
+    });
   }
 
   /** @param {string} text */
