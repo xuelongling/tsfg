@@ -6,6 +6,7 @@ import path from 'node:path';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {finiteNormalFlow,finiteNormalLogical} from '../../compiler/finite-numeric-use.mjs';
 import {sha256,i32TypeId,boolTypeId} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 
@@ -61,7 +62,7 @@ test('normal numeric domains do not inherit undefined from the conditional physi
   }
 });
 
-test('actual Source i32 plus, operand order and U-only normal continuation use the accepted operation boundary',async()=>{
+test('actual Source i32 plus, operand order and U-only normal continuation use the accepted operation boundary',async t=>{
   const raw=await readFile(new URL('./testdata/typed-array-holder-parameter/numeric-use-order-package.json',import.meta.url));
   assert.equal(raw.length,23356);assert.equal(sha256(raw),'sha256:31d977221743664401bffcba459895e76ece4f42449570a42f7dedcaf8b2410b');
   const facts=readTypedArrayFacts(raw),context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:raw,expectedPackageId:facts.packageId};
@@ -85,4 +86,34 @@ test('actual Source i32 plus, operand order and U-only normal continuation use t
   const rhs=body('rhsFails');assert.ok(rhs.indexOf('"tsfg_core.div"')<rhs.indexOf('"tsfg_core.domain.numeric_use"'),'RHS operation precedes outer operand consumption');
   assert.match(body('plus'),/"tsfg_core.pos"/,'checked unary plus retains an actual scalar consumer');
   if(process.env.TSFG_TEST_STORAGE)await writeFile(path.join(process.env.TSFG_TEST_STORAGE,'numeric-order-core.mlir'),core,{flag:'wx'});
+
+  const numeric=proofs.reached.nodes.find(node=>node.id===fn('plus').id+'/return');
+  const rhsTypes=proofs.reached.domains.find(domain=>domain.id===numeric.domainId).actualTypes;
+  for(const [operator,literal,takesRight,completes] of [
+    ['&&',true,true,false],['||',false,true,false],
+    ['&&',false,false,true],['||',true,false,true],
+    ['&&',undefined,true,true],['||',undefined,true,true],
+  ]) await t.test(operator+' left '+String(literal),()=>{
+    const nodes=new Map(),flow=finiteNormalFlow(true,()=>{},nodes),reached=new Set();
+    const emit=(id,gate,types,dependencies=[])=>{
+      flow.entry(id,gate);nodes.set(id,{actual:new Set(),pending:new Set()});flow.finish(id,dependencies);
+      flow.publish(id,()=>{
+        reached.add(id);
+        for(const type of types)nodes.get(id).actual.add(type);
+        flow.changed(id);
+      });
+      return id;
+    };
+    const value={kind:'shortCircuit',operator,left:{kind:literal===undefined?'reference':'boolean',value:literal}};
+    const dependencies=finiteNormalLogical(value,flow,flow.always,(id,gate,propagatePending)=>{
+      if(id==='right')assert.equal(propagatePending,takesRight,'only selectable operands supply pending facts');
+      return emit(id,gate,id==='left'?[boolTypeId]:rhsTypes);
+    });
+    emit('result',flow.always,[boolTypeId],dependencies);
+    emit('next',flow.normal('result'),[i32TypeId]);
+    flow.seal();
+    assert.ok(nodes.has('right'),'lexical right operand');
+    assert.equal(reached.has('right'),takesRight,'right operand reachability');
+    assert.equal(reached.has('next'),completes,'normal continuation');
+  });
 });

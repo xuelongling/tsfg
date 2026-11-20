@@ -10,7 +10,7 @@ import {finiteNormalBody,finiteNormalFlow} from '../../compiler/finite-numeric-u
 import {sha256,scalarName} from '../../compiler/identity.mjs';
 const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-entry/636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571-expected.json',import.meta.url),'utf8'));
 const packet=new URL('./testdata/typed-array-entry/'+expected.source.sha256+'-package.json',import.meta.url);
-test('only feasible incoming call occurrences supply Array versions; unproductive entry stays pending',async()=>{
+test('only feasible incoming call occurrences supply Array versions; unproductive entry stays pending',async t=>{
   const bytes=await readFile(packet),facts=readTypedArrayFacts(bytes);
   assert.equal(sha256(bytes).slice(7),'7732a541fe22955a8a4a3a4449a6117e793f5807e58cf527fd65f3148d1c5657');
   assert.equal(facts.payload.files.find(row=>row.path==='/src/main.ts').content,expected.source.text);
@@ -51,6 +51,26 @@ test('only feasible incoming call occurrences supply Array versions; unproductiv
     assert.notEqual(domain(selectedPlan.carrierNodes.find(row=>row.id===deadCall)),'bottom');
     assert.notEqual(domain(selectedPlan.nodes.find(row=>row.id===liveCall)),'bottom');
   }
+  for(const {name,suffix,live} of [
+    {name:'runIf',suffix:'/body/1/then/',live:false},
+    {name:'runAnd',suffix:'/body/1/expression/right',live:false},
+    {name:'runOr',suffix:'/body/1/expression/right',live:false},
+    {name:'runUnknown',suffix:'/body/1/then/',live:true}
+  ]) await t.test(name,()=>{
+    const fn=hir.functions.find(fn=>fn.name===name);
+    const sites=plan.expressions.filter(row=>row.kind==='call'&&row.id.startsWith(fn.id+suffix));
+    assert.equal(sites.length,1,'lexical call inventory');
+    const [site]=sites;
+    for(const selectedPlan of [plans.reached,plans.definition]) {
+      const isBottom=node=>selectedPlan.domains.find(row=>row.id===node.domainId).representation==='bottom';
+      const argument=selectedPlan.nodes.find(row=>row.id===site.id+'/arguments/0');
+      assert.equal(isBottom(argument),!live,'ordered call argument');
+      assert.equal(isBottom(selectedPlan.nodes.find(row=>row.id===site.id)),!live,'ordered call result');
+      assert.equal(isBottom(selectedPlan.carrierNodes.find(row=>row.id===site.id)),false,'lexical call carrier');
+      const result=selectedPlan.nodes.find(row=>row.id===fn.id+'/return');
+      assert.equal(isBottom(result),false,'normal function result');
+    }
+  });
 });
 
 test('normal loop exits retain reachable return sites and carrier inventory',async t=>{

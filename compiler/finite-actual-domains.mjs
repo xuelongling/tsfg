@@ -8,7 +8,7 @@ import {buildFiniteFieldReaching} from './finite-field-reaching.mjs';
 import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
-import {finiteNumericUse,finiteNormalFlow,finiteNormalBody} from './finite-numeric-use.mjs';
+import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {actualFieldResolver} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
@@ -412,7 +412,12 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
   for(let cursor=0;cursor<tasks.length;cursor++) {
     charge();const {value:v,path:p,fn,guards}=tasks[cursor],id=p;
     let continuation=flow.incoming(p);const dependencies=[],requirements=[];
-    const at=(value,path)=>{const id=expression(value,path,fn,guards,continuation);copy(id,p,{pendingOnly:true});
+    const operand=(value,path,gate,propagatePending)=>{
+      const id=expression(value,path,fn,guards,gate);
+      if(propagatePending||arrayReaching===null)copy(id,p,{pendingOnly:true});
+      return id;
+    };
+    const at=(value,path)=>{const id=operand(value,path,continuation,true);
       continuation=flow.normal(id);dependencies.push(continuation);return id;};
     const child=key=>at(v[key],p+'/'+key);
     const children=key=>(v[key]??[]).map((value,index)=>at(value,p+'/'+key+'/'+index));
@@ -491,11 +496,12 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       'arrayResizeChecked','update','fieldUpdate','stringConcat'].includes(v.kind)) {
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
-      for(const key of ['left','right','operand','receiver','index','value'])if(v[key])child(key);
+      if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))
+        dependencies.push(...finiteNormalLogical(v,flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending)));
+      else for(const key of ['left','right','operand','receiver','index','value'])if(v[key])child(key);
       if(v.target)for(const key of ['receiver','index'])if(v.target[key])at(v.target[key],p+'/target/'+key);
       children('arguments');if(finiteNumericUse(v))for(const key of v.kind==='binary'?['left','right']:['operand'])
         requirements.push({node:p+'/'+key,type:i32TypeId,possible:true});
-      if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))dependencies.splice(1);
       for(const type of leaves(v.type))insert(id,'actual',type);
     }else insert(id,'pending','unsupported-expression:'+v.kind+':'+id);
     flow.finish(id,dependencies,requirements);

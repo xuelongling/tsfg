@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {i32TypeId} from './identity.mjs';
+import {literalBooleanRhs,literalIfArm} from './finite-field-effects.mjs';
 
 const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^','<','<=','>','>=']);
 /** The accepted first numeric-use domain is exactly same-i32 plus undefined. */
@@ -7,6 +8,14 @@ export function finiteNumericUse(value) {
   const operands=value.kind==='binary'?[value.left,value.right]:value.kind==='unary'?[value.operand]:[];
   const approved=value.kind==='binary'?numericBinary.has(value.operator):value.kind==='unary'&&['+','-','~'].includes(value.operator);
   return approved&&operands.every(operand=>(operand.semanticType??operand.type)===i32TypeId)?operands:null;
+}
+
+/** Register both lexical operands and require completion of the selected path. */
+export function finiteNormalLogical(value,flow,incoming,emit) {
+  const left=flow.normal(emit('left',incoming,true));
+  const takesRight=literalBooleanRhs(value);
+  const right=flow.normal(emit('right',takesRight===false?flow.never:left,takesRight!==false));
+  return takesRight===true?[left,right]:[left];
 }
 
 /** Positive normal-completion constraints share the enclosing domain worklist.
@@ -110,11 +119,13 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
         stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),
           gate:literal===false?flow.never:incoming,index:0});
       }else {
+        const arm=literalIfArm(s);
         const exits=[];let remaining=2;
         const complete=gate=>{exits.push(gate);if(--remaining===0)frame.gate=flow.any(exits);};
         // Suspend this sequence until both arms have registered their exits.
         for(const key of ['else','then'])stack.push({body:s[key],path:p+'/'+key,
-          guards:stableGuards(branchGuard(s.condition,key==='then',frame.guards),s[key],charge),gate:incoming,index:0,complete});
+          guards:stableGuards(branchGuard(s.condition,key==='then',frame.guards),s[key],charge),
+          gate:arm===null||arm===key?incoming:flow.never,index:0,complete});
       }
     }
   }
