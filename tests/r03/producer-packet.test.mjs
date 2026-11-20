@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {verifyProducedPacket} from '../../compiler/producer-packet.mjs';
 import {stringCases,expectedStringPacket} from './formal-string-gold.mjs';
 
@@ -21,4 +22,16 @@ test('normal producer requires the exact eight magic bytes',()=>{
   const packet=expectedStringPacket(stringCases()[0].hir);
   packet[0]^=0x80;
   assert.throws(()=>verifyProducedPacket(packet),/r04-producer-identity/);
+});
+
+test('normal producer bounds the complete packet envelope to one MiB',()=>{
+  const original=expectedStringPacket(stringCases()[0].hir);
+  const exact=Buffer.alloc(1024*1024),oversized=Buffer.alloc(exact.length+1);
+  for(const packet of [exact,oversized]) {
+    original.copy(packet);
+    packet.writeUInt32LE(packet.length,44);
+    createHash('sha256').update(packet.subarray(80)).digest().copy(packet,48);
+  }
+  verifyProducedPacket(exact);
+  assert.throws(()=>verifyProducedPacket(oversized),/r04-producer-identity/);
 });
