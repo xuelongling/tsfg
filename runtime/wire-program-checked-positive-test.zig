@@ -4,6 +4,7 @@ const std = @import("std");
 const model = @import("wire-program-model.zig");
 const decoder = @import("wire-program-decoder.zig");
 const reader = @import("wire-program-checked-reader.zig");
+const refcheck = @import("wire-program-refcheck.zig");
 
 const packet = @embedFile("test-data/common20/right.tbc");
 const allocator = std.testing.allocator;
@@ -45,4 +46,24 @@ test "checked reader frees the decoded arena if independent verification runs ou
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expect(work > model.format.max_work - remaining and work <= model.format.max_work);
     try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+}
+
+test "independent verification rejects an out-of-range ABI in the decoded right model" {
+    var remaining: usize = model.format.max_work;
+    var owned = try decoder.readOwned(allocator, packet, &remaining);
+    defer owned.deinit();
+
+    // Only the derived model changes. Keep the original packet and tables.
+    var derived = owned.program;
+    const functions = try allocator.dupe(model.Function, derived.functions);
+    defer allocator.free(functions);
+    const right = for (functions) |*function| {
+        if (std.mem.eql(u8, function.name, "right")) break function;
+    } else return error.MissingRightFunction;
+    right.abi = @enumFromInt(derived.tables.mode.common.abis.len);
+    derived.functions = functions;
+
+    const before = remaining;
+    try std.testing.expectError(error.InvalidReference, refcheck.check(allocator, &derived, null, &remaining));
+    try std.testing.expect(remaining < before);
 }
