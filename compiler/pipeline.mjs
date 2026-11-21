@@ -287,7 +287,7 @@ function produceOwnedCore(hir, options, selected = undefined) {
     const fixedOptions = { core: options.core, optimize: options.optimize };
     return produceCore(prepared.hir, fixedOptions, () => prepared.text);
   }
-  if (family !== genericHirFormat.family) return produceCore(hir, options, selected?.lower);
+  if (family !== genericHirFormat.family) return produceCore(hir, options, selected?.lower, selected);
   const { factsContext, callPublicationContext } = selected ?? options;
   if (factsContext !== undefined || callPublicationContext !== undefined)
     return produceCore(hir, options, selected?.lower ?? (value => lowerFormalHir(value, factsContext, callPublicationContext)), { factsContext });

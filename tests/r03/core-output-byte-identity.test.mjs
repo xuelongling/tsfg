@@ -58,6 +58,17 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   const compiled=await compileOwnedCore(hir,{core:artifact});
   assert.equal(compiled.status,'ok');
   assert.deepEqual(Buffer.from(compiled.core,'utf8'),valid);
+  const factsBytes=await fs.readFile(new URL('./testdata/common-borrow-proof/safe-lastuse-facts.json',import.meta.url));
+  const facts=readCommonProgramFacts(factsBytes);
+  await t.test('Core transport keeps the lowering context across asynchronous admission',async()=>{
+    const options={core:artifact};
+    const first=calls.length;
+    const pending=compileOwnedCore(hir,options);
+    Object.assign(options,{factsContext:{family:'tsfg.common-program-context-candidate',version:facts.version,
+      factsBytes,expectedPackageId:facts.packageId}});
+    assert.equal((await pending).status,'ok');
+    assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+  });
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
   const expected={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: invalid UTF-8 in compiler output'};
@@ -72,7 +83,6 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   });
 
   await t.test('Common borrow proof',async()=>{
-    const facts=readCommonProgramFacts(await fs.readFile(new URL('./testdata/common-borrow-proof/safe-lastuse-facts.json',import.meta.url)));
     const common=projectCommonProgram(facts),publication=createCommonProgramPublication(common);
     const request={targets:common.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
     const first=calls.length;
