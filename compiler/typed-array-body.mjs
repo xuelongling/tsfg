@@ -83,6 +83,18 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
           check(index===tail.length-1&&tail[index]===')','source');
         }else check(value.nameRange.end===value.range.end,'source');
       }
+      if(value.kind==='stringIndex') {
+        const index=value.index,{start,end}=value.receiver.range,result='union<string,undefined>';
+        check(payload.stringIndex?.id===value.property&&value.receiver.flowType==='string'
+          &&value.type===result&&value.flowType===result
+          &&types.get(index.flowType)?.kind==='scalar'&&index.flowType!=='bool','type');
+        sourceRange(index.range,source,value.range);
+        check(start===value.range.start&&index.range.start>end,'source');
+        const before=source.slice(end,index.range.start),open=skipCallTrivia(before);
+        const after=source.slice(index.range.end,value.range.end),close=skipCallTrivia(after);
+        check(before[open]==='['&&skipCallTrivia(before.slice(open+1))===before.length-open-1
+          &&close===after.length-1&&after[close]===']','source');
+      }
       if(value.kind==='undefinedLiteral'||value.kind==='nullLiteral')check(spelling(value.range)===(value.kind==='undefinedLiteral'?'undefined':'null'),'source');
       if(value.kind==='booleanLiteral')check(value.type==='bool'&&['true','false'].includes(value.token)&&spelling(value.range)===value.token,'literal');
       if(value.kind==='numericLiteral') {

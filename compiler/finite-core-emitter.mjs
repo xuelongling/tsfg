@@ -126,6 +126,38 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     const opAttrs=value=>`view_type = ${quote(value.semanticType)}, domain = ${quote(value.type)}`;
     const op=(api,name,values,result,attrs,range)=>api.operation('tsfg_core.domain.'+name,values.map(value=>value.name),
       values.map(value=>value.type),result,attrs,range);
+    function stringIndex(value,api) {
+      const receiver=api.emit(value.receiver),original=api.emit(value.index);
+      const actual=domains.get(value.index.type).actualTypes;
+      const scalar=scalarName(actual[0]),missing=domains.get(value.type).actualTypes.find(id=>types.get(id).kind==='undefined');
+      if(actual.length!==1||!scalar||scalar==='bool'||!missing
+        ||domains.get(value.receiver.type).actualTypes.some(id=>types.get(id).kind!=='string'))
+        pending('String index operation-domain-check mapping',value.range);
+      const {f64,usize}=scalarTypeIds,range=value.range,origin=value.index.range;
+      const convert=(input,type,target)=>api.operation('tsfg_core.convert_checked',[input],[type],target,'',origin);
+      const number=scalar==='f64'?original:convert(original,value.index.type,f64);
+      const length=api.operation('tsfg_string.length',[receiver],[value.receiver.type],usize,'',range);
+      const limit=convert(length,usize,f64);
+      const zero=api.operation('tsfg_core.constant',[],[],f64,'value = "0000000000000000"',origin);
+      const compare=(name,left,right)=>api.operation('tsfg_core.'+name,[left,right],[f64,f64],boolTypeId,'',origin);
+      const widen=(name,type)=>op(api,'view',[{name,type}],value.type,opAttrs(value),range);
+      let start;
+      const predicates=[()=>compare('ge',number,zero),()=>compare('lt',number,limit),()=>{
+        // Bounds exclude nonfinite values and make truncation safe. A round
+        // trip excludes fractional property keys before reading a unit.
+        start=convert(number,f64,usize);
+        return compare('eq',number,convert(start,usize,f64));
+      }];
+      return api.branchValue(predicates,value.type,range,()=>{
+        const one=api.operation('tsfg_core.constant',[],[],usize,'value = "1"',origin);
+        const end=api.operation('tsfg_core.add',[start,one],[usize,usize],usize,'',origin);
+        const result=api.operation('tsfg_string.slice',[receiver,start,end],[value.receiver.type,usize,usize],value.receiver.type,'',range);
+        return widen(result,value.receiver.type);
+      },()=>{
+        const type=presenceDomain([missing],range);
+        return widen(op(api,'literal',[],type,`view_type = ${quote(missing)}, domain = ${quote(type)}`,range),type);
+      });
+    }
     function stringSlice(value,api) {
       const receiver=api.emit(value.receiver),args=value.arguments.map(argument=>api.emit(argument));
       if(domains.get(value.receiver.type).actualTypes.some(id=>types.get(id).kind!=='string'))
@@ -282,6 +314,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           return api.operation('tsfg_core.convert_checked',[length],[lengthType],value.type,'',value.range);
         }
         if(value.kind==='stringSlice')return stringSlice(value,api);
+        if(value.kind==='stringIndex')return stringIndex(value,api);
         if(value.kind==='stringConcat') {
           if([value.left,value.right].some(operand=>domains.get(operand.type).actualTypes.some(id=>types.get(id).kind!=='string')))
             pending('String operation-domain-check mapping',value.range);

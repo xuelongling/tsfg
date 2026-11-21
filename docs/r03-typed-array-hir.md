@@ -2,9 +2,11 @@
 # Generic Array facts and owned HIR
 
 The default typed Array HIR route uses facts8/context2 and typed HIR0.16.
-Select the development facts9/context3 profile for `String.length` and
-typed HIR0.17. It emits the existing finite Core contract using the same
-String length and checked conversion operations.
+The development facts9/context3 profile adds `String.length` and typed
+HIR0.17. Facts10/context4 with HIR0.18 adds `String.slice`. Facts11/context5
+with HIR0.19 adds numeric String indexing with the result
+`string | undefined`. Each profile is selected explicitly. They share
+the existing finite Core contract and checked String operations.
 Actual borrowed expressions, borrowed parameters/results and cyclic calls require
 an independently selected fixed publication context5. Explicit ArrayCalls
 analysis always requires that context. Source facts validation remains a

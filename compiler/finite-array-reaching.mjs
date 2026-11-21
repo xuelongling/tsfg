@@ -404,9 +404,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const right=child('right',terminalRoot);if(right.terminal)return right;
         return ['===','!=='].includes(value.operator)?{symbol:path,truth:predicateTruth(value,path)}:{symbol:path};
       }
-      if(['unary','fieldAccess','stringLength'].includes(value.kind)) {
+      if(['unary','fieldAccess','stringLength','stringIndex'].includes(value.kind)) {
         const operand=child(value.kind==='unary'?'operand':'receiver',terminalRoot);
-        return operand.terminal?operand:{symbol:path};
+        if(operand.terminal)return operand;
+        if(value.kind==='stringIndex') {
+          const index=child('index',terminalRoot);
+          if(index.terminal)return index;
+        }
+        return {symbol:path};
       }
       if(value.kind==='stringSlice') {
         const receiver=child('receiver',terminalRoot);

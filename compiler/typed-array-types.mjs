@@ -82,8 +82,11 @@ export function validateTypedArrayDeclarations(payload,sources,declarationPath=p
   if(payload.stringLength) {
     const row=payload.stringLength,content=sources.get(declarationPath).content;
     const slice='slice(start?: number, end?: number): string;';
-    const declaration=payload.stringSlice?'interface String { readonly length: number; '+slice+' }'
-      :'interface String { readonly length: number; }';
+    const index='readonly [index: number]: string | undefined;';
+    const members=['readonly length: number;'];
+    if(payload.stringSlice)members.push(slice);
+    if(payload.stringIndex)members.push(index);
+    const declaration='interface String { '+members.join(' ')+' }';
     const start=content.indexOf(declaration);
     check(start>=0&&row.sourcePath===declarationPath&&row.ownerType==='string'&&row.name==='length'
       &&row.kind==='property'&&row.officialType==='number'&&row.readType==='f64'&&row.readonly===true,'declaration');
@@ -98,6 +101,15 @@ export function validateTypedArrayDeclarations(payload,sources,declarationPath=p
         &&method.nameRange.start===methodStart&&method.nameRange.end===methodStart+'slice'.length
         &&method.declarationRange.start===methodStart&&method.declarationRange.end===methodStart+slice.length
         &&method.id===originId(declarationPath,method.nameRange),'declaration');
+    }
+    if(payload.stringIndex) {
+      const signature=payload.stringIndex,signatureStart=start+declaration.indexOf(index);
+      const nameStart=signatureStart+'readonly ['.length;
+      check(signature.sourcePath===declarationPath&&signature.ownerType==='string'
+        &&signature.kind==='indexSignature'&&signature.name==='index'
+        &&signature.nameRange.start===nameStart&&signature.nameRange.end===nameStart+'index'.length
+        &&signature.declarationRange.start===signatureStart&&signature.declarationRange.end===signatureStart+index.length
+        &&signature.id===originId(declarationPath,signature.nameRange),'declaration');
     }
   }
   const intrinsic=payload.readSpanIntrinsic,content=sources.get(intrinsic.sourcePath)?.content;

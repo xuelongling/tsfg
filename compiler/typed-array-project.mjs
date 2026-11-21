@@ -3,6 +3,7 @@
 import descriptor from '../contracts/typed-array-hir.schema.json' with {type:'json'};
 import stringLengthDescriptor from '../contracts/typed-array-hir-v9.schema.json' with {type:'json'};
 import stringSliceDescriptor from '../contracts/typed-array-hir-v10.schema.json' with {type:'json'};
+import stringIndexDescriptor from '../contracts/typed-array-hir-v11.schema.json' with {type:'json'};
 import bytecode from '../contracts/bytecode.schema.json' with {type:'json'};
 import {canonical,own,sha256,functionIdentity,signatureHash} from './identity.mjs';
 export const typedArrayHirFormat=own({contractVersion:'0.16.0',schemaHash:sha256(canonical(descriptor)+'\n')});
@@ -10,7 +11,9 @@ export const typedArrayHirV9Format=own({contractVersion:stringLengthDescriptor.c
   schemaHash:sha256(canonical(stringLengthDescriptor)+'\n')});
 export const typedArrayHirV10Format=own({contractVersion:stringSliceDescriptor.contractVersion,
   schemaHash:sha256(canonical(stringSliceDescriptor)+'\n')});
-const hirFormats={8:typedArrayHirFormat,9:typedArrayHirV9Format,10:typedArrayHirV10Format};
+export const typedArrayHirV11Format=own({contractVersion:stringIndexDescriptor.contractVersion,
+  schemaHash:sha256(canonical(stringIndexDescriptor)+'\n')});
+const hirFormats={8:typedArrayHirFormat,9:typedArrayHirV9Format,10:typedArrayHirV10Format,11:typedArrayHirV11Format};
 
 export function projectTypedArrayFacts(facts,profile=undefined) {
   const payload=facts.payload,sourceTypes=new Map(payload.types.map(row=>[row.id,row]));
@@ -186,5 +189,6 @@ export function projectTypedArrayFacts(facts,profile=undefined) {
     intrinsics:{arrayLength:structuredClone(payload.arrayLength),readSpanLength:structuredClone(payload.readSpanLength),
       ...(payload.stringLength?{stringLength:structuredClone(payload.stringLength)}:{}),
       ...(payload.stringSlice?{stringSlice:structuredClone(payload.stringSlice)}:{}),
+      ...(payload.stringIndex?{stringIndex:structuredClone(payload.stringIndex)}:{}),
       readSpan:structuredClone(payload.readSpanIntrinsic)}};
 }

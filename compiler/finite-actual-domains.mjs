@@ -511,7 +511,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       child('value');
       for(const type of leaves(v.type))insert(id,'actual',type);
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength',
-      'update','fieldUpdate','stringConcat','stringLength','stringSlice'].includes(v.kind)) {
+      'update','fieldUpdate','stringConcat','stringLength','stringSlice','stringIndex'].includes(v.kind)) {
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))
@@ -520,6 +520,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       if(v.target)for(const key of ['receiver','index'])if(v.target[key])at(v.target[key],p+'/target/'+key);
       const arguments_=children('arguments');
       if(v.kind==='stringSlice')presenceCarriers.push(...arguments_);
+      if(v.kind==='stringIndex')presenceCarriers.push(id);
       if(finiteNumericUse(v))for(const key of v.kind==='binary'?['left','right']:['operand'])
         requirements.push({node:p+'/'+key,type:i32TypeId,possible:true});
       for(const type of leaves(v.type))insert(id,'actual',type);
