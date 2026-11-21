@@ -7,7 +7,7 @@ import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from './finite-a
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
-import {finiteNumericUse} from './finite-numeric-use.mjs';
+import {finiteBindingWrites,finiteNumericUse} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
@@ -61,7 +61,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
   const fieldPhases=buildFiniteFieldPhases(hir,context,options);
   const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
-  const presenceBindings=new Map();
+  const presenceBindings=new Map(),loopSources=new WeakMap();
   const arrayWrites=new Map(plan.arrayReaching.writes.map(row=>[row.id,row]));
   const types=new Map([...hir.types,...plan.intrinsics].map(type=>[type.id,type]));
   const selected=(id,allowBottom=false)=>{const row=nodes.get(id);if(!row)pending('missing domain '+id);
@@ -112,6 +112,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       if(value.then)result.thenBody=body(value.then,p+'/then',fn);
       if(value.else)result.elseBody=body(value.else,p+'/else',fn);
       if(value.body)result.body=body(value.body,p+'/body',fn);
+      if(value.kind==='while')loopSources.set(result,value);
       return result;
     });
   }
@@ -168,8 +169,10 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         op(api,'field_initialize',[receiver,value],null,attrs+`, input_domain = ${quote(value.type)}`,output.origin);
       }
     }
+    const guardedBindings=presenceBindings.get(fn.id);
     const emission=emitCoreSsaFunction(fn,{verified:hir,coreType,functionSymbol:symbol,budget,
-      preserveDominatingJoinBindings:presenceBindings.get(fn.id),
+      preserveDominatingJoinBindings:guardedBindings,
+      loopWrittenBindings:guardedBindings?statement=>finiteBindingWrites(loopSources.get(statement),budget.step):undefined,
       ...(voidResult?{resultType:'()',emitFallthrough:api=>api.returnValue(null,null,fn.range)}:{}),
       emitStatementLeaf(statement,api) {
         if(statement.kind==='local') {

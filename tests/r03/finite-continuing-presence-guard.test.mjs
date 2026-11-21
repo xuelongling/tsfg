@@ -44,13 +44,13 @@ function guardsAtExpressions(fn,body) {
   return seen;
 }
 
-test('the same guard survives an unchanged join and is cleared by a loop header',()=>{
+test('the same guard survives an unchanged join and loop',()=>{
   const fn=functions.get('presentAfterReturn');
   const condition={kind:'boolean',value:false},use={kind:'expression',expression:fn.body[1].value};
   const seen=guardsAtExpressions(fn,[fn.body[0],{kind:'if',condition,then:[],else:[]},use,
     {kind:'while',condition,body:[]},fn.body[1]]);
   assert.ok(seen.get('body/2/expression').has(fn.parameters[0].id));
-  assert.equal(seen.get('body/4/value').size,0);
+  assert.ok(seen.get('body/4/value').has(fn.parameters[0].id));
 });
 
 test('a continuing block retains no guard for its local binding outside its scope',()=>{

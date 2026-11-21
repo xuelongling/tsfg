@@ -165,15 +165,18 @@ export function emitCoreSsaFunction(fn, context) {
         declared = outerDeclared;
       } else if (statement.kind === "while") {
         const outer = new Map(definitions), outerDeclared = new Set(declared), keys = [...outer.keys()];
-        const header = newBlock(keys.map(id => bindingTypes.get(id)));
-        branch(header, keys.map(id => outer.get(id)), statement.condition.range);
-        current = header; definitions = new Map(keys.map((id, index) => [id, header.parameters[index].name]));
+        const written = context.loopWrittenBindings?.(statement);
+        const carried = written ? keys.filter(id => !context.preserveDominatingJoinBindings?.has(id) || written.has(id)) : keys;
+        const header = newBlock(carried.map(id => bindingTypes.get(id)));
+        branch(header, carried.map(id => outer.get(id)), statement.condition.range);
+        current = header; definitions = new Map(outer);
+        carried.forEach((id, index) => definitions.set(id, header.parameters[index].name));
         fuel(2, statement.condition.range);
         const condition = emit(statement.condition), incoming = new Map(definitions);
         const loop = newBlock(), exit = newBlock();
         conditional(condition, loop, exit, statement.condition.range);
         current = loop; definitions = new Map(incoming); emitBody(statement.body);
-        if (current) branch(header, keys.map(id => definitions.get(id)), statement.condition.range);
+        if (current) branch(header, carried.map(id => definitions.get(id)), statement.condition.range);
         current = exit; definitions = incoming; declared = outerDeclared;
       }
     }

@@ -107,14 +107,18 @@ function branchGuard(condition,truth,guards,charge) {
     return copyGuards(guards,charge).set(binding.binding,{type:absence.type,equal:(condition.operator==='===')===truth,range:{...condition.range}});
   return guards;
 }
-function stableGuards(guards,body,charge) {
-  const result=copyGuards(guards,charge),stack=[body];
+export function finiteBindingWrites(body,charge) {
+  const written=new Set(),stack=[body];
   while(stack.length) {
     charge();const value=stack.pop();if(!value||typeof value!=='object')continue;
-    if(value.kind==='assignment')result.delete(value.target.binding);
-    if(value.kind==='update')result.delete(value.operand?.binding??value.target?.binding);
+    const binding=value.kind==='assignment'?value.target.binding:
+      value.kind==='update'?value.operand?.binding??value.target?.binding:undefined;
+    if(binding)written.add(binding);
     for(const child of Object.values(value))if(child&&typeof child==='object')stack.push(child);
-  }return result;
+  }return written;
+}
+function stableGuards(guards,body,charge) {
+  return copyGuards(guards,charge,finiteBindingWrites(body,charge));
 }
 
 /** The domain solver's single statement traversal. Normal continuation gates
@@ -149,14 +153,14 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),gate:frame.gate,continues:true,index:0,
         complete:exit=>{frame.gate=exit.gate;frame.continues&&=exit.continues;frame.guards=exit.guards;}});
     }else if(s.kind==='if'||s.kind==='while') {
-      // The loop header gives carried bindings new SSA values. Presence proofs
-      // in its body must be established against those current values.
-      if(s.kind==='while')frame.guards=new Map();
+      // Only the condition and body can replace a local value on the backedge.
+      // The same filtered entry proofs also hold on the zero-iteration exit.
+      if(s.kind==='while'&&frame.guards.size)frame.guards=stableGuards(frame.guards,s,charge);
       const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition);
       if(s.kind==='while') {
         const literal=literalLoopCondition(s,charge);
         frame.gate=literal===true?flow.never:incoming;
-        stack.push({body:s.body,path:p+'/body',guards:new Map(),
+        stack.push({body:s.body,path:p+'/body',guards:frame.guards,
           gate:literal===false?flow.never:incoming,continues:true,index:0});
       }else {
         const arm=literalIfArm(s,charge);
