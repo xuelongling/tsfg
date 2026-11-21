@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {pathToFileURL,fileURLToPath} from 'node:url';
+import wireContract from '../../contracts/common-program-wire-development.json' with {type:'json'};
 const root=process.env.TSFG_PUB3_IMPLEMENTATION_ROOT??fileURLToPath(new URL('../..',import.meta.url)),
   factsApi=await import(pathToFileURL(root+'/compiler/common-program-facts.mjs').href),
   hirApi=await import(pathToFileURL(root+'/compiler/common-program-hir.mjs').href),
@@ -30,5 +31,5 @@ test('original Source3 constructor defaults publish both completion heaps throug
   assert.ok(called.length);assert.ok(called.every(context=>context.language&&!context.normal),'the existing actual solver retains the real default throw');
   const cold=JSON.parse(common.canonical({hir,publication,request:{targets:[]}})),product=coreApi.commonProgramCore(cold.hir,cold.publication,cold.request);
   assert.match(product.text,/tsfg_program.initialize_field/);assert.match(product.text,/tsfg_program.receiver_child/);
-  assert.equal(product.text.match(/, schema = "([^"]+)"/)[1],'sha256:db46cd091d08f951a4a1564e8cf24702dca6137fe0585bbfe256c522e6ee3332');
+  assert.equal(product.text.match(/, schema = "([^"]+)"/)[1],wireContract.privateCore.schemaHash);
 });
