@@ -58,7 +58,11 @@ struct ActualFlow {
   bool edge(size_t from,size_t to,size_t gate=noGate,std::string selected={},std::string filter={},bool equal=true,bool pendingOnly=false) {
     return valid&&(flow.connect({from,to,gate,std::move(selected),std::move(filter),equal,pendingOnly})||proof.reject(flow.error()));
   }
-  bool copy(mlir::Value from,mlir::Value to) { const auto a=value(from),b=value(to);return edge(a,b); }
+  bool copyBranchOperand(mlir::Operation *op,mlir::Value from,mlir::Value to) {
+    const auto a=value(from),b=value(to);
+    const auto gate=role==ArrayFlow::Role::OrderedPayload?normalInputs.at(op):noGate;
+    return edge(a,b,gate,gate==noGate?"":normalAtom);
+  }
   bool call(mlir::Operation *op,const std::string &target,size_t sourceOffset,size_t targetOffset,
             size_t gate=noGate,const std::string &selected={},bool forwardResult=true) {
     if(!proof.functions.count(target))return proof.reject("actual flow call leaves owned closure");
@@ -89,14 +93,17 @@ struct ActualFlow {
     if(!valid)return proof.reject(flow.error());
     if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
       if(!controlOnly&&role==ArrayFlow::Role::OrderedPayload&&!proof.mayTraverse(op,0))return true;
-      for(size_t i=0;i<branch.getDestOperands().size();++i)if(!copy(branch.getDestOperands()[i],branch.getDest()->getArgument(i)))return false;
+      for(size_t i=0;i<branch.getDestOperands().size();++i)
+        if(!copyBranchOperand(op,branch.getDestOperands()[i],branch.getDest()->getArgument(i)))return false;
       return true;
     }
     if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
       if(controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayTraverse(op,0))
-        for(size_t i=0;i<branch.getTrueDestOperands().size();++i)if(!copy(branch.getTrueDestOperands()[i],branch.getTrueDest()->getArgument(i)))return false;
+        for(size_t i=0;i<branch.getTrueDestOperands().size();++i)
+          if(!copyBranchOperand(op,branch.getTrueDestOperands()[i],branch.getTrueDest()->getArgument(i)))return false;
       if(controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayTraverse(op,1))
-        for(size_t i=0;i<branch.getFalseDestOperands().size();++i)if(!copy(branch.getFalseDestOperands()[i],branch.getFalseDest()->getArgument(i)))return false;
+        for(size_t i=0;i<branch.getFalseDestOperands().size();++i)
+          if(!copyBranchOperand(op,branch.getFalseDestOperands()[i],branch.getFalseDest()->getArgument(i)))return false;
       return true;
     }
     if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op)) {
