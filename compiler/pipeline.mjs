@@ -273,22 +273,25 @@ async function compileSnapshot(snapshot, options) {
   return produceBytecode(() => produceCore(highLevel.hir, options));
 }
 
-/** Match the request in the generic compiler printer's final module dictionary.
- * @param {string} core @param {string} inputIdentity
- */
-function hasCheckedCoreInput(core,inputIdentity) {
-  const end=core.trimEnd().length;
-  const closing=core.slice(core.lastIndexOf('\n',end-1)+1,end);
+const coreModulePrefix='"builtin.module"() ({\n';
+
+/** Match a unique field owned by the operation's final dictionary.
+ * @param {string} closing @param {string} identityField @param {string} identity */
+function hasCheckedCoreField(closing,identityField,identity) {
   const suffix='} : () -> ()';
-  if(!core.startsWith('"builtin.module"() ({\n')||!closing.startsWith('}) {')||!closing.endsWith(suffix))return false;
-  const fields=closing.slice(4,-suffix.length),expected='"'+inputIdentity+'"';
-  const tokens=/"(?:[^"\\]|\\.)*"|[{}\[\]]|(?:^|, )(tsfg_core\.input_identity) = /gu;
+  if(!closing.startsWith('}) {')||!closing.endsWith(suffix))return false;
+  const fields=closing.slice(4,-suffix.length),expected='"'+identity+'"';
+  const tokens=/(?:^|,)[ \t]*(?:"((?:[^"\\]|\\.)*)"|(tsfg_core\.(?:input_identity|function_id)))[ \t]*=[ \t]*|"(?:[^"\\]|\\.)*"|[{}\[\]]/gu;
   let depth=0,found=false;
   for(const match of fields.matchAll(tokens)){
-    const [token,key]=match;
-    if(key&&depth===0){
+    const [token,quoted,bare]=match;
+    // The scalar generic printer emits only bare names in the function's
+    // own dictionary. Reject quoted keys, including escaped spellings.
+    if(depth===0&&quoted!==undefined&&(identityField==='tsfg_core.function_id'||quoted===identityField))return false;
+    if(bare===identityField&&depth===0){
+      const canonical=(match.index===0?'':', ')+identityField+' = ';
       const value=match.index+token.length,after=value+expected.length;
-      if(found||!fields.startsWith(expected,value)||(after!==fields.length&&!fields.startsWith(', ',after)))return false;
+      if(found||token!==canonical||!fields.startsWith(expected,value)||(after!==fields.length&&!fields.startsWith(', ',after)))return false;
       found=true;
     }else if(token==='['||token==='{')depth++;
     else if(token===']'||token==='}'){
@@ -300,8 +303,31 @@ function hasCheckedCoreInput(core,inputIdentity) {
 
 /** @param {string} core @param {string} inputIdentity */
 function requireCheckedCoreInput(core,inputIdentity) {
-  if(!hasCheckedCoreInput(core,inputIdentity))
+  const end=core.trimEnd().length,closing=core.slice(core.lastIndexOf('\n',end-1)+1,end);
+  if(!core.startsWith(coreModulePrefix)||!hasCheckedCoreField(closing,'tsfg_core.input_identity',inputIdentity))
     throw new TypeError('r03-core-output: checked input identity differs');
+}
+
+/** @param {string} core @param {string} defaultRoot */
+function hasCheckedGenericRoot(core,defaultRoot) {
+  // A registered generic Core module consists of function definitions. The
+  // printer closes each region before printing that function's own fields.
+  const prefix=coreModulePrefix+'  "func.func"() <{';
+  if(!core.startsWith(prefix))return false;
+  const headerEnd=core.indexOf('\n',prefix.length);
+  if(headerEnd<0||!core.slice(prefix.length,headerEnd).endsWith('}> ({'))return false;
+  const tokens=/"(?:[^"\\]|\\.)*"|[{}]/gu;
+  tokens.lastIndex=headerEnd+1;
+  let depth=1;
+  for(const {0:token,index} of core.matchAll(tokens)){
+    if(token==='{')depth++;
+    else if(token==='}'&&--depth===0){
+      const end=core.indexOf('\n',index);
+      return core.startsWith('\n  }) {',index-3)&&end>index&&
+        hasCheckedCoreField(core.slice(index,end),'tsfg_core.function_id',defaultRoot);
+    }
+  }
+  return false;
 }
 
 async function produceCore(hir, options, lower = undefined, context = undefined) {
@@ -322,6 +348,8 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
   if(common||ordinary||generic)requireCheckedCoreInput(core,inputIdentity);
+  if(generic&&!hasCheckedGenericRoot(core,packetDefaultRoot))
+    throw new TypeError('r03-core-output: first generic function differs from the checked default root');
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
 }
 

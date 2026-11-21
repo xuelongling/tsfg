@@ -124,6 +124,65 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     assert.equal(rejected.status,'tool-error');
     assert.deepEqual(rejected,mismatch);
   });
+  await t.test('generic Core transport binds its first top-level function',async sub=>{
+    const fixture=name=>fs.readFile(new URL('./fixtures/'+name,import.meta.url));
+    const [hirBytes,coreBytes]=await Promise.all([
+      fixture('generic-recursive-conditional-hir-v7.json'),fixture('generic-recursive-conditional-core-v7.mlir'),
+    ]);
+    const checked=readGenericHir(hirBytes),root=checked.closure.roots[0];
+    const header=coreBytes.toString('utf8').split('\n',1)[0];
+    const rootField='tsfg_core.function_id = "'+root+'"';
+    const otherField='tsfg_core.function_id = "sha256:80608d127848d931cf95b6f74401576cde929a49d0f2b89c97e6636b7161c4d4"';
+    assert.equal(root,'sha256:de5deb74229f008bb111bfb9140de6260737fcecfa13f252a01296f9c251006f');
+    const options={core:artifact},wrongRoot={status:'tool-error',code:'r03-d-consumer',
+      message:'r03-core-output: first generic function differs from the checked default root'};
+    sub.after(()=>{stdout=valid;packetStdout=undefined;});
+    // Model the printer's function region and own dictionary, with the checked
+    // bool root first. The archived HIR supplies its real identity and order.
+    const operation=(name,type,fields,bodyFields='')=>'  "func.func"() <{function_type = ('+type+') -> '+type+
+      ', sym_name = "'+name+'"}> ({\n  ^bb0(%arg: '+type+'):\n    "func.return"(%arg)'+bodyFields+' : ('+type+') -> ()\n  }) {'+
+      fields+'} : () -> ()';
+    const modeled=(first,second)=>framedCore([header,first,second,'}'].join('\n'));
+    const boolRoot=operation('route_bool','i1',rootField),other=operation('route_f64','f64',otherField);
+    stdout=modeled(boolRoot,other);
+    const accepted=await compileOwnedCore(checked,options);
+    assert.equal(accepted.status,'ok');
+    assert.deepEqual(Buffer.from(accepted.core,'utf8'),stdout);
+
+    await sub.test('retained same-input Core is rejected before the next stage',{skip:!capture},async()=>{
+      const retained=await fs.readFile(path.join(capture,'tsfg-owned-hir-cli-VGcGjr','stdout.bin'));
+      stdout=Buffer.from(retained);
+      assert.equal(sha256(stdout),'sha256:bb72e86dc34b310a43851ffa15a1f3e3e313e101c65399d4e246d168b710f3fa');
+      packetStdout=Buffer.alloc(0);
+      const first=calls.length;
+      const text=await compileOwnedCore(checked,{...options,optimize:true});
+      const bytecode=await compileOwnedHir(checked,options);
+      assert.equal(text.status,'tool-error');
+      assert.deepEqual(text,wrongRoot);
+      assert.deepEqual(calls.slice(first),[['--optimize'],['--canonicalize']]);
+      assert.deepEqual(bytecode,wrongRoot);
+    });
+    await sub.test('nested and later IDs cannot replace a unique own field',async()=>{
+      for(const fields of [otherField,'nested = [{'+rootField+'}]',
+        'note = '+JSON.stringify(rootField),rootField+', '+rootField]){
+        stdout=modeled(operation('route_f64','f64',fields,' {'+rootField+'}'),boolRoot);
+        const result=await compileOwnedCore(checked,options);
+        assert.equal(result.status,'tool-error');
+        assert.deepEqual(result,wrongRoot);
+      }
+    });
+    await sub.test('alternate spellings cannot hide a duplicate own ID',async()=>{
+      const quoted='"tsfg_core.function_id" = "'+root+'"';
+      const escaped='"\\74sfg_core.function_id" = "'+root+'"';
+      const results=[];
+      for(const duplicate of ['  '+rootField,' '+quoted,' '+escaped]){
+        stdout=modeled(operation('route_bool','i1',rootField+','+duplicate),other);
+        results.push(await compileOwnedCore(checked,options));
+      }
+      assert.deepEqual(results.map(result=>result.status),['tool-error','tool-error','tool-error']);
+      assert.deepEqual(results,[wrongRoot,wrongRoot,wrongRoot]);
+    });
+  });
   await t.test('registered bytecode transport keeps the checked input identity',async sub=>{
     const {hir:stringHir,context}=stringCases()[0];
     const packet=expectedStringPacket(stringHir);
