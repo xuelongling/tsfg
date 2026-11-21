@@ -10,6 +10,8 @@ import {sha256} from '../../compiler/identity.mjs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
+import {readGenericHir} from '../../compiler/generic-hir.mjs';
+import {expectedGenericCore} from './generic-core-package-capture.mjs';
 
 const artifact=path.join(import.meta.dirname,'core-transport-only','core.exe');
 const manifestPath=path.join(path.dirname(artifact),'artifact-manifest.json');
@@ -44,12 +46,14 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   });
   /** @type {string[][]} */
   const calls=[];
+  let coreInput;
   let stdout=valid;
-  t.mock.method(childProcess,'spawnSync',(executable,args)=>{
+  t.mock.method(childProcess,'spawnSync',(executable,args,options)=>{
     assert.equal(executable,artifact);
     assert.ok(Array.isArray(args));
     calls.push(args);
     assert.ok(['--canonicalize','--optimize'].includes(args.at(-1)),'unexpected downstream stage '+args.join(' '));
+    coreInput=options.input;
     return {stdout,stderr:Buffer.alloc(0),status:0,signal:null,output:[null,stdout,Buffer.alloc(0)],pid:0};
   });
   syncBuiltinESMExports();
@@ -72,6 +76,22 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
   const expected={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: invalid UTF-8 in compiler output'};
+  await t.test('AOT entry retains the original owned generic HIR and mode during admission',async()=>{
+    const fixture=name=>fs.readFile(new URL('./fixtures/'+name,import.meta.url));
+    const [conditionalBytes,mappedBytes,conditionalCore]=await Promise.all([
+      fixture('generic-recursive-conditional-hir-v7.json'),fixture('generic-recursive-mapped-hir-v7.json'),
+      fixture('generic-recursive-conditional-core-v7.mlir'),
+    ]);
+    const conditional=readGenericHir(conditionalBytes),mapped=readGenericHir(mappedBytes);
+    const candidate=structuredClone(conditional),options={core:artifact,optimize:false};
+    const first=calls.length;
+    const pending=compileOwnedStaticProgram(candidate,options);
+    Object.assign(candidate,mapped);
+    options.optimize=true;
+    assert.deepEqual(await pending,expected);
+    assert.deepEqual([calls.slice(first),sha256(coreInput)],
+      [[['--canonicalize']],sha256(expectedGenericCore(conditionalCore.toString('utf8'),conditional.closure.roots[0]))]);
+  });
   for(const {name,compile,optimize} of [
     {name:'optimized text',compile:compileOwnedCore,optimize:true},
     {name:'bytecode',compile:compileOwnedHir,optimize:false},

@@ -346,10 +346,15 @@ export async function compileOwnedHir(hir, options) {
  * Existing Source admission is independent; no frontend lock is relaxed here.
  */
 export async function compileOwnedStaticProgram(hir, options) {
-  const result = await produceBytecode(() => produceCore(hir, options));
+  let nativeCore;
+  const result = await produceBytecode(() => {
+    const { core, optimize, factsContext, callPublicationContext } = options;
+    nativeCore = options.nativeCore ?? core;
+    return produceOwnedCore(hir, { core, optimize, factsContext, callPublicationContext });
+  });
   if (result.status !== "ok") return result;
   try {
-    const executable = await verifiedConsumer(options.nativeCore ?? options.core, "core-native");
+    const executable = await verifiedConsumer(nativeCore, "core-native");
     const object = consume(executable, ["--emit-program-object"], result.core);
     // The generated metadata and instance use exactly this original packet;
     // neither a projection nor a re-signed surrogate program enters the link.
