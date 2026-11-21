@@ -37,6 +37,35 @@ test('ordinary full Core requests no kernel permission while preserving actual H
   for(const name of ['direct','relay','entry'])assert.deepEqual(analysis.functions.find(fn=>fn.functionId===byName.get(name).id).effective.hostResources,rw);
   assert.deepEqual(analysis.initializers.find(fn=>fn.functionId===hir.modules.find(m=>m.sourcePath==='/src/main.ts').initializer).effective.hostResources,rw);
 });
+test('verified Counter returns carry a Fixed scalar origin and preserve both resource effects',()=>{
+  for(const [current,fixed]of [[hir,publication],[extendedHir,extendedPublication]]){
+    const report=analyzeCommonProgram(current,fixed);
+    for(const name of ['direct','relay','entry']){
+      const id=current.functions.find(fn=>fn.name===name).id;
+      const record=fixed.contracts.find(row=>row.functionId===id);
+      assert.ok(record.returnOrigins,name);
+      assert.ok(record.returnOrigins.normal.length,name);
+      assert.deepEqual(record.upper.hostResources,rw);
+      const checked=report.functions.find(row=>row.functionId===id);
+      assert.equal(checked.returnOriginStatus.status,'covered');
+      assert.deepEqual(checked.effective.hostResources,rw);
+    }
+    const direct=fixed.contracts.find(row=>row.functionId===current.functions.find(fn=>fn.name==='direct').id);
+    const scalar=current.hostImports[0].returnType;
+    assert.ok(direct.returnOrigins.nodes.some(node=>node.kind==='nonowning'&&node.type===scalar));
+  }
+});
+test('an existing open Counter row remains open and keeps its resource effects',()=>{
+  const old=structuredClone(publication),direct=byName.get('direct').id;
+  const row=old.contracts.find(record=>record.functionId===direct);
+  row.returnOrigins=null;
+  const {digest,...body}=row;
+  row.digest=commonIdentity('published-contract',body);
+  old.expectedDigest=commonIdentity('publication',{scopeDigest:old.scopeDigest,contracts:old.contracts});
+  const report=analyzeCommonProgram(hir,old),actual=report.functions.find(record=>record.functionId===direct);
+  assert.deepEqual(actual.returnOriginStatus,{status:'open',reason:'fixed-return-open'});
+  assert.deepEqual(actual.effective.hostResources,rw);
+});
 test('real Counter kernel request rejects at the original callee occurrence',()=>{
   assert.throws(()=>verifyCommonKernelGroup(hir,publication,{targets:targets(['direct','right'])}),{code:'r03-common-program-kernel-host',primary:{sourceId:'/src/main.ts',start:190,end:203}});
 });

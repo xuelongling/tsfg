@@ -10,6 +10,7 @@ const refs = @import("wire-program-publication-refs.zig");
 const origin = @import("wire-program-return-origin-model.zig");
 const construction_domain = @import("wire-program-return-origin-construction.zig");
 const structural = @import("wire-program-return-origins.zig");
+const host_binding = @import("wire-program-host-binding-check.zig");
 const t = wire.types;
 pub const Pending = enum { mode, control_flow, entry_protocol, raw_input, operation, view, archive_type, literal_protocol, receiver_fields, implicit_protocol, archive_construction, archive_field, archive_global, global_payload, span_transfer, array_view, archive_environment, archive_function, fixed_targets };
 pub const Projection = struct {
@@ -63,6 +64,33 @@ const Flow = struct { heap: origin.Ref, control: origin.Ref };
 fn nativeScalar(common: *const tables.CommonTables, carrier: t.Carrier, expected: t.TypeRef) bool {
     const row = common.types[@intFromEnum(expected)];
     return carrier == .@"type" and carrier.@"type" == expected and row.kind == .scalar and row.native_code != 0;
+}
+
+// The public refcheck boundary has verified this immutable Bundle against its
+// compiled Runtime anchor. Rejoin that same material to this original Host op;
+// the declared return view alone supplies no successful Data result.
+fn counterHost(c: *context.Context, f: *const wire.Function, op: *const wire.instruction.Instruction, material: ?*const host_binding.Bundle) context.Error!bool {
+    const bundle = material orelse return false;
+    const common = &c.program.tables.mode.common;
+    const host = &common.modules.hosts[@intFromEnum(op.data.authorized_host.host)];
+    const scope = common.authority.fixed_publication.stable_scope.host_context orelse return error.InvalidShape;
+    const contract = &bundle.contract;
+    try c.charge(12);
+    try c.require(host.capability == 31 and contract.binding.id == host.capability and
+        std.mem.eql(u8, &host.contract_digest, &contract.digest) and
+        std.mem.eql(u8, &scope.contract_digest, &contract.digest) and
+        std.mem.eql(u8, &host.build_identity_digest, &bundle.buildIdentity.digest) and
+        std.mem.eql(u8, &scope.build_identity_digest, &bundle.buildIdentity.digest) and
+        std.mem.eql(u8, &contract.buildIdentityDigest, &bundle.buildIdentity.digest));
+    try c.require(host.parameter_types.len == 1 and op.operands.len == 1 and op.result != null);
+    const input = host.parameter_types[0];
+    const output = host.return_type;
+    try c.charge(9);
+    return common.types[@intFromEnum(input)].kind == .scalar and common.types[@intFromEnum(input)].native_code == 1 and
+        common.types[@intFromEnum(output)].kind == .scalar and common.types[@intFromEnum(output)].native_code == 1 and
+        nativeScalar(common, f.registers[@intFromEnum(op.operands[0])].carrier, input) and
+        nativeScalar(common, f.registers[@intFromEnum(op.result.?)].carrier, output) and
+        f.registers[@intFromEnum(op.result.?)].view == output;
 }
 
 fn entryCellCarrier(common: *const tables.CommonTables, carrier: t.Carrier, expected: t.TypeRef) bool {
@@ -879,6 +907,12 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
 // Directory/typed current Fn are borrowed from this Context's complete owning
 // validation. Budget must charge that same Context; it is never reset here.
 pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const origin.Directory, budget: *origin.Budget) context.Error!Projection {
+    return projectWithHost(c, function, directory, budget, null);
+}
+
+// Effects passes only the same material already admitted by refcheck, sharing
+// its Context and remaining budget. The original entry keeps Host ops open.
+pub fn projectWithHost(c: *context.Context, function: t.FunctionRef, directory: *const origin.Directory, budget: *origin.Budget, material: ?*const host_binding.Bundle) context.Error!Projection {
     var result = Projection{ .arena = std.heap.ArenaAllocator.init(c.allocator) }; errdefer result.deinit();
     if (c.program.tables.mode != .common) { result.pending = .mode; return result; }
     const f = &c.program.functions[@intFromEnum(function)]; const v = &c.program.tables.mode.common;
@@ -907,6 +941,9 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     if (has_cells and !try directCellHandles(c, f)) { result.pending = .operation; return result; }
     for (f.blocks) |*block| { try c.step(); for (block.instructions) |*op| {
         try c.step(); switch (op.data) {
+            .authorized_host => {
+                if (!try counterHost(c, f, op, material)) { result.pending = .operation; return result; }
+            },
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
             .br, .cond_br, .eh_pack, .@"return", .eh_raise, .eh_unreachable, .eh_cell, .eh_store, .eh_load,
             .global_load, .domain_field_read, .domain_field_store, .domain_array_read, .domain_array_store, .domain_array_length, .domain_array_resize,
@@ -992,6 +1029,11 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
         for (block.instructions, 0..) |*op, ordinal| {
         try c.step(); switch (op.data) {
             .fuel => {}, // Request fuel control is not a Graph5 language exit.
+            .authorized_host => {
+                const view = try builder.view(f, op.result.?) orelse break;
+                const value = try builder.value(.{ .nonowning = .{ .@"type" = view } });
+                try cfg.define(op.result.?, value, flow.control);
+            },
             .eh_cell, .eh_store, .eh_load => try cfg.entryCell(function, block_index, op, flow),
             .receiver_create => try cfg.receiverFrame(op, flow, function_id, block_index, ordinal),
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => flow = try cfg.lexical(op, flow, function_id, block_index, ordinal),

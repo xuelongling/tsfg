@@ -1372,7 +1372,7 @@ const UpperGraph = struct {
         var arena = std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit();
         const directory = try publication_refs.returnOriginDirectory(c, arena.allocator(), fixed.*);
         var budget: origin_model.Budget = .{ .context = c, .charge = publication_refs.graphCharge };
-        var body = try body_origins.project(c, target, &directory, &budget); defer body.deinit();
+        var body = try body_origins.projectWithHost(c, target, &directory, &budget, collector.host_material); defer body.deinit();
         if (body.pending != null) {
             return self.noFixedBodyProof(full, returned, thrown);
         }

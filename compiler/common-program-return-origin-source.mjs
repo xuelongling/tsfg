@@ -11,6 +11,22 @@ import {commonFacets} from './common-program-effects.mjs';
 import {commonLexicalScopes} from './common-program-lexical.mjs';
 import {nativeScalarGlobalLeaf,projectConstructorReturnOrigins,unavailableConstructorReturnOriginOperation} from './common-program-constructor-return-origins.mjs';
 import {commonReceiverActivations} from './common-program-return-origin-receivers.mjs';
+import {commonHostResources} from './common-program-hosts.mjs';
+import {i32TypeId} from './identity.mjs';
+
+// Both publication entry points have already rebuilt and verified the HIR
+// together with its Counter implementation contract and build identity.
+function counterImport(hir) {
+  const host=hir.hostImports?.[0];
+  return hir.hostImports?.length===1&&host?.capabilityId===31&&hir.hostContext?.contract?.binding?.id===31&&
+    host.returnType===i32TypeId&&host.parameterTypes.length===1&&host.parameterTypes[0]===i32TypeId?host:null;
+}
+function counterCall(host,value) {
+  return host!==null&&value.callee===host.id&&value.signatureHash===host.signatureHash&&
+    value.type===i32TypeId&&value.signature?.returnType===i32TypeId&&value.signature.parameters.length===1&&
+    value.signature.parameters[0]===i32TypeId&&value.arguments.length===1&&value.arguments[0].type===i32TypeId;
+}
+
 /** @param {((id:string)=>string|null)|null} [fixedTypeKind] */
 export function commonReturnOriginSource(hir,spend,physical=null,storageProjection=null,fixedTypeKind=null,fixedRecords=null,selectedFunctions=null,fixedCatalogue=null) {
   check(storageProjection===null||storageProjection.status==='complete'||storageProjection.status==='partial','return-origin-storage-open','verified storage directory is unresolved');
@@ -19,6 +35,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
   if(fixedRecords!==null){spend(fixedRecords.size*2+1);for(const [id,row]of fixedRecords)if(row.returnOrigins!==null)fixedUppers.set(id,{...row.upper,returnOrigins:row.returnOrigins});}
   spend(hir.types.length+hir.functions.length+hir.globals.length+hir.environments.length);
   const types=new Map(hir.types.map(row=>[row.id,row])),functions=new Map(hir.functions.map(row=>[row.id,row]));
+  const counter=counterImport(hir),counterResources=counter===null?[]:commonHostResources(hir.hostContext);
   // Only explicit authoring may infer a callee's code-return transfer from its
   // body. A consumer's admitted fixed rows also override a physical model's
   // current-body callable observations; physical capacity is not a code grant.
@@ -218,7 +235,12 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
         const before=graph.checkpoint(),normalHeaps=[];owner=new Set();for(const target of targets.functions){spend();graph.restore(before);const record=consume(target,arguments_,value,environment,selectedCode);throwing ||= record.upper.facets.mayThrow;join(owner,record.normal);join(thrown,record.language);normalHeaps.push(record.normalHeap);if(record.upper.facets.mayThrow){throwHeaps.add(record.languageHeap);appendStates(throwStates,record.throwStates);}}
         graph.restore(graph.mergeStates(normalHeaps));
       }else if(value.kind==='hostCall'){
-        check(false,'return-origin-host-open','Host payload provenance requires a fixed admitted boundary; a Source scalar view is insufficient');
+        check(counterCall(counter,value),'return-origin-host-open','Host return provenance requires the admitted Counter binding');
+        visit(value.arguments[0]);
+        for(const resource of counterResources){
+          spend();hostRead.add(resource);hostWrite.add(resource);
+          for(const access of ['read','write'])witness({kind:'host-resource',resource,access},'operation',value.kind,value.range);
+        }
       }else if(value.kind==='call') {
         spend(value.arguments.length+1);const arguments_=[...(value.receiver?[visit(value.receiver)]:[]),...value.arguments.map((child,index)=>copied(visit(child),value.signature.parameters[index],child.range,'direct-argument:'+index))];
         if(value.callee==='intrinsic:readSpan')owner=arguments_[0];
@@ -384,6 +406,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
 // Malformed data, exhausted work and broken invariants are never caught here.
 export function commonReturnOriginAvailability(hir,callables,methods,spend,storageProjection=null,normalized=null) {
   spend(hir.types.length+hir.functions.length+hir.environments.length+1);
+  const counter=counterImport(hir);
   const types=new Map(hir.types.map(row=>[row.id,row])),functions=new Map(hir.functions.map(fn=>[fn.id,fn])),
     slots=new Map(),reasons=new Map(),dependencies=new Map(),scalarLocal=new Map();
   const normalizedPlans=new Map();for(const plan of normalized?.corePlans??[]){spend();normalizedPlans.set(plan.owner.id,plan);}
@@ -413,7 +436,7 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
       if(typeof row.argumentType==='string')views.push(row.argumentType);
       if(['new','superConstruct','hostCall','functionReference','indirectCall','globalReference','globalTarget'].includes(row.kind))scalar=false;
       if((row.kind==='new'||row.kind==='superConstruct')&&normalized===null)reasons.set(fn.id,'construction-frame-open');
-      if(row.kind==='hostCall')reasons.set(fn.id,'host-return-open');
+      if(row.kind==='hostCall'&&!counterCall(counter,row))reasons.set(fn.id,'host-return-open');
       if(row.kind==='indirectCall'){
         const allowed=callables.site(fn.id,row.range);spend(allowed.functions.length+1);
         if(allowed.top||allowed.functions.length===0)reasons.set(fn.id,'permitted-target-open');

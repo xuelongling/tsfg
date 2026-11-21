@@ -16,6 +16,7 @@ const correspondence = @import("wire-program-source-correspondence.zig");
 const refs = @import("wire-program-publication-refs.zig");
 const origin = @import("wire-program-return-origin-model.zig");
 const body = @import("wire-program-return-origin-body.zig");
+const host_binding = @import("wire-program-host-binding-check.zig");
 const t = wire.types;
 const ins = wire.instruction;
 const reference: t.TypeRef = @enumFromInt(0);
@@ -195,6 +196,85 @@ test "ordinary reference aliases keep private views, both copies and complete br
     try std.testing.expectEqual(@as(usize, 2), copies); try std.testing.expectEqual(copies, copy_heaps);
     try std.testing.expectEqual(@as(usize, 2), untyped);
     try std.testing.expect(before < wire.format.max_work and c.remaining < before and c.remaining > 0);
+}
+
+test "ordinary Counter projection joins the admitted Host material before producing scalar Data" {
+    var fixture: Fixture = undefined; fixture.init();
+    fixture.types[0].kind = .scalar; fixture.types[0].name = "i32"; fixture.types[0].native_code = 1;
+    fixture.instructions[1] = .{ .source = copied, .result = r2, .operands = &.{r0}, .data = .{ .authorized_host = .{ .host = @enumFromInt(0) } } };
+    fixture.instructions[2] = .{ .source = returned_true, .result = null, .operands = &.{r2}, .data = .@"return" };
+    fixture.blocks[0].instructions = fixture.instructions[0..3];
+    fixture.functions[0].blocks = fixture.blocks[0..1];
+    fixture.functions[0].registers = fixture.registers[0..3];
+    const host_properties = [_]t.JsonMember{
+        .{ .key = "host_id", .value = .{ .string = "sha256:" ++ "88" ** 32 } },
+        .{ .key = "signature_hash", .value = .{ .string = "sha256:" ++ "77" ** 32 } },
+        .{ .key = "contract_hash", .value = .{ .string = "sha256:" ++ "aa" ** 32 } },
+    };
+    fixture.operations[1] = .{ .name = "host_call", .view = reference_text, .properties = &host_properties,
+        .result = r2, .operands = &.{r0}, .successors = &.{}, .source = copied };
+    fixture.operations[2] = .{ .name = "func.return", .view = "", .properties = &.{},
+        .result = null, .operands = &.{r2}, .successors = &.{}, .source = returned_true };
+    fixture.plan_blocks[0].operations = fixture.operations[0..3];
+    fixture.abis[0].source_plan.blocks = fixture.plan_blocks[0..1];
+    fixture.abis[0].source_plan.carriers = fixture.carriers[0..3];
+    const concrete = fixture.program.tables.mode.common.storage.concrete;
+    var scalar = concrete[0];
+    scalar.carrier = .{ .layout = .{ .byte_size = 4, .alignment = 4, .reference_count = 0 }, .field_offsets = &.{} };
+    scalar.body = null;
+    fixture.program.tables.mode.common.storage.concrete = &.{ scalar, concrete[1], concrete[2], concrete[3] };
+    fixture.program.tables.mode.common.modules.hosts = &.{.{
+        .id = @splat(0x88), .source = @enumFromInt(0), .name = "Counter", .capability = 31,
+        .signature = @splat(0x77), .start = 0, .end = 10, .parameter_types = &.{reference}, .return_type = reference,
+        .contract_digest = @splat(0xaa), .build_identity_digest = @splat(0xbb),
+    }};
+    fixture.program.tables.mode.common.authority.fixed_publication.stable_scope.host_context =
+        .{ .contract_digest = @splat(0xaa), .build_identity_digest = @splat(0xbb) };
+    const interpretation: origin.Directory = .{
+        .types = &.{ .{ .id = reference_text, .kind = .scalar }, .{ .id = boolean_text, .kind = .scalar } },
+        .functions = directory.functions, .globals = &.{}, .environments = &.{}, .fields = &.{}, .constructions = &.{},
+    };
+    // This direct projector fixture supplies only the typed boundary premises
+    // it consumes. Complete HSC/build/compiled-artifact admission belongs to
+    // refcheck and is not claimed by these self-owned normalized records.
+    var material = std.mem.zeroes(host_binding.Bundle);
+    material.contract.binding.id = 31;
+    material.contract.digest = @splat(0xaa);
+    material.contract.buildIdentityDigest = @splat(0xbb);
+    material.buildIdentity.digest = @splat(0xbb);
+    var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge };
+    try typedInput(&c, &budget, &interpretation);
+    var unbound = try body.project(&c, @enumFromInt(0), &interpretation, &budget);
+    defer unbound.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, .operation), unbound.pending);
+    try std.testing.expect(unbound.graph == null);
+    var projected = try body.projectWithHost(&c, @enumFromInt(0), &interpretation, &budget, &material);
+    defer projected.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projected.pending);
+    const graph = &projected.graph.?;
+    try std.testing.expect((try origin.validateGraph(c.allocator, &interpretation, function_text, graph, &budget)) == .valid);
+    try std.testing.expectEqual(@as(usize, 0), graph.calls.len);
+    try std.testing.expectEqual(@as(usize, 1), graph.normal.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.language.len);
+    var results: usize = 0;
+    for (graph.nodes) |node| if (node == .nonowning) {
+        results += 1;
+        try std.testing.expectEqualStrings(reference_text, node.nonowning.@"type");
+    };
+    try std.testing.expectEqual(@as(usize, 1), results);
+
+    material.contract.digest[0] ^= 1;
+    try std.testing.expectError(error.InvalidShape, body.projectWithHost(&c, @enumFromInt(0), &interpretation, &budget, &material));
+    material.contract.digest[0] ^= 1;
+    material.buildIdentity.digest[0] ^= 1;
+    try std.testing.expectError(error.InvalidShape, body.projectWithHost(&c, @enumFromInt(0), &interpretation, &budget, &material));
+    material.buildIdentity.digest[0] ^= 1;
+    fixture.registers[2].view = boolean;
+    var wrong_view = try body.projectWithHost(&c, @enumFromInt(0), &interpretation, &budget, &material);
+    defer wrong_view.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, .operation), wrong_view.pending);
+    try std.testing.expect(wrong_view.graph == null);
 }
 
 test "ordinary parameter entry Cell retains its original Reference on both exits" {

@@ -32,7 +32,7 @@ test('first publication binds complete fixed-v6 rows including explicit null cap
   assert.equal(publication.scope.profile,'common-program-fixed-v6');
   assert.deepEqual(publication.contracts.map(row=>row.functionId),hir.functions.map(fn=>fn.id));
   assert.equal(publication.scope.functions.length,hir.functions.length);
-  assert.ok(publication.contracts.some(row=>row.returnOrigins===null),'Host-dependent return protocol stays unresolved');
+  assert.ok(publication.contracts.some(row=>row.returnOrigins===null),'an unresolved return protocol keeps its explicit null entry');
   assert.ok(publication.contracts.some(row=>row.returnOrigins?.format.version===5),'closed ordinary Source has a real Graph5');
   assert.deepEqual(publication.scope.storage,{fields:[],results:[]});
 });

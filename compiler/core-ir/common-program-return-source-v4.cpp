@@ -347,7 +347,35 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
     if(targetKind=="globalTarget"){const auto global=string(field(*target,"global"));if(!lookup(direct.writes.size(),global)||!step())return result;direct.writes.insert(global);}
     if(logical){std::vector<Environment> branches;if(!step(2))return result;branches.push_back(std::move(shortEnvironment));branches.push_back(normalEnvironment(environment));replaceEnvironment(environment,branches);restore(mergeStates({shortState,state}));}
   }else if(kind=="new"||kind=="superConstruct")open("receiver frame/result and dynamic-newTarget equations are not connected to Source return-origin production");
-  else if(kind=="hostCall")open("Host payload provenance has no admitted fixed return-origin boundary");
+  else if(kind=="hostCall"){
+    const auto id=string(field(value,"callee"));if(!lookup(p.hosts.size(),id))return result;
+    const auto host=p.hosts.find(id);
+    if(host==p.hosts.end()||p.hostContractHash.empty()||p.hostResources.empty()){
+      open("Host payload provenance has no admitted fixed return-origin boundary");return result;
+    }
+    const auto &contract=field(field(p.hir,"hostContext"),"contract"),&binding=field(contract,"binding");
+    const auto &signature=field(value,"signature");
+    const auto &parameters=items(field(signature,"parameters"));
+    const auto *arguments=field(value,"arguments").getAsArray();
+    const auto i32=tsfg::exception::i32Id;
+    if(!text(p.hostContractHash)||!need(field(contract,"digest").getAsString()==llvm::StringRef(p.hostContractHash)&&
+      field(binding,"id").getAsInteger()==31&&field(binding,"adapter").getAsString()=="counter"&&
+      field(value,"signatureHash").getAsString()==llvm::StringRef(host->second.signature)&&
+      host->second.parameters.size()==1&&llvm::StringRef(host->second.parameters[0])==i32&&llvm::StringRef(host->second.returnType)==i32&&
+      llvm::StringRef(type)==i32&&exact(signature,{"parameters","returnType"})&&parameters.size()==1&&
+      parameters[0].getAsString()==i32&&field(signature,"returnType").getAsString()==i32&&arguments&&arguments->size()==1&&
+      field((*arguments)[0],"type").getAsString()==i32,
+      "Counter Host call does not match its fixed i32 signature"))return result;
+    for(const auto &argument:*arguments)visit(argument);
+    for(const auto &resource:p.hostResources){
+      if(!lookup(direct.hostReads.size(),resource)||!lookup(direct.hostWrites.size(),resource)||!step())return result;
+      direct.hostReads.insert(resource);direct.hostWrites.insert(resource);
+      for(auto mode:{"read","write"})witness(Object{{"kind","host-resource"},{"resource",resource},{"access",mode}},&value);
+    }
+    const auto path=string(field(fn,"sourcePath"));const auto &range=field(value,"range");
+    if(!lookup(p.hostOrigins.size(),functionId)||!text(path)||!step())return result;
+    p.hostOrigins.try_emplace(functionId,HostOrigin{path,{uint32_t(field(range,"start").getAsInteger().value()),uint32_t(field(range,"end").getAsInteger().value())}});
+  }
   else if(kind=="indirectCall"||kind=="call"){
     Refs selectedCode;const bool indirect=kind=="indirectCall";if(indirect)selectedCode=visit(field(value,"expression"));
     std::vector<Refs> arguments;const auto &rawArguments=items(field(value,"arguments"));if(!step(rawArguments.size()+2))return result;arguments.reserve(rawArguments.size()+1);
