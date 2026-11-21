@@ -64,6 +64,11 @@ fn nativeScalar(common: *const tables.CommonTables, carrier: t.Carrier, expected
     return carrier == .@"type" and carrier.@"type" == expected and row.kind == .scalar and row.native_code != 0;
 }
 
+fn entryCellCarrier(common: *const tables.CommonTables, carrier: t.Carrier, expected: t.TypeRef) bool {
+    return nativeScalar(common, carrier, expected) or
+        (carrier == .@"type" and carrier.@"type" == expected and common.types[@intFromEnum(expected)].kind == .reference);
+}
+
 // Entries own the one allocation and initialization before control splits.
 // Handling direct loads and stores does not give Cell values a Data equation.
 fn directCellHandles(c: *context.Context, function: *const wire.Function) context.Error!bool {
@@ -91,12 +96,12 @@ fn directCellHandles(c: *context.Context, function: *const wire.Function) contex
 
 const CFG = struct {
     const FieldAddress = struct { id: origin.Symbol, view: origin.Symbol };
-    const ScalarCell = struct { register: t.RegisterRef, view: t.TypeRef, value: ?origin.Ref = null };
+    const EntryCell = struct { register: t.RegisterRef, view: t.TypeRef, value: ?origin.Ref = null };
     b: *Builder, f: *const wire.Function, receiver_protocol: bool = false,
     collect_scalar_calls: bool = false,
     scalar_call_candidates: std.ArrayListUnmanaged(DirectCall) = .empty,
     cells: []?origin.Ref = &.{}, cell_inputs: []RefList = &.{},
-    scalar_cells: std.AutoHashMapUnmanaged(t.CellRef, ScalarCell) = .empty,
+    entry_cells: std.AutoHashMapUnmanaged(t.CellRef, EntryCell) = .empty,
     receiver_actions: std.ArrayListUnmanaged(ReceiverControl) = .empty,
     field_stores: std.ArrayListUnmanaged(ReceiverField) = .empty,
     heaps: std.ArrayListUnmanaged(origin.Heap) = .empty, controls: std.ArrayListUnmanaged(origin.Control) = .empty,
@@ -275,7 +280,7 @@ const CFG = struct {
         }
     }
     fn registerRef(self: *CFG, ref: t.RegisterRef) origin.Ref { return self.b.registers[@intFromEnum(ref)].?; }
-    fn scalarCell(self: *CFG, function: t.FunctionRef, block: usize, op: *const wire.instruction.Instruction, flow: Flow) context.Error!void {
+    fn entryCell(self: *CFG, function: t.FunctionRef, block: usize, op: *const wire.instruction.Instruction, flow: Flow) context.Error!void {
         const c = self.b.c;
         const common = &c.program.tables.mode.common;
         switch (op.data) {
@@ -284,27 +289,27 @@ const CFG = struct {
                 const own = switch (binding.owner) { .param, .local => |owner| owner == function, else => false };
                 const register = op.result.?;
                 const carrier = self.f.registers[@intFromEnum(register)].carrier;
-                if (block != 0 or !own or !nativeScalar(common, binding.carrier, binding.@"type") or
+                if (block != 0 or !own or !entryCellCarrier(common, binding.carrier, binding.@"type") or
                     carrier != .cell or carrier.cell != cell.binding) { self.b.pending = .operation; return; }
-                try c.charge(self.scalar_cells.count() + 1);
-                const entry = try self.scalar_cells.getOrPut(self.b.allocator, cell.binding);
+                try c.charge(self.entry_cells.count() + 1);
+                const entry = try self.entry_cells.getOrPut(self.b.allocator, cell.binding);
                 if (entry.found_existing) { self.b.pending = .operation; return; }
                 entry.value_ptr.* = .{ .register = register, .view = binding.@"type" };
             },
             .eh_store => |store_data| {
-                const cell = self.scalar_cells.getPtr(store_data.binding) orelse { self.b.pending = .operation; return; };
+                const cell = self.entry_cells.getPtr(store_data.binding) orelse { self.b.pending = .operation; return; };
                 const input = op.operands[1];
                 // The only write must occur in the entry block before any
                 // continuation. Project the original Data, including its origin.
                 if (block != 0 or !store_data.initialize or cell.value != null or cell.register != op.operands[0] or
-                    !nativeScalar(common, self.f.registers[@intFromEnum(input)].carrier, cell.view)) { self.b.pending = .operation; return; }
+                    !entryCellCarrier(common, self.f.registers[@intFromEnum(input)].carrier, cell.view)) { self.b.pending = .operation; return; }
                 cell.value = self.registerRef(input);
             },
             .eh_load => |load| {
-                const cell = self.scalar_cells.get(load.binding) orelse { self.b.pending = .operation; return; };
+                const cell = self.entry_cells.get(load.binding) orelse { self.b.pending = .operation; return; };
                 const value = cell.value orelse { self.b.pending = .operation; return; };
                 const register = op.result.?;
-                if (cell.register != op.operands[0] or !nativeScalar(common, self.f.registers[@intFromEnum(register)].carrier, cell.view)) {
+                if (cell.register != op.operands[0] or !entryCellCarrier(common, self.f.registers[@intFromEnum(register)].carrier, cell.view)) {
                     self.b.pending = .operation; return;
                 }
                 try self.define(register, value, flow.control);
@@ -327,6 +332,23 @@ const CFG = struct {
         try self.b.c.charge(operands.len); const args = try self.b.allocator.alloc(origin.Ref, operands.len);
         for (operands, args) |reg, *value| { try self.b.c.step(); value.* = self.registerRef(reg); }
         try self.connect(target, flow, args);
+    }
+    fn receiverFrame(self: *CFG, op: *const wire.instruction.Instruction, flow: Flow, function_id: origin.Symbol, block: usize, ordinal: usize) context.Error!void {
+        const index = switch (op.data) {
+            inline .receiver_create, .receiver_child => |row| row.construction,
+            else => unreachable,
+        };
+        const role = try self.construction(index) orelse return;
+        const target = if (op.data == .receiver_create) try self.b.typeSymbol(op.data.receiver_create.new_target) else null;
+        if (self.b.pending != null) return;
+        // Account for both the sizing and writing passes of each formatter.
+        try self.b.c.charge(128);
+        const suffix = try std.fmt.allocPrint(self.b.allocator, "receiver-frame:{d}:{d}", .{ block, ordinal });
+        try self.b.c.charge(2 * (function_id.len + suffix.len + 64));
+        const birth = try std.json.Stringify.valueAlloc(self.b.allocator, .{ function_id, op.source.start, op.source.end, suffix }, .{});
+        const parent = if (op.data == .receiver_child) try self.one(self.registerRef(op.operands[0])) else null;
+        const frame = try self.b.value(.{ .receiver_frame = .{ .construction = role, .new_target = target, .parent = parent, .site = birth, .control = flow.control } });
+        try self.define(op.result.?, frame, flow.control);
     }
     fn action(self: *CFG, flow: Flow, name: origin.ReceiverAction, frame: origin.Ref, operands: []const origin.Ref, completion: origin.Completion, view: ?origin.Symbol) context.Error!struct { flow: Flow, value: origin.Ref } {
         const h = try self.heap(.{ .receiver_action = .{ .previous = flow.heap, .control = flow.control, .frames = try self.one(frame), .action = name, .operands = operands, .completion = completion } });
@@ -667,19 +689,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                     if (!view_supported or !std.meta.eql(from.carrier, into.carrier) or from.carrier == .initialization) { b.pending = .view; break; }
                     try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control);
                 },
-                inline .receiver_create, .receiver_child => |row| {
-                    const role = try cfg.construction(row.construction) orelse break;
-                    const target = if (@hasField(@TypeOf(row), "new_target")) try b.typeSymbol(row.new_target) else null;
-                    if (b.pending != null) break;
-                    // Both formatters count then render; prepay both bounded
-                    // passes using the existing per-byte work, before either.
-                    try c.charge(128); const suffix = try std.fmt.allocPrint(a, "receiver-frame:{d}:{d}", .{ block_index, ordinal });
-                    try c.charge(2 * (function_id.len + suffix.len + 64));
-                    const site = try std.json.Stringify.valueAlloc(a, .{ function_id, op.source.start, op.source.end, suffix }, .{});
-                    const parent = if (op.data == .receiver_child) try cfg.one(cfg.registerRef(op.operands[0])) else null;
-                    const frame = try b.value(.{ .receiver_frame = .{ .construction = role, .new_target = target, .parent = parent, .site = site, .control = flow.control } });
-                    try cfg.define(op.result.?, frame, flow.control);
-                },
+                .receiver_create, .receiver_child => try cfg.receiverFrame(op, flow, function_id, block_index, ordinal),
                 .receiver_allocate => |row| {
                     _ = try cfg.construction(row.construction) orelse break;
                     const view = try b.view(f, op.result.?) orelse break;
@@ -759,9 +769,9 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     }
     var has_cells = false;
     for (f.registers) |*reg| { try c.step(); switch (reg.carrier) {
-        .domain, .@"type", .payload, .environment => {},
+        .domain, .@"type", .payload, .environment, .receiver => {},
         .cell => has_cells = true,
-        else => { result.pending = .entry_protocol; return result; },
+        .initialization => { result.pending = .entry_protocol; return result; },
     } }
     for (abi.parameters, abi.argument_types, 0..) |binding, incoming, index| {
         try c.step(); const declared = v.storage.bindings[@intFromEnum(binding)].@"type";
@@ -779,6 +789,13 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
             .common_typed_array_create, .domain_array_create, .domain_copy,
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store,
             .function_make, .eh_invoke, .eh_invoke_indirect, .common_method_invoke, .eh_route => {},
+            .receiver_create => |row| {
+                try c.charge(3);
+                const construction = v.members.constructions[@intFromEnum(row.construction)];
+                if (construction.kind != .explicit or construction.owner != row.new_target or v.types[@intFromEnum(construction.owner)].base != null) {
+                    result.pending = .implicit_protocol; return result;
+                }
+            },
             .global_store => |store_data| {
                 const global = v.modules.globals[@intFromEnum(store_data.global)];
                 const input = f.registers[@intFromEnum(op.operands[0])].carrier;
@@ -850,7 +867,8 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
         for (block.instructions, 0..) |*op, ordinal| {
         try c.step(); switch (op.data) {
             .fuel => {}, // Request fuel control is not a Graph5 language exit.
-            .eh_cell, .eh_store, .eh_load => try cfg.scalarCell(function, block_index, op, flow),
+            .eh_cell, .eh_store, .eh_load => try cfg.entryCell(function, block_index, op, flow),
+            .receiver_create => try cfg.receiverFrame(op, flow, function_id, block_index, ordinal),
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => flow = try cfg.lexical(op, flow, function_id, block_index, ordinal),
             .eh_invoke => |call| try cfg.invoke(call.callee, op, flow, function_id, block_index, ordinal, .direct),
             .common_method_invoke => |call| {

@@ -197,6 +197,47 @@ test "ordinary reference aliases keep private views, both copies and complete br
     try std.testing.expect(before < wire.format.max_work and c.remaining < before and c.remaining > 0);
 }
 
+test "ordinary parameter entry Cell retains its original Reference on both exits" {
+    var fixture: Fixture = undefined; fixture.init();
+    const binding = [_]t.JsonMember{.{ .key = "binding", .value = .{ .string = "ordinary-value" } }};
+    const initialization = binding ++ [_]t.JsonMember{.{ .key = "initialize", .value = .{ .boolean = true } }};
+    const cell: t.CellRef = @enumFromInt(0);
+    const handle = [_]t.RegisterRef{r2};
+    const input = [_]t.RegisterRef{ r2, r0 };
+    const loaded = [_]t.RegisterRef{r3};
+    const copied_value = [_]t.RegisterRef{r4};
+    fixture.registers[2] = .{ .carrier = .{ .cell = cell }, .view = null };
+    fixture.registers[3].view = reference; fixture.registers[4].view = reference;
+    fixture.carriers[2] = "cell:ordinary-value";
+    fixture.carriers[3] = reference_text; fixture.carriers[4] = reference_text;
+    fixture.functions[0].registers = fixture.registers[0..5];
+    fixture.abis[0].source_plan.carriers = fixture.carriers[0..5];
+    fixture.instructions[1] = .{ .source = copied, .result = r2, .operands = &.{}, .data = .{ .eh_cell = .{ .binding = cell } } };
+    fixture.instructions[2] = .{ .source = viewed, .result = null, .operands = &input, .data = .{ .eh_store = .{ .binding = cell, .initialize = true } } };
+    fixture.instructions[3] = .{ .source = viewed_again, .result = r3, .operands = &handle, .data = .{ .eh_load = .{ .binding = cell } } };
+    fixture.instructions[4].result = r4; fixture.instructions[4].operands = &loaded;
+    fixture.instructions[6].operands = &copied_value; fixture.instructions[7].operands = &loaded;
+    fixture.operations[1] = .{ .name = "cell", .view = reference_text, .properties = &binding, .result = r2, .operands = &.{}, .successors = &.{}, .source = copied };
+    fixture.operations[2] = .{ .name = "store", .view = "void", .properties = &initialization, .result = null, .operands = &input, .successors = &.{}, .source = viewed };
+    fixture.operations[3] = .{ .name = "load", .view = reference_text, .properties = &binding, .result = r3, .operands = &handle, .successors = &.{}, .source = viewed_again };
+    fixture.operations[4].result = r4; fixture.operations[4].operands = &loaded;
+    fixture.operations[6].operands = &copied_value; fixture.operations[7].operands = &loaded;
+    var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    var budget = origin.Budget{ .context = &c, .charge = refs.graphCharge }; try typedInput(&c, &budget, &directory);
+    var projected = try body.project(&c, @enumFromInt(0), &directory, &budget); defer projected.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projected.pending);
+    const graph = &projected.graph.?;
+    try std.testing.expect((try origin.validateGraph(c.allocator, &directory, function_text, graph, &budget)) == .valid);
+    try std.testing.expectEqual(@as(usize, 2), graph.normal.len);
+    var paths: u2 = 0;
+    for (graph.normal) |value| {
+        const count = try copiesFromOriginal(graph, value, 0);
+        try std.testing.expect(count <= 1);
+        paths |= @as(u2, 1) << @as(u1, @intCast(count));
+    }
+    try std.testing.expectEqual(@as(u2, 3), paths);
+}
+
 test "ordinary view rejects a different owned physical reference after typed prerequisites" {
     var fixture: Fixture = undefined; fixture.init(); fixture.registers[3].carrier = .{ .@"type" = other };
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };

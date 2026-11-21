@@ -78,6 +78,36 @@ const caller_operations = [_]control.SourcePlanOperation{
 const caller_plan = [_]control.SourcePlanBlock{
     .{ .parameters = &.{r0}, .operations = caller_operations[0..3] }, .{ .parameters = &.{r2}, .operations = caller_operations[3..4] }, .{ .parameters = &.{r3}, .operations = caller_operations[4..5] }, .{ .parameters = &.{r4}, .operations = caller_operations[5..6] }, .{ .parameters = &.{r5}, .operations = caller_operations[6..7] },
 };
+const factory_registers = [_]wire.Register{
+    .{ .carrier = bf, .view = null }, .{ .carrier = bc, .view = b },
+    .{ .carrier = .payload, .view = null }, .{ .carrier = sc, .view = scalar },
+};
+const factory_entry = [_]ins.Instruction{
+    caller_instructions[0],
+    .{ .source = operation, .result = r0, .operands = &.{}, .data = caller_instructions[1].data },
+    .{ .source = operation, .result = null, .operands = &.{r0}, .data = caller_instructions[2].data },
+};
+const factory_blocks = [_]wire.Block{
+    .{ .parameters = &.{}, .instructions = &factory_entry },
+    .{ .parameters = &.{r1}, .instructions = &.{
+        .{ .source = operation, .result = r3, .operands = &.{r1}, .data = .{ .domain_field_read = .{ .receiver_view = b, .member = @enumFromInt(0), .dispatch = @enumFromInt(0) } } },
+        .{ .source = operation, .result = null, .operands = &.{r3}, .data = .@"return" },
+    } },
+    .{ .parameters = &.{r2}, .instructions = &.{.{ .source = operation, .result = null, .operands = &.{r2}, .data = .eh_raise }} },
+};
+const factory_entry_plan = [_]control.SourcePlanOperation{
+    caller_operations[0],
+    .{ .name = "receiver_create", .view = "receiver:" ++ dto.b, .properties = &create_properties, .result = r0, .operands = &.{}, .successors = &.{}, .source = operation },
+    .{ .name = "invoke", .view = "void", .properties = &invoke_properties, .result = null, .operands = &.{r0}, .successors = &.{ @enumFromInt(1), @enumFromInt(2) }, .source = operation },
+};
+const factory_plan = [_]control.SourcePlanBlock{
+    .{ .parameters = &.{}, .operations = &factory_entry_plan },
+    .{ .parameters = &.{r1}, .operations = &.{
+        .{ .name = "field_load", .view = dto.scalar, .properties = &.{.{ .key = "field", .value = .{ .string = dto.field } }}, .result = r3, .operands = &.{r1}, .successors = &.{}, .source = operation },
+        .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r3}, .successors = &.{}, .source = operation },
+    } },
+    .{ .parameters = &.{r2}, .operations = &.{.{ .name = "return_throw", .view = "void", .properties = &.{}, .result = null, .operands = &.{r2}, .successors = &.{}, .source = operation }} },
+};
 const callee_registers = [_]wire.Register{
     .{ .carrier = bf, .view = null }, .{ .carrier = bc, .view = b }, .{ .carrier = bc, .view = b }, .{ .carrier = .payload, .view = null }, .{ .carrier = token, .view = null },
     .{ .carrier = sc, .view = scalar }, .{ .carrier = token, .view = null }, .{ .carrier = uc, .view = undefined_type }, .{ .carrier = bc, .view = b }, .{ .carrier = .payload, .view = null },
@@ -184,13 +214,13 @@ const Fixture = struct {
         self.program = .{ .envelope = std.mem.zeroes(wire.Envelope), .target = std.mem.zeroes(wire.Target), .input_identity = @splat(0), .source_hash = @splat(0), .source_path = "", .source_length = 0, .root_source = @enumFromInt(0), .tables = .{ .sources = &self.sources, .mode = .{ .common = common } }, .functions = &self.functions };
     }
 };
-fn typed(c: *context.Context, budget: *m.Budget) !void {
+fn typed(c: *context.Context, directory: *const m.Directory, budget: *m.Budget) !void {
     for (c.program.functions) |function| {
         try c.anchor(function.declaration, function.source);
         for (function.registers) |register| { try c.carrier(register.carrier); try c.maybeRef(register.view, c.counts().types); }
         for (function.blocks) |block| for (block.instructions) |op| try c.origin(op.source);
     }
-    try layout.check(c); try ssa.check(c); try correspondence.check(c); try m.validateDirectory(c.allocator, &dto.directory, budget);
+    try layout.check(c); try ssa.check(c); try correspondence.check(c); try m.validateDirectory(c.allocator, directory, budget);
 }
 fn rootValue(graph: *const m.Graph, value: m.Ref) !m.Ref {
     var current = value;
@@ -203,7 +233,7 @@ fn rootValue(graph: *const m.Graph, value: m.Ref) !m.Ref {
 }
 test "typed constructor Body projects the original hidden frame call and both continuations" {
     var fixture: Fixture = undefined; fixture.init(); var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
-    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge }; try typed(&c, &budget);
+    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge }; try typed(&c, &dto.directory, &budget);
     var projection = try body.project(&c, @enumFromInt(0), &dto.directory, &budget); defer projection.deinit();
     try std.testing.expectEqual(@as(?body.Pending, null), projection.pending); const graph = &projection.graph.?;
     const validation = try m.validateGraph(c.allocator, &dto.directory, dto.caller, graph, &budget); try std.testing.expect(validation == .pending); try std.testing.expectEqual(m.Pending.construction_frame, validation.pending);
@@ -227,7 +257,7 @@ test "typed constructor Body projects the original hidden frame call and both co
 }
 test "typed fixed constructor leaf preserves the complete native initialization prefix" {
     var fixture: Fixture = undefined; fixture.init(); var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
-    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge }; try typed(&c, &budget);
+    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge }; try typed(&c, &dto.directory, &budget);
     var projection = try body.project(&c, @enumFromInt(1), &dto.directory, &budget); defer projection.deinit(); try std.testing.expectEqual(@as(?body.Pending, null), projection.pending);
     const rows = [_]certificates.FixedContract{ .{ .function_id = dto.caller, .graph = &dto.caller_graph }, .{ .function_id = dto.callee, .graph = &complete_leaf } };
     // The selected leaf is call-free; its own certificate needs no callee input.
@@ -237,4 +267,103 @@ test "typed fixed constructor leaf preserves the complete native initialization 
     const prefix = result.initializations[0]; try std.testing.expectEqualStrings("field:" ++ dto.field, projection.graph.?.heaps[prefix.store].store.selector);
     try std.testing.expect(prefix.base.source == .allocation and projection.graph.?.nodes[prefix.base.source.allocation] == .receiver_input);
     try std.testing.expect(prefix.value.source == .node and projection.graph.?.nodes[prefix.value.source.node] == .literal);
+}
+
+test "typed ordinary Body reads the field of its own fresh constructor completion" {
+    var fixture: Fixture = undefined; fixture.init();
+    fixture.functions[0].name = "factory";
+    fixture.functions[0].role = .ordinary;
+    fixture.functions[0].registers = &factory_registers;
+    fixture.functions[0].blocks = &factory_blocks;
+    const abi = &fixture.abis[0];
+    abi.receiver = null;
+    abi.construction = null;
+    abi.receiver_frame = null;
+    abi.physical_parameters = &.{};
+    abi.result = scalar;
+    abi.result_carrier = sc;
+    abi.source_plan = .{ .carriers = &.{ "receiver:" ++ dto.b, dto.b, payload, dto.scalar }, .blocks = &factory_plan };
+    fixture.abis[1].receiver = @enumFromInt(0);
+    const common = &fixture.program.tables.mode.common;
+    common.storage.bindings = fixture.bindings[1..];
+    common.exceptions.bindings = &.{.{ .binding = @enumFromInt(0), .scope = @enumFromInt(1) }};
+    var fields = common.members.fields[0..1].*;
+    fields[0].binding = @enumFromInt(1);
+    common.members.fields = &fields;
+    var concrete = common.storage.concrete[0..4].*;
+    var body_fields = concrete[1].body.?.fields[0..1].*;
+    body_fields[0].binding = @enumFromInt(1);
+    concrete[1].body.?.fields = &body_fields;
+    common.storage.concrete = &concrete;
+    var constructions = common.members.constructions[0..2].*;
+    constructions[0].function = null;
+    constructions[0].kind = .@"implicit-base";
+    common.members.constructions = &constructions;
+    common.views.dispatch = &.{.{ .field = .{ .view = b, .member = @enumFromInt(0), .arms = &.{.{ .actual = b, .target = @enumFromInt(0), .abi = null }} } }};
+
+    var directory = dto.directory;
+    var functions = directory.functions[0..2].*;
+    functions[0].kind = .source;
+    functions[0].parameter_types = &.{};
+    functions[0].return_type = dto.scalar;
+    functions[0].construction = null;
+    directory.functions = &functions;
+    var roles = directory.constructions[0..2].*;
+    roles[0].kind = .implicit_base;
+    roles[0].function_id = null;
+    directory.constructions = &roles;
+    var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge };
+    try typed(&c, &directory, &budget);
+
+    var projection = try body.project(&c, @enumFromInt(0), &directory, &budget);
+    defer projection.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projection.pending);
+    const graph = &projection.graph.?;
+    for (graph.nodes) |node| try std.testing.expect(node != .receiver_input);
+    const validation = try m.validateGraph(c.allocator, &directory, dto.caller, graph, &budget);
+    try std.testing.expect(validation == .pending);
+    try std.testing.expectEqual(m.Pending.construction_frame, validation.pending);
+    try std.testing.expectEqual(@as(usize, 1), graph.calls.len);
+    const call = graph.calls[0];
+    try std.testing.expectEqualStrings(dto.callee, call.function_id);
+    try std.testing.expect(call.arguments.len == 0 and call.environment == null and call.callee == null);
+    try std.testing.expectEqual(@as(usize, 1), call.receiver.?.len);
+    const frame = graph.nodes[try rootValue(graph, call.receiver.?[0])].receiver_frame;
+    try std.testing.expectEqualStrings(dto.role_b, frame.construction);
+    try std.testing.expectEqualStrings(dto.b, frame.new_target.?);
+    try std.testing.expect(frame.parent == null);
+
+    try std.testing.expectEqual(@as(usize, 1), graph.normal.len);
+    const field = graph.nodes[try rootValue(graph, graph.normal[0])].projection;
+    try std.testing.expectEqualStrings("field:" ++ dto.field, field.selector);
+    try std.testing.expectEqualStrings(dto.b, field.view);
+    try std.testing.expectEqualStrings(dto.scalar, field.@"type");
+    try std.testing.expectEqual(@as(usize, 1), field.bases.len);
+    const loaded = graph.nodes[try rootValue(graph, field.bases[0])].call;
+    try std.testing.expectEqual(@as(usize, 0), loaded.call);
+    try std.testing.expectEqual(m.Completion.normal, loaded.completion);
+
+    var heap = field.heap;
+    var predicate = field.control;
+    for (0..graph.heaps.len) |_| {
+        if (graph.heaps[heap] != .join) break;
+        try std.testing.expectEqual(@as(usize, 1), graph.heaps[heap].join.inputs.len);
+        heap = graph.heaps[heap].join.inputs[0];
+    }
+    for (0..graph.controls.len) |_| {
+        if (graph.controls[predicate] != .join) break;
+        try std.testing.expectEqual(@as(usize, 1), graph.controls[predicate].join.inputs.len);
+        predicate = graph.controls[predicate].join.inputs[0];
+    }
+    try std.testing.expectEqual(@as(usize, 0), graph.heaps[heap].call.call);
+    try std.testing.expectEqual(m.Completion.normal, graph.heaps[heap].call.completion);
+    try std.testing.expectEqual(@as(usize, 0), graph.controls[predicate].call.call);
+    try std.testing.expectEqual(m.Completion.normal, graph.controls[predicate].call.completion);
+
+    try std.testing.expectEqual(@as(usize, 1), graph.language.len);
+    const failure = graph.nodes[try rootValue(graph, graph.language[0])].call;
+    try std.testing.expectEqual(@as(usize, 0), failure.call);
+    try std.testing.expectEqual(m.Completion.language, failure.completion);
+    try std.testing.expect(failure.@"type" == null);
 }
