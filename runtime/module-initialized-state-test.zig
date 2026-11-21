@@ -31,12 +31,15 @@ const load1: ins.Instruction = .{ .source=anchor,.result=r2,.operands=&empty,.da
 const store0: ins.Instruction = .{ .source=anchor,.result=null,.operands=&value,.data=.{ .global_store=.{ .global=@enumFromInt(0),.initialize=false } } };
 const ret: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.@"return" };
 const loop_fuel: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .fuel=.{ .event=.condition } } };
-const Case = enum { linear, diamond, stable_loop, double, missing_arm, missing_arm_return, missing_unused, before_init, ordinary_store, wrong_binding, repeated_loop, unreachable_repeat };
+const choose_arm: ins.Instruction = .{ .source=anchor,.result=null,.operands=&condition,.data=.{ .cond_br=.{ .true_destination=@enumFromInt(1),.false_destination=@enumFromInt(2),.true_count=0 } } };
+const merge: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(3) } } };
+const Case = enum { linear, reversed, nonordinal, diamond, reversed_arm, stable_loop, double, missing_arm, missing_arm_return, missing_unused, before_init, ordinary_store, wrong_binding, repeated_loop, unreachable_repeat };
 const Fixture = struct {
     program: wire.Program,
     instructions: [16]ins.Instruction,
     blocks: [4]wire.Block,
     functions: [1]wire.Function,
+    modules: [1]@typeInfo(@FieldType(tables.CommonModules,"modules")).pointer.child,
     abis: [1]storage.CommonAbi,
     bindings: [2]storage.CommonBinding,
     sources: [1]tables.Source,
@@ -55,6 +58,7 @@ const Fixture = struct {
         var count: usize=1;
         switch(case) {
             .linear => {},
+            .reversed,.nonordinal => { self.instructions[2]=init1; self.instructions[3]=init0; },
             .double => { self.instructions[0..7].*=.{constant,bool_op,init0,init0,init1,load0,ret}; self.blocks[0].instructions=self.instructions[0..7]; },
             .before_init => { self.instructions[0..6].*=.{constant,bool_op,load0,init0,init1,ret}; },
             .ordinary_store => { self.instructions[0..7].*=.{constant,bool_op,store0,init0,init1,load0,ret}; self.blocks[0].instructions=self.instructions[0..7]; },
@@ -62,21 +66,23 @@ const Fixture = struct {
             .wrong_binding => { self.instructions[0..5].*=.{constant,bool_op,init0,load1,ret}; self.blocks[0].instructions=self.instructions[0..5]; },
             .diamond,.missing_arm,.missing_arm_return => {
                 count=4;
-                self.instructions[0..10].*=.{constant,bool_op,init1,
-                    .{ .source=anchor,.result=null,.operands=&condition,.data=.{ .cond_br=.{ .true_destination=@enumFromInt(1),.false_destination=@enumFromInt(2),.true_count=0 } } },
-                    init0,.{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(3) } } },
-                    init0,.{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(3) } } },load0,ret};
+                self.instructions[0..10].*=.{constant,bool_op,init0,choose_arm,init1,merge,init1,merge,load1,ret};
                 self.blocks=.{ .{ .parameters=&empty,.instructions=self.instructions[0..4] },.{ .parameters=&empty,.instructions=self.instructions[4..6] },.{ .parameters=&empty,.instructions=self.instructions[6..8] },.{ .parameters=&empty,.instructions=self.instructions[8..10] } };
                 if(case!=.diamond)self.blocks[2].instructions=self.instructions[7..8];
-                if(case==.missing_arm_return)self.instructions[8]=load1;
+                if(case==.missing_arm_return)self.instructions[8]=load0;
+            },
+            .reversed_arm => {
+                count=4;
+                self.instructions[0..11].*=.{constant,bool_op,choose_arm,init0,init1,merge,init1,init0,merge,load0,ret};
+                self.blocks=.{ .{ .parameters=&empty,.instructions=self.instructions[0..3] },.{ .parameters=&empty,.instructions=self.instructions[3..6] },.{ .parameters=&empty,.instructions=self.instructions[6..9] },.{ .parameters=&empty,.instructions=self.instructions[9..11] } };
             },
             .stable_loop,.repeated_loop => {
                 count=3;
                 const repeated=case==.repeated_loop;
-                self.instructions[0..10].*=.{constant,bool_op,init1,init0,
+                self.instructions[0..10].*=.{constant,bool_op,init0,init1,
                     .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(1) } } },loop_fuel,init0,
                     .{ .source=anchor,.result=null,.operands=&condition,.data=.{ .cond_br=.{ .true_destination=@enumFromInt(1),.false_destination=@enumFromInt(2),.true_count=0 } } },load0,ret};
-                if(repeated)self.instructions[3]=self.instructions[4];
+                if(repeated){self.instructions[3]=self.instructions[4]; self.instructions[6]=init1;}
                 self.blocks[0]=.{ .parameters=&empty,.instructions=self.instructions[0..if(repeated)4 else 5] };
                 if(!repeated)self.instructions[6]=self.instructions[7];
                 self.blocks[1]=.{ .parameters=&empty,.instructions=self.instructions[5..if(repeated)8 else 7] };
@@ -96,7 +102,9 @@ const Fixture = struct {
             .{ .id=@splat(0x41),.source=@enumFromInt(0),.name="g0",.@"type"=scalar,.carrier=sc,.writable=true,.generated=false,.start=0,.end=100,.decl_key=.{ .kind=.global,.name="g0",.path=&.{"g0"},.source_path="/module-initialized-state.ts" },.binding=@enumFromInt(0) },
             .{ .id=@splat(0x42),.source=@enumFromInt(0),.name="g1",.@"type"=scalar,.carrier=sc,.writable=true,.generated=false,.start=0,.end=100,.decl_key=.{ .kind=.global,.name="g1",.path=&.{"g1"},.source_path="/module-initialized-state.ts" },.binding=@enumFromInt(1) },
         };
-        common.modules.modules=&.{.{ .id=@splat(0x50),.source=@enumFromInt(0),.external=false,.initializer=@enumFromInt(0),.dependencies=&.{},.globals=&.{ @enumFromInt(0),@enumFromInt(1) },.imports=&.{},.exports=&.{} }};
+        const source_order: []const t.GlobalRef=if(case==.nonordinal)&.{@enumFromInt(1),@enumFromInt(0)}else &.{@enumFromInt(0),@enumFromInt(1)};
+        self.modules=.{.{ .id=@splat(0x50),.source=@enumFromInt(0),.external=false,.initializer=@enumFromInt(0),.dependencies=&.{},.globals=source_order,.imports=&.{},.exports=&.{} }};
+        common.modules.modules=&self.modules;
         common.modules.initialization=&.{@enumFromInt(0)};
         self.program=.{ .envelope=std.mem.zeroes(wire.Envelope),.target=std.mem.zeroes(wire.Target),.input_identity=@splat(0),.source_hash=@splat(0),.source_path="",.source_length=0,.root_source=@enumFromInt(0),.tables=.{ .sources=&self.sources,.mode=.{ .common=common } },.functions=&self.functions };
     }
@@ -132,6 +140,9 @@ fn check(case: Case, rejected: bool) !void {
     try std.testing.expect(c.remaining>0 and c.remaining<wire.format.max_work);
 }
 test "module cell accepts one init before observation" { try check(.linear,false); }
+test "module return rejects initialization in reverse source order" { try check(.reversed,true); }
+test "module cell uses source order when storage indexes differ" { try check(.nonordinal,false); }
+test "module return rejects one branch initializing in reverse source order" { try check(.reversed_arm,true); }
 test "module cell accepts mutually exclusive init arms" { try check(.diamond,false); }
 test "module cell accepts initialized loop without reinitialization" { try check(.stable_loop,false); }
 test "module cell rejects two consecutive initializations" { try check(.double,true); }

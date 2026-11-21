@@ -40,6 +40,7 @@ fn edgeTargets(op: *const ins.Instruction) EdgeTargets {
     };
 }
 const GlobalRefs = std.AutoHashMapUnmanaged(t.GlobalRef, void);
+const GlobalInitializationUse = struct { needed: bool=false, following: ?t.GlobalRef=null };
 const Predecessors = struct {
     bits: Bits, word: usize=0,
     fn next(self: *Predecessors, c: *Context) Error!?usize {
@@ -2023,7 +2024,7 @@ const Graph = struct {
         return if (resolved == targets[0]) resolved else null;
     }
 
-    fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []bool, observed: *GlobalRefs, nested_targets: *NestedCodeTargets) Error!void {
+    fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []GlobalInitializationUse, observed: *GlobalRefs, nested_targets: *NestedCodeTargets) Error!void {
         // An imported ordinary call can reach the initializer's own Globals
         // through a callback. Visit exact targets from block 0, once per body.
         const c=self.c; try c.charge(3); const functions=c.program.functions;
@@ -2074,7 +2075,7 @@ const Graph = struct {
                         try c.charge(2); const index=@intFromEnum(ref);
                         if(globals[index].source==self.f.source) {
                             try observed.put(c.allocator,ref,{});
-                            used[index]=true;
+                            used[index].needed=true;
                         }
                         break;
                     }
@@ -2092,13 +2093,17 @@ const Graph = struct {
         // GlobalRef identifies one program cell. Permission/defining-module
         // ownership remains the independent module-contracts obligation.
         try c.charge(globals.len);
-        const used=try c.allocator.alloc(bool,globals.len); defer c.allocator.free(used); @memset(used,false);
+        const used=try c.allocator.alloc(GlobalInitializationUse,globals.len); defer c.allocator.free(used); @memset(used,.{});
         var own_globals: []const t.GlobalRef=&.{};
         for(modules.modules) |module| {
             try c.step(); if(@intFromEnum(module.initializer)==self.function and module.source==self.f.source) { own_globals=module.globals; break; }
         }
-        if(complete) for(own_globals) |ref| {
-            try c.step(); used[@intFromEnum(ref)]=true;
+        if(complete) for(own_globals,0..) |ref,ordinal| {
+            try c.step();
+            used[@intFromEnum(ref)]=.{
+                .needed=true,
+                .following=if(ordinal+1<own_globals.len)own_globals[ordinal+1] else null,
+            };
         };
         var nested_targets: NestedCodeTargets = .empty;
         defer nested_targets.deinit(c.allocator);
@@ -2113,7 +2118,7 @@ const Graph = struct {
             for(block.instructions) |op| {
                 try c.step(); switch(op.data) {
                     inline .global_load,.global_store=>|v| {
-                        const index=@intFromEnum(v.global); if(globals[index].source==self.f.source)used[index]=true;
+                        const index=@intFromEnum(v.global); if(globals[index].source==self.f.source)used[index].needed=true;
                     },
                     inline .eh_invoke,.eh_invoke_indirect=>|v,kind| if(own_globals.len!=0) {
                         try c.step();
@@ -2128,8 +2133,8 @@ const Graph = struct {
                 }
             }
         }
-        for(used,0..) |needed,index| {
-            try c.step(); if(!needed)continue;
+        for(used,0..) |usage,index| {
+            try c.step(); if(!usage.needed)continue;
             const ref: t.GlobalRef=@enumFromInt(index);
             try c.charge(4*self.f.blocks.len);
             var initializes: [256]bool=undefined; @memset(initializes[0..self.f.blocks.len],false);
@@ -2166,6 +2171,9 @@ const Graph = struct {
                     switch(op.data) {
                         .global_store=>|v| if(v.global==ref) {
                             if(v.initialize) { try c.require(state==1); state=2; } else try c.require(state==2);
+                        } else if(complete and v.initialize and usage.following==v.global) {
+                            // Adjacent stores enforce the complete source order transitively.
+                            try c.require(state==2);
                         },
                         .global_load=>|v| if(v.global==ref) { try c.require(state==2); },
                         .@"return"=>if(complete)try c.require(state==2),
