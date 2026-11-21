@@ -46,7 +46,7 @@ HIR and bytecode versions, stable logical identities, source anchors and machine
 codes are specified in [HIR](../contracts/hir.md) and
 [R04](../contracts/bytecode.md).
 
-## Restore generic HIR from saved package results
+## Read saved generic package responses
 
 Pass the original canonical package instantiation request and its matching
 response to recover checked HIR after the frontend session has closed.
@@ -56,10 +56,18 @@ node tooling/tsfgc.mjs --input-kind generic-package-response --input request.jso
 ```
 
 The CLI verifies the request identity, package, roots and concrete instance
-facts before writing canonical HIR to stdout. A saved frontend diagnostic is
-returned as structured JSON with exit 3. A mismatched pair or invalid input
-exits 2 with a diagnostic on stderr. This command reads both files directly
-and invokes no frontend or Runtime process.
+facts before writing canonical HIR to stdout.
+
+Pass the original export request and its matching response to write the owned
+package. Stdout contains the exact canonical package bytes.
+
+```text
+node tooling/tsfgc.mjs --input-kind generic-package-response --input export-request.json --package-response export-response.json --emit package
+```
+
+Both modes read the saved request and response directly. A saved frontend
+diagnostic is returned as structured JSON with exit 3. A mismatched pair or
+invalid input exits 2 with a diagnostic on stderr.
 
 Applicable Node tests are discovered under `tests/r00`, `tests/r01`,
 `tests/r02b` and `tests/r03`. Native checks require the actual locked frontend,

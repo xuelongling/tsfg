@@ -25,7 +25,7 @@ const responseBytes = () => bytes(instantiate.response);
 const frontend = () => import('../../compiler/generic-package-frontend.mjs');
 const rejected = error => error instanceof Error && /^(generic-package|generic-instance|generic-hir)-/.test(Reflect.get(error, 'code'));
 
-test('CLI restores checked Generic HIR from the original saved pair', async t => {
+test('CLI writes owned Generic packages and restores HIR from the original saved pairs', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'tsfg-generic-package-cli-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const request = join(directory, 'request.json');
@@ -43,6 +43,10 @@ test('CLI restores checked Generic HIR from the original saved pair', async t =>
   };
   const expected = (await frontend()).readGenericPackageFrontendResponse(requestBytes(), responseBytes());
   assert.equal(expected.status, 'ok');
+  const savedPackage = await run(exported.request, exported.response, [], 'package');
+  assert.equal(savedPackage.status, 0, savedPackage.stderr);
+  assert.equal(savedPackage.stderr, '');
+  assert.equal(savedPackage.stdout, canonical(instantiate.request.package));
   const restored = await run(instantiate.request, instantiate.response);
   assert.equal(restored.status, 0, restored.stderr);
   assert.equal(restored.stderr, '');
@@ -58,6 +62,25 @@ test('CLI restores checked Generic HIR from the original saved pair', async t =>
     assert.equal(wrongOperation.stdout, '');
     assert.match(wrongOperation.stderr, /expected instantiate request/);
   }
+  const wrongPackageOperation = await run(instantiate.request, instantiate.response, [], 'package');
+  assert.equal(wrongPackageOperation.status, 2);
+  assert.equal(wrongPackageOperation.stdout, '');
+  assert.match(wrongPackageOperation.stderr, /expected export request/);
+  const crossedExport = await run(exportError.request, exported.response, [], 'package');
+  assert.equal(crossedExport.status, 2);
+  assert.equal(crossedExport.stdout, '');
+  assert.match(crossedExport.stderr, /^generic-package-io-/);
+  const exportDiagnostic = await run(exportError.request, exportError.response, [], 'package');
+  assert.equal(exportDiagnostic.status, 3);
+  assert.equal(exportDiagnostic.stderr, '');
+  assert.equal(exportDiagnostic.stdout, canonical({ status: 'error', requestId: exportError.response.requestId,
+    diagnostic: exportError.response.diagnostic }) + '\n');
+  const wrongKind = spawnSync(process.execPath, [cli, '--input', request, '--emit', 'package'],
+    { windowsHide: true, encoding: 'utf8' });
+  assert.equal(wrongKind.error, undefined);
+  assert.equal(wrongKind.status, 2);
+  assert.equal(wrongKind.stdout, '');
+  assert.match(wrongKind.stderr, /^r03-cli-options:/);
   const failure = { ...instantiate.response, status: 'error',
     diagnostic: { kind: 'budget', code: 0, detail: 'limit', primary: null } };
   delete failure.value;

@@ -63,6 +63,7 @@ try {
   const borrowProof = emit === "borrow-proof";
   const fixedCommonCore = inputKind === "hir" && emit === "core" && hasFixedCommon;
   const emitModes = ["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof", "gpu-binding-plan"];
+  if (packageResponse) emitModes.push("package");
   if (!emitModes.includes(emit))
     throw new TypeError("r03-cli-options: unsupported --emit (expected " + emitModes.join("|") + ")");
   if (options.has("--gpu-request") && !gpuBindingPlan)
@@ -79,18 +80,20 @@ try {
       ["--vm", "--requests"].some(key => options.has(key))))
     throw new TypeError("r03-cli-options: Common Core requires --publication, --kernel-request and --core without Runtime inputs");
   if (packageResponse) {
-    if (emit !== "hir" || !options.has("--package-response") || options.size !== 4)
-      throw new TypeError("r03-cli-options: generic-package-response requires --input <request.json>, --package-response <response.json> and --emit hir");
+    if ((emit !== "hir" && emit !== "package") || !options.has("--package-response") || options.size !== 4)
+      throw new TypeError("r03-cli-options: generic-package-response requires --input <request.json>, --package-response <response.json> and --emit hir|package");
     const request = await readStableInputFile(options.get("--input"), checkGenericPackageIoFileSize, "Generic package RPC");
     const response = await readStableInputFile(options.get("--package-response"), checkGenericPackageIoFileSize, "Generic package RPC");
-    const restored = readGenericPackageFrontendResponse(request, response, { operation: "instantiate" });
+    const restored = readGenericPackageFrontendResponse(request, response, { operation: emit === "package" ? "export" : "instantiate" });
     if (restored.status === "error") {
       process.stdout.write(canonical(restored) + "\n");
       process.exitCode = 3;
-    } else if ("hir" in restored) {
+    } else if (emit === "package" && "packageBytes" in restored) {
+      process.stdout.write(restored.packageBytes);
+    } else if (emit === "hir" && "hir" in restored) {
       process.stdout.write(printHir(restored.hir));
     } else {
-      throw new TypeError("generic-package-io-operation: checked instantiation response did not contain HIR");
+      throw new TypeError("generic-package-io-operation: checked response lacked the requested output");
     }
   } else if (gpuBindingPlan || borrowProof) {
     const hasCommonInputs = options.has("--publication") && options.has("--kernel-request") &&
