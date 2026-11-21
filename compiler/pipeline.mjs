@@ -20,6 +20,7 @@ import {isSelectedNullableContext} from './nullable-common.mjs';
 import {isTypedArrayContext} from './typed-array-hir.mjs';
 import {typedArrayHirFormat} from './typed-array-project.mjs';
 import {isOptionalPropertyContext,optionalPropertyHirFormat} from './optional-property-hir.mjs';
+import {referenceHirFormat} from './reference-hir.mjs';
 import {prepareFiniteCore} from './finite-core-emitter.mjs';
 import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
@@ -350,13 +351,15 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const exception = family === 'tsfg.exception-hir-candidate';
   const closure = family === 'tsfg.closure-hir-candidate';
   const optional = family === optionalPropertyHirFormat.family;
+  const reference = factsContext === undefined && family === referenceHirFormat.family;
+  const coreInput = reference ? hir.context.factsDigest : inputIdentity;
   const packetInput = common || generic || ordinary ? inputIdentity : undefined;
   // Only scalar packets use the first function descriptor as the default.
   const scalar = !common && family === undefined && hir.modules === undefined;
   const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
-  if(common||ordinary||generic||exception||closure||optional)requireCheckedCoreInput(core,inputIdentity);
+  if(common||ordinary||generic||exception||closure||optional||reference)requireCheckedCoreInput(core,coreInput);
   if(generic&&!hasCheckedGenericRoot(core,packetDefaultRoot))
     throw new TypeError('r03-core-output: first generic function differs from the checked default root');
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };

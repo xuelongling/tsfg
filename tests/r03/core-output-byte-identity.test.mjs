@@ -14,6 +14,8 @@ import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {readGenericHir} from '../../compiler/generic-hir.mjs';
+import {decodeReferenceFacts} from '../../compiler/reference-facts.mjs';
+import {buildReferenceHir} from '../../compiler/reference-hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {expectedGenericCore} from './generic-core-package-capture.mjs';
 import {readClosureSourceCase} from './closure-core-consumer-cases.mjs';
@@ -59,6 +61,7 @@ const closureCapture=process.env.TSFG_R03_CLOSURE_PAIR_CAPTURE;
 const finiteCapture=process.env.TSFG_R03_FINITE_PAIR_CAPTURE;
 const commonCapture=process.env.TSFG_R03_COMMON_PAIR_CAPTURE;
 const exceptionCapture=process.env.TSFG_R03_EXCEPTION_PAIR_CAPTURE;
+const referenceCapture=process.env.TSFG_R03_REFERENCE_PAIR_CAPTURE;
 const mismatch={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked input identity differs'};
 
 test('Core transport preserves valid bytes and rejects malformed stdout before dependent stages',async t=>{
@@ -72,6 +75,7 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   const calls=[];
   let coreInput;
   let dependentInput;
+  /** @type {Buffer} */
   let stdout=valid;
   /** @type {Buffer | undefined} */
   let packetStdout;
@@ -240,6 +244,41 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
         {status:'tool-error',code:'r03-d-consumer',message:'r03-optional-property-context: unexpected publication'});
       assert.equal(calls.length,first);
     });
+  });
+  await t.test('Reference Core transport keeps the verified facts identity',async sub=>{
+    async function reference(name,directory,coreHash) {
+      const fixture=suffix=>new URL('./fixtures/reference-source/'+name+'.'+suffix,import.meta.url);
+      const [bytes,binding]=await Promise.all([fs.readFile(fixture('facts.json')),fs.readFile(fixture('binding.json'),'utf8')]);
+      const hir=buildReferenceHir(decodeReferenceFacts(bytes,JSON.parse(binding)));
+      const lowered=lowerFormalHir(hir);
+      if(!referenceCapture)return {hir,lowered,core:framedCore(lowered)};
+      const root=path.join(referenceCapture,directory,'0001');
+      const original=await fs.readFile(path.join(root,'stdin.bin'));
+      const core=await fs.readFile(path.join(root,'stdout.bin'));
+      assert.deepEqual(Buffer.from(lowered),original);
+      assert.equal(sha256(core),'sha256:'+coreHash);
+      return {hir,lowered,core};
+    }
+    const [requested,foreign]=await Promise.all([
+      reference('terminal-reference-if','reference-core-terminal-if',
+        'df921a43b40441640f45b509a6d7fa077056f226d4dd276641669660528aab51'),
+      reference('ancestor-super-method','reference-core-ancestor-super',
+        '7f44f9f60202b812c865e5f9033eb1f8e03fcb28e114330a1e7cc17e3802e860'),
+    ]);
+    assert.notEqual(requested.hir.context.factsDigest,foreign.hir.context.factsDigest);
+    sub.after(()=>{stdout=valid;packetStdout=undefined;});
+    const options={core:artifact},first=calls.length;
+    stdout=requested.core;
+    const accepted=await compileOwnedCore(requested.hir,options);
+    assert.equal(accepted.status,'ok');
+    assert.deepEqual(Buffer.from(accepted.core,'utf8'),requested.core);
+    assert.equal(coreInput,requested.lowered);
+    stdout=foreign.core;packetStdout=Buffer.alloc(0);
+    const actual=await compileOwnedCore(requested.hir,options);
+    const bytecode=await compileOwnedHir(requested.hir,{...options,optimize:true});
+    assert.deepEqual(actual,mismatch);
+    assert.deepEqual(bytecode,mismatch);
+    assert.deepEqual(calls.slice(first),[['--canonicalize'],['--canonicalize'],['--optimize']]);
   });
   await t.test('registered Core transport rejects a foreign input before bytecode',async sub=>{
     const {hir:foreignHir}=stringCases()[0];
