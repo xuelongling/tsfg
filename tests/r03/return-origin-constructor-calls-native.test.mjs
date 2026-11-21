@@ -31,7 +31,7 @@ test('typed scalar constructor arguments retain their original initialized paylo
 });
 
 test('scalar constructor arguments retain caller input identity', async () => {
-  await nativeUnit({ source: 'runtime/return-origin-constructor-scalar-formal-test.zig', prefix: 'r03-constructor-scalar-formal-', expectedPasses: 3 });
+  await nativeUnit({ source: 'runtime/return-origin-constructor-scalar-formal-test.zig', prefix: 'r03-constructor-scalar-formal-', expectedPasses: 4 });
 });
 
 test('scalar constructor arguments respect typed boundaries and full effect permissions', async () => {

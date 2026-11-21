@@ -67,6 +67,9 @@ pub const Analysis = struct {
     // Exact absent direct-Base normal control and its single-predecessor
     // receiver continuations. Empty/uncomputed controls confer no such fact.
     absent_base_controls: []const bool = &.{},
+    // Original empty output refs with a verified inactive completion. This
+    // proof is borrowed only for the matching graph and completion.
+    inactive_base_outputs: ?struct { graph: *const model.Graph, values: [2][]const bool } = null,
     // Child Analysis objects and ALL their arena chunks belong to this parent
     // arena. calls[].analysis is a read-only borrowed view: never separately
     // deinit it or allocate through its arena after this parent result moves.
@@ -468,7 +471,7 @@ const Engine = struct {
         const exits = analysis.input_exits orelse return false;
         try self.budget.spend(6);
         if (analysis.normal_live != exits.normal.live or analysis.language_live != exits.language.live or
-            may_throw != analysis.language_live or analysis.normal_live == analysis.language_live) return false;
+            may_throw != analysis.language_live or (!analysis.normal_live and !analysis.language_live)) return false;
         const normal = exits.normal;
         const original = Atom{ .source = .{ .allocation = exits.input }, .category = .object };
         if (normal.live and (normal.unbound or normal.missing_fields == null or normal.missing_fields.?.len != 0 or
@@ -493,6 +496,27 @@ const Engine = struct {
         }
         return true;
     }
+    fn baseNormalContinuation(self: *Engine, row: @FieldType(model.Heap, "receiver_action"), call: Ref) Error!bool {
+        var heap = row.previous;
+        for (0..self.graph.heaps.len) |_| {
+            try self.budget.step();
+            switch (self.graph.heaps[heap]) {
+                .join => |join| { if (join.inputs.len != 1) return false; heap = join.inputs[0]; },
+                .call => |original| { if (original.call != call or original.completion != .normal) return false; break; },
+                else => return false,
+            }
+        } else return false;
+        var control = row.control;
+        for (0..self.graph.controls.len) |_| {
+            try self.budget.step();
+            switch (self.graph.controls[control]) {
+                .join => |join| { if (join.inputs.len != 1) return false; control = join.inputs[0]; },
+                .call => |original| return original.call == call and original.completion == .normal,
+                else => return false,
+            }
+        }
+        return false;
+    }
     fn bindsExplicitBase(self: *Engine, parent: Ref, row: @FieldType(model.Heap, "receiver_action"), selected: []const Atom) Error!bool {
         for (self.frames) |child| {
             try self.budget.step();
@@ -504,6 +528,9 @@ const Engine = struct {
             for (self.calls.items) |fact| {
                 try self.budget.step();
                 if (fact.call != value.call.call or self.frames[fact.receiver].parent != parent) continue;
+                // The failed path may have initialized this same child.
+                // Only the original normal World can authorize the bind.
+                if (fact.analysis.language_live and !try self.baseNormalContinuation(row, fact.call)) return false;
                 const original = Atom{ .source = .{ .allocation = fact.receiver }, .category = .object };
                 const child_binding = self.worlds[row.previous].bindings[fact.receiver];
                 return !child_binding.unbound and child_binding.atoms.items.len == 1 and
@@ -880,6 +907,15 @@ const Engine = struct {
             }
         }
         return true;
+    }
+    fn recordInactiveOutput(self: *Engine, marked: *[]bool, value: Ref) Error!void {
+        if (marked.len == 0) {
+            try self.budget.spend(self.graph.nodes.len);
+            marked.* = try self.allocator.alloc(bool, self.graph.nodes.len);
+            @memset(marked.*, false);
+        }
+        try self.budget.step();
+        marked.*[value] = true;
     }
     fn action(self: *Engine, index: Ref, row: @FieldType(model.Heap, "receiver_action")) Error!void {
         if (!self.controls[row.control] or !self.worlds[row.previous].live) return;
@@ -1297,11 +1333,23 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
         try budget.step(); if (controls[exit.control] and !worlds[exit.heap].live) { result.pending = .heap_protocol; return; }
         result.language_live = result.language_live or (controls[exit.control] and worlds[exit.heap].live);
     }
+    var dual_base = false;
+    if (engine.explicit_base and result.normal_live and result.language_live) for (engine.calls.items) |fact| {
+        try budget.step();
+        if (frames[fact.receiver].parent != null and fact.analysis.normal_live and fact.analysis.language_live) {
+            dual_base = true;
+            break;
+        }
+    };
+    var inactive: [2][]bool = .{ &.{}, &.{} };
     if (result.normal_live) {
         for (graph.normal) |id| {
             try budget.step();
             if (values[id].atoms.items.len == 0) {
-                if (try engine.inactiveReceiverRoot(id, result.absent_base_controls)) continue;
+                if (try engine.inactiveReceiverRoot(id, result.absent_base_controls)) {
+                    if (dual_base) try engine.recordInactiveOutput(&inactive[0], id);
+                    continue;
+                }
                 result.pending = .unknown_origin; return;
             }
             try engine.atoms(&normal, values[id].atoms.items);
@@ -1313,7 +1361,10 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
         for (graph.language) |id| {
             try budget.step();
             if (values[id].atoms.items.len == 0) {
-                if (try engine.inactiveReceiverRoot(id, result.absent_base_controls)) continue;
+                if (try engine.inactiveReceiverRoot(id, result.absent_base_controls)) {
+                    if (dual_base) try engine.recordInactiveOutput(&inactive[1], id);
+                    continue;
+                }
                 result.pending = .unknown_origin; return;
             }
             try engine.atoms(&language, values[id].atoms.items);
@@ -1321,6 +1372,8 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
         try budget.step();
         if (graph.language.len != 0 and language.items.len == 0) { result.pending = .unknown_origin; return; }
     }
+    if (inactive[0].len != 0 or inactive[1].len != 0)
+        result.inactive_base_outputs = .{ .graph = graph, .values = .{ inactive[0], inactive[1] } };
     try budget.spend(graph.nodes.len); const summary = try a.alloc(FrameSummary, graph.nodes.len); @memset(summary, .{});
     for (frames, summary, 0..) |frame, *row, index| {
         try budget.step(); if (frame.role) |role| {

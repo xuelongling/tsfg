@@ -383,14 +383,27 @@ test "typed scalar constructor transports a committed copy of the original calle
 }
 
 test "typed immediate explicit base preserves the original child allocation" {
-    try checkExplicitBase(false);
+    try checkExplicitBase(.normal);
 }
 
 test "typed explicit base throw preserves the original copied parameter and unbound parent" {
-    try checkExplicitBase(true);
+    try checkExplicitBase(.language);
 }
 
-fn checkExplicitBase(comptime throws: bool) !void {
+test "typed conditional explicit base keeps both original completions separate" {
+    try checkExplicitBase(.both);
+}
+
+fn checkExplicitBase(comptime mode: enum { normal, language, both }) !void {
+    const throws = mode != .normal;
+    const both = mode == .both;
+    const boolean: t.TypeRef = @enumFromInt(4);
+    const boolean_id = "sha256:" ++ "47" ** 32;
+    const argument_type = if (both) boolean else scalar;
+    const argument_id = if (both) boolean_id else dto.scalar;
+    const argument_label = if (both) "bool" else "i32";
+    const argument_hash: t.Hash = if (both) @splat(0x47) else @splat(0x33);
+    const argument_carrier: t.Carrier = .{ .@"type" = argument_type };
     var fixture: Fixture = undefined;
     fixture.init();
     const common = &fixture.program.tables.mode.common;
@@ -402,9 +415,10 @@ fn checkExplicitBase(comptime throws: bool) !void {
     const own_token: t.Carrier = .{ .initialization = @enumFromInt(0) };
     const own_field_properties = a_properties ++ [_]t.JsonMember{.{ .key = "field", .value = .{ .string = own_field } }};
     const copy_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = dto.scalar } }};
+    const argument_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = argument_id } }};
     const code = [_]ins.Instruction{
         caller_instructions[0],
-        .{ .source = operation, .result = r6, .operands = &.{r7}, .data = .{ .domain_copy = .{ .static_view = scalar } } },
+        .{ .source = operation, .result = r6, .operands = &.{r7}, .data = .{ .domain_copy = .{ .static_view = argument_type } } },
         .{ .source = operation, .result = r1, .operands = &.{r0}, .data = .{ .receiver_child = .{ .construction = @enumFromInt(1) } } },
         caller_instructions[3],
         .{ .source = operation, .result = null, .operands = &.{ r0, r2 }, .data = .{ .receiver_bind = .{ .construction = @enumFromInt(0), .normal = @enumFromInt(3), .language = @enumFromInt(4) } } },
@@ -421,7 +435,7 @@ fn checkExplicitBase(comptime throws: bool) !void {
     };
     const ops = [_]control.SourcePlanOperation{
         caller_operations[0],
-        .{ .name = "value_copy", .view = dto.scalar, .properties = &copy_properties, .result = r6, .operands = &.{r7}, .successors = &.{}, .source = operation },
+        .{ .name = "value_copy", .view = argument_id, .properties = &argument_properties, .result = r6, .operands = &.{r7}, .successors = &.{}, .source = operation },
         .{ .name = "receiver_child", .view = "receiver:" ++ dto.b, .properties = &b_properties, .result = r1, .operands = &.{r0}, .successors = &.{}, .source = operation },
         caller_operations[3],
         .{ .name = "receiver_bind", .view = "void", .properties = &a_properties, .result = null, .operands = &.{ r0, r2 }, .successors = &.{ @enumFromInt(3), @enumFromInt(4) }, .source = operation },
@@ -444,24 +458,34 @@ fn checkExplicitBase(comptime throws: bool) !void {
         blocks[index] = .{ .parameters = block[2], .instructions = code[block[0]..block[1]] };
         plan[index] = .{ .parameters = block[2], .operations = ops[block[0]..block[1]] };
     }
-    const registers = caller_registers ++ [_]wire.Register{
-        .{ .carrier = sc, .view = scalar }, .{ .carrier = ac, .view = a }, .{ .carrier = .payload, .view = null },
+    var registers = caller_registers ++ [_]wire.Register{
+        .{ .carrier = argument_carrier, .view = argument_type }, .{ .carrier = ac, .view = a }, .{ .carrier = .payload, .view = null },
         .{ .carrier = own_token, .view = null }, .{ .carrier = own_token, .view = null },
         .{ .carrier = sc, .view = scalar }, .{ .carrier = sc, .view = scalar },
     };
+    registers[6] = .{ .carrier = argument_carrier, .view = argument_type };
     fixture.functions[0].registers = &registers;
     fixture.functions[0].blocks = &blocks;
     fixture.types[0].base = b;
+    const types = fixture.types ++ [_]tables.CommonType{.{
+        .id = @splat(0x47), .kind = .scalar, .name = "bool", .native_code = 2,
+        .base = null, .element = null, .members = &.{}, .methods = null, .nominal_key = null, .runtime_key = null,
+    }};
+    if (both) common.types = &types;
     fixture.abis[0].parameters = &.{@enumFromInt(4)};
-    fixture.abis[0].argument_types = &.{scalar};
-    fixture.abis[0].physical_parameters = &.{ af, sc };
+    fixture.abis[0].argument_types = &.{argument_type};
+    fixture.abis[0].physical_parameters = &.{ af, argument_carrier };
     fixture.abis[0].source_plan = .{ .blocks = &plan, .carriers = &.{
-        "receiver:" ++ dto.a, "receiver:" ++ dto.b, dto.b, payload, dto.a, payload, dto.scalar, dto.scalar, dto.a, payload,
+        "receiver:" ++ dto.a, "receiver:" ++ dto.b, dto.b, payload, dto.a, payload, argument_id, argument_id, dto.a, payload,
         "initialization:" ++ dto.a, "initialization:" ++ dto.a, dto.scalar, dto.scalar,
     } };
-    const bindings = fixture.bindings ++ [_]storage.CommonBinding{
-        .{ .id = "a-argument", .owner = .{ .param = @enumFromInt(0) }, .name = "x", .@"type" = scalar, .writable = false, .origin = declaration, .carrier = sc, .scope = @enumFromInt(0), .declaration_kind = .parameter },
+    var bindings = fixture.bindings ++ [_]storage.CommonBinding{
+        .{ .id = "a-argument", .owner = .{ .param = @enumFromInt(0) }, .name = "x", .@"type" = argument_type, .writable = false, .origin = declaration, .carrier = argument_carrier, .scope = @enumFromInt(0), .declaration_kind = .parameter },
         .{ .id = "a-field", .owner = .{ .field = @enumFromInt(1) }, .name = "own", .@"type" = scalar, .writable = true, .origin = operation, .carrier = sc, .scope = null, .declaration_kind = null },
+    };
+    if (both) for (bindings[2..4]) |*binding| {
+        binding.@"type" = argument_type;
+        binding.carrier = argument_carrier;
     };
     common.storage.bindings = &bindings;
     var fields = common.members.fields[0..1].* ++ [_]@TypeOf(common.members.fields[0]){common.members.fields[0]};
@@ -469,38 +493,54 @@ fn checkExplicitBase(comptime throws: bool) !void {
     fields[1].owner = a;
     fields[1].name = "own";
     fields[1].binding = @enumFromInt(5);
+    fields[0].@"type" = argument_type;
+    fields[0].declared_type = argument_type;
     common.members.fields = &fields;
-    var concrete = common.storage.concrete[0..4].*;
+    var concrete = common.storage.concrete[0..4].* ++ [_]@TypeOf(common.storage.concrete[0]){.{
+        .@"type" = boolean, .carrier = .{ .layout = .{ .byte_size = 1, .alignment = 1, .reference_count = 0 }, .field_offsets = &.{} }, .body = null,
+    }};
     concrete[0].body = .{ .byte_size = 8, .alignment = 4, .reference_count = 0, .fields = &.{
         .{ .field = @enumFromInt(0), .binding = @enumFromInt(2), .offset = 0, .reference_offset = 0 },
         .{ .field = @enumFromInt(1), .binding = @enumFromInt(5), .offset = 4, .reference_offset = 0 },
     } };
-    common.storage.concrete = &concrete;
+    if (both) {
+        concrete[1].body.?.byte_size = 1;
+        concrete[1].body.?.alignment = 1;
+    }
+    common.storage.concrete = if (both) &concrete else concrete[0..4];
     var constructions = common.members.constructions[0..2].*;
-    constructions[0].parameters = &.{.{ .binding = @enumFromInt(4), .inherited_from = null, .origin = declaration, .@"type" = scalar }};
-    constructions[0].signature.parameters = &.{scalar};
+    constructions[0].parameters = &.{.{ .binding = @enumFromInt(4), .inherited_from = null, .origin = declaration, .@"type" = argument_type }};
+    constructions[0].signature.parameters = &.{argument_type};
     constructions[0].initialization_phase = .@"after-successful-super";
     constructions[0].initialization_fields = &.{@enumFromInt(1)};
+    if (both) {
+        constructions[1].parameters = &.{.{ .binding = @enumFromInt(3), .inherited_from = null, .origin = declaration, .@"type" = argument_type }};
+        constructions[1].signature.parameters = &.{argument_type};
+    }
     common.members.constructions = &constructions;
     const cells = common.exceptions.bindings[0..3].* ++ [_]@TypeOf(common.exceptions.bindings[0]){.{ .binding = @enumFromInt(4), .scope = @enumFromInt(0) }};
     common.exceptions.bindings = &cells;
 
     var functions = dto.directory.functions[0..2].*;
     functions[0].construction.?.base = dto.b;
-    functions[0].parameter_types = &.{ dto.a, dto.scalar };
+    functions[0].parameter_types = &.{ dto.a, argument_id };
+    functions[1].parameter_types = &.{ dto.b, argument_id };
     var roles = dto.directory.constructions[0..2].*;
     roles[0].base = dto.b;
     var directory = dto.directory;
+    const directory_types = dto.directory.types[0..4].* ++ [_]m.TypeRow{.{ .id = boolean_id, .kind = .scalar }};
+    if (both) directory.types = &directory_types;
     directory.functions = &functions;
     directory.constructions = &roles;
     directory.fields = &.{ dto.field, own_field };
     var declarations = dto.declarations;
-    declarations[0].parameter_types = &.{ @splat(0x11), @splat(0x33) };
+    declarations[0].parameter_types = &.{ @splat(0x11), argument_hash };
+    declarations[1].parameter_types = &.{ @splat(0x22), argument_hash };
     declarations[0].construction.?.base = @splat(0x22);
     var original: m.Graph = .{
         .nodes = &.{
-            .receiver_input, .{ .parameter = .{ .@"type" = dto.scalar, .index = 1 } },
-            .{ .copy = .{ .@"type" = dto.scalar, .bases = &.{1}, .site = "argument-copy", .heap = 0, .control = 0 } },
+            .receiver_input, .{ .parameter = .{ .@"type" = argument_id, .index = 1 } },
+            .{ .copy = .{ .@"type" = argument_id, .bases = &.{1}, .site = "argument-copy", .heap = 0, .control = 0 } },
             .{ .receiver_frame = .{ .construction = dto.role_b, .new_target = null, .parent = &.{0}, .site = "base-child", .control = 0 } },
             .{ .call = .{ .@"type" = dto.b, .call = 0, .completion = .normal } },
             .{ .receiver_value = .{ .@"type" = dto.a, .action = 3 } },
@@ -528,14 +568,18 @@ fn checkExplicitBase(comptime throws: bool) !void {
     const language_heaps = original.heaps[0..7].* ++ [_]m.Heap{.{ .call = .{ .call = 0, .completion = .language } }};
     const language_controls = original.controls[0..4].* ++ [_]m.Control{.{ .call = .{ .call = 0, .completion = .language } }};
     const throw_leaf_nodes = dto.leaf.nodes[0..4].* ++ [_]m.Value{.{ .gate = .{ .@"type" = null, .inputs = &.{3}, .control = 2 } }};
+    var both_leaf_nodes = complete_nodes ++ [_]m.Value{throw_leaf_nodes[4]};
+    both_leaf_nodes[3].parameter.@"type" = argument_id;
+    both_leaf_nodes[6].join.@"type" = argument_id;
     var leaf = complete_leaf;
     if (throws) {
         original.nodes = &language_nodes;
         original.heaps = &language_heaps;
         original.controls = &language_controls;
-        original.normal = &.{};
+        if (!both) original.normal = &.{};
         original.language = &.{9};
-        original.exits = .{ .normal = &.{}, .language = &.{.{ .heap = 7, .control = 4 }} };
+        if (!both) original.exits.normal = &.{};
+        original.exits.language = &.{.{ .heap = 7, .control = 4 }};
         leaf = dto.leaf;
         leaf.normal = &.{};
         leaf.language = &.{4};
@@ -544,6 +588,12 @@ fn checkExplicitBase(comptime throws: bool) !void {
         leaf.heaps = leaf.heaps[0..4];
         leaf.controls = leaf.controls[0..3];
         leaf.accesses = complete_leaf.accesses;
+        if (both) {
+            leaf = complete_leaf;
+            leaf.language = &.{8};
+            leaf.exits.language = &.{.{ .heap = 3, .control = 2 }};
+            leaf.nodes = &both_leaf_nodes;
+        }
     }
     // The same checked base field prefix now ends with a throw of its
     // required native input. The pack retains that exact scalar payload.
@@ -568,7 +618,46 @@ fn checkExplicitBase(comptime throws: bool) !void {
         .{ .parameters = &.{r2}, .operations = throw_ops[3..8] },
         .{ .parameters = &.{r3}, .operations = throw_ops[8..9] },
     };
-    if (throws) {
+    var both_registers = callee_registers ++ [_]wire.Register{.{ .carrier = .payload, .view = null }};
+    both_registers[5] = .{ .carrier = argument_carrier, .view = argument_type };
+    const both_code = callee_instructions[0..6].* ++ [_]ins.Instruction{
+        .{ .source = operation, .result = null, .operands = &.{r5}, .data = .{ .cond_br = .{ .true_destination = @enumFromInt(3), .false_destination = @enumFromInt(4), .true_count = 0 } } },
+        .{ .source = operation, .result = r10, .operands = &.{r5}, .data = .{ .eh_carrier = null } },
+        .{ .source = operation, .result = null, .operands = &.{r10}, .data = .eh_raise },
+        callee_instructions[6],
+        .{ .source = operation, .result = null, .operands = &.{ r0, r7 }, .data = .{ .receiver_result = .{ .construction = @enumFromInt(1), .normal = @enumFromInt(5), .language = @enumFromInt(6) } } },
+        callee_instructions[8],
+        callee_instructions[9],
+        callee_instructions[10],
+    };
+    const both_ops = callee_operations[0..6].* ++ [_]control.SourcePlanOperation{
+        .{ .name = "cf.cond_br", .view = "", .properties = &.{}, .result = null, .operands = &.{r5}, .successors = &.{ @enumFromInt(3), @enumFromInt(4) }, .source = operation },
+        .{ .name = "pack", .view = argument_id, .properties = &argument_properties, .result = r10, .operands = &.{r5}, .successors = &.{}, .source = operation },
+        .{ .name = "return_throw", .view = "void", .properties = &.{}, .result = null, .operands = &.{r10}, .successors = &.{}, .source = operation },
+        callee_operations[6],
+        .{ .name = "receiver_result", .view = "void", .properties = &b_properties, .result = null, .operands = &.{ r0, r7 }, .successors = &.{ @enumFromInt(5), @enumFromInt(6) }, .source = operation },
+        callee_operations[8],
+        callee_operations[9],
+        callee_operations[10],
+    };
+    const both_ranges = .{ .{ 0, 3, &.{ r0, r5 } }, .{ 3, 7, &.{r2} }, .{ 11, 12, &.{r3} },
+        .{ 7, 9, &.{} }, .{ 9, 11, &.{} }, .{ 12, 13, &.{r8} }, .{ 13, 14, &.{r9} } };
+    var both_blocks: [both_ranges.len]wire.Block = undefined;
+    var both_plan: [both_ranges.len]control.SourcePlanBlock = undefined;
+    inline for (both_ranges, 0..) |block, index| {
+        both_blocks[index] = .{ .parameters = block[2], .instructions = both_code[block[0]..block[1]] };
+        both_plan[index] = .{ .parameters = block[2], .operations = both_ops[block[0]..block[1]] };
+    }
+    if (both) {
+        fixture.functions[1].registers = &both_registers;
+        fixture.functions[1].blocks = &both_blocks;
+        fixture.abis[1].argument_types = &.{argument_type};
+        fixture.abis[1].physical_parameters = &.{ bf, argument_carrier };
+        fixture.abis[1].source_plan = .{ .blocks = &both_plan, .carriers = &.{
+            "receiver:" ++ dto.b, dto.b, dto.b, payload, "initialization:" ++ dto.b, argument_id,
+            "initialization:" ++ dto.b, dto.undefined_type, dto.b, payload, payload,
+        } };
+    } else if (throws) {
         fixture.functions[1].registers = &throw_registers;
         fixture.functions[1].blocks = &throw_blocks;
         fixture.abis[1].source_plan = .{ .blocks = &throw_plan, .carriers = &.{
@@ -592,17 +681,19 @@ fn checkExplicitBase(comptime throws: bool) !void {
     };
     fixed.stable_scope.constructions = &scope_roles;
     const derived_shape: publication.ScopeShape = .{ .nominal = .{ .kind = .reference, .label = "A", .base = "B",
-        .construction = .{ .access = .public, .parameters = &.{"i32"}, .return_type = "A", .argument_signature = null },
+        .construction = .{ .access = .public, .parameters = &.{argument_label}, .return_type = "A", .argument_signature = null },
         .fields = &.{.{ .access = .public, .index = 0, .name = "own", .readonly = false, .@"type" = "i32" }}, .methods = null } };
     const base_shape: publication.ScopeShape = .{ .nominal = .{ .kind = .reference, .label = "B", .base = null,
-        .construction = .{ .access = .public, .parameters = &.{"i32"}, .return_type = "B", .argument_signature = null },
-        .fields = &.{.{ .access = .public, .index = 0, .name = "value", .readonly = false, .@"type" = "i32" }}, .methods = null } };
-    fixed.stable_scope.types = &.{
+        .construction = .{ .access = .public, .parameters = &.{argument_label}, .return_type = "B", .argument_signature = null },
+        .fields = &.{.{ .access = .public, .index = 0, .name = "value", .readonly = false, .@"type" = argument_label }}, .methods = null } };
+    const archived_types = [_]@TypeOf(fixed.stable_scope.types[0]){
         .{ .id = @splat(0x11), .label = "A", .shape = derived_shape },
         .{ .id = @splat(0x22), .label = "B", .shape = base_shape },
         .{ .id = @splat(0x33), .label = "i32", .shape = .{ .primitive = .{ .kind = .scalar, .label = "i32" } } },
         .{ .id = @splat(0x44), .label = "undefined", .shape = .{ .primitive = .{ .kind = .@"undefined", .label = "undefined" } } },
+        .{ .id = @splat(0x47), .label = "bool", .shape = .{ .primitive = .{ .kind = .scalar, .label = "bool" } } },
     };
+    fixed.stable_scope.types = if (both) &archived_types else archived_types[0..4];
     fixed.publication.scope = fixed.stable_scope;
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
     var budget = m.Budget{ .context = &c, .charge = refs.graphCharge };
@@ -627,7 +718,7 @@ fn checkExplicitBase(comptime throws: bool) !void {
     defer analyzed.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), analyzed.pending);
     if (throws) {
-        try expectExplicitBaseThrow(&c, &directory, graph, &analyzed, input, &contracts, &budget);
+        try expectExplicitBaseThrow(&c, &directory, graph, &analyzed, input, &contracts, &budget, both, argument_id, own_field);
         return;
     }
     try std.testing.expect(analyzed.normal_live and !analyzed.language_live);
@@ -695,8 +786,9 @@ fn explicitCertificateRows(contracts: *const [2]domain.PublicationContract, inpu
 }
 
 fn expectExplicitBaseThrow(c: *context.Context, directory: *const m.Directory, graph: *const m.Graph, analyzed: *const domain.Analysis,
-    input: domain.FormalInput, contracts: *[2]domain.PublicationContract, budget: *m.Budget) !void {
-    try std.testing.expect(!analyzed.normal_live and analyzed.language_live and analyzed.normal.len == 0);
+    input: domain.FormalInput, contracts: *[2]domain.PublicationContract, budget: *m.Budget, comptime both: bool,
+    argument_id: m.Symbol, own_field: m.Symbol) !void {
+    try std.testing.expect(analyzed.normal_live == both and analyzed.language_live);
     try std.testing.expect(analyzed.language.len != 0);
     for (analyzed.language) |atom| {
         try std.testing.expect(atom.source == .node);
@@ -706,42 +798,86 @@ fn expectExplicitBaseThrow(c: *context.Context, directory: *const m.Directory, g
     const parent = analyzed.input_exits.?.language;
     try std.testing.expect(parent.live and parent.unbound and parent.atoms.len == 0);
     try std.testing.expectEqual(@as(usize, 1), parent.missing_fields.?.len);
-    try std.testing.expectEqual(@as(usize, 0), analyzed.initializations.len);
+    try std.testing.expectEqual(@as(usize, if (both) 1 else 0), analyzed.initializations.len);
     const fact = analyzed.calls[0];
     const base = fact.analysis.input_exits.?.language;
     try std.testing.expect(base.live and !base.unbound and base.atoms.len == 1);
     try std.testing.expectEqual(@as(usize, 0), base.missing_fields.?.len);
-    try std.testing.expect(!fact.analysis.input_exits.?.normal.live);
+    try std.testing.expect(fact.analysis.input_exits.?.normal.live == both);
+    if (both) {
+        const normal = analyzed.input_exits.?.normal;
+        const original = domain.Atom{ .source = .{ .allocation = fact.receiver }, .category = .object };
+        try std.testing.expect(normal.live and !normal.unbound and normal.atoms.len == 1);
+        try std.testing.expectEqual(original, normal.atoms[0]);
+        try std.testing.expectEqual(@as(usize, 1), analyzed.normal.len);
+        try std.testing.expectEqual(original, analyzed.normal[0]);
+        try std.testing.expectEqual(@as(usize, 0), normal.missing_fields.?.len);
+        try std.testing.expectEqual(@as(usize, 0), analyzed.absent_base_controls.len);
+        const inactive = analyzed.inactive_base_outputs orelse return error.TestUnexpectedResult;
+        try std.testing.expect(inactive.graph == graph);
+        try std.testing.expectEqual(@as(usize, 0), inactive.values[0].len);
+        var inactive_errors: usize = 0;
+        for (graph.language) |id| inactive_errors += @intFromBool(inactive.values[1][id]);
+        try std.testing.expectEqual(@as(usize, 2), inactive_errors);
+    } else {
+        try std.testing.expectEqual(@as(usize, 0), analyzed.normal.len);
+    }
 
     var effect = try body.coverReceiverEffects(c, @enumFromInt(0));
     defer effect.deinit();
-    try std.testing.expect(effect.proof != null and !effect.analysis.?.normal_live and effect.analysis.?.language_live);
+    try std.testing.expect(effect.proof != null and effect.analysis.?.normal_live == both and effect.analysis.?.language_live);
     const certificate_rows = explicitCertificateRows(contracts, input);
     try std.testing.expect((try certificates.covered(c.allocator, directory, dto.caller, graph, &certificate_rows, budget)) == .covered);
 
     var rows = ownerRows(contracts);
     rows[0].parameters = &.{ .{ .write = true }, .{} };
     const locations = [_]owners.Location{
-        .{ .kind = .root, .owner = .nonowning, .type_id = dto.scalar },
-        .{ .kind = .root, .owner = .nonowning, .type_id = dto.scalar },
+        .{ .kind = .root, .owner = .nonowning, .type_id = argument_id },
+        .{ .kind = .root, .owner = .nonowning, .type_id = argument_id },
+    };
+    const base_field: owners.Field = .{ .id = dto.field, .view = dto.b, .physical = 0, .type_id = argument_id };
+    const complete_physical = [_]owners.Physical{
+        .{ .type_id = dto.a, .fields = &.{ base_field, .{ .id = own_field, .view = dto.a, .physical = 1, .type_id = dto.scalar } } },
+        .{ .type_id = dto.b, .fields = &.{base_field} },
     };
     const initial: owners.Initial = .{ .locations = &locations, .arguments = &.{ &.{}, &.{1} }, .environment = &.{}, .heap = &.{}, .parents = &.{} };
-    var owned = try owners.analyzeInputs(c.allocator, directory, &physical, dto.caller, graph, &rows, budget, analyzed, &initial);
+    var owned = try owners.analyzeInputs(c.allocator, directory, &complete_physical, dto.caller, graph, &rows, budget, analyzed, &initial);
     defer owned.deinit();
     try std.testing.expectEqual(@as(?owners.Pending, null), owned.pending);
-    try std.testing.expect(!owned.normal_live and owned.normal_heap.len == 0 and owned.language_live);
+    try std.testing.expect(owned.normal_live == both and owned.language_live);
     try std.testing.expectEqual(@as(usize, 1), owned.language.len);
     try std.testing.expectEqual(@as(?usize, 1), owned.locations[owned.language[0]].input);
     try std.testing.expectEqual(@as(usize, 1), owned.language_heap.len);
     const prefix = owned.language_heap[0];
     try std.testing.expectEqualStrings("field:" ++ dto.field, prefix.selector);
     try std.testing.expectEqualSlices(usize, owned.language, prefix.values.items);
+    if (both) {
+        try std.testing.expectEqual(@as(usize, 1), owned.normal.len);
+        try std.testing.expectEqual(@as(usize, 2), owned.normal_heap.len);
+        try std.testing.expectEqual(owned.normal[0], prefix.base);
+        var found_base = false;
+        var found_own = false;
+        for (owned.normal_heap) |row| {
+            try std.testing.expectEqual(owned.normal[0], row.base);
+            if (std.mem.eql(u8, row.selector, "field:" ++ dto.field)) {
+                try std.testing.expectEqualSlices(usize, owned.language, row.values.items);
+                found_base = true;
+            } else if (std.mem.startsWith(u8, row.selector, "field:")) {
+                try std.testing.expectEqualStrings(own_field, row.selector[6..]);
+                found_own = true;
+            }
+        }
+        try std.testing.expect(found_base and found_own);
+    } else {
+        try std.testing.expectEqual(@as(usize, 0), owned.normal_heap.len);
+    }
 
     const original_leaf = contracts[1].return_origins.?;
-    const wrong_nodes = original_leaf.nodes[0..5].* ++ [_]m.Value{.{ .literal = .{ .@"type" = dto.scalar, .category = .other } }};
+    const node_count = if (both) 9 else 5;
+    const wrong_nodes = original_leaf.nodes[0..node_count].* ++ [_]m.Value{.{ .literal = .{ .@"type" = argument_id, .category = .other } }};
     var wrong_payload = original_leaf;
     wrong_payload.nodes = &wrong_nodes;
-    wrong_payload.language = &.{5};
+    wrong_payload.language = &.{node_count};
     var false_normal = original_leaf;
     false_normal.normal = &.{1};
     false_normal.exits.normal = &.{.{ .heap = 1, .control = 1 }};
@@ -758,6 +894,28 @@ fn expectExplicitBaseThrow(c: *context.Context, directory: *const m.Directory, g
     defer undeclared.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, .fixed_completion), undeclared.pending);
 
+    if (both) {
+        contracts[1].upper.facets.may_throw = true;
+        const archive = contracts[0].return_origins.?;
+        var joined_heaps = archive.heaps[0..8].* ++ [_]m.Heap{.{ .join = .{ .inputs = &.{ 2, 7 } } }};
+        joined_heaps[3].receiver_action.previous = 8;
+        var joined_world = archive;
+        joined_world.heaps = &joined_heaps;
+        const joined_controls = archive.controls[0..5].* ++ [_]m.Control{.{ .join = .{ .inputs = &.{ 1, 4 } } }};
+        var wrong_arm_heaps = archive.heaps[0..8].*;
+        wrong_arm_heaps[3].receiver_action.control = 5;
+        var joined_arm = archive;
+        joined_arm.heaps = &wrong_arm_heaps;
+        joined_arm.controls = &joined_controls;
+        const ambiguous_bindings = [_]m.Graph{ joined_world, joined_arm };
+        for (&ambiguous_bindings) |*candidate| {
+            try std.testing.expect((try m.validateGraph(c.allocator, directory, dto.caller, candidate, budget)) == .pending);
+            var rejected = try domain.analyzeReturns(c.allocator, directory, candidate, budget, input);
+            defer rejected.deinit();
+            try std.testing.expectEqual(@as(?domain.Pending, .call_entry), rejected.pending);
+        }
+        return;
+    }
     // The separately empty predecessor supplies no exact Base-call proof.
     // It must keep this second candidate language root unresolved.
     contracts[1].upper.facets.may_throw = true;

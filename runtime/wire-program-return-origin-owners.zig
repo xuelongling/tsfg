@@ -172,6 +172,18 @@ const Engine = struct {
         }
         return true;
     }
+    fn readyCompletionRefs(self: *Engine, frame: *const Frame, refs: []const R, completion: usize) E!bool {
+        const receiver = frame.receiver orelse return self.readyRefs(frame, refs);
+        const inactive = receiver.inactive_base_outputs orelse return self.readyRefs(frame, refs);
+        const known = inactive.values[completion];
+        if (inactive.graph != frame.graph or known.len != frame.graph.nodes.len) return self.readyRefs(frame, refs);
+        for (refs) |id| {
+            try self.budget.step();
+            if (known[id] and frame.values[id].items.len == 0) continue;
+            if (!try self.readyRefs(frame, &.{id})) return false;
+        }
+        return true;
+    }
     fn ready(self: *Engine, value: *bool, defined: bool) void { if (defined and !value.*) { value.* = true; self.changed = true; } }
     fn envKind(kind: Kind) bool { return kind == .environment_input or kind == .environment_local or kind == .environment_component; }
     fn entryEnvironment(self: *Engine, layout: S) E!R {
@@ -1104,7 +1116,7 @@ const Engine = struct {
                 for (exits) |exit| {
                     try self.budget.step(); if (!frame.controls[exit.control]) continue;
                     if (!frame.heap_ready[exit.heap]) { self.pending = .incomplete_completion; return; }
-                    if (!try self.readyRefs(frame, refs)) { self.pending = .unresolved_value; return; }
+                    if (!try self.readyCompletionRefs(frame, refs, completion)) { self.pending = .unresolved_value; return; }
                     const values = try self.resolved(frame, refs);
                     if (refs.len != 0 and values.items.len == 0) { self.pending = .unresolved_value; return; }
                     try self.completeContents(.{ .frame = index, .heap = exit.heap }, values.items, &frame.output_payloads[completion]); if (self.pending != null) return;
