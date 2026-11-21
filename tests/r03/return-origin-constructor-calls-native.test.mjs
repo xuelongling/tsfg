@@ -83,5 +83,5 @@ test('typed constructor Ref parameters forward original C through B to D', async
 });
 
 test('transitive constructor Ref controls preserve source chains and caller facts', async () => {
-  await nativeUnit({ source: 'runtime/return-origin-constructor-transitive-ref-negative-test.zig', prefix: 'r03-constructor-transitive-ref-negative-', expectedPasses: 7 });
+  await nativeUnit({ source: 'runtime/return-origin-constructor-transitive-ref-negative-test.zig', prefix: 'r03-constructor-transitive-ref-negative-', expectedPasses: 8 });
 });

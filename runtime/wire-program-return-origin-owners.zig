@@ -464,11 +464,48 @@ const Engine = struct {
         }
         return found;
     }
-    // Construction supplies the final original atom set, never an admission
-    // boolean. Resolve it identically during solve and stable validation.
-    fn receiverArgument(self: *Engine, index: usize, atoms: []const construction.Atom) E!?Set {
+    fn ordinaryParameterRoots(self: *Engine, frame: *const Frame, node: m.Value, roots: []const R) E!bool {
+        const receiver = frame.receiver orelse return false;
+        const ordinary = receiver.ordinary orelse return false;
+        const parameter = node.parameter.index;
+        if (ordinary.graph != frame.graph or parameter >= ordinary.types.len or ordinary.types[parameter] == null or
+            !try self.budget.equal(ordinary.types[parameter].?, node.parameter.@"type")) return false;
+        for (roots) |id| {
+            try self.budget.step();
+            const value = self.locations.items[id];
+            if (value.kind != .root or (value.owner != .input and (value.owner != .parameter or value.owner.parameter != parameter))) return false;
+        }
+        return true;
+    }
+    // A committed copy carries the exact original Set at this ordered
+    // argument. Follow only earlier checked receiver imports to its ABI root.
+    fn inheritedParameterRoots(self: *Engine, index: usize, node: m.Value, roots: []const R) E!bool {
+        var child = index;
+        var parameter = node.parameter.index;
+        var current = node;
+        while (true) {
+            try self.budget.step();
+            const frame = self.frames.items[child];
+            const entry = frame.receiver_import orelse return self.ordinaryParameterRoots(frame, current, roots);
+            const fact = entry.fact;
+            if (entry.caller >= child or fact.analysis != frame.receiver or fact.graph != frame.graph or
+                parameter == 0 or parameter >= fact.arguments.len) return false;
+            const source = fact.orderedReferenceSource(parameter) orelse return false;
+            const caller = self.frames.items[entry.caller];
+            if (fact.caller_graph != caller.graph or fact.call != frame.scope_call or source >= caller.graph.nodes.len) return false;
+            const parent = caller.graph.nodes[source];
+            if (parent != .parameter or parent.parameter.index >= caller.arguments.len or
+                !try self.budget.equal(parent.parameter.@"type", node.parameter.@"type") or
+                !try self.sameSet(roots, caller.arguments[parent.parameter.index].items)) return false;
+            child = entry.caller;
+            parameter = parent.parameter.index;
+            current = parent;
+        }
+    }
+    // Resolve the final original atoms identically during solve and stable validation.
+    fn receiverArgument(self: *Engine, index: usize, fact: *const construction.CallFact, slot: usize) E!?Set {
         var proved: Set = .empty; var transported: Set = .empty; try self.budget.step();
-        for (atoms) |atom| {
+        for (fact.arguments[slot]) |atom| {
             try self.budget.step(); if (atom.category != .object) { self.pending = .receiver_protocol; return null; }
             switch (atom.source) {
                 .allocation => |source| { const location_id = try self.receiverLocation(index, source, true) orelse return null; try self.add(&proved, location_id); },
@@ -483,19 +520,19 @@ const Engine = struct {
                     if (originals.items.len == 0) return null;
                     if (frame.receiver_import) |entry| {
                         if (entry.fact.analysis != frame.receiver or entry.fact.graph != frame.graph or parameter == 0) { self.pending = .receiver_protocol; return null; }
-                    } else {
-                        const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return null; };
-                        const ordinary = receiver.ordinary orelse { self.pending = .receiver_protocol; return null; };
-                        if (ordinary.graph != frame.graph or parameter >= ordinary.types.len or ordinary.types[parameter] == null or
-                            !try self.budget.equal(ordinary.types[parameter].?, node.parameter.@"type")) { self.pending = .receiver_protocol; return null; }
                         for (originals.items) |id| {
                             try self.budget.step();
-                            const value = self.locations.items[id];
-                            if (value.kind != .root or (value.owner != .input and (value.owner != .parameter or value.owner.parameter != parameter))) {
+                            const owner = self.locations.items[id].owner;
+                            if (owner != .input and owner != .parameter) continue;
+                            if (fact.orderedReferenceSource(slot) != source or !try self.inheritedParameterRoots(index, node, originals.items)) {
                                 self.pending = .receiver_protocol; return null;
                             }
-                            try self.add(&transported, id);
+                            try self.merge(&transported, originals.items);
+                            break;
                         }
+                    } else {
+                        if (!try self.ordinaryParameterRoots(frame, node, originals.items)) { self.pending = .receiver_protocol; return null; }
+                        try self.merge(&transported, originals.items);
                     }
                     try self.merge(&proved, originals.items);
                 },
@@ -557,7 +594,7 @@ const Engine = struct {
                     if (arguments[parameter_index].items.len == 0) { self.pending = .receiver_protocol; return; }
                     if (kind == .reference) {
                         if (fact.arguments.len != protocol.parameter_types.len) { self.pending = .receiver_protocol; return; }
-                        const proved = try self.receiverArgument(index, fact.arguments[parameter_index]) orelse {
+                        const proved = try self.receiverArgument(index, fact, parameter_index) orelse {
                             if (self.pending != null) return;
                             continue :calls;
                         };
@@ -1173,7 +1210,7 @@ const Engine = struct {
                     try self.budget.step();
                     for (call.arguments, 1..) |refs, parameter| {
                         try self.budget.step(); if ((try self.typeRow(protocol.parameter_types[parameter])).kind != .reference) continue;
-                        const proved = try self.receiverArgument(index, fact.arguments[parameter]) orelse { self.pending = .receiver_protocol; return; };
+                        const proved = try self.receiverArgument(index, fact, parameter) orelse { self.pending = .receiver_protocol; return; };
                         const actual = try self.resolved(frame, refs);
                         if (!try self.sameSet(proved.items, actual.items)) { self.pending = .receiver_protocol; return; }
                     }

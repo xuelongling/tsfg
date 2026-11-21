@@ -4,6 +4,7 @@
 const std = @import("std");
 const m = @import("wire-program-return-origin-model.zig");
 const domain = @import("wire-program-return-origin-construction.zig");
+const inclusion = @import("wire-program-return-origins.zig");
 const owners = @import("wire-program-return-origin-owners.zig");
 const dto = @import("constructor-transitive-ref-dto.zig");
 const Meter = struct {
@@ -49,6 +50,141 @@ test "public formal Ref cannot manufacture a caller proof for its nested D" {
     try validate(&dto.contracts,&dto.caller_graph,&budget);
     var result = try domain.analyzeReturns(std.testing.allocator,&dto.directory,&dto.native_leaf,&budget,.{ .function_id=dto.native_callee, .fixed=&fixed }); defer result.deinit();
     try std.testing.expectEqual(@as(?domain.Pending,.data_protocol),result.pending);
+}
+test "ordinary ABI Ref keeps its original input through two constructor copies and the replacement field" {
+    var functions = dto.directory.functions[0..4].*;
+    functions[0].kind = .source;
+    functions[0].parameter_types = &.{dto.actual_c};
+    functions[0].return_type = dto.actual_c;
+    functions[0].construction = null;
+    var constructions = dto.directory.constructions[0..4].*;
+    constructions[0].kind = .implicit_base;
+    constructions[0].function_id = null;
+    const carrier_field = "sha256:" ++ "9b" ** 32;
+    var directory = dto.directory;
+    directory.functions = &functions;
+    directory.constructions = &constructions;
+    directory.fields = &.{ dto.field, dto.native_field, carrier_field };
+    var layout = physical;
+    layout[2].fields = &.{
+        .{ .id = dto.field, .view = dto.b, .physical = 0, .type_id = dto.actual_c },
+        .{ .id = carrier_field, .view = dto.a, .physical = 0, .type_id = dto.actual_c },
+    };
+    var declarations = dto.declarations;
+    declarations[0].kind = .source;
+    declarations[0].decl_key.kind = .function;
+    declarations[0].decl_key.name = "pass";
+    declarations[0].parameter_types = &.{@splat(0x46)};
+    declarations[0].return_type = @splat(0x46);
+    declarations[0].construction = null;
+    const graph: m.Graph = .{
+        .nodes = &.{
+            .{ .parameter = .{ .@"type" = dto.actual_c, .index = 0 } },
+            .{ .receiver_frame = .{ .construction = dto.role_a, .new_target = dto.a, .parent = null, .site = "pass:new-Carrier", .control = 0 } },
+            .{ .copy = .{ .@"type" = dto.actual_c, .bases = &.{0}, .site = "pass:owner", .heap = 0, .control = 0 } },
+            .{ .call = .{ .@"type" = dto.a, .call = 0, .completion = .normal } },
+            .{ .call = .{ .@"type" = null, .call = 0, .completion = .language } },
+            .{ .projection = .{ .@"type" = dto.actual_c, .bases = &.{3}, .selector = "field:" ++ carrier_field, .view = dto.a, .heap = 2, .control = 1 } },
+            .{ .copy = .{ .@"type" = dto.actual_c, .bases = &.{5}, .site = "pass:return", .heap = 2, .control = 1 } },
+        },
+        .heaps = &.{
+            .entry, .{ .copy = .{ .previous = 0, .value = 2 } },
+            .{ .call = .{ .call = 0, .completion = .normal } }, .{ .call = .{ .call = 0, .completion = .language } },
+            .{ .copy = .{ .previous = 2, .value = 6 } },
+        },
+        .controls = &.{ .entry, .{ .call = .{ .call = 0, .completion = .normal } }, .{ .call = .{ .call = 0, .completion = .language } } },
+        .calls = &.{.{ .function_id = dto.native_callee, .arguments = &.{&.{2}}, .environment = null, .callee = null, .receiver = &.{1}, .heap = 1, .control = 0, .site = "pass:construct-Carrier" }},
+        .normal = &.{6}, .language = &.{4},
+        .exits = .{ .normal = &.{.{ .heap = 4, .control = 1 }}, .language = &.{.{ .heap = 3, .control = 2 }} },
+        .accesses = &.{.{ .values = &.{3}, .flag = .read, .control = 1 }},
+    };
+    var upper_nodes = graph.nodes[0..6].*;
+    upper_nodes[1].receiver_frame.site = "published:new-Carrier";
+    upper_nodes[2].copy.site = "published:owner";
+    upper_nodes[4] = graph.nodes[5];
+    upper_nodes[5] = graph.nodes[6];
+    upper_nodes[5].copy.site = "published:return";
+    upper_nodes[5].copy.bases = &.{4};
+    var upper_heaps = graph.heaps[0..4].*;
+    upper_heaps[3] = .{ .copy = .{ .previous = 2, .value = 5 } };
+    var upper = graph;
+    upper.nodes = &upper_nodes;
+    upper.heaps = &upper_heaps;
+    upper.controls = graph.controls[0..2];
+    upper.language = &.{};
+    upper.normal = &.{5};
+    upper.exits = .{ .normal = &.{.{ .heap = 3, .control = 1 }}, .language = &.{} };
+    var carrier = dto.native_leaf;
+    var carrier_nodes = carrier.nodes[0..7].* ++ [_]m.Value{.{
+        .copy = .{ .@"type" = dto.actual_c, .bases = &.{6}, .site = "Carrier:owner", .heap = 0, .control = 0 },
+    }};
+    const carrier_heaps = carrier.heaps[0..5].* ++ [_]m.Heap{.{ .copy = .{ .previous = 0, .value = 7 } }};
+    var carrier_calls = carrier.calls[0..1].*;
+    carrier_calls[0].arguments = &.{&.{7}};
+    carrier_calls[0].heap = 5;
+    carrier.nodes = &carrier_nodes;
+    carrier.heaps = &carrier_heaps;
+    carrier.calls = &carrier_calls;
+    var contracts = dto.contracts;
+    contracts[0].return_origins = upper;
+    contracts[0].upper.parameters = &.{.{ .index = 0, .read = true, .write = false, .structural = false }};
+    contracts[1].return_origins = carrier;
+    var fixed = fixedRows(&contracts);
+    fixed[0].declaration = &declarations[0];
+    const evidence = domain.OrdinaryReferenceInputs{ .current = &graph, .upper = &contracts[0].return_origins.?, .types = &.{dto.actual_c} };
+    var meter: Meter = .{};
+    var budget = m.Budget{ .context = &meter, .charge = Meter.charge };
+    try m.validateDirectory(std.testing.allocator, &directory, &budget);
+    const bounds = [_]inclusion.FixedContract{
+        .{ .function_id = dto.caller, .graph = evidence.upper, .complete = &fixed[0] },
+        .{ .function_id = dto.native_callee, .graph = &contracts[1].return_origins.?, .complete = &fixed[1] },
+        .{ .function_id = dto.callee, .graph = &contracts[2].return_origins.?, .complete = &fixed[2] },
+        .{ .function_id = dto.final_callee, .graph = &contracts[3].return_origins.?, .complete = &fixed[3] },
+    };
+    try std.testing.expect((try inclusion.coveredWithEvidence(std.testing.allocator, &directory, dto.caller, &graph, &bounds, &budget, .{ .ordinary = evidence })) == .covered);
+    var rows = ownerRows(&contracts);
+    rows[0].parameters = &.{.{ .read = true }};
+    const initial = owners.Initial{
+        .locations = &.{ .{ .kind = .root, .owner = .{ .input = 0 } }, .{ .kind = .root, .owner = .{ .input = 1 } } },
+        .arguments = &.{&.{1}}, .environment = &.{}, .heap = &.{}, .parents = &.{},
+    };
+    for ([_]*const m.Graph{ &graph, evidence.upper }) |candidate| {
+        var result = try domain.analyzeReturns(std.testing.allocator, &directory, candidate, &budget, .{ .function_id = dto.caller, .fixed = &fixed, .ordinary = evidence });
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
+        try std.testing.expect(result.normal_live and !result.language_live);
+        const outer = result.calls[0];
+        const inner = outer.analysis.calls[0];
+        try std.testing.expectEqual(@as(usize, 1), outer.arguments[1].len);
+        try std.testing.expectEqual(@as(usize, 1), inner.arguments[1].len);
+        try std.testing.expectEqual(@as(m.Ref, 0), outer.arguments[1][0].source.node);
+        try std.testing.expectEqual(@as(m.Ref, 6), inner.arguments[1][0].source.node);
+        try std.testing.expectEqual(@as(?m.Ref, 0), outer.orderedReferenceSource(1));
+        try std.testing.expectEqual(@as(?m.Ref, 6), inner.orderedReferenceSource(1));
+        var returned = try owners.analyzeInputs(std.testing.allocator, &directory, &layout, dto.caller, candidate, &rows, &budget, &result, &initial);
+        defer returned.deinit();
+        try std.testing.expectEqual(@as(?owners.Pending, null), returned.pending);
+        try std.testing.expect(returned.normal_live and !returned.language_live);
+        try std.testing.expectEqual(@as(usize, 1), returned.normal.len);
+        const original = returned.locations[returned.normal[0]];
+        try std.testing.expect(original.kind == .root and original.owner == .input and original.owner.input == 1 and original.type_id == null);
+        var wrong = initial;
+        wrong.locations = &.{.{ .kind = .root, .owner = .{ .parameter = 1 } }};
+        wrong.arguments = &.{&.{0}};
+        var rejected = try owners.analyzeInputs(std.testing.allocator, &directory, &layout, dto.caller, candidate, &rows, &budget, &result, &wrong);
+        defer rejected.deinit();
+        try std.testing.expectEqual(@as(?owners.Pending, .receiver_protocol), rejected.pending);
+    }
+    contracts[1].return_origins = dto.native_leaf;
+    rows = ownerRows(&contracts);
+    rows[0].parameters = &.{.{ .read = true }};
+    var bare = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = dto.caller, .fixed = &fixed, .ordinary = evidence });
+    defer bare.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, null), bare.pending);
+    try std.testing.expectEqual(@as(?m.Ref, null), bare.calls[0].analysis.calls[0].orderedReferenceSource(1));
+    var uncommitted = try owners.analyzeInputs(std.testing.allocator, &directory, &layout, dto.caller, &graph, &rows, &budget, &bare, &initial);
+    defer uncommitted.deinit();
+    try std.testing.expectEqual(@as(?owners.Pending, .receiver_protocol), uncommitted.pending);
 }
 test "late missing C native field cannot borrow B known empty inventory through forwarding" {
     var heaps: [6]m.Heap = undefined; @memcpy(heaps[0..5],dto.actual_leaf.heaps);

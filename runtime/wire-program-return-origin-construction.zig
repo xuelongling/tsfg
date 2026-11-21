@@ -47,7 +47,18 @@ pub const ScalarReturnCalls = struct { current: *const model.Graph, upper: *cons
 const ScalarCalls = union(enum) { effects: ScalarEffectCalls, returns: ScalarReturnCalls };
 pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{}, missing_fields: ?[]const model.Symbol = null };
 pub const InputExits = struct { input: Ref, normal: ExitBinding = .{}, language: ExitBinding = .{} };
-pub const CallFact = struct { caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis, arguments: []const []const Atom };
+pub const CallFact = struct {
+    caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref,
+    fixed: *const FixedFunction, analysis: *const Analysis, arguments: []const []const Atom,
+    ordered_reference_sources: []const ?Ref = &.{},
+
+    pub fn orderedReferenceSource(self: *const CallFact, parameter: usize) ?Ref {
+        if (parameter >= self.ordered_reference_sources.len or parameter >= self.fixed.contract.upper.parameters.len) return null;
+        const permission = self.fixed.contract.upper.parameters[parameter];
+        if (permission.index != parameter or permission.read or permission.write or permission.structural) return null;
+        return self.ordered_reference_sources[parameter];
+    }
+};
 pub const Initialization = struct { store: Ref, base: Atom, value: Atom };
 pub const FrameSummary = struct {
     // A formal receiver's null new_target is a universal compatible-target
@@ -1411,15 +1422,25 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
             try budget.step(); if (fact.call != call_ordinal) continue;
             try budget.spend(function.parameter_types.len);
             const final_arguments = try a.alloc([]const Atom, function.parameter_types.len); @memset(final_arguments, &.{});
+            var ordered_references: []?Ref = &.{};
             for (call.arguments, 1..) |argument, parameter| {
                 try budget.step(); var originals: Atoms = .empty;
                 for (argument) |id| { try budget.step(); for (values[id].atoms.items) |atom| { _ = try engine.insert(Atom, &originals, atom); } }
-                _ = (try engine.referenceCopyArgument(call, argument, function.parameter_types[parameter], originals.items, fact.fixed.contract.upper.parameters[parameter])) orelse {
+                const ordered = (try engine.referenceCopyArgument(call, argument, function.parameter_types[parameter], originals.items, fact.fixed.contract.upper.parameters[parameter])) orelse {
                     result.pending = engine.pending; return;
                 };
+                if (ordered) {
+                    if (ordered_references.len == 0) {
+                        try budget.spend(function.parameter_types.len);
+                        ordered_references = try a.alloc(?Ref, function.parameter_types.len);
+                        @memset(ordered_references, null);
+                    }
+                    ordered_references[parameter] = originals.items[0].source.node;
+                }
                 final_arguments[parameter] = originals.items;
             }
             fact.arguments = final_arguments;
+            fact.ordered_reference_sources = ordered_references;
         }
         const receiver = call.receiver orelse { result.pending = .fixed_call; return; };
         var resolved = false;
