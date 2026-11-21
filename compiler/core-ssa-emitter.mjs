@@ -115,6 +115,36 @@ export function emitCoreSsaFunction(fn, context) {
     line(`    ${name} = "tsfg_core.${op}"(${operands.join(", ")}) {${valueAttr}${attrsFor(expression.range)}} : (${operandTypes.map(coreType).join(", ")}) -> ${type}`);
     return name;
   };
+  const emitConditionBranches = condition => {
+    const parts = context.conditionBranches?.(condition, api);
+    const predicate = parts ? null : emit(condition);
+    const comparisons = [current];
+    for (let index = 1; index < (parts?.leaves ?? 1); index++) {
+      context.budget?.step();
+      comparisons.push(newBlock());
+    }
+    const yes = newBlock(), no = newBlock();
+    if (!parts) {
+      conditional(predicate, yes, no, condition.range);
+      return {yes,no};
+    }
+    // These operands leave caller-local SSA bindings unchanged.
+    const pending = [{node:parts.tree, yes, no, range:condition.range}];
+    while (pending.length) {
+      context.budget?.step();
+      const edge = pending.pop(), {node} = edge;
+      if (node.expression) {
+        current = comparisons[node.firstLeaf];
+        conditional(parts.emit(node), edge.yes, edge.no, edge.range);
+      } else {
+        const rhs = comparisons[node.right.firstLeaf];
+        pending.push({...edge, node:node.right},
+          {...edge, node:node.left, yes:node.when ? rhs : edge.yes,
+            no:node.when ? edge.no : rhs, range:node.condition.range});
+      }
+    }
+    return {yes,no};
+  };
   const emitBody = statements => {
     for (const statement of statements) {
       if (!current) break;
@@ -144,33 +174,7 @@ export function emitCoreSsaFunction(fn, context) {
         definitions = new Map([...definitions].filter(([id]) => outer.has(id)));
         declared = outer;
       } else if (statement.kind === "if") {
-        const parts = context.conditionBranches?.(statement.condition, api);
-        const condition = parts ? null : emit(statement.condition);
-        const comparisons = parts ? [current] : null;
-        if (comparisons) {
-          for (let index = 1; index < parts.leaves; index++) {
-            context.budget?.step();
-            comparisons.push(newBlock());
-          }
-        }
-        const yes = newBlock(), no = newBlock();
-        if (parts) {
-          // These operands leave caller-local SSA bindings unchanged.
-          const pending = [{node:parts.tree, yes, no, range:statement.condition.range}];
-          while (pending.length) {
-            context.budget?.step();
-            const edge = pending.pop(), {node} = edge;
-            if (node.expression) {
-              current = comparisons[node.firstLeaf];
-              conditional(parts.emit(node), edge.yes, edge.no, edge.range);
-            } else {
-              const rhs = comparisons[node.right.firstLeaf];
-              pending.push({...edge, node:node.right},
-                {...edge, node:node.left, yes:node.when ? rhs : edge.yes,
-                  no:node.when ? edge.no : rhs, range:node.condition.range});
-            }
-          }
-        } else conditional(condition, yes, no, statement.condition.range);
+        const {yes,no} = emitConditionBranches(statement.condition);
         const outer = new Map(definitions), outerDeclared = new Set(declared);
         current = yes; definitions = new Map(outer); emitBody(statement.thenBody);
         const yesExit = current, yesDefinitions = new Map(definitions);
@@ -197,9 +201,8 @@ export function emitCoreSsaFunction(fn, context) {
         current = header; definitions = new Map(outer);
         carried.forEach((id, index) => definitions.set(id, header.parameters[index].name));
         fuel(2, statement.condition.range);
-        const condition = emit(statement.condition), incoming = new Map(definitions);
-        const loop = newBlock(), exit = newBlock();
-        conditional(condition, loop, exit, statement.condition.range);
+        const {yes:loop,no:exit} = emitConditionBranches(statement.condition);
+        const incoming = new Map(definitions);
         current = loop; definitions = new Map(incoming); emitBody(statement.body);
         if (current) branch(header, carried.map(id => definitions.get(id)), statement.condition.range);
         current = exit; definitions = incoming; declared = outerDeclared;

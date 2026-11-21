@@ -217,14 +217,14 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       // Only the condition and body can replace a local value on the backedge.
       // The same filtered entry proofs also hold on the zero-iteration exit.
       if(s.kind==='while'&&frame.guards.size)frame.guards=stableGuards(frame.guards,s,charge);
-      const logical=s.kind==='if'?finitePresenceShortCircuit(s.condition,charge):null;
+      const logical=finitePresenceShortCircuit(s.condition,charge);
       const edges=logical?shortCircuitGuards(logical.tree,frame.guards,charge):null;
       const condition=emit(s.condition,'/condition',edges?.operands),
         incoming=flow.normal(condition),test=logical?null:finitePresenceTest(s.condition,charge);
       if(s.kind==='while') {
         const literal=literalLoopCondition(s,charge),entryGuards=frame.guards;
-        const bodyGuards=branchGuard(test,true,entryGuards,charge);
-        frame.guards=branchGuard(test,false,entryGuards,charge);
+        const bodyGuards=edges?.yes??branchGuard(test,true,entryGuards,charge);
+        frame.guards=edges?.no??branchGuard(test,false,entryGuards,charge);
         frame.gate=literal===true?flow.never:incoming;
         stack.push({body:s.body,path:p+'/body',guards:bodyGuards,
           gate:literal===false?flow.never:incoming,continues:true,index:0});

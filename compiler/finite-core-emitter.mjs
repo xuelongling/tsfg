@@ -110,7 +110,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       }else if(value.kind==='expression')result.value=adapt(value.expression,p+'/expression',fn);
       if(value.condition) {
         result.condition=finiteCoreGuard(adapt(value.condition,p+'/condition',fn),budget.step);
-        const logical=value.kind==='if'?finitePresenceShortCircuit(result.condition,budget.step):null;
+        const logical=finitePresenceShortCircuit(result.condition,budget.step);
         if(logical) {
           logicalPresence.set(result.condition,logical);
           const pending=[logical.tree];
