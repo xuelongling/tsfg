@@ -9,8 +9,8 @@ const request_outcome = @import("request.zig");
 
 const writeOutcome = @import("outcome-writer.zig").writeOutcome;
 
-fn writeModuleOutcome(writer: *std.Io.Writer, output_allocator: std.mem.Allocator, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: ?*const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64, mode: @import("string-output.zig").Mode) !void {
-    try @import("module-outcome-writer.zig").write(writer, output_allocator, outcome, host,
+fn writeModuleOutcome(writer: *std.Io.Writer, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: ?*const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64, mode: @import("string-output.zig").Mode) !void {
+    try @import("module-outcome-writer.zig").write(writer, outcome, host,
         if (instance) |value| @tagName(value.status()) else "uninitialized", counter.events, events_before, counter.storage, mode);
 }
 
@@ -225,7 +225,7 @@ fn runMode(init: *const std.process.Init, mode: Mode, bytes: []const u8, request
         defer runtime.deinitOutcome(&outcome);
         if (mode == .module_requests) {
             const instance = if (persistent.prepared) &persistent.instance else null;
-            try writeModuleOutcome(&output.writer, init.gpa, &outcome, &host, instance, &counter, events_before, request.stringOutput);
+            try writeModuleOutcome(&output.writer, &outcome, &host, instance, &counter, events_before, request.stringOutput);
         } else try writeOutcome(&output.writer, &outcome, &host, request.stringOutput);
     }
     try output.writer.writeAll("]\n");

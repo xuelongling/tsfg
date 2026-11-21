@@ -246,10 +246,10 @@ test "persistent output preserves a lease allocation abort and its module accoun
         .fuel_consumed = 3,
     } };
     defer request.deinitOutcome(&result);
-    var writer: std.Io.Writer.Allocating = .init(a);
-    defer writer.deinit();
-    try @import("module-outcome-writer.zig").write(&writer.writer, a, &result, &host, "initialized", 9, 5, 12, .strict);
-    const parsed = try std.json.parseFromSlice(std.json.Value, a, writer.written(), .{});
+    var bytes: [1024]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&bytes);
+    try @import("module-outcome-writer.zig").write(&writer, &result, &host, "initialized", 9, 5, 12, .strict);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, writer.buffered(), .{});
     defer parsed.deinit();
     const fields = parsed.value.object;
     try std.testing.expectEqualStrings("failed", fields.get("status").?.string);

@@ -43,7 +43,7 @@ fn run(init: std.process.Init) !u8 {
         var outcome: request.RequestOutcome = undefined;
         try evaluate(&host, &metadata, original, if (persistent) &instance else null, &counter, &outcome);
         defer request.deinitOutcome(&outcome);
-        if (persistent) try @import("module-outcome-writer.zig").write(&output.writer, init.gpa, &outcome, &host,
+        if (persistent) try @import("module-outcome-writer.zig").write(&output.writer, &outcome, &host,
             moduleStatus(&instance), counter.events, before, counter.storage, original.stringOutput)
         else try @import("outcome-writer.zig").writeOutcome(&output.writer, &outcome, &host, original.stringOutput);
     }
