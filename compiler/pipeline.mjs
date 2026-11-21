@@ -233,6 +233,7 @@ export async function compileCommonBorrowProof(hir,publication,request,options){
   const fixed=own({publication,request});
   const executable=await verifiedConsumer(options.core,'core');
   const core=decodeCompilerText(consume(executable,['--common-program','--canonicalize'],product.text),'r03-core-output');
+  requireCheckedCoreInput(core,product.hir.inputIdentity);
   const proof=readCommonBorrowProof(consume(executable,['--common-program','--borrow-proof'],core),product.hir,fixed.publication,fixed.request);
   return {status:'ok',hir:product.hir,core,proof};
 }
@@ -297,6 +298,12 @@ function hasCheckedCoreInput(core,inputIdentity) {
   return found&&depth===0;
 }
 
+/** @param {string} core @param {string} inputIdentity */
+function requireCheckedCoreInput(core,inputIdentity) {
+  if(!hasCheckedCoreInput(core,inputIdentity))
+    throw new TypeError('r03-core-output: checked input identity differs');
+}
+
 async function produceCore(hir, options, lower = undefined, context = undefined) {
   const { core:coreExecutable, optimize } = options;
   const executable = await verifiedConsumer(coreExecutable, "core");
@@ -314,8 +321,7 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
-  if(!common&&(ordinary||generic)&&!hasCheckedCoreInput(core,inputIdentity))
-    throw new TypeError('r03-core-output: checked input identity differs');
+  if(common||ordinary||generic)requireCheckedCoreInput(core,inputIdentity);
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
 }
 

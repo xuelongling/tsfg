@@ -6,10 +6,11 @@ import {syncBuiltinESMExports} from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import {compileCommonBorrowProof,compileOwnedCore,compileOwnedHir,compileOwnedStaticProgram} from '../../compiler/pipeline.mjs';
-import {sha256} from '../../compiler/identity.mjs';
+import {canonical,sha256} from '../../compiler/identity.mjs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
+import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {readGenericHir} from '../../compiler/generic-hir.mjs';
 import {expectedGenericCore} from './generic-core-package-capture.mjs';
 import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
@@ -48,6 +49,7 @@ function framedCore(text,tail=Buffer.alloc(0)){
 const valid=framedCore(core.toString('utf8'),Buffer.from('// Source note: \ufffd\n'));
 const malformed=framedCore(core.toString('utf8'),Buffer.concat([Buffer.from('// Source note: '),Buffer.of(255,10)]));
 const capture=process.env.TSFG_R03_CORE_PAIR_CAPTURE;
+const commonCapture=process.env.TSFG_R03_COMMON_PAIR_CAPTURE;
 const mismatch={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked input identity differs'};
 
 test('Core transport preserves valid bytes and rejects malformed stdout before dependent stages',async t=>{
@@ -60,17 +62,21 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   /** @type {string[][]} */
   const calls=[];
   let coreInput;
+  let dependentInput;
   let stdout=valid;
   /** @type {Buffer | undefined} */
   let packetStdout;
+  /** @type {Buffer | undefined} */
+  let borrowStdout;
   t.mock.method(childProcess,'spawnSync',(executable,args,options)=>{
     assert.equal(executable,artifact);
     assert.ok(Array.isArray(args));
     calls.push(args);
-    const emitPacket=args.at(-1)==='--emit-bytecode';
-    assert.ok(emitPacket?packetStdout:['--canonicalize','--optimize'].includes(args.at(-1)),'unexpected downstream stage '+args.join(' '));
-    if(!emitPacket)coreInput=options.input;
-    const output=emitPacket?packetStdout:stdout;
+    const action=args.at(-1);
+    const output=action==='--emit-bytecode'?packetStdout:action==='--borrow-proof'?borrowStdout:stdout;
+    assert.ok(output&&['--canonicalize','--optimize','--emit-bytecode','--borrow-proof'].includes(action),'unexpected downstream stage '+args.join(' '));
+    if(action==='--emit-bytecode'||action==='--borrow-proof')dependentInput=options.input;
+    else coreInput=options.input;
     return {stdout:output,stderr:Buffer.alloc(0),status:0,signal:null,output:[null,output,Buffer.alloc(0)],pid:0};
   });
   syncBuiltinESMExports();
@@ -154,6 +160,71 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     assert.equal(mismatched.status,'tool-error');
     assert.deepEqual(mismatched,{status:'tool-error',code:'r03-d-consumer',
       message:'r04-producer-default-root: first scalar function differs from the checked default root'});
+  });
+  await t.test('Common transport checks Core input before its dependent stage',async sub=>{
+    let common,publication,request,matching,foreign,retainedPacket;
+    if(commonCapture){
+      const retained=JSON.parse(await fs.readFile(commonCapture,'utf8'));
+      const [right,plus,packet]=await Promise.all([retained.right,retained.foreign,retained.packet].map(file=>fs.readFile(file)));
+      assert.equal(sha256(right),'sha256:7c278bf56fe5b45b9f0b57b5dec97bb149f4224d24eb454dd25826b39a064314');
+      assert.equal(sha256(plus),'sha256:1ec57ca88342428241ff365bc6d08ff5d045417b2fbda2c21cf031c940f18614');
+      assert.equal(sha256(packet),'sha256:b16b5cba1c72a906b14ac1854e304b2f32a34d68a4810b45c1e386a2b38ba807');
+      common=JSON.parse(retained.context.hir);publication=JSON.parse(retained.context.publication);request=JSON.parse(retained.context.request);
+      assert.equal(common.inputIdentity,'sha256:3dce93bcece355dbd642fe88f4f1fb140442cb1af5a81f19588cce7889945f16');
+      // These retained inputs supply module bodies; only the printer frame is modeled.
+      matching=framedCore(right.toString('utf8'));foreign=framedCore(plus.toString('utf8'));retainedPacket=packet;
+    }else{
+      common=projectCommonProgram(facts);publication=createCommonProgramPublication(common);
+      request={targets:common.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
+      matching=framedCore(commonProgramCore(common,publication,request).text);foreign=valid;
+    }
+    const options={core:artifact,callPublicationContext:{publication,request},factsContext:commonCapture?undefined:{
+      family:'tsfg.common-program-context-candidate',version:facts.version,factsBytes,expectedPackageId:facts.packageId,
+    }};
+    sub.after(()=>{stdout=valid;packetStdout=undefined;borrowStdout=undefined;});
+    await sub.test('Common Core text rejects the foreign module',async()=>{
+      stdout=matching;
+      const accepted=await compileOwnedCore(common,options);
+      assert.equal(accepted.status,'ok');
+      assert.deepEqual(Buffer.from(accepted.core,'utf8'),matching);
+      stdout=foreign;
+      const rejected=await compileOwnedCore(common,{...options,optimize:true});
+      assert.equal(rejected.status,'tool-error');
+      assert.deepEqual(rejected,mismatch);
+    });
+    await sub.test('Common bytecode checks the input before emission',async()=>{
+      packetStdout=retainedPacket??Buffer.alloc(0);
+      stdout=matching;
+      let first=calls.length;
+      const accepted=await compileOwnedHir(common,options);
+      assert.deepEqual(calls.slice(first),[['--common-program','--canonicalize'],['--common-program','--emit-bytecode']]);
+      assert.deepEqual(Buffer.from(dependentInput,'utf8'),matching);
+      if(retainedPacket){
+        assert.equal(accepted.status,'ok');
+        assert.deepEqual(accepted.bytecode,retainedPacket);
+      }else assert.deepEqual(accepted,{status:'tool-error',code:'r03-d-consumer',
+        message:'r04-common-producer-identity: output differs from exact Common20 development envelope'});
+      stdout=foreign;
+      first=calls.length;
+      const rejected=await compileOwnedHir(common,options);
+      assert.deepEqual(calls.slice(first),[['--common-program','--canonicalize']]);
+      assert.deepEqual(rejected,mismatch);
+    });
+    await sub.test('Common borrow proof checks the input before analysis',async()=>{
+      const expected=commonProgramCore(common,publication,request,{borrowProof:true}).borrowProof;
+      borrowStdout=Buffer.from(canonical(expected)+'\n');
+      stdout=matching;
+      let first=calls.length;
+      const accepted=await compileCommonBorrowProof(common,publication,request,{core:artifact});
+      assert.deepEqual(accepted.proof,expected);
+      assert.deepEqual(calls.slice(first),[['--common-program','--canonicalize'],['--common-program','--borrow-proof']]);
+      assert.deepEqual(Buffer.from(dependentInput,'utf8'),matching);
+      stdout=foreign;
+      first=calls.length;
+      await assert.rejects(compileCommonBorrowProof(common,publication,request,{core:artifact}),
+        /r03-core-output: checked input identity differs/);
+      assert.deepEqual(calls.slice(first),[['--common-program','--canonicalize']]);
+    });
   });
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
