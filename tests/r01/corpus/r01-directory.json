@@ -2102,14 +2102,14 @@
     {
       "ruleId": "r01-string",
       "caseIds": [],
-      "requirement": "Immutable UTF-8 storage and StringView MUST have an explicit mapping to TS observable text behavior.",
-      "semanticSource": "pending-special-mapping",
+      "requirement": "String MUST preserve TS UTF-16 code units losslessly in canonical WTF-8. A StringView MUST report UTF-8 byte length. The source and byte address MUST remain valid during the borrow, and borrowers MUST NOT retain the view beyond it. Conversion MUST be strict unless the caller explicitly requests lossy replacement.",
+      "semanticSource": "necessary-difference",
       "basis": "docs/r01-language-contract.md#54-容器文本abi-与内核; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
       "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
       "capability": "string",
       "target": "windows-x86_64-msvc",
       "mode": "strict",
-      "positive": "MUST preserve accepted text under the independently specified mapping.",
+      "positive": "MUST preserve all accepted UTF-16 code units, including isolated surrogates.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
       "diagnosticCodes": [],
       "trapCodes": [],
@@ -2119,21 +2119,21 @@
           {
             "id": "positive",
             "kind": "positive",
-            "requirement": "MUST preserve accepted text under the independently specified mapping.",
+            "requirement": "MUST preserve all accepted UTF-16 code units, including isolated surrogates.",
             "applicability": "required",
             "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST reject unsafe ABI text inputs under that mapping, without inventing unapproved source surrogate bans.",
+            "requirement": "MUST reject strict UTF-8 output for an isolated surrogate.",
             "applicability": "required",
             "oracleKind": "pending"
           },
           {
             "id": "text-domain",
             "kind": "boundary",
-            "requirement": "MUST resolve length/index/slice units and unpaired surrogate representation before independent oracle claims.",
+            "requirement": "MUST apply UTF-16 code-unit length, indexing and slicing and preserve isolated surrogates across String operations.",
             "applicability": "required",
             "oracleKind": "return"
           }
@@ -2146,12 +2146,11 @@
           "R06 UTF-8/StringView bridge"
         ],
         "missing": [
-          "TS UTF-16 observable domain versus strict UTF-8 representation",
-          "length/index/slice units and lone-surrogate mapping",
-          "Independent text boundary oracle"
+          "Formal current-version String operations and range behavior against an independent oracle",
+          "Formal strict and explicitly lossy StringView results and host borrow lifetime"
         ],
-        "consumptionStage": "W3 before string lowering or ABI consumption",
-        "closure": "Document actual mapping/conflicts and accepted smallest decision, then independent text/ABI corpus.",
+        "consumptionStage": "W3 String execution and ABI consumption",
+        "closure": "Verify the accepted String and StringView semantics through formal consumers with a current-version text and ABI corpus.",
         "affectedCapabilities": [
           "string"
         ]
@@ -2783,7 +2782,7 @@
     },
     {
       "capability": "string",
-      "semanticSource": "pending-special-mapping",
+      "semanticSource": "necessary-difference",
       "productBoundary": "allowed",
       "implementation": "not-implemented",
       "target": "windows-x86_64-msvc",

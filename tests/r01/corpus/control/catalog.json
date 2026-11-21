@@ -230,7 +230,7 @@
     {
       "kind": "rule",
       "id": "r01-string",
-      "meaning": "Immutable UTF-8 storage and StringView MUST have an explicit mapping to TS observable text behavior.",
+      "meaning": "String MUST preserve TS UTF-16 code units losslessly in canonical WTF-8. A StringView MUST report UTF-8 byte length. The source and byte address MUST remain valid during the borrow, and borrowers MUST NOT retain the view beyond it. Conversion MUST be strict unless the caller explicitly requests lossy replacement.",
       "status": "active",
       "introducedIn": "tsfg-r01-v2"
     },

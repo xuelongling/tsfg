@@ -2,8 +2,9 @@
 
 # Formal String Core and R04
 
-The current development exchange is Core0.10/R04 wire10, capability51. It
-retains scalar codes1–13 and adds the nominal managed String code14. The
+The registered development exchange is Core 0.12 and R04 wire12 with
+capability119. The managed String code14 was introduced in Core 0.10 and
+wire10 alongside the existing scalar codes1–13. The
 `tsfg.type`, `tsfg.signature` and `tsfg.function` identity algorithms remain
 unchanged; String uses the name `string`. Ordinary scalar arithmetic and
 equality operations do not accept String. The existing certified Counter
@@ -35,14 +36,14 @@ numeric conversion and slice clamping still needs its official facts and
 lowering connection. No new language bounds-trap policy or source API is
 introduced here; these remaining paths keep parent M24 open.
 
-The registry and machine schema own the exact wire identity. Old unmarked
-formal Core0.9 and old/mixed wire/schema identities are rejected. Independent
-private candidate contracts remain Core0.9 with their own marker, schema,
-profile and verifier; `privateCoreExchangeFormat` records that current private
-contract metadata. It is not a formal compatibility route. An empty reference
-candidate keeps its marker and runs its explicit private profile verifier,
-which accepts only scalar1–13 and cannot publish an R04 packet. Forged markers
-or formal0.10 modules mixed with private metadata cannot bypass either gate.
+The [registry](../contracts/registry.json) and [machine schema](../contracts/bytecode.schema.json)
+define the exact accepted wire identity. The retained wire10 String packets
+are historical goldens. The current CLI requires the registered wire12
+format. The private reference candidate uses its own marker, profile and
+verifier. `privateCoreExchangeFormat` records its version and schema identity.
+The empty private reference profile accepts scalar codes1–13 and does not
+publish R04 packets. Each route rejects Core carrying a mismatched marker or
+schema.
 
 ## CLI String output
 
