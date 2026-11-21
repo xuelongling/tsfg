@@ -3,6 +3,7 @@
 // an input. References/layout/SSA/identity are owned by the same Context first.
 const std = @import("std");
 const wire = @import("wire-program-model.zig");
+const tables = @import("wire-program-tables.zig");
 const context = @import("wire-program-refcheck-context.zig");
 const refs = @import("wire-program-publication-refs.zig");
 const origin = @import("wire-program-return-origin-model.zig");
@@ -54,10 +55,42 @@ const Builder = struct {
 
 const RefList = std.ArrayListUnmanaged(origin.Ref);
 const Flow = struct { heap: origin.Ref, control: origin.Ref };
+fn nativeScalar(common: *const tables.CommonTables, carrier: t.Carrier, expected: t.TypeRef) bool {
+    const row = common.types[@intFromEnum(expected)];
+    return carrier == .@"type" and carrier.@"type" == expected and row.kind == .scalar and row.native_code != 0;
+}
+
+// Entries own the one allocation and initialization before control splits.
+// Handling direct loads and stores does not give Cell values a Data equation.
+fn directCellHandles(c: *context.Context, function: *const wire.Function) context.Error!bool {
+    for (function.blocks) |block| {
+        try c.step();
+        for (block.parameters) |register| {
+            try c.step();
+            if (function.registers[@intFromEnum(register)].carrier == .cell) return false;
+        }
+        for (block.instructions) |op| {
+            try c.step();
+            if (op.result) |register| {
+                try c.step();
+                if (function.registers[@intFromEnum(register)].carrier == .cell and op.data != .eh_cell) return false;
+            }
+            for (op.operands, 0..) |register, index| {
+                try c.step();
+                if (function.registers[@intFromEnum(register)].carrier != .cell) continue;
+                if (index != 0 or (op.data != .eh_load and op.data != .eh_store)) return false;
+            }
+        }
+    }
+    return true;
+}
+
 const CFG = struct {
     const FieldAddress = struct { id: origin.Symbol, view: origin.Symbol };
+    const ScalarCell = struct { register: t.RegisterRef, view: t.TypeRef, value: ?origin.Ref = null };
     b: *Builder, f: *const wire.Function, receiver_protocol: bool = false,
     cells: []?origin.Ref = &.{}, cell_inputs: []RefList = &.{},
+    scalar_cells: std.AutoHashMapUnmanaged(t.CellRef, ScalarCell) = .empty,
     receiver_actions: std.ArrayListUnmanaged(ReceiverControl) = .empty,
     field_stores: std.ArrayListUnmanaged(ReceiverField) = .empty,
     heaps: std.ArrayListUnmanaged(origin.Heap) = .empty, controls: std.ArrayListUnmanaged(origin.Control) = .empty,
@@ -228,6 +261,43 @@ const CFG = struct {
         }
     }
     fn registerRef(self: *CFG, ref: t.RegisterRef) origin.Ref { return self.b.registers[@intFromEnum(ref)].?; }
+    fn scalarCell(self: *CFG, function: t.FunctionRef, block: usize, op: *const wire.instruction.Instruction, flow: Flow) context.Error!void {
+        const c = self.b.c;
+        const common = &c.program.tables.mode.common;
+        switch (op.data) {
+            .eh_cell => |cell| {
+                const binding = common.storage.bindings[@intFromEnum(common.exceptions.bindings[@intFromEnum(cell.binding)].binding)];
+                const own = switch (binding.owner) { .param, .local => |owner| owner == function, else => false };
+                const register = op.result.?;
+                const carrier = self.f.registers[@intFromEnum(register)].carrier;
+                if (block != 0 or !own or !nativeScalar(common, binding.carrier, binding.@"type") or
+                    carrier != .cell or carrier.cell != cell.binding) { self.b.pending = .operation; return; }
+                try c.charge(self.scalar_cells.count() + 1);
+                const entry = try self.scalar_cells.getOrPut(self.b.allocator, cell.binding);
+                if (entry.found_existing) { self.b.pending = .operation; return; }
+                entry.value_ptr.* = .{ .register = register, .view = binding.@"type" };
+            },
+            .eh_store => |store_data| {
+                const cell = self.scalar_cells.getPtr(store_data.binding) orelse { self.b.pending = .operation; return; };
+                const input = op.operands[1];
+                // The only write must occur in the entry block before any
+                // continuation. Project the original Data, including its origin.
+                if (block != 0 or !store_data.initialize or cell.value != null or cell.register != op.operands[0] or
+                    !nativeScalar(common, self.f.registers[@intFromEnum(input)].carrier, cell.view)) { self.b.pending = .operation; return; }
+                cell.value = self.registerRef(input);
+            },
+            .eh_load => |load| {
+                const cell = self.scalar_cells.get(load.binding) orelse { self.b.pending = .operation; return; };
+                const value = cell.value orelse { self.b.pending = .operation; return; };
+                const register = op.result.?;
+                if (cell.register != op.operands[0] or !nativeScalar(common, self.f.registers[@intFromEnum(register)].carrier, cell.view)) {
+                    self.b.pending = .operation; return;
+                }
+                try self.define(register, value, flow.control);
+            },
+            else => unreachable,
+        }
+    }
     fn define(self: *CFG, reg: t.RegisterRef, value: origin.Ref, control_id: origin.Ref) context.Error!void {
         const target = self.b.registers[@intFromEnum(reg)].?;
         const view = self.b.nodes.items[target].join.@"type";
@@ -604,7 +674,12 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
         try c.step(); const declared = v.storage.bindings[@intFromEnum(binding)].@"type";
         if (f.registers[@intFromEnum(f.blocks[0].parameters[hidden])].view != declared) { result.pending = .raw_input; return result; }
     }
-    for (f.registers) |*reg| { try c.step(); switch (reg.carrier) { .domain, .@"type", .payload, .environment => {}, else => { result.pending = .entry_protocol; return result; } } }
+    var has_cells = false;
+    for (f.registers) |*reg| { try c.step(); switch (reg.carrier) {
+        .domain, .@"type", .payload, .environment => {},
+        .cell => has_cells = true,
+        else => { result.pending = .entry_protocol; return result; },
+    } }
     for (abi.parameters, abi.argument_types, 0..) |binding, incoming, index| {
         try c.step(); const declared = v.storage.bindings[@intFromEnum(binding)].@"type";
         if (incoming != declared or f.registers[@intFromEnum(f.blocks[0].parameters[hidden + receiver + index])].view != declared) { result.pending = .raw_input; return result; }
@@ -612,15 +687,30 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
     // This complete-op preflight does not omit dead definitions, side effects,
     // calls, handlers or terminators. Unsupported semantics make the WHOLE body
     // unavailable; all malformed references were already rejected upstream.
+    if (has_cells and !try directCellHandles(c, f)) { result.pending = .operation; return result; }
     for (f.blocks) |*block| { try c.step(); for (block.instructions) |*op| {
         try c.step(); switch (op.data) {
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
-            .br, .cond_br, .eh_pack, .@"return", .eh_raise, .eh_unreachable,
+            .br, .cond_br, .eh_pack, .@"return", .eh_raise, .eh_unreachable, .eh_cell, .eh_store, .eh_load,
             .global_load, .domain_field_read, .domain_field_store, .domain_array_read, .domain_array_store, .domain_array_length, .domain_array_resize,
             .common_typed_array_create, .domain_array_create, .domain_copy,
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store,
             .function_make, .eh_invoke, .eh_invoke_indirect, .common_method_invoke, .eh_route => {},
-            .global_store => { result.pending = .global_payload; return result; },
+            .global_store => |store_data| {
+                const global = v.modules.globals[@intFromEnum(store_data.global)];
+                const input = f.registers[@intFromEnum(op.operands[0])].carrier;
+                if (store_data.initialize or !global.writable or !nativeScalar(v, global.carrier, global.@"type") or !nativeScalar(v, input, global.@"type")) {
+                    result.pending = .global_payload; return result;
+                }
+            },
+            .domain_numeric_use => |numeric| {
+                const target = f.blocks[@intFromEnum(numeric.normal_successor)];
+                const input = f.registers[@intFromEnum(op.operands[0])].carrier;
+                if (target.parameters.len != 1 or !nativeScalar(v, input, numeric.target_type) or
+                    !nativeScalar(v, f.registers[@intFromEnum(target.parameters[0])].carrier, numeric.target_type)) {
+                    result.pending = .operation; return result;
+                }
+            },
             .domain_read_span => { result.pending = .span_transfer; return result; },
             .add, .sub, .mul, .div, .rem, .shl, .shr, .ushr, .@"and", .@"or", .xor, .neg, .@"not", .pos, .bool_not, .eq, .ne, .lt, .le, .gt, .ge => {
                 // These native operations produce an i32 (or native bool)
@@ -677,6 +767,7 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
         for (block.instructions, 0..) |*op, ordinal| {
         try c.step(); switch (op.data) {
             .fuel => {}, // Request fuel control is not a Graph5 language exit.
+            .eh_cell, .eh_store, .eh_load => try cfg.scalarCell(function, block_index, op, flow),
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => flow = try cfg.lexical(op, flow, function_id, block_index, ordinal),
             .eh_invoke => |call| try cfg.invoke(call.callee, op, flow, function_id, block_index, ordinal, .direct),
             .common_method_invoke => |call| {
@@ -743,11 +834,17 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
                 try cfg.define(op.result.?, copied, flow.control);
             },
             .global_load => |row| {
-                // Graph.global denotes the owned global root. No store is
-                // admitted in this body, and calls cannot replace its payload.
                 const value = try cfg.global(row.global) orelse break;
+                // The normalized load does not distinguish an rvalue read
+                // from the old-value read in a compound write. Keep both.
                 try cfg.access(flow, try cfg.one(value), .read);
                 try cfg.define(op.result.?, value, flow.control);
+            },
+            .global_store => |row| {
+                // Native storage cannot carry owners or alter an original
+                // managed payload. Keep the original Global write permission.
+                const value = try cfg.global(row.global) orelse break;
+                try cfg.access(flow, try cfg.one(value), .write);
             },
             .domain_field_read => |row| {
                 const field = try cfg.fieldAddress(row.member, row.receiver_view) orelse break;
@@ -811,6 +908,11 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
                 // external owner, heap write or language completion is added.
                 const value = try builder.value(.{ .literal = .{ .@"type" = view, .category = .other } });
                 try cfg.define(reg, value, flow.control);
+            },
+            .domain_numeric_use => |numeric| {
+                // Input and normal parameter already have that exact native
+                // carrier. A request abort adds no language continuation.
+                try cfg.connect(numeric.normal_successor, flow, &.{cfg.registerRef(op.operands[0])});
             },
             .br => |row| try cfg.branch(row.destination, flow, op.operands),
             .eh_route => |row| try cfg.branch(row.successor, flow, op.operands),
