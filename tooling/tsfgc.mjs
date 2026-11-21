@@ -8,14 +8,17 @@ import {createCommonGpuBindingPlan} from '../compiler/common-program-gpu-binding
 import { printHir, readHir } from "../compiler/hir.mjs";
 import { checkHirWireFileSize } from '../compiler/hir-wire.mjs';
 import { genericHirFormat } from '../compiler/generic-hir.mjs';
+import { readGenericPackageFrontendResponse } from '../compiler/generic-package-frontend.mjs';
+import { checkGenericPackageIoFileSize } from '../compiler/generic-package-io.mjs';
 import { referenceHirFormat } from '../compiler/reference-hir.mjs';
 import { familyOf } from '../compiler/module-callable-common.mjs';
 import { checkSystemQueryFileSize, systemQueryRequestContext } from '../compiler/system-query-facts.mjs';
 import {canonical} from '../compiler/identity.mjs';
 
-/** @param {string} file @param {(size: bigint) => number} checkSize @param {'Query'|'HIR'|'Common'} kind */
+/** @param {string} file @param {(size: bigint) => number} checkSize @param {'Query'|'HIR'|'Common'|'Generic package RPC'} kind */
 async function readStableInputFile(file,checkSize,kind){
-  const diagnostic={Query:'r10-system-query-input',HIR:'r03-hir-invalid',Common:'r03-common-program-input'}[kind];
+  const diagnostic={Query:'r10-system-query-input',HIR:'r03-hir-invalid',Common:'r03-common-program-input',
+    'Generic package RPC':'generic-package-io-input'}[kind];
   const handle=await open(file,constants.O_RDONLY|(constants.O_NONBLOCK??0));
   try {
     const before=await handle.stat({bigint:true});
@@ -43,7 +46,7 @@ async function readStableInputFile(file,checkSize,kind){
 const readCommonInputFile = file => readStableInputFile(file,checkCommonJsonFileSize,'Common');
 
 try {
-  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request", "--gpu-request"];
+  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request", "--gpu-request", "--package-response"];
   const options = new Map();
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i += 2) {
@@ -54,6 +57,7 @@ try {
   }
   const emit = options.get("--emit") ?? "run";
   const inputKind = options.get("--input-kind") ?? "source";
+  const packageResponse = inputKind === "generic-package-response";
   const hasFixedCommon = options.has("--publication") || options.has("--kernel-request");
   const gpuBindingPlan = emit === "gpu-binding-plan";
   const borrowProof = emit === "borrow-proof";
@@ -63,16 +67,32 @@ try {
     throw new TypeError("r03-cli-options: unsupported --emit (expected " + emitModes.join("|") + ")");
   if (options.has("--gpu-request") && !gpuBindingPlan)
     throw new TypeError("r03-cli-options: --gpu-request requires --emit gpu-binding-plan");
-  if (!["source", "hir"].includes(inputKind) || inputKind === "hir" && !gpuBindingPlan && !borrowProof &&
+  if (options.has("--package-response") && !packageResponse)
+    throw new TypeError("r03-cli-options: --package-response requires --input-kind generic-package-response");
+  if (!["source", "hir", "generic-package-response"].includes(inputKind) || inputKind === "hir" && !gpuBindingPlan && !borrowProof &&
       (!["hir", "core", "bytecode", "program-object", "run"].includes(emit) ||
         ["--frontend", "--query-request"].some(key => options.has(key)) || hasFixedCommon && !fixedCommonCore))
-    throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|program-object|run without Source, Query or borrow inputs");
+    throw new TypeError("r03-cli-options: --input-kind source|hir|generic-package-response; HIR requires --emit hir|core|bytecode|program-object|run without Source, Query or borrow inputs");
   if (!options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> is required (--emit defaults to run)");
   if (fixedCommonCore && (!options.has("--publication") || !options.has("--kernel-request") || !options.has("--core") ||
       ["--vm", "--requests"].some(key => options.has(key))))
     throw new TypeError("r03-cli-options: Common Core requires --publication, --kernel-request and --core without Runtime inputs");
-  if (gpuBindingPlan || borrowProof) {
+  if (packageResponse) {
+    if (emit !== "hir" || !options.has("--package-response") || options.size !== 4)
+      throw new TypeError("r03-cli-options: generic-package-response requires --input <request.json>, --package-response <response.json> and --emit hir");
+    const request = await readStableInputFile(options.get("--input"), checkGenericPackageIoFileSize, "Generic package RPC");
+    const response = await readStableInputFile(options.get("--package-response"), checkGenericPackageIoFileSize, "Generic package RPC");
+    const restored = readGenericPackageFrontendResponse(request, response, { operation: "instantiate" });
+    if (restored.status === "error") {
+      process.stdout.write(canonical(restored) + "\n");
+      process.exitCode = 3;
+    } else if ("hir" in restored) {
+      process.stdout.write(printHir(restored.hir));
+    } else {
+      throw new TypeError("generic-package-io-operation: checked instantiation response did not contain HIR");
+    }
+  } else if (gpuBindingPlan || borrowProof) {
     const hasCommonInputs = options.has("--publication") && options.has("--kernel-request") &&
       !["--frontend", "--vm", "--requests", "--query-request"].some(key => options.has(key));
     if (gpuBindingPlan && (!hasCommonInputs || inputKind !== "hir" || !options.has("--gpu-request") || options.has("--core")))

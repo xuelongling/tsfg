@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 import { encodeGenericPackage } from '../../compiler/generic-package.mjs';
 import { encodeGenericPackageRequest, genericPackageRequestId } from '../../compiler/generic-package-io.mjs';
@@ -20,6 +24,62 @@ const requestBytes = () => bytes(instantiate.request);
 const responseBytes = () => bytes(instantiate.response);
 const frontend = () => import('../../compiler/generic-package-frontend.mjs');
 const rejected = error => error instanceof Error && /^(generic-package|generic-instance|generic-hir)-/.test(Reflect.get(error, 'code'));
+
+test('CLI restores checked Generic HIR from the original saved pair', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'tsfg-generic-package-cli-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const request = join(directory, 'request.json');
+  const response = join(directory, 'response.json');
+  const cli = fileURLToPath(new URL('../../tooling/tsfgc.mjs', import.meta.url));
+  const run = async (input, output, extra = [], emit = 'hir', oversized = undefined) => {
+    await writeFile(request, bytes(input));
+    await writeFile(response, bytes(output));
+    if (oversized) await truncate(oversized, 16 * 1024 * 1024 + 1);
+    const child = spawnSync(process.execPath, [cli, '--input-kind', 'generic-package-response',
+      '--input', request, '--package-response', response, '--emit', emit, ...extra], { windowsHide: true, encoding: 'utf8' });
+    assert.equal(child.error, undefined);
+    assert.equal(child.signal, null);
+    return child;
+  };
+  const expected = (await frontend()).readGenericPackageFrontendResponse(requestBytes(), responseBytes());
+  assert.equal(expected.status, 'ok');
+  const restored = await run(instantiate.request, instantiate.response);
+  assert.equal(restored.status, 0, restored.stderr);
+  assert.equal(restored.stderr, '');
+  assert.equal(restored.stdout, printGenericHir(expected.hir));
+  const crossed = await run(instantiate.request, exported.response);
+  assert.equal(crossed.status, 2);
+  assert.equal(crossed.stdout, '');
+  assert.match(crossed.stderr, /^generic-package-io-/);
+  const exportError = cases.find(item => item.name === 'source-eof-error');
+  for (const { request: input, response: output } of [exported, exportError]) {
+    const wrongOperation = await run(input, output);
+    assert.equal(wrongOperation.status, 2);
+    assert.equal(wrongOperation.stdout, '');
+    assert.match(wrongOperation.stderr, /expected instantiate request/);
+  }
+  const failure = { ...instantiate.response, status: 'error',
+    diagnostic: { kind: 'budget', code: 0, detail: 'limit', primary: null } };
+  delete failure.value;
+  const diagnostic = await run(instantiate.request, failure);
+  assert.equal(diagnostic.status, 3);
+  assert.equal(diagnostic.stderr, '');
+  assert.deepEqual(JSON.parse(diagnostic.stdout), {
+    status: 'error', requestId: failure.requestId, diagnostic: failure.diagnostic,
+  });
+  for (const args of [{ extra: ['--frontend', 'unused'] }, { emit: 'core' }]) {
+    const invalid = await run(instantiate.request, instantiate.response, args.extra, args.emit);
+    assert.equal(invalid.status, 2);
+    assert.equal(invalid.stdout, '');
+    assert.match(invalid.stderr, /^r03-cli-options:/);
+  }
+  for (const file of [request, response]) {
+    const limited = await run(instantiate.request, instantiate.response, [], 'hir', file);
+    assert.equal(limited.status, 2);
+    assert.equal(limited.stdout, '');
+    assert.match(limited.stderr, /^generic-package-io-limit:/);
+  }
+});
 
 // Each test loads the new module inside its public behavior. The BASE failure is
 // the missing production capability, with no test executor or fabricated Source.

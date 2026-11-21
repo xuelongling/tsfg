@@ -17,9 +17,12 @@ function ownedRequest(input) {
  * Production cold importer shared by live transport and persisted responses.
  * Candidate correspondence is separate from Source executable admission.
  * @param {unknown} requestBytes @param {unknown} responseBytes
+ * @param {{operation?: 'instantiate' | 'export'}} [options]
  */
-export function readGenericPackageFrontendResponse(requestBytes, responseBytes) {
+export function readGenericPackageFrontendResponse(requestBytes, responseBytes, { operation } = {}) {
   const input = ownedRequest(requestBytes);
+  if (operation !== undefined && input.request.operation !== operation)
+    throw new TypeError(`generic-package-io-operation: expected ${operation} request`);
   const response = decodeGenericPackageResponse(responseBytes, input.bytes);
   const requestId = response.requestId;
   if (response.status === 'error')

@@ -5,6 +5,12 @@ import { readGenericJson, preflightGenericJson, genericPackageIoJsonPolicy } fro
 import { normalizeIoRequest, normalizeIoResponse, ioFailure } from './generic-package-io-shape.mjs';
 export { genericPackageIoFormat } from './generic-package-io-shape.mjs';
 
+/** Enforce the transport limit before allocating a request or response file buffer. @param {bigint} size */
+export function checkGenericPackageIoFileSize(size) {
+  if (size > BigInt(genericPackageIoJsonPolicy.bytes)) ioFailure('limit');
+  return genericPackageIoJsonPolicy.bytes;
+}
+
 function encode(value) {
   const text = canonical(value), bytes = new TextEncoder().encode(text);
   if (bytes.byteLength > genericPackageIoJsonPolicy.bytes) ioFailure('limit');
