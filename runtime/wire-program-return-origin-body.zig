@@ -4,6 +4,7 @@
 const std = @import("std");
 const wire = @import("wire-program-model.zig");
 const tables = @import("wire-program-tables.zig");
+const storage = @import("wire-program-storage.zig");
 const context = @import("wire-program-refcheck-context.zig");
 const refs = @import("wire-program-publication-refs.zig");
 const origin = @import("wire-program-return-origin-model.zig");
@@ -487,6 +488,83 @@ const CFG = struct {
 };
 
 const ReceiverMode = enum { certificate, control, effects };
+
+const ReceiverParameterCells = struct {
+    cells: []const bool = &.{},
+    loads: []const ?t.RegisterRef = &.{},
+};
+
+fn receiverParameterCells(cfg: *CFG, abi: *const storage.CommonAbi, hidden: usize) context.Error!ReceiverParameterCells {
+    const c = cfg.b.c;
+    const common = &c.program.tables.mode.common;
+    const f = cfg.f;
+    try c.charge(3 * f.registers.len + 2 * common.exceptions.bindings.len);
+    const uses = try cfg.b.allocator.alloc(u8, f.registers.len);
+    const entries = try cfg.b.allocator.alloc(?t.BindingRef, f.registers.len);
+    const loads = try cfg.b.allocator.alloc(?t.RegisterRef, f.registers.len);
+    const cell_ops = try cfg.b.allocator.alloc(u8, common.exceptions.bindings.len);
+    const cells = try cfg.b.allocator.alloc(bool, common.exceptions.bindings.len);
+    @memset(uses, 0);
+    @memset(entries, null);
+    @memset(loads, null);
+    @memset(cell_ops, 0);
+    @memset(cells, false);
+    for (abi.parameters, abi.argument_types, 0..) |binding, raw, index| {
+        try c.charge(4);
+        const ref = hidden + index + 1;
+        const register = f.blocks[0].parameters[ref];
+        const row = common.storage.bindings[@intFromEnum(binding)];
+        const physical = t.Carrier{ .@"type" = raw };
+        if (common.types[@intFromEnum(raw)].kind == .reference and std.meta.eql(row.carrier, physical) and
+            std.meta.eql(abi.physical_parameters[ref], physical))
+            entries[@intFromEnum(register)] = binding;
+    }
+    for (f.blocks) |block| {
+        try c.step();
+        for (block.instructions) |op| {
+            try c.step();
+            for (op.operands) |reg| {
+                try c.step();
+                uses[@intFromEnum(reg)] +|= 1;
+            }
+            switch (op.data) {
+                inline .eh_cell, .eh_store, .eh_load => |row| cell_ops[@intFromEnum(row.binding)] +|= 1,
+                else => {},
+            }
+        }
+    }
+    for (f.blocks) |block| {
+        try c.step();
+        for (block.instructions, 0..) |copy, index| {
+            try c.step();
+            if (copy.data != .domain_copy or index < 3) continue;
+            const window = block.instructions[index - 3 .. index];
+            const cell = &window[0];
+            const store = &window[1];
+            const load = &window[2];
+            if (cell.data != .eh_cell or store.data != .eh_store or load.data != .eh_load or !store.data.eh_store.initialize) continue;
+            const binding = cell.data.eh_cell.binding;
+            const cell_index = @intFromEnum(binding);
+            if (cell_ops[cell_index] != 3 or store.data.eh_store.binding != binding or load.data.eh_load.binding != binding) continue;
+            const handle = cell.result.?;
+            const loaded = load.result.?;
+            const original = store.operands[1];
+            if (uses[@intFromEnum(handle)] != 2 or uses[@intFromEnum(loaded)] != 1 or store.operands[0] != handle or
+                load.operands[0] != handle or copy.operands[0] != loaded) continue;
+            const parameter = entries[@intFromEnum(original)] orelse continue;
+            if (common.exceptions.bindings[cell_index].binding != parameter) continue;
+            const expected = common.storage.bindings[@intFromEnum(parameter)].@"type";
+            const physical = t.Carrier{ .@"type" = expected };
+            const operand = f.registers[@intFromEnum(loaded)];
+            const result = f.registers[@intFromEnum(copy.result.?)];
+            if (copy.data.domain_copy.static_view != expected or operand.view != expected or result.view != expected or
+                !std.meta.eql(operand.carrier, physical) or !std.meta.eql(result.carrier, physical)) continue;
+            cells[cell_index] = true;
+            loads[@intFromEnum(loaded)] = original;
+        }
+    }
+    return .{ .cells = cells, .loads = loads };
+}
 fn directExplicitBase(c: *context.Context, f: *const wire.Function, construction: t.ConstructionIndex, entry: t.RegisterRef, op: *const wire.instruction.Instruction) context.Error!bool {
     const common = &c.program.tables.mode.common;
     const parent = common.members.constructions[@intFromEnum(construction)];
@@ -553,8 +631,10 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
         if (incoming != declared or f.registers[@intFromEnum(f.blocks[0].parameters[hidden + index + 1])].view != declared) { result.pending = .raw_input; return; }
     };
     var has_explicit_base = false;
+    var has_cells = false;
     for (f.blocks) |*block| for (block.instructions) |*op| {
         try c.step();
+        has_cells = has_cells or op.data == .eh_cell;
         // A checked implicit-base child stays a separate frame and allocation.
         // Its parent/newTarget edge, both completions, initialization prefix and
         // later explicit parent bind are all projected below without shortening.
@@ -606,6 +686,10 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
         } else try b.value(.unknown);
         try cfg.insert(&cfg.values[@intFromEnum(reg)], value);
     }
+    const parameter_cells = if (mode == .certificate and has_cells and abi.parameters.len != 0)
+        try receiverParameterCells(&cfg, abi, hidden)
+    else
+        ReceiverParameterCells{};
     if (!control_only) {
         // Conditional lexical Cell owners, never Object or Frame identities.
         // All control-gated writes join; old values across repeated births are
@@ -619,6 +703,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
             const binding = v.storage.bindings[@intFromEnum(v.exceptions.bindings[index].binding)];
             const owner = switch (binding.owner) { .param, .local, .receiver => |owner_id| owner_id, else => { result.pending = .entry_protocol; return; } };
             if (owner != function) { result.pending = .entry_protocol; return; }
+            if (index < parameter_cells.cells.len and parameter_cells.cells[index]) continue;
             if (cfg.cells[index] == null) { const view = try b.typeSymbol(binding.@"type") orelse break; cfg.cells[index] = try b.value(.{ .join = .{ .@"type" = view, .inputs = &.{} } }); }
         };
     }
@@ -647,11 +732,19 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                 .eh_cell => {},
                 .eh_store => |row| if (!control_only) {
                     const index = @intFromEnum(row.binding);
+                    if (index < parameter_cells.cells.len and parameter_cells.cells[index]) continue;
                     if (cfg.cells[index] == null) { b.pending = .entry_protocol; break; }
                     const value = try b.value(.{ .gate = .{ .@"type" = null, .inputs = try cfg.one(cfg.registerRef(op.operands[1])), .control = flow.control } });
                     try cfg.insert(&cfg.cell_inputs[index], value);
                 },
                 .eh_load => |row| {
+                    const register = @intFromEnum(op.result.?);
+                    if (register < parameter_cells.loads.len) if (parameter_cells.loads[register]) |original| {
+                        // The immediate copy retains the original control
+                        // and heap. Its operand is the same entry parameter.
+                        try cfg.insert(&cfg.values[register], cfg.registerRef(original));
+                        continue;
+                    };
                     const value = if (!control_only) cfg.cells[@intFromEnum(row.binding)] orelse { b.pending = .entry_protocol; break; } else try b.value(.unknown);
                     try cfg.define(op.result.?, value, flow.control);
                 },

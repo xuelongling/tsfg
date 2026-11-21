@@ -47,7 +47,7 @@ test('each scalar constructor argument keeps its typed and complete effect bound
 });
 
 test('initialized Ref constructor arguments keep their original objects and contents', async () => {
-  await nativeUnit({ source: 'runtime/return-origin-constructor-initialized-ref-test.zig', prefix: 'r03-constructor-initialized-ref-', expectedPasses: 1 });
+  await nativeUnit({ source: 'runtime/return-origin-constructor-initialized-ref-test.zig', prefix: 'r03-constructor-initialized-ref-', expectedPasses: 2 });
 });
 
 test('Ref constructor arguments require complete initialization and stable caller facts', async () => {

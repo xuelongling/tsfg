@@ -158,14 +158,26 @@ test "ordinary Ref parameter survives an ordered Box argument and own field proj
     declarations[0].return_type = @splat(0x11);
     declarations[0].construction = null;
     var contracts = dto.contracts;
-    var published_nodes = graph.nodes[0..7].*;
+    var published_nodes = graph.nodes[0..6].*;
     published_nodes[1].receiver_frame.site = "published:new-Box";
     published_nodes[2].copy.site = "published:argument";
-    published_nodes[6].copy.site = "published:return";
+    published_nodes[4] = graph.nodes[5];
+    published_nodes[5] = graph.nodes[6];
+    published_nodes[5].copy.site = "published:return";
+    published_nodes[5].copy.bases = &.{4};
+    var published_heaps = graph.heaps[0..4].*;
+    published_heaps[3] = .{ .copy = .{ .previous = 2, .value = 5 } };
     var published = graph;
     published.nodes = &published_nodes;
+    published.heaps = &published_heaps;
+    published.controls = graph.controls[0..2];
+    published.normal = &.{5};
+    published.language = &.{};
+    published.exits = .{ .normal = &.{.{ .heap = 3, .control = 1 }}, .language = &.{} };
     contracts[0].return_origins = published;
     contracts[0].upper.parameters = &.{.{ .index = 0, .read = false, .write = false, .structural = false }};
+
+    contracts[2].return_origins = dto.authored_leaf;
     var rows = fixedRows(&contracts);
     rows[0].declaration = &declarations[0];
 
@@ -192,7 +204,8 @@ test "ordinary Ref parameter survives an ordered Box argument and own field proj
         defer result.deinit();
         try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
         try std.testing.expect(result.normal_live and !result.language_live);
-        try std.testing.expect(result.heap_live[4] and !result.heap_live[3]);
+        try std.testing.expect(result.heap_live[candidate.exits.normal[0].heap]);
+        for (candidate.exits.language) |exit| try std.testing.expect(!result.heap_live[exit.heap]);
         try std.testing.expectEqual(@as(usize, 1), result.calls.len);
         const call = result.calls[0];
         try std.testing.expect(call.caller_graph == candidate);
@@ -249,4 +262,16 @@ test "ordinary Ref parameter survives an ordered Box argument and own field proj
     var forbidden = try domain.analyzeReturns(std.testing.allocator, &directory, &graph, &budget, .{ .function_id = dto.caller, .fixed = &rows, .ordinary = evidence });
     defer forbidden.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, .fixed_contract), forbidden.pending);
+    formal_parameters[1].read = false;
+
+    // A guarded parameter equation without the exact typed Cell proof
+    // remains part of the certificate and cannot match the direct operand.
+    var projected_nodes = dto.authored_leaf.nodes[0..6].* ++ [_]m.Value{.{ .gate = .{ .@"type" = null, .inputs = &.{3}, .control = 2 } }};
+    projected_nodes[4].copy.bases = &.{6};
+    var projected_box = dto.authored_leaf;
+    projected_box.nodes = &projected_nodes;
+    const owned_box = try m.validateGraph(std.testing.allocator, &directory, dto.callee, &projected_box, &budget);
+    try std.testing.expect(owned_box == .pending and owned_box.pending == .construction_frame);
+    const unproven = try inclusion.covered(std.testing.allocator, &directory, dto.callee, &projected_box, &bounds, &budget);
+    try std.testing.expect(unproven == .pending and unproven.pending == .receiver_no_exact_certificate);
 }

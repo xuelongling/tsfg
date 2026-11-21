@@ -335,3 +335,64 @@ test "typed initialized caller Ref argument retains original allocation and cont
     }
     try std.testing.expect(native_seen and reference_seen); try std.testing.expectEqual(@as(usize, 0), result.effects.len);
 }
+
+test "typed constructor property copy retains its original Reference parameter" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const cell: t.CellRef = @enumFromInt(3);
+    const binding = [_]t.JsonMember{.{ .key = "binding", .value = .{ .string = "b-argument" } }};
+    const init_properties = binding ++ [_]t.JsonMember{.{ .key = "initialize", .value = .{ .boolean = true } }};
+    const copy_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = dto.a } }};
+    var registers = callee_registers ++ [_]wire.Register{ .{ .carrier = ac, .view = a }, .{ .carrier = ac, .view = a } };
+    registers[7] = .{ .carrier = .{ .cell = cell }, .view = null };
+    fixture.functions[2].registers = &registers;
+    const carriers = [_][]const u8{
+        "receiver:" ++ dto.b, dto.b, dto.b, payload, "initialization:" ++ dto.b, dto.a,
+        "initialization:" ++ dto.b, "cell:b-argument", dto.b, payload, dto.a, dto.a,
+    };
+    const writes = [_]ins.Instruction{
+        callee_instructions[3],
+        .{ .source = operation, .result = r7, .operands = &.{}, .data = .{ .eh_cell = .{ .binding = cell } } },
+        .{ .source = operation, .result = null, .operands = &.{ r7, r5 }, .data = .{ .eh_store = .{ .binding = cell, .initialize = true } } },
+        .{ .source = operation, .result = r10, .operands = &.{r7}, .data = .{ .eh_load = .{ .binding = cell } } },
+        .{ .source = operation, .result = r11, .operands = &.{r10}, .data = .{ .domain_copy = .{ .static_view = a } } },
+        .{ .source = operation, .result = r6, .operands = &.{ r4, r2, r11 }, .data = callee_instructions[4].data },
+        callee_instructions[5],
+        .{ .source = operation, .result = null, .operands = &.{r0}, .data = callee_instructions[7].data },
+    };
+    const operations = [_]control.SourcePlanOperation{
+        callee_operations[3],
+        .{ .name = "cell", .view = dto.a, .properties = &binding, .result = r7, .operands = &.{}, .successors = &.{}, .source = operation },
+        .{ .name = "store", .view = "void", .properties = &init_properties, .result = null, .operands = &.{ r7, r5 }, .successors = &.{}, .source = operation },
+        .{ .name = "load", .view = dto.a, .properties = &binding, .result = r10, .operands = &.{r7}, .successors = &.{}, .source = operation },
+        .{ .name = "value_copy", .view = dto.a, .properties = &copy_properties, .result = r11, .operands = &.{r10}, .successors = &.{}, .source = operation },
+        .{ .name = "initialize_field", .view = "initialization:" ++ dto.b, .properties = &field_properties, .result = r6, .operands = &.{ r4, r2, r11 }, .successors = &.{}, .source = operation },
+        callee_operations[5],
+        .{ .name = "receiver_result", .view = "void", .properties = &b_properties, .result = null, .operands = &.{r0}, .successors = &.{ @enumFromInt(3), @enumFromInt(4) }, .source = operation },
+    };
+    var blocks = callee_blocks;
+    blocks[1].instructions = &writes;
+    fixture.functions[2].blocks = &blocks;
+    var plan = callee_plan;
+    plan[1].operations = &operations;
+    fixture.abis[2].source_plan = .{ .carriers = &carriers, .blocks = &plan };
+
+    var contracts = complete_contracts;
+    contracts[2].return_origins = dto.authored_leaf;
+    fixture.program.tables.mode.common.authority.fixed_publication.publication.contracts = &contracts;
+    var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge };
+    try typed(&c, &budget);
+    var projection = try body.project(&c, @enumFromInt(2), &dto.directory, &budget);
+    defer projection.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projection.pending);
+    var arena = std.heap.ArenaAllocator.init(c.allocator);
+    defer arena.deinit();
+    const input = try refs.returnOriginConstructorInput(&c, arena.allocator(), c.program.tables.mode.common.authority.fixed_publication, dto.callee);
+    const bounds = [_]certificates.FixedContract{
+        .{ .function_id = dto.caller, .graph = &contracts[0].return_origins.?, .complete = &input.fixed[0] },
+        .{ .function_id = dto.native_callee, .graph = &contracts[1].return_origins.?, .complete = &input.fixed[1] },
+        .{ .function_id = dto.callee, .graph = &contracts[2].return_origins.?, .complete = &input.fixed[2] },
+    };
+    try std.testing.expect((try certificates.covered(c.allocator, &dto.directory, dto.callee, &projection.graph.?, &bounds, &budget)) == .covered);
+}

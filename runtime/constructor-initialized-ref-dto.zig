@@ -42,6 +42,38 @@ pub const leaf: m.Graph = .{
     .controls = &.{ .entry, .{ .receiver_completion = .{ .action = 1 } }, .{ .receiver_completion = .{ .action = 2 } }, .{ .receiver_completion = .{ .action = 4 } } },
     .calls = &.{}, .normal = &.{5}, .language = &.{}, .exits = .{ .normal = &.{.{ .heap = 4, .control = 3 }}, .language = &.{} }, .accesses = &.{},
 };
+// The required Source3 parameter property copies the original p:1 into its
+// own field. Constructor fallthrough has no Data operand.
+const authored_nodes: [6]m.Value = blk: {
+    var nodes = leaf.nodes[0..6].*;
+    nodes[4] = .{ .copy = .{ .@"type" = a, .bases = &.{3}, .site = "Box:field-value", .heap = 2, .control = 2 } };
+    nodes[5].receiver_value.action = 5;
+    break :blk nodes;
+};
+const authored_heaps: [6]m.Heap = blk: {
+    var heaps = leaf.heaps[0..5].* ++ [_]m.Heap{leaf.heaps[4]};
+    heaps[3] = .{ .copy = .{ .previous = 2, .value = 4 } };
+    heaps[4] = leaf.heaps[3];
+    heaps[4].store.previous = 3;
+    heaps[4].store.values = &.{4};
+    heaps[5].receiver_action.previous = 4;
+    heaps[5].receiver_action.operands = &.{};
+    break :blk heaps;
+};
+const authored_controls: [4]m.Control = blk: {
+    var controls = leaf.controls[0..4].*;
+    controls[3].receiver_completion.action = 5;
+    break :blk controls;
+};
+pub const authored_leaf: m.Graph = blk: {
+    var graph = leaf;
+    graph.nodes = &authored_nodes;
+    graph.heaps = &authored_heaps;
+    graph.controls = &authored_controls;
+    graph.exits.normal = &.{.{ .heap = 5, .control = 3 }};
+    graph.accesses = &.{.{ .values = &.{2}, .flag = .write, .control = 2 }};
+    break :blk graph;
+};
 pub const native_leaf: m.Graph = .{
     .nodes = &.{ .receiver_input,
         .{ .receiver_value = .{ .@"type" = a, .action = 1 } }, .{ .receiver_value = .{ .@"type" = a, .action = 2 } },
