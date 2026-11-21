@@ -235,7 +235,9 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
     }else if(s.kind==='expression') {
       frame.gate=flow.normal(emit(s.expression,'/expression'));
     }else if(s.kind==='block') {
-      stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),gate:frame.gate,continues:true,index:0,
+      // Each expression invalidates its own writes. Earlier statements in a
+      // nested body still read the value established on the incoming edge.
+      stack.push({body:s.body,path:p+'/body',guards:frame.guards,gate:frame.gate,continues:true,index:0,
         complete:exit=>{frame.gate=exit.gate;frame.continues&&=exit.continues;frame.guards=exit.guards;}});
     }else if(s.kind==='if'||s.kind==='while') {
       // Only the condition and body can replace a local value on the backedge.
@@ -269,7 +271,7 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
         for(const key of ['else','then']) {
           const truth=key==='then';
           const guards=edges?(truth?edges.yes:edges.no):branchGuard(test,truth,frame.guards,charge);
-          stack.push({body:s[key],path:p+'/'+key,guards:stableGuards(guards,s[key],charge),
+          stack.push({body:s[key],path:p+'/'+key,guards,
             gate:arm===null||arm===key?incoming:flow.never,continues:true,index:0,complete});
         }
       }
