@@ -208,6 +208,7 @@ function checkQueryLlvmEntries(llvm,entries){
  */
 export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,consumeQuery){
   const core=decodeQueryCompilerText(coreBytes,'core');
+  requireCheckedCoreInput(core,facts.inputIdentity,'r10-system-query-core');
   const {effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
   const effects=includeEffects?readSystemQueryEffects(consumeQuery('--effects',core),facts,sourceContext):undefined;
   const needsCheckedBatch=includeBatch||includeTmeta||llvmOutput!==undefined;
@@ -305,11 +306,11 @@ function hasCheckedCoreField(closing,identityField,identity) {
   return found&&depth===0;
 }
 
-/** @param {string} core @param {string} inputIdentity */
-function requireCheckedCoreInput(core,inputIdentity) {
+/** @param {string} core @param {string} inputIdentity @param {string} [stage] */
+function requireCheckedCoreInput(core,inputIdentity,stage='r03-core-output') {
   const end=core.trimEnd().length,closing=core.slice(core.lastIndexOf('\n',end-1)+1,end);
   if(!core.startsWith(coreModulePrefix)||!hasCheckedCoreField(closing,'tsfg_core.input_identity',inputIdentity))
-    throw new TypeError('r03-core-output: checked input identity differs');
+    throw new TypeError(`${stage}: checked input identity differs`);
 }
 
 /** @param {string} core @param {string} defaultRoot */

@@ -339,12 +339,29 @@ function retainedQuery(name){
   return {metadata,payload,core,facts,context};
 }
 
-test('Query standalone batch corresponds to the verified input Core',()=>{
+test('Query standalone batch corresponds to the verified input Core',async t=>{
   const copy=retainedQuery('i32-copy'),compound=retainedQuery('i32-compound');
   assert.equal(sha256(copy.core),'sha256:19e3f22128ddd95e88c2a4c32c8a0a27c907dddc0e9b88ec9205d2e9aad4713c');
   assert.equal(sha256(compound.core),'sha256:d467525f88c304d6132ae0cf2b41fbe20b2c244850ab3276a50c6e472f1d37e0');
   assert.notEqual(copy.facts.inputIdentity,compound.facts.inputIdentity);
   assert.ok(copy.core.includes('\\F0\\9F\\98\\80'));
+  for(const retained of [copy,compound]){
+    const matched=readQueryCompilerOutputs(retained.facts,retained.context,retained.core,{},()=>assert.fail('Core-only output has no dependent stage'));
+    assert.deepEqual(Buffer.from(matched.core,'utf8'),retained.core);
+  }
+  for(const downstream of [false,true])await t.test(downstream?'foreign Core stops before dependent Query outputs':'foreign Core is rejected on its own',()=>{
+    const calls=[];
+    const options=downstream?{effects:true,cpuBatch:true,cpuLLVM:/** @type {const} */('ir'),tmeta:true}:{};
+    assert.throws(()=>readQueryCompilerOutputs(copy.facts,copy.context,compound.core,options,command=>{
+      calls.push(command);
+      return Buffer.from(copy.payload.batch);
+    }),error=>{
+      assert.deepEqual(calls,[]);
+      assert.match(String(error),/r10-system-query-core: checked input identity differs/);
+      return true;
+    });
+    assert.deepEqual(calls,[]);
+  });
   const collect=(batch,paired=false,core=copy.core)=>readQueryCompilerOutputs(copy.facts,copy.context,core,
     {cpuBatch:true,cpuLLVM:paired?'ir':undefined},(command,input)=>{
       assert.equal(command,'--cpu-batch');
@@ -353,7 +370,7 @@ test('Query standalone batch corresponds to the verified input Core',()=>{
     });
   assert.equal(collect(copy.payload.batch).cpuBatch,copy.payload.batch);
   for(const paired of [false,true])assert.throws(()=>collect(compound.payload.batch,paired),/r10-system-query-batch: checked input/);
-  assert.throws(()=>collect(copy.payload.batch,false,compound.core),/r10-system-query-batch: checked input/);
+  assert.throws(()=>collect(copy.payload.batch,false,compound.core),/r10-system-query-core: checked input identity differs/);
   const wrongIdentity=copy.payload.batch.replace('tsfg_core.input_identity = "'+copy.facts.inputIdentity+'"',
     'tsfg_core.input_identity = "'+compound.facts.inputIdentity+'"');
   assert.notEqual(wrongIdentity,copy.payload.batch);
