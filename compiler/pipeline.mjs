@@ -245,25 +245,28 @@ async function compileSnapshot(snapshot, options) {
   return produceBytecode(() => produceCore(highLevel.hir, options));
 }
 
-async function produceCore(hir, options, lower = value => lowerFormalHir(value, options.factsContext, options.callPublicationContext), context = undefined) {
+async function produceCore(hir, options, lower = undefined, context = undefined) {
   const executable = await verifiedConsumer(options.core, "core");
-  const lowered = lower(hir);
+  const factsContext = context ? context.factsContext : options.factsContext;
+  const lowered = lower ? lower(hir) : lowerFormalHir(hir, factsContext, options.callPublicationContext);
   const inputIdentity = Object.getOwnPropertyDescriptor(hir, "inputIdentity")?.value;
-  const commonContext = isCommonProgramContext(context ? context.factsContext : options.factsContext);
+  const commonContext = isCommonProgramContext(factsContext);
   const family = commonContext ? undefined : familyOf(hir);
   const common = commonContext || family === 'tsfg.program-hir-candidate';
-  const packetInput = common || family === genericHirFormat.family ? inputIdentity : undefined;
+  const generic = family === genericHirFormat.family;
+  const packetInput = common || generic ? inputIdentity : undefined;
+  const packetDefaultRoot = generic ? hir.closure.roots[0] : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
-  return { hir, executable, prefix, common, core, packetInput };
+  return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
 }
 
 async function produceBytecode(buildCore) {
   try {
-    const { hir, executable, prefix, common, core, packetInput } = await buildCore();
+    const { hir, executable, prefix, common, core, packetInput, packetDefaultRoot } = await buildCore();
     const bytecode = consume(executable, [...prefix, "--emit-bytecode"], core);
     if (common) verifyCommonProducedPacket(bytecode, packetInput);
-    else verifyProducedPacket(bytecode, packetInput);
+    else verifyProducedPacket(bytecode, packetInput, packetDefaultRoot);
     return { status: "ok", hir, core, bytecode };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };
