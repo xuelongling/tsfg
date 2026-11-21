@@ -375,7 +375,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           return value.operator==='??'?adapt(result,result.symbol,path):{symbol:path};};
         if(!possibilities.absent)return resultValue(left);
         if(!possibilities.present) {
-          const result=child('right',terminalRoot&&value.operator!=='??'&&value.left.kind==='boolean');
+          const result=child('right',terminalRoot&&(value.operator==='??'||value.left.kind==='boolean'));
           return result.terminal?result:resultValue(result);
         }
         const right=clone(state),branchBindings=copyBindings(bindings),

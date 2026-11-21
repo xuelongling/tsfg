@@ -196,7 +196,9 @@ function buildPlans(input,context,options,definitions) {
       // Field identities selected from Array versions can in turn refine a
       // later Array owner. Close both existing constraints with one budget;
       // neither carrier maxima nor successful bounds become alias witnesses.
-      const current=canonical([rows,fields,aliases]);if(current===previous)break;previous=current;
+      const terminal=[];for(const id of terminalReads??[]){charge();terminal.push(id);}
+      terminal.sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
+      const current=canonical([rows,fields,aliases,terminal]);if(current===previous)break;previous=current;
       ordered=solve(fieldReaching,{...arrayReaching,normalReadSources:array.normalReadSources},terminalReads);
     }
     // Refined payloads do not silently republish a narrower ABI. Representation

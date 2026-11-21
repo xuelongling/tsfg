@@ -7,6 +7,7 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
 import {finiteFieldEffects} from '../../compiler/finite-field-effects.mjs';
 import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
 import {sha256,scalarName,scalarTypeIds} from '../../compiler/identity.mjs';
@@ -64,6 +65,49 @@ for(const row of expected.cases) {
     assert.match(body,row.memory==='array'?/"tsfg_core.domain.array_read"/:/"tsfg_core.domain.field_read"/);
   });
 }
+
+test('only a definitely selected nullish fallback can stop the following Array read',async()=>{
+  const {hir,context}=await actual(expected.cases.find(row=>row.name==='nullish-array-i32'));
+  const plan=buildFiniteCoreDomains(hir,context).definition,run=hir.functions.find(fn=>fn.name==='run'),
+    [initial,conditional,returned]=run.body,root=run.id+'/body',
+    left=root+'/1/expression/left',fallback=root+'/1/expression/right',suffix=root+'/2/value',
+    undefinedId=hir.types.find(type=>type.kind==='undefined').id,
+    single=type=>plan.domains.find(row=>row.actualTypes.length===1&&row.actualTypes[0]===type).id;
+  // Project the checked read from the existing HIR into the fallback.
+  for(const {kind,domainId,pending,reachesFallback} of [
+    {kind:'absent',domainId:single(undefinedId),pending:[],reachesFallback:true},
+    {kind:'present',domainId:single(scalarTypeIds.i32),pending:[],reachesFallback:false},
+    {kind:'mixed',domainId:null,pending:[],reachesFallback:true},
+    {kind:'pending',domainId:single(undefinedId),pending:['unresolved'],reachesFallback:true},
+  ]){
+    const nodes=plan.nodes.map(node=>node.id===left&&domainId?{...node,domainId,pending}:node);
+    for(const missing of [true,false]){
+      const right={...returned.value,index:{...returned.value.index,decimal:missing?'1':'0'}},
+        fn={...run,body:[initial,{...conditional,expression:{...conditional.expression,right}},returned]},
+        model={...hir,functions:hir.functions.map(row=>row===run?fn:row)},
+        reaching=buildFiniteArrayReaching(model,{...plan,nodes},()=>{},()=>true).reaching;
+      assert.equal(reaching.reads.find(row=>row.node===fallback)?.status,
+        reachesFallback?(missing?'missing':'proven'):'pending',kind);
+      assert.equal(reaching.reads.find(row=>row.node===suffix)?.status,
+        kind==='absent'&&missing?'pending':'proven',kind);
+      assert.ok(reaching.writes.some(row=>row.id===root+'/0/initializer/initial/0/array-version'));
+    }
+  }
+  const store=conditional.expression.right.operand;
+  assert.equal(store.kind,'arrayStoreDenseChecked');
+  const right={...store,kind:'arrayCompoundAssignment',operator:'+=',
+    target:{...store.target,index:{...store.target.index,decimal:'1'}}},
+    fn={...run,body:[initial,{...conditional,expression:{...conditional.expression,right}}]},
+    model={...hir,functions:hir.functions.map(row=>row===run?fn:row)},
+    absent={...plan,nodes:plan.nodes.map(node=>node.id===left?{...node,domainId:single(undefinedId)}:node)},
+    optional=buildFiniteArrayReaching(model,plan,()=>{},()=>true),
+    required=buildFiniteArrayReaching(model,absent,()=>{},()=>true);
+  assert.deepEqual(required.reaching.reads,optional.reaching.reads);
+  assert.deepEqual(required.reaching.writes,optional.reaching.writes);
+  assert.equal(required.reaching.reads.find(row=>row.node===fallback+'/old-value')?.status,'missing');
+  assert.deepEqual([...optional.terminalReads??[]],[]);
+  assert.deepEqual([...required.terminalReads??[]],[fallback+'/old-value']);
+});
 
 test('literal Boolean short circuit keeps lexical field writes and selects the reached version',async()=>{
   const {hir,context}=await actual(expected.cases.find(row=>row.memory==='field'));
