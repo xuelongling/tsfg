@@ -62,8 +62,8 @@ test('a stable loop can combine a second absence test and a backedge write clear
   const stable=observed([first,loop,returned]);
   assert.equal(stable.get('body/1/condition').type,sha256('tsfg.type\0null'));
   assert.equal(stable.get('body/2/value').type,sha256('tsfg.type\0undefined'));
-  assert.equal(stable.get('body/2/value').excluded,stable.get('body/1/condition').type);
+  assert.equal(stable.get('body/2/value').previous,stable.get('body/1/condition'));
   const written=observed([first,{...loop,body:[write]},returned]);
   assert.equal(written.get('body/1/condition'),undefined);
-  assert.equal(written.get('body/2/value').excluded,undefined);
+  assert.equal(written.get('body/2/value').previous,undefined);
 });

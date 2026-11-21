@@ -113,7 +113,12 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         const logical=value.kind==='if'?finitePresenceShortCircuit(result.condition,budget.step):null;
         if(logical) {
           logicalPresence.set(result.condition,logical);
-          for(const test of [logical.left,logical.right])presenceConditions.set(test.condition,test);
+          const pending=[logical.tree];
+          while(pending.length) {
+            budget.step();const node=pending.pop();
+            if(node.test)presenceConditions.set(node.test.condition,node.test);
+            else pending.push(node.right,node.left);
+          }
         }else {
           const test=finitePresenceTest(result.condition,budget.step);
           if(test)presenceConditions.set(test.condition,test);
@@ -188,8 +193,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       pureConditionBranches(condition,api) {
         const logical=logicalPresence.get(condition);
         if(!logical)return null;
-        return {when:logical.when,range:logical.condition.range,emit(side) {
-          const value=logical.condition[side],name=api.emit(value);
+        return {...logical,emit(value) {
+          const name=api.emit(value);
           // Preserve the conservative field-reaching analysis while the
           // independent refinement check can trace the original comparison.
           return op(api,'view',[{name,type:value.type}],value.type,opAttrs(value),value.range);

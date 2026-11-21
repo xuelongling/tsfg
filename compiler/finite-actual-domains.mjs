@@ -268,7 +268,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     for(const key of ['actual','owners','pending'])for(const value of nodes.get(from)[key]) {
       charge();if(predicate?.presentOnly&&key==='actual'&&absent(value))continue;
       if(predicate?.ownerOnly&&key!=='owners'||predicate?.pendingOnly&&key!=='pending')continue;
-      if(predicate&&key==='actual'&&(value===predicate.excluded||(predicate.equal?value!==predicate.type:value===predicate.type)))continue;
+      if(predicate&&key==='actual'&&(value===predicate.previous?.type||(predicate.equal?value!==predicate.type:value===predicate.type)))continue;
       if((predicate?.equal||predicate?.payloadOnly)&&key==='owners')continue;
       insert(to,key,value);
     }
@@ -418,14 +418,14 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
   for(let cursor=0;cursor<tasks.length;cursor++) {
     charge();const {value:v,path:p,fn,guards,logical}=tasks[cursor],id=p;
     let continuation=flow.incoming(p);const dependencies=[],requirements=[];
-    const operand=(value,path,gate,propagatePending,active=guards,context=undefined)=>{
-      const id=expression(value,path,fn,active,gate,context);
+    const operand=(value,path,gate,propagatePending)=>{
+      const id=expression(value,path,fn,logical?.get(value)??guards,gate,logical);
       if(propagatePending||arrayReaching===null)copy(id,p,{pendingOnly:true});
       return id;
     };
-    const at=(value,path,context=undefined)=>{const id=operand(value,path,continuation,true,guards,context);
+    const at=(value,path)=>{const id=operand(value,path,continuation,true);
       continuation=flow.normal(id);dependencies.push(continuation);return id;};
-    const child=key=>at(v[key],p+'/'+key,key==='operand'&&v.kind==='group'?logical:undefined);
+    const child=key=>at(v[key],p+'/'+key);
     const children=key=>(v[key]??[]).map((value,index)=>at(value,p+'/'+key+'/'+index));
     const invoke=action=>flow.when(flow.all([flow.incoming(id),...dependencies]),action);
     if(['constant','floating','boolean','undefined','null','stringLiteral'].includes(v.kind))insert(id,'actual',v.type);
@@ -516,8 +516,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))
-        dependencies.push(...finiteNormalLogical(v,flow,continuation,(key,gate,pending)=>
-          operand(v[key],p+'/'+key,gate,pending,key==='right'&&logical?.condition===v?logical.rightGuards:guards),charge));
+        dependencies.push(...finiteNormalLogical(v,flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),charge));
       else for(const key of ['left','right','operand','receiver','index','value'])if(v[key])child(key);
       if(v.target)for(const key of ['receiver','index'])if(v.target[key])at(v.target[key],p+'/target/'+key);
       children('arguments');if(finiteNumericUse(v))for(const key of v.kind==='binary'?['left','right']:['operand'])

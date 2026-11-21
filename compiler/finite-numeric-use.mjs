@@ -109,17 +109,63 @@ export function finitePresenceTest(condition,charge) {
 export function finitePresenceShortCircuit(condition,charge) {
   condition=ungroup(condition,charge);
   if(!['binary','shortCircuit'].includes(condition.kind)||!['&&','||'].includes(condition.operator))return null;
-  const left=finitePresenceTest(condition.left,charge),right=finitePresenceTest(condition.right,charge);
-  return left&&right?{condition,left,right,when:condition.operator==='&&'}:null;
+  const root={},pending=[{expression:condition,node:root}];let leaves=0;
+  while(pending.length) {
+    charge();const {expression,node}=pending.pop(),value=ungroup(expression,charge);
+    node.firstLeaf=leaves;
+    const test=finitePresenceTest(value,charge);
+    if(test) {
+      node.test=test;node.expression=expression;leaves++;
+    }else {
+      if(!['binary','shortCircuit'].includes(value.kind)||!['&&','||'].includes(value.operator))return null;
+      Object.assign(node,{condition:value,when:value.operator==='&&',left:{},right:{}});
+      pending.push({expression:value.right,node:node.right},{expression:value.left,node:node.left});
+    }
+  }
+  return {tree:root,leaves};
 }
 function branchGuard(test,truth,guards,charge) {
   if(!test)return guards;
   const {condition,binding,type}=test,prior=guards.get(binding);
   // A positive absence test fixes the value. The only remaining distinct
   // narrowing after one exclusion is a test for the other absence type.
-  if(prior?.equal||prior?.excluded||prior?.type===type)return guards;
+  if(prior?.equal||prior?.previous||prior?.type===type)return guards;
   return copyGuards(guards,charge).set(binding,{type,equal:(condition.operator==='===')===truth,
-    range:{...condition.range},...(prior?{excluded:prior.type}:{})});
+    range:{...condition.range},previous:prior});
+}
+function commonGuards(left,right,charge) {
+  const common=new Map();
+  for(const [binding,guard] of left) {
+    charge();const other=right.get(binding);
+    if(!other)continue;
+    // Two distinct tests may extend the same original dominating edge.
+    const shared=guard===other||guard===other.previous?guard
+      :guard.previous===other||guard.previous===other.previous?guard.previous:undefined;
+    if(shared)common.set(binding,shared);
+  }
+  return common;
+}
+function shortCircuitGuards(tree,entry,charge) {
+  const operands=new Map(),pending=[{node:tree,guards:entry}];
+  let exits={yes:entry,no:entry};
+  while(pending.length) {
+    charge();const frame=pending.at(-1),{node,guards}=frame;
+    if(node.test) {
+      exits={yes:branchGuard(node.test,true,guards,charge),no:branchGuard(node.test,false,guards,charge)};
+    }else if(!frame.started) {
+      frame.started=true;pending.push({node:node.left,guards});continue;
+    }else if(!frame.left) {
+      frame.left=exits;
+      const guards=node.when?exits.yes:exits.no;
+      operands.set(node.condition.right,guards);
+      pending.push({node:node.right,guards});continue;
+    }else {
+      exits=node.when?{yes:exits.yes,no:commonGuards(frame.left.no,exits.no,charge)}
+        :{yes:commonGuards(frame.left.yes,exits.yes,charge),no:exits.no};
+    }
+    pending.pop();
+  }
+  return {...exits,operands};
 }
 export function finiteBindingWrites(body,charge) {
   const written=new Set(),stack=[body];
@@ -171,8 +217,8 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       // The same filtered entry proofs also hold on the zero-iteration exit.
       if(s.kind==='while'&&frame.guards.size)frame.guards=stableGuards(frame.guards,s,charge);
       const logical=s.kind==='if'?finitePresenceShortCircuit(s.condition,charge):null;
-      const rightGuards=logical?branchGuard(logical.left,logical.when,frame.guards,charge):null;
-      const condition=emit(s.condition,'/condition',logical?{condition:logical.condition,rightGuards}:undefined),
+      const edges=logical?shortCircuitGuards(logical.tree,frame.guards,charge):null;
+      const condition=emit(s.condition,'/condition',edges?.operands),
         incoming=flow.normal(condition),test=logical?null:finitePresenceTest(s.condition,charge);
       if(s.kind==='while') {
         const literal=literalLoopCondition(s,charge),entryGuards=frame.guards;
@@ -192,20 +238,12 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
           // A lexically present edge still participates in the SSA merge even
           // when the normal-flow solver knows its condition is false.
           const [first,second]=continuing;
-          frame.guards=first?.guards??new Map();
-          if(second) {
-            const common=new Map();
-            for(const [binding,guard] of frame.guards) {
-              charge();if(second.guards.get(binding)===guard)common.set(binding,guard);
-            }
-            frame.guards=common;
-          }
+          frame.guards=second?commonGuards(first.guards,second.guards,charge):first?.guards??new Map();
         };
         // Suspend this sequence until both arms have registered their exits.
         for(const key of ['else','then']) {
           const truth=key==='then';
-          const guards=logical&&truth===logical.when?branchGuard(logical.right,truth,rightGuards,charge)
-            :branchGuard(test,truth,frame.guards,charge);
+          const guards=edges?(truth?edges.yes:edges.no):branchGuard(test,truth,frame.guards,charge);
           stack.push({body:s[key],path:p+'/'+key,guards:stableGuards(guards,s[key],charge),
             gate:arm===null||arm===key?incoming:flow.never,continues:true,index:0,complete});
         }

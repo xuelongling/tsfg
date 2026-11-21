@@ -145,15 +145,32 @@ export function emitCoreSsaFunction(fn, context) {
         declared = outer;
       } else if (statement.kind === "if") {
         const parts = context.pureConditionBranches?.(statement.condition, api);
-        const condition = parts ? parts.emit("left") : emit(statement.condition);
-        const rhs = parts ? newBlock() : null;
+        const condition = parts ? null : emit(statement.condition);
+        const comparisons = parts ? [current] : null;
+        if (comparisons) {
+          for (let index = 1; index < parts.leaves; index++) {
+            context.budget?.step();
+            comparisons.push(newBlock());
+          }
+        }
         const yes = newBlock(), no = newBlock();
         if (parts) {
           // The caller supplies read-only operands, so neither condition
           // edge needs a different set of binding definitions.
-          conditional(condition, parts.when ? rhs : yes, parts.when ? no : rhs, parts.range);
-          current = rhs;
-          conditional(parts.emit("right"), yes, no, statement.condition.range);
+          const pending = [{node:parts.tree, yes, no, range:statement.condition.range}];
+          while (pending.length) {
+            context.budget?.step();
+            const edge = pending.pop(), {node} = edge;
+            if (node.expression) {
+              current = comparisons[node.firstLeaf];
+              conditional(parts.emit(node.expression), edge.yes, edge.no, edge.range);
+            } else {
+              const rhs = comparisons[node.right.firstLeaf];
+              pending.push({...edge, node:node.right},
+                {...edge, node:node.left, yes:node.when ? rhs : edge.yes,
+                  no:node.when ? edge.no : rhs, range:node.condition.range});
+            }
+          }
         } else conditional(condition, yes, no, statement.condition.range);
         const outer = new Map(definitions), outerDeclared = new Set(declared);
         current = yes; definitions = new Map(outer); emitBody(statement.thenBody);
