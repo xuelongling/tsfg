@@ -93,10 +93,33 @@ test('actual short-circuit binding mutation cannot retain an index known only on
   assert.equal(plan.arrayReaching.reads.length,1);const read=plan.arrayReaching.reads[0];
   assert.equal(read.status,'pending','i may be either zero or one; skipped-RHS binding is not a must fact');
   assert.deepEqual(read.versions,[]);assert.deepEqual(read.sources,[]);
-  assert.ok(plan.nodes.find(row=>row.id===read.node).pending.length);
+  const actual=plan.nodes.find(row=>row.id===read.node);
+  assert.deepEqual(actual.pending,[]);
+  assert.deepEqual(plan.domains.find(row=>row.id===actual.domainId).actualTypes,[scalarTypeIds.i32,sha256('tsfg.type\0undefined')].sort());
   const core=lowerFormalHir(built.hir,context);assert.match(core,/cf.cond_br/);
   assert.match(core,/"tsfg_core.domain.array_read"/,'real dynamic checked access remains in production Core');
   const index=/"tsfg_core.domain.array_read"\([^,]+,\s*(%[a-zA-Z0-9_]+)\)/.exec(core)?.[1];
   assert.ok(index);assert.ok(core.split('\n').some(line=>/^\s*\^bb/.test(line)&&line.includes(index+':')),
     'read uses the conditional join index parameter, not the pre-RHS zero literal');
+});
+
+test('a checked dynamic index retains every possible successful element of a known Array',async()=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-actual-v8/1d8dc547f9c38d6dd52aaeeccf92248ef260673de0aea8a4dd9c5cfe8193c427-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:be00e9631916e94c24fade1d9093a0b5dac5c9b9f5202fa110d8bbf8211c35f3');
+  const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,
+    factsBytes:bytes,expectedPackageId:facts.packageId},built=buildHir(facts,context);
+  assert.equal(built.status,'ok');
+  const plans=buildFiniteCoreDomains(built.hir,context),fn=built.hir.functions[0];
+  const payloads=[scalarTypeIds.i32,sha256('tsfg.type\0null'),sha256('tsfg.type\0undefined')].sort();
+  for(const plan of [plans.reached,plans.definition]){
+    const [read]=plan.arrayReaching.reads;
+    assert.equal(read.status,'pending','dynamic bounds still depend on the checked operation');
+    assert.deepEqual(read.versions,[]);
+    for(const id of [read.node,fn.id+'/return']){
+      const node=plan.nodes.find(row=>row.id===id);
+      assert.deepEqual(plan.domains.find(row=>row.id===node.domainId).actualTypes,payloads);
+      assert.deepEqual(node.pending,[]);
+    }
+  }
+  assert.match(lowerFormalHir(built.hir,context),/"tsfg_core.domain.array_read"/);
 });

@@ -183,7 +183,10 @@ function buildPlans(input,context,options,definitions) {
         buildFiniteFieldReaching(hir,{...fieldPlan,carrierFields:result.fields},charge,terminalReads):
         buildFiniteFieldReaching(hir,fieldPlan,charge);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
-        for(const id of read.versions){charge();versions.push(id);}rows.push([read.node,read.status,versions]);}
+        for(const id of read.versions){charge();versions.push(id);}
+        const normalSources=array.normalReadSources.get(read.node)??[];
+        for(let index=0;index<normalSources.length;index++)charge();
+        rows.push([read.node,read.status,versions,normalSources]);}
       const fields=[];for(const read of fieldReaching.reads){charge();const targets=[];
         for(const target of read.reaching){charge();const versions=[],sources=[],intrinsics=[];
           for(const id of target.versions){charge();versions.push(id);}for(const id of target.sources){charge();sources.push(id);}
@@ -194,7 +197,7 @@ function buildPlans(input,context,options,definitions) {
       // later Array owner. Close both existing constraints with one budget;
       // neither carrier maxima nor successful bounds become alias witnesses.
       const current=canonical([rows,fields,aliases]);if(current===previous)break;previous=current;
-      ordered=solve(fieldReaching,arrayReaching,terminalReads);
+      ordered=solve(fieldReaching,{...arrayReaching,normalReadSources:array.normalReadSources},terminalReads);
     }
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
@@ -264,7 +267,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       charge();if(predicate?.presentOnly&&key==='actual'&&absent(value))continue;
       if(predicate?.ownerOnly&&key!=='owners'||predicate?.pendingOnly&&key!=='pending')continue;
       if(predicate&&key==='actual'&&(predicate.equal?value!==predicate.type:value===predicate.type))continue;
-      if(predicate?.equal&&key==='owners')continue;
+      if((predicate?.equal||predicate?.payloadOnly)&&key==='owners')continue;
       insert(to,key,value);
     }
   }
@@ -573,7 +576,9 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       if(!arrayReaching)for(const allocation of nodes.get(current).owners)copy(owners.get(allocation),read.result);
       else {
         const ordered=arrayReads.get(read.result);
-        if(ordered?.status==='proven')for(const source of ordered.sources)copy(source,read.result);
+        const proven=ordered?.status==='proven';
+        const sources=proven?ordered.sources:arrayReaching.normalReadSources?.get(read.result);
+        if(sources)for(const source of sources)copy(source,read.result,proven?null:{payloadOnly:true});
         // A definite bounds failure has no normal payload or unresolved source.
         else if(ordered?.status!=='missing')insert(read.result,'pending','unproved-ordered-array-read:'+read.result);
       }

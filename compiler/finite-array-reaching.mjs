@@ -49,7 +49,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
     effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set(),localSlots:!fn.ownerType}])),
-    writes=new Map(),reads=new Map(),contextsByTarget=new Map(),
+    writes=new Map(),reads=new Map(),normalReadSources=new Map(),contextsByTarget=new Map(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
   let contextWrites=new Map(),terminalReads=null;
@@ -166,6 +166,23 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       if(types.get(value.type)?.kind!==kind||view&&collectAll)return;
       charge();(slotValues??=new Map()).set(id,{owner:stored.owner,offset:stored.offset,limit:stored.limit});
     }
+    function checkedSources(memory,receiver) {
+      const start=receiver.offset??0,length=receiver.limit??memory.length;
+      if(length===null||length===0||memory.length===null||start+length>memory.length||length>memory.slots.size)return null;
+      const sources=new Set();
+      for(let index=start;index<start+length;index++){
+        charge();
+        const versions=memory.slots.get('c:'+index);
+        if(!versions?.size)return null;
+        for(const version of versions){
+          charge();
+          const source=writes.get(version).node;
+          if(!source.startsWith(fn.id+'/'))return null;
+          sources.add(source);
+        }
+      }
+      return [...sources].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
+    }
     function load(value,path,state,receiver,index,projectKind=undefined) {
       const memory=state.get(receiver?.owner),slot=key(index),missing=memory?.length!==null&&memory?.length!==undefined&&
         index?.constant!==undefined&&index.constant>=memory.length,
@@ -177,6 +194,12 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       const status=missing||bounds?'missing':versions?.size?'proven':'pending';
       if(recordReads)reads.set(path,{node:path,owner:receiver?.owner??null,index:slot,status,
         versions:status==='proven'?[...versions].sort():[],sources:status==='proven'?[...new Set([...versions].map(id=>writes.get(id).node))].sort():[],origin:origin(value)});
+      // A successful checked dynamic read selects one initialized cell. This
+      // feeds payload analysis only, preserving the explicit bounds check.
+      if(recordReads&&!collectAll&&status==='pending'&&memory&&index?.constant===undefined){
+        const sources=checkedSources(memory,receiver);
+        if(sources)normalReadSources.set(path,sources);
+      }
       if(!slotValues||(projectKind!=='array'&&projectKind!=='readSpan')||status!=='proven'||versions.size!==1||
         index?.constant===undefined||receiver.owner.includes('/parameter/'))return {status};
       charge();const stored=slotValues.get(versions.values().next().value);
@@ -473,7 +496,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }
   let before;
   do {
-    charge();before=ledger();reads.clear();contextWrites=new Map();terminalReads=null;
+    charge();before=ledger();reads.clear();normalReadSources.clear();contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of functions) {
       const incoming=[];
@@ -488,5 +511,5 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }while(before!==ledger());
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
-  return {reaching,terminalReads};
+  return {reaching,terminalReads,normalReadSources};
 }
