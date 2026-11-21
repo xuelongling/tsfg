@@ -234,7 +234,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     const value={id:undefinedId,kind:'undefined',name:'undefined'};types.set(undefinedId,value);intrinsics.push(value);
     physical.set(undefinedId,{alignment:1,byteSize:0,referenceCount:0});
   }
-  const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),coalesces=[],
+  const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),presenceCarriers=[],
     representationOnly=!arrayReaching&&terminalReads?new Map():null;
   const reads=[],stores=[],fieldReads=[],fieldStores=[],presenceTests=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
   const views=projection.views(hir);
@@ -513,7 +513,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
         viewType:['reference','value'].includes(types.get(v.target.receiver.type).kind)?v.target.receiver.type:fieldOwners.get(v.target.property).owner,targets:new Map()});copy(value,id);
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
       const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),absent);
-      coalesces.push(selected.left);dependencies.push(...selected.dependencies);
+      presenceCarriers.push(selected.left);dependencies.push(...selected.dependencies);
       copy(selected.left,id,{presentOnly:true});copy(selected.right,id,{gate:selected.left});
     }else if(v.kind==='arrayCompoundAssignment'||v.kind==='arrayUpdate') {
       const receiver=at(v.target.receiver,p+'/target/receiver');
@@ -536,14 +536,17 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       child('value');
       for(const type of leaves(v.type))insert(id,'actual',type);
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength',
-      'update','fieldUpdate','stringConcat'].includes(v.kind)) {
+      'update','fieldUpdate','stringConcat','stringLength','stringSlice','stringIndex'].includes(v.kind)) {
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))
         dependencies.push(...finiteNormalLogical(v,flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),charge));
       else for(const key of ['left','right','operand','receiver','index','value'])if(v[key])child(key);
       if(v.target)for(const key of ['receiver','index'])if(v.target[key])at(v.target[key],p+'/target/'+key);
-      children('arguments');if(finiteNumericUse(v))for(const key of v.kind==='binary'?['left','right']:['operand'])
+      const arguments_=children('arguments');
+      if(v.kind==='stringSlice')presenceCarriers.push(...arguments_);
+      if(v.kind==='stringIndex')presenceCarriers.push(id);
+      if(finiteNumericUse(v))for(const key of v.kind==='binary'?['left','right']:['operand'])
         requirements.push({node:p+'/'+key,type:i32TypeId,possible:true});
       for(const type of leaves(v.type))insert(id,'actual',type);
     }else insert(id,'pending','unsupported-expression:'+v.kind+':'+id);
@@ -649,7 +652,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
   }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
   // These canonical intermediate carriers serve compiler-derived presence
   // tests/refinements, not new actual seeds or fabricated Source literals.
-  for(const left of coalesces){let remaining=[...nodes.get(left).actual].sort();
+  for(const input of presenceCarriers){let remaining=[...nodes.get(input).actual].sort();
     for(const type of remaining.filter(absent)){charge();domain(new Set([type]));remaining=remaining.filter(id=>id!==type);domain(new Set(remaining));}}
   const byId=new Map(resultNodes.map(row=>[row.id,row]));
   const abi=callables.map(fn=>{

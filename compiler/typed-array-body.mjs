@@ -2,7 +2,7 @@
 // Cold typed occurrences and original anchors, never a second evaluator/checker.
 import {canonical,integerNames,integerRange} from './identity.mjs';
 import {floatBits} from './float.mjs';
-import {identifierName} from './module-facts.mjs';
+import {identifierName,skipCallTrivia} from './module-facts.mjs';
 import {check,hash,sourceRange,originId,signatureId,byteOrder} from './typed-array-schema.mjs';
 import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
@@ -52,6 +52,48 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
         let owner=types.get(value.receiver.flowType);
         while(owner&&!owner.fields?.some(field=>field.id===value.property&&field.type===value.type))owner=types.get(owner.base);
         check(owner&&['value','reference'].includes(owner.kind),'field');
+      }
+      if(value.kind==='stringLength'||value.kind==='stringSlice') {
+        const slice=value.kind==='stringSlice',member=slice?payload.stringSlice:payload.stringLength;
+        const type=slice?'string':'f64';
+        check(member?.id===value.property&&value.receiver.flowType==='string'
+          &&value.type===type&&value.flowType===type,'type');
+        sourceRange(value.nameRange,source,value.range);
+        const {start,end}=value.receiver.range,name=spelling(value.nameRange);
+        check(start===value.range.start&&end<value.nameRange.start,'source');
+        const suffix=source.slice(end,value.nameRange.start),dot=skipCallTrivia(suffix);
+        check(suffix[dot]==='.'&&skipCallTrivia(suffix.slice(dot+1))===suffix.length-dot-1
+          &&!/[\s/]/u.test(name)&&identifierName(name)===member.name,'source');
+        if(slice) {
+          const args=value.arguments??[];
+          check(args.length<=2&&args.every(arg=>['f64','undefined','union<f64,undefined>'].includes(arg.flowType)),'type');
+          let from=value.nameRange.end,separator='(';
+          for(const arg of args) {
+            sourceRange(arg.range,source,value.range);
+            const gap=source.slice(from,arg.range.start),token=skipCallTrivia(gap);
+            check(arg.range.start>from&&gap[token]===separator&&!source.startsWith('...',arg.range.start)
+              &&skipCallTrivia(gap.slice(token+1))===gap.length-token-1,'source');
+            from=arg.range.end;separator=',';
+          }
+          const tail=source.slice(from,value.range.end);let index=skipCallTrivia(tail);
+          if(tail[index]===(args.length===0?'(':',')) {
+            const trivia=skipCallTrivia(tail.slice(index+1));
+            check(trivia>=0,'source');index+=trivia+1;
+          }else check(args.length>0,'source');
+          check(index===tail.length-1&&tail[index]===')','source');
+        }else check(value.nameRange.end===value.range.end,'source');
+      }
+      if(value.kind==='stringIndex') {
+        const index=value.index,{start,end}=value.receiver.range,result='union<string,undefined>';
+        check(payload.stringIndex?.id===value.property&&value.receiver.flowType==='string'
+          &&value.type===result&&value.flowType===result
+          &&types.get(index.flowType)?.kind==='scalar'&&index.flowType!=='bool','type');
+        sourceRange(index.range,source,value.range);
+        check(start===value.range.start&&index.range.start>end,'source');
+        const before=source.slice(end,index.range.start),open=skipCallTrivia(before);
+        const after=source.slice(index.range.end,value.range.end),close=skipCallTrivia(after);
+        check(before[open]==='['&&skipCallTrivia(before.slice(open+1))===before.length-open-1
+          &&close===after.length-1&&after[close]===']','source');
       }
       if(value.kind==='undefinedLiteral'||value.kind==='nullLiteral')check(spelling(value.range)===(value.kind==='undefinedLiteral'?'undefined':'null'),'source');
       if(value.kind==='booleanLiteral')check(value.type==='bool'&&['true','false'].includes(value.token)&&spelling(value.range)===value.token,'literal');
