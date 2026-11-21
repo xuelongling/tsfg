@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir,verifyHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 import {invokeCore,accepted,rejected} from './generic-core-package-capture.mjs';
@@ -67,6 +68,42 @@ test('existing direct Span Array selected reads keep their legal storage closure
     '512d8c5d1d5c481f27d7d9af0a13ef5e205f6289b37abf305acc1c225faf399e',source);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
   if(process.env.TSFG_CORE_IR_EXE)accepted(await invokeCore(lowerFormalHir(built.hir,context,publication)));
+});
+
+test('a checked field receiver must complete before the next Array read',async()=>{
+  const [,packetHash,sourceHash]=cases[0];
+  const {built}=await actual('./testdata/typed-array-aggregate-storage/create-package.json',packetHash,sourceHash);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const {hir}=built,fn=hir.functions.find(row=>row.name==='run');
+  assert.ok(fn);
+  const returned=fn.body.at(-1),field=returned.value.receiver;
+  const construction=fn.body.find(row=>row.kind==='local'&&row.binding.name==='h').initializer;
+  assert.equal(returned.value.kind,'arrayReadChecked');
+  assert.equal(field.kind,'fieldAccess');
+  assert.equal(field.receiver.kind,'arrayReadChecked');
+  const inside=field.receiver.index,outside=construction.arguments[0].arguments[2];
+  assert.equal(inside.decimal,'0');
+  assert.equal(outside.decimal,'1');
+  assert.equal(inside.type,outside.type);
+
+  // Exercise the analysis component with the original field read and checked
+  // Array operands. The inserted statement is a model, not a new Source capture.
+  const offset=fn.body.length-1,root=fn.id+'/body/',read=root+offset+'/expression/receiver';
+  const tail=root+(offset+1)+'/value/receiver/receiver';
+  for(const {index,expected} of [
+    {index:inside,expected:['proven','proven']},
+    {index:outside,expected:['missing','pending']},
+  ]){
+    const expression={...field,receiver:{...field.receiver,index}};
+    const model={...hir,functions:hir.functions.map(row=>row!==fn?row:{
+      ...fn,body:[...fn.body.slice(0,-1),{kind:'expression',expression,range:field.range},returned],
+    })};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>true);
+    const rows=[read,tail].map(node=>reaching.reads.find(row=>row.node===node));
+    assert.deepEqual(rows.map(row=>row?.status),expected);
+    if(index===inside)assert.deepEqual(rows[1].versions,rows[0].versions);
+    else assert.deepEqual(rows[1].versions,[]);
+  }
 });
 
 const edges=[
