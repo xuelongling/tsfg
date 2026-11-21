@@ -61,6 +61,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
   const fieldPhases=buildFiniteFieldPhases(hir,context,options);
   const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
+  const presenceBindings=new Map();
   const arrayWrites=new Map(plan.arrayReaching.writes.map(row=>[row.id,row]));
   const types=new Map([...hir.types,...plan.intrinsics].map(type=>[type.id,type]));
   const selected=(id,allowBottom=false)=>{const row=nodes.get(id);if(!row)pending('missing domain '+id);
@@ -75,6 +76,13 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
   };
   function adapt(value,path,fn) {
     const result={...value,type:selected(path).domainId,semanticType:value.type,domainNode:path};
+    if(value.kind==='reference'&&occurrences.get(path)?.presenceProof) {
+      const carrier=selected(fn.id+'/binding/'+value.binding).domainId;
+      if(carrier!==result.type&&domains.get(carrier).actualTypes.length>1) {
+        if(!presenceBindings.has(fn.id))presenceBindings.set(fn.id,new Set());
+        presenceBindings.get(fn.id).add(value.binding);
+      }
+    }
     if(value.kind==='binary'&&['&&','||'].includes(value.operator))result.kind='shortCircuit';
     for(const key of ['operand','receiver','index','value','left','right','target'])if(value[key]&&typeof value[key]==='object') {
       // Targets describe locations, not produced SSA values.
@@ -161,6 +169,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       }
     }
     const emission=emitCoreSsaFunction(fn,{verified:hir,coreType,functionSymbol:symbol,budget,
+      preserveDominatingJoinBindings:presenceBindings.get(fn.id),
       ...(voidResult?{resultType:'()',emitFallthrough:api=>api.returnValue(null,null,fn.range)}:{}),
       emitStatementLeaf(statement,api) {
         if(statement.kind==='local') {

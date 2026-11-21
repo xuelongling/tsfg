@@ -91,18 +91,24 @@ function ungroup(value,charge) {
   }
   return value;
 }
+function copyGuards(guards,charge,excluded=undefined) {
+  const result=new Map();
+  for(const [binding,guard] of guards) {
+    charge();if(!excluded?.has(binding))result.set(binding,guard);
+  }
+  return result;
+}
 function branchGuard(condition,truth,guards,charge) {
-  const next=new Map(guards);
   condition=ungroup(condition,charge);
-  if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return next;
+  if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return guards;
   const a=ungroup(condition.left,charge),b=ungroup(condition.right,charge);
   const binding=a?.kind==='reference'?a:b,absence=binding===a?b:a;
   if(binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind))
-    next.set(binding.binding,{type:absence.type,equal:(condition.operator==='===')===truth,range:{...condition.range}});
-  return next;
+    return copyGuards(guards,charge).set(binding.binding,{type:absence.type,equal:(condition.operator==='===')===truth,range:{...condition.range}});
+  return guards;
 }
 function stableGuards(guards,body,charge) {
-  const result=new Map(guards),stack=[body];
+  const result=copyGuards(guards,charge),stack=[body];
   while(stack.length) {
     charge();const value=stack.pop();if(!value||typeof value!=='object')continue;
     if(value.kind==='assignment')result.delete(value.target.binding);
@@ -114,39 +120,68 @@ function stableGuards(guards,body,charge) {
 /** The domain solver's single statement traversal. Normal continuation gates
  * preserve lexical nodes while excluding assignments and returns on dead paths. */
 export function finiteNormalBody(statements,path,fn,{flow,expression,binding,copy,charge,voidResult,requirements=[]}) {
-  const returns=[],root={body:statements,path,guards:new Map(),gate:flow.always,index:0},stack=[root];
+  const returns=[],root={body:statements,path,guards:new Map(),gate:flow.always,continues:true,index:0},stack=[root];
   while(stack.length) {
     charge();const frame=stack[stack.length-1];
     if(frame.index===frame.body.length) {
-      stack.pop();if(frame.complete)frame.complete(frame.gate);continue;
+      stack.pop();
+      if(frame.complete) {
+        if(frame.locals?.size&&frame.guards.size)frame.guards=copyGuards(frame.guards,charge,frame.locals);
+        frame.complete(frame);
+      }
+      continue;
     }
     const s=frame.body[frame.index],p=frame.path+'/'+frame.index++;
-    const emit=(value,suffix)=>expression(value,p+suffix,fn,frame.guards,frame.gate);
+    const emit=(value,suffix)=>{
+      if(frame.guards.size)frame.guards=stableGuards(frame.guards,value,charge);
+      return expression(value,p+suffix,fn,frame.guards,frame.gate);
+    };
     if(s.kind==='local') {
+      (frame.locals??=new Set()).add(s.binding.id);
       const id=emit(s.initializer,'/initializer');copy(id,binding(fn,s.binding.id,s.binding.type));frame.gate=flow.normal(id);
     }else if(s.kind==='return'||s.kind==='constructorReturn') {
       if(s.value){const id=emit(s.value,'/value');copy(id,fn.id+'/return');returns.push(flow.normal(id));}
-      else returns.push(frame.gate);frame.gate=flow.never;
+      else returns.push(frame.gate);
+      frame.gate=flow.never;frame.continues=false;
     }else if(s.kind==='expression') {
       frame.gate=flow.normal(emit(s.expression,'/expression'));
     }else if(s.kind==='block') {
-      stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),gate:frame.gate,index:0,
-        complete:gate=>{frame.gate=gate;}});
+      stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),gate:frame.gate,continues:true,index:0,
+        complete:exit=>{frame.gate=exit.gate;frame.continues&&=exit.continues;frame.guards=exit.guards;}});
     }else if(s.kind==='if'||s.kind==='while') {
+      // The loop header gives carried bindings new SSA values. Presence proofs
+      // in its body must be established against those current values.
+      if(s.kind==='while')frame.guards=new Map();
       const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition);
       if(s.kind==='while') {
         const literal=literalLoopCondition(s,charge);
         frame.gate=literal===true?flow.never:incoming;
-        stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),
-          gate:literal===false?flow.never:incoming,index:0});
+        stack.push({body:s.body,path:p+'/body',guards:new Map(),
+          gate:literal===false?flow.never:incoming,continues:true,index:0});
       }else {
         const arm=literalIfArm(s,charge);
         const exits=[];let remaining=2;
-        const complete=gate=>{exits.push(gate);if(--remaining===0)frame.gate=flow.any(exits);};
+        const complete=exit=>{
+          exits.push(exit);if(--remaining!==0)return;
+          frame.gate=flow.any(exits.map(row=>row.gate));
+          const continuing=exits.filter(row=>row.continues);
+          frame.continues&&=continuing.length!==0;
+          // A lexically present edge still participates in the SSA merge even
+          // when the normal-flow solver knows its condition is false.
+          const [first,second]=continuing;
+          frame.guards=first?.guards??new Map();
+          if(second) {
+            const common=new Map();
+            for(const [binding,guard] of frame.guards) {
+              charge();if(second.guards.get(binding)===guard)common.set(binding,guard);
+            }
+            frame.guards=common;
+          }
+        };
         // Suspend this sequence until both arms have registered their exits.
         for(const key of ['else','then'])stack.push({body:s[key],path:p+'/'+key,
           guards:stableGuards(branchGuard(s.condition,key==='then',frame.guards,charge),s[key],charge),
-          gate:arm===null||arm===key?incoming:flow.never,index:0,complete});
+          gate:arm===null||arm===key?incoming:flow.never,continues:true,index:0,complete});
       }
     }
   }

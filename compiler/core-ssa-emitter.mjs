@@ -153,10 +153,14 @@ export function emitCoreSsaFunction(fn, context) {
         const noExit = current, noDefinitions = new Map(definitions);
         const keys = [...outerDeclared].filter(id => (!yesExit || yesDefinitions.has(id)) && (!noExit || noDefinitions.has(id)));
         if (yesExit || noExit) {
-          const join = newBlock(keys.map(id => bindingTypes.get(id)));
-          if (yesExit) { current = yesExit; branch(join, keys.map(id => yesDefinitions.get(id)), statement.range); }
-          if (noExit) { current = noExit; branch(join, keys.map(id => noDefinitions.get(id)), statement.range); }
-          current = join; definitions = new Map(keys.map((id, index) => [id, join.parameters[index].name]));
+          const carried = keys.filter(id => !context.preserveDominatingJoinBindings?.has(id) ||
+            (yesExit && noExit && yesDefinitions.get(id) !== noDefinitions.get(id)));
+          const join = newBlock(carried.map(id => bindingTypes.get(id)));
+          if (yesExit) { current = yesExit; branch(join, carried.map(id => yesDefinitions.get(id)), statement.range); }
+          if (noExit) { current = noExit; branch(join, carried.map(id => noDefinitions.get(id)), statement.range); }
+          const incoming = yesExit ? yesDefinitions : noDefinitions;
+          current = join; definitions = new Map(keys.map(id => [id, incoming.get(id)]));
+          carried.forEach((id, index) => definitions.set(id, join.parameters[index].name));
         } else { current = null; definitions = outer; }
         declared = outerDeclared;
       } else if (statement.kind === "while") {
