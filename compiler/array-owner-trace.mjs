@@ -106,6 +106,9 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     if(!context)active.add(fn.id);
     const base=empty(),bindings=new Map(),calls=[],lengths=new Map(),contents=new Map(),operations=[];
     let callCount=0,conditionalDepth=0;
+    // An effect outside the exact local length map may leave stale entries.
+    // Keep the previous conservative branch behavior after any such effect.
+    let exactLengthJoin=true;
     const truthBindings=new Map(),truthValues=new Map();
     const meetTruth=states=>{
       const names=new Set();for(const state of states)for(const name of state.keys()){charge();names.add(name);}
@@ -138,6 +141,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       const operand=resize?value.value:value.target.index;
       const n=operand?.kind==='constant'?Number(operand.decimal):null;
       const fresh=owner?.kind==='allocation'&&owner.functionId===fn.id&&owner.callPath.length===0;
+      if(!fresh)exactLengthJoin=false;
       const nonStructural=fresh&&previous!==null&&n!==null&&(resize?n===previous:n<previous);
       const proof={owner,exactLength:previous,[resize?'newLength':'index']:n,nonStructural};
       insert(base.structural,owner);if(!resize)insert(base.writes,owner);
@@ -156,6 +160,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         contents.set(canonical(owner),mergeArrayOwners(children));
       }else if(['call','construct','superConstruct'].includes(value.kind)) {
         if(++callCount>32)fail('limit');
+        if(value.target!==hir.intrinsics.readSpan.id)exactLengthJoin=false;
         const receiver=value.receiver?expression(value.receiver,[...path,'receiver'],index):null;
         const actuals=value.arguments.map((child,i)=>expression(child,[...path,'arguments',i],index));
         if(value.target===hir.intrinsics.readSpan.id) {
@@ -299,6 +304,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             const priorTruth=snapshot(truthBindings);
             const storageBefore=stored.state();
             conditionalDepth++;const yesExit=body(row.then??[],[...at,'then']),yes=snapshot(bindings);
+            const yesLengths=exactLengthJoin&&yesExit?snapshot(lengths):null;
             const storageYes=stored.state();stored.restore(storageBefore);
             const yesTruth=snapshot(truthBindings);truthBindings.clear();for(const [id,value]of priorTruth){charge();truthBindings.set(id,value);}
             bindings.clear();for(const [id,owner]of before){charge();bindings.set(id,owner);}
@@ -308,7 +314,11 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             stored.join([storageYes,stored.state()]);
             meetTruth([...(yesExit?[yesTruth]:[]),...(noExit?[snapshot(truthBindings)]:[])]);
             for(const [id,owner]of yes)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
-            for(const key of lengths.keys()){charge();lengths.set(key,null);}
+            if(exactLengthJoin&&!noExit&&yesLengths){
+              lengths.clear();for(const [key,length]of yesLengths){charge();lengths.set(key,length);}
+            }else for(const [key,length]of lengths){
+              charge();if(!exactLengthJoin||!noExit||yesLengths&&yesLengths.get(key)!==length)lengths.set(key,null);
+            }
           }
           if(row.body&&row.kind==='while') {
             if(context&&truthValues.get(canonical([...at,'condition']))===false){stored.leaveLoop(loopEntry,stored.state());continue;}

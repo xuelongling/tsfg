@@ -5,10 +5,14 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {readTypedArrayFacts,writeTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {projectTypedArrayFacts} from '../../compiler/typed-array-project.mjs';
+import {initialArrayPublication,prepareArrayCalls} from '../../compiler/array-call-context.mjs';
+import {deriveReadSpanPlan,consumeReadSpanPlan} from '../../compiler/array-readspan-model.mjs';
 import {buildHir,verifyHir,printHir,readHir,analyzeArrayCalls,verifyArrayCalls,
   verifyArrayCallParallelGroup,printArrayParallelProof,readArrayParallelProof} from '../../compiler/hir.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 import manifest from './testdata/typed-array-consumer-v8/manifest.json' with {type:'json'};
+import semanticEdges from './testdata/typed-array-consumer-v8/semantic-edges.json' with {type:'json'};
 const none={read:false,write:false,structural:false};
 const borrow={parameters:{0:{read:true,write:false,structural:false}},local:none,returnOrigin:{kind:'parameter',index:0}};
 const counts={
@@ -26,7 +30,7 @@ function kinds(value,result={}) {
   if(value.kind)result[value.kind]=(result[value.kind]??0)+1;
   for(const child of Object.values(value))kinds(child,result);return result;
 }
-for(const row of manifest)test('fresh Source v8 ordinary consumer: '+row.name,async()=>{
+for(const row of manifest)test('fresh Source v8 ordinary consumer: '+row.name,async t=>{
   const bytes=await readFile(new URL('./testdata/typed-array-consumer-v8/'+row.file,import.meta.url));
   assert.equal(createHash('sha256').update(bytes).digest('hex'),row.sha256);
   const facts=readTypedArrayFacts(bytes);assert.equal(facts.version,8);assert.equal(facts.packageId,row.packageId);
@@ -139,8 +143,40 @@ for(const row of manifest)test('fresh Source v8 ordinary consumer: '+row.name,as
     const state=hir.readSpanPlan.functions.find(fn=>fn.views.length);
     const store=state.events.find(event=>event.kind==='array-store-effect');assert.ok(store);
     if(row.name==='after-last-use')assert.ok(state.views[0].lastUseEvent<store.sequence);
-    else {assert.equal(row.name,'serial-overwrite');assert.equal(store.nonStructural,true);
-      assert.ok(state.views[0].lastUseEvent>store.sequence);}
+    else {
+      assert.equal(row.name,'serial-overwrite');assert.equal(store.nonStructural,true);
+      assert.ok(state.views[0].lastUseEvent>store.sequence);
+      await t.test('equal normal branch lengths preserve an in-range write during a ReadSpan borrow',async()=>{
+        const control=semanticEdges.find(item=>item.name==='view-short-rebind'),
+          controlBytes=await readFile(new URL('./testdata/typed-array-consumer-v8/'+control.file,import.meta.url));
+        assert.equal(createHash('sha256').update(controlBytes).digest('hex'),control.sha256);
+        const guard=projectTypedArrayFacts(readTypedArrayFacts(controlBytes)),
+          flag=guard.functions[0].parameters.find(parameter=>parameter.name==='flag'),
+          bool=guard.types.find(type=>type.id===flag.type);
+        const fn=hir.functions[0],[array,view,write,returned]=fn.body;
+        assert.equal(write.expression.kind,'arrayStoreDenseChecked');
+        const controlled=(then,otherwise)=>{
+          const condition={kind:'reference',type:flag.type,binding:flag.id,range:write.range},
+            branch={kind:'if',condition,then,else:otherwise,range:write.range},
+            projected={...hir,types:[...hir.types,bool],functions:[{...fn,parameters:[flag],body:[array,view,branch,write,returned]}]},
+            prepared=prepareArrayCalls(projected,initialArrayPublication(projected)),
+            {plan,work}=deriveReadSpanPlan(projected,prepared);
+          return {prepared,work,hir:{...projected,readSpanPlan:plan},events:plan.functions[0].events};
+        };
+        const overwrite=controlled([write],[write]);
+        consumeReadSpanPlan(overwrite.hir,overwrite.prepared,overwrite.work);
+        assert.deepEqual(overwrite.events.filter(event=>event.kind==='array-store-effect').map(event=>[event.exactLength,event.nonStructural]),
+          [[1,true],[1,true],[1,true]]);
+
+        const {expression}=write,append={...write,expression:{...expression,target:{...expression.target,
+          index:{...expression.target.index,token:'1',decimal:'1'}}}},
+          unequal=controlled([append],[write]);
+        const after=unequal.events.find(event=>event.kind==='array-store-effect'&&event.expressionPath[1]===3);
+        assert.deepEqual([after.exactLength,after.nonStructural],[null,false]);
+        assert.throws(()=>consumeReadSpanPlan(unequal.hir,unequal.prepared,unequal.work),
+          {code:'r03-d-readspan-structural-conflict'});
+      });
+    }
   }
   const obsolete={...selected,version:1};assert.equal(buildHir(facts,obsolete,publication).status,'error');
   const oldFixed={...publication,version:4};assert.equal(buildHir(facts,selected,oldFixed).status,'error');
