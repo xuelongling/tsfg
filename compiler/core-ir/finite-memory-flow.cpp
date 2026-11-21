@@ -237,13 +237,14 @@ struct FirstWrites {
     std::set<std::string> targets;if(!selected(op,current,targets))return flow.unknown(after);
     for(const auto &target:targets) {
       if(!proof.charge()||!proof.functions.count(target))return false;
+      if(proof.trapOnlyFunctions.count(target))continue;
       const auto frame=sources.enter(current.activation,op,target);
       std::vector<size_t> aliases;for(const auto id:current.aliases){if(!proof.charge())return false;aliases.push_back(id);}
       const auto next=context(target,std::move(aliases),frame);if(!valid||!sources.good())return false;
       const auto returned=contexts[next].returned;
       // Successful callee writes replace the old state. Only an actual input
       // path in its summary allows the caller predecessor to continue.
-      if(!flow.connect({returned,after,PayloadFlow::none,{},input,false})||
+      if(!flow.requireEvidence(returned)||!flow.connect({returned,after,PayloadFlow::none,{},input,false})||
          !flow.connect({before,after,returned,input}))return false;
     }
     return true;
@@ -280,21 +281,23 @@ struct FirstWrites {
     if(op->getNumResults()==1&&matches(current,op->getResult(0))&&
         (op->getName().getStringRef()=="func.call"||op->getName().getStringRef()=="tsfg_core.domain.method_call")) {
       std::set<std::string> targets;if(!selected(op,current,targets))return flow.unknown(after);
-      bool found=false;
       for(const auto &target:targets) {
         if(!proof.charge()||!proof.functions.count(target))return false;
+        if(proof.trapOnlyFunctions.count(target))continue;
+        bool found=false;
         for(auto &block:proof.functions.at(target).getBody())for(auto &operation:block) {
           if(!proof.charge())return false;
           auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(&operation);
-          if(!returned||returned.getNumOperands()!=1||!proof.mayReach(&block))continue;
+          if(!returned||returned.getNumOperands()!=1||!proof.mayExecute(&operation))continue;
           found=true;const auto frame=sources.enter(current.activation,op,target),prior=activeFrame;activeFrame=frame;
           const auto selectedIdentity=identity(returned.getOperand(0));activeFrame=prior;
           const auto source=context(target,{selectedIdentity},frame);
           const auto sourceEntry=entryNode(source);if(!valid)return false;
           snapshots.push_back({source,&operation,sourceEntry,after});
         }
+        if(!found&&!flow.unknown(after))return false;
       }
-      return found?true:flow.unknown(after);
+      return true;
     }
     const auto bound=writes.find(op);bool relevant=false,definite=true;
     if(bound!=writes.end())for(const auto &version:bound->second) {
@@ -339,7 +342,7 @@ struct FirstWrites {
     if(!valid||!entry(current)||!edge(current.entry,current.blocks.at(&fn.getBody().front())))return false;
     for(auto &block:fn.getBody())for(auto &op:block) {
       if(!proof.charge())return false;
-      if(!proof.mayReach(&block))continue;
+      if(!proof.mayExecute(&op))continue;
       if(!operation(&op,current,current.before.at(&op),current.after.at(&op)))return false;
       if(llvm::isa<mlir::func::ReturnOp>(&op)&&!edge(current.before.at(&op),current.returned))return false;
       for(unsigned i=0;i<op.getNumSuccessors();++i)
