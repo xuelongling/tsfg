@@ -18,17 +18,19 @@ public:
   bool field(const std::string &id,const std::string &declaringOwner);
   Id block();
   bool entry(Id block);
-  bool edge(Id from,Id to);
+  bool edge(Id from,Id to,bool normal=true);
   bool baseComplete(Id block,const std::string &base);
   bool activate(Id block);
   bool commit(Id block,size_t ordinal);
   bool write(Id block,const std::string &member,const std::string &receiver);
+  bool normalExit(Id block);
   bool solve();
   const std::string &error()const{return failure;}
 private:
-  enum class Kind { BaseComplete,Activate,Commit,Write };
+  enum class Kind { BaseComplete,Activate,Commit,Write,NormalExit };
   struct Action {Kind kind;size_t ordinal=0;};
-  struct Block {std::vector<Action> actions;std::vector<Id> successors;};
+  struct Edge {Id target;bool normal;};
+  struct Block {std::vector<Action> actions;std::vector<Edge> successors;};
   std::string owner,receiver,base,failure;
   size_t events;
   size_t &remaining;

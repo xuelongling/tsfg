@@ -214,6 +214,7 @@ bool usesModule(mlir::ModuleOp module) {return discover(module)!=Discovery::Abse
 namespace {
 bool contracts(ModuleProof &proof, const coreHeader::Identity *header = nullptr) {
   auto module=proof.module;
+  std::set<mlir::Operation *> readonlyConstructorStores;
   // Exact unpublished development descriptor; synchronize this gate when it changes.
   constexpr char expectedContract[] =
       "sha256:2f96b85766950b7e39a2a9192672d97a5d12e7c663cde144d203c3420b96b259";
@@ -233,9 +234,10 @@ bool contracts(ModuleProof &proof, const coreHeader::Identity *header = nullptr)
       !proof.document("tsfg_core.source_exports", proof.sourceExports) ||
       !proof.document("tsfg_core.entry_compatibility_roots", proof.entryRoots) ||
       !sources(proof,header) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
-      !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyDefinitionBounds(proof) ||
+      !verifyValueContracts(proof) || !verifyMemberContracts(proof,readonlyConstructorStores) || !verifyDefinitionBounds(proof) ||
       !verifyFlowContracts(proof) || !verifyReturnedParameters(proof) || !verifyControlPaths(proof) ||
-      !memoryPaths(proof) || !verifyActualFlow(proof) || !verifyBorrowContracts(proof))
+      !memoryPaths(proof) || !verifyConstructorPhases(proof,readonlyConstructorStores) ||
+      !verifyActualFlow(proof) || !verifyBorrowContracts(proof))
     return false;
   return true;
 }

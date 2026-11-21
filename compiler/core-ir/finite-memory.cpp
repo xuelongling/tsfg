@@ -85,7 +85,7 @@ struct Memory {
       const auto id=attr(op,"field_version"),field=attr(op,"member");
       std::string source;
       // Bind the Source node to the real phase event, not to a detached global
-      // write list. Local phase verification already proves owned frame/order.
+      // write list. Phase verification checks the owned frame and order.
       const auto *phases=proof.phases.getAsArray(); const Object *event=nullptr;
       const auto ordinal=op->getAttrOfType<mlir::IntegerAttr>("ordinal");
       if (!phases || !ordinal) return proof.reject("field commit phase catalogue");

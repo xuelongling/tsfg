@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "finite-constructor-writes.h"
+#include <tuple>
 #include <utility>
 
 namespace tsfg::finite {
@@ -35,9 +36,9 @@ bool ConstructorWrites::entry(Id block) {
   if(initial!=none)return reject("constructor write CFG has duplicate entry");
   initial=block;return true;
 }
-bool ConstructorWrites::edge(Id from,Id to) {
+bool ConstructorWrites::edge(Id from,Id to,bool normal) {
   if(!building(from)||!building(to))return false;
-  blocks[from].successors.push_back(to);return true;
+  blocks[from].successors.push_back({to,normal});return true;
 }
 bool ConstructorWrites::action(Id block,Action value) {
   if(!building(block))return false;blocks[block].actions.push_back(value);return true;
@@ -58,20 +59,22 @@ bool ConstructorWrites::write(Id block,const std::string &member,const std::stri
   if(binding!=receiver||!fields.count(member))return reject("constructor write receiver/member authority");
   return action(block,{Kind::Write});
 }
+bool ConstructorWrites::normalExit(Id block) {return action(block,{Kind::NormalExit});}
 bool ConstructorWrites::solve() {
   if(!charge())return false;
   if(sealed||initial==none)return reject("constructor write proof has no fresh entry");
   sealed=true;
   // Distinguish never-activated storage from a zero-event completed phase.
-  // Visit each (block,progress) separately: one completed predecessor cannot
-  // hide an unactivated/incomplete predecessor at a join or around a loop.
+  // Keep structural paths for event checking. Only independently possible
+  // normal paths can establish a successful return.
   const size_t ready=none-1;
-  std::vector<std::pair<Id,size_t>> work{{initial,base.empty()?ready:none}};
-  std::set<std::pair<Id,size_t>> seen;
+  using State=std::tuple<Id,size_t,bool>;
+  std::vector<State> work{{initial,base.empty()?ready:none,true}};
+  std::set<State> seen;
   while(!work.empty()) {
     if(!charge())return false;const auto state=work.back();work.pop_back();
-    if(!seen.insert(state).second)continue;auto progress=state.second;
-    for(const auto &item:blocks[state.first].actions) {
+    if(!seen.insert(state).second)continue;auto [block,progress,normal]=state;
+    for(const auto &item:blocks[block].actions) {
       if(!charge())return false;
       if(item.kind==Kind::BaseComplete) {
         if(progress!=none)return reject("constructor base completion restarts");
@@ -82,10 +85,12 @@ bool ConstructorWrites::solve() {
       }else if(item.kind==Kind::Commit) {
         if(progress==none||progress==ready||item.ordinal!=progress)return reject("constructor write phase is incomplete or reordered");
         ++progress;
-      }else if(progress!=events)return reject("readonly constructor write precedes completed own initialization");
+      }else if(item.kind==Kind::Write) {
+        if(progress!=events)return reject("readonly constructor write precedes completed own initialization");
+      }else if(normal&&progress!=events)return reject("constructor normal return precedes completed own initialization");
     }
-    for(const auto next:blocks[state.first].successors) {
-      if(!charge())return false;work.emplace_back(next,progress);
+    for(const auto &edge:blocks[block].successors) {
+      if(!charge())return false;work.emplace_back(edge.target,progress,normal&&edge.normal);
     }
   }
   return true;

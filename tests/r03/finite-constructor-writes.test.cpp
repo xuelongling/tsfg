@@ -84,6 +84,48 @@ int main() {
     pass("own phase marker cannot replace missing super completion");
   }
   {
+    size_t budget=1000;ConstructorWrites p("D","this-D","Base",1,budget);
+    const auto entry=p.block(),initialized=p.block(),join=p.block();
+    check(p.field("D.x","D")&&p.entry(entry)&&p.edge(entry,initialized)&&p.edge(entry,join),"derived return branch setup");
+    check(p.baseComplete(initialized,"Base")&&p.activate(initialized)&&p.commit(initialized,0)&&
+          p.edge(initialized,join)&&p.normalExit(join),"one predecessor has a complete derived phase");
+    check(!p.solve()&&p.error()=="constructor normal return precedes completed own initialization","missing phase at return");
+    pass("a normal return cannot bypass both the base and own phase");
+  }
+  {
+    size_t budget=1000;ConstructorWrites p("D","this-D","",2,budget);
+    const auto entry=p.block(),finished=p.block(),partial=p.block(),join=p.block();
+    check(p.field("D.x","D")&&p.field("D.y","D")&&p.entry(entry)&&p.activate(entry)&&p.commit(entry,0),
+          "first field committed before both branches");
+    check(p.edge(entry,finished)&&p.edge(entry,partial)&&p.commit(finished,1)&&
+          p.edge(finished,join)&&p.edge(partial,join)&&p.normalExit(join),"one predecessor skips the second commit");
+    check(!p.solve()&&p.error()=="constructor normal return precedes completed own initialization","partial phase at return");
+    pass("a normal return requires every predecessor to finish the own phase");
+  }
+  {
+    size_t budget=1000;ConstructorWrites p("D","this-D","Base",0,budget);const auto b=p.block();
+    check(p.entry(b)&&p.baseComplete(b,"Base")&&p.activate(b)&&p.normalExit(b)&&p.solve(),"zero-event phase completion");
+    pass("a zero-event derived phase can return after activation");
+  }
+  {
+    size_t budget=1000;ConstructorWrites p("D","this-D","",1,budget);
+    const auto entry=p.block(),finished=p.block(),stopped=p.block(),join=p.block();
+    check(p.field("D.x","D")&&p.entry(entry)&&p.edge(entry,finished)&&p.edge(entry,stopped,false),"structural alternate predecessor");
+    check(p.activate(finished)&&p.commit(finished,0)&&p.edge(finished,join)&&
+          p.edge(stopped,join)&&p.normalExit(join)&&p.solve(),"only the completed path returns normally");
+    pass("a non-normal edge stays non-normal through a later join");
+  }
+  {
+    size_t budget=1000;ConstructorWrites p("D","this-D","",2,budget);
+    const auto entry=p.block(),finished=p.block(),stopped=p.block(),join=p.block();
+    check(p.field("D.x","D")&&p.field("D.y","D")&&p.entry(entry)&&
+          p.edge(entry,finished)&&p.edge(entry,stopped,false),"non-normal structural control setup");
+    check(p.activate(finished)&&p.commit(finished,0)&&p.commit(finished,1)&&p.edge(finished,join)&&
+          p.activate(stopped)&&p.commit(stopped,1)&&p.edge(stopped,join)&&p.normalExit(join),"non-normal path has a bad commit");
+    check(!p.solve()&&p.error()=="constructor write phase is incomplete or reordered","structural events remain checked");
+    pass("an invalid commit on a non-normal path still fails structural checks");
+  }
+  {
     size_t budget=1000;bool cancelled=false;ConstructorWrites p("D","this-D","",0,budget,[&]{return cancelled;});
     const auto b=p.block();check(p.field("D.x","D")&&p.entry(b)&&p.activate(b)&&p.write(b,"D.x","this-D"),"bounded setup");
     budget=1;check(!p.solve()&&p.error()=="constructor write proof work limit","budget at worklist boundary");

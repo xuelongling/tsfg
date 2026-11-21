@@ -13,6 +13,7 @@ using Pair = std::pair<std::string,std::string>;
 struct Members { std::map<std::string,const Object *> fields, methods; };
 struct MemberProof {
   ModuleProof &proof;
+  std::set<mlir::Operation *> &readonlyConstructorStores;
   std::map<std::string,Members> cache;
   std::map<Pair,Json> views;
   std::map<std::string,const Object *> declarations;
@@ -20,7 +21,6 @@ struct MemberProof {
   std::set<Pair> relations;
   referenceContracts::Types logicalTypes;
   referenceContracts::MethodCatalogue methodTypes;bool methodTypesReady=false;
-  std::map<std::string,std::set<mlir::Operation *>> constructorStores;
   std::vector<std::string> lineage(std::string type) {
     std::vector<std::string> result; std::set<std::string> seen;
     while (!type.empty()) {
@@ -251,75 +251,7 @@ struct MemberProof {
     if(!fields)return proof.reject("constructor own field directory");
     for(const auto &value:*fields){if(!proof.charge())return false;own|=string(*value.getAsObject(),"id")==member;}
     if(!own)return proof.reject("constructor cannot assign an inherited readonly declaration");
-    constructorStores[found->first].insert(op);return true;
-  }
-  bool constructorPhases() {
-    for(const auto &[id,stores]:constructorStores) {
-      if(!proof.charge())return false;auto fn=proof.functions.at(id);const auto &frame=*proof.callable.at(id);
-      const auto owner=string(frame,"ownerType"),construction=string(frame,"construction");
-      const auto &nominal=*proof.catalog.at(owner);const auto *definition=nominal.getObject("construction");
-      const auto *fields=nominal.getArray("fields"),*parameters=definition?definition->getArray("parameters"):nullptr;
-      const auto *initialization=definition?definition->getArray("initialization"):nullptr;
-      if(!fields||!parameters||!initialization||initialization->size()!=fields->size())return proof.reject("constructor initialization catalogue");
-      // Independently rebuild the required commit identities from the owned
-      // catalogue. A shortened producer phase cannot authorize an early write.
-      std::vector<std::pair<std::string,bool>> events;std::set<std::string> own,initialized;
-      for(const auto &value:*fields){if(!proof.charge())return false;own.insert(string(*value.getAsObject(),"id"));}
-      for(const auto &parameter:*parameters)for(const auto &value:*fields) {
-        if(!proof.charge())return false;const auto *p=parameter.getAsObject();const auto &field=*value.getAsObject();
-        if(!p||string(*p,"symbol").empty())return proof.reject("constructor phase parameter identity");
-        if(string(field,"parameterBinding")==string(*p,"symbol"))events.emplace_back(string(field,"id"),true);
-      }
-      for(const auto &value:*initialization) {
-        if(!proof.charge())return false;const auto *step=value.getAsObject();const auto member=step?string(*step,"field"):std::string();
-        const auto kind=step?string(*step,"kind"):std::string();
-        if(!own.count(member)||!initialized.insert(member).second||
-            (kind!="fieldDefine"&&kind!="fieldInitialize"&&kind!="parameterFieldInitialize"))return proof.reject("constructor phase own-member coverage");
-        events.emplace_back(member,kind=="fieldDefine");
-      }
-      const auto binding=string(*(*frame.getArray("parameters"))[0].getAsObject(),"id");
-      const auto base=string(nominal,"base");
-      ConstructorWrites control(owner,binding,base,events.size(),proof.remaining);
-      for(const auto &value:*fields)if(!control.field(string(*value.getAsObject(),"id"),owner))return proof.reject(control.error());
-      std::map<mlir::Block *,ConstructorWrites::Id> blocks;
-      for(auto &block:fn.getBody()) {
-        if(!proof.charge())return false;const auto key=control.block();
-        if(key==ConstructorWrites::none)return proof.reject(control.error());blocks.emplace(&block,key);
-      }
-      if(!control.entry(blocks.at(&fn.getBody().front())))return proof.reject(control.error());
-      for(auto &block:fn.getBody()) {
-        const auto key=blocks.at(&block);
-        for(auto &op:block) {
-          if(!proof.charge())return false;const auto name=op.getName().getStringRef();
-          if(name=="tsfg_core.domain.super") {
-            const auto selected=op.getAttrOfType<mlir::StringAttr>("construction");
-            const auto *parent=proof.catalog.count(base)?proof.catalog.at(base)->getObject("construction"):nullptr;
-            if(!parent||!selected||selected.getValue()!=string(*parent,"id")||op.getOperand(0)!=fn.getArgument(0))
-              return proof.reject("readonly constructor phase has no same-receiver direct super");
-            if(!control.baseComplete(key,base))return proof.reject(control.error());
-          }
-          if(name=="tsfg_core.domain.initialize_fields"||name=="tsfg_core.domain.field_define"||name=="tsfg_core.domain.field_initialize") {
-            const auto selected=op.getAttrOfType<mlir::StringAttr>("construction");
-            if(!selected||selected.getValue()!=construction||op.getOperand(0)!=fn.getArgument(0))return proof.reject("constructor write phase belongs to another frame");
-            if(name=="tsfg_core.domain.initialize_fields") {if(!control.activate(key))return proof.reject(control.error());}
-            else {
-              const auto ordinal=op.getAttrOfType<mlir::IntegerAttr>("ordinal");const auto member=op.getAttrOfType<mlir::StringAttr>("member");
-              if(!ordinal||ordinal.getInt()<0||uint64_t(ordinal.getInt())>=events.size()||!member||
-                  events[ordinal.getInt()]!=std::make_pair(member.getValue().str(),name=="tsfg_core.domain.field_define"))
-                return proof.reject("constructor write phase differs from owned field sequence");
-              if(!control.commit(key,size_t(ordinal.getInt())))return proof.reject(control.error());
-            }
-          }
-          if(stores.count(&op)&&!control.write(key,op.getAttrOfType<mlir::StringAttr>("member").getValue().str(),binding))
-            return proof.reject(control.error());
-        }
-        for(auto *successor:block.getTerminator()->getSuccessors()) {
-          if(!proof.charge())return false;
-          if(!control.edge(key,blocks.at(successor)))return proof.reject(control.error());
-        }
-      }
-      if(!control.solve())return proof.reject(control.error());
-    }
+    readonlyConstructorStores.insert(op);
     return true;
   }
   bool accesses() {
@@ -332,12 +264,9 @@ struct MemberProof {
         auto fn=op->getParentOfType<mlir::func::FuncOp>();
         const auto id=fn?fn->getAttrOfType<mlir::StringAttr>("tsfg_core.function_id"):mlir::StringAttr();
         const auto found=id?proof.callable.find(id.getValue().str()):proof.callable.end();
-        if(found==proof.callable.end()||string(*found->second,"role")!="construction-body"){
-          valid=proof.reject("field phase requires its owned constructor");return;
-        }
-        // A shared phase needs the same base and receiver proof as a
-        // readonly write, even when all its declared fields are writable.
-        constructorStores.try_emplace(found->first);return;
+        if(found==proof.callable.end()||string(*found->second,"role")!="construction-body")
+          valid=proof.reject("field phase requires its owned constructor");
+        return;
       }
       if(!method&&name!="tsfg_core.domain.field_read"&&name!="tsfg_core.domain.field_store"&&name!="tsfg_core.domain.member_present")return;
       if(!proof.charge()){valid=false;return;}
@@ -398,12 +327,87 @@ struct MemberProof {
         valid=proof.reject("access dispatch differs from exact actual/member authority");
       if(valid&&!method)proof.memberFields.emplace(op,std::move(authority));
     });
-    return valid&&constructorPhases();
+    return valid;
   }
 };
 }
-bool verifyMemberContracts(ModuleProof &proof) {
-  MemberProof members{proof}; const auto *rows=proof.witnesses.getAsArray();if (!rows || rows->size()>100000) return proof.reject("member witness directory");
+bool verifyConstructorPhases(ModuleProof &proof,const std::set<mlir::Operation *> &readonlyConstructorStores) {
+  for(auto &[id,fn]:proof.functions) {
+    if(!proof.charge())return false;const auto &frame=*proof.callable.at(id);
+    if(string(frame,"role")!="construction-body")continue;
+    const auto owner=string(frame,"ownerType"),construction=string(frame,"construction");
+    const auto &nominal=*proof.catalog.at(owner);const auto *definition=nominal.getObject("construction");
+    const auto *fields=nominal.getArray("fields"),*parameters=definition?definition->getArray("parameters"):nullptr;
+    const auto *initialization=definition?definition->getArray("initialization"):nullptr;
+    if(!fields||!parameters||!initialization||initialization->size()!=fields->size())return proof.reject("constructor initialization catalogue");
+    // Independently rebuild the required commit identities from the owned
+    // catalogue. A shortened producer phase cannot authorize an early write.
+    std::vector<std::pair<std::string,bool>> events;std::set<std::string> own,initialized;
+    for(const auto &value:*fields){if(!proof.charge())return false;own.insert(string(*value.getAsObject(),"id"));}
+    for(const auto &parameter:*parameters)for(const auto &value:*fields) {
+      if(!proof.charge())return false;const auto *p=parameter.getAsObject();const auto &field=*value.getAsObject();
+      if(!p||string(*p,"symbol").empty())return proof.reject("constructor phase parameter identity");
+      if(string(field,"parameterBinding")==string(*p,"symbol"))events.emplace_back(string(field,"id"),true);
+    }
+    for(const auto &value:*initialization) {
+      if(!proof.charge())return false;const auto *step=value.getAsObject();const auto member=step?string(*step,"field"):std::string();
+      const auto kind=step?string(*step,"kind"):std::string();
+      if(!own.count(member)||!initialized.insert(member).second||
+          (kind!="fieldDefine"&&kind!="fieldInitialize"&&kind!="parameterFieldInitialize"))return proof.reject("constructor phase own-member coverage");
+      events.emplace_back(member,kind=="fieldDefine");
+    }
+    const auto binding=string(*(*frame.getArray("parameters"))[0].getAsObject(),"id");
+    const auto base=string(nominal,"base");
+    ConstructorWrites control(owner,binding,base,events.size(),proof.remaining);
+    for(const auto &value:*fields)if(!control.field(string(*value.getAsObject(),"id"),owner))return proof.reject(control.error());
+    std::map<mlir::Block *,ConstructorWrites::Id> blocks;
+    for(auto &block:fn.getBody()) {
+      if(!proof.charge())return false;const auto key=control.block();
+      if(key==ConstructorWrites::none)return proof.reject(control.error());blocks.emplace(&block,key);
+    }
+    if(!control.entry(blocks.at(&fn.getBody().front())))return proof.reject(control.error());
+    for(auto &block:fn.getBody()) {
+      const auto key=blocks.at(&block);
+      for(auto &op:block) {
+        if(!proof.charge())return false;const auto name=op.getName().getStringRef();
+        if(name=="tsfg_core.domain.super") {
+          const auto selected=op.getAttrOfType<mlir::StringAttr>("construction");
+          const auto *parent=proof.catalog.count(base)?proof.catalog.at(base)->getObject("construction"):nullptr;
+          if(!parent||!selected||selected.getValue()!=string(*parent,"id")||op.getOperand(0)!=fn.getArgument(0))
+            return proof.reject("constructor phase has no same-receiver direct super");
+          if(!control.baseComplete(key,base))return proof.reject(control.error());
+        }
+        if(name=="tsfg_core.domain.initialize_fields"||name=="tsfg_core.domain.field_define"||name=="tsfg_core.domain.field_initialize") {
+          const auto selected=op.getAttrOfType<mlir::StringAttr>("construction");
+          if(!selected||selected.getValue()!=construction||op.getOperand(0)!=fn.getArgument(0))return proof.reject("constructor write phase belongs to another frame");
+          if(name=="tsfg_core.domain.initialize_fields") {if(!control.activate(key))return proof.reject(control.error());}
+          else {
+            const auto ordinal=op.getAttrOfType<mlir::IntegerAttr>("ordinal");const auto member=op.getAttrOfType<mlir::StringAttr>("member");
+            if(!ordinal||ordinal.getInt()<0||uint64_t(ordinal.getInt())>=events.size()||!member||
+                events[ordinal.getInt()]!=std::make_pair(member.getValue().str(),name=="tsfg_core.domain.field_define"))
+              return proof.reject("constructor write phase differs from owned field sequence");
+            if(!control.commit(key,size_t(ordinal.getInt())))return proof.reject(control.error());
+          }
+        }
+        if(readonlyConstructorStores.count(&op)&&
+            !control.write(key,op.getAttrOfType<mlir::StringAttr>("member").getValue().str(),binding))
+          return proof.reject(control.error());
+        if(llvm::isa<mlir::func::ReturnOp>(&op)&&proof.mayExecute(&op)&&!control.normalExit(key))
+          return proof.reject(control.error());
+      }
+      auto *terminator=block.getTerminator();
+      for(unsigned edge=0;edge<terminator->getNumSuccessors();++edge) {
+        if(!proof.charge())return false;
+        if(!control.edge(key,blocks.at(terminator->getSuccessor(edge)),proof.mayTraverse(terminator,edge)))
+          return proof.reject(control.error());
+      }
+    }
+    if(!control.solve())return proof.reject(control.error());
+  }
+  return true;
+}
+bool verifyMemberContracts(ModuleProof &proof,std::set<mlir::Operation *> &readonlyConstructorStores) {
+  MemberProof members{proof,readonlyConstructorStores}; const auto *rows=proof.witnesses.getAsArray();if (!rows || rows->size()>100000) return proof.reject("member witness directory");
   if(!members.declarationTypes())return false;
   using Key=std::tuple<std::string,uint32_t,uint32_t,std::string,std::string>;
   std::map<Key,std::set<Pair>> directory;std::optional<Key> previous;
