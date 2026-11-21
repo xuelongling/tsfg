@@ -467,22 +467,36 @@ const Engine = struct {
     // Construction supplies the final original atom set, never an admission
     // boolean. Resolve it identically during solve and stable validation.
     fn receiverArgument(self: *Engine, index: usize, atoms: []const construction.Atom) E!?Set {
-        var proved: Set = .empty; try self.budget.step();
+        var proved: Set = .empty; var transported: Set = .empty; try self.budget.step();
         for (atoms) |atom| {
             try self.budget.step(); if (atom.category != .object) { self.pending = .receiver_protocol; return null; }
             switch (atom.source) {
                 .allocation => |source| { const location_id = try self.receiverLocation(index, source, true) orelse return null; try self.add(&proved, location_id); },
                 .node => |source| {
-                    // Only this original private constructor parameter denotes
-                    // its Frame's complete caller-bound argument Set. Foreign
-                    // bare refs and public arbitrary formals grant no proof.
+                    // Resolve the original parameter in its own Frame.
                     try self.budget.spend(4); const frame = self.frames.items[index];
-                    const entry = frame.receiver_import orelse { self.pending = .receiver_protocol; return null; };
-                    if (entry.fact.analysis != frame.receiver or entry.fact.graph != frame.graph or source >= frame.graph.nodes.len) { self.pending = .receiver_protocol; return null; }
+                    if (source >= frame.graph.nodes.len) { self.pending = .receiver_protocol; return null; }
                     const node = frame.graph.nodes[source];
-                    if (node != .parameter or node.parameter.index == 0 or node.parameter.index >= frame.arguments.len) { self.pending = .receiver_protocol; return null; }
-                    const originals = frame.arguments[node.parameter.index];
+                    if (node != .parameter or node.parameter.index >= frame.arguments.len) { self.pending = .receiver_protocol; return null; }
+                    const parameter = node.parameter.index;
+                    const originals = frame.arguments[parameter];
                     if (originals.items.len == 0) return null;
+                    if (frame.receiver_import) |entry| {
+                        if (entry.fact.analysis != frame.receiver or entry.fact.graph != frame.graph or parameter == 0) { self.pending = .receiver_protocol; return null; }
+                    } else {
+                        const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return null; };
+                        const ordinary = receiver.ordinary orelse { self.pending = .receiver_protocol; return null; };
+                        if (ordinary.graph != frame.graph or parameter >= ordinary.types.len or ordinary.types[parameter] == null or
+                            !try self.budget.equal(ordinary.types[parameter].?, node.parameter.@"type")) { self.pending = .receiver_protocol; return null; }
+                        for (originals.items) |id| {
+                            try self.budget.step();
+                            const value = self.locations.items[id];
+                            if (value.kind != .root or (value.owner != .input and (value.owner != .parameter or value.owner.parameter != parameter))) {
+                                self.pending = .receiver_protocol; return null;
+                            }
+                            try self.add(&transported, id);
+                        }
+                    }
                     try self.merge(&proved, originals.items);
                 },
                 .scoped_allocation => |source| {
@@ -493,6 +507,8 @@ const Engine = struct {
         }
         for (proved.items) |id| {
             try self.budget.step(); const value = self.locations.items[id];
+            try self.budget.spend(transported.items.len);
+            if (std.mem.indexOfScalar(R, transported.items, id) != null) continue;
             if (value.kind != .root or value.owner != .local or value.type_id == null or (try self.typeRow(value.type_id.?)).kind != .reference) { self.pending = .receiver_protocol; return null; }
         }
         return proved;
@@ -553,13 +569,13 @@ const Engine = struct {
                         // full proven Set is present; final validation still
                         // rejects any unresolved original argument/continuation.
                         if (!try self.sameSet(proved.items, arguments[parameter_index].items)) continue :calls;
+                        continue;
                     }
                     for (arguments[parameter_index].items) |location_id| {
                         try self.budget.step(); const value = self.locations.items[location_id];
-                        if (value.kind != .root or value.type_id == null) { self.pending = .receiver_protocol; return; }
-                        if (kind == .scalar) {
-                            if (!try self.budget.equal(value.type_id.?, expected)) { self.pending = .receiver_protocol; return; }
-                        } else if ((try self.typeRow(value.type_id.?)).kind != .reference) { self.pending = .receiver_protocol; return; }
+                        if (value.kind != .root or value.type_id == null or !try self.budget.equal(value.type_id.?, expected)) {
+                            self.pending = .receiver_protocol; return;
+                        }
                     }
                 }
                 const target = try self.ensure(graph, call.function_id, frame.graph, ordinal, arguments, .empty, frame.heaps[call.heap].items, .{ .frame = index, .heap = call.heap }, fact.analysis, .{ .caller = index, .fact = fact });
@@ -1260,10 +1276,17 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, phys
     var engine = Engine{ .a = result.arena.allocator(), .directory = directory, .physical = physical, .fixed = fixed, .budget = budget, .receiver = receiver };
     const protocol = try m.findFunction(directory, function_id, budget);
     if (!protocol.environment_metadata_complete) { result.pending = .environment_protocol; return result; }
-    if ((protocol.construction != null) != (receiver != null)) { result.pending = .receiver_protocol; return result; }
+    const hidden_receiver = protocol.construction != null;
+    if (hidden_receiver and receiver == null) { result.pending = .receiver_protocol; return result; }
     if (receiver) |facts| {
         try budget.step();
         if (!try engine.receiverFacts(graph, facts)) { result.pending = .receiver_protocol; return result; }
+        if (!hidden_receiver) {
+            const ordinary = facts.ordinary orelse { result.pending = .receiver_protocol; return result; };
+            if (facts.input_exits != null or ordinary.graph != graph or !try budget.equal(ordinary.function_id, function_id)) {
+                result.pending = .receiver_protocol; return result;
+            }
+        }
     }
     const arguments = try engine.allocate(Set, protocol.parameter_types.len); @memset(arguments, .empty);
     var environment: Set = .empty; var input_heap: Heap = .empty;
@@ -1280,7 +1303,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, phys
             if (row.environment) |env| { if (env >= mapping.len) return error.InvalidGraph; engine.locations.items[into].environment = mapping[env]; }
         }
         for (input.arguments, arguments, 0..) |refs, *into, index| {
-            try budget.step(); if (receiver != null and index == 0) continue;
+            try budget.step(); if (hidden_receiver and index == 0) continue;
             for (refs) |ref| { try budget.step(); if (ref >= mapping.len) return error.InvalidGraph; try engine.add(into, mapping[ref]); }
             if (into.items.len == 0) { result.pending = .unresolved_value; return result; }
         }
@@ -1304,7 +1327,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const m.Directory, phys
         engine.initial_heap = input_heap.items;
     } else {
         for (protocol.parameter_types, 0..) |type_id, index| {
-            try budget.step(); if (receiver != null and index == 0) continue;
+            try budget.step(); if (hidden_receiver and index == 0) continue;
             const location = try engine.location(.{ .kind = .root, .owner = .{ .parameter = index }, .type_id = type_id }); try engine.add(&arguments[index], location);
         }
         if (protocol.lexical_environment) |layout| { const input = try engine.entryEnvironment(layout); try engine.add(&environment, input); }

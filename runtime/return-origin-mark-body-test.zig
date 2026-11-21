@@ -477,7 +477,7 @@ test "formal constructor certificate rechecks the original scalar call on both g
     const original = try inclusion.covered(c.allocator, &archive, constructor_symbol, current, &bounds, &budget);
     try std.testing.expect(original == .pending and original.pending == .receiver_no_exact_certificate);
     const evidence = (try body.scalarReturnCalls(&c, allocator, &archive, &projected, upper, &input, &bounds, &budget)).?;
-    const covered = try inclusion.coveredWithScalarCalls(c.allocator, &archive, constructor_symbol, current, &bounds, &budget, evidence);
+    const covered = try inclusion.coveredWithEvidence(c.allocator, &archive, constructor_symbol, current, &bounds, &budget, .{ .scalar_calls = evidence });
     try std.testing.expectEqual(std.meta.Tag(inclusion.Inclusion).covered, std.meta.activeTag(covered));
     var upper_result = try construction.analyzeReturnsWithCalls(c.allocator, &archive, upper, &budget, input, evidence);
     defer upper_result.deinit();
@@ -489,7 +489,7 @@ test "formal constructor certificate rechecks the original scalar call on both g
     try std.testing.expect(upper.nodes[write.value.source.node] == .literal);
 
     const copied = current.*;
-    const wrong = try inclusion.coveredWithScalarCalls(c.allocator, &archive, constructor_symbol, &copied, &bounds, &budget, evidence);
+    const wrong = try inclusion.coveredWithEvidence(c.allocator, &archive, constructor_symbol, &copied, &bounds, &budget, .{ .scalar_calls = evidence });
     try std.testing.expect(wrong == .pending and wrong.pending == .receiver_no_exact_certificate);
     var mismatched = evidence;
     mismatched.callees = &.{constructor_symbol};

@@ -229,6 +229,11 @@ test "ordinary parameter entry Cell retains its original Reference on both exits
     const graph = &projected.graph.?;
     try std.testing.expect((try origin.validateGraph(c.allocator, &directory, function_text, graph, &budget)) == .valid);
     try std.testing.expectEqual(@as(usize, 2), graph.normal.len);
+    const evidence = (try refs.returnOriginOrdinaryReferences(&c, projected.arena.allocator(), @enumFromInt(0), graph, graph)).?;
+    try std.testing.expect(evidence.current == graph and evidence.upper == graph);
+    try std.testing.expectEqual(@as(usize, 2), evidence.types.len);
+    try std.testing.expectEqualStrings(reference_text, evidence.types[0].?);
+    try std.testing.expect(evidence.types[1] == null);
     var paths: u2 = 0;
     for (graph.normal) |value| {
         const count = try copiesFromOriginal(graph, value, 0);

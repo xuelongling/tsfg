@@ -1303,6 +1303,20 @@ const UpperGraph = struct {
         }
         const physical = try self.physicalFields(allocator, directory);
         const invocation = effect_env.Invocation{ .caller = self.function, .block = self.block, .instruction = self.instruction, .target = target };
+        if (receiver) |checked| if (checked.ordinary) |ordinary| {
+            // Match the caller's physical transport without adding a concrete
+            // type or heap fact to any of its original owner locations.
+            const abi = self.collector.common().abis[@intFromEnum(c.program.functions[@intFromEnum(target)].abi)];
+            const caller = c.program.functions[@intFromEnum(self.function)];
+            if (offset > op.operands.len or ordinary.types.len != full.parameters.len or ordinary.types.len > op.operands.len - offset)
+                return self.noFixedBodyProof(full, returned, thrown);
+            for (ordinary.types, abi.argument_types, op.operands[offset..][0..ordinary.types.len]) |known, raw, argument| {
+                try c.charge(2);
+                if (known == null) continue;
+                const carrier = caller.registers[@intFromEnum(argument)].carrier;
+                if (carrier != .@"type" or carrier.@"type" != raw) return self.noFixedBodyProof(full, returned, thrown);
+            }
+        };
         var inputs = PayloadInputs{ .g = self, .saved = saved, .a = allocator, .invocation = invocation }; defer inputs.deinit();
         try inputs.build(target, op, offset, full.parameters.len);
         if (inputs.unavailable) return self.noFixedBodyProof(full, returned, thrown);
@@ -1363,7 +1377,8 @@ const UpperGraph = struct {
             return self.noFixedBodyProof(full, returned, thrown);
         }
         const function_id = try publication_refs.symbol(c, arena.allocator(), c.program.functions[@intFromEnum(target)].id);
-        const constructor_input = try publication_refs.returnOriginConstructorInput(c, arena.allocator(), fixed.*, function_id);
+        var constructor_input = try publication_refs.returnOriginConstructorInput(c, arena.allocator(), fixed.*, function_id);
+        if (receiver) constructor_input.ordinary = try publication_refs.returnOriginOrdinaryReferences(c, arena.allocator(), target, &body.graph.?, graph);
         try c.charge(fixed.publication.contracts.len + 1);
         const contracts = try arena.allocator().alloc(structural_origins.FixedContract, fixed.publication.contracts.len);
         for (fixed.publication.contracts, constructor_input.fixed, contracts) |*row, *complete, *entry| {
@@ -1372,7 +1387,9 @@ const UpperGraph = struct {
         // Body is independently derived ONLY from the current owned SSA/ABI.
         // The immutable complete fixed contract vector is solely the upper.
         const scalar_calls = if (receiver) try body_origins.scalarReturnCalls(c, arena.allocator(), &directory, &body, graph, &constructor_input, contracts, &budget) else null;
-        const coverage = structural_origins.coveredWithScalarCalls(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget, scalar_calls) catch |err| return publication_refs.graphFailure(err);
+        const coverage = structural_origins.coveredWithEvidence(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget, .{
+            .scalar_calls = scalar_calls, .ordinary = constructor_input.ordinary,
+        }) catch |err| return publication_refs.graphFailure(err);
         if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
         if (!receiver) return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), null, returned, thrown, completions);
         // Receiver return interpretation is owned by the independently checked
@@ -1381,7 +1398,8 @@ const UpperGraph = struct {
         // mandatory before any immutable fixed return value is consumed.
         if (receiver) {
             try c.charge(2); const target_function = c.program.functions[@intFromEnum(target)];
-            if (target_function.role != .construction_body or collector.common().abis[@intFromEnum(target_function.abi)].construction == null) return self.noFixedBodyProof(full, returned, thrown);
+            if ((target_function.role != .construction_body or collector.common().abis[@intFromEnum(target_function.abi)].construction == null) and
+                constructor_input.ordinary == null) return self.noFixedBodyProof(full, returned, thrown);
         }
         var analysis = construction_origins.analyzeReturnsWithCalls(c.allocator, &directory, graph, &budget, constructor_input, scalar_calls) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();

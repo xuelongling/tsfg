@@ -290,3 +290,30 @@ pub fn returnOriginConstructorInput(c: *Context, allocator: std.mem.Allocator, v
     }
     return .{ .function_id = function_id, .fixed = fixed };
 }
+
+// Carry the original Reference parameter category, without a receiver seed
+// or a concrete object identity. Both graphs use the same checked entry ABI.
+pub fn returnOriginOrdinaryReferences(c: *Context, allocator: std.mem.Allocator, target: t.FunctionRef, current: *const origin.Graph, upper: *const origin.Graph) Error!?construction.OrdinaryReferenceInputs {
+    const function = c.program.functions[@intFromEnum(target)];
+    const common = &c.program.tables.mode.common;
+    const abi = common.abis[@intFromEnum(function.abi)];
+    try c.charge(4);
+    if (function.role != .ordinary or abi.receiver != null or abi.construction != null or abi.receiver_frame != null or
+        abi.lexical_environment != null or abi.parameters.len != function.blocks[0].parameters.len) return null;
+    try c.charge(abi.parameters.len + 1);
+    const types = try allocator.alloc(?origin.Symbol, abi.parameters.len);
+    @memset(types, null);
+    var found = false;
+    for (abi.parameters, abi.argument_types, abi.physical_parameters, function.blocks[0].parameters, types) |binding_ref, raw, physical, entry_ref, *into| {
+        try c.charge(4);
+        const binding = common.storage.bindings[@intFromEnum(binding_ref)];
+        const row = common.types[@intFromEnum(binding.@"type")];
+        const entry = function.registers[@intFromEnum(entry_ref)];
+        if (row.kind != .reference or binding.@"type" != raw or entry.view != raw or
+            physical != .@"type" or physical.@"type" != raw or entry.carrier != .@"type" or entry.carrier.@"type" != raw or
+            binding.carrier != .@"type" or binding.carrier.@"type" != raw) continue;
+        into.* = try symbol(c, allocator, row.id);
+        found = true;
+    }
+    return if (found) .{ .current = current, .upper = upper, .types = types } else null;
+}

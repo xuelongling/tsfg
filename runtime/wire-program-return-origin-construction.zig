@@ -26,10 +26,18 @@ pub const Atom = struct {
 pub const Pending = enum { entry_state, fixed_call, fixed_contract, fixed_completion, fixed_origin, call_entry, data_protocol, heap_protocol, unknown_origin, parent_activation, frame_activation, scalar_initialization };
 pub const PublicationContract = @typeInfo(@FieldType(publication.Publication, "contracts")).pointer.child;
 pub const ScopeFunction = @typeInfo(@FieldType(publication.StableScope, "functions")).pointer.child;
+const ParameterAccess = @typeInfo(@FieldType(publication.EffectUpper, "parameters")).pointer.child;
 // Borrow the complete already-owned immutable rows. No narrowed graph-only
 // upper, verification marker or selected actual state is accepted here.
 pub const FixedFunction = struct { function_id: model.Symbol, contract: *const PublicationContract, declaration: *const ScopeFunction, initialization_fields: ?[]const model.Symbol = null };
-pub const FormalInput = struct { function_id: model.Symbol, fixed: []const FixedFunction = &.{} };
+// References proved by the owned ordinary entry ABI. Entries are indexed by
+// original Source parameter ordinal, without a hidden receiver offset.
+pub const OrdinaryReferenceInputs = struct {
+    current: *const model.Graph,
+    upper: *const model.Graph,
+    types: []const ?model.Symbol,
+};
+pub const FormalInput = struct { function_id: model.Symbol, fixed: []const FixedFunction = &.{}, ordinary: ?OrdinaryReferenceInputs = null };
 // One exact current graph and its original callee IDs by call ordinal. A
 // certified scalar leaf returns its single Data argument on normal only.
 pub const ScalarEffectCalls = struct { caller: *const model.Graph, callees: []const ?model.Symbol };
@@ -53,6 +61,7 @@ pub const FrameSummary = struct {
 pub const Analysis = struct {
     arena: std.heap.ArenaAllocator,
     pending: ?Pending = null,
+    ordinary: ?struct { graph: *const model.Graph, function_id: model.Symbol, types: []const ?model.Symbol } = null,
     normal: []const Atom = &.{}, language: []const Atom = &.{},
     normal_live: bool = false, language_live: bool = false,
     frames: []const FrameSummary = &.{},
@@ -344,6 +353,13 @@ const Engine = struct {
         }
         return true;
     }
+    fn ordinaryReference(self: *Engine, node: model.Value, expected: model.Symbol) Error!bool {
+        const ordinary = (self.formal_input orelse return false).ordinary orelse return false;
+        try self.budget.step();
+        if (node != .parameter or node.parameter.index >= ordinary.types.len) return false;
+        const admitted = ordinary.types[node.parameter.index] orelse return false;
+        return try self.budget.equal(admitted, node.parameter.@"type") and try self.budget.equal(admitted, expected);
+    }
     fn referenceArgument(self: *Engine, argument: []const Ref, expected: model.Symbol, heap: Ref) Error!bool {
         const Probe = struct { engine: *Engine, refs: []const Ref, expected: model.Symbol, heap: Ref };
         var work: std.ArrayListUnmanaged(Probe) = .empty;
@@ -380,6 +396,7 @@ const Engine = struct {
                 }
                 if (atom.source == .node) {
                     try self.budget.step(); const node = current.graph.nodes[atom.source.node];
+                    if (try current.ordinaryReference(node, probe.expected)) { found = true; continue; }
                     if (node != .parameter or node.parameter.index == 0 or node.parameter.index >= current.parameter_sources.len) return false;
                     const source = current.parameter_sources[node.parameter.index] orelse return false;
                     const formal = current.formal_input orelse return false;
@@ -441,10 +458,12 @@ const Engine = struct {
         }
         return null;
     }
-    fn orderedParameterCopy(self: *Engine, call: model.Call, value: Ref, expected: model.Symbol) Error!?Ref {
-        if (call.arguments.len != 1 or call.arguments[0].len != 1 or
-            (try self.singleArgumentValue(call.arguments[0][0], call.control)) != value) return null;
-        const copy = self.graph.nodes[value].copy;
+    fn orderedParameterCopy(self: *Engine, call: model.Call, argument: []const Ref, expected: model.Symbol, reference: bool) Error!?struct { copy: Ref, parameter: Ref } {
+        if ((!reference and call.arguments.len != 1) or argument.len != 1) return null;
+        const value = try self.singleArgumentValue(argument[0], call.control) orelse return null;
+        const operation = self.graph.nodes[value];
+        if (operation != .copy) return null;
+        const copy = operation.copy;
         const event = self.graph.heaps[call.heap];
         if (copy.bases.len != 1 or copy.control != call.control or event != .copy or
             event.copy.value != value or event.copy.previous != copy.heap) return null;
@@ -456,9 +475,26 @@ const Engine = struct {
         }
         const parameter = try self.singleArgumentValue(copy.bases[0], copy.control) orelse return null;
         const original = self.graph.nodes[parameter];
-        if (original != .parameter or original.parameter.index == 0 or
+        if (reference) {
+            if (!try self.ordinaryReference(original, expected)) return null;
+        } else if (original != .parameter or original.parameter.index == 0 or
             !try self.budget.equal(original.parameter.@"type", expected)) return null;
-        return parameter;
+        return .{ .copy = value, .parameter = parameter };
+    }
+    fn ordinaryArgument(self: *Engine, call: model.Call, argument: []const Ref, expected: model.Symbol, values: []const Atom, permission: ParameterAccess) Error!?bool {
+        if (self.formal_input == null or self.formal_input.?.ordinary == null) return false;
+        for (values) |atom| {
+            try self.budget.step();
+            if (atom.source != .node or !try self.ordinaryReference(self.graph.nodes[atom.source.node], expected)) continue;
+            if (permission.read or permission.write or permission.structural) { self.pending = .fixed_contract; return null; }
+            if (values.len == 1) {
+                if (try self.orderedParameterCopy(call, argument, expected, true)) |ordered| {
+                    if (ordered.parameter == atom.source.node) return true;
+                }
+            }
+            self.pending = .data_protocol; return null;
+        }
+        return false;
     }
     fn directExplicitBase(self: *Engine, parent: Ref, child: *const model.Construction) Error!bool {
         try self.budget.spend(5);
@@ -571,6 +607,7 @@ const Engine = struct {
             const expected = function.parameter_types[parameter_index]; var scalar = false; var reference = false;
             for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, expected)) { scalar = row.kind == .scalar; reference = row.kind == .reference; break; } }
             if ((!scalar and !reference) or argument.len == 0) { self.pending = .data_protocol; return null; }
+            var ordinary_copy = false;
             if (reference) {
                 // Uncomputed inputs defer this call within the same Engine.
                 // The final stable caller state is checked again below; an
@@ -578,6 +615,7 @@ const Engine = struct {
                 if (!try self.referenceArgument(argument, expected, call.heap)) return null;
                 var origins: Atoms = .empty;
                 for (argument) |id| { try self.budget.step(); for (self.values[id].atoms.items) |atom| { _ = try self.insert(Atom, &origins, atom); } }
+                ordinary_copy = (try self.ordinaryArgument(call, argument, expected, origins.items, fixed.contract.upper.parameters[parameter_index])) orelse return null;
                 arguments[parameter_index] = origins.items;
                 try self.budget.spend(5); sources[parameter_index] = .{ .caller = self, .call = ordinal, .parameter = parameter_index, .expected = expected, .heap = call.heap };
             }
@@ -608,10 +646,12 @@ const Engine = struct {
                 switch (node) {
                     inline .join, .gate => |row| { if (row.inputs.len == 0) { self.pending = .data_protocol; return null; } for (row.inputs) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } } },
                     .copy => {
-                        const original = (if (scalar) try self.orderedParameterCopy(call, value_id, expected) else null) orelse {
+                        if (reference and ordinary_copy) { leaf = true; continue; }
+                        const ordered = (if (scalar) try self.orderedParameterCopy(call, argument, expected, false) else null) orelse {
                             self.pending = .data_protocol; return null;
                         };
-                        const source = self.values[original].atoms.items;
+                        if (ordered.copy != value_id) { self.pending = .data_protocol; return null; }
+                        const source = self.values[ordered.parameter].atoms.items;
                         const copied = self.values[value_id].atoms.items;
                         // A live heap edge alone is insufficient: the copy
                         // must have reached the same original formal Data.
@@ -627,7 +667,10 @@ const Engine = struct {
                     .receiver_value, .call => { if (!reference) { self.pending = .data_protocol; return null; } leaf = true; },
                     .literal => |row| { if (reference or row.category != .other) { self.pending = .data_protocol; return null; } leaf = true; },
                     .parameter => |row| {
-                        if (reference and (row.index == 0 or row.index >= self.parameter_sources.len or self.parameter_sources[row.index] == null)) { self.pending = .data_protocol; return null; }
+                        if (reference and !try self.ordinaryReference(node, expected) and
+                            (row.index == 0 or row.index >= self.parameter_sources.len or self.parameter_sources[row.index] == null)) {
+                            self.pending = .data_protocol; return null;
+                        }
                         leaf = true;
                     },
                     .nonowning => { if (reference) { self.pending = .data_protocol; return null; } leaf = true; },
@@ -986,7 +1029,9 @@ const Engine = struct {
                     },
                     .parameter => |row| {
                         const arguments = self.arguments;
-                        if (row.index < arguments.len and arguments[row.index].len != 0) {
+                        if (try self.ordinaryReference(node, row.@"type")) {
+                            try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = .object });
+                        } else if (row.index < arguments.len and arguments[row.index].len != 0) {
                             for (arguments[row.index]) |origin| { try self.budget.step(); try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = origin.category }); }
                         } else inline for (std.meta.tags(Category)) |category| try self.add(Atom, &into.atoms, .{ .source = .{ .node = index }, .category = category });
                     },
@@ -1107,15 +1152,49 @@ fn fixedClosure(engine: *Engine) Error!?Pending {
 // Optional entry carries only original IDs for an independently proved unbound
 // root. It must belong to this graph's owning function and completed same-
 // Context actual analysis. No raw payload, Source/FDI or permission is accepted.
+fn ordinaryEntry(directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput, ordinary: OrdinaryReferenceInputs) Error!bool {
+    try budget.spend(3);
+    if (graph != ordinary.current and graph != ordinary.upper) return false;
+    const function = try model.findFunction(directory, input.function_id, budget);
+    if (function.kind != .source or function.construction != null or !function.environment_metadata_complete or
+        function.lexical_environment != null or function.activation_environment != null or
+        function.parameter_types.len != ordinary.types.len) return false;
+    for (ordinary.types, function.parameter_types) |maybe_type, declared| {
+        try budget.step();
+        const type_id = maybe_type orelse continue;
+        if (!try budget.equal(type_id, declared)) return false;
+        var reference = false;
+        for (directory.types) |row| {
+            try budget.step();
+            if (try budget.equal(row.id, type_id)) { reference = row.kind == .reference; break; }
+        }
+        if (!reference) return false;
+    }
+    for (input.fixed) |fixed| {
+        try budget.step();
+        if (!try budget.equal(fixed.function_id, input.function_id)) continue;
+        if (fixed.declaration.kind != .source or fixed.declaration.construction != null or fixed.declaration.captures.len != 0 or
+            fixed.declaration.parameter_types.len != ordinary.types.len) return false;
+        if (fixed.contract.return_origins) |*upper| return upper == ordinary.upper;
+        return false;
+    }
+    return false;
+}
 fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_input: ?FormalInput, arguments: []const []const Atom, sources: []const ?ParameterSource, effect_origins: bool, return_origins: bool, closure_checked: bool) Error!?*Engine {
     const formal_function = if (formal_input) |input| input.function_id else null;
+    const ordinary = if (formal_input) |input| input.ordinary else null;
+    if (ordinary) |evidence| {
+        if (entry != null or !return_origins or !try ordinaryEntry(directory, graph, budget, formal_input.?, evidence)) {
+            result.pending = .entry_state; return null;
+        }
+    }
     if (!try model.receiverActivations(allocator, graph, budget)) { result.pending = .frame_activation; return null; }
     if (graph.calls.len != 0 and (formal_input == null or formal_input.?.fixed.len == 0)) { result.pending = .fixed_call; return null; }
     var input: ?Ref = null;
     var explicit_base = false;
     for (graph.nodes,0..) |node,index| {
         try budget.step(); switch (node) {
-            .receiver_input => { if((entry==null and formal_function==null) or input!=null) { result.pending = .entry_state; return null; } input=index; },
+            .receiver_input => { if(ordinary != null or (entry==null and formal_function==null) or input!=null) { result.pending = .entry_state; return null; } input=index; },
             .unknown => if (formal_function==null or effect_origins) { result.pending = .unknown_origin; return null; },
             .copy => if (formal_function==null) { result.pending = .data_protocol; return null; },
             .local => |row| if (effect_origins) {
@@ -1128,9 +1207,15 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
                 }
                 if (!known) { result.pending = .data_protocol; return null; }
             },
-            .receiver_frame => |row| if (formal_function != null and graph.calls.len != 0 and row.parent != null and !explicit_base) {
-                const role = try construction(directory, row.construction, budget);
-                explicit_base = role.kind == .explicit and role.base == null;
+            .receiver_frame => |row| {
+                if (ordinary != null) {
+                    const role = try construction(directory, row.construction, budget);
+                    if (row.parent != null or row.new_target == null or role.kind != .explicit or role.base != null or
+                        !try budget.equal(row.new_target.?, role.owner)) { result.pending = .parent_activation; return null; }
+                } else if (formal_function != null and graph.calls.len != 0 and row.parent != null and !explicit_base) {
+                    const role = try construction(directory, row.construction, budget);
+                    explicit_base = role.kind == .explicit and role.base == null;
+                }
             },
             .literal, .parameter, .global, .nonowning, .join, .gate, .receiver_value => {},
             .call => if (formal_input == null or formal_input.?.fixed.len == 0) { result.pending = .fixed_call; return null; },
@@ -1138,13 +1223,14 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
             .environment_input, .environment_create, .environment_parent, .environment_component, .capture, .projection => if (formal_function == null) { result.pending = .data_protocol; return null; },
         }
     }
-    if (return_origins and input == null) { result.pending = .entry_state; return null; }
+    if (return_origins and input == null and ordinary == null) { result.pending = .entry_state; return null; }
     const a = result.arena.allocator();
     // The proved immutable entry is shared by every store and its frame seed.
     const entry_function=if(input!=null)try model.findFunction(directory,formal_function orelse entry.?.function_id,budget) else null;
     const explicit_base_effects = explicit_base and effect_origins;
     for (graph.heaps) |heap| { try budget.step(); switch (heap) {
-        .entry, .join, .receiver_action => {},
+        .entry, .join => {},
+        .receiver_action => if (ordinary != null) { result.pending = .entry_state; return null; },
         .call => if (formal_input == null or formal_input.?.fixed.len == 0) { result.pending = .fixed_call; return null; },
         .copy => |row| if (!return_origins) {
             var scalar = false;
@@ -1314,6 +1400,9 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
             for (call.arguments, 1..) |argument, parameter| {
                 try budget.step(); var originals: Atoms = .empty;
                 for (argument) |id| { try budget.step(); for (values[id].atoms.items) |atom| { _ = try engine.insert(Atom, &originals, atom); } }
+                _ = (try engine.ordinaryArgument(call, argument, function.parameter_types[parameter], originals.items, fact.fixed.contract.upper.parameters[parameter])) orelse {
+                    result.pending = engine.pending; return;
+                };
                 final_arguments[parameter] = originals.items;
             }
             fact.arguments = final_arguments;
@@ -1420,6 +1509,9 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
     // not invent counts, generations, last-value or physical alias evidence.
     for(worlds) |*world| { try budget.step(); if(world.live)try engine.initializations(&writes,world.initializations.items); }
     result.initializations=writes.items;
+    if (formal_input) |formal| if (formal.ordinary) |ordinary| {
+        result.ordinary = .{ .graph = graph, .function_id = formal.function_id, .types = ordinary.types };
+    };
     result.normal = normal.items; result.language = language.items; result.frames = summary;
     if (input) |id| { try budget.step(); result.input_exits = .{ .input = id, .normal = summary[id].normal, .language = summary[id].language }; }
     if (formal_function != null) {
