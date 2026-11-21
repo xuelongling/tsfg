@@ -125,6 +125,7 @@ const Engine = struct {
     input: ?Ref = null, obligations: []const Obligation = &.{},
     changed: bool = false, pending: ?Pending = null, control_only: bool = false, effect_origins: bool = false,
     formal_environments: bool = false, formal_input: ?FormalInput = null,
+    explicit_base: bool = false, validate_copies: bool = false,
     scalar_calls: []const ?model.Symbol = &.{},
     calls: std.ArrayListUnmanaged(CallFact) = .empty, call_results: [][2]Atoms = &.{}, call_live: [][2]bool = &.{},
     fn insert(self: *Engine, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!bool {
@@ -453,6 +454,43 @@ const Engine = struct {
             !try self.budget.equal(original.parameter.@"type", expected)) return null;
         return parameter;
     }
+    fn directExplicitBase(self: *Engine, parent: Ref, child: *const model.Construction) Error!bool {
+        try self.budget.spend(5);
+        const role = self.frames[parent].role orelse return false;
+        return self.input == parent and role.kind == .explicit and role.base != null and
+            child.kind == .explicit and child.base == null and child.function_id != null and
+            try self.budget.equal(role.base.?, child.owner);
+    }
+    fn completeBaseAllocation(self: *Engine, analysis: *const Analysis) Error!bool {
+        const exits = analysis.input_exits orelse return false;
+        try self.budget.spend(6);
+        const normal = exits.normal;
+        if (analysis.language_live or exits.language.live or !normal.live or normal.unbound or
+            normal.missing_fields == null or normal.missing_fields.?.len != 0 or
+            normal.atoms.len != 1 or analysis.normal.len != 1) return false;
+        const original = Atom{ .source = .{ .allocation = exits.input }, .category = .object };
+        return std.meta.eql(normal.atoms[0], original) and std.meta.eql(analysis.normal[0], original);
+    }
+    fn bindsExplicitBase(self: *Engine, parent: Ref, row: @FieldType(model.Heap, "receiver_action"), selected: []const Atom) Error!bool {
+        for (self.frames) |child| {
+            try self.budget.step();
+            if (child.parent != parent or child.role == null or child.role.?.kind != .explicit) continue;
+            if (row.operands.len != 1 or selected.len != 1) return false;
+            const source = try self.singleArgumentValue(row.operands[0], row.control) orelse return false;
+            const value = self.graph.nodes[source];
+            if (value != .call or value.call.completion != .normal) return false;
+            for (self.calls.items) |fact| {
+                try self.budget.step();
+                if (fact.call != value.call.call or self.frames[fact.receiver].parent != parent) continue;
+                const original = Atom{ .source = .{ .allocation = fact.receiver }, .category = .object };
+                const child_binding = self.worlds[row.previous].bindings[fact.receiver];
+                return !child_binding.unbound and child_binding.atoms.items.len == 1 and
+                    std.meta.eql(child_binding.atoms.items[0], original) and std.meta.eql(selected[0], original);
+            }
+            return false;
+        }
+        return true;
+    }
     fn callFact(self: *Engine, ordinal: Ref, frame: Ref) Error!?*const CallFact {
         for (self.calls.items) |*fact| { try self.budget.step(); if (fact.call == ordinal and fact.receiver == frame) return fact; }
         const call = self.graph.calls[ordinal];
@@ -460,6 +498,14 @@ const Engine = struct {
         const function = try model.findFunction(self.directory, call.function_id, self.budget);
         const role = function.construction orelse { self.pending = .fixed_call; return null; };
         const declared = fixed.declaration.construction orelse { self.pending = .fixed_contract; return null; };
+        const selected_frame = self.frames[frame];
+        const selected_role = selected_frame.role orelse { self.pending = .call_entry; return null; };
+        if (!try self.budget.equal(selected_role.id, role.id)) { self.pending = .call_entry; return null; }
+        if (selected_frame.parent) |parent| {
+            if (!try self.directExplicitBase(parent, selected_role) or call.arguments.len != 1 or fixed.contract.upper.facets.may_throw) {
+                self.pending = .call_entry; return null;
+            }
+        }
         if (function.kind != .construction_body or fixed.declaration.kind != .@"construction-body" or !function.environment_metadata_complete or
             function.parameter_types.len != call.arguments.len + 1 or fixed.declaration.parameter_types.len != function.parameter_types.len or fixed.contract.upper.parameters.len != function.parameter_types.len or
             fixed.declaration.lexical_environment != null or fixed.declaration.activation_environment != null or fixed.declaration.captures.len != 0 or fixed.contract.upper.captures.len != 0 or
@@ -471,6 +517,7 @@ const Engine = struct {
         const arguments = try self.allocator.alloc([]const Atom, function.parameter_types.len); @memset(arguments, &.{});
         try self.budget.spend(function.parameter_types.len);
         const sources = try self.allocator.alloc(?ParameterSource, function.parameter_types.len); @memset(sources, null);
+        var ordered_copy = false;
         for (call.arguments, 1..) |argument, parameter_index| {
             const expected = function.parameter_types[parameter_index]; var scalar = false; var reference = false;
             for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, expected)) { scalar = row.kind == .scalar; reference = row.kind == .reference; break; } }
@@ -525,6 +572,7 @@ const Engine = struct {
                             for (source) |before| { try self.budget.step(); if (std.meta.eql(atom, before)) { found = true; break; } }
                             if (!found) return null;
                         }
+                        ordered_copy = true;
                         leaf = true;
                     },
                     .receiver_value, .call => { if (!reference) { self.pending = .data_protocol; return null; } leaf = true; },
@@ -539,7 +587,7 @@ const Engine = struct {
             }
             if (!leaf) { self.pending = .data_protocol; return null; }
         }
-        if (self.frames[frame].role == null or self.frames[frame].parent != null or !try self.budget.equal(self.frames[frame].role.?.id, role.id)) { self.pending = .call_entry; return null; }
+        if (selected_frame.parent != null and !ordered_copy) { self.pending = .data_protocol; return null; }
         const graph = if (fixed.contract.return_origins) |*value| value else { self.pending = .fixed_call; return null; };
         // Run a child only after this original caller has proved its Data.
         // The same paused Engine resumes when the explicit scheduler supplies
@@ -552,6 +600,7 @@ const Engine = struct {
         };
         if (analysis.pending) |reason| { self.pending = reason; return null; }
         if (fixed.contract.upper.facets.may_throw and !analysis.language_live) { self.pending = .fixed_completion; return null; }
+        if (selected_frame.parent != null and !try self.completeBaseAllocation(analysis)) { self.pending = .fixed_completion; return null; }
         const exits = analysis.input_exits orelse { self.pending = .call_entry; return null; };
         if (self.calls.items.len == self.calls.capacity) try self.budget.spend(self.calls.items.len + 1);
         try self.budget.step(); try self.calls.append(self.allocator, .{ .caller_graph = self.graph, .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis, .arguments = arguments });
@@ -623,6 +672,13 @@ const Engine = struct {
         if (selected.items.len != 1) { self.pending = .call_entry; return; }
         const frame = selected.items[0]; const before = &self.worlds[call.heap].bindings[frame];
         if (!before.unbound or before.atoms.items.len != 0) { self.pending = .call_entry; return; }
+        if (self.frames[frame].parent) |parent| {
+            // This is the call's current World, including late joins. Cached
+            // topology and callee facts cannot establish the parent's state.
+            try self.budget.step();
+            const binding = self.worlds[call.heap].bindings[parent];
+            if (!binding.unbound or binding.atoms.items.len != 0) { self.pending = .call_entry; return; }
+        }
         const fact = try self.callFact(row.call, frame) orelse return;
         const binding = if (row.completion == .normal) fact.analysis.input_exits.?.normal else fact.analysis.input_exits.?.language;
         if (!binding.live) return;
@@ -758,7 +814,10 @@ const Engine = struct {
                     try self.birth(&self.worlds[index], id, false, prior);
                 },
                 .bind => {
-                    if (normal and before.unbound and selected.items.len != 0) try self.outcome(index, source, id, selected.items, selected.items, false);
+                    if (normal and before.unbound and selected.items.len != 0) {
+                        if (self.explicit_base and role.base != null and !try self.bindsExplicitBase(id, row, selected.items)) { self.pending = .call_entry; continue; }
+                        try self.outcome(index, source, id, selected.items, selected.items, false);
+                    }
                     if (!normal and before.atoms.items.len != 0) try self.outcome(index, source, id, &failure, null, null);
                 },
                 .get => {
@@ -843,13 +902,9 @@ const Engine = struct {
                         }
                         if (self.frames[index].role == null) {
                             const role = try construction(self.directory, row.construction, self.budget);
-                            if (parent != null) {
-                                // Model's owning typed-carrier boundary already
-                                // proved the direct-base relation. Limit this
-                                // interpreter's new capability to implicit Base.
-                                try self.budget.step();
-                                if (role.kind != .implicit_base) { self.pending = .parent_activation; continue; }
-                            }
+                            if (parent) |owner| if (role.kind != .implicit_base and !try self.directExplicitBase(owner, role)) {
+                                self.pending = .parent_activation; continue;
+                            };
                             try self.budget.spend(4);
                             self.frames[index] = .{ .role = role, .new_target = if (parent) |id| self.frames[id].new_target else row.new_target, .parent = parent };
                         }
@@ -927,6 +982,7 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
     if (!try model.receiverActivations(allocator, graph, budget)) { result.pending = .frame_activation; return null; }
     if (graph.calls.len != 0 and (formal_input == null or formal_input.?.fixed.len == 0)) { result.pending = .fixed_call; return null; }
     var input: ?Ref = null;
+    var explicit_base = false;
     for (graph.nodes,0..) |node,index| {
         try budget.step(); switch (node) {
             .receiver_input => { if((entry==null and formal_function==null) or input!=null) { result.pending = .entry_state; return null; } input=index; },
@@ -942,7 +998,11 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
                 }
                 if (!known) { result.pending = .data_protocol; return null; }
             },
-            .literal, .parameter, .global, .nonowning, .join, .gate, .receiver_frame, .receiver_value => {},
+            .receiver_frame => |row| if (formal_function != null and graph.calls.len != 0 and row.parent != null and !explicit_base) {
+                const role = try construction(directory, row.construction, budget);
+                explicit_base = role.kind == .explicit and role.base == null;
+            },
+            .literal, .parameter, .global, .nonowning, .join, .gate, .receiver_value => {},
             .call => if (formal_input == null or formal_input.?.fixed.len == 0) { result.pending = .fixed_call; return null; },
             .code => |row| if (formal_function == null and row.environment != null) { result.pending = .data_protocol; return null; },
             .environment_input, .environment_create, .environment_parent, .environment_component, .capture, .projection => if (formal_function == null) { result.pending = .data_protocol; return null; },
@@ -952,10 +1012,19 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
     const a = result.arena.allocator();
     // The proved immutable entry is shared by every store and its frame seed.
     const entry_function=if(input!=null)try model.findFunction(directory,formal_function orelse entry.?.function_id,budget) else null;
+    const explicit_base_effects = explicit_base and effect_origins;
     for (graph.heaps) |heap| { try budget.step(); switch (heap) {
         .entry, .join, .receiver_action => {},
         .call => if (formal_input == null or formal_input.?.fixed.len == 0) { result.pending = .fixed_call; return null; },
-        .copy => if (!return_origins) { result.pending = .heap_protocol; return null; },
+        .copy => |row| if (!return_origins) {
+            var scalar = false;
+            if (explicit_base_effects) for (directory.types) |known| {
+                try budget.step();
+                if (!try budget.equal(known.id, graph.nodes[row.value].copy.@"type")) continue;
+                scalar = known.kind == .scalar; break;
+            };
+            if (!scalar) { result.pending = .heap_protocol; return null; }
+        },
         .store=>|row|{
             if (formal_function != null and std.mem.startsWith(u8, row.selector, "capture:")) continue;
             if((entry==null and !effect_origins) or input==null or !row.initialize) { result.pending=.scalar_initialization; return null; }
@@ -1006,7 +1075,7 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
     for (worlds) |*world| { try budget.spend(4 * graph.nodes.len + obligations.items.len + 1); world.* = .{ .bindings = try a.alloc(Binding, graph.nodes.len), .missing = try a.alloc(bool, obligations.items.len), .births = try a.alloc(Birth, graph.nodes.len) }; @memset(world.bindings, .{}); @memset(world.missing, false); @memset(world.births, .{}); }
     try budget.spend(graph.heaps.len); const results = try a.alloc(Atoms, graph.heaps.len); @memset(results, .empty);
     try budget.spend(1); const engine = try a.create(Engine);
-    engine.* = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null, .formal_input = formal_input, .arguments = arguments, .parameter_sources = sources, .obligations = obligations.items };
+    engine.* = Engine{ .allocator = a, .directory = directory, .graph = graph, .budget = budget, .values = values, .worlds = worlds, .controls = controls, .frames = frames, .results = results, .input = input, .control_only = formal_function != null, .effect_origins = effect_origins, .formal_environments = formal_function != null, .formal_input = formal_input, .arguments = arguments, .parameter_sources = sources, .obligations = obligations.items, .explicit_base = explicit_base, .validate_copies = return_origins or explicit_base_effects };
     try budget.spend(2 * graph.calls.len);
     engine.call_results = try a.alloc([2]Atoms, graph.calls.len); @memset(engine.call_results, .{ .empty, .empty });
     engine.call_live = try a.alloc([2]bool, graph.calls.len); @memset(engine.call_live, .{ false, false });
@@ -1047,7 +1116,7 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
     return engine;
 }
 
-fn finish(result: *Analysis, engine: *Engine, return_origins: bool) Error!void {
+fn finish(result: *Analysis, engine: *Engine) Error!void {
     const a = engine.allocator; const directory = engine.directory; const graph = engine.graph; const budget = engine.budget;
     const formal_input = engine.formal_input; const formal_function = if (formal_input) |input| input.function_id else null;
     const input = engine.input; const frames = engine.frames; const values = engine.values; const worlds = engine.worlds; const controls = engine.controls; const results = engine.results;
@@ -1055,14 +1124,17 @@ fn finish(result: *Analysis, engine: *Engine, return_origins: bool) Error!void {
     if (formal_function != null and input != null) {
         try budget.step(); const root = input.?;
         if (frames[root].role.?.base != null) {
-            // Only the newly supported resolved direct implicit-Base child
-            // protocol opens a derived formal entry. A result-only derived
-            // graph still lacks this capability, even if it returns Object.
+            // A derived entry needs an actual checked descendant construction.
+            // An explicit child requires its own ordered call and completion.
             var child = false;
             for (frames) |frame| {
                 try budget.spend(2);
                 if (frame.parent == root and frame.role != null and frame.role.?.kind == .implicit_base) { child = true; break; }
             }
+            if (!child) for (engine.calls.items) |fact| {
+                try budget.step();
+                if (frames[fact.receiver].parent == root) { child = true; break; }
+            };
             if (!child) { result.pending = .entry_state; return; }
         }
     }
@@ -1071,7 +1143,7 @@ fn finish(result: *Analysis, engine: *Engine, return_origins: bool) Error!void {
         if (formal_function != null and std.mem.startsWith(u8, row.selector, "capture:")) continue;
         if (!worlds[row.previous].live or (try engine.fieldDestination(row)) == null) { result.pending = .scalar_initialization; return; }
     };
-    if (return_origins) for (graph.heaps) |heap| {
+    if (engine.validate_copies) for (graph.heaps) |heap| {
         try budget.step(); if (heap != .copy) continue;
         const row = heap.copy; const operation = graph.nodes[row.value].copy;
         if (!controls[operation.control] or !worlds[row.previous].live) continue;
@@ -1233,9 +1305,9 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
         }
     }
     const a = result.arena.allocator();
-    const Job = struct { analysis: *Analysis, engine: *Engine, returns: bool };
+    const Job = struct { analysis: *Analysis, engine: *Engine };
     var jobs: std.ArrayListUnmanaged(Job) = .empty;
-    try budget.spend(1); try jobs.append(a, .{ .analysis = &result, .engine = root, .returns = return_origins });
+    try budget.spend(1); try jobs.append(a, .{ .analysis = &result, .engine = root });
     while (jobs.items.len != 0) {
         try budget.step(); const job = jobs.items[jobs.items.len - 1];
         try job.engine.run();
@@ -1248,7 +1320,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
                 .{ .function_id = demand.fixed.function_id, .fixed = job.engine.formal_input.?.fixed }, demand.arguments, demand.sources, true, true, true);
             if (nested) |engine| {
                 if (jobs.items.len == jobs.capacity) try budget.spend(jobs.items.len + 1);
-                try budget.step(); try jobs.append(a, .{ .analysis = child, .engine = engine, .returns = true });
+                try budget.step(); try jobs.append(a, .{ .analysis = child, .engine = engine });
             } else {
                 if (job.engine.prepared.items.len == job.engine.prepared.capacity) try budget.spend(job.engine.prepared.items.len + 1);
                 try budget.step(); try job.engine.prepared.append(job.engine.allocator, .{ .call = demand.call, .analysis = child }); job.engine.demand = null;
@@ -1256,7 +1328,7 @@ fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, 
             continue;
         };
         if (job.engine.pending) |reason| { job.analysis.calls = job.engine.calls.items; job.analysis.pending = reason; }
-        else try finish(job.analysis, job.engine, job.returns);
+        else try finish(job.analysis, job.engine);
         _ = jobs.pop();
         if (jobs.items.len == 0) return result;
         const parent = jobs.items[jobs.items.len - 1].engine; const demand = parent.demand.?;

@@ -349,13 +349,39 @@ const Engine = struct {
             var visited = false; for (seen.items) |old| { try self.budget.step(); if (old == id) { visited = true; break; } } if (visited) continue;
             try self.add(&seen, id);
             switch (frame.graph.nodes[id]) {
-                .receiver_frame => { if (id != receiver) return false; found = true; },
+                .receiver_frame, .receiver_input => { if (id != receiver) return false; found = true; },
                 .join => |row| for (row.inputs) |input| try self.append(R, &work, input),
                 .gate => |row| if (frame.controls[row.control]) { for (row.inputs) |input| try self.append(R, &work, input); },
                 else => return false,
             }
         }
         return found;
+    }
+    fn receiverCallFrame(self: *Engine, frame: *const Frame, receiver: *const construction.Analysis, fact: *const construction.CallFact, role: m.Constructor) E!bool {
+        try self.budget.spend(8);
+        if (frame.graph.nodes[fact.receiver] != .receiver_frame) return false;
+        const selected = receiver.frames[fact.receiver];
+        const caller_frame = frame.graph.nodes[fact.receiver].receiver_frame;
+        const callee_input = fact.analysis.frames[fact.input];
+        const child_exits = fact.analysis.input_exits orelse return false;
+        if (selected.construction == null or callee_input.construction == null or child_exits.input != fact.input or
+            callee_input.new_target != null or callee_input.parent != null or
+            !try self.budget.equal(caller_frame.construction, role.id) or
+            !try self.budget.equal(selected.construction.?, role.id) or
+            !try self.budget.equal(callee_input.construction.?, role.id)) return false;
+        if (caller_frame.parent) |parents| {
+            const parent = selected.parent orelse return false;
+            const current = (try m.findFunction(self.directory, frame.function_id, self.budget)).construction orelse return false;
+            try self.budget.spend(6);
+            if (caller_frame.new_target != null or parent >= frame.graph.nodes.len or frame.graph.nodes[parent] != .receiver_input or
+                receiver.input_exits == null or receiver.input_exits.?.input != parent or current.base == null or
+                !try self.budget.equal(current.base.?, role.owner) or !try self.receiverRefs(frame, parents, parent)) return false;
+            const owner = receiver.frames[parent];
+            return owner.parent == null and owner.construction != null and try self.budget.equal(owner.construction.?, current.id) and
+                try self.sameOptional(selected.new_target, owner.new_target);
+        }
+        return selected.parent == null and caller_frame.new_target != null and
+            try self.sameOptional(selected.new_target, caller_frame.new_target);
     }
     fn receiverLocation(self: *Engine, original_index: usize, original_source: R, allocation: bool) E!?R {
         var index = original_index; var source = original_source;
@@ -469,9 +495,7 @@ const Engine = struct {
                 for (fixed.parameters, upper.parameters, 0..) |flags, parameter, parameter_index| {
                     try self.budget.step(); if (parameter.index != parameter_index or flags.read != parameter.read or flags.write != parameter.write or flags.structural != parameter.structural) { self.pending = .receiver_protocol; return; }
                 }
-                const caller_frame = frame.graph.nodes[fact.receiver].receiver_frame;
-                if (caller_frame.parent != null or caller_frame.new_target == null or !try self.budget.equal(caller_frame.construction, role.id) or fact.analysis.input_exits == null or fact.analysis.input_exits.?.input != fact.input) { self.pending = .receiver_protocol; return; }
-                if (receiver.frames[fact.receiver].construction == null or !try self.budget.equal(receiver.frames[fact.receiver].construction.?, role.id) or !try self.sameOptional(receiver.frames[fact.receiver].new_target, caller_frame.new_target) or receiver.frames[fact.receiver].parent != null or fact.analysis.frames[fact.input].construction == null or !try self.budget.equal(fact.analysis.frames[fact.input].construction.?, role.id) or fact.analysis.frames[fact.input].new_target != null or fact.analysis.frames[fact.input].parent != null) { self.pending = .receiver_protocol; return; }
+                if (!try self.receiverCallFrame(frame, receiver, fact, role)) { self.pending = .receiver_protocol; return; }
                 const arguments = try self.allocate(Set, protocol.parameter_types.len); @memset(arguments, .empty);
                 const receiver_location = try self.receiverLocation(index, fact.receiver, true) orelse return;
                 try self.add(&arguments[0], receiver_location);

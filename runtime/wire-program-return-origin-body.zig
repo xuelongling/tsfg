@@ -465,6 +465,55 @@ const CFG = struct {
 };
 
 const ReceiverMode = enum { certificate, control, effects };
+fn directExplicitBase(c: *context.Context, f: *const wire.Function, construction: t.ConstructionIndex, entry: t.RegisterRef, op: *const wire.instruction.Instruction) context.Error!bool {
+    const common = &c.program.tables.mode.common;
+    const parent = common.members.constructions[@intFromEnum(construction)];
+    const child = common.members.constructions[@intFromEnum(op.data.receiver_child.construction)];
+    try c.charge(7);
+    if (child.kind != .explicit or parent.kind != .explicit or op.operands[0] != entry or
+        common.types[@intFromEnum(parent.owner)].base != child.owner or
+        common.types[@intFromEnum(child.owner)].base != null or child.signature.parameters.len != 1) return false;
+    const target = child.function orelse return false;
+    const fn_row = c.program.functions[@intFromEnum(target)];
+    const abi = common.abis[@intFromEnum(fn_row.abi)];
+    try c.charge(7);
+    const scalar = child.signature.parameters[0];
+    if (fn_row.role != .construction_body or abi.construction != op.data.receiver_child.construction or
+        abi.receiver_frame != 0 or abi.lexical_environment != null or abi.argument_types.len != 1 or
+        abi.argument_types[0] != scalar or abi.physical_parameters.len != 2 or
+        !nativeScalar(common, abi.physical_parameters[1], scalar)) return false;
+    var invoke = false;
+    for (f.blocks) |block| for (block.instructions) |candidate| {
+        try c.step();
+        if (candidate.data != .eh_invoke or candidate.operands.len == 0 or candidate.operands[0] != op.result.?) continue;
+        if (invoke or candidate.data.eh_invoke.callee != target or candidate.operands.len != 2 or
+            !nativeScalar(common, f.registers[@intFromEnum(candidate.operands[1])].carrier, scalar)) return false;
+        invoke = true;
+    };
+    return invoke;
+}
+fn soleNativeLiteralCopy(c: *context.Context, f: *const wire.Function, block: *const wire.Block, ordinal: usize, register: t.RegisterRef) context.Error!bool {
+    if (ordinal + 1 == block.instructions.len) return false;
+    const copy = block.instructions[ordinal + 1];
+    if (copy.data != .domain_copy or copy.operands[0] != register) return false;
+    const view = copy.data.domain_copy.static_view;
+    const common = &c.program.tables.mode.common;
+    try c.charge(3);
+    if (!nativeScalar(common, f.registers[@intFromEnum(register)].carrier, view) or
+        !nativeScalar(common, f.registers[@intFromEnum(copy.result.?)].carrier, view)) return false;
+    // Source correspondence and SSA already included successor arguments
+    // among these operands. The immediate copy is the one use of this pure
+    // literal, and its original control still gates that use and heap event.
+    var used = false;
+    for (f.blocks) |candidate| for (candidate.instructions) |instruction| {
+        try c.charge(instruction.operands.len + 1);
+        for (instruction.operands) |operand| if (operand == register) {
+            if (used) return false;
+            used = true;
+        };
+    };
+    return used;
+}
 fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const origin.Directory, budget: *origin.Budget, result: *Projection, mode: ReceiverMode) context.Error!void {
     const control_only = mode == .control;
     const v = &c.program.tables.mode.common; const f = &c.program.functions[@intFromEnum(function)]; const abi = &v.abis[@intFromEnum(f.abi)];
@@ -481,14 +530,17 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
         try c.charge(3); const declared = v.storage.bindings[@intFromEnum(binding)].@"type";
         if (incoming != declared or f.registers[@intFromEnum(f.blocks[0].parameters[hidden + index + 1])].view != declared) { result.pending = .raw_input; return; }
     };
+    var has_explicit_base = false;
     for (f.blocks) |*block| for (block.instructions) |*op| {
         try c.step();
         // A checked implicit-base child stays a separate frame and allocation.
         // Its parent/newTarget edge, both completions, initialization prefix and
         // later explicit parent bind are all projected below without shortening.
-        // Other delegated constructor bodies still require a call-aware domain.
         if (op.data == .receiver_child and v.members.constructions[@intFromEnum(op.data.receiver_child.construction)].kind != .@"implicit-base") {
-            result.pending = .implicit_protocol; return;
+            if (mode == .control or has_explicit_base or !try directExplicitBase(c, f, abi.construction.?, f.blocks[0].parameters[abi.receiver_frame.?], op)) {
+                result.pending = .implicit_protocol; return;
+            }
+            has_explicit_base = true;
         }
         switch (op.data) {
             .fuel, .const_i32, .const_integer, .const_bool, .const_float, .string_constant, .domain_literal, .domain_view,
@@ -498,6 +550,10 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
             .environment_alloc, .environment_parent, .environment_init, .environment_load, .environment_store, .function_make => {},
             else => { result.pending = .operation; return; },
         }
+    };
+    if (has_explicit_base and mode == .effects) for (abi.parameters, abi.argument_types) |binding, incoming| {
+        try c.step();
+        if (incoming != v.storage.bindings[@intFromEnum(binding)].@"type") { result.pending = .raw_input; return; }
     };
     const a = result.arena.allocator();
     try c.charge(f.registers.len); const registers = try a.alloc(?origin.Ref, f.registers.len); @memset(registers, null);
@@ -560,7 +616,11 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                     if (op.data == .domain_literal) switch (v.types[@intFromEnum(op.data.domain_literal.actual_type)].kind) {
                         .@"undefined" => category = .@"undefined", .scalar, .string, .@"null", .@"void" => {}, else => { b.pending = .literal_protocol; break; },
                     };
-                    const value = try b.value(.{ .literal = .{ .@"type" = view, .category = category } }); try cfg.define(reg, value, flow.control);
+                    const value = try b.value(.{ .literal = .{ .@"type" = view, .category = category } });
+                    if (has_explicit_base and mode == .certificate and op.data == .const_i32 and try soleNativeLiteralCopy(c, f, block, ordinal, reg))
+                        try cfg.insert(&cfg.values[@intFromEnum(reg)], value)
+                    else
+                        try cfg.define(reg, value, flow.control);
                 },
                 .eh_cell => {},
                 .eh_store => |row| if (!control_only) {
@@ -576,10 +636,18 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                 .domain_copy => |row| {
                     const view = try b.typeSymbol(row.static_view) orelse break;
                     // Keep the original copy equation. A return certificate
-                    // also retains its heap edge; control/effect projections
-                    // grant no physical clone, alias or holding proof.
+                    // retains its heap edge. Explicit-base effects also need
+                    // the original order of their scalar argument copy.
+                    const checked_effect_copy = mode == .effects and has_explicit_base;
+                    if (checked_effect_copy) {
+                        try c.charge(2);
+                        if (!nativeScalar(v, f.registers[@intFromEnum(op.operands[0])].carrier, row.static_view) or
+                            !nativeScalar(v, f.registers[@intFromEnum(op.result.?)].carrier, row.static_view)) {
+                            b.pending = .operation; break;
+                        }
+                    }
                     const copied = try b.value(.{ .copy = .{ .@"type" = view, .bases = try cfg.one(cfg.registerRef(op.operands[0])), .site = try cfg.site(function_id, op, block_index, ordinal), .heap = flow.heap, .control = flow.control } });
-                    if (mode == .certificate) flow.heap = try cfg.heap(.{ .copy = .{ .previous = flow.heap, .value = copied } });
+                    if (mode == .certificate or checked_effect_copy) flow.heap = try cfg.heap(.{ .copy = .{ .previous = flow.heap, .value = copied } });
                     try cfg.define(op.result.?, copied, flow.control);
                 },
                 .domain_refine, .eh_assertion, .eh_pack, .eh_carrier, .eh_presence_widen => try cfg.define(op.result.?, cfg.registerRef(op.operands[0]), flow.control),

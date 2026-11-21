@@ -381,3 +381,233 @@ test "typed scalar constructor transports a committed copy of the original calle
         try std.testing.expectEqual(@as(?domain.Pending, .data_protocol), rejected.pending);
     }
 }
+
+test "typed immediate explicit base preserves the original child allocation" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const common = &fixture.program.tables.mode.common;
+    const own_field = "sha256:" ++ "ee" ** 32;
+    const r10: t.RegisterRef = @enumFromInt(10);
+    const r11: t.RegisterRef = @enumFromInt(11);
+    const r12: t.RegisterRef = @enumFromInt(12);
+    const r13: t.RegisterRef = @enumFromInt(13);
+    const own_token: t.Carrier = .{ .initialization = @enumFromInt(0) };
+    const own_field_properties = a_properties ++ [_]t.JsonMember{.{ .key = "field", .value = .{ .string = own_field } }};
+    const copy_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = dto.scalar } }};
+    const code = [_]ins.Instruction{
+        caller_instructions[0],
+        .{ .source = operation, .result = r6, .operands = &.{r7}, .data = .{ .domain_copy = .{ .static_view = scalar } } },
+        .{ .source = operation, .result = r1, .operands = &.{r0}, .data = .{ .receiver_child = .{ .construction = @enumFromInt(1) } } },
+        caller_instructions[3],
+        .{ .source = operation, .result = null, .operands = &.{ r0, r2 }, .data = .{ .receiver_bind = .{ .construction = @enumFromInt(0), .normal = @enumFromInt(3), .language = @enumFromInt(4) } } },
+        caller_instructions[5],
+        .{ .source = operation, .result = r10, .operands = &.{ r0, r4 }, .data = .{ .initialize_begin = .{ .construction = @enumFromInt(0) } } },
+        .{ .source = operation, .result = r12, .operands = &.{}, .data = .{ .const_i32 = 2 } },
+        .{ .source = operation, .result = r13, .operands = &.{r12}, .data = .{ .domain_copy = .{ .static_view = scalar } } },
+        .{ .source = operation, .result = r11, .operands = &.{ r10, r4, r13 }, .data = .{ .initialize_field = .{ .construction = @enumFromInt(0), .field = @enumFromInt(1) } } },
+        .{ .source = operation, .result = null, .operands = &.{ r11, r4 }, .data = .{ .initialize_end = .{ .construction = @enumFromInt(0) } } },
+        .{ .source = operation, .result = null, .operands = &.{r0}, .data = .{ .receiver_result = .{ .construction = @enumFromInt(0), .normal = @enumFromInt(5), .language = @enumFromInt(6) } } },
+        caller_instructions[7],
+        .{ .source = operation, .result = null, .operands = &.{r8}, .data = .@"return" },
+        .{ .source = operation, .result = null, .operands = &.{r9}, .data = .eh_raise },
+    };
+    const ops = [_]control.SourcePlanOperation{
+        caller_operations[0],
+        .{ .name = "value_copy", .view = dto.scalar, .properties = &copy_properties, .result = r6, .operands = &.{r7}, .successors = &.{}, .source = operation },
+        .{ .name = "receiver_child", .view = "receiver:" ++ dto.b, .properties = &b_properties, .result = r1, .operands = &.{r0}, .successors = &.{}, .source = operation },
+        caller_operations[3],
+        .{ .name = "receiver_bind", .view = "void", .properties = &a_properties, .result = null, .operands = &.{ r0, r2 }, .successors = &.{ @enumFromInt(3), @enumFromInt(4) }, .source = operation },
+        caller_operations[5],
+        .{ .name = "initialize_begin", .view = "initialization:" ++ dto.a, .properties = &a_properties, .result = r10, .operands = &.{ r0, r4 }, .successors = &.{}, .source = operation },
+        .{ .name = "constant", .view = dto.scalar, .properties = &.{.{ .key = "decimal", .value = .{ .string = "2" } }}, .result = r12, .operands = &.{}, .successors = &.{}, .source = operation },
+        .{ .name = "value_copy", .view = dto.scalar, .properties = &copy_properties, .result = r13, .operands = &.{r12}, .successors = &.{}, .source = operation },
+        .{ .name = "initialize_field", .view = "initialization:" ++ dto.a, .properties = &own_field_properties, .result = r11, .operands = &.{ r10, r4, r13 }, .successors = &.{}, .source = operation },
+        .{ .name = "initialize_end", .view = "void", .properties = &a_properties, .result = null, .operands = &.{ r11, r4 }, .successors = &.{}, .source = operation },
+        .{ .name = "receiver_result", .view = "void", .properties = &a_properties, .result = null, .operands = &.{r0}, .successors = &.{ @enumFromInt(5), @enumFromInt(6) }, .source = operation },
+        caller_operations[7],
+        .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r8}, .successors = &.{}, .source = operation },
+        .{ .name = "return_throw", .view = "void", .properties = &.{}, .result = null, .operands = &.{r9}, .successors = &.{}, .source = operation },
+    };
+    const ranges = .{ .{ 0, 4, &.{ r0, r7 } }, .{ 4, 5, &.{r2} }, .{ 5, 6, &.{r3} }, .{ 6, 12, &.{r4} },
+        .{ 12, 13, &.{r5} }, .{ 13, 14, &.{r8} }, .{ 14, 15, &.{r9} } };
+    var blocks: [ranges.len]wire.Block = undefined;
+    var plan: [ranges.len]control.SourcePlanBlock = undefined;
+    inline for (ranges, 0..) |block, index| {
+        blocks[index] = .{ .parameters = block[2], .instructions = code[block[0]..block[1]] };
+        plan[index] = .{ .parameters = block[2], .operations = ops[block[0]..block[1]] };
+    }
+    const registers = caller_registers ++ [_]wire.Register{
+        .{ .carrier = sc, .view = scalar }, .{ .carrier = ac, .view = a }, .{ .carrier = .payload, .view = null },
+        .{ .carrier = own_token, .view = null }, .{ .carrier = own_token, .view = null },
+        .{ .carrier = sc, .view = scalar }, .{ .carrier = sc, .view = scalar },
+    };
+    fixture.functions[0].registers = &registers;
+    fixture.functions[0].blocks = &blocks;
+    fixture.types[0].base = b;
+    fixture.abis[0].parameters = &.{@enumFromInt(4)};
+    fixture.abis[0].argument_types = &.{scalar};
+    fixture.abis[0].physical_parameters = &.{ af, sc };
+    fixture.abis[0].source_plan = .{ .blocks = &plan, .carriers = &.{
+        "receiver:" ++ dto.a, "receiver:" ++ dto.b, dto.b, payload, dto.a, payload, dto.scalar, dto.scalar, dto.a, payload,
+        "initialization:" ++ dto.a, "initialization:" ++ dto.a, dto.scalar, dto.scalar,
+    } };
+    const bindings = fixture.bindings ++ [_]storage.CommonBinding{
+        .{ .id = "a-argument", .owner = .{ .param = @enumFromInt(0) }, .name = "x", .@"type" = scalar, .writable = false, .origin = declaration, .carrier = sc, .scope = @enumFromInt(0), .declaration_kind = .parameter },
+        .{ .id = "a-field", .owner = .{ .field = @enumFromInt(1) }, .name = "own", .@"type" = scalar, .writable = true, .origin = operation, .carrier = sc, .scope = null, .declaration_kind = null },
+    };
+    common.storage.bindings = &bindings;
+    var fields = common.members.fields[0..1].* ++ [_]@TypeOf(common.members.fields[0]){common.members.fields[0]};
+    fields[1].id = @splat(0xee);
+    fields[1].owner = a;
+    fields[1].name = "own";
+    fields[1].binding = @enumFromInt(5);
+    common.members.fields = &fields;
+    var concrete = common.storage.concrete[0..4].*;
+    concrete[0].body = .{ .byte_size = 8, .alignment = 4, .reference_count = 0, .fields = &.{
+        .{ .field = @enumFromInt(0), .binding = @enumFromInt(2), .offset = 0, .reference_offset = 0 },
+        .{ .field = @enumFromInt(1), .binding = @enumFromInt(5), .offset = 4, .reference_offset = 0 },
+    } };
+    common.storage.concrete = &concrete;
+    var constructions = common.members.constructions[0..2].*;
+    constructions[0].parameters = &.{.{ .binding = @enumFromInt(4), .inherited_from = null, .origin = declaration, .@"type" = scalar }};
+    constructions[0].signature.parameters = &.{scalar};
+    constructions[0].initialization_phase = .@"after-successful-super";
+    constructions[0].initialization_fields = &.{@enumFromInt(1)};
+    common.members.constructions = &constructions;
+    const cells = common.exceptions.bindings[0..3].* ++ [_]@TypeOf(common.exceptions.bindings[0]){.{ .binding = @enumFromInt(4), .scope = @enumFromInt(0) }};
+    common.exceptions.bindings = &cells;
+
+    var functions = dto.directory.functions[0..2].*;
+    functions[0].construction.?.base = dto.b;
+    functions[0].parameter_types = &.{ dto.a, dto.scalar };
+    var roles = dto.directory.constructions[0..2].*;
+    roles[0].base = dto.b;
+    var directory = dto.directory;
+    directory.functions = &functions;
+    directory.constructions = &roles;
+    directory.fields = &.{ dto.field, own_field };
+    var declarations = dto.declarations;
+    declarations[0].parameter_types = &.{ @splat(0x11), @splat(0x33) };
+    declarations[0].construction.?.base = @splat(0x22);
+    const original: m.Graph = .{
+        .nodes = &.{
+            .receiver_input, .{ .parameter = .{ .@"type" = dto.scalar, .index = 1 } },
+            .{ .copy = .{ .@"type" = dto.scalar, .bases = &.{1}, .site = "argument-copy", .heap = 0, .control = 0 } },
+            .{ .receiver_frame = .{ .construction = dto.role_b, .new_target = null, .parent = &.{0}, .site = "base-child", .control = 0 } },
+            .{ .call = .{ .@"type" = dto.b, .call = 0, .completion = .normal } },
+            .{ .receiver_value = .{ .@"type" = dto.a, .action = 3 } },
+            .{ .literal = .{ .@"type" = dto.scalar, .category = .other } },
+            .{ .copy = .{ .@"type" = dto.scalar, .bases = &.{6}, .site = "own-copy", .heap = 3, .control = 2 } },
+            .{ .receiver_value = .{ .@"type" = dto.a, .action = 6 } },
+        },
+        .heaps = &.{
+            .entry, .{ .copy = .{ .previous = 0, .value = 2 } },
+            .{ .call = .{ .call = 0, .completion = .normal } },
+            .{ .receiver_action = .{ .previous = 2, .control = 1, .frames = &.{0}, .action = .bind, .operands = &.{4}, .completion = .normal } },
+            .{ .copy = .{ .previous = 3, .value = 7 } },
+            .{ .store = .{ .previous = 4, .bases = &.{5}, .selector = "field:" ++ own_field, .view = dto.a, .values = &.{7}, .control = 2, .initialize = true } },
+            .{ .receiver_action = .{ .previous = 5, .control = 2, .frames = &.{0}, .action = .result, .operands = &.{}, .completion = .normal } },
+        },
+        .controls = &.{ .entry, .{ .call = .{ .call = 0, .completion = .normal } },
+            .{ .receiver_completion = .{ .action = 3 } }, .{ .receiver_completion = .{ .action = 6 } } },
+        .calls = &.{.{ .function_id = dto.callee, .arguments = &.{&.{2}}, .environment = null,
+            .callee = null, .receiver = &.{3}, .heap = 1, .control = 0, .site = "invoke-base" }},
+        .normal = &.{8}, .language = &.{},
+        .exits = .{ .normal = &.{.{ .heap = 6, .control = 3 }}, .language = &.{} },
+        .accesses = &.{.{ .values = &.{5}, .flag = .write, .control = 2 }},
+    };
+    var contracts = complete_contracts;
+    contracts[0].return_origins = original;
+    contracts[0].upper = dto.scalar_full;
+    const fixed = &common.authority.fixed_publication;
+    fixed.stable_scope.functions = &declarations;
+    fixed.publication.contracts = &contracts;
+    const scope_roles = [_]publication.Construction{
+        .{ .id = @splat(0x77), .owner = @splat(0x11), .base = @splat(0x22), .kind = .explicit, .function_id = @splat(0x55) },
+        .{ .id = @splat(0x88), .owner = @splat(0x22), .base = null, .kind = .explicit, .function_id = @splat(0x66) },
+    };
+    fixed.stable_scope.constructions = &scope_roles;
+    const derived_shape: publication.ScopeShape = .{ .nominal = .{ .kind = .reference, .label = "A", .base = "B",
+        .construction = .{ .access = .public, .parameters = &.{"i32"}, .return_type = "A", .argument_signature = null },
+        .fields = &.{.{ .access = .public, .index = 0, .name = "own", .readonly = false, .@"type" = "i32" }}, .methods = null } };
+    const base_shape: publication.ScopeShape = .{ .nominal = .{ .kind = .reference, .label = "B", .base = null,
+        .construction = .{ .access = .public, .parameters = &.{"i32"}, .return_type = "B", .argument_signature = null },
+        .fields = &.{.{ .access = .public, .index = 0, .name = "value", .readonly = false, .@"type" = "i32" }}, .methods = null } };
+    fixed.stable_scope.types = &.{
+        .{ .id = @splat(0x11), .label = "A", .shape = derived_shape },
+        .{ .id = @splat(0x22), .label = "B", .shape = base_shape },
+        .{ .id = @splat(0x33), .label = "i32", .shape = .{ .primitive = .{ .kind = .scalar, .label = "i32" } } },
+        .{ .id = @splat(0x44), .label = "undefined", .shape = .{ .primitive = .{ .kind = .@"undefined", .label = "undefined" } } },
+    };
+    fixed.publication.scope = fixed.stable_scope;
+    var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge };
+    try typed(&c, &budget);
+    try m.validateDirectory(c.allocator, &directory, &budget);
+    var projection = try body.project(&c, @enumFromInt(0), &directory, &budget);
+    defer projection.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projection.pending);
+    const graph = &projection.graph.?;
+    try std.testing.expect((try m.validateGraph(c.allocator, &directory, dto.caller, graph, &budget)) == .pending);
+    var arena = std.heap.ArenaAllocator.init(c.allocator);
+    defer arena.deinit();
+    const input = try refs.returnOriginConstructorInput(&c, arena.allocator(), fixed.*, dto.caller);
+    var analyzed = try domain.analyzeReturns(c.allocator, &directory, graph, &budget, input);
+    defer analyzed.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, null), analyzed.pending);
+    try std.testing.expect(analyzed.normal_live and !analyzed.language_live);
+    const root = analyzed.input_exits.?.input;
+    const child = analyzed.calls[0].receiver;
+    try std.testing.expectEqual(@as(?m.Ref, root), analyzed.frames[child].parent);
+    try std.testing.expect(analyzed.frames[child].new_target == null);
+    try std.testing.expect(analyzed.normal[0].source == .allocation and analyzed.normal[0].source.allocation == child);
+    try std.testing.expectEqual(@as(usize, 0), analyzed.input_exits.?.normal.missing_fields.?.len);
+    try std.testing.expectEqual(@as(usize, 1), analyzed.initializations.len);
+    try std.testing.expectEqual(child, analyzed.initializations[0].base.source.allocation);
+    var effect = try body.coverReceiverEffects(&c, @enumFromInt(0));
+    defer effect.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), effect.body.pending);
+    try std.testing.expect(effect.proof != null and effect.analysis.?.normal_live and !effect.analysis.?.language_live);
+    const certificate_rows = [_]certificates.FixedContract{
+        .{ .function_id = dto.caller, .graph = &contracts[0].return_origins.?, .complete = &input.fixed[0] },
+        .{ .function_id = dto.callee, .graph = &contracts[1].return_origins.?, .complete = &input.fixed[1] },
+    };
+    try std.testing.expect((try certificates.covered(c.allocator, &directory, dto.caller, graph, &certificate_rows, &budget)) == .covered);
+    var owner_rows = ownerRows(&contracts);
+    owner_rows[0].parameters = &.{ .{ .write = true }, .{} };
+    var owned = try owners.analyzeReceiver(c.allocator, &directory, &physical, dto.caller, graph, &owner_rows, &budget, &analyzed);
+    defer owned.deinit();
+    try std.testing.expectEqual(@as(?owners.Pending, null), owned.pending);
+    try std.testing.expect(owned.normal_live and !owned.language_live);
+    try std.testing.expectEqual(@as(usize, 1), owned.normal.len);
+    try std.testing.expect(owned.locations[owned.normal[0]].type_id == null);
+    try std.testing.expectEqual(@as(usize, 2), owned.normal_heap.len);
+    for (owned.normal_heap) |row| try std.testing.expectEqual(owned.normal[0], row.base);
+
+    var wrong_heaps = original.heaps[0..7].*;
+    const wrong_nodes = original.nodes[0..9].* ++ [_]m.Value{.{ .local = .{ .@"type" = dto.b } }};
+    wrong_heaps[3].receiver_action.operands = &.{9};
+    var wrong = original;
+    wrong.heaps = &wrong_heaps;
+    wrong.nodes = &wrong_nodes;
+
+    var loop_heaps = original.heaps[0..7].* ++ [_]m.Heap{.{ .join = .{ .inputs = &.{ 0, 3 } } }};
+    var loop_nodes = original.nodes[0..9].*;
+    loop_heaps[1].copy.previous = 7;
+    loop_nodes[2].copy.heap = 7;
+    var loop = original;
+    loop.heaps = &loop_heaps;
+    loop.nodes = &loop_nodes;
+
+    const unsupported = [_]m.Graph{ wrong, loop };
+    for (&unsupported) |*candidate| {
+        try std.testing.expect((try m.validateGraph(c.allocator, &directory, dto.caller, candidate, &budget)) == .pending);
+        var rejected = try domain.analyzeReturns(c.allocator, &directory, candidate, &budget, input);
+        defer rejected.deinit();
+        try std.testing.expectEqual(@as(?domain.Pending, .call_entry), rejected.pending);
+    }
+    contracts[1].upper.facets.may_throw = true;
+    var throwing = try domain.analyzeReturns(c.allocator, &directory, graph, &budget, input);
+    defer throwing.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, .call_entry), throwing.pending);
+}
