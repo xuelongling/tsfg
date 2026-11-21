@@ -155,6 +155,50 @@ test('mutually exclusive super calls meet at a single lexical initializer',async
   assert.ok(join.includes('"tsfg_core.domain.initialize_fields"(%v0)'));
 });
 
+
+test('branch-local super arguments run before one shared phase and their original suffix',async()=>{
+  const {hir,context,publicationContext}=await initializerProof(
+    'super-prefix-suffix','d83249ceccb0056cb9fa050d0b29506438b257397b1833d40a7d5345f6721ac3');
+  const entry=hir.functions.find(row=>row.name==='entry');
+  const owner=hir.types.find(row=>row.id===entry.body[0].initializer.type);
+  const constructor=hir.functions.find(row=>row.id===owner.constructor);
+  const core=lowerFormalHir(hir,context,publicationContext);
+  const start=core.indexOf('  func.func @"f'+constructor.id.slice(7)+'"(');
+  assert.ok(start>=0);
+  const body=core.slice(start,core.indexOf('\n  }',start));
+  const [prefix,rest]=body.split('"tsfg_core.domain.initialize_fields"');
+  assert.ok(rest);
+  assert.equal(body.split('"tsfg_core.domain.initialize_fields"').length,2);
+  assert.equal(body.split('"tsfg_core.domain.array_create"').length,2);
+  const armLines=[...prefix.matchAll(/value = (11|22) : i32[^\n]*\n[^]*?"tsfg_core\.domain\.super"[^\n]*\n[^\n]*\n    cf\.br \^(bb\d+)/g)];
+  assert.deepEqual(armLines.map(arm=>arm[1]),['11','22']);
+  assert.equal(armLines[0][2],armLines[1][2]);
+  const [phase,suffixes]=rest.split('cf.cond_br');
+  assert.ok(phase.includes('"tsfg_core.domain.field_initialize"'));
+  const stores=[...suffixes.matchAll(/value = (31|42) : i32[^\n]*\n[^]*?"tsfg_core\.domain\.field_store"[^\n]*/g)];
+  assert.deepEqual(stores.map(store=>store[1]),['31','42']);
+});
+
+
+test('a suffix using a super argument local keeps its own branch scope',async()=>{
+  const {hir,context,publicationContext}=await initializerProof(
+    'super-prefix-live-local','dfc44eba7593f4c84c65c5ffbfa0da14d1d7a0aad661db5fa06ce10027a9efa4');
+  const entry=hir.functions.find(row=>row.name==='entry');
+  const owner=hir.types.find(row=>row.id===entry.body[0].initializer.type);
+  const constructor=hir.functions.find(row=>row.id===owner.constructor);
+  const core=lowerFormalHir(hir,context,publicationContext);
+  const start=core.indexOf('  func.func @"f'+constructor.id.slice(7)+'"(');
+  assert.ok(start>=0);
+  const body=core.slice(start,core.indexOf('\n  }',start));
+  const arms=body.split(/\n  \^bb\d+(?:\([^\n]*\))?:\n/).filter(block=>block.includes('"tsfg_core.domain.super"'));
+  assert.equal(arms.length,2);
+  for(const [index,arm] of arms.entries()){
+    assert.ok(arm.includes('value = '+[11,22][index]+' : i32'));
+    const operations=[...arm.matchAll(/"tsfg_core\.domain\.(super|initialize_fields|field_initialize|field_store)"/g)];
+    assert.deepEqual(operations.map(op=>op[1]),['super','initialize_fields','field_initialize','field_store']);
+  }
+});
+
 test('failed super arguments and nested initializer operands stop their own continuation',async()=>{
   const {hir,proofs,phases,context,publicationContext}=await initializerProof('constructor-expression-failures','e5599012fe72a1f0ccd8e33650b66098cbbb41dd2846df89598bb2f80473c1c9');
   const entry=hir.functions.find(row=>row.name==='entry'),nested=hir.functions.find(row=>row.name==='nested');

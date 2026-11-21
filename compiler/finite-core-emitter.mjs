@@ -94,14 +94,37 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     return result;
   }
   const wrap=(value,type)=>value.type===type?value:{kind:'finiteAdapt',operand:value,type,semanticType:value.semanticType,range:value.range};
+  function superInArm(statements) {
+    const prefixLocals=new Set();
+    const index=statements.findIndex(statement=>{
+      budget.step();
+      if(statement.kind==='local')prefixLocals.add(statement.binding.id);
+      return statement.kind==='expression'&&statement.expression.kind==='superConstruct';
+    });
+    if(index<0)return null;
+    // The shared block retains outer bindings. An arm-local value that is
+    // still used by its suffix must keep the original arm's complete phase.
+    if(prefixLocals.size) {
+      const pending=[statements.slice(index+1)];
+      while(pending.length) {
+        budget.step();
+        for(const child of Object.values(pending.pop())) {
+          budget.step();
+          if(typeof child==='string'&&prefixLocals.has(child))return null;
+          if(child&&typeof child==='object')pending.push(child);
+        }
+      }
+    }
+    return {index,call:statements[index].expression};
+  }
   function sharedSuperPhase(fn) {
     if(fn.role!=='construction-body')return null;
     for(const statement of fn.body) {
       budget.step();
-      if(statement.kind!=='if'||statement.then[0]?.kind!=='expression'||statement.else[0]?.kind!=='expression')continue;
-      const left=statement.then[0].expression,right=statement.else[0].expression;
-      if(left?.kind!=='superConstruct'||right?.kind!=='superConstruct'||left.construction!==right.construction||
-        left.afterSuccess.construction!==right.afterSuccess.construction)continue;
+      if(statement.kind!=='if')continue;
+      const left=superInArm(statement.then),right=superInArm(statement.else);
+      if(!left||!right||left.call.construction!==right.call.construction||
+        left.call.afterSuccess.construction!==right.call.afterSuccess.construction)continue;
       const pending=[fn.body];let sites=0;
       while(pending.length) {
         budget.step();const value=pending.pop();
@@ -114,7 +137,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         const written=finiteBindingWrites(fn.body,budget.step);
         for(const binding of bindings)if(written.has(binding))return null;
       }
-      return {statement,phase:left.afterSuccess,bindings};
+      return {statement,phase:left.call.afterSuccess,bindings,thenSuper:left.index,elseSuper:right.index};
     }
     return null;
   }
@@ -153,11 +176,13 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       if(value.kind==='while')loopSources.set(result,value);
       if(value!==shared?.statement)return [result];
       // Each arm reaches the same own phase immediately after its original super.
-      delete result.thenBody[0].value.afterSuccess;
-      delete result.elseBody[0].value.afterSuccess;
-      if(result.thenBody.length>1||result.elseBody.length>1) {
+      delete result.thenBody[shared.thenSuper].value.afterSuccess;
+      delete result.elseBody[shared.elseSuper].value.afterSuccess;
+      const thenBody=result.thenBody.splice(shared.thenSuper+1);
+      const elseBody=result.elseBody.splice(shared.elseSuper+1);
+      if(thenBody.length||elseBody.length) {
         result.continuation={
-          common:[shared.phase],thenBody:result.thenBody.splice(1),elseBody:result.elseBody.splice(1)
+          common:[shared.phase],thenBody,elseBody
         };
         return [result];
       }
