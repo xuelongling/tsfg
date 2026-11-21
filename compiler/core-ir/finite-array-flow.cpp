@@ -94,7 +94,7 @@ bool ownInitializerArray(ModuleProof &proof,mlir::Operation *allocation) {
   for(const auto &phase:*proof.phases.getAsArray()) {
     if(!proof.charge())return false;
     const auto *row=phase.getAsObject();
-    if(row&&string(*row,"constructionId")==construction)return string(*row,"activation")=="before-body";
+      if(row&&string(*row,"constructionId")==construction)return true;
   }
   return false;
 }
@@ -426,7 +426,13 @@ bool ArrayFlow::build() {
       if(!proof.charge())return false;
       const bool executable=proof.mayExecute(&op);
       if((carrier||executable)&&!operation(&op,id,sawTrap&&!executable))return false;
-      if(carrier&&executable&&proof.trappingArrayReads.count(&op))sawTrap=true;
+      if(!carrier||!executable||sawTrap)continue;
+      sawTrap=proof.trappingArrayReads.count(&op);
+      if(!sawTrap&&llvm::isa<DomainSuperOp>(&op)){
+        const auto target=proof.selectedCallees.find(&op);
+        sawTrap=target!=proof.selectedCallees.end()&&target->second.size()==1&&
+          proof.trapOnlyFunctions.count(*target->second.begin());
+      }
     }
   }
   return valid;

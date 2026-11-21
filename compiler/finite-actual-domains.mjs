@@ -178,7 +178,8 @@ function buildPlans(input,context,options,definitions) {
       if(!arrayReaching.reads.length)break;
       // Even skipped stores need lexical versions from the carrier. The
       // ordered field selections continue to govern successful reads.
-      const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields,failedInitializers:array.failedInitializers};
+      const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields,
+        failedInitializers:array.failedInitializers,failedConstructions:array.failedConstructions,failedSuperArguments:array.failedSuperArguments};
       fieldReaching=buildFiniteFieldReaching(hir,fieldPlan,charge,allowCompoundTermination?null:terminalReads);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
         for(const id of read.versions){charge();versions.push(id);}
@@ -196,7 +197,14 @@ function buildPlans(input,context,options,definitions) {
       // neither carrier maxima nor successful bounds become alias witnesses.
       const terminal=[];for(const id of terminalReads??[]){charge();terminal.push(id);}
       terminal.sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
-      const current=canonical([rows,fields,aliases,terminal]);if(current===previous)break;previous=current;
+      const failedInitializers=[];for(const [site,node] of array.failedInitializers??[]){charge();failedInitializers.push([site,node]);}
+      failedInitializers.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
+      const failedConstructions=[];for(const id of array.failedConstructions??[]){charge();failedConstructions.push(id);}
+      failedConstructions.sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
+      const failedSuperArguments=[];for(const pair of array.failedSuperArguments??[]){charge();failedSuperArguments.push(pair);}
+      failedSuperArguments.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
+      const current=canonical([rows,fields,aliases,terminal,failedInitializers,failedConstructions,failedSuperArguments]);
+      if(current===previous)break;previous=current;
       ordered=solve(fieldReaching,{...arrayReaching,normalReadSources:array.normalReadSources},terminalReads);
     }
     // Refined payloads do not silently republish a narrower ABI. Representation
@@ -384,8 +392,9 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
   function constructionFrame(type) {
     return functions.get(type.constructor??type.construction.id);
   }
-  const constructionNormal=new Map();
+  const constructionNormal=new Map(),constructionEntries=new Map();
   for(const type of hir.types)if(type.construction) {
+    constructionEntries.set(type.construction.id,[]);
     const requirements=type.construction.initialization.filter(init=>init.value)
       .map(init=>flow.normal('construction/'+type.construction.id+'/initialization/'+init.field));
     if(type.construction.implicitForward)requirements.push(flow.returned(constructionFrame(types.get(type.base)).id));
@@ -395,14 +404,8 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     voidResult:fn.role==='construction-body'||types.get(fn.returnType.id).kind==='void',requirements:constructionNormal.get(fn.id)??[]});
   for(const fn of callables)if(!hir.functions.includes(fn))flow.returns(fn.id,[flow.all(constructionNormal.get(fn.id)??[])]);
   for(const type of hir.types)if(type.construction) {
-    const frame=constructionFrame(type),receiver=binding(frame,frame.parameters[0].id,type.id),requirements=[];
+    const frame=constructionFrame(type),receiver=binding(frame,frame.parameters[0].id,type.id);
     frame.parameters.forEach(parameter=>binding(frame,parameter.id,parameter.type));
-    for(const init of type.construction.initialization) {
-      if(init.value) {const value=expression(init.value,'construction/'+type.construction.id+'/initialization/'+init.field,frame,new Map(),flow.all(requirements));
-        fieldStores.push({receiver,field:init.field,value});requirements.push(flow.normal(value));}
-      else if(init.binding)fieldStores.push({receiver,field:init.field,
-        value:binding(frame,init.binding,type.fields.find(field=>field.id===init.field).type)});
-    }
     if(type.construction.implicitForward) {
       const base=constructionFrame(types.get(type.base));
       copy(receiver,binding(base,base.parameters[0].id,base.parameters[0].type));
@@ -413,7 +416,28 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     }
   }
 
-  for(let cursor=0;cursor<tasks.length;cursor++) {
+  // Ordinary bodies register every real super site before the shared lexical
+  // own phase is attached. Its entry waits only for the base and operands;
+  // the super expression itself also waits for that own phase to complete.
+  for(let cursor=0,initialized=false;;cursor++) {
+    if(cursor===tasks.length) {
+      if(initialized)break;initialized=true;
+      for(const type of hir.types)if(type.construction) {
+        charge();const construction=type.construction,frame=constructionFrame(type),
+          receiver=binding(frame,frame.parameters[0].id,type.id),requirements=[];
+        const entry=!type.base?flow.always:construction.implicitForward
+          ?flow.returned(constructionFrame(types.get(type.base)).id):flow.any(constructionEntries.get(construction.id));
+        for(const init of construction.initialization) {
+          charge();const gate=flow.all([entry,...requirements]);
+          if(init.value) {
+            const value=expression(init.value,'construction/'+construction.id+'/initialization/'+init.field,frame,new Map(),gate);
+            fieldStores.push({receiver,field:init.field,value});requirements.push(flow.normal(value));
+          }else if(init.binding)fieldStores.push({receiver,field:init.field,gate,
+            value:binding(frame,init.binding,type.fields.find(field=>field.id===init.field).type)});
+        }
+      }
+      if(cursor===tasks.length)break;
+    }
     charge();const {value:v,path:p,fn,guards,logical}=tasks[cursor],id=p;
     let continuation=flow.incoming(p);const dependencies=[],requirements=[];
     const operand=(value,path,gate,propagatePending)=>{
@@ -475,7 +499,9 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
         copy(binding(fn,v.receiverBinding,fn.ownerType),binding(target,target.parameters[0].id,target.parameters[0].type));
         arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
       });
-      requirements.push(flow.returned(target.id));insert(id,'actual',v.type);
+      const baseReturned=flow.returned(target.id);
+      constructionEntries.get(v.afterSuccess.construction).push(flow.all([flow.incoming(id),...dependencies,baseReturned]));
+      requirements.push(baseReturned,...constructionNormal.get(fn.id));insert(id,'actual',v.type);
     }else if(v.kind==='propertyPresenceTest') {
       child('left');const receiver=child('right');insert(id,'actual',v.type);
       presenceTests.push({id,receiver,field:v.property,viewType:fieldOwners.get(v.property).owner,targets:new Map()});
@@ -600,7 +626,9 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     }
     for(const store of fieldStores)if(store.receiver===current)for(const actual of nodes.get(current).actual) {
       const field=actualField(actual,store.field,store.viewType);
-      if(field&&!field.missing){store.targets?.set(actual,field);copy(store.value,fieldNode(actual,field));}
+      if(field&&!field.missing){store.targets?.set(actual,field);
+        const commit=()=>copy(store.value,fieldNode(actual,field));
+        if(store.gate)flow.when(store.gate,commit);else commit();}
       else insert(store.value,'pending','unresolved-actual-field:'+actual+':'+store.field);
     }
     for(const test of presenceTests)if(test.receiver===current)for(const actual of nodes.get(current).actual) {

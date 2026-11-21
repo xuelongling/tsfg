@@ -168,15 +168,26 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
             const index=callee.parameters.findIndex(parameter=>{charge();return callee.id+'/parameter/'+parameter.id===source?.token;});
             if(source?.function===callee.id&&index>=0)fieldChildren.set(token+'\0'+version,tokens[index]??null);}}
     }
-    function initialize(statement,state,env) {
+    let trapSource=null,stopped=false;
+    function phaseExpression(value,path,state,env,trap) {
+      if(!trap)return expression(value,path,state,env);
+      const previous=trapSource,wasStopped=stopped;
+      trapSource=trap;stopped=false;
+      const token=expression(value,path,state,env);
+      trapSource=previous;stopped=wasStopped;
+      return token;
+    }
+    function initialize(statement,site,state,env) {
       const owner=types.get(statement.ownerType),phase=phases.get(statement.construction);
       if(!phase)return state;
+      const failure=plan.failedInitializers?.get(site);
       for(const event of phase.events) {
         charge();const output=event.output;
         if(event.kind==='initializerWrite') {
           const init=owner.construction.initialization.find(row=>row.field===output.field&&row.value);
-          const token=expression(init.value,output.valueNode,state,env);
-          if(plan.failedInitializers?.has(output.valueNode))return null;
+          const trap=failure?.node===output.valueNode?failure.trap:null;
+          const token=phaseExpression(init.value,output.valueNode,state,env,trap);
+          if(trap)return null;
           storedTokens.set(output.id,{function:fn.id,token,fresh:init.value.kind==='construct'});
         }
         if(event.kind==='parameterWrite'){charge();storedTokens.set(output.id,{function:fn.id,token:env.get(output.parameterBinding)??null,parameter:true,fresh:false});}
@@ -188,6 +199,18 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           state.set(key(receiver,{actualType,fieldId:output.field}),new Set([output.id]));
       }
       return state;
+    }
+    function initializeAfterSuper(value,path,state,env) {
+      const failure=plan.failedSuperArguments?.get(path);
+      for(const [index,argument] of value.arguments.entries()){
+        const trap=index===failure?.index?failure.trap:null;
+        phaseExpression(argument,path+'/arguments/'+index,state,env,trap);
+        if(trap||stopped)return null;
+      }
+      if(trapSource===path){stopped=true;return null;}
+      if(plan.failedConstructions?.has(value.construction))return null;
+      completed(value.construction,env.get(value.receiverBinding),state);
+      return initialize(value.afterSuccess,path,state,env);
     }
     function access(value,path,state,token,kind,payload=null) {
       const selection=selections.get(path);if(!selection)return;
@@ -253,62 +276,76 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       }
     }
     function expression(value,path,state,env) {
-      charge();if(!value)return null;
+      charge();if(!value||stopped)return null;
       const child=key=>expression(value[key],path+'/'+key,state,env);
       if(value.kind==='reference')return env.get(value.binding)??null;
       if(['group','nonNull','assertType'].includes(value.kind))return child('operand');
       if(value.kind==='assignment') {
-        const token=child('value'),alias=copiesValue(value.target.type)?copyToken(token,path+'/copy',state):token;
+        const token=child('value');
+        if(stopped)return null;
+        const alias=copiesValue(value.target.type)?copyToken(token,path+'/copy',state):token;
         env.set(value.target.binding,alias);return alias;
       }
       if(value.kind==='arrayCreate'){
         for(const [index,item]of value.elements.entries()){
           const source=path+'/elements/'+index,token=expression(item,source,state,env);
+          if(stopped)return null;
           if(arrayReads.size){charge();arraySources.set(source,token&&copiesValue(item.type)?copyToken(token,source+'/array-copy',state):token);}
         }return null;
       }
       if(value.kind==='arrayStoreDenseChecked'){
         expression(value.target.receiver,path+'/target/receiver',state,env);expression(value.target.index,path+'/target/index',state,env);
-        const token=child('value');if(arrayReads.size){charge();arraySources.set(path+'/value',token&&copiesValue(value.value.type)?copyToken(token,path+'/stored-copy',state):token);}return token;
+        const token=child('value');
+        if(stopped)return null;
+        if(arrayReads.size){charge();arraySources.set(path+'/value',token&&copiesValue(value.value.type)?copyToken(token,path+'/stored-copy',state):token);}return token;
       }
       if(value.kind==='arrayReadChecked'){
-        child('receiver');child('index');const sources=arrayReads.get(path);let selected;
+        child('receiver');child('index');
+        if(trapSource===path)stopped=true;
+        if(stopped)return null;
+        const sources=arrayReads.get(path);let selected;
         // Bounds are not an origin. Every ordered successful source must have
         // retained the same actual alias at its own storage boundary.
         for(const source of sources??[]){charge();const token=arraySources.get(source);if(!token||selected!==undefined&&selected!==token)return null;selected=token;}
         return selected&&copiesValue(value.type)?copyToken(selected,path+'/copy',state):selected??null;
       }
       if(value.kind==='fieldAccess') {
-        const token=child('receiver'),payload=access(value,path,state,token,'read');
+        const token=child('receiver');
+        if(stopped)return null;
+        const payload=access(value,path,state,token,'read');
         return copiesValue(value.type)?copyToken(payload,path+'/copy',state):payload;
       }
       if(value.kind==='fieldAssignment') {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env);
-        const rhs=child('value'),payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
+        const rhs=child('value');
+        if(stopped)return null;
+        const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
         access(value,path,state,token,'store',payload);return rhs;
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
         const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
+        if(stopped)return null;
         if(!possibilities.absent)return left;
         if(!possibilities.present)return child('right');
         const rightReached=literalBooleanRhs(value,charge);
         if(rightReached!==null){if(rightReached)child('right');return null;}
         const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge),
           result=expression(value.right,path+'/right',right,rightEnv);
+        if(stopped)return null;
         const merged=join(state,right);state.clear();for(const pair of merged){charge();state.set(...pair);}
         meetAliases(env,env,rightEnv);return value.operator==='??'&&left&&left===result?left:null;
       }
       if(value.kind==='superConstruct') {
-        for(const [index,argument] of value.arguments.entries())expression(argument,path+'/arguments/'+index,state,env);
-        completed(value.construction,env.get(value.receiverBinding),state);
-        initialize(value.afterSuccess,state,env);return null;
+        initializeAfterSuper(value,path,state,env);return null;
       }
       if(value.kind==='call') {
-        const tokens=[...(value.receiver?[child('receiver')]:[]),
-          ...value.arguments.map((argument,index)=>{
-            const token=expression(argument,path+'/arguments/'+index,state,env);
-            return copiesValue(argument.type)?copyToken(token,path+'/arguments/'+index+'/copy',state):token;
-          })];
+        const tokens=value.receiver?[child('receiver')]:[];
+        if(stopped)return null;
+        for(const [index,argument] of value.arguments.entries()){
+          const token=expression(argument,path+'/arguments/'+index,state,env);
+          if(stopped)return null;
+          tokens.push(copiesValue(argument.type)?copyToken(token,path+'/arguments/'+index+'/copy',state):token);
+        }
         const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
         const returned=[],continuations=[],valueReturns=[];
         for(const target of targets) {
@@ -368,6 +405,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       if(value.kind==='construct'){
         const tokens=[path];for(const [index,arg]of value.arguments.entries()){
           const token=expression(arg,path+'/arguments/'+index,state,env);
+          if(stopped)return null;
           tokens.push(copiesValue(arg.type)?copyToken(token,path+'/arguments/'+index+'/copy',state):token);}
         completed(value.construction,path,state,[value.type],tokens,path);freshTokens.add(path);return path;
       }
@@ -375,10 +413,11 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       for(const name of ['receiver','left','operand'])if(value[name])child(name);
       if(value.target&&typeof value.target==='object')for(const name of ['receiver','index'])if(value.target[name])
         expression(value.target[name],path+'/target/'+name,state,env);
+      if(trapSource===path+'/old-value')stopped=true;
       for(const name of ['index','right','value'])if(value[name])child(name);
       for(const name of ['arguments','elements'])for(const [index,child] of (value[name]??[]).entries())
         expression(child,path+'/'+name+'/'+index,state,env);
-      if(value.kind==='fieldUpdate')state.clear();
+      if(!stopped&&value.kind==='fieldUpdate')state.clear();
       return null;
     }
     function conditionEffects(condition,path,state,env) {
@@ -402,6 +441,12 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         }
         else if(value.kind==='expression') {
           const expressionPath=p+'/expression',root=value.expression;
+          let phase=root,phasePath=expressionPath;
+          while(['group','nonNull','assertType'].includes(phase.kind)){charge();phase=phase.operand;phasePath+='/operand';}
+          if(phase.kind==='superConstruct'){
+            if(!initializeAfterSuper(phase,phasePath,state,env))return null;
+            continue;
+          }
           if(terminalReads&&(root.kind==='arrayCompoundAssignment'||root.kind==='arrayUpdate')&&terminalReads.has(expressionPath+'/old-value')) {
             expression(root.target.receiver,expressionPath+'/target/receiver',state,env);
             expression(root.target.index,expressionPath+'/target/index',state,env);
@@ -456,8 +501,11 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           state.clear();
           if(truth===true)return null;
         }else if(value.kind==='block')state=statements(value.body,p+'/body',state,env);
-        else if(value.kind==='initializeOwnFields')state=initialize(value,state,env);
-        else if(value.kind==='forwardBaseConstruction')completed(value.construction,env.get(value.receiverBinding),state);
+        else if(value.kind==='initializeOwnFields')state=initialize(value,p,state,env);
+        else if(value.kind==='forwardBaseConstruction'){
+          if(plan.failedConstructions?.has(value.construction))return null;
+          completed(value.construction,env.get(value.receiverBinding),state);
+        }
         if(!state)return null;
       }
       return state;

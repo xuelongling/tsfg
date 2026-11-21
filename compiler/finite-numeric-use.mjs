@@ -253,6 +253,8 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       frame.gate=flow.never;frame.continues=false;
     }else if(s.kind==='expression') {
       frame.gate=flow.normal(emit(s.expression,'/expression'));
+    }else if(s.kind==='initializeOwnFields') {
+      frame.gate=flow.all([frame.gate,...requirements]);
     }else if(s.kind==='block') {
       // Each expression invalidates its own writes. Earlier statements in a
       // nested body still read the value established on the incoming edge.

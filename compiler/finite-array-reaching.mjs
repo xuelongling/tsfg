@@ -54,7 +54,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     writes=new Map(),reads=new Map(),normalReadSources=new Map(),contextsByTarget=new Map(),checkedLoopConditions=new Set(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
-  const failedInitializers=new Set();
+  const failedInitializers=new Map(),failedConstructions=new Set(),failedSuperArguments=new Map();
+  const constructors=[],ordinary=[];
   let contextWrites=new Map(),terminalReads=null;
   function arrayCarrier(id) {
     const stack=[id],seen=new Set();while(stack.length) {
@@ -72,8 +73,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }
   for(const fn of functions) {
     const stack=[{value:fn.body,path:fn.id+'/body'}],effect=effects.get(fn.id);
-    if(fn.role==='construction-body')for(const row of types.get(fn.ownerType).construction.initialization)
-      if(row.value)stack.push({value:row.value,path:'construction/'+fn.construction+'/initialization/'+row.field});
+    if(fn.role==='construction-body'){
+      const owner=types.get(fn.ownerType);
+      let depth=0,type=owner;
+      while(type.base){charge();depth++;type=types.get(type.base);}
+      constructors.push({fn,depth});
+      for(const row of owner.construction.initialization)if(row.value)
+        stack.push({value:row.value,path:'construction/'+fn.construction+'/initialization/'+row.field});
+    }else ordinary.push(fn);
     while(stack.length) {
       charge();const {value,path}=stack.pop();if(!value||typeof value!=='object')continue;
       if(['arrayStoreDenseChecked','arrayResizeChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind))effect.writes=true;
@@ -91,6 +98,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       for(const [key,child] of Object.entries(value))if(child&&typeof child==='object')stack.push({value:child,path:path+'/'+key});
     }
   }
+  // Base construction is always analyzed before its derived continuation.
+  constructors.sort((a,b)=>{charge();return a.depth-b.depth;});
+  const ordered=[...constructors.map(row=>row.fn),...ordinary];
   propagateArrayWrites(effects,charge);
   const clone=state=>copyArrayReachingState(state,charge);
   const transfers=createArrayCallContexts(charge,clone,(fn,state,bindings)=>analyze(fn,state,bindings,true,false));
@@ -151,6 +161,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }
   function analyze(fn,initial,env,applyCalls,recordReads=true,collectAll=false,firstCondition=null) {
     const exits=[],mutated=new Set();let complete=true,invalidateAll=false;
+    const initializerReads=new Set();let inInitializer=false;
     // One visit per source occurrence gives a local version one stored value.
     // The lexical pass uses Array identities to name stores through aliases.
     const trackLocalSlots=recordReads&&effects.get(fn.id).localSlots;
@@ -204,11 +215,26 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         versions=index?.constant!==undefined?memory?.slots.get('c:'+(index.constant+receiver.offset)):null;
       }
       const status=missing||bounds?'missing':versions?.size?'proven':'pending';
-      if(recordReads)reads.set(path,{node:path,owner:receiver?.owner??null,index:slot,status,
-        versions:status==='proven'?[...versions].sort():[],sources:status==='proven'?[...new Set([...versions].map(id=>writes.get(id).node))].sort():[],origin:origin(value)});
+      const repeated=inInitializer&&initializerReads.has(path);
+      if(recordReads) {
+        const prior=repeated?reads.get(path):null,owner=receiver?.owner??null;
+        const compatible=!prior||prior.owner===owner&&prior.index===slot;
+        const mergedStatus=compatible&&(!prior||prior.status===status)?status:'pending';
+        const selected=new Set(),sources=new Set();
+        if(mergedStatus==='proven') {
+          for(const id of versions){if(repeated)charge();selected.add(id);}
+          for(const id of prior?.versions??[]){charge();selected.add(id);}
+          for(const id of selected){if(repeated)charge();sources.add(writes.get(id).node);}
+        }
+        const order=repeated?(a,b)=>{charge();return a<b?-1:a>b?1:0;}:undefined;
+        reads.set(path,{node:path,owner:compatible?owner:null,index:compatible?slot:null,status:mergedStatus,
+          versions:[...selected].sort(order),sources:[...sources].sort(order),origin:origin(value)});
+        if(inInitializer){charge();initializerReads.add(path);}
+      }
       // A successful checked dynamic read selects one initialized cell. This
       // feeds payload analysis only, preserving the explicit bounds check.
-      if(recordReads&&!collectAll&&status==='pending'&&memory&&index?.constant===undefined){
+      if(recordReads&&repeated)normalReadSources.delete(path);
+      else if(recordReads&&!collectAll&&status==='pending'&&memory&&index?.constant===undefined){
         const sources=checkedSources(memory,receiver);
         if(sources)normalReadSources.set(path,sources);
       }
@@ -237,11 +263,12 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       memory.slots.set(slot,new Set([id]));
       return id;
     }
-    /** @param {boolean|'initializer'} [root] */
+    /** @param {boolean|'initializer'|'superArgument'} [root] */
     function expression(value,path,state,bindings,root=false,directStatement=false) {
       if(!value)return {};charge();
-      const terminalRoot=root===true;
-      const child=(name,allowTerminal=false)=>expression(value[name],path+'/'+name,state,bindings,allowTerminal);
+      const constructionEvaluation=root==='initializer'||root==='superArgument';
+      const terminalRoot=root===true||root==='superArgument';
+      const child=(name,mode=root)=>expression(value[name],path+'/'+name,state,bindings,mode);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
       if(['group','nonNull','assertType'].includes(value.kind)) {
         const {truth,...result}=expression(value.operand,path+'/operand',state,bindings,root);return result;
@@ -252,7 +279,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       }
       if(value.kind==='arrayCreate') {
         const slots=new Map();for(const [index,item] of value.elements.entries()) {
-          const element=expression(item,path+'/elements/'+index,state,bindings,terminalRoot);
+          const element=expression(item,path+'/elements/'+index,state,bindings,root);
           if(element.terminal)return element;
           const id=version(path+'/initial/'+index,item,path+'/elements/'+index,path,'c:'+index,'initial');
           rememberSlotValue(id,item,element);
@@ -261,17 +288,18 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         state.set(path,{length:value.elements.length,slots});return {owner:path,symbol:path};
       }
       if(value.kind==='arrayReadChecked') {
-        const receiver=child('receiver',terminalRoot);if(receiver.terminal)return receiver;
-        const index=child('index',terminalRoot);if(index.terminal)return index;
+        const receiver=child('receiver');if(receiver.terminal)return receiver;
+        const index=child('index');if(index.terminal)return index;
         const projectKind=slotValues&&types.get(value.receiver.type)?.kind==='array'?types.get(value.type)?.kind:undefined,
           {status,stored}=load(value,path,state,receiver,index,projectKind);
-        if(!collectAll&&status==='missing'&&(root==='initializer'||terminalRoot&&canTerminateArrayRead(false)))return {terminal:true};
+        if(!collectAll&&status==='missing'&&
+          (constructionEvaluation||terminalRoot&&canTerminateArrayRead(false)))return {terminal:true,trap:path};
         return stored?{...stored,symbol:path}:{symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
-        const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,terminalRoot);
+        const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,root);
         if(receiver.terminal)return receiver;
-        const index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings,terminalRoot):null;
+        const index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings,root):null;
         if(index?.terminal)return index;
         let oldLength=null;
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
@@ -281,10 +309,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           // transfer stops only at a definite old-read trap on the current evaluation path.
           if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateArrayRead(directStatement&&!fn.ownerType)) {
             if(recordReads){charge();(terminalReads??=new Set()).add(old);}
-            return {terminal:true};
+            return {terminal:true,trap:old};
           }
         }
-        const rhs=value.value?child('value',terminalRoot):{symbol:path};
+        const rhs=value.value?child('value'):{symbol:path};
         if(rhs.terminal)return rhs;
         if(value.kind==='arrayResizeChecked') {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
@@ -303,19 +331,19 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         return {symbol:path};
       }
       if(value.kind==='assignment') {
-        const rhs=child('value',terminalRoot);if(rhs.terminal)return rhs;
+        const rhs=child('value');if(rhs.terminal)return rhs;
         bindings.set(value.target.binding,adapt(rhs,path+'/value',fn.id+'/binding/'+value.target.binding));return rhs;
       }
       if(value.kind==='arrayLength'||value.kind==='readSpanLength') {
-        const receiver=child('receiver',terminalRoot);if(receiver.terminal)return receiver;
+        const receiver=child('receiver');if(receiver.terminal)return receiver;
         const length=receiver.limit??state.get(receiver.owner)?.length;
         return length!==undefined&&length!==null?{constant:length,symbol:path}:{symbol:path};
       }
       if(value.kind==='call') {
-        const receiver=value.receiver?child('receiver',terminalRoot):null,args=[];
+        const receiver=value.receiver?child('receiver'):null,args=[];
         if(receiver?.terminal)return receiver;
         for(const [index,item] of (value.arguments??[]).entries()) {
-          const argument=expression(item,path+'/arguments/'+index,state,bindings,terminalRoot);
+          const argument=expression(item,path+'/arguments/'+index,state,bindings,root);
           if(argument.terminal)return argument;
           args.push(argument);
         }
@@ -385,7 +413,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         return ordinal!==null&&ordinal!==undefined&&consistent?actual[ordinal]??{}:{symbol:path};
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const left=child('left',terminalRoot);if(left.terminal)return left;
+        const left=child('left');if(left.terminal)return left;
         const literal=value.operator==='??'?null:booleanLiteral(value.left,charge),truth=literal?.value??left.truth;
         const possibilities=collectAll?{present:true,absent:true}:value.operator==='??'?presence(path+'/left'):
           {present:truth===undefined||truth===(value.operator==='||'),absent:truth===undefined||truth===(value.operator==='&&')};
@@ -393,7 +421,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           return value.operator==='??'?adapt(result,result.symbol,path):{symbol:path};};
         if(!possibilities.absent)return resultValue(left);
         if(!possibilities.present) {
-          const result=child('right',terminalRoot&&(value.operator==='??'||literal!==null));
+          const result=child('right',value.operator==='??'||literal!==null?root:false);
           return result.terminal?result:resultValue(result);
         }
         const right=clone(state),branchBindings=copyBindings(bindings),
@@ -404,33 +432,42 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       }
       if(value.kind==='binary'||value.kind==='stringConcat') {
         // Strict binary operations require normal completion in operand order.
-        const left=child('left',terminalRoot);if(left.terminal)return left;
-        const right=child('right',terminalRoot);if(right.terminal)return right;
+        const left=child('left');if(left.terminal)return left;
+        const right=child('right');if(right.terminal)return right;
         return ['===','!=='].includes(value.operator)?{symbol:path,truth:predicateTruth(value,path)}:{symbol:path};
       }
       if(value.kind==='unary'||value.kind==='fieldAccess') {
-        const operand=child(value.kind==='unary'?'operand':'receiver',terminalRoot);
+        const operand=child(value.kind==='unary'?'operand':'receiver');
         return operand.terminal?operand:{symbol:path};
       }
       if(value.kind==='fieldAssignment') {
-        const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,terminalRoot);
+        const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,root);
         if(receiver.terminal)return receiver;
-        const rhs=child('value',terminalRoot);
+        const rhs=child('value');
         // Replacing a nominal field does not write an independently tracked Array slot.
         return rhs.terminal?rhs:{symbol:path};
       }
       if(value.kind==='construct'||value.kind==='superConstruct') {
+        const superCall=value.kind==='superConstruct';
         for(const [index,item] of (value.arguments??[]).entries()) {
-          const argument=expression(item,path+'/arguments/'+index,state,bindings,terminalRoot);
-          if(argument.terminal)return argument;
+          const argument=expression(item,path+'/arguments/'+index,state,bindings,superCall?'superArgument':root);
+          if(argument.terminal){
+            if(superCall&&recordReads){charge();failedSuperArguments.set(path,{index,trap:argument.trap});}
+            return argument;
+          }
         }
         invalidate(state);
+        if(superCall){
+          if(!collectAll&&failedConstructions.has(value.construction))return {terminal:true,trap:path};
+          const failure=initialize(value.afterSuccess,path,state,bindings);
+          if(failure)return failure;
+        }
         return {symbol:path};
       }
       // Unmodeled aliases never acquire an owner identity. Still traverse all
       // real evaluation children and conservatively discard mutating effects.
       if(value.target)for(const name of ['receiver','index'])if(value.target[name])expression(value.target[name],path+'/target/'+name,state,bindings);
-      for(const name of ['receiver','operand','left','right','index','value'])if(value[name])child(name);
+      for(const name of ['receiver','operand','left','right','index','value'])if(value[name])child(name,false);
       for(const [index,item] of (value.arguments??[]).entries())expression(item,path+'/arguments/'+index,state,bindings);
       if(value.kind==='update')invalidate(state);
       return {symbol:path};
@@ -466,6 +503,19 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const bindings=new Map();meetBindings(bindings,left.bindings,right.bindings);
         return {state:join(left.state,right.state),bindings};
       },charge);
+    }
+    function initialize(statement,site,state,bindings) {
+      inInitializer=true;
+      let failure=null;
+      for(const init of types.get(statement.ownerType).construction.initialization)if(init.value) {
+        const initializer='construction/'+statement.construction+'/initialization/'+init.field;
+        const result=expression(init.value,initializer,state,bindings,'initializer');
+        if(!result.terminal)continue;
+        if(recordReads){charge();failedInitializers.set(site,{node:initializer,trap:result.trap});}
+        failure=result;break;
+      }
+      inInitializer=false;
+      return failure;
     }
     function statements(body,path,state,bindings) {
       for(const [index,row] of body.entries()) {
@@ -540,17 +590,11 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           invalidate(state);
           if(truth===true)return null;
         }else if(row.kind==='initializeOwnFields') {
-          const construction=types.get(row.ownerType).construction;
-          // Forwarded construction has its own activation after the base returns.
-          const root=construction.initializationPhase==='before-body'?'initializer':false;
-          for(const init of construction.initialization)if(init.value) {
-            const initializer='construction/'+row.construction+'/initialization/'+init.field;
-            if(expression(init.value,initializer,state,bindings,root).terminal) {
-              if(recordReads){charge();failedInitializers.add(initializer);}
-              return null;
-            }
-          }
-        }else if(row.kind==='forwardBaseConstruction')invalidate(state);
+          if(initialize(row,p,state,bindings))return null;
+        }else if(row.kind==='forwardBaseConstruction'){
+          if(!collectAll&&failedConstructions.has(row.construction))return null;
+          invalidate(state);
+        }
       }return state;
     }
     if(firstCondition) {
@@ -585,14 +629,16 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }
   let before;
   do {
-    charge();before=ledger();reads.clear();normalReadSources.clear();failedInitializers.clear();contextWrites=new Map();terminalReads=null;
+    charge();before=ledger();reads.clear();normalReadSources.clear();failedInitializers.clear();failedConstructions.clear();failedSuperArguments.clear();
+    contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
-    for(const fn of functions) {
+    for(const fn of ordered) {
       const incoming=[];
       for(const row of contextsByTarget.get(fn.id)?.values()??[]){charge();if(row.possible)incoming.push(row);}
       if(exported.has(fn.id)||fn.ownerType||!incoming.length)incoming.push({state:new Map(),constants:new Map()});
       let state;for(const row of incoming){charge();state=state?join(state,row.state):clone(row.state);}
-      analyze(fn,state,parameters(fn,incoming),true);
+      const outcome=analyze(fn,state,parameters(fn,incoming),true);
+      if(fn.role==='construction-body'&&outcome.complete&&!outcome.productive){charge();failedConstructions.add(fn.construction);}
     }
     for(const sites of contextsByTarget.values())for(const site of sites.keys()){
       charge();sites.set(site,contextWrites.get(site)??{possible:false,state:new Map(),constants:new Map(),truths:new Map()});
@@ -600,5 +646,5 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }while(before!==ledger());
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
-  return {reaching,terminalReads,normalReadSources,failedInitializers};
+  return {reaching,terminalReads,normalReadSources,failedInitializers,failedConstructions,failedSuperArguments};
 }

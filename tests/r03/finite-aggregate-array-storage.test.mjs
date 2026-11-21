@@ -165,6 +165,8 @@ for(const kind of ['construct','superConstruct'])for(const {name,indices,expecte
   const statement=expression=>({kind:'expression',expression,range});
   const superCall=kind==='superConstruct';
   const call={kind,type:superCall?'void':'Derived',callee:superCall?'Base':'Derived',
+    construction:superCall?'base':'derived',
+    ...(superCall?{afterSuccess:{kind:'initializeOwnFields',ownerType:'Derived',construction:'derived',origin:range}}:{}),
     arguments:indices.map(index=>read(reference,index)),range};
   const body=[
     {kind:'local',binding:{id:'slots',type:'array'},initializer:array,range},

@@ -59,9 +59,9 @@ test('the existing mutable static alias remains writable on a readonly-declared 
   assert.notEqual(hir.functions.find(row=>row.name==='f').role,'construction-body','ordinary function did not acquire a construction role');
 });
 
-test('a checked field initializer stops subsequent initialization and normal construction',async()=>{
-  const bytes=await readFile(new URL('./testdata/typed-array-reference-domain/initializer-order-package.json',import.meta.url));
-  assert.equal(sha256(bytes),'sha256:5e4374117a2e272310c4003c9069cdb3ab0ddee34ebc5070b8113e6e0dbd818b');
+async function initializerProof(file,digest){
+  const bytes=await readFile(new URL('./testdata/typed-array-reference-domain/'+file+'-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:'+digest);
   const facts=readTypedArrayFacts(bytes);
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const publicationContext=buildInitialArrayPublication(context);
@@ -70,6 +70,10 @@ test('a checked field initializer stops subsequent initialization and normal con
   const {hir}=built;
   const proofs=buildFiniteCoreDomains(hir,context,{publicationContext});
   const phases=buildFiniteFieldPhases(hir,context,{publicationContext});
+  return {hir,proofs,phases};
+}
+test('a checked field initializer stops subsequent initialization and normal construction',async()=>{
+  const {hir,proofs,phases}=await initializerProof('initializer-order','5e4374117a2e272310c4003c9069cdb3ab0ddee34ebc5070b8113e6e0dbd818b');
   for(const [name,continues] of [['stops',false],['good',true]]) {
     const fn=hir.functions.find(row=>row.name===name);
     const phase=phases.find(row=>row.ownerType===fn.body[0].initializer.type);
@@ -91,5 +95,90 @@ test('a checked field initializer stops subsequent initialization and normal con
       const fieldRead=plan.fieldReaching.reads.find(row=>row.node===fn.id+'/body/1/value');
       assert.deepEqual(fieldRead?.reaching.flatMap(row=>row.sources),continues?[tail]:[]);
     }
+  }
+});
+
+test('derived field initialization requires successful super and stops at its first failing read',async()=>{
+  const {hir,proofs,phases}=await initializerProof('derived-initializer-order','42a9625af3afedf27e0691c7962042917d2df5ab8b614dbe3eaa92da9f54f0fe');
+  const expected={blocked:['pending','pending'],stops:['missing','pending'],good:['proven','proven']};
+  for(const [name,status] of Object.entries(expected)) {
+    const fn=hir.functions.find(row=>row.name===name),type=hir.types.find(row=>row.id===fn.body[0].initializer.type);
+    const phase=phases.find(row=>row.ownerType===type.id),base=phases.find(row=>row.ownerType===type.base);
+    assert.equal(phase.activation,'after-successful-super');
+    const [first,tail]=phase.events.map(row=>row.output.valueNode);
+    assert.equal(phase.events.length,2);
+    for(const plan of [proofs.definition,proofs.reached]) {
+      const reads=new Map(plan.arrayReaching.reads.map(row=>[row.node,row]));
+      assert.deepEqual([reads.get(first)?.status,reads.get(tail)?.status],status,name+' initializer reads');
+      const writes=plan.fieldReaching.phaseWrites.filter(row=>row.id.startsWith(phase.constructionId+'/'));
+      assert.deepEqual(writes.map(row=>row.node).sort(),name==='good'?[first,tail].sort():[],name+' reached writes');
+      const completed=id=>plan.fieldReaching.completions.some(row=>row.construction===id);
+      assert.equal(completed(base.constructionId),name!=='blocked',name+' base completion');
+      assert.equal(completed(phase.constructionId),name==='good',name+' derived completion');
+      const result=plan.nodes.find(row=>row.id===fn.id+'/return');
+      const domain=plan.domains.find(row=>row.id===result.domainId);
+      assert.deepEqual(domain.actualTypes,name==='good'?[fn.returnType.id]:[],name+' returned value');
+    }
+  }
+});
+
+test('mutually exclusive super calls meet at a single lexical initializer',async()=>{
+  const {hir,proofs,phases}=await initializerProof('multi-super-initializer','e28589ca07d0dd98d1ac851ddd1345d4ea6019706b266f2ab4df39f90f375726');
+  const fn=hir.functions.find(row=>row.name==='entry'),type=hir.types.find(row=>row.id===fn.body[0].initializer.type);
+  const constructor=hir.functions.find(row=>row.id===type.constructor),branch=constructor.body[0];
+  assert.equal(branch.then[0].expression.kind,'superConstruct');
+  assert.equal(branch.else[0].expression.kind,'superConstruct');
+  const phase=phases.find(row=>row.ownerType===type.id),[event]=phase.events;
+  const node=event.output.valueNode;
+  for(const plan of [proofs.definition,proofs.reached]) {
+    const reads=plan.arrayReaching.reads.filter(row=>row.node===node);
+    assert.deepEqual(reads.map(row=>row.status),['proven']);
+    assert.equal(reads[0].versions.length,1);
+    assert.equal(plan.fieldReaching.phaseWrites.filter(row=>row.node===node).length,1);
+    const result=plan.nodes.find(row=>row.id===fn.id+'/return');
+    const domain=plan.domains.find(row=>row.id===result.domainId);
+    assert.deepEqual(domain.actualTypes,[fn.returnType.id]);
+  }
+});
+
+test('failed super arguments and nested initializer operands stop their own continuation',async()=>{
+  const {hir,proofs,phases}=await initializerProof('constructor-expression-failures','e5599012fe72a1f0ccd8e33650b66098cbbb41dd2846df89598bb2f80473c1c9');
+  const entry=hir.functions.find(row=>row.name==='entry'),nested=hir.functions.find(row=>row.name==='nested');
+  const multi=hir.types.find(row=>row.id===entry.body[0].initializer.type);
+  const own=phases.find(row=>row.ownerType===multi.id).events[0].output.valueNode;
+  const firstArgument=multi.constructor+'/body/0/then/0/expression/arguments/0';
+  const nestedPhase=phases.find(row=>row.ownerType===nested.body[0].initializer.type);
+  const [first,tail]=nestedPhase.events.map(row=>row.output.valueNode);
+  for(const plan of [proofs.definition,proofs.reached]){
+    assert.equal(plan.arrayReaching.reads.find(row=>row.node===firstArgument)?.status,'missing');
+    const reading=plan.fieldReaching.reads.find(row=>row.node===entry.id+'/body/1/value');
+    assert.deepEqual(reading?.reaching.flatMap(row=>row.sources),[own],'only the successful arm contributes its initializer');
+    const nestedRead=plan.arrayReaching.reads.find(row=>row.node.startsWith(first+'/'));
+    assert.equal(nestedRead?.status,'missing');
+    assert.equal(plan.arrayReaching.reads.find(row=>row.node===tail)?.status,'pending');
+    assert.ok(!plan.fieldReaching.phaseWrites.some(row=>row.id.startsWith(nestedPhase.constructionId+'/')));
+    assert.ok(!plan.fieldReaching.completions.some(row=>row.construction===nestedPhase.constructionId));
+    const result=plan.nodes.find(row=>row.id===nested.id+'/return');
+    const domain=plan.domains.find(row=>row.id===result.domainId);
+    assert.deepEqual(domain.actualTypes,[]);
+  }
+});
+
+test('a failed initializer preserves only the effects before its checked read',async()=>{
+  const {hir,proofs,phases}=await initializerProof('initializer-effect-prefix','49f2f016b5cab752215451826ba7497eeba97e7388800b447ac9f10da01e0084');
+  const entry=hir.functions.find(row=>row.name==='entry');
+  const owner=hir.types.find(row=>row.id===entry.body[0].initializer.type);
+  const before=hir.functions.find(row=>row.ownerType===owner.id&&row.name==='before');
+  const after=hir.functions.find(row=>row.ownerType===owner.id&&row.name==='after');
+  assert.ok(before&&after);
+  const phase=phases.find(row=>row.ownerType===owner.id);
+  const [marker,first,tail]=phase.events.map(row=>row.output.valueNode);
+  for(const plan of [proofs.definition,proofs.reached]){
+    assert.equal(plan.arrayReaching.reads.find(row=>row.node.startsWith(first+'/'))?.status,'missing');
+    assert.equal(plan.arrayReaching.reads.find(row=>row.node===tail)?.status,'pending');
+    assert.deepEqual(plan.fieldReaching.phaseWrites.filter(row=>row.id.startsWith(phase.constructionId+'/')).map(row=>row.node),[marker]);
+    assert.ok(plan.fieldReaching.callContexts.some(row=>row.target===before.id&&row.fields.length),'receiver reaches the earlier call');
+    assert.ok(!plan.fieldReaching.callContexts.some(row=>row.target===after.id&&row.fields.length),'later call receives no state');
+    assert.ok(!plan.fieldReaching.completions.some(row=>row.construction===phase.constructionId));
   }
 });
