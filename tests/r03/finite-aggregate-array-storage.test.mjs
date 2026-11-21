@@ -150,6 +150,43 @@ test('a checked field store completes its receiver before its value and the foll
   }
 });
 
+// The synthetic bodies isolate constructor operand order from Source production
+// and model only the Array facts consumed by this analysis.
+for(const kind of ['construct','superConstruct'])for(const {name,indices,expected} of [
+  {name:'first fails',indices:[1,0],expected:['missing','pending','pending','pending']},
+  {name:'second fails',indices:[0,1],expected:['proven','missing','pending','pending']},
+  {name:'both complete',indices:[0,0],expected:['proven','proven','pending','proven']},
+])test('construction arguments '+kind+' '+name,()=>{
+  const range={start:0,end:1};
+  const constant=decimal=>({kind:'constant',type:'i32',decimal:String(decimal),range});
+  const array={kind:'arrayCreate',type:'array',elements:[constant(7)],range};
+  const reference={kind:'reference',type:'array',binding:'slots',range};
+  const read=(receiver,index)=>({kind:'arrayReadChecked',type:'i32',receiver,index:constant(index),range});
+  const statement=expression=>({kind:'expression',expression,range});
+  const superCall=kind==='superConstruct';
+  const call={kind,type:superCall?'void':'Derived',callee:superCall?'Base':'Derived',
+    arguments:indices.map(index=>read(reference,index)),range};
+  const body=[
+    {kind:'local',binding:{id:'slots',type:'array'},initializer:array,range},
+    statement(call),statement(read(reference,0)),statement(read(array,0)),
+  ];
+  const fn={id:'body',sourcePath:'model.ts',parameters:[],body,
+    ...(superCall?{role:'construction-body',ownerType:'Derived',construction:'derived',
+      parameters:[{id:'this',type:'Derived'}]}:{})};
+  const model={functions:[fn],exports:superCall?[]:[{functionId:fn.id}],types:[
+    {id:'i32',kind:'scalar',constructor:undefined},{id:'void',kind:'void',constructor:undefined},
+    {id:'array',kind:'array',element:'i32',constructor:undefined},
+    {id:'Derived',kind:'reference',constructor:'body',construction:{initialization:[]}},
+  ],intrinsics:{readSpan:{id:'readSpan'}}};
+  const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>true);
+  const paths=['1/expression/arguments/0','1/expression/arguments/1','2/expression','3/expression'];
+  const rows=paths.map(path=>reaching.reads.find(row=>row.node==='body/body/'+path));
+  const first='body/body/0/initializer/initial/0/array-version',fresh='body/body/3/expression/receiver/initial/0/array-version';
+  assert.deepEqual(rows.map(row=>row?.status),expected);
+  assert.deepEqual(rows.map(row=>row?.versions),expected.map((status,index)=>status==='proven'?[index===3?fresh:first]:[]));
+  assert.ok(reaching.writes.some(row=>row.id===fresh),'lexical inventory includes the later fresh array');
+});
+
 const edges=[
   ['external-store','2da94f8faf2ccfce063ba3a4b37023cb0d0a00056604f83257d5771b7c493423',
     '6ff21b20fca958a1e7e7dd834368c008b5d5bc7ffcd02a9a7c7b362671cb91a2'],

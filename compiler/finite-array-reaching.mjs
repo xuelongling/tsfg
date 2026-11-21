@@ -401,12 +401,20 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         // Replacing a nominal field does not write an independently tracked Array slot.
         return rhs.terminal?rhs:{symbol:path};
       }
+      if(value.kind==='construct'||value.kind==='superConstruct') {
+        for(const [index,item] of (value.arguments??[]).entries()) {
+          const argument=expression(item,path+'/arguments/'+index,state,bindings,terminalRoot);
+          if(argument.terminal)return argument;
+        }
+        invalidate(state);
+        return {symbol:path};
+      }
       // Unmodeled aliases never acquire an owner identity. Still traverse all
       // real evaluation children and conservatively discard mutating effects.
       if(value.target)for(const name of ['receiver','index'])if(value.target[name])expression(value.target[name],path+'/target/'+name,state,bindings);
       for(const name of ['receiver','operand','left','right','index','value'])if(value[name])child(name);
       for(const [index,item] of (value.arguments??[]).entries())expression(item,path+'/arguments/'+index,state,bindings);
-      if(['construct','superConstruct','update'].includes(value.kind))invalidate(state);
+      if(value.kind==='update')invalidate(state);
       return {symbol:path};
     }
     // A representation-changing adaptation emits domain.view, which is not
