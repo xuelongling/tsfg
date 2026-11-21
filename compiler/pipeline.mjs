@@ -17,6 +17,9 @@ import {commonProgramCore} from './common-program-core.mjs';
 import {isCommonProgramContext} from './common-program-hir.mjs';
 import {commonHirFormat} from './common-program-common.mjs';
 import {isSelectedNullableContext} from './nullable-common.mjs';
+import {isTypedArrayContext} from './typed-array-hir.mjs';
+import {typedArrayHirFormat} from './typed-array-project.mjs';
+import {prepareFiniteCore} from './finite-core-emitter.mjs';
 import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
@@ -331,7 +334,8 @@ function hasCheckedGenericRoot(core,defaultRoot) {
 }
 
 async function produceCore(hir, options, lower = undefined, context = undefined) {
-  const { core:coreExecutable, optimize } = options;
+  const coreExecutable = options.core;
+  const optimize = coreExecutable ? options.optimize : undefined;
   const executable = await verifiedConsumer(coreExecutable, "core");
   const factsContext = context ? context.factsContext : options.factsContext;
   const lowered = lower ? lower(hir) : lowerFormalHir(hir, factsContext, options.callPublicationContext);
@@ -368,10 +372,30 @@ async function produceBytecode(buildCore) {
 
 function produceOwnedCore(hir, options, selected = undefined) {
   let family;
+  let finite = false;
   try {
     family = familyOf(hir);
+    if (family === undefined && hir && typeof hir === 'object') {
+      // familyOf already checked the own format descriptor and its prototype.
+      const format = Object.getOwnPropertyDescriptor(hir, 'format')?.value;
+      finite = !!format && typeof format === 'object' &&
+        Object.getOwnPropertyDescriptor(format, 'contractVersion')?.value === typedArrayHirFormat.contractVersion &&
+        Object.getOwnPropertyDescriptor(format, 'schemaHash')?.value === typedArrayHirFormat.schemaHash;
+    }
   } catch {
     // Keep malformed inputs on the existing formal validation path.
+  }
+  if (finite) {
+    const core = options.core;
+    if (!core) return produceCore(hir, { core });
+    const fixedOptions = { core, optimize: options.optimize };
+    const request = selected ?? options;
+    const { factsContext } = request;
+    if (!isTypedArrayContext(factsContext))
+      return produceCore(hir, fixedOptions,
+        selected?.lower ?? (value => lowerFormalHir(value, factsContext, options.callPublicationContext)), { factsContext });
+    const prepared = prepareFiniteCore(hir, factsContext, request.callPublicationContext);
+    return produceCore(prepared.hir, fixedOptions, () => prepared.text);
   }
   if (family === commonHirFormat.family && selected?.callPublicationContext !== undefined &&
       selected.factsContext === undefined) {

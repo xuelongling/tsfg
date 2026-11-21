@@ -32,6 +32,10 @@ function memberWitnessContracts(hir) {
 }
 
 export function emitFiniteCore(input,context,publicationContext=undefined) {
+  return prepareFiniteCore(input,context,publicationContext).text;
+}
+
+export function prepareFiniteCore(input,context,publicationContext=undefined) {
   const options={publicationContext},hir=verifyHir(input,context,publicationContext);
   // The selected root is not necessarily the first member of the complete
   // Source closure. Bind the formal header to that original owned text.
@@ -366,5 +370,5 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
     member_views:canonical(buildTypedReferenceViews(hir,context,options)),target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout};
   const result='module attributes {'+Object.entries(attrs).map(([key,value])=>'tsfg_core.'+key+' = '
     +(typeof value==='number'?value+' : i64':quote(value))).join(', ')+'} {\n'+functions.join('\n')+'\n}\n';
-  if(Buffer.byteLength(result)>8388608)pending('Core byte limit');return result;
+  if(Buffer.byteLength(result)>8388608)pending('Core byte limit');return {hir,text:result};
 }

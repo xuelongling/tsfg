@@ -14,9 +14,11 @@ import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {readGenericHir} from '../../compiler/generic-hir.mjs';
+import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {expectedGenericCore} from './generic-core-package-capture.mjs';
 import {expectedExceptionModule} from './formal-exception-module-oracle.mjs';
 import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
+import {staticPublication} from './typed-array-publication-fixtures.mjs';
 
 const artifact=path.join(import.meta.dirname,'core-transport-only','core.exe');
 const manifestPath=path.join(path.dirname(artifact),'artifact-manifest.json');
@@ -52,6 +54,7 @@ function framedCore(text,tail=Buffer.alloc(0)){
 const valid=framedCore(core.toString('utf8'),Buffer.from('// Source note: \ufffd\n'));
 const malformed=framedCore(core.toString('utf8'),Buffer.concat([Buffer.from('// Source note: '),Buffer.of(255,10)]));
 const capture=process.env.TSFG_R03_CORE_PAIR_CAPTURE;
+const finiteCapture=process.env.TSFG_R03_FINITE_PAIR_CAPTURE;
 const commonCapture=process.env.TSFG_R03_COMMON_PAIR_CAPTURE;
 const exceptionCapture=process.env.TSFG_R03_EXCEPTION_PAIR_CAPTURE;
 const mismatch={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked input identity differs'};
@@ -99,6 +102,88 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       factsBytes,expectedPackageId:facts.packageId}});
     assert.equal((await pending).status,'ok');
     assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+  });
+  await t.test('ordinary bytecode reads lowering options once after Core admission',async sub=>{
+    const reads=[];
+    const options={core:/** @type {string|undefined} */(undefined),
+      get optimize(){reads.push('optimize');return false;},
+      get factsContext(){reads.push('facts');return undefined;},
+      get callPublicationContext(){reads.push('publication');return undefined;},
+    };
+    const missing=await compileOwnedHir(hir,options);
+    const withoutCore=reads.splice(0);
+    options.core=artifact;
+    packetStdout=Buffer.alloc(0);
+    sub.after(()=>{packetStdout=undefined;});
+    const first=calls.length,pending=compileOwnedHir(hir,options);
+    const beforeAdmission=[...reads];
+    await pending;
+    assert.deepEqual(missing,{status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required'});
+    assert.deepEqual({withoutCore,beforeAdmission,reads},
+      {withoutCore:[],beforeAdmission:['optimize'],reads:['optimize','facts','publication']});
+    assert.deepEqual(calls.slice(first),[['--canonicalize'],['--emit-bytecode']]);
+  });
+  await t.test('owned finite Core keeps the original Span request during admission',async sub=>{
+    async function finiteFixture(file,digest) {
+      const factsBytes=await fs.readFile(new URL('./testdata/'+file,import.meta.url));
+      assert.equal(sha256(factsBytes),'sha256:'+digest);
+      const facts=readTypedArrayFacts(factsBytes);
+      const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:facts.packageId};
+      const publication=staticPublication(facts),built=buildHir(facts,context,publication);
+      assert.equal(built.status,'ok');
+      return {hir:built.hir,context,publication};
+    }
+    const [original,replacement]=await Promise.all([
+      finiteFixture('typed-array-span-array-slots/f0f4a3e0a384a08fdfe7532a6bd86e63f52e3f6c3704cf53a60f0dfee2629979-package.json',
+        '512d8c5d1d5c481f27d7d9af0a13ef5e205f6289b37abf305acc1c225faf399e'),
+      finiteFixture('typed-array-aggregate-storage/selected-return-package.json',
+        '48b781c24069dc159ffe9802388625abd0612a99e1032e3d526ec631b6dd28a4'),
+    ]);
+    assert.notEqual(original.hir.inputIdentity,replacement.hir.inputIdentity);
+    const missingReads=[];
+    const missing=await compileOwnedHir(original.hir,{
+      get core(){missingReads.push('core');return undefined;},
+      get optimize(){missingReads.push('optimize');return false;},
+      get factsContext(){missingReads.push('facts');return original.context;},
+      get callPublicationContext(){missingReads.push('publication');return original.publication;},
+    });
+    assert.deepEqual(missing,{status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required'});
+    assert.deepEqual(missingReads,['core']);
+    const lower=value=>lowerFormalHir(value.hir,value.context,value.publication);
+    const originalText=lower(original);
+    const [matching,foreign]=finiteCapture?await Promise.all(['0002','0003'].map(name=>fs.readFile(path.join(finiteCapture,name,'stdout.bin')))):
+      [framedCore(originalText),framedCore(lower(replacement))];
+    if(finiteCapture){
+      assert.equal(sha256(matching),'sha256:a0c61a625461141b31f901ffce06e990543c97eed9fce6332d46a2f96d6313bb');
+      assert.equal(sha256(foreign),'sha256:17aa2a9cae229691646ebce33e5a2addce61199b014962ee6a0664ee37fd4b73');
+    }
+    function replaceDuringAdmission(compile) {
+      const candidate=structuredClone(original.hir),factsContext={...original.context},callPublicationContext=structuredClone(original.publication);
+      let factsReads=0;
+      const options={core:artifact,optimize:false,get factsContext(){factsReads++;return factsContext;},callPublicationContext};
+      const pending=compile(candidate,options);
+      assert.equal(factsReads,1);
+      Object.assign(candidate,replacement.hir);
+      Object.assign(factsContext,replacement.context);
+      Object.assign(callPublicationContext,replacement.publication);
+      Object.assign(options,{core:'replacement.exe',optimize:true});
+      return pending;
+    }
+    sub.after(()=>{stdout=valid;packetStdout=undefined;});
+    stdout=Buffer.from(matching);
+    let first=calls.length;
+    const accepted=await replaceDuringAdmission(compileOwnedCore);
+    assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+    assert.equal(sha256(coreInput),sha256(originalText));
+    assert.equal(accepted.status,'ok');
+    assert.deepEqual(accepted.hir,original.hir);
+    assert.deepEqual(Buffer.from(accepted.core,'utf8'),matching);
+
+    stdout=Buffer.from(foreign);packetStdout=Buffer.alloc(0);
+    first=calls.length;
+    assert.deepEqual(await replaceDuringAdmission(compileOwnedHir),mismatch);
+    assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+    assert.equal(sha256(coreInput),sha256(originalText));
   });
   await t.test('registered Core transport rejects a foreign input before bytecode',async sub=>{
     const {hir:foreignHir}=stringCases()[0];
