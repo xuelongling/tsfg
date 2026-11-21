@@ -147,13 +147,21 @@ function decodeQueryCompilerText(bytes,stage){
   return decodeCompilerText(bytes,`r10-system-query-${stage}`);
 }
 
-/** Match the official printer's byte-escaped batch proof. @param {string} llvm @param {string} batch */
-function checkQueryLlvmBatch(llvm,batch){
+/** Match the official printer's target declarations and byte-escaped batch proof.
+ * @param {string} llvm @param {string} batch
+ * @param {import('./system-query-facts.mjs').SystemQueryFacts['program']['target']} target
+ */
+function checkQueryLlvmPair(llvm,batch,target){
   const lines=llvm.split('\n');
   const definitions=/** @param {string} id */ id=>lines.filter(line=>{
     const equals=line.indexOf('=');
     return equals>=0&&line.slice(0,equals).trim()===id;
   });
+  for(const [name,value] of [['target triple',target.triple],['target datalayout',target.llvmDataLayout]]){
+    const declaration=definitions(name);
+    if(declaration.length!==1||declaration[0]!==name+' = "'+value+'"')
+      throw new TypeError('r10-system-query-llvm: checked target differs');
+  }
   const named=definitions('!tsfg.query.cpu');
   const id=named.length===1&&/^!tsfg\.query\.cpu = !\{(![0-9]+)\}$/u.exec(named[0])?.[1];
   if(id){
@@ -179,7 +187,7 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
   const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;
-  if(cpuLLVM&&llvmOutput==='ir'&&(includeBatch||includeTmeta))checkQueryLlvmBatch(cpuLLVM,checkedBatch);
+  if(cpuLLVM&&llvmOutput==='ir'&&(includeBatch||includeTmeta))checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),

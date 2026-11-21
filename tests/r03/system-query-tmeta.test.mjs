@@ -326,11 +326,11 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
   });
 });
 
-test('Query LLVM pairing rejects a retained module for a different batch',()=>{
+test('Query LLVM pairing validates the retained batch and target',async t=>{
   const fixtures=new URL('../../runtime/jobs/testdata/',import.meta.url);
   const llvm=readFileSync(new URL('query-tmeta-i32-copy-retained.ll',fixtures));
-  /** @param {string} name @param {string[]} calls */
-  const run=(name,calls)=>{
+  /** @param {string} name @param {string[]} calls @param {Buffer} [llvmOutput] */
+  const run=(name,calls,llvmOutput=llvm)=>{
     const metadata=readFileSync(new URL('query-tmeta-'+name+'.tmeta',fixtures));
     const payload=JSON.parse(JSON.parse(metadata.toString('utf8')).payload);
     const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
@@ -340,7 +340,7 @@ test('Query LLVM pairing rejects a retained module for a different batch',()=>{
       calls.push(command);
       if(command==='--cpu-batch')return Buffer.from(payload.batch);
       assert.equal(source,payload.batch);
-      if(command==='--llvm-ir')return llvm;
+      if(command==='--llvm-ir')return llvmOutput;
       assert.equal(command,'--tmeta');
       return metadata;
     });
@@ -357,6 +357,19 @@ test('Query LLVM pairing rejects a retained module for a different batch',()=>{
   const mismatched=[];
   assert.throws(()=>run('i32-compound',mismatched),/r10-system-query-llvm: checked batch proof differs/);
   assert.deepEqual(mismatched,['--cpu-batch','--llvm-ir']);
+
+  const original=llvm.toString('utf8');
+  const replacements=[
+    ['target triple','x86_64-pc-windows-msvc','aarch64-pc-windows-msvc'],
+    ['target datalayout','-S128"','-S64"'],
+  ];
+  for(const [name,before,after] of replacements)await t.test('reject mismatched '+name,()=>{
+    const changed=original.replace(before,after);
+    assert.notEqual(changed,original);
+    const calls=[];
+    assert.throws(()=>run('i32-copy',calls,Buffer.from(changed)),/r10-system-query-llvm: checked target differs/);
+    assert.deepEqual(calls,['--cpu-batch','--llvm-ir']);
+  });
 });
 
 test('Query tmeta rejects an otherwise matching batch missing its final LF',()=>{
