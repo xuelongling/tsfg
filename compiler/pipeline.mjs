@@ -115,6 +115,12 @@ function consume(executable, args, input) {
   return child.stdout;
 }
 
+/** @param {Buffer} bytes @param {string} diagnostic */
+function decodeCompilerText(bytes,diagnostic){
+  try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}
+  catch{throw new TypeError(`${diagnostic}: invalid UTF-8 in compiler output`);}
+}
+
 /** Compile complete owned Query input through the independent static consumer.
  * @param {Uint8Array} bytes @param {unknown} context
  * @param {{core:string,optimize?:boolean,effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir',tmeta?:boolean}} options
@@ -135,8 +141,7 @@ function decodeQueryCompilerText(bytes,stage){
     throw new TypeError(`r10-system-query-${stage}: compiler output size differs`);
   if(stage==='batch'&&bytes.at(-1)!==10)
     throw new TypeError('r10-system-query-batch: compiler output requires a final LF');
-  try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}
-  catch{throw new TypeError(`r10-system-query-${stage}: invalid UTF-8 in compiler output`);}
+  return decodeCompilerText(bytes,`r10-system-query-${stage}`);
 }
 
 /** Collect outputs from the same verified static Query consumer.
@@ -170,7 +175,7 @@ export async function compileCommonBorrowProof(hir,publication,request,options){
   const product=commonProgramCore(hir,publication,request,{borrowProof:true});
   const fixed=own({publication,request});
   const executable=await verifiedConsumer(options.core,'core');
-  const core=consume(executable,['--common-program','--canonicalize'],product.text).toString('utf8');
+  const core=decodeCompilerText(consume(executable,['--common-program','--canonicalize'],product.text),'r03-core-output');
   const proof=readCommonBorrowProof(consume(executable,['--common-program','--borrow-proof'],core),product.hir,fixed.publication,fixed.request);
   return {status:'ok',hir:product.hir,core,proof};
 }
@@ -215,7 +220,7 @@ async function produceCore(hir, options, lower = value => lowerFormalHir(value, 
   const lowered = lower(hir);
   const common = isCommonProgramContext(context ? context.factsContext : options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate';
   const prefix = common ? ['--common-program'] : [];
-  const core = consume(executable, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered).toString("utf8");
+  const core = decodeCompilerText(consume(executable, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
   return { hir, executable, prefix, common, core };
 }
 
