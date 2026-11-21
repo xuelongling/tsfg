@@ -48,7 +48,7 @@ export async function runBuildCommand(arguments_, command, sourceTarget, runtime
         const result = await executeAotTarget({ options, runtime: runtimeClosure,
           tools: runtimeClosure ? windowsToolchain(runtimeClosure) : undefined,
           productRoot: workspaceState.root, workspaceState, serialize: canonicalize, sha256: digest,
-          core: await readFile(options.get("--program-core"), "utf8"), coreExecutable: options.get("--core"),
+          corePath: options.get("--program-core"), coreExecutable: options.get("--core"),
           normalize: async ({ executable, pdb, stage, product, environment, identity, tools, runtime }) => {
             const guid = await normalizeWindowsPdb(pdb, tools.pdbutil,
               [[product, "."], [runtime.closurePath, ".toolchain"], [stage, ".build"],

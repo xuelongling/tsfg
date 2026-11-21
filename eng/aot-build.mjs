@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
+import {isUtf8} from 'node:buffer';
 import {randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {copyFile,lstat,mkdir,open,readFile,rename,writeFile} from 'node:fs/promises';
+import {copyFile,lstat,mkdir,open,readFile,realpath,rename,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {verifiedConsumer} from '../compiler/pipeline.mjs';
 import {verifyProducedPacket} from '../compiler/producer-packet.mjs';
@@ -16,6 +17,7 @@ export class AotBuildError extends VmBuildError {
 const metadata=value=>Object.fromEntries(['dev','ino','mode','nlink','size','mtimeNs','ctimeNs','birthtimeNs'].map(key=>[key,String(value[key])]));
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const exists=async file=>lstat(file).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+const maxCoreBytes=16777216;
 
 async function ordinaryAncestor(directory) {
   await requireOrdinaryEAncestor(directory,reason=>new AotBuildError(reason==='missing'
@@ -24,25 +26,27 @@ async function ordinaryAncestor(directory) {
 
 // Retain exact finite producer/artifact bytes, including EOF and metadata
 // continuity. Failure keeps the stage and never publishes a partial artifact.
-async function stableBytes(file,maximum) {
+async function stableBytes(file,maximum,issueCode='aot-output-integrity') {
+  const label=issueCode==='aot-input-integrity'?'AOT Core input':'AOT artifact';
+  const invalid=reason=>new AotBuildError(label+' '+reason,issueCode);
   const before=await lstat(file,{bigint:true});
   if(!before.isFile()||before.isSymbolicLink()||before.size<1n||before.size>BigInt(maximum))
-    throw new AotBuildError('AOT artifact extent','aot-output-integrity');
+    throw invalid('extent');
   const observed=metadata(before),bytes=Buffer.alloc(Number(before.size));
   let input,at=0,first;
   try {
     input=await open(file,'r');
-    if(!same(observed,metadata(await input.stat({bigint:true}))))throw new AotBuildError('AOT artifact changed','aot-output-integrity');
+    if(!same(observed,metadata(await input.stat({bigint:true}))))throw invalid('changed');
     while(at<bytes.length) {
       const count=(await input.read(bytes,at,Math.min(1048576,bytes.length-at),at)).bytesRead;
-      if(!count)throw new AotBuildError('AOT artifact early EOF','aot-output-integrity');
+      if(!count)throw invalid('early EOF');
       at+=count;
     }
     if((await input.read(Buffer.alloc(1),0,1,at)).bytesRead!==0
-        ||!same(observed,metadata(await input.stat({bigint:true}))))throw new AotBuildError('AOT artifact changed','aot-output-integrity');
+        ||!same(observed,metadata(await input.stat({bigint:true}))))throw invalid('changed');
   }catch(error){first=error;}finally{if(input)try{await input.close();}catch(error){first??=error;}}
   if(first)throw first;
-  if(!same(observed,metadata(await lstat(file,{bigint:true}))))throw new AotBuildError('AOT artifact changed','aot-output-integrity');
+  if(!same(observed,metadata(await lstat(file,{bigint:true}))))throw invalid('changed');
   return bytes;
 }
 
@@ -57,12 +61,12 @@ function runtimeInputs(identity) {
  * neither a code address nor a metadata/descriptor file. This ordinary build
  * deliberately retains the real false Host resource certificate. */
 export async function executeAotTarget({options,runtime,tools,productRoot,workspaceState,serialize,sha256,
-  createIdentity,verifyTools,normalize,core,coreExecutable}) {
+  createIdentity,verifyTools,normalize,corePath,coreExecutable}) {
   if(!runtime||!tools||typeof verifyTools!=='function'||typeof createIdentity!=='function'
       ||typeof normalize!=='function')throw new AotBuildError('AOT build requires the locked normal build context','aot-tool-integrity');
-  if(typeof core!=='string'||!core.isWellFormed()||Buffer.byteLength(core)<1||Buffer.byteLength(core)>16777216)
-    throw new AotBuildError('AOT expects one complete bounded Core program','aot-input-integrity');
-  const coreBytes=Buffer.from(core,'utf8'),programCore=sha256(coreBytes),output=path.resolve(options.get('--out'));
+  const coreBytes=await stableBytes(await realpath(corePath),maxCoreBytes,'aot-input-integrity');
+  if(!isUtf8(coreBytes))throw new AotBuildError('AOT Core input must be valid UTF-8','aot-input-integrity');
+  const programCore=sha256(coreBytes),output=path.resolve(options.get('--out'));
   if(!/^E:[\\/]/i.test(output))throw new AotBuildError('AOT output must use absolute E storage','aot-output-integrity');
   for(const inputRoot of [productRoot,runtime.closurePath]) {
     const relative=path.relative(inputRoot,output);
@@ -164,7 +168,7 @@ export async function executeAotTarget({options,runtime,tools,productRoot,worksp
   // helper or synthetic positive authority participates in this build path.
   await normalize({executable,pdb,stage,product,environment,identity,tools,runtime});
   if(!certificateBytes.equals(await readFile(certificate)))throw new AotBuildError('AOT false certificate changed','aot-source-integrity');
-  if(!coreBytes.equals(await stableBytes(coreInput,16777216))||!programObject.equals(await stableBytes(object,16777216))
+  if(!coreBytes.equals(await stableBytes(coreInput,maxCoreBytes))||!programObject.equals(await stableBytes(object,16777216))
       ||!wire.equals(await stableBytes(wirePath,1048576)))throw new AotBuildError('AOT program input changed','aot-source-integrity');
   for(const entry of sources)if(sha256(await readFile(path.join(product,entry.repositoryRelativePath)))!==entry.sha256)
     throw new AotBuildError('AOT staged source changed','aot-source-integrity');
