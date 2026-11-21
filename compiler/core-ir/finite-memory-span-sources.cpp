@@ -24,7 +24,7 @@ bool MemorySources::path(Id frame,Id query,MemoryCallPath &destination){
     const auto site=frames.site(current);if(site>=operations.size())return false;
     auto *call=operations[site];const auto &function=frameFunctions.at(current);
     const auto selected=proof.selectedCallees.find(call);
-    if(selected==proof.selectedCallees.end()||!selected->second.count(function)||!proof.mayReach(call->getBlock()))return false;
+    if(selected==proof.selectedCallees.end()||!selected->second.count(function)||!proof.mayExecute(call))return false;
     if(!proof.charge(1+function.size()/64)){valid=false;return false;}result.push_back({call,function,incoming});return true;
   };
   for(const auto current:before)if(!append(current,true))return false;
@@ -47,7 +47,7 @@ MemorySources::Id MemorySources::replay(Id base,const StoredSpanSlice &source){
     if(current==MemoryFrames::none||!frameFunctions.count(current)||!step.call)return MemoryFrames::none;
     const auto selected=proof.selectedCallees.find(step.call);
     if(selected==proof.selectedCallees.end()||!selected->second.count(step.function)||
-        (!step.incoming&&attr(step.call->getParentOp(),"tsfg_core.function_id")!=frameFunctions.at(current))||!proof.mayReach(step.call->getBlock()))return MemoryFrames::none;
+        (!step.incoming&&attr(step.call->getParentOp(),"tsfg_core.function_id")!=frameFunctions.at(current))||!proof.mayExecute(step.call))return MemoryFrames::none;
     if(step.incoming){
       if(!frames.exact(current)||frames.site(current)>=operations.size()||operations[frames.site(current)]!=step.call||
           frameFunctions.at(current)!=step.function)return MemoryFrames::none;
@@ -86,11 +86,14 @@ MemorySelection MemorySources::spanRead(Id query,mlir::Operation *read,const std
       const auto targets=proof.selectedCallees.find(op);
       if(targets==proof.selectedCallees.end()||targets->second.empty()){pending=true;continue;}
       for(const auto &target:targets->second){
-        if(!proof.charge()){valid=false;break;}const auto child=enter(origin.frame,op,target);bool returned=false;
+        if(!proof.charge()){valid=false;break;}
+        if(proof.trapOnlyFunctions.count(target))continue;
+        const auto child=enter(origin.frame,op,target);bool returned=false;
         if(child==MemoryFrames::none){pending=true;continue;}
         for(auto &block:proof.functions.at(target).getBody()){
           if(!proof.charge()){valid=false;break;}if(!proof.mayReach(&block))continue;
-          auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());if(!ret||ret.getNumOperands()!=1)continue;
+          auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
+          if(!ret||ret.getNumOperands()!=1||!proof.mayExecute(ret.getOperation()))continue;
           returned=true;add(ret.getOperand(0),child);
         }
         if(!returned)pending=true;

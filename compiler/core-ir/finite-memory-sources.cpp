@@ -144,10 +144,13 @@ bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrig
     if(name=="func.call"||name=="tsfg_core.domain.method_call"){
       const auto targets=proof.selectedCallees.find(op);if(targets==proof.selectedCallees.end()||targets->second.empty())return false;
       for(const auto &target:targets->second){
-        if(!proof.charge()){valid=false;return false;}const auto child=enter(origin.frame,op,target);bool returned=false;
+        if(!proof.charge()){valid=false;return false;}
+        if(proof.trapOnlyFunctions.count(target))continue;
+        const auto child=enter(origin.frame,op,target);bool returned=false;
         for(auto &block:proof.functions.at(target).getBody()){
           if(!proof.charge()){valid=false;return false;}if(!proof.mayReach(&block))continue;
-          auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());if(!ret||ret.getNumOperands()!=1)continue;
+          auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
+          if(!ret||ret.getNumOperands()!=1||!proof.mayExecute(ret.getOperation()))continue;
           returned=true;add(ret.getOperand(0),child,item.element);
         }
         if(!returned)return false;
@@ -334,10 +337,13 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
     if(name=="func.call"||name=="tsfg_core.domain.method_call"){
       const auto targets=proof.selectedCallees.find(op);if(targets==proof.selectedCallees.end()||targets->second.empty()){result.pending=true;continue;}
       for(const auto &target:targets->second){
-        if(!proof.charge()){valid=false;break;}const auto child=enter(origin.frame,op,target);bool returned=false;
+        if(!proof.charge()){valid=false;break;}
+        if(proof.trapOnlyFunctions.count(target))continue;
+        const auto child=enter(origin.frame,op,target);bool returned=false;
         for(auto &block:proof.functions.at(target).getBody()){
           if(!proof.charge()){valid=false;break;}if(!proof.mayReach(&block))continue;
-          auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());if(!ret||ret.getNumOperands()!=1)continue;
+          auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
+          if(!ret||ret.getNumOperands()!=1||!proof.mayExecute(ret.getOperation()))continue;
           returned=true;add(ret.getOperand(0),child,item.owner,item.dependency);
         }
         if(!returned)result.pending=true;
@@ -440,12 +446,15 @@ MemorySelection MemorySources::arrayRead(Id frame,mlir::Operation *read){
       const auto targets=proof.selectedCallees.find(call);
       if(targets==proof.selectedCallees.end()||targets->second.empty()){pending=true;continue;}
       for(const auto &target:targets->second){
-        if(!proof.charge()){valid=false;break;}const auto child=enter(item.frame,call,target);bool productive=false;
+        if(!proof.charge()){valid=false;break;}
+        if(proof.trapOnlyFunctions.count(target))continue;
+        const auto child=enter(item.frame,call,target);bool productive=false;
         if(child==MemoryFrames::none){pending=true;continue;}
         for(auto &block:proof.functions.at(target).getBody()){
           if(!proof.charge()){valid=false;break;}if(!proof.mayReach(&block))continue;
           auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
-          if(!returned||returned.getNumOperands()!=1)continue;productive=true;
+          if(!returned||returned.getNumOperands()!=1||!proof.mayExecute(returned.getOperation()))continue;
+          productive=true;
           if(!proof.charge(item.after.size())){valid=false;break;}
           work.push_back({child,returned.getOperation(),returned.getOperation(),returned.getOperand(0),capture.index,item.after});
         }

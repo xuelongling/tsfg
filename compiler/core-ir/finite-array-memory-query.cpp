@@ -225,7 +225,8 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
         const auto &step=(*activation)[task.level];bool productive=false;
         for(auto &block:proof.functions.at(step.function).getBody()){
           if(!charge())return {};if(!proof.mayReach(&block))continue;
-          if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator())){
+          if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
+              returned&&proof.mayExecute(returned.getOperation())){
             productive=true;const auto prior=at(returned,task.owner,task.index,0,true,task.level+1);
             if(!valid||!connect({prior,task.node}))return {};
           }
@@ -262,6 +263,16 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
         continue;
       }
       const auto callees=proof.selectedCallees.find(previous);
+      bool modifies=false;
+      if(callees!=proof.selectedCallees.end()){
+        bool normal=false;
+        for(const auto &target:callees->second){
+          if(!charge())return {};
+          if(proof.trapOnlyFunctions.count(target))continue;
+          normal=true;modifies|=effects.at(target);
+        }
+        if(!normal){if(!unknown(task.node))return {};continue;}
+      }
       const bool descriptor=name=="tsfg_core.domain.array_read"||name=="tsfg_core.domain.field_read"||name=="tsfg_core.domain.read_span";
       if(previous==task.owner.getDefiningOp()&&(callees!=proof.selectedCallees.end()||descriptor)){
         if(!charge())return {};
@@ -275,7 +286,6 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
         continue;
       }
       if(callees!=proof.selectedCallees.end()) {
-        bool modifies=false;for(const auto &target:callees->second){if(!charge())return {};modifies|=effects.at(target);}
         if(modifies&&!activation&&!task.scope&&!task.foreign){
           bool preserved=false;
           if(!proveArrayCallPreservesFreshOwner(proof,previous,task.owner,[&](mlir::Value value){return strip(value);},preserved)){
@@ -291,7 +301,9 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
           // incoming path. Substitute this caller's predecessor only for that
           // path; never mix one caller's old writes into every invocation.
           for(const auto &target:callees->second) {
-            if(!charge())return {};auto fn=proof.functions.at(target);
+            if(!charge())return {};
+            if(proof.trapOnlyFunctions.count(target))continue;
+            auto fn=proof.functions.at(target);
             const bool allocation=previous->getName().getStringRef()=="tsfg_core.domain.construct";
             const size_t offset=allocation?1:0;std::vector<size_t> aliases;
             mlir::Value formal;auto slot=task.index;
@@ -317,7 +329,7 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
                 if(!charge())return {};
                 if(!mayReach(selectedScope,&block))continue;
                 if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator())) {
-                  if(selectedScope.condition.truth&&!proof.mayExecute(returned.getOperation()))continue;
+                  if(!proof.mayExecute(returned.getOperation()))continue;
                   const auto origin=at(returned,formal,slot,scope,true);
                   if(!valid||!connect({origin,summary}))return {};
                 }
@@ -413,7 +425,7 @@ bool proveSpanSliceSources(ModuleProof &proof,mlir::Operation *read,mlir::Value 
     const auto selected=proof.selectedCallees.find(step.call);
     if(!step.call||selected==proof.selectedCallees.end()||!selected->second.count(step.function)||
         !proof.functions.count(step.function)||
-        !proof.mayReach(step.call->getBlock())){destination=std::move(result);return true;}
+        !proof.mayExecute(step.call)){destination=std::move(result);return true;}
     const auto caller=attr(step.call->getParentOp(),"tsfg_core.function_id");
     if((step.incoming?step.function:caller)!=function){destination=std::move(result);return true;}
     function=step.incoming?caller:step.function;
