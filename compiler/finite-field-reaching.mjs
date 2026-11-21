@@ -49,8 +49,12 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   const projectedOutputs=new Map(),returnValueParameters=new Map(),returnGraphs=createFieldReturnGraphs(charge);
   const constructors=new Map();for(const fn of callables){charge();if(fn.role==='construction-body')constructors.set(fn.construction,fn);}
   const lexicalWrites=new Map();
-  const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,!!terminalReads);
-  if(!terminalReads)for(const [id,version]of lexicalWrites){charge();writes.set(id,version);}
+  // Core retains the original store instructions across these cuts. Their
+  // lexical versions belong to the emitted inventory, outside ordered state.
+  const keepLexicalWrites=Boolean(terminalReads||plan.failedInitializers?.size||
+    plan.failedConstructions?.size||plan.failedSuperArguments?.size);
+  const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepLexicalWrites);
+  if(!keepLexicalWrites)for(const [id,version]of lexicalWrites){charge();writes.set(id,version);}
   for(const [site,row]of sites)contexts.set(site,{...row,fields:new Map()});
   const clone=state=>copyFieldReachingState(state,charge);
   function join(left,right) {
@@ -558,9 +562,9 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   }
   }while(ledger()!==previous);
   const writeOrder=(a,b)=>a.id<b.id?-1:1;
-  const compareWrites=terminalReads?(a,b)=>{charge();return writeOrder(a,b);}:writeOrder;
+  const compareWrites=keepLexicalWrites?(a,b)=>{charge();return writeOrder(a,b);}:writeOrder;
   return own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),
-    writes:[...(terminalReads?lexicalWrites:writes).values()].sort(compareWrites),
+    writes:[...(keepLexicalWrites?lexicalWrites:writes).values()].sort(compareWrites),
     phaseWrites:[...phaseWrites.values()].sort((a,b)=>a.id<b.id?-1:1),
     allocationEntries:[...allocationEntries.values()].sort((a,b)=>a.id<b.id?-1:1),
     completions:[...completions].sort(([a],[b])=>a<b?-1:1).map(([construction,fields])=>({construction,fields})),

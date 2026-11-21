@@ -145,6 +145,46 @@ export function emitCoreSsaFunction(fn, context) {
     }
     return {yes,no};
   };
+  function emitIfArms(yes, no, thenBody, elseBody, range, continuation) {
+    const outer = new Map(definitions), outerDeclared = new Set(declared);
+    current = yes; definitions = new Map(outer); emitBody(thenBody);
+    const yesExit = current, yesDefinitions = new Map(definitions);
+    current = no; definitions = new Map(outer); declared = new Set(outerDeclared); emitBody(elseBody);
+    const noExit = current, noDefinitions = new Map(definitions);
+    declared = outerDeclared;
+    if (!yesExit && !noExit) {
+      current = null;
+      definitions = outer;
+      return;
+    }
+    const keys = [...outerDeclared].filter(id => (!yesExit || yesDefinitions.has(id)) && (!noExit || noDefinitions.has(id)));
+    const carried = keys.filter(id => !context.preserveDominatingJoinBindings?.has(id) ||
+      (yesExit && noExit && yesDefinitions.get(id) !== noDefinitions.get(id)));
+    const types = carried.map(id => bindingTypes.get(id));
+    if (continuation) types.unshift(boolTypeId);
+    const join = newBlock(types);
+    for (const [exit, bindings, selectedThen] of [[yesExit, yesDefinitions, true], [noExit, noDefinitions, false]]) {
+      if (!exit) continue;
+      current = exit;
+      const args = carried.map(id => bindings.get(id));
+      if (continuation) {
+        context.budget?.step();
+        const selector = variable();
+        operationLine(selector, "tsfg_core.constant", [], [], boolTypeId, `value = ${Number(selectedThen)} : i1`, range);
+        args.unshift(selector);
+      }
+      branch(join, args, range);
+    }
+    const incoming = yesExit ? yesDefinitions : noDefinitions;
+    current = join; definitions = new Map(keys.map(id => [id, incoming.get(id)]));
+    carried.forEach((id, index) => definitions.set(id, join.parameters[index + Number(Boolean(continuation))].name));
+    if (!continuation) return;
+    emitBody(continuation.common);
+    if (!current) return;
+    const resumeThen = newBlock(), resumeElse = newBlock();
+    conditional(join.parameters[0].name, resumeThen, resumeElse, range);
+    emitIfArms(resumeThen, resumeElse, continuation.thenBody, continuation.elseBody, range);
+  }
   const emitBody = statements => {
     for (const statement of statements) {
       if (!current) break;
@@ -175,23 +215,7 @@ export function emitCoreSsaFunction(fn, context) {
         declared = outer;
       } else if (statement.kind === "if") {
         const {yes,no} = emitConditionBranches(statement.condition);
-        const outer = new Map(definitions), outerDeclared = new Set(declared);
-        current = yes; definitions = new Map(outer); emitBody(statement.thenBody);
-        const yesExit = current, yesDefinitions = new Map(definitions);
-        current = no; definitions = new Map(outer); declared = new Set(outerDeclared); emitBody(statement.elseBody);
-        const noExit = current, noDefinitions = new Map(definitions);
-        const keys = [...outerDeclared].filter(id => (!yesExit || yesDefinitions.has(id)) && (!noExit || noDefinitions.has(id)));
-        if (yesExit || noExit) {
-          const carried = keys.filter(id => !context.preserveDominatingJoinBindings?.has(id) ||
-            (yesExit && noExit && yesDefinitions.get(id) !== noDefinitions.get(id)));
-          const join = newBlock(carried.map(id => bindingTypes.get(id)));
-          if (yesExit) { current = yesExit; branch(join, carried.map(id => yesDefinitions.get(id)), statement.range); }
-          if (noExit) { current = noExit; branch(join, carried.map(id => noDefinitions.get(id)), statement.range); }
-          const incoming = yesExit ? yesDefinitions : noDefinitions;
-          current = join; definitions = new Map(keys.map(id => [id, incoming.get(id)]));
-          carried.forEach((id, index) => definitions.set(id, join.parameters[index].name));
-        } else { current = null; definitions = outer; }
-        declared = outerDeclared;
+        emitIfArms(yes, no, statement.thenBody, statement.elseBody, statement.range, statement.continuation);
       } else if (statement.kind === "while") {
         const outer = new Map(definitions), outerDeclared = new Set(declared), keys = [...outer.keys()];
         const written = context.loopWrittenBindings?.(statement);

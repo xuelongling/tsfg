@@ -156,15 +156,18 @@ test('mutually exclusive super calls meet at a single lexical initializer',async
 });
 
 test('failed super arguments and nested initializer operands stop their own continuation',async()=>{
-  const {hir,proofs,phases}=await initializerProof('constructor-expression-failures','e5599012fe72a1f0ccd8e33650b66098cbbb41dd2846df89598bb2f80473c1c9');
+  const {hir,proofs,phases,context,publicationContext}=await initializerProof('constructor-expression-failures','e5599012fe72a1f0ccd8e33650b66098cbbb41dd2846df89598bb2f80473c1c9');
   const entry=hir.functions.find(row=>row.name==='entry'),nested=hir.functions.find(row=>row.name==='nested');
   const multi=hir.types.find(row=>row.id===entry.body[0].initializer.type);
   const own=phases.find(row=>row.ownerType===multi.id).events[0].output.valueNode;
   const firstArgument=multi.constructor+'/body/0/then/0/expression/arguments/0';
+  const skippedWrite=multi.constructor+'/body/0/then/1/expression/value';
   const nestedPhase=phases.find(row=>row.ownerType===nested.body[0].initializer.type);
   const [first,tail]=nestedPhase.events.map(row=>row.output.valueNode);
   for(const plan of [proofs.definition,proofs.reached]){
     assert.equal(plan.arrayReaching.reads.find(row=>row.node===firstArgument)?.status,'missing');
+    const inventory=plan.fieldReaching.writes.filter(row=>row.node===skippedWrite);
+    assert.equal(inventory.length,1,'the skipped store still has a lexical version for Core');
     const reading=plan.fieldReaching.reads.find(row=>row.node===entry.id+'/body/1/value');
     assert.deepEqual(reading?.reaching.flatMap(row=>row.sources),[own],'only the successful arm contributes its initializer');
     const nestedRead=plan.arrayReaching.reads.find(row=>row.node.startsWith(first+'/'));
@@ -176,6 +179,21 @@ test('failed super arguments and nested initializer operands stop their own cont
     const domain=plan.domains.find(row=>row.id===result.domainId);
     assert.deepEqual(domain.actualTypes,[]);
   }
+  const core=lowerFormalHir(hir,context,publicationContext);
+  const start=core.indexOf('  func.func @"f'+multi.constructor.slice(7)+'"(');
+  assert.ok(start>=0);
+  const body=core.slice(start,core.indexOf('\n  }',start));
+  const arms=[...body.matchAll(/"tsfg_core\.domain\.super"[^\n]*\n    (%v\d+) = "tsfg_core\.constant"\(\) \{value = ([01]) : i1[^\n]*\n    cf\.br \^(bb\d+)\(\1,/g)];
+  assert.deepEqual(arms.map(arm=>arm[2]),['1','0']);
+  assert.equal(arms[0][3],arms[1][3]);
+  const selector=body.match(new RegExp('^  \\^'+arms[0][3]+'\\((%v\\d+): i1','m'))?.[1];
+  assert.ok(selector);
+  const initializations=body.split('"tsfg_core.domain.initialize_fields"');
+  assert.equal(initializations.length,2);
+  const resume=initializations[1].match(new RegExp('cf\\.cond_br '+selector+', \\^(bb\\d+), \\^bb\\d+'));
+  assert.ok(resume);
+  const continuation=initializations[1].slice(initializations[1].indexOf('\n  ^'+resume[1]+':'));
+  assert.match(continuation,/^\n  \^bb\d+:\n(?:(?!  \^)[^\n]*\n)*?    "tsfg_core\.domain\.field_store"/);
 });
 
 test('a failed initializer preserves only the effects before its checked read',async()=>{

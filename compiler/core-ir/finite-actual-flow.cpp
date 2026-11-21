@@ -7,6 +7,7 @@
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include <algorithm>
+#include <set>
 
 namespace tsfg::finite {
 namespace {
@@ -232,6 +233,40 @@ struct ActualFlow {
     }
     return true;
   }
+  bool joinedBooleanLiteral(mlir::BlockArgument argument,std::optional<bool> &destination) {
+    if(!argument)return true;
+    auto *block=argument.getOwner();
+    if(block==&block->getParent()->front())return true;
+    std::set<mlir::Operation *> seen;std::optional<bool> selected;bool unknown=false;
+    for(auto *predecessor:block->getPredecessors()) {
+      if(!proof.charge())return false;auto *terminator=predecessor->getTerminator();
+      if(!seen.insert(terminator).second||!proof.mayReach(predecessor)||!proof.mayExecute(terminator))continue;
+      const auto incoming=[&](unsigned edge,mlir::Block *target,mlir::ValueRange operands) {
+        if(!proof.charge())return false;
+        if(target!=block||!proof.mayTraverse(terminator,edge))return true;
+        const auto index=argument.getArgNumber();
+        if(index>=operands.size()||typeCode(operands[index].getType())!=2)
+          return proof.reject("conditional Boolean join operand");
+        auto *constant=operands[index].getDefiningOp();
+        if(!constant||constant->getName().getStringRef()!="tsfg_core.constant"){unknown=true;return true;}
+        uint64_t bits=0;
+        if(!constantBits(constant,bits))return proof.reject("conditional Boolean join literal authority");
+        const bool value=bits!=0;
+        if(selected&&*selected!=value)unknown=true;else selected=value;
+        return true;
+      };
+      if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(terminator)) {
+        if(!incoming(0,branch.getDest(),branch.getDestOperands()))return false;
+      }else if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(terminator)) {
+        if(!incoming(0,branch.getTrueDest(),branch.getTrueDestOperands())||
+            !incoming(1,branch.getFalseDest(),branch.getFalseDestOperands()))return false;
+      }else unknown=true;
+      if(unknown)return true;
+    }
+    // Empty, conflicting and loop-carried nonliteral inputs retain both edges.
+    if(selected)destination=selected;
+    return true;
+  }
   bool controlPaths(bool *changed) {
     ControlPaths paths(proof.remaining);
     std::map<mlir::Block *,size_t> blocks;
@@ -259,6 +294,9 @@ struct ActualFlow {
             predicate.input=flow.evidence(value(condition->getOperand(1-i)));
             if(!predicate.input)return proof.reject("conditional predicate has no solved IR origin");break;
           }
+        }else if(memorySources&&typeCode(branch.getCondition().getType())==2&&
+            string(*proof.callable.at(id),"role")=="construction-body") {
+          if(!joinedBooleanLiteral(llvm::dyn_cast<mlir::BlockArgument>(branch.getCondition()),predicate.literal))return false;
         }
       }
       if(terminator->getName().getStringRef()=="tsfg_core.domain.numeric_use") {

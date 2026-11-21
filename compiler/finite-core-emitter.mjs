@@ -98,8 +98,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     if(fn.role!=='construction-body')return null;
     for(const statement of fn.body) {
       budget.step();
-      if(statement.kind!=='if'||statement.then.length!==1||statement.else.length!==1)continue;
-      if(statement.then[0].kind!=='expression'||statement.else[0].kind!=='expression')continue;
+      if(statement.kind!=='if'||statement.then[0]?.kind!=='expression'||statement.else[0]?.kind!=='expression')continue;
       const left=statement.then[0].expression,right=statement.else[0].expression;
       if(left?.kind!=='superConstruct'||right?.kind!=='superConstruct'||left.construction!==right.construction||
         left.afterSuccess.construction!==right.afterSuccess.construction)continue;
@@ -156,6 +155,12 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       // Each arm reaches the same own phase immediately after its original super.
       delete result.thenBody[0].value.afterSuccess;
       delete result.elseBody[0].value.afterSuccess;
+      if(result.thenBody.length>1||result.elseBody.length>1) {
+        result.continuation={
+          common:[shared.phase],thenBody:result.thenBody.splice(1),elseBody:result.elseBody.splice(1)
+        };
+        return [result];
+      }
       return [result,shared.phase];
     });
   }
