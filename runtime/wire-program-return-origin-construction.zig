@@ -36,6 +36,7 @@ pub const OrdinaryReferenceInputs = struct {
     current: *const model.Graph,
     upper: *const model.Graph,
     types: []const ?model.Symbol,
+    native_bool: ?model.Symbol = null,
 };
 pub const FormalInput = struct { function_id: model.Symbol, fixed: []const FixedFunction = &.{}, ordinary: ?OrdinaryReferenceInputs = null };
 // One exact current graph and its original callee IDs by call ordinal. A
@@ -47,9 +48,11 @@ pub const ScalarReturnCalls = struct { current: *const model.Graph, upper: *cons
 const ScalarCalls = union(enum) { effects: ScalarEffectCalls, returns: ScalarReturnCalls };
 pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{}, missing_fields: ?[]const model.Symbol = null };
 pub const InputExits = struct { input: Ref, normal: ExitBinding = .{}, language: ExitBinding = .{} };
+const ImplicitBaseCompletion = struct { allocation: Ref, language_action: Ref, unbound_heap: Ref };
 pub const CallFact = struct {
     caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref,
     fixed: *const FixedFunction, analysis: *const Analysis, arguments: []const []const Atom,
+    implicit_base: ?ImplicitBaseCompletion = null,
     ordered_reference_sources: []const ?Ref = &.{},
 
     pub fn orderedReferenceSource(self: *const CallFact, parameter: usize) ?Ref {
@@ -114,6 +117,14 @@ const Frame = struct { role: ?*const model.Construction = null, new_target: ?mod
 fn construction(directory: *const model.Directory, id: model.Symbol, budget: *Budget) Error!*const model.Construction {
     for (directory.constructions) |*row| { try budget.step(); if (try budget.equal(row.id, id)) return row; }
     return error.InvalidReference;
+}
+
+fn implicitBaseFor(directory: *const model.Directory, base: model.Symbol, budget: *Budget) Error!?*const model.Construction {
+    for (directory.constructions) |*row| {
+        try budget.step();
+        if (try budget.equal(row.owner, base)) return if (row.kind == .implicit_base and row.base == null and row.function_id == null) row else null;
+    }
+    return null;
 }
 
 // Follow only literal provenance, independently of join/gate static views.
@@ -472,8 +483,8 @@ const Engine = struct {
         }
         return null;
     }
-    fn orderedParameterCopy(self: *Engine, call: model.Call, argument: []const Ref, expected: model.Symbol, reference: bool) Error!?struct { copy: Ref, parameter: Ref } {
-        if ((!reference and call.arguments.len != 1) or argument.len != 1) return null;
+    fn orderedParameterCopy(self: *Engine, call: model.Call, argument: []const Ref, expected: model.Symbol, kind: enum { reference, scalar, ordinary_bool }) Error!?struct { copy: Ref, parameter: Ref } {
+        if ((kind != .reference and call.arguments.len != 1) or argument.len != 1) return null;
         const value = try self.singleArgumentValue(argument[0], call.control) orelse return null;
         const operation = self.graph.nodes[value];
         if (operation != .copy) return null;
@@ -483,11 +494,17 @@ const Engine = struct {
             event.copy.value != value or event.copy.previous != copy.heap) return null;
         const parameter = try self.singleArgumentValue(copy.bases[0], copy.control) orelse return null;
         const original = self.graph.nodes[parameter];
-        if (reference) {
+        if (kind == .reference) {
             if (!try self.ordinaryReference(original, expected) and
                 (self.parameterSource(original) == null or !try self.budget.equal(original.parameter.@"type", expected))) return null;
-        } else if (original != .parameter or original.parameter.index == 0 or
-            !try self.budget.equal(original.parameter.@"type", expected)) return null;
+        } else {
+            if (original != .parameter or !try self.budget.equal(original.parameter.@"type", expected)) return null;
+            if (kind == .ordinary_bool) {
+                const ordinary = self.formal_input.?.ordinary orelse return null;
+                const boolean = ordinary.native_bool orelse return null;
+                if (original.parameter.index != 0 or !try self.budget.equal(boolean, expected)) return null;
+            } else if (original.parameter.index == 0) return null;
+        }
         // The original operand must have exactly one materialized copy
         // occurrence, immediately preceding this call in the same control.
         for (self.graph.heaps, 0..) |heap, id| {
@@ -509,7 +526,7 @@ const Engine = struct {
         // referenceArgument already followed the supplied constructor
         // parameter to its exact original call. Identify this copy even
         // when the final values no longer agree with an earlier CallFact.
-        const ordered = try self.orderedParameterCopy(call, argument, expected, true);
+        const ordered = try self.orderedParameterCopy(call, argument, expected, .reference);
         if (ordinary == null and ordered == null) return false;
         if (permission.read or permission.write or permission.structural) {
             self.pending = .fixed_contract;
@@ -612,6 +629,7 @@ const Engine = struct {
         const selected_frame = self.frames[frame];
         const selected_role = selected_frame.role orelse { self.pending = .call_entry; return null; };
         if (!try self.budget.equal(selected_role.id, role.id)) { self.pending = .call_entry; return null; }
+        const ordinary_derived = self.formal_input.?.ordinary != null and selected_role.base != null;
         if (selected_frame.parent) |parent| {
             if (!try self.directExplicitBase(parent, selected_role) or call.arguments.len != 1) {
                 self.pending = .call_entry; return null;
@@ -673,7 +691,7 @@ const Engine = struct {
                     inline .join, .gate => |row| { if (row.inputs.len == 0) { self.pending = .data_protocol; return null; } for (row.inputs) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } } },
                     .copy => {
                         if (reference and reference_copy) { leaf = true; continue; }
-                        const ordered = (if (scalar) try self.orderedParameterCopy(call, argument, expected, false) else null) orelse {
+                        const ordered = (if (scalar) try self.orderedParameterCopy(call, argument, expected, if (ordinary_derived) .ordinary_bool else .scalar) else null) orelse {
                             self.pending = .data_protocol; return null;
                         };
                         if (ordered.copy != value_id) { self.pending = .data_protocol; return null; }
@@ -687,6 +705,7 @@ const Engine = struct {
                             for (source) |before| { try self.budget.step(); if (std.meta.eql(atom, before)) { found = true; break; } }
                             if (!found) return null;
                         }
+                        if (ordinary_derived) arguments[parameter_index] = copied;
                         ordered_copy = true;
                         leaf = true;
                     },
@@ -704,7 +723,7 @@ const Engine = struct {
             }
             if (!leaf) { self.pending = .data_protocol; return null; }
         }
-        if (selected_frame.parent != null and !ordered_copy) { self.pending = .data_protocol; return null; }
+        if ((selected_frame.parent != null or ordinary_derived) and !ordered_copy) { self.pending = .data_protocol; return null; }
         const graph = if (fixed.contract.return_origins) |*value| value else { self.pending = .fixed_call; return null; };
         // Run a child only after this original caller has proved its Data.
         // The same paused Engine resumes when the explicit scheduler supplies
@@ -721,9 +740,70 @@ const Engine = struct {
             self.pending = .fixed_completion; return null;
         }
         const exits = analysis.input_exits orelse { self.pending = .call_entry; return null; };
+        var implicit_base: ?ImplicitBaseCompletion = null;
+        if (ordinary_derived) {
+            implicit_base = try self.implicitBaseCompletion(selected_role.base.?, graph, analysis, exits, fixed);
+            if (implicit_base == null) { self.pending = .fixed_completion; return null; }
+        }
         if (self.calls.items.len == self.calls.capacity) try self.budget.spend(self.calls.items.len + 1);
-        try self.budget.step(); try self.calls.append(self.allocator, .{ .caller_graph = self.graph, .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis, .arguments = arguments });
+        try self.budget.step(); try self.calls.append(self.allocator, .{ .caller_graph = self.graph, .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis, .arguments = arguments, .implicit_base = implicit_base });
         return &self.calls.items[self.calls.items.len - 1];
+    }
+
+    fn implicitBaseCompletion(self: *Engine, base: model.Symbol, graph: *const model.Graph, analysis: *const Analysis,
+        exits: InputExits, fixed: *const FixedFunction) Error!?ImplicitBaseCompletion {
+        try self.budget.spend(8);
+        // A normal conditional-super result keeps the allocation of the
+        // immediate Base child actually bound into the original Derived frame.
+        // Its language result must remain the original Derived result action.
+        if (!fixed.contract.upper.facets.may_throw or !analysis.normal_live or !analysis.language_live or
+            !exits.normal.live or !exits.language.live or exits.normal.unbound or !exits.language.unbound or
+            analysis.normal.len != 1 or analysis.language.len != 1 or exits.normal.atoms.len != 1 or
+            analysis.normal[0].source != .allocation or analysis.normal[0].category != .object or
+            !std.meta.eql(exits.normal.atoms[0], analysis.normal[0]) or analysis.language[0].source != .language_error or
+            analysis.language[0].category != .object) return null;
+        const child = analysis.normal[0].source.allocation;
+        const summary = analysis.frames[child];
+        const role = try implicitBaseFor(self.directory, base, self.budget) orelse return null;
+        if (summary.parent != exits.input or summary.new_target != null or summary.construction == null or
+            !try self.budget.equal(summary.construction.?, role.id)) return null;
+        const language_action = analysis.language[0].source.language_error;
+        if (graph.exits.language.len != 1 or graph.exits.language[0].heap != language_action) return null;
+        const failure = graph.heaps[language_action];
+        if (failure != .receiver_action or failure.receiver_action.action != .result or failure.receiver_action.completion != .language or
+            failure.receiver_action.operands.len != 0 or failure.receiver_action.frames.len != 1 or
+            failure.receiver_action.frames[0] != exits.input) return null;
+        const prior = graph.heaps[failure.receiver_action.previous];
+        if (prior != .join or prior.join.inputs.len != 2) return null;
+        var unbound_heap: ?Ref = null;
+        var bound = false;
+        for (prior.join.inputs) |incoming| {
+            // Singleton joins preserve the original world. The unbound arm is
+            // the original entry, while a successful bind proves the other arm
+            // holds the same child. A mixed predecessor keeps the call pending.
+            var predecessor = incoming;
+            for (graph.heaps) |_| {
+                try self.budget.step();
+                if (!analysis.heap_live[predecessor]) return null;
+                const heap = graph.heaps[predecessor];
+                if (heap == .join and heap.join.inputs.len == 1) {
+                    predecessor = heap.join.inputs[0];
+                    continue;
+                }
+                if (heap == .entry and unbound_heap == null) {
+                    unbound_heap = incoming;
+                    break;
+                }
+                if (bound or heap != .receiver_action or heap.receiver_action.action != .bind or
+                    heap.receiver_action.completion != .normal or heap.receiver_action.frames.len != 1 or
+                    heap.receiver_action.frames[0] != exits.input) return null;
+                const result = analysis.action_results[predecessor];
+                if (result.len != 1 or !std.meta.eql(result[0], analysis.normal[0])) return null;
+                bound = true;
+                break;
+            } else return null;
+        }
+        return if (bound and unbound_heap != null) .{ .allocation = child, .language_action = language_action, .unbound_heap = unbound_heap.? } else null;
     }
     fn imported(self: *Engine, fact: *const CallFact, completion: model.Completion, values: []const Atom, into: *Atoms) Error!bool {
         var error_site: ?Ref = null;
@@ -799,8 +879,13 @@ const Engine = struct {
             if (!binding.unbound or binding.atoms.items.len != 0) { self.pending = .call_entry; return; }
         }
         const fact = try self.callFact(row.call, frame) orelse return;
-        const binding = if (row.completion == .normal) fact.analysis.input_exits.?.normal else fact.analysis.input_exits.?.language;
+        var binding = if (row.completion == .normal) fact.analysis.input_exits.?.normal else fact.analysis.input_exits.?.language;
         if (!binding.live) return;
+        if (row.completion == .language and fact.implicit_base != null) {
+            // The exact unbound predecessor carries the original entry state.
+            binding.atoms = &.{};
+            binding.missing_fields = fact.fixed.initialization_fields;
+        }
         var replacement: Atoms = .empty;
         if (!try self.imported(fact, row.completion, binding.atoms, &replacement)) return;
         var returned: Atoms = .empty;
@@ -1184,6 +1269,15 @@ fn ordinaryEntry(directory: *const model.Directory, graph: *const model.Graph, b
     if (function.kind != .source or function.construction != null or !function.environment_metadata_complete or
         function.lexical_environment != null or function.activation_environment != null or
         function.parameter_types.len != ordinary.types.len) return false;
+    if (ordinary.native_bool) |boolean| {
+        if (ordinary.types.len != 1 or ordinary.types[0] != null or !try budget.equal(function.parameter_types[0], boolean)) return false;
+        var scalar = false;
+        for (directory.types) |row| {
+            try budget.step();
+            if (try budget.equal(row.id, boolean)) { scalar = row.kind == .scalar; break; }
+        }
+        if (!scalar) return false;
+    }
     for (ordinary.types, function.parameter_types) |maybe_type, declared| {
         try budget.step();
         const type_id = maybe_type orelse continue;
@@ -1235,8 +1329,11 @@ fn initialize(result: *Analysis, allocator: std.mem.Allocator, directory: *const
             .receiver_frame => |row| {
                 if (ordinary != null) {
                     const role = try construction(directory, row.construction, budget);
-                    if (row.parent != null or row.new_target == null or role.kind != .explicit or role.base != null or
+                    if (row.parent != null or row.new_target == null or role.kind != .explicit or
                         !try budget.equal(row.new_target.?, role.owner)) { result.pending = .parent_activation; return null; }
+                    if (role.base) |base| if (try implicitBaseFor(directory, base, budget) == null) {
+                        result.pending = .parent_activation; return null;
+                    };
                 } else if (formal_function != null and graph.calls.len != 0 and row.parent != null and !explicit_base) {
                     const role = try construction(directory, row.construction, budget);
                     explicit_base = role.kind == .explicit and role.base == null;

@@ -4,6 +4,7 @@
 const std = @import("std");
 const model = @import("wire-program-return-origin-model.zig");
 const domain = @import("wire-program-return-origin-construction.zig");
+const owners = @import("wire-program-return-origin-owners.zig");
 const call_fixture = @import("constructor-call-literal-dto.zig");
 
 const Meter = struct {
@@ -119,6 +120,140 @@ test "formal return interpretation preserves the same complete child protocol" {
     try std.testing.expectEqual(@as(usize, 1), result.initializations.len);
     try std.testing.expectEqual(@as(?model.Symbol, null), result.frames[0].new_target);
     try std.testing.expectEqual(@as(?model.Symbol, null), result.frames[1].new_target);
+}
+
+test "ordinary conditional super imports the exact child allocation and language result" {
+    const fixture: Fixture = .{};
+    const functions = [_]model.FunctionRow{.{
+        .id = "create", .kind = .source, .parameter_types = &.{"bool"}, .return_type = "Derived",
+        .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = null, .construction = null,
+    }} ++ directory.functions[0..1].*;
+    var catalog = directory;
+    catalog.functions = &functions;
+    // Literal model of the retained Source3 conditional-super-bool ``create``.
+    // Data0 is its original bool ABI binding. Use the same fixed Derived graph
+    // as the formal controls above and follow its two completions separately.
+    const graph: model.Graph = .{
+        .nodes = &.{
+            .{ .parameter = .{ .@"type" = "bool", .index = 0 } },
+            .{ .receiver_frame = .{ .construction = "construct:Derived", .new_target = "Derived", .parent = null, .site = "162:179", .control = 0 } },
+            .{ .call = .{ .@"type" = "Derived", .call = 0, .completion = .normal } },
+            .{ .call = .{ .@"type" = null, .call = 0, .completion = .language } },
+            .{ .copy = .{ .@"type" = "bool", .bases = &.{0}, .site = "174:178", .heap = 0, .control = 0 } },
+            .{ .copy = .{ .@"type" = "Derived", .bases = &.{2}, .site = "155:180", .heap = 2, .control = 1 } },
+        },
+        .heaps = &.{
+            .entry,
+            .{ .copy = .{ .previous = 0, .value = 4 } },
+            .{ .call = .{ .call = 0, .completion = .normal } },
+            .{ .call = .{ .call = 0, .completion = .language } },
+            .{ .copy = .{ .previous = 2, .value = 5 } },
+        },
+        .controls = &.{ .entry, .{ .call = .{ .call = 0, .completion = .normal } }, .{ .call = .{ .call = 0, .completion = .language } } },
+        .calls = &.{.{ .function_id = "ctor", .arguments = &.{&.{4}}, .environment = null, .callee = null, .receiver = &.{1}, .heap = 1, .control = 0, .site = "162:179" }},
+        .normal = &.{5}, .language = &.{3}, .accesses = &.{},
+        .exits = .{ .normal = &.{.{ .heap = 4, .control = 1 }}, .language = &.{.{ .heap = 3, .control = 2 }} },
+    };
+    var contracts = call_fixture.contracts;
+    contracts[0].return_origins = fixture.graph();
+    contracts[0].upper.parameters = &.{
+        .{ .index = 0, .read = false, .write = true, .structural = false },
+        .{ .index = 1, .read = false, .write = false, .structural = false },
+    };
+    contracts[0].upper.facets.may_throw = true;
+    contracts[1].return_origins = graph;
+    contracts[1].upper.parameters = &.{.{ .index = 0, .read = false, .write = false, .structural = false }};
+    contracts[1].upper.facets.may_throw = true;
+    var declarations = call_fixture.declarations;
+    declarations[0].decl_key.name = "Derived";
+    declarations[0].construction.?.base = @splat(0x22);
+    declarations[0].parameter_types = &.{ @splat(0x11), @splat(0x33) };
+    declarations[1].construction = null;
+    declarations[1].kind = .source;
+    declarations[1].decl_key.kind = .function;
+    declarations[1].decl_key.name = "create";
+    declarations[1].return_type = declarations[0].return_type;
+    declarations[1].parameter_types = &.{@splat(0x33)};
+    const fixed = [_]domain.FixedFunction{
+        .{ .function_id = "create", .contract = &contracts[1], .declaration = &declarations[1] },
+        .{ .function_id = "ctor", .contract = &contracts[0], .declaration = &declarations[0], .initialization_fields = &.{} },
+    };
+    var meter: Meter = .{};
+    var budget = meter.budget();
+    try model.validateDirectory(std.testing.allocator, &catalog, &budget);
+    try std.testing.expectEqual(model.Pending.construction_frame, (try model.validateGraph(std.testing.allocator, &catalog, "create", &graph, &budget)).pending);
+    try std.testing.expectEqual(model.Pending.construction_frame, (try model.validateGraph(std.testing.allocator, &catalog, "ctor", &contracts[0].return_origins.?, &budget)).pending);
+    const input: domain.FormalInput = .{
+        .function_id = "create", .fixed = &fixed,
+        .ordinary = .{ .current = &graph, .upper = &contracts[1].return_origins.?, .types = &.{null}, .native_bool = "bool" },
+    };
+    var result = try domain.analyzeReturns(std.testing.allocator, &catalog, &graph, &budget, input);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
+    try std.testing.expect(result.normal_live and result.language_live);
+    try std.testing.expectEqual(@as(usize, 1), result.calls.len);
+    const fact = result.calls[0];
+    try std.testing.expect(fact.caller_graph == &graph and fact.graph == &contracts[0].return_origins.?);
+    try std.testing.expectEqual(@as(model.Ref, 1), fact.receiver);
+    try std.testing.expectEqual(@as(model.Ref, 0), fact.input);
+    try std.testing.expect(fact.arguments[1].len != 0);
+    for (fact.arguments[1]) |argument| {
+        try std.testing.expect(argument.source == .node);
+        try std.testing.expectEqual(@as(model.Ref, 0), argument.source.node);
+    }
+    try std.testing.expectEqualStrings("Derived", result.frames[fact.receiver].new_target.?);
+    try std.testing.expect(result.normal.len == 1 and result.normal[0].source == .scoped_allocation);
+    const imported = result.normal[0].source.scoped_allocation;
+    try std.testing.expect(imported.analysis == fact.analysis and imported.completion == .normal);
+    try std.testing.expectEqual(@as(model.Ref, 1), imported.frame);
+    try std.testing.expectEqual(@as(?model.Ref, fact.input), fact.analysis.frames[imported.frame].parent);
+    try std.testing.expectEqual(@as(?model.Symbol, null), fact.analysis.frames[imported.frame].new_target);
+    try std.testing.expect(result.language.len == 1 and result.language[0].source == .language_error);
+    try std.testing.expectEqual(@as(model.Ref, 3), result.language[0].source.language_error);
+    try std.testing.expectEqual(@as(model.Ref, 5), fact.analysis.language[0].source.language_error);
+
+    const rows = [_]owners.Fixed{
+        .{ .function_id = "create", .graph = &contracts[1].return_origins.?, .parameters = &.{.{}}, .captures = &.{}, .may_throw = true },
+        .{ .function_id = "ctor", .graph = &contracts[0].return_origins.?, .parameters = &.{ .{ .write = true }, .{} }, .captures = &.{}, .may_throw = true },
+    };
+    const fields: []const owners.Field = &.{.{ .id = "value", .view = "Base", .physical = 0, .type_id = "i32" }};
+    const physical: []const owners.Physical = &.{ .{ .type_id = "Base", .fields = fields }, .{ .type_id = "Derived", .fields = fields } };
+    var returned = try owners.analyzeReceiver(std.testing.allocator, &catalog, physical, "create", &graph, &rows, &budget, &result);
+    defer returned.deinit();
+    try std.testing.expectEqual(@as(?owners.Pending, null), returned.pending);
+    try std.testing.expect(returned.normal_live and returned.language_live);
+    try std.testing.expectEqual(@as(usize, 1), returned.normal.len);
+    try std.testing.expectEqual(@as(usize, 1), returned.language.len);
+    const normal = returned.locations[returned.normal[0]];
+    const language = returned.locations[returned.language[0]];
+    try std.testing.expect(normal.kind == .root and normal.owner == .local and normal.scope != 0 and normal.node == imported.frame);
+    try std.testing.expectEqualStrings("Derived", normal.type_id.?);
+    try std.testing.expect(language.kind == .root and language.owner == .local and language.scope == 0 and language.node == 3 and language.type_id == null);
+    try std.testing.expectEqualStrings("receiver-language-error", language.key.?);
+    try std.testing.expectEqual(@as(usize, 1), returned.normal_heap.len);
+    const field = returned.normal_heap[0];
+    try std.testing.expectEqual(returned.normal[0], field.base);
+    try std.testing.expectEqualStrings("field:value", field.selector);
+    try std.testing.expectEqualStrings("Base", field.view);
+    try std.testing.expectEqual(@as(usize, 0), returned.language_heap.len);
+    try std.testing.expect(result.frames[fact.receiver].language.unbound);
+    try std.testing.expectEqual(@as(usize, 0), result.frames[fact.receiver].language.atoms.len);
+
+    var omitted_abi = input;
+    omitted_abi.ordinary.?.native_bool = null;
+    var unproved = try domain.analyzeReturns(std.testing.allocator, &catalog, &graph, &budget, omitted_abi);
+    defer unproved.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, .data_protocol), unproved.pending);
+
+    // An apparent skip arm whose own heap can also contain the child's
+    // initialization is no basis for partitioning the caller's language heap.
+    var mixed_heaps = fixture.heaps ++ [_]model.Heap{.{ .join = .{ .inputs = &.{ 0, 8 } } }};
+    mixed_heaps[1].join.inputs = &.{ 8, 9 };
+    contracts[0].return_origins.?.heaps = &mixed_heaps;
+    try std.testing.expectEqual(model.Pending.construction_frame, (try model.validateGraph(std.testing.allocator, &catalog, "ctor", &contracts[0].return_origins.?, &budget)).pending);
+    var ambiguous = try domain.analyzeReturns(std.testing.allocator, &catalog, &graph, &budget, input);
+    defer ambiguous.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, .fixed_completion), ambiguous.pending);
 }
 
 test "a parent owns its own field only after binding the child's allocation" {

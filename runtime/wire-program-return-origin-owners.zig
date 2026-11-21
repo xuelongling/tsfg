@@ -403,6 +403,8 @@ const Engine = struct {
             !try self.budget.equal(caller_frame.construction, role.id) or
             !try self.budget.equal(selected.construction.?, role.id) or
             !try self.budget.equal(callee_input.construction.?, role.id)) return false;
+        if (role.base != null and (fact.implicit_base == null or caller_frame.parent != null or
+            caller_frame.new_target == null or !try self.budget.equal(caller_frame.new_target.?, role.owner))) return false;
         if (caller_frame.parent) |parents| {
             const parent = selected.parent orelse return false;
             const current = (try m.findFunction(self.directory, frame.function_id, self.budget)).construction orelse return false;
@@ -416,6 +418,40 @@ const Engine = struct {
         }
         return selected.parent == null and caller_frame.new_target != null and
             try self.sameOptional(selected.new_target, caller_frame.new_target);
+    }
+    fn implicitBaseTarget(self: *Engine, index: usize, frame: *const Frame, receiver: *const construction.Analysis,
+        source: R, entry: ReceiverImport) E!?S {
+        try self.budget.spend(10);
+        const fact = entry.fact;
+        if (entry.caller >= index or fact.analysis != receiver or fact.graph != frame.graph or
+            source >= frame.graph.nodes.len or frame.graph.nodes[source] != .receiver_frame) return null;
+        const caller = self.frames.items[entry.caller];
+        const caller_receiver = caller.receiver orelse return null;
+        if (fact.caller_graph != caller.graph or fact.receiver >= caller.graph.nodes.len or fact.call >= caller.graph.calls.len) return null;
+        const role = (try m.findFunction(self.directory, caller.graph.calls[fact.call].function_id, self.budget)).construction orelse return null;
+        const base = role.base orelse return null;
+        if (!try self.receiverCallFrame(caller, caller_receiver, fact, role)) return null;
+        const child = frame.graph.nodes[source].receiver_frame;
+        const parent = child.parent orelse return null;
+        const summary = receiver.frames[source];
+        if (child.new_target != null or summary.new_target != null or summary.parent != fact.input or
+            summary.construction == null or !try self.budget.equal(summary.construction.?, child.construction) or
+            !try self.receiverRefs(frame, parent, fact.input)) return null;
+        for (self.directory.constructions) |candidate| {
+            try self.budget.step();
+            if (!try self.budget.equal(candidate.id, child.construction)) continue;
+            if (candidate.kind != .implicit_base or candidate.base != null or candidate.function_id != null or
+                !try self.budget.equal(candidate.owner, base)) return null;
+            // Keep the original child location (scope, node). Only its
+            // parametric allocation type uses the actual caller newTarget.
+            return caller_receiver.frames[fact.receiver].new_target;
+        }
+        return null;
+    }
+    fn receiverPrevious(frame: *const Frame, action: R, previous: R) R {
+        const entry = frame.receiver_import orelse return previous;
+        const proof = entry.fact.implicit_base orelse return previous;
+        return if (proof.language_action == action) proof.unbound_heap else previous;
     }
     fn receiverLocation(self: *Engine, original_index: usize, original_source: R, allocation: bool) E!?R {
         var index = original_index; var source = original_source;
@@ -437,7 +473,13 @@ const Engine = struct {
             }
             if (allocation) {
                 if (source >= receiver.frames.len) { self.pending = .receiver_protocol; return null; }
-                return try self.location(.{ .kind = .root, .owner = .local, .type_id = receiver.frames[source].new_target, .scope = index, .node = source, .key = "receiver-allocation" });
+                var target = receiver.frames[source].new_target;
+                if (frame.receiver_import) |entry| if (entry.fact.implicit_base) |proof| {
+                    if (proof.allocation == source) target = try self.implicitBaseTarget(index, frame, receiver, source, entry) orelse {
+                        self.pending = .receiver_protocol; return null;
+                    };
+                };
+                return try self.location(.{ .kind = .root, .owner = .local, .type_id = target, .scope = index, .node = source, .key = "receiver-allocation" });
             }
             if (source >= frame.graph.heaps.len) { self.pending = .receiver_protocol; return null; }
             return try self.location(.{ .kind = .root, .owner = .local, .scope = index, .node = source, .key = "receiver-language-error" });
@@ -569,7 +611,7 @@ const Engine = struct {
                 // The borrowed construction analysis has already interpreted
                 // this supported proved-Data/no-ENV fixed call tree. Keep
                 // its original graph and facts in this same ordinary Engine.
-                if (call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.base != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
+                if (call.environment != null or call.callee != null or protocol.parameter_types.len != call.arguments.len + 1 or protocol.lexical_environment != null or protocol.activation_environment != null or role.receiver_index != 0) { self.pending = .receiver_protocol; return; }
                 var selected: ?*const construction.CallFact = null;
                 for (receiver.calls) |*fact| {
                     try self.budget.step(); if (fact.call != ordinal) continue;
@@ -803,8 +845,9 @@ const Engine = struct {
             .call => |call| for (frame.targets[call.call].items) |target| { try self.budget.step(); const called = self.frames.items[target]; const completion = @intFromEnum(call.completion); try self.mergeHeap(out, called.output_heap[completion].items); defined = defined or called.completed[completion]; },
             .receiver_action => |action| {
                 if (frame.receiver == null) { self.pending = .receiver_protocol; return; }
-                try self.mergeHeap(out, frame.heaps[action.previous].items);
-                defined = frame.heap_ready[action.previous] and try self.readyRefs(frame, action.operands);
+                const previous = receiverPrevious(frame, ordinal, action.previous);
+                try self.mergeHeap(out, frame.heaps[previous].items);
+                defined = frame.heap_ready[previous] and try self.readyRefs(frame, action.operands);
             },
         }
         self.ready(&frame.heap_ready[ordinal], defined);
@@ -855,7 +898,7 @@ const Engine = struct {
                 .call => |row| for (frame.targets[row.call].items) |target| { try self.budget.step(); if (self.frames.items[target].live[@intFromEnum(row.completion)]) return true; },
                 .receiver_action => |row| {
                     const receiver = frame.receiver orelse { self.pending = .receiver_protocol; return false; };
-                    if (receiver.heap_live[current.heap]) try self.append(Source, &work, .{ .frame = current.frame, .heap = row.previous });
+                    if (receiver.heap_live[current.heap]) try self.append(Source, &work, .{ .frame = current.frame, .heap = receiverPrevious(frame, current.heap, row.previous) });
                 },
             }
         }
@@ -972,7 +1015,7 @@ const Engine = struct {
                                     try self.localReceiverAllocation(current.source.frame, atom.source.allocation, current.base)) return false;
                             }
                         }
-                        try self.append(Task, &work, .{ .source = .{ .frame = current.source.frame, .heap = row.previous }, .base = current.base });
+                        try self.append(Task, &work, .{ .source = .{ .frame = current.source.frame, .heap = receiverPrevious(frame, current.source.heap, row.previous) }, .base = current.base });
                     }
                 },
             }

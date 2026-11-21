@@ -437,3 +437,102 @@ test "typed ordinary Body reads the field of its own fresh constructor completio
     try std.testing.expect(returned.kind == .root and returned.owner == .nonowning);
     try std.testing.expectEqualStrings(dto.scalar, returned.type_id.?);
 }
+
+test "typed ordinary Body carries its original flag and fresh Derived frame to both exits" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const common = &fixture.program.tables.mode.common;
+    fixture.types[1].base = a;
+    fixture.types[2].name = "bool";
+    fixture.types[2].native_code = 2;
+    const bindings = [_]storage.CommonBinding{
+        .{ .id = "flag", .owner = .{ .param = @enumFromInt(0) }, .name = "flag", .@"type" = scalar, .writable = false, .origin = declaration, .carrier = sc, .scope = @enumFromInt(0), .declaration_kind = .parameter },
+        fixture.bindings[1],
+        .{ .id = "flag-body", .owner = .{ .param = @enumFromInt(1) }, .name = "flag", .@"type" = scalar, .writable = false, .origin = declaration, .carrier = sc, .scope = @enumFromInt(1), .declaration_kind = .parameter },
+    };
+    common.storage.bindings = &bindings;
+    common.members.fields = &.{};
+    common.exceptions.bindings = &.{
+        .{ .binding = @enumFromInt(0), .scope = @enumFromInt(0) },
+        .{ .binding = @enumFromInt(1), .scope = @enumFromInt(1) },
+        .{ .binding = @enumFromInt(2), .scope = @enumFromInt(1) },
+    };
+    var concrete = common.storage.concrete[0..4].*;
+    concrete[1].body = concrete[0].body;
+    concrete[2].carrier.layout = .{ .byte_size = 1, .alignment = 1, .reference_count = 0 };
+    common.storage.concrete = &concrete;
+    var constructions = common.members.constructions[0..2].*;
+    constructions[0].function = null;
+    constructions[0].kind = .@"implicit-base";
+    constructions[1].parameters = &.{.{ .binding = @enumFromInt(2), .inherited_from = null, .origin = declaration, .@"type" = scalar }};
+    constructions[1].signature.parameters = &.{scalar};
+    constructions[1].initialization_fields = &.{};
+    common.members.constructions = &constructions;
+    const registers: []const wire.Register = &.{
+        .{ .carrier = sc, .view = scalar }, .{ .carrier = bf, .view = null }, .{ .carrier = bc, .view = b },
+        .{ .carrier = .payload, .view = null }, .{ .carrier = sc, .view = scalar }, .{ .carrier = bc, .view = b },
+    };
+    const operands: []const t.RegisterRef = &.{ r1, r4 };
+    fixture.functions[0].role = .ordinary;
+    fixture.functions[0].registers = registers;
+    fixture.functions[0].blocks = &.{
+        .{ .parameters = &.{r0}, .instructions = &.{
+            caller_instructions[0], caller_instructions[1],
+            .{ .source = operation, .result = r4, .operands = &.{r0}, .data = .{ .domain_copy = .{ .static_view = scalar } } },
+            .{ .source = operation, .result = null, .operands = operands, .data = caller_instructions[2].data },
+        } },
+        .{ .parameters = &.{r2}, .instructions = &.{
+            .{ .source = operation, .result = r5, .operands = &.{r2}, .data = .{ .domain_copy = .{ .static_view = b } } },
+            .{ .source = operation, .result = null, .operands = &.{r5}, .data = .@"return" },
+        } },
+        .{ .parameters = &.{r3}, .instructions = &.{.{ .source = operation, .result = null, .operands = &.{r3}, .data = .eh_raise }} },
+    };
+    fixture.abis[0] = .{ .kind = .common, .function = @enumFromInt(0), .signature = @splat(0xaa), .parameters = &.{@enumFromInt(0)}, .argument_types = &.{scalar}, .receiver = null, .construction = null, .receiver_frame = null, .lexical_environment = null, .physical_parameters = &.{sc}, .result = b, .result_carrier = bc, .source_plan = .{ .carriers = &.{ dto.scalar, "receiver:" ++ dto.b, dto.b, payload, dto.scalar, dto.b }, .blocks = &.{
+        .{ .parameters = &.{r0}, .operations = &.{
+            caller_operations[0],
+            .{ .name = "receiver_create", .view = "receiver:" ++ dto.b, .properties = &create_properties, .result = r1, .operands = &.{}, .successors = &.{}, .source = operation },
+            .{ .name = "value_copy", .view = dto.scalar, .properties = &.{.{ .key = "type", .value = .{ .string = dto.scalar } }}, .result = r4, .operands = &.{r0}, .successors = &.{}, .source = operation },
+            .{ .name = "invoke", .view = "void", .properties = &invoke_properties, .result = null, .operands = operands, .successors = &.{ @enumFromInt(1), @enumFromInt(2) }, .source = operation },
+        } },
+        .{ .parameters = &.{r2}, .operations = &.{
+            .{ .name = "value_copy", .view = dto.b, .properties = &.{.{ .key = "type", .value = .{ .string = dto.b } }}, .result = r5, .operands = &.{r2}, .successors = &.{}, .source = operation },
+            .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r5}, .successors = &.{}, .source = operation },
+        } },
+        .{ .parameters = &.{r3}, .operations = &.{.{ .name = "return_throw", .view = "void", .properties = &.{}, .result = null, .operands = &.{r3}, .successors = &.{}, .source = operation }} },
+    } } };
+    // Only typed caller projection/ABI is exercised here. The fixed conditional
+    // constructor is independently interpreted by child-construction-test.
+    fixture.functions[1].registers = &.{ .{ .carrier = bf, .view = null }, registers[0] };
+    fixture.functions[1].blocks = &.{.{ .parameters = &.{ r0, r1 }, .instructions = &.{ caller_instructions[0], .{ .source = operation, .result = null, .operands = &.{}, .data = .eh_unreachable } } }};
+    fixture.abis[1].parameters = &.{@enumFromInt(2)};
+    fixture.abis[1].argument_types = &.{scalar};
+    fixture.abis[1].physical_parameters = &.{ bf, sc };
+    fixture.abis[1].source_plan = .{ .carriers = &.{ "receiver:" ++ dto.b, dto.scalar }, .blocks = &.{.{ .parameters = &.{ r0, r1 }, .operations = &.{ caller_operations[0], .{ .name = "unreachable", .view = "void", .properties = &.{}, .result = null, .operands = &.{}, .successors = &.{}, .source = operation } } }} };
+    var directory = dto.directory;
+    var functions = directory.functions[0..2].*;
+    functions[0] = .{ .id = dto.caller, .kind = .source, .parameter_types = &.{dto.scalar}, .return_type = dto.b, .environment_metadata_complete = true, .lexical_environment = null, .activation_environment = null, .construction = null };
+    functions[1].parameter_types = &.{ dto.b, dto.scalar };
+    functions[1].construction.?.base = dto.a;
+    directory.functions = &functions;
+    directory.constructions = &.{ .{ .id = dto.role_a, .owner = dto.a, .base = null, .kind = .implicit_base, .function_id = null }, .{ .id = dto.role_b, .owner = dto.b, .base = dto.a, .kind = .explicit, .function_id = dto.callee } };
+    var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+    var budget = m.Budget{ .context = &c, .charge = refs.graphCharge };
+    try typed(&c, &directory, &budget);
+    var projected = try body.project(&c, @enumFromInt(0), &directory, &budget);
+    defer projected.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projected.pending);
+    const graph = &projected.graph.?;
+    const call = graph.calls[0];
+    const frame = graph.nodes[try rootValue(graph, call.receiver.?[0])].receiver_frame;
+    const flag = try rootValue(graph, call.arguments[0][0]);
+    const flag_copy = graph.nodes[flag].copy;
+    try std.testing.expect(frame.parent == null and graph.nodes[try rootValue(graph, flag_copy.bases[0])].parameter.index == 0);
+    try std.testing.expect(graph.heaps[call.heap].copy.value == flag and graph.heaps[call.heap].copy.previous == flag_copy.heap);
+    try std.testing.expectEqualStrings(dto.b, frame.new_target.?);
+    const returned = graph.nodes[try rootValue(graph, graph.normal[0])].copy;
+    try std.testing.expect(graph.nodes[try rootValue(graph, returned.bases[0])].call.completion == .normal);
+    try std.testing.expect(graph.nodes[try rootValue(graph, graph.language[0])].call.completion == .language);
+    const abi = (try refs.returnOriginOrdinaryReferences(&c, projected.arena.allocator(), @enumFromInt(0), graph, graph)).?;
+    try std.testing.expect(abi.types.len == 1 and abi.types[0] == null);
+    try std.testing.expectEqualStrings(dto.scalar, abi.native_bool.?);
+}

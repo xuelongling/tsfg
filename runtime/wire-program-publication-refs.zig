@@ -291,8 +291,22 @@ pub fn returnOriginConstructorInput(c: *Context, allocator: std.mem.Allocator, v
     return .{ .function_id = function_id, .fixed = fixed };
 }
 
-// Carry the original Reference parameter category, without a receiver seed
-// or a concrete object identity. Both graphs use the same checked entry ABI.
+pub fn hasDirectImplicitBase(c: *Context, owner: t.TypeRef) Error!bool {
+    const common = &c.program.tables.mode.common;
+    try c.charge(2);
+    const base = common.types[@intFromEnum(owner)].base orelse return false;
+    if (common.types[@intFromEnum(base)].base != null) return false;
+    for (common.members.constructions) |row| {
+        try c.step();
+        if (row.owner != base) continue;
+        return row.kind == .@"implicit-base" and row.function == null and row.parameters.len == 0 and row.signature.parameters.len == 0;
+    }
+    return false;
+}
+
+// Carry proved Reference categories and the original entry ABI. A native bool
+// also supports the checked direct Derived call without seeding a Ref or a
+// receiver. Both graphs use the same ABI and keep the bool's two outcomes.
 pub fn returnOriginOrdinaryReferences(c: *Context, allocator: std.mem.Allocator, target: t.FunctionRef, current: *const origin.Graph, upper: *const origin.Graph) Error!?construction.OrdinaryReferenceInputs {
     const function = c.program.functions[@intFromEnum(target)];
     const common = &c.program.tables.mode.common;
@@ -306,16 +320,36 @@ pub fn returnOriginOrdinaryReferences(c: *Context, allocator: std.mem.Allocator,
     const types = try allocator.alloc(?origin.Symbol, abi.parameters.len);
     @memset(types, null);
     var found = false;
+    var native_bool: ?t.Hash = null;
     for (abi.parameters, abi.argument_types, abi.physical_parameters, function.blocks[0].parameters, types) |binding_ref, raw, physical, entry_ref, *into| {
         try c.charge(4);
         const binding = common.storage.bindings[@intFromEnum(binding_ref)];
         const row = common.types[@intFromEnum(binding.@"type")];
         const entry = function.registers[@intFromEnum(entry_ref)];
-        if (row.kind != .reference or binding.@"type" != raw or entry.view != raw or
+        if (binding.@"type" != raw or entry.view != raw or
             physical != .@"type" or physical.@"type" != raw or entry.carrier != .@"type" or entry.carrier.@"type" != raw or
             binding.carrier != .@"type" or binding.carrier.@"type" != raw) continue;
-        into.* = try symbol(c, allocator, row.id);
-        found = true;
+        if (row.kind == .reference) {
+            into.* = try symbol(c, allocator, row.id);
+            found = true;
+        } else if (row.kind == .scalar and row.native_code == 2) native_bool = row.id;
     }
-    return if (found) .{ .current = current, .upper = upper, .types = types } else null;
+    const evidence: construction.OrdinaryReferenceInputs = .{ .current = current, .upper = upper, .types = types };
+    if (found) return evidence;
+    if (types.len != 1 or native_bool == null) return null;
+    for (function.blocks) |block| {
+        try c.step();
+        for (block.instructions) |instruction| {
+            try c.step();
+            if (instruction.data != .receiver_create) continue;
+            const create = instruction.data.receiver_create;
+            const role = common.members.constructions[@intFromEnum(create.construction)];
+            if (role.kind == .explicit and role.owner == create.new_target and try hasDirectImplicitBase(c, role.owner)) {
+                var checked = evidence;
+                checked.native_bool = try symbol(c, allocator, native_bool.?);
+                return checked;
+            }
+        }
+    }
+    return null;
 }

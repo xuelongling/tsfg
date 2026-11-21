@@ -916,7 +916,8 @@ pub fn project(c: *context.Context, function: t.FunctionRef, directory: *const o
             .receiver_create => |row| {
                 try c.charge(3);
                 const construction = v.members.constructions[@intFromEnum(row.construction)];
-                if (construction.kind != .explicit or construction.owner != row.new_target or v.types[@intFromEnum(construction.owner)].base != null) {
+                if (construction.kind != .explicit or construction.owner != row.new_target or
+                    (v.types[@intFromEnum(construction.owner)].base != null and !try refs.hasDirectImplicitBase(c, construction.owner))) {
                     result.pending = .implicit_protocol; return result;
                 }
             },

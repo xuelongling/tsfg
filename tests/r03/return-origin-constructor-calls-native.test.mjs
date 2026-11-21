@@ -15,7 +15,7 @@ test('constructor call certificates preserve both site and frame relations', asy
 });
 
 test('typed constructor and ordinary bodies retain the original call frame and field source', async () => {
-  await nativeUnit({ source: 'runtime/return-origin-constructor-call-body-test.zig', prefix: 'r03-constructor-call-body-', expectedPasses: 3 });
+  await nativeUnit({ source: 'runtime/return-origin-constructor-call-body-test.zig', prefix: 'r03-constructor-call-body-', expectedPasses: 4 });
 });
 
 test('fixed constructor owner payloads retain original frames and initialized contents', async () => {
