@@ -8,11 +8,19 @@ export function finiteFieldWriteVersion(path,value,sourcePath,target) {
   return {id:path+'/field-version/'+target.actualType+'/'+target.fieldId,node:path+'/value',
     actualType:target.actualType,field:target.fieldId,origin:{source:sourcePath,...value.range}};
 }
-export function booleanLiteral(value,charge) {
-  while(value.kind==='group'){
-    charge();value=value.operand;
+export function booleanOperand(value,charge) {
+  let inverted=false,negation;
+  while(value.kind==='group'||value.kind==='unary'&&value.operator==='!'){
+    charge();
+    if(value.kind==='unary'){inverted=!inverted;negation??=value;}
+    value=value.operand;
   }
-  return value.kind==='boolean'?value:null;
+  return {operand:value,inverted,negation};
+}
+export function booleanLiteral(value,charge) {
+  const {operand,inverted,negation}=booleanOperand(value,charge);
+  if(operand.kind!=='boolean')return null;
+  return negation?{...operand,value:operand.value!==inverted,range:negation.range}:operand;
 }
 export function literalBooleanRhs(value,charge) {
   if((value.kind!=='shortCircuit'&&value.kind!=='binary')||

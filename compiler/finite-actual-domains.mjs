@@ -155,7 +155,7 @@ function buildPlans(input,context,options,definitions) {
     // Field short-circuit control also must not consume capacity-based Array
     // reads. This is the same conservative solver role as the ordered start.
     const controlInitial=solve(null,{reads:[]});
-    let fieldReaching=buildFiniteFieldReaching(hir,controlInitial,charge);
+    let fieldReaching=buildFiniteFieldReaching(hir,{...controlInitial,carrierFields:initial.fields},charge);
     const carrierFieldReaching=fieldReaching.reads.some(row=>row.reaching.length)?fieldReaching:null;
     let result=carrierFieldReaching?solve(carrierFieldReaching):initial;
     const canTerminateArrayRead=directStatement=>{
@@ -176,12 +176,10 @@ function buildPlans(input,context,options,definitions) {
       const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateArrayRead);
       arrayReaching=array.reaching;terminalReads=array.terminalReads;
       if(!arrayReaching.reads.length)break;
-      const fieldPlan={...ordered,arrayReaching};
-      // The mixed cut keeps the carrier-authorized lexical write inventory
-      // apart from field versions selected by normal completion.
-      fieldReaching=terminalReads&&!allowCompoundTermination?
-        buildFiniteFieldReaching(hir,{...fieldPlan,carrierFields:result.fields},charge,terminalReads):
-        buildFiniteFieldReaching(hir,fieldPlan,charge);
+      // Even skipped stores need lexical versions from the carrier. The
+      // ordered field selections continue to govern successful reads.
+      const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields};
+      fieldReaching=buildFiniteFieldReaching(hir,fieldPlan,charge,allowCompoundTermination?null:terminalReads);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
         for(const id of read.versions){charge();versions.push(id);}
         const normalSources=array.normalReadSources.get(read.node)??[];

@@ -37,10 +37,9 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
 }
 
 export function finiteCoreGuard(value,charge) {
-  if(value.kind!=='group')return value;
+  if(value.kind!=='group'&&(value.kind!=='unary'||value.operator!=='!'))return value;
   const literal=booleanLiteral(value,charge);
-  // The verifier sees the direct literal. Keep both the enclosing control
-  // anchor and the original literal anchor for their respective operations.
+  // Keep the control anchor and the original constant expression anchor.
   return literal===null?value:{...literal,range:value.range,literalRange:literal.range};
 }
 

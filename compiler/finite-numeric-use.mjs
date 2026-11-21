@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {boolTypeId,i32TypeId} from './identity.mjs';
-import {literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
+import {booleanOperand,literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
 
 const orderedComparison=new Set(['<','<=','>','>=']);
 const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^',...orderedComparison]);
@@ -98,13 +98,6 @@ function copyGuards(guards,charge,excluded=undefined) {
     charge();if(!excluded?.has(binding))result.set(binding,guard);
   }
   return result;
-}
-function booleanOperand(value,charge) {
-  let operand=ungroup(value,charge),inverted=false;
-  while(operand.kind==='unary'&&operand.operator==='!') {
-    charge();inverted=!inverted;operand=ungroup(operand.operand,charge);
-  }
-  return {operand,inverted};
 }
 function presenceComparison(condition,inverted,charge) {
   if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return null;
