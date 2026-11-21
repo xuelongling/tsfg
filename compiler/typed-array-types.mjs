@@ -4,7 +4,7 @@ import {canonical,sha256,scalarTypeIds} from './identity.mjs';
 import {check,byteOrder,hash,sourceRange,originId} from './typed-array-schema.mjs';
 import {checkTypedValueContainment} from './typed-array-type-graphs.mjs';
 
-export function validateTypedArrayTypes(payload,sources) {
+export function validateTypedArrayTypes(payload,sources,declarationPath=payload.sourceRoot+'/minimal-arrays-v8.d.ts') {
   const types=new Map();
   for(const row of payload.types) {
     check(!types.has(row.id)&&(!types.size||byteOrder([...types.keys()].at(-1),row.id)<0),'type');
@@ -20,14 +20,14 @@ export function validateTypedArrayTypes(payload,sources) {
     }
     if(['scalar','string'].includes(row.kind)) {
       check(row.id===row.name&&(row.kind==='string'?row.name==='string':Object.hasOwn(scalarTypeIds,row.name))
-        &&row.sourcePath===payload.sourceRoot+'/minimal-arrays-v8.d.ts'&&row.constructor===null,'type');
+        &&row.sourcePath===declarationPath&&row.constructor===null,'type');
       const source=sources.get(row.sourcePath).content;
       check(source.slice(row.nameRange.start,row.nameRange.end)===(row.kind==='string'?'String':row.name),'source');
     }
     if(['array','readSpan'].includes(row.kind)) {
       requireType(row.elementType);
       check(row.id===row.kind+'<'+row.elementType+'>'&&row.constructor===null
-        &&row.sourcePath===payload.sourceRoot+'/minimal-arrays-v8.d.ts','type');
+        &&row.sourcePath===declarationPath,'type');
       const content=sources.get(row.sourcePath).content;
       sourceRange(row.indexSignatureRange,content,row.declarationRange);
       check(content.slice(row.nameRange.start,row.nameRange.end)===(row.kind==='array'?'Array':'ReadSpan'),'source');
@@ -67,10 +67,10 @@ export function validateTypedArrayTypes(payload,sources) {
   return types;
 }
 
-export function validateTypedArrayDeclarations(payload,sources) {
+export function validateTypedArrayDeclarations(payload,sources,declarationPath=payload.sourceRoot+'/minimal-arrays-v8.d.ts') {
   for(const [row,owner,read] of [[payload.arrayLength,'Array<T>',false],[payload.readSpanLength,'ReadSpan<T>',true]]) {
     check(row.ownerType===owner&&row.name==='length'&&row.kind==='property'
-      &&row.sourcePath===payload.sourceRoot+'/minimal-arrays-v8.d.ts'&&row.officialType==='number'
+      &&row.sourcePath===declarationPath&&row.officialType==='number'
       &&(read?row.readonly===true&&row.readType==='u32':row.writeType==='u32'),'declaration');
     const content=sources.get(row.sourcePath)?.content;check(typeof content==='string','declaration');
     sourceRange(row.declarationRange,content);sourceRange(row.nameRange,content,row.declarationRange);
@@ -79,8 +79,19 @@ export function validateTypedArrayDeclarations(payload,sources) {
       &&content.slice(row.nameRange.start,row.nameRange.end)==='length'
       &&content.slice(row.typeRange.start,row.typeRange.end)===(read?'u32':'number'),'declaration');
   }
+  if(payload.stringLength) {
+    const row=payload.stringLength,content=sources.get(declarationPath).content;
+    const declaration='interface String { readonly length: number; }',start=content.indexOf(declaration);
+    check(start>=0&&row.sourcePath===declarationPath&&row.ownerType==='string'&&row.name==='length'
+      &&row.kind==='property'&&row.officialType==='number'&&row.readType==='f64'&&row.readonly===true,'declaration');
+    sourceRange(row.declarationRange,content,{start,end:start+declaration.length});
+    sourceRange(row.nameRange,content,row.declarationRange);sourceRange(row.typeRange,content,row.declarationRange);
+    check(row.id===originId(declarationPath,row.nameRange)
+      &&content.slice(row.nameRange.start,row.nameRange.end)==='length'
+      &&content.slice(row.typeRange.start,row.typeRange.end)==='number','declaration');
+  }
   const intrinsic=payload.readSpanIntrinsic,content=sources.get(intrinsic.sourcePath)?.content;
-  check(typeof content==='string'&&intrinsic.sourcePath===payload.sourceRoot+'/minimal-arrays-v8.d.ts'
+  check(typeof content==='string'&&intrinsic.sourcePath===declarationPath
     &&intrinsic.kind==='intrinsic'&&intrinsic.name==='readSpan','declaration');
   sourceRange(intrinsic.declarationRange,content);sourceRange(intrinsic.nameRange,content,intrinsic.declarationRange);
   check(intrinsic.id===originId(intrinsic.sourcePath,intrinsic.nameRange)

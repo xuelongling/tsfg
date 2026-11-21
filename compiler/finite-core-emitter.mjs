@@ -12,7 +12,7 @@ import {isFiniteAbsence} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
-import {canonical,sha256,scalarName,i32TypeId,boolTypeId} from './identity.mjs';
+import {canonical,sha256,scalarName,scalarTypeIds,i32TypeId,boolTypeId} from './identity.mjs';
 import {scalarComparisons,scalarOperations} from './scalar-operators.mjs';
 import {memberPresence} from './member-presence.mjs';
 
@@ -221,6 +221,13 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         }
         if(value.kind==='stringLiteral')return api.operation('tsfg_string.constant',[],[],value.type,
           'code_units = array<i32'+(value.codeUnits.length?': '+value.codeUnits.join(', '):'')+'>',value.range);
+        if(value.kind==='stringLength') {
+          const receiver=evaluated(value.receiver),lengthType=scalarTypeIds.usize;
+          if(domains.get(receiver.type).actualTypes.some(id=>types.get(id).kind!=='string'))
+            pending('String operation-domain-check mapping',value.range);
+          const length=api.operation('tsfg_string.length',[receiver.name],[receiver.type],lengthType,'',value.range);
+          return api.operation('tsfg_core.convert_checked',[length],[lengthType],value.type,'',value.range);
+        }
         if(value.kind==='stringConcat') {
           if([value.left,value.right].some(operand=>domains.get(operand.type).actualTypes.some(id=>types.get(id).kind!=='string')))
             pending('String operation-domain-check mapping',value.range);

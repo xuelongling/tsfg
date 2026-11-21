@@ -2,7 +2,7 @@
 // Cold typed occurrences and original anchors, never a second evaluator/checker.
 import {canonical,integerNames,integerRange} from './identity.mjs';
 import {floatBits} from './float.mjs';
-import {identifierName} from './module-facts.mjs';
+import {identifierName,skipCallTrivia} from './module-facts.mjs';
 import {check,hash,sourceRange,originId,signatureId,byteOrder} from './typed-array-schema.mjs';
 import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
@@ -52,6 +52,16 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
         let owner=types.get(value.receiver.flowType);
         while(owner&&!owner.fields?.some(field=>field.id===value.property&&field.type===value.type))owner=types.get(owner.base);
         check(owner&&['value','reference'].includes(owner.kind),'field');
+      }
+      if(value.kind==='stringLength') {
+        check(payload.stringLength?.id===value.property&&value.receiver.flowType==='string'
+          &&value.type==='f64'&&value.flowType==='f64','type');
+        sourceRange(value.nameRange,source,value.range);
+        const {start,end}=value.receiver.range,name=spelling(value.nameRange);
+        check(start===value.range.start&&end<value.nameRange.start&&value.nameRange.end===value.range.end,'source');
+        const suffix=source.slice(end,value.range.end),dot=skipCallTrivia(suffix);
+        check(suffix[dot]==='.'&&dot+1+skipCallTrivia(suffix.slice(dot+1))===value.nameRange.start-end
+          &&!/[\s/]/u.test(name)&&identifierName(name)==='length','source');
       }
       if(value.kind==='undefinedLiteral'||value.kind==='nullLiteral')check(spelling(value.range)===(value.kind==='undefinedLiteral'?'undefined':'null'),'source');
       if(value.kind==='booleanLiteral')check(value.type==='bool'&&['true','false'].includes(value.token)&&spelling(value.range)===value.token,'literal');

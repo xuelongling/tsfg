@@ -33,13 +33,19 @@ comparisons of checked `Array<string>` reads. Finite Core evaluates the two
 operands in source order and compares the UTF-16 comparison result against
 signed i32 zero.
 
-Length, checked code unit access and checked slice are available as low-level
-Core operations. The pinned typed Array declaration gives `String` an empty
-interface, so the official checker rejects `s.length`, `s[i]` and `s.slice`
-before projection. Their Source connection requires builtin declaration
-identities and matching facts. The lowering must preserve missing-value
-results, negative arguments, numeric conversion and slice clamping before
-using the checked Core endpoints. Source-to-Runtime acceptance remains open.
+The v8 typed Array facts profile uses an empty `String` declaration. The
+development v9 profile declares `readonly length: number` and owns the
+checker-resolved builtin property identity, receiver and original ranges.
+Select it with typed Array facts context version 3. The v8 profile retains
+context version 2 and its existing package and HIR identities.
+
+Finite Core evaluates the length receiver once. `tsfg_string.length` counts
+UTF-16 code units and returns `usize`. A checked conversion at the same source
+range supplies the TypeScript `number` result as `f64`. Current String limits
+keep the count exactly representable. Checked code unit access and checked
+slice remain low-level Core operations. Their Source connection requires builtin
+declarations and must preserve missing-value results, negative arguments,
+numeric conversion and slice clamping. Source-to-Runtime acceptance remains open.
 
 The [registry](../contracts/registry.json) and [machine schema](../contracts/bytecode.schema.json)
 define the exact accepted wire identity. The retained wire10 String packets

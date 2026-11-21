@@ -404,7 +404,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const right=child('right',terminalRoot);if(right.terminal)return right;
         return ['===','!=='].includes(value.operator)?{symbol:path,truth:predicateTruth(value,path)}:{symbol:path};
       }
-      if(value.kind==='unary'||value.kind==='fieldAccess') {
+      if(['unary','fieldAccess','stringLength'].includes(value.kind)) {
         const operand=child(value.kind==='unary'?'operand':'receiver',terminalRoot);
         return operand.terminal?operand:{symbol:path};
       }

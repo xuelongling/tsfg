@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 // The sole protocol-to-domain transform: semantic identities and owned HIR nodes.
 import descriptor from '../contracts/typed-array-hir.schema.json' with {type:'json'};
+import stringLengthDescriptor from '../contracts/typed-array-hir-v9.schema.json' with {type:'json'};
 import bytecode from '../contracts/bytecode.schema.json' with {type:'json'};
 import {canonical,own,sha256,functionIdentity,signatureHash} from './identity.mjs';
 export const typedArrayHirFormat=own({contractVersion:'0.16.0',schemaHash:sha256(canonical(descriptor)+'\n')});
+export const typedArrayHirV9Format=own({contractVersion:stringLengthDescriptor.contractVersion,
+  schemaHash:sha256(canonical(stringLengthDescriptor)+'\n')});
 
 export function projectTypedArrayFacts(facts,profile=undefined) {
   const payload=facts.payload,sourceTypes=new Map(payload.types.map(row=>[row.id,row]));
@@ -164,7 +167,7 @@ export function projectTypedArrayFacts(facts,profile=undefined) {
     }
     return result;
   }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
-  return {format:{...(profile?.hirFormat??typedArrayHirFormat)},inputIdentity:facts.packageId,
+  return {format:{...(profile?.hirFormat??(facts.version===9?typedArrayHirV9Format:typedArrayHirFormat))},inputIdentity:facts.packageId,
     facts:{version:facts.version,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),
     target:structuredClone(bytecode.target),types,functions:functions.map(projectFunction),
@@ -176,5 +179,6 @@ export function projectTypedArrayFacts(facts,profile=undefined) {
       roots:row.roots.map(pair=>({sourceType:typeIds.get(pair.sourceType),targetType:typeIds.get(pair.targetType)}))})),
     exports:payload.exports.map(row=>({name:row.name,functionId:functionIds.get(row.functionId)})),
     intrinsics:{arrayLength:structuredClone(payload.arrayLength),readSpanLength:structuredClone(payload.readSpanLength),
+      ...(payload.stringLength?{stringLength:structuredClone(payload.stringLength)}:{}),
       readSpan:structuredClone(payload.readSpanIntrinsic)}};
 }

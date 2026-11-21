@@ -24,8 +24,8 @@ function context(value) {
   const fields=Object.getOwnPropertyDescriptors(value);
   check(wanted.every(key=>fields[key].enumerable&&Object.hasOwn(fields[key],'value')),'context');
   const selected=Object.fromEntries(wanted.map(key=>[key,fields[key].value]));
-  check(selected.family==='tsfg.array-facts-context-candidate'&&selected.version===2,'context');hash(selected.expectedPackageId);
-  const bytes=copyGenericJsonBytes(selected.factsBytes,policy),facts=readTypedArrayFacts(bytes);
+  check(selected.family==='tsfg.array-facts-context-candidate'&&[2,3].includes(selected.version),'context');hash(selected.expectedPackageId);
+  const bytes=copyGenericJsonBytes(selected.factsBytes,policy),facts=readTypedArrayFacts(bytes,selected.version===3?9:8);
   check(facts.packageId===selected.expectedPackageId,'context');return {bytes,facts};
 }
 export function buildInitialArrayPublication(factsContext) {
@@ -61,7 +61,7 @@ export function verifyTypedArrayHir(hir,factsContext,publicationContext=undefine
 export function buildTypedArrayHir(input,factsContext,publicationContext=undefined) {
   try {
     const {bytes,facts}=context(factsContext);
-    check(writeTypedArrayFacts(input).equals(bytes),'context');
+    check(writeTypedArrayFacts(input,facts.version).equals(bytes),'context');
     const result=Object.freeze({status:'ok',hir:finish(prepare(facts,publicationContext)).hir});
     return /** @type {typeof result & {diagnostics?:undefined}} */(result);
   }catch(error) {

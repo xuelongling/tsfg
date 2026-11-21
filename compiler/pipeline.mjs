@@ -19,7 +19,7 @@ import {isCommonProgramContext} from './common-program-hir.mjs';
 import {commonHirFormat} from './common-program-common.mjs';
 import {isSelectedNullableContext} from './nullable-common.mjs';
 import {isTypedArrayContext} from './typed-array-hir.mjs';
-import {typedArrayHirFormat} from './typed-array-project.mjs';
+import {typedArrayHirFormat,typedArrayHirV9Format} from './typed-array-project.mjs';
 import {isOptionalPropertyContext,optionalPropertyHirFormat} from './optional-property-hir.mjs';
 import {referenceHirFormat} from './reference-hir.mjs';
 import {prepareFiniteCore} from './finite-core-emitter.mjs';
@@ -388,14 +388,14 @@ function produceOwnedCore(hir, options, selected = undefined) {
   let string = false;
   try {
     family = familyOf(hir);
-    const expected = family === undefined ? typedArrayHirFormat :
-      family === optionalPropertyHirFormat.family ? optionalPropertyHirFormat : undefined;
-    if (expected && hir && typeof hir === 'object') {
+    const expected = family === undefined ? [typedArrayHirFormat,typedArrayHirV9Format] :
+      family === optionalPropertyHirFormat.family ? [optionalPropertyHirFormat] : [];
+    if (expected.length && hir && typeof hir === 'object') {
       // familyOf already checked the own format descriptor and its prototype.
       const format = Object.getOwnPropertyDescriptor(hir, 'format')?.value;
-      finite = !!format && typeof format === 'object' &&
-        Object.getOwnPropertyDescriptor(format, 'contractVersion')?.value === expected.contractVersion &&
-        Object.getOwnPropertyDescriptor(format, 'schemaHash')?.value === expected.schemaHash;
+      finite = !!format && typeof format === 'object' && expected.some(candidate =>
+        Object.getOwnPropertyDescriptor(format, 'contractVersion')?.value === candidate.contractVersion &&
+        Object.getOwnPropertyDescriptor(format, 'schemaHash')?.value === candidate.schemaHash);
       if (!finite && family === undefined) {
         const data = (object, key) => object && typeof object === 'object' && !isProxy(object)
           ? Object.getOwnPropertyDescriptor(object, key)?.value : undefined;
@@ -554,7 +554,8 @@ const sessionInputs = ["compiler/core-ssa-graph.mjs", "compiler/scalar-operators
   "compiler/typed-array-facts.mjs", "compiler/typed-array-hir.mjs", "compiler/typed-array-literals.mjs", "compiler/typed-array-project.mjs",
   "compiler/typed-array-relations.mjs", "compiler/typed-array-representation.mjs", "compiler/typed-array-schema.mjs", "compiler/typed-array-type-graphs.mjs",
   "compiler/typed-array-types.mjs", "compiler/typed-array-witnesses.mjs", "compiler/typed-layouts.mjs", "compiler/typed-reference-authority.mjs",
-  "compiler/typed-reference-views.mjs", "contracts/array-calls-candidate.schema.json", "contracts/array-generic-facts.schema.json", "contracts/common-program-bytecode-development.schema.json",
+  "compiler/typed-reference-views.mjs", "contracts/array-calls-candidate.schema.json", "contracts/array-generic-facts-v9.schema.json", "contracts/array-generic-facts.schema.json",
+  "contracts/common-program-bytecode-development.schema.json",
   "contracts/common-program-core-development.json", "contracts/common-program-hir-v2.schema.json", "contracts/common-program-hir-v3.schema.json", "contracts/common-program-source-v2.schema.json",
   "contracts/common-program-source-v3.schema.json", "contracts/common-program-wire-development.json", "contracts/component-layout-development.json", "contracts/core-closure-candidate.schema.json",
   "contracts/core-closure-publication-candidate.schema.json", "contracts/core-kernel-global-candidate.schema.json", "contracts/core-nullable-candidate.schema.json", "contracts/core-reference-candidate.schema.json",
@@ -562,7 +563,8 @@ const sessionInputs = ["compiler/core-ssa-graph.mjs", "compiler/scalar-operators
   "contracts/formal-closure-core-development.json", "contracts/formal-exception-core-development.json", "contracts/host-counter-semantic-v1.json", "contracts/module-callable-candidate.schema.json",
   "contracts/nullable-groups-candidate.schema.json", "contracts/nullable-owned-bridge-candidate.schema.json", "contracts/nullable-presence-capture-candidate.schema.json", "contracts/nullable-presence-hir-candidate.schema.json",
   "contracts/nullable-typeof-undefined-candidate.schema.json", "contracts/optional-property-facts-v1.schema.json", "contracts/optional-property-hir.schema.json", "contracts/query-tmeta-development.json",
-  "contracts/string-facts-candidate.schema.json", "contracts/string-facts-v2-candidate.schema.json", "contracts/system-query-facts.schema.json", "contracts/typed-array-hir.schema.json",
+  "contracts/string-facts-candidate.schema.json", "contracts/string-facts-v2-candidate.schema.json", "contracts/system-query-facts.schema.json",
+  "contracts/typed-array-hir-v9.schema.json", "contracts/typed-array-hir.schema.json",
   "eng/core-ir-inputs.mjs", "eng/frontend-source.lock.json", "eng/host-counter-binary.mjs", "eng/host-counter-objects.mjs",
   "eng/host-counter.mjs", "eng/host-semantic-contract.mjs", "eng/output-storage.mjs", "eng/runtime-entry.mjs",
   "eng/vm-build.mjs"
