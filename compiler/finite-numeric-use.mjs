@@ -2,7 +2,8 @@
 import {boolTypeId,i32TypeId} from './identity.mjs';
 import {literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
 
-const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^','<','<=','>','>=']);
+const orderedComparison=new Set(['<','<=','>','>=']);
+const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^',...orderedComparison]);
 /** The accepted first numeric-use domain is exactly same-i32 plus undefined. */
 export function finiteNumericUse(value) {
   const operands=value.kind==='binary'?[value.left,value.right]:value.kind==='unary'?[value.operand]:[];
@@ -98,13 +99,23 @@ function copyGuards(guards,charge,excluded=undefined) {
   }
   return result;
 }
-export function finitePresenceTest(condition,charge) {
-  condition=ungroup(condition,charge);
+function booleanOperand(value,charge) {
+  let operand=ungroup(value,charge),inverted=false;
+  while(operand.kind==='unary'&&operand.operator==='!') {
+    charge();inverted=!inverted;operand=ungroup(operand.operand,charge);
+  }
+  return {operand,inverted};
+}
+function presenceComparison(condition,inverted,charge) {
   if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return null;
   const a=ungroup(condition.left,charge),b=ungroup(condition.right,charge);
   const binding=a?.kind==='reference'?a:b,absence=binding===a?b:a;
   return binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind)
-    ?{condition,binding:binding.binding,type:absence.semanticType??absence.type,operand:binding===a?0:1}:null;
+    ?{condition,inverted,binding:binding.binding,type:absence.semanticType??absence.type,operand:binding===a?0:1}:null;
+}
+export function finitePresenceTest(condition,charge) {
+  const {operand,inverted}=booleanOperand(condition,charge);
+  return presenceComparison(operand,inverted,charge);
 }
 export function finitePresenceShortCircuit(condition,charge) {
   let rootPath='';
@@ -116,20 +127,27 @@ export function finitePresenceShortCircuit(condition,charge) {
     let value=expression,innerPath=path;
     while(value.kind==='group'){charge();value=value.operand;innerPath+='/operand';}
     node.firstLeaf=leaves;
-    const test=finitePresenceTest(value,charge);
+    // Classify through Boolean negation while keeping the original operand
+    // for lowering, including its operations and source locations.
+    const {operand:flag,inverted}=booleanOperand(value,charge);
+    const test=presenceComparison(flag,inverted,charge);
     const semanticType=value.semanticType??value.type;
-    // Classify the binding through boolean negation, but keep the complete
-    // operand for lowering so its original value and source range are used.
-    let flag=value;
-    while(flag.kind==='unary'&&flag.operator==='!') {
-      charge();flag=ungroup(flag.operand,charge);
-    }
     const flagType=flag.semanticType??flag.type;
     const booleanBinding=semanticType===boolTypeId&&flag.kind==='reference'&&
       flagType===boolTypeId&&(flag.declaredType??flagType)===boolTypeId;
+    // Local scalar operands can use a preceding presence proof without
+    // modifying the binding or introducing branch-specific memory effects.
+    const scalarOrder=semanticType===boolTypeId&&flag.kind==='binary'&&orderedComparison.has(flag.operator)&&
+      finiteNumericUse(flag)?.every(value=>{
+        let operand=ungroup(value,charge);
+        while(operand.kind==='assertType') {
+          charge();operand=ungroup(operand.operand,charge);
+        }
+        return operand.kind==='reference'||operand.kind==='constant';
+      });
     const callWithoutRebinding=value.kind==='call'&&semanticType===boolTypeId
       &&finiteBindingWrites(value.receiver?[value.receiver,value.arguments]:value.arguments,charge).size===0;
-    if(test||booleanBinding||callWithoutRebinding) {
+    if(test||booleanBinding||scalarOrder||callWithoutRebinding) {
       node.test=test;node.booleanBinding=booleanBinding;node.expression=expression;node.path=path;leaves++;
       hasPresenceTest||=Boolean(test);
       hasCall||=callWithoutRebinding;
@@ -144,11 +162,11 @@ export function finitePresenceShortCircuit(condition,charge) {
 }
 function branchGuard(test,truth,guards,charge) {
   if(!test)return guards;
-  const {condition,binding,type}=test,prior=guards.get(binding);
+  const {condition,inverted,binding,type}=test,prior=guards.get(binding);
   // A positive absence test fixes the value. The only remaining distinct
   // narrowing after one exclusion is a test for the other absence type.
   if(prior?.equal||prior?.previous||prior?.type===type)return guards;
-  return copyGuards(guards,charge).set(binding,{type,equal:(condition.operator==='===')===truth,
+  return copyGuards(guards,charge).set(binding,{type,equal:(condition.operator==='===')===(truth!==inverted),
     range:{...condition.range},previous:prior});
 }
 function commonGuards(left,right,charge) {

@@ -70,8 +70,21 @@ bool refinement(ModuleProof &proof, mlir::Operation *op, mlir::func::FuncOp fn, 
     auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(block.getTerminator());
     if (!branch) continue;
     mlir::Value condition = branch.getCondition();
-    // Parentheses preserve the condition through Boolean domain views.
-    if (!unview(proof, condition)) return false;
+    // Boolean views preserve polarity. Each explicit not reverses the edge
+    // selected by the original presence comparison.
+    bool inverted = false;
+    for (;;) {
+      if (!unview(proof, condition)) return false;
+      if (condition.getType() != branch.getCondition().getType()) break;
+      auto *negation = condition.getDefiningOp();
+      if (!negation || negation->getName().getStringRef() != "tsfg_core.bool_not") break;
+      if (negation->getNumOperands() != 1 || negation->getNumResults() != 1 ||
+          negation->getOperand(0).getType() != condition.getType())
+        return proof.reject("malformed Boolean negation in presence edge proof");
+      if (!proof.charge()) return false;
+      condition = negation->getOperand(0);
+      inverted = !inverted;
+    }
     if (condition.getType() != branch.getCondition().getType()) continue;
     auto *comparison = condition.getDefiningOp();
     if (!comparison || comparison->getName().getStringRef() != "tsfg_core.domain.presence_equal") continue;
@@ -84,7 +97,7 @@ bool refinement(ModuleProof &proof, mlir::Operation *op, mlir::func::FuncOp fn, 
     if ((left != input && right != input) || !other || other->alternatives != std::vector<std::string>{type}) continue;
     const auto name = attr(comparison,"operator");
     if (name != "===" && name != "!==") continue;
-    const unsigned selected = (*equal == (name == "===")) ? 0 : 1;
+    const unsigned selected = ((*equal == (name == "===")) != inverted) ? 0 : 1;
     // Edge dominance, rather than a block-name heuristic: removing the proven
     // edge must make this use unreachable from the actual function entry.
     std::set<mlir::Block *> visited; std::vector<mlir::Block *> pending{&fn.getBody().front()}; bool reachable = false;
