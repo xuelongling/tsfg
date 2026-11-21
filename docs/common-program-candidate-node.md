@@ -196,8 +196,11 @@ carries the `tsfg.core-program-development` v7 marker and exact Common20
 development exchange identity (`0.20.0`, prospective packet capability 1020). The C++ consumer selects it with `tsfg-core-ir --common-program --canonicalize` (or `--optimize`). This static format has no wire or execution qualification.
 
 Core7, Common20 and publication6/fixed-v6 remain unpublished private development
-formats. Common20 has only the prospective producer/passive metadata reader
-binding; it does not adopt the registered formal wire17 loader, State or VM.
+formats. Common20 pairs the prospective producer with the passive owning reader
+`readOwnedChecked`. The reader checks the supplied SourcePlan against the typed
+physical body after checking layout and SSA. SourcePlan serves as a correspondence
+witness. Formal loader registration, Runtime instance creation and execution
+remain pending.
 The formal Frontend/HIR/bytecode registries, Source lock and admission remain unchanged by this private candidate. Candidate metadata never derives its private header from that registry. Shared MLIR string escaping has its own module so the budgeted printer does not import the scalar emitter and its formal registry.
 
 Run the pure Node regressions with:
