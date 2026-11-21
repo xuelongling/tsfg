@@ -13,7 +13,7 @@ import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
 import {canonical,sha256,scalarName,i32TypeId,boolTypeId} from './identity.mjs';
-import {scalarOperations} from './scalar-operators.mjs';
+import {scalarComparisons,scalarOperations} from './scalar-operators.mjs';
 import {memberPresence} from './member-presence.mjs';
 
 function pending(message,range) {throw Object.assign(new TypeError('r03-finite-core-capability: '+message),
@@ -294,11 +294,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           if(value.kind==='binary'&&['===','!=='].includes(value.operator)&&operands.some(operand=>domains.get(operand.type).actualTypes
             .every(id=>['null','undefined'].includes(types.get(id).kind))))
             return op(api,'presence_equal',operands.map(evaluated),value.type,'operator = '+quote(value.operator),value.range);
-          if(value.kind==='binary'&&['===','!=='].includes(value.operator)&&operands.every(operand=>domains.get(operand.type).actualTypes
+          if(value.kind==='binary'&&scalarComparisons.has(value.operator)&&operands.every(operand=>domains.get(operand.type).actualTypes
             .every(id=>types.get(id).kind==='string'))) {
             const compared=api.operation('tsfg_string.compare',operands.map(operand=>api.emit(operand)),operands.map(operand=>operand.type),i32TypeId,'',value.range);
             const zero=api.operation('tsfg_core.constant',[],[],i32TypeId,'value = 0 : i32',value.range);
-            return api.operation('tsfg_core.'+(value.operator==='==='?'eq':'ne'),[compared,zero],[i32TypeId,i32TypeId],value.type,'',value.range);
+            return api.operation('tsfg_core.'+scalarOperations[value.operator],[compared,zero],[i32TypeId,i32TypeId],value.type,'',value.range);
           }
           if(value.kind==='binary'&&['===','!=='].includes(value.operator)&&operands.every(operand=>domains.get(operand.type).actualTypes
             .every(id=>['reference','array','null','undefined'].includes(types.get(id).kind))))
