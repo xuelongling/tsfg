@@ -21,7 +21,7 @@ const validPath = value => typeof value === "string" && value.startsWith("/") &&
 function failure(code, root, definition) {
   const error = new TypeError(`${code}: compilation closure root or dependency differs`);
   Object.assign(error, { code, ruleId: "r01-compilation-closure", phase: "hir",
-    primary: { sourceId: root?.sourcePath ?? definition?.sourcePath ?? "",
+    primary: { sourceId: definition?.sourcePath ?? root?.sourcePath ?? "",
       start: definition?.range?.start ?? 0, end: definition?.range?.end ?? 0 } });
   throw error;
 }

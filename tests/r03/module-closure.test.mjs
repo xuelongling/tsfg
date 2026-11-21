@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { compilationClosure, moduleIdentity, normalizeClosure, rootKinds, printClosure } from "../../compiler/modules.mjs";
 import { functionIdentity } from "../../compiler/identity.mjs";
+import { sample } from "./module-callable-fixtures.mjs";
 
 function facts() {
   const functions = [], modules = [];
@@ -50,6 +51,21 @@ test("required callback and hot roots reject omission at original declaration an
       && 'primary' in error && error.primary && typeof error.primary==='object'
       && 'start' in error.primary && error.primary.start === 12);
   }
+});
+
+test("an omitted required re-export uses the source range of its target declaration", () => {
+  const { modules, functions, globals } = sample("first-rr").hir;
+  const application = { kind: "application", sourcePath: "/src/state.ts", name: "read" };
+  const alias = { kind: "host-export", sourcePath: "/src/barrel.ts", name: "chosen" };
+  const input = { modules, functions, globals, configuration: { roots: [application, alias], requiredRoots: [alias] } };
+  const closure = compilationClosure(input);
+  assert.equal(closure.roots[1].target, closure.roots[0].target);
+
+  input.configuration.roots = [application];
+  assert.throws(() => compilationClosure(input), {
+    code: "r03-d-closure-root",
+    primary: { sourceId: "/src/state.ts", start: 32, end: 80 },
+  });
 });
 
 test("ordinary application does not implicitly require every embedding root category", () => {
