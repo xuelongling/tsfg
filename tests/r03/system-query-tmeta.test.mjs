@@ -363,6 +363,33 @@ test('Query standalone batch corresponds to the verified input Core',()=>{
   assert.throws(()=>collect(wrongVersion),/r10-system-query-batch: checked input/);
 });
 
+test('Query standalone LLVM IR rejects a retained result from another checked batch',()=>{
+  const llvm=readFileSync(new URL('query-tmeta-i32-copy-retained.ll',queryFixtures));
+  const copy=retainedQuery('i32-copy'),compound=retainedQuery('i32-compound');
+  /** @type {{command:string,input:string}[]} */
+  const calls=[];
+  /** @param {ReturnType<typeof retainedQuery>} retained */
+  const collect=retained=>readQueryCompilerOutputs(retained.facts,retained.context,retained.core,
+    {cpuLLVM:'ir'},(command,input)=>{
+      calls.push({command,input});
+      if(command==='--cpu-batch')return Buffer.from(retained.payload.batch);
+      assert.equal(command,'--llvm-ir');
+      return llvm;
+    });
+  assert.throws(()=>collect(compound),/r10-system-query-llvm: checked batch proof differs/);
+  assert.deepEqual(calls.splice(0),[
+    {command:'--cpu-batch',input:compound.core.toString('utf8')},
+    {command:'--llvm-ir',input:compound.payload.batch},
+  ]);
+  const product=collect(copy);
+  assert.equal(product.cpuLLVM,llvm.toString('utf8'));
+  for(const field of ['cpuBatch','tmeta','llvmArtifact'])assert.equal(Object.hasOwn(product,field),false);
+  assert.deepEqual(calls,[
+    {command:'--cpu-batch',input:copy.core.toString('utf8')},
+    {command:'--llvm-ir',input:copy.payload.batch},
+  ]);
+});
+
 test('Query LLVM pairing validates the retained batch and target',async t=>{
   const llvm=readFileSync(new URL('query-tmeta-i32-copy-retained.ll',queryFixtures));
   /** @param {string} name @param {string[]} calls @param {Buffer} [llvmOutput] */

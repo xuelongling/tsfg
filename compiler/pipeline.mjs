@@ -206,12 +206,13 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   const core=decodeQueryCompilerText(coreBytes,'core');
   const {effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
   const effects=includeEffects?readSystemQueryEffects(consumeQuery('--effects',core),facts,sourceContext):undefined;
-  const checkedBatch=includeBatch||includeTmeta?decodeQueryCompilerText(consumeQuery('--cpu-batch',core),'batch'):core;
-  if(includeBatch||includeTmeta)checkQueryBatchSource(checkedBatch,coreBytes,facts.inputIdentity);
+  const needsCheckedBatch=includeBatch||includeTmeta||llvmOutput==='ir';
+  const checkedBatch=needsCheckedBatch?decodeQueryCompilerText(consumeQuery('--cpu-batch',core),'batch'):core;
+  if(needsCheckedBatch)checkQueryBatchSource(checkedBatch,coreBytes,facts.inputIdentity);
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
   const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;
-  if(cpuLLVM&&llvmOutput==='ir'&&(includeBatch||includeTmeta))checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
+  if(cpuLLVM&&llvmOutput==='ir')checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
   if(cpuLLVM&&llvmOutput==='ir'&&tmeta)checkQueryLlvmEntries(cpuLLVM,tmeta.payload.entries);
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
