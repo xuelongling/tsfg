@@ -183,7 +183,7 @@ bool nativePayloadOperation(mlir::Operation *op) {
     "tsfg_core.neg","tsfg_core.pos","tsfg_core.not","tsfg_core.bool_not","tsfg_core.eq","tsfg_core.ne",
     "tsfg_core.lt","tsfg_core.le","tsfg_core.gt","tsfg_core.ge","tsfg_core.convert_checked","tsfg_core.convert_wrap",
     "tsfg_core.reinterpret","tsfg_string.constant","tsfg_string.concat","tsfg_string.compare","tsfg_string.length",
-    "tsfg_string.code_unit_at","tsfg_string.slice","tsfg_core.domain.identity_equal",
+    "tsfg_string.codeunit","tsfg_string.slice","tsfg_core.domain.identity_equal",
     "tsfg_core.domain.presence_equal","tsfg_core.domain.member_present","tsfg_core.domain.array_length"};
   if(!native.count(op->getName().getStringRef().str()))return false;
   return true;
