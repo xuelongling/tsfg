@@ -19,6 +19,7 @@ import {commonHirFormat} from './common-program-common.mjs';
 import {isSelectedNullableContext} from './nullable-common.mjs';
 import {isTypedArrayContext} from './typed-array-hir.mjs';
 import {typedArrayHirFormat} from './typed-array-project.mjs';
+import {isOptionalPropertyContext,optionalPropertyHirFormat} from './optional-property-hir.mjs';
 import {prepareFiniteCore} from './finite-core-emitter.mjs';
 import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
@@ -347,13 +348,14 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const ordinary = family === undefined || family === 'tsfg.module-callable-hir-candidate';
   const exception = family === 'tsfg.exception-hir-candidate';
   const closure = family === 'tsfg.closure-hir-candidate';
+  const optional = family === optionalPropertyHirFormat.family;
   const packetInput = common || generic || ordinary ? inputIdentity : undefined;
   // Only scalar packets use the first function descriptor as the default.
   const scalar = !common && family === undefined && hir.modules === undefined;
   const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
-  if(common||ordinary||generic||exception||closure)requireCheckedCoreInput(core,inputIdentity);
+  if(common||ordinary||generic||exception||closure||optional)requireCheckedCoreInput(core,inputIdentity);
   if(generic&&!hasCheckedGenericRoot(core,packetDefaultRoot))
     throw new TypeError('r03-core-output: first generic function differs from the checked default root');
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
@@ -376,12 +378,14 @@ function produceOwnedCore(hir, options, selected = undefined) {
   let finite = false;
   try {
     family = familyOf(hir);
-    if (family === undefined && hir && typeof hir === 'object') {
+    const expected = family === undefined ? typedArrayHirFormat :
+      family === optionalPropertyHirFormat.family ? optionalPropertyHirFormat : undefined;
+    if (expected && hir && typeof hir === 'object') {
       // familyOf already checked the own format descriptor and its prototype.
       const format = Object.getOwnPropertyDescriptor(hir, 'format')?.value;
       finite = !!format && typeof format === 'object' &&
-        Object.getOwnPropertyDescriptor(format, 'contractVersion')?.value === typedArrayHirFormat.contractVersion &&
-        Object.getOwnPropertyDescriptor(format, 'schemaHash')?.value === typedArrayHirFormat.schemaHash;
+        Object.getOwnPropertyDescriptor(format, 'contractVersion')?.value === expected.contractVersion &&
+        Object.getOwnPropertyDescriptor(format, 'schemaHash')?.value === expected.schemaHash;
     }
   } catch {
     // Keep malformed inputs on the existing formal validation path.
@@ -392,7 +396,8 @@ function produceOwnedCore(hir, options, selected = undefined) {
     const fixedOptions = { core, optimize: options.optimize };
     const request = selected ?? options;
     const { factsContext } = request;
-    if (!isTypedArrayContext(factsContext))
+    const matchesContext = family === optionalPropertyHirFormat.family ? isOptionalPropertyContext : isTypedArrayContext;
+    if (!matchesContext(factsContext))
       return produceCore(hir, fixedOptions,
         selected?.lower ?? (value => lowerFormalHir(value, factsContext, options.callPublicationContext)), { factsContext });
     const prepared = prepareFiniteCore(hir, factsContext, request.callPublicationContext);

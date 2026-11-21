@@ -187,6 +187,60 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     assert.deepEqual(calls.slice(first),[['--canonicalize']]);
     assert.equal(sha256(coreInput),sha256(originalText));
   });
+  await t.test('owned Optional Core keeps the verified request and output identity',async sub=>{
+    const factsBytes=await fs.readFile(new URL('./testdata/optional-property-v1/source-package.json',import.meta.url));
+    assert.equal(sha256(factsBytes),'sha256:4e1dce8a4319159993e93cd3ef8143850456c923dc5a35a46d33bdefca33c4ab');
+    const facts=JSON.parse(factsBytes.toString('utf8'));
+    const context={family:'tsfg.optional-property-facts-context-candidate',version:1,factsBytes,expectedPackageId:facts.packageId};
+    const built=buildHir(facts,context);
+    assert.equal(built.status,'ok');
+    const held=built.hir,original=lowerFormalHir(held,context);
+    assert.equal(sha256(canonical(held)+'\n'),'sha256:ddb62103bf9a21c766b781b1eebca627675822acf046d299e61096b6d13c4c6a');
+    // The existing verified finite body supplies the input. Model only the printer frame.
+    const matching=framedCore(original);
+    sub.after(()=>{stdout=valid;packetStdout=undefined;});
+    await sub.test('caller mutation during admission cannot replace the Optional request',async()=>{
+      stdout=matching;
+      const candidate=structuredClone(held),factsContext={...context};
+      const options={core:artifact,optimize:false,factsContext};
+      const first=calls.length,pending=compileOwnedCore(candidate,options);
+      Object.assign(candidate,{inputIdentity:hir.inputIdentity});
+      Object.assign(factsContext,{factsBytes:Buffer.from('{}')});
+      Object.assign(options,{core:'replacement.exe',optimize:true});
+      const accepted=await pending;
+      assert.equal(accepted.status,'ok');
+      assert.deepEqual(accepted.hir,held);
+      assert.deepEqual(Buffer.from(accepted.core,'utf8'),matching);
+      assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+      assert.equal(sha256(coreInput),sha256(original));
+    });
+    await sub.test('foreign Core stops before Optional bytecode',async()=>{
+      stdout=valid;packetStdout=Buffer.alloc(0);
+      const first=calls.length,options={core:artifact,factsContext:context};
+      const text=await compileOwnedCore(held,options),bytecode=await compileOwnedHir(held,options);
+      assert.equal(text.status,'tool-error');
+      assert.deepEqual(text,mismatch);
+      assert.deepEqual(calls.slice(first),[['--canonicalize'],['--canonicalize']]);
+      assert.deepEqual(bytecode,mismatch);
+    });
+    await sub.test('missing Core and unexpected Optional publication keep their diagnostics',async()=>{
+      for(const compile of [compileOwnedCore,compileOwnedHir]){
+        const reads=[];
+        const failure=await compile(held,{
+          get core(){reads.push('core');return undefined;},
+          get optimize(){reads.push('optimize');return false;},
+          get factsContext(){reads.push('facts');return context;},
+          get callPublicationContext(){reads.push('publication');return undefined;},
+        });
+        assert.deepEqual(failure,{status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required'});
+        assert.deepEqual(reads,compile===compileOwnedCore?['facts','publication','core']:['core']);
+      }
+      const first=calls.length;
+      assert.deepEqual(await compileOwnedHir(held,{core:artifact,factsContext:context,callPublicationContext:{}}),
+        {status:'tool-error',code:'r03-d-consumer',message:'r03-optional-property-context: unexpected publication'});
+      assert.equal(calls.length,first);
+    });
+  });
   await t.test('registered Core transport rejects a foreign input before bytecode',async sub=>{
     const {hir:foreignHir}=stringCases()[0];
     const foreign=framedCore(expectedStringCore(foreignHir)).toString('utf8');
