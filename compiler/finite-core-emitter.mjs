@@ -94,8 +94,33 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     return result;
   }
   const wrap=(value,type)=>value.type===type?value:{kind:'finiteAdapt',operand:value,type,semanticType:value.semanticType,range:value.range};
-  function body(values,path,fn) {
-    return values.map((value,index)=>{
+  function sharedSuperPhase(fn) {
+    if(fn.role!=='construction-body')return null;
+    for(const statement of fn.body) {
+      budget.step();
+      if(statement.kind!=='if'||statement.then.length!==1||statement.else.length!==1)continue;
+      if(statement.then[0].kind!=='expression'||statement.else[0].kind!=='expression')continue;
+      const left=statement.then[0].expression,right=statement.else[0].expression;
+      if(left?.kind!=='superConstruct'||right?.kind!=='superConstruct'||left.construction!==right.construction||
+        left.afterSuccess.construction!==right.afterSuccess.construction)continue;
+      const pending=[fn.body];let sites=0;
+      while(pending.length) {
+        budget.step();const value=pending.pop();
+        if(value.kind==='superConstruct'&&++sites>2)return null;
+        for(const child of Object.values(value))if(child&&typeof child==='object')pending.push(child);
+      }
+      const owner=types.get(fn.ownerType),bindings=new Set([fn.parameters[0].id]);
+      for(const init of owner.construction.initialization)if(init.binding){budget.step();bindings.add(init.binding);}
+      if(bindings.size>1) {
+        const written=finiteBindingWrites(fn.body,budget.step);
+        for(const binding of bindings)if(written.has(binding))return null;
+      }
+      return {statement,phase:left.afterSuccess,bindings};
+    }
+    return null;
+  }
+  function body(values,path,fn,shared=null) {
+    return values.flatMap((value,index)=>{
       const p=path+'/'+index,result={...value};
       if(value.kind==='local') {
         result.binding={...value.binding,type:selected(fn.id+'/binding/'+value.binding.id).domainId};
@@ -127,7 +152,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       if(value.else)result.elseBody=body(value.else,p+'/else',fn);
       if(value.body)result.body=body(value.body,p+'/body',fn);
       if(value.kind==='while')loopSources.set(result,value);
-      return result;
+      if(value!==shared?.statement)return [result];
+      // Each arm reaches the same own phase immediately after its original super.
+      delete result.thenBody[0].value.afterSuccess;
+      delete result.elseBody[0].value.afterSuccess;
+      return [result,shared.phase];
     });
   }
   const symbol=fn=>'f'+fn.id.slice(7);
@@ -136,10 +165,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
   // ledger remains separate; no definition seed is a runtime instance claim.
   const functions=finiteCallables(hir).map(original=>{
     const voidResult=original.role==='construction-body'||types.get(original.returnType.id).kind==='void';
+    const shared=sharedSuperPhase(original);
     const fn={...original,parameters:original.parameters.map(parameter=>({...parameter,
       type:selected(original.id+'/binding/'+parameter.id).domainId})),
       returnType:{...original.returnType,id:voidResult?original.returnType.id:selected(original.id+'/return').domainId},
-      body:body(original.body,original.id+'/body',original)};
+      body:body(original.body,original.id+'/body',original,shared)};
     const abi=plan.abi.find(row=>row.functionId===fn.id);
     const opAttrs=value=>`view_type = ${quote(value.semanticType)}, domain = ${quote(value.type)}`;
     const op=(api,name,values,result,attrs,range)=>api.operation('tsfg_core.domain.'+name,values.map(value=>value.name),
@@ -183,7 +213,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         op(api,'field_initialize',[receiver,value],null,attrs+`, input_domain = ${quote(value.type)}`,output.origin);
       }
     }
-    const guardedBindings=presenceBindings.get(fn.id);
+    const guarded=presenceBindings.get(fn.id);
+    const guardedBindings=shared?new Set([...(guarded??[]),...shared.bindings]):guarded;
     const testedOperands=new Map();
     const presenceKey=(binding,range)=>binding+'/'+range.start+'/'+range.end;
     const emission=emitCoreSsaFunction(fn,{verified:hir,coreType,functionSymbol:symbol,budget,
@@ -387,8 +418,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const receiver={name:api.lookup(value.receiverBinding),type:fn.parameters[0].type};
           op(api,'super',[receiver,...value.arguments.map(argument=>copy(api,evaluated(argument),argument.semanticType,argument.range))],null,
             `view_type = ${quote(value.semanticType)}, construction = ${quote(value.construction)}`,value.range);
-          const after=value.afterSuccess;
-          initializeFields(after,api);
+          if(value.afterSuccess)initializeFields(value.afterSuccess,api);
           return null;
         }
         if(value.kind==='propertyPresenceTest') {

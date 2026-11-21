@@ -70,7 +70,7 @@ async function initializerProof(file,digest){
   const {hir}=built;
   const proofs=buildFiniteCoreDomains(hir,context,{publicationContext});
   const phases=buildFiniteFieldPhases(hir,context,{publicationContext});
-  return {hir,proofs,phases};
+  return {hir,proofs,phases,context,publicationContext};
 }
 test('a checked field initializer stops subsequent initialization and normal construction',async()=>{
   const {hir,proofs,phases}=await initializerProof('initializer-order','5e4374117a2e272310c4003c9069cdb3ab0ddee34ebc5070b8113e6e0dbd818b');
@@ -123,7 +123,7 @@ test('derived field initialization requires successful super and stops at its fi
 });
 
 test('mutually exclusive super calls meet at a single lexical initializer',async()=>{
-  const {hir,proofs,phases}=await initializerProof('multi-super-initializer','e28589ca07d0dd98d1ac851ddd1345d4ea6019706b266f2ab4df39f90f375726');
+  const {hir,proofs,phases,context,publicationContext}=await initializerProof('multi-super-initializer','e28589ca07d0dd98d1ac851ddd1345d4ea6019706b266f2ab4df39f90f375726');
   const fn=hir.functions.find(row=>row.name==='entry'),type=hir.types.find(row=>row.id===fn.body[0].initializer.type);
   const constructor=hir.functions.find(row=>row.id===type.constructor),branch=constructor.body[0];
   assert.equal(branch.then[0].expression.kind,'superConstruct');
@@ -139,6 +139,20 @@ test('mutually exclusive super calls meet at a single lexical initializer',async
     const domain=plan.domains.find(row=>row.id===result.domainId);
     assert.deepEqual(domain.actualTypes,[fn.returnType.id]);
   }
+  const core=lowerFormalHir(hir,context,publicationContext);
+  const start=core.indexOf('  func.func @"f'+constructor.id.slice(7)+'"(');
+  assert.ok(start>=0);
+  const body=core.slice(start,core.indexOf('\n  }',start));
+  const arms=[...body.matchAll(/"tsfg_core\.domain\.super"\(%v0\)[^\n]*\n    cf\.br \^(bb\d+)/g)];
+  assert.equal(arms.length,2);
+  assert.equal(arms[0][1],arms[1][1]);
+  const join=body.slice(body.indexOf('^'+arms[0][1],(arms[1].index??0)+arms[1][0].length));
+  for(const name of ['initialize_fields','array_create','array_read','field_initialize']){
+    const op='"tsfg_core.domain.'+name+'"';
+    assert.equal(body.split(op).length-1,1);
+    assert.ok(join.includes(op));
+  }
+  assert.ok(join.includes('"tsfg_core.domain.initialize_fields"(%v0)'));
 });
 
 test('failed super arguments and nested initializer operands stop their own continuation',async()=>{

@@ -327,6 +327,18 @@ struct MemberProof {
     proof.module.walk([&](mlir::Operation *op){
       if(!valid)return;
       const auto name=op->getName().getStringRef();const bool method=name=="tsfg_core.domain.method_call";
+      if(name=="tsfg_core.domain.initialize_fields") {
+        if(!proof.charge()){valid=false;return;}
+        auto fn=op->getParentOfType<mlir::func::FuncOp>();
+        const auto id=fn?fn->getAttrOfType<mlir::StringAttr>("tsfg_core.function_id"):mlir::StringAttr();
+        const auto found=id?proof.callable.find(id.getValue().str()):proof.callable.end();
+        if(found==proof.callable.end()||string(*found->second,"role")!="construction-body"){
+          valid=proof.reject("field phase requires its owned constructor");return;
+        }
+        // A shared phase needs the same base and receiver proof as a
+        // readonly write, even when all its declared fields are writable.
+        constructorStores.try_emplace(found->first);return;
+      }
       if(!method&&name!="tsfg_core.domain.field_read"&&name!="tsfg_core.domain.field_store"&&name!="tsfg_core.domain.member_present")return;
       if(!proof.charge()){valid=false;return;}
       const auto text=[&](llvm::StringRef key){const auto a=op->getAttrOfType<mlir::StringAttr>(key);return a?a.getValue().str():std::string();};
