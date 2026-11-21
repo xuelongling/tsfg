@@ -98,12 +98,13 @@ function copyGuards(guards,charge,excluded=undefined) {
   }
   return result;
 }
-function branchGuard(condition,truth,guards,charge) {
+function branchGuard(condition,truth,guards,charge,preserveExisting=false) {
   condition=ungroup(condition,charge);
   if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return guards;
   const a=ungroup(condition.left,charge),b=ungroup(condition.right,charge);
   const binding=a?.kind==='reference'?a:b,absence=binding===a?b:a;
-  if(binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind))
+  if(binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind)
+    &&(!preserveExisting||!guards.has(binding.binding)))
     return copyGuards(guards,charge).set(binding.binding,{type:absence.type,equal:(condition.operator==='===')===truth,range:{...condition.range}});
   return guards;
 }
@@ -158,9 +159,13 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       if(s.kind==='while'&&frame.guards.size)frame.guards=stableGuards(frame.guards,s,charge);
       const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition);
       if(s.kind==='while') {
-        const literal=literalLoopCondition(s,charge);
+        const literal=literalLoopCondition(s,charge),entryGuards=frame.guards;
+        // The condition reads the current header binding. An inherited proof
+        // may already refine that operand to a different SSA value.
+        const bodyGuards=branchGuard(s.condition,true,entryGuards,charge,true);
+        frame.guards=branchGuard(s.condition,false,entryGuards,charge,true);
         frame.gate=literal===true?flow.never:incoming;
-        stack.push({body:s.body,path:p+'/body',guards:frame.guards,
+        stack.push({body:s.body,path:p+'/body',guards:bodyGuards,
           gate:literal===false?flow.never:incoming,continues:true,index:0});
       }else {
         const arm=literalIfArm(s,charge);
