@@ -42,10 +42,13 @@ function uniqueManifestRow(rows, matches) {
 export async function verifiedConsumer(executable, role) {
   if (!["core", "core-native", "vm", "aot"].includes(role)) throw new TypeError("r03-tool-role: unsupported consumer");
   if (!executable) throw new TypeError(`r03-tool-${role}: formal executable is required`);
+  const executableName = path.basename(executable);
+  if (role === "aot" && executableName !== "tsfg-aot.exe")
+    throw new TypeError("r03-tool-aot: published executable must be tsfg-aot.exe");
   const manifest = JSON.parse(await readFile(path.join(path.dirname(executable), "artifact-manifest.json"), "utf8"));
   /** @param {string} name */
   const artifactRow = name => uniqueManifestRow(manifest.outputs, row => row?.path === name);
-  const output = artifactRow(path.basename(executable));
+  const output = artifactRow(executableName);
   if (!output || output.sha256 !== sha256(await readFile(executable)))
     throw new TypeError(`r03-tool-${role}: executable differs from its source-build manifest`);
   if (manifest.buildIdentity?.target !== "windows-x86_64-msvc"

@@ -2,11 +2,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {mkdtemp,writeFile,unlink,rmdir,symlink} from 'node:fs/promises';
+import fs,{mkdtemp,writeFile,unlink,rmdir,symlink} from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import path from 'node:path';
 import {requireOrdinaryEAncestor} from '../../eng/output-storage.mjs';
 import oracle from './host-counter-semantic-oracle.json' with {type:'json'};
 import {createCounterHostContract,verifyCounterHostContract} from '../../eng/host-semantic-contract.mjs';
+import {verifiedConsumer} from '../../compiler/pipeline.mjs';
+import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
+import declarations from '../../eng/build-inputs.json' with {type:'json'};
 
 const hash=bytes=>'sha256:'+createHash('sha256').update(bytes).digest('hex');
 const jcs=value=>value&&typeof value==='object'
@@ -64,6 +68,53 @@ test('ordinary AOT target admits no other target, changed source or additional i
   const claim=identity('tsfg-aot');
   claim.buildIdentity.options.qualified=true;
   assert.throws(()=>createCounterHostContract(claim),/identity shape/);
+});
+
+test('AOT consumer admits the published executable role from its output inventory',async t=>{
+  const directory=path.join(import.meta.dirname,'aot-role-admission-fixture');
+  const {hir}=stringCases()[0],core=Buffer.from(expectedStringCore(hir)),wire=expectedStringPacket(hir);
+  // In-memory file admission fixture. These executable/object labels are inert
+  // data, and this check never starts the request runner.
+  const files=new Map([
+    ['tsfg-aot.exe',Buffer.from('test executable row')],
+    ['tsfg-aot.pdb',Buffer.from('test debug row')],
+    ['program.mlir',core],['program.tbc',wire],['program.obj',Buffer.from('test object row')],
+  ]);
+  const product=new URL('../../',import.meta.url);
+  const paths=declarations.entries.filter(row=>row.projectId==='tsfg').map(row=>row.path).sort();
+  const entries=await Promise.all(paths.map(async name=>({projectId:'tsfg',repositoryRelativePath:name,
+    normalizedMode:'100644',sha256:hash(await fs.readFile(new URL(name,product)))})));
+  const {buildIdentity}=identity('tsfg-aot',hash(core));
+  const inputs={entries,schemaVersion:'1'};
+  const buildInputSet={...inputs,digest:hash(jcs(inputs))};
+  buildIdentity.buildInputSetDigest=buildInputSet.digest;
+  const {digest:unboundDigest,...body}=buildIdentity;
+  buildIdentity.digest=hash(jcs(body));
+  const host=createCounterHostContract({buildIdentity,buildInputSet});
+  files.set('host-semantic-contract.json',Buffer.from(host.contractText));
+  const manifest={buildIdentity,buildInputSet,executionBackend:'aot-v4',
+    program:{core:hash(core),bytecode:hash(wire),object:hash(files.get('program.obj')),
+      compiledTableId:hash(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'),wire]))},
+    outputs:[...files].map(([name,bytes])=>({path:name,sha256:hash(bytes)}))};
+  const reads=[],readFile=fs.readFile;
+  t.mock.method(fs,'readFile',async (file,...args)=>{
+    if(typeof file==='string'&&path.dirname(file)===directory){
+      const name=path.basename(file);reads.push(name);
+      return name==='artifact-manifest.json'?JSON.stringify(manifest):files.get(name);
+    }
+    return Reflect.apply(readFile,fs,[file,...args]);
+  });
+  syncBuiltinESMExports();
+  t.after(()=>{t.mock.restoreAll();syncBuiltinESMExports();});
+
+  const executable=path.join(directory,'tsfg-aot.exe');
+  assert.equal(await verifiedConsumer(executable,'aot'),executable);
+  for(const name of ['program.obj','program.tbc','program.mlir','tsfg-aot.pdb','host-semantic-contract.json'])
+    await t.test(name,async()=>{
+      reads.length=0;
+      await assert.rejects(verifiedConsumer(path.join(directory,name),'aot'),/r03-tool-aot: published executable must be tsfg-aot.exe/);
+      assert.deepEqual(reads,[]);
+    });
 });
 
 test('shared VM/AOT output storage accepts absent owned descendants and preserves builder failure identity',async()=>{
