@@ -247,6 +247,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       else if(args[0].tags.size()==1&&args[1].tags==args[0].tags&&args[0].tags.count(typeId("bool"))&&
         (args[0].truth==1||args[0].truth==2)&&(args[1].truth==1||args[1].truth==2))
         value.truth=((args[0].truth==args[1].truth)==(string(field(props,"operator"))=="==="))?2:1;
+      else if(!conditional&&args[0].tags.size()==1&&args[1].tags==args[0].tags&&args[0].tags.count(typeId("i32"))&&
+        args[0].number&&args[1].number)
+        value.truth=((args[0].number==args[1].number)==(string(field(props,"operator"))=="==="))?2:1;
     }
   }else if(name=="numeric_use"){
     const auto i32=typeId("i32"),undefined=typeId("undefined");

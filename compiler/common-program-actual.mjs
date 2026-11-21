@@ -416,6 +416,8 @@ export function analyzeCommonGraphs({model,plans},records=null,options=/** @type
                 const sameAbsence=args.every(v=>v.tags.size===1)&&[...args[0].tags].every(tag=>args[1].tags.has(tag)&&['undefined','null'].includes(types.get(tag)?.kind));
                 const disjoint=![...args[0].tags].some(tag=>args[1].tags.has(tag));if(sameAbsence||disjoint)value.truth=(sameAbsence===(p.operator==='==='))?2:1;
                 else if(args.every(v=>v.tags.size===1&&v.tags.has(boolTypeId)&&[1,2].includes(v.truth)))value.truth=((args[0].truth===args[1].truth)===(p.operator==='==='))?2:1;
+                else if(!bounded&&args.every(v=>v.tags.size===1&&v.tags.has(i32TypeId)&&Number.isSafeInteger(v.number)))
+                  value.truth=((args[0].number===args[1].number)===(p.operator==='==='))?2:1;
               }
             }else if(name==='binary'||name==='unary') {
               const views=op.operands.map(name=>plan.graph.registers.get(name).view),shape=name==='unary'?{kind:name,operator:p.operator,operand:{type:views[0]}}

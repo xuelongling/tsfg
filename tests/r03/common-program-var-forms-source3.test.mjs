@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram,readCommonProgramHir,printCommonProgramHir} from '../../compiler/common-program-hir.mjs';
 import {commonProgramPlan} from '../../compiler/common-program-plan.mjs';
+import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {canonical} from '../../compiler/identity.mjs';
@@ -145,6 +146,12 @@ for(const sample of cases)test('complete official var form: '+sample.name,()=>{
   }
   const publication=createCommonProgramPublication(hir),request={targets:[]},program=commonProgramCore(hir,publication,request,{borrowProof:true});
   assert.ok(program.borrowProof);
+  if(sample.name==='inferred-parameter'){
+    const physical=commonProgramPhysical(hir,new Map(publication.contracts.map(row=>[row.functionId,row]))),
+      context=[...physical.values.actual.contexts.values()].find(c=>c.root&&c.plan.owner.id===owner.id);
+    assert.ok(context);
+    assert.equal(context.returned.truth,2);
+  }
   const storage=program.representation.bindings.find(row=>row.id===cell.id),domain=program.representation.domains.find(row=>row.id===storage.carrier),
     undefinedType='sha256:'+createHash('sha256').update('tsfg.type\0undefined').digest('hex'),i32Type=hir.types.find(t=>t.sourceType==='i32').id;
   assert.ok(domain?.actualTypes.includes(undefinedType));assert.ok(domain.actualTypes.includes(i32Type));

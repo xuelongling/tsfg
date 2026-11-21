@@ -49,6 +49,17 @@ for(const name of names)test('complete official nominal reference original captu
     assert.deepEqual(physical.carriers.bodies.get(slot.type),{byteSize:24,alignment:8,referenceCount:2});
     assert.ok(physical.values.actual.borrows);
   }
+  if(name==='inherited-throw'){
+    const factory=hir.functions.find(fn=>fn.name==='makeOwnedReader'),
+      calls=[...physical.values.actual.contexts.values()].filter(context=>context.plan.owner.id===factory.id),
+      known=calls.filter(context=>[1,2].includes(context.args[0].number));
+    assert.deepEqual([...new Set(known.map(context=>context.args[0].number))].sort(),[1,2]);
+    for(const context of known){
+      assert.equal(context.normal,true);
+      assert.equal(context.language,false);
+    }
+    assert.ok(calls.some(context=>context.root&&context.normal&&context.language));
+  }
   if(name==='alias-field-write'){
     const plan=physical.plans.find(p=>p.owner.name==='readOwned'),loads=plan.graph.blocks.flatMap(b=>b.instructions).filter(op=>op.name==='tsfg_program.env_load'&&op.view===slot.type),
       held=loads.find(op=>op.properties.binding===binding.id),alias=loads.find(op=>op.properties.binding!==binding.id),
