@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {i32TypeId} from './identity.mjs';
+import {boolTypeId,i32TypeId} from './identity.mjs';
 import {literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
 
 const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^','<','<=','>','>=']);
@@ -114,7 +114,9 @@ export function finitePresenceShortCircuit(condition,charge) {
     charge();const {expression,node}=pending.pop(),value=ungroup(expression,charge);
     node.firstLeaf=leaves;
     const test=finitePresenceTest(value,charge);
-    if(test||value.kind==='call'&&!value.receiver&&finiteBindingWrites(value.arguments,charge).size===0) {
+    const semanticType=value.semanticType??value.type;
+    const booleanBinding=value.kind==='reference'&&semanticType===boolTypeId&&(value.declaredType??semanticType)===boolTypeId;
+    if(test||booleanBinding||value.kind==='call'&&!value.receiver&&finiteBindingWrites(value.arguments,charge).size===0) {
       node.test=test;node.expression=expression;leaves++;
       hasPresenceTest||=Boolean(test);
     }else {
