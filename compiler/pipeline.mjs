@@ -128,6 +128,12 @@ export async function compileSystemQuery(bytes,context,options){
   return readQueryCompilerOutputs(facts,sourceContext,core,{effects,cpuBatch,cpuLLVM,tmeta},consumeQuery);
 }
 
+/** @param {Buffer} bytes @param {'batch'|'llvm'} stage */
+function decodeQueryCompilerText(bytes,stage){
+  try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}
+  catch{throw new TypeError(`r10-system-query-${stage}: invalid UTF-8 in compiler output`);}
+}
+
 /** Collect outputs from the same verified static Query consumer.
  * @internal
  * @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} sourceContext
@@ -137,14 +143,10 @@ export async function compileSystemQuery(bytes,context,options){
 export function readQueryCompilerOutputs(facts,sourceContext,core,options,consumeQuery){
   const {effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
   const effects=includeEffects?readSystemQueryEffects(consumeQuery('--effects',core),facts,sourceContext):undefined;
-  const checkedBatch=includeBatch||includeTmeta?consumeQuery('--cpu-batch',core).toString('utf8'):core;
+  const checkedBatch=includeBatch||includeTmeta?decodeQueryCompilerText(consumeQuery('--cpu-batch',core),'batch'):core;
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
-  let cpuLLVM;
-  if(llvmBytes){
-    try{cpuLLVM=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(llvmBytes);}
-    catch{throw new TypeError('r10-system-query-llvm: invalid UTF-8 in compiler output');}
-  }
+  const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),

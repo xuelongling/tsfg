@@ -227,7 +227,7 @@ test('shared JSON engine preserves old owning string and coreText policies',{ski
 });
 
 test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
-  {skip:!process.env.TSFG_QUERY_PAIRED_CAPTURE},()=>{
+  {skip:!process.env.TSFG_QUERY_PAIRED_CAPTURE},async t=>{
   const capture=process.env.TSFG_QUERY_PAIRED_CAPTURE;
   assert.ok(path.isAbsolute(capture));
   const bytes=name=>readFileSync(path.join(capture,name));
@@ -267,6 +267,18 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
     return meta;
   }),/r10-system-query-llvm: invalid UTF-8 in compiler output/);
   assert.equal(requestedMetadata,false);
+
+  const malformedBatch=Buffer.from(batch);
+  malformedBatch[0]=0xff;
+  for(const pair of [false,true])await t.test(pair?'reject malformed batch before downstream stages':'reject malformed standalone batch',()=>{
+    const calls=[];
+    assert.throws(()=>readQueryCompilerOutputs(facts,context,core,
+      {cpuBatch:true,cpuLLVM:pair?'ir':undefined,tmeta:pair},command=>{
+        calls.push(command);
+        return command==='--cpu-batch'?malformedBatch:command==='--llvm-ir'?llvm:meta;
+      }),/r10-system-query-batch: invalid UTF-8 in compiler output/);
+    assert.deepEqual(calls,['--cpu-batch']);
+  });
 });
 
 test('Query tmeta rejects a changed physical i32 scalar extent',()=>{
