@@ -12,6 +12,7 @@ import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {readGenericHir} from '../../compiler/generic-hir.mjs';
 import {expectedGenericCore} from './generic-core-package-capture.mjs';
+import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
 
 const artifact=path.join(import.meta.dirname,'core-transport-only','core.exe');
 const manifestPath=path.join(path.dirname(artifact),'artifact-manifest.json');
@@ -48,13 +49,17 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   const calls=[];
   let coreInput;
   let stdout=valid;
+  /** @type {Buffer | undefined} */
+  let packetStdout;
   t.mock.method(childProcess,'spawnSync',(executable,args,options)=>{
     assert.equal(executable,artifact);
     assert.ok(Array.isArray(args));
     calls.push(args);
-    assert.ok(['--canonicalize','--optimize'].includes(args.at(-1)),'unexpected downstream stage '+args.join(' '));
-    coreInput=options.input;
-    return {stdout,stderr:Buffer.alloc(0),status:0,signal:null,output:[null,stdout,Buffer.alloc(0)],pid:0};
+    const emitPacket=args.at(-1)==='--emit-bytecode';
+    assert.ok(emitPacket?packetStdout:['--canonicalize','--optimize'].includes(args.at(-1)),'unexpected downstream stage '+args.join(' '));
+    if(!emitPacket)coreInput=options.input;
+    const output=emitPacket?packetStdout:stdout;
+    return {stdout:output,stderr:Buffer.alloc(0),status:0,signal:null,output:[null,output,Buffer.alloc(0)],pid:0};
   });
   syncBuiltinESMExports();
   t.after(()=>{t.mock.restoreAll();syncBuiltinESMExports();});
@@ -72,6 +77,22 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       factsBytes,expectedPackageId:facts.packageId}});
     assert.equal((await pending).status,'ok');
     assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+  });
+  await t.test('registered bytecode transport keeps the checked input identity',async sub=>{
+    const {hir:stringHir,context}=stringCases()[0];
+    const packet=expectedStringPacket(stringHir);
+    assert.notEqual(hir.inputIdentity,stringHir.inputIdentity);
+    const first=calls.length;
+    packetStdout=packet;
+    sub.after(()=>{packetStdout=undefined;stdout=valid;});
+    stdout=Buffer.from(expectedStringCore(stringHir));
+    const matched=await compileOwnedHir(stringHir,{core:artifact,factsContext:context});
+    assert.equal(matched.status,'ok');
+    assert.deepEqual(matched.bytecode,packet);
+    stdout=Buffer.from(core);
+    assert.deepEqual(await compileOwnedHir(hir,{core:artifact}),
+      {status:'tool-error',code:'r03-d-consumer',message:'r04-producer-input-identity: packet target or input differs from the checked HIR'});
+    assert.deepEqual(calls.slice(first),[['--canonicalize'],['--emit-bytecode'],['--canonicalize'],['--emit-bytecode']]);
   });
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
