@@ -8,7 +8,7 @@ import {buildFiniteActualDomains,buildFiniteCoreDomains} from '../../compiler/fi
 import {buildFiniteFieldPhases} from '../../compiler/finite-field-phases.mjs';
 import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
 import {finiteCallables} from '../../compiler/finite-callables.mjs';
-import {canonical,sha256} from '../../compiler/identity.mjs';
+import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import entryManifest from './testdata/typed-array-entry/manifest.json' with {type:'json'};
 import independentExpected from './testdata/typed-array-entry/finite-core-expected.json' with {type:'json'};
 import reachingExpected from './testdata/typed-array-entry/field-reaching.json' with {type:'json'};
@@ -405,7 +405,10 @@ test('memory constraint unit joins both successful branch versions and retains a
     store=plan.fields.find(row=>row.kind==='store'),read=plan.fields.find(row=>row.kind==='read');
   for(const both of [true,false]) {
     const fn=structuredClone(original),assignment=fn.body[1];
-    fn.body[1]={kind:'if',condition:{kind:'boolean',type:fn.returnType.id},then:[assignment],else:both?[structuredClone(assignment)]:[]};
+    const condition={...fn.parameters[0],id:'unit-branch-condition',name:'condition',type:scalarTypeIds.bool};
+    fn.parameters.push(condition);
+    fn.body[1]={kind:'if',condition:{kind:'reference',binding:condition.id,type:condition.type,range:assignment.range},
+      then:[assignment],else:both?[structuredClone(assignment)]:[]};
     const fields=[read,...['then','else'].map(branch=>({...store,id:fn.id+'/body/1/'+branch+'/0/expression'}))];
     const reaching=buildFiniteFieldReaching({...hir,functions:[fn]},{fields,calls:[],nodes:[],domains:[]},()=>{});
     const observed=reaching.reads.find(row=>row.node===read.id).reaching;

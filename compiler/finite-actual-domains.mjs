@@ -421,6 +421,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       continuation=flow.normal(id);dependencies.push(continuation);return id;};
     const child=key=>at(v[key],p+'/'+key);
     const children=key=>(v[key]??[]).map((value,index)=>at(value,p+'/'+key+'/'+index));
+    const invoke=action=>flow.when(flow.all([flow.incoming(id),...dependencies]),action);
     if(['constant','floating','boolean','undefined','null','stringLiteral'].includes(v.kind))insert(id,'actual',v.type);
     else if(v.kind==='reference')copy(binding(fn,v.binding,v.type),id,guards.get(v.binding));
     else if(['group','nonNull','assertType'].includes(v.kind))copy(child('operand'),id);
@@ -446,7 +447,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
         flow.finish(id,dependencies);continue;
       }
       // Publish arguments at invocation, independently of the callee's return.
-      flow.when(flow.all([flow.incoming(id),...dependencies]),()=>{
+      invoke(()=>{
         arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index].id,target.parameters[index].type)));
       });
       requirements.push(flow.returned(target.id));
@@ -457,15 +458,19 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       if(target) {
         // Allocation supplies the internal receiver before constructor completion;
         // only the public result waits for that successful completion.
-        flow.when(flow.all([flow.incoming(id),...dependencies]),()=>
-          insert(binding(target,target.parameters[0].id,target.parameters[0].type),'actual',v.type));
+        invoke(()=>{
+          insert(binding(target,target.parameters[0].id,target.parameters[0].type),'actual',v.type);
+          arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
+        });
         requirements.push(flow.returned(target.id));
-        arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
       }
     }else if(v.kind==='superConstruct') {
       const base=hir.types.find(type=>type.construction?.id===v.construction),target=constructionFrame(base);
-      copy(binding(fn,v.receiverBinding,fn.ownerType),binding(target,target.parameters[0].id,target.parameters[0].type));
-      children('arguments').forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
+      const arguments_=children('arguments');
+      invoke(()=>{
+        copy(binding(fn,v.receiverBinding,fn.ownerType),binding(target,target.parameters[0].id,target.parameters[0].type));
+        arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
+      });
       requirements.push(flow.returned(target.id));insert(id,'actual',v.type);
     }else if(v.kind==='propertyPresenceTest') {
       child('left');const receiver=child('right');insert(id,'actual',v.type);
