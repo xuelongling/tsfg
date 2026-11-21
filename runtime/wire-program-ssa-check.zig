@@ -41,6 +41,21 @@ fn edgeTargets(op: *const ins.Instruction) EdgeTargets {
 }
 const GlobalRefs = std.AutoHashMapUnmanaged(t.GlobalRef, void);
 const GlobalInitializationUse = struct { needed: bool=false, following: ?t.GlobalRef=null };
+const InitializerCallTargets = struct {
+    single: ?t.FunctionRef = null,
+    arms: @FieldType(@FieldType(table.Dispatch,"method"),"arms") = &.{},
+
+    fn next(self: *InitializerCallTargets) Error!?t.FunctionRef {
+        if(self.single) |target| {
+            self.single=null;
+            return target;
+        }
+        if(self.arms.len==0)return null;
+        const arm=self.arms[0];
+        self.arms=self.arms[1..];
+        return arm.target orelse return error.InvalidShape;
+    }
+};
 const Predecessors = struct {
     bits: Bits, word: usize=0,
     fn next(self: *Predecessors, c: *Context) Error!?usize {
@@ -2024,9 +2039,18 @@ const Graph = struct {
         return if (resolved == targets[0]) resolved else null;
     }
 
-    fn directClosureGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []GlobalInitializationUse, observed: *GlobalRefs, nested_targets: *NestedCodeTargets) Error!void {
+    fn initializerCallTargets(self: *const Graph, op: *const ins.Instruction, saved: ?t.FunctionRef) InitializerCallTargets {
+        return switch(op.data) {
+            .eh_invoke=>|call| .{ .single=call.callee },
+            .eh_invoke_indirect=>.{ .single=saved },
+            .common_method_invoke=>|call| .{ .arms=self.c.program.tables.mode.common.views.dispatch[@intFromEnum(call.dispatch)].method.arms },
+            else=>unreachable,
+        };
+    }
+
+    fn calleeGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []GlobalInitializationUse, observed: *GlobalRefs, nested_targets: *NestedCodeTargets) Error!void {
         // An imported ordinary call can reach the initializer's own Globals
-        // through a callback. Visit exact targets from block 0, once per body.
+        // through a callback or method arm. Visit targets from block 0, once per body.
         const c=self.c; try c.charge(3); const functions=c.program.functions;
         const first=&functions[@intFromEnum(target)];
         if(first.role!=.ordinary)return;
@@ -2053,15 +2077,20 @@ const Graph = struct {
                 const block=&function.blocks[block_index];
                 for(block.instructions,0..) |*op,position| {
                     try c.step(); const ref=switch(op.data) {
-                        inline .eh_invoke,.eh_invoke_indirect=>|v,kind| {
-                            if (kind == .eh_invoke_indirect) try c.charge(2);
-                            const selected = if (kind == .eh_invoke) v.callee else
-                                (try self.nestedCodeTarget(function_ref, @enumFromInt(block_index), block.instructions[0..position], op.operands[0], &origins, nested_targets)) orelse continue;
-                            try c.charge(3); const index=@intFromEnum(selected);
-                            if(!seen_functions.isSet(index)) {
-                                seen_functions.set(index);
-                                if(functions[index].role==.ordinary) {
-                                    try c.step(); pending_functions[function_count]=selected; function_count+=1;
+                        .eh_invoke,.eh_invoke_indirect,.common_method_invoke=>{
+                            const saved=if(op.data==.eh_invoke_indirect) resolved: {
+                                try c.charge(2);
+                                break :resolved try self.nestedCodeTarget(function_ref,@enumFromInt(block_index),
+                                    block.instructions[0..position],op.operands[0],&origins,nested_targets);
+                            } else null;
+                            var targets=self.initializerCallTargets(op,saved);
+                            while(try targets.next()) |selected| {
+                                try c.charge(3); const index=@intFromEnum(selected);
+                                if(!seen_functions.isSet(index)) {
+                                    seen_functions.set(index);
+                                    if(functions[index].role==.ordinary) {
+                                        try c.step(); pending_functions[function_count]=selected; function_count+=1;
+                                    }
                                 }
                             }
                             continue;
@@ -2115,18 +2144,20 @@ const Graph = struct {
         }
         for(self.f.blocks,0..) |block,b| {
             try c.step(); if(!self.facts[b].reachable)continue;
-            for(block.instructions) |op| {
+            for(block.instructions) |*op| {
                 try c.step(); switch(op.data) {
                     inline .global_load,.global_store=>|v| {
                         const index=@intFromEnum(v.global); if(globals[index].source==self.f.source)used[index].needed=true;
                     },
-                    inline .eh_invoke,.eh_invoke_indirect=>|v,kind| if(own_globals.len!=0) {
-                        try c.step();
-                        const callee=if(kind==.eh_invoke) v.callee else initializer_callees[b] orelse continue;
-                        const entry=try callee_globals.getOrPut(c.allocator,callee);
-                        if(!entry.found_existing) {
-                            entry.value_ptr.*=.empty;
-                            try self.directClosureGlobalUses(callee,own_globals,used,entry.value_ptr,&nested_targets);
+                    .eh_invoke,.eh_invoke_indirect,.common_method_invoke=>if(own_globals.len!=0) {
+                        var targets=self.initializerCallTargets(op,initializer_callees[b]);
+                        while(try targets.next()) |callee| {
+                            try c.step();
+                            const entry=try callee_globals.getOrPut(c.allocator,callee);
+                            if(!entry.found_existing) {
+                                entry.value_ptr.*=.empty;
+                                try self.calleeGlobalUses(callee,own_globals,used,entry.value_ptr,&nested_targets);
+                            }
                         }
                     },
                     else=>{},
@@ -2166,7 +2197,7 @@ const Graph = struct {
                 // Common has only block0 as an execution entry; reach() and
                 // usesDom() permit original unreachable blocks. Keep their
                 // empty path set rather than inventing extra entry states.
-                for(block.instructions) |op| {
+                for(block.instructions) |*op| {
                     try c.step(); if(state==0)continue;
                     switch(op.data) {
                         .global_store=>|v| if(v.global==ref) {
@@ -2177,11 +2208,13 @@ const Graph = struct {
                         },
                         .global_load=>|v| if(v.global==ref) { try c.require(state==2); },
                         .@"return"=>if(complete)try c.require(state==2),
-                        inline .eh_invoke,.eh_invoke_indirect=>|v,kind| if(own_globals.len!=0 and state!=2) {
-                            try c.charge(2);
-                            const callee=if(kind==.eh_invoke) v.callee else initializer_callees[b] orelse continue;
-                            const observed=callee_globals.getPtr(callee) orelse return error.InvalidShape;
-                            try c.require(!observed.contains(ref));
+                        .eh_invoke,.eh_invoke_indirect,.common_method_invoke=>if(own_globals.len!=0 and state!=2) {
+                            var targets=self.initializerCallTargets(op,initializer_callees[b]);
+                            while(try targets.next()) |callee| {
+                                try c.charge(2);
+                                const observed=callee_globals.getPtr(callee) orelse return error.InvalidShape;
+                                try c.require(!observed.contains(ref));
+                            }
                         },
                         else=>{},
                     }
@@ -2189,7 +2222,7 @@ const Graph = struct {
             }
         }
         // Callee observations do not change either continuation's state.
-        // Dynamic targets, other modules and Env instance state retain their
+        // Unresolved indirect targets, other modules and Env instance state retain their
         // separate proof obligations.
     }
     fn fuel(self: *Graph) Error!void {

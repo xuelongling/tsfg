@@ -141,6 +141,7 @@ const Fixture = struct {
         self.method_a_blocks = .{.{ .parameters = if (hidden_environment) &method_a_parameters_env else &method_a_parameters_plain, .instructions = &self.method_a_instructions }};
         self.functions[1].blocks = &self.method_a_blocks;
         self.abis[1].function = @enumFromInt(1); self.abis[1].parameters = &.{@enumFromInt(3)}; self.abis[1].argument_types = &.{a_type}; self.abis[1].receiver = @enumFromInt(2);
+        self.abis[1].method_minimum_argument_count = 1;
         self.abis[1].lexical_environment = if (hidden_environment) @enumFromInt(0) else null; self.abis[1].physical_parameters = if (hidden_environment) &method_a_physical_env else &method_a_physical_plain;
         self.abis[1].result_carrier = ac;
         self.method_a_operations = .{
@@ -153,6 +154,7 @@ const Fixture = struct {
         self.functions[2].registers = &method_b_registers;
         self.functions[2].blocks = &method_b_blocks;
         self.abis[2].function = @enumFromInt(2); self.abis[2].signature = @splat(0xee); self.abis[2].parameters = &.{}; self.abis[2].argument_types = &.{}; self.abis[2].receiver = @enumFromInt(4);
+        self.abis[2].method_minimum_argument_count = 0;
         self.abis[2].physical_parameters = &.{bc}; self.abis[2].result_carrier = bc;
         self.abis[2].source_plan = .{ .carriers = &.{ b_text, a_text }, .blocks = &method_b_plan };
         if (hidden_environment) {
@@ -275,4 +277,114 @@ test "method dispatch preserves both target prefixes and normal language continu
             try std.testing.expectEqual(completion, h.completion); try std.testing.expectEqual(completion, ctl.completion); try std.testing.expectEqual(completion, data.completion);
         }
     }
+}
+
+const Global = @typeInfo(@FieldType(tables.CommonModules, "globals")).pointer.child;
+const Module = @typeInfo(@FieldType(tables.CommonModules, "modules")).pointer.child;
+const ModuleMethodAccess = enum { read, write };
+const i32_type: t.TypeRef = @enumFromInt(2);
+const i32_carrier: t.Carrier = .{ .@"type" = i32_type };
+const module_initializer: t.FunctionRef = @enumFromInt(3);
+const owned_global: t.GlobalRef = @enumFromInt(0);
+const foreign_source: t.SourceRef = @enumFromInt(1);
+const r4: t.RegisterRef = @enumFromInt(4);
+const initializer_registers = caller_registers ++ [_]wire.Register{.{ .carrier = i32_carrier, .view = i32_type }};
+const override_registers = method_b_registers ++ [_]wire.Register{.{ .carrier = i32_carrier, .view = i32_type }};
+
+fn globalRow(id: t.Hash, source: t.SourceRef, name: []const u8, view: t.TypeRef, carrier: t.Carrier) Global {
+    return .{ .id = id, .source = source, .name = name, .@"type" = view, .carrier = carrier, .writable = source != foreign_source,
+        .generated = false, .start = 0, .end = 80, .decl_key = .{ .kind = .global, .name = name, .path = &.{},
+        .source_path = if (source == foreign_source) "/dependency.ts" else "method-body-literal-dto.ts" }, .binding = @enumFromInt(0) };
+}
+
+// Project the retained A/B dispatch into an initializer. Its foreign input slots
+// model an existing dependency. The only observed own slot is the scalar used
+// by the second arm, and it is eventually initialized on both normal variants.
+fn checkModuleMethodAccess(comptime access: ModuleMethodAccess, comptime through_helper: bool, comptime initialized: bool) !void {
+    var fixture: Fixture = undefined;
+    fixture.init(false);
+    const sources = fixture.sources ++ [_]tables.Source{.{ .hash = @splat(0x99), .path = "/dependency.ts", .length = 80 }};
+    const types = fixture.types ++ [_]tables.CommonType{.{ .id = @splat(0x33), .kind = .scalar, .name = "i32",
+        .native_code = 1, .base = null, .element = null, .members = &.{}, .methods = null, .nominal_key = null, .runtime_key = null }};
+    const globals = [_]Global{
+        globalRow(@splat(0x10), declaration.source, "own", i32_type, i32_carrier),
+        globalRow(@splat(0x20), foreign_source, "receiver", a_type, dc),
+        globalRow(@splat(0x30), foreign_source, "argument", a_type, ac),
+    };
+    const modules = [_]Module{.{ .id = @splat(0x42), .source = declaration.source, .external = true,
+        .initializer = module_initializer, .dependencies = &.{}, .globals = &.{owned_global}, .imports = &.{}, .exports = &.{} }};
+    const read_receiver: ins.Instruction = .{ .source = operation, .result = r0, .operands = &.{},
+        .data = .{ .global_load = .{ .global = @enumFromInt(1) } } };
+    const read_argument: ins.Instruction = .{ .source = operation, .result = r1, .operands = &.{},
+        .data = .{ .global_load = .{ .global = @enumFromInt(2) } } };
+    const scalar: ins.Instruction = .{ .source = operation, .result = r4, .operands = &.{}, .data = .{ .const_i32 = 7 } };
+    const init: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{r4},
+        .data = .{ .global_store = .{ .global = owned_global, .initialize = true } } };
+    const invoke = if (through_helper)
+        ins.Instruction{ .source = operation, .result = null, .operands = &.{ r0, r1 },
+            .data = .{ .eh_invoke = .{ .callee = @enumFromInt(0), .normal = @enumFromInt(1), .exceptional = @enumFromInt(2) } } }
+    else fixture.caller_instructions[1];
+    const entry = if (initialized)
+        [_]ins.Instruction{ read_receiver, read_argument, scalar, init, invoke }
+    else
+        [_]ins.Instruction{ read_receiver, read_argument, scalar, invoke };
+    const ret: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{}, .data = .@"return" };
+    const normal = if (initialized) [_]ins.Instruction{ret} else [_]ins.Instruction{ init, ret };
+    const language = [_]ins.Instruction{fixture.caller_instructions[3]};
+    const initializer_blocks = [_]wire.Block{
+        .{ .parameters = &.{}, .instructions = &entry },
+        .{ .parameters = &.{r2}, .instructions = &normal },
+        .{ .parameters = &.{r3}, .instructions = &language },
+    };
+    const override_body = if (access == .read)
+        [_]ins.Instruction{ method_b_instructions[0], .{ .source = operation, .result = r2, .operands = &.{},
+            .data = .{ .global_load = .{ .global = owned_global } } }, method_b_instructions[1], method_b_instructions[2] }
+    else
+        [_]ins.Instruction{ method_b_instructions[0], .{ .source = operation, .result = r2, .operands = &.{}, .data = .{ .const_i32 = 9 } },
+            .{ .source = operation, .result = null, .operands = &.{r2}, .data = .{ .global_store = .{ .global = owned_global, .initialize = false } } },
+            method_b_instructions[1], method_b_instructions[2] };
+    const override_blocks = [_]wire.Block{.{ .parameters = &.{r0}, .instructions = &override_body }};
+    var initializer = fixture.functions[0];
+    initializer.id = @splat(0x77);
+    initializer.abi = @enumFromInt(3);
+    initializer.name = "$moduleInit";
+    initializer.role = .module_initializer;
+    initializer.registers = &initializer_registers;
+    initializer.blocks = &initializer_blocks;
+    var functions = fixture.functions ++ [_]wire.Function{initializer};
+    functions[2].registers = &override_registers;
+    functions[2].blocks = &override_blocks;
+    var initializer_abi = fixture.abis[0];
+    initializer_abi.function = module_initializer;
+    initializer_abi.parameters = &.{};
+    initializer_abi.argument_types = &.{};
+    initializer_abi.physical_parameters = &.{};
+    initializer_abi.result = null;
+    initializer_abi.result_carrier = null;
+    const abis = fixture.abis ++ [_]storage.CommonAbi{initializer_abi};
+    var program = fixture.program;
+    program.functions = &functions;
+    program.tables.sources = &sources;
+    program.tables.mode.common.types = &types;
+    program.tables.mode.common.abis = &abis;
+    program.tables.mode.common.modules.globals = &globals;
+    program.tables.mode.common.modules.modules = &modules;
+    var c = context.Context{ .program = &program, .allocator = std.testing.allocator };
+    if (initialized) try ssa.checkCompleteProgram(&c) else
+        try std.testing.expectError(error.InvalidShape, ssa.checkCompleteProgram(&c));
+}
+
+test "initializer method dispatch checks a later override reading the uninitialized own global" {
+    try checkModuleMethodAccess(.read, false, false);
+}
+test "initializer method dispatch checks a later override writing the uninitialized own global" {
+    try checkModuleMethodAccess(.write, false, false);
+}
+test "initializer checks a nested method dispatch reached through an ordinary helper" {
+    try checkModuleMethodAccess(.read, true, false);
+}
+test "initializer allows direct and nested method dispatch after the own global is initialized" {
+    try checkModuleMethodAccess(.read, false, true);
+    try checkModuleMethodAccess(.write, false, true);
+    try checkModuleMethodAccess(.read, true, true);
 }
