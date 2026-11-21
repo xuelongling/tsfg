@@ -127,6 +127,10 @@ struct GraphTargets {
           auto result=invoke(fn,op,state);std::vector<Maybe> normal;
           if(!fn.blocks[op.successors[0]].parameters.empty())normal.push_back(result);
           if(!edge(op.successors[0],state,normal)||!edge(op.successors[1],state,{std::nullopt}))return false;
+        }else if(name=="receiver_bind"||name=="receiver_get"||name=="receiver_result"){
+          // Carry saved Code into both continuations. The edge value is a
+          // receiver or language payload and does not supply a Code target.
+          if(!edge(op.successors[0],state,{std::nullopt})||!edge(op.successors[1],state,{std::nullopt}))return false;
         }else if(name=="cf.br"||name=="route"){
           std::vector<Maybe> arguments;for(auto operand:op.operands)arguments.push_back(state.values[operand]);if(!edge(op.successors[0],state,arguments))return false;
         }else if(name=="cf.cond_br"){
