@@ -85,10 +85,17 @@ export function finiteNormalFlow(enabled,charge,nodes) {
   };
 }
 
-function branchGuard(condition,truth,guards) {
-  const next=new Map(guards);let a=condition.left,b=condition.right;
+function ungroup(value,charge) {
+  while(value?.kind==='group') {
+    charge();value=value.operand;
+  }
+  return value;
+}
+function branchGuard(condition,truth,guards,charge) {
+  const next=new Map(guards);
+  condition=ungroup(condition,charge);
   if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return next;
-  while(a?.kind==='group')a=a.operand;while(b?.kind==='group')b=b.operand;
+  const a=ungroup(condition.left,charge),b=ungroup(condition.right,charge);
   const binding=a?.kind==='reference'?a:b,absence=binding===a?b:a;
   if(binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind))
     next.set(binding.binding,{type:absence.type,equal:(condition.operator==='===')===truth,range:{...condition.range}});
@@ -138,7 +145,7 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
         const complete=gate=>{exits.push(gate);if(--remaining===0)frame.gate=flow.any(exits);};
         // Suspend this sequence until both arms have registered their exits.
         for(const key of ['else','then'])stack.push({body:s[key],path:p+'/'+key,
-          guards:stableGuards(branchGuard(s.condition,key==='then',frame.guards),s[key],charge),
+          guards:stableGuards(branchGuard(s.condition,key==='then',frame.guards,charge),s[key],charge),
           gate:arm===null||arm===key?incoming:flow.never,index:0,complete});
       }
     }

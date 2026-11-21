@@ -68,7 +68,12 @@ bool refinement(ModuleProof &proof, mlir::Operation *op, mlir::func::FuncOp fn, 
   for (auto &block : fn.getBody()) {
     if (!proof.charge()) return false;
     auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(block.getTerminator());
-    auto *comparison = branch ? branch.getCondition().getDefiningOp() : nullptr;
+    if (!branch) continue;
+    mlir::Value condition = branch.getCondition();
+    // Parentheses preserve the condition through Boolean domain views.
+    if (!unview(proof, condition)) return false;
+    if (condition.getType() != branch.getCondition().getType()) continue;
+    auto *comparison = condition.getDefiningOp();
     if (!comparison || comparison->getName().getStringRef() != "tsfg_core.domain.presence_equal") continue;
     if(comparison->getNumOperands()!=2||comparison->getNumResults()!=1)return proof.reject("malformed presence comparison");
     const auto a = comparison->getAttrOfType<mlir::IntegerAttr>("tsfg_source.start"), b = comparison->getAttrOfType<mlir::IntegerAttr>("tsfg_source.end");
