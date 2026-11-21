@@ -44,13 +44,33 @@ candidate keeps its marker and runs its explicit private profile verifier,
 which accepts only scalar1–13 and cannot publish an R04 packet. Forged markers
 or formal0.10 modules mixed with private metadata cannot bypass either gate.
 
-Runtime String values use actual managed owner/generation Handles and typed
-roots across frames, calls, CFG transfer, globals and results. The existing
-CLI result writer is the synchronous byte consumer. Its strict UTF8 choice
-fails explicitly for isolated surrogates; loss replacement requires an
-explicit choice. Its bounded lease owns stable copied bytes and retains the
-source through the synchronous write. This does not promise zero-copy String
-export or permit retaining a view after its lease.
+## CLI String output
+
+Runtime String values use managed owner/generation handles and typed roots
+across frames, calls, CFG transfer, globals and results. The CLI writer holds
+the source root and a bounded copy of the UTF-8 bytes until the synchronous
+write returns. The byte view is valid only during that lease.
+
+Set `stringOutput` on each request to `strict` or `lossy`. Omission selects
+`strict`, which reports isolated UTF-16 surrogates as an error. Explicit
+`lossy` replaces each isolated surrogate with U+FFFD.
+
+A successful String outcome has `status: "returned"` and a `result` object
+with `type: "string"`, the UTF-8 text in `value`, and the selected mode in
+`encoding`. `byteLength` is a JSON integer counting the UTF-8 bytes after
+conversion and before JSON escaping. For example, NUL counts as one byte and
+U+FFFD counts as three bytes.
+
+Failure to open the output lease has `status: "failed"` and keeps `functionId`,
+`source`, `activeRequests`, `fuelRemaining`, and `fuelConsumed`.
+
+| Cause | `code` | `category` | `ruleIds` |
+| --- | --- | --- | --- |
+| Invalid UTF-8 in strict mode | `r05-string-invalid-utf8` | `string-output` | `["r01-strings"]` |
+| Other lease failures, including allocation or output limits | `r05-execution-abort` | `execution-abort` | `[]` |
+
+The `--module-requests` mode includes
+[module status and Host counters](r03-module-aot.md#request-and-instance-lifetime).
 
 Pure compiler/reader, byte gold, lifecycle components and ordinary compilation
 are separate evidence from formal guest execution. Component or schema
