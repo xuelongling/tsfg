@@ -16,6 +16,7 @@ import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {readGenericHir} from '../../compiler/generic-hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {expectedGenericCore} from './generic-core-package-capture.mjs';
+import {readClosureSourceCase} from './closure-core-consumer-cases.mjs';
 import {expectedExceptionModule} from './formal-exception-module-oracle.mjs';
 import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
@@ -54,6 +55,7 @@ function framedCore(text,tail=Buffer.alloc(0)){
 const valid=framedCore(core.toString('utf8'),Buffer.from('// Source note: \ufffd\n'));
 const malformed=framedCore(core.toString('utf8'),Buffer.concat([Buffer.from('// Source note: '),Buffer.of(255,10)]));
 const capture=process.env.TSFG_R03_CORE_PAIR_CAPTURE;
+const closureCapture=process.env.TSFG_R03_CLOSURE_PAIR_CAPTURE;
 const finiteCapture=process.env.TSFG_R03_FINITE_PAIR_CAPTURE;
 const commonCapture=process.env.TSFG_R03_COMMON_PAIR_CAPTURE;
 const exceptionCapture=process.env.TSFG_R03_EXCEPTION_PAIR_CAPTURE;
@@ -373,6 +375,34 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
         /r03-core-output: checked input identity differs/);
       assert.deepEqual(calls.slice(first),[['--common-program','--canonicalize']]);
     });
+  });
+  await t.test('formal closure Core retains its checked input identity',async sub=>{
+    const [returned,shared]=await Promise.all([readClosureSourceCase('returned'),readClosureSourceCase('shared-mutable')]);
+    assert.equal(returned.hir.inputIdentity,'sha256:613d356be4968391608f70569b01a025613864849ab863387a2641c95696eae8');
+    assert.equal(shared.hir.inputIdentity,'sha256:f673fc79141586ba4e8c2f7bab377390e0014e1e02954793460c1ea1bab5a231');
+    const [matching,foreign]=closureCapture?await Promise.all(['0001','0003'].map(name=>fs.readFile(path.join(closureCapture,name,'stdout.bin')))):
+      [framedCore(lowerFormalHir(returned.hir)),framedCore(lowerFormalHir(shared.hir))];
+    if(closureCapture){
+      assert.equal(sha256(matching),'sha256:724e9b9783f3467e4d62e829c32e4712775bf32b2d954418444eb6d7d2d8144c');
+      assert.equal(sha256(foreign),'sha256:53994db6b00f4d7c883d0d34ff218c34b895cb1caa4fd3a522d72ac9da7e924b');
+    }
+    const options={core:artifact};
+    sub.after(()=>{stdout=valid;packetStdout=undefined;});
+    for(const {hir:request,output} of [{hir:returned.hir,output:matching},{hir:shared.hir,output:foreign}]){
+      stdout=Buffer.from(output);
+      const accepted=await compileOwnedCore(request,options);
+      assert.equal(accepted.status,'ok');
+      assert.deepEqual(Buffer.from(accepted.core,'utf8'),output);
+    }
+
+    stdout=Buffer.from(foreign);packetStdout=Buffer.alloc(0);
+    const first=calls.length;
+    const text=await compileOwnedCore(returned.hir,options);
+    const bytecode=await compileOwnedHir(returned.hir,options);
+    assert.equal(text.status,'tool-error');
+    assert.deepEqual(text,mismatch);
+    assert.deepEqual(calls.slice(first),[['--canonicalize'],['--canonicalize']]);
+    assert.deepEqual(bytecode,mismatch);
   });
   await t.test('exception Core retains the checked module initializer input',async sub=>{
     const fixture=new URL('../fixtures/r03/m21-exception/controls/module-initialization/',import.meta.url);
