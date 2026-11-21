@@ -336,20 +336,24 @@ test "typed initialized caller Ref argument retains original allocation and cont
     try std.testing.expect(native_seen and reference_seen); try std.testing.expectEqual(@as(usize, 0), result.effects.len);
 }
 
-test "typed constructor property copy retains its original Reference parameter" {
+fn checkParameterCell(comptime shape: enum { single, repeated, reassigned }) !void {
     var fixture: Fixture = undefined;
     fixture.init();
     const cell: t.CellRef = @enumFromInt(3);
     const binding = [_]t.JsonMember{.{ .key = "binding", .value = .{ .string = "b-argument" } }};
     const init_properties = binding ++ [_]t.JsonMember{.{ .key = "initialize", .value = .{ .boolean = true } }};
+    const assign_properties = binding ++ [_]t.JsonMember{.{ .key = "initialize", .value = .{ .boolean = false } }};
     const copy_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = dto.a } }};
-    var registers = callee_registers ++ [_]wire.Register{ .{ .carrier = ac, .view = a }, .{ .carrier = ac, .view = a } };
+    const reference: wire.Register = .{ .carrier = ac, .view = a };
+    var registers = callee_registers ++ [_]wire.Register{ reference, reference, reference, reference };
     registers[7] = .{ .carrier = .{ .cell = cell }, .view = null };
-    fixture.functions[2].registers = &registers;
+    const register_count = if (shape == .single) 12 else 14;
+    fixture.functions[2].registers = registers[0..register_count];
     const carriers = [_][]const u8{
         "receiver:" ++ dto.b, dto.b, dto.b, payload, "initialization:" ++ dto.b, dto.a,
-        "initialization:" ++ dto.b, "cell:b-argument", dto.b, payload, dto.a, dto.a,
+        "initialization:" ++ dto.b, "cell:b-argument", dto.b, payload, dto.a, dto.a, dto.a, dto.a,
     };
+    if (shape == .reassigned) fixture.bindings[4].writable = true;
     const writes = [_]ins.Instruction{
         callee_instructions[3],
         .{ .source = operation, .result = r7, .operands = &.{}, .data = .{ .eh_cell = .{ .binding = cell } } },
@@ -357,7 +361,13 @@ test "typed constructor property copy retains its original Reference parameter" 
         .{ .source = operation, .result = r10, .operands = &.{r7}, .data = .{ .eh_load = .{ .binding = cell } } },
         .{ .source = operation, .result = r11, .operands = &.{r10}, .data = .{ .domain_copy = .{ .static_view = a } } },
         .{ .source = operation, .result = r6, .operands = &.{ r4, r2, r11 }, .data = callee_instructions[4].data },
-        callee_instructions[5],
+    } ++ (if (shape == .reassigned) [_]ins.Instruction{
+        .{ .source = operation, .result = null, .operands = &.{ r7, r5 }, .data = .{ .eh_store = .{ .binding = cell, .initialize = false } } },
+    } else [_]ins.Instruction{}) ++ (if (shape != .single) [_]ins.Instruction{
+        .{ .source = operation, .result = r12, .operands = &.{r7}, .data = .{ .eh_load = .{ .binding = cell } } },
+    } else [_]ins.Instruction{}) ++ [_]ins.Instruction{callee_instructions[5]} ++ (if (shape != .single) [_]ins.Instruction{
+        .{ .source = operation, .result = r13, .operands = &.{r12}, .data = .{ .domain_copy = .{ .static_view = a } } },
+    } else [_]ins.Instruction{}) ++ [_]ins.Instruction{
         .{ .source = operation, .result = null, .operands = &.{r0}, .data = callee_instructions[7].data },
     };
     const operations = [_]control.SourcePlanOperation{
@@ -367,7 +377,13 @@ test "typed constructor property copy retains its original Reference parameter" 
         .{ .name = "load", .view = dto.a, .properties = &binding, .result = r10, .operands = &.{r7}, .successors = &.{}, .source = operation },
         .{ .name = "value_copy", .view = dto.a, .properties = &copy_properties, .result = r11, .operands = &.{r10}, .successors = &.{}, .source = operation },
         .{ .name = "initialize_field", .view = "initialization:" ++ dto.b, .properties = &field_properties, .result = r6, .operands = &.{ r4, r2, r11 }, .successors = &.{}, .source = operation },
-        callee_operations[5],
+    } ++ (if (shape == .reassigned) [_]control.SourcePlanOperation{
+        .{ .name = "store", .view = "void", .properties = &assign_properties, .result = null, .operands = &.{ r7, r5 }, .successors = &.{}, .source = operation },
+    } else [_]control.SourcePlanOperation{}) ++ (if (shape != .single) [_]control.SourcePlanOperation{
+        .{ .name = "load", .view = dto.a, .properties = &binding, .result = r12, .operands = &.{r7}, .successors = &.{}, .source = operation },
+    } else [_]control.SourcePlanOperation{}) ++ [_]control.SourcePlanOperation{callee_operations[5]} ++ (if (shape != .single) [_]control.SourcePlanOperation{
+        .{ .name = "value_copy", .view = dto.a, .properties = &copy_properties, .result = r13, .operands = &.{r12}, .successors = &.{}, .source = operation },
+    } else [_]control.SourcePlanOperation{}) ++ [_]control.SourcePlanOperation{
         .{ .name = "receiver_result", .view = "void", .properties = &b_properties, .result = null, .operands = &.{r0}, .successors = &.{ @enumFromInt(3), @enumFromInt(4) }, .source = operation },
     };
     var blocks = callee_blocks;
@@ -375,10 +391,28 @@ test "typed constructor property copy retains its original Reference parameter" 
     fixture.functions[2].blocks = &blocks;
     var plan = callee_plan;
     plan[1].operations = &operations;
-    fixture.abis[2].source_plan = .{ .carriers = &carriers, .blocks = &plan };
+    fixture.abis[2].source_plan = .{ .carriers = carriers[0..register_count], .blocks = &plan };
 
     var contracts = complete_contracts;
-    contracts[2].return_origins = dto.authored_leaf;
+    // The second copy remains after the initializing store, in the same
+    // bound control. Both original copy operands are the ABI parameter.
+    var nodes = dto.authored_leaf.nodes[0..6].* ++ [_]m.Value{
+        .{ .copy = .{ .@"type" = dto.a, .bases = &.{3}, .site = "Box:later-use", .heap = 4, .control = 2 } },
+    };
+    var heaps = dto.authored_leaf.heaps[0..6].* ++ [_]m.Heap{dto.authored_leaf.heaps[5]};
+    var controls = dto.authored_leaf.controls[0..4].*;
+    var authored = dto.authored_leaf;
+    if (shape != .single) {
+        nodes[5].receiver_value.action = 6;
+        heaps[5] = .{ .copy = .{ .previous = 4, .value = 6 } };
+        heaps[6].receiver_action.previous = 5;
+        controls[3].receiver_completion.action = 6;
+        authored.nodes = &nodes;
+        authored.heaps = &heaps;
+        authored.controls = &controls;
+        authored.exits.normal = &.{.{ .heap = 6, .control = 3 }};
+    }
+    contracts[2].return_origins = authored;
     fixture.program.tables.mode.common.authority.fixed_publication.publication.contracts = &contracts;
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
     var budget = m.Budget{ .context = &c, .charge = refs.graphCharge };
@@ -394,5 +428,17 @@ test "typed constructor property copy retains its original Reference parameter" 
         .{ .function_id = dto.native_callee, .graph = &contracts[1].return_origins.?, .complete = &input.fixed[1] },
         .{ .function_id = dto.callee, .graph = &contracts[2].return_origins.?, .complete = &input.fixed[2] },
     };
-    try std.testing.expect((try certificates.covered(c.allocator, &dto.directory, dto.callee, &projection.graph.?, &bounds, &budget)) == .covered);
+    const coverage = try certificates.covered(c.allocator, &dto.directory, dto.callee, &projection.graph.?, &bounds, &budget);
+    if (shape == .reassigned) {
+        try std.testing.expect(coverage == .pending and coverage.pending == .receiver_no_exact_certificate);
+    } else {
+        if (coverage == .pending) std.debug.print("{s} parameter Cell: {s}\n", .{ @tagName(shape), @tagName(coverage.pending) });
+        try std.testing.expect(coverage == .covered);
+    }
+}
+
+test "typed constructor property copies retain their original Reference parameter" {
+    try checkParameterCell(.single);
+    try checkParameterCell(.repeated);
+    try checkParameterCell(.reassigned);
 }

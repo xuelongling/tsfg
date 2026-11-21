@@ -489,26 +489,25 @@ const CFG = struct {
 
 const ReceiverMode = enum { certificate, control, effects };
 
-const ReceiverParameterCells = struct {
-    cells: []const bool = &.{},
-    loads: []const ?t.RegisterRef = &.{},
-};
-
-fn receiverParameterCells(cfg: *CFG, abi: *const storage.CommonAbi, hidden: usize) context.Error!ReceiverParameterCells {
+fn receiverParameterCells(cfg: *CFG, abi: *const storage.CommonAbi, hidden: usize) context.Error![]const ?t.RegisterRef {
+    const Cell = struct {
+        handle: ?t.RegisterRef = null,
+        original: ?t.RegisterRef = null,
+        block: usize = 0,
+        loads: usize = 0,
+        rejected: bool = false,
+    };
+    const Use = struct {
+        count: usize = 0,
+        copy: ?struct { block: usize, view: t.TypeRef, result: t.RegisterRef } = null,
+    };
     const c = cfg.b.c;
     const common = &c.program.tables.mode.common;
     const f = cfg.f;
-    try c.charge(3 * f.registers.len + 2 * common.exceptions.bindings.len);
-    const uses = try cfg.b.allocator.alloc(u8, f.registers.len);
+    try c.charge(f.registers.len);
     const entries = try cfg.b.allocator.alloc(?t.BindingRef, f.registers.len);
-    const loads = try cfg.b.allocator.alloc(?t.RegisterRef, f.registers.len);
-    const cell_ops = try cfg.b.allocator.alloc(u8, common.exceptions.bindings.len);
-    const cells = try cfg.b.allocator.alloc(bool, common.exceptions.bindings.len);
-    @memset(uses, 0);
     @memset(entries, null);
-    @memset(loads, null);
-    @memset(cell_ops, 0);
-    @memset(cells, false);
+    var has_parameter = false;
     for (abi.parameters, abi.argument_types, 0..) |binding, raw, index| {
         try c.charge(4);
         const ref = hidden + index + 1;
@@ -516,54 +515,88 @@ fn receiverParameterCells(cfg: *CFG, abi: *const storage.CommonAbi, hidden: usiz
         const row = common.storage.bindings[@intFromEnum(binding)];
         const physical = t.Carrier{ .@"type" = raw };
         if (common.types[@intFromEnum(raw)].kind == .reference and std.meta.eql(row.carrier, physical) and
-            std.meta.eql(abi.physical_parameters[ref], physical))
+            std.meta.eql(abi.physical_parameters[ref], physical)) {
             entries[@intFromEnum(register)] = binding;
+            has_parameter = true;
+        }
     }
-    for (f.blocks) |block| {
+    if (!has_parameter) return &.{};
+    try c.charge(f.registers.len + 2 * common.exceptions.bindings.len);
+    const uses = try cfg.b.allocator.alloc(Use, f.registers.len);
+    const cells = try cfg.b.allocator.alloc(Cell, common.exceptions.bindings.len);
+    @memset(uses, .{});
+    @memset(cells, .{});
+    // One direct allocation and initialization must precede all loads in
+    // their block. No other write or alias of the handle can be supplied.
+    for (f.blocks, 0..) |block, block_index| {
         try c.step();
         for (block.instructions) |op| {
             try c.step();
             for (op.operands) |reg| {
                 try c.step();
-                uses[@intFromEnum(reg)] +|= 1;
+                uses[@intFromEnum(reg)].count += 1;
             }
             switch (op.data) {
-                inline .eh_cell, .eh_store, .eh_load => |row| cell_ops[@intFromEnum(row.binding)] +|= 1,
+                .eh_cell => |row| {
+                    const cell = &cells[@intFromEnum(row.binding)];
+                    if (cell.handle != null) cell.rejected = true;
+                    cell.handle = op.result.?;
+                    cell.block = block_index;
+                },
+                .eh_store => |row| {
+                    const index = @intFromEnum(row.binding);
+                    const cell = &cells[index];
+                    const input = op.operands[1];
+                    if (cell.block != block_index or cell.handle != op.operands[0] or cell.original != null or !row.initialize or
+                        entries[@intFromEnum(input)] != common.exceptions.bindings[index].binding) {
+                        cell.rejected = true;
+                    } else cell.original = input;
+                },
+                .eh_load => |row| {
+                    const cell = &cells[@intFromEnum(row.binding)];
+                    cell.loads += 1;
+                    if (cell.block != block_index or cell.handle != op.operands[0] or cell.original == null) cell.rejected = true;
+                },
+                .domain_copy => |row| uses[@intFromEnum(op.operands[0])].copy =
+                    .{ .block = block_index, .view = row.static_view, .result = op.result.? },
                 else => {},
             }
         }
     }
-    for (f.blocks) |block| {
+    // Require each load to feed one copy in its block. SSA owns definition
+    // order and the loaded carrier. The copy retains its control and heap.
+    for (f.blocks, 0..) |block, block_index| {
         try c.step();
-        for (block.instructions, 0..) |copy, index| {
+        for (block.instructions) |op| {
             try c.step();
-            if (copy.data != .domain_copy or index < 3) continue;
-            const window = block.instructions[index - 3 .. index];
-            const cell = &window[0];
-            const store = &window[1];
-            const load = &window[2];
-            if (cell.data != .eh_cell or store.data != .eh_store or load.data != .eh_load or !store.data.eh_store.initialize) continue;
-            const binding = cell.data.eh_cell.binding;
-            const cell_index = @intFromEnum(binding);
-            if (cell_ops[cell_index] != 3 or store.data.eh_store.binding != binding or load.data.eh_load.binding != binding) continue;
-            const handle = cell.result.?;
-            const loaded = load.result.?;
-            const original = store.operands[1];
-            if (uses[@intFromEnum(handle)] != 2 or uses[@intFromEnum(loaded)] != 1 or store.operands[0] != handle or
-                load.operands[0] != handle or copy.operands[0] != loaded) continue;
-            const parameter = entries[@intFromEnum(original)] orelse continue;
-            if (common.exceptions.bindings[cell_index].binding != parameter) continue;
-            const expected = common.storage.bindings[@intFromEnum(parameter)].@"type";
+            if (op.data != .eh_load) continue;
+            const index = @intFromEnum(op.data.eh_load.binding);
+            const cell = &cells[index];
+            if (cell.rejected) continue;
+            const loaded = @intFromEnum(op.result.?);
+            const use = uses[loaded];
+            const copy = use.copy orelse {
+                cell.rejected = true;
+                continue;
+            };
+            const binding = common.exceptions.bindings[index].binding;
+            const expected = common.storage.bindings[@intFromEnum(binding)].@"type";
             const physical = t.Carrier{ .@"type" = expected };
-            const operand = f.registers[@intFromEnum(loaded)];
-            const result = f.registers[@intFromEnum(copy.result.?)];
-            if (copy.data.domain_copy.static_view != expected or operand.view != expected or result.view != expected or
-                !std.meta.eql(operand.carrier, physical) or !std.meta.eql(result.carrier, physical)) continue;
-            cells[cell_index] = true;
-            loads[@intFromEnum(loaded)] = original;
+            const operand = f.registers[loaded];
+            const result = f.registers[@intFromEnum(copy.result)];
+            if (use.count != 1 or copy.block != block_index or copy.view != expected or
+                operand.view != expected or result.view != expected or !std.meta.eql(result.carrier, physical)) cell.rejected = true;
         }
     }
-    return .{ .cells = cells, .loads = loads };
+    const originals = try cfg.b.allocator.alloc(?t.RegisterRef, cells.len);
+    for (cells, originals) |cell, *original| {
+        try c.step();
+        original.* = if (!cell.rejected and cell.loads != 0 and uses[@intFromEnum(cell.handle.?)].count == cell.loads + 1)
+            cell.original
+        else
+            null;
+    }
+    return originals;
 }
 fn directExplicitBase(c: *context.Context, f: *const wire.Function, construction: t.ConstructionIndex, entry: t.RegisterRef, op: *const wire.instruction.Instruction) context.Error!bool {
     const common = &c.program.tables.mode.common;
@@ -686,10 +719,10 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
         } else try b.value(.unknown);
         try cfg.insert(&cfg.values[@intFromEnum(reg)], value);
     }
-    const parameter_cells = if (mode == .certificate and has_cells and abi.parameters.len != 0)
+    const parameter_cells: []const ?t.RegisterRef = if (mode == .certificate and has_cells and abi.parameters.len != 0)
         try receiverParameterCells(&cfg, abi, hidden)
     else
-        ReceiverParameterCells{};
+        &.{};
     if (!control_only) {
         // Conditional lexical Cell owners, never Object or Frame identities.
         // All control-gated writes join; old values across repeated births are
@@ -703,7 +736,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
             const binding = v.storage.bindings[@intFromEnum(v.exceptions.bindings[index].binding)];
             const owner = switch (binding.owner) { .param, .local, .receiver => |owner_id| owner_id, else => { result.pending = .entry_protocol; return; } };
             if (owner != function) { result.pending = .entry_protocol; return; }
-            if (index < parameter_cells.cells.len and parameter_cells.cells[index]) continue;
+            if (index < parameter_cells.len and parameter_cells[index] != null) continue;
             if (cfg.cells[index] == null) { const view = try b.typeSymbol(binding.@"type") orelse break; cfg.cells[index] = try b.value(.{ .join = .{ .@"type" = view, .inputs = &.{} } }); }
         };
     }
@@ -732,20 +765,18 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
                 .eh_cell => {},
                 .eh_store => |row| if (!control_only) {
                     const index = @intFromEnum(row.binding);
-                    if (index < parameter_cells.cells.len and parameter_cells.cells[index]) continue;
+                    if (index < parameter_cells.len and parameter_cells[index] != null) continue;
                     if (cfg.cells[index] == null) { b.pending = .entry_protocol; break; }
                     const value = try b.value(.{ .gate = .{ .@"type" = null, .inputs = try cfg.one(cfg.registerRef(op.operands[1])), .control = flow.control } });
                     try cfg.insert(&cfg.cell_inputs[index], value);
                 },
                 .eh_load => |row| {
-                    const register = @intFromEnum(op.result.?);
-                    if (register < parameter_cells.loads.len) if (parameter_cells.loads[register]) |original| {
-                        // The immediate copy retains the original control
-                        // and heap. Its operand is the same entry parameter.
-                        try cfg.insert(&cfg.values[register], cfg.registerRef(original));
+                    const index = @intFromEnum(row.binding);
+                    if (index < parameter_cells.len) if (parameter_cells[index]) |original| {
+                        try cfg.insert(&cfg.values[@intFromEnum(op.result.?)], cfg.registerRef(original));
                         continue;
                     };
-                    const value = if (!control_only) cfg.cells[@intFromEnum(row.binding)] orelse { b.pending = .entry_protocol; break; } else try b.value(.unknown);
+                    const value = if (!control_only) cfg.cells[index] orelse { b.pending = .entry_protocol; break; } else try b.value(.unknown);
                     try cfg.define(op.result.?, value, flow.control);
                 },
                 .domain_copy => |row| {
