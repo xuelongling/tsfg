@@ -17,6 +17,7 @@ const m = @import("wire-program-return-origin-model.zig");
 const domain = @import("wire-program-return-origin-construction.zig");
 const body = @import("wire-program-return-origin-body.zig");
 const certificates = @import("wire-program-return-origins.zig");
+const owners = @import("wire-program-return-origin-owners.zig");
 const publication = @import("wire-program-publication.zig");
 const dto = @import("constructor-call-literal-dto.zig");
 const t = wire.types;
@@ -81,6 +82,7 @@ const caller_plan = [_]control.SourcePlanBlock{
 const factory_registers = [_]wire.Register{
     .{ .carrier = bf, .view = null }, .{ .carrier = bc, .view = b },
     .{ .carrier = .payload, .view = null }, .{ .carrier = sc, .view = scalar },
+    .{ .carrier = sc, .view = scalar },
 };
 const factory_entry = [_]ins.Instruction{
     caller_instructions[0],
@@ -91,7 +93,8 @@ const factory_blocks = [_]wire.Block{
     .{ .parameters = &.{}, .instructions = &factory_entry },
     .{ .parameters = &.{r1}, .instructions = &.{
         .{ .source = operation, .result = r3, .operands = &.{r1}, .data = .{ .domain_field_read = .{ .receiver_view = b, .member = @enumFromInt(0), .dispatch = @enumFromInt(0) } } },
-        .{ .source = operation, .result = null, .operands = &.{r3}, .data = .@"return" },
+        .{ .source = operation, .result = r4, .operands = &.{r3}, .data = .{ .domain_copy = .{ .static_view = scalar } } },
+        .{ .source = operation, .result = null, .operands = &.{r4}, .data = .@"return" },
     } },
     .{ .parameters = &.{r2}, .instructions = &.{.{ .source = operation, .result = null, .operands = &.{r2}, .data = .eh_raise }} },
 };
@@ -104,7 +107,8 @@ const factory_plan = [_]control.SourcePlanBlock{
     .{ .parameters = &.{}, .operations = &factory_entry_plan },
     .{ .parameters = &.{r1}, .operations = &.{
         .{ .name = "field_load", .view = dto.scalar, .properties = &.{.{ .key = "field", .value = .{ .string = dto.field } }}, .result = r3, .operands = &.{r1}, .successors = &.{}, .source = operation },
-        .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r3}, .successors = &.{}, .source = operation },
+        .{ .name = "value_copy", .view = dto.scalar, .properties = &.{.{ .key = "type", .value = .{ .string = dto.scalar } }}, .result = r4, .operands = &.{r3}, .successors = &.{}, .source = operation },
+        .{ .name = "func.return", .view = "", .properties = &.{}, .result = null, .operands = &.{r4}, .successors = &.{}, .source = operation },
     } },
     .{ .parameters = &.{r2}, .operations = &.{.{ .name = "return_throw", .view = "void", .properties = &.{}, .result = null, .operands = &.{r2}, .successors = &.{}, .source = operation }} },
 };
@@ -282,7 +286,7 @@ test "typed ordinary Body reads the field of its own fresh constructor completio
     abi.physical_parameters = &.{};
     abi.result = scalar;
     abi.result_carrier = sc;
-    abi.source_plan = .{ .carriers = &.{ "receiver:" ++ dto.b, dto.b, payload, dto.scalar }, .blocks = &factory_plan };
+    abi.source_plan = .{ .carriers = &.{ "receiver:" ++ dto.b, dto.b, payload, dto.scalar, dto.scalar }, .blocks = &factory_plan };
     fixture.abis[1].receiver = @enumFromInt(0);
     const common = &fixture.program.tables.mode.common;
     common.storage.bindings = fixture.bindings[1..];
@@ -312,6 +316,33 @@ test "typed ordinary Body reads the field of its own fresh constructor completio
     roles[0].kind = .implicit_base;
     roles[0].function_id = null;
     directory.constructions = &roles;
+    const authored: m.Graph = .{
+        .nodes = &.{
+            .{ .receiver_frame = .{ .construction = dto.role_b, .new_target = dto.b, .parent = null, .site = "published:factory:new", .control = 0 } },
+            .{ .call = .{ .@"type" = dto.b, .call = 0, .completion = .normal } },
+            .{ .projection = .{ .@"type" = dto.scalar, .bases = &.{1}, .selector = "field:" ++ dto.field, .view = dto.b, .heap = 1, .control = 1 } },
+            .{ .copy = .{ .@"type" = dto.scalar, .bases = &.{2}, .site = "published:factory:return", .heap = 1, .control = 1 } },
+        },
+        .heaps = &.{ .entry, .{ .call = .{ .call = 0, .completion = .normal } }, .{ .copy = .{ .previous = 1, .value = 3 } } },
+        .controls = &.{ .entry, .{ .call = .{ .call = 0, .completion = .normal } } },
+        .calls = &.{.{ .function_id = dto.callee, .arguments = &.{}, .environment = null, .callee = null, .receiver = &.{0}, .heap = 0, .control = 0, .site = "published:factory:construct" }},
+        .normal = &.{3},
+        .language = &.{},
+        .exits = .{ .normal = &.{.{ .heap = 2, .control = 1 }}, .language = &.{} },
+        .accesses = &.{.{ .values = &.{1}, .flag = .read, .control = 1 }},
+    };
+    var declarations = dto.declarations;
+    declarations[0].kind = .source;
+    declarations[0].decl_key.kind = .function;
+    declarations[0].decl_key.name = "factory";
+    declarations[0].parameter_types = &.{};
+    declarations[0].return_type = @splat(0x33);
+    declarations[0].construction = null;
+    common.authority.fixed_publication.stable_scope.functions = &declarations;
+    var contracts = complete_contracts;
+    contracts[0].upper.parameters = &.{};
+    contracts[0].return_origins = authored;
+    common.authority.fixed_publication.publication.contracts = &contracts;
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
     var budget = m.Budget{ .context = &c, .charge = refs.graphCharge };
     try typed(&c, &directory, &budget);
@@ -335,7 +366,9 @@ test "typed ordinary Body reads the field of its own fresh constructor completio
     try std.testing.expect(frame.parent == null);
 
     try std.testing.expectEqual(@as(usize, 1), graph.normal.len);
-    const field = graph.nodes[try rootValue(graph, graph.normal[0])].projection;
+    const copied = graph.nodes[try rootValue(graph, graph.normal[0])].copy;
+    try std.testing.expectEqual(@as(usize, 1), copied.bases.len);
+    const field = graph.nodes[try rootValue(graph, copied.bases[0])].projection;
     try std.testing.expectEqualStrings("field:" ++ dto.field, field.selector);
     try std.testing.expectEqualStrings(dto.b, field.view);
     try std.testing.expectEqualStrings(dto.scalar, field.@"type");
@@ -366,4 +399,41 @@ test "typed ordinary Body reads the field of its own fresh constructor completio
     try std.testing.expectEqual(@as(usize, 0), failure.call);
     try std.testing.expectEqual(m.Completion.language, failure.completion);
     try std.testing.expect(failure.@"type" == null);
+
+    var arena = std.heap.ArenaAllocator.init(c.allocator);
+    defer arena.deinit();
+    const fixed = common.authority.fixed_publication;
+    var input = try refs.returnOriginConstructorInput(&c, arena.allocator(), fixed, dto.caller);
+    const upper = &contracts[0].return_origins.?;
+    const bounds = [_]certificates.FixedContract{
+        .{ .function_id = dto.caller, .graph = upper, .complete = &input.fixed[0] },
+        .{ .function_id = dto.callee, .graph = &contracts[1].return_origins.?, .complete = &input.fixed[1] },
+    };
+    const no_witness = try certificates.covered(c.allocator, &directory, dto.caller, graph, &bounds, &budget);
+    try std.testing.expect(no_witness == .pending and no_witness.pending == .receiver_no_exact_certificate);
+    input.ordinary = try refs.returnOriginOrdinaryReferences(&c, arena.allocator(), @enumFromInt(0), graph, upper);
+    try std.testing.expect(input.ordinary != null);
+    try std.testing.expectEqual(@as(usize, 0), input.ordinary.?.types.len);
+    try std.testing.expect((try certificates.coveredWithEvidence(c.allocator, &directory, dto.caller, graph, &bounds, &budget, .{ .ordinary = input.ordinary })) == .covered);
+    var stale = input.ordinary.?;
+    stale.current = &dto.caller_graph;
+    const rejection = try certificates.coveredWithEvidence(c.allocator, &directory, dto.caller, graph, &bounds, &budget, .{ .ordinary = stale });
+    try std.testing.expect(rejection == .pending and rejection.pending == .receiver_no_exact_certificate);
+
+    var checked = try domain.analyzeReturns(c.allocator, &directory, upper, &budget, input);
+    defer checked.deinit();
+    try std.testing.expect(checked.pending == null and checked.normal_live and !checked.language_live);
+    const rows = [_]owners.Fixed{
+        .{ .function_id = dto.caller, .graph = upper, .parameters = &.{}, .captures = &.{}, .may_throw = false },
+        .{ .function_id = dto.callee, .graph = &contracts[1].return_origins.?, .parameters = &.{.{ .write = true }}, .captures = &.{}, .may_throw = false },
+    };
+    const physical = [_]owners.Physical{.{ .type_id = dto.b, .fields = &.{.{ .id = dto.field, .view = dto.b, .physical = 0, .type_id = dto.scalar }} }};
+    const arguments: owners.Initial = .{ .locations = &.{}, .arguments = &.{}, .environment = &.{}, .heap = &.{}, .parents = &.{} };
+    var result = try owners.analyzeInputs(c.allocator, &directory, &physical, dto.caller, upper, &rows, &budget, &checked, &arguments);
+    defer result.deinit();
+    try std.testing.expect(result.pending == null and result.normal_live and !result.language_live);
+    try std.testing.expectEqual(@as(usize, 1), result.normal.len);
+    const returned = result.locations[result.normal[0]];
+    try std.testing.expect(returned.kind == .root and returned.owner == .nonowning);
+    try std.testing.expectEqualStrings(dto.scalar, returned.type_id.?);
 }

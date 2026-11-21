@@ -300,6 +300,8 @@ pub fn returnOriginOrdinaryReferences(c: *Context, allocator: std.mem.Allocator,
     try c.charge(4);
     if (function.role != .ordinary or abi.receiver != null or abi.construction != null or abi.receiver_frame != null or
         abi.lexical_environment != null or abi.parameters.len != function.blocks[0].parameters.len) return null;
+    // A closed ordinary entry can still own a fresh constructor frame.
+    if (abi.parameters.len == 0) return .{ .current = current, .upper = upper, .types = &.{} };
     try c.charge(abi.parameters.len + 1);
     const types = try allocator.alloc(?origin.Symbol, abi.parameters.len);
     @memset(types, null);
