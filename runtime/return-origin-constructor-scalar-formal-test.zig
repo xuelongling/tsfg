@@ -295,25 +295,37 @@ fn originalLiteralRegression() !void {
 
 // A distinct formal input identity is carried through the original callsite,
 // even when two supplied scalar values have equal types and metadata labels.
-test "typed scalar constructor transports original caller input identity" {
+test "typed scalar constructor transports a committed copy of the original caller input" {
     var fixture: Fixture = undefined; fixture.init();
-    const formal_nodes: [7]m.Value = blk: { var rows = dto.caller_graph.nodes[0..7].*; rows[6] = .{ .parameter = .{ .@"type" = dto.scalar, .index = 1 } }; break :blk rows; };
-    const formal_caller: m.Graph = blk: { var row = dto.caller_graph; row.nodes = &formal_nodes; break :blk row; };
+    var formal_nodes = dto.caller_graph.nodes[0..7].* ++ [_]m.Value{
+        .{ .copy = .{ .@"type" = dto.scalar, .bases = &.{6}, .site = "caller:argument-copy", .heap = 0, .control = 0 } },
+    };
+    formal_nodes[6] = .{ .parameter = .{ .@"type" = dto.scalar, .index = 1 } };
+    const formal_heaps = dto.caller_graph.heaps[0..5].* ++ [_]m.Heap{.{ .copy = .{ .previous = 0, .value = 7 } }};
+    var formal_calls = dto.caller_graph.calls[0..1].*;
+    formal_calls[0].arguments = &.{&.{7}};
+    formal_calls[0].heap = 5;
+    const formal_caller: m.Graph = blk: { var row = dto.caller_graph; row.nodes = &formal_nodes; row.heaps = &formal_heaps; row.calls = &formal_calls; break :blk row; };
     const formal_functions: [2]m.FunctionRow = blk: { var rows = dto.directory.functions[0..2].*; rows[0].parameter_types = &.{ dto.a, dto.scalar }; break :blk rows; };
     const directory: m.Directory = blk: { var row = dto.directory; row.functions = &formal_functions; break :blk row; };
     const declarations = blk: { var rows = dto.declarations; rows[0].parameter_types = &.{ @splat(0x11), @splat(0x33) }; break :blk rows; };
     const contracts = blk: { var rows = complete_contracts; rows[0].return_origins = formal_caller; rows[0].upper = dto.scalar_full; break :blk rows; };
-    const instructions = caller_instructions[0..2].* ++ caller_instructions[3..8].*;
-    const operations = caller_operations[0..2].* ++ caller_operations[3..8].*;
+    var instructions = caller_instructions;
+    instructions[2] = .{ .source = operation, .result = r6, .operands = &.{r7}, .data = .{ .domain_copy = .{ .static_view = scalar } } };
+    var operations = caller_operations;
+    operations[2] = .{ .name = "value_copy", .view = dto.scalar, .properties = &.{.{ .key = "type", .value = .{ .string = dto.scalar } }}, .result = r6, .operands = &.{r7}, .successors = &.{}, .source = operation };
     const blocks = [_]wire.Block{
-        .{ .parameters = &.{ r0, r6 }, .instructions = instructions[0..3] }, .{ .parameters = &.{r2}, .instructions = instructions[3..4] }, .{ .parameters = &.{r3}, .instructions = instructions[4..5] }, .{ .parameters = &.{r4}, .instructions = instructions[5..6] }, .{ .parameters = &.{r5}, .instructions = instructions[6..7] },
+        .{ .parameters = &.{ r0, r7 }, .instructions = instructions[0..4] }, .{ .parameters = &.{r2}, .instructions = instructions[4..5] }, .{ .parameters = &.{r3}, .instructions = instructions[5..6] }, .{ .parameters = &.{r4}, .instructions = instructions[6..7] }, .{ .parameters = &.{r5}, .instructions = instructions[7..8] },
     };
     const plan = [_]control.SourcePlanBlock{
-        .{ .parameters = &.{ r0, r6 }, .operations = operations[0..3] }, .{ .parameters = &.{r2}, .operations = operations[3..4] }, .{ .parameters = &.{r3}, .operations = operations[4..5] }, .{ .parameters = &.{r4}, .operations = operations[5..6] }, .{ .parameters = &.{r5}, .operations = operations[6..7] },
+        .{ .parameters = &.{ r0, r7 }, .operations = operations[0..4] }, .{ .parameters = &.{r2}, .operations = operations[4..5] }, .{ .parameters = &.{r3}, .operations = operations[5..6] }, .{ .parameters = &.{r4}, .operations = operations[6..7] }, .{ .parameters = &.{r5}, .operations = operations[7..8] },
     };
     const bindings = fixture.bindings ++ [_]storage.CommonBinding{.{ .id = "a-argument", .owner = .{ .param = @enumFromInt(0) }, .name = "x", .@"type" = scalar, .writable = false, .origin = declaration, .carrier = sc, .scope = @enumFromInt(0), .declaration_kind = .parameter }};
     fixture.program.tables.mode.common.storage.bindings = &bindings;
     fixture.abis[0].parameters = &.{@enumFromInt(4)}; fixture.abis[0].argument_types = &.{scalar}; fixture.abis[0].physical_parameters = &.{ af, sc }; fixture.abis[0].source_plan.blocks = &plan;
+    fixture.abis[0].source_plan.carriers = &.{ "receiver:" ++ dto.a, "receiver:" ++ dto.b, dto.b, payload, dto.a, payload, dto.scalar, dto.scalar };
+    const registers = caller_registers ++ [_]wire.Register{.{ .carrier = sc, .view = scalar }};
+    fixture.functions[0].registers = &registers;
     fixture.functions[0].blocks = &blocks;
     const constructions = blk: { var rows = fixture.program.tables.mode.common.members.constructions[0..2].*; rows[0].parameters = &.{.{ .binding = @enumFromInt(4), .inherited_from = null, .origin = declaration, .@"type" = scalar }}; rows[0].signature.parameters = &.{scalar}; break :blk rows; };
     fixture.program.tables.mode.common.members.constructions = &constructions;
@@ -329,9 +341,9 @@ test "typed scalar constructor transports original caller input identity" {
     var arena = std.heap.ArenaAllocator.init(c.allocator); defer arena.deinit();
     const input = try refs.returnOriginConstructorInput(&c, arena.allocator(), c.program.tables.mode.common.authority.fixed_publication, dto.caller);
     const certificates_rows = [_]certificates.FixedContract{ .{ .function_id = dto.caller, .graph = &formal_caller, .complete = &input.fixed[0] }, .{ .function_id = dto.callee, .graph = &complete_leaf, .complete = &input.fixed[1] } };
-    try std.testing.expect((try certificates.covered(c.allocator, &directory, dto.caller, graph, &certificates_rows, &budget)) == .covered);
     var receiver = try domain.analyzeReturns(c.allocator, &directory, graph, &budget, input); defer receiver.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), receiver.pending);
+    try std.testing.expect((try certificates.covered(c.allocator, &directory, dto.caller, graph, &certificates_rows, &budget)) == .covered);
     var rows = ownerRows(&contracts); rows[0].parameters = &.{ .{ .write = true }, .{} };
     for ([_]usize{ 0, 1 }) |supplied| {
         const argument = [_]usize{supplied};
@@ -342,5 +354,30 @@ test "typed scalar constructor transports original caller input identity" {
         try std.testing.expectEqual(@as(?usize, supplied), value.input);
         try std.testing.expectEqual(std.math.maxInt(usize), value.scope);
         try std.testing.expectEqual(supplied, value.node);
+    }
+    var missing_heaps = formal_heaps;
+    missing_heaps[5] = .{ .join = .{ .inputs = &.{0} } };
+    var late_heaps = formal_heaps;
+    late_heaps[5].copy.previous = 1;
+    var late_calls = formal_calls;
+    late_calls[0].heap = 0;
+    var late_nodes = formal_nodes;
+    late_nodes[7].copy.heap = 1;
+    var ambiguous_nodes = formal_nodes ++ [_]m.Value{.{ .literal = .{ .@"type" = dto.scalar, .category = .other } }};
+    ambiguous_nodes[7].copy.bases = &.{ 6, 8 };
+    var absent = formal_caller;
+    absent.heaps = &missing_heaps;
+    var late = formal_caller;
+    late.nodes = &late_nodes;
+    late.heaps = &late_heaps;
+    late.calls = &late_calls;
+    var ambiguous = formal_caller;
+    ambiguous.nodes = &ambiguous_nodes;
+    const rejected_graphs = [_]m.Graph{ absent, late, ambiguous };
+    for (&rejected_graphs) |*candidate| {
+        try std.testing.expect((try m.validateGraph(c.allocator, &directory, dto.caller, candidate, &budget)) == .pending);
+        var rejected = try domain.analyzeReturns(c.allocator, &directory, candidate, &budget, input);
+        defer rejected.deinit();
+        try std.testing.expectEqual(@as(?domain.Pending, .data_protocol), rejected.pending);
     }
 }

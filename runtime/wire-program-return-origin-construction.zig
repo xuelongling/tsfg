@@ -420,6 +420,39 @@ const Engine = struct {
         }
         return found;
     }
+    fn singleArgumentValue(self: *Engine, start: Ref, control: Ref) Error!?Ref {
+        var id = start;
+        for (0..self.graph.nodes.len) |_| {
+            try self.budget.step();
+            const inputs = switch (self.graph.nodes[id]) {
+                .join => |row| row.inputs,
+                .gate => |row| if (row.control == control) row.inputs else return null,
+                else => return id,
+            };
+            if (inputs.len != 1) return null;
+            id = inputs[0];
+        }
+        return null;
+    }
+    fn orderedParameterCopy(self: *Engine, call: model.Call, value: Ref, expected: model.Symbol) Error!?Ref {
+        if (call.arguments.len != 1 or call.arguments[0].len != 1 or
+            (try self.singleArgumentValue(call.arguments[0][0], call.control)) != value) return null;
+        const copy = self.graph.nodes[value].copy;
+        const event = self.graph.heaps[call.heap];
+        if (copy.bases.len != 1 or copy.control != call.control or event != .copy or
+            event.copy.value != value or event.copy.previous != copy.heap) return null;
+        // The original operand must have exactly one materialized copy
+        // occurrence, immediately preceding this call in the same control.
+        for (self.graph.heaps, 0..) |heap, id| {
+            try self.budget.step();
+            if (heap == .copy and heap.copy.value == value and id != call.heap) return null;
+        }
+        const parameter = try self.singleArgumentValue(copy.bases[0], copy.control) orelse return null;
+        const original = self.graph.nodes[parameter];
+        if (original != .parameter or original.parameter.index == 0 or
+            !try self.budget.equal(original.parameter.@"type", expected)) return null;
+        return parameter;
+    }
     fn callFact(self: *Engine, ordinal: Ref, frame: Ref) Error!?*const CallFact {
         for (self.calls.items) |*fact| { try self.budget.step(); if (fact.call == ordinal and fact.receiver == frame) return fact; }
         const call = self.graph.calls[ordinal];
@@ -460,15 +493,15 @@ const Engine = struct {
             const work = try self.allocator.alloc(Ref, self.graph.nodes.len); var count: usize = 0; var cursor: usize = 0; var leaf = false;
             for (argument) |id| {
                 try self.budget.step(); const node = self.graph.nodes[id];
-                const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate, .receiver_value, .call => |row| row.@"type", else => null };
+                const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate, .copy, .receiver_value, .call => |row| row.@"type", else => null };
                 // A Ref catch has an explicit static view at the argument
                 // boundary. An untyped payload is never that boundary.
                 if (type_id == null or !try self.budget.equal(type_id.?, expected)) { self.pending = .data_protocol; return null; }
                 if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; }
             }
             while (cursor < count) : (cursor += 1) {
-                try self.budget.step(); const node = self.graph.nodes[work[cursor]];
-                const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate, .receiver_value, .call => |row| row.@"type", else => null };
+                try self.budget.step(); const value_id = work[cursor]; const node = self.graph.nodes[value_id];
+                const type_id: ?model.Symbol = switch (node) { inline .literal, .parameter, .nonowning, .join, .gate, .copy, .receiver_value, .call => |row| row.@"type", else => null };
                 // Graph's language-call result MUST be null-typed. A typed
                 // catch view may retain that original payload through null
                 // joins/gates. referenceArgument above has already proved
@@ -478,6 +511,22 @@ const Engine = struct {
                 if (!language_payload and (type_id == null or !try self.budget.equal(type_id.?, expected))) { self.pending = .data_protocol; return null; }
                 switch (node) {
                     inline .join, .gate => |row| { if (row.inputs.len == 0) { self.pending = .data_protocol; return null; } for (row.inputs) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } } },
+                    .copy => {
+                        const original = (if (scalar) try self.orderedParameterCopy(call, value_id, expected) else null) orelse {
+                            self.pending = .data_protocol; return null;
+                        };
+                        const source = self.values[original].atoms.items;
+                        const copied = self.values[value_id].atoms.items;
+                        // A live heap edge alone is insufficient: the copy
+                        // must have reached the same original formal Data.
+                        if (source.len == 0 or copied.len != source.len) return null;
+                        for (copied) |atom| {
+                            var found = false;
+                            for (source) |before| { try self.budget.step(); if (std.meta.eql(atom, before)) { found = true; break; } }
+                            if (!found) return null;
+                        }
+                        leaf = true;
+                    },
                     .receiver_value, .call => { if (!reference) { self.pending = .data_protocol; return null; } leaf = true; },
                     .literal => |row| { if (reference or row.category != .other) { self.pending = .data_protocol; return null; } leaf = true; },
                     .parameter => |row| {
