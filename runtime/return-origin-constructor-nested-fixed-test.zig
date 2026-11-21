@@ -336,3 +336,129 @@ test "typed nested fixed constructor returns C birth and native content across B
         try std.testing.expect(row.node != c_call.receiver or row.type_id == null or !std.mem.eql(u8, row.type_id.?, dto.c));
     };
 }
+
+const Global = @typeInfo(@FieldType(tables.CommonModules, "globals")).pointer.child;
+const Module = @typeInfo(@FieldType(tables.CommonModules, "modules")).pointer.child;
+const GlobalAccess = enum { read, write };
+const own_global: t.GlobalRef = @enumFromInt(0);
+const initializer: t.FunctionRef = @enumFromInt(3);
+const helper: t.FunctionRef = @enumFromInt(4);
+const leaf: t.FunctionRef = @enumFromInt(2);
+const r10: t.RegisterRef = @enumFromInt(10);
+const scalar_register: wire.Register = .{ .carrier = sc, .view = scalar };
+const payload_register: wire.Register = .{ .carrier = .payload, .view = null };
+const global_registers = callee_registers ++ [_]wire.Register{scalar_register};
+
+// Reuse A, B and C with their typed receiver lifetimes. The initializer
+// calls C directly, or reaches C through an ordinary helper that calls A.
+// C observes the global on its receiver_result normal continuation.
+fn checkConstructorGlobalAccess(comptime access: GlobalAccess, comptime nested: bool, comptime initialized: bool) !void {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const globals = [_]Global{.{
+        .id = @splat(0x91), .source = declaration.source, .name = "own", .@"type" = scalar, .carrier = sc,
+        .writable = true, .generated = false, .start = declaration.start, .end = declaration.end,
+        .decl_key = .{ .kind = .global, .name = "own", .path = &.{}, .source_path = fixture.sources[0].path },
+        .binding = @enumFromInt(4),
+    }};
+    const bindings = fixture.bindings ++ [_]storage.CommonBinding{.{
+        .id = "own", .owner = .{ .global = own_global }, .name = "own", .@"type" = scalar,
+        .writable = true, .origin = declaration, .carrier = sc, .scope = null, .declaration_kind = null,
+    }};
+    const modules = [_]Module{.{
+        .id = @splat(0x92), .source = declaration.source, .external = true, .initializer = initializer,
+        .dependencies = &.{}, .globals = &.{own_global}, .imports = &.{}, .exports = &.{},
+    }};
+    const read: ins.Instruction = .{ .source = operation, .result = r10, .operands = &.{},
+        .data = .{ .global_load = .{ .global = own_global } } };
+    const write: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{r5},
+        .data = .{ .global_store = .{ .global = own_global, .initialize = false } } };
+    const leaf_return = [_]ins.Instruction{ if (access == .read) read else write, callee_instructions[10] };
+    var leaf_blocks = callee_blocks;
+    leaf_blocks[3].instructions = &leaf_return;
+
+    const invoke_helper: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{},
+        .data = .{ .eh_invoke = .{ .callee = helper, .normal = @enumFromInt(1), .exceptional = @enumFromInt(2) } } };
+    const create_c: ins.Instruction = .{ .source = operation, .result = r3, .operands = &.{},
+        .data = .{ .receiver_create = .{ .construction = @enumFromInt(2), .new_target = c_type } } };
+    const invoke_c: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{r3},
+        .data = .{ .eh_invoke = .{ .callee = leaf, .normal = @enumFromInt(1), .exceptional = @enumFromInt(2) } } };
+    const initialize: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{r0},
+        .data = .{ .global_store = .{ .global = own_global, .initialize = true } } };
+    const constant: ins.Instruction = .{ .source = operation, .result = r0, .operands = &.{}, .data = .{ .const_i32 = 7 } };
+    const return_void: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{}, .data = .@"return" };
+    const raise: ins.Instruction = .{ .source = operation, .result = null, .operands = &.{r2}, .data = .eh_raise };
+    const initializer_entry = [_]ins.Instruction{constant} ++
+        (if (initialized) [_]ins.Instruction{initialize} else [_]ins.Instruction{}) ++
+        (if (nested) [_]ins.Instruction{invoke_helper} else [_]ins.Instruction{ create_c, invoke_c });
+    const initializer_return = if (initialized) [_]ins.Instruction{return_void} else [_]ins.Instruction{ initialize, return_void };
+    const initializer_blocks = [_]wire.Block{
+        .{ .parameters = &.{}, .instructions = &initializer_entry },
+        .{ .parameters = &.{r1}, .instructions = &initializer_return },
+        .{ .parameters = &.{r2}, .instructions = &.{raise} },
+    };
+    const initializer_registers = [_]wire.Register{
+        scalar_register, if (nested) .{ .carrier = ac, .view = a } else .{ .carrier = cc, .view = c_type }, payload_register,
+    } ++ (if (nested) [_]wire.Register{} else [_]wire.Register{.{ .carrier = cf, .view = null }});
+    const helper_entry = [_]ins.Instruction{
+        callee_instructions[0],
+        .{ .source = operation, .result = r0, .operands = &.{}, .data = .{ .receiver_create = .{ .construction = @enumFromInt(0), .new_target = a } } },
+        .{ .source = operation, .result = null, .operands = &.{r0}, .data = .{ .eh_invoke = .{ .callee = @enumFromInt(0), .normal = @enumFromInt(1), .exceptional = @enumFromInt(2) } } },
+    };
+    const helper_registers = [_]wire.Register{ .{ .carrier = af, .view = null }, .{ .carrier = ac, .view = a }, payload_register };
+    const helper_blocks = [_]wire.Block{
+        .{ .parameters = &.{}, .instructions = &helper_entry },
+        .{ .parameters = &.{r1}, .instructions = &.{.{ .source = operation, .result = null, .operands = &.{r1}, .data = .@"return" }} },
+        .{ .parameters = &.{r2}, .instructions = &.{raise} },
+    };
+    const signature: t.Hash = @splat(0x93);
+    var functions = fixture.functions ++ [_]wire.Function{
+        .{ .id = @splat(0x94), .signature = signature, .abi = @enumFromInt(3), .source = declaration.source,
+            .role = .module_initializer, .declaration = .{ .start = declaration.start, .end = declaration.end },
+            .name = "$moduleInit", .registers = &initializer_registers, .blocks = &initializer_blocks },
+        .{ .id = @splat(0x95), .signature = signature, .abi = @enumFromInt(4), .source = declaration.source,
+            .role = .ordinary, .declaration = .{ .start = declaration.start, .end = declaration.end },
+            .name = "constructA", .registers = &helper_registers, .blocks = &helper_blocks },
+    };
+    functions[2].registers = if (access == .read) &global_registers else &callee_registers;
+    functions[2].blocks = &leaf_blocks;
+    var initializer_abi = fixture.abis[0];
+    initializer_abi.function = initializer;
+    initializer_abi.signature = signature;
+    initializer_abi.receiver = null;
+    initializer_abi.construction = null;
+    initializer_abi.receiver_frame = null;
+    initializer_abi.physical_parameters = &.{};
+    initializer_abi.result = null;
+    initializer_abi.result_carrier = null;
+    var helper_abi = initializer_abi;
+    helper_abi.function = helper;
+    helper_abi.result = a;
+    helper_abi.result_carrier = ac;
+    const abis = fixture.abis ++ [_]storage.CommonAbi{ initializer_abi, helper_abi };
+    var program = fixture.program;
+    program.functions = &functions;
+    program.tables.mode.common.abis = &abis;
+    program.tables.mode.common.storage.bindings = &bindings;
+    program.tables.mode.common.modules.globals = &globals;
+    program.tables.mode.common.modules.modules = &modules;
+    var c = context.Context{ .program = &program, .allocator = std.testing.allocator };
+    try layout.check(&c);
+    if (initialized) try ssa.checkCompleteProgram(&c) else
+        try std.testing.expectError(error.InvalidShape, ssa.checkCompleteProgram(&c));
+}
+
+test "initializer detects an early global read in a constructor" {
+    try checkConstructorGlobalAccess(.read, false, false);
+}
+test "initializer detects an early global write in a constructor" {
+    try checkConstructorGlobalAccess(.write, false, false);
+}
+test "initializer detects an early global read through a helper and nested constructors" {
+    try checkConstructorGlobalAccess(.read, true, false);
+}
+test "initializer permits constructor calls after initializing the observed global" {
+    try checkConstructorGlobalAccess(.read, false, true);
+    try checkConstructorGlobalAccess(.write, false, true);
+    try checkConstructorGlobalAccess(.read, true, true);
+}

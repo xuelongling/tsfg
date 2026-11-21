@@ -2049,11 +2049,11 @@ const Graph = struct {
     }
 
     fn calleeGlobalUses(self: *Graph, target: t.FunctionRef, owned: []const t.GlobalRef, used: []GlobalInitializationUse, observed: *GlobalRefs, nested_targets: *NestedCodeTargets) Error!void {
-        // An imported ordinary call can reach the initializer's own Globals
-        // through a callback or method arm. Visit targets from block 0, once per body.
+        // Constructors and ordinary calls can both reach the initializer's
+        // own globals. Visit each callable body from its entry, including nested calls.
         const c=self.c; try c.charge(3); const functions=c.program.functions;
         const first=&functions[@intFromEnum(target)];
-        if(first.role!=.ordinary)return;
+        if(first.role==.module_initializer)return;
         const globals=c.program.tables.mode.common.modules.globals;
         const mask_bits=@bitSizeOf(std.DynamicBitSetUnmanaged.MaskInt);
         try c.charge(4+functions.len+(functions.len+mask_bits-1)/mask_bits);
@@ -2088,7 +2088,7 @@ const Graph = struct {
                                 try c.charge(3); const index=@intFromEnum(selected);
                                 if(!seen_functions.isSet(index)) {
                                     seen_functions.set(index);
-                                    if(functions[index].role==.ordinary) {
+                                    if(functions[index].role!=.module_initializer) {
                                         try c.step(); pending_functions[function_count]=selected; function_count+=1;
                                     }
                                 }
