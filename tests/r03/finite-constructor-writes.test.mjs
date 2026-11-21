@@ -180,9 +180,12 @@ test('branch-local super arguments run before one shared phase and their origina
 });
 
 
-test('a suffix using a super argument local keeps its own branch scope',async()=>{
-  const {hir,context,publicationContext}=await initializerProof(
-    'super-prefix-live-local','dfc44eba7593f4c84c65c5ffbfa0da14d1d7a0aad661db5fa06ce10027a9efa4');
+
+for(const [kind,file,digest] of [
+  ['scalar','super-prefix-live-local','dfc44eba7593f4c84c65c5ffbfa0da14d1d7a0aad661db5fa06ce10027a9efa4'],
+  ['Array','super-prefix-live-array','8b964015e0253fd14e68f51e706001b6e3562614d45f61470ecf57ef748ab234'],
+])test('a shared '+kind+' field initializer preserves each arm-local value',async()=>{
+  const {hir,context,publicationContext}=await initializerProof(file,digest);
   const entry=hir.functions.find(row=>row.name==='entry');
   const owner=hir.types.find(row=>row.id===entry.body[0].initializer.type);
   const constructor=hir.functions.find(row=>row.id===owner.constructor);
@@ -190,12 +193,40 @@ test('a suffix using a super argument local keeps its own branch scope',async()=
   const start=core.indexOf('  func.func @"f'+constructor.id.slice(7)+'"(');
   assert.ok(start>=0);
   const body=core.slice(start,core.indexOf('\n  }',start));
-  const arms=body.split(/\n  \^bb\d+(?:\([^\n]*\))?:\n/).filter(block=>block.includes('"tsfg_core.domain.super"'));
+  const blocks=new Map([...body.matchAll(/^  \^(bb\d+)(?:\(([^\n]*)\))?:\n((?:    [^\n]*\n?)+)/gm)]
+    .map(([,id,parameters,text])=>[id,{parameters:parameters??'',text}]));
+  const arms=[...blocks.values()].filter(block=>block.text.includes('"tsfg_core.domain.super"'));
   assert.equal(arms.length,2);
-  for(const [index,arm] of arms.entries()){
-    assert.ok(arm.includes('value = '+[11,22][index]+' : i32'));
-    const operations=[...arm.matchAll(/"tsfg_core\.domain\.(super|initialize_fields|field_initialize|field_store)"/g)];
-    assert.deepEqual(operations.map(op=>op[1]),['super','initialize_fields','field_initialize','field_store']);
+  const edges=arms.map(({text})=>text.match(/cf\.br \^(bb\d+)\(([^:\n]+) : /));
+  assert.equal(edges[0][1],edges[1][1]);
+  const join=blocks.get(edges[0][1]);
+  const parameters=join.parameters.split(', ').map(parameter=>parameter.split(': ')[0]);
+  assert.equal(body.split('"tsfg_core.domain.initialize_fields"').length,2);
+  assert.ok(join.text.includes('"tsfg_core.domain.field_initialize"'));
+  assert.equal(body.split('"tsfg_core.domain.array_create"').length-1,kind==='Array'?1:0);
+  const dispatch=join.text.match(/cf\.cond_br (%v\d+), \^(bb\d+), \^(bb\d+)/);
+  assert.equal(dispatch[1],parameters[0]);
+  const origin=(text,value)=>{
+    const views=new Map([...text.matchAll(/(%v\d+) = "tsfg_core\.domain\.view"\((%v\d+)\)/g)]
+      .map(([,result,input])=>[result,input]));
+    while(views.has(value))value=views.get(value);
+    return value;
+  };
+  for(const [index,side] of ['then','else'].entries()){
+    const prefix=arms[index].text,suffix=blocks.get(dispatch[index+2]).text;
+    const call=prefix.match(/"tsfg_core\.domain\.super"\(%v\d+, (%v\d+)\)[^\n]+/);
+    const store=suffix.match(/"tsfg_core\.domain\.field_store"\(%v\d+, (%v\d+)\)[^\n]+/);
+    const branch=constructor.body[0][side];
+    for(const [line,range] of [[call[0],branch[1].expression.range],[store[0],branch[2].expression.range]]){
+      assert.ok(line.includes('tsfg_source.start = '+range.start+' : i64'));
+      assert.ok(line.includes('tsfg_source.end = '+range.end+' : i64'));
+    }
+    const values=edges[index][2].trim().split(', ');
+    assert.ok(prefix.includes(values[0]+' = "tsfg_core.constant"() {value = '+[1,0][index]+' : i1'));
+    const slot=parameters.indexOf(origin(suffix,store[1]));
+    assert.ok(slot>0);
+    assert.equal(values[slot],call[1]);
+    assert.ok(prefix.includes(origin(prefix,call[1])+' = "tsfg_core.constant"() {value = '+[11,22][index]+' : i32'));
   }
 });
 

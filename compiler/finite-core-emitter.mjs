@@ -15,6 +15,7 @@ import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-
 import {canonical,sha256,scalarName,i32TypeId,boolTypeId} from './identity.mjs';
 import {scalarComparisons,scalarOperations} from './scalar-operators.mjs';
 import {memberPresence} from './member-presence.mjs';
+import {hasState} from './presence.mjs';
 
 function pending(message,range) {throw Object.assign(new TypeError('r03-finite-core-capability: '+message),
   {code:'r03-finite-core-capability',ruleId:'r01-ts-baseline',phase:'lowering',...(range?{primary:range}:{})});}
@@ -94,37 +95,48 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     return result;
   }
   const wrap=(value,type)=>value.type===type?value:{kind:'finiteAdapt',operand:value,type,semanticType:value.semanticType,range:value.range};
-  function superInArm(statements) {
-    const prefixLocals=new Set();
+  function superInArm(statements,fn) {
+    const prefixLocals=new Map(),live=new Set();
     const index=statements.findIndex(statement=>{
       budget.step();
-      if(statement.kind==='local')prefixLocals.add(statement.binding.id);
+      if(statement.kind==='local')prefixLocals.set(statement.binding.id,statement.binding);
       return statement.kind==='expression'&&statement.expression.kind==='superConstruct';
     });
     if(index<0)return null;
-    // The shared block retains outer bindings. An arm-local value that is
-    // still used by its suffix must keep the original arm's complete phase.
     if(prefixLocals.size) {
       const pending=[statements.slice(index+1)];
       while(pending.length) {
         budget.step();
         for(const child of Object.values(pending.pop())) {
           budget.step();
-          if(typeof child==='string'&&prefixLocals.has(child))return null;
+          if(typeof child==='string'&&prefixLocals.has(child))live.add(child);
           if(child&&typeof child==='object')pending.push(child);
         }
       }
     }
-    return {index,call:statements[index].expression};
+    const locals=[];
+    for(const id of live) {
+      budget.step();
+      const type=selected(fn.id+'/binding/'+id).domainId;
+      // The verifier tracks exact bool predicates and u32 array indices.
+      // Those proofs, and owner/presence proofs, need per-arm provenance.
+      if(hasState(prefixLocals.get(id).presence)||domains.get(type).nativeType!=='i32')return null;
+      locals.push({id,type});
+    }
+    locals.sort((a,b)=>{budget.step();return a.type<b.type?-1:a.type>b.type?1:0;});
+    return {index,call:statements[index].expression,locals};
   }
   function sharedSuperPhase(fn) {
     if(fn.role!=='construction-body')return null;
     for(const statement of fn.body) {
       budget.step();
       if(statement.kind!=='if')continue;
-      const left=superInArm(statement.then),right=superInArm(statement.else);
+      const left=superInArm(statement.then,fn),right=superInArm(statement.else,fn);
       if(!left||!right||left.call.construction!==right.call.construction||
         left.call.afterSuccess.construction!==right.call.afterSuccess.construction)continue;
+      if(left.locals.length!==right.locals.length||
+        left.locals.some((local,index)=>{budget.step();return local.type!==right.locals[index].type;}))continue;
+      const locals=left.locals.map((local,index)=>{budget.step();return {type:local.type,ids:[local.id,right.locals[index].id]};});
       const pending=[fn.body];let sites=0;
       while(pending.length) {
         budget.step();const value=pending.pop();
@@ -137,7 +149,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         const written=finiteBindingWrites(fn.body,budget.step);
         for(const binding of bindings)if(written.has(binding))return null;
       }
-      return {statement,phase:left.call.afterSuccess,bindings,thenSuper:left.index,elseSuper:right.index};
+      return {statement,phase:left.call.afterSuccess,bindings,locals,thenSuper:left.index,elseSuper:right.index};
     }
     return null;
   }
@@ -182,7 +194,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       const elseBody=result.elseBody.splice(shared.elseSuper+1);
       if(thenBody.length||elseBody.length) {
         result.continuation={
-          common:[shared.phase],thenBody,elseBody
+          common:[shared.phase],thenBody,elseBody,locals:shared.locals
         };
         return [result];
       }

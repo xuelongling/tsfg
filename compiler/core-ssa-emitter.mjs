@@ -145,12 +145,20 @@ export function emitCoreSsaFunction(fn, context) {
     }
     return {yes,no};
   };
-  function emitIfArms(yes, no, thenBody, elseBody, range, continuation) {
+  function emitIfArms(yes, no, thenBody, elseBody, range, continuation, resumed = undefined) {
     const outer = new Map(definitions), outerDeclared = new Set(declared);
-    current = yes; definitions = new Map(outer); emitBody(thenBody);
-    const yesExit = current, yesDefinitions = new Map(definitions);
-    current = no; definitions = new Map(outer); declared = new Set(outerDeclared); emitBody(elseBody);
-    const noExit = current, noDefinitions = new Map(definitions);
+    const emitArm = (block, body, locals) => {
+      current = block; definitions = new Map(outer);
+      for (const [id, value] of locals ?? []) {
+        context.budget?.step();
+        declared.add(id); definitions.set(id, value);
+      }
+      emitBody(body);
+      return [current, new Map(definitions)];
+    };
+    const [yesExit, yesDefinitions] = emitArm(yes, thenBody, resumed?.[0]);
+    declared = new Set(outerDeclared);
+    const [noExit, noDefinitions] = emitArm(no, elseBody, resumed?.[1]);
     declared = outerDeclared;
     if (!yesExit && !noExit) {
       current = null;
@@ -160,8 +168,11 @@ export function emitCoreSsaFunction(fn, context) {
     const keys = [...outerDeclared].filter(id => (!yesExit || yesDefinitions.has(id)) && (!noExit || noDefinitions.has(id)));
     const carried = keys.filter(id => !context.preserveDominatingJoinBindings?.has(id) ||
       (yesExit && noExit && yesDefinitions.get(id) !== noDefinitions.get(id)));
+    const locals = continuation?.locals ?? [];
     const types = carried.map(id => bindingTypes.get(id));
     if (continuation) types.unshift(boolTypeId);
+    const localsStart = types.length;
+    for (const slot of locals) { context.budget?.step(); types.push(slot.type); }
     const join = newBlock(types);
     for (const [exit, bindings, selectedThen] of [[yesExit, yesDefinitions, true], [noExit, noDefinitions, false]]) {
       if (!exit) continue;
@@ -173,6 +184,10 @@ export function emitCoreSsaFunction(fn, context) {
         operationLine(selector, "tsfg_core.constant", [], [], boolTypeId, `value = ${Number(selectedThen)} : i1`, range);
         args.unshift(selector);
       }
+      for (const slot of locals) {
+        context.budget?.step();
+        args.push(bindings.get(slot.ids[selectedThen ? 0 : 1]));
+      }
       branch(join, args, range);
     }
     const incoming = yesExit ? yesDefinitions : noDefinitions;
@@ -183,7 +198,11 @@ export function emitCoreSsaFunction(fn, context) {
     if (!current) return;
     const resumeThen = newBlock(), resumeElse = newBlock();
     conditional(join.parameters[0].name, resumeThen, resumeElse, range);
-    emitIfArms(resumeThen, resumeElse, continuation.thenBody, continuation.elseBody, range);
+    const scopes = [0,1].map(arm => locals.map((slot, index) => {
+      context.budget?.step();
+      return [slot.ids[arm], join.parameters[localsStart + index].name];
+    }));
+    emitIfArms(resumeThen, resumeElse, continuation.thenBody, continuation.elseBody, range, undefined, scopes);
   }
   const emitBody = statements => {
     for (const statement of statements) {
