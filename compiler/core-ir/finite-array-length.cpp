@@ -17,6 +17,7 @@ struct Lengths {
   std::map<std::string,bool> effects;
   std::map<std::string,std::vector<mlir::Operation *>> callers;
   std::set<std::string> exported;
+  bool collected=false;
   bool valid=true;
   Lengths(ModuleProof &p,const std::function<mlir::Value(mlir::Value)> &n,
       const std::set<mlir::Operation *> &writes):proof(p),normalize(n),overwrites(writes){}
@@ -50,6 +51,9 @@ struct Lengths {
     const auto id=identity(value);return valid?DenseLength::Term{{},std::to_string(id)}:DenseLength::Term{};
   }
   bool collect(){
+    // Purely local queries need neither the call directory nor its effects.
+    // Keep both together for queries in this one unchanged proof state.
+    if(collected)return true;
     for(const auto &row:*proof.sourceExports.getAsArray()) {
       if(!charge())return false;exported.insert(string(*row.getAsObject(),"functionId"));
     }
@@ -82,6 +86,7 @@ struct Lengths {
         if(!charge())return false;modifies=true;pending.push_back(std::move(id));
       }
     }
+    collected=true;
     return true;
   }
   bool query(mlir::Operation *point,mlir::Value receiver,const DenseLength::Term *requested,
@@ -119,7 +124,10 @@ struct Lengths {
         if(!predecessor){
           auto fn=task.before->getParentOfType<mlir::func::FuncOp>();const auto id=attr(fn,"tsfg_core.function_id");
           const auto &contract=*proof.callable.at(id);const auto parameter=llvm::dyn_cast<mlir::BlockArgument>(task.owner);
-          if(exported.count(id)||string(contract,"role")!="function"||!string(contract,"ownerType").empty()||!parameter||parameter.getOwner()!=&fn.getBody().front()||callers[id].empty()){
+          const bool formal=parameter&&parameter.getOwner()==&fn.getBody().front()&&
+            string(contract,"role")=="function"&&string(contract,"ownerType").empty();
+          if(formal&&!collect())return false;
+          if(!formal||exported.count(id)||callers[id].empty()){
             if(!outcome(graph.unknown(task.node)))return false;
           }else for(auto *call:callers.at(id)){
             if(!charge())return false;if(!proof.mayExecute(call))continue;
@@ -157,6 +165,7 @@ struct Lengths {
         if(proof.mayExecute(previous))for(const auto &target:selected->second){
           if(!charge())return false;
           if(proof.trapOnlyFunctions.count(target))continue;
+          if(!collect())return false;
           normal=true;modifies|=effects.at(target);
         }
         if(!normal){
@@ -223,13 +232,13 @@ bool proveArrayLength(ModuleProof &proof,mlir::Operation *point,mlir::Value rece
     const std::function<mlir::Value(mlir::Value)> &normalize,std::optional<uint32_t> &length){
   if(!proof.mayExecute(point)){length.reset();return true;}
   const std::set<mlir::Operation *> overwrites;
-  Lengths lengths{proof,normalize,overwrites};if(!lengths.collect())return false;
+  Lengths lengths{proof,normalize,overwrites};
   std::optional<uint32_t> result;lengths.query(point,receiver,nullptr,result);
   if(!lengths.valid)return false;length=result;return true;
 }
 bool proveArrayNoChangeResizes(ModuleProof &proof,const std::function<mlir::Value(mlir::Value)> &normalize,
     std::set<mlir::Operation *> &nonStructural){
-  Lengths lengths{proof,normalize,nonStructural};if(!lengths.collect())return false;
+  Lengths lengths{proof,normalize,nonStructural};
   std::set<mlir::Operation *> proved;
   for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block){
     if(!proof.charge())return false;
