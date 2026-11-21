@@ -44,18 +44,47 @@ fn requiredParameterDomain(c: *Context, types: []const tables.CommonType, id: t.
     };
 }
 
+// For a scalar declaration, raw equality denotes a required slot. A
+// default can only add undefined to the original scalar. This establishes
+// the declaration minimum while the initializer itself remains unavailable.
+fn scalarConstructorMinimum(c: *Context, types: []const tables.CommonType, declared: []const t.TypeRef, incoming: []const t.TypeRef, minimum: usize) Error!void {
+    for (declared) |id| {
+        try c.step();
+        const row = types[@intFromEnum(id)];
+        if (row.kind != .scalar or row.native_code == 0) return;
+    }
+    var required: usize = 0;
+    for (declared, incoming, 1..) |parameter, argument, ordinal| {
+        try c.step();
+        if (parameter == argument) {
+            required = ordinal;
+            continue;
+        }
+        const raw = types[@intFromEnum(argument)];
+        try c.charge(3);
+        try c.require(raw.kind == .@"union" and raw.members.len == 2);
+        const other = if (raw.members[0] == parameter) raw.members[1]
+            else if (raw.members[1] == parameter) raw.members[0] else return error.InvalidShape;
+        try c.require(types[@intFromEnum(other)].kind == .@"undefined");
+    }
+    try c.require(minimum == required);
+}
+
 // A narrow typed declaration boundary, also used by its pure metadata tests.
 // References and complete Source3 identities are owned by the enclosing check;
 // ABI/binding/ordinal/origin and parameter-property joins remain independently
 // mandatory in layout/construction checks. No signature is an admission token.
 pub fn requiredConstructorArguments(c: *Context, types: []const tables.CommonType, declared: []const t.TypeRef, incoming: []const t.TypeRef, minimum: usize) Error!bool {
     try c.charge(3);
-    if (minimum != declared.len or incoming.len != declared.len) return false;
-    for (declared, incoming) |parameter, argument| {
-        try c.charge(2);
-        if (parameter != argument or !try requiredParameterDomain(c, types, argument, 0)) return false;
+    if (incoming.len != declared.len) return false;
+    if (minimum == declared.len) {
+        for (declared, incoming) |parameter, argument| {
+            try c.charge(2);
+            if (parameter != argument or !try requiredParameterDomain(c, types, argument, 0)) break;
+        } else return true;
     }
-    return true;
+    try scalarConstructorMinimum(c, types, declared, incoming, minimum);
+    return false;
 }
 
 const LabelKey = struct { index: usize, units: []u16, count: usize };
