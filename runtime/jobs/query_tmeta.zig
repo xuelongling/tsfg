@@ -287,6 +287,7 @@ pub const Document = struct {
 /// and lifetime, and binding still uses the original Document.
 pub const ParallelGroup = struct {
     pub const System = struct { function_id: []const u8, entries: []const Entry, first_entry: usize };
+    pub const BatchBinding = struct { loop: usize, batch: storage.Store.Batch, scalars: []const ScalarValue };
     allocator: std.mem.Allocator,
     document: *const Document,
     systems: []const System,
@@ -330,6 +331,26 @@ pub const ParallelGroup = struct {
 
     pub fn bind(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, system_index: usize, loop_index: usize, scalars: []const ScalarValue) !Plan {
         return self.document.bind(allocator, store, batch, try self.entryIndex(system_index, loop_index), scalars);
+    }
+
+    /// Prepare the participating batches in admitted-system order. The caller
+    /// retains the live query leases and provides one vacant slot per system.
+    /// Only a complete result transfers Plans to those slots for later use.
+    pub fn bindBatches(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?BatchBinding, output: []?Plan) !void {
+        if (bindings.len != self.systems.len or output.len != self.systems.len) return error.BindingMismatch;
+        for (output) |slot| if (slot != null) return error.BindingMismatch;
+        for (bindings) |binding| {
+            if (binding != null) break;
+        } else return;
+
+        const staged = try allocator.alloc(?Plan, bindings.len);
+        defer allocator.free(staged);
+        @memset(staged, null);
+        errdefer for (staged) |*slot| if (slot.*) |*plan| plan.deinit();
+        for (bindings, staged, 0..) |binding, *slot, index| {
+            if (binding) |value| slot.* = try self.bind(allocator, store, value.batch, index, value.loop, value.scalars);
+        }
+        @memcpy(output, staged);
     }
 };
 

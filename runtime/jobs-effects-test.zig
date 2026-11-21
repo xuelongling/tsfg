@@ -252,6 +252,58 @@ test "atomic Query group keeps real Position and Velocity leases unpublished on 
         try std.testing.expectEqual(@as(usize, 1), plan.rows);
     }
     try std.testing.expectError(error.InvalidLease, group.acquire(A, &store, &.{ null, null }, &output));
+    try checkGroupPlans(&group, &store, try output[0].?.batch(0), try output[1].?.batch(0));
+}
+
+fn checkGroupPlans(group: *const T.ParallelGroup, store: *jobs.Store, left: jobs.Store.Batch, right: jobs.Store.Batch) !void {
+    var position = [_]T.ScalarValue{.{ .float32 = 17 }};
+    var velocity = [_]T.ScalarValue{.{ .float32 = 23 }};
+    var bindings = [_]?T.ParallelGroup.BatchBinding{
+        .{ .loop = 0, .batch = left, .scalars = &position },
+        .{ .loop = 0, .batch = right, .scalars = &.{.{ .float64 = 23 }} },
+    };
+    var plans = [_]?T.Plan{ null, null };
+    defer for (&plans) |*slot| if (slot.*) |*plan| plan.deinit();
+    var failing = std.testing.FailingAllocator.init(A, .{ .fail_index = 0 });
+    try group.bindBatches(failing.allocator(), store, &.{ null, null }, &plans);
+    try std.testing.expectError(error.BindingMismatch, group.bindBatches(A, store, bindings[0..1], &plans));
+    try std.testing.expectError(error.BindingMismatch, group.bindBatches(A, store, &bindings, &plans));
+    try std.testing.expect(plans[0] == null and plans[1] == null);
+
+    bindings[1].?.scalars = &velocity;
+    bindings[1].?.batch = left;
+    try std.testing.expectError(error.BindingMismatch, group.bindBatches(A, store, &bindings, &plans));
+    try std.testing.expect(plans[0] == null and plans[1] == null);
+    bindings[1].?.batch = right;
+    try std.testing.expectEqual(@as(usize, 1), try left.rowCount());
+    try std.testing.expectEqual(@as(usize, 1), try right.rowCount());
+    try std.testing.checkAllAllocationFailures(A, groupPlanAllocationScenario, .{ group, store, &bindings });
+
+    try group.bindBatches(A, store, &.{ null, bindings[1] }, &plans);
+    try std.testing.expect(plans[0] == null and plans[1] != null);
+    if (plans[1]) |*plan| plan.deinit();
+    plans[1] = null;
+    try group.bindBatches(A, store, &bindings, &plans);
+    position[0] = .{ .float32 = 71 };
+    velocity[0] = .{ .float32 = 32 };
+    try std.testing.expectError(error.BindingMismatch, group.bindBatches(A, store, &.{ null, null }, &plans));
+    for (&plans, group.systems, [_]f32{ 17, 23 }) |*slot, system, scalar| {
+        const plan = if (slot.*) |*value| value else return error.TestExpectedEqual;
+        try std.testing.expectEqualStrings(system.entries[0].entrySymbol, plan.entry_symbol);
+        try std.testing.expectEqual(T.Plan.LLVMArgument{ .float32 = scalar }, try plan.llvmArgument(7));
+    }
+}
+
+fn groupPlanAllocationScenario(allocator: std.mem.Allocator, group: *const T.ParallelGroup, store: *jobs.Store,
+    bindings: *const [2]?T.ParallelGroup.BatchBinding) !void {
+    var plans = [_]?T.Plan{ null, null };
+    defer for (&plans) |*slot| if (slot.*) |*plan| plan.deinit();
+    group.bindBatches(allocator, store, bindings, &plans) catch |err| {
+        try std.testing.expect(plans[0] == null and plans[1] == null);
+        for (bindings) |binding| try std.testing.expectEqual(@as(usize, 1), try binding.?.batch.rowCount());
+        return err;
+    };
+    try std.testing.expect(plans[0] != null and plans[1] != null);
 }
 
 test "typed effects reject rehashed noncanonical edges and invalid members modes and identities" {
