@@ -24,8 +24,8 @@ function context(value) {
   const fields=Object.getOwnPropertyDescriptors(value);
   check(wanted.every(key=>fields[key].enumerable&&Object.hasOwn(fields[key],'value')),'context');
   const selected=Object.fromEntries(wanted.map(key=>[key,fields[key].value]));
-  check(selected.family==='tsfg.array-facts-context-candidate'&&[2,3].includes(selected.version),'context');hash(selected.expectedPackageId);
-  const bytes=copyGenericJsonBytes(selected.factsBytes,policy),facts=readTypedArrayFacts(bytes,selected.version===3?9:8);
+  check(selected.family==='tsfg.array-facts-context-candidate'&&[2,3,4].includes(selected.version),'context');hash(selected.expectedPackageId);
+  const bytes=copyGenericJsonBytes(selected.factsBytes,policy),facts=readTypedArrayFacts(bytes,selected.version+6);
   check(facts.packageId===selected.expectedPackageId,'context');return {bytes,facts};
 }
 export function buildInitialArrayPublication(factsContext) {

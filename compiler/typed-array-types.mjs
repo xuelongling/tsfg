@@ -81,7 +81,10 @@ export function validateTypedArrayDeclarations(payload,sources,declarationPath=p
   }
   if(payload.stringLength) {
     const row=payload.stringLength,content=sources.get(declarationPath).content;
-    const declaration='interface String { readonly length: number; }',start=content.indexOf(declaration);
+    const slice='slice(start?: number, end?: number): string;';
+    const declaration=payload.stringSlice?'interface String { readonly length: number; '+slice+' }'
+      :'interface String { readonly length: number; }';
+    const start=content.indexOf(declaration);
     check(start>=0&&row.sourcePath===declarationPath&&row.ownerType==='string'&&row.name==='length'
       &&row.kind==='property'&&row.officialType==='number'&&row.readType==='f64'&&row.readonly===true,'declaration');
     sourceRange(row.declarationRange,content,{start,end:start+declaration.length});
@@ -89,6 +92,13 @@ export function validateTypedArrayDeclarations(payload,sources,declarationPath=p
     check(row.id===originId(declarationPath,row.nameRange)
       &&content.slice(row.nameRange.start,row.nameRange.end)==='length'
       &&content.slice(row.typeRange.start,row.typeRange.end)==='number','declaration');
+    if(payload.stringSlice) {
+      const method=payload.stringSlice,methodStart=start+declaration.indexOf(slice);
+      check(method.sourcePath===declarationPath&&method.ownerType==='string'&&method.kind==='method'&&method.name==='slice'
+        &&method.nameRange.start===methodStart&&method.nameRange.end===methodStart+'slice'.length
+        &&method.declarationRange.start===methodStart&&method.declarationRange.end===methodStart+slice.length
+        &&method.id===originId(declarationPath,method.nameRange),'declaration');
+    }
   }
   const intrinsic=payload.readSpanIntrinsic,content=sources.get(intrinsic.sourcePath)?.content;
   check(typeof content==='string'&&intrinsic.sourcePath===declarationPath

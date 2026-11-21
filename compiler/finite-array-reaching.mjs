@@ -408,6 +408,15 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const operand=child(value.kind==='unary'?'operand':'receiver',terminalRoot);
         return operand.terminal?operand:{symbol:path};
       }
+      if(value.kind==='stringSlice') {
+        const receiver=child('receiver',terminalRoot);
+        if(receiver.terminal)return receiver;
+        for(const [index,item] of value.arguments.entries()) {
+          const argument=expression(item,path+'/arguments/'+index,state,bindings,terminalRoot);
+          if(argument.terminal)return argument;
+        }
+        return {symbol:path};
+      }
       if(value.kind==='fieldAssignment') {
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,terminalRoot);
         if(receiver.terminal)return receiver;

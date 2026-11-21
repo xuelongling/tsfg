@@ -73,6 +73,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     if(domain?.actualTypes.length===1&&types.get(domain.actualTypes[0]).kind==='string')return '!tsfg_string.string';
     if(!domain)pending('unknown Core domain '+id);return '!tsfg_core.domain<'+quote(id)+'>';
   };
+  function presenceDomain(ids,range) {
+    const id=sha256('tsfg.actual-domain.v1\0'+canonical([...ids].sort()));
+    if(!domains.has(id))pending('missing intermediate presence carrier',range);
+    return id;
+  }
   function adapt(value,path,fn) {
     const result={...value,type:selected(path).domainId,semanticType:value.type,domainNode:path};
     if(value.kind==='binary'&&['&&','||'].includes(value.operator))result.kind='shortCircuit';
@@ -121,6 +126,54 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     const opAttrs=value=>`view_type = ${quote(value.semanticType)}, domain = ${quote(value.type)}`;
     const op=(api,name,values,result,attrs,range)=>api.operation('tsfg_core.domain.'+name,values.map(value=>value.name),
       values.map(value=>value.type),result,attrs,range);
+    function stringSlice(value,api) {
+      const receiver=api.emit(value.receiver),args=value.arguments.map(argument=>api.emit(argument));
+      if(domains.get(value.receiver.type).actualTypes.some(id=>types.get(id).kind!=='string'))
+        pending('String operation-domain-check mapping',value.range);
+      const {usize,f64}=scalarTypeIds,range=value.range;
+      const length=api.operation('tsfg_string.length',[receiver],[value.receiver.type],usize,'',range);
+      const zero=api.operation('tsfg_core.constant',[],[],usize,'value = "0"',range);
+      const numeric=value.arguments.some(arg=>domains.get(arg.type).actualTypes.includes(f64));
+      const zeroFloat=numeric?api.operation('tsfg_core.constant',[],[],f64,'value = "0000000000000000"',range):null;
+      const minusOne=numeric?api.operation('tsfg_core.constant',[],[],f64,'value = "bff0000000000000"',range):null;
+      const limit=numeric?api.operation('tsfg_core.convert_checked',[length],[usize],f64,'',range):null;
+      function endpoint(argument,input,fallback) {
+        if(!argument)return fallback;
+        const origin=argument.range,actual=domains.get(argument.type).actualTypes;
+        const missing=actual.find(id=>types.get(id).kind==='undefined');
+        if(missing&&actual.length===1)return fallback;
+        if(actual.some(id=>id!==missing&&id!==f64))pending('String slice endpoint domain',origin);
+        function normalize(number) {
+          const compare=(name,a,b)=>api.operation('tsfg_core.'+name,[a,b],[f64,f64],boolTypeId,'',origin);
+          // A negative fraction above -1 truncates to zero, not a relative index.
+          const negative=compare('le',number,minusOne);
+          const magnitude=api.branchValue(negative,f64,origin,
+            ()=>api.operation('tsfg_core.neg',[number],[f64],f64,'',origin),()=>number);
+          const bounded=api.branchValue(compare('gt',magnitude,zeroFloat),f64,origin,
+            ()=>api.branchValue(compare('lt',magnitude,limit),f64,origin,()=>magnitude,()=>limit),()=>zeroFloat);
+          // Only a finite magnitude within the String's length reaches the
+          // truncating conversion. Subtract the integer magnitude, not the fraction.
+          const units=api.operation('tsfg_core.convert_checked',[bounded],[f64],usize,'',origin);
+          return api.branchValue(negative,usize,origin,
+            ()=>api.operation('tsfg_core.sub',[length,units],[usize,usize],usize,'',origin),()=>units);
+        }
+        if(!missing)return normalize(input);
+        const literalType=presenceDomain([missing],origin),target=presenceDomain([f64],origin);
+        const literal=op(api,'literal',[],literalType,`view_type = ${quote(missing)}, domain = ${quote(literalType)}`,origin);
+        const present=op(api,'presence_equal',[{name:input,type:argument.type},{name:literal,type:literalType}],
+          boolTypeId,'operator = "!=="',origin);
+        return api.branchValue(present,usize,origin,()=>{
+          const proof={type:missing,equal:false,range:origin};
+          const number=op(api,'refine',[{name:input,type:argument.type}],target,
+            `view_type = ${quote(argument.semanticType)}, domain = ${quote(target)}, presence_proof = ${quote(canonical(proof))}`,origin);
+          return normalize(number);
+        },()=>fallback);
+      }
+      const start=endpoint(value.arguments[0],args[0],zero),end=endpoint(value.arguments[1],args[1],length);
+      const orderedEnd=args.length===2?api.branchValue(api.operation('tsfg_core.lt',[end,start],[usize,usize],boolTypeId,'',range),
+        usize,range,()=>start,()=>end):end;
+      return api.operation('tsfg_string.slice',[receiver,start,orderedEnd],[value.receiver.type,usize,usize],value.type,'',range);
+    }
     const copy=(api,value,semanticType,range)=>{
       let inline=false;for(const actual of domains.get(value.type).actualTypes){budget.step();inline ||= types.get(actual).kind==='value';}
       return inline?{name:op(api,'copy',[value],value.type,
@@ -228,6 +281,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const length=api.operation('tsfg_string.length',[receiver.name],[receiver.type],lengthType,'',value.range);
           return api.operation('tsfg_core.convert_checked',[length],[lengthType],value.type,'',value.range);
         }
+        if(value.kind==='stringSlice')return stringSlice(value,api);
         if(value.kind==='stringConcat') {
           if([value.left,value.right].some(operand=>domains.get(operand.type).actualTypes.some(id=>types.get(id).kind!=='string')))
             pending('String operation-domain-check mapping',value.range);
@@ -273,8 +327,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const anchor=value.operatorRange??value.range,
             absent=alternatives.filter(id=>{budget.step();return isFiniteAbsence(types.get(id).kind);}),
             present=alternatives.filter(id=>{budget.step();return !absent.includes(id);}),
-            domainFor=ids=>{const id=sha256('tsfg.actual-domain.v1\0'+canonical([...ids].sort()));
-              if(!domains.has(id))pending('missing nullish intermediate carrier',anchor);return id;},
+            domainFor=ids=>presenceDomain(ids,anchor),
             widen=payload=>payload.type===value.type?payload.name:api.operation('tsfg_core.domain.view',
               [payload.name],[payload.type],value.type,opAttrs(value),value.range),
             filter=()=>{if(previous===null)return;alternatives=alternatives.filter(id=>{budget.step();return id!==previous;});

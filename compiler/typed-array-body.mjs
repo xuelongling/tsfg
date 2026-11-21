@@ -53,15 +53,35 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
         while(owner&&!owner.fields?.some(field=>field.id===value.property&&field.type===value.type))owner=types.get(owner.base);
         check(owner&&['value','reference'].includes(owner.kind),'field');
       }
-      if(value.kind==='stringLength') {
-        check(payload.stringLength?.id===value.property&&value.receiver.flowType==='string'
-          &&value.type==='f64'&&value.flowType==='f64','type');
+      if(value.kind==='stringLength'||value.kind==='stringSlice') {
+        const slice=value.kind==='stringSlice',member=slice?payload.stringSlice:payload.stringLength;
+        const type=slice?'string':'f64';
+        check(member?.id===value.property&&value.receiver.flowType==='string'
+          &&value.type===type&&value.flowType===type,'type');
         sourceRange(value.nameRange,source,value.range);
         const {start,end}=value.receiver.range,name=spelling(value.nameRange);
-        check(start===value.range.start&&end<value.nameRange.start&&value.nameRange.end===value.range.end,'source');
-        const suffix=source.slice(end,value.range.end),dot=skipCallTrivia(suffix);
-        check(suffix[dot]==='.'&&dot+1+skipCallTrivia(suffix.slice(dot+1))===value.nameRange.start-end
-          &&!/[\s/]/u.test(name)&&identifierName(name)==='length','source');
+        check(start===value.range.start&&end<value.nameRange.start,'source');
+        const suffix=source.slice(end,value.nameRange.start),dot=skipCallTrivia(suffix);
+        check(suffix[dot]==='.'&&skipCallTrivia(suffix.slice(dot+1))===suffix.length-dot-1
+          &&!/[\s/]/u.test(name)&&identifierName(name)===member.name,'source');
+        if(slice) {
+          const args=value.arguments??[];
+          check(args.length<=2&&args.every(arg=>['f64','undefined','union<f64,undefined>'].includes(arg.flowType)),'type');
+          let from=value.nameRange.end,separator='(';
+          for(const arg of args) {
+            sourceRange(arg.range,source,value.range);
+            const gap=source.slice(from,arg.range.start),token=skipCallTrivia(gap);
+            check(arg.range.start>from&&gap[token]===separator&&!source.startsWith('...',arg.range.start)
+              &&skipCallTrivia(gap.slice(token+1))===gap.length-token-1,'source');
+            from=arg.range.end;separator=',';
+          }
+          const tail=source.slice(from,value.range.end);let index=skipCallTrivia(tail);
+          if(tail[index]===(args.length===0?'(':',')) {
+            const trivia=skipCallTrivia(tail.slice(index+1));
+            check(trivia>=0,'source');index+=trivia+1;
+          }else check(args.length>0,'source');
+          check(index===tail.length-1&&tail[index]===')','source');
+        }else check(value.nameRange.end===value.range.end,'source');
       }
       if(value.kind==='undefinedLiteral'||value.kind==='nullLiteral')check(spelling(value.range)===(value.kind==='undefinedLiteral'?'undefined':'null'),'source');
       if(value.kind==='booleanLiteral')check(value.type==='bool'&&['true','false'].includes(value.token)&&spelling(value.range)===value.token,'literal');

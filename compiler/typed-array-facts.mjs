@@ -9,6 +9,7 @@ import {validateTypedArrayTypes,validateTypedArrayDeclarations} from './typed-ar
 import {validateTypedArrayFunctions} from './typed-array-body.mjs';
 import {validateTypedArrayDensity} from './typed-array-density.mjs';
 import stringLengthDescriptor from '../contracts/array-generic-facts-v9.schema.json' with {type:'json'};
+import stringSliceDescriptor from '../contracts/array-generic-facts-v10.schema.json' with {type:'json'};
 export {typedArrayFactsFormat} from './typed-array-schema.mjs';
 
 export const typedArrayFactsV9Format=own({family:format.family,version:9,
@@ -16,9 +17,14 @@ export const typedArrayFactsV9Format=own({family:format.family,version:9,
 const typedArrayV9={descriptor:stringLengthDescriptor,factsFormat:typedArrayFactsV9Format,
   requestDomain:'tsfg.array-facts.request.v9',packageDomain:'tsfg.array-facts.package.v9',
   declarationVersion:'minimal-arrays-v9',declarationHash:'03f2ae31cd79b01e468c519f429d7f50a95aafae5c35cbb7053d7a58483ea480'};
+export const typedArrayFactsV10Format=own({family:format.family,version:10,
+  schemaHash:sha256(canonical(stringSliceDescriptor)+'\n')});
+const typedArrayV10={descriptor:stringSliceDescriptor,factsFormat:typedArrayFactsV10Format,
+  requestDomain:'tsfg.array-facts.request.v10',packageDomain:'tsfg.array-facts.package.v10',
+  declarationVersion:'minimal-arrays-v10',declarationHash:'6dbd7df35f5325c57a0cad4fba8230a7484346fd9003cca01580f381cb2dee14'};
 function arrayProfile(version) {
-  check(version===8||version===9,'context');
-  return version===9?typedArrayV9:undefined;
+  check([8,9,10].includes(version),'context');
+  return version===10?typedArrayV10:version===9?typedArrayV9:undefined;
 }
 
 function verify(value,profile=undefined) {
