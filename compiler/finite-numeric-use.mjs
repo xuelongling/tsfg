@@ -118,7 +118,15 @@ export function finitePresenceShortCircuit(condition,charge) {
     node.firstLeaf=leaves;
     const test=finitePresenceTest(value,charge);
     const semanticType=value.semanticType??value.type;
-    const booleanBinding=value.kind==='reference'&&semanticType===boolTypeId&&(value.declaredType??semanticType)===boolTypeId;
+    // Classify the binding through boolean negation, but keep the complete
+    // operand for lowering so its original value and source range are used.
+    let flag=value;
+    while(flag.kind==='unary'&&flag.operator==='!') {
+      charge();flag=ungroup(flag.operand,charge);
+    }
+    const flagType=flag.semanticType??flag.type;
+    const booleanBinding=semanticType===boolTypeId&&flag.kind==='reference'&&
+      flagType===boolTypeId&&(flag.declaredType??flagType)===boolTypeId;
     const callWithoutRebinding=value.kind==='call'&&semanticType===boolTypeId
       &&finiteBindingWrites(value.receiver?[value.receiver,value.arguments]:value.arguments,charge).size===0;
     if(test||booleanBinding||callWithoutRebinding) {
