@@ -8,6 +8,7 @@ const context = @import("wire-program-refcheck-context.zig");
 const refs = @import("wire-program-publication-refs.zig");
 const origin = @import("wire-program-return-origin-model.zig");
 const construction_domain = @import("wire-program-return-origin-construction.zig");
+const structural = @import("wire-program-return-origins.zig");
 const t = wire.types;
 pub const Pending = enum { mode, control_flow, entry_protocol, raw_input, operation, view, archive_type, literal_protocol, receiver_fields, implicit_protocol, archive_construction, archive_field, archive_global, global_payload, span_transfer, array_view, archive_environment, archive_function, fixed_targets };
 pub const Projection = struct {
@@ -17,10 +18,12 @@ pub const Projection = struct {
     // Effect-only control projection: original block and receiver action joins.
     block_controls: []const origin.Ref = &.{}, receiver_actions: []const ReceiverControl = &.{},
     field_stores: []const ReceiverField = &.{},
+    scalar_call_candidates: []const DirectCall = &.{},
     pub fn deinit(self: *Projection) void { self.arena.deinit(); }
 };
 pub const ReceiverField = struct { block: usize, instruction: usize, field: t.FieldRef, store: origin.Ref };
 pub const ReceiverControl = struct { block: usize, instruction: usize, normal: origin.Ref, language: origin.Ref, normal_control: origin.Ref, language_control: origin.Ref };
+const DirectCall = struct { call: origin.Ref, target: t.FunctionRef };
 const Builder = struct {
     c: *context.Context, allocator: std.mem.Allocator, directory: *const origin.Directory, budget: *origin.Budget,
     nodes: std.ArrayListUnmanaged(origin.Value) = .empty, registers: []?origin.Ref,
@@ -89,6 +92,8 @@ const CFG = struct {
     const FieldAddress = struct { id: origin.Symbol, view: origin.Symbol };
     const ScalarCell = struct { register: t.RegisterRef, view: t.TypeRef, value: ?origin.Ref = null };
     b: *Builder, f: *const wire.Function, receiver_protocol: bool = false,
+    receiver_effects: bool = false,
+    scalar_call_candidates: std.ArrayListUnmanaged(DirectCall) = .empty,
     cells: []?origin.Ref = &.{}, cell_inputs: []RefList = &.{},
     scalar_cells: std.AutoHashMapUnmanaged(t.CellRef, ScalarCell) = .empty,
     receiver_actions: std.ArrayListUnmanaged(ReceiverControl) = .empty,
@@ -131,6 +136,7 @@ const CFG = struct {
             for (self.blocks, block_controls) |flow, *control_id| { try self.b.c.step(); control_id.* = flow.control; }
             try self.b.c.charge(3); result.block_controls = block_controls; result.receiver_actions = self.receiver_actions.items; result.field_stores = self.field_stores.items;
         }
+        result.scalar_call_candidates = self.scalar_call_candidates.items;
         try self.b.c.row(origin.Graph); result.graph = .{ .nodes = self.b.nodes.items, .heaps = self.heaps.items, .controls = self.controls.items, .calls = self.calls.items, .normal = self.normal.items, .language = self.language.items, .exits = .{ .normal = self.normal_exits.items, .language = self.language_exits.items }, .accesses = self.accesses.items };
     }
     fn insert(self: *CFG, into: *RefList, id: origin.Ref) context.Error!void {
@@ -251,6 +257,11 @@ const CFG = struct {
         const id = self.calls.items.len; try self.b.c.row(origin.Call);
         if (self.calls.items.len == self.calls.capacity) try self.b.c.charge(self.calls.items.len + 1);
         try self.calls.append(self.b.allocator, .{ .function_id = row.id, .arguments = arguments, .environment = environment_refs, .callee = callee, .receiver = receiver, .heap = flow.heap, .control = flow.control, .site = try self.site(function_id, op, block, ordinal) });
+        if (self.receiver_effects and mode == .direct and receiver == null and environment_refs == null and row.kind == .source and argument_count == 1) {
+            try self.b.c.row(DirectCall);
+            if (self.scalar_call_candidates.items.len == self.scalar_call_candidates.capacity) try self.b.c.charge(self.scalar_call_candidates.items.len + 1);
+            try self.scalar_call_candidates.append(self.b.allocator, .{ .call = id, .target = target });
+        }
         const normal = switch (op.data) { .eh_invoke => |call| call.normal, .eh_invoke_indirect => |call| call.normal, .common_method_invoke => |call| call.normal, else => unreachable };
         const language = switch (op.data) { .eh_invoke => |call| call.exceptional, .eh_invoke_indirect => |call| call.exceptional, .common_method_invoke => |call| call.exceptional, else => unreachable };
         inline for (.{ origin.Completion.normal, origin.Completion.language }) |completion| {
@@ -488,7 +499,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     const a = result.arena.allocator();
     try c.charge(f.registers.len); const registers = try a.alloc(?origin.Ref, f.registers.len); @memset(registers, null);
     var b = Builder{ .c = c, .allocator = a, .directory = directory, .budget = budget, .registers = registers };
-    var cfg = try CFG.init(&b, f); cfg.receiver_protocol = true;
+    var cfg = try CFG.init(&b, f); cfg.receiver_protocol = true; cfg.receiver_effects = mode == .effects;
     _ = try cfg.construction(abi.construction.?);
     if (b.pending) |reason| { result.pending = reason; return; }
     const root = &v.members.constructions[@intFromEnum(abi.construction.?)];
@@ -963,6 +974,188 @@ pub const ReceiverEffects = struct {
     pub fn deinit(self: *ReceiverEffects) void { if (self.analysis) |*analysis| analysis.deinit(); self.body.deinit(); self.arena.deinit(); }
 };
 
+fn nativeGlobal(c: *context.Context, id: t.Hash, write: bool) context.Error!bool {
+    const common = &c.program.tables.mode.common;
+    for (common.modules.globals) |global| {
+        try c.step();
+        if (std.mem.eql(u8, &global.id, &id)) {
+            return nativeScalar(common, global.carrier, global.@"type") and (!write or global.writable);
+        }
+    }
+    return false;
+}
+
+fn permittedGlobal(c: *context.Context, ids: []const t.Hash, id: t.Hash) context.Error!bool {
+    for (ids) |candidate| {
+        try c.step();
+        if (std.mem.eql(u8, &candidate, &id)) return true;
+    }
+    return false;
+}
+
+// This proof is consumed only by the effect analysis. It identifies a
+// successful Data passthrough without assigning any actual tag to the input.
+fn entryControl(graph: *const origin.Graph, initial: origin.Ref, budget: *origin.Budget) origin.Error!bool {
+    var control = initial;
+    for (0..graph.controls.len) |_| {
+        try budget.step();
+        const row = graph.controls[control];
+        if (row == .entry) return true;
+        if (row != .join or row.join.inputs.len != 1) return false;
+        control = row.join.inputs[0];
+    }
+    return false;
+}
+
+fn scalarPassthrough(graph: *const origin.Graph, expected: origin.Symbol, budget: *origin.Budget) origin.Error!bool {
+    if (graph.calls.len != 0 or graph.normal.len != 1 or graph.language.len != 0 or
+        graph.exits.normal.len != 1 or graph.exits.language.len != 0 or
+        !try entryControl(graph, graph.exits.normal[0].control, budget)) return false;
+    for (graph.heaps) |row| {
+        try budget.step();
+        if (row != .entry and row != .copy and row != .join) return false;
+    }
+    for (graph.nodes) |node| {
+        try budget.step();
+        switch (node) {
+            .join => {},
+            .gate => |row| if (!try entryControl(graph, row.control, budget)) return false,
+            .copy => |row| if (!try budget.equal(row.@"type", expected) or !try entryControl(graph, row.control, budget)) return false,
+            .literal => |row| if (row.category != .other or row.@"type" == null or !try budget.equal(row.@"type".?, expected)) return false,
+            inline .parameter, .global, .nonowning => |row| if (!try budget.equal(row.@"type", expected)) return false,
+            else => return false,
+        }
+    }
+    for (graph.accesses) |access| {
+        try budget.step();
+        if (access.flag == .structural or !try entryControl(graph, access.control, budget)) return false;
+        for (access.values) |initial| {
+            var root = initial;
+            for (0..graph.nodes.len) |_| {
+                try budget.step();
+                const inputs = switch (graph.nodes[root]) {
+                    .global => break,
+                    inline .join, .gate => |row| row.inputs,
+                    else => return false,
+                };
+                if (inputs.len != 1) return false;
+                root = inputs[0];
+            } else return false;
+        }
+    }
+    var heap = graph.exits.normal[0].heap;
+    for (0..graph.heaps.len) |_| {
+        try budget.step();
+        switch (graph.heaps[heap]) {
+            .entry => break,
+            .copy => |row| heap = row.previous,
+            .join => |row| { if (row.inputs.len != 1) return false; heap = row.inputs[0]; },
+            else => return false,
+        }
+    } else return false;
+    var value = graph.normal[0];
+    for (0..graph.nodes.len) |_| {
+        try budget.step();
+        const inputs = switch (graph.nodes[value]) {
+            .parameter => |row| return row.index == 0 and try budget.equal(row.@"type", expected),
+            inline .join, .gate => |row| row.inputs,
+            .copy => |row| row.bases,
+            else => return false,
+        };
+        if (inputs.len != 1) return false;
+        value = inputs[0];
+    }
+    return false;
+}
+
+fn scalarCallee(c: *context.Context, target: t.FunctionRef, directory: *const origin.Directory, bounds: []const structural.FixedContract,
+    fixed: *const construction_domain.FixedFunction, budget: *origin.Budget) context.Error!bool {
+    const common = &c.program.tables.mode.common;
+    const function = &c.program.functions[@intFromEnum(target)];
+    const abi = &common.abis[@intFromEnum(function.abi)];
+    const declaration = fixed.declaration;
+    const upper = fixed.contract.upper;
+    const result_type = abi.result orelse return false;
+    if (function.role != .ordinary or abi.receiver != null or abi.construction != null or abi.receiver_frame != null or
+        abi.lexical_environment != null or abi.ordinary_minimum_argument_count != null or
+        abi.argument_types.len != 1 or abi.argument_types[0] != result_type or abi.physical_parameters.len != 1 or
+        !nativeScalar(common, abi.physical_parameters[0], result_type) or !nativeScalar(common, abi.result_carrier orelse return false, result_type) or
+        declaration.kind != .source or declaration.construction != null or declaration.lexical_environment != null or declaration.activation_environment != null or
+        declaration.captures.len != 0 or declaration.ordinary_parameter_initialization != null or
+        upper.parameters.len != 1 or upper.parameters[0].index != 0 or upper.parameters[0].read or upper.parameters[0].write or upper.parameters[0].structural or
+        upper.captures.len != 0 or upper.host_resources.reads.len != 0 or upper.host_resources.writes.len != 0 or
+        !std.meta.eql(upper.facets, std.mem.zeroes(@TypeOf(upper.facets)))) return false;
+    const fixed_graph = if (fixed.contract.return_origins) |*value| value else return false;
+    for (upper.globals.reads) |id| if (!try nativeGlobal(c, id, false)) return false;
+    for (upper.globals.writes) |id| if (!try nativeGlobal(c, id, true)) return false;
+    // Complete physical preflight. The ordinary projector independently
+    // checks exact Cell lifetimes, numeric carriers and Global storage joins.
+    for (function.registers) |register| {
+        try c.step();
+        if (register.carrier != .cell and !nativeScalar(common, register.carrier, result_type)) return false;
+    }
+    for (function.blocks) |block| {
+        try c.step();
+        for (block.instructions) |op| {
+            try c.step();
+            switch (op.data) {
+                .fuel, .eh_cell, .eh_load, .eh_store, .const_i32, .domain_view, .domain_copy,
+                .domain_numeric_use, .add, .mul, .br, .@"return" => {},
+                .global_load => |row| {
+                    const global = common.modules.globals[@intFromEnum(row.global)];
+                    if (global.@"type" != result_type or !try permittedGlobal(c, upper.globals.reads, global.id)) return false;
+                },
+                .global_store => |row| {
+                    const global = common.modules.globals[@intFromEnum(row.global)];
+                    if (global.@"type" != result_type or !try permittedGlobal(c, upper.globals.writes, global.id)) return false;
+                },
+                else => return false,
+            }
+        }
+    }
+    var current = try project(c, target, directory, budget);
+    defer current.deinit();
+    if (current.pending != null) return false;
+    const graph = &current.graph.?;
+    const coverage = structural.covered(c.allocator, directory, fixed.function_id, graph, bounds, budget) catch |err| return refs.graphFailure(err);
+    if (coverage == .pending) return false;
+    const expected = try refs.symbol(c, current.arena.allocator(), common.types[@intFromEnum(result_type)].id);
+    return (scalarPassthrough(graph, expected, budget) catch |err| return refs.graphFailure(err)) and
+        (scalarPassthrough(fixed_graph, expected, budget) catch |err| return refs.graphFailure(err));
+}
+
+fn scalarEffectCalls(c: *context.Context, allocator: std.mem.Allocator, directory: *const origin.Directory, projection: *const Projection,
+    input: *const construction_domain.FormalInput, budget: *origin.Budget) context.Error!?construction_domain.ScalarEffectCalls {
+    if (projection.scalar_call_candidates.len == 0) return null;
+    const caller = &projection.graph.?;
+    const calls = caller.calls;
+    try c.charge(input.fixed.len + calls.len + 2);
+    const bounds = try allocator.alloc(structural.FixedContract, input.fixed.len);
+    for (input.fixed, bounds) |*row, *bound| {
+        try c.step();
+        bound.* = .{ .function_id = row.function_id, .graph = if (row.contract.return_origins) |*value| value else null, .complete = row };
+    }
+    const callees = try allocator.alloc(?origin.Symbol, calls.len);
+    @memset(callees, null);
+    var proved: std.AutoHashMapUnmanaged(t.FunctionRef, bool) = .empty;
+    for (projection.scalar_call_candidates) |site| {
+        try c.charge(proved.count() + 1);
+        const known = try proved.getOrPut(allocator, site.target);
+        if (!known.found_existing) {
+            known.value_ptr.* = false;
+            const id = c.program.functions[@intFromEnum(site.target)].id;
+            for (input.fixed) |*row| {
+                try c.step();
+                if (!std.mem.eql(u8, &row.contract.function_id, &id)) continue;
+                known.value_ptr.* = try scalarCallee(c, site.target, directory, bounds, row, budget);
+                break;
+            }
+        }
+        if (known.value_ptr.*) callees[site.call] = calls[site.call].function_id;
+    }
+    return .{ .caller = caller, .callees = callees };
+}
+
 pub fn coverReceiverEffects(c: *context.Context, function: t.FunctionRef) context.Error!ReceiverEffects {
     var result = ReceiverEffects{ .arena = std.heap.ArenaAllocator.init(c.allocator), .body = .{ .arena = std.heap.ArenaAllocator.init(c.allocator) } }; errdefer result.deinit();
     if (c.program.tables.mode != .common or c.program.functions[@intFromEnum(function)].role != .construction_body) { result.body.pending = .entry_protocol; return result; }
@@ -973,7 +1166,8 @@ pub fn coverReceiverEffects(c: *context.Context, function: t.FunctionRef) contex
     if (result.body.pending != null) return result;
     const function_id = try refs.symbol(c, result.arena.allocator(), c.program.functions[@intFromEnum(function)].id);
     const input = try refs.returnOriginConstructorInput(c, result.arena.allocator(), fixed.*, function_id);
-    result.analysis = construction_domain.analyzeEffects(c.allocator, &directory, &result.body.graph.?, &budget, input) catch |err| return refs.graphFailure(err);
+    const scalar_calls = try scalarEffectCalls(c, result.arena.allocator(), &directory, &result.body, &input, &budget);
+    result.analysis = construction_domain.analyzeEffectsWithCalls(c.allocator, &directory, &result.body.graph.?, &budget, input, scalar_calls) catch |err| return refs.graphFailure(err);
     if (result.analysis.?.pending != null) return result;
     try c.row(ReceiverEffectProof); try c.row(ReceiverFlow); try c.row(origin.Graph);
     result.proof = .{ .flow = .{ .graph = result.body.graph.?, .block_controls = result.body.block_controls, .receiver_actions = result.body.receiver_actions, .controls = result.analysis.?.controls, .action_results = result.analysis.?.action_results }, .fields = result.body.field_stores, .initializations = result.analysis.?.initializations };
