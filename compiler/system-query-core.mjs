@@ -166,3 +166,16 @@ export function checkQueryBatchSource(batch,core,inputIdentity){
   }
   if(!version||identity!==inputIdentity||source===undefined||source.length<core.length||source!==escapeQueryCompilerBytes(core))failure();
 }
+
+/** Check the fixed generic printer's top-level LLVM dialect dictionary.
+ * @param {string} dialect @param {string} batch
+ * @param {import('./system-query-facts.mjs').SystemQueryFacts['program']['target']} target
+ */
+export function checkQueryLlvmDialect(dialect,batch,target){
+  const layout=escapeQueryCompilerBytes(Buffer.from(target.llvmDataLayout));
+  const triple=escapeQueryCompilerBytes(Buffer.from(target.triple));
+  const source=escapeQueryCompilerBytes(Buffer.from(batch));
+  const dictionary=`}) {llvm.data_layout = "${layout}", llvm.target_triple = "${triple}", tsfg.cpu_llvm_source = "${source}", tsfg.cpu_llvm_version = 1 : i32} : () -> ()`;
+  if(!dialect.startsWith('"builtin.module"() ({\n')||!dialect.trimEnd().endsWith('\n'+dictionary))
+    throw new TypeError('r10-system-query-llvm: checked dialect proof differs');
+}

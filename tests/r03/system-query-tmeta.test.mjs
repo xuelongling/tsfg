@@ -390,6 +390,48 @@ test('Query standalone LLVM IR rejects a retained result from another checked ba
   ]);
 });
 
+test('Query LLVM dialect binds the retained batch and target',
+  {skip:!process.env.TSFG_QUERY_PAIRED_CAPTURE},()=>{
+  const capture=process.env.TSFG_QUERY_PAIRED_CAPTURE;
+  assert.ok(path.isAbsolute(capture));
+  const dialect=readFileSync(path.join(capture,'005-llvm-dialect-stdout.bin'));
+  assert.equal(sha256(dialect),'sha256:96aac736f8a7f3c81ad0b33ededc0d05aad550dcfd075ece05eb9130da61589a');
+  assert.deepEqual(dialect,readFileSync(path.join(capture,'006-llvm-dialect-cold-stdout.bin')));
+  const copy=retainedQuery('i32-copy'),compound=retainedQuery('i32-compound');
+  /** @type {string[]} */
+  const calls=[];
+  /**
+   * @param {ReturnType<typeof retainedQuery>} retained
+   * @param {Buffer} output
+   */
+  const collect=(retained,output)=>readQueryCompilerOutputs(retained.facts,retained.context,retained.core,
+    {cpuLLVM:'dialect'},(command,input)=>{
+      calls.push(command);
+      if(command==='--cpu-batch'){
+        assert.equal(input,retained.core.toString('utf8'));
+        return Buffer.from(retained.payload.batch);
+      }
+      assert.equal(command,'--cpu-llvm');
+      assert.equal(input,retained.payload.batch);
+      return output;
+    });
+  assert.throws(()=>collect(compound,dialect),/r10-system-query-llvm: checked dialect proof differs/);
+  assert.deepEqual(calls.splice(0),['--cpu-batch','--cpu-llvm']);
+  const product=collect(copy,dialect);
+  assert.equal(product.cpuLLVM,dialect.toString('utf8'));
+  assert.equal(Object.hasOwn(product,'cpuBatch'),false);
+  assert.deepEqual(calls.splice(0),['--cpu-batch','--cpu-llvm']);
+  const original=dialect.toString('utf8');
+  for(const replacement of [
+    original.replace('llvm.target_triple = "x86_64-pc-windows-msvc"','llvm.target_triple = "aarch64-pc-windows-msvc"'),
+    original.replace('tsfg.cpu_llvm_version = 1 : i32','tsfg.cpu_llvm_version = 2 : i32'),
+  ]){
+    assert.notEqual(replacement,original);
+    assert.throws(()=>collect(copy,Buffer.from(replacement)),/r10-system-query-llvm: checked dialect proof differs/);
+    assert.deepEqual(calls.splice(0),['--cpu-batch','--cpu-llvm']);
+  }
+});
+
 test('Query LLVM pairing validates the retained batch and target',async t=>{
   const llvm=readFileSync(new URL('query-tmeta-i32-copy-retained.ll',queryFixtures));
   /** @param {string} name @param {string[]} calls @param {Buffer} [llvmOutput] */
