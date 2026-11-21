@@ -251,6 +251,39 @@ test('a skipped boolean operand preserves the binding used by a later Array writ
   }
 });
 
+test('String concatenation requires each checked Array operand before the next read',async t=>{
+  const actual=sourceIdentity=>checkedFixture(actualManifest.find(row=>row.sourceIdentity===sourceIdentity),'typed-array-actual-v8/');
+  const [{hir},{hir:concatHir},{hir:endpoint},{hir:overwrite}]=await Promise.all([
+    actual('c5f4d1da4d8ee6a8ed92f7e69ca7463fca4a496500ff136fe1407cd39ed6edc7'),
+    actual('619021d061e1003c598032e3bdaf00ece6600b52927d3718334a723a4c1e821e'),
+    checkedFixture(manifest.find(row=>row.name==='length-equal-checked-read')),
+    checkedFixture(manifest.find(row=>row.name==='dense-overwrite')),
+  ]);
+  const [fn]=hir.functions,[local,returned]=fn.body,original=concatHir.functions[0].body[1].expression.value;
+  const boundary=endpoint.functions[0].body.at(-1).value.index,first=overwrite.functions[0].body.at(-1).value.index;
+  assert.equal(original.kind,'stringConcat');
+  assert.equal(returned.value.kind,'arrayReadChecked');
+  assert.equal(returned.value.type,original.type);
+  assert.equal(local.initializer.elements.length,2);
+  assert.equal(boundary.decimal,'2');assert.equal(first.decimal,'0');
+  // Project verified typed operands into an analysis model. The captures
+  // retain the actual String concat and Array read separately.
+  const inside={...returned.value,index:first},outside={...returned.value,index:boundary};
+  const root=fn.id+'/body/',initial=root+'0/initializer/initial/0/array-version';
+  for(const [name,left,right,statuses] of [
+    ['left fails',outside,inside,['missing','pending','pending']],
+    ['right fails',inside,outside,['proven','missing','pending']],
+    ['both complete',inside,inside,['proven','proven','proven']],
+  ])await t.test(name,()=>{
+    const expression={...original,left,right};
+    const model={...hir,functions:[{...fn,body:[local,{kind:'expression',expression,range:expression.range},{...returned,value:inside}]}]};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>true);
+    const reads=['1/expression/left','1/expression/right','2/value'].map(path=>reaching.reads.find(row=>row.node===root+path));
+    assert.deepEqual(reads.map(row=>row?.status),statuses);
+    assert.deepEqual(reads.map(row=>row?.versions),statuses.map(status=>status==='proven'?[initial]:[]));
+  });
+});
+
 for(const [name,status] of [
   ['empty-checked-read','missing'],['length-equal-checked-read','missing'],
   ['far-oob-checked-read','missing'],['dense-overwrite','proven'],['after-last-use','pending'],

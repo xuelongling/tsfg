@@ -384,8 +384,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         meetBindings(bindings,bindings,branchBindings);
         return resultValue(value.operator==='??'&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path});
       }
-      if(value.kind==='binary') {
-        // An ordinary binary uses the normal completion of each operand in order.
+      if(value.kind==='binary'||value.kind==='stringConcat') {
+        // Strict binary operations require normal completion in operand order.
         const left=child('left',terminalRoot);if(left.terminal)return left;
         const right=child('right',terminalRoot);if(right.terminal)return right;
         return ['===','!=='].includes(value.operator)?{symbol:path,truth:predicateTruth(value,path)}:{symbol:path};
