@@ -92,19 +92,20 @@ mlir::Operation *MemorySources::capture(Id frame,Id query){
   }
   return nullptr;
 }
-bool MemorySources::incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result){
+bool MemorySources::incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result,bool allEdges){
   // Phi authority is an actual edge occurrence and operand, never the block
   // argument's carrier. Two arms targeting one block keep both operands.
   if(source.value>=sources.size())return false;
   const auto argument=llvm::dyn_cast<mlir::BlockArgument>(sources[source.value]);
   if(!argument)return false;auto *block=argument.getOwner();
+  if(allEdges&&block==&block->getParent()->front())return false;
   std::vector<MemoryFrames::Origin> selected;std::set<mlir::Operation *> seen;
   for(auto *parent:block->getPredecessors()){
     if(!proof.charge()){valid=false;return false;}auto *term=parent->getTerminator();
     if(!seen.insert(term).second)continue;
     for(unsigned edge=0;edge<term->getNumSuccessors();++edge){
       if(!proof.charge()){valid=false;return false;}
-      if(term->getSuccessor(edge)!=block||!proof.mayTraverse(term,edge))continue;
+      if(term->getSuccessor(edge)!=block||(!allEdges&&!proof.mayTraverse(term,edge)))continue;
       mlir::ValueRange operands;
       if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(term))operands=branch.getDestOperands();
       else if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(term))
@@ -117,6 +118,16 @@ bool MemorySources::incoming(MemoryFrames::Origin source,std::vector<MemoryFrame
     }
   }
   if(selected.empty())return false;result=std::move(selected);return true;
+}
+mlir::Value MemorySources::unchangedBlockOperand(MemoryFrames::Origin origin){
+  // Receiver identity must hold before path pruning and across loop entries.
+  std::vector<MemoryFrames::Origin> operands;
+  if(!incoming(origin,operands,true))return {};
+  for(const auto &operand:operands){
+    if(!proof.charge()){valid=false;return {};}
+    if(!(operand==operands.front()))return {};
+  }
+  return source(operands.front());
 }
 bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result){
   struct Item {MemoryFrames::Origin origin;std::string element;};

@@ -18,6 +18,7 @@ public:
   std::vector<Id> entries(const std::string &function);
   MemoryFrames::Origin resolve(Id frame,mlir::Value value);
   mlir::Value source(MemoryFrames::Origin origin);
+  mlir::Value unchangedBlockOperand(MemoryFrames::Origin origin);
   Id parent(Id frame)const{return frames.parent(frame);}
   mlir::Operation *call(Id frame)const;
   bool applies(Id frame,const MemoryCallPath &entry);
@@ -40,7 +41,7 @@ private:
   std::map<std::string,std::vector<Id>> entryFrames;
   bool buildEntries();
   bool repeats(mlir::Operation *op);
-  bool incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result);
+  bool incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result,bool allEdges=false);
   bool indices(Id frame,mlir::Value value,std::set<uint32_t> &result);
   bool retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result);
   bool slice(MemoryFrames::Origin source,Id query,StoredSpanSlice &result);

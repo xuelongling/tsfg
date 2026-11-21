@@ -114,13 +114,21 @@ struct FirstWrites {
   }
   size_t identityAt(mlir::Value value,size_t frame){
     auto resolved=sources.resolve(frame,value);auto actualValue=sources.source(resolved);
+    const auto original=resolved;
     std::set<std::pair<const void *,size_t>> seen;
     while(actualValue){
       if(!proof.charge()){valid=false;return SIZE_MAX;}
-      if(!seen.emplace(actualValue.getAsOpaquePointer(),resolved.frame).second){identityCacheable=false;break;}
-      auto *op=actualValue.getDefiningOp();if(!op)break;const auto name=op->getName().getStringRef();
-      if(name!="tsfg_core.domain.view"&&name!="tsfg_core.domain.refine"&&(name!="tsfg_core.domain.copy"||inlineStorage()))break;
-      resolved=sources.resolve(resolved.frame,op->getOperand(0));actualValue=sources.source(resolved);
+      if(!seen.emplace(actualValue.getAsOpaquePointer(),resolved.frame).second){
+        identityCacheable=false;resolved=original;actualValue=sources.source(original);break;
+      }
+      mlir::Value operand;
+      if(auto *op=actualValue.getDefiningOp()){
+        const auto name=op->getName().getStringRef();
+        if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||(name=="tsfg_core.domain.copy"&&!inlineStorage()))
+          operand=op->getOperand(0);
+      }else operand=sources.unchangedBlockOperand(resolved);
+      if(!operand)break;
+      resolved=sources.resolve(resolved.frame,operand);actualValue=sources.source(resolved);
     }
     if(!sources.good()){valid=false;return SIZE_MAX;}
     if(!actualValue||resolved.frame==MemoryFrames::none)identityCacheable=false;
