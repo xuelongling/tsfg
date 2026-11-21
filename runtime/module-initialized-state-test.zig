@@ -31,7 +31,7 @@ const load1: ins.Instruction = .{ .source=anchor,.result=r2,.operands=&empty,.da
 const store0: ins.Instruction = .{ .source=anchor,.result=null,.operands=&value,.data=.{ .global_store=.{ .global=@enumFromInt(0),.initialize=false } } };
 const ret: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.@"return" };
 const loop_fuel: ins.Instruction = .{ .source=anchor,.result=null,.operands=&empty,.data=.{ .fuel=.{ .event=.condition } } };
-const Case = enum { linear, diamond, stable_loop, double, missing_arm, before_init, ordinary_store, wrong_binding, repeated_loop, unreachable_repeat };
+const Case = enum { linear, diamond, stable_loop, double, missing_arm, missing_arm_return, missing_unused, before_init, ordinary_store, wrong_binding, repeated_loop, unreachable_repeat };
 const Fixture = struct {
     program: wire.Program,
     instructions: [16]ins.Instruction,
@@ -58,15 +58,17 @@ const Fixture = struct {
             .double => { self.instructions[0..7].*=.{constant,bool_op,init0,init0,init1,load0,ret}; self.blocks[0].instructions=self.instructions[0..7]; },
             .before_init => { self.instructions[0..6].*=.{constant,bool_op,load0,init0,init1,ret}; },
             .ordinary_store => { self.instructions[0..7].*=.{constant,bool_op,store0,init0,init1,load0,ret}; self.blocks[0].instructions=self.instructions[0..7]; },
+            .missing_unused => { self.instructions[0..5].*=.{constant,bool_op,init0,load0,ret}; self.blocks[0].instructions=self.instructions[0..5]; },
             .wrong_binding => { self.instructions[0..5].*=.{constant,bool_op,init0,load1,ret}; self.blocks[0].instructions=self.instructions[0..5]; },
-            .diamond,.missing_arm => {
+            .diamond,.missing_arm,.missing_arm_return => {
                 count=4;
                 self.instructions[0..10].*=.{constant,bool_op,init1,
                     .{ .source=anchor,.result=null,.operands=&condition,.data=.{ .cond_br=.{ .true_destination=@enumFromInt(1),.false_destination=@enumFromInt(2),.true_count=0 } } },
                     init0,.{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(3) } } },
                     init0,.{ .source=anchor,.result=null,.operands=&empty,.data=.{ .br=.{ .destination=@enumFromInt(3) } } },load0,ret};
                 self.blocks=.{ .{ .parameters=&empty,.instructions=self.instructions[0..4] },.{ .parameters=&empty,.instructions=self.instructions[4..6] },.{ .parameters=&empty,.instructions=self.instructions[6..8] },.{ .parameters=&empty,.instructions=self.instructions[8..10] } };
-                if(case==.missing_arm)self.blocks[2].instructions=self.instructions[7..8];
+                if(case!=.diamond)self.blocks[2].instructions=self.instructions[7..8];
+                if(case==.missing_arm_return)self.instructions[8]=load1;
             },
             .stable_loop,.repeated_loop => {
                 count=3;
@@ -126,7 +128,7 @@ fn check(case: Case, rejected: bool) !void {
     var fixture: Fixture=undefined; fixture.init(case);
     var c=context.Context{ .program=&fixture.program,.allocator=std.testing.allocator };
     try preconditions(&c);
-    if(rejected)try std.testing.expectError(error.InvalidShape,ssa.check(&c)) else try ssa.check(&c);
+    if(rejected)try std.testing.expectError(error.InvalidShape,ssa.checkCompleteProgram(&c)) else try ssa.checkCompleteProgram(&c);
     try std.testing.expect(c.remaining>0 and c.remaining<wire.format.max_work);
 }
 test "module cell accepts one init before observation" { try check(.linear,false); }
@@ -134,6 +136,8 @@ test "module cell accepts mutually exclusive init arms" { try check(.diamond,fal
 test "module cell accepts initialized loop without reinitialization" { try check(.stable_loop,false); }
 test "module cell rejects two consecutive initializations" { try check(.double,true); }
 test "module cell rejects an uninitialized merge arm" { try check(.missing_arm,true); }
+test "module return rejects an uninitialized arm without observing its Global" { try check(.missing_arm_return,true); }
+test "module return requires an initializer for an unused Global" { try check(.missing_unused,true); }
 test "module cell rejects observation preceding initialization" { try check(.before_init,true); }
 test "module cell ordinary assignment cannot initialize" { try check(.ordinary_store,true); }
 test "module cells do not borrow another binding initialization" { try check(.wrong_binding,true); }

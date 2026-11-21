@@ -74,7 +74,7 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
         try functionShape(&c, function, index, &string_units);
     }
     try layout_check.check(&c);
-    try ssa_check.check(&c);
+    try ssa_check.checkCompleteProgram(&c);
     try source_correspondence_check.check(&c);
     try identity_check.check(&c);
     try module_contracts_check.checkModules(&c);

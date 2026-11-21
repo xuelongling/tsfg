@@ -2087,7 +2087,7 @@ const Graph = struct {
             }
         }
     }
-    fn globalInitialization(self: *Graph, initializer_callees: []const ?t.FunctionRef) Error!void {
+    fn globalInitialization(self: *Graph, initializer_callees: []const ?t.FunctionRef, comptime complete: bool) Error!void {
         const c=self.c; const modules=c.program.tables.mode.common.modules; const globals=modules.globals;
         // GlobalRef identifies one program cell. Permission/defining-module
         // ownership remains the independent module-contracts obligation.
@@ -2097,6 +2097,9 @@ const Graph = struct {
         for(modules.modules) |module| {
             try c.step(); if(@intFromEnum(module.initializer)==self.function and module.source==self.f.source) { own_globals=module.globals; break; }
         }
+        if(complete) for(own_globals) |ref| {
+            try c.step(); used[@intFromEnum(ref)]=true;
+        };
         var nested_targets: NestedCodeTargets = .empty;
         defer nested_targets.deinit(c.allocator);
         var callee_globals = std.AutoHashMapUnmanaged(t.FunctionRef, GlobalRefs){};
@@ -2165,6 +2168,7 @@ const Graph = struct {
                             if(v.initialize) { try c.require(state==1); state=2; } else try c.require(state==2);
                         },
                         .global_load=>|v| if(v.global==ref) { try c.require(state==2); },
+                        .@"return"=>if(complete)try c.require(state==2),
                         inline .eh_invoke,.eh_invoke_indirect=>|v,kind| if(own_globals.len!=0 and state!=2) {
                             try c.charge(2);
                             const callee=if(kind==.eh_invoke) v.callee else initializer_callees[b] orelse continue;
@@ -2320,7 +2324,7 @@ const Graph = struct {
             // crypto/provenance boundary, not this typed CFG/SSA checker.
         }
     }
-    fn run(self: *Graph) Error!void {
+    fn run(self: *Graph, comptime complete: bool) Error!void {
         try self.directory(); try self.reach(); self.dom=try self.dominance(false);
         try self.usesDom(); try self.entryAbi();
         var call_buffer: [256]?t.FunctionRef=undefined;
@@ -2344,7 +2348,7 @@ const Graph = struct {
                 try self.environmentDirectCellState(allocations, owned_layout, calls);
             }
         }
-        if(initializer_callees) |callees| try self.globalInitialization(callees);
+        if(initializer_callees) |callees| try self.globalInitialization(callees,complete);
         try self.numeric(); try self.fuel();
         // Borrow the paid definition/predecessor directory. The business proof
         // adds no second dominance graph, Context, Source table or admission.
@@ -2352,9 +2356,19 @@ const Graph = struct {
     }
 };
 
-// references/layout must already have succeeded with this same Context. No
-// fresh budget, marker, retained graph or execution handle is created here.
+// Function analysis also supports typed component fixtures with partial modules.
 pub fn check(c: *Context) Error!void {
+    if(!@import("builtin").is_test)@compileError("partial module SSA checking is for component fixtures");
+    try checkFunctions(c,false);
+}
+
+// Whole-program references/layout must already have succeeded with this Context.
+// A module's normal return now certifies its entire declared global inventory.
+pub fn checkCompleteProgram(c: *Context) Error!void {
+    try checkFunctions(c,true);
+}
+
+fn checkFunctions(c: *Context, comptime complete: bool) Error!void {
     if(c.program.tables.mode==.legacy) {
         const v=c.program.tables.mode.legacy;
         // The real legacy dispatcher selects closure verification by the
@@ -2365,6 +2379,6 @@ pub fn check(c: *Context) Error!void {
         } else try c.require(v.closures.environments.len==0 and v.closures.calls.len==0);
     }
     for(c.program.functions,0..) |_,index| {
-        try c.step(); var graph=try Graph.init(c,index); defer graph.deinit(); try graph.run();
+        try c.step(); var graph=try Graph.init(c,index); defer graph.deinit(); try graph.run(complete);
     }
 }
