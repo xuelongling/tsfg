@@ -23,7 +23,8 @@ function kindKeys(value, name, selected) {
   check(Array.isArray(specific),'kind');
   check(specific.every(key=>Object.hasOwn(value,key)),'schema');
   const optional = name==='arrayGenericExpression'
-    ? value.kind==='numericLiteral'?['decimal','bits']:value.kind==='call'?['receiver']:value.kind==='stringConcat'?['operator']:[]
+    ? value.kind==='numericLiteral'?['decimal','bits']:value.kind==='call'?['receiver']
+      :value.kind==='stringConcat'?['operator']:value.kind==='stringSlice'?['arguments']:[]
     : name==='arrayGenericType'&&['value','reference'].includes(value.kind)?['markerOrigin','base','methods']
     : name==='arrayGenericStatement'&&value.kind==='return'?['value']:[];
   if(name==='arrayGenericExpression')optional.push('compatibilityRoots');
