@@ -106,6 +106,50 @@ test('a checked field receiver must complete before the next Array read',async()
   }
 });
 
+test('a checked field store completes its receiver before its value and the following Array read',async()=>{
+  const [,packetHash,sourceHash]=cases[0];
+  const {built}=await actual('./testdata/typed-array-aggregate-storage/create-package.json',packetHash,sourceHash);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const {hir}=built,fn=hir.functions.find(row=>row.name==='run');
+  assert.ok(fn);
+  const returned=fn.body.at(-1),field=returned.value.receiver;
+  const construction=fn.body.find(row=>row.kind==='local'&&row.binding.name==='h').initializer;
+  assert.equal(field.kind,'fieldAccess');
+  assert.equal(field.receiver.kind,'arrayReadChecked');
+  const inside=field.receiver.index,outside=construction.arguments[0].arguments[2];
+  assert.equal(inside.decimal,'0');
+  assert.equal(outside.decimal,'1');
+  assert.equal(inside.type,outside.type);
+  const owner=hir.types.find(type=>type.id===field.receiver.type);
+  assert.equal(owner?.kind,'reference');
+  assert.ok(owner.fields.some(member=>member.id===field.property&&!member.readonly&&member.type===field.type));
+
+  // Insert a modeled store using the retained writable field, checked receiver,
+  // and matching value type. The capture itself contains no such assignment.
+  const offset=fn.body.length-1,root=fn.id+'/body/';
+  const reads=[root+offset+'/expression/target/receiver',root+offset+'/expression/value/receiver',
+    root+(offset+1)+'/value/receiver/receiver'];
+  for(const {receiver,value,expected} of [
+    {receiver:inside,value:inside,expected:['proven','proven','proven']},
+    {receiver:outside,value:inside,expected:['missing','pending','pending']},
+    {receiver:inside,value:outside,expected:['proven','missing','pending']},
+  ]){
+    const expression={kind:'fieldAssignment',type:field.type,range:field.range,
+      target:{...field,kind:'fieldTarget',receiver:{...field.receiver,index:receiver}},
+      value:{...field,receiver:{...field.receiver,index:value}}};
+    const model={...hir,functions:hir.functions.map(row=>row!==fn?row:{
+      ...fn,body:[...fn.body.slice(0,-1),{kind:'expression',expression,range:field.range},returned],
+    })};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>true);
+    const rows=reads.map(node=>reaching.reads.find(row=>row.node===node));
+    assert.deepEqual(rows.map(row=>row?.status),expected);
+    if(receiver===inside&&value===inside){
+      assert.deepEqual(rows[1].versions,rows[0].versions);
+      assert.deepEqual(rows[2].versions,rows[0].versions);
+    }else assert.deepEqual(rows[2].versions,[]);
+  }
+});
+
 const edges=[
   ['external-store','2da94f8faf2ccfce063ba3a4b37023cb0d0a00056604f83257d5771b7c493423',
     '6ff21b20fca958a1e7e7dd834368c008b5d5bc7ffcd02a9a7c7b362671cb91a2'],
