@@ -19,6 +19,7 @@ pub const Projection = struct {
     block_controls: []const origin.Ref = &.{}, receiver_actions: []const ReceiverControl = &.{},
     field_stores: []const ReceiverField = &.{},
     scalar_call_candidates: []const DirectCall = &.{},
+    certificate: bool = false,
     pub fn deinit(self: *Projection) void { self.arena.deinit(); }
 };
 pub const ReceiverField = struct { block: usize, instruction: usize, field: t.FieldRef, store: origin.Ref };
@@ -92,7 +93,7 @@ const CFG = struct {
     const FieldAddress = struct { id: origin.Symbol, view: origin.Symbol };
     const ScalarCell = struct { register: t.RegisterRef, view: t.TypeRef, value: ?origin.Ref = null };
     b: *Builder, f: *const wire.Function, receiver_protocol: bool = false,
-    receiver_effects: bool = false,
+    collect_scalar_calls: bool = false,
     scalar_call_candidates: std.ArrayListUnmanaged(DirectCall) = .empty,
     cells: []?origin.Ref = &.{}, cell_inputs: []RefList = &.{},
     scalar_cells: std.AutoHashMapUnmanaged(t.CellRef, ScalarCell) = .empty,
@@ -257,7 +258,9 @@ const CFG = struct {
         const id = self.calls.items.len; try self.b.c.row(origin.Call);
         if (self.calls.items.len == self.calls.capacity) try self.b.c.charge(self.calls.items.len + 1);
         try self.calls.append(self.b.allocator, .{ .function_id = row.id, .arguments = arguments, .environment = environment_refs, .callee = callee, .receiver = receiver, .heap = flow.heap, .control = flow.control, .site = try self.site(function_id, op, block, ordinal) });
-        if (self.receiver_effects and mode == .direct and receiver == null and environment_refs == null and row.kind == .source and argument_count == 1) {
+        if (self.collect_scalar_calls and mode == .direct and receiver == null and environment_refs == null and row.kind == .source and
+            argument_count == 1 and abi.argument_types.len == 1 and
+            nativeScalar(&self.b.c.program.tables.mode.common, self.f.registers[@intFromEnum(op.operands[0])].carrier, abi.argument_types[0])) {
             try self.b.c.row(DirectCall);
             if (self.scalar_call_candidates.items.len == self.scalar_call_candidates.capacity) try self.b.c.charge(self.scalar_call_candidates.items.len + 1);
             try self.scalar_call_candidates.append(self.b.allocator, .{ .call = id, .target = target });
@@ -499,7 +502,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     const a = result.arena.allocator();
     try c.charge(f.registers.len); const registers = try a.alloc(?origin.Ref, f.registers.len); @memset(registers, null);
     var b = Builder{ .c = c, .allocator = a, .directory = directory, .budget = budget, .registers = registers };
-    var cfg = try CFG.init(&b, f); cfg.receiver_protocol = true; cfg.receiver_effects = mode == .effects;
+    var cfg = try CFG.init(&b, f); cfg.receiver_protocol = true; cfg.collect_scalar_calls = mode != .control;
     _ = try cfg.construction(abi.construction.?);
     if (b.pending) |reason| { result.pending = reason; return; }
     const root = &v.members.constructions[@intFromEnum(abi.construction.?)];
@@ -668,6 +671,7 @@ fn receiverBody(c: *context.Context, function: t.FunctionRef, directory: *const 
     }
     if (b.pending) |reason| { result.pending = reason; return; }
     try cfg.finish(result);
+    result.certificate = mode == .certificate;
 }
 
 // Directory/typed current Fn are borrowed from this Context's complete owning
@@ -1124,17 +1128,11 @@ fn scalarCallee(c: *context.Context, target: t.FunctionRef, directory: *const or
         (scalarPassthrough(fixed_graph, expected, budget) catch |err| return refs.graphFailure(err));
 }
 
-fn scalarEffectCalls(c: *context.Context, allocator: std.mem.Allocator, directory: *const origin.Directory, projection: *const Projection,
-    input: *const construction_domain.FormalInput, budget: *origin.Budget) context.Error!?construction_domain.ScalarEffectCalls {
-    if (projection.scalar_call_candidates.len == 0) return null;
-    const caller = &projection.graph.?;
-    const calls = caller.calls;
-    try c.charge(input.fixed.len + calls.len + 2);
-    const bounds = try allocator.alloc(structural.FixedContract, input.fixed.len);
-    for (input.fixed, bounds) |*row, *bound| {
-        try c.step();
-        bound.* = .{ .function_id = row.function_id, .graph = if (row.contract.return_origins) |*value| value else null, .complete = row };
-    }
+fn checkedScalarCallees(c: *context.Context, allocator: std.mem.Allocator, directory: *const origin.Directory, projection: *const Projection,
+    input: *const construction_domain.FormalInput, bounds: []const structural.FixedContract, budget: *origin.Budget) context.Error![]const ?origin.Symbol {
+    if (projection.scalar_call_candidates.len == 0) return &.{};
+    const calls = projection.graph.?.calls;
+    try c.charge(calls.len + 1);
     const callees = try allocator.alloc(?origin.Symbol, calls.len);
     @memset(callees, null);
     var proved: std.AutoHashMapUnmanaged(t.FunctionRef, bool) = .empty;
@@ -1153,7 +1151,66 @@ fn scalarEffectCalls(c: *context.Context, allocator: std.mem.Allocator, director
         }
         if (known.value_ptr.*) callees[site.call] = calls[site.call].function_id;
     }
-    return .{ .caller = caller, .callees = callees };
+    return callees;
+}
+
+fn scalarEffectCalls(c: *context.Context, allocator: std.mem.Allocator, directory: *const origin.Directory, projection: *const Projection,
+    input: *const construction_domain.FormalInput, budget: *origin.Budget) context.Error!?construction_domain.ScalarEffectCalls {
+    if (projection.scalar_call_candidates.len == 0) return null;
+    try c.charge(input.fixed.len + 1);
+    const bounds = try allocator.alloc(structural.FixedContract, input.fixed.len);
+    for (input.fixed, bounds) |*row, *bound| {
+        try c.step();
+        bound.* = .{ .function_id = row.function_id, .graph = if (row.contract.return_origins) |*value| value else null, .complete = row };
+    }
+    const callees = try checkedScalarCallees(c, allocator, directory, projection, input, bounds, budget);
+    return .{ .caller = &projection.graph.?, .callees = callees };
+}
+
+fn directScalarArgument(graph: *const origin.Graph, call: origin.Call) ?origin.Symbol {
+    if (call.receiver != null or call.callee != null or call.environment != null or call.arguments.len != 1 or call.arguments[0].len != 1) return null;
+    const argument = call.arguments[0][0];
+    if (argument >= graph.nodes.len) return null;
+    return switch (graph.nodes[argument]) {
+        inline .literal, .parameter, .global, .nonowning, .join, .gate, .copy, .call => |row| row.@"type",
+        else => null,
+    };
+}
+
+// A formal receiver certificate needs current typed call-site provenance AND
+// the original fixed occurrence. Reprove the scalar callee from its current
+// owned SSA body here. No effect result or selected actual state is reused.
+pub fn scalarReturnCalls(c: *context.Context, allocator: std.mem.Allocator, directory: *const origin.Directory, projection: *const Projection,
+    upper: *const origin.Graph, input: *const construction_domain.FormalInput, bounds: []const structural.FixedContract,
+    budget: *origin.Budget) context.Error!?construction_domain.ScalarReturnCalls {
+    if (!projection.certificate or projection.scalar_call_candidates.len == 0) return null;
+    const current = &projection.graph.?;
+    if (current.calls.len != upper.calls.len) return null;
+    var bound_matches = false;
+    for (input.fixed) |row| {
+        if (!(budget.equal(row.function_id, input.function_id) catch |err| return refs.graphFailure(err))) continue;
+        bound_matches = if (row.contract.return_origins) |*value| value == upper else false;
+        break;
+    }
+    if (!bound_matches) return null;
+    for (current.calls, upper.calls) |left, right| {
+        if (!(budget.equal(left.function_id, right.function_id) catch |err| return refs.graphFailure(err))) return null;
+    }
+    const callees = try checkedScalarCallees(c, allocator, directory, projection, input, bounds, budget);
+    var supported = false;
+    for (callees, current.calls, upper.calls) |callee, left, right| {
+        try c.step();
+        const id = callee orelse continue;
+        const function = origin.findFunction(directory, id, budget) catch |err| return refs.graphFailure(err);
+        if (function.parameter_types.len != 1) return null;
+        const expected = function.parameter_types[0];
+        const current_view = directScalarArgument(current, left) orelse return null;
+        const upper_view = directScalarArgument(upper, right) orelse return null;
+        if (!(budget.equal(current_view, expected) catch |err| return refs.graphFailure(err)) or
+            !(budget.equal(upper_view, expected) catch |err| return refs.graphFailure(err))) return null;
+        supported = true;
+    }
+    return if (supported) .{ .current = current, .upper = upper, .callees = callees } else null;
 }
 
 pub fn coverReceiverEffects(c: *context.Context, function: t.FunctionRef) context.Error!ReceiverEffects {

@@ -833,7 +833,8 @@ const ReceiverCertificate = struct {
     }
 };
 
-fn receiverCovered(allocator: std.mem.Allocator, directory: *const model.Directory, function_id: Symbol, body_graph: *const Graph, upper_graph: *const Graph, fixed: []const FixedContract, budget: *Budget) Error!bool {
+fn receiverCovered(allocator: std.mem.Allocator, directory: *const model.Directory, function_id: Symbol, body_graph: *const Graph, upper_graph: *const Graph, fixed: []const FixedContract,
+    budget: *Budget, scalar_calls: ?receiver_domain.ScalarReturnCalls) Error!bool {
     var complete: std.ArrayListUnmanaged(receiver_domain.FixedFunction) = .empty;
     if (body_graph.calls.len != 0 or upper_graph.calls.len != 0) {
         try budget.spend(fixed.len + 1); try complete.ensureTotalCapacityPrecise(allocator, fixed.len);
@@ -842,9 +843,10 @@ fn receiverCovered(allocator: std.mem.Allocator, directory: *const model.Directo
     const input = receiver_domain.FormalInput{ .function_id = function_id, .fixed = complete.items };
     // Same formal receiver protocol/Engine as return interpretation. No
     // selected actual state or effect proof enters this complete certificate.
-    var body_analysis = try receiver_domain.analyzeReturns(allocator, directory, body_graph, budget, input); defer body_analysis.deinit();
+    const call_proof = if (scalar_calls) |facts| if (facts.current == body_graph and facts.upper == upper_graph) facts else null else null;
+    var body_analysis = try receiver_domain.analyzeReturnsWithCalls(allocator, directory, body_graph, budget, input, call_proof); defer body_analysis.deinit();
     if (body_analysis.pending != null) return false;
-    var upper_analysis = try receiver_domain.analyzeReturns(allocator, directory, upper_graph, budget, input); defer upper_analysis.deinit();
+    var upper_analysis = try receiver_domain.analyzeReturnsWithCalls(allocator, directory, upper_graph, budget, input, call_proof); defer upper_analysis.deinit();
     if (upper_analysis.pending != null) return false;
     var certificate = try ReceiverCertificate.init(allocator, budget, body_graph, upper_graph, &body_analysis, &upper_analysis);
     return certificate.run();
@@ -855,6 +857,11 @@ fn receiverCovered(allocator: std.mem.Allocator, directory: *const model.Directo
 // identity. Every function is bound to its immutable signature and optional
 // fixed graph; null grants no data proof and is never replaced by a body graph.
 pub fn covered(allocator: std.mem.Allocator, directory: *const model.Directory, function_id: Symbol, body: *const Graph, fixed: []const FixedContract, budget: *Budget) Error!Inclusion {
+    return coveredWithScalarCalls(allocator, directory, function_id, body, fixed, budget, null);
+}
+
+pub fn coveredWithScalarCalls(allocator: std.mem.Allocator, directory: *const model.Directory, function_id: Symbol, body: *const Graph,
+    fixed: []const FixedContract, budget: *Budget, scalar_calls: ?receiver_domain.ScalarReturnCalls) Error!Inclusion {
     try model.validateDirectory(allocator, directory, budget);
     if (fixed.len != directory.functions.len) return error.InvalidReference;
     var arena = std.heap.ArenaAllocator.init(allocator); defer arena.deinit();
@@ -910,7 +917,7 @@ pub fn covered(allocator: std.mem.Allocator, directory: *const model.Directory, 
             }
         }
         if (try exactEquation(Graph, body.*, bound.*, budget)) return .covered;
-        if (try receiverCovered(workspace, directory, function_id, body, bound, fixed, budget)) return .covered;
+        if (try receiverCovered(workspace, directory, function_id, body, bound, fixed, budget, scalar_calls)) return .covered;
         return .{ .pending = .receiver_no_exact_certificate };
     }
     var engine: Engine = .{ .allocator = workspace, .budget = budget, .body = body, .upper = bound, .fixed = validated };

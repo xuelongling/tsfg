@@ -443,3 +443,62 @@ test "receiver scalar calls require verified permissions and active scalar graph
         try std.testing.expect(result.proof == null);
     }
 }
+
+test "formal constructor certificate rechecks the original scalar call on both graphs" {
+    var fixture: ReceiverFixture = undefined;
+    fixture.init();
+    var c = context.Context{ .program = &fixture.mark.program, .allocator = std.testing.allocator };
+    try layout.check(&c);
+    try ssa.check(&c);
+    var arena = std.heap.ArenaAllocator.init(c.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const fixed_publication = c.program.tables.mode.common.authority.fixed_publication;
+    const archive = try refs.returnOriginDirectory(&c, allocator, fixed_publication);
+    const constructor_symbol = try refs.symbol(&c, allocator, ctor_id);
+    var budget = model.Budget{ .context = &c, .charge = refs.graphCharge };
+    var projected = try body.project(&c, ctor, &archive, &budget);
+    defer projected.deinit();
+    try std.testing.expectEqual(@as(?body.Pending, null), projected.pending);
+    const current = &projected.graph.?;
+    const fixed_calls = try allocator.dupe(model.Call, current.calls);
+    try std.testing.expectEqual(@as(usize, 1), fixed_calls.len);
+    // Fresh immutable occurrence spelling forces the whole receiver
+    // comparator, including the actual call and both completion arms.
+    fixed_calls[0].site = "fixed-constructor-mark";
+    fixture.contracts[1].return_origins = current.*;
+    fixture.contracts[1].return_origins.?.calls = fixed_calls;
+    const upper = &fixture.contracts[1].return_origins.?;
+    const input = try refs.returnOriginConstructorInput(&c, allocator, fixed_publication, constructor_symbol);
+    const bounds = [_]inclusion.FixedContract{
+        .{ .function_id = function, .graph = &fixture.contracts[0].return_origins.?, .complete = &input.fixed[0] },
+        .{ .function_id = constructor_symbol, .graph = upper, .complete = &input.fixed[1] },
+    };
+    const original = try inclusion.covered(c.allocator, &archive, constructor_symbol, current, &bounds, &budget);
+    try std.testing.expect(original == .pending and original.pending == .receiver_no_exact_certificate);
+    const evidence = (try body.scalarReturnCalls(&c, allocator, &archive, &projected, upper, &input, &bounds, &budget)).?;
+    const covered = try inclusion.coveredWithScalarCalls(c.allocator, &archive, constructor_symbol, current, &bounds, &budget, evidence);
+    try std.testing.expectEqual(std.meta.Tag(inclusion.Inclusion).covered, std.meta.activeTag(covered));
+    var upper_result = try construction.analyzeReturnsWithCalls(c.allocator, &archive, upper, &budget, input, evidence);
+    defer upper_result.deinit();
+    try std.testing.expectEqual(@as(?construction.Pending, null), upper_result.pending);
+    try std.testing.expect(upper_result.normal_live and !upper_result.language_live);
+    try std.testing.expectEqual(@as(usize, 1), upper_result.initializations.len);
+    const write = upper_result.initializations[0];
+    try std.testing.expect(write.value.source == .node and write.value.category == .other);
+    try std.testing.expect(upper.nodes[write.value.source.node] == .literal);
+
+    const copied = current.*;
+    const wrong = try inclusion.coveredWithScalarCalls(c.allocator, &archive, constructor_symbol, &copied, &bounds, &budget, evidence);
+    try std.testing.expect(wrong == .pending and wrong.pending == .receiver_no_exact_certificate);
+    var mismatched = evidence;
+    mismatched.callees = &.{constructor_symbol};
+    var wrong_target = try construction.analyzeReturnsWithCalls(c.allocator, &archive, upper, &budget, input, mismatched);
+    defer wrong_target.deinit();
+    try std.testing.expectEqual(@as(?construction.Pending, .fixed_call), wrong_target.pending);
+
+    var effects = try body.coverReceiverEffects(&c, ctor);
+    defer effects.deinit();
+    try std.testing.expect(effects.proof != null);
+    try std.testing.expect((try body.scalarReturnCalls(&c, allocator, &archive, &effects.body, upper, &input, &bounds, &budget)) == null);
+}

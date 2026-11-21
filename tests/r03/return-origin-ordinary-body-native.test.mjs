@@ -7,7 +7,7 @@ test('ordinary Body local Span and incoming-function aliases preserve opaque Dat
 });
 
 test('ordinary scalar Cell and numeric continuations preserve original Graph access obligations', async () => {
-  await nativeUnit({ source: 'runtime/return-origin-mark-body-test.zig', prefix: 'r03-return-origin-mark-body-', expectedPasses: 5 });
+  await nativeUnit({ source: 'runtime/return-origin-mark-body-test.zig', prefix: 'r03-return-origin-mark-body-', expectedPasses: 6 });
 });
 
 test('ordinary hidden lexical ENV retains logical parameters and explicit copy heaps', async () => {

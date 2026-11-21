@@ -1371,7 +1371,8 @@ const UpperGraph = struct {
         }
         // Body is independently derived ONLY from the current owned SSA/ABI.
         // The immutable complete fixed contract vector is solely the upper.
-        const coverage = structural_origins.covered(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget) catch |err| return publication_refs.graphFailure(err);
+        const scalar_calls = if (receiver) try body_origins.scalarReturnCalls(c, arena.allocator(), &directory, &body, graph, &constructor_input, contracts, &budget) else null;
+        const coverage = structural_origins.coveredWithScalarCalls(c.allocator, &directory, function_id, &body.graph.?, contracts, &budget, scalar_calls) catch |err| return publication_refs.graphFailure(err);
         if (coverage == .pending) return self.noFixedBodyProof(full, returned, thrown);
         if (!receiver) return self.fixedOwnersGraph(target, op, state, destination, offset, full, &directory, function_id, graph, &budget, arena.allocator(), null, returned, thrown, completions);
         // Receiver return interpretation is owned by the independently checked
@@ -1382,7 +1383,7 @@ const UpperGraph = struct {
             try c.charge(2); const target_function = c.program.functions[@intFromEnum(target)];
             if (target_function.role != .construction_body or collector.common().abis[@intFromEnum(target_function.abi)].construction == null) return self.noFixedBodyProof(full, returned, thrown);
         }
-        var analysis = construction_origins.analyzeReturns(c.allocator, &directory, graph, &budget, constructor_input) catch |err| return publication_refs.graphFailure(err);
+        var analysis = construction_origins.analyzeReturnsWithCalls(c.allocator, &directory, graph, &budget, constructor_input, scalar_calls) catch |err| return publication_refs.graphFailure(err);
         defer analysis.deinit();
         if (analysis.pending != null) return self.noFixedBodyProof(full, returned, thrown);
         for(analysis.initializations) |*write| {

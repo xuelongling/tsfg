@@ -33,6 +33,10 @@ pub const FormalInput = struct { function_id: model.Symbol, fixed: []const Fixed
 // One exact current graph and its original callee IDs by call ordinal. A
 // certified scalar leaf returns its single Data argument on normal only.
 pub const ScalarEffectCalls = struct { caller: *const model.Graph, callees: []const ?model.Symbol };
+// Formal evidence joins the independently projected current caller and its
+// original immutable contract. Both use the same native direct occurrence.
+pub const ScalarReturnCalls = struct { current: *const model.Graph, upper: *const model.Graph, callees: []const ?model.Symbol };
+const ScalarCalls = union(enum) { effects: ScalarEffectCalls, returns: ScalarReturnCalls };
 pub const ExitBinding = struct { live: bool = false, unbound: bool = false, atoms: []const Atom = &.{}, missing_fields: ?[]const model.Symbol = null };
 pub const InputExits = struct { input: Ref, normal: ExitBinding = .{}, language: ExitBinding = .{} };
 pub const CallFact = struct { caller_graph: *const model.Graph, call: Ref, receiver: Ref, graph: *const model.Graph, input: Ref, fixed: *const FixedFunction, analysis: *const Analysis, arguments: []const []const Atom };
@@ -121,7 +125,7 @@ const Engine = struct {
     input: ?Ref = null, obligations: []const Obligation = &.{},
     changed: bool = false, pending: ?Pending = null, control_only: bool = false, effect_origins: bool = false,
     formal_environments: bool = false, formal_input: ?FormalInput = null,
-    scalar_effect_calls: []const ?model.Symbol = &.{},
+    scalar_calls: []const ?model.Symbol = &.{},
     calls: std.ArrayListUnmanaged(CallFact) = .empty, call_results: [][2]Atoms = &.{}, call_live: [][2]bool = &.{},
     fn insert(self: *Engine, comptime T: type, into: *std.ArrayListUnmanaged(T), value: T) Error!bool {
         for (into.items) |old| { try self.budget.step(); if (std.meta.eql(old, value)) return false; }
@@ -512,7 +516,7 @@ const Engine = struct {
         if (!self.controls[call.control] or !self.worlds[call.heap].live) return;
         if (call.callee != null or call.environment != null) { self.pending = .fixed_call; return; }
         if (call.receiver == null) {
-            if (!try self.scalarEffectCall(row.call) or call.arguments.len != 1 or call.arguments[0].len == 0) {
+            if (!try self.scalarCall(row.call) or call.arguments.len != 1 or call.arguments[0].len == 0) {
                 self.pending = .fixed_call;
                 return;
             }
@@ -573,9 +577,9 @@ const Engine = struct {
         try self.birth(&self.worlds[heap_index], frame, ready, prior);
         const live = &self.call_live[row.call][@intFromEnum(row.completion)]; if (!live.*) { live.* = true; self.changed = true; }
     }
-    fn scalarEffectCall(self: *const Engine, ordinal: Ref) Error!bool {
-        if (ordinal >= self.scalar_effect_calls.len) return false;
-        const callee = self.scalar_effect_calls[ordinal] orelse return false;
+    fn scalarCall(self: *const Engine, ordinal: Ref) Error!bool {
+        if (ordinal >= self.scalar_calls.len) return false;
+        const callee = self.scalar_calls[ordinal] orelse return false;
         return self.budget.equal(callee, self.graph.calls[ordinal].function_id);
     }
     // Empty Data is not normally an absence proof. Only a finite, nonempty
@@ -597,7 +601,7 @@ const Engine = struct {
                     // can prove that this exact completion has no live exit.
                     try self.budget.spend(6); const call = self.graph.calls[row.call];
                     if (!self.controls[call.control] or !self.worlds[call.heap].live or self.call_live[row.call][@intFromEnum(row.completion)]) return false;
-                    var found = call.receiver == null and try self.scalarEffectCall(row.call) and
+                    var found = call.receiver == null and try self.scalarCall(row.call) and
                         row.completion == .language and self.call_live[row.call][0];
                     if (call.receiver != null) for (self.calls.items) |fact| {
                         try self.budget.step(); if (fact.call != row.call) continue;
@@ -1010,7 +1014,7 @@ fn finish(result: *Analysis, engine: *Engine, return_origins: bool) Error!void {
     for (graph.calls, 0..) |call, call_ordinal| {
         try budget.step(); if (!controls[call.control] or !worlds[call.heap].live) continue;
         if (call.receiver == null) {
-            if (!try engine.scalarEffectCall(call_ordinal)) { result.pending = .fixed_call; return; }
+            if (!try engine.scalarCall(call_ordinal)) { result.pending = .fixed_call; return; }
             if (!engine.call_live[call_ordinal][0]) { result.pending = .unknown_origin; return; }
             continue;
         }
@@ -1130,13 +1134,21 @@ fn finish(result: *Analysis, engine: *Engine, return_origins: bool) Error!void {
 // Initialize once, pause the original Engine at one missing call, then resume
 // that same Engine after its child. Growable jobs contain pointers only; root
 // and child arena allocator contexts stay stationary until all jobs finish.
-fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_input: ?FormalInput, arguments: []const []const Atom, effect_origins: bool, return_origins: bool, scalar_calls: ?ScalarEffectCalls) Error!Analysis {
+fn analyzeImpl(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, entry: ?Entry, formal_input: ?FormalInput, arguments: []const []const Atom, effect_origins: bool, return_origins: bool, scalar_calls: ?ScalarCalls) Error!Analysis {
     var result = Analysis{ .arena = std.heap.ArenaAllocator.init(allocator) }; errdefer result.deinit();
     const root = try initialize(&result, allocator, directory, graph, budget, entry, formal_input, arguments, &.{}, effect_origins, return_origins, false) orelse return result;
     if (scalar_calls) |evidence| {
         try budget.step();
-        if (effect_origins and !return_origins and evidence.caller == graph and evidence.callees.len == graph.calls.len) {
-            root.scalar_effect_calls = evidence.callees;
+        switch (evidence) {
+            .effects => |facts| if (effect_origins and !return_origins and facts.caller == graph and facts.callees.len == graph.calls.len) {
+                root.scalar_calls = facts.callees;
+            },
+            .returns => |facts| if (return_origins and (graph == facts.current or graph == facts.upper) and facts.callees.len == graph.calls.len) {
+                const original = if (formal_input) |formal| try root.fixedFunction(formal.function_id) else null;
+                if (original) |fixed| if (fixed.contract.return_origins) |*upper| {
+                    if (upper == facts.upper) root.scalar_calls = facts.callees;
+                };
+            },
         }
     }
     const a = result.arena.allocator();
@@ -1195,7 +1207,7 @@ pub fn analyzeEffects(allocator: std.mem.Allocator, directory: *const model.Dire
 
 pub fn analyzeEffectsWithCalls(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget,
     input: FormalInput, scalar_calls: ?ScalarEffectCalls) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, input, &.{}, true, false, scalar_calls);
+    return analyzeImpl(allocator, directory, graph, budget, null, input, &.{}, true, false, if (scalar_calls) |facts| .{ .effects = facts } else null);
 }
 
 // Pure interpretation of an independently typed construction-frame return
@@ -1203,5 +1215,10 @@ pub fn analyzeEffectsWithCalls(allocator: std.mem.Allocator, directory: *const m
 // included in the immutable fixed graph. No effect-proof object, selected actual
 // entrance, allocation authority, physical Value clone or holding is accepted.
 pub fn analyzeReturns(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget, input: FormalInput) Error!Analysis {
-    return analyzeImpl(allocator, directory, graph, budget, null, input, &.{}, true, true, null);
+    return analyzeReturnsWithCalls(allocator, directory, graph, budget, input, null);
+}
+
+pub fn analyzeReturnsWithCalls(allocator: std.mem.Allocator, directory: *const model.Directory, graph: *const model.Graph, budget: *Budget,
+    input: FormalInput, scalar_calls: ?ScalarReturnCalls) Error!Analysis {
+    return analyzeImpl(allocator, directory, graph, budget, null, input, &.{}, true, true, if (scalar_calls) |facts| .{ .returns = facts } else null);
 }
