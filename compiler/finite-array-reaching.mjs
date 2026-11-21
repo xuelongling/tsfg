@@ -49,7 +49,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
     effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set(),localSlots:!fn.ownerType}])),
-    writes=new Map(),reads=new Map(),normalReadSources=new Map(),contextsByTarget=new Map(),
+    writes=new Map(),reads=new Map(),normalReadSources=new Map(),contextsByTarget=new Map(),checkedLoopConditions=new Set(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
   let contextWrites=new Map(),terminalReads=null;
@@ -58,6 +58,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       charge();const current=stack.pop();if(seen.has(current))continue;seen.add(current);const type=types.get(current);
       if(type.kind==='array'||type.kind==='readSpan')return true;if(type.kind==='union')stack.push(...type.members);
     }return false;
+  }
+  function hasCheckedRead(root) {
+    const stack=[root];while(stack.length) {
+      charge();const value=stack.pop();
+      if(['arrayReadChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind))return true;
+      for(const child of Object.values(value)){charge();if(child&&typeof child==='object')stack.push(child);}
+    }
+    return false;
   }
   for(const fn of functions) {
     const stack=[{value:fn.body,path:fn.id+'/body'}],effect=effects.get(fn.id);
@@ -68,6 +76,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       if(['arrayStoreDenseChecked','arrayResizeChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind))effect.writes=true;
       if(value.kind==='while'||value.kind==='construct'||value.kind==='superConstruct'||
         value.kind==='call'&&value.target!==hir.intrinsics.readSpan.id)effect.localSlots=false;
+      if(value.kind==='while'&&hasCheckedRead(value.condition))checkedLoopConditions.add(value.condition);
       if(value.kind==='call')for(const id of value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target]) {
         if(id===hir.intrinsics.readSpan.id)continue;
         effect.callees.add(id);
@@ -137,7 +146,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     else if(['undefined','null'].includes(value.left.kind))classified=presence(path+'/right',value.left.kind);
     return classified&&classified.present!==classified.absent?(value.operator==='==='?classified.absent:classified.present):undefined;
   }
-  function analyze(fn,initial,env,applyCalls,recordReads=true,collectAll=false) {
+  function analyze(fn,initial,env,applyCalls,recordReads=true,collectAll=false,firstCondition=null) {
     const exits=[],mutated=new Set();let complete=true,invalidateAll=false;
     // One visit per source occurrence gives a local version one stored value.
     // The lexical pass uses Array identities to name stores through aliases.
@@ -149,7 +158,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       const id=path+'/array-version';charge();
       // Canonical source bindings are collected independently in the first
       // pass. Contextual application never rewrites that version's identity.
-      if(!writes.has(id))writes.set(id,{id,node,owner,index,kind,origin:origin(value)});return id;
+      if(!firstCondition&&!writes.has(id))writes.set(id,{id,node,owner,index,kind,origin:origin(value)});return id;
     }
     function invalidate(state) {invalidateAll=true;for(const row of state.values()){charge();row.slots.clear();row.length=null;}}
     function invalidateOtherParameters(state,owner) {
@@ -312,6 +321,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             available!==undefined&&available!==null&&start.constant+length.constant<=available?
             {owner:owner.owner,offset:(owner.offset??0)+start.constant,limit:length.constant,symbol:path}:{};
         }
+        // An entry-only probe proves local effects without opening a call
+        // context. Arguments still have their original evaluation order.
+        if(firstCondition){complete=false;return {symbol:path};}
         const targets=[];let unknown=false,modifies=false,ordinal,consistent=true;
         if(receiver)for(const target of calls.get(path)?.targets??[]){charge();targets.push(target.functionId);}
         else {charge();targets.push(value.target);}
@@ -463,26 +475,38 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           // pending/empty evidence keeps the original conservative loop.
           forgetTruth(bindings);
           const truth=collectAll?undefined:predicateTruth(row.condition,p+'/condition');
+          const condition=p+'/condition';
           if(truth===false) {
-            expression(row.condition,p+'/condition',state,bindings);continue;
+            if(expression(row.condition,condition,state,bindings,true).terminal)return null;
+            continue;
           }
           if(endsInReturn(row.body)) {
             // The checked statements have no break or continue. The body may
             // contribute a function exit, but only the skipped edge reaches
             // the next statement and it keeps the condition's effects.
-            if(expression(row.condition,p+'/condition',state,bindings,true).terminal)return null;
+            if(expression(row.condition,condition,state,bindings,true).terminal)return null;
             statements(row.body,p+'/body',clone(state),copyBindings(bindings));
             if(truth===true)return null;
             continue;
           }
+          if(!collectAll&&checkedLoopConditions.has(row.condition)) {
+            // A failed first entry prevents backedges altogether. A successful
+            // probe publishes nothing to the recurring header or to callees.
+            const entry=analyze(fn,clone(state),copyBindings(bindings),false,false,false,{value:row.condition,path:condition});
+            if(entry.complete&&!entry.productive&&expression(row.condition,condition,state,bindings,true).terminal)return null;
+          }
           invalidate(state);for(const id of bindings.keys()){charge();bindings.set(id,{});}
-          expression(row.condition,p+'/condition',state,bindings);statements(row.body,p+'/body',clone(state),copyBindings(bindings));invalidate(state);
+          expression(row.condition,condition,state,bindings);statements(row.body,p+'/body',clone(state),copyBindings(bindings));invalidate(state);
           if(truth===true)return null;
         }else if(row.kind==='initializeOwnFields') {
           for(const init of types.get(row.ownerType).construction.initialization)if(init.value)
             expression(init.value,'construction/'+row.construction+'/initialization/'+init.field,state,bindings);
         }else if(row.kind==='forwardBaseConstruction')invalidate(state);
       }return state;
+    }
+    if(firstCondition) {
+      const productive=!expression(firstCondition.value,firstCondition.path,initial,env,true).terminal;
+      return {state:initial,complete,productive,invalidateAll,mutated};
     }
     const fallthrough=statements(fn.body,fn.id+'/body',initial,env);if(fallthrough)exits.push(fallthrough);
     let result=null;for(const exit of exits){charge();result=result?join(result,exit):exit;}

@@ -251,6 +251,59 @@ test('a skipped boolean operand preserves the binding used by a later Array writ
   }
 });
 
+// Bodies synthesized for the Array analysis seam. Their loop condition can
+// read the original slot, update it, or stop before the first body iteration.
+test('while condition entry keeps traps and later headers separate',async t=>{
+  const range={start:0,end:1};
+  const integer=value=>({kind:'constant',type:'i32',decimal:String(value),range});
+  const boolean=value=>({kind:'boolean',type:'bool',value,range});
+  const array={kind:'arrayCreate',type:'array',elements:[boolean(true)],range};
+  const owner={kind:'reference',type:'array',binding:'a',range};
+  const read=(receiver,index)=>({kind:'arrayReadChecked',type:'bool',receiver,index,range});
+  const equality=(left,right)=>({kind:'binary',type:'bool',operator:'===',left,right,range});
+  const target={receiver:owner,index:integer(0),range};
+  const overwrite={kind:'arrayStoreDenseChecked',type:'bool',target,value:boolean(false),range};
+  const shrink={kind:'arrayResizeChecked',type:'i32',target:{receiver:owner,range},value:integer(0),range};
+  const statement=expression=>({kind:'expression',expression,range});
+  const first='f/body/0/initializer/initial/0/array-version';
+  const bodyProbe='f/body/1/body/0/expression';
+  const following='f/body/2/expression',fresh='f/body/3/expression';
+  const conditionSite='f/body/1/condition';
+  for(const scenario of [
+    {name:'first read fails',condition:read(owner,integer(1)),conditionStatus:'missing',tail:['pending','pending','pending']},
+    {name:'first failure retains its prior store',condition:equality(equality(overwrite,read(owner,integer(0))),read(owner,integer(1))),
+      conditionPath:'/right',conditionStatus:'missing',tail:['pending','pending','pending'],prefixWrite:true},
+    {name:'first success keeps repeated headers conservative',condition:read(owner,integer(0)),conditionStatus:'pending',
+      tail:['proven','pending','proven']},
+    {name:'unknown entry index supplies no loop header sources',condition:read(owner,{kind:'reference',type:'i32',binding:'index',range}),
+      conditionStatus:'pending',tail:['proven','pending','proven']},
+    {name:'false guard keeps its store but skips the body',condition:equality(overwrite,{kind:'undefined',type:'undefined',range}),
+      tail:['pending','proven','proven'],constantFalse:true},
+  ])await t.test(scenario.name,()=>{
+    const fn={id:'f',sourcePath:'model.ts',parameters:[{id:'index',type:'i32'}],body:[
+      {kind:'local',binding:{id:'a',type:'array'},initializer:array,range},
+      {kind:'while',condition:scenario.condition,body:[statement(read(array,integer(0))),statement(shrink)],range},
+      statement(read(owner,integer(0))),statement(read(array,integer(0))),
+    ]};
+    const model={functions:[fn],exports:[{functionId:fn.id}],types:[
+      {id:'i32',kind:'scalar'},{id:'bool',kind:'scalar'},{id:'array',kind:'array',element:'bool'},
+      {id:'undefined',kind:'undefined'},
+    ],intrinsics:{readSpan:{id:'readSpan'}}};
+    const plan={nodes:scenario.constantFalse?[{id:conditionSite+'/left',domainId:'boolean',pending:[]}]:[],
+      domains:scenario.constantFalse?[{id:'boolean',actualTypes:['bool']}]:[],calls:[]};
+    const {reaching,normalReadSources}=buildFiniteArrayReaching(model,plan,()=>{},()=>true);
+    const evidence=site=>reaching.reads.find(row=>row.node===site);
+    if(scenario.conditionStatus)assert.equal(evidence(conditionSite+(scenario.conditionPath??''))?.status,scenario.conditionStatus);
+    assert.deepEqual([bodyProbe,following,fresh].map(site=>evidence(site)?.status),scenario.tail);
+    assert.equal(normalReadSources.has(conditionSite),false);
+    if(scenario.prefixWrite)assert.deepEqual(evidence(conditionSite+'/left/right').versions,
+      [conditionSite+'/left/left/array-version']);
+    if(scenario.constantFalse)assert.deepEqual(evidence(following).versions,[conditionSite+'/left/array-version']);
+    else assert.ok(!evidence(following).versions.includes(first));
+    assert.ok(reaching.writes.some(row=>row.id===fresh+'/receiver/initial/0/array-version'));
+  });
+});
+
 test('String concatenation requires each checked Array operand before the next read',async t=>{
   const actual=sourceIdentity=>checkedFixture(actualManifest.find(row=>row.sourceIdentity===sourceIdentity),'typed-array-actual-v8/');
   const [{hir},{hir:concatHir},{hir:endpoint},{hir:overwrite}]=await Promise.all([
