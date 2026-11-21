@@ -244,7 +244,8 @@ export function commonEffects(hir,spend,physical=null) {
     let parameterThrow=false;
     for(const step of fn.parameterInitialization?.steps??[]){
       spend();if(step.initializer){const before=collections.map(origins),evaluated=expression(step.initializer,origins);
-        parameterThrow ||= evaluated.throwing;mergeOrigins(origins,before);origins.set(step.binding,union([origins.get(step.binding)??new Set(),evaluated.owner]));}
+        if(evaluated.throwing){parameterThrow=true;facet('mayThrow','operation',step.initializer.kind,step.initializer.range);}
+        mergeOrigins(origins,before);origins.set(step.binding,union([origins.get(step.binding)??new Set(),evaluated.owner]));}
     }
     const throws=local?new Map():null,entryThrow=fn.analysisOnly&&!types.get(fn.ownerType).base
       ?initialize(types.get(fn.ownerType),params.map(parameter=>origins.get(parameter.id)??new Set()),origins):false,

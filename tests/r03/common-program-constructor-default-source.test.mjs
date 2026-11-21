@@ -11,7 +11,7 @@ import {createCommonProgramPublication} from '../../compiler/common-program-anal
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {commonCoreSchema} from '../../compiler/common-program-plan.mjs';
 import {commonEffects} from '../../compiler/common-program-effects.mjs';
-import {commonMeter} from '../../compiler/common-program-common.mjs';
+import {canonical,commonMeter} from '../../compiler/common-program-common.mjs';
 import {i32TypeId,sha256} from '../../compiler/identity.mjs';
 const bytes=await fs.readFile(new URL('./common-program-constructor-default-source-v3.json',import.meta.url));
 const facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:3,factsBytes:bytes,expectedPackageId:facts.packageId};
@@ -157,4 +157,17 @@ test('default expression calls, globals and language throws participate in compl
   assert.ok(uppers.get(numeric.id).globals.writes.includes(total.id));assert.equal(uppers.get(broken.id).facets.mayThrow,true);
   const details=effects.derive(numeric,uppers,true),defaults=numeric.parameterInitialization.steps.map(step=>step.initializer.range);
   for(const range of defaults)assert.ok(details.calls.some(call=>call.target===named('mark').id&&call.range.start>=range.start&&call.range.end<=range.end));
+});
+
+test('escaping default initialization reports the original Source expression',()=>{
+  const effects=commonEffects(hir,commonMeter(2000000),physical),uppers=effects.derived();
+  const construction=name=>hir.functions.find(fn=>fn.ownerType===type(name).id&&fn.kind==='construction-body');
+  const broken=construction('Broken'),numeric=construction('Numeric'),reason=canonical({kind:'facet',facet:'mayThrow'});
+  const failed=effects.derive(broken,uppers,true),normal=effects.derive(numeric,uppers,true);
+  const source=facts.payload.files.find(row=>row.path==='/src/main.ts');
+  assert.equal(source.content.slice(849,855),'fail()');
+  assert.equal(failed.upper.facets.mayThrow,true);
+  assert.deepEqual(failed.local.get(reason),{kind:'operation',functionId:broken.id,source:{sourceId:'/src/main.ts',start:849,end:855},operation:'call'});
+  assert.equal(normal.upper.facets.mayThrow,false);
+  assert.equal(normal.local.has(reason),false);
 });
