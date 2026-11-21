@@ -10,7 +10,7 @@ export { compilePackageHir };
 import { buildHir, lowerHir, lowerFormalHir, prepareCommonCore } from "./hir.mjs";
 import { canonical, own, sha256 } from "./identity.mjs";
 import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
-import {emitSystemQueryCore} from './system-query-core.mjs';
+import {checkQueryBatchSource,emitSystemQueryCore,escapeQueryCompilerBytes} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
@@ -166,8 +166,7 @@ function checkQueryLlvmPair(llvm,batch,target){
   const id=named.length===1&&/^!tsfg\.query\.cpu = !\{(![0-9]+)\}$/u.exec(named[0])?.[1];
   if(id){
     const proof=definitions(id);
-    const encoded=Buffer.from(batch).toString('latin1').replace(/[\x00-\x1f"\\\x7f-\xff]/gu,byte=>
-      byte==='\\'?'\\\\':'\\'+byte.charCodeAt(0).toString(16).toUpperCase().padStart(2,'0'));
+    const encoded=escapeQueryCompilerBytes(Buffer.from(batch));
     if(proof.length===1&&proof[0]===id+' = !{!"1", !"'+encoded+'"}')return;
   }
   throw new TypeError('r10-system-query-llvm: checked batch proof differs');
@@ -184,6 +183,7 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   const {effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
   const effects=includeEffects?readSystemQueryEffects(consumeQuery('--effects',core),facts,sourceContext):undefined;
   const checkedBatch=includeBatch||includeTmeta?decodeQueryCompilerText(consumeQuery('--cpu-batch',core),'batch'):core;
+  if(includeBatch||includeTmeta)checkQueryBatchSource(checkedBatch,coreBytes,facts.inputIdentity);
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
   const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;

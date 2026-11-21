@@ -109,3 +109,60 @@ export function emitSystemQueryCore(facts,context){
   }
   line('}');return text.finish();
 }
+
+/** The native generic module and LLVM metadata printers use byte escapes. @param {Buffer} bytes */
+export function escapeQueryCompilerBytes(bytes){
+  return bytes.toString('latin1').replace(/[\x00-\x1f"\\\x7f-\xff]/gu,byte=>
+    byte==='\\'?'\\\\':'\\'+byte.charCodeAt(0).toString(16).toUpperCase().padStart(2,'0'));
+}
+
+/** Check the original bound Core in the canonical batch's final module attribute dictionary.
+ * @param {string} batch @param {Buffer} core @param {string} inputIdentity
+ */
+export function checkQueryBatchSource(batch,core,inputIdentity){
+  const failure=()=>{throw new TypeError('r10-system-query-batch: checked input identity or Core differs');};
+  const end=batch.trimEnd().length,closing=batch.slice(batch.lastIndexOf('\n',end-1)+1,end);
+  const suffix='} : () -> ()';
+  // Nested operation dictionaries are indented. This printer puts the module
+  // dictionary on its final unindented line and quotes embedded newlines.
+  if(!batch.startsWith('"builtin.module"() ({\n')||!closing.startsWith('}) {')||!closing.endsWith(suffix))failure();
+  const fields=closing.slice(4,-suffix.length);
+  const name=/([a-z_][a-z_0-9.]*) = /y,versionValue='1 : i32';
+  const special=/["\\]/g,escape=/(?:\\|[0-9A-F]{2})/y;
+  let offset=0,source,identity,version=false;
+  while(offset<fields.length){
+    name.lastIndex=offset;
+    const field=name.exec(fields);
+    if(!field)failure();
+    offset=name.lastIndex;
+    if(field[1]==='tsfg.cpu_batch_version'){
+      if(version||!fields.startsWith(versionValue,offset))failure();
+      version=true;
+      offset+=versionValue.length;
+    }else{
+      if(fields[offset]!=='"')failure();
+      const start=offset+1;
+      special.lastIndex=start;
+      let token=special.exec(fields);
+      while(token?.[0]==='\\'){
+        escape.lastIndex=special.lastIndex;
+        if(!escape.test(fields))failure();
+        special.lastIndex=escape.lastIndex;
+        token=special.exec(fields);
+      }
+      if(!token)failure();
+      offset=special.lastIndex;
+      if(field[1]==='tsfg.cpu_batch_source'){
+        if(source!==undefined)failure();
+        source=fields.slice(start,offset-1);
+      }else if(field[1]==='tsfg_core.input_identity'){
+        if(identity!==undefined)failure();
+        identity=fields.slice(start,offset-1);
+      }
+    }
+    if(offset===fields.length)break;
+    if(fields.slice(offset,offset+2)!==', '||offset+2===fields.length)failure();
+    offset+=2;
+  }
+  if(!version||identity!==inputIdentity||source===undefined||source.length<core.length||source!==escapeQueryCompilerBytes(core))failure();
+}

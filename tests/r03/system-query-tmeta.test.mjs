@@ -326,17 +326,49 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
   });
 });
 
+const queryFixtures=new URL('../../runtime/jobs/testdata/',import.meta.url);
+function retainedQuery(name){
+  const metadata=readFileSync(new URL('query-tmeta-'+name+'.tmeta',queryFixtures));
+  const payload=JSON.parse(JSON.parse(metadata.toString('utf8')).payload);
+  const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
+  const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
+  const snapshot=/tsfg\.cpu_batch_source = "((?:[^"\\]|\\.)*)"/u.exec(payload.batch)?.[1];
+  assert.ok(snapshot);
+  const core=Buffer.from(snapshot.replace(/\\(\\|[0-9A-F]{2})/gu,(_,byte)=>
+    byte==='\\'?'\\':String.fromCharCode(Number.parseInt(byte,16))),'latin1');
+  return {metadata,payload,core,facts,context};
+}
+
+test('Query standalone batch corresponds to the verified input Core',()=>{
+  const copy=retainedQuery('i32-copy'),compound=retainedQuery('i32-compound');
+  assert.equal(sha256(copy.core),'sha256:19e3f22128ddd95e88c2a4c32c8a0a27c907dddc0e9b88ec9205d2e9aad4713c');
+  assert.equal(sha256(compound.core),'sha256:d467525f88c304d6132ae0cf2b41fbe20b2c244850ab3276a50c6e472f1d37e0');
+  assert.notEqual(copy.facts.inputIdentity,compound.facts.inputIdentity);
+  assert.ok(copy.core.includes('\\F0\\9F\\98\\80'));
+  const collect=(batch,paired=false,core=copy.core)=>readQueryCompilerOutputs(copy.facts,copy.context,core,
+    {cpuBatch:true,cpuLLVM:paired?'ir':undefined},(command,input)=>{
+      assert.equal(command,'--cpu-batch');
+      assert.equal(input,core.toString('utf8'));
+      return Buffer.from(batch);
+    });
+  assert.equal(collect(copy.payload.batch).cpuBatch,copy.payload.batch);
+  for(const paired of [false,true])assert.throws(()=>collect(compound.payload.batch,paired),/r10-system-query-batch: checked input/);
+  assert.throws(()=>collect(copy.payload.batch,false,compound.core),/r10-system-query-batch: checked input/);
+  const wrongIdentity=copy.payload.batch.replace('tsfg_core.input_identity = "'+copy.facts.inputIdentity+'"',
+    'tsfg_core.input_identity = "'+compound.facts.inputIdentity+'"');
+  assert.notEqual(wrongIdentity,copy.payload.batch);
+  assert.throws(()=>collect(wrongIdentity),/r10-system-query-batch: checked input/);
+  const wrongVersion=copy.payload.batch.replace('tsfg.cpu_batch_version = 1 : i32','tsfg.cpu_batch_version = 2 : i32');
+  assert.notEqual(wrongVersion,copy.payload.batch);
+  assert.throws(()=>collect(wrongVersion),/r10-system-query-batch: checked input/);
+});
+
 test('Query LLVM pairing validates the retained batch and target',async t=>{
-  const fixtures=new URL('../../runtime/jobs/testdata/',import.meta.url);
-  const llvm=readFileSync(new URL('query-tmeta-i32-copy-retained.ll',fixtures));
+  const llvm=readFileSync(new URL('query-tmeta-i32-copy-retained.ll',queryFixtures));
   /** @param {string} name @param {string[]} calls @param {Buffer} [llvmOutput] */
   const run=(name,calls,llvmOutput=llvm)=>{
-    const metadata=readFileSync(new URL('query-tmeta-'+name+'.tmeta',fixtures));
-    const payload=JSON.parse(JSON.parse(metadata.toString('utf8')).payload);
-    const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
-    const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
-    const input=Buffer.from(emitSystemQueryCore(facts,context));
-    return readQueryCompilerOutputs(facts,context,input,{cpuBatch:true,cpuLLVM:'ir',tmeta:true},(command,source)=>{
+    const {metadata,payload,core,facts,context}=retainedQuery(name);
+    return readQueryCompilerOutputs(facts,context,core,{cpuBatch:true,cpuLLVM:'ir',tmeta:true},(command,source)=>{
       calls.push(command);
       if(command==='--cpu-batch')return Buffer.from(payload.batch);
       assert.equal(source,payload.batch);
