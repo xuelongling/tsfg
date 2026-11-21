@@ -56,16 +56,19 @@ struct Lengths {
     for(auto &[id,fn]:proof.functions){
       bool modifies=false;
       for(auto &block:fn.getBody())for(auto &op:block){
-        if(!charge())return false;if(!proof.mayReach(&block))continue;
+        if(!charge())return false;if(!proof.mayExecute(&op))continue;
         const auto name=op.getName().getStringRef();modifies|=name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_resize";
       }
       effects.emplace(id,modifies);
     }
     bool changed=true;while(changed){
       changed=false;for(const auto &[op,targets]:proof.selectedCallees){
-        if(!charge())return false;if(!proof.mayReach(op->getBlock()))continue;
+        if(!charge())return false;if(!proof.mayExecute(op))continue;
         const auto id=attr(op->getParentOfType<mlir::func::FuncOp>(),"tsfg_core.function_id");
-        for(const auto &target:targets){if(!charge())return false;if(effects.at(target)&&!effects.at(id)){effects[id]=true;changed=true;}}
+        for(const auto &target:targets){
+          if(!charge())return false;
+          if(!proof.trapOnlyFunctions.count(target)&&effects.at(target)&&!effects.at(id)){effects[id]=true;changed=true;}
+        }
       }
     }
     for(const auto &[op,targets]:proof.selectedCallees)for(const auto &target:targets){
@@ -142,7 +145,16 @@ struct Lengths {
         continue;
       }
       if(const auto selected=proof.selectedCallees.find(previous);selected!=proof.selectedCallees.end()){
-        bool modifies=false;for(const auto &target:selected->second){if(!charge())return false;modifies|=effects.at(target);}
+        bool normal=false,modifies=false;
+        if(proof.mayExecute(previous))for(const auto &target:selected->second){
+          if(!charge())return false;
+          if(proof.trapOnlyFunctions.count(target))continue;
+          normal=true;modifies|=effects.at(target);
+        }
+        if(!normal){
+          if(!outcome(graph.unknown(task.node)))return false;
+          continue;
+        }
         if(modifies){
           bool preserved=false;
           if(!proveArrayCallPreservesFreshOwner(proof,previous,task.owner,normalize,preserved)){valid=false;return false;}
@@ -201,6 +213,7 @@ bool proveArrayCallPreservesFreshOwner(ModuleProof &proof,mlir::Operation *call,
 }
 bool proveArrayLength(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
     const std::function<mlir::Value(mlir::Value)> &normalize,std::optional<uint32_t> &length){
+  if(!proof.mayExecute(point)){length.reset();return true;}
   const std::set<mlir::Operation *> overwrites;
   Lengths lengths{proof,normalize,overwrites};if(!lengths.collect())return false;
   std::optional<uint32_t> result;lengths.query(point,receiver,nullptr,result);
@@ -212,7 +225,7 @@ bool proveArrayNoChangeResizes(ModuleProof &proof,const std::function<mlir::Valu
   std::set<mlir::Operation *> proved;
   for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block){
     if(!proof.charge())return false;
-    if(op.getName().getStringRef()!="tsfg_core.domain.array_resize"||!proof.mayReach(&block))continue;
+    if(op.getName().getStringRef()!="tsfg_core.domain.array_resize"||!proof.mayExecute(&op))continue;
     if(lengths.unchanged(&op))proved.insert(&op);else if(!lengths.valid)return false;
   }
   for(auto *op:proved){if(!proof.charge())return false;nonStructural.insert(op);}return true;
