@@ -4,9 +4,12 @@
 #include "finite-array-memory.h"
 #include "finite-memory-lifetime.h"
 #include "bytecode.h"
+#include "dialect.h"
 #include "module.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/ADT/DenseSet.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
 #include <array>
@@ -357,5 +360,29 @@ mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
     proof.reject("whole admission requires the exact formal Core header");return mlir::failure();
   }
   return mlir::success(contracts(proof,&header)&&complete(proof)&&!proof.failed);
+}
+bool foldConstantBranches(mlir::ModuleOp module) {
+  bool changed = false;
+  for (auto function : module.getOps<mlir::func::FuncOp>()) {
+    for (auto &block : function.getBody()) {
+      auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(block.getTerminator());
+      if (!branch) continue;
+      const auto condition = branch.getCondition();
+      auto *constant = condition.getDefiningOp();
+      uint64_t bits = 0;
+      if (!constant || constant->getName().getStringRef() != "tsfg_core.constant" ||
+          typeCode(condition.getType()) != 2 || !constantBits(constant,bits)) continue;
+      const bool takeTrue = bits != 0;
+      auto *destination = takeTrue ? branch.getTrueDest() : branch.getFalseDest();
+      const auto operands = takeTrue ? branch.getTrueDestOperands() : branch.getFalseDestOperands();
+      // Keep lexical blocks, events and source metadata. Only the proven
+      // unreachable edge is removed.
+      auto jump = mlir::OpBuilder(branch).create<mlir::cf::BranchOp>(branch.getLoc(),destination,operands);
+      jump->setDiscardableAttrs(branch->getDiscardableAttrDictionary());
+      branch.erase();
+      changed = true;
+    }
+  }
+  return changed;
 }
 } // namespace tsfg::finite

@@ -2,6 +2,7 @@
 #include "core-command.h"
 #include "bytecode.h"
 #include "core-verify.h"
+#include "finite-module.h"
 #include "closure.h"
 #include "formal-closure.h"
 #include "formal-exception.h"
@@ -320,8 +321,11 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
     llvm::outs().write(reinterpret_cast<const char *>(packet.data()), packet.size());
     return 0;
   }
-  // The current optimization pipeline is deliberately the canonical identity
-  // pass: it performs full verification and retains every event/failure anchor.
+  if (name == "--optimize" && !formalClosure && !formalException && !privateCandidate &&
+      module->getOperation()->hasAttr("tsfg_core.finite_domains")) {
+    const bool changed = tsfg::finite::foldConstantBranches(*module);
+    if (changed && (mlir::failed(mlir::verify(*module)) || mlir::failed(tsfg::verifyCoreModule(*module)))) return 3;
+  }
   if (formalException || reference || nullable || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());

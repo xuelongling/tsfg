@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
-import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compiler/hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
 const factsBytes=await readFile(new URL('./testdata/finite-literal-negation/package.json',import.meta.url));
 const facts=readTypedArrayFacts(factsBytes);
@@ -61,3 +62,23 @@ test('Core uses anchored literals for known negation and keeps dynamic negation'
     }
   }
 });
+
+test('optimization selects constant edges and retains lexical memory and fuel operations',
+  {skip:!process.env.TSFG_CORE_IR_EXE},async()=>{
+    const publication=buildInitialArrayPublication(context);
+    const checked=buildHir(facts,context,publication);
+    assert.equal(checked.status,'ok',JSON.stringify(checked.diagnostics));
+    const core=lowerFormalHir(checked.hir,context,publication);
+    const canonical=await invokeCore(core,'--canonicalize');accepted(canonical);
+    const optimized=await invokeCore(core,'--optimize');accepted(optimized);
+    const before=canonical.stdout.toString('utf8'),after=optimized.stdout.toString('utf8');
+    const count=(text,pattern)=>[...text.matchAll(pattern)].length;
+    assert.equal(count(before,/\bcf\.cond_br\b/gu),5);
+    assert.equal(count(after,/\bcf\.cond_br\b/gu),1);
+    for(const pattern of [/\btsfg_core\.fuel\b/gu,/\btsfg_core\.domain\.field_store\b/gu,
+      /\btsfg_core\.domain\.array_store\b/gu,/\btsfg_core\.domain\.array_read\b/gu]){
+      assert.equal(count(after,pattern),count(before,pattern));
+    }
+    const repeated=await invokeCore(optimized.stdout,'--optimize');accepted(repeated);
+    assert.deepEqual(repeated.stdout,optimized.stdout);
+  });
