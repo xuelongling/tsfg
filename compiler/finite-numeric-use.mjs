@@ -98,15 +98,22 @@ function copyGuards(guards,charge,excluded=undefined) {
   }
   return result;
 }
-function branchGuard(condition,truth,guards,charge,preserveExisting=false) {
+export function finitePresenceTest(condition,charge) {
   condition=ungroup(condition,charge);
-  if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return guards;
+  if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return null;
   const a=ungroup(condition.left,charge),b=ungroup(condition.right,charge);
   const binding=a?.kind==='reference'?a:b,absence=binding===a?b:a;
-  if(binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind)
-    &&(!preserveExisting||!guards.has(binding.binding)))
-    return copyGuards(guards,charge).set(binding.binding,{type:absence.type,equal:(condition.operator==='===')===truth,range:{...condition.range}});
-  return guards;
+  return binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind)
+    ?{condition,binding:binding.binding,type:absence.semanticType??absence.type,operand:binding===a?0:1}:null;
+}
+function branchGuard(test,truth,guards,charge) {
+  if(!test)return guards;
+  const {condition,binding,type}=test,prior=guards.get(binding);
+  // A positive absence test fixes the value. The only remaining distinct
+  // narrowing after one exclusion is a test for the other absence type.
+  if(prior?.equal||prior?.excluded||prior?.type===type)return guards;
+  return copyGuards(guards,charge).set(binding,{type,equal:(condition.operator==='===')===truth,
+    range:{...condition.range},...(prior?{excluded:prior.type}:{})});
 }
 export function finiteBindingWrites(body,charge) {
   const written=new Set(),stack=[body];
@@ -157,13 +164,11 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       // Only the condition and body can replace a local value on the backedge.
       // The same filtered entry proofs also hold on the zero-iteration exit.
       if(s.kind==='while'&&frame.guards.size)frame.guards=stableGuards(frame.guards,s,charge);
-      const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition);
+      const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition),test=finitePresenceTest(s.condition,charge);
       if(s.kind==='while') {
         const literal=literalLoopCondition(s,charge),entryGuards=frame.guards;
-        // The condition reads the current header binding. An inherited proof
-        // may already refine that operand to a different SSA value.
-        const bodyGuards=branchGuard(s.condition,true,entryGuards,charge,true);
-        frame.guards=branchGuard(s.condition,false,entryGuards,charge,true);
+        const bodyGuards=branchGuard(test,true,entryGuards,charge);
+        frame.guards=branchGuard(test,false,entryGuards,charge);
         frame.gate=literal===true?flow.never:incoming;
         stack.push({body:s.body,path:p+'/body',guards:bodyGuards,
           gate:literal===false?flow.never:incoming,continues:true,index:0});
@@ -189,7 +194,7 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
         };
         // Suspend this sequence until both arms have registered their exits.
         for(const key of ['else','then'])stack.push({body:s[key],path:p+'/'+key,
-          guards:stableGuards(branchGuard(s.condition,key==='then',frame.guards,charge),s[key],charge),
+          guards:stableGuards(branchGuard(test,key==='then',frame.guards,charge),s[key],charge),
           gate:arm===null||arm===key?incoming:flow.never,continues:true,index:0,complete});
       }
     }

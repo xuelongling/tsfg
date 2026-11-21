@@ -268,7 +268,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     for(const key of ['actual','owners','pending'])for(const value of nodes.get(from)[key]) {
       charge();if(predicate?.presentOnly&&key==='actual'&&absent(value))continue;
       if(predicate?.ownerOnly&&key!=='owners'||predicate?.pendingOnly&&key!=='pending')continue;
-      if(predicate&&key==='actual'&&(predicate.equal?value!==predicate.type:value===predicate.type))continue;
+      if(predicate&&key==='actual'&&(value===predicate.excluded||(predicate.equal?value!==predicate.type:value===predicate.type)))continue;
       if((predicate?.equal||predicate?.payloadOnly)&&key==='owners')continue;
       insert(to,key,value);
     }
@@ -378,8 +378,9 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
   const tasks=[];
   function expression(value,path,fn,guards=new Map(),incoming=flow.always) {
     flow.entry(path,incoming);
+    const proof=value.kind==='reference'?guards.get(value.binding):undefined;
     const result=node(path,value.type).id;expressions.push({id:result,kind:value.kind,range:{...value.range},functionId:fn.id,
-      ...(value.kind==='reference'&&guards.has(value.binding)?{presenceProof:guards.get(value.binding)}:{})});
+      ...(proof?{presenceProof:{type:proof.type,equal:proof.equal,range:proof.range}}:{})});
     tasks.push({value,path,fn,guards});return result;
   }
   function constructionFrame(type) {

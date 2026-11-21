@@ -7,7 +7,7 @@ import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from './finite-a
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
-import {finiteBindingWrites,finiteNumericUse} from './finite-numeric-use.mjs';
+import {finiteBindingWrites,finiteNumericUse,finitePresenceTest} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
@@ -61,7 +61,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
   const fieldPhases=buildFiniteFieldPhases(hir,context,options);
   const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
-  const presenceBindings=new Map(),loopSources=new WeakMap();
+  const presenceBindings=new Map(),loopSources=new WeakMap(),presenceConditions=new WeakMap();
   const arrayWrites=new Map(plan.arrayReaching.writes.map(row=>[row.id,row]));
   const types=new Map([...hir.types,...plan.intrinsics].map(type=>[type.id,type]));
   const selected=(id,allowBottom=false)=>{const row=nodes.get(id);if(!row)pending('missing domain '+id);
@@ -108,7 +108,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             ?expression:wrap(expression,selected(fn.id+'/return').domainId);
         }
       }else if(value.kind==='expression')result.value=adapt(value.expression,p+'/expression',fn);
-      if(value.condition)result.condition=finiteCoreGuard(adapt(value.condition,p+'/condition',fn),budget.step);
+      if(value.condition) {
+        result.condition=finiteCoreGuard(adapt(value.condition,p+'/condition',fn),budget.step);
+        const test=finitePresenceTest(result.condition,budget.step);
+        if(test)presenceConditions.set(test.condition,test);
+      }
       if(value.then)result.thenBody=body(value.then,p+'/then',fn);
       if(value.else)result.elseBody=body(value.else,p+'/else',fn);
       if(value.body)result.body=body(value.body,p+'/body',fn);
@@ -170,6 +174,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       }
     }
     const guardedBindings=presenceBindings.get(fn.id);
+    const testedOperands=new Map();
+    const presenceKey=(binding,range)=>binding+'/'+range.start+'/'+range.end;
     const emission=emitCoreSsaFunction(fn,{verified:hir,coreType,functionSymbol:symbol,budget,
       preserveDominatingJoinBindings:guardedBindings,
       loopWrittenBindings:guardedBindings?statement=>finiteBindingWrites(loopSources.get(statement),budget.step):undefined,
@@ -220,8 +226,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const type=parameter?.type??bound?.domainId;
           if(type===value.type)return api.lookup(value.binding);
           const proof=occurrences.get(value.domainNode)?.presenceProof;
-          return op(api,proof?'refine':'view',[{name:api.lookup(value.binding),type}],value.type,opAttrs(value)
-            +(proof?', presence_proof = '+quote(canonical(proof)):''),value.range);
+          if(!proof)return op(api,'view',[{name:api.lookup(value.binding),type}],value.type,opAttrs(value),value.range);
+          const tested=testedOperands.get(presenceKey(value.binding,proof.range));
+          if(!tested)pending('missing original presence operand',value.range);
+          if(tested.type===value.type)return tested.name;
+          return op(api,'refine',[tested],value.type,opAttrs(value)+', presence_proof = '+quote(canonical(proof)),value.range);
         }
         if(['finiteAdapt','group','nonNull','assertType'].includes(value.kind))return view(value.operand,
           value.compatibilityRoots?'compatibility_roots = '+quote(canonical(value.compatibilityRoots)):'');
@@ -304,8 +313,15 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           if(value.kind==='unary'&&value.operator==='+'&&domains.get(value.operand.type).representation==='native'
             &&!['f32','f64'].includes(domains.get(value.operand.type).nativeType))return api.emit(value.operand);
           if(value.kind==='binary'&&['===','!=='].includes(value.operator)&&operands.some(operand=>domains.get(operand.type).actualTypes
-            .every(id=>['null','undefined'].includes(types.get(id).kind))))
-            return op(api,'presence_equal',operands.map(evaluated),value.type,'operator = '+quote(value.operator),value.range);
+            .every(id=>['null','undefined'].includes(types.get(id).kind)))) {
+            const tested=operands.map(evaluated),test=presenceConditions.get(value);
+            if(test) {
+              const key=presenceKey(test.binding,value.range);
+              if(testedOperands.has(key))pending('duplicate original presence comparison',value.range);
+              testedOperands.set(key,tested[test.operand]);
+            }
+            return op(api,'presence_equal',tested,value.type,'operator = '+quote(value.operator),value.range);
+          }
           if(value.kind==='binary'&&scalarComparisons.has(value.operator)&&operands.every(operand=>domains.get(operand.type).actualTypes
             .every(id=>types.get(id).kind==='string'))) {
             const compared=api.operation('tsfg_string.compare',operands.map(operand=>api.emit(operand)),operands.map(operand=>operand.type),i32TypeId,'',value.range);
