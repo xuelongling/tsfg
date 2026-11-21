@@ -284,7 +284,9 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const generic = family === genericHirFormat.family;
   const ordinary = family === undefined || family === 'tsfg.module-callable-hir-candidate';
   const packetInput = common || generic || ordinary ? inputIdentity : undefined;
-  const packetDefaultRoot = generic ? hir.closure.roots[0] : undefined;
+  // Only scalar packets use the first function descriptor as the default.
+  const scalar = !common && family === undefined && hir.modules === undefined;
+  const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };

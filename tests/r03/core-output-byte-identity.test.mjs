@@ -94,6 +94,27 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       {status:'tool-error',code:'r03-d-consumer',message:'r04-producer-input-identity: packet target or input differs from the checked HIR'});
     assert.deepEqual(calls.slice(first),[['--canonicalize'],['--emit-bytecode'],['--canonicalize'],['--emit-bytecode']]);
   });
+  await t.test('registered scalar bytecode transport keeps the default function',async sub=>{
+    const {hir:stringHir,context}=stringCases()[0];
+    const [first,second,...rest]=stringHir.functions;
+    assert.notEqual(first.id,second.id);
+    const selectedCore=Buffer.from(expectedStringCore(stringHir));
+    const options={core:artifact,factsContext:context};
+    const packet=expectedStringPacket(stringHir);
+    stdout=selectedCore;
+    packetStdout=packet;
+    sub.after(()=>{packetStdout=undefined;stdout=valid;});
+    const matched=await compileOwnedHir(stringHir,options);
+    assert.equal(matched.status,'ok');
+    assert.deepEqual(matched.bytecode,packet);
+
+    // Both packets bind the same HIR input. Only the descriptor order differs.
+    packetStdout=expectedStringPacket({...stringHir,functions:[second,first,...rest]});
+    const mismatched=await compileOwnedHir(stringHir,options);
+    assert.equal(mismatched.status,'tool-error');
+    assert.deepEqual(mismatched,{status:'tool-error',code:'r03-d-consumer',
+      message:'r04-producer-default-root: first scalar function differs from the checked default root'});
+  });
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
   const expected={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: invalid UTF-8 in compiler output'};
