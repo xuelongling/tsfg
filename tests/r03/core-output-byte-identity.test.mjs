@@ -7,12 +7,15 @@ import path from 'node:path';
 import test from 'node:test';
 import {compileCommonBorrowProof,compileOwnedCore,compileOwnedHir,compileOwnedStaticProgram} from '../../compiler/pipeline.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
+import {importCapturedFrontendResponse} from '../../compiler/frontend.mjs';
+import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {readGenericHir} from '../../compiler/generic-hir.mjs';
 import {expectedGenericCore} from './generic-core-package-capture.mjs';
+import {expectedExceptionModule} from './formal-exception-module-oracle.mjs';
 import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
 
 const artifact=path.join(import.meta.dirname,'core-transport-only','core.exe');
@@ -50,6 +53,7 @@ const valid=framedCore(core.toString('utf8'),Buffer.from('// Source note: \ufffd
 const malformed=framedCore(core.toString('utf8'),Buffer.concat([Buffer.from('// Source note: '),Buffer.of(255,10)]));
 const capture=process.env.TSFG_R03_CORE_PAIR_CAPTURE;
 const commonCapture=process.env.TSFG_R03_COMMON_PAIR_CAPTURE;
+const exceptionCapture=process.env.TSFG_R03_EXCEPTION_PAIR_CAPTURE;
 const mismatch={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked input identity differs'};
 
 test('Core transport preserves valid bytes and rejects malformed stdout before dependent stages',async t=>{
@@ -284,6 +288,39 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
         /r03-core-output: checked input identity differs/);
       assert.deepEqual(calls.slice(first),[['--common-program','--canonicalize']]);
     });
+  });
+  await t.test('exception Core retains the checked module initializer input',async sub=>{
+    const fixture=new URL('../fixtures/r03/m21-exception/controls/module-initialization/',import.meta.url);
+    const [request,response,origin]=await Promise.all(['request.json','response.json','origin.json'].map(name=>fs.readFile(new URL(name,fixture))));
+    assert.equal(sha256(response),'sha256:52de1db4d66779fea3376102df4f455b72c687348659e92abb42c20350ebb6b7');
+    const imported=await importCapturedFrontendResponse(request,response,JSON.parse(origin.toString('utf8')));
+    assert.equal(imported.status,'ok');
+    const built=buildHir(imported.snapshot);
+    assert.equal(built.status,'ok');
+    const checked=built.hir;
+    assert.deepEqual(checked,expectedExceptionModule(imported.snapshot));
+    let matching=framedCore(lowerFormalHir(checked)),foreign=valid;
+    if(exceptionCapture){
+      const [retainedMatch,retainedForeign]=await Promise.all(['0092','0001'].map(name=>
+        fs.readFile(path.join(exceptionCapture,name,'stdout.bin'))));
+      assert.equal(sha256(retainedMatch),'sha256:7d6b53ef26791a3a273b4de16423a05f87f228dbd65ae3c2143303701ec30312');
+      assert.equal(sha256(retainedForeign),'sha256:98f8cd0dad23620ece611814fdfdbd34e5cb75f574c22f3908866154004eaf65');
+      matching=Buffer.from(retainedMatch);foreign=Buffer.from(retainedForeign);
+    }
+    sub.after(()=>{stdout=valid;packetStdout=undefined;});
+    stdout=matching;
+    const accepted=await compileOwnedCore(checked,{core:artifact});
+    assert.equal(accepted.status,'ok');
+    assert.deepEqual(Buffer.from(accepted.core,'utf8'),matching);
+    stdout=foreign;
+    packetStdout=Buffer.alloc(0);
+    const first=calls.length;
+    const rejected=[
+      await compileOwnedCore(checked,{core:artifact,optimize:true}),
+      await compileOwnedHir(checked,{core:artifact}),
+    ];
+    assert.deepEqual(rejected,[mismatch,mismatch]);
+    assert.deepEqual(calls.slice(first),[['--optimize'],['--canonicalize']]);
   });
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
