@@ -225,11 +225,15 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
     return { status: "tool-error", inputIdentity, message: "invalid frontend response status" };
   }
   const consumed = output.inputs;
-  if (!Array.isArray(consumed) || new Set(consumed).size !== consumed.length
+  const consumedPaths = new Set(Array.isArray(consumed) ? consumed : []);
+  const requestedModules = moduleInput ? files.filter(file => !file.path.endsWith(".d.ts")).map(file => file.path) : [];
+  const invalidInputClosure = { status: "tool-error", inputIdentity, message: "frontend input closure differs from recorded content" };
+  if (!Array.isArray(consumed) || consumedPaths.size !== consumed.length
       || canonical(consumed) !== canonical([...consumed].sort())
-      || !consumed.includes(rootFile) || declarationPaths.some(name => !consumed.includes(name))
+      || !consumedPaths.has(rootFile) || declarationPaths.some(name => !consumedPaths.has(name))
+      || requestedModules.some(name => !consumedPaths.has(name))
       || consumed.some(name => !seen.has(name))) {
-    return { status: "tool-error", inputIdentity, message: "frontend input closure differs from recorded content" };
+    return invalidInputClosure;
   }
   if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || !output.symbols.every(responseRecord)
       || !moduleInput && output.functions.length === 0
@@ -240,10 +244,15 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
         || !isResponseBody(fn.body))) {
     return incomplete;
   }
-  if (moduleInput && !Array.isArray(output.modules))
-    return { status: "tool-error", inputIdentity, message: "frontend omitted owned modules" };
-  if (moduleInput && !output.modules.every(module => responseRecord(module) && isResponseBody(module.initialization)))
-    return incomplete;
+  if (moduleInput) {
+    if (!Array.isArray(output.modules))
+      return { status: "tool-error", inputIdentity, message: "frontend omitted owned modules" };
+    if (!output.modules.every(module => responseRecord(module) && isResponseBody(module.initialization)))
+      return incomplete;
+    const returnedModules = new Set(output.modules.map(module => module.sourcePath));
+    if (output.modules.length !== requestedModules.length || requestedModules.some(name => !returnedModules.has(name)))
+      return invalidInputClosure;
+  }
   const snapshotId = snapshotIdentity(inputIdentity, frontendSource);
   const symbols = output.symbols.map(symbol => ({ ...symbol, ref: { snapshotId, id: symbol.id } }));
   const expression = value => ({

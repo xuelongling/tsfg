@@ -30,6 +30,30 @@ test('cold module HIR cannot omit an unselected source function and its bindings
   rejectsCold(hir);
 });
 
+test('module Snapshot materialization requires unselected implementation files',async t=>{
+  const {input,snapshot,prepared,facts,origin}=await moduleDefaultFacts({unrooted:true});
+  const unused='/src/unused.ts';
+  assert.equal(snapshot.inputs.find(file=>file.path===unused)?.kind,'source');
+  assert.ok(snapshot.modules.some(module=>module.sourcePath===unused));
+  assert.ok(!snapshot.compilationClosure.roots.some(root=>root.sourcePath===unused));
+
+  const extraDeclaration={path:'/src/unlisted.d.ts',content:'declare function unusedDeclaration():i32;'};
+  const withDeclaration=await prepareFrontendInput({...input,files:[...input.files,extraDeclaration]});
+  assert.equal(withDeclaration.status,'ready');
+  assert.equal(materializeFrontendResponse(withDeclaration,JSON.stringify(facts),origin).status,'ok');
+
+  const modules=facts.modules.filter(row=>row.sourcePath!==unused);
+  const expected={status:'tool-error',inputIdentity:prepared.inputIdentity,message:'frontend input closure differs from recorded content'};
+  for(const {name,changes} of [
+    {name:'omitted input and module',changes:{inputs:facts.inputs.filter(file=>file!==unused),modules,
+      functions:facts.functions.filter(row=>row.sourcePath!==unused),symbols:facts.symbols.filter(row=>row.sourcePath!==unused)}},
+    {name:'omitted module row',changes:{modules}},
+  ])await t.test(name,()=>{
+    const result=materializeFrontendResponse(prepared,JSON.stringify({...facts,...changes}),origin);
+    assert.deepEqual(result,expected);
+  });
+});
+
 test('cold module HIR binds an imported alias to its original dependency export',async()=>{
   const hir=await original(),unused=hir.functions.find(fn=>fn.sourcePath==='/src/unused.ts'&&fn.name==='unused');
   const app=hir.modules.find(module=>module.sourcePath==='/src/app.ts');

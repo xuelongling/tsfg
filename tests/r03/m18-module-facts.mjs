@@ -65,7 +65,8 @@ export async function moduleDefaultFacts({unrooted=false,globalWrite=false,worke
     facts.modules.push({sourcePath:'/src/unused.ts',external:true,imports:[],exports:[{name:'saved',target:'g',range:global.range},{name:'unused',target:'u',range:range(nameStart,nameStart+6)}],globals:['g'],
       initialization:[{kind:'initialize',range:range(globalStart,valueStart+2),symbol:global,initializer:{kind:'integer',type:'i32',literal:{decimal:'99',token:'99'},range:range(valueStart,valueStart+2)}}]});
   }
-  const result=materializeFrontendResponse(prepared,JSON.stringify(facts),{forkOid:'test-owned-module-facts',binarySha256:'sha256:'+'0'.repeat(64)});
+  const origin={forkOid:'test-owned-module-facts',binarySha256:'sha256:'+'0'.repeat(64)};
+  const result=materializeFrontendResponse(prepared,JSON.stringify(facts),origin);
   assert.equal(result.status,'ok',JSON.stringify(result));
-  return {input,snapshot:result.snapshot};
+  return {input,snapshot:result.snapshot,prepared,facts,origin};
 }
