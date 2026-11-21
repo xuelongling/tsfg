@@ -108,6 +108,17 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       out.set(owner,{length:a.length===b.length?a.length:null,slots});
     }return out;
   }
+  function endsInReturn(body) {
+    charge();
+    const last=body.at(-1);
+    switch(last?.kind) {
+      case 'return':
+      case 'constructorReturn':return true;
+      case 'block':return endsInReturn(last.body);
+      case 'if':return endsInReturn(last.then)&&endsInReturn(last.else??[]);
+      default:return false;
+    }
+  }
   function parameters(fn,incoming=[]) {
     const env=new Map();for(const parameter of fn.parameters) {
       let constant,truth;for(const [index,row] of incoming.entries()) {
@@ -415,6 +426,15 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           const truth=collectAll?undefined:predicateTruth(row.condition,p+'/condition');
           if(truth===false) {
             expression(row.condition,p+'/condition',state,bindings);continue;
+          }
+          if(endsInReturn(row.body)) {
+            // The checked statements have no break or continue. The body may
+            // contribute a function exit, but only the skipped edge reaches
+            // the next statement and it keeps the condition's effects.
+            if(expression(row.condition,p+'/condition',state,bindings,true).terminal)return null;
+            statements(row.body,p+'/body',clone(state),copyBindings(bindings));
+            if(truth===true)return null;
+            continue;
           }
           invalidate(state);for(const id of bindings.keys()){charge();bindings.set(id,{});}
           expression(row.condition,p+'/condition',state,bindings);statements(row.body,p+'/body',clone(state),copyBindings(bindings));invalidate(state);

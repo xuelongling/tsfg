@@ -19,6 +19,10 @@ const spanEndpoint={
   packageId:'sha256:b424e43f1d1b2b620274cf4bb3cc76b09566418d1fb15ee0524689702f8c2344',
   requestId:'sha256:5d12866e8ccc5ebd35c58ab51dd12d53621fc0bfd43db44b12d79527ed402f53',
 };
+const arrayEntryFixture={file:'636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571-package.json',
+  sha256:'7732a541fe22955a8a4a3a4449a6117e793f5807e58cf527fd65f3148d1c5657',
+  packageId:'sha256:1c15ccfce665452c422635ba21cac5cfa657a296c32e5d234126c218b4bfacf8',
+  requestId:'sha256:e68b201086d40beec104c396ba1a497f0191ef19f000cbcdc3d9bf7222735f72'};
 
 async function checkedFixture(fixture,folder='typed-array-consumer-v8/') {
   assert.ok(fixture);
@@ -162,11 +166,7 @@ test('a call writing one Array preserves disjoint writes and forgets possible pa
 });
 
 test('a returning branch does not carry its local Array binding into the normal merge',async()=>{
-  const fixture={file:'636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571-package.json',
-    sha256:'7732a541fe22955a8a4a3a4449a6117e793f5807e58cf527fd65f3148d1c5657',
-    packageId:'sha256:1c15ccfce665452c422635ba21cac5cfa657a296c32e5d234126c218b4bfacf8',
-    requestId:'sha256:e68b201086d40beec104c396ba1a497f0191ef19f000cbcdc3d9bf7222735f72'};
-  const {hir}=await checkedFixture(fixture,'typed-array-entry/');
+  const {hir}=await checkedFixture(arrayEntryFixture,'typed-array-entry/');
   const fn=hir.functions.find(row=>row.name==='runUnknown'),read=hir.functions.find(row=>row.name==='read').body[0].value;
   const [early,branch,live,returned]=fn.body;
   assert.equal(branch.kind,'if');assert.equal(read.kind,'arrayReadChecked');
@@ -181,6 +181,40 @@ test('a returning branch does not carry its local Array binding into the normal 
     assert.equal(result?.status,'proven');
     assert.deepEqual(result.sources,[fn.id+'/body/1/initializer/elements/0']);
   }
+});
+
+test('a while body that returns preserves the Array versions on the skipped path',async()=>{
+  const [{hir},{hir:entryHir}]=await Promise.all([
+    checkedFixture(manifest.find(row=>row.name==='dense-overwrite')),
+    checkedFixture(arrayEntryFixture,'typed-array-entry/'),
+  ]);
+  const [fn]=hir.functions,[local,store,returned]=fn.body;
+  const entry=entryHir.functions.find(row=>row.name==='runUnknown');
+  assert.ok(entry);
+  const [flag]=entry.parameters,condition=entry.body[1].condition,range=store.range;
+  const bool=entryHir.types.find(row=>row.id===flag.type);
+  assert.ok(bool);
+  const types=hir.types.some(row=>row.id===bool.id)?hir.types:[...hir.types,bool];
+  const prefix=fn.id+'/body/';
+  const write={...store,expression:{...store.expression,target:{...store.expression.target,index:returned.value.index}}};
+  function readAfter(body) {
+    const loop={kind:'while',range,condition,body};
+    const model={...hir,types,functions:[{...fn,parameters:[flag],body:[local,loop,returned]}]};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>false);
+    const read=reaching.reads.find(row=>row.node===prefix+'2/value');
+    assert.ok(read);
+    return read;
+  }
+  const original=[prefix+'0/initializer/elements/0'];
+  for(const exit of [returned,{kind:'block',range,body:[returned]},
+    {kind:'if',range,condition,then:[returned],else:[returned]}]) {
+    const read=readAfter([write,exit]);
+    assert.equal(read.status,'proven');
+    assert.deepEqual(read.sources,original);
+  }
+  const repeated=readAfter([write]);
+  assert.equal(repeated.status,'pending');
+  assert.deepEqual(repeated.sources,[]);
 });
 
 for(const [name,status] of [
