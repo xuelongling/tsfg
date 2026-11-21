@@ -273,7 +273,8 @@ async function compileSnapshot(snapshot, options) {
 }
 
 async function produceCore(hir, options, lower = undefined, context = undefined) {
-  const executable = await verifiedConsumer(options.core, "core");
+  const { core:coreExecutable, optimize } = options;
+  const executable = await verifiedConsumer(coreExecutable, "core");
   const factsContext = context ? context.factsContext : options.factsContext;
   const lowered = lower ? lower(hir) : lowerFormalHir(hir, factsContext, options.callPublicationContext);
   const inputIdentity = Object.getOwnPropertyDescriptor(hir, "inputIdentity")?.value;
@@ -284,7 +285,7 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const packetInput = common || generic ? inputIdentity : undefined;
   const packetDefaultRoot = generic ? hir.closure.roots[0] : undefined;
   const prefix = common ? ['--common-program'] : [];
-  const core = decodeCompilerText(consume(executable, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
+  const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
 }
 

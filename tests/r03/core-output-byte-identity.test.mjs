@@ -76,6 +76,16 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
   const expected={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: invalid UTF-8 in compiler output'};
+  await t.test('owned scalar compilation keeps the requested mode during admission',async()=>{
+    for(const {compile,optimize} of [{compile:compileOwnedCore,optimize:false},{compile:compileOwnedHir,optimize:true}]){
+      const options={core:artifact,optimize};
+      const first=calls.length;
+      const pending=compile(hir,options);
+      options.optimize=!optimize;
+      assert.deepEqual(await pending,expected);
+      assert.deepEqual(calls.slice(first),[[optimize?'--optimize':'--canonicalize']]);
+    }
+  });
   await t.test('AOT entry retains the original owned generic HIR and mode during admission',async()=>{
     const fixture=name=>fs.readFile(new URL('./fixtures/'+name,import.meta.url));
     const [conditionalBytes,mappedBytes,conditionalCore]=await Promise.all([
