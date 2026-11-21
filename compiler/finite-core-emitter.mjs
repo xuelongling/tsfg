@@ -7,7 +7,7 @@ import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from './finite-a
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
-import {finiteBindingWrites,finiteNumericUse,finitePresenceTest} from './finite-numeric-use.mjs';
+import {finiteBindingWrites,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
@@ -61,7 +61,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
   const fieldPhases=buildFiniteFieldPhases(hir,context,options);
   const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
-  const presenceBindings=new Map(),loopSources=new WeakMap(),presenceConditions=new WeakMap();
+  const presenceBindings=new Map(),loopSources=new WeakMap(),presenceConditions=new WeakMap(),logicalPresence=new WeakMap();
   const arrayWrites=new Map(plan.arrayReaching.writes.map(row=>[row.id,row]));
   const types=new Map([...hir.types,...plan.intrinsics].map(type=>[type.id,type]));
   const selected=(id,allowBottom=false)=>{const row=nodes.get(id);if(!row)pending('missing domain '+id);
@@ -110,8 +110,14 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       }else if(value.kind==='expression')result.value=adapt(value.expression,p+'/expression',fn);
       if(value.condition) {
         result.condition=finiteCoreGuard(adapt(value.condition,p+'/condition',fn),budget.step);
-        const test=finitePresenceTest(result.condition,budget.step);
-        if(test)presenceConditions.set(test.condition,test);
+        const logical=value.kind==='if'?finitePresenceShortCircuit(result.condition,budget.step):null;
+        if(logical) {
+          logicalPresence.set(result.condition,logical);
+          for(const test of [logical.left,logical.right])presenceConditions.set(test.condition,test);
+        }else {
+          const test=finitePresenceTest(result.condition,budget.step);
+          if(test)presenceConditions.set(test.condition,test);
+        }
       }
       if(value.then)result.thenBody=body(value.then,p+'/then',fn);
       if(value.else)result.elseBody=body(value.else,p+'/else',fn);
@@ -179,6 +185,16 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     const emission=emitCoreSsaFunction(fn,{verified:hir,coreType,functionSymbol:symbol,budget,
       preserveDominatingJoinBindings:guardedBindings,
       loopWrittenBindings:guardedBindings?statement=>finiteBindingWrites(loopSources.get(statement),budget.step):undefined,
+      pureConditionBranches(condition,api) {
+        const logical=logicalPresence.get(condition);
+        if(!logical)return null;
+        return {when:logical.when,range:logical.condition.range,emit(side) {
+          const value=logical.condition[side],name=api.emit(value);
+          // Preserve the conservative field-reaching analysis while the
+          // independent refinement check can trace the original comparison.
+          return op(api,'view',[{name,type:value.type}],value.type,opAttrs(value),value.range);
+        }};
+      },
       ...(voidResult?{resultType:'()',emitFallthrough:api=>api.returnValue(null,null,fn.range)}:{}),
       emitStatementLeaf(statement,api) {
         if(statement.kind==='local') {

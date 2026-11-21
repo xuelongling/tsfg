@@ -144,9 +144,18 @@ export function emitCoreSsaFunction(fn, context) {
         definitions = new Map([...definitions].filter(([id]) => outer.has(id)));
         declared = outer;
       } else if (statement.kind === "if") {
-        const condition = emit(statement.condition), outer = new Map(definitions), outerDeclared = new Set(declared);
+        const parts = context.pureConditionBranches?.(statement.condition, api);
+        const condition = parts ? parts.emit("left") : emit(statement.condition);
+        const rhs = parts ? newBlock() : null;
         const yes = newBlock(), no = newBlock();
-        conditional(condition, yes, no, statement.condition.range);
+        if (parts) {
+          // The caller supplies read-only operands, so neither condition
+          // edge needs a different set of binding definitions.
+          conditional(condition, parts.when ? rhs : yes, parts.when ? no : rhs, parts.range);
+          current = rhs;
+          conditional(parts.emit("right"), yes, no, statement.condition.range);
+        } else conditional(condition, yes, no, statement.condition.range);
+        const outer = new Map(definitions), outerDeclared = new Set(declared);
         current = yes; definitions = new Map(outer); emitBody(statement.thenBody);
         const yesExit = current, yesDefinitions = new Map(definitions);
         current = no; definitions = new Map(outer); declared = new Set(outerDeclared); emitBody(statement.elseBody);

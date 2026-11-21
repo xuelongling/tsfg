@@ -106,6 +106,12 @@ export function finitePresenceTest(condition,charge) {
   return binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind)
     ?{condition,binding:binding.binding,type:absence.semanticType??absence.type,operand:binding===a?0:1}:null;
 }
+export function finitePresenceShortCircuit(condition,charge) {
+  condition=ungroup(condition,charge);
+  if(!['binary','shortCircuit'].includes(condition.kind)||!['&&','||'].includes(condition.operator))return null;
+  const left=finitePresenceTest(condition.left,charge),right=finitePresenceTest(condition.right,charge);
+  return left&&right?{condition,left,right,when:condition.operator==='&&'}:null;
+}
 function branchGuard(test,truth,guards,charge) {
   if(!test)return guards;
   const {condition,binding,type}=test,prior=guards.get(binding);
@@ -144,9 +150,9 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       continue;
     }
     const s=frame.body[frame.index],p=frame.path+'/'+frame.index++;
-    const emit=(value,suffix)=>{
+    const emit=(value,suffix,logical=undefined)=>{
       if(frame.guards.size)frame.guards=stableGuards(frame.guards,value,charge);
-      return expression(value,p+suffix,fn,frame.guards,frame.gate);
+      return expression(value,p+suffix,fn,frame.guards,frame.gate,logical);
     };
     if(s.kind==='local') {
       (frame.locals??=new Set()).add(s.binding.id);
@@ -164,7 +170,10 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
       // Only the condition and body can replace a local value on the backedge.
       // The same filtered entry proofs also hold on the zero-iteration exit.
       if(s.kind==='while'&&frame.guards.size)frame.guards=stableGuards(frame.guards,s,charge);
-      const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition),test=finitePresenceTest(s.condition,charge);
+      const logical=s.kind==='if'?finitePresenceShortCircuit(s.condition,charge):null;
+      const rightGuards=logical?branchGuard(logical.left,logical.when,frame.guards,charge):null;
+      const condition=emit(s.condition,'/condition',logical?{condition:logical.condition,rightGuards}:undefined),
+        incoming=flow.normal(condition),test=logical?null:finitePresenceTest(s.condition,charge);
       if(s.kind==='while') {
         const literal=literalLoopCondition(s,charge),entryGuards=frame.guards;
         const bodyGuards=branchGuard(test,true,entryGuards,charge);
@@ -193,9 +202,13 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
           }
         };
         // Suspend this sequence until both arms have registered their exits.
-        for(const key of ['else','then'])stack.push({body:s[key],path:p+'/'+key,
-          guards:stableGuards(branchGuard(test,key==='then',frame.guards,charge),s[key],charge),
-          gate:arm===null||arm===key?incoming:flow.never,continues:true,index:0,complete});
+        for(const key of ['else','then']) {
+          const truth=key==='then';
+          const guards=logical&&truth===logical.when?branchGuard(logical.right,truth,rightGuards,charge)
+            :branchGuard(test,truth,frame.guards,charge);
+          stack.push({body:s[key],path:p+'/'+key,guards:stableGuards(guards,s[key],charge),
+            gate:arm===null||arm===key?incoming:flow.never,continues:true,index:0,complete});
+        }
       }
     }
   }
