@@ -35,7 +35,7 @@ bool MemorySources::buildEntries(){
     if(!proof.charge()){valid=false;return false;}const auto [id,frame]=work[cursor];
     for(auto &block:proof.functions.at(id).getBody())for(auto &op:block){
       if(!proof.charge()){valid=false;return false;}const auto selected=proof.selectedCallees.find(&op);
-      if(selected==proof.selectedCallees.end()||!proof.mayReach(&block))continue;
+      if(selected==proof.selectedCallees.end()||!proof.mayExecute(&op))continue;
       for(const auto &target:selected->second){
         if(!proof.charge()){valid=false;return false;}const auto child=enter(frame,&op,target);
         // Unclosed fresh recursion is an unknown entry, never an omitted call.
