@@ -532,7 +532,13 @@ const ReceiverCertificate = struct {
                     }
                     if (!completion) return .pending; if (!live) return .dead; terminal = true; break;
                 },
-                inline .copy, .receiver_frame, .environment_create, .environment_parent, .environment_component, .capture, .code, .projection => |row| { if (try self.controlView(side, row.control) != .id) return .pending; terminal = true; break; },
+                .copy => |row| {
+                    if (self.absentBaseControl(side, row.control)) return .dead;
+                    if (try self.controlView(side, row.control) != .id) return .pending;
+                    terminal = true;
+                    break;
+                },
+                inline .receiver_frame, .environment_create, .environment_parent, .environment_component, .capture, .code, .projection => |row| { if (try self.controlView(side, row.control) != .id) return .pending; terminal = true; break; },
                 .receiver_input, .parameter, .literal, .nonowning, .environment_input, .global, .local => { terminal = true; break; },
                 else => return .pending,
             }
@@ -565,14 +571,28 @@ const ReceiverCertificate = struct {
         }
         return .pending;
     }
+    fn absentBaseControl(self: *ReceiverCertificate, side: usize, id: Ref) bool {
+        const known = self.analyses[side].absent_base_controls;
+        return id < known.len and known[id];
+    }
     fn heapView(self: *ReceiverCertificate, side: usize, start: Ref) Error!View {
         const graph = self.graphs[side]; var id = start;
         for (0..graph.heaps.len + 1) |_| {
             try self.budget.step(); switch (graph.heaps[id]) {
                 .join => |row| { if (row.inputs.len == 0) return .dead; if (row.inputs.len != 1) return .{ .id = id }; id = row.inputs[0]; },
                 .receiver_action => { if (self.analyses[side].action_results[id].len == 0) return .dead; return .{ .id = id }; },
-                .store => |row| { if (try self.controlView(side, row.control) != .id) return .pending; return .{ .id = id }; },
-                .copy => |row| { if (graph.nodes[row.value] != .copy) return .pending; if (try self.controlView(side, graph.nodes[row.value].copy.control) != .id) return .pending; return .{ .id = id }; },
+                .store => |row| {
+                    if (self.absentBaseControl(side, row.control)) return .dead;
+                    if (try self.controlView(side, row.control) != .id) return .pending;
+                    return .{ .id = id };
+                },
+                .copy => |row| {
+                    if (graph.nodes[row.value] != .copy) return .pending;
+                    const control = graph.nodes[row.value].copy.control;
+                    if (self.absentBaseControl(side, control)) return .dead;
+                    if (try self.controlView(side, control) != .id) return .pending;
+                    return .{ .id = id };
+                },
                 .entry => return .{ .id = id },
                 .call => { if (!self.analyses[side].heap_live[id]) return .dead; return .{ .id = id }; },
             }

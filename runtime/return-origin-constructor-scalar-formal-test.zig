@@ -383,6 +383,14 @@ test "typed scalar constructor transports a committed copy of the original calle
 }
 
 test "typed immediate explicit base preserves the original child allocation" {
+    try checkExplicitBase(false);
+}
+
+test "typed explicit base throw preserves the original copied parameter and unbound parent" {
+    try checkExplicitBase(true);
+}
+
+fn checkExplicitBase(comptime throws: bool) !void {
     var fixture: Fixture = undefined;
     fixture.init();
     const common = &fixture.program.tables.mode.common;
@@ -489,7 +497,7 @@ test "typed immediate explicit base preserves the original child allocation" {
     var declarations = dto.declarations;
     declarations[0].parameter_types = &.{ @splat(0x11), @splat(0x33) };
     declarations[0].construction.?.base = @splat(0x22);
-    const original: m.Graph = .{
+    var original: m.Graph = .{
         .nodes = &.{
             .receiver_input, .{ .parameter = .{ .@"type" = dto.scalar, .index = 1 } },
             .{ .copy = .{ .@"type" = dto.scalar, .bases = &.{1}, .site = "argument-copy", .heap = 0, .control = 0 } },
@@ -516,9 +524,65 @@ test "typed immediate explicit base preserves the original child allocation" {
         .exits = .{ .normal = &.{.{ .heap = 6, .control = 3 }}, .language = &.{} },
         .accesses = &.{.{ .values = &.{5}, .flag = .write, .control = 2 }},
     };
+    const language_nodes = original.nodes[0..9].* ++ [_]m.Value{.{ .call = .{ .@"type" = null, .call = 0, .completion = .language } }};
+    const language_heaps = original.heaps[0..7].* ++ [_]m.Heap{.{ .call = .{ .call = 0, .completion = .language } }};
+    const language_controls = original.controls[0..4].* ++ [_]m.Control{.{ .call = .{ .call = 0, .completion = .language } }};
+    const throw_leaf_nodes = dto.leaf.nodes[0..4].* ++ [_]m.Value{.{ .gate = .{ .@"type" = null, .inputs = &.{3}, .control = 2 } }};
+    var leaf = complete_leaf;
+    if (throws) {
+        original.nodes = &language_nodes;
+        original.heaps = &language_heaps;
+        original.controls = &language_controls;
+        original.normal = &.{};
+        original.language = &.{9};
+        original.exits = .{ .normal = &.{}, .language = &.{.{ .heap = 7, .control = 4 }} };
+        leaf = dto.leaf;
+        leaf.normal = &.{};
+        leaf.language = &.{4};
+        leaf.exits = .{ .normal = &.{}, .language = &.{.{ .heap = 3, .control = 2 }} };
+        leaf.nodes = &throw_leaf_nodes;
+        leaf.heaps = leaf.heaps[0..4];
+        leaf.controls = leaf.controls[0..3];
+        leaf.accesses = complete_leaf.accesses;
+    }
+    // The same checked base field prefix now ends with a throw of its
+    // required native input. The pack retains that exact scalar payload.
+    const throw_registers = callee_registers[0..7].* ++ [_]wire.Register{.{ .carrier = .payload, .view = null }};
+    const throw_code = callee_instructions[0..6].* ++ [_]ins.Instruction{
+        .{ .source = operation, .result = r7, .operands = &.{r5}, .data = .{ .eh_carrier = null } },
+        .{ .source = operation, .result = null, .operands = &.{r7}, .data = .eh_raise },
+        callee_instructions[8],
+    };
+    const throw_ops = callee_operations[0..6].* ++ [_]control.SourcePlanOperation{
+        .{ .name = "pack", .view = dto.scalar, .properties = &copy_properties, .result = r7, .operands = &.{r5}, .successors = &.{}, .source = operation },
+        .{ .name = "return_throw", .view = "void", .properties = &.{}, .result = null, .operands = &.{r7}, .successors = &.{}, .source = operation },
+        callee_operations[8],
+    };
+    const throw_blocks = [_]wire.Block{
+        .{ .parameters = &.{ r0, r5 }, .instructions = throw_code[0..3] },
+        .{ .parameters = &.{r2}, .instructions = throw_code[3..8] },
+        .{ .parameters = &.{r3}, .instructions = throw_code[8..9] },
+    };
+    const throw_plan = [_]control.SourcePlanBlock{
+        .{ .parameters = &.{ r0, r5 }, .operations = throw_ops[0..3] },
+        .{ .parameters = &.{r2}, .operations = throw_ops[3..8] },
+        .{ .parameters = &.{r3}, .operations = throw_ops[8..9] },
+    };
+    if (throws) {
+        fixture.functions[1].registers = &throw_registers;
+        fixture.functions[1].blocks = &throw_blocks;
+        fixture.abis[1].source_plan = .{ .blocks = &throw_plan, .carriers = &.{
+            "receiver:" ++ dto.b, dto.b, dto.b, payload, "initialization:" ++ dto.b, dto.scalar, "initialization:" ++ dto.b, payload,
+        } };
+    }
     var contracts = complete_contracts;
     contracts[0].return_origins = original;
     contracts[0].upper = dto.scalar_full;
+    contracts[1].return_origins = leaf;
+    if (throws) {
+        contracts[0].upper.facets.may_throw = true;
+        contracts[1].upper.facets.may_throw = true;
+    }
     const fixed = &common.authority.fixed_publication;
     fixed.stable_scope.functions = &declarations;
     fixed.publication.contracts = &contracts;
@@ -552,9 +616,20 @@ test "typed immediate explicit base preserves the original child allocation" {
     var arena = std.heap.ArenaAllocator.init(c.allocator);
     defer arena.deinit();
     const input = try refs.returnOriginConstructorInput(&c, arena.allocator(), fixed.*, dto.caller);
+    if (throws) {
+        var base_projection = try body.project(&c, @enumFromInt(1), &directory, &budget);
+        defer base_projection.deinit();
+        try std.testing.expectEqual(@as(?body.Pending, null), base_projection.pending);
+        const certificate_rows = explicitCertificateRows(&contracts, input);
+        try std.testing.expect((try certificates.covered(c.allocator, &directory, dto.callee, &base_projection.graph.?, &certificate_rows, &budget)) == .covered);
+    }
     var analyzed = try domain.analyzeReturns(c.allocator, &directory, graph, &budget, input);
     defer analyzed.deinit();
     try std.testing.expectEqual(@as(?domain.Pending, null), analyzed.pending);
+    if (throws) {
+        try expectExplicitBaseThrow(&c, &directory, graph, &analyzed, input, &contracts, &budget);
+        return;
+    }
     try std.testing.expect(analyzed.normal_live and !analyzed.language_live);
     const root = analyzed.input_exits.?.input;
     const child = analyzed.calls[0].receiver;
@@ -609,5 +684,97 @@ test "typed immediate explicit base preserves the original child allocation" {
     contracts[1].upper.facets.may_throw = true;
     var throwing = try domain.analyzeReturns(c.allocator, &directory, graph, &budget, input);
     defer throwing.deinit();
-    try std.testing.expectEqual(@as(?domain.Pending, .call_entry), throwing.pending);
+    try std.testing.expectEqual(@as(?domain.Pending, .fixed_completion), throwing.pending);
+}
+
+fn explicitCertificateRows(contracts: *const [2]domain.PublicationContract, input: domain.FormalInput) [2]certificates.FixedContract {
+    return .{
+        .{ .function_id = dto.caller, .graph = &contracts[0].return_origins.?, .complete = &input.fixed[0] },
+        .{ .function_id = dto.callee, .graph = &contracts[1].return_origins.?, .complete = &input.fixed[1] },
+    };
+}
+
+fn expectExplicitBaseThrow(c: *context.Context, directory: *const m.Directory, graph: *const m.Graph, analyzed: *const domain.Analysis,
+    input: domain.FormalInput, contracts: *[2]domain.PublicationContract, budget: *m.Budget) !void {
+    try std.testing.expect(!analyzed.normal_live and analyzed.language_live and analyzed.normal.len == 0);
+    try std.testing.expect(analyzed.language.len != 0);
+    for (analyzed.language) |atom| {
+        try std.testing.expect(atom.source == .node);
+        const parameter = graph.nodes[atom.source.node];
+        try std.testing.expect(parameter == .parameter and parameter.parameter.index == 1);
+    }
+    const parent = analyzed.input_exits.?.language;
+    try std.testing.expect(parent.live and parent.unbound and parent.atoms.len == 0);
+    try std.testing.expectEqual(@as(usize, 1), parent.missing_fields.?.len);
+    try std.testing.expectEqual(@as(usize, 0), analyzed.initializations.len);
+    const fact = analyzed.calls[0];
+    const base = fact.analysis.input_exits.?.language;
+    try std.testing.expect(base.live and !base.unbound and base.atoms.len == 1);
+    try std.testing.expectEqual(@as(usize, 0), base.missing_fields.?.len);
+    try std.testing.expect(!fact.analysis.input_exits.?.normal.live);
+
+    var effect = try body.coverReceiverEffects(c, @enumFromInt(0));
+    defer effect.deinit();
+    try std.testing.expect(effect.proof != null and !effect.analysis.?.normal_live and effect.analysis.?.language_live);
+    const certificate_rows = explicitCertificateRows(contracts, input);
+    try std.testing.expect((try certificates.covered(c.allocator, directory, dto.caller, graph, &certificate_rows, budget)) == .covered);
+
+    var rows = ownerRows(contracts);
+    rows[0].parameters = &.{ .{ .write = true }, .{} };
+    const locations = [_]owners.Location{
+        .{ .kind = .root, .owner = .nonowning, .type_id = dto.scalar },
+        .{ .kind = .root, .owner = .nonowning, .type_id = dto.scalar },
+    };
+    const initial: owners.Initial = .{ .locations = &locations, .arguments = &.{ &.{}, &.{1} }, .environment = &.{}, .heap = &.{}, .parents = &.{} };
+    var owned = try owners.analyzeInputs(c.allocator, directory, &physical, dto.caller, graph, &rows, budget, analyzed, &initial);
+    defer owned.deinit();
+    try std.testing.expectEqual(@as(?owners.Pending, null), owned.pending);
+    try std.testing.expect(!owned.normal_live and owned.normal_heap.len == 0 and owned.language_live);
+    try std.testing.expectEqual(@as(usize, 1), owned.language.len);
+    try std.testing.expectEqual(@as(?usize, 1), owned.locations[owned.language[0]].input);
+    try std.testing.expectEqual(@as(usize, 1), owned.language_heap.len);
+    const prefix = owned.language_heap[0];
+    try std.testing.expectEqualStrings("field:" ++ dto.field, prefix.selector);
+    try std.testing.expectEqualSlices(usize, owned.language, prefix.values.items);
+
+    const original_leaf = contracts[1].return_origins.?;
+    const wrong_nodes = original_leaf.nodes[0..5].* ++ [_]m.Value{.{ .literal = .{ .@"type" = dto.scalar, .category = .other } }};
+    var wrong_payload = original_leaf;
+    wrong_payload.nodes = &wrong_nodes;
+    wrong_payload.language = &.{5};
+    var false_normal = original_leaf;
+    false_normal.normal = &.{1};
+    false_normal.exits.normal = &.{.{ .heap = 1, .control = 1 }};
+    for ([_]m.Graph{ wrong_payload, false_normal }) |rejected_leaf| {
+        contracts[1].return_origins = rejected_leaf;
+        try std.testing.expect((try m.validateGraph(c.allocator, directory, dto.callee, &contracts[1].return_origins.?, budget)) == .pending);
+        var rejected = try domain.analyzeReturns(c.allocator, directory, graph, budget, input);
+        defer rejected.deinit();
+        try std.testing.expectEqual(@as(?domain.Pending, .fixed_completion), rejected.pending);
+    }
+    contracts[1].return_origins = original_leaf;
+    contracts[1].upper.facets.may_throw = false;
+    var undeclared = try domain.analyzeReturns(c.allocator, directory, graph, budget, input);
+    defer undeclared.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, .fixed_completion), undeclared.pending);
+
+    // The separately empty predecessor supplies no exact Base-call proof.
+    // It must keep this second candidate language root unresolved.
+    contracts[1].upper.facets.may_throw = true;
+    var unproved = contracts[0].return_origins.?;
+    const unproved_nodes = unproved.nodes[0..10].* ++ [_]m.Value{.{ .receiver_value = .{ .@"type" = null, .action = 8 } }};
+    const unproved_heaps = unproved.heaps[0..8].* ++ [_]m.Heap{.{
+        .receiver_action = .{ .previous = 2, .control = 6, .frames = &.{0}, .action = .get, .operands = &.{}, .completion = .language },
+    }};
+    const unproved_controls = unproved.controls[0..5].* ++ [_]m.Control{
+        .{ .join = .{ .inputs = &.{} } }, .{ .join = .{ .inputs = &.{ 1, 5 } } }, .{ .receiver_completion = .{ .action = 8 } },
+    };
+    unproved.nodes = &unproved_nodes;
+    unproved.heaps = &unproved_heaps;
+    unproved.controls = &unproved_controls;
+    unproved.language = &.{ 9, 10 };
+    unproved.exits.language = &.{ .{ .heap = 7, .control = 4 }, .{ .heap = 8, .control = 7 } };
+    contracts[0].return_origins = unproved;
+    const unproved_rows = explicitCertificateRows(contracts, input);
+    try std.testing.expect((try certificates.covered(c.allocator, directory, dto.caller, graph, &unproved_rows, budget)) == .pending);
 }

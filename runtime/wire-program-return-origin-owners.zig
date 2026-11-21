@@ -129,6 +129,28 @@ const Engine = struct {
     fn resolved(self: *Engine, frame: *const Frame, refs: []const R) E!Set {
         var set: Set = .empty; try self.budget.spend(refs.len); for (refs) |id| try self.merge(&set, frame.values[id].items); return set;
     }
+    fn absentBaseValue(self: *Engine, frame: *const Frame, root: R) E!bool {
+        const receiver = frame.receiver orelse return false;
+        const controls = receiver.absent_base_controls;
+        if (controls.len == 0 or controls.len != frame.graph.controls.len) return false;
+        var id = root;
+        for (0..frame.graph.nodes.len) |_| {
+            try self.budget.step();
+            if (frame.values[id].items.len != 0) return false;
+            switch (frame.graph.nodes[id]) {
+                .join => |row| {
+                    if (row.inputs.len != 1) return false;
+                    id = row.inputs[0];
+                },
+                .receiver_value => |row| {
+                    const operation = frame.graph.heaps[row.action];
+                    return operation == .receiver_action and !receiver.heap_live[row.action] and controls[operation.receiver_action.control];
+                },
+                else => return false,
+            }
+        }
+        return false;
+    }
     fn readyRefs(self: *Engine, frame: *const Frame, refs: []const R) E!bool {
         try self.budget.spend(refs.len);
         for (refs) |id| {
@@ -146,7 +168,7 @@ const Engine = struct {
                 .receiver_value => |row| if (frame.receiver) |receiver| receiver.heap_live[row.action] else true,
                 else => true,
             };
-            if (active and !frame.ready[id]) return false;
+            if (active and !frame.ready[id] and !try self.absentBaseValue(frame, id)) return false;
         }
         return true;
     }

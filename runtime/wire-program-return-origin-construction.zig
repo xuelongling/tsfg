@@ -64,6 +64,9 @@ pub const Analysis = struct {
     // Shared formal receiver continuation facts. Content interpreters borrow
     // these worlds' liveness; they do not repeat the receiver state machine.
     heap_live: []const bool = &.{},
+    // Exact absent direct-Base normal control and its single-predecessor
+    // receiver continuations. Empty/uncomputed controls confer no such fact.
+    absent_base_controls: []const bool = &.{},
     // Child Analysis objects and ALL their arena chunks belong to this parent
     // arena. calls[].analysis is a read-only borrowed view: never separately
     // deinit it or allocate through its arena after this parent result moves.
@@ -461,15 +464,34 @@ const Engine = struct {
             child.kind == .explicit and child.base == null and child.function_id != null and
             try self.budget.equal(role.base.?, child.owner);
     }
-    fn completeBaseAllocation(self: *Engine, analysis: *const Analysis) Error!bool {
+    fn explicitBaseCompletions(self: *Engine, graph: *const model.Graph, analysis: *const Analysis, may_throw: bool) Error!bool {
         const exits = analysis.input_exits orelse return false;
         try self.budget.spend(6);
+        if (analysis.normal_live != exits.normal.live or analysis.language_live != exits.language.live or
+            may_throw != analysis.language_live or analysis.normal_live == analysis.language_live) return false;
         const normal = exits.normal;
-        if (analysis.language_live or exits.language.live or !normal.live or normal.unbound or
-            normal.missing_fields == null or normal.missing_fields.?.len != 0 or
-            normal.atoms.len != 1 or analysis.normal.len != 1) return false;
         const original = Atom{ .source = .{ .allocation = exits.input }, .category = .object };
-        return std.meta.eql(normal.atoms[0], original) and std.meta.eql(analysis.normal[0], original);
+        if (normal.live and (normal.unbound or normal.missing_fields == null or normal.missing_fields.?.len != 0 or
+            normal.atoms.len != 1 or analysis.normal.len != 1 or
+            !std.meta.eql(normal.atoms[0], original) or !std.meta.eql(analysis.normal[0], original))) return false;
+        if (!normal.live and analysis.normal.len != 0) return false;
+        if (!exits.language.live) return analysis.language.len == 0;
+
+        // A failed direct Base can forward its original copied scalar input.
+        // The existing call import then resolves the exact caller argument.
+        // A literal, unrelated local or receiver object needs a separate proof.
+        if (analysis.language.len == 0 or exits.language.missing_fields == null) return false;
+        for (analysis.language) |atom| {
+            try self.budget.spend(2);
+            if (atom.source != .node) return false;
+            const node = graph.nodes[atom.source.node];
+            if (node != .parameter or node.parameter.index != 1) return false;
+        }
+        for (exits.language.atoms) |atom| {
+            try self.budget.step();
+            if (!std.meta.eql(atom, original)) return false;
+        }
+        return true;
     }
     fn bindsExplicitBase(self: *Engine, parent: Ref, row: @FieldType(model.Heap, "receiver_action"), selected: []const Atom) Error!bool {
         for (self.frames) |child| {
@@ -502,7 +524,7 @@ const Engine = struct {
         const selected_role = selected_frame.role orelse { self.pending = .call_entry; return null; };
         if (!try self.budget.equal(selected_role.id, role.id)) { self.pending = .call_entry; return null; }
         if (selected_frame.parent) |parent| {
-            if (!try self.directExplicitBase(parent, selected_role) or call.arguments.len != 1 or fixed.contract.upper.facets.may_throw) {
+            if (!try self.directExplicitBase(parent, selected_role) or call.arguments.len != 1) {
                 self.pending = .call_entry; return null;
             }
         }
@@ -600,7 +622,9 @@ const Engine = struct {
         };
         if (analysis.pending) |reason| { self.pending = reason; return null; }
         if (fixed.contract.upper.facets.may_throw and !analysis.language_live) { self.pending = .fixed_completion; return null; }
-        if (selected_frame.parent != null and !try self.completeBaseAllocation(analysis)) { self.pending = .fixed_completion; return null; }
+        if (selected_frame.parent != null and !try self.explicitBaseCompletions(graph, analysis, fixed.contract.upper.facets.may_throw)) {
+            self.pending = .fixed_completion; return null;
+        }
         const exits = analysis.input_exits orelse { self.pending = .call_entry; return null; };
         if (self.calls.items.len == self.calls.capacity) try self.budget.spend(self.calls.items.len + 1);
         try self.budget.step(); try self.calls.append(self.allocator, .{ .caller_graph = self.graph, .call = ordinal, .receiver = frame, .graph = graph, .input = exits.input, .fixed = fixed, .analysis = analysis, .arguments = arguments });
@@ -707,7 +731,10 @@ const Engine = struct {
             try self.budget.step();
             if (atom.category == .object and atom.source == .allocation and atom.source.allocation == fact.input) own = true;
         }
-        const ready = own and !binding.unbound and fact.fixed.initialization_fields != null and
+        // An explicit child's failed completion retains its own prefix in
+        // this World but never publishes a ready child allocation.
+        const ready = (row.completion == .normal or self.frames[frame].parent == null) and
+            own and !binding.unbound and fact.fixed.initialization_fields != null and
             binding.missing_fields != null and binding.missing_fields.?.len == 0;
         // This runs only for an actual live resolved completion. A paused
         // Demand/bottom is not an unknown birth. Earlier bad births persist.
@@ -719,10 +746,71 @@ const Engine = struct {
         const callee = self.scalar_calls[ordinal] orelse return false;
         return self.budget.equal(callee, self.graph.calls[ordinal].function_id);
     }
+    fn absentExplicitBaseControls(self: *Engine) Error![]const bool {
+        if (!self.explicit_base) return &.{};
+        var selected: ?Ref = null;
+        for (self.calls.items) |fact| {
+            try self.budget.step();
+            if (self.frames[fact.receiver].parent == null or fact.analysis.normal_live or !fact.analysis.language_live) continue;
+            const exits = fact.analysis.input_exits orelse continue;
+            const site = self.graph.calls[fact.call];
+            try self.budget.spend(5);
+            if (selected != null or fact.caller_graph != self.graph or fact.analysis.pending != null or
+                exits.normal.live or !exits.language.live or !self.controls[site.control] or !self.worlds[site.heap].live or
+                self.call_live[fact.call][0] or !self.call_live[fact.call][1]) return &.{};
+            selected = fact.call;
+        }
+        const call = selected orelse return &.{};
+        const controls = self.graph.controls;
+        const State = enum { unknown, visiting, resolved };
+        try self.budget.spend(3 * controls.len);
+        const absent = try self.allocator.alloc(bool, controls.len);
+        const states = try self.allocator.alloc(State, controls.len);
+        @memset(states, .unknown);
+        const chain = try self.allocator.alloc(Ref, controls.len);
+        for (0..controls.len) |start| {
+            try self.budget.step();
+            if (states[start] == .resolved) continue;
+            var id = start;
+            var count: usize = 0;
+            var known = false;
+            walk: while (true) {
+                try self.budget.step();
+                switch (states[id]) {
+                    .resolved => { known = absent[id]; break; },
+                    .visiting => break,
+                    .unknown => {},
+                }
+                states[id] = .visiting;
+                chain[count] = id;
+                count += 1;
+                if (self.controls[id]) break;
+                id = switch (controls[id]) {
+                    .entry => break :walk,
+                    .join => |row| if (row.inputs.len == 1) row.inputs[0] else break :walk,
+                    .receiver_completion => |row| blk: {
+                        const operation = self.graph.heaps[row.action];
+                        if (operation != .receiver_action or self.worlds[row.action].live) break :walk;
+                        break :blk operation.receiver_action.control;
+                    },
+                    .call => |row| {
+                        known = row.call == call and row.completion == .normal;
+                        break :walk;
+                    },
+                };
+            }
+            for (chain[0..count]) |visited| {
+                try self.budget.step();
+                states[visited] = .resolved;
+                absent[visited] = known;
+            }
+        }
+        return absent;
+    }
     // Empty Data is not normally an absence proof. Only a finite, nonempty
     // wrapper DAG whose every leaf is a resolved impossible receiver or fixed
     // call completion explains an inactive root. No roots or prefixes are removed.
-    fn inactiveReceiverRoot(self: *Engine, root: Ref) Error!bool {
+    fn inactiveReceiverRoot(self: *Engine, root: Ref, absent_base_controls: []const bool) Error!bool {
         const length = self.graph.nodes.len;
         try self.budget.spend(3 * length);
         const marks = try self.allocator.alloc(u2, length); @memset(marks, 0);
@@ -758,7 +846,13 @@ const Engine = struct {
                     // declaration, selected Actual entrance or upper bound.
                     try self.budget.spend(4);
                     const receiver_action_row = self.graph.heaps[row.action].receiver_action;
-                    if (self.worlds[row.action].live or !self.controls[receiver_action_row.control] or !self.worlds[receiver_action_row.previous].live) return false;
+                    if (self.worlds[row.action].live) return false;
+                    if (!self.controls[receiver_action_row.control]) {
+                        const control = receiver_action_row.control;
+                        if (control >= absent_base_controls.len or !absent_base_controls[control]) return false;
+                        try self.budget.spend(2); marks[id] = 2; count -= 1; continue;
+                    }
+                    if (!self.worlds[receiver_action_row.previous].live) return false;
                     try self.budget.spend(receiver_action_row.frames.len);
                     for (receiver_action_row.frames) |operand| {
                         const selected = self.values[operand].frames.items;
@@ -1193,6 +1287,7 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
         for (receiver) |id| { try budget.step(); resolved = resolved or values[id].frames.items.len != 0; }
         if (!resolved) { result.pending = .unknown_origin; return; }
     }
+    result.absent_base_controls = try engine.absentExplicitBaseControls();
     var normal: Atoms = .empty; var language: Atoms = .empty;
     for (graph.exits.normal) |exit| {
         try budget.step(); if (controls[exit.control] and !worlds[exit.heap].live) { result.pending = .heap_protocol; return; }
@@ -1206,7 +1301,7 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
         for (graph.normal) |id| {
             try budget.step();
             if (values[id].atoms.items.len == 0) {
-                if (try engine.inactiveReceiverRoot(id)) continue;
+                if (try engine.inactiveReceiverRoot(id, result.absent_base_controls)) continue;
                 result.pending = .unknown_origin; return;
             }
             try engine.atoms(&normal, values[id].atoms.items);
@@ -1218,7 +1313,7 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
         for (graph.language) |id| {
             try budget.step();
             if (values[id].atoms.items.len == 0) {
-                if (try engine.inactiveReceiverRoot(id)) continue;
+                if (try engine.inactiveReceiverRoot(id, result.absent_base_controls)) continue;
                 result.pending = .unknown_origin; return;
             }
             try engine.atoms(&language, values[id].atoms.items);
