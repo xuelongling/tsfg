@@ -34,9 +34,21 @@ const profile=new URL('./testdata/formal-cold-profile/',import.meta.url);
 const {hir}=JSON.parse(await fs.readFile(new URL('owned-snapshot-hir.json',profile),'utf8'));
 const core=await fs.readFile(new URL('checked-i8.core.mlir',profile));
 assert.equal(sha256(core),'sha256:908bcb58249895f78d1c2e8e1ec8cee5b4a10d4b5d66f9b0e0bd803a0c12f05a');
-const comment=Buffer.from('// Source note: ');
-const valid=Buffer.concat([core,comment,Buffer.from('\ufffd\n')]);
-const malformed=Buffer.concat([core,comment,Buffer.of(255,10)]);
+
+// Mock only the printer's outer framing. The compiler body remains fixture text.
+/** @param {string} text @param {Buffer} [tail] */
+function framedCore(text,tail=Buffer.alloc(0)){
+  const [header,...body]=text.trimEnd().split('\n');
+  const prefix='module attributes {';
+  assert.ok(header.startsWith(prefix)&&header.endsWith('} {'));
+  assert.equal(body.pop(),'}');
+  return Buffer.concat([Buffer.from('"builtin.module"() ({\n'+body.join('\n')+'\n'),
+    tail,Buffer.from('}) {'+header.slice(prefix.length,-3)+'} : () -> ()\n')]);
+}
+const valid=framedCore(core.toString('utf8'),Buffer.from('// Source note: \ufffd\n'));
+const malformed=framedCore(core.toString('utf8'),Buffer.concat([Buffer.from('// Source note: '),Buffer.of(255,10)]));
+const capture=process.env.TSFG_R03_CORE_PAIR_CAPTURE;
+const mismatch={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked input identity differs'};
 
 test('Core transport preserves valid bytes and rejects malformed stdout before dependent stages',async t=>{
   const readFile=fs.readFile;
@@ -78,6 +90,34 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     assert.equal((await pending).status,'ok');
     assert.deepEqual(calls.slice(first),[['--canonicalize']]);
   });
+  await t.test('registered Core transport rejects a foreign input before bytecode',async sub=>{
+    const {hir:foreignHir}=stringCases()[0];
+    const foreign=framedCore(expectedStringCore(foreignHir)).toString('utf8');
+    sub.after(()=>{stdout=valid;});
+    for(const text of [foreign,foreign.replace('}) {','}) {nested = [{tsfg_core.input_identity = "'+hir.inputIdentity+'"}], ')]){
+      stdout=Buffer.from(text);
+      const first=calls.length;
+      const result=await compileOwnedHir(hir,{core:artifact});
+      assert.deepEqual(result,mismatch);
+      assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+    }
+  });
+  await t.test('registered Core transport binds retained compiler stdout',{skip:!capture},async sub=>{
+    assert.ok(capture);
+    const [matching,foreign]=await Promise.all(['3FrC2E','VGcGjr'].map(name=>
+      fs.readFile(path.join(capture,'tsfg-owned-hir-cli-'+name,'stdout.bin'))));
+    assert.equal(sha256(matching),'sha256:d726b11309b39a075267614589ad1c557b9d0163148f3dd8171967af0c10d3e5');
+    assert.equal(sha256(foreign),'sha256:bb72e86dc34b310a43851ffa15a1f3e3e313e101c65399d4e246d168b710f3fa');
+    sub.after(()=>{stdout=valid;});
+    stdout=Buffer.from(matching);
+    const result=await compileOwnedCore(hir,{core:artifact});
+    assert.equal(result.status,'ok');
+    assert.deepEqual(Buffer.from(result.core,'utf8'),matching);
+    stdout=Buffer.from(foreign);
+    const rejected=await compileOwnedCore(hir,{core:artifact,optimize:true});
+    assert.equal(rejected.status,'tool-error');
+    assert.deepEqual(rejected,mismatch);
+  });
   await t.test('registered bytecode transport keeps the checked input identity',async sub=>{
     const {hir:stringHir,context}=stringCases()[0];
     const packet=expectedStringPacket(stringHir);
@@ -85,11 +125,11 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     const first=calls.length;
     packetStdout=packet;
     sub.after(()=>{packetStdout=undefined;stdout=valid;});
-    stdout=Buffer.from(expectedStringCore(stringHir));
+    stdout=framedCore(expectedStringCore(stringHir));
     const matched=await compileOwnedHir(stringHir,{core:artifact,factsContext:context});
     assert.equal(matched.status,'ok');
     assert.deepEqual(matched.bytecode,packet);
-    stdout=Buffer.from(core);
+    stdout=framedCore(core.toString('utf8'));
     assert.deepEqual(await compileOwnedHir(hir,{core:artifact}),
       {status:'tool-error',code:'r03-d-consumer',message:'r04-producer-input-identity: packet target or input differs from the checked HIR'});
     assert.deepEqual(calls.slice(first),[['--canonicalize'],['--emit-bytecode'],['--canonicalize'],['--emit-bytecode']]);
@@ -98,7 +138,7 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     const {hir:stringHir,context}=stringCases()[0];
     const [first,second,...rest]=stringHir.functions;
     assert.notEqual(first.id,second.id);
-    const selectedCore=Buffer.from(expectedStringCore(stringHir));
+    const selectedCore=framedCore(expectedStringCore(stringHir));
     const options={core:artifact,factsContext:context};
     const packet=expectedStringPacket(stringHir);
     stdout=selectedCore;

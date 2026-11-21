@@ -272,6 +272,31 @@ async function compileSnapshot(snapshot, options) {
   return produceBytecode(() => produceCore(highLevel.hir, options));
 }
 
+/** Match the request in the generic compiler printer's final module dictionary.
+ * @param {string} core @param {string} inputIdentity
+ */
+function hasCheckedCoreInput(core,inputIdentity) {
+  const end=core.trimEnd().length;
+  const closing=core.slice(core.lastIndexOf('\n',end-1)+1,end);
+  const suffix='} : () -> ()';
+  if(!core.startsWith('"builtin.module"() ({\n')||!closing.startsWith('}) {')||!closing.endsWith(suffix))return false;
+  const fields=closing.slice(4,-suffix.length),expected='"'+inputIdentity+'"';
+  const tokens=/"(?:[^"\\]|\\.)*"|[{}\[\]]|(?:^|, )(tsfg_core\.input_identity) = /gu;
+  let depth=0,found=false;
+  for(const match of fields.matchAll(tokens)){
+    const [token,key]=match;
+    if(key&&depth===0){
+      const value=match.index+token.length,after=value+expected.length;
+      if(found||!fields.startsWith(expected,value)||(after!==fields.length&&!fields.startsWith(', ',after)))return false;
+      found=true;
+    }else if(token==='['||token==='{')depth++;
+    else if(token===']'||token==='}'){
+      if(--depth<0)return false;
+    }
+  }
+  return found&&depth===0;
+}
+
 async function produceCore(hir, options, lower = undefined, context = undefined) {
   const { core:coreExecutable, optimize } = options;
   const executable = await verifiedConsumer(coreExecutable, "core");
@@ -289,6 +314,8 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
+  if(!common&&(ordinary||generic)&&!hasCheckedCoreInput(core,inputIdentity))
+    throw new TypeError('r03-core-output: checked input identity differs');
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
 }
 
