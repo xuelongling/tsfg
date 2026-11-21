@@ -111,7 +111,7 @@ struct Lengths {
           if(exported.count(id)||string(contract,"role")!="function"||!string(contract,"ownerType").empty()||!parameter||parameter.getOwner()!=&fn.getBody().front()||callers[id].empty()){
             if(!outcome(graph.unknown(task.node)))return false;
           }else for(auto *call:callers.at(id)){
-            if(!charge())return false;if(!proof.mayReach(call->getBlock()))continue;
+            if(!charge())return false;if(!proof.mayExecute(call))continue;
             if(call->getName().getStringRef()!="func.call"||parameter.getArgNumber()>=call->getNumOperands()){
               if(!outcome(graph.unknown(task.node)))return false;
             }else if(!pass(call,call->getOperand(parameter.getArgNumber())))return false;

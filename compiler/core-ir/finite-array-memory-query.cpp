@@ -197,7 +197,7 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
             if(!unknown(task.node))return {};continue;
           }
           for(auto *call:callers.at(id)) {
-            if(!charge())return {};if(!proof.mayReach(call->getBlock()))continue;
+            if(!charge())return {};if(!proof.mayExecute(call))continue;
             if(call->getName().getStringRef()!="func.call"||owner.getArgNumber()>=call->getNumOperands()) {
               if(!unknown(task.node))return {};continue;
             }
