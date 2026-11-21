@@ -104,11 +104,14 @@ test('actual Source i32 plus, operand order and U-only normal continuation use t
       });
       return id;
     };
-    const value={kind:'shortCircuit',operator,left:{kind:literal===undefined?'reference':'boolean',value:literal}};
+    const operand={kind:literal===undefined?'reference':'boolean',value:literal};
+    const value={kind:'shortCircuit',operator,left:{kind:'group',operand:{kind:'group',operand}}};
+    let guardWork=0;
     const dependencies=finiteNormalLogical(value,flow,flow.always,(id,gate,propagatePending)=>{
       if(id==='right')assert.equal(propagatePending,takesRight,'only selectable operands supply pending facts');
       return emit(id,gate,id==='left'?[boolTypeId]:rhsTypes);
-    });
+    },()=>{guardWork++;});
+    assert.equal(guardWork,2);
     emit('result',flow.always,[boolTypeId],dependencies);
     emit('next',flow.normal('result'),[i32TypeId]);
     flow.seal();

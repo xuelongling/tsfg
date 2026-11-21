@@ -8,17 +8,24 @@ export function finiteFieldWriteVersion(path,value,sourcePath,target) {
   return {id:path+'/field-version/'+target.actualType+'/'+target.fieldId,node:path+'/value',
     actualType:target.actualType,field:target.fieldId,origin:{source:sourcePath,...value.range}};
 }
-export function literalBooleanRhs(value) {
-  if((value.kind==='shortCircuit'||value.kind==='binary')&&
-      (value.operator==='&&'||value.operator==='||')&&value.left.kind==='boolean')
-    return value.left.value===(value.operator==='&&');
-  return null;
+export function booleanLiteral(value,charge) {
+  while(value.kind==='group'){
+    charge();value=value.operand;
+  }
+  return value.kind==='boolean'?value:null;
 }
-export function literalIfArm(value) {
-  return value.kind==='if'&&value.condition.kind==='boolean'?(value.condition.value?'then':'else'):null;
+export function literalBooleanRhs(value,charge) {
+  if((value.kind!=='shortCircuit'&&value.kind!=='binary')||
+      (value.operator!=='&&'&&value.operator!=='||'))return null;
+  const left=booleanLiteral(value.left,charge);
+  return left===null?null:left.value===(value.operator==='&&');
 }
-export function literalLoopCondition(value) {
-  return value.kind==='while'&&value.condition.kind==='boolean'?value.condition.value:null;
+export function literalIfArm(value,charge) {
+  const condition=value.kind==='if'?booleanLiteral(value.condition,charge):null;
+  return condition===null?null:condition.value?'then':'else';
+}
+export function literalLoopCondition(value,charge) {
+  return value.kind==='while'?booleanLiteral(value.condition,charge)?.value??null:null;
 }
 
 /** @typedef {{target:string,fields:Map<string,Set<string>>,mayExecute:boolean}} FieldCallContext */
@@ -59,10 +66,10 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
   const endsBody=body=>body?.some(row=>{charge();return endsStatement(row);})??false;
   function endsStatement(statement) {
     if(statement.kind==='return'||statement.kind==='constructorReturn')return true;
-    if(literalLoopCondition(statement)===true)return true;
+    if(literalLoopCondition(statement,charge)===true)return true;
     if(statement.kind!=='block'&&statement.kind!=='if')return false;
     if(terminal.has(statement))return terminal.get(statement);
-    const arm=literalIfArm(statement),ends=statement.kind==='block'?endsBody(statement.body):
+    const arm=literalIfArm(statement,charge),ends=statement.kind==='block'?endsBody(statement.body):
       arm?endsBody(statement[arm]):endsBody(statement.then)&&endsBody(statement.else);
     terminal.set(statement,ends);return ends;
   }
@@ -108,7 +115,7 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
       if(['construct','superConstruct','forwardBaseConstruction'].includes(value.kind)) {
         effect.writes=true;target(constructors.get(value.construction));
       }
-      const skipLoop=literalLoopCondition(value)===false;
+      const skipLoop=literalLoopCondition(value,charge)===false;
       if(value.kind==='while'&&mayExecute&&!skipLoop){cyclicFunctions.add(fn.id);effect.unknown=true;}
       if(value.kind==='call') {
         const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
@@ -117,7 +124,7 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
           target(id);sites.set(path+'\0'+id,{target:id,mayExecute});
         }
       }
-      const skipRight=literalBooleanRhs(value)===false,arm=literalIfArm(value);
+      const skipRight=literalBooleanRhs(value,charge)===false,arm=literalIfArm(value,charge);
       for(const [key,child]of Object.entries(value))if(child&&typeof child==='object') {
         const skipped=key==='right'&&skipRight||key==='then'&&arm==='else'||key==='else'&&arm==='then'
           ||key==='body'&&skipLoop;

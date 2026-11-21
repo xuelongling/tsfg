@@ -5,6 +5,7 @@ import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
+import {booleanLiteral} from './finite-field-effects.mjs';
 
 // The production state-copy seam also admits bounded component budget checks;
 // its version tokens are proof identities, never synthetic Source expressions.
@@ -139,7 +140,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     }return env;
   }
   function predicateTruth(value,path) {
-    charge();if(value.kind==='boolean')return value.value;
+    charge();const literal=booleanLiteral(value,charge);if(literal!==null)return literal.value;
     if(value.kind!=='binary'||!['===','!=='].includes(value.operator))return undefined;
     let classified;
     if(['undefined','null'].includes(value.right.kind))classified=presence(path+'/left',value.right.kind);
@@ -381,13 +382,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
         const left=child('left',terminalRoot);if(left.terminal)return left;
+        const literal=value.operator==='??'?null:booleanLiteral(value.left,charge),truth=literal?.value??left.truth;
         const possibilities=collectAll?{present:true,absent:true}:value.operator==='??'?presence(path+'/left'):
-          {present:left.truth===undefined||left.truth===(value.operator==='||'),absent:left.truth===undefined||left.truth===(value.operator==='&&')};
+          {present:truth===undefined||truth===(value.operator==='||'),absent:truth===undefined||truth===(value.operator==='&&')};
         const resultValue=result=>{if(possibilities.absent&&value.operator!=='??')forgetAssignedTruth(value.right,bindings);
           return value.operator==='??'?adapt(result,result.symbol,path):{symbol:path};};
         if(!possibilities.absent)return resultValue(left);
         if(!possibilities.present) {
-          const result=child('right',terminalRoot&&(value.operator==='??'||value.left.kind==='boolean'));
+          const result=child('right',terminalRoot&&(value.operator==='??'||literal!==null));
           return result.terminal?result:resultValue(result);
         }
         const right=clone(state),branchBindings=copyBindings(bindings),
@@ -464,9 +466,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         else if(row.kind==='if') {
           const condition=expression(row.condition,p+'/condition',state,bindings,true);
           if(condition.terminal)return null;
+          const truth=collectAll?undefined:condition.truth??booleanLiteral(row.condition,charge)?.value;
           const a=copyBindings(bindings),b=copyBindings(bindings),
-            left=!collectAll&&condition.truth===false?null:statements(row.then,p+'/then',clone(state),a),
-            right=!collectAll&&condition.truth===true?null:statements(row.else??[],p+'/else',clone(state),b);
+            left=truth===false?null:statements(row.then,p+'/then',clone(state),a),
+            right=truth===true?null:statements(row.else??[],p+'/else',clone(state),b);
           state=join(left,right);if(!state)return null;
           meetBindings(bindings,a,b,!!left,!!right);forgetTruth(bindings);
         }else if(row.kind==='while') {

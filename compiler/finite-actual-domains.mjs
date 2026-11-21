@@ -515,7 +515,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))
-        dependencies.push(...finiteNormalLogical(v,flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending)));
+        dependencies.push(...finiteNormalLogical(v,flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),charge));
       else for(const key of ['left','right','operand','receiver','index','value'])if(v[key])child(key);
       if(v.target)for(const key of ['receiver','index'])if(v.target[key])at(v.target[key],p+'/target/'+key);
       children('arguments');if(finiteNumericUse(v))for(const key of v.kind==='binary'?['left','right']:['operand'])

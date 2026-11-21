@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {i32TypeId} from './identity.mjs';
-import {literalBooleanRhs,literalIfArm} from './finite-field-effects.mjs';
+import {literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
 
 const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^','<','<=','>','>=']);
 /** The accepted first numeric-use domain is exactly same-i32 plus undefined. */
@@ -11,9 +11,9 @@ export function finiteNumericUse(value) {
 }
 
 /** Register both lexical operands and require completion of the selected path. */
-export function finiteNormalLogical(value,flow,incoming,emit) {
+export function finiteNormalLogical(value,flow,incoming,emit,charge) {
   const left=flow.normal(emit('left',incoming,true));
-  const takesRight=literalBooleanRhs(value);
+  const takesRight=literalBooleanRhs(value,charge);
   const right=flow.normal(emit('right',takesRight===false?flow.never:left,takesRight!==false));
   return takesRight===true?[left,right]:[left];
 }
@@ -128,12 +128,12 @@ export function finiteNormalBody(statements,path,fn,{flow,expression,binding,cop
     }else if(s.kind==='if'||s.kind==='while') {
       const condition=emit(s.condition,'/condition'),incoming=flow.normal(condition);
       if(s.kind==='while') {
-        const literal=s.condition.kind==='boolean'?s.condition.value:null;
+        const literal=literalLoopCondition(s,charge);
         frame.gate=literal===true?flow.never:incoming;
         stack.push({body:s.body,path:p+'/body',guards:stableGuards(frame.guards,s.body,charge),
           gate:literal===false?flow.never:incoming,index:0});
       }else {
-        const arm=literalIfArm(s);
+        const arm=literalIfArm(s,charge);
         const exits=[];let remaining=2;
         const complete=gate=>{exits.push(gate);if(--remaining===0)frame.gate=flow.any(exits);};
         // Suspend this sequence until both arms have registered their exits.

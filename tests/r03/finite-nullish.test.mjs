@@ -9,6 +9,7 @@ import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
 import {finiteFieldEffects} from '../../compiler/finite-field-effects.mjs';
+import {finiteCoreGuard} from '../../compiler/finite-core-emitter.mjs';
 import {buildFiniteFieldReaching} from '../../compiler/finite-field-reaching.mjs';
 import {sha256,scalarName,scalarTypeIds} from '../../compiler/identity.mjs';
 import {finitePresence} from '../../compiler/finite-presence.mjs';
@@ -109,7 +110,24 @@ test('only a definitely selected nullish fallback can stop the following Array r
   assert.deepEqual([...required.terminalReads??[]],[fallback+'/old-value']);
 });
 
-test('literal Boolean short circuit keeps lexical field writes and selects the reached version',async()=>{
+function groupedBoolean(operand) {
+  const outer={kind:'group',type:scalarTypeIds.bool,range:operand.range};
+  return {...outer,operand:{...outer,operand}};
+}
+
+test('a direct parenthesized Core guard keeps the literal and branch anchors',()=>{
+  const literal={kind:'boolean',value:false,type:scalarTypeIds.bool,range:{start:12,end:17},domainNode:'guard/operand/operand'};
+  const group={...groupedBoolean(literal),range:{start:10,end:19}};
+  let work=0;
+  const charge=()=>{work++;};
+  assert.deepEqual(finiteCoreGuard(group,charge),{...literal,range:group.range,literalRange:literal.range});
+  assert.equal(work,2);
+  const assertion=groupedBoolean({kind:'assertType',operand:literal,range:{start:12,end:28}});
+  const alias=groupedBoolean({kind:'reference',binding:'flag',range:{start:12,end:16}});
+  for(const value of [assertion,alias])assert.equal(finiteCoreGuard(value,charge),value);
+});
+
+test('parenthesized Boolean short circuit keeps lexical field writes and selects the reached version',async()=>{
   const {hir,context}=await actual(expected.cases.find(row=>row.memory==='field'));
   const plan=buildFiniteCoreDomains(hir,context).definition,run=hir.functions.find(fn=>fn.name==='run');
   const [initial,conditional,returned]=run.body,original=conditional.expression;
@@ -122,7 +140,7 @@ test('literal Boolean short circuit keeps lexical field writes and selects the r
   const modelPlan={...plan,fields:moveFields(plan.fields),carrierFields:moveFields(plan.carrierFields)};
   // Component analysis of checked field operations under a literal Boolean guard.
   for(const [operator,literal,takesRhs] of [['&&',false,false],['||',true,false],['&&',true,true],['||',false,true]]){
-    const left={kind:'boolean',value:literal,type:scalarTypeIds.bool,range:original.left.range};
+    const left=groupedBoolean({kind:'boolean',value:literal,type:scalarTypeIds.bool,range:original.left.range});
     const right={kind:'binary',operator:'===',left:original.right,right:initial.expression.value,type:scalarTypeIds.bool,range:original.right.range};
     const expression={...original,kind:'shortCircuit',operator,left,right,type:scalarTypeIds.bool};
     const fn={...run,body:[initial,{...conditional,expression},returned]};
@@ -134,7 +152,7 @@ test('literal Boolean short circuit keeps lexical field writes and selects the r
   }
 });
 
-test('literal if keeps both field stores and selects the reached version',async()=>{
+test('a parenthesized literal if keeps both field stores and selects the reached version',async()=>{
   const {hir,context}=await actual(expected.cases.find(row=>row.memory==='field'));
   const plan=buildFiniteCoreDomains(hir,context).definition,run=hir.functions.find(fn=>fn.name==='run');
   const [initial,conditional,returned]=run.body,original=conditional.expression,root=run.id+'/body/';
@@ -145,7 +163,7 @@ test('literal if keeps both field stores and selects the reached version',async(
     const move=rows=>rows.map(row=>row.id.startsWith(oldPath+'/')?{...row,id:rhsPath+row.id.slice(oldPath.length)}:row);
     const modelPlan={...plan,fields:move(plan.fields),carrierFields:move(plan.carrierFields)};
     for(const taken of [false,true]) {
-      const condition={kind:'boolean',value:taken===(arm==='then'),type:scalarTypeIds.bool,range:original.left.range};
+      const condition=groupedBoolean({kind:'boolean',value:taken===(arm==='then'),type:scalarTypeIds.bool,range:original.left.range});
       const branch={kind:'if',range:conditional.range,condition,then:[],else:[],[arm]:[{...conditional,expression:original.right}]};
       const fn={...run,body:[initial,branch,returned]},model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
       const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
@@ -156,7 +174,7 @@ test('literal if keeps both field stores and selects the reached version',async(
   }
 });
 
-test('literal false while preserves the reached field version and records the lexical loop store',async()=>{
+test('parenthesized false while preserves the reached field version and records the lexical loop store',async()=>{
   const {hir,context}=await actual(expected.cases.find(row=>row.memory==='field'));
   const plan=buildFiniteCoreDomains(hir,context).definition,run=hir.functions.find(fn=>fn.name==='run');
   const [initial,conditional,returned]=run.body,original=conditional.expression,root=run.id+'/body/';
@@ -169,7 +187,7 @@ test('literal false while preserves the reached field version and records the le
   const literalFalse={kind:'boolean',value:false,type:scalarTypeIds.bool,range:original.left.range},
     unknown={kind:'binary',operator:'===',left:original.left,right:initial.expression.value,type:scalarTypeIds.bool,range:original.left.range};
   for(const condition of [literalFalse,unknown]) {
-    const loop={kind:'while',range:conditional.range,condition,body:[{...conditional,expression:original.right}]};
+    const loop={kind:'while',range:conditional.range,condition:groupedBoolean(condition),body:[{...conditional,expression:original.right}]};
     const fn={...run,body:[initial,loop,returned]},model={...hir,functions:hir.functions.map(row=>row.id===run.id?fn:row)};
     const reaching=buildFiniteFieldReaching(model,modelPlan,()=>{});
     assert.deepEqual(reaching.writes.filter(row=>row.id.startsWith(root)).map(row=>row.node),[first,second]);

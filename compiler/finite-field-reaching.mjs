@@ -287,7 +287,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
         if(!possibilities.absent)return left;
         if(!possibilities.present)return child('right');
-        const rightReached=literalBooleanRhs(value);
+        const rightReached=literalBooleanRhs(value,charge);
         if(rightReached!==null){if(rightReached)child('right');return null;}
         const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge),
           result=expression(value.right,path+'/right',right,rightEnv);
@@ -410,7 +410,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           exits.push(value.value&&value.kind==='constructorReturn'?new Map():clone(state));return null;
         }else if(value.kind==='if') {
           expression(value.condition,p+'/condition',state,env);
-          const arm=literalIfArm(value);
+          const arm=literalIfArm(value,charge);
           if(arm) {
             state=statements(value[arm]??[],p+'/'+arm,state,env);
             if(!state)return null;
@@ -422,7 +422,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           if(!merged)return null;state=merged;
           meetAliases(env,leftEnv,rightEnv,!!left,!!right);
         }else if(value.kind==='while') {
-          const truth=literalLoopCondition(value);
+          const truth=literalLoopCondition(value,charge);
           if(truth===false){expression(value.condition,p+'/condition',state,env);continue;}
           // A loop-carried write or alias is not a proof for its first turn.
           state.clear();for(const id of env.keys()){charge();env.set(id,null);}

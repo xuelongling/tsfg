@@ -5,6 +5,7 @@ import descriptor from '../contracts/finite-core-development.json' with {type:'j
 import {verifyHir} from './module-hir.mjs';
 import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from './finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
+import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
 import {finiteNumericUse} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
@@ -33,6 +34,14 @@ function memberWitnessContracts(hir) {
 
 export function emitFiniteCore(input,context,publicationContext=undefined) {
   return prepareFiniteCore(input,context,publicationContext).text;
+}
+
+export function finiteCoreGuard(value,charge) {
+  if(value.kind!=='group')return value;
+  const literal=booleanLiteral(value,charge);
+  // The verifier sees the direct literal. Keep both the enclosing control
+  // anchor and the original literal anchor for their respective operations.
+  return literal===null?value:{...literal,range:value.range,literalRange:literal.range};
 }
 
 export function prepareFiniteCore(input,context,publicationContext=undefined) {
@@ -73,6 +82,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         .map(key=>[key,adapt(value.target[key],path+'/target/'+key,fn)]))};
       else result[key]=adapt(value[key],path+'/'+key,fn);
     }
+    if(result.kind==='shortCircuit'&&['&&','||'].includes(result.operator))result.left=finiteCoreGuard(result.left,budget.step);
     for(const key of ['arguments','elements'])if(value[key])result[key]=value[key].map((child,index)=>adapt(child,path+'/'+key+'/'+index,fn));
     return result;
   }
@@ -90,7 +100,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             ?expression:wrap(expression,selected(fn.id+'/return').domainId);
         }
       }else if(value.kind==='expression')result.value=adapt(value.expression,p+'/expression',fn);
-      if(value.condition)result.condition=adapt(value.condition,p+'/condition',fn);
+      if(value.condition)result.condition=finiteCoreGuard(adapt(value.condition,p+'/condition',fn),budget.step);
       if(value.then)result.thenBody=body(value.then,p+'/then',fn);
       if(value.else)result.elseBody=body(value.else,p+'/else',fn);
       if(value.body)result.body=body(value.body,p+'/body',fn);
@@ -207,7 +217,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const domain=domains.get(value.type);if(domain.representation!=='native')pending('literal domain',value.range);
           const attribute=value.kind==='floating'?quote(value.bits):value.kind==='boolean'?`${Number(value.value)} : i1`
             :domain.nativeType==='i32'?`${value.decimal} : i32`:quote(value.decimal);
-          return api.operation('tsfg_core.constant',[],[],value.type,'value = '+attribute,value.range);
+          return api.operation('tsfg_core.constant',[],[],value.type,'value = '+attribute,value.literalRange??value.range);
         }
         if(value.kind==='stringLiteral')return api.operation('tsfg_string.constant',[],[],value.type,
           'code_units = array<i32'+(value.codeUnits.length?': '+value.codeUnits.join(', '):'')+'>',value.range);

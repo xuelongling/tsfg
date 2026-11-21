@@ -217,7 +217,7 @@ test('a while body that returns preserves the Array versions on the skipped path
   assert.deepEqual(repeated.sources,[]);
 });
 
-test('a skipped boolean operand preserves the binding used by a later Array write guard',async()=>{
+test('a parenthesized Boolean preserves the binding when its right operand is skipped',async()=>{
   const [{hir},{hir:entryHir}]=await Promise.all([
     checkedFixture(manifest.find(row=>row.name==='dense-overwrite')),
     checkedFixture(arrayEntryFixture,'typed-array-entry/'),
@@ -240,7 +240,8 @@ test('a skipped boolean operand preserves the binding used by a later Array writ
     const initial={...sample.left,value:false},assigned={...sample.left,value:true};
     const declare={...local,binding:gate,initializer:initial};
     const assignment={kind:'assignment',type:bool.id,range,target:ref,value:assigned};
-    const expression={...sample,left:includeRight?unknown:sample.left,right:assignment};
+    const left=includeRight?unknown:sample.left;
+    const expression={...sample,left:{kind:'group',operand:left,type:bool.id,range:left.range},right:assignment};
     const guarded={kind:'if',range,condition:ref,then:[write],else:[]};
     const body=[local,declare,{kind:'expression',range,expression},guarded,returned];
     const model={...hir,types,functions:[{...fn,parameters:[flag],body}]};
