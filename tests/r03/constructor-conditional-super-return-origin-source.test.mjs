@@ -9,6 +9,7 @@ const factsApi=await import(pathToFileURL(root+'/compiler/common-program-facts.m
   api=await import(pathToFileURL(root+'/compiler/common-program-analysis.mjs').href),
   coreApi=await import(pathToFileURL(root+'/compiler/common-program-core.mjs').href),
   graphApi=await import(pathToFileURL(root+'/compiler/common-program-return-origin-domain.mjs').href),
+  receiverApi=await import(pathToFileURL(root+'/compiler/common-program-return-origin-receivers.mjs').href),
   scopeApi=await import(pathToFileURL(root+'/compiler/common-program-return-origin-scope.mjs').href),
   common=await import(pathToFileURL(root+'/compiler/common-program-common.mjs').href);
 
@@ -43,4 +44,40 @@ test('an original acyclic conditional super retains both bound normal and unboun
   assert.equal(reorderedResult.language,true,'equivalent control ordering cannot discard the live unbound arm');
   const product=coreApi.commonProgramCore(JSON.parse(common.canonical(hir)),publication,{targets:[]});
   assert.match(product.text,/tsfg_program.receiver_result/);assert.match(product.text,/tsfg_program.receiver_child/);
+});
+
+test('normal constructor result joins replacement and bound receiver fallback worlds',()=>{
+  const bytes=readFileSync(new URL('./testdata/constructor-return-origin/conditional-super-bool.json',import.meta.url));
+  assert.equal(common.sha256(bytes),'sha256:5bdfe8390e2046b61a03f53dfc9ef39c3b8a4217760d6a88fd3d5058b482bc9c');
+  const facts=factsApi.readCommonProgramFacts(bytes),hir=hirApi.buildCommonProgramHir(facts,
+    {family:'tsfg.common-program-context-candidate',version:3,factsBytes:bytes,expectedPackageId:facts.packageId});
+  const publication=api.createCommonProgramPublication(hir),constructions=new Map(publication.scope.constructions.map(row=>[row.id,row]));
+  const protocol=publication.scope.functions.find(row=>row.construction&&constructions.get(row.construction.id).base!==null);
+  assert.ok(protocol);
+  const locations=[],ids=new Map(),location=(key,node,owner)=>{
+    const text=common.canonical(key);
+    if(!ids.has(text)){ids.set(text,locations.length);locations.push({node,owner});}
+    return ids.get(text);
+  };
+  const receiver=receiverApi.commonReturnOriginReceivers({spend:common.commonMeter(1000000),constructions,location,locations});
+  const frames=receiver.entry(protocol),unbound=receiver.world(frames),type=constructions.get(protocol.construction.id).owner;
+  const prior=location(['allocated receiver'],{kind:'local',type},'p:0');
+  const replacement=location(['replacement'],{kind:'local',type},'local:return-origin');
+  const absent=location(['undefined'],{kind:'literal',type:null,category:'undefined'},null);
+  const bound=receiver.apply(null,{action:'bind',completion:'normal'},frames,new Set([prior]),unbound);
+  assert.equal(bound.live,true);
+  const mixed=receiver.copy(unbound);
+  assert.equal(receiver.merge(mixed,bound.world),true);
+  const operands=new Set([replacement,absent]);
+  const normal=receiver.apply(null,{action:'result',completion:'normal'},frames,operands,mixed);
+  assert.equal(normal.live,true);
+  assert.deepEqual(normal.result,new Set([replacement,prior]));
+  for(const id of frames)assert.deepEqual(normal.world.get(id),{unbound:true,bound:new Set([prior])});
+
+  const fallback=receiver.apply(null,{action:'result',completion:'normal'},frames,new Set([absent]),mixed);
+  assert.deepEqual(fallback.result,new Set([prior]));
+  for(const id of frames)assert.equal(fallback.world.get(id).unbound,false);
+  const failure=receiver.apply(null,{action:'result',completion:'language'},frames,operands,mixed);
+  assert.equal(failure.live,true);
+  assert.deepEqual([...failure.result].map(id=>locations[id].node.kind),['receiver-error']);
 });

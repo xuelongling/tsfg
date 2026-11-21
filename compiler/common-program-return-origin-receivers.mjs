@@ -458,7 +458,13 @@ export function commonReturnOriginReceivers({spend,constructions,location,locati
         check(operation.action==='result','return-origin-receiver','unknown receiver action');
         let absent=values.size===0,other=false;const objects=new Set();
         for(const value of values){spend();const mask=category(value);if(mask&1)objects.add(object(value));absent ||= Boolean(mask&2);other ||= Boolean(mask&4);}
-        if(normal){if(objects.size)complete(objects);if((absent||other&&role.base===null)&&before.bound.size)complete(before.bound,false);}
+        if(normal){
+          const usesBound=(absent||other&&role.base===null)&&before.bound.size>0;
+          if(objects.size){
+            if(usesBound)add(objects,before.bound);
+            complete(objects);
+          }else if(usesBound)complete(before.bound,false);
+        }
         else if(other&&role.base!==null||(absent||other&&role.base===null)&&before.unbound)complete(new Set([location(['receiver-error','constructor-result'],{kind:'receiver-error',type:null},'local:return-origin')]));
       }
       const after=world.get(id)??before;add(bound,after.bound);
