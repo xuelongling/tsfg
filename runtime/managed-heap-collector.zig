@@ -15,7 +15,13 @@ fn copyObject(allocator: Allocator, old: *Object, forwarded: []?*Object, copies:
     if (forwarded[old.index]) |copy| return copy;
     const copy = try allocator.create(Object);
     errdefer allocator.destroy(copy);
-    const edges = try allocator.dupe(?*Object, old.edges);
+    // Array payload cloning keeps only the initialized prefix. Match that
+    // length in the reference plane so removed slots cost nothing to copy.
+    const live_edges = switch (old.payload) {
+        .array => |array| old.edges[0 .. @as(usize, array.length) * array.layout.reference_count],
+        else => old.edges,
+    };
+    const edges = try allocator.dupe(?*Object, live_edges);
     errdefer allocator.free(edges);
     copy.* = .{ .identity = old.identity, .type_id = old.type_id, .payload = try old.payload.clone(allocator), .edges = edges, .index = copies.items.len };
     copies.appendAssumeCapacity(copy);

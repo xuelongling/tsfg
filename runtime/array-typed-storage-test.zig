@@ -108,6 +108,40 @@ test "reference elements move with their owner and removed tails stop retaining 
     try equal(@as(usize, 0), try heap.objectCount());
 }
 
+test "moving collection drops truncated reference slots and preserves append" {
+    var collection_bytes: [2]usize = undefined;
+    for ([_]usize{ 128, 1 }, 0..) |original_length, case| {
+        var tracking = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var heap = Heap.init(tracking.allocator());
+        defer heap.deinit() catch unreachable;
+        const child = try heap.create(77, 41, 0, .persistent);
+        const row: managed.ArrayInput = .{ .tag = 3, .bytes = &zero, .references = &.{child} };
+        const rows = [_]managed.ArrayInput{row} ** 128;
+        const array = try heap.createTypedArray(sum, rows[0..original_length], .persistent);
+        try heap.release(child);
+        try heap.resizeTypedArray(array, sum, 1);
+
+        const before = tracking.allocated_bytes;
+        try heap.collect();
+        collection_bytes[case] = tracking.allocated_bytes - before;
+        try equal(@as(usize, 2), try heap.objectCount());
+
+        const scope = try heap.beginScope();
+        defer heap.endScope(scope) catch unreachable;
+        var first = try heap.readTypedArray(array, sum, 0, .temporary);
+        defer first.deinit(heap.allocator);
+        const retained = first.references[0].?;
+        try equal(@as(u64, 41), (try heap.read(retained, 77)).scalar);
+        try heap.storeTypedArray(array, sum, 1, .{ .tag = 3, .bytes = &zero, .references = &.{retained} });
+        try heap.collect();
+        try equal(@as(u32, 2), try heap.typedArrayLength(array, sum));
+        var appended = try heap.readTypedArray(array, sum, 1, .temporary);
+        defer appended.deinit(heap.allocator);
+        try expect(try heap.sameObject(retained, appended.references[0].?));
+    }
+    try equal(collection_bytes[1], collection_bytes[0]);
+}
+
 test "descriptor identity and active reference maps reject wrong owners types widths and bypasses" {
     var heap = Heap.init(std.testing.allocator);
     defer heap.deinit() catch unreachable;
