@@ -1,9 +1,11 @@
 # Finite actual domains in ordinary Core
 
-`contracts/finite-core-development.json` defines the current development seam
-from verified HIR 0.15 to ordinary Core. It does not admit a new executable
-profile or change bytecode 0.12. M25 remains open through the independent Core
-verifier, canonical printing, roundtrip, versioned wire, ABI and VM consumers.
+`contracts/finite-core-development.json` defines the finite seam from
+verified typed HIR 0.16 to ordinary Core. The facts9/context3 profile
+uses HIR 0.17 and emits the same Core contract. Executable profile and
+bytecode 0.12 stay at the current development boundary. M25 remains open
+through the independent Core verifier, canonical printing, roundtrip,
+versioned wire, ABI and VM consumers.
 
 Each expression, binding and call slot receives facts from actual Source flow.
 The fixed point tracks concrete actual types and shared array allocation
