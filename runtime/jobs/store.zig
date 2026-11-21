@@ -361,22 +361,40 @@ pub const Store = struct {
         /// Keep this batch and its query alive through one synchronous call.
         /// A second call on the same batch or release through any alias fails.
         pub fn withActiveCall(self: Batch, arguments: anytype, comptime call: anytype) !void {
-            {
-                self.store.lock();
-                defer self.store.mutex.unlock();
-                const bound = try self.store.queryBatch(self.token, self.index);
-                if (bound.batch_state.active_call) return error.BorrowConflict;
-                bound.batch_state.active_call = true;
-            }
-            defer {
-                self.store.lock();
-                defer self.store.mutex.unlock();
-                const bound = self.store.queryBatch(self.token, self.index) catch unreachable;
-                bound.batch_state.active_call = false;
-            }
-            return @call(.auto, call, arguments);
+            return self.store.withActiveCalls(&.{self}, arguments, call);
         }
     };
+
+    /// Pin all batches under the same lock for one synchronous call. The caller
+    /// keeps the borrowed batch list alive and unchanged through the callback.
+    pub fn withActiveCalls(self: *Store, batches: []const Batch, arguments: anytype, comptime call: anytype) !void {
+        {
+            self.lock();
+            defer self.mutex.unlock();
+            var pinned: usize = 0;
+            errdefer self.endActiveCalls(batches[0..pinned]);
+            for (batches) |batch| {
+                if (batch.store != self) return error.InvalidLease;
+                const bound = try self.queryBatch(batch.token, batch.index);
+                if (bound.batch_state.active_call) return error.BorrowConflict;
+                bound.batch_state.active_call = true;
+                pinned += 1;
+            }
+        }
+        defer {
+            self.lock();
+            defer self.mutex.unlock();
+            self.endActiveCalls(batches);
+        }
+        return @call(.auto, call, arguments);
+    }
+
+    fn endActiveCalls(self: *Store, batches: []const Batch) void {
+        for (batches) |batch| {
+            const bound = self.queryBatch(batch.token, batch.index) catch unreachable;
+            bound.batch_state.active_call = false;
+        }
+    }
 
     pub fn query(self: *Store, selection: []const Selection) !Query {
         self.lock();

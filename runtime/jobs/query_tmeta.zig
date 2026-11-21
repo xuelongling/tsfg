@@ -376,6 +376,7 @@ pub const Plan = struct {
         signature_hash: []const u8,
         abi_type: []const u8,
     };
+    pub const CheckedCall = struct { plan: *const Plan, code: CodeIdentity };
     arena: std.heap.ArenaAllocator,
     batch: storage.Store.Batch,
     rows: usize,
@@ -416,9 +417,32 @@ pub const Plan = struct {
     pub fn withCheckedBatch(self: *const Plan, candidate: CodeIdentity, llvm_ir: []const u8, context: anytype, comptime call: anytype) !void {
         try self.verifyCodeIdentity(candidate);
         const llvm_hash = self.llvm_hash orelse return error.IdentityMismatch;
+        try checkLlvmArtifact(llvm_hash, llvm_ir);
+        return self.batch.withActiveCall(.{ self, context }, call);
+    }
+    /// Pin the ordered group from one Store and one paired artifact for a
+    /// synchronous call. The caller keeps the requests, Plans and code version
+    /// alive and unchanged, and releases all borrowed views on return.
+    pub fn withCheckedBatches(allocator: std.mem.Allocator, requests: []const CheckedCall, llvm_ir: []const u8, context: anytype, comptime call: anytype) !void {
+        if (requests.len == 0) return error.BindingMismatch;
+        const first = requests[0].plan;
+        const llvm_hash = first.llvm_hash orelse return error.IdentityMismatch;
+        const batches = try allocator.alloc(storage.Store.Batch, requests.len);
+        defer allocator.free(batches);
+        for (requests, batches) |request, *batch| {
+            try request.plan.verifyCodeIdentity(request.code);
+            const paired = request.plan.llvm_hash orelse return error.IdentityMismatch;
+            if (!std.mem.eql(u8, &paired, &llvm_hash) or
+                !std.mem.eql(u8, request.plan.metadata_hash, first.metadata_hash) or
+                !std.mem.eql(u8, request.plan.batch_hash, first.batch_hash)) return error.IdentityMismatch;
+            batch.* = request.plan.batch;
+        }
+        try checkLlvmArtifact(llvm_hash, llvm_ir);
+        return first.batch.store.withActiveCalls(batches, .{ requests, context }, call);
+    }
+    fn checkLlvmArtifact(llvm_hash: [71]u8, llvm_ir: []const u8) Error!void {
         if (llvm_ir.len > 8 * 1024 * 1024) return error.MetadataLimit;
         if (llvm_ir.len == 0 or !std.mem.eql(u8, &digest("", llvm_ir), &llvm_hash)) return error.IdentityMismatch;
-        return self.batch.withActiveCall(.{self, context}, call);
     }
     pub fn argument(self: *const Plan, index: usize) !Argument {
         _ = try self.batch.rowCount();

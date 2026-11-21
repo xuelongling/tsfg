@@ -731,6 +731,25 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
             try inspect(active, 2);
             return error.TestCallFailed;
         }
+
+        fn unexpectedGroup(_: []const T.Plan.CheckedCall, _: void) !void {
+            return error.TestUnexpectedResult;
+        }
+
+        fn inspectGroup(group: []const T.Plan.CheckedCall, query_handle: jobs.Store.Query) !void {
+            try std.testing.expectEqual(@as(usize, 2), group.len);
+            try inspect(group[0].plan, 2);
+            try inspect(group[1].plan, 1);
+            try std.testing.expectError(error.BorrowConflict, query_handle.release());
+            for (group) |request|
+                try std.testing.expectError(error.BorrowConflict, request.plan.withCheckedBatch(request.code, ir, {}, unexpected));
+            return error.TestCallFailed;
+        }
+
+        fn checkBusySecond(_: *const T.Plan, group: []const T.Plan.CheckedCall) !void {
+            try std.testing.expectError(error.BorrowConflict, T.Plan.withCheckedBatches(A, group, ir, {}, unexpectedGroup));
+            try group[0].plan.withCheckedBatch(group[0].code, ir, @as(usize, 2), inspect);
+        }
     };
     const changed = try A.dupe(u8, ir);
     defer A.free(changed);
@@ -745,10 +764,28 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
     }
     try std.testing.expectError(error.TestCallFailed, plan.withCheckedBatch(candidate.value, ir,
         Call{ .query = query, .other = &other, .candidate = candidate.value }, Call.checkPinned));
+    const group = [_]T.Plan.CheckedCall{
+        .{ .plan = &plan, .code = candidate.value },
+        .{ .plan = &other, .code = candidate.value },
+    };
+    var wrong_entry = group;
+    wrong_entry[1].code.entry_symbol = "foreign";
+    try std.testing.expectError(error.IdentityMismatch, T.Plan.withCheckedBatches(A, &wrong_entry, ir, {}, Call.unexpectedGroup));
+    var foreign_plan = other;
+    foreign_plan.metadata_hash = unused_expected.payloadHash;
+    var wrong_pair_group = group;
+    wrong_pair_group[1].plan = &foreign_plan;
+    wrong_pair_group[1].code.metadata_hash = foreign_plan.metadata_hash;
+    try std.testing.expectError(error.IdentityMismatch, T.Plan.withCheckedBatches(A, &wrong_pair_group, ir, {}, Call.unexpectedGroup));
+    try std.testing.expectError(error.IdentityMismatch, T.Plan.withCheckedBatches(A, &group, changed, {}, Call.unexpectedGroup));
+    try std.testing.expectError(error.BorrowConflict, T.Plan.withCheckedBatches(A, &.{ group[0], group[0] }, ir, {}, Call.unexpectedGroup));
+    try other.withCheckedBatch(candidate.value, ir, @as([]const T.Plan.CheckedCall, &group), Call.checkBusySecond);
+    try std.testing.expectError(error.TestCallFailed, T.Plan.withCheckedBatches(A, &group, ir, query, Call.inspectGroup));
     try plan.withCheckedBatch(candidate.value, ir, @as(usize, 2), Call.inspect);
     try query.release();
     released = true;
     try std.testing.expectError(error.InvalidLease, plan.withCheckedBatch(candidate.value, ir, {}, Call.unexpected));
+    try std.testing.expectError(error.InvalidLease, T.Plan.withCheckedBatches(A, &group, ir, {}, Call.unexpectedGroup));
 }
 
 test "actual i32 compound metadata binds original columns and retains ordered read read write" {
