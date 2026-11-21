@@ -99,6 +99,99 @@ test "actual multi systems and loops preserve the complete independent effects g
     }
 }
 
+fn namedSystem(case: OracleCase, name: []const u8) []const u8 {
+    for (case.systemNames) |system| if (std.mem.eql(u8, name, system.name)) return system.functionId;
+    unreachable;
+}
+
+const OracleCase = std.meta.Elem(@FieldType(Oracle, "cases"));
+
+test "checked parallel Query group admits disjoint systems and reports first conflict in request order" {
+    const oracle = try std.json.parseFromSlice(Oracle, A, @embedFile("jobs/testdata/query-effects-expected.json"), .{ .max_value_len = 8388608 });
+    defer oracle.deinit();
+    const case = oracle.value.cases[0];
+    try std.testing.expectEqualStrings("multi", case.name);
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-multi.tmeta"), case.receipt);
+    defer document.deinit();
+    const velocity = namedSystem(case, "writeVelocity");
+    const position = namedSystem(case, "writePositionY");
+    const alias = namedSystem(case, "aliasPosition");
+    const copy = namedSystem(case, "copyPositionToVelocity");
+    const read_first = namedSystem(case, "readPosition2");
+    const read_last = namedSystem(case, "readPosition");
+
+    const disjoint = try document.admitParallelGroup(A, &.{ velocity, position });
+    try std.testing.expect(disjoint == .admitted);
+    var group = disjoint.admitted;
+    defer group.deinit();
+    try std.testing.expectEqualStrings(velocity, group.systems[0].function_id);
+    try std.testing.expectEqualStrings(position, group.systems[1].function_id);
+    try std.testing.expectEqualStrings(velocity, group.systems[0].entries[0].logicalFunctionId);
+
+    const readonly = try document.admitParallelGroup(A, &.{ read_first, read_last });
+    try std.testing.expect(readonly == .admitted);
+    var readers = readonly.admitted;
+    defer readers.deinit();
+    try std.testing.expectEqualStrings(read_first, readers.systems[0].function_id);
+    for (readers.systems) |system| try std.testing.expectEqual(@as(usize, 0), system.entries.len);
+
+    const position_id = "sha256:167c8aea4972823af5ef95fa326af280253b661e52ce96d45ce3fc7cfe995b7d";
+    const velocity_id = "sha256:736bf6ed32376875960d2f42348ac71a40e4977b69e5b5ca7bbd93cd7ccbc677";
+    const conflict_cases = .{
+        .{ &.{ velocity, copy, alias, position }, velocity, copy, velocity_id },
+        .{ &.{ position, alias, copy, velocity }, position, alias, position_id },
+        .{ &.{ read_last, position }, read_last, position, position_id },
+    };
+    inline for (conflict_cases) |scenario| {
+        const result = try document.admitParallelGroup(A, scenario[0]);
+        try std.testing.expect(result == .conflict);
+        try std.testing.expectEqualStrings(scenario[1], result.conflict.left);
+        try std.testing.expectEqualStrings(scenario[2], result.conflict.right);
+        try std.testing.expectEqualStrings(scenario[3], result.conflict.component);
+    }
+    const unknown = "sha256:" ++ "0" ** 64;
+    try std.testing.expectError(error.InvalidGroup, document.admitParallelGroup(A, &.{}));
+    try std.testing.expectError(error.DuplicateSystem, document.admitParallelGroup(A, &.{ alias, alias, unknown }));
+    try std.testing.expectError(error.UnknownSystem, document.admitParallelGroup(A, &.{ alias, unknown, alias }));
+}
+
+test "checked parallel Query group retains ordered loop entries and opens the selected Store Plan" {
+    const loop_receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-double-loop-receipt.json"), .{});
+    defer loop_receipt.deinit();
+    var loops = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-double-loop.tmeta"), loop_receipt.value);
+    defer loops.deinit();
+    const ordered = try loops.admitParallelGroup(A, &.{loops.payload.entries[0].logicalFunctionId});
+    try std.testing.expect(ordered == .admitted);
+    var ordered_group = ordered.admitted;
+    defer ordered_group.deinit();
+    try std.testing.expectEqual(@as(usize, 2), ordered_group.systems[0].entries.len);
+    try std.testing.expectEqual(@as(u32, 0), ordered_group.systems[0].entries[0].loop);
+    try std.testing.expectEqual(@as(u32, 1), ordered_group.systems[0].entries[1].loop);
+
+    const copy_receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-tmeta-i32-copy-receipt.json"), .{});
+    defer copy_receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-tmeta-i32-copy.tmeta"), copy_receipt.value);
+    defer document.deinit();
+    const entry = document.payload.entries[0];
+    const admitted = try document.admitParallelGroup(A, &.{entry.logicalFunctionId});
+    try std.testing.expect(admitted == .admitted);
+    var group = admitted.admitted;
+    defer group.deinit();
+    var store = try jobs.Store.init(A, &document.component_layout, 4);
+    defer store.deinit() catch unreachable;
+    try std.testing.expectEqual(@as(usize, 2), entry.columns.len);
+    const archetype = try store.addArchetype(&.{ entry.columns[0].componentType, entry.columns[1].componentType });
+    _ = try store.create(archetype, &.{});
+    try std.testing.expectError(error.BindingMismatch, group.query(A, &store, 0, 1));
+    const query = try group.query(A, &store, 0, 0);
+    defer query.release() catch unreachable;
+    const batch = try query.batch(0);
+    var plan = try group.bind(A, &store, batch, 0, 0, &.{});
+    defer plan.deinit();
+    try std.testing.expectEqualStrings(entry.entrySymbol, plan.entry_symbol);
+    try std.testing.expectEqual(@as(usize, 1), plan.rows);
+}
+
 test "typed effects reject rehashed noncanonical edges and invalid members modes and identities" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();

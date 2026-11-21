@@ -6,6 +6,11 @@ const storage = @import("store.zig");
 const effects_module = @import("query_effects.zig");
 pub const schema_hash = "sha256:d598644bbd5360feb48a17cb2511dc93b4dbb2785d2a3f111759dfb6c1b2c69b";
 pub const Error = error{ InvalidMetadata, MetadataLimit, IdentityMismatch, WrongStore, BindingMismatch, ReadOnly };
+pub const ParallelAdmission = union(enum) {
+    admitted: ParallelGroup,
+    // IDs borrow the checked Document. Ends are ordered by the original request.
+    conflict: struct { left: []const u8, right: []const u8, component: []const u8 },
+};
 pub const Source = effects_module.Source;
 pub const Column = struct { access: storage.Access, alignment: u32, bufferArgument: u32, componentType: []const u8, index: u32, sourceComponentType: []const u8, stride: u32, strideArgument: u32 };
 pub const Tuple = struct { bufferArgument: u32, columnIndex: u32, componentType: []const u8, mode: storage.Access, sourceBinding: []const u8, tupleIndex: u32 };
@@ -153,6 +158,50 @@ pub const Document = struct {
         self.arena.deinit();
         self.* = undefined;
     }
+
+    /// Admit the requested parallel group as a whole, before opening any Store
+    /// query. Invalid identities are rejected in request order. For a conflict,
+    /// choose the earliest requested pair, then its first canonical component.
+    pub fn admitParallelGroup(self: *const Document, allocator: std.mem.Allocator, system_ids: []const []const u8) !ParallelAdmission {
+        if (system_ids.len == 0 or system_ids.len > self.effects.report.systems.len) return error.InvalidGroup;
+        var ranks = std.StringHashMap(usize).init(allocator);
+        defer ranks.deinit();
+        try ranks.ensureTotalCapacity(@intCast(system_ids.len));
+        for (system_ids, 0..) |id, rank| {
+            const system = self.effects.system(id) orelse return error.UnknownSystem;
+            const slot = ranks.getOrPutAssumeCapacity(system.functionId);
+            if (slot.found_existing) return error.DuplicateSystem;
+            slot.value_ptr.* = rank;
+        }
+        var first = [2]usize{ system_ids.len, system_ids.len };
+        var refusal: ?ParallelAdmission = null;
+        for (self.effects.report.conflicts) |edge| {
+            const left = ranks.get(edge.left) orelse continue;
+            const right = ranks.get(edge.right) orelse continue;
+            const earlier = @min(left, right);
+            const later = @max(left, right);
+            if (earlier > first[0] or (earlier == first[0] and later >= first[1])) continue;
+            first = .{ earlier, later };
+            refusal = .{ .conflict = .{
+                .left = if (left < right) edge.left else edge.right,
+                .right = if (left < right) edge.right else edge.left,
+                .component = edge.components[0],
+            } };
+        }
+        if (refusal) |result| return result;
+
+        const selected = try allocator.alloc(ParallelGroup.System, system_ids.len);
+        var start: usize = 0;
+        for (self.effects.source_system_order) |index| {
+            const system = self.effects.report.systems[index];
+            const end = start + system.loops.len;
+            if (ranks.get(system.functionId)) |rank|
+                selected[rank] = .{ .function_id = system.functionId, .entries = self.payload.entries[start..end], .first_entry = start };
+            start = end;
+        }
+        return .{ .admitted = .{ .allocator = allocator, .document = self, .systems = selected } };
+    }
+
     fn entryForStore(self: *const Document, store: *const storage.Store, entry_index: usize) Error!*const Entry {
         if (!std.mem.eql(u8, &store.layout_identity, &self.component_layout.payload_hash)) return error.IdentityMismatch;
         if (entry_index >= self.payload.entries.len) return error.BindingMismatch;
@@ -224,6 +273,37 @@ pub const Document = struct {
         };
         result.arena = arena;
         return result;
+    }
+};
+
+/// Systems follow the request order; a system's entries retain its original
+/// sequential loop order. The Document must outlive the group and its views.
+/// Admission owns only this selection. Store queries keep their normal owner
+/// and lifetime, and binding still uses the original Document.
+pub const ParallelGroup = struct {
+    pub const System = struct { function_id: []const u8, entries: []const Entry, first_entry: usize };
+    allocator: std.mem.Allocator,
+    document: *const Document,
+    systems: []const System,
+
+    pub fn deinit(self: *ParallelGroup) void {
+        self.allocator.free(self.systems);
+        self.* = undefined;
+    }
+
+    fn entryIndex(self: *const ParallelGroup, system_index: usize, loop_index: usize) Error!usize {
+        if (system_index >= self.systems.len) return error.BindingMismatch;
+        const system = self.systems[system_index];
+        if (loop_index >= system.entries.len) return error.BindingMismatch;
+        return system.first_entry + loop_index;
+    }
+
+    pub fn query(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, system_index: usize, loop_index: usize) !storage.Store.Query {
+        return self.document.query(allocator, store, try self.entryIndex(system_index, loop_index));
+    }
+
+    pub fn bind(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, system_index: usize, loop_index: usize, scalars: []const ScalarValue) !Plan {
+        return self.document.bind(allocator, store, batch, try self.entryIndex(system_index, loop_index), scalars);
     }
 };
 
