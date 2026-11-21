@@ -276,7 +276,7 @@ fn executeStep(execution: *ExecutionState, state: *module_state.State, limits: *
             return .call_host;
         } else if (op.opcode >= 34 and op.opcode <= 39) {
             string_frame.execute(&current.roots, frame, op.*) catch |err| {
-                if (err == error.IndexOutOfBounds) storeArithmeticTrap(result_out, "r01-t-string-range", "r01-strings", current_id, source)
+                if (err == error.IndexOutOfBounds) storeArithmeticTrap(result_out, "r01-t-string-range", "r01-string", current_id, source)
                 else storeRequestFailure(result_out, "r05-execution-abort", current_id, source);
                 return .terminal;
             };

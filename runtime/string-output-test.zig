@@ -124,7 +124,7 @@ test "actual CLI result writer emits byte length and reports strict failure" {
     try std.testing.expectEqualStrings("string-output", failure.value.object.get("category").?.string);
     const rules = failure.value.object.get("ruleIds").?.array.items;
     try std.testing.expectEqual(@as(usize, 1), rules.len);
-    try std.testing.expectEqualStrings("r01-strings", rules[0].string);
+    try std.testing.expectEqualStrings("r01-string", rules[0].string);
     writer.clearRetainingCapacity();
     try @import("outcome-writer.zig").writeOutcome(&writer.writer, &result, &host, .lossy);
     const lossy = try std.json.parseFromSlice(std.json.Value, a, writer.written(), .{});

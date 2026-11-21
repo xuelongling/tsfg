@@ -66,7 +66,7 @@ Failure to open the output lease has `status: "failed"` and keeps `functionId`,
 
 | Cause | `code` | `category` | `ruleIds` |
 | --- | --- | --- | --- |
-| Invalid UTF-8 in strict mode | `r05-string-invalid-utf8` | `string-output` | `["r01-strings"]` |
+| Invalid UTF-8 in strict mode | `r05-string-invalid-utf8` | `string-output` | `["r01-string"]` |
 | Other lease failures, including allocation or output limits | `r05-execution-abort` | `execution-abort` | `[]` |
 
 The `--module-requests` mode includes

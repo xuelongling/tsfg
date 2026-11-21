@@ -56,7 +56,7 @@ pub fn write(writer: *std.Io.Writer, outcome: *const request.RequestOutcome, hos
             failure = .{
                 .code = if (invalid_utf8) "r05-string-invalid-utf8" else "r05-execution-abort",
                 .category = if (invalid_utf8) "string-output" else "execution-abort",
-                .rule_ids = if (invalid_utf8) &.{"r01-strings"} else &.{},
+                .rule_ids = if (invalid_utf8) &.{"r01-string"} else &.{},
                 .function_id = function_id,
                 .source = source,
             };
