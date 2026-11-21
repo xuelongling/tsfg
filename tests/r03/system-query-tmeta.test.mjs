@@ -326,6 +326,39 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
   });
 });
 
+test('Query LLVM pairing rejects a retained module for a different batch',()=>{
+  const fixtures=new URL('../../runtime/jobs/testdata/',import.meta.url);
+  const llvm=readFileSync(new URL('query-tmeta-i32-copy-retained.ll',fixtures));
+  /** @param {string} name @param {string[]} calls */
+  const run=(name,calls)=>{
+    const metadata=readFileSync(new URL('query-tmeta-'+name+'.tmeta',fixtures));
+    const payload=JSON.parse(JSON.parse(metadata.toString('utf8')).payload);
+    const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
+    const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
+    const input=Buffer.from(emitSystemQueryCore(facts,context));
+    return readQueryCompilerOutputs(facts,context,input,{cpuBatch:true,cpuLLVM:'ir',tmeta:true},(command,source)=>{
+      calls.push(command);
+      if(command==='--cpu-batch')return Buffer.from(payload.batch);
+      assert.equal(source,payload.batch);
+      if(command==='--llvm-ir')return llvm;
+      assert.equal(command,'--tmeta');
+      return metadata;
+    });
+  };
+  /** @type {string[]} */
+  const matching=[];
+  const product=run('i32-copy',matching);
+  assert.deepEqual(matching,['--cpu-batch','--llvm-ir','--tmeta']);
+  assert.equal(product.llvmArtifact?.llvmHash,sha256(llvm));
+  assert.ok(typeof product.cpuBatch==='string');
+  assert.equal(product.llvmArtifact?.batchHash,sha256(product.cpuBatch));
+
+  /** @type {string[]} */
+  const mismatched=[];
+  assert.throws(()=>run('i32-compound',mismatched),/r10-system-query-llvm: checked batch proof differs/);
+  assert.deepEqual(mismatched,['--cpu-batch','--llvm-ir']);
+});
+
 test('Query tmeta rejects an otherwise matching batch missing its final LF',()=>{
   const original=readFileSync(new URL('../../runtime/jobs/testdata/query-tmeta-i32-copy.tmeta',import.meta.url));
   const envelope=JSON.parse(original.toString('utf8')),payload=JSON.parse(envelope.payload);

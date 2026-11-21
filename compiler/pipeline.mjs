@@ -147,6 +147,24 @@ function decodeQueryCompilerText(bytes,stage){
   return decodeCompilerText(bytes,`r10-system-query-${stage}`);
 }
 
+/** Match the official printer's byte-escaped batch proof. @param {string} llvm @param {string} batch */
+function checkQueryLlvmBatch(llvm,batch){
+  const lines=llvm.split('\n');
+  const definitions=/** @param {string} id */ id=>lines.filter(line=>{
+    const equals=line.indexOf('=');
+    return equals>=0&&line.slice(0,equals).trim()===id;
+  });
+  const named=definitions('!tsfg.query.cpu');
+  const id=named.length===1&&/^!tsfg\.query\.cpu = !\{(![0-9]+)\}$/u.exec(named[0])?.[1];
+  if(id){
+    const proof=definitions(id);
+    const encoded=Buffer.from(batch).toString('latin1').replace(/[\x00-\x1f"\\\x7f-\xff]/gu,byte=>
+      byte==='\\'?'\\\\':'\\'+byte.charCodeAt(0).toString(16).toUpperCase().padStart(2,'0'));
+    if(proof.length===1&&proof[0]===id+' = !{!"1", !"'+encoded+'"}')return;
+  }
+  throw new TypeError('r10-system-query-llvm: checked batch proof differs');
+}
+
 /** Collect outputs from the same verified static Query consumer.
  * @internal
  * @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} sourceContext
@@ -161,6 +179,7 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
   const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;
+  if(cpuLLVM&&llvmOutput==='ir'&&(includeBatch||includeTmeta))checkQueryLlvmBatch(cpuLLVM,checkedBatch);
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),
