@@ -198,6 +198,12 @@ const Walker = struct {
             .eh_route => |route| { const args = try self.borrowArguments(state, op.operands); defer c.allocator.free(args); try self.edge(route.successor, state, args); },
             .cond_br => |branch| { const args = try self.borrowArguments(state, op.operands[1..]); defer c.allocator.free(args); try self.edge(branch.true_destination, state, args[0..branch.true_count]); try self.edge(branch.false_destination, state, args[branch.true_count..]); },
             .domain_numeric_use => |numeric| try self.edge(numeric.normal_successor, state, &.{null}),
+            inline .receiver_bind, .receiver_get, .receiver_result => |control| {
+                // Preserve the surrounding CODE state. The continuation value
+                // is the receiver object or language payload, never CODE.
+                try self.edge(control.normal, state, &.{null});
+                try self.edge(control.language, state, &.{null});
+            },
             .@"return" => { if (op.operands.len != 0) {
                 const incoming = state.values[@intFromEnum(op.operands[0])]; const abi = self.d.abi(self.function);
                 try self.d.erase(abi.result, self.d.logical(self.function, op.operands[0]), incoming, false);
@@ -287,4 +293,44 @@ pub fn analyze(c: *Context) Error!Flow {
         if (!domain.arrays[root].unsafe) { if (domain.arrays[root].minimum) |n| try result.initialized_arrays.put(c.allocator, @enumFromInt(i), n); }
     }
     return result;
+}
+
+test "receiver continuations preserve saved fixed Code values and replace their result parameters" {
+    const origin: t.Origin = .{ .source = @enumFromInt(0), .start = 0, .end = 0 };
+    const op: model.instruction.Instruction = .{ .source = origin, .result = null, .operands = &.{},
+        .data = .{ .receiver_get = .{ .construction = @enumFromInt(0), .normal = @enumFromInt(1), .language = @enumFromInt(2) } } };
+    const function: model.Function = .{ .id = @splat(1), .signature = @splat(2), .abi = @enumFromInt(0),
+        .source = @enumFromInt(0), .role = .ordinary, .declaration = .{ .start = 0, .end = 0 }, .name = "receiver",
+        .registers = &.{}, .blocks = &.{
+            .{ .parameters = &.{}, .instructions = &.{op} },
+            .{ .parameters = &.{@enumFromInt(1)}, .instructions = &.{} },
+            .{ .parameters = &.{@enumFromInt(2)}, .instructions = &.{} },
+        } };
+    const common = std.mem.zeroes(@import("wire-program-tables.zig").CommonTables);
+    const program: model.Program = .{ .envelope = std.mem.zeroes(model.Envelope), .target = std.mem.zeroes(model.Target),
+        .input_identity = @splat(0), .source_hash = @splat(0), .source_path = "", .source_length = 0, .root_source = @enumFromInt(0),
+        .tables = .{ .sources = &.{}, .mode = .{ .common = common } }, .functions = &.{function} };
+    var c = Context{ .program = &program, .allocator = std.testing.allocator };
+    var domain = fixed.Domain{ .c = &c, .common = common };
+    var flow = Flow{};
+    defer flow.deinit(c.allocator);
+    var walker = Walker{ .d = &domain, .output = &flow, .function = @enumFromInt(0) };
+    defer walker.deinit();
+    walker.entries = try c.allocator.alloc(?State, 3);
+    @memset(walker.entries, null);
+    walker.queued = try c.allocator.alloc(bool, 3);
+    @memset(walker.queued, false);
+    var state = try State.init(&c, 3);
+    defer state.deinit(&c);
+    state.values[0] = Codes{};
+    try state.values[0].?.functions.put(c.allocator, @enumFromInt(0), {});
+    state.values[1] = Codes{ .top = true };
+    state.values[2] = Codes{ .top = true };
+    try walker.transfer(.{ .function = @enumFromInt(0), .block = @enumFromInt(0), .instruction = 0 }, op, &state);
+    for (1..3) |edge| {
+        try std.testing.expect(walker.entries[edge] != null);
+        const incoming = walker.entries[edge].?;
+        try std.testing.expect(incoming.values[0].?.functions.contains(@enumFromInt(0)));
+        try std.testing.expect(incoming.values[edge] == null);
+    }
 }

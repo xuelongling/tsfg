@@ -29,7 +29,7 @@ async function stageReader(productRoot, testRoot, source) {
 
 test('owning Common20 reader rejects malformed and old packets', async () => {
   await nativeUnit({
-    source: negativeSource, prefix: 'r03-checked-reader-', expectedPasses: 20,
+    source: negativeSource, prefix: 'r03-checked-reader-', expectedPasses: 24,
     async stageSource(productRoot, testRoot) {
       await stageReader(productRoot, testRoot, negativeSource);
       await mkdir(path.dirname(path.join(testRoot, common18)), { recursive: true });
@@ -46,7 +46,7 @@ test('owning Common20 reader checks the retained right packet', {
   assert.equal(packet.length, 30046);
   assert.equal(sha256(packet), 'sha256:b16b5cba1c72a906b14ac1854e304b2f32a34d68a4810b45c1e386a2b38ba807');
   await nativeUnit({
-    source: positiveSource, prefix: 'r03-checked-reader-right-', expectedPasses: 16,
+    source: positiveSource, prefix: 'r03-checked-reader-right-', expectedPasses: 20,
     async stageSource(productRoot, testRoot) {
       await stageReader(productRoot, testRoot, positiveSource);
       await mkdir(path.dirname(path.join(testRoot, common20)), { recursive: true });

@@ -3,5 +3,5 @@ import test from 'node:test';
 import { nativeUnit } from './native-unit.mjs';
 
 test('module initializer checks reachable Global access through known direct calls', async () => {
-  await nativeUnit({ source: 'runtime/module-call-initialized-state-test.zig', prefix: 'r03-module-call-initialized-', expectedPasses: 23 });
+  await nativeUnit({ source: 'runtime/module-call-initialized-state-test.zig', prefix: 'r03-module-call-initialized-', expectedPasses: 61 });
 });

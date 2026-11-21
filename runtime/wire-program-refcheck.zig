@@ -87,7 +87,6 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     try host_artifact.check(&c, material);
     var fixed_flow = try fixed_targets_check.analyze(&c);
     defer fixed_flow.deinit(allocator);
-    try effective_dependencies_check.checkCallees(&c, &fixed_flow);
     var actual: targets_check.Analysis = .{};
     defer actual.deinit(allocator);
     var borrowing = borrow_check.Observations.init(&c);
@@ -98,6 +97,10 @@ pub fn check(allocator: std.mem.Allocator, program: *const model.Program, materi
     actual = try targets_check.analyze(&c, material, &observers);
     try borrowing.finish();
     try effects.finish(&actual);
+    // Reverse equality reuses the fixed effects check's receiver controls.
+    // The effects walk observes independently selected callees and checks
+    // their original digest joins before this comparison checks extra rows.
+    try effective_dependencies_check.checkCallees(&c, &fixed_flow, effects.receiver_effects);
     return initial - c.remaining;
 }
 
