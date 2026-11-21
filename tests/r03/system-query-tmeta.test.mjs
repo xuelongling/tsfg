@@ -231,7 +231,8 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
   const capture=process.env.TSFG_QUERY_PAIRED_CAPTURE;
   assert.ok(path.isAbsolute(capture));
   const bytes=name=>readFileSync(path.join(capture,name));
-  const core=bytes('001-bound-cold-stdout.bin').toString('utf8');
+  const core=bytes('001-bound-cold-stdout.bin');
+  assert.equal(sha256(core),'sha256:19e3f22128ddd95e88c2a4c32c8a0a27c907dddc0e9b88ec9205d2e9aad4713c');
   const batch=bytes('003-batch-cold-stdout.bin');
   const llvm=bytes('007-llvm-ir-stdout.bin');
   assert.deepEqual(llvm,bytes('008-llvm-ir-cold-stdout.bin'));
@@ -241,7 +242,7 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
   const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
   const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
   /** @type {Array<[string,string,Buffer]>} */
-  const steps=[['--cpu-batch',core,batch],['--llvm-ir',batch.toString('utf8'),llvm],['--tmeta',batch.toString('utf8'),meta]];
+  const steps=[['--cpu-batch',core.toString('utf8'),batch],['--llvm-ir',batch.toString('utf8'),llvm],['--tmeta',batch.toString('utf8'),meta]];
   const product=readQueryCompilerOutputs(facts,context,core,{cpuLLVM:'ir',tmeta:true},(command,input)=>{
     const step=steps.shift();
     assert.ok(step);
@@ -251,6 +252,7 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
     return output;
   });
   assert.deepEqual(steps,[]);
+  assert.equal(sha256(product.core),sha256(core));
   assert.equal(product.cpuBatch,undefined);
   assert.equal(product.cpuLLVM,llvm.toString('utf8'));
   assert.deepEqual(product.llvmArtifact,{llvmHash:sha256(llvm),batchHash:sha256(batch),metadataHash:envelope.payloadHash});
@@ -278,6 +280,17 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
         return command==='--cpu-batch'?malformedBatch:command==='--llvm-ir'?llvm:meta;
       }),/r10-system-query-batch: invalid UTF-8 in compiler output/);
     assert.deepEqual(calls,['--cpu-batch']);
+  });
+
+  const malformedCore=Buffer.from(core);
+  malformedCore[0]=0xff;
+  for(const downstream of [false,true])await t.test(downstream?'reject malformed Core before downstream stages':'reject malformed standalone Core',()=>{
+    let called=false;
+    assert.throws(()=>readQueryCompilerOutputs(facts,context,malformedCore,{cpuBatch:downstream,effects:downstream},()=>{
+      called=true;
+      return batch;
+    }),/r10-system-query-core: invalid UTF-8 in compiler output/);
+    assert.equal(called,false);
   });
 });
 

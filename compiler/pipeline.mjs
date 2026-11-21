@@ -124,11 +124,11 @@ export async function compileSystemQuery(bytes,context,options){
   const {core:corePath,optimize,effects,cpuBatch,cpuLLVM,tmeta}=options;
   const executable=await verifiedConsumer(corePath,'core');
   const consumeQuery=(command,input)=>consume(executable,['--system-query',command],input);
-  const core=consumeQuery(optimize?'--optimize':'--canonicalize',emitSystemQueryCore(facts,sourceContext)).toString('utf8');
-  return readQueryCompilerOutputs(facts,sourceContext,core,{effects,cpuBatch,cpuLLVM,tmeta},consumeQuery);
+  const coreBytes=consumeQuery(optimize?'--optimize':'--canonicalize',emitSystemQueryCore(facts,sourceContext));
+  return readQueryCompilerOutputs(facts,sourceContext,coreBytes,{effects,cpuBatch,cpuLLVM,tmeta},consumeQuery);
 }
 
-/** @param {Buffer} bytes @param {'batch'|'llvm'} stage */
+/** @param {Buffer} bytes @param {'core'|'batch'|'llvm'} stage */
 function decodeQueryCompilerText(bytes,stage){
   try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}
   catch{throw new TypeError(`r10-system-query-${stage}: invalid UTF-8 in compiler output`);}
@@ -137,10 +137,11 @@ function decodeQueryCompilerText(bytes,stage){
 /** Collect outputs from the same verified static Query consumer.
  * @internal
  * @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} sourceContext
- * @param {string} core @param {{effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir',tmeta?:boolean}} options
+ * @param {Buffer} coreBytes @param {{effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir',tmeta?:boolean}} options
  * @param {(command:string,input:string)=>Buffer} consumeQuery
  */
-export function readQueryCompilerOutputs(facts,sourceContext,core,options,consumeQuery){
+export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,consumeQuery){
+  const core=decodeQueryCompilerText(coreBytes,'core');
   const {effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
   const effects=includeEffects?readSystemQueryEffects(consumeQuery('--effects',core),facts,sourceContext):undefined;
   const checkedBatch=includeBatch||includeTmeta?decodeQueryCompilerText(consumeQuery('--cpu-batch',core),'batch'):core;
