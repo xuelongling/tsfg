@@ -219,17 +219,19 @@ for(const row of cases)test(row.name,async t=>{
       for(const version of [inner+'/array-version',outer+'/array-version'])
         assert.ok(reaching.writes.some(write=>write.id===version),'lexical write '+version);
     });
-    await t.test('a definite checked Array read failure blocks a later dense store',()=>{
+    for(const wrapper of ['plain','group','assertType','nonNull'])await t.test(`a definite checked Array read failure under ${wrapper} blocks a later dense store`,()=>{
       const value=mark.body[1].value;
       assert.ok(value.kind==='floating');
       const dense={kind:'arrayStoreDenseChecked',target:original.left.operand.target,value,type,range:original.range};
-      const first={kind:'expression',expression:tail,range:tail.range};
+      const expression=wrapper==='plain'?tail:{kind:wrapper,type:tail.type,range:tail.range,operand:tail};
+      const first={kind:'expression',expression,range:tail.range};
       const store={kind:'expression',expression:dense,range:local.range};
       const fn={...compound,body:[...compound.body.slice(0,2),first,store,{...returned,value:tail}]};
       const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
       const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
       const root=compound.id+'/body',written=root+'/3/expression/array-version';
-      const before=reaching.reads.find(read=>read.node===root+'/2/expression');
+      const readPath=root+'/2/expression'+(wrapper==='plain'?'':'/operand');
+      const before=reaching.reads.find(read=>read.node===readPath);
       const after=reaching.reads.find(read=>read.node===root+'/4/value');
       assert.ok(before&&after);
       assert.deepEqual([before.status,before.versions],row.productive?['proven',[initial]]:['missing',[]]);

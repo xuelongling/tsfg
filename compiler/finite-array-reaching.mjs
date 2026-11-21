@@ -196,7 +196,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       const child=(name,allowTerminal=false)=>expression(value[name],path+'/'+name,state,bindings,allowTerminal);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
       if(['group','nonNull','assertType'].includes(value.kind)) {
-        const {truth,...result}=child('operand',terminalRoot&&value.kind==='group');return result;
+        const {truth,...result}=child('operand',terminalRoot);return result;
       }
       if(value.kind==='boolean')return {truth:value.value,symbol:path};
       if(value.kind==='constant') {
