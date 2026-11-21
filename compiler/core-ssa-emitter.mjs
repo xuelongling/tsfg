@@ -144,7 +144,7 @@ export function emitCoreSsaFunction(fn, context) {
         definitions = new Map([...definitions].filter(([id]) => outer.has(id)));
         declared = outer;
       } else if (statement.kind === "if") {
-        const parts = context.pureConditionBranches?.(statement.condition, api);
+        const parts = context.conditionBranches?.(statement.condition, api);
         const condition = parts ? null : emit(statement.condition);
         const comparisons = parts ? [current] : null;
         if (comparisons) {
@@ -155,15 +155,14 @@ export function emitCoreSsaFunction(fn, context) {
         }
         const yes = newBlock(), no = newBlock();
         if (parts) {
-          // The caller supplies read-only operands, so neither condition
-          // edge needs a different set of binding definitions.
+          // These operands leave caller-local SSA bindings unchanged.
           const pending = [{node:parts.tree, yes, no, range:statement.condition.range}];
           while (pending.length) {
             context.budget?.step();
             const edge = pending.pop(), {node} = edge;
             if (node.expression) {
               current = comparisons[node.firstLeaf];
-              conditional(parts.emit(node.expression), edge.yes, edge.no, edge.range);
+              conditional(parts.emit(node), edge.yes, edge.no, edge.range);
             } else {
               const rhs = comparisons[node.right.firstLeaf];
               pending.push({...edge, node:node.right},

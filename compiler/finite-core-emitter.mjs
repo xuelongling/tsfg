@@ -117,7 +117,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           while(pending.length) {
             budget.step();const node=pending.pop();
             if(node.test)presenceConditions.set(node.test.condition,node.test);
-            else pending.push(node.right,node.left);
+            if(!node.expression)pending.push(node.right,node.left);
           }
         }else {
           const test=finitePresenceTest(result.condition,budget.step);
@@ -190,11 +190,12 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     const emission=emitCoreSsaFunction(fn,{verified:hir,coreType,functionSymbol:symbol,budget,
       preserveDominatingJoinBindings:guardedBindings,
       loopWrittenBindings:guardedBindings?statement=>finiteBindingWrites(loopSources.get(statement),budget.step):undefined,
-      pureConditionBranches(condition,api) {
+      conditionBranches(condition,api) {
         const logical=logicalPresence.get(condition);
         if(!logical)return null;
-        return {...logical,emit(value) {
+        return {...logical,emit({expression:value,test}) {
           const name=api.emit(value);
+          if(!test)return name;
           // Preserve the conservative field-reaching analysis while the
           // independent refinement check can trace the original comparison.
           return op(api,'view',[{name,type:value.type}],value.type,opAttrs(value),value.range);

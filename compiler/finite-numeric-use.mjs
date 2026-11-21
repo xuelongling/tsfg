@@ -109,20 +109,21 @@ export function finitePresenceTest(condition,charge) {
 export function finitePresenceShortCircuit(condition,charge) {
   condition=ungroup(condition,charge);
   if(!['binary','shortCircuit'].includes(condition.kind)||!['&&','||'].includes(condition.operator))return null;
-  const root={},pending=[{expression:condition,node:root}];let leaves=0;
+  const root={},pending=[{expression:condition,node:root}];let leaves=0,hasPresenceTest=false;
   while(pending.length) {
     charge();const {expression,node}=pending.pop(),value=ungroup(expression,charge);
     node.firstLeaf=leaves;
     const test=finitePresenceTest(value,charge);
-    if(test) {
+    if(test||value.kind==='call'&&!value.receiver&&finiteBindingWrites(value.arguments,charge).size===0) {
       node.test=test;node.expression=expression;leaves++;
+      hasPresenceTest||=Boolean(test);
     }else {
       if(!['binary','shortCircuit'].includes(value.kind)||!['&&','||'].includes(value.operator))return null;
       Object.assign(node,{condition:value,when:value.operator==='&&',left:{},right:{}});
       pending.push({expression:value.right,node:node.right},{expression:value.left,node:node.left});
     }
   }
-  return {tree:root,leaves};
+  return hasPresenceTest?{tree:root,leaves}:null;
 }
 function branchGuard(test,truth,guards,charge) {
   if(!test)return guards;
@@ -150,7 +151,7 @@ function shortCircuitGuards(tree,entry,charge) {
   let exits={yes:entry,no:entry};
   while(pending.length) {
     charge();const frame=pending.at(-1),{node,guards}=frame;
-    if(node.test) {
+    if(node.expression) {
       exits={yes:branchGuard(node.test,true,guards,charge),no:branchGuard(node.test,false,guards,charge)};
     }else if(!frame.started) {
       frame.started=true;pending.push({node:node.left,guards});continue;
