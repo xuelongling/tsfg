@@ -5,13 +5,14 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,verifyHir,readHir,printHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 const root=new URL('./testdata/typed-array-span-array-slots/',import.meta.url);
 const expected=JSON.parse(await readFile(new URL('source-expected.json',root),'utf8'));
 const packets=['512d8c5d1d5c481f27d7d9af0a13ef5e205f6289b37abf305acc1c225faf399e',
   '3df9edcb311c19ea96986e5efb699cd8b86f87802a52e7d38dcb7baa64e19c14'];
-for(const [index,oracle]of expected.cases.entries())test('SLOT25v '+oracle.name+' consumes the real current slot version',async()=>{
+for(const [index,oracle]of expected.cases.entries())test('SLOT25v '+oracle.name+' consumes the real current slot version',async t=>{
   const bytes=await readFile(new URL(oracle.sha256+'-package.json',root));assert.equal(sha256(bytes).slice(7),packets[index]);
   const facts=readTypedArrayFacts(bytes),source=facts.payload.files.find(file=>file.path===facts.payload.rootFile);
   assert.equal(sha256(source.content).slice(7),oracle.sha256);assert.equal(Buffer.byteLength(source.content),oracle.bytes);
@@ -48,6 +49,25 @@ for(const [index,oracle]of expected.cases.entries())test('SLOT25v '+oracle.name+
     assert.deepEqual(result.pending,[]);
     assert.deepEqual(plan.domains.find(row=>row.id===result.domainId).actualTypes,[fn.returnType.id]);
   }
+  await t.test('a checked ReadSpan length receiver must complete before following Array reads',()=>{
+    const returned=fn.body.at(-1),slot=returned.value.receiver;
+    assert.equal(slot.kind,'arrayReadChecked');
+    assert.equal(slot.index.kind,'constant');
+    const at=fn.body.length-1,body=fn.id+'/body',after=body+'/'+(at+1)+'/value',
+      expectedVersions=definition.arrayReaching.reads.find(row=>row.node===body+'/'+at+'/value').versions;
+    for(const [offset,lengthStatus,afterStatus] of [['0','proven','proven'],['1','missing','pending']]){
+      const receiver={...slot,index:{...slot.index,token:offset,decimal:offset}},
+        length={kind:'readSpanLength',property:built.hir.intrinsics.readSpanLength.id,receiver,type:slot.index.type,range:slot.range},
+        statement={kind:'expression',expression:length,range:length.range},
+        projected={...fn,body:[...fn.body.slice(0,-1),statement,returned]},
+        hir={...built.hir,functions:built.hir.functions.map(row=>row===fn?projected:row)};
+      const {reaching}=buildFiniteArrayReaching(hir,definition,()=>{},()=>true);
+      const input=reaching.reads.find(row=>row.node===body+'/'+at+'/expression/receiver'),
+        output=reaching.reads.find(row=>row.node===after);
+      assert.equal(input?.status,lengthStatus);
+      assert.deepEqual([output?.status,output?.versions],[afterStatus,offset==='0'?expectedVersions:[]]);
+    }
+  });
 });
 
 test('a stored local Array keeps its owner through a checked slot read and dense writes',async()=>{

@@ -293,7 +293,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         bindings.set(value.target.binding,adapt(rhs,path+'/value',fn.id+'/binding/'+value.target.binding));return rhs;
       }
       if(value.kind==='arrayLength'||value.kind==='readSpanLength') {
-        const receiver=child('receiver',terminalRoot&&value.kind==='arrayLength');if(receiver.terminal)return receiver;
+        const receiver=child('receiver',terminalRoot);if(receiver.terminal)return receiver;
         const length=receiver.limit??state.get(receiver.owner)?.length;
         return length!==undefined&&length!==null?{constant:length,symbol:path}:{symbol:path};
       }
