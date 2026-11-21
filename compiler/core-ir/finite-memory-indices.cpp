@@ -32,12 +32,14 @@ bool MemorySources::indices(Id frame,mlir::Value value,std::set<uint32_t> &desti
       const auto targets=proof.selectedCallees.find(op);
       if(targets==proof.selectedCallees.end()||targets->second.empty()){pending=true;continue;}
       for(const auto &target:targets->second){
-        if(!proof.charge()){valid=false;break;}const auto child=enter(origin.frame,op,target);bool productive=false;
+        if(!proof.charge()){valid=false;break;}
+        if(proof.trapOnlyFunctions.count(target))continue;
+        const auto child=enter(origin.frame,op,target);bool productive=false;
         if(child==MemoryFrames::none){pending=true;continue;}
         for(auto &block:proof.functions.at(target).getBody()){
           if(!proof.charge()){valid=false;break;}if(!proof.mayReach(&block))continue;
           auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
-          if(!returned||returned.getNumOperands()!=1)continue;
+          if(!returned||returned.getNumOperands()!=1||!proof.mayExecute(returned.getOperation()))continue;
           productive=true;add(returned.getOperand(0),child);
         }
         if(!productive)pending=true;
