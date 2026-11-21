@@ -65,9 +65,18 @@ struct ActualFlow {
     auto fn=proof.functions.at(target);
     if(sourceOffset>op->getNumOperands()||targetOffset>fn.getNumArguments()||
        op->getNumOperands()-sourceOffset<fn.getNumArguments()-targetOffset)return proof.reject("actual call argument prefix");
+    const bool ordered=role==ArrayFlow::Role::OrderedPayload;
+    auto argumentGate=ordered?normalInputs.at(op):gate;
+    const std::string argumentSelection=ordered?normalAtom:selected;
+    if(ordered&&gate!=noGate){
+      // A method arm receives normal-entry evidence only if its receiver matches.
+      const auto selectedEntry=node();
+      if(!edge(argumentGate,selectedEntry,gate,selected))return false;
+      argumentGate=selectedEntry;
+    }
     for(size_t i=targetOffset;i<fn.getNumArguments();++i) {
       const auto a=value(op->getOperand(sourceOffset+i-targetOffset)),b=value(fn.getArgument(i));
-      if(!edge(a,b,gate,selected,i==0&&gate!=noGate?selected:std::string()))return false;
+      if(!edge(a,b,argumentGate,argumentSelection,i==0&&gate!=noGate?selected:std::string()))return false;
     }
     if(forwardResult&&op->getNumResults()) {
       if(!returns.count(target))return proof.reject("actual call result has no return slot");
@@ -91,7 +100,9 @@ struct ActualFlow {
       return true;
     }
     if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op)) {
-      return returned.getNumOperands()==0||edge(value(returned.getOperand(0)),returns.at(function));
+      const auto gate=role==ArrayFlow::Role::OrderedPayload?normalInputs.at(op):noGate;
+      return returned.getNumOperands()==0||
+        edge(value(returned.getOperand(0)),returns.at(function),gate,gate==noGate?"":normalAtom);
     }
     if(llvm::isa<mlir::func::CallOp>(op))return call(op,attr(op,"tsfg_core.function_id"),0,0);
     const auto name=op->getName().getStringRef();
