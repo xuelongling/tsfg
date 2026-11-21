@@ -402,6 +402,21 @@ test('Query LLVM pairing validates the retained batch and target',async t=>{
     assert.throws(()=>run('i32-copy',calls,Buffer.from(changed)),/r10-system-query-llvm: checked target differs/);
     assert.deepEqual(calls,['--cpu-batch','--llvm-ir']);
   });
+
+  const symbol='batch_7b22872314488f78b6db981f5caf2e405c3641b76dd51cfcf62f7b5d96924df3_0';
+  const definition=original.split('\n').find(line=>line.startsWith('define void @'+symbol+'('));
+  assert.ok(definition);
+  const renamed=definition.replace(symbol,'batch_'+'0'.repeat(64)+'_0');
+  const wrongType=definition.replace('ptr %1,','i64 %1,');
+  const repeatedSlot=definition.replace('ptr %2,','ptr %1,');
+  for(const [name,replacement] of [['wrong entry symbol',renamed],['wrong entry argument type',wrongType],
+    ['repeated entry argument slot',repeatedSlot]])await t.test('reject '+name,()=>{
+    assert.notEqual(replacement,definition);
+    const calls=[];
+    const changed=Buffer.from(original.replace(definition,replacement));
+    assert.throws(()=>run('i32-copy',calls,changed),/r10-system-query-llvm: checked entry ABI differs/);
+    assert.deepEqual(calls,['--cpu-batch','--llvm-ir','--tmeta']);
+  });
 });
 
 test('Query tmeta rejects an otherwise matching batch missing its final LF',()=>{

@@ -172,6 +172,30 @@ function checkQueryLlvmPair(llvm,batch,target){
   throw new TypeError('r10-system-query-llvm: checked batch proof differs');
 }
 
+/** Match the canonical public definitions emitted by the fixed Query printer.
+ * @param {string} llvm
+ * @param {import('./system-query-tmeta.mjs').SystemQueryTmeta['payload']['entries']} entries
+ */
+function checkQueryLlvmEntries(llvm,entries){
+  const fail=()=>{throw new TypeError('r10-system-query-llvm: checked entry ABI differs');};
+  const expected=new Map(entries.map(entry=>[entry.entrySymbol,entry]));
+  const definitions=/^define[ \t]+[^@\r\n]*@(?:"(batch_[^"\r\n]*)"|(batch_[-a-zA-Z0-9.$_]*))[ \t]*\([^\r\n]*$/gmu;
+  for(const [line,quoted,unquoted] of llvm.matchAll(definitions)){
+    const symbol=quoted??unquoted;
+    if(/^batch_helper_[0-9a-f]{64}$/u.test(symbol))continue;
+    const entry=expected.get(symbol);
+    if(!entry)fail();
+    // Index is i64 on the checked target. Each byte memref expands to two
+    // pointers and three indices, followed by the component row stride.
+    const types=['i64',...entry.columns.flatMap(()=>['ptr','ptr','i64','i64','i64','i64']),
+      ...entry.scalars.map(scalar=>scalar.type==='f32'?'float':'double')];
+    const parameters=types.map((type,index)=>`${type} %${index}`).join(', ');
+    if(line!==`define void @${symbol}(${parameters}) {`)fail();
+    expected.delete(symbol);
+  }
+  if(expected.size!==0)fail();
+}
+
 /** Collect outputs from the same verified static Query consumer.
  * @internal
  * @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} sourceContext
@@ -189,6 +213,7 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;
   if(cpuLLVM&&llvmOutput==='ir'&&(includeBatch||includeTmeta))checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
+  if(cpuLLVM&&llvmOutput==='ir'&&tmeta)checkQueryLlvmEntries(cpuLLVM,tmeta.payload.entries);
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),
     batchHash:tmeta.payload.batchHash,
