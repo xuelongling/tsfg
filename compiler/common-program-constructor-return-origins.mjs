@@ -2,6 +2,7 @@
 // Project an owning normalized CFG. Receiver and initialization ordering is
 // already lowered here; Source syntax/ranges do not authorize an operation.
 import {commonCheck as check} from './common-program-common.mjs';
+import {i32TypeId} from './identity.mjs';
 
 const represented=new Set(['cell','catch_bind','store','load','value_copy','view','assert','pack','unpack','undefined',
   'constant','floating','boolean','null','string','strict_equal','binary','unary','compare','global_load',
@@ -18,7 +19,55 @@ export function unavailableConstructorReturnOriginOperation(plan,spend) {
   }}return null;
 }
 
-export function projectConstructorReturnOrigins({plan,model},catalogue,graph,spend) {
+// Newly authored native scalar leaves can use the same explicit Graph access
+// accounting as the independent physical body projector. The logical plan is
+// already owned, and the Actual-selected physical carrier must agree at every
+// boundary. A Source view alone never licenses the native result category.
+export function nativeScalarGlobalLeaf(plan,{model,carriers},spend) {
+  const fn=plan.owner,abi=carriers.functions.get(fn.id);
+  if(fn.kind!=='source'||fn.ownerType||fn.lexicalEnvironment||fn.activationEnvironment||
+    fn.parameterInitialization||fn.captures.length||plan.graph.blocks.length!==1||fn.returnType!==i32TypeId||abi?.result!==i32TypeId)return false;
+  spend(abi.parameters.length+fn.parameters.length+plan.graph.registers.size+1);
+  if(abi.parameters.length!==fn.parameters.length||abi.parameters.some(type=>type!==i32TypeId)||
+    fn.parameters.some(parameter=>parameter.type!==i32TypeId))return false;
+  const physical=carriers.registers.get(fn.id),cells=new Map();
+  const scalar=register=>physical?.get(register)===i32TypeId&&plan.graph.registers.get(register)?.view===i32TypeId;
+  let wroteGlobal=false;
+  for(const op of plan.entry.instructions){
+    spend(op.operands.length+1);
+    const name=op.name.replace('tsfg_program.','');
+    if(name==='cell'){
+      const binding=model.bindings.get(op.properties.binding);
+      if(!binding||binding.owner!==fn.id||model.slots.has(binding.id)||binding.type!==i32TypeId||
+        carriers.bindings.get(binding.id)!==i32TypeId||physical?.get(op.result)!==model.cell(binding.id)||cells.has(binding.id))return false;
+      cells.set(binding.id,{register:op.result,initialized:false});
+      continue;
+    }
+    if(name==='load'||name==='store'){
+      const cell=cells.get(op.properties.binding);
+      if(!cell||cell.register!==op.operands[0])return false;
+      if(name==='store'){
+        if(cell.initialized||!op.properties.initialize||!scalar(op.operands[1]))return false;
+        cell.initialized=true;
+      }else if(!cell.initialized||!scalar(op.result))return false;
+      continue;
+    }
+    if(op.operands.some(register=>!scalar(register))||op.result!==null&&!scalar(op.result))return false;
+    if(name==='global_load'||name==='global_store'){
+      const global=model.globals.get(op.properties.global);
+      if(global?.type!==i32TypeId||carriers.bindings.get(global.sourceBinding)!==i32TypeId)return false;
+      if(name==='global_store'){
+        if(op.properties.initialize||!global.writable)return false;
+        wroteGlobal=true;
+      }
+    }else if(name==='binary'){
+      if(op.properties.operator!=='+'&&op.properties.operator!=='*')return false;
+    }else if(name!=='fuel'&&name!=='constant'&&name!=='value_copy'&&name!=='view'&&name!=='func.return')return false;
+  }
+  return wroteGlobal;
+}
+
+export function projectConstructorReturnOrigins({plan,model,scalarGlobalLeaf=false},catalogue,graph,spend) {
   const fn=plan.owner,registers=new Map(),cells=new Map(),blocks=new Map(),cellTypes=new Map(),parameters=new Set(),normal=new Set(),language=new Set(),normalExits=[],languageExits=[],calls=[];
   for(const block of plan.graph.blocks)if(block!==plan.entry){spend(block.parameters.length);for(const parameter of block.parameters)parameters.add(parameter.name);}
   const graphType=id=>catalogue.types.has(id)?id:null;
@@ -53,7 +102,10 @@ export function projectConstructorReturnOrigins({plan,model},catalogue,graph,spe
       else if(name==='undefined')value=graph.literal('undefined',graphType(op.view));
       else if(['constant','floating','boolean','null','string','strict_equal','binary','unary','compare'].includes(name))value=graph.literal('other',graphType(op.view));
       else if(name==='global_load'){value=graph.root('global',op.view,op.properties.global);graph.access(value,'read');}
-      else if(name==='global_store')check(false,'return-origin-construction-open','global payload transfer is not represented by the normalized graph');
+      else if(name==='global_store'){
+        check(scalarGlobalLeaf,'return-origin-construction-open','global payload transfer is not represented by the normalized graph');
+        graph.access(graph.root('global',model.globals.get(op.properties.global).type,op.properties.global),'write');
+      }
       else if(name==='receiver_create')value=graph.receiverFrame(op.properties.construction,op.properties.new_target,null,fn.id+'/'+op.result);
       else if(name==='receiver_child')value=graph.receiverFrame(role(op.properties.owner).id,null,args[0],fn.id+'/'+op.result);
       else if(name==='receiver_allocate')value=graph.receiverAction('allocate',args[0],new Set(),op.view).normal;

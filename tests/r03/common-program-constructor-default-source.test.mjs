@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import {readCommonProgramFacts,verifyCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir,printCommonProgramHir,readCommonProgramHir} from '../../compiler/common-program-hir.mjs';
 import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
+import {nativeScalarGlobalLeaf} from '../../compiler/common-program-constructor-return-origins.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {commonCoreSchema} from '../../compiler/common-program-plan.mjs';
@@ -32,6 +33,46 @@ test('official Source3 defaults emit Core through first publication and cold fix
   assert.equal(product.hir.inputIdentity,facts.packageId);assert.deepEqual(product.proof.targets,[]);
   assert.equal(product.borrowProof,null);assert.ok(product.text.includes('schema = "'+commonCoreSchema+'"'));
   assert.ok(product.text.includes('tsfg_program.strict_equal'));
+});
+test('new mark publication records native arithmetic and both GlobalId accesses',()=>{
+  const mark=named('mark'),total=hir.globals.find(row=>row.name==='total');
+  const publication=createCommonProgramPublication(hir);
+  const {upper,returnOrigins:graph}=publication.contracts.find(row=>row.functionId===mark.id);
+  assert.deepEqual(upper.globals,{reads:[total.id],writes:[total.id]});
+  assert.equal(upper.facets.mayThrow,false);
+  assert.equal(graph.format.version,5);
+  assert.equal(graph.exits.normal.length,1);
+  assert.deepEqual(graph.exits.language,[]);
+  assert.deepEqual(graph.calls,[]);
+  const atoms=refs=>{
+    const seen=new Set(),result=[],pending=[...refs];
+    while(pending.length){
+      const id=pending.pop();
+      if(seen.has(id))continue;
+      seen.add(id);
+      const node=graph.nodes[id];
+      if(node.kind==='gate'||node.kind==='join')pending.push(...node.inputs);
+      else result.push(node);
+    }
+    return result;
+  };
+  assert.deepEqual(graph.accesses.map(({flag,values})=>[flag,atoms(values)]),[
+    ['read',[{kind:'global',type:i32TypeId,id:total.id}]],
+    ['write',[{kind:'global',type:i32TypeId,id:total.id}]],
+  ]);
+  const [returned]=atoms(graph.normal);
+  assert.equal(returned.kind,'copy');
+  assert.deepEqual(atoms(returned.bases),[{kind:'parameter',type:i32TypeId,index:0}]);
+  assert.equal(graph.heaps.filter(row=>row.kind==='copy').length,2);
+  const assignment=graph.nodes[graph.heaps.find(row=>row.kind==='copy').value];
+  assert.deepEqual(atoms(assignment.bases),[{kind:'literal',type:i32TypeId,category:'other'}]);
+  const core=commonProgramCore(hir,publication,{targets:[]});
+  assert.ok(core.text.includes(publication.expectedDigest));
+  const plan=physical.corePlans.find(row=>row.owner.id===mark.id);
+  assert.ok(nativeScalarGlobalLeaf(plan,physical,commonMeter()));
+  const bindings=new Map(physical.carriers.bindings);
+  bindings.delete(total.sourceBinding);
+  assert.equal(nativeScalarGlobalLeaf(plan,{...physical,carriers:{...physical.carriers,bindings}},commonMeter()),false);
 });
 test('Source3 admission checks the owning parameter, expression anchors and raw argument capacity',()=>{
   for(const {mutate,code}of [

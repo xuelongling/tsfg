@@ -9,7 +9,7 @@ import {commonReturnOrigins,commonReturnOriginFormat} from './common-program-ret
 import {commonReturnOriginsInclusion} from './common-program-return-origin-inclusion.mjs';
 import {commonFacets} from './common-program-effects.mjs';
 import {commonLexicalScopes} from './common-program-lexical.mjs';
-import {projectConstructorReturnOrigins,unavailableConstructorReturnOriginOperation} from './common-program-constructor-return-origins.mjs';
+import {nativeScalarGlobalLeaf,projectConstructorReturnOrigins,unavailableConstructorReturnOriginOperation} from './common-program-constructor-return-origins.mjs';
 import {commonReceiverActivations} from './common-program-return-origin-receivers.mjs';
 /** @param {((id:string)=>string|null)|null} [fixedTypeKind] */
 export function commonReturnOriginSource(hir,spend,physical=null,storageProjection=null,fixedTypeKind=null,fixedRecords=null,selectedFunctions=null,fixedCatalogue=null) {
@@ -46,7 +46,10 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     protocols.set(fn.id,{lexicalEnvironment:fn.lexicalEnvironment??null,activationEnvironment:fn.activationEnvironment??null,
       construction:owner?{id:owner.construction.id,owner:owner.id,base:owner.base??null,receiverIndex:0}:null});}
   for(const plan of physical?.corePlans??[]){spend();let receiver=false;for(const block of plan.graph.blocks)for(const op of block.instructions){spend();receiver ||= op.name.startsWith('tsfg_program.receiver_');}
-    if(receiver||!plan.owner.ownerType&&plan.owner.parameterInitialization)projectionPlans.set(plan.owner.id,plan);}
+    if(receiver||!plan.owner.ownerType&&plan.owner.parameterInitialization)projectionPlans.set(plan.owner.id,{plan,scalarGlobalLeaf:false});
+    // Fixed consumers keep their original independently derived body check.
+    // Only explicit authoring can add the stronger physical leaf equations.
+    else if(fixedRecords===null&&nativeScalarGlobalLeaf(plan,physical,spend))projectionPlans.set(plan.owner.id,{plan,scalarGlobalLeaf:true});}
   const catalogue={types:fixedCatalogue?.types??types,functions:fixedCatalogue?.functions??new Map(hir.functions.map(fn=>{spend();return [fn.id,{...protocols.get(fn.id),returnType:fn.returnType}];})),constructions:fixedCatalogue?.constructions??constructions,slots,environments};
   function reference(id,active=new Set()) {
     if(id===null||id==='void')return false;
@@ -77,7 +80,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     const mayAlias=(a,b)=>a.node.kind!=='local'||b.node.kind!=='local'||a.node.type===b.node.type;
     const graph=commonReturnOrigins(spend,{projectField,mayAlias,actualType,contracts,environments,constructions:catalogue.constructions,rootProtocol:protocol(fn)}),normalReturns=new Set(),normalExits=new Set(),languageExits=new Set(),marks=[];
     if(projectionPlans.has(fn.id)){
-      const plan=projectionPlans.get(fn.id),projected=projectConstructorReturnOrigins({plan,model:physical.model},catalogue,graph,spend),captureRows=new Map();
+      const {plan,scalarGlobalLeaf}=projectionPlans.get(fn.id),projected=projectConstructorReturnOrigins({plan,model:physical.model,scalarGlobalLeaf},catalogue,graph,spend),captureRows=new Map();
       for(const capture of fn.captures??[]){spend();const slot=slots.get(capture.binding);captureRows.set(slot.key,{slot:slot.key,read:capture.read,write:capture.write,structural:false});}
       for(const [flag,roots]of projected.effects.accesses)for(const root of roots){spend();
         if(root.startsWith('p:'))result.parameters[Number(root.slice(2))][flag]=true;
