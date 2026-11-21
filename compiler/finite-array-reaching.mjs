@@ -348,7 +348,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const left=child('left',terminalRoot);if(left.terminal)return left;
         const possibilities=collectAll?{present:true,absent:true}:value.operator==='??'?presence(path+'/left'):
           {present:left.truth===undefined||left.truth===(value.operator==='||'),absent:left.truth===undefined||left.truth===(value.operator==='&&')};
-        const resultValue=result=>{if(value.operator!=='??')forgetAssignedTruth(value.right,bindings);
+        const resultValue=result=>{if(possibilities.absent&&value.operator!=='??')forgetAssignedTruth(value.right,bindings);
           return value.operator==='??'?adapt(result,result.symbol,path):{symbol:path};};
         if(!possibilities.absent)return resultValue(left);
         if(!possibilities.present) {

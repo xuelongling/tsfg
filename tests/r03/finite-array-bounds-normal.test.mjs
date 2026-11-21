@@ -217,6 +217,40 @@ test('a while body that returns preserves the Array versions on the skipped path
   assert.deepEqual(repeated.sources,[]);
 });
 
+test('a skipped boolean operand preserves the binding used by a later Array write guard',async()=>{
+  const [{hir},{hir:entryHir}]=await Promise.all([
+    checkedFixture(manifest.find(row=>row.name==='dense-overwrite')),
+    checkedFixture(arrayEntryFixture,'typed-array-entry/'),
+  ]);
+  const [fn]=hir.functions,[local,store,returned]=fn.body;
+  const entry=entryHir.functions.find(row=>row.name==='runUnknown');
+  assert.ok(entry);
+  const [flag]=entry.parameters,unknown=entry.body[1].condition;
+  const bool=entryHir.types.find(row=>row.id===flag.type);
+  assert.ok(bool);
+  const types=hir.types.some(row=>row.id===bool.id)?hir.types:[...hir.types,bool];
+  const prefix=fn.id+'/body/',range=unknown.range;
+  const gate={...local.binding,id:fn.id+'/gate',name:'gate',type:bool.id,writable:true};
+  const ref={...unknown,binding:gate.id};
+  const write={...store,expression:{...store.expression,target:{...store.expression.target,index:returned.value.index}}};
+  const original=prefix+'0/initializer/elements/0',replacement=prefix+'3/then/0/expression/value';
+  for(const [name,includeRight] of [['runAnd',false],['runOr',false],['runAnd',true]]) {
+    const sample=entryHir.functions.find(row=>row.name===name)?.body[1].expression;
+    assert.ok(sample);
+    const initial={...sample.left,value:false},assigned={...sample.left,value:true};
+    const declare={...local,binding:gate,initializer:initial};
+    const assignment={kind:'assignment',type:bool.id,range,target:ref,value:assigned};
+    const expression={...sample,left:includeRight?unknown:sample.left,right:assignment};
+    const guarded={kind:'if',range,condition:ref,then:[write],else:[]};
+    const body=[local,declare,{kind:'expression',range,expression},guarded,returned];
+    const model={...hir,types,functions:[{...fn,parameters:[flag],body}]};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>false);
+    const read=reaching.reads.find(row=>row.node===prefix+'4/value');
+    assert.equal(read?.status,'proven');
+    assert.deepEqual(read.sources,includeRight?[original,replacement]:[original]);
+  }
+});
+
 for(const [name,status] of [
   ['empty-checked-read','missing'],['length-equal-checked-read','missing'],
   ['far-oob-checked-read','missing'],['dense-overwrite','proven'],['after-last-use','pending'],
