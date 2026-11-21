@@ -170,12 +170,14 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
     }
     function initialize(statement,state,env) {
       const owner=types.get(statement.ownerType),phase=phases.get(statement.construction);
-      if(!phase)return;
+      if(!phase)return state;
       for(const event of phase.events) {
         charge();const output=event.output;
         if(event.kind==='initializerWrite') {
           const init=owner.construction.initialization.find(row=>row.field===output.field&&row.value);
-          storedTokens.set(output.id,{function:fn.id,token:expression(init.value,output.valueNode,state,env),fresh:init.value.kind==='construct'});
+          const token=expression(init.value,output.valueNode,state,env);
+          if(plan.failedInitializers?.has(output.valueNode))return null;
+          storedTokens.set(output.id,{function:fn.id,token,fresh:init.value.kind==='construct'});
         }
         if(event.kind==='parameterWrite'){charge();storedTokens.set(output.id,{function:fn.id,token:env.get(output.parameterBinding)??null,parameter:true,fresh:false});}
         const node=event.kind==='nativeDefine'?null:event.kind==='parameterWrite'
@@ -185,6 +187,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         if(receiver)for(const actualType of receiverTypes)
           state.set(key(receiver,{actualType,fieldId:output.field}),new Set([output.id]));
       }
+      return state;
     }
     function access(value,path,state,token,kind,payload=null) {
       const selection=selections.get(path);if(!selection)return;
@@ -453,7 +456,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           state.clear();
           if(truth===true)return null;
         }else if(value.kind==='block')state=statements(value.body,p+'/body',state,env);
-        else if(value.kind==='initializeOwnFields')initialize(value,state,env);
+        else if(value.kind==='initializeOwnFields')state=initialize(value,state,env);
         else if(value.kind==='forwardBaseConstruction')completed(value.construction,env.get(value.receiverBinding),state);
         if(!state)return null;
       }

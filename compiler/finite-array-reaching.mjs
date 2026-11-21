@@ -54,6 +54,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     writes=new Map(),reads=new Map(),normalReadSources=new Map(),contextsByTarget=new Map(),checkedLoopConditions=new Set(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
+  const failedInitializers=new Set();
   let contextWrites=new Map(),terminalReads=null;
   function arrayCarrier(id) {
     const stack=[id],seen=new Set();while(stack.length) {
@@ -236,12 +237,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       memory.slots.set(slot,new Set([id]));
       return id;
     }
-    function expression(value,path,state,bindings,terminalRoot=false,directStatement=false) {
+    /** @param {boolean|'initializer'} [root] */
+    function expression(value,path,state,bindings,root=false,directStatement=false) {
       if(!value)return {};charge();
+      const terminalRoot=root===true;
       const child=(name,allowTerminal=false)=>expression(value[name],path+'/'+name,state,bindings,allowTerminal);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
       if(['group','nonNull','assertType'].includes(value.kind)) {
-        const {truth,...result}=child('operand',terminalRoot);return result;
+        const {truth,...result}=expression(value.operand,path+'/operand',state,bindings,root);return result;
       }
       if(value.kind==='boolean')return {truth:value.value,symbol:path};
       if(value.kind==='constant') {
@@ -262,7 +265,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const index=child('index',terminalRoot);if(index.terminal)return index;
         const projectKind=slotValues&&types.get(value.receiver.type)?.kind==='array'?types.get(value.type)?.kind:undefined,
           {status,stored}=load(value,path,state,receiver,index,projectKind);
-        if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateArrayRead(false))return {terminal:true};
+        if(!collectAll&&status==='missing'&&(root==='initializer'||terminalRoot&&canTerminateArrayRead(false)))return {terminal:true};
         return stored?{...stored,symbol:path}:{symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
@@ -537,8 +540,16 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           invalidate(state);
           if(truth===true)return null;
         }else if(row.kind==='initializeOwnFields') {
-          for(const init of types.get(row.ownerType).construction.initialization)if(init.value)
-            expression(init.value,'construction/'+row.construction+'/initialization/'+init.field,state,bindings);
+          const construction=types.get(row.ownerType).construction;
+          // Forwarded construction has its own activation after the base returns.
+          const root=construction.initializationPhase==='before-body'?'initializer':false;
+          for(const init of construction.initialization)if(init.value) {
+            const initializer='construction/'+row.construction+'/initialization/'+init.field;
+            if(expression(init.value,initializer,state,bindings,root).terminal) {
+              if(recordReads){charge();failedInitializers.add(initializer);}
+              return null;
+            }
+          }
         }else if(row.kind==='forwardBaseConstruction')invalidate(state);
       }return state;
     }
@@ -574,7 +585,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }
   let before;
   do {
-    charge();before=ledger();reads.clear();normalReadSources.clear();contextWrites=new Map();terminalReads=null;
+    charge();before=ledger();reads.clear();normalReadSources.clear();failedInitializers.clear();contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of functions) {
       const incoming=[];
@@ -589,5 +600,5 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }while(before!==ledger());
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
-  return {reaching,terminalReads,normalReadSources};
+  return {reaching,terminalReads,normalReadSources,failedInitializers};
 }

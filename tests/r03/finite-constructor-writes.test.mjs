@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
-import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from '../../compiler/finite-field-phases.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 
@@ -56,4 +57,39 @@ test('the existing mutable static alias remains writable on a readonly-declared 
   assert.ok(store.includes('receiver_view = "'+writable.id+'"'));
   assert.ok(store.includes(frozen.id)&&store.includes(frozen.fields[0].id),'actual field dispatch keeps readonly declaration identity');
   assert.notEqual(hir.functions.find(row=>row.name==='f').role,'construction-body','ordinary function did not acquire a construction role');
+});
+
+test('a checked field initializer stops subsequent initialization and normal construction',async()=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-reference-domain/initializer-order-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:5e4374117a2e272310c4003c9069cdb3ab0ddee34ebc5070b8113e6e0dbd818b');
+  const facts=readTypedArrayFacts(bytes);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const publicationContext=buildInitialArrayPublication(context);
+  const built=buildHir(facts,context,publicationContext);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const {hir}=built;
+  const proofs=buildFiniteCoreDomains(hir,context,{publicationContext});
+  const phases=buildFiniteFieldPhases(hir,context,{publicationContext});
+  for(const [name,continues] of [['stops',false],['good',true]]) {
+    const fn=hir.functions.find(row=>row.name===name);
+    const phase=phases.find(row=>row.ownerType===fn.body[0].initializer.type);
+    assert.ok(phase);
+    const {constructionId}=phase;
+    const [first,tail]=phase.events.map(({output})=>output.valueNode);
+    assert.equal(phase.events.length,2);
+    for(const plan of [proofs.definition,proofs.reached]){
+      const reads=new Map(plan.arrayReaching.reads.map(row=>[row.node,row]));
+      assert.equal(reads.get(first)?.status,continues?'proven':'missing',name+' first initializer');
+      assert.equal(reads.get(tail)?.status,continues?'proven':'pending',name+' next initializer');
+      const reachedWrites=plan.fieldReaching.phaseWrites.filter(row=>row.id.startsWith(constructionId+'/'));
+      assert.deepEqual(reachedWrites.map(row=>row.node).sort(),continues?[first,tail].sort():[]);
+      assert.equal(plan.fieldReaching.completions.some(row=>row.construction===constructionId),continues);
+      const result=plan.nodes.find(row=>row.id===fn.id+'/return');
+      assert.ok(result);
+      const domain=plan.domains.find(row=>row.id===result.domainId);
+      assert.deepEqual(domain.actualTypes,continues?[fn.returnType.id]:[]);
+      const fieldRead=plan.fieldReaching.reads.find(row=>row.node===fn.id+'/body/1/value');
+      assert.deepEqual(fieldRead?.reaching.flatMap(row=>row.sources),continues?[tail]:[]);
+    }
+  }
 });

@@ -178,7 +178,7 @@ function buildPlans(input,context,options,definitions) {
       if(!arrayReaching.reads.length)break;
       // Even skipped stores need lexical versions from the carrier. The
       // ordered field selections continue to govern successful reads.
-      const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields};
+      const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields,failedInitializers:array.failedInitializers};
       fieldReaching=buildFiniteFieldReaching(hir,fieldPlan,charge,allowCompoundTermination?null:terminalReads);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
         for(const id of read.versions){charge();versions.push(id);}
