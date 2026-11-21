@@ -320,10 +320,78 @@ fn ownerRows(contracts: *const [4]domain.PublicationContract) [4]owners.Fixed {
         .{ .function_id = dto.final_callee, .graph = &contracts[3].return_origins.?, .parameters = &.{.{ .write = true }}, .captures = &.{}, .may_throw = contracts[3].upper.facets.may_throw },
     };
 }
-test "typed A new C forwards original Ref through B parameter to new D and returns actual D" {
+fn checkTransitiveParameter(comptime copied: bool) !void {
     var fixture: Fixture = undefined; fixture.init();
+    const cell: t.CellRef = @enumFromInt(5);
+    const binding = [_]t.JsonMember{.{ .key = "binding", .value = .{ .string = "b-forward-argument" } }};
+    const initialize = binding ++ [_]t.JsonMember{.{ .key = "initialize", .value = .{ .boolean = true } }};
+    const copy_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = dto.actual_c } }};
+    const registers = native_registers ++ [_]wire.Register{
+        .{ .carrier = .{ .cell = cell }, .view = null },
+        .{ .carrier = actual_cc, .view = actual_c }, .{ .carrier = actual_cc, .view = actual_c },
+    };
+    const carriers = [_][]const u8{
+        "receiver:" ++ dto.a, "receiver:" ++ dto.b, dto.b, payload, dto.a, payload, dto.actual_c,
+        "cell:b-forward-argument", dto.actual_c, dto.actual_c,
+    };
+    var entry = [_]ins.Instruction{
+        native_instructions[0],
+        .{ .source = operation, .result = r7, .operands = &.{}, .data = .{ .eh_cell = .{ .binding = cell } } },
+        .{ .source = operation, .result = null, .operands = &.{ r7, r6 }, .data = .{ .eh_store = .{ .binding = cell, .initialize = true } } },
+        .{ .source = operation, .result = r8, .operands = &.{r7}, .data = .{ .eh_load = .{ .binding = cell } } },
+        native_instructions[1],
+        .{ .source = operation, .result = r9, .operands = &.{r8}, .data = .{ .domain_copy = .{ .static_view = actual_c } } },
+        native_instructions[2],
+    };
+    entry[6].operands = &.{ r1, r9 };
+    var entry_plan = [_]control.SourcePlanOperation{
+        native_operations[0],
+        .{ .name = "cell", .view = dto.actual_c, .properties = &binding, .result = r7, .operands = &.{}, .successors = &.{}, .source = operation },
+        .{ .name = "store", .view = "void", .properties = &initialize, .result = null, .operands = &.{ r7, r6 }, .successors = &.{}, .source = operation },
+        .{ .name = "load", .view = dto.actual_c, .properties = &binding, .result = r8, .operands = &.{r7}, .successors = &.{}, .source = operation },
+        native_operations[1],
+        .{ .name = "value_copy", .view = dto.actual_c, .properties = &copy_properties, .result = r9, .operands = &.{r8}, .successors = &.{}, .source = operation },
+        native_operations[2],
+    };
+    entry_plan[6].operands = &.{ r1, r9 };
+    var blocks = native_blocks;
+    blocks[0].instructions = &entry;
+    var plan = native_plan;
+    plan[0].operations = &entry_plan;
+    var contracts = complete_contracts;
+    const nodes = dto.native_leaf.nodes[0..7].* ++ [_]m.Value{
+        .{ .copy = .{ .@"type" = dto.actual_c, .bases = &.{6}, .site = "B:original-argument-copy", .heap = 0, .control = 0 } },
+    };
+    const heaps = dto.native_leaf.heaps[0..5].* ++ [_]m.Heap{.{ .copy = .{ .previous = 0, .value = 7 } }};
+    var calls = dto.native_leaf.calls[0..1].*;
+    calls[0].arguments = &.{&.{7}};
+    calls[0].heap = 5;
+    if (copied) {
+        fixture.functions[1].registers = &registers;
+        fixture.functions[1].blocks = &blocks;
+        fixture.abis[1].source_plan = .{ .carriers = &carriers, .blocks = &plan };
+        const upper = &contracts[1].return_origins.?;
+        upper.nodes = &nodes;
+        upper.heaps = &heaps;
+        upper.calls = &calls;
+    }
+    fixture.program.tables.mode.common.authority.fixed_publication.publication.contracts = &contracts;
     var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
     var budget = m.Budget{ .context = &c, .charge = refs.graphCharge }; try typed(&c, &budget);
+    if (copied) {
+        var middle = try body.project(&c, @enumFromInt(1), &dto.directory, &budget);
+        defer middle.deinit();
+        try std.testing.expectEqual(@as(?body.Pending, null), middle.pending);
+        const graph = &middle.graph.?;
+        const argument = try rootValue(graph, graph.calls[0].arguments[0][0]);
+        try std.testing.expect(graph.nodes[argument] == .copy);
+        const copy = graph.nodes[argument].copy;
+        const original = graph.nodes[try rootValue(graph, copy.bases[0])].parameter;
+        try std.testing.expect(original.index == 1 and std.mem.eql(u8, original.@"type", dto.actual_c));
+        const heap = graph.heaps[graph.calls[0].heap];
+        const event = if (heap == .join) graph.heaps[heap.join.inputs[0]].copy else heap.copy;
+        try std.testing.expect(event.value == argument and event.previous == copy.heap);
+    }
     var projection = try body.project(&c, @enumFromInt(0), &dto.directory, &budget); defer projection.deinit();
     try std.testing.expectEqual(@as(?body.Pending, null), projection.pending); const graph = &projection.graph.?;
     const validation = try m.validateGraph(c.allocator, &dto.directory, dto.caller, graph, &budget);
@@ -332,7 +400,7 @@ test "typed A new C forwards original Ref through B parameter to new D and retur
     const input = try refs.returnOriginConstructorInput(&c, arena.allocator(), c.program.tables.mode.common.authority.fixed_publication, dto.caller);
     const certificates_rows = [_]certificates.FixedContract{
         .{ .function_id = dto.caller, .graph = &dto.caller_graph, .complete = &input.fixed[0] },
-        .{ .function_id = dto.native_callee, .graph = &dto.native_leaf, .complete = &input.fixed[1] },
+        .{ .function_id = dto.native_callee, .graph = &contracts[1].return_origins.?, .complete = &input.fixed[1] },
         .{ .function_id = dto.callee, .graph = &complete_leaf, .complete = &input.fixed[2] },
         .{ .function_id = dto.final_callee, .graph = &actual_complete, .complete = &input.fixed[3] },
     };
@@ -352,8 +420,8 @@ test "typed A new C forwards original Ref through B parameter to new D and retur
     try std.testing.expectEqual(c_birth, first.receiver);
     try std.testing.expect(first.analysis.calls.len == 0 and fact.analysis.calls.len == 1);
     const inner = fact.analysis.calls[0];
-    try std.testing.expect(fact.caller_graph == graph and fact.graph == &complete_contracts[1].return_origins.?);
-    try std.testing.expect(inner.caller_graph == fact.graph and inner.graph == &complete_contracts[2].return_origins.?);
+    try std.testing.expect(fact.caller_graph == graph and fact.graph == &contracts[1].return_origins.?);
+    try std.testing.expect(inner.caller_graph == fact.graph and inner.graph == &contracts[2].return_origins.?);
     try std.testing.expectEqualStrings(dto.a, dto.directory.functions[1].return_type);
     try std.testing.expectEqualStrings(dto.a, fact.graph.nodes[4].receiver_value.@"type".?);
     try std.testing.expectEqual(@as(usize, 1), fact.arguments[1].len);
@@ -368,7 +436,7 @@ test "typed A new C forwards original Ref through B parameter to new D and retur
     try std.testing.expect(birth.analysis == fact.analysis and birth.frame == d_birth and birth.completion == .normal);
     try std.testing.expectEqualStrings(dto.b, birth.analysis.frames[birth.frame].new_target.?);
     try std.testing.expectEqualStrings(dto.actual_c, receiver.frames[c_birth].new_target.?);
-    const rows = ownerRows(&complete_contracts);
+    const rows = ownerRows(&contracts);
     var result = try owners.analyzeReceiver(c.allocator, &dto.directory, &physical, dto.caller, graph, &rows, &budget, &receiver); defer result.deinit();
     try std.testing.expectEqual(@as(?owners.Pending, null), result.pending);
     try std.testing.expect(result.normal_live and !result.language_live);
@@ -402,4 +470,20 @@ test "typed A new C forwards original Ref through B parameter to new D and retur
     }
     try std.testing.expect(native_seen and reference_seen);
     try std.testing.expectEqual(@as(usize, 0),result.effects.len);
+    if (copied) {
+        var bad_contracts = contracts;
+        var bad_calls = calls;
+        bad_calls[0].heap = 0;
+        bad_contracts[1].return_origins.?.calls = &bad_calls;
+        var fixed = input.fixed[0..4].*;
+        fixed[1].contract = &bad_contracts[1];
+        var rejected = try domain.analyzeReturns(c.allocator, &dto.directory, graph, &budget, .{ .function_id = dto.caller, .fixed = &fixed });
+        defer rejected.deinit();
+        try std.testing.expectEqual(@as(?domain.Pending, .data_protocol), rejected.pending);
+    }
+}
+
+test "typed A new C forwards original Ref through B parameter to new D and returns actual D" {
+    try checkTransitiveParameter(false);
+    try checkTransitiveParameter(true);
 }

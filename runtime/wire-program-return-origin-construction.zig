@@ -360,6 +360,10 @@ const Engine = struct {
         const admitted = ordinary.types[node.parameter.index] orelse return false;
         return try self.budget.equal(admitted, node.parameter.@"type") and try self.budget.equal(admitted, expected);
     }
+    fn parameterSource(self: *const Engine, node: model.Value) ?ParameterSource {
+        if (node != .parameter or node.parameter.index == 0 or node.parameter.index >= self.parameter_sources.len) return null;
+        return self.parameter_sources[node.parameter.index];
+    }
     fn referenceArgument(self: *Engine, argument: []const Ref, expected: model.Symbol, heap: Ref) Error!bool {
         const Probe = struct { engine: *Engine, refs: []const Ref, expected: model.Symbol, heap: Ref };
         var work: std.ArrayListUnmanaged(Probe) = .empty;
@@ -397,8 +401,7 @@ const Engine = struct {
                 if (atom.source == .node) {
                     try self.budget.step(); const node = current.graph.nodes[atom.source.node];
                     if (try current.ordinaryReference(node, probe.expected)) { found = true; continue; }
-                    if (node != .parameter or node.parameter.index == 0 or node.parameter.index >= current.parameter_sources.len) return false;
-                    const source = current.parameter_sources[node.parameter.index] orelse return false;
+                    const source = current.parameterSource(node) orelse return false;
                     const formal = current.formal_input orelse return false;
                     try self.budget.spend(4);
                     if (source.call >= source.caller.graph.calls.len or source.parameter != node.parameter.index) return false;
@@ -467,34 +470,46 @@ const Engine = struct {
         const event = self.graph.heaps[call.heap];
         if (copy.bases.len != 1 or copy.control != call.control or event != .copy or
             event.copy.value != value or event.copy.previous != copy.heap) return null;
+        const parameter = try self.singleArgumentValue(copy.bases[0], copy.control) orelse return null;
+        const original = self.graph.nodes[parameter];
+        if (reference) {
+            if (!try self.ordinaryReference(original, expected) and
+                (self.parameterSource(original) == null or !try self.budget.equal(original.parameter.@"type", expected))) return null;
+        } else if (original != .parameter or original.parameter.index == 0 or
+            !try self.budget.equal(original.parameter.@"type", expected)) return null;
         // The original operand must have exactly one materialized copy
         // occurrence, immediately preceding this call in the same control.
         for (self.graph.heaps, 0..) |heap, id| {
             try self.budget.step();
             if (heap == .copy and heap.copy.value == value and id != call.heap) return null;
         }
-        const parameter = try self.singleArgumentValue(copy.bases[0], copy.control) orelse return null;
-        const original = self.graph.nodes[parameter];
-        if (reference) {
-            if (!try self.ordinaryReference(original, expected)) return null;
-        } else if (original != .parameter or original.parameter.index == 0 or
-            !try self.budget.equal(original.parameter.@"type", expected)) return null;
         return .{ .copy = value, .parameter = parameter };
     }
-    fn ordinaryArgument(self: *Engine, call: model.Call, argument: []const Ref, expected: model.Symbol, values: []const Atom, permission: ParameterAccess) Error!?bool {
-        if (self.formal_input == null or self.formal_input.?.ordinary == null) return false;
-        for (values) |atom| {
+    fn referenceCopyArgument(self: *Engine, call: model.Call, argument: []const Ref, expected: model.Symbol, values: []const Atom, permission: ParameterAccess) Error!?bool {
+        var ordinary: ?Ref = null;
+        if (self.formal_input != null and self.formal_input.?.ordinary != null) for (values) |atom| {
             try self.budget.step();
-            if (atom.source != .node or !try self.ordinaryReference(self.graph.nodes[atom.source.node], expected)) continue;
-            if (permission.read or permission.write or permission.structural) { self.pending = .fixed_contract; return null; }
-            if (values.len == 1) {
-                if (try self.orderedParameterCopy(call, argument, expected, true)) |ordered| {
-                    if (ordered.parameter == atom.source.node) return true;
-                }
+            if (atom.source == .node and try self.ordinaryReference(self.graph.nodes[atom.source.node], expected)) {
+                ordinary = atom.source.node;
+                break;
             }
-            self.pending = .data_protocol; return null;
+        };
+        if (ordinary == null and self.parameter_sources.len == 0) return false;
+        // referenceArgument already followed the supplied constructor
+        // parameter to its exact original call. Identify this copy even
+        // when the final values no longer agree with an earlier CallFact.
+        const ordered = try self.orderedParameterCopy(call, argument, expected, true);
+        if (ordinary == null and ordered == null) return false;
+        if (permission.read or permission.write or permission.structural) {
+            self.pending = .fixed_contract;
+            return null;
         }
-        return false;
+        if (ordered) |copy| {
+            if ((ordinary == null or ordinary.? == copy.parameter) and values.len == 1 and
+                values[0].category == .object and values[0].source == .node and values[0].source.node == copy.parameter) return true;
+        }
+        self.pending = .data_protocol;
+        return null;
     }
     fn directExplicitBase(self: *Engine, parent: Ref, child: *const model.Construction) Error!bool {
         try self.budget.spend(5);
@@ -607,7 +622,7 @@ const Engine = struct {
             const expected = function.parameter_types[parameter_index]; var scalar = false; var reference = false;
             for (self.directory.types) |row| { try self.budget.step(); if (try self.budget.equal(row.id, expected)) { scalar = row.kind == .scalar; reference = row.kind == .reference; break; } }
             if ((!scalar and !reference) or argument.len == 0) { self.pending = .data_protocol; return null; }
-            var ordinary_copy = false;
+            var reference_copy = false;
             if (reference) {
                 // Uncomputed inputs defer this call within the same Engine.
                 // The final stable caller state is checked again below; an
@@ -615,7 +630,7 @@ const Engine = struct {
                 if (!try self.referenceArgument(argument, expected, call.heap)) return null;
                 var origins: Atoms = .empty;
                 for (argument) |id| { try self.budget.step(); for (self.values[id].atoms.items) |atom| { _ = try self.insert(Atom, &origins, atom); } }
-                ordinary_copy = (try self.ordinaryArgument(call, argument, expected, origins.items, fixed.contract.upper.parameters[parameter_index])) orelse return null;
+                reference_copy = (try self.referenceCopyArgument(call, argument, expected, origins.items, fixed.contract.upper.parameters[parameter_index])) orelse return null;
                 arguments[parameter_index] = origins.items;
                 try self.budget.spend(5); sources[parameter_index] = .{ .caller = self, .call = ordinal, .parameter = parameter_index, .expected = expected, .heap = call.heap };
             }
@@ -646,7 +661,7 @@ const Engine = struct {
                 switch (node) {
                     inline .join, .gate => |row| { if (row.inputs.len == 0) { self.pending = .data_protocol; return null; } for (row.inputs) |id| { try self.budget.step(); if (!seen[id]) { seen[id] = true; work[count] = id; count += 1; } } },
                     .copy => {
-                        if (reference and ordinary_copy) { leaf = true; continue; }
+                        if (reference and reference_copy) { leaf = true; continue; }
                         const ordered = (if (scalar) try self.orderedParameterCopy(call, argument, expected, false) else null) orelse {
                             self.pending = .data_protocol; return null;
                         };
@@ -666,9 +681,8 @@ const Engine = struct {
                     },
                     .receiver_value, .call => { if (!reference) { self.pending = .data_protocol; return null; } leaf = true; },
                     .literal => |row| { if (reference or row.category != .other) { self.pending = .data_protocol; return null; } leaf = true; },
-                    .parameter => |row| {
-                        if (reference and !try self.ordinaryReference(node, expected) and
-                            (row.index == 0 or row.index >= self.parameter_sources.len or self.parameter_sources[row.index] == null)) {
+                    .parameter => {
+                        if (reference and !try self.ordinaryReference(node, expected) and self.parameterSource(node) == null) {
                             self.pending = .data_protocol; return null;
                         }
                         leaf = true;
@@ -1400,7 +1414,7 @@ fn finish(result: *Analysis, engine: *Engine) Error!void {
             for (call.arguments, 1..) |argument, parameter| {
                 try budget.step(); var originals: Atoms = .empty;
                 for (argument) |id| { try budget.step(); for (values[id].atoms.items) |atom| { _ = try engine.insert(Atom, &originals, atom); } }
-                _ = (try engine.ordinaryArgument(call, argument, function.parameter_types[parameter], originals.items, fact.fixed.contract.upper.parameters[parameter])) orelse {
+                _ = (try engine.referenceCopyArgument(call, argument, function.parameter_types[parameter], originals.items, fact.fixed.contract.upper.parameters[parameter])) orelse {
                     result.pending = engine.pending; return;
                 };
                 final_arguments[parameter] = originals.items;
