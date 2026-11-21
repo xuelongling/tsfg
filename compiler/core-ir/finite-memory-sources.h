@@ -39,10 +39,12 @@ private:
   std::map<Id,std::string> frameFunctions;
   bool valid=true,entriesBuilt=false;
   std::map<std::string,std::vector<Id>> entryFrames;
+  std::map<std::pair<mlir::Operation *,std::set<uint32_t>>,std::vector<mlir::Value>> checkedCells;
   bool buildEntries();
   bool repeats(mlir::Operation *op);
   bool incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result,bool allEdges=false);
   bool indices(Id frame,mlir::Value value,std::set<uint32_t> &result);
+  const std::vector<mlir::Value> *checkedArrayCells(Id frame,mlir::Operation *read);
   bool retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result);
   bool slice(MemoryFrames::Origin source,Id query,StoredSpanSlice &result);
   Id replay(Id base,const StoredSpanSlice &slice);

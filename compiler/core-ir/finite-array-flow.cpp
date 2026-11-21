@@ -68,6 +68,51 @@ bool orderedArrayParameters(ModuleProof &proof,llvm::DenseSet<mlir::Value> &para
   }
   return true;
 }
+
+bool ownInitializerArray(ModuleProof &proof,mlir::Operation *allocation) {
+  // This lexical owner feeds exactly one initializer commit in the same
+  // block, through its checked read and representation-preserving views.
+  auto value=allocation->getResult(0);
+  bool read=false;
+  std::string construction;
+  while(value.hasOneUse()) {
+    if(!proof.charge())return false;
+    auto &use=*value.getUses().begin();
+    auto *operation=use.getOwner();
+    if(operation->getBlock()!=allocation->getBlock())return false;
+    if(llvm::isa<DomainViewOp>(operation)&&operation->getResult(0).getType()==value.getType()) {
+      value=operation->getResult(0);continue;
+    }
+    if(!read&&llvm::isa<DomainArrayReadOp>(operation)&&use.getOperandNumber()==0) {
+      value=operation->getResult(0);read=true;continue;
+    }
+    if(!read||!llvm::isa<DomainFieldInitializeOp>(operation)||use.getOperandNumber()!=1)return false;
+    construction=attr(operation,"construction");
+    break;
+  }
+  if(construction.empty())return false;
+  for(const auto &phase:*proof.phases.getAsArray()) {
+    if(!proof.charge())return false;
+    const auto *row=phase.getAsObject();
+    if(row&&string(*row,"constructionId")==construction)return string(*row,"activation")=="before-body";
+  }
+  return false;
+}
+
+const Domain *lexicalNativeElement(ModuleProof &proof,mlir::Value value) {
+  const auto type=value.getType();
+  if(llvm::isa<FiniteDomainType>(type))return nullptr;
+  while(auto *producer=value.getDefiningOp()) {
+    if(!proof.charge())return nullptr;
+    if(llvm::isa<DomainViewOp>(producer)&&producer->getOperand(0).getType()==type) {
+      value=producer->getOperand(0);continue;
+    }
+    if(producer->getName().getStringRef()!="tsfg_core.constant")return nullptr;
+    const auto *domain=valueDomain(proof,type);
+    return domain&&domain->representation=="native"&&domain->alternatives.size()==1?domain:nullptr;
+  }
+  return nullptr;
+}
 }
 ArrayFlow::ArrayFlow(ModuleProof &p,PayloadFlow &f,std::function<Id(mlir::Value)> resolve,Role r)
     :proof(p),flow(f),payload(std::move(resolve)),role(r),entryCells(f,p.remaining){}
@@ -269,7 +314,7 @@ bool ArrayFlow::call(mlir::Operation *op,const std::string &target,size_t offset
   }
   return true;
 }
-bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
+bool ArrayFlow::operation(mlir::Operation *op,const std::string &function,bool afterKnownTrap) {
   if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
     if(role==Role::OrderedPayload&&!proof.mayTraverse(op,0))return true;
     for(size_t i=0;i<branch.getDestOperands().size();++i)
@@ -314,8 +359,17 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
   if(name=="tsfg_core.domain.array_create") {
     const auto &owner=owners[allocations.at(op)];const auto target=value(op->getResult(0));
     if(!valid||target==PayloadFlow::none||!flow.seed(target,owner.token))return false;
-    for(const auto input:op->getOperands())
+    const bool lexical=afterKnownTrap&&ownInitializerArray(proof,op);
+    if(proof.failed)return false;
+    for(const auto input:op->getOperands()) {
       if(!proof.charge()||!edge(payload(input),owner.elements)||!edge(value(input),owner.nested))return false;
+      // The backing check still covers and exactly compares the lexical
+      // allocation. This independent constant never enters the actual flow.
+      if(lexical) {
+        const auto *element=lexicalNativeElement(proof,input);
+        if(proof.failed||(element&&!flow.seed(owner.elements,element->alternatives.front())))return false;
+      }
+    }
     return valid;
   }
   if(name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_read") {
@@ -365,8 +419,16 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
 }
 bool ArrayFlow::build() {
   if(!collect()||!entrySeeds())return false;
-  for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
-    if(!proof.charge()||((role==Role::CarrierMaximum||proof.mayExecute(&op))&&!operation(&op,id)))return false;
+  const bool carrier=role==Role::CarrierMaximum;
+  for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+    bool sawTrap=false;
+    for(auto &op:block) {
+      if(!proof.charge())return false;
+      const bool executable=proof.mayExecute(&op);
+      if((carrier||executable)&&!operation(&op,id,sawTrap&&!executable))return false;
+      if(carrier&&executable&&proof.trappingArrayReads.count(&op))sawTrap=true;
+    }
+  }
   return valid;
 }
 bool ArrayFlow::finish() {

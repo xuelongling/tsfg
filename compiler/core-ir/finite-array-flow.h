@@ -45,6 +45,6 @@ private:
   bool entrySeeds();
   bool publishCells();
   bool call(mlir::Operation *op,const std::string &target,size_t offset,Id gate=PayloadFlow::none,const std::string &selected={},bool forward=true);
-  bool operation(mlir::Operation *op,const std::string &function);
+  bool operation(mlir::Operation *op,const std::string &function,bool afterKnownTrap);
 };
 } // namespace tsfg::finite

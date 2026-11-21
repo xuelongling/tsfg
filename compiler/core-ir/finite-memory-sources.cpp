@@ -272,6 +272,19 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
         result.receivers.push_back({source,origin.frame,query});result.introduced.insert(type);continue;
       }
     }
+    if(!item.owner&&name=="tsfg_core.domain.array_read"){
+      const auto *domain=valueDomain(proof,source.getType());
+      if(!domain||domain->representation!="native"||!proof.mayExecute(op)){
+        result.pending=true;continue;
+      }
+      const auto *cells=checkedArrayCells(origin.frame,op);
+      if(!good())break;
+      if(!cells||cells->empty()){result.pending=true;continue;}
+      // Follow the checked cells in their own activation. Only values that
+      // reach the query frame can be published there as SSA inputs.
+      for(auto cell:*cells)add(cell,origin.frame,false,item.dependency);
+      continue;
+    }
     if(name=="tsfg_core.domain.field_read"){
       // These are current-pass FirstWrites results at this exact read, not a
       // previous actual-payload fixed point. Inputs are relative to the read's

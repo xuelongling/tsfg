@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "finite-memory-sources.h"
+#include "finite-array-memory.h"
 
 namespace tsfg::finite {
 bool MemorySources::indices(Id frame,mlir::Value value,std::set<uint32_t> &destination){
@@ -60,5 +61,22 @@ bool MemorySources::indices(Id frame,mlir::Value value,std::set<uint32_t> &desti
   }
   if(!good()||pending||result.empty())return false;
   destination=std::move(result);return true;
+}
+const std::vector<mlir::Value> *MemorySources::checkedArrayCells(Id frame,mlir::Operation *read){
+  std::set<uint32_t> slots;
+  if(!indices(frame,read->getOperand(1),slots))return nullptr;
+  if(!proof.charge(1+slots.size())){valid=false;return nullptr;}
+  // The caller's frame resolves the index. Once fixed, the checked query
+  // accepts only cells from this read's own function and control pass.
+  auto key=std::make_pair(read,std::move(slots));
+  if(const auto found=checkedCells.find(key);found!=checkedCells.end())return &found->second;
+  CheckedArraySources selected;
+  if(!proveCheckedArraySources(proof,read,&key.second,selected)){valid=false;return nullptr;}
+  std::vector<mlir::Value> cells;
+  if(selected.complete)for(const auto &cell:selected.cells){
+    if(!proof.charge()){valid=false;return nullptr;}
+    cells.push_back(cell.value);
+  }
+  return &checkedCells.emplace(std::move(key),std::move(cells)).first->second;
 }
 } // namespace tsfg::finite
