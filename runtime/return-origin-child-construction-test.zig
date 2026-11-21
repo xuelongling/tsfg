@@ -4,6 +4,7 @@
 const std = @import("std");
 const model = @import("wire-program-return-origin-model.zig");
 const domain = @import("wire-program-return-origin-construction.zig");
+const call_fixture = @import("constructor-call-literal-dto.zig");
 
 const Meter = struct {
     remaining: usize = 100_000,
@@ -118,6 +119,74 @@ test "formal return interpretation preserves the same complete child protocol" {
     try std.testing.expectEqual(@as(usize, 1), result.initializations.len);
     try std.testing.expectEqual(@as(?model.Symbol, null), result.frames[0].new_target);
     try std.testing.expectEqual(@as(?model.Symbol, null), result.frames[1].new_target);
+}
+
+test "a parent owns its own field only after binding the child's allocation" {
+    const fixture: Fixture = .{};
+    var graph = fixture.graph();
+    const nodes = fixture.nodes ++ [_]model.Value{.{ .receiver_value = .{ .@"type" = "Derived", .action = 8 } }};
+    var heaps = fixture.heaps ++ [_]model.Heap{.{ .store = .{
+        .previous = 8, .bases = &.{9}, .selector = "field:own", .view = "Derived", .values = &.{6}, .control = 7, .initialize = true,
+    } }};
+    heaps[1].join.inputs = &.{ 0, 9 };
+    heaps[4].receiver_action.previous = 9;
+    heaps[4].receiver_action.control = 7;
+    graph.nodes = &nodes;
+    graph.heaps = &heaps;
+    var catalog = directory;
+    catalog.fields = &.{ "own", "value" };
+    var meter: Meter = .{};
+    var budget = meter.budget();
+    var contract = call_fixture.contracts[0];
+    contract.return_origins = graph;
+    var declaration = call_fixture.declarations[0];
+    declaration.decl_key.name = "Derived";
+    declaration.construction.?.base = @splat(0x22);
+    declaration.parameter_types = &.{ @splat(0x11), @splat(0x33) };
+    const rows = [_]domain.FixedFunction{.{
+        .function_id = "ctor", .contract = &contract, .declaration = &declaration, .initialization_fields = &.{"own"},
+    }};
+    const input: domain.FormalInput = .{ .function_id = "ctor", .fixed = &rows };
+    try model.validateDirectory(std.testing.allocator, &catalog, &budget);
+    try std.testing.expectEqual(model.Pending.construction_frame, (try model.validateGraph(std.testing.allocator, &catalog, "ctor", &graph, &budget)).pending);
+
+    var result = try domain.analyzeReturns(std.testing.allocator, &catalog, &graph, &budget, input);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, null), result.pending);
+    try std.testing.expect(result.normal_live and result.language_live);
+    const exits = result.input_exits.?;
+    try std.testing.expectEqual(@as(usize, 0), exits.normal.missing_fields.?.len);
+    try std.testing.expectEqual(@as(usize, 1), exits.language.missing_fields.?.len);
+    try std.testing.expectEqualStrings("own", exits.language.missing_fields.?[0]);
+    try std.testing.expectEqual(@as(usize, 2), result.initializations.len);
+    for (result.initializations) |write| {
+        try std.testing.expect(write.base.source == .allocation and write.base.source.allocation == 1);
+    }
+
+    heaps[9].store.previous = 7;
+    var before_parent_bind = try domain.analyzeReturns(std.testing.allocator, &catalog, &graph, &budget, input);
+    defer before_parent_bind.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, .scalar_initialization), before_parent_bind.pending);
+
+    // A distinct allocation by the same base role shares the parent frame,
+    // but was never bound to that parent.
+    const distinct_nodes = nodes ++ [_]model.Value{
+        .{ .receiver_frame = .{ .construction = "construct:Base", .new_target = null, .parent = &.{0}, .site = "other-child", .control = 7 } },
+        .{ .receiver_value = .{ .@"type" = "Base", .action = 10 } },
+        .{ .receiver_value = .{ .@"type" = "Base", .action = 11 } },
+    };
+    var distinct_heaps = heaps ++ [_]model.Heap{
+        .{ .receiver_action = .{ .previous = 8, .control = 7, .frames = &.{10}, .action = .allocate, .operands = &.{}, .completion = .normal } },
+        .{ .receiver_action = .{ .previous = 10, .control = 7, .frames = &.{10}, .action = .bind, .operands = &.{11}, .completion = .normal } },
+    };
+    distinct_heaps[9].store.previous = 11;
+    distinct_heaps[9].store.bases = &.{12};
+    graph.nodes = &distinct_nodes;
+    graph.heaps = &distinct_heaps;
+    try std.testing.expectEqual(model.Pending.construction_frame, (try model.validateGraph(std.testing.allocator, &catalog, "ctor", &graph, &budget)).pending);
+    var wrong_allocation = try domain.analyzeReturns(std.testing.allocator, &catalog, &graph, &budget, input);
+    defer wrong_allocation.deinit();
+    try std.testing.expectEqual(@as(?domain.Pending, .scalar_initialization), wrong_allocation.pending);
 }
 
 test "child completion alone never binds its parent" {

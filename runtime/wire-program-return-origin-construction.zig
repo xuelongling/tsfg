@@ -181,39 +181,71 @@ const Engine = struct {
         }
         try self.initializations(&into.initializations,from.initializations.items);
     }
-    fn storeReady(self:*Engine,row:@FieldType(model.Heap,"store")) Error!bool {
-        if(self.input==null or row.bases.len==0 or row.values.len==0)return false;
+    fn fieldOwner(self: *Engine, world: *const World, atom: Atom, view: model.Symbol) Error!?Ref {
+        if (atom.category != .object or atom.source != .allocation) return null;
+        const allocation = atom.source.allocation;
+        const born = self.frames[allocation];
+        const role = born.role orelse return null;
+        if (allocation != self.input.? and born.parent == null) return null;
+        const binding = world.bindings[allocation];
+        if (binding.unbound) return null;
+        var bound = false;
+        for (binding.atoms.items) |old| { try self.budget.step(); if (std.meta.eql(old, atom)) { bound = true; break; } }
+        if (!bound) return null;
+        if (try self.budget.equal(view, role.owner)) return allocation;
+        // A super allocation retains its original identity. A containing frame
+        // can initialize its own fields only with that sole current binding;
+        // a joined or repeated birth cannot pair two different histories.
+        if (world.births[allocation].repeated) return null;
+        var ancestor = born.parent;
+        while (ancestor) |id| {
+            try self.budget.spend(3);
+            const frame = self.frames[id];
+            const owner = frame.role orelse return null;
+            if (try self.budget.equal(view, owner.owner)) {
+                const parent_binding = world.bindings[id];
+                if (parent_binding.unbound or parent_binding.atoms.items.len != 1 or
+                    !std.meta.eql(parent_binding.atoms.items[0], atom)) return null;
+                return id;
+            }
+            ancestor = frame.parent;
+        }
+        return null;
+    }
+    const FieldDestination = struct { definite_owner: ?Ref };
+    fn fieldDestination(self: *Engine, row: @FieldType(model.Heap, "store")) Error!?FieldDestination {
+        if (self.input == null or row.bases.len == 0 or row.values.len == 0) return null;
+        const world = &self.worlds[row.previous];
+        var allocation: ?Ref = null;
+        var owner: ?Ref = null;
+        var single = true;
         for(row.bases) |id| {
-            try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return false;
+            try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return null;
             for(value.atoms.items) |atom| {
-                try self.budget.step(); if(atom.category!=.object or atom.source!=.allocation)return false;
-                try self.budget.spend(4); const frame=atom.source.allocation;
-                const role=self.frames[frame].role orelse return false;
-                if(frame!=self.input.? and self.frames[frame].parent==null)return false;
-                if(!try self.budget.equal(row.view,role.owner))return false;
-                const before=&self.worlds[row.previous].bindings[frame];
-                if(before.unbound or before.atoms.items.len==0)return false;
-                var bound=false; for(before.atoms.items) |old| { try self.budget.step(); if(std.meta.eql(old,atom)) { bound=true; break; } }
-                if(!bound)return false;
+                try self.budget.spend(5);
+                const field_owner = try self.fieldOwner(world, atom, row.view) orelse return null;
+                if (allocation) |old| {
+                    if (old != atom.source.allocation or owner.? != field_owner) single = false;
+                } else {
+                    allocation = atom.source.allocation;
+                    owner = field_owner;
+                }
             }
         }
         for(row.values) |id| {
-            try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return false;
-            if (!self.effect_origins) for(value.atoms.items) |atom| { try self.budget.step(); if(atom.category!=.other or atom.source!=.node or self.graph.nodes[atom.source.node]!=.literal)return false; };
+            try self.budget.step(); const value=&self.values[id]; if(value.frames.items.len!=0 or value.atoms.items.len==0)return null;
+            if (!self.effect_origins) for(value.atoms.items) |atom| { try self.budget.step(); if(atom.category!=.other or atom.source!=.node or self.graph.nodes[atom.source.node]!=.literal)return null; };
         }
-        return true;
+        return .{ .definite_owner = if (single) owner else null };
     }
     fn initialize(self:*Engine,index:Ref,row:@FieldType(model.Heap,"store")) Error!void {
-        if(!self.controls[row.control] or !self.worlds[row.previous].live or !try self.storeReady(row))return;
+        if (!self.controls[row.control] or !self.worlds[row.previous].live) return;
+        const destination = try self.fieldDestination(row) orelse return;
         // A store through alternative receiver allocations is not a MUST write
         // to any single one of them, even when each alternative is bound.
-        var selected: ?Ref = null; var single = true;
-        for (row.bases) |base| { try self.budget.step(); for (self.values[base].atoms.items) |atom| {
-            try self.budget.step(); const frame = atom.source.allocation;
-            if (selected) |old| { if (old != frame) single = false; } else selected = frame;
-        } }
         const fields = [_]model.Symbol{row.selector[6..]};
-        try self.merge(&self.worlds[index],&self.worlds[row.previous],null,null,null,if (single and selected != null) .{ .frame = selected.?, .fields = &fields } else null);
+        try self.merge(&self.worlds[index],&self.worlds[row.previous],null,null,null,
+            if (destination.definite_owner) |owner| .{ .frame = owner, .fields = &fields } else null);
         for(row.bases) |base| { try self.budget.step(); for(self.values[base].atoms.items) |object| {
             try self.budget.step(); for(row.values) |value| { try self.budget.step(); for(self.values[value].atoms.items) |atom| {
                 try self.budget.spend(4); try self.add(Initialization,&self.worlds[index].initializations,.{.store=index,.base=object,.value=atom});
@@ -988,7 +1020,7 @@ fn finish(result: *Analysis, engine: *Engine, return_origins: bool) Error!void {
     for(graph.heaps) |heap| if(heap==.store) {
         try budget.step(); const row=heap.store; if(!controls[row.control])continue;
         if (formal_function != null and std.mem.startsWith(u8, row.selector, "capture:")) continue;
-        if(!worlds[row.previous].live or !try engine.storeReady(row)) { result.pending=.scalar_initialization; return; }
+        if (!worlds[row.previous].live or (try engine.fieldDestination(row)) == null) { result.pending = .scalar_initialization; return; }
     };
     if (return_origins) for (graph.heaps) |heap| {
         try budget.step(); if (heap != .copy) continue;
