@@ -270,6 +270,38 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
   }),/r10-system-query-llvm: invalid UTF-8 in compiler output/);
   assert.equal(requestedMetadata,false);
 
+  for(const {name,output} of [{name:'empty',output:Buffer.alloc(0)},{name:'over-limit',output:Buffer.alloc(8*1024*1024+1,32)}])
+    await t.test('reject '+name+' LLVM output before metadata',()=>{
+      const calls=[];
+      assert.throws(()=>readQueryCompilerOutputs(facts,context,core,{cpuLLVM:'ir',tmeta:true},command=>{
+        calls.push(command);
+        return command==='--cpu-batch'?batch:command==='--llvm-ir'?output:meta;
+      }),/r10-system-query-llvm: compiler output size differs/);
+      assert.deepEqual(calls,['--cpu-batch','--llvm-ir']);
+    });
+
+  const oversizedBatch=Buffer.concat([Buffer.alloc(8*1024*1024+1-batch.length,32),batch]);
+  for(const {name,output} of [{name:'empty',output:Buffer.alloc(0)},{name:'over-limit',output:oversizedBatch}])
+    await t.test('reject '+name+' checked batch before LLVM',()=>{
+      const calls=[];
+      assert.throws(()=>readQueryCompilerOutputs(facts,context,core,{cpuBatch:true,cpuLLVM:'ir'},command=>{
+        calls.push(command);
+        return command==='--cpu-batch'?output:llvm;
+      }),/r10-system-query-batch: compiler output size differs/);
+      assert.deepEqual(calls,['--cpu-batch']);
+    });
+
+  await t.test('reject checked batch missing its final LF before LLVM',()=>{
+    assert.equal(batch.at(-1),10);
+    const unterminated=Buffer.from(batch.toString('utf8').replace(/\n+$/u,''));
+    const calls=[];
+    assert.throws(()=>readQueryCompilerOutputs(facts,context,core,{cpuBatch:true,cpuLLVM:'ir'},command=>{
+      calls.push(command);
+      return command==='--cpu-batch'?unterminated:llvm;
+    }),/r10-system-query-batch: compiler output requires a final LF/);
+    assert.deepEqual(calls,['--cpu-batch']);
+  });
+
   const malformedBatch=Buffer.from(batch);
   malformedBatch[0]=0xff;
   for(const pair of [false,true])await t.test(pair?'reject malformed batch before downstream stages':'reject malformed standalone batch',()=>{
@@ -292,6 +324,21 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
     }),/r10-system-query-core: invalid UTF-8 in compiler output/);
     assert.equal(called,false);
   });
+});
+
+test('Query tmeta rejects an otherwise matching batch missing its final LF',()=>{
+  const original=readFileSync(new URL('../../runtime/jobs/testdata/query-tmeta-i32-copy.tmeta',import.meta.url));
+  const envelope=JSON.parse(original.toString('utf8')),payload=JSON.parse(envelope.payload);
+  const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
+  const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
+  assert.equal(canonical(readSystemQueryTmeta(original,facts,context,payload.batch).envelope)+'\n',original.toString('utf8'));
+  assert.ok(payload.batch.endsWith('\n'));
+  payload.batch=payload.batch.replace(/\n+$/u,'');
+  payload.batchHash=sha256(payload.batch);
+  envelope.payload=canonical(payload);
+  envelope.payloadHash=sha256('tsfg.query-tmeta.v2\0'+envelope.payload);
+  const edited=Buffer.from(canonical(envelope)+'\n');
+  assert.throws(()=>readSystemQueryTmeta(edited,facts,context,payload.batch),/r10-query-tmeta: checked batch requires a final LF/);
 });
 
 test('Query tmeta rejects a changed physical i32 scalar extent',()=>{

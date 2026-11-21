@@ -52,6 +52,7 @@ export function readSystemQueryTmeta(bytes,facts,context,checkedBatch){
   const body=text(envelope.payload);equal(envelope.payloadHash,sha256('tsfg.query-tmeta.v2\0'+body));
   const payload=record(json(body+'\n'),descriptor.payload),packet=text(payload.sourcePacket),request=text(payload.sourceRequest),batch=text(payload.batch);
   equal([packet,request,batch],[receipt.packetText,receipt.requestText,checkedBatch]);
+  if(!batch.endsWith('\n'))fail('checked batch requires a final LF');
   equal([payload.inputIdentity,payload.packageId,payload.target,payload.functionIdentityDomain],
     [facts.inputIdentity,facts.packageId,facts.program.target,descriptor.functionIdentityDomain]);
   const componentLayouts=text(payload.componentLayouts),effectText=text(payload.effects);

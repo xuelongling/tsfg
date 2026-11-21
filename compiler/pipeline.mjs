@@ -130,6 +130,11 @@ export async function compileSystemQuery(bytes,context,options){
 
 /** @param {Buffer} bytes @param {'core'|'batch'|'llvm'} stage */
 function decodeQueryCompilerText(bytes,stage){
+  // Match the byte limit of the independent batch and LLVM consumers.
+  if(stage!=='core'&&(bytes.length===0||bytes.length>8*1024*1024))
+    throw new TypeError(`r10-system-query-${stage}: compiler output size differs`);
+  if(stage==='batch'&&bytes.at(-1)!==10)
+    throw new TypeError('r10-system-query-batch: compiler output requires a final LF');
   try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}
   catch{throw new TypeError(`r10-system-query-${stage}: invalid UTF-8 in compiler output`);}
 }
