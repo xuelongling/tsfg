@@ -27,14 +27,19 @@ remains512 complete functions,64 parameters,4096 registers,256 blocks,
 8192 instructions,8MiB Core text and1MiB packet; functions are never removed
 to make an unsupported module pass.
 
-The existing official String facts/HIR input currently supplies literal and
-concat only. Length/codeunit/slice/compare are verified low-level Core
-primitives. Their checked usize endpoints state an IR precondition; they do
-not define ordinary TS `s[i]`, `charCodeAt` or `String.slice` behavior. Source
-normalization for the applicable missing-value result, negative arguments,
-numeric conversion and slice clamping still needs its official facts and
-lowering connection. No new language bounds-trap policy or source API is
-introduced here; these remaining paths keep parent M24 open.
+The String-only facts profiles supply literals and concatenation. The
+typed Array facts route also projects relational String comparisons, including
+comparisons of checked `Array<string>` reads. Finite Core evaluates the two
+operands in source order and compares the UTF-16 comparison result against
+signed i32 zero.
+
+Length, checked code unit access and checked slice are available as low-level
+Core operations. The pinned typed Array declaration gives `String` an empty
+interface, so the official checker rejects `s.length`, `s[i]` and `s.slice`
+before projection. Their Source connection requires builtin declaration
+identities and matching facts. The lowering must preserve missing-value
+results, negative arguments, numeric conversion and slice clamping before
+using the checked Core endpoints. Source-to-Runtime acceptance remains open.
 
 The [registry](../contracts/registry.json) and [machine schema](../contracts/bytecode.schema.json)
 define the exact accepted wire identity. The retained wire10 String packets
