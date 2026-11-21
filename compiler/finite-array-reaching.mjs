@@ -390,6 +390,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const right=child('right',terminalRoot);if(right.terminal)return right;
         return ['===','!=='].includes(value.operator)?{symbol:path,truth:predicateTruth(value,path)}:{symbol:path};
       }
+      if(value.kind==='unary') {
+        const operand=child('operand',terminalRoot);
+        return operand.terminal?operand:{symbol:path};
+      }
       // Unmodeled aliases never acquire an owner identity. Still traverse all
       // real evaluation children and conservatively discard mutating effects.
       if(value.target)for(const name of ['receiver','index'])if(value.target[name])expression(value.target[name],path+'/target/'+name,state,bindings);

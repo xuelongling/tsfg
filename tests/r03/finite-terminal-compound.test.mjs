@@ -107,6 +107,21 @@ for(const row of cases)test(row.name,async t=>{
     const {receiver,index,type,range}=original.left.operand.target;
     // Component exercise using the same checked array operand and source range.
     const tail={kind:'arrayReadChecked',receiver,index,type,range};
+    await t.test('a strict unary operand must complete before its following Array read',()=>{
+      const initializer={kind:'unary',operator:'+',operand:original.left,type,range:original.left.range};
+      const fn={...compound,body:[...compound.body.slice(0,2),{...local,initializer},{...returned,value:tail}]};
+      const model={...hir,functions:hir.functions.map(item=>item===compound?fn:item)};
+      const site=compound.id+'/body/2/initializer/operand/operand',old=site+'/old-value';
+      const {reaching,terminalReads}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>true);
+      assert.deepEqual([...terminalReads??[]],row.productive?[]:[old]);
+      const read=reaching.reads.find(read=>read.node===old);
+      assert.equal(read?.status,row.productive?'proven':'missing');
+      assert.equal(source.slice(read.origin.start,read.origin.end),'a[at]');
+      const after=reaching.reads.find(read=>read.node===compound.id+'/body/3/value');
+      assert.equal(after?.status,row.productive?'proven':'pending');
+      assert.deepEqual(after?.versions,row.productive?[site+'/array-version']:[]);
+      assert.ok(reaching.writes.some(write=>write.id===site+'/array-version'));
+    });
     const compare={...original,operator:'===',type:scalarTypeIds.bool};
     const flag={kind:'boolean',value:true,type:scalarTypeIds.bool,range:original.range};
     for(const operator of ['&&','||','??']){
