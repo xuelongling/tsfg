@@ -6,6 +6,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
+import {finiteBranchEffects} from './finite-numeric-use.mjs';
 
 // The production state-copy seam also admits bounded component budget checks;
 // its version tokens are proof identities, never synthetic Source expressions.
@@ -448,6 +449,21 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         for(const child of Object.values(value)){charge();if(child&&typeof child==='object')stack.push(child);}
       }
     }
+    function conditionEffects(value,path,state,bindings,terminalRoot) {
+      if(collectAll)return;
+      return finiteBranchEffects(value,path,{state,bindings},(value,path,entry)=>{
+        const state=clone(entry.state),bindings=copyBindings(entry.bindings);
+        const result=expression(value,path,state,bindings,terminalRoot);
+        if(result.terminal)return {yes:null,no:null};
+        // The emitter preserves both outcomes in a call-bearing condition.
+        const exit={state,bindings};
+        return {yes:exit,no:exit};
+      },(left,right)=>{
+        if(!left)return right;if(!right)return left;
+        const bindings=new Map();meetBindings(bindings,left.bindings,right.bindings);
+        return {state:join(left.state,right.state),bindings};
+      },charge);
+    }
     function statements(body,path,state,bindings) {
       for(const [index,row] of body.entries()) {
         charge();const p=path+'/'+index;
@@ -464,12 +480,18 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         else if(row.kind==='block') {state=statements(row.body,p+'/body',state,bindings);if(!state)return null;}
         else if(row.kind==='if') {
-          const condition=expression(row.condition,p+'/condition',state,bindings,true);
-          if(condition.terminal)return null;
-          const truth=collectAll?undefined:condition.truth??booleanLiteral(row.condition,charge)?.value;
-          const a=copyBindings(bindings),b=copyBindings(bindings),
-            left=truth===false?null:statements(row.then,p+'/then',clone(state),a),
-            right=truth===true?null:statements(row.else??[],p+'/else',clone(state),b);
+          let branches=conditionEffects(row.condition,p+'/condition',state,bindings,true);
+          if(!branches) {
+            const condition=expression(row.condition,p+'/condition',state,bindings,true);
+            if(condition.terminal)return null;
+            const truth=collectAll?undefined:condition.truth??booleanLiteral(row.condition,charge)?.value;
+            const entry={state,bindings};
+            branches={yes:truth===false?null:entry,no:truth===true?null:entry};
+          }
+          const {yes,no}=branches;
+          const a=yes?copyBindings(yes.bindings):bindings,b=no?copyBindings(no.bindings):bindings;
+          const left=yes?statements(row.then,p+'/then',clone(yes.state),a):null,
+            right=no?statements(row.else??[],p+'/else',clone(no.state),b):null;
           state=join(left,right);if(!state)return null;
           meetBindings(bindings,a,b,!!left,!!right);forgetTruth(bindings);
         }else if(row.kind==='while') {
@@ -487,6 +509,13 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             // The checked statements have no break or continue. The body may
             // contribute a function exit, but only the skipped edge reaches
             // the next statement and it keeps the condition's effects.
+            const branches=conditionEffects(row.condition,condition,state,bindings,true);
+            if(branches) {
+              if(branches.yes)statements(row.body,p+'/body',clone(branches.yes.state),copyBindings(branches.yes.bindings));
+              if(!branches.no)return null;
+              state=branches.no.state;meetBindings(bindings,branches.no.bindings,branches.no.bindings);
+              continue;
+            }
             if(expression(row.condition,condition,state,bindings,true).terminal)return null;
             statements(row.body,p+'/body',clone(state),copyBindings(bindings));
             if(truth===true)return null;
@@ -499,7 +528,13 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             if(entry.complete&&!entry.productive&&expression(row.condition,condition,state,bindings,true).terminal)return null;
           }
           invalidate(state);for(const id of bindings.keys()){charge();bindings.set(id,{});}
-          expression(row.condition,condition,state,bindings);statements(row.body,p+'/body',clone(state),copyBindings(bindings));invalidate(state);
+          const branches=conditionEffects(row.condition,condition,state,bindings,false);
+          if(branches) {
+            if(branches.yes)statements(row.body,p+'/body',clone(branches.yes.state),copyBindings(branches.yes.bindings));
+          }else {
+            expression(row.condition,condition,state,bindings);statements(row.body,p+'/body',clone(state),copyBindings(bindings));
+          }
+          invalidate(state);
           if(truth===true)return null;
         }else if(row.kind==='initializeOwnFields') {
           for(const init of types.get(row.ownerType).construction.initialization)if(init.value)

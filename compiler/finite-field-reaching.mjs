@@ -5,6 +5,7 @@
 import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
+import {finiteBranchEffects} from './finite-numeric-use.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
 import {createFieldCallContexts,finiteFieldEffects,finiteFieldWriteVersion,
@@ -377,6 +378,18 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       if(value.kind==='fieldUpdate')state.clear();
       return null;
     }
+    function conditionEffects(condition,path,state,env) {
+      return finiteBranchEffects(condition,path,{state,env},(leaf,at,entry)=>{
+        const exit={state:clone(entry.state),env:copyFieldReachingAliases(entry.env,charge)};
+        expression(leaf,at,exit.state,exit.env);
+        return {yes:exit,no:exit};
+      },(left,right)=>{
+        if(!left||!right)return left??right;
+        const aliases=new Map();
+        meetAliases(aliases,left.env,right.env);
+        return {state:join(left.state,right.state),env:aliases};
+      },charge);
+    }
     function statements(values,path,state,env) {
       for(const [index,value] of values.entries()) {
         charge();const p=path+'/'+index;
@@ -409,16 +422,20 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           // proof; it cannot inherit the original this-field versions.
           exits.push(value.value&&value.kind==='constructorReturn'?new Map():clone(state));return null;
         }else if(value.kind==='if') {
-          expression(value.condition,p+'/condition',state,env);
-          const arm=literalIfArm(value,charge);
-          if(arm) {
-            state=statements(value[arm]??[],p+'/'+arm,state,env);
-            if(!state)return null;
-            continue;
+          const branches=conditionEffects(value.condition,p+'/condition',state,env);
+          if(!branches) {
+            expression(value.condition,p+'/condition',state,env);
+            const arm=literalIfArm(value,charge);
+            if(arm) {
+              state=statements(value[arm]??[],p+'/'+arm,state,env);
+              if(!state)return null;
+              continue;
+            }
           }
-          const leftEnv=copyFieldReachingAliases(env,charge),rightEnv=copyFieldReachingAliases(env,charge),
-            left=statements(value.then,p+'/then',clone(state),leftEnv),
-            right=statements(value.else??[],p+'/else',clone(state),rightEnv),merged=join(left,right);
+          const current={state,env},{yes,no}=branches??{yes:current,no:current};
+          const leftEnv=copyFieldReachingAliases(yes?.env??env,charge),rightEnv=copyFieldReachingAliases(no?.env??env,charge),
+            left=yes?statements(value.then,p+'/then',clone(yes.state),leftEnv):null,
+            right=no?statements(value.else??[],p+'/else',clone(no.state),rightEnv):null,merged=join(left,right);
           if(!merged)return null;state=merged;
           meetAliases(env,leftEnv,rightEnv,!!left,!!right);
         }else if(value.kind==='while') {
@@ -426,8 +443,14 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           if(truth===false){expression(value.condition,p+'/condition',state,env);continue;}
           // A loop-carried write or alias is not a proof for its first turn.
           state.clear();for(const id of env.keys()){charge();env.set(id,null);}
-          expression(value.condition,p+'/condition',state,env);
-          statements(value.body,p+'/body',new Map(),copyFieldReachingAliases(env,charge));state.clear();
+          const branches=conditionEffects(value.condition,p+'/condition',state,env);
+          if(branches) {
+            if(branches.yes)statements(value.body,p+'/body',branches.yes.state,branches.yes.env);
+          }else {
+            expression(value.condition,p+'/condition',state,env);
+            statements(value.body,p+'/body',new Map(),copyFieldReachingAliases(env,charge));
+          }
+          state.clear();
           if(truth===true)return null;
         }else if(value.kind==='block')state=statements(value.body,p+'/body',state,env);
         else if(value.kind==='initializeOwnFields')initialize(value,state,env);

@@ -87,9 +87,9 @@ test('a call argument that assigns a caller binding keeps the ordinary SSA merge
   assert.equal(finitePresenceShortCircuit(condition,()=>{}),null);
 });
 
-test('method dispatch keeps the ordinary condition path',()=>{
+test('a method receiver that assigns a caller binding keeps the ordinary condition path',()=>{
   const condition=structuredClone(functionNamed('selected').body[0].condition);
-  const call=condition.left.right;
-  call.receiver=call.arguments[0];
+  const call=condition.left.right,receiver=call.arguments[0];
+  call.receiver={...receiver,kind:'assignment',target:receiver,value:receiver};
   assert.equal(finitePresenceShortCircuit(condition,()=>{}),null);
 });

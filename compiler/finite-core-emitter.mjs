@@ -193,11 +193,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       conditionBranches(condition,api) {
         const logical=logicalPresence.get(condition);
         if(!logical)return null;
-        return {...logical,emit({expression:value,test}) {
+        return {...logical,emit({expression:value,test,booleanBinding}) {
           const name=api.emit(value);
-          if(!test)return name;
-          // Preserve the conservative field-reaching analysis while the
-          // independent refinement check can trace the original comparison.
+          if(!test&&!(logical.hasCall&&booleanBinding))return name;
+          // Memory analysis tracks both outcomes. The refinement verifier
+          // can still trace an original presence comparison through the view.
           return op(api,'view',[{name,type:value.type}],value.type,opAttrs(value),value.range);
         }};
       },

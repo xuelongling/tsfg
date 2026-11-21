@@ -107,25 +107,32 @@ export function finitePresenceTest(condition,charge) {
     ?{condition,binding:binding.binding,type:absence.semanticType??absence.type,operand:binding===a?0:1}:null;
 }
 export function finitePresenceShortCircuit(condition,charge) {
-  condition=ungroup(condition,charge);
+  let rootPath='';
+  while(condition.kind==='group'){charge();condition=condition.operand;rootPath+='/operand';}
   if(!['binary','shortCircuit'].includes(condition.kind)||!['&&','||'].includes(condition.operator))return null;
-  const root={},pending=[{expression:condition,node:root}];let leaves=0,hasPresenceTest=false;
+  const root={},pending=[{expression:condition,node:root,path:rootPath}];let leaves=0,hasPresenceTest=false,hasCall=false;
   while(pending.length) {
-    charge();const {expression,node}=pending.pop(),value=ungroup(expression,charge);
+    charge();const {expression,node,path}=pending.pop();
+    let value=expression,innerPath=path;
+    while(value.kind==='group'){charge();value=value.operand;innerPath+='/operand';}
     node.firstLeaf=leaves;
     const test=finitePresenceTest(value,charge);
     const semanticType=value.semanticType??value.type;
     const booleanBinding=value.kind==='reference'&&semanticType===boolTypeId&&(value.declaredType??semanticType)===boolTypeId;
-    if(test||booleanBinding||value.kind==='call'&&!value.receiver&&finiteBindingWrites(value.arguments,charge).size===0) {
-      node.test=test;node.expression=expression;leaves++;
+    const callWithoutRebinding=value.kind==='call'&&semanticType===boolTypeId
+      &&finiteBindingWrites(value.receiver?[value.receiver,value.arguments]:value.arguments,charge).size===0;
+    if(test||booleanBinding||callWithoutRebinding) {
+      node.test=test;node.booleanBinding=booleanBinding;node.expression=expression;node.path=path;leaves++;
       hasPresenceTest||=Boolean(test);
+      hasCall||=callWithoutRebinding;
     }else {
       if(!['binary','shortCircuit'].includes(value.kind)||!['&&','||'].includes(value.operator))return null;
       Object.assign(node,{condition:value,when:value.operator==='&&',left:{},right:{}});
-      pending.push({expression:value.right,node:node.right},{expression:value.left,node:node.left});
+      pending.push({expression:value.right,node:node.right,path:innerPath+'/right'},
+        {expression:value.left,node:node.left,path:innerPath+'/left'});
     }
   }
-  return hasPresenceTest?{tree:root,leaves}:null;
+  return hasPresenceTest?{tree:root,leaves,hasCall}:null;
 }
 function branchGuard(test,truth,guards,charge) {
   if(!test)return guards;
@@ -148,27 +155,42 @@ function commonGuards(left,right,charge) {
   }
   return common;
 }
-function shortCircuitGuards(tree,entry,charge) {
-  const operands=new Map(),pending=[{node:tree,guards:entry}];
+function shortCircuitEdges(tree,entry,visit,merge,charge,rightEntry=undefined) {
+  const pending=[{node:tree,entry}];
   let exits={yes:entry,no:entry};
   while(pending.length) {
-    charge();const frame=pending.at(-1),{node,guards}=frame;
+    charge();const frame=pending.at(-1),{node,entry}=frame;
     if(node.expression) {
-      exits={yes:branchGuard(node.test,true,guards,charge),no:branchGuard(node.test,false,guards,charge)};
+      exits=entry===null?{yes:null,no:null}:visit(node,entry);
     }else if(!frame.started) {
-      frame.started=true;pending.push({node:node.left,guards});continue;
+      frame.started=true;pending.push({node:node.left,entry});continue;
     }else if(!frame.left) {
       frame.left=exits;
-      const guards=node.when?exits.yes:exits.no;
-      operands.set(node.condition.right,guards);
-      pending.push({node:node.right,guards});continue;
+      const entry=node.when?exits.yes:exits.no;
+      rightEntry?.(node.condition.right,entry);
+      pending.push({node:node.right,entry});continue;
     }else {
-      exits=node.when?{yes:exits.yes,no:commonGuards(frame.left.no,exits.no,charge)}
-        :{yes:commonGuards(frame.left.yes,exits.yes,charge),no:exits.no};
+      exits=node.when?{yes:exits.yes,no:merge(frame.left.no,exits.no)}
+        :{yes:merge(frame.left.yes,exits.yes),no:exits.no};
     }
     pending.pop();
   }
+  return exits;
+}
+function shortCircuitGuards(tree,entry,charge) {
+  const operands=new Map();
+  const exits=shortCircuitEdges(tree,entry,(node,guards)=>({
+    yes:branchGuard(node.test,true,guards,charge),no:branchGuard(node.test,false,guards,charge),
+  }),(left,right)=>commonGuards(left,right,charge),charge,(value,guards)=>operands.set(value,guards));
   return {...exits,operands};
+}
+
+/** A selected call may change memory. Reuse the emitter's lexical short-circuit
+ * tree so a consumer sees its effects only on edges that passed through it. */
+export function finiteBranchEffects(condition,path,entry,evaluate,combine,charge) {
+  const logical=finitePresenceShortCircuit(condition,charge);
+  if(!logical?.hasCall)return undefined;
+  return shortCircuitEdges(logical.tree,entry,(node,entry)=>evaluate(node.expression,path+node.path,entry),combine,charge);
 }
 export function finiteBindingWrites(body,charge) {
   const written=new Set(),stack=[body];
