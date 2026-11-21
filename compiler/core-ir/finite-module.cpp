@@ -352,7 +352,51 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
   ModuleProof proof(module);
   return mlir::success(contracts(proof)&&!proof.failed);
 }
-mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
+namespace {
+bool foldVerifiedBranches(ModuleProof &proof,bool &changed) {
+  std::vector<std::pair<mlir::cf::CondBranchOp,bool>> folds;
+  for (auto &[id,function] : proof.functions) {
+    if (!proof.charge()) return false;
+    const bool constructor = string(*proof.callable.at(id),"role") == "construction-body";
+    for (auto &block : function.getBody()) {
+      if (!proof.charge()) return false;
+      auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(block.getTerminator());
+      if (!branch) continue;
+      const auto condition = branch.getCondition();
+      auto *constant = condition.getDefiningOp();
+      uint64_t bits = 0;
+      bool takeTrue;
+      if (typeCode(condition.getType()) != 2) continue;
+      if (constant && constant->getName().getStringRef() == "tsfg_core.constant" && constantBits(constant,bits)) {
+        takeTrue = bits != 0;
+      } else {
+        // Only consume the independently verified outcome of a live
+        // constructor join. Keep the original prefix and its checked traps.
+        const auto argument = llvm::dyn_cast<mlir::BlockArgument>(condition);
+        if (!constructor || !argument || argument.getOwner() == &function.getBody().front() ||
+            !proof.mayExecute(branch)) continue;
+        const bool trueEdge = proof.mayTraverse(branch,0), falseEdge = proof.mayTraverse(branch,1);
+        if (trueEdge == falseEdge) continue;
+        takeTrue = trueEdge;
+      }
+      const auto operands = takeTrue ? branch.getTrueDestOperands() : branch.getFalseDestOperands();
+      if (!proof.charge(1 + operands.size())) return false;
+      folds.emplace_back(branch,takeTrue);
+    }
+  }
+  // Decide on the original CFG before changing any operation in the proof.
+  // Keep lexical blocks, events and source metadata.
+  for (auto [branch,takeTrue] : folds) {
+    auto *destination = takeTrue ? branch.getTrueDest() : branch.getFalseDest();
+    const auto operands = takeTrue ? branch.getTrueDestOperands() : branch.getFalseDestOperands();
+    auto jump = mlir::OpBuilder(branch).create<mlir::cf::BranchOp>(branch.getLoc(),destination,operands);
+    jump->setDiscardableAttrs(branch->getDiscardableAttrDictionary());
+    branch.erase();
+  }
+  changed = !folds.empty();
+  return true;
+}
+mlir::LogicalResult checkModule(mlir::ModuleOp module,bool *changed=nullptr) {
   ModuleProof proof(module);
   if(discover(module)==Discovery::Limit) {
     proof.reject("finite identity discovery work limit");return mlir::failure();
@@ -361,30 +405,17 @@ mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
   if(!coreHeader::read(module,header)) {
     proof.reject("whole admission requires the exact formal Core header");return mlir::failure();
   }
-  return mlir::success(contracts(proof,&header)&&complete(proof)&&!proof.failed);
+  if(!contracts(proof,&header)||!complete(proof)||proof.failed)return mlir::failure();
+  if(changed&&!foldVerifiedBranches(proof,*changed))return mlir::failure();
+  return mlir::success();
 }
-bool foldConstantBranches(mlir::ModuleOp module) {
-  bool changed = false;
-  for (auto function : module.getOps<mlir::func::FuncOp>()) {
-    for (auto &block : function.getBody()) {
-      auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(block.getTerminator());
-      if (!branch) continue;
-      const auto condition = branch.getCondition();
-      auto *constant = condition.getDefiningOp();
-      uint64_t bits = 0;
-      if (!constant || constant->getName().getStringRef() != "tsfg_core.constant" ||
-          typeCode(condition.getType()) != 2 || !constantBits(constant,bits)) continue;
-      const bool takeTrue = bits != 0;
-      auto *destination = takeTrue ? branch.getTrueDest() : branch.getFalseDest();
-      const auto operands = takeTrue ? branch.getTrueDestOperands() : branch.getFalseDestOperands();
-      // Keep lexical blocks, events and source metadata. Only the proven
-      // unreachable edge is removed.
-      auto jump = mlir::OpBuilder(branch).create<mlir::cf::BranchOp>(branch.getLoc(),destination,operands);
-      jump->setDiscardableAttrs(branch->getDiscardableAttrDictionary());
-      branch.erase();
-      changed = true;
-    }
-  }
-  return changed;
+}
+mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
+  return checkModule(module);
+}
+mlir::LogicalResult optimizeModule(mlir::ModuleOp module) {
+  bool changed=false;
+  if(mlir::failed(checkModule(module,&changed)))return mlir::failure();
+  return changed?checkModule(module):mlir::success();
 }
 } // namespace tsfg::finite

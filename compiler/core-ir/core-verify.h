@@ -4,5 +4,5 @@
 namespace tsfg {
 // Shared CLI verification boundary. Reference metadata is validated before its
 // base scalar projection can enter the unchanged scalar verifier/encoder.
-mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module);
+mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module, bool optimizeFinite = false);
 } // namespace tsfg

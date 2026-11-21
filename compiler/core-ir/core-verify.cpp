@@ -18,7 +18,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 namespace tsfg {
-mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
+mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module, bool optimizeFinite) {
   if (commonProgram::uses(module)) return commonProgram::verify(module);
   if (formalException::uses(module)) return formalException::verify(module);
   if (formalClosure::uses(module)) return formalClosure::verify(module);
@@ -33,7 +33,7 @@ mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
       module.emitError("[core-ir-finite-module] mixed finite/private candidate identities");
       return mlir::failure();
     }
-    return finite::verifyModule(module);
+    return optimizeFinite ? finite::optimizeModule(module) : finite::verifyModule(module);
   }
   if (kernelGlobal::usesCandidate(module)) return kernelGlobal::verifyCandidate(module);
   if (exception::usesCandidate(module)) {

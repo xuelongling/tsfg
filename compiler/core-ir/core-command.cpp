@@ -2,7 +2,6 @@
 #include "core-command.h"
 #include "bytecode.h"
 #include "core-verify.h"
-#include "finite-module.h"
 #include "closure.h"
 #include "formal-closure.h"
 #include "formal-exception.h"
@@ -243,7 +242,9 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
     llvm::errs() << "[core-ir-invalid] verification failed\n";
     return 3;
   }
-  if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  const bool optimizeFinite = name == "--optimize" && !formalClosure && !formalException && !privateCandidate &&
+    module->getOperation()->hasAttr("tsfg_core.finite_domains");
+  if (mlir::failed(tsfg::verifyCoreModule(*module,optimizeFinite))) return 3;
   if (formalException && (nativeCommand || name == "--emit-bytecode" || nullableWire || stringWire || arrayWire)) {
     llvm::errs() << "[r04-core-exception-unsupported] the current wire and native consumers do not encode exceptional control\n";
     return 3;
@@ -320,11 +321,6 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
     llvm::sys::ChangeStdoutToBinary();
     llvm::outs().write(reinterpret_cast<const char *>(packet.data()), packet.size());
     return 0;
-  }
-  if (name == "--optimize" && !formalClosure && !formalException && !privateCandidate &&
-      module->getOperation()->hasAttr("tsfg_core.finite_domains")) {
-    const bool changed = tsfg::finite::foldConstantBranches(*module);
-    if (changed && (mlir::failed(mlir::verify(*module)) || mlir::failed(tsfg::verifyCoreModule(*module)))) return 3;
   }
   if (formalException || reference || nullable || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) {
     ReferenceOutput output;

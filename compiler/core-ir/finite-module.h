@@ -189,6 +189,6 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module);
 // Complete finite-module admission; development contract success alone does
 // not discharge outstanding memory, actual-domain or lifetime obligations.
 mlir::LogicalResult verifyModule(mlir::ModuleOp module);
-// Rewrite only directly known Boolean branches in a verified finite module.
-bool foldConstantBranches(mlir::ModuleOp module);
+// Admit, fold proven control edges, and verify the resulting finite module.
+mlir::LogicalResult optimizeModule(mlir::ModuleOp module);
 } // namespace tsfg::finite

@@ -7,6 +7,7 @@ import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compil
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from '../../compiler/finite-field-phases.mjs';
 import {sha256} from '../../compiler/identity.mjs';
+import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
 // Source-only expectations from the existing accepted fe82/e4f inputs. These
 // describe static permission and real SSA order, never executed payload values.
@@ -270,6 +271,36 @@ test('failed super arguments and nested initializer operands stop their own cont
   const continuation=initializations[1].slice(initializations[1].indexOf('\n  ^'+resume[1]+':'));
   assert.match(continuation,/^\n  \^bb\d+:\n(?:(?!  \^)[^\n]*\n)*?    "tsfg_core\.domain\.field_store"/);
 });
+
+
+for(const [file,digest,expected] of [
+  ['constructor-expression-failures','e5599012fe72a1f0ccd8e33650b66098cbbb41dd2846df89598bb2f80473c1c9',1],
+  ['super-prefix-live-array','8b964015e0253fd14e68f51e706001b6e3562614d45f61470ecf57ef748ab234',2],
+])test(file+' optimizes only independently selected constructor continuation edges',
+  {skip:!process.env.TSFG_CORE_IR_EXE},async()=>{
+    const {hir,context,publicationContext}=await initializerProof(file,digest);
+    const core=lowerFormalHir(hir,context,publicationContext);
+    const canonical=await invokeCore(core,'--canonicalize');accepted(canonical);
+    const optimized=await invokeCore(core,'--optimize');accepted(optimized);
+    const before=canonical.stdout.toString('utf8'),after=optimized.stdout.toString('utf8');
+    const conditional=text=>text.split('\n').filter(line=>line.includes('"cf.cond_br"'));
+    const oldBranches=conditional(before),newBranches=conditional(after);
+    assert.equal(oldBranches.length,2);
+    assert.equal(newBranches.length,expected);
+    assert.equal(newBranches[0],oldBranches[0]);
+    if(expected===2)assert.deepEqual(optimized.stdout,canonical.stdout);
+    else {
+      const removed=oldBranches[1].match(/\[\^bb\d+, (\^bb\d+)\] <\{operandSegmentSizes = array<i32: 1, 0, 0>\}> (\{[^}]*\})/u);
+      assert.ok(removed);
+      const [,target,source]=removed;
+      assert.ok(after.split('\n').includes('    "cf.br"()['+target+'] '+source+' : () -> ()'));
+      const retained=text=>text.split('\n').filter(line=>!line.includes('"cf.cond_br"')&&!line.includes('"cf.br"'))
+        .map(line=>line.replace(/  \/\/ (?:no predecessors|preds?: .*)$/u,''));
+      assert.deepEqual(retained(after),retained(before));
+    }
+    const repeated=await invokeCore(optimized.stdout,'--optimize');accepted(repeated);
+    assert.deepEqual(repeated.stdout,optimized.stdout);
+  });
 
 test('a failed initializer preserves only the effects before its checked read',async()=>{
   const {hir,proofs,phases}=await initializerProof('initializer-effect-prefix','49f2f016b5cab752215451826ba7497eeba97e7388800b447ac9f10da01e0084');
