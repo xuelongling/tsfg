@@ -53,6 +53,7 @@ struct Lengths {
     for(const auto &row:*proof.sourceExports.getAsArray()) {
       if(!charge())return false;exported.insert(string(*row.getAsObject(),"functionId"));
     }
+    std::vector<std::string> pending;
     for(auto &[id,fn]:proof.functions){
       bool modifies=false;
       for(auto &block:fn.getBody())for(auto &op:block){
@@ -60,19 +61,26 @@ struct Lengths {
         const auto name=op.getName().getStringRef();modifies|=name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_resize";
       }
       effects.emplace(id,modifies);
+      if(modifies){if(!charge())return false;pending.push_back(id);}
     }
-    bool changed=true;while(changed){
-      changed=false;for(const auto &[op,targets]:proof.selectedCallees){
-        if(!charge())return false;if(!proof.mayExecute(op))continue;
-        const auto id=attr(op->getParentOfType<mlir::func::FuncOp>(),"tsfg_core.function_id");
-        for(const auto &target:targets){
-          if(!charge())return false;
-          if(!proof.trapOnlyFunctions.count(target)&&effects.at(target)&&!effects.at(id)){effects[id]=true;changed=true;}
-        }
+    for(const auto &[op,targets]:proof.selectedCallees){
+      if(!charge())return false;
+      for(const auto &target:targets){
+        if(!charge())return false;callers[target].push_back(op);
       }
     }
-    for(const auto &[op,targets]:proof.selectedCallees)for(const auto &target:targets){
-      if(!charge())return false;callers[target].push_back(op);
+    // Each function becomes modifying at most once. Reuse the incoming
+    // call sites and filter them only for propagation along normal paths.
+    for(size_t cursor=0;cursor<pending.size();++cursor){
+      if(!charge())return false;
+      if(proof.trapOnlyFunctions.count(pending[cursor]))continue;
+      const auto found=callers.find(pending[cursor]);if(found==callers.end())continue;
+      for(auto *op:found->second){
+        if(!charge())return false;if(!proof.mayExecute(op))continue;
+        auto id=attr(op->getParentOfType<mlir::func::FuncOp>(),"tsfg_core.function_id");
+        auto &modifies=effects.at(id);if(modifies)continue;
+        if(!charge())return false;modifies=true;pending.push_back(std::move(id));
+      }
     }
     return true;
   }
