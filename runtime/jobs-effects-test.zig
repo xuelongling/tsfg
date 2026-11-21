@@ -192,6 +192,68 @@ test "checked parallel Query group retains ordered loop entries and opens the se
     try std.testing.expectEqual(@as(usize, 1), plan.rows);
 }
 
+test "atomic Query group keeps real Position and Velocity leases unpublished on late conflict" {
+    const oracle = try std.json.parseFromSlice(Oracle, A, @embedFile("jobs/testdata/query-effects-expected.json"), .{ .max_value_len = 8388608 });
+    defer oracle.deinit();
+    const case = oracle.value.cases[0];
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-multi.tmeta"), case.receipt);
+    defer document.deinit();
+    const ids = [_][]const u8{ namedSystem(case, "writePositionY"), namedSystem(case, "writeVelocity") };
+    const admission = try document.admitParallelGroup(A, &ids);
+    try std.testing.expect(admission == .admitted);
+    var group = admission.admitted;
+    defer group.deinit();
+    const position = group.systems[0].entries[0].columns[0].componentType;
+    const velocity = group.systems[1].entries[0].columns[0].componentType;
+    var store = try jobs.Store.init(A, &document.component_layout, 4);
+    defer store.deinit() catch unreachable;
+    const prior = try store.query(&.{.{ .component = position, .access = .read }});
+    defer prior.release() catch unreachable;
+    const archetype = try store.addArchetype(&.{ position, velocity });
+    const entity = try store.create(archetype, &.{});
+    var output = [_]?jobs.Store.Query{ null, null };
+    {
+        const held = try store.borrowWrite(entity, velocity);
+        defer held.release() catch unreachable;
+        const next_token = store.next_token;
+        try std.testing.expectError(error.BorrowConflict, group.acquire(A, &store, &.{ 0, 0 }, &output));
+        try std.testing.expect(output[0] == null and output[1] == null);
+        try std.testing.expectEqual(next_token, store.next_token);
+        try std.testing.expectEqual(@as(usize, 0), try prior.batchCount());
+        try std.testing.expect((try held.bytes()).len > 0);
+        const available = try store.borrowWrite(entity, position);
+        try available.release();
+    }
+    {
+        const held = try store.borrowWrite(entity, position);
+        defer held.release() catch unreachable;
+        try group.acquire(A, &store, &.{ null, 0 }, &output);
+        try std.testing.expect(output[0] == null and output[1] != null);
+        try output[1].?.release();
+        output[1] = null;
+    }
+    const before_empty = store.next_token;
+    var failing = std.testing.FailingAllocator.init(A, .{ .fail_index = 0 });
+    try group.acquire(failing.allocator(), &store, &.{ null, null }, &output);
+    try std.testing.expectEqual(before_empty, store.next_token);
+    try std.testing.expectError(error.BindingMismatch, group.acquire(A, &store, &.{0}, &output));
+    try std.testing.expectError(error.BindingMismatch, group.acquire(A, &store, &.{ 0, 1 }, &output));
+    try std.testing.expect(output[0] == null and output[1] == null);
+
+    try group.acquire(A, &store, &.{ 0, 0 }, &output);
+    defer for (output) |query| if (query) |active| active.release() catch unreachable;
+    for (output, group.systems, 0..) |query, system, index| {
+        const batch = try query.?.batch(0);
+        const entry = system.entries[0];
+        try std.testing.expectEqual(@as(usize, 1), entry.scalars.len);
+        var plan = try group.bind(A, &store, batch, index, 0, &.{.{ .float32 = 1 }});
+        defer plan.deinit();
+        try std.testing.expectEqualStrings(entry.entrySymbol, plan.entry_symbol);
+        try std.testing.expectEqual(@as(usize, 1), plan.rows);
+    }
+    try std.testing.expectError(error.InvalidLease, group.acquire(A, &store, &.{ null, null }, &output));
+}
+
 test "typed effects reject rehashed noncanonical edges and invalid members modes and identities" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();

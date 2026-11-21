@@ -281,3 +281,36 @@ test "all allocation failure points preserve complete old column and query owner
     try std.testing.checkAllAllocationFailures(A, allocationScenario, .{false});
     try std.testing.checkAllAllocationFailures(A, allocationScenario, .{true});
 }
+
+fn queryGroupAllocationScenario(allocator: std.mem.Allocator) !void {
+    var source = try load(A);
+    defer source.deinit();
+    const p = component(&source, "Position");
+    const s = component(&source, "Stats");
+    var store = try jobs.Store.init(allocator, &source, 2);
+    defer store.deinit() catch unreachable;
+    const both = try store.addArchetype(&.{ p, s });
+    const entity = try store.create(both, &.{});
+    const read = [_]jobs.Selection{.{ .component = p, .access = .read }};
+    const write = [_]jobs.Selection{.{ .component = s, .access = .write }};
+    var prior: ?jobs.Store.Query = try store.query(&read);
+    defer if (prior) |query| query.release() catch unreachable;
+    const next_token = store.next_token;
+    var output = [_]?jobs.Store.Query{ null, null };
+    store.queryGroup(&.{ &read, &write }, &output) catch |err| {
+        try std.testing.expect(output[0] == null and output[1] == null);
+        try std.testing.expectEqual(next_token, store.next_token);
+        try std.testing.expectEqual(@as(usize, 1), try prior.?.batchCount());
+        try prior.?.release();
+        prior = null;
+        // A failed attempt leaves neither phantom readers nor a writer.
+        try store.remove(entity);
+        return err;
+    };
+    for (output) |query| try query.?.release();
+    try std.testing.expectEqual(@as(usize, 1), try prior.?.batchCount());
+}
+
+test "atomic Query group rolls back every allocation failure around mixed existing readers" {
+    try std.testing.checkAllAllocationFailures(A, queryGroupAllocationScenario, .{});
+}

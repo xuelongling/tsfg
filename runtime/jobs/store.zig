@@ -381,6 +381,42 @@ pub const Store = struct {
     pub fn query(self: *Store, selection: []const Selection) !Query {
         self.lock();
         defer self.mutex.unlock();
+        return self.queryHandle(try self.reserveQuery(selection));
+    }
+
+    /// Acquire all present selections under one Store lock. Only vacant
+    /// output slots are accepted, and no handle is published on failure.
+    pub fn queryGroup(self: *Store, selections: []const ?[]const Selection, output: []?Query) !void {
+        if (selections.len != output.len) return error.InvalidLease;
+        for (output) |slot| if (slot != null) return error.InvalidLease;
+        if (selections.len == 0) return;
+        self.lock();
+        defer self.mutex.unlock();
+        const start = self.queries.items.len;
+        const first_token = self.next_token;
+        errdefer {
+            while (self.queries.items.len > start) self.endQuery(self.queries.pop().?);
+            // These tokens never left the lock or reached the output.
+            self.next_token = first_token;
+        }
+        for (selections) |selection| {
+            if (selection) |present| _ = try self.reserveQuery(present);
+        }
+        var index = start;
+        for (selections, output) |selection, *slot| {
+            if (selection == null) continue;
+            slot.* = self.queryHandle(self.queries.items[index].token);
+            index += 1;
+        }
+    }
+
+    fn queryHandle(self: *Store, sequence: u64) Query {
+        return .{ .store = self, .token = .{ .store_id = self.id, .sequence = sequence } };
+    }
+
+    // The caller holds the Store lock. No fallible operation follows the
+    // first change to a lease counter or the query directory.
+    fn reserveQuery(self: *Store, selection: []const Selection) !u64 {
         if (selection.len == 0 or selection.len > self.components.len) return error.ComponentMissing;
         const resolved = try self.allocator.alloc(Resolved, selection.len);
         errdefer self.allocator.free(resolved);
@@ -432,7 +468,7 @@ pub const Store = struct {
         }
         self.queries.appendAssumeCapacity(.{ .token = token, .selection = resolved, .chunks = chunks });
         self.next_token += 1;
-        return .{ .store = self, .token = .{ .store_id = self.id, .sequence = token } };
+        return token;
     }
     fn queryAt(self: *Store, token: LeaseToken) Error!*QueryState {
         if (token.store_id != self.id) return error.InvalidLease;
@@ -463,21 +499,26 @@ pub const Store = struct {
         if (token.store_id != self.id) return error.InvalidLease;
         for (self.queries.items, 0..) |state, state_index| if (state.token == token.sequence) {
             for (state.chunks) |matching| if (matching.active_call) return error.BorrowConflict;
-            for (state.chunks) |matching| {
-                const chunk = matching.chunk;
-                var first: usize = 0;
-                for (state.selection) |item| {
-                    const index = nextColumnIndex(chunk.columns, first, item.component);
-                    first = index + 1;
-                    self.endLease(chunk, &chunk.columns[index], item.access == .write);
-                }
-            }
-            self.allocator.free(state.selection);
-            self.allocator.free(state.chunks);
-            _ = self.queries.swapRemove(state_index);
+            self.endQuery(self.queries.swapRemove(state_index));
             return;
         };
         return error.InvalidLease;
+    }
+
+    // Normal release checks active calls before removal; rollback reaches
+    // only unpublished states, which cannot have an active call.
+    fn endQuery(self: *Store, state: QueryState) void {
+        for (state.chunks) |matching| {
+            const chunk = matching.chunk;
+            var first: usize = 0;
+            for (state.selection) |item| {
+                const index = nextColumnIndex(chunk.columns, first, item.component);
+                first = index + 1;
+                self.endLease(chunk, &chunk.columns[index], item.access == .write);
+            }
+        }
+        self.allocator.free(state.selection);
+        self.allocator.free(state.chunks);
     }
     const Location = struct { chunk: *Chunk, column: *Column, index: usize, row: usize };
     fn locate(self: *Store, entity: Entity, component_id: []const u8) !Location {

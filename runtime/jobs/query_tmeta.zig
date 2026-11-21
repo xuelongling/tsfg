@@ -32,6 +32,13 @@ pub const Expected = struct {
     llvmArtifact: ?struct { llvmHash: []const u8, batchHash: []const u8, metadataHash: []const u8 } = null,
 };
 
+fn querySelection(allocator: std.mem.Allocator, entry: *const Entry) ![]storage.Selection {
+    const selection = try allocator.alloc(storage.Selection, entry.columns.len);
+    for (entry.columns, selection) |column, *item|
+        item.* = .{ .component = column.componentType, .access = column.access };
+    return selection;
+}
+
 pub const Document = struct {
     arena: std.heap.ArenaAllocator,
     payload: Payload,
@@ -211,10 +218,8 @@ pub const Document = struct {
     /// Opens the Store's complete borrow session for the checked entry columns.
     pub fn query(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, entry_index: usize) !storage.Store.Query {
         const entry = try self.entryForStore(store, entry_index);
-        const selection = try allocator.alloc(storage.Selection, entry.columns.len);
+        const selection = try querySelection(allocator, entry);
         defer allocator.free(selection);
-        for (entry.columns, selection) |column, *item|
-            item.* = .{ .component = column.componentType, .access = column.access };
         return store.query(selection);
     }
 
@@ -300,6 +305,27 @@ pub const ParallelGroup = struct {
 
     pub fn query(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, system_index: usize, loop_index: usize) !storage.Store.Query {
         return self.document.query(allocator, store, try self.entryIndex(system_index, loop_index));
+    }
+
+    /// Acquire one selected loop per participating system in request order.
+    /// Pass null for systems without a loop in this stage and for each vacant
+    /// output slot. Success transfers the usual independently released Query
+    /// handles; failure keeps all output slots and existing Store leases intact.
+    pub fn acquire(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, loops: []const ?usize, output: []?storage.Store.Query) !void {
+        if (loops.len != self.systems.len or output.len != self.systems.len) return error.BindingMismatch;
+        for (output) |slot| if (slot != null) return error.InvalidLease;
+        for (loops) |loop| {
+            if (loop != null) break;
+        } else return;
+        var temporary = std.heap.ArenaAllocator.init(allocator);
+        defer temporary.deinit();
+        const scratch = temporary.allocator();
+        const selections = try scratch.alloc(?[]const storage.Selection, loops.len);
+        for (loops, selections, 0..) |loop, *selection, index| {
+            selection.* = if (loop) |ordinal| try querySelection(scratch,
+                try self.document.entryForStore(store, try self.entryIndex(index, ordinal))) else null;
+        }
+        return store.queryGroup(selections, output);
     }
 
     pub fn bind(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, system_index: usize, loop_index: usize, scalars: []const ScalarValue) !Plan {
