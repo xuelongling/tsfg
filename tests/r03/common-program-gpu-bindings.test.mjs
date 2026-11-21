@@ -14,6 +14,7 @@ import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {createCommonGpuBindingPlan,verifyCommonGpuBindingPlan,printCommonGpuBindingPlan,readCommonGpuBindingPlan}
   from '../../compiler/common-program-gpu-bindings.mjs';
 import {canonical} from '../../compiler/common-program-common.mjs';
+import {verifyCommonProducedPacket} from '../../compiler/common-program-packet.mjs';
 
 const raw=await fs.readFile(new URL('./common-program-positive.json',import.meta.url)),facts=readCommonProgramFacts(raw);
 const hir=buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:raw,expectedPackageId:facts.packageId});
@@ -251,6 +252,16 @@ test('genuine Source3 void kernel retains its whole group and needs no return bi
   assert.ok(voidCore.borrowProof);
   assert.deepEqual(createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,voidRequest),voidExpected);
 });
+const retainedRightPath=process.env.TSFG_COMMON20_RIGHT_PACKET;
+test('Common20 producer admits the retained right packet only for its checked input',{skip:!retainedRightPath},async()=>{
+  const packet=await fs.readFile(retainedRightPath);
+  assert.equal(createHash('sha256').update(packet).digest('hex'),
+    'b16b5cba1c72a906b14ac1854e304b2f32a34d68a4810b45c1e386a2b38ba807');
+  assert.notEqual(voidHir.inputIdentity,hir.inputIdentity);
+  verifyCommonProducedPacket(packet,voidHir.inputIdentity);
+  assert.throws(()=>verifyCommonProducedPacket(packet,hir.inputIdentity),/^TypeError: r04-common-producer-identity:/);
+});
+
 test('genuine Source3 extra void return resource identifies its owner function',()=>{
   assert.throws(()=>createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,voidExtraReturn),error=>
     sourceDiagnostic(error)&&error.code==='r03-common-program-gpu-resource'&&error.ruleId==='r01-gpu'&&

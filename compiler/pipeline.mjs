@@ -248,17 +248,22 @@ async function compileSnapshot(snapshot, options) {
 async function produceCore(hir, options, lower = value => lowerFormalHir(value, options.factsContext, options.callPublicationContext), context = undefined) {
   const executable = await verifiedConsumer(options.core, "core");
   const lowered = lower(hir);
-  const common = isCommonProgramContext(context ? context.factsContext : options.factsContext) || familyOf(hir) === 'tsfg.program-hir-candidate';
+  const inputIdentity = Object.getOwnPropertyDescriptor(hir, "inputIdentity")?.value;
+  const commonContext = isCommonProgramContext(context ? context.factsContext : options.factsContext);
+  const family = commonContext ? undefined : familyOf(hir);
+  const common = commonContext || family === 'tsfg.program-hir-candidate';
+  const packetInput = common || family === genericHirFormat.family ? inputIdentity : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, options.optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
-  return { hir, executable, prefix, common, core };
+  return { hir, executable, prefix, common, core, packetInput };
 }
 
 async function produceBytecode(buildCore) {
   try {
-    const { hir, executable, prefix, common, core } = await buildCore();
+    const { hir, executable, prefix, common, core, packetInput } = await buildCore();
     const bytecode = consume(executable, [...prefix, "--emit-bytecode"], core);
-    (common ? verifyCommonProducedPacket : verifyProducedPacket)(bytecode);
+    if (common) verifyCommonProducedPacket(bytecode, packetInput);
+    else verifyProducedPacket(bytecode, packetInput);
     return { status: "ok", hir, core, bytecode };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };

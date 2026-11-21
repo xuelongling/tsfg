@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {canonical,sha256} from './identity.mjs';
+import {hasProducedInputIdentity} from './producer-packet.mjs';
 import binding from '../contracts/common-program-wire-development.json' with {type:'json'};
 import schema from '../contracts/common-program-bytecode-development.schema.json' with {type:'json'};
 import privateCore from '../contracts/common-program-core-development.json' with {type:'json'};
@@ -14,11 +15,14 @@ if(canonical(binding)!==canonical(expected)||schemaIdentity!==expected.wire.sche
   throw new TypeError('r04-common-producer-schema: exact Core7/Common20 development binding required');
 export const commonProgramExchangeFormat=Object.freeze({version:'0.20.0',bytecodeSchema:schemaIdentity});
 
-// Only the exact Common-development envelope; no caller-selected identity or fallback.
-export function verifyCommonProducedPacket(bytecode){
+// Match the exact Common-development envelope to the checked HIR input.
+/** @param {Buffer} bytecode @param {string} expectedInputIdentity */
+export function verifyCommonProducedPacket(bytecode,expectedInputIdentity){
   if(!Buffer.isBuffer(bytecode)||bytecode.length<80||bytecode.length>8388608||!bytecode.subarray(0,8).equals(Buffer.from('TSFGTBC0','ascii'))||
       bytecode.readUInt32LE(8)!==20||bytecode.readUInt32LE(44)!==bytecode.length||
       'sha256:'+bytecode.subarray(12,44).toString('hex')!==schemaIdentity||
       'sha256:'+bytecode.subarray(48,80).toString('hex')!==sha256(bytecode.subarray(80)))
     throw new TypeError('r04-common-producer-identity: output differs from exact Common20 development envelope');
+  if(!hasProducedInputIdentity(bytecode,schema.target,schema.capabilities.exact,expectedInputIdentity))
+    throw new TypeError('r04-common-producer-identity: packet target or input differs from the checked HIR');
 }

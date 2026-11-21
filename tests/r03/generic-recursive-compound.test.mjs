@@ -9,8 +9,21 @@ import { validateGenericInstanceResult } from '../../compiler/generic-instance.m
 import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir, lowerGenericHir } from '../../compiler/generic-hir.mjs';
 import { readHir, printHir, lowerHir, lowerFormalHir, lowerOwnedHir } from '../../compiler/hir.mjs';
 import { canonical } from '../../compiler/identity.mjs';
+import { verifyProducedPacket } from '../../compiler/producer-packet.mjs';
+import { expectedStringPacket, stringCases } from './formal-string-gold.mjs';
 
 const fixture=name=>readFile(new URL('./fixtures/'+name,import.meta.url));
+
+test('registered R04 pairing rejects a different checked generic input',async()=>{
+ const generic=readGenericHir(await fixture('generic-recursive-conditional-hir-v7.json'));
+ const { hir }=stringCases()[0];
+ const packet=expectedStringPacket(hir);
+ assert.doesNotThrow(()=>verifyProducedPacket(packet));
+ assert.doesNotThrow(()=>verifyProducedPacket(packet,hir.inputIdentity));
+ assert.throws(()=>verifyProducedPacket(packet,generic.inputIdentity),/r04-producer-input-identity/);
+ const wrongTarget=expectedStringPacket({...hir,target:{...hir.target,triple:'aarch64-pc-windows-msvc'}});
+ assert.throws(()=>verifyProducedPacket(wrongTarget,hir.inputIdentity),/r04-producer-input-identity/);
+});
 for(const family of ['conditional','mapped']) test('official cold '+family+' chain/self/mutual closure preserves complete bool/f64 HIR and Core',async()=>{
  const [bytes,recordBytes,oracleBytes]=await Promise.all(['package','record','oracle'].map(kind=>fixture(`generic-recursive-${family}-${kind}-v7.json`)));
  const record=JSON.parse(recordBytes.toString('utf8')),oracle=JSON.parse(oracleBytes.toString('utf8'));
