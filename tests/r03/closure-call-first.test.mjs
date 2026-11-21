@@ -67,6 +67,42 @@ test("Snapshot materialization reports malformed response envelopes with the ori
     { status: "tool-error", inputIdentity: prepared.inputIdentity, message: "incomplete frontend diagnostics" });
 });
 
+test("Snapshot materialization rejects malformed successful response rows", async t => {
+  const fixture = new URL("../fixtures/r03/m19-local-core-cases/afterIfInitializerCall/", import.meta.url);
+  const [request, raw, receipt] = await Promise.all(["request.json", "response.json", "provenance.json"]
+    .map(name => readFile(new URL(name, fixture))));
+  const { origin } = JSON.parse(receipt.toString("utf8"));
+  assert.equal(digest(request), origin.requestSha256);
+  assert.equal(digest(raw), origin.responseSha256);
+  const prepared = await prepareFrontendInput(JSON.parse(request.toString("utf8")), true);
+  assert.equal(prepared.status, "ready");
+  const transportOrigin = { kind: "retained-transport-fixture" };
+  const retained = JSON.parse(raw.toString("utf8"));
+  const fn = retained.functions[1], statement = fn.body[0];
+  assert.equal(fn.name, "identity");
+  // Project the retained ordinary scalar rows through the locked adapter shape.
+  const response = { ...retained, functions: [fn], symbols: retained.symbols.filter(symbol =>
+    symbol.id === fn.symbol || symbol.id === fn.parameters[0].id) };
+  const accepted = materializeFrontendResponse(prepared, Buffer.from(JSON.stringify(response)), transportOrigin);
+  assert.equal(accepted.status, "ok", JSON.stringify(accepted));
+  assert.equal(accepted.snapshot.inputIdentity, prepared.inputIdentity);
+
+  for (const { name, edits } of [
+    { name: "null function", edits: { functions: [null] } },
+    { name: "null symbol", edits: { symbols: [null] } },
+    { name: "invalid function body", edits: { functions: [{ ...fn, body: {} }] } },
+    { name: "null statement", edits: { functions: [{ ...fn, body: [null] }] } },
+    { name: "invalid nested arguments", edits: { functions: [{ ...fn, body: [{ ...statement,
+      expression: { ...statement.expression, arguments: {} } }] }] } },
+    { name: "invalid nested statements", edits: { functions: [{ ...fn, body: [{ ...statement, body: [null] }] }] } },
+    { name: "invalid initializer", edits: { functions: [{ ...fn, parameterInitializers: [false] }] } },
+  ]) await t.test(name, () => {
+    const malformed = Buffer.from(JSON.stringify({ ...response, ...edits }));
+    assert.deepEqual(materializeFrontendResponse(prepared, malformed, transportOrigin),
+      { status: "tool-error", inputIdentity: prepared.inputIdentity, message: "incomplete frontend response" });
+  });
+});
+
 test("Snapshot materialization rejects malformed UTF-8 and preserves a genuine replacement character", async () => {
   const frames = await capturedFrames();
   const prepared = await prepareFrontendInput(JSON.parse(frames["request.json"].toString("utf8")), true);

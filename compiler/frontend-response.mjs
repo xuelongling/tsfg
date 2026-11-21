@@ -179,6 +179,23 @@ export async function prepareFrontendInput(input, captured = false) {
     declarationVersion, declarationPaths, moduleInput };
 }
 
+const expressionChildren = ["left", "right", "operand"];
+const statementExpressions = ["expression", "initializer", "condition", "target", "value"];
+const statementBodies = ["body", "thenBody", "elseBody"];
+const responseRecord = value => value !== null && typeof value === "object" && !Array.isArray(value);
+
+function isResponseExpression(value) {
+  return responseRecord(value)
+    && (value.arguments == null || Array.isArray(value.arguments) && value.arguments.every(isResponseExpression))
+    && expressionChildren.every(key => value[key] == null || isResponseExpression(value[key]));
+}
+
+function isResponseBody(value) {
+  return Array.isArray(value) && value.every(statement => responseRecord(statement)
+    && statementExpressions.every(key => statement[key] == null || isResponseExpression(statement[key]))
+    && statementBodies.every(key => statement[key] == null || isResponseBody(statement[key])));
+}
+
 /** Shared owned conversion for the locked transport and captured Go responses.
  * @param {any} prepared @param {string | Uint8Array} response @param {any} frontendSource
  */
@@ -186,6 +203,7 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
   const { ownedInput, identityInput, inputIdentity, rootFile, files, seen,
     declarationVersion, declarationPaths, moduleInput } = prepared;
   const invalid = { status: "tool-error", inputIdentity, message: "invalid frontend response" };
+  const incomplete = { status: "tool-error", inputIdentity, message: "incomplete frontend response" };
   let output, responseText;
   try {
     responseText = typeof response === "string" ? response : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(response);
@@ -213,11 +231,19 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
       || consumed.some(name => !seen.has(name))) {
     return { status: "tool-error", inputIdentity, message: "frontend input closure differs from recorded content" };
   }
-  if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || !moduleInput && output.functions.length === 0
-      || output.functions.some(fn => !Array.isArray(fn.parameters) || !Array.isArray(fn.parameterInitializers)
-        || fn.parameterInitializers.length !== fn.parameters.length || fn.parameters.some(parameter => !parameter.presence))) {
-    return { status: "tool-error", inputIdentity, message: "incomplete frontend response" };
+  if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || !output.symbols.every(responseRecord)
+      || !moduleInput && output.functions.length === 0
+      || output.functions.some(fn => !responseRecord(fn) || !Array.isArray(fn.parameters) || !Array.isArray(fn.parameterInitializers)
+        || fn.parameterInitializers.length !== fn.parameters.length
+        || fn.parameters.some(parameter => !responseRecord(parameter) || !responseRecord(parameter.presence))
+        || !fn.parameterInitializers.every(value => value === null || isResponseExpression(value))
+        || !isResponseBody(fn.body))) {
+    return incomplete;
   }
+  if (moduleInput && !Array.isArray(output.modules))
+    return { status: "tool-error", inputIdentity, message: "frontend omitted owned modules" };
+  if (moduleInput && !output.modules.every(module => responseRecord(module) && isResponseBody(module.initialization)))
+    return incomplete;
   const snapshotId = snapshotIdentity(inputIdentity, frontendSource);
   const symbols = output.symbols.map(symbol => ({ ...symbol, ref: { snapshotId, id: symbol.id } }));
   const expression = value => ({
@@ -226,16 +252,14 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
     ...(value.symbol ? { symbol: { snapshotId, id: value.symbol } } : {}),
     ...(value.target ? { target: { snapshotId, id: value.target } } : {}),
     ...(value.arguments ? { arguments: value.arguments.map(expression) } : {}),
-    ...(value.left ? { left: expression(value.left) } : {}),
-    ...(value.right ? { right: expression(value.right) } : {}),
-    ...(value.operand ? { operand: expression(value.operand) } : {}),
+    ...Object.fromEntries(expressionChildren.filter(key => value[key]).map(key => [key, expression(value[key])])),
   });
   const statement = value => ({
     ...value,
     ...(value.symbol ? { symbol: { ...value.symbol, ref: { snapshotId, id: value.symbol.id } } } : {}),
-    ...Object.fromEntries(["expression", "initializer", "condition", "target", "value"]
+    ...Object.fromEntries(statementExpressions
       .filter(key => value[key]).map(key => [key, expression(value[key])])),
-    ...Object.fromEntries(["body", "thenBody", "elseBody"]
+    ...Object.fromEntries(statementBodies
       .filter(key => value[key]).map(key => [key, value[key].map(statement)])),
   });
   const functions = output.functions.map(fn => ({
@@ -270,13 +294,13 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
   const recordExpression = value => {
     recordNode(value, value.kind);
     for (const argument of value.arguments ?? []) recordExpression(argument);
-    for (const key of ["left", "right", "operand"]) if (value[key]) recordExpression(value[key]);
+    for (const key of expressionChildren) if (value[key]) recordExpression(value[key]);
   };
   const recordStatement = value => {
     recordNode(value, value.kind);
-    for (const key of ["expression", "initializer", "condition", "target", "value"])
+    for (const key of statementExpressions)
       if (value[key]) recordExpression(value[key]);
-    for (const key of ["body", "thenBody", "elseBody"])
+    for (const key of statementBodies)
       for (const nested of value[key] ?? []) recordStatement(nested);
   };
   for (const fn of functions) {
@@ -287,9 +311,8 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
     for (const value of fn.parameterInitializers) if (value) recordExpression(value);
     for (const item of fn.body) recordStatement(item);
   }
-  const modules = moduleInput && Array.isArray(output.modules) ? output.modules.map(module => ({ ...module,
+  const modules = moduleInput ? output.modules.map(module => ({ ...module,
     initialization: module.initialization.map(statement) })) : undefined;
-  if (moduleInput && !modules) return {status:"tool-error",inputIdentity,message:"frontend omitted owned modules"};
   for (const module of modules ?? []) {
     currentSourcePath = module.sourcePath;
     for (const initializer of module.initialization) recordStatement(initializer);
