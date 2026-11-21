@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isProxy } from "node:util/types";
 import { analyzeFrontend } from "./frontend.mjs";
 import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { genericHirFormat, lowerGenericHir, prepareGenericCore } from "./generic-hir.mjs";
@@ -22,6 +23,8 @@ import {typedArrayHirFormat} from './typed-array-project.mjs';
 import {isOptionalPropertyContext,optionalPropertyHirFormat} from './optional-property-hir.mjs';
 import {referenceHirFormat} from './reference-hir.mjs';
 import {prepareFiniteCore} from './finite-core-emitter.mjs';
+import {prepareFormalStringCore} from './string-formal-emitter.mjs';
+import {stringHirType} from './string-hir-model.mjs';
 import {familyOf} from './module-callable-common.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
@@ -382,6 +385,7 @@ async function produceBytecode(buildCore) {
 function produceOwnedCore(hir, options, selected = undefined) {
   let family;
   let finite = false;
+  let string = false;
   try {
     family = familyOf(hir);
     const expected = family === undefined ? typedArrayHirFormat :
@@ -392,6 +396,13 @@ function produceOwnedCore(hir, options, selected = undefined) {
       finite = !!format && typeof format === 'object' &&
         Object.getOwnPropertyDescriptor(format, 'contractVersion')?.value === expected.contractVersion &&
         Object.getOwnPropertyDescriptor(format, 'schemaHash')?.value === expected.schemaHash;
+      if (!finite && family === undefined) {
+        const data = (object, key) => object && typeof object === 'object' && !isProxy(object)
+          ? Object.getOwnPropertyDescriptor(object, key)?.value : undefined;
+        const functions = data(hir, 'functions');
+        const first = Array.isArray(functions) ? data(functions, '0') : undefined;
+        string = data(data(first, 'returnType'), 'id') === stringHirType.id;
+      }
     }
   } catch {
     // Keep malformed inputs on the existing formal validation path.
@@ -408,6 +419,19 @@ function produceOwnedCore(hir, options, selected = undefined) {
         selected?.lower ?? (value => lowerFormalHir(value, factsContext, options.callPublicationContext)), { factsContext });
     const prepared = prepareFiniteCore(hir, factsContext, request.callPublicationContext);
     return produceCore(prepared.hir, fixedOptions, () => prepared.text);
+  }
+  if (string) {
+    const core = options.core;
+    if (!core) return produceCore(hir, { core });
+    const fixedOptions = { core, optimize: options.optimize };
+    const { factsContext, callPublicationContext } = selected ?? options;
+    if (factsContext !== undefined && callPublicationContext === undefined &&
+      !isCommonProgramContext(factsContext) && !isSelectedNullableContext(factsContext) &&
+      !isTypedArrayContext(factsContext) && !isOptionalPropertyContext(factsContext)) {
+      const prepared = prepareFormalStringCore(hir, factsContext);
+      return produceCore(prepared.hir, fixedOptions, () => prepared.text);
+    }
+    return produceCore(hir, { ...fixedOptions, factsContext, callPublicationContext }, selected?.lower, { factsContext });
   }
   if (family === commonHirFormat.family && selected?.callPublicationContext !== undefined &&
       selected.factsContext === undefined) {

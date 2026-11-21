@@ -5,6 +5,10 @@ import { verifyStringHir, stringHirType, stringHirFailure } from './string-hir-m
 // Compile the complete owned HIR directly into ordinary Core. Private packet
 // bytes, candidate marker metadata and cold handles never enter this boundary.
 export function emitFormalStringCore(hir, context) {
+  return prepareFormalStringCore(hir, context).text;
+}
+
+export function prepareFormalStringCore(hir, context) {
   const verified = verifyStringHir(hir, context), source = verified.source;
   const type = id => {
     if (id !== stringHirType.id) stringHirFailure('invalid');
@@ -42,5 +46,5 @@ export function emitFormalStringCore(hir, context) {
     + ', tsfg_core.source_length = ' + source.content.length + ' : i64} {\n' + functions.join('\n') + '\n}\n';
   if (Buffer.byteLength(result) > 8388608)
     throw Object.assign(new TypeError('r03-d-core-string-limit: formal Core exceeds byte limit'), { code: 'r03-d-core-string-limit', ruleId: 'r01-input-boundary', phase: 'lowering' });
-  return result;
+  return { hir: verified, text: result };
 }

@@ -383,6 +383,44 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       {status:'tool-error',code:'r03-d-consumer',message:'r04-producer-input-identity: packet target or input differs from the checked HIR'});
     assert.deepEqual(calls.slice(first),[['--canonicalize'],['--emit-bytecode'],['--canonicalize'],['--emit-bytecode']]);
   });
+  await t.test('String Core and bytecode keep the selected facts and HIR during admission',async sub=>{
+    const cases=stringCases();
+    const original=cases.find(row=>row.name==='lossless'),replacement=cases.find(row=>row.name==='concat');
+    assert.ok(original&&replacement);
+    assert.notEqual(original.hir.inputIdentity,replacement.hir.inputIdentity);
+    const lowered=expectedStringCore(original.hir),packet=expectedStringPacket(original.hir);
+    stdout=framedCore(lowered);
+    packetStdout=packet;
+    sub.after(()=>{stdout=valid;packetStdout=undefined;});
+    for(const mode of [false,true]){
+      const candidate=structuredClone(original.hir),factsContext=structuredClone(original.context);
+      const first=calls.length,options={core:artifact,factsContext,optimize:mode};
+      const pending=mode?compileOwnedHir(candidate,options):compileOwnedCore(candidate,options);
+      Object.assign(candidate,replacement.hir);Object.assign(factsContext,replacement.context);
+      options.optimize=!mode;
+      const result=await pending;
+      assert.equal(result.status,'ok',JSON.stringify(result));
+      assert.deepEqual(result.hir,original.hir);
+      assert.equal(coreInput,lowered);
+      assert.deepEqual(calls.slice(first),mode?[['--optimize'],['--emit-bytecode']]:[['--canonicalize']]);
+      assert.equal('bytecode' in result,mode);
+      if('bytecode' in result)assert.deepEqual(result.bytecode,packet);
+    }
+  });
+  await t.test('String selection does not inspect proxied HIR rows before tool admission',async()=>{
+    const {hir:stringHir,context}=stringCases()[0];
+    const first=stringHir.functions[0];
+    let reads=0;
+    const proxy=value=>new Proxy(value,{getOwnPropertyDescriptor(target,key){
+      reads++;
+      return Reflect.getOwnPropertyDescriptor(target,key);
+    }});
+    for(const functions of [proxy(stringHir.functions),[proxy(first)],[{...first,returnType:proxy(first.returnType)}]]){
+      const result=await compileOwnedHir({...stringHir,functions},{factsContext:context});
+      assert.deepEqual(result,{status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required'});
+    }
+    assert.equal(reads,0);
+  });
   await t.test('registered scalar bytecode transport keeps the default function',async sub=>{
     const {hir:stringHir,context}=stringCases()[0];
     const [first,second,...rest]=stringHir.functions;
