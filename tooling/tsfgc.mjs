@@ -124,6 +124,9 @@ try {
     process.stdout.write(emit==='query-tmeta'?canonical(result.tmeta.envelope)+'\n':emit==='query-effects'?canonical(result.effects)+'\n':emit==='query-batch'?result.cpuBatch:emit==='query-llvm'||emit==='query-llvm-ir'?result.cpuLLVM:result.core);
   }else{
   if(['query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit))throw new TypeError('r03-cli-options: Query output requires --query-request');
+  const runtimeOption = ["--vm", "--requests"].find(option => options.has(option));
+  if (emit !== "run" && runtimeOption)
+    throw new TypeError(`r03-cli-options: ${runtimeOption} requires --emit run`);
   const inputPath = options.get("--input");
   const input = inputKind === "hir" ? readHir(await (fixedCommonCore ? readCommonInputFile(inputPath)
     : readStableInputFile(inputPath, checkHirWireFileSize, 'HIR')))
