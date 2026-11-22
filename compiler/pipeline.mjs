@@ -644,16 +644,20 @@ export function readRuntimeOutput(bytes, command) {
  * @param {{vm?: string, requests?: unknown, requestJson?: string, command?: string}} options
  */
 export async function runBytecode(bytes, { vm, requests = [{}], requestJson, command = "--requests" }) {
-  const executable = await verifiedConsumer(vm, "vm");
+  // Own the selected input range before asynchronous admission. Typed views
+  // carry bytes, regardless of their element width.
+  const input = typeof bytes === "string" ? bytes : Buffer.from(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   const args = command === "--requests" || command === "--module-requests"
     ? [command, requestJson ?? JSON.stringify(requests)] : [command];
-  return readRuntimeOutput(consume(executable, args, bytes), command);
+  const executable = await verifiedConsumer(vm, "vm");
+  return readRuntimeOutput(consume(executable, args, input), command);
 }
 
 /** The executable is a source-built static program, never a request loader. */
 export async function runStaticProgram({ executable, requests = [{}], persistent = false }) {
+  const args = [persistent ? "--module-requests" : "--requests", JSON.stringify(requests)];
   const admitted = await verifiedConsumer(executable, "aot");
-  return readRuntimeOutput(consume(admitted, [persistent ? "--module-requests" : "--requests", JSON.stringify(requests)], undefined));
+  return readRuntimeOutput(consume(admitted, args, undefined));
 }
 
 /** Evaluate a serial batch against one persistent module instance. */
@@ -661,7 +665,7 @@ export function runModuleRequests(bytes, {vm,requests=[{}]}) {
   return runBytecode(bytes,{vm,requests,command:"--module-requests"});
 }
 
-/** Multiple verified modules share one formal Zig Runtime request host. */
+/** Run a serial batch of framed bytecode requests on one Runtime host. */
 export async function runRequestSequence(bytecodes, { vm, requests = undefined }) {
   if (!Array.isArray(bytecodes) || bytecodes.length < 1 || bytecodes.length > 128)
     throw new TypeError("r05-request-sequence: expected 1..128 matching modules and requests");
@@ -683,8 +687,9 @@ export async function runRequestSequence(bytecodes, { vm, requests = undefined }
     return [length, bytes];
   });
   const input = Buffer.concat([header, ...frames]);
+  const args = ["--request-sequence", JSON.stringify(requestFrames)];
   const executable = await verifiedConsumer(vm, "vm");
-  return readRuntimeOutput(consume(executable, ["--request-sequence", JSON.stringify(requestFrames)], input));
+  return readRuntimeOutput(consume(executable, args, input));
 }
 
 export async function sourceInput(source, { sourcePath = "/src/main.ts", declarationVersion = "minimal-conversions-v5" } = {}) {
