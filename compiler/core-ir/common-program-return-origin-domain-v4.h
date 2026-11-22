@@ -120,7 +120,7 @@ struct InheritedInput {
   std::size_t effectCount=0,boundHistoryRevision=0,boundReceiverCount=0;
 };
 struct Context {
-  enum class Sweep {Shared,Independent,Settled,Environment,EnvironmentSettled};
+  enum class Sweep {Shared,Independent,Settled,Environment,EnvironmentSettled,Direct};
   Sweep sweep=Sweep::Shared;
   std::size_t settledParentRevision=0;
   Ref index=0,function=None,scope=0;
@@ -660,6 +660,25 @@ class Solver {
             if(environmentValue(node.kind)){value->sweep=Context::Sweep::Environment;break;}
           }
         }
+      }else{
+        if(!m_.spend(7))return false;
+        bool direct=(!callbacks_.environments||callbacks_.environments->empty())&&
+          !protocol->lexicalEnvironment&&!protocol->activationEnvironment&&upper->captures.empty();
+        if(direct)for(const auto &call:graph->calls){
+          if(!m_.spend(3))return false;
+          if(call.callee||call.environment){direct=false;break;}
+        }
+        if(direct)for(const auto &node:graph->nodes){
+          if(!m_.spend(3))return false;
+          if(environmentValue(node.kind)){direct=false;break;}
+        }
+        if(direct)for(const auto &heap:graph->heaps){
+          if(!m_.spend(2))return false;
+          if(heap.kind!=V4::HeapKind::Store)continue;
+          if(!m_.spend(10))return false;
+          if(llvm::StringRef(heap.selector).starts_with("capture:")){direct=false;break;}
+        }
+        if(direct)value->sweep=Context::Sweep::Direct;
       }
     }
     value->values.resize(graph->nodes.size());value->ready.resize(graph->nodes.size(),false);value->heaps.resize(graph->heaps.size());value->heapReady.resize(graph->heaps.size(),false);value->controls.resize(graph->controls.size(),false);value->targets.resize(graph->calls.size());value->arguments.resize(arguments.size());
@@ -2459,19 +2478,32 @@ public:
             if(!m_.spend(4))return finish();
             if(context.sweep==Context::Sweep::EnvironmentSettled&&context.settledParentRevision==environmentRevision_)continue;
           }
-          independent=environment||context.sweep==Context::Sweep::Independent;
+          independent=environment||context.sweep==Context::Sweep::Independent||context.sweep==Context::Sweep::Direct;
           if(independent){priorChange=changed_;changed_=false;}
         }
         if(!runCalls(context)||!runControls(context)||!runValues(context)||!runHeaps(context)||!finishContext(context))return finish();
         if(independent){
           if(!m_.spend(5))return finish();
-          // These contexts have immutable inputs and no other context's
-          // completion equations. A changed Env parent reopens lexical work.
+          // A quiet pass fixes a leaf with immutable inputs. Lexical work
+          // still watches Env parents; a direct caller also needs settled callees.
           if(!changed_){
             if(environment){
               if(!m_.spend(2))return finish();
               context.settledParentRevision=environmentRevision_;
               context.sweep=Context::Sweep::EnvironmentSettled;
+            }else if(context.sweep==Context::Sweep::Direct){
+              bool settled=true;
+              for(const auto &targets:context.targets){
+                if(!m_.spend())return finish();
+                for(auto target:targets){
+                  if(!m_.spend(3))return finish();
+                  if(contexts_[target]->sweep!=Context::Sweep::Settled){settled=false;break;}
+                }
+                if(!settled)break;
+              }
+              // Fixed local inputs and settled summaries leave no source of
+              // new facts. Cyclic or environment-dependent targets stay live.
+              if(settled)context.sweep=Context::Sweep::Settled;
             }else context.sweep=Context::Sweep::Settled;
           }
           changed_|=priorChange;
