@@ -85,6 +85,32 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
   const canonical=value=>Array.isArray(value)?tools.pathKey(value):tools.key(value);
   const snapshot=source=>{const result=new Map();for(const [key,value]of source){charge();result.set(key,value);}return result;};
   const type=arrayAnalysisTypes(hir),callables=finiteCallables(hir),functions=new Map(callables.map(fn=>[fn.id,fn]));
+  const nestedElements=hir.types.some(row=>{charge();return row.kind==='array'&&type.isOwner(row.elementType);});
+  const nestedWrite=value=>{
+    if(!value)return false;
+    charge();
+    return value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type)||
+      arrayExpressionChildren(value,[]).some(([child])=>nestedWrite(child));
+  };
+  // A store on an all-return path cannot feed the next loop iteration.
+  const normalNestedWrites=rows=>{
+    let writes=false;
+    for(const row of rows){
+      charge();if(row.kind==='return')return null;
+      writes ||= [row.initializer,row.condition,row.expression,row.value].some(nestedWrite);
+      if(row.then||row.else){
+        const yes=normalNestedWrites(row.then??[]),no=normalNestedWrites(row.else??[]);
+        if(yes===null&&no===null)return null;
+        writes ||= yes===true||no===true;
+      }
+      if(row.body){
+        const nested=normalNestedWrites(row.body);
+        if(row.kind!=='while'&&nested===null)return null;
+        writes ||= nested===true;
+      }
+    }
+    return writes;
+  };
   const ownerSlots=new Map(callables.map(fn=>[fn.id,fn.parameters.flatMap((p,index)=>{charge();return type.isOwner(p.type)?[index]:[];})]));
   const constructions=new Map(hir.types.filter(row=>row.construction).map(row=>[row.construction.id,row]));
   const target=id=>constructions.get(id)?.constructor??id;
@@ -104,7 +130,23 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     if(!context&&models.has(fn.id))return;
     if(!context&&active.has(fn.id))return;
     if(!context)active.add(fn.id);
-    const base=empty(),bindings=new Map(),calls=[],lengths=new Map(),contents=new Map(),operations=[];
+    const base=empty(),bindings=new Map(),calls=[],lengths=new Map(),operations=[];
+    let contents=new Map(),repeatedContents=false;
+    const joinContents=(left,right)=>{
+      const joined=new Map();
+      // An untracked edge uses the same receiver-relative fallback as a
+      // standalone read. Keep that attribution for fixed upper checks.
+      const missing=row=>({...row,elements:mergeArrayOwners([row.elements,row.receiver,unknownArrayOwner])});
+      for(const [key,row]of left){
+        charge();const other=right.get(key);
+        if(!other)joined.set(key,missing(row));
+        else joined.set(key,row.elements===other.elements?row:{...row,elements:mergeArrayOwners([row.elements,other.elements])});
+      }
+      for(const [key,row]of right){
+        charge();if(!left.has(key))joined.set(key,missing(row));
+      }
+      return joined;
+    };
     let callCount=0,conditionalDepth=0;
     // An effect outside the exact local length map may leave stale entries.
     // Keep the previous conservative branch behavior after any such effect.
@@ -157,7 +199,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         const children=value.elements.map((child,i)=>expression(child,[...path,'elements',i],index));
         owner={kind:'allocation',functionId:fn.id,allocationSite:value.allocationSite,callPath:[]};
         insert(base.owners,owner);lengths.set(canonical(owner),value.elements.length);
-        contents.set(canonical(owner),mergeArrayOwners(children));
+        contents.set(canonical(owner),{receiver:owner,elements:mergeArrayOwners(children)});
       }else if(['call','construct','superConstruct'].includes(value.kind)) {
         if(++callCount>32)fail('limit');
         if(value.target!==hir.intrinsics.readSpan.id)exactLengthJoin=false;
@@ -210,17 +252,21 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(['arrayCompoundAssignment','arrayUpdate'].includes(value.kind))read(receiver);
         const rhs=value.value?expression(value.value,[...path,'value'],index):null;
         mutate(value,path,receiver??unknownArrayOwner,index,value.kind==='arrayResizeChecked');
-        if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type))contents.set(canonical(receiver),
-          mergeArrayOwners([contents.get(canonical(receiver)),rhs]));
+        if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type)){
+          const key=canonical(receiver);
+          contents.set(key,{receiver,elements:mergeArrayOwners([contents.get(key)?.elements,rhs])});
+        }
       }else if(hasConditionalArrayRhs(value)) {
         const left=expression(value.left,[...path,'left'],index),before=snapshot(bindings);
         const storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
         const leftTruth=truthValues.get(canonical([...path,'left'])),op=value.operator;
         const executes=context&&typeof leftTruth==='boolean'?(op==='&&'?leftTruth:op==='||'?!leftTruth:op==='??'?false:null):null;
+        const skippedContents=executes===null?snapshot(contents):null;
         let right=null;
         if(executes!==false){conditionalDepth++;right=expression(value.right,[...path,'right'],index);conditionalDepth--;}
         if(executes===null){
           stored.join([storageBefore,stored.state()]);
+          contents=joinContents(skippedContents,contents);
           for(const [id,prior]of before)bindings.set(id,mergeArrayOwners([prior,bindings.get(id)]));
           meetTruth([priorTruth,snapshot(truthBindings)]);
           for(const key of lengths.keys()){charge();lengths.set(key,null);}
@@ -234,7 +280,12 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         const children=arrayExpressionChildren(value,path).map(([child,childPath])=>expression(child,childPath,index));
         if(value.kind==='arrayReadChecked') {
           const receiver=children[0];read(receiver);
-          if(type.isOwner(value.type))owner=contents.get(canonical(receiver))??mergeArrayOwners([receiver,unknownArrayOwner]);
+          if(type.isOwner(value.type)){
+            const known=contents.get(canonical(receiver))?.elements;
+            // A read in a repeated condition or body can see writes from an
+            // earlier iteration, even when this lexical arm has no write.
+            owner=known&&!repeatedContents?known:mergeArrayOwners([known,receiver,unknownArrayOwner]);
+          }
           operations.push({kind:'read',path,range:value.range,value,statementIndex:index});
         }else if(value.kind==='readSpanLength'||value.kind==='arrayLength') {
           // Descriptor length extends a borrow but is not an element-buffer R effect.
@@ -285,7 +336,14 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           // The condition is evaluated on every backedge, not only before
           // the first body. Its field inputs share the loop-entry labels.
           const loopEntry=row.kind==='while'?stored.state():null;
-          if(row.kind==='while')stored.enterLoop(loopEntry);
+          const enclosingRepeatedContents=repeatedContents;
+          if(row.kind==='while'){
+            stored.enterLoop(loopEntry);
+            if(nestedElements&&!repeatedContents&&reachableRow&&predicate(row.condition)!==false){
+              const writes=normalNestedWrites(row.body);
+              repeatedContents=writes!==null&&(writes||nestedWrite(row.condition));
+            }
+          }
           if(row.condition)expression(row.condition,[...at,'condition'],index);
           for(const key of ['expression','value'])if(row[key]) {
             const owner=expression(row[key],[...at,key],index);
@@ -300,11 +358,12 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             if(typeof condition==='boolean'){
               fallthrough=incoming&&body(condition?row.then??[]:row.else??[],[...at,condition?'then':'else'],reachableRow);continue;
             }
-            const before=snapshot(bindings),beforeLengths=snapshot(lengths);
+            const before=snapshot(bindings),beforeLengths=snapshot(lengths),beforeContents=snapshot(contents);
             const priorTruth=snapshot(truthBindings);
             const storageBefore=stored.state();
             conditionalDepth++;const yesExit=body(row.then??[],[...at,'then'],reachableRow),yes=snapshot(bindings);
             const yesLengths=exactLengthJoin&&yesExit?snapshot(lengths):null;
+            const yesContents=contents;contents=beforeContents;
             const storageYes=stored.state();stored.restore(storageBefore);
             const yesTruth=snapshot(truthBindings);truthBindings.clear();for(const [id,value]of priorTruth){charge();truthBindings.set(id,value);}
             bindings.clear();for(const [id,owner]of before){charge();bindings.set(id,owner);}
@@ -312,6 +371,10 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             const noExit=body(row.else??[],[...at,'else'],reachableRow);conditionalDepth--;
             fallthrough=incoming&&(yesExit||noExit);
             stored.join([storageYes,stored.state()]);
+            // A sole normal arm retains its own nested element owners. Dead
+            // lexical tails remain traversed with their conservative union.
+            if(reachableRow&&yesExit!==noExit){if(yesExit)contents=yesContents;}
+            else contents=joinContents(yesContents,contents);
             meetTruth([...(yesExit?[yesTruth]:[]),...(noExit?[snapshot(truthBindings)]:[])]);
             // Only continuing arms can supply an owner at a live join. The
             // dead lexical tail retains the conservative trace of both arms.
@@ -328,14 +391,17 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             }
           }
           if(row.body&&row.kind==='while') {
-            if(context&&truthValues.get(canonical([...at,'condition']))===false){stored.leaveLoop(loopEntry,stored.state());continue;}
+            if(context&&truthValues.get(canonical([...at,'condition']))===false){
+              repeatedContents=enclosingRepeatedContents;stored.leaveLoop(loopEntry,stored.state());continue;
+            }
             const entryTruth=truthValues.get(canonical([...at,'condition'])),beforeTruth=snapshot(truthBindings);
             // A loop proof must hold on its backedge, not only on the first iteration.
             const conditionLengths=new Map(),conditionExactLengthJoin=exactLengthJoin;
             for(const [key,length]of lengths){charge();conditionLengths.set(key,length);lengths.set(key,null);}
             for(const id of truthBindings.keys()){charge();truthBindings.set(id,null);}
-            const before=snapshot(bindings),conditionExit=stored.state();conditionalDepth++;
+            const before=snapshot(bindings),conditionExit=stored.state(),conditionContents=snapshot(contents);conditionalDepth++;
             const bodyExit=body(row.body,[...at,'body'],reachableRow);conditionalDepth--;
+            repeatedContents=enclosingRepeatedContents;
             const backedgeTruth=predicate(row.condition),afterTruth=snapshot(truthBindings);
             // Only a normally completed body can repeat its condition. The
             // shared scope also distinguishes views freshly made each turn.
@@ -349,6 +415,8 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             // Entry true is not an invariant. A proved false backedge yields
             // an actual normal continuation; unresolved cycles do not.
             if(context&&entryTruth===true&&(repeats||!bodyExit))fallthrough=false;
+            if(initialExit)contents=conditionContents;
+            else if(zero||repeats)contents=joinContents(conditionContents,contents);
             if(initialExit){
               // With no continuing body path, only the initial condition can exit.
               bindings.clear();

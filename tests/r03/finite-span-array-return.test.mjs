@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {projectTypedArrayFacts} from '../../compiler/typed-array-project.mjs';
-import {prepareArrayCalls} from '../../compiler/array-call-context.mjs';
+import {initialArrayPublication,prepareArrayCalls} from '../../compiler/array-call-context.mjs';
 import {buildHir,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
@@ -124,4 +124,63 @@ test('unreachable lexical returns do not add a second Array owner to a caller',a
   assert.equal(both.origin.owners.length,2);
   assert.deepEqual(new Set(both.origin.owners),new Set([a,b]));
   assert.deepEqual(both.returns,[a,b]);
+});
+test('nested Array element owners follow the continuing control paths',async t=>{
+  const [nested,{facts:control}]=await Promise.all([
+    readFile(new URL('./testdata/typed-array-source514/9068b0b5e16dd0715dc9bc165c9d067a6594b1ce67d21d2477cbe5df560146de-package.json',import.meta.url)),
+    readChoiceFixture(),
+  ]);
+  assert.equal(sha256(nested).slice(7),'29e6c213c43c012abe71cba8869fc7339f73ce74327ebed4f2c5ad9297520f6f');
+  const hir=projectTypedArrayFacts(readTypedArrayFacts(nested)),[fn]=hir.functions;
+  const [seed,outer,load,write,,done]=fn.body;
+  const [controlFn]=projectTypedArrayFacts(control).functions;
+  const alternate=controlFn.body.find(row=>row.binding?.name==='y');
+  const {condition,range}=controlFn.body.find(row=>row.kind==='if');
+  assert.equal(seed.binding.type,alternate.binding.type);
+  const {receiver,index,type}=load.initializer;
+  const right={...outer.initializer.elements[0],binding:alternate.binding.id};
+  const store={...write,expression:{...write.expression,type,declaredType:type,value:right,
+    target:{...write.expression.target,type,declaredType:type,receiver,index}}};
+  // These variants run only the owner analysis on projected control shapes.
+  // Both retained Source packets and their source identities stay intact.
+  const trace=(statement,{formal=false,inside=false}={})=>{
+    const parameters=[...controlFn.parameters,...(formal?[outer.binding]:[])];
+    const body=[seed,alternate,...(formal?[]:[outer]),statement,...(inside?[]:[load,write]),done];
+    const variant={...hir,functions:[{...fn,parameters,body}]};
+    const {ownerModel,ownerTools}=prepareArrayCalls(variant,initialArrayPublication(variant));
+    const stores=ownerModel.functions.get(fn.id).operations.filter(row=>row.kind==='store');
+    assert.equal(stores.length,2,'the lexical nested store is still visited');
+    return new Set(ownerTools.leaves(stores.at(-1).proof.owner));
+  };
+  const owner=allocation=>({kind:'allocation',functionId:fn.id,allocationSite:allocation.initializer.allocationSite,callPath:[]});
+  const a=owner(seed),b=owner(alternate);
+  const branch=(then,otherwise=[])=>({kind:'if',range,condition,then,else:otherwise});
+  const loop=body=>({kind:'while',range,condition,body});
+  await t.test('terminating arms do not supply later nested reads',()=>{
+    assert.deepEqual(trace(branch([store,done])),new Set([a]));
+  });
+  await t.test('an already dead arm retains its lexical store but contributes no nested owner',()=>{
+    assert.deepEqual(trace(branch([done,store])),new Set([a]));
+  });
+  await t.test('continuing arms keep both possible contents',()=>{
+    assert.deepEqual(trace(branch([store])),new Set([a,b]));
+  });
+  await t.test('a missing live-arm content retains its formal receiver and unknown alongside the known write',()=>{
+    const incoming={kind:'parameter',functionId:fn.id,index:1};
+    assert.deepEqual(trace(branch([store]),{formal:true}),new Set([b,incoming,{kind:'unknown'}]));
+  });
+  await t.test('a terminating loop body leaves the initial condition exit unchanged',()=>{
+    assert.deepEqual(trace(loop([store,done])),new Set([a]));
+  });
+  await t.test('a possible backedge retains both the initial and loop-written owners',()=>{
+    assert.deepEqual(trace(loop([store])),new Set([a,b]));
+  });
+  await t.test('a nested read can see a write from a different arm on an earlier iteration',()=>{
+    const shape=loop([branch([store],[load,write])]);
+    assert.deepEqual(trace(shape,{inside:true}),new Set([a,owner(outer),{kind:'unknown'}]));
+  });
+  await t.test('a writer that returns cannot change any later iteration',()=>{
+    const shape=loop([branch([store,done],[load,write])]);
+    assert.deepEqual(trace(shape,{inside:true}),new Set([a]));
+  });
 });
