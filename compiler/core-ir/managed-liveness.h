@@ -33,6 +33,8 @@ struct CommonCallRootPoint {
   std::vector<uint16_t> languagePayloads;
   // Each listed local Cell has an initialized, single-handle payload.
   std::vector<uint16_t> cellHandles{};
+  // Only the optional environment component of an initialized callable Cell.
+  std::vector<uint16_t> cellCallableEnvironments{};
 };
 struct CommonCallRoots {
   std::string inputIdentity, functionId;
@@ -48,7 +50,8 @@ enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloa
 // ClosureComponents also admits direct lexical environment handles and lists
 // the environment component of live callable SSA values separately.
 // LanguagePayloadComponents additionally describes pending language payloads.
-// CellComponents additionally describes initialized direct-handle local Cells.
+// CellComponents additionally describes initialized direct-handle and
+// callable environment components of local Cells.
 bool analyzeCommonCallRoots(mlir::ModuleOp, llvm::StringRef functionId,
     CommonCallRoots &, commonProgram::Error &, size_t workLimit = commonCallRootsWorkLimit,
     CommonCallRootMode mode = CommonCallRootMode::DirectHandles);

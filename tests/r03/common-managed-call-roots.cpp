@@ -39,7 +39,8 @@ bool pointsMatch(const tsfg::CommonCallRoots &result,llvm::ArrayRef<tsfg::Common
     if(point.block!=want.block||point.instruction!=want.instruction||point.operation!=want.operation||
        point.sourcePath!=want.sourcePath||point.start!=want.start||point.end!=want.end||
        point.registers!=want.registers||point.callableEnvironments!=want.callableEnvironments||
-       point.languagePayloads!=want.languagePayloads||point.cellHandles!=want.cellHandles)return false;
+       point.languagePayloads!=want.languagePayloads||point.cellHandles!=want.cellHandles||
+       point.cellCallableEnvironments!=want.cellCallableEnvironments)return false;
   }
   return true;
 }
@@ -180,6 +181,33 @@ int callable(mlir::ModuleOp module,llvm::StringRef functionId) {
   llvm::outs()<<"exact environment roots at "<<last.sourcePath<<':'<<last.start<<".."<<last.end<<'\n';
   return 0;
 }
+
+int callableCells(mlir::ModuleOp module) {
+  using tsfg::CommonCallRootMode;
+  tsfg::CommonCallRoots result;tsfg::commonProgram::Error error;
+  if(!tsfg::analyzeCommonCallRoots(module,closureEntryId,result,error,tsfg::commonCallRootsWorkLimit,
+      CommonCallRootMode::CellComponents)){diagnostic(error);return 4;}
+  if(result.inputIdentity!="sha256:6d0fd042e78cbf2dc3f982e23c98595ca96dbfb491ec1384d40623198f25864c"||
+     result.functionId!=closureEntryId||result.carriers.size()<=9||result.points.size()!=5)return 4;
+  if(result.carriers[3]!="cell:sha256:87026cfeb29aa103981033b01474ab92d77701a282fc637bd9cc6c720a187c7e"||
+     result.carriers[9]!="cell:sha256:3b21cbe20b2a7df130dacde716d80f7b88405e1cfbb3ac6981ffc3d2d2def253")return 4;
+  struct Expected {uint32_t start,end;std::vector<uint16_t> cells,values;};
+  const Expected expected[]={
+    {743,753,{},{}},{774,785,{3},{}},{808,812,{3,9},{11}},{836,840,{3},{18}},{863,867,{},{25}},
+  };
+  for(size_t i=0;i<result.points.size();++i){
+    const auto &point=result.points[i];const auto &want=expected[i];
+    if(point.sourcePath!="/src/main.ts"||point.operation!=(i<2?"invoke":"invoke_indirect")||
+       point.start!=want.start||point.end!=want.end||point.cellCallableEnvironments!=want.cells||
+       point.callableEnvironments!=want.values||!point.cellHandles.empty()||!point.registers.empty()||
+       !point.languagePayloads.empty())return 4;
+  }
+  if(tsfg::analyzeCommonCallRoots(module,closureEntryId,result,error,tsfg::commonCallRootsWorkLimit,
+      CommonCallRootMode::ClosureComponents)||!empty(result)||error.code!="core-ir-common-call-roots-capability"||
+     error.path!="/src/main.ts"||error.range.start!=774||error.range.end!=785){diagnostic(error);return 4;}
+  llvm::outs()<<"five closure calls preserve separate live Cell and SSA environment roots\n";
+  return 0;
+}
 }
 
 int main(int argc,char **argv) {
@@ -195,6 +223,7 @@ int main(int argc,char **argv) {
   if(functionId==pendingReferenceId||functionId==pendingScalarId||functionId==pendingValueId||functionId==stringEntryId)
     return pendingLanguage(*module,functionId);
   if(functionId==applyId||functionId==captureEntryId||functionId==captureFactoryId)return callable(*module,functionId);
+  if(functionId==closureEntryId)return callableCells(*module);
   tsfg::CommonCallRoots result;tsfg::commonProgram::Error error;
   if(functionId==adaptedId){
     const auto identity=(*module)->getAttrOfType<mlir::StringAttr>("tsfg_core.input_identity");

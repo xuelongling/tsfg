@@ -257,12 +257,16 @@ before selecting one FunctionId. Its direct-handle mode records live reference,
 Array and String handles by SSA register ordinal at each call's original source
 range. The opt-in closure mode also records direct lexical environment
 handles and identifies each live callable's optional environment handle in a
-separate list. The FunctionId portion of a callable carries no root. The
-analysis rejects live managed cells and other unsupported composite carriers.
+separate list. The FunctionId portion of a callable carries no root.
 The language-payload mode also records live pending payloads that can contain
 a managed handle. A pack of a verified scalar, null or undefined adds no
 root. A packed aggregate may need a handle to its stored value. A forwarded
 payload keeps the possibility of a handle from each incoming completion. The active tag
 selects the handle component when a downstream consumer materializes roots.
+The CellComponents mode also records live local Cells that are initialized on
+every path to the call. It uses the Cell's SSA ordinal to identify either a
+single direct handle or a verified callable's optional environment handle, in
+separate lists. Other modes reject live managed Cells. Unsupported composite
+carriers fail the analysis.
 The output describes compiler roots for downstream lowering. It supplies no
 physical frame locations or moving-heap execution result.
