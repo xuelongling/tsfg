@@ -35,6 +35,8 @@ struct CommonCallRootPoint {
   std::vector<uint16_t> cellHandles{};
   // Only the optional environment component of an initialized callable Cell.
   std::vector<uint16_t> cellCallableEnvironments{};
+  // The Array owner of a live ReadSpan carrier.
+  std::vector<uint16_t> readSpanOwners{};
 };
 struct CommonCallRoots {
   std::string inputIdentity, functionId;
@@ -44,7 +46,7 @@ struct CommonCallRoots {
   size_t work = 0;
 };
 inline constexpr size_t commonCallRootsWorkLimit = 1000000;
-enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloadComponents, CellComponents };
+enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloadComponents, CellComponents, ReadSpanComponents };
 // Analyzes one function only after verifying the whole Common module. Register
 // ordinals and carriers are owned compiler data, with no physical addresses.
 // ClosureComponents also admits direct lexical environment handles and lists
@@ -52,6 +54,7 @@ enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloa
 // LanguagePayloadComponents additionally describes pending language payloads.
 // CellComponents additionally describes initialized direct-handle and
 // callable environment components of local Cells.
+// ReadSpanComponents additionally describes the owner component of a direct ReadSpan.
 bool analyzeCommonCallRoots(mlir::ModuleOp, llvm::StringRef functionId,
     CommonCallRoots &, commonProgram::Error &, size_t workLimit = commonCallRootsWorkLimit,
     CommonCallRootMode mode = CommonCallRootMode::DirectHandles);

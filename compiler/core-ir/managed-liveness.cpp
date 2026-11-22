@@ -140,16 +140,18 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
   if(!spend(fn.blocks.size()*(words+1)+width+1))return false;
 
   const bool closureComponents=mode!=CommonCallRootMode::DirectHandles;
-  const bool cellComponents=mode==CommonCallRootMode::CellComponents;
+  const bool readSpanComponents=mode==CommonCallRootMode::ReadSpanComponents;
+  const bool cellComponents=readSpanComponents||mode==CommonCallRootMode::CellComponents;
   const bool languageComponents=cellComponents||mode==CommonCallRootMode::LanguagePayloadComponents;
   const auto payloadCarrier="payload:"+schema.str();
-  std::set<llvm::StringRef> direct,callables,inlinePayloads;
+  std::set<llvm::StringRef> direct,callables,inlinePayloads,readSpans;
   for(const auto &row:items(field(program.hir,"types"))){
     const auto id=field(row,"id").getAsString().value(),kind=field(row,"kind").getAsString().value();
     if(!spend(id.size()/8+1))return false;
     if(kind=="reference"||kind=="array"||kind=="string")direct.insert(id);
     if(closureComponents&&kind=="function")callables.insert(id);
     if(languageComponents&&(kind=="scalar"||kind=="null"||kind=="undefined"))inlinePayloads.insert(id);
+    if(readSpanComponents&&kind=="readSpan")readSpans.insert(id);
   }
   for(const auto &row:items(field(program.representation,"domains"))){
     const auto id=field(row,"id").getAsString().value();
@@ -168,7 +170,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(!spend(id.size()/8+1))return false;
     bindings.emplace(id,field(row,"carrier").getAsString().value());
   }
-  enum class RootKind { None, Handle, CallableEnvironment, LanguagePayload, CellHandle, CellCallableEnvironment, Unsupported };
+  enum class RootKind { None, Handle, CallableEnvironment, LanguagePayload, CellHandle, CellCallableEnvironment, ReadSpanOwner, Unsupported };
   const auto cellRoot=[](RootKind kind){return kind==RootKind::CellHandle||kind==RootKind::CellCallableEnvironment;};
   std::vector<RootKind> kinds;
   kinds.reserve(width);
@@ -197,6 +199,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
         if(storage.byteSize==8&&(environment||direct.count(carrier)))kind=RootKind::Handle;
         if(storage.byteSize==40&&callables.count(carrier))kind=RootKind::CallableEnvironment;
         if(languageComponents&&storage.byteSize==16&&carrier==payloadCarrier)kind=RootKind::LanguagePayload;
+        if(storage.byteSize==16&&readSpans.count(carrier))kind=RootKind::ReadSpanOwner;
       }
     }
     kinds.push_back(kind);
@@ -372,6 +375,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
         if(kinds[reg]==RootKind::LanguagePayload&&payloadRoots.test(reg))point.languagePayloads.push_back(uint16_t(reg));
         if(kinds[reg]==RootKind::CellHandle)point.cellHandles.push_back(uint16_t(reg));
         if(kinds[reg]==RootKind::CellCallableEnvironment)point.cellCallableEnvironments.push_back(uint16_t(reg));
+        if(kinds[reg]==RootKind::ReadSpanOwner)point.readSpanOwners.push_back(uint16_t(reg));
       }
       if(!callCells.empty())callCells.pop_back();
       points.push_back(std::move(point));

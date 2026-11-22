@@ -23,6 +23,7 @@ constexpr llvm::StringLiteral pendingReferenceId="sha256:87d64c5de6c4ce58136981e
 constexpr llvm::StringLiteral pendingScalarId="sha256:778c6f954484852958044ca0b0cf465e970df07e453deef836d498ee5ae04153";
 constexpr llvm::StringLiteral pendingValueId="sha256:be87c98a7eca2aa319feea864d51dd52786814beacd856a229e018753f06b54b";
 constexpr llvm::StringLiteral stringEntryId="sha256:f0ee64fefc8c14813a266777e9ac42ad0e8a5563f6959e7cfc5360bfb9a54708";
+constexpr llvm::StringLiteral readSpanEntryId="sha256:940b277e8bd267e912d21527078d7d842360515866c3b74acfa52717c81d1699";
 
 void diagnostic(const tsfg::commonProgram::Error &error) {
   llvm::errs()<<'['<<error.code<<"] "<<error.message<<" ("<<error.path<<':'<<error.range.start<<':'<<error.range.end<<")\n";
@@ -40,7 +41,7 @@ bool pointsMatch(const tsfg::CommonCallRoots &result,llvm::ArrayRef<tsfg::Common
        point.sourcePath!=want.sourcePath||point.start!=want.start||point.end!=want.end||
        point.registers!=want.registers||point.callableEnvironments!=want.callableEnvironments||
        point.languagePayloads!=want.languagePayloads||point.cellHandles!=want.cellHandles||
-       point.cellCallableEnvironments!=want.cellCallableEnvironments)return false;
+       point.cellCallableEnvironments!=want.cellCallableEnvironments||point.readSpanOwners!=want.readSpanOwners)return false;
   }
   return true;
 }
@@ -208,6 +209,31 @@ int callableCells(mlir::ModuleOp module) {
   llvm::outs()<<"five closure calls preserve separate live Cell and SSA environment roots\n";
   return 0;
 }
+
+int readSpanOwners(mlir::ModuleOp module) {
+  using tsfg::CommonCallRootMode;
+  tsfg::CommonCallRoots result;tsfg::commonProgram::Error error;
+  if(tsfg::analyzeCommonCallRoots(module,readSpanEntryId,result,error,tsfg::commonCallRootsWorkLimit,
+      CommonCallRootMode::CellComponents)||!empty(result)||error.code!="core-ir-common-call-roots-capability"||
+     error.path!="/src/main.ts"||error.range.start!=1600||error.range.end!=1621){diagnostic(error);return 4;}
+  if(!tsfg::analyzeCommonCallRoots(module,readSpanEntryId,result,error,tsfg::commonCallRootsWorkLimit,
+      CommonCallRootMode::ReadSpanComponents)){diagnostic(error);return 3;}
+  // The next call uses only the resulting closure. Its %v22 has register
+  // ordinal 21 because the text names a later block argument %v19 earlier.
+  const tsfg::CommonCallRootPoint expected[]={
+    {0,21,"invoke","/src/main.ts",1600,1621,{17},{},{},{},{},{15}},
+    {1,4,"invoke_indirect","/src/main.ts",1632,1640,{},{21},{},{},{},{}},
+  };
+  if(result.inputIdentity!="sha256:40b44e29f4d4756577b2d564c2cd142142002baf90bf7f6a148c12433a92b613"||
+     result.functionId!=readSpanEntryId||result.work==0||result.work>tsfg::commonCallRootsWorkLimit||
+     result.carriers.size()!=26||
+     result.carriers[15]!="sha256:f6f1d2b8618d4c0f96657f7525437ee673355433c184eeb6d61b764e49b08788"||
+     result.carriers[17]!="sha256:d3a500f4fcba98a50471c9325c44766c82ff99d4efa13bf7b520f24f95c4bc25"||
+     result.carriers[21]!="sha256:75bf9103b1bd8d4a1e7bc89c412a046048db96aa150624f473a8df3fbfd5046f"||
+     !pointsMatch(result,expected))return 4;
+  llvm::outs()<<"ReadSpan owner is live at 1600..1621 and absent at 1632..1640\n";
+  return 0;
+}
 }
 
 int main(int argc,char **argv) {
@@ -224,6 +250,7 @@ int main(int argc,char **argv) {
     return pendingLanguage(*module,functionId);
   if(functionId==applyId||functionId==captureEntryId||functionId==captureFactoryId)return callable(*module,functionId);
   if(functionId==closureEntryId)return callableCells(*module);
+  if(functionId==readSpanEntryId)return readSpanOwners(*module);
   tsfg::CommonCallRoots result;tsfg::commonProgram::Error error;
   if(functionId==adaptedId){
     const auto identity=(*module)->getAttrOfType<mlir::StringAttr>("tsfg_core.input_identity");
