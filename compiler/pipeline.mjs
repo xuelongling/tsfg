@@ -272,26 +272,36 @@ export async function compileHir(input, options) {
   return buildHir(analyzed.snapshot);
 }
 
+/** Capture the selected tools and lowering options before the frontend can wait.
+ * @param {{frontend?:string, core?:string, optimize?:boolean, factsContext?:unknown, callPublicationContext?:unknown}} [options]
+ */
+function captureSourceCompilationOptions({ frontend, core, optimize, factsContext, callPublicationContext } = {}) {
+  return { frontend, core, optimize, factsContext, callPublicationContext };
+}
+
 /** Compile only through official checking, owned HIR and the real C++ SSA consumer. */
 export async function compileProgram(input, options) {
-  const highLevel = await compileHir(input, options);
-  return highLevel.status === "ok" ? produceBytecode(() => produceCore(highLevel.hir, options)) : highLevel;
+  const selected = captureSourceCompilationOptions(options);
+  const highLevel = await compileHir(input, selected);
+  return highLevel.status === "ok" ? produceBytecode(() => produceCore(highLevel.hir, selected)) : highLevel;
 }
 
 /** Produce verified Core text from officially checked Source. */
 export async function compileSourceCore(input, options) {
-  const highLevel = await compileHir(input, options);
-  return highLevel.status === "ok" ? compileOwnedCore(highLevel.hir, options) : highLevel;
+  const selected = captureSourceCompilationOptions(options);
+  const highLevel = await compileHir(input, selected);
+  return highLevel.status === "ok" ? compileOwnedCore(highLevel.hir, selected) : highLevel;
 }
 
 /** Candidate package route; Source and formal Core manifest admission remain independent. */
 export async function compilePackage(packageBytes, roots, options) {
-  const highLevel = await compilePackageHir(packageBytes, roots, options);
+  const selected = captureSourceCompilationOptions(options);
+  const highLevel = await compilePackageHir(packageBytes, roots, selected);
   if (highLevel.status !== "ok") return highLevel;
   // Only an instantiated owned-HIR result can enter concrete Core lowering.
   if (!("hir" in highLevel)) return { status: "tool-error", requestId: highLevel.requestId,
     code: "r03-d-consumer", message: "r03-package-result: instantiation returned no owned HIR" };
-  return { ...highLevel, ...await produceBytecode(() => produceCore(highLevel.hir, options, lowerGenericHir)) };
+  return { ...highLevel, ...await produceBytecode(() => produceCore(highLevel.hir, selected, lowerGenericHir)) };
 }
 
 async function compileSnapshot(snapshot, options) {
@@ -515,8 +525,9 @@ export async function compileOwnedStaticProgram(hir, options) {
 
 /** Official source checking uses its existing exact producer admission. */
 export async function compileStaticProgram(input, options) {
-  const highLevel = await compileHir(input, options);
-  return highLevel.status === "ok" ? compileOwnedStaticProgram(highLevel.hir, options) : highLevel;
+  const selected = { ...captureSourceCompilationOptions(options), nativeCore: options.nativeCore };
+  const highLevel = await compileHir(input, selected);
+  return highLevel.status === "ok" ? compileOwnedStaticProgram(highLevel.hir, selected) : highLevel;
 }
 
 // Pin the actual static module/data closure, including declaration profiles.
