@@ -10,6 +10,7 @@ import oracle from './host-counter-semantic-oracle.json' with {type:'json'};
 import {createCounterHostContract,verifyCounterHostContract} from '../../eng/host-semantic-contract.mjs';
 import {verifiedConsumer} from '../../compiler/pipeline.mjs';
 import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
+import {aotMetadataObject} from './aot-compiler-coff.mjs';
 import declarations from '../../eng/build-inputs.json' with {type:'json'};
 
 const hash=bytes=>'sha256:'+createHash('sha256').update(bytes).digest('hex');
@@ -73,12 +74,14 @@ test('ordinary AOT target admits no other target, changed source or additional i
 test('AOT consumer admits the published executable role from its output inventory',async t=>{
   const directory=path.join(import.meta.dirname,'aot-role-admission-fixture');
   const {hir}=stringCases()[0],core=Buffer.from(expectedStringCore(hir)),wire=expectedStringPacket(hir);
+  const tableIdentity=packet=>hash(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'),packet]));
+  const object=aotMetadataObject(hir.inputIdentity,tableIdentity(wire));
   // In-memory file admission fixture. These executable/object labels are inert
   // data, and this check never starts the request runner.
   const files=new Map([
     ['tsfg-aot.exe',Buffer.from('test executable row')],
     ['tsfg-aot.pdb',Buffer.from('test debug row')],
-    ['program.mlir',core],['program.tbc',wire],['program.obj',Buffer.from('test object row')],
+    ['program.mlir',core],['program.tbc',wire],['program.obj',object],
   ]);
   const product=new URL('../../',import.meta.url);
   const paths=declarations.entries.filter(row=>row.projectId==='tsfg').map(row=>row.path).sort();
@@ -92,7 +95,6 @@ test('AOT consumer admits the published executable role from its output inventor
   buildIdentity.digest=hash(jcs(body));
   const host=createCounterHostContract({buildIdentity,buildInputSet});
   files.set('host-semantic-contract.json',Buffer.from(host.contractText));
-  const tableIdentity=packet=>hash(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'),packet]));
   const manifest={buildIdentity,buildInputSet,executionBackend:'aot-v4',
     program:{core:hash(core),bytecode:hash(wire),object:hash(files.get('program.obj')),
       compiledTableId:tableIdentity(wire)},
@@ -110,6 +112,20 @@ test('AOT consumer admits the published executable role from its output inventor
 
   const executable=path.join(directory,'tsfg-aot.exe');
   assert.equal(await verifiedConsumer(executable,'aot'),executable);
+  await t.test('object from another String input is rejected at receipt admission',async()=>{
+    const {hir: other}=stringCases()[1],otherWire=expectedStringPacket(other);
+    const foreign=aotMetadataObject(other.inputIdentity,tableIdentity(otherWire));
+    const objectRow=manifest.outputs.find(row=>row.path==='program.obj');
+    assert.ok(objectRow);
+    files.set('program.obj',foreign);
+    objectRow.sha256=manifest.program.object=hash(foreign);
+    try{
+      await assert.rejects(verifiedConsumer(executable,'aot'),/r03-aot-object: compiled program identity differs/);
+    }finally{
+      files.set('program.obj',object);
+      objectRow.sha256=manifest.program.object=hash(object);
+    }
+  });
   await t.test('bytecode from another String input is rejected at receipt admission',async()=>{
     const other=stringCases()[1].hir,otherWire=expectedStringPacket(other);
     assert.notEqual(other.inputIdentity,hir.inputIdentity);

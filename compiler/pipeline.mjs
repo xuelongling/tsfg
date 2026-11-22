@@ -31,7 +31,7 @@ import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
 import {verifyCoreIrInputs} from "../eng/core-ir-inputs.mjs";
 import {runtimeSources} from "../eng/vm-build.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
-import {readCoreInputIdentity,verifyAotProducedPacket,verifyProducedPacket} from './producer-packet.mjs';
+import {readCoreInputIdentity,verifyAotPacketInput,verifyAotProducedObject,verifyAotProducedPacket,verifyProducedPacket} from './producer-packet.mjs';
 import {verifyCommonProducedPacket} from './common-program-packet.mjs';
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -112,11 +112,13 @@ export async function verifiedConsumer(executable, role) {
       throw new TypeError("r03-tool-aot: missing unique Core input identity");
     const wire=await artifact("program.tbc");
     verifyAotProducedPacket(wire,inputIdentity);
+    const programObject=await artifact("program.obj");
+    const compiledTableId=verifyAotProducedObject(programObject,wire,inputIdentity);
     const programCore=sha256(core);
     if (manifest.program?.core !== programCore || manifest.buildIdentity.options.programCore !== programCore
-        || manifest.program?.object !== sha256(await artifact("program.obj"))
+        || manifest.program?.object !== sha256(programObject)
         || manifest.program?.bytecode !== sha256(wire)
-        || manifest.program?.compiledTableId !== sha256(Buffer.concat([Buffer.from("tsfg.aot-compiled-module.v4\0"), wire])))
+        || manifest.program?.compiledTableId !== compiledTableId)
       throw new TypeError("r03-tool-aot: compiled program identity mismatch");
     verifyCounterHostContract(await artifact("host-semantic-contract.json"), manifest);
   }
@@ -496,11 +498,15 @@ export async function compileOwnedStaticProgram(hir, options) {
   });
   if (result.status !== "ok") return result;
   try {
+    const inputIdentity = readCoreInputIdentity(result.core);
+    if (inputIdentity === undefined)
+      throw new TypeError("r03-tool-aot: missing unique Core input identity");
+    verifyAotPacketInput(result.bytecode, inputIdentity);
     const executable = await verifiedConsumer(nativeCore, "core-native");
     const object = consume(executable, ["--emit-program-object"], result.core);
     // The generated metadata and instance use exactly this original packet;
     // neither a projection nor a re-signed surrogate program enters the link.
-    const compiledIdentity = sha256(Buffer.concat([Buffer.from("tsfg.aot-compiled-module.v4\0"), result.bytecode]));
+    const compiledIdentity = verifyAotProducedObject(object, result.bytecode, inputIdentity);
     return { ...result, object, compiledIdentity };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };

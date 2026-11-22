@@ -161,6 +161,91 @@ export function verifyProducedPacket(bytecode, expectedInputIdentity, expectedDe
 /** @param {Buffer} bytecode @param {string} coreInputIdentity */
 export function verifyAotProducedPacket(bytecode,coreInputIdentity) {
   verifyProducedPacket(bytecode);
+  verifyAotPacketInput(bytecode, coreInputIdentity);
+}
+
+/** Check AOT target and Core identity after the packet envelope was verified.
+ * @param {Buffer} bytecode @param {string} coreInputIdentity
+ */
+export function verifyAotPacketInput(bytecode, coreInputIdentity) {
   if(!hasProducedInputIdentity(bytecode,schema.target,capability,coreInputIdentity))
     throw new TypeError('r04-producer-input-identity: packet target or input differs from the checked Core');
+}
+
+/** Bind an ordinary AMD64 COFF object's immutable AOT metadata to the exact
+ * packet and Core already selected for the build. No text or code is decoded.
+ * @param {Buffer} object @param {Buffer} bytecode @param {string} coreInputIdentity
+ */
+export function verifyAotProducedObject(object, bytecode, coreInputIdentity) {
+  const digestBytes = 32, programBytes = 160, inputOffset = 8 + digestBytes;
+  const fixedPrefixBytes = inputOffset + digestBytes;
+  const initializedReadOnly = 0x40000040;
+  const unsupportedSectionFlags = 0xa10000a0;
+  const malformed = () => { throw new TypeError('r03-aot-object: missing or invalid compiled program metadata'); };
+  if (!Buffer.isBuffer(object) || object.length < 20 || object.length > 16 * 1024 * 1024 ||
+      object.readUInt16LE(0) !== 0x8664 || object.readUInt16LE(16) !== 0) return malformed();
+
+  // COFF uses 40-byte section headers and 18-byte symbol rows. The name
+  // offsets in long symbol rows are relative to the following string table.
+  const sections = object.readUInt16LE(2);
+  const headersEnd = 20 + 40 * sections;
+  const symbols = object.readUInt32LE(8);
+  const count = object.readUInt32LE(12);
+  const strings = symbols + 18 * count;
+  if (!sections || symbols < headersEnd || !count || strings + 4 > object.length) return malformed();
+  const stringsSize = object.readUInt32LE(strings);
+  if (stringsSize < 4 || strings + stringsSize > object.length) return malformed();
+
+  const idName = Buffer.from('tsfg_aot_compiled_table_id_v4\0');
+  const programName = Buffer.from('tsfg_aot_program_v1\0');
+  let id, program;
+  for (let i = 0; i < count;) {
+    const row = symbols + 18 * i;
+    const aux = object[row + 17];
+    if (i + aux >= count) return malformed();
+    i += 1 + aux;
+    // Both selected symbols require the long-name representation.
+    if (object.readUInt32LE(row) !== 0) continue;
+    const name = object.readUInt32LE(row + 4);
+    if (name < 4 || name >= stringsSize) return malformed();
+    const matches = candidate => name + candidate.length <= stringsSize &&
+      object.subarray(strings + name, strings + name + candidate.length).equals(candidate);
+    const isId = matches(idName);
+    if (!isId && !matches(programName)) continue;
+    const section = object.readInt16LE(row + 12);
+    if (section < 1 || section > sections || object.readUInt16LE(row + 14) !== 0 ||
+        object[row + 16] !== 2 || aux || (isId ? id : program)) return malformed();
+
+    const header = 20 + 40 * (section - 1);
+    const size = object.readUInt32LE(header + 16);
+    const raw = object.readUInt32LE(header + 20);
+    const flags = object.readUInt32LE(header + 36);
+    const value = object.readUInt32LE(row + 8);
+    const width = isId ? digestBytes : programBytes;
+    // Reject code, writable/uninitialized data, and relocation-overflow
+    // sections. The published records reside in initialized read-only data.
+    if ((flags & initializedReadOnly) !== initializedReadOnly || (flags & unsupportedSectionFlags) ||
+        raw < headersEnd || raw + size > symbols || value + width > size) return malformed();
+    const relocations = object.readUInt16LE(header + 32);
+    const reloc = object.readUInt32LE(header + 24);
+    if (relocations && (reloc < headersEnd || reloc + 10 * relocations > symbols)) return malformed();
+    // Program v1 puts its relocatable tables after the fixed prefix. A COFF
+    // relocation must not touch either digest or the program version/size.
+    const fixedEnd = value + (isId ? width : fixedPrefixBytes);
+    // AMD64 relocations write at most eight bytes. Include nearby starts
+    // before the protected range without interpreting relocation types.
+    for (let r = 0; r < relocations; ++r) {
+      const address = object.readUInt32LE(reloc + 10 * r);
+      if (address < fixedEnd && address + 8 > value) return malformed();
+    }
+    const data = object.subarray(raw + value, raw + value + width);
+    if (isId) id = data;
+    else program = data;
+  }
+  if (!id || !program || program.readUInt32LE(0) !== 1 || program.readUInt32LE(4) !== program.length) return malformed();
+  const compiledTableId = sha256(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'), bytecode]));
+  if (`sha256:${id.toString('hex')}` !== compiledTableId || !program.subarray(8, inputOffset).equals(id) ||
+      `sha256:${program.subarray(inputOffset, fixedPrefixBytes).toString('hex')}` !== coreInputIdentity)
+    throw new TypeError('r03-aot-object: compiled program identity differs from the checked Core or R04 packet');
+  return compiledTableId;
 }

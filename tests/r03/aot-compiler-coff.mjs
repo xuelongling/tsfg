@@ -1,6 +1,40 @@
 // SPDX-License-Identifier: MIT
 // Test-local bounded COFF/stackmap data reader. It never decodes instructions.
 import assert from 'node:assert/strict';
+
+// Minimal initialized data for ingress tests. The section has no functions.
+export function aotMetadataObject(inputIdentity, compiledTableId) {
+  const digest = Buffer.from(compiledTableId.slice(7), 'hex');
+  const names = ['tsfg_aot_compiled_table_id_v4', 'tsfg_aot_program_v1'];
+  const raw = 60, symbols = raw + 32 + 160, strings = symbols + 2 * 18;
+  const object = Buffer.alloc(strings + 4 + names.join('\0').length + 1);
+  object.writeUInt16LE(0x8664, 0);
+  object.writeUInt16LE(1, 2);
+  object.writeUInt32LE(symbols, 8);
+  object.writeUInt32LE(names.length, 12);
+  object.write('.rdata', 20);
+  object.writeUInt32LE(symbols - raw, 36);
+  object.writeUInt32LE(raw, 40);
+  object.writeUInt32LE(0x40000040, 56);
+  digest.copy(object, raw);
+  object.writeUInt32LE(1, raw + 32);
+  object.writeUInt32LE(160, raw + 36);
+  digest.copy(object, raw + 40);
+  Buffer.from(inputIdentity.slice(7), 'hex').copy(object, raw + 72);
+  object.writeUInt32LE(object.length - strings, strings);
+  let nameOffset = 4;
+  for (const [index, name] of names.entries()) {
+    const row = symbols + 18 * index;
+    object.writeUInt32LE(nameOffset, row + 4);
+    object.writeUInt32LE(32 * index, row + 8);
+    object.writeUInt16LE(1, row + 12);
+    object[row + 16] = 2;
+    object.write(name, strings + nameOffset);
+    nameOffset += name.length + 1;
+  }
+  return object;
+}
+
 export function readCompilerCoff(bytes) {
   assert.ok(Buffer.isBuffer(bytes) && bytes.length >=20 && bytes.length <=67108864);
   function range(offset,size) {

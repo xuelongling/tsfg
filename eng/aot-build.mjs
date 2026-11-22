@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {copyFile,lstat,mkdir,open,readFile,realpath,rename,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {verifiedConsumer} from '../compiler/pipeline.mjs';
-import {readCoreInputIdentity,verifyAotProducedPacket} from '../compiler/producer-packet.mjs';
+import {readCoreInputIdentity,verifyAotProducedObject,verifyAotProducedPacket} from '../compiler/producer-packet.mjs';
 import {prepareUnqualifiedCurrentCounter} from './host-counter.mjs';
 import {createCounterHostContract} from './host-semantic-contract.mjs';
 import {startVmBuildChild,VmBuildError} from './vm-build.mjs';
@@ -155,7 +155,7 @@ export async function executeAotTarget({options,runtime,tools,productRoot,worksp
   const wire=await stableBytes(wirePath,1048576);verifyAotProducedPacket(wire,inputIdentity);
   await run({executable:producer,args:['--emit-program-object'],cwd:product,environment,label:'core-program'},object);
   const programObject=await stableBytes(object,16777216);
-  const compiledTableId=sha256(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'),wire]));
+  const compiledTableId=verifyAotProducedObject(programObject,wire,inputIdentity);
   const counter=await prepareUnqualifiedCurrentCounter({productRoot,product,stage,tools,environment,run});
   const certificate=path.join(product,'runtime/host_certificate.zig');
   const certificateBytes=await readFile(certificate);

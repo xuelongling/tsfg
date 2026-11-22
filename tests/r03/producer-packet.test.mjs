@@ -2,12 +2,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {readCoreInputIdentity,verifyAotProducedPacket,verifyProducedPacket} from '../../compiler/producer-packet.mjs';
+import {readCoreInputIdentity,verifyAotProducedObject,verifyAotProducedPacket,verifyProducedPacket} from '../../compiler/producer-packet.mjs';
 import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
+import {aotMetadataObject} from './aot-compiler-coff.mjs';
 
 test('normal producer accepts the complete current independent packet without changing its bytes',()=>{
   const packet=expectedStringPacket(stringCases()[0].hir),before=Buffer.from(packet);
   verifyProducedPacket(packet);assert.deepEqual(packet,before);
+});
+
+test('AOT objects bind exported immutable program metadata to the checked Core and R04', () => {
+  const [{hir}, {hir: other}] = stringCases();
+  const wire = expectedStringPacket(hir);
+  const digest = 'sha256:' + createHash('sha256').update('tsfg.aot-compiled-module.v4\0').update(wire).digest('hex');
+  const object = aotMetadataObject(hir.inputIdentity, digest);
+  assert.equal(verifyAotProducedObject(object, wire, hir.inputIdentity), digest);
+  assert.throws(() => verifyAotProducedObject(object, expectedStringPacket(other), other.inputIdentity), /identity differs/);
+  assert.throws(() => verifyAotProducedObject(object, wire, other.inputIdentity), /identity differs/);
+  assert.throws(() => verifyAotProducedObject(object.subarray(0, -1), wire, hir.inputIdentity), /invalid compiled program metadata/);
 });
 
 test('the Core input identity belongs to the module in both printed forms',()=>{
