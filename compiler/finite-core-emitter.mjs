@@ -95,7 +95,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     return result;
   }
   const wrap=(value,type)=>value.type===type?value:{kind:'finiteAdapt',operand:value,type,semanticType:value.semanticType,range:value.range};
-  function superInArm(statements,fn) {
+  function superInArm(statements,fn,path) {
     const prefixLocals=new Map(),live=new Set();
     const index=statements.findIndex(statement=>{
       budget.step();
@@ -125,7 +125,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       locals.push({id,type});
     }
     locals.sort((a,b)=>{budget.step();return a.type<b.type?-1:a.type>b.type?1:0;});
-    return {index,call:statements[index].expression,locals,prefixLocals};
+    return {index,call:statements[index].expression,locals,prefixLocals,
+      argumentsPath:path+'/'+index+'/expression/arguments',capturedArguments:new Map()};
   }
   function sharedSuperLocals(arms,fn) {
     const groups=new Map(),locals=[];
@@ -144,6 +145,13 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           budget.step();
           if(!hasState(binding.presence)&&selected(fn.id+'/binding/'+binding.id).domainId===type)return binding.id;
         }
+        const side=arms[arm];
+        for(let index=0;index<side.call.arguments.length;index++) {
+          budget.step();
+          if(selected(side.argumentsPath+'/'+index).domainId!==type)continue;
+          if(!side.capturedArguments.has(index))side.capturedArguments.set(index,Symbol());
+          return side.capturedArguments.get(index);
+        }
       });
       for(let index=0;index<count;index++) {
         budget.step();
@@ -158,10 +166,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
   }
   function sharedSuperPhase(fn) {
     if(fn.role!=='construction-body')return null;
-    for(const statement of fn.body) {
+    for(const [index,statement] of fn.body.entries()) {
       budget.step();
       if(statement.kind!=='if')continue;
-      const left=superInArm(statement.then,fn),right=superInArm(statement.else,fn);
+      const path=fn.id+'/body/'+index;
+      const left=superInArm(statement.then,fn,path+'/then'),right=superInArm(statement.else,fn,path+'/else');
       if(!left||!right||left.call.construction!==right.call.construction||
         left.call.afterSuccess.construction!==right.call.afterSuccess.construction)continue;
       const locals=sharedSuperLocals([left,right],fn);
@@ -178,7 +187,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         const written=finiteBindingWrites(fn.body,budget.step);
         for(const binding of bindings)if(written.has(binding))return null;
       }
-      return {statement,phase:left.call.afterSuccess,bindings,locals,thenSuper:left.index,elseSuper:right.index};
+      return {statement,phase:left.call.afterSuccess,bindings,locals,thenSuper:left.index,elseSuper:right.index,
+        thenArguments:left.capturedArguments,elseArguments:right.capturedArguments};
     }
     return null;
   }
@@ -217,8 +227,12 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       if(value.kind==='while')loopSources.set(result,value);
       if(value!==shared?.statement)return [result];
       // Each arm reaches the same own phase immediately after its original super.
-      delete result.thenBody[shared.thenSuper].value.afterSuccess;
-      delete result.elseBody[shared.elseSuper].value.afterSuccess;
+      for(const [arm,index,captured] of [[result.thenBody,shared.thenSuper,shared.thenArguments],
+        [result.elseBody,shared.elseSuper,shared.elseArguments]]) {
+        const call=arm[index].value;
+        delete call.afterSuccess;
+        if(captured.size)call.capturedArguments=captured;
+      }
       const thenBody=result.thenBody.splice(shared.thenSuper+1);
       const elseBody=result.elseBody.splice(shared.elseSuper+1);
       if(thenBody.length||elseBody.length) {
@@ -487,8 +501,13 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           opAttrs(value)+', construction = '+quote(value.construction),value.range);
         if(value.kind==='superConstruct') {
           const receiver={name:api.lookup(value.receiverBinding),type:fn.parameters[0].type};
-          op(api,'super',[receiver,...value.arguments.map(argument=>copy(api,evaluated(argument),argument.semanticType,argument.range))],null,
+          const args=value.arguments.map(argument=>copy(api,evaluated(argument),argument.semanticType,argument.range));
+          op(api,'super',[receiver,...args],null,
             `view_type = ${quote(value.semanticType)}, construction = ${quote(value.construction)}`,value.range);
+          for(const [index,binding] of value.capturedArguments??[]) {
+            budget.step();
+            api.assign(binding,args[index].name);
+          }
           if(value.afterSuccess)initializeFields(value.afterSuccess,api);
           return null;
         }

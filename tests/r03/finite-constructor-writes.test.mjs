@@ -187,6 +187,7 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
   ['Array','super-prefix-live-array','8b964015e0253fd14e68f51e706001b6e3562614d45f61470ecf57ef748ab234','i32'],
   ['f64 Array','super-prefix-live-f64','33778b1037ced59d9099d79239fbfff9a108c11f5cb890bbf040bcfe8a4a5c35','f64'],
   ['asymmetric f64 Array','super-prefix-asymmetric-locals','a2745b1da88e70433605b56b682d1da1b27c45a440285265c2c84dbc2a69f9e8','f64','"403fc00000000000"'],
+  ['direct super argument Array','super-evaluated-argument','9269f54e6278ea1040e7608ac75431b3b56ce00adb1ada69c4f93887109a4e2b','f64','"403fc00000000000"'],
 ])test('a shared '+kind+' field initializer preserves each arm-local value',async()=>{
   const {hir,context,publicationContext}=await initializerProof(file,digest);
   const entry=hir.functions.find(row=>row.name==='entry');
@@ -223,16 +224,24 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
     const call=prefix.match(/"tsfg_core\.domain\.super"\(%v\d+, (%v\d+)\)[^\n]+/);
     const store=suffix.match(/"tsfg_core\.domain\.field_store"\(%v\d+, (%v\d+)\)[^\n]+/);
     const branch=constructor.body[0][side];
-    for(const [line,range] of [[call[0],branch[1].expression.range],[store[0],branch[2].expression.range]]){
+    const superIndex=branch[0].kind==='local'?1:0,sourceCall=branch[superIndex].expression;
+    for(const [line,range] of [[call[0],sourceCall.range],[store[0],branch[superIndex+1].expression.range]]){
       assert.ok(line.includes('tsfg_source.start = '+range.start+' : i64'));
       assert.ok(line.includes('tsfg_source.end = '+range.end+' : i64'));
     }
     const values=edges[index][2].trim().split(', ');
     assert.ok(prefix.includes(values[0]+' = "tsfg_core.constant"() {value = '+[1,0][index]+' : i1'));
-    assert.ok(prefix.includes(origin(prefix,call[1])+' = "tsfg_core.constant"() {value = '+literals[index]));
+    const argument=sourceCall.arguments[0],argumentOrigin=origin(prefix,call[1]);
+    if(argument.kind==='call'){
+      assert.equal(body.split('"func.call"').length,2,'the original argument is evaluated only once');
+      const evaluation=prefix.split('\n').find(line=>line.startsWith('    '+argumentOrigin+' = "func.call"('));
+      assert.ok(evaluation?.includes('tsfg_core.function_id = "'+argument.target+'"'));
+      assert.ok(evaluation.includes('tsfg_source.start = '+argument.range.start+' : i64'));
+      assert.ok(evaluation.includes('tsfg_source.end = '+argument.range.end+' : i64'));
+    }else assert.ok(prefix.includes(argumentOrigin+' = "tsfg_core.constant"() {value = '+literals[index]));
     const storeOrigin=origin(suffix,store[1]);
     if(index===1&&elseLiteral!==undefined){
-      assert.equal(values.at(-1),call[1],'unused incoming slot reuses the evaluated local from this arm');
+      assert.equal(values.at(-1),call[1],'unused incoming slot reuses the evaluated value from this arm');
       assert.ok(!parameters.includes(storeOrigin));
       assert.ok(suffix.includes(storeOrigin+' = "tsfg_core.constant"() {value = '+elseLiteral));
     }else{
