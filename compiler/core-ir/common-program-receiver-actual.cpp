@@ -109,7 +109,10 @@ bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&r
 }
 bool ordinary(ActualCheck &c,const ActualValue &v){
   if(!c.need(v.frames.empty()&&v.cursors.empty()&&v.cells.empty(),"control/Cell is not a selected language receiver"))return false;
-  for(const auto &tag:v.tags)if(!c.receiverText(tag)||!c.need(!llvm::StringRef(tag).starts_with("env:"),"Env carrier is not a selected language receiver"))return false;
+  constexpr llvm::StringLiteral environmentPrefix="env:";
+  // The receiver-carrier check examines at most this fixed prefix.
+  for(const auto &tag:v.tags)if(!c.step(5+environmentPrefix.size())||
+    !c.need(!llvm::StringRef(tag).starts_with(environmentPrefix),"Env carrier is not a selected language receiver"))return false;
   return true;
 }
 struct Parts {ActualValue object;bool undefined=false,primitive=false,pending=false;};

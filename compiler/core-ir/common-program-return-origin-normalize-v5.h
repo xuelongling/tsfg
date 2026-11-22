@@ -3,7 +3,7 @@
 #include "common-program-return-origin-domain-v4.h"
 
 // Canonical equations from one independently solved, already typed graph.
-// This removes aliases and unreachable equations; it never grants an upper,
+// This removes aliases and unreferenced equations; it never grants an upper,
 // renames allocation sites, or substitutes the published graph for the body.
 namespace CommonReturnOriginNormalizeV5 {
 namespace V4=CommonReturnOriginV4;
@@ -43,12 +43,16 @@ inline Result normalize(const V4::Graph &input,const Domain::Summary &solution,c
     }
     const auto reachable=[&](unsigned kind,Ref id){return kind==Nodes?solution.populated[id]:kind==Heaps?solution.heapReady[id]:kind==Controls?solution.live[id]:solution.live[input.calls[id].control];};
     std::vector<std::pair<unsigned,Ref>> pending;
-    const auto one=[&](unsigned kind,Ref id){if(!m.spend())return false;return !reachable(kind,id)||push(pending,std::make_pair(kind,resolve(kind,id)),m);};
+    const auto one=[&](unsigned kind,Ref id){return m.spend()&&push(pending,std::make_pair(kind,resolve(kind,id)),m);};
     const auto many=[&](unsigned kind,const std::vector<Ref> &values){if(!m.spend(values.size()))return false;for(auto id:values)if(!one(kind,id))return false;return true;};
-    if(!many(Nodes,input.normal)||!many(Nodes,input.language))goto budget;
+    const auto liveRoot=[&](unsigned kind,Ref id){return m.spend()&&(!reachable(kind,id)||one(kind,id));};
+    // Actual reachability chooses the roots. Their structural dependencies
+    // remain part of the certificate, including inactive arms of a live join.
+    for(const auto *roots:{&input.normal,&input.language})
+      for(auto id:*roots)if(!liveRoot(Nodes,id))goto budget;
     for(const auto *exits:{&input.exits.normal,&input.exits.language})for(const auto &row:*exits){if(!m.spend())goto budget;if(solution.live[row.control]&&(!one(Heaps,row.heap)||!one(Controls,row.control)))goto budget;}
     for(const auto &row:input.accesses){if(!m.spend())goto budget;if(solution.live[row.control]&&(!many(Nodes,row.values)||!one(Controls,row.control)))goto budget;}
-    for(Ref id=0;id<input.calls.size();++id)if(!one(Calls,id))goto budget;
+    for(Ref id=0;id<input.calls.size();++id)if(!liveRoot(Calls,id))goto budget;
     while(!pending.empty()){
       if(!m.spend())goto budget;const auto [kind,id]=pending.back();pending.pop_back();if(seen[kind][id])continue;seen[kind][id]=true;
       if(kind==Nodes){
@@ -85,7 +89,8 @@ inline Result normalize(const V4::Graph &input,const Domain::Summary &solution,c
     const auto remap=[&](unsigned kind,Ref id){return maps[kind][resolve(kind,id)];};
     const auto refs=[&](unsigned kind,const std::vector<Ref> &values,std::vector<Ref> &out){
       std::set<Ref> ordered;if(!m.spend(values.size()))return false;
-      for(auto id:values){if(!m.spend())return false;if(reachable(kind,id)){if(!m.lookup(ordered.size(),0)||!m.spend())return false;ordered.insert(remap(kind,id));}}
+      for(auto id:values){if(!m.spend())return false;const auto mapped=remap(kind,id);if(mapped!=absent){
+        if(!m.lookup(ordered.size(),0)||!m.spend())return false;ordered.insert(mapped);}}
       if(!reserve(out,ordered.size(),m))return false;for(auto id:ordered)if(!push(out,id,m))return false;return true;
     };
     const auto replace=[&](unsigned kind,std::vector<Ref> &values){std::vector<Ref> next;if(!refs(kind,values,next))return false;values=std::move(next);return true;};

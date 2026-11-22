@@ -3,6 +3,7 @@
 #include "common-program-return-origin-scope-v4.h"
 #include "common-program-return-origin-normalize-v5.h"
 #include "llvm/Support/ConvertUTF.h"
+#include <type_traits>
 namespace tsfg::commonProgram {
 namespace V4=CommonReturnOriginV4;
 namespace Scope=CommonReturnOriginScopeV4;
@@ -713,6 +714,84 @@ ProjectedReturnEffects deriveOwnedEffects(Program &p,const Json &fn,Effects &out
   return deriveProjectedEffectsImpl(p,fn,raw,out,e,diagnostics,witnesses,out.writes.empty());
 }
 
+namespace {
+bool directThrowEdge(const Function &cfg,const Operation &invoke,V4::Detail::Meter &meter){
+  if(!meter.spend(3)||invoke.successors.size()!=2||invoke.successors[0]==invoke.successors[1])return false;
+  const auto language=invoke.successors[1];if(language>=cfg.blocks.size())return false;const auto &exit=cfg.blocks[language];
+  if(!meter.spend(exit.parameters.size()+exit.operations.size()+3)||exit.parameters.size()!=1||exit.operations.size()!=1)return false;
+  const auto &returned=exit.operations[0];
+  if(!meter.text(returned.name.size())||!meter.spend(returned.operands.size()+returned.successors.size()+3))return false;
+  if(returned.name!="return_throw"||returned.result!=noRegister||!returned.successors.empty()||returned.operands.size()!=1||returned.operands[0]!=exit.parameters[0])return false;
+  size_t incoming=0;
+  for(const auto &block:cfg.blocks)for(const auto &op:block.operations){
+    if(!meter.spend(op.successors.size()+1))return false;
+    for(auto successor:op.successors)if(successor==language)++incoming;
+  }
+  return incoming==1;
+}
+
+bool directLanguageCall(const V4::Graph &graph,V4::Ref call,V4::Detail::Meter &meter){
+  if(!meter.spend(graph.language.size()+graph.exits.language.size()+3)||graph.version!=5)return false;
+  const auto terminal=[&](const auto &rows,V4::Ref ref,auto join,auto allowed){
+    for(size_t steps=0;steps<rows.size();++steps){
+      if(!meter.spend(5)||ref>=rows.size())return false;const auto &row=rows[ref];
+      if(row.kind!=join)return allowed(row);
+      if(row.inputs.size()!=1)return false;
+      if constexpr(std::is_same_v<std::decay_t<decltype(row)>,V4::Value>)if(row.type)return false;
+      ref=row.inputs[0];
+    }
+    return false;
+  };
+  const auto languageCall=[call](const auto &row){return row.call==call&&row.completion==V4::Completion::Language;};
+  bool forwardedPayload=false;
+  for(auto value:graph.language)if(terminal(graph.nodes,value,V4::ValueKind::Join,[&](const V4::Value &row){
+    return row.kind==V4::ValueKind::Call&&!row.type&&languageCall(row);
+  })){forwardedPayload=true;break;}
+  if(!forwardedPayload)return false;
+  for(const auto &exit:graph.exits.language)if(terminal(graph.controls,exit.control,V4::ControlKind::Join,[&](const V4::Control &row){
+    return row.kind==V4::ControlKind::Call&&languageCall(row);
+  })&&terminal(graph.heaps,exit.heap,V4::HeapKind::Join,[&](const V4::Heap &row){
+    return row.kind==V4::HeapKind::Call&&languageCall(row);
+  }))return true;
+  return false;
+}
+
+bool interceptsLanguage(llvm::StringRef name){
+  return name=="enter_handler"||name=="catch_bind"||name=="finally_enter"||name=="route"||
+    name=="pack"||name=="unpack"||name=="invoke_method"||name=="invoke_indirect";
+}
+
+DirectThrowPotential projectConstructorThrowPotential(Program &p,const Function &cfg,const V4::Graph &current,
+    const V4::Graph &fixed,V4::Ref selected,Error &e){
+  using Status=DirectThrowPotential;
+  const V4::Charge charge=[&](size_t n){return work(p,e,n);};
+  V4::Detail::Meter meter(charge);
+  const auto pending=[&]{return meter.good&&e.message.empty()?Status::Pending:Status::Invalid;};
+  if(!meter.lookup(p.constructorReturnCFGs.size(),cfg.id.size())||!meter.lookup(p.sourceBlocks.size(),cfg.id.size()))return Status::Invalid;
+  const auto checked=p.constructorReturnCFGs.find(cfg.id);const auto source=p.sourceBlocks.find(cfg.id);
+  if(checked==p.constructorReturnCFGs.end()||&checked->second.get()!=&cfg||
+    source==p.sourceBlocks.end()||source->second.size()!=cfg.blocks.size()||
+    current.calls.size()!=fixed.calls.size()||fixed.language.size()!=1||fixed.exits.language.size()!=1)return pending();
+  size_t index=0;const Operation *invocation=nullptr;
+  for(size_t b=0;b<cfg.blocks.size();++b)for(const auto &op:cfg.blocks[b].operations){
+    if(!meter.spend(3)||!meter.text(op.name.size()))return Status::Invalid;
+    if(interceptsLanguage(op.name))return pending();
+    if(op.name!="invoke")continue;
+    if(index>=current.calls.size()||&op!=&cfg.blocks[b].operations.back()||source->second[b]==noRegister)return pending();
+    if(!meter.text(cfg.id.size()+42)||!meter.spend(5))return Status::Invalid;
+    const auto target=field(op.properties,"function_id").getAsString().value_or("");
+    const auto site=cfg.id+"/bb"+std::to_string(source->second[b])+"/"+std::to_string(index);
+    const auto &call=current.calls[index],&bound=fixed.calls[index];
+    if(!meter.equal(call.functionId,target)||!meter.equal(bound.functionId,target)||
+      !meter.equal(call.site,site)||!meter.equal(bound.site,site))return pending();
+    if(index++==selected)invocation=&op;
+  }
+  if(index!=current.calls.size()||!invocation||!directThrowEdge(cfg,*invocation,meter)||
+    !directLanguageCall(current,selected,meter)||!directLanguageCall(fixed,selected,meter))return pending();
+  return Status::Forwarded;
+}
+} // namespace
+
 DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,const V4::Graph &current,const V4::Graph &fixed,Error &e){
   using Status=DirectThrowPotential;const V4::Charge charge=[&](size_t n){return work(p,e,n);};V4::Detail::Meter meter(charge);
   const auto pending=[&]{return meter.good&&e.message.empty()?Status::Pending:Status::Invalid;};
@@ -729,45 +808,24 @@ DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,
     registers->second.size()!=cfg.carriers.size()||views->second.size()!=cfg.carriers.size())return pending();
   // Complete Source correspondence is owned by these directories, not inferred
   // from a call signature. Inspect the actual entire CFG for interception.
-  const Operation *invocation=nullptr;size_t incoming=0;
+  const Operation *invocation=nullptr;
   for(size_t b=0;b<cfg.blocks.size();++b)for(const auto &op:cfg.blocks[b].operations){
     if(!meter.spend(op.successors.size()+2)||!meter.text(op.name.size()))return Status::Invalid;
-    if(op.name=="enter_handler"||op.name=="catch_bind"||op.name=="finally_enter"||op.name=="route"||op.name=="pack"||op.name=="unpack"||op.name=="invoke_method"||op.name=="invoke_indirect")return pending();
+    if(interceptsLanguage(op.name))return pending();
     if(op.name=="invoke"){if(invocation||b!=0||&op!=&cfg.blocks[0].operations.back())return pending();invocation=&op;}
   }
-  if(!invocation||invocation->successors.size()!=2||invocation->successors[0]==invocation->successors[1])return pending();
+  if(!invocation)return pending();
   if(!meter.spend(4))return Status::Invalid;const auto target=field(invocation->properties,"function_id").getAsString().value_or("");
   if(!meter.equal(target,call.functionId)||!meter.text(call.site.size()+cfg.id.size()))return pending();
   llvm::StringRef site(call.site);if(!site.consume_front(cfg.id)||!site.consume_front("/bb")||!site.consume_back("/0")||site.empty())return pending();
   uint64_t sourceBlock=0;if((site.size()>1&&site.front()=='0')||site.getAsInteger(10,sourceBlock)||sourceBlock!=blocks->second[0]||sourceBlock==noRegister)return pending();
-  const auto language=invocation->successors[1];if(language>=cfg.blocks.size())return pending();const auto &exit=cfg.blocks[language];
-  if(!meter.spend(exit.parameters.size()+exit.operations.size()+3)||exit.parameters.size()!=1||exit.operations.size()!=1)return pending();
-  const auto &returned=exit.operations[0];
-  if(!meter.text(returned.name.size())||!meter.spend(returned.operands.size()+returned.successors.size()+3))return Status::Invalid;
-  if(returned.name!="return_throw"||returned.result!=noRegister||!returned.successors.empty()||returned.operands.size()!=1||returned.operands[0]!=exit.parameters[0])return pending();
-  for(const auto &block:cfg.blocks)for(const auto &op:block.operations){if(!meter.spend(op.successors.size()+1))return Status::Invalid;
-    for(auto successor:op.successors)if(successor==language)++incoming;}
-  if(incoming!=1)return pending();
-  const auto direct=[&](const V4::Graph &graph){
-    if(!meter.spend(7)||graph.version!=5||graph.calls[0].control!=0||graph.controls.empty()||graph.controls[0].kind!=V4::ControlKind::Entry||
-      graph.language.size()!=1||graph.exits.language.size()!=1)return false;
-    auto value=graph.language[0];size_t steps=0;
-    while(true){if(!meter.spend(5))return false;const auto &node=graph.nodes[value];if(node.kind!=V4::ValueKind::Join)break;
-      if(++steps>graph.nodes.size()||node.type||node.inputs.size()!=1)return false;value=node.inputs[0];}
-    if(!meter.spend(4))return false;const auto &payload=graph.nodes[value];
-    if(payload.kind!=V4::ValueKind::Call||payload.call!=0||payload.completion!=V4::Completion::Language||payload.type)return false;
-    auto control=graph.exits.language[0].control;steps=0;
-    while(true){if(!meter.spend(4))return false;const auto &row=graph.controls[control];if(row.kind!=V4::ControlKind::Join)break;
-      if(++steps>graph.controls.size()||row.inputs.size()!=1)return false;control=row.inputs[0];}
-    if(!meter.spend(3))return false;const auto &completion=graph.controls[control];
-    if(completion.kind!=V4::ControlKind::Call||completion.call!=0||completion.completion!=V4::Completion::Language)return false;
-    auto heap=graph.exits.language[0].heap;steps=0;
-    while(true){if(!meter.spend(4))return false;const auto &row=graph.heaps[heap];if(row.kind!=V4::HeapKind::Join)break;
-      if(++steps>graph.heaps.size()||row.inputs.size()!=1)return false;heap=row.inputs[0];}
-    if(!meter.spend(3))return false;const auto &world=graph.heaps[heap];
-    return world.kind==V4::HeapKind::Call&&world.call==0&&world.completion==V4::Completion::Language;
+  const auto entryCall=[&](const V4::Graph &graph){
+    return meter.spend(5)&&graph.calls[0].control==0&&!graph.controls.empty()&&
+      graph.controls[0].kind==V4::ControlKind::Entry&&graph.language.size()==1&&graph.exits.language.size()==1;
   };
-  if(!direct(current)||!direct(fixed))return pending();return Status::Forwarded;
+  if(!directThrowEdge(cfg,*invocation,meter)||!entryCall(current)||!entryCall(fixed)||
+    !directLanguageCall(current,0,meter)||!directLanguageCall(fixed,0,meter))return pending();
+  return Status::Forwarded;
 }
 
 static ProjectedReturnEffects deriveProjectedEffectsImpl(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,
@@ -785,14 +843,19 @@ static ProjectedReturnEffects deriveProjectedEffectsImpl(Program &p,const Json &
   // permission. Only a separately checked, unintercepted whole normalized
   // language route may forward it. Caught/finally/other cases remain Pending.
   bool fullThrowPotential=false;
-  for(const auto &call:parsed.graph.calls){
+  for(V4::Ref index=0;index<parsed.graph.calls.size();++index){
+    const auto &call=parsed.graph.calls[index];
     if(!work(p,e,call.functionId.size()/8+2))return Status::Invalid;const auto upper=p.fixedEffects.find(call.functionId);
     if(!need(upper!=p.fixedEffects.end(),e,"body call lacks complete fixed throw permission"))return Status::Invalid;
     if(upper->second.mayThrow){
       const Function *cfg=nullptr;
       for(const auto &candidate:p.functions){if(!work(p,e,(candidate.id.size()+id.size())/8+2))return Status::Invalid;if(candidate.id==id)cfg=&candidate;}
-      if(!cfg||out.ehControl||bound==state.graphs.end()){p.returnOriginPending.insert(id);return Status::Open;}
-      const auto forwarded=projectDirectThrowPotential(p,*cfg,parsed.graph,bound->second,e);
+      if(!cfg||bound==state.graphs.end()){p.returnOriginPending.insert(id);return Status::Open;}
+      // A constructor inherits the callee's EH facet. Its checked CFG can
+      // independently establish whether the caller intercepts the payload.
+      const auto forwarded=cfg->role=="construction-body"
+        ?projectConstructorThrowPotential(p,*cfg,parsed.graph,bound->second,index,e)
+        :out.ehControl?DirectThrowPotential::Pending:projectDirectThrowPotential(p,*cfg,parsed.graph,bound->second,e);
       if(forwarded==DirectThrowPotential::Invalid)return Status::Invalid;
       if(forwarded!=DirectThrowPotential::Forwarded){p.returnOriginPending.insert(id);return Status::Open;}
       fullThrowPotential=true;
