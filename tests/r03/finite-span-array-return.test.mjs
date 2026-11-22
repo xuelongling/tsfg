@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {projectTypedArrayFacts} from '../../compiler/typed-array-project.mjs';
+import {prepareArrayCalls} from '../../compiler/array-call-context.mjs';
 import {buildHir,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
@@ -78,11 +80,15 @@ test('production Span planes retain skipped receivers of an ambiguous resize',as
   assert.equal(planes.elements(c).length,1,'equal skip/resize extents remain exact');
   assert.equal(planes.elements(d).length,1);
 });
-test('actual choice resize cannot prove every possible returned Span Array empty',async()=>{
+async function readChoiceFixture(){
   const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-span-array-return/choice-resize-expected.json',import.meta.url),'utf8'));
   const bytes=await readFile(new URL('./testdata/typed-array-span-array-return/'+expected.source.sha256+'-package.json',import.meta.url));
   assert.equal(sha256(bytes).slice(7),'ba9a81b8ab22d0db14b65090c973164cc1a7004e10bba64768fc92c88b8cc6f5');
-  const facts=readTypedArrayFacts(bytes),source=facts.payload.files.find(row=>row.path===facts.payload.rootFile).content;
+  return {expected,bytes,facts:readTypedArrayFacts(bytes)};
+}
+test('actual choice resize cannot prove every possible returned Span Array empty',async()=>{
+  const {expected,bytes,facts}=await readChoiceFixture();
+  const source=facts.payload.files.find(row=>row.path===facts.payload.rootFile).content;
   assert.equal(sha256(source).slice(7),expected.source.sha256);assert.equal(Buffer.byteLength(source),expected.source.bytes);
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const built=buildHir(facts,context,staticPublication(facts));
@@ -91,4 +97,31 @@ test('actual choice resize cannot prove every possible returned Span Array empty
   const diagnostic=built.diagnostics[0];
   assert.ok(['r03-d-readspan-origin','r03-d-readspan-return-escape','r03-d-readspan-structural-conflict'].includes(diagnostic.code),JSON.stringify(diagnostic));
   assert.ok(['a','x.length=0','wrap(flag)[0][0]'].includes(source.slice(diagnostic.primary.start,diagnostic.primary.end)),JSON.stringify(diagnostic));
+});
+test('unreachable lexical returns do not add a second Array owner to a caller',async()=>{
+  const {facts}=await readChoiceFixture();
+  const hir=projectTypedArrayFacts(facts);
+  const wrap=hir.functions.find(row=>row.name==='wrap');
+  const branch=wrap.body.find(row=>row.kind==='if'),returnA=wrap.body.at(-1);
+  const returnB={...returnA,value:branch.then[0].expression.value};
+  const allocation=name=>({kind:'allocation',functionId:wrap.id,
+    allocationSite:wrap.body.find(row=>row.binding?.name===name).initializer.allocationSite,callPath:[]});
+  const a=allocation('a'),b=allocation('b');
+  assert.notDeepEqual(a,b);
+  const publication=staticPublication(facts);
+  const trace=body=>{
+    const variant={...hir,functions:hir.functions.map(row=>row===wrap?{...row,body}:row)};
+    const {flow,ownerModel}=prepareArrayCalls(variant,publication);
+    const returns=ownerModel.functions.get(wrap.id).operations.filter(row=>row.kind==='return');
+    const origin=flow.functions.find(row=>row.functionId===wrap.id).derivedReturnOrigin;
+    return {origin,returns:returns.map(row=>row.owner)};
+  };
+  assert.deepEqual(trace(wrap.body),{origin:a,returns:[a]});
+  // Keep both lexical return operations. Only the first can supply the caller.
+  assert.deepEqual(trace([...wrap.body,returnB]),{origin:a,returns:[a,b]});
+  const both=trace(wrap.body.flatMap(row=>row===branch?[{...branch,then:[returnA],else:[returnB]}]:row===returnA?[]:[row]));
+  assert.equal(both.origin.kind,'aliases');
+  assert.equal(both.origin.owners.length,2);
+  assert.deepEqual(new Set(both.origin.owners),new Set([a,b]));
+  assert.deepEqual(both.returns,[a,b]);
 });

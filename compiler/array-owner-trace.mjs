@@ -289,7 +289,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           if(row.condition)expression(row.condition,[...at,'condition'],index);
           for(const key of ['expression','value'])if(row[key]) {
             const owner=expression(row[key],[...at,key],index);
-            if(row.kind==='return'&&type.isOwner(fn.returnType.id))returns.push(owner);
+            if(row.kind==='return'&&reachableRow&&type.isOwner(fn.returnType.id))returns.push(owner);
             if(row.kind==='return')operations.push({kind:'return',path:[...at,key],value:row[key],range:row[key].range,owner,statementIndex:index});
             if(row.kind==='return')stored.returned(stored.get([...at,key]),[...at,key]);
           }
