@@ -687,10 +687,41 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
     defer A.free(code);
     const candidate = try std.json.parseFromSlice(T.Plan.CodeIdentity, A, code, .{});
     defer candidate.deinit();
+    const changed = try A.dupe(u8, ir);
+    defer A.free(changed);
+    changed[0] ^= 1;
     var store = try jobs.Store.init(A, &document.component_layout, 2);
     defer store.deinit() catch unreachable;
     const archetype = try store.addArchetype(document.component_layout.payload.components);
-    for (0..3) |_| _ = try store.create(archetype, &.{});
+    {
+        const admitted = try document.admitParallelGroup(A, &.{entry.logicalFunctionId});
+        try std.testing.expect(admitted == .admitted);
+        var stage = admitted.admitted;
+        defer stage.deinit();
+        const loops = [_]?T.ParallelGroup.LoopBinding{.{ .loop = 0, .scalars = &.{} }};
+        const codes = [_]?T.Plan.CodeIdentity{candidate.value};
+        const Observe = struct {
+            fn reject(_: []const T.Plan) !void {
+                return error.UnexpectedCallback;
+            }
+            fn read(plans: []const T.Plan, selected: T.Plan.CodeIdentity, counts: []const u64) !void {
+                try std.testing.expectEqual(counts.len, plans.len);
+                for (plans, counts) |*active, count| {
+                    try active.verifyCodeIdentity(selected);
+                    try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = count }, try active.llvmArgument(0));
+                    try std.testing.expectError(error.BorrowConflict, active.batch.release());
+                }
+            }
+        };
+        var foreign = candidate.value;
+        foreign.abi_type = "foreign";
+        try std.testing.expectError(error.IdentityMismatch, stage.withCheckedPlans(A, &store, &loops, &.{foreign}, ir, .{}, Observe.reject));
+        try std.testing.expectError(error.BindingMismatch, stage.withCheckedPlans(A, &store, &loops, &.{null}, ir, .{}, Observe.reject));
+        try stage.withCheckedPlans(A, &store, &loops, &codes, ir, .{ candidate.value, @as([]const u64, &.{}) }, Observe.read);
+        for (0..3) |_| _ = try store.create(archetype, &.{});
+        try std.testing.expectError(error.IdentityMismatch, stage.withCheckedPlans(A, &store, &loops, &codes, changed, .{}, Observe.reject));
+        try stage.withCheckedPlans(A, &store, &loops, &codes, ir, .{ candidate.value, @as([]const u64, &.{ 2, 1 }) }, Observe.read);
+    }
     const query = try document.query(A, &store, 0);
     var released = false;
     defer if (!released) query.release() catch unreachable;
@@ -751,9 +782,6 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
             try group[0].plan.withCheckedBatch(group[0].code, ir, @as(usize, 2), inspect);
         }
     };
-    const changed = try A.dupe(u8, ir);
-    defer A.free(changed);
-    changed[0] ^= 1;
     try std.testing.expectError(error.IdentityMismatch, plan.withCheckedBatch(candidate.value, changed, {}, Call.unexpected));
     {
         var old_document = try T.Document.load(A, metadata, receipt.value);

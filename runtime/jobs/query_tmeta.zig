@@ -293,6 +293,7 @@ pub const ParallelGroup = struct {
     pub const System = struct { function_id: []const u8, entries: []const Entry, first_entry: usize };
     pub const BatchBinding = struct { loop: usize, batch: storage.Store.Batch, scalars: []const ScalarValue };
     pub const LoopBinding = struct { loop: usize, scalars: []const ScalarValue };
+    const StageCode = struct { entries: []const ?Plan.CodeIdentity, llvm_ir: []const u8 };
     allocator: std.mem.Allocator,
     document: *const Document,
     systems: []const System,
@@ -360,11 +361,22 @@ pub const ParallelGroup = struct {
 
     /// Borrow every batch for one selected loop per participating system.
     /// The callback receives Plans in system order, then Store batch order.
-    /// Plans and their query leases stay alive through the synchronous call.
-    /// The callback must not release or retain the Plans, their query aliases,
-    /// or any borrowed column views.
+    /// All batches stay pinned through the synchronous callback. The callback
+    /// must not retain Plans, query aliases or borrowed column views.
     pub fn withPlans(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?LoopBinding, arguments: anytype, comptime call: anytype) !void {
+        return self.withStage(allocator, store, bindings, null, arguments, call);
+    }
+
+    /// Check the paired LLVM and each selected loop's independent code identity
+    /// before acquiring Store leases, including for loops with no batches.
+    /// Code entries follow bindings in system order and share their null slots.
+    pub fn withCheckedPlans(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?LoopBinding, code: []const ?Plan.CodeIdentity, llvm_ir: []const u8, arguments: anytype, comptime call: anytype) !void {
+        return self.withStage(allocator, store, bindings, .{ .entries = code, .llvm_ir = llvm_ir }, arguments, call);
+    }
+
+    fn withStage(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?LoopBinding, code: ?StageCode, arguments: anytype, comptime call: anytype) !void {
         if (bindings.len != self.systems.len) return error.BindingMismatch;
+        if (code) |checked| if (checked.entries.len != bindings.len) return error.BindingMismatch;
         var temporary = std.heap.ArenaAllocator.init(allocator);
         defer temporary.deinit();
         const scratch = temporary.allocator();
@@ -373,11 +385,29 @@ pub const ParallelGroup = struct {
             loop.* = null;
             if (binding) |selected| {
                 const entry_index = try self.entryIndex(index, selected.loop);
-                const formals = self.document.payload.entries[entry_index].scalars;
+                const entry = &self.document.payload.entries[entry_index];
+                const formals = entry.scalars;
                 if (selected.scalars.len != formals.len) return error.BindingMismatch;
                 try checkScalarWidths(formals, selected.scalars);
+                if (code) |checked| {
+                    const candidate = checked.entries[index] orelse return error.BindingMismatch;
+                    try candidate.verify(.{
+                        .metadata_hash = self.document.payload_hash,
+                        .batch_hash = self.document.payload.batchHash,
+                        .entry_symbol = entry.entrySymbol,
+                        .logical_function_id = entry.logicalFunctionId,
+                        .signature_hash = entry.signatureHash,
+                        .abi_type = entry.abiType,
+                    });
+                }
                 loop.* = selected.loop;
+            } else if (code) |checked| {
+                if (checked.entries[index] != null) return error.BindingMismatch;
             }
+        }
+        if (code) |checked| {
+            const llvm_hash = self.document.llvm_hash orelse return error.IdentityMismatch;
+            try Plan.checkLlvmArtifact(llvm_hash, checked.llvm_ir);
         }
         const queries = try scratch.alloc(?storage.Store.Query, bindings.len);
         @memset(queries, null);
@@ -389,18 +419,21 @@ pub const ParallelGroup = struct {
             count += try lease.batchCount();
         };
         const plans = try scratch.alloc(Plan, count);
+        const batches = try scratch.alloc(storage.Store.Batch, count);
         var bound: usize = 0;
         defer for (plans[0..bound]) |*plan| plan.deinit();
         for (bindings, queries, 0..) |binding, maybe_lease, index| {
             if (maybe_lease) |lease| {
                 const selected = binding.?;
                 for (0..try lease.batchCount()) |batch_index| {
-                    plans[bound] = try self.bind(allocator, store, try lease.batch(batch_index), index, selected.loop, selected.scalars);
+                    const batch = try lease.batch(batch_index);
+                    plans[bound] = try self.bind(allocator, store, batch, index, selected.loop, selected.scalars);
+                    batches[bound] = batch;
                     bound += 1;
                 }
             }
         }
-        return @call(.auto, call, .{@as([]const Plan, plans)} ++ arguments);
+        return store.withActiveCalls(batches, .{@as([]const Plan, plans)} ++ arguments, call);
     }
 };
 
@@ -425,6 +458,12 @@ pub const Plan = struct {
         logical_function_id: []const u8,
         signature_hash: []const u8,
         abi_type: []const u8,
+
+        fn verify(self: CodeIdentity, expected: anytype) Error!void {
+            inline for (std.meta.fields(CodeIdentity)) |field| {
+                if (!std.mem.eql(u8, @field(expected, field.name), @field(self, field.name))) return error.IdentityMismatch;
+            }
+        }
     };
     pub const CheckedCall = struct { plan: *const Plan, code: CodeIdentity };
     arena: std.heap.ArenaAllocator,
@@ -458,9 +497,7 @@ pub const Plan = struct {
     /// Compare checked entry and batch identities supplied by a code owner.
     /// The code owner's executable lease and the Store borrow remain separate.
     pub fn verifyCodeIdentity(self: *const Plan, candidate: CodeIdentity) Error!void {
-        inline for (std.meta.fields(CodeIdentity)) |field| {
-            if (!std.mem.eql(u8, @field(self, field.name), @field(candidate, field.name))) return error.IdentityMismatch;
-        }
+        return candidate.verify(self);
     }
     /// Keep this plan and the code version alive through the synchronous call.
     /// The callback must not retain argument or column views after returning.
@@ -506,7 +543,7 @@ pub const Plan = struct {
         return .{ .scalar = self.scalars[scalar] };
     }
     /// Flatten the checked batch's arguments in the emitted LLVM entry order.
-    /// Pointer values borrow a live column. For a call, use them during withCheckedBatch.
+    /// Calls use the column pointers inside the checked single, group or stage callback.
     pub fn llvmArgument(self: *const Plan, index: usize) !LLVMArgument {
         _ = try self.batch.rowCount();
         if (index == 0) return .{ .index = self.rows };

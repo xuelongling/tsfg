@@ -325,6 +325,7 @@ test "complete Query stage forwards every real Position and Velocity batch in re
     const first = try store.create(p, &.{});
     const second = try store.create(p, &.{});
     const Observe = struct {
+        fn nested() !void {}
         fn plans(rows: []const T.Plan, expected: *const [3]Expected, reject: bool) !void {
             try std.testing.expectEqual(expected.len, rows.len);
             for (rows, expected) |*plan, wanted| {
@@ -332,6 +333,8 @@ test "complete Query stage forwards every real Position and Velocity batch in re
                 try std.testing.expectEqual(@as(usize, 1), plan.rows);
                 try std.testing.expectEqual(wanted.entity, try plan.batch.entity(0));
                 try std.testing.expectEqual(T.Plan.LLVMArgument{ .float32 = wanted.scalar }, try plan.llvmArgument(7));
+                try std.testing.expectError(error.BorrowConflict, plan.batch.withActiveCall(.{}, nested));
+                try std.testing.expectError(error.BorrowConflict, plan.batch.release());
                 try std.testing.expectError(error.BorrowConflict, plan.batch.store.borrowWrite(wanted.entity, wanted.entry.columns[0].componentType));
             }
             if (reject) return error.TestStageFailure;
