@@ -182,6 +182,22 @@ test('branch-local super arguments run before one shared phase and their origina
 
 
 
+function constructorBlocks(core,id){
+  const start=core.indexOf('  func.func @"f'+id.slice(7)+'"(');
+  assert.ok(start>=0);
+  const body=core.slice(start,core.indexOf('\n  }',start));
+  const blocks=new Map([...body.matchAll(/^  \^(bb\d+)(?:\(([^\n]*)\))?:\n((?:    [^\n]*\n?)+)/gm)]
+    .map(([,id,parameters,text])=>[id,{parameters:parameters??'',text}]));
+  return {body,blocks};
+}
+
+function coreValueOrigin(text,value){
+  const views=new Map([...text.matchAll(/(%v\d+) = "tsfg_core\.domain\.view"\((%v\d+)\)/g)]
+    .map(([,result,input])=>[result,input]));
+  while(views.has(value))value=views.get(value);
+  return value;
+}
+
 for(const [kind,file,digest,carrier,elseLiteral] of [
   ['scalar','super-prefix-live-local','dfc44eba7593f4c84c65c5ffbfa0da14d1d7a0aad661db5fa06ce10027a9efa4','i32'],
   ['Array','super-prefix-live-array','8b964015e0253fd14e68f51e706001b6e3562614d45f61470ecf57ef748ab234','i32'],
@@ -193,12 +209,7 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
   const entry=hir.functions.find(row=>row.name==='entry');
   const owner=hir.types.find(row=>row.id===entry.body[0].initializer.type);
   const constructor=hir.functions.find(row=>row.id===owner.constructor);
-  const core=lowerFormalHir(hir,context,publicationContext);
-  const start=core.indexOf('  func.func @"f'+constructor.id.slice(7)+'"(');
-  assert.ok(start>=0);
-  const body=core.slice(start,core.indexOf('\n  }',start));
-  const blocks=new Map([...body.matchAll(/^  \^(bb\d+)(?:\(([^\n]*)\))?:\n((?:    [^\n]*\n?)+)/gm)]
-    .map(([,id,parameters,text])=>[id,{parameters:parameters??'',text}]));
+  const {body,blocks}=constructorBlocks(lowerFormalHir(hir,context,publicationContext),constructor.id);
   const arms=[...blocks.values()].filter(block=>block.text.includes('"tsfg_core.domain.super"'));
   assert.equal(arms.length,2);
   const edges=arms.map(({text})=>text.match(/cf\.br \^(bb\d+)\(([^:\n]+) : /));
@@ -212,12 +223,6 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
   assert.equal(body.split('"tsfg_core.domain.array_create"').length-1,kind==='scalar'?0:1);
   const dispatch=join.text.match(/cf\.cond_br (%v\d+), \^(bb\d+), \^(bb\d+)/);
   assert.equal(dispatch[1],parameters[0]);
-  const origin=(text,value)=>{
-    const views=new Map([...text.matchAll(/(%v\d+) = "tsfg_core\.domain\.view"\((%v\d+)\)/g)]
-      .map(([,result,input])=>[result,input]));
-    while(views.has(value))value=views.get(value);
-    return value;
-  };
   const literals=carrier==='f64'?['"4026800000000000"','"4036800000000000"']:['11 : i32','22 : i32'];
   for(const [index,side] of ['then','else'].entries()){
     const prefix=arms[index].text,suffix=blocks.get(dispatch[index+2]).text;
@@ -231,7 +236,7 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
     }
     const values=edges[index][2].trim().split(', ');
     assert.ok(prefix.includes(values[0]+' = "tsfg_core.constant"() {value = '+[1,0][index]+' : i1'));
-    const argument=sourceCall.arguments[0],argumentOrigin=origin(prefix,call[1]);
+    const argument=sourceCall.arguments[0],argumentOrigin=coreValueOrigin(prefix,call[1]);
     if(argument.kind==='call'){
       assert.equal(body.split('"func.call"').length,2,'the original argument is evaluated only once');
       const evaluation=prefix.split('\n').find(line=>line.startsWith('    '+argumentOrigin+' = "func.call"('));
@@ -239,7 +244,7 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
       assert.ok(evaluation.includes('tsfg_source.start = '+argument.range.start+' : i64'));
       assert.ok(evaluation.includes('tsfg_source.end = '+argument.range.end+' : i64'));
     }else assert.ok(prefix.includes(argumentOrigin+' = "tsfg_core.constant"() {value = '+literals[index]));
-    const storeOrigin=origin(suffix,store[1]);
+    const storeOrigin=coreValueOrigin(suffix,store[1]);
     if(index===1&&elseLiteral!==undefined){
       assert.equal(values.at(-1),call[1],'unused incoming slot reuses the evaluated value from this arm');
       assert.ok(!parameters.includes(storeOrigin));
@@ -249,6 +254,47 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
       assert.ok(slot>0);
       assert.equal(values[slot],call[1]);
     }
+  }
+});
+
+test('disjoint i32 and f64 locals do not enter the opposite constructor suffixes',async()=>{
+  const {hir,context,publicationContext}=await initializerProof(
+    'super-disjoint-domains','8a94798639072b7524fd32dab31c89eb2946909a3e1b408c57ae9908af88a65c');
+  const entry=hir.functions.find(row=>row.name==='entry');
+  const owner=hir.types.find(row=>row.id===entry.body[0].initializer.type);
+  const fn=hir.functions.find(row=>row.id===owner.constructor);
+  const {body,blocks}=constructorBlocks(lowerFormalHir(hir,context,publicationContext),fn.id);
+  const arms=[...blocks.values()].filter(block=>block.text.includes('"tsfg_core.domain.super"'));
+  assert.equal(arms.length,2);
+  const edges=arms.map(({text})=>text.match(/cf\.br \^(bb\d+)\(([^:\n]+) : /));
+  assert.ok(edges.every(Boolean));
+  assert.equal(edges[0][1],edges[1][1]);
+  const join=blocks.get(edges[0][1]);
+  const parameters=join.parameters.split(', ').map(parameter=>parameter.split(': '));
+  const float=parameters.findIndex(([,type])=>type==='f64'),integer=parameters.findIndex(([,type])=>type==='i32');
+  assert.ok(float>0&&integer>0,'one shared initialization carries the two distinct local types');
+  assert.equal(body.split('"tsfg_core.domain.initialize_fields"').length,2);
+  assert.equal(body.split('"tsfg_core.domain.array_create"').length,2);
+  const dispatch=join.text.match(/cf\.cond_br (%v\d+), \^(bb\d+), \^(bb\d+)/);
+  assert.equal(dispatch[1],parameters[0][0]);
+  for(const [index,[active,unused,expected,zero,side]] of [
+    [float,integer,'"4026800000000000"','0 : i32','then'],
+    [integer,float,'42 : i32','"0000000000000000"','else'],
+  ].entries()){
+    const prefix=arms[index].text,suffix=blocks.get(dispatch[index+2]).text;
+    const inputs=edges[index][2].trim().split(', ');
+    assert.ok(prefix.includes(inputs[0]+' = "tsfg_core.constant"() {value = '+[1,0][index]+' : i1'));
+    assert.ok(prefix.includes(coreValueOrigin(prefix,inputs[active])+' = "tsfg_core.constant"() {value = '+expected));
+    assert.ok(prefix.includes(inputs[unused]+' = "tsfg_core.constant"() {value = '+zero));
+    const call=prefix.match(/"tsfg_core\.domain\.super"\(%v\d+\)[^\n]+/);
+    const store=suffix.match(/"tsfg_core\.domain\.field_store"\(%v\d+, (%v\d+)\)[^\n]+/);
+    assert.equal(coreValueOrigin(suffix,store[1]),parameters[active][0]);
+    for(const [line,range] of [[call[0],fn.body[0][side][1].expression.range],
+      [store[0],fn.body[0][side][2].expression.range]]){
+      assert.ok(line.includes('tsfg_source.start = '+range.start+' : i64'));
+      assert.ok(line.includes('tsfg_source.end = '+range.end+' : i64'));
+    }
+    for(const text of [join.text,suffix])assert.doesNotMatch(text,new RegExp(parameters[unused][0]+'\\b','u'));
   }
 });
 

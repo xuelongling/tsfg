@@ -184,9 +184,22 @@ export function emitCoreSsaFunction(fn, context) {
         operationLine(selector, "tsfg_core.constant", [], [], boolTypeId, `value = ${Number(selectedThen)} : i1`, range);
         args.unshift(selector);
       }
+      let unusedValues;
       for (const slot of locals) {
         context.budget?.step();
-        args.push(bindings.get(slot.inputs[selectedThen ? 0 : 1]));
+        const input = slot.inputs[selectedThen ? 0 : 1];
+        if (input !== undefined) {
+          args.push(bindings.get(input));
+          continue;
+        }
+        unusedValues ??= new Map();
+        let value = unusedValues.get(slot.type);
+        if (value === undefined) {
+          value = variable();
+          operationLine(value, "tsfg_core.constant", [], [], slot.type, `value = ${slot.unusedValue}`, range);
+          unusedValues.set(slot.type, value);
+        }
+        args.push(value);
       }
       branch(join, args, range);
     }

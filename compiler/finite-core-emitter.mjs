@@ -156,10 +156,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       for(let index=0;index<count;index++) {
         budget.step();
         const ids=bindings.map(arm=>arm[index]);
-        // An unneeded slot carries a value already evaluated on that edge.
         const inputs=ids.map((id,arm)=>id??available[arm]);
-        if(inputs.some(id=>id===undefined))return null;
-        locals.push({type,ids,inputs});
+        // Only a slot with no live binding on that edge can lack a value.
+        const unusedValue=inputs.some(id=>id===undefined)
+          ?(domains.get(type).nativeType==='i32'?'0 : i32':'"0000000000000000"'):undefined;
+        locals.push({type,ids,inputs,unusedValue});
       }
     }
     return locals;
@@ -174,7 +175,6 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       if(!left||!right||left.call.construction!==right.call.construction||
         left.call.afterSuccess.construction!==right.call.afterSuccess.construction)continue;
       const locals=sharedSuperLocals([left,right],fn);
-      if(!locals)continue;
       const pending=[fn.body];let sites=0;
       while(pending.length) {
         budget.step();const value=pending.pop();
