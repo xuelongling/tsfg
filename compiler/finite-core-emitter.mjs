@@ -17,6 +17,10 @@ import {scalarComparisons,scalarOperations} from './scalar-operators.mjs';
 import {memberPresence} from './member-presence.mjs';
 import {hasState} from './presence.mjs';
 
+const sharedSuperLocalZero=new Map([
+  ['i32','0 : i32'],['f32','"00000000"'],['f64','"0000000000000000"'],
+]);
+
 function pending(message,range) {throw Object.assign(new TypeError('r03-finite-core-capability: '+message),
   {code:'r03-finite-core-capability',ruleId:'r01-ts-baseline',phase:'lowering',...(range?{primary:range}:{})});}
 
@@ -121,7 +125,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       const carrier=domains.get(type).nativeType;
       // The verifier tracks exact bool predicates and u32 array indices.
       // Those proofs, and owner/presence proofs, need per-arm provenance.
-      if(hasState(prefixLocals.get(id).presence)||(carrier!=='i32'&&carrier!=='f64'))return null;
+      if(hasState(prefixLocals.get(id).presence)||!sharedSuperLocalZero.has(carrier))return null;
       locals.push({id,type});
     }
     locals.sort((a,b)=>{budget.step();return a.type<b.type?-1:a.type>b.type?1:0;});
@@ -159,7 +163,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         const inputs=ids.map((id,arm)=>id??available[arm]);
         // Only a slot with no live binding on that edge can lack a value.
         const unusedValue=inputs.some(id=>id===undefined)
-          ?(domains.get(type).nativeType==='i32'?'0 : i32':'"0000000000000000"'):undefined;
+          ?sharedSuperLocalZero.get(domains.get(type).nativeType):undefined;
         locals.push({type,ids,inputs,unusedValue});
       }
     }

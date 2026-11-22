@@ -257,9 +257,11 @@ for(const [kind,file,digest,carrier,elseLiteral] of [
   }
 });
 
-test('disjoint i32 and f64 locals do not enter the opposite constructor suffixes',async()=>{
-  const {hir,context,publicationContext}=await initializerProof(
-    'super-disjoint-domains','8a94798639072b7524fd32dab31c89eb2946909a3e1b408c57ae9908af88a65c');
+for(const [carrier,file,digest,literal,zeroValue] of [
+  ['f64','super-disjoint-domains','8a94798639072b7524fd32dab31c89eb2946909a3e1b408c57ae9908af88a65c','"4026800000000000"','"0000000000000000"'],
+  ['f32','super-live-f32','c2f9eb86e1b45b421c851ca8ad7ab9e39fbd190008c8bf5aec6c57821e7cb1df','"41340000"','"00000000"'],
+])test('disjoint i32 and '+carrier+' locals do not enter the opposite constructor suffixes',async()=>{
+  const {hir,context,publicationContext}=await initializerProof(file,digest);
   const entry=hir.functions.find(row=>row.name==='entry');
   const owner=hir.types.find(row=>row.id===entry.body[0].initializer.type);
   const fn=hir.functions.find(row=>row.id===owner.constructor);
@@ -271,15 +273,15 @@ test('disjoint i32 and f64 locals do not enter the opposite constructor suffixes
   assert.equal(edges[0][1],edges[1][1]);
   const join=blocks.get(edges[0][1]);
   const parameters=join.parameters.split(', ').map(parameter=>parameter.split(': '));
-  const float=parameters.findIndex(([,type])=>type==='f64'),integer=parameters.findIndex(([,type])=>type==='i32');
+  const float=parameters.findIndex(([,type])=>type===carrier),integer=parameters.findIndex(([,type])=>type==='i32');
   assert.ok(float>0&&integer>0,'one shared initialization carries the two distinct local types');
   assert.equal(body.split('"tsfg_core.domain.initialize_fields"').length,2);
   assert.equal(body.split('"tsfg_core.domain.array_create"').length,2);
   const dispatch=join.text.match(/cf\.cond_br (%v\d+), \^(bb\d+), \^(bb\d+)/);
   assert.equal(dispatch[1],parameters[0][0]);
   for(const [index,[active,unused,expected,zero,side]] of [
-    [float,integer,'"4026800000000000"','0 : i32','then'],
-    [integer,float,'42 : i32','"0000000000000000"','else'],
+    [float,integer,literal,'0 : i32','then'],
+    [integer,float,'42 : i32',zeroValue,'else'],
   ].entries()){
     const prefix=arms[index].text,suffix=blocks.get(dispatch[index+2]).text;
     const inputs=edges[index][2].trim().split(', ');
