@@ -312,59 +312,72 @@ async function compileSnapshot(snapshot, options) {
 
 const coreModulePrefix='"builtin.module"() ({\n';
 
-/** Match a unique field owned by the operation's final dictionary.
- * @param {string} closing @param {string} identityField @param {string} identity */
-function hasCheckedCoreField(closing,identityField,identity) {
+/** Read a unique identity owned by the operation's final dictionary.
+ * @param {string} closing @param {string} identityField */
+function checkedCoreIdentity(closing,identityField) {
   const suffix='} : () -> ()';
-  if(!closing.startsWith('}) {')||!closing.endsWith(suffix))return false;
-  const fields=closing.slice(4,-suffix.length),expected='"'+identity+'"';
+  if(!closing.startsWith('}) {')||!closing.endsWith(suffix))return;
+  const fields=closing.slice(4,-suffix.length);
   const tokens=/(?:^|,)[ \t]*(?:"((?:[^"\\]|\\.)*)"|(tsfg_core\.(?:input_identity|function_id)))[ \t]*=[ \t]*|"(?:[^"\\]|\\.)*"|[{}\[\]]/gu;
-  let depth=0,found=false;
+  const digest=/"(sha256:[0-9a-f]{64})"/y;
+  let depth=0,identity;
   for(const match of fields.matchAll(tokens)){
     const [token,quoted,bare]=match;
     // The scalar generic printer emits only bare names in the function's
     // own dictionary. Reject quoted keys, including escaped spellings.
-    if(depth===0&&quoted!==undefined&&(identityField==='tsfg_core.function_id'||quoted===identityField))return false;
+    if(depth===0&&quoted!==undefined&&(identityField==='tsfg_core.function_id'||quoted===identityField))return;
     if(bare===identityField&&depth===0){
       const canonical=(match.index===0?'':', ')+identityField+' = ';
-      const value=match.index+token.length,after=value+expected.length;
-      if(found||token!==canonical||!fields.startsWith(expected,value)||(after!==fields.length&&!fields.startsWith(', ',after)))return false;
-      found=true;
+      digest.lastIndex=match.index+token.length;
+      const value=digest.exec(fields),after=digest.lastIndex;
+      if(identity!==undefined||token!==canonical||!value||(after!==fields.length&&!fields.startsWith(', ',after)))return;
+      identity=value[1];
     }else if(token==='['||token==='{')depth++;
     else if(token===']'||token==='}'){
-      if(--depth<0)return false;
+      if(--depth<0)return;
     }
   }
-  return found&&depth===0;
+  if(depth===0)return identity;
 }
 
 /** @param {string} core @param {string} inputIdentity @param {string} [stage] */
 function requireCheckedCoreInput(core,inputIdentity,stage='r03-core-output') {
-  const end=core.trimEnd().length,closing=core.slice(core.lastIndexOf('\n',end-1)+1,end);
-  if(!core.startsWith(coreModulePrefix)||!hasCheckedCoreField(closing,'tsfg_core.input_identity',inputIdentity))
+  const end=core.trimEnd().length,closing=core.lastIndexOf('\n',end-1)+1;
+  if(!core.startsWith(coreModulePrefix)||!inputIdentity||
+     checkedCoreIdentity(core.slice(closing,end),'tsfg_core.input_identity')!==inputIdentity)
     throw new TypeError(`${stage}: checked input identity differs`);
+  return closing;
 }
 
-/** @param {string} core @param {string} defaultRoot */
-function hasCheckedGenericRoot(core,defaultRoot) {
+/** @param {string} core @param {number} moduleClose
+ * @param {string} defaultRoot @param {readonly string[]} functionIds */
+function requireCheckedGenericFunctions(core,moduleClose,defaultRoot,functionIds) {
   // A registered generic Core module consists of function definitions. The
   // printer closes each region before printing that function's own fields.
-  const prefix=coreModulePrefix+'  "func.func"() <{';
-  if(!core.startsWith(prefix))return false;
-  const headerEnd=core.indexOf('\n',prefix.length);
-  if(headerEnd<0||!core.slice(prefix.length,headerEnd).endsWith('}> ({'))return false;
+  const prefix='  "func.func"() <{',remaining=new Set(functionIds);
   const tokens=/"(?:[^"\\]|\\.)*"|[{}]/gu;
-  tokens.lastIndex=headerEnd+1;
-  let depth=1;
-  for(const {0:token,index} of core.matchAll(tokens)){
-    if(token==='{')depth++;
-    else if(token==='}'&&--depth===0){
-      const end=core.indexOf('\n',index);
-      return core.startsWith('\n  }) {',index-3)&&end>index&&
-        hasCheckedCoreField(core.slice(index,end),'tsfg_core.function_id',defaultRoot);
+  let cursor=coreModulePrefix.length;
+  const inventoryError='r03-core-output: generic function inventory differs from the checked HIR';
+  while(cursor<moduleClose){
+    const first=cursor===coreModulePrefix.length;
+    const invalid=()=>new TypeError(first
+      ?'r03-core-output: first generic function differs from the checked default root':inventoryError);
+    const headerEnd=core.indexOf('\n',cursor);
+    if(!core.startsWith(prefix,cursor)||headerEnd<0||!core.startsWith('}> ({',headerEnd-5))throw invalid();
+    tokens.lastIndex=headerEnd+1;
+    let depth=1,closing;
+    for(let match; (match=tokens.exec(core))&&match.index<moduleClose;){
+      if(match[0]==='{')depth++;
+      else if(match[0]==='}'&&--depth===0){closing=match.index;break;}
     }
+    if(closing===undefined||!core.startsWith('\n  }) {',closing-3))throw invalid();
+    const end=core.indexOf('\n',closing);
+    if(end<0||end>=moduleClose)throw invalid();
+    const identity=checkedCoreIdentity(core.slice(closing,end),'tsfg_core.function_id');
+    if(identity===undefined||(first&&identity!==defaultRoot)||!remaining.delete(identity))throw invalid();
+    cursor=end+1;
   }
-  return false;
+  if(cursor!==moduleClose||remaining.size)throw new TypeError(inventoryError);
 }
 
 async function produceCore(hir, options, lower = undefined, context = undefined) {
@@ -390,9 +403,10 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
-  if(common||ordinary||generic||exception||closure||optional||reference)requireCheckedCoreInput(core,coreInput);
-  if(generic&&!hasCheckedGenericRoot(core,packetDefaultRoot))
-    throw new TypeError('r03-core-output: first generic function differs from the checked default root');
+  if(common||ordinary||generic||exception||closure||optional||reference){
+    const moduleClose=requireCheckedCoreInput(core,coreInput);
+    if(generic)requireCheckedGenericFunctions(core,moduleClose,packetDefaultRoot,hir.closure.functions);
+  }
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
 }
 

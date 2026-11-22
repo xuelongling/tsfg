@@ -308,7 +308,7 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     assert.equal(rejected.status,'tool-error');
     assert.deepEqual(rejected,mismatch);
   });
-  await t.test('generic Core transport binds its first top-level function',async sub=>{
+  await t.test('generic Core transport binds the checked function inventory and default root',async sub=>{
     const fixture=name=>fs.readFile(new URL('./fixtures/'+name,import.meta.url));
     const [hirBytes,coreBytes]=await Promise.all([
       fixture('generic-recursive-conditional-hir-v7.json'),fixture('generic-recursive-conditional-core-v7.mlir'),
@@ -326,12 +326,38 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     const operation=(name,type,fields,bodyFields='')=>'  "func.func"() <{function_type = ('+type+') -> '+type+
       ', sym_name = "'+name+'"}> ({\n  ^bb0(%arg: '+type+'):\n    "func.return"(%arg)'+bodyFields+' : ('+type+') -> ()\n  }) {'+
       fields+'} : () -> ()';
-    const modeled=(first,second)=>framedCore([header,first,second,'}'].join('\n'));
+    const modeled=(...functions)=>framedCore([header,...functions,'}'].join('\n'));
     const boolRoot=operation('route_bool','i1',rootField),other=operation('route_f64','f64',otherField);
-    stdout=modeled(boolRoot,other);
+    const remaining=checked.functions.filter(fn=>fn.id!==root).map((fn,index)=>
+      operation('instance_'+index,'i1','tsfg_core.function_id = "'+fn.id+'"'));
+    const nondefault='sha256:3c570a6d34471b23176a384676fc7189d13b8c3befca039106f798fe8cb0a32c';
+    assert.ok(checked.closure.roots.includes(nondefault));
+    const omitted=remaining.findIndex(fn=>fn.includes(nondefault));
+    assert.ok(omitted>=0);
+    stdout=modeled(boolRoot,...remaining);
     const accepted=await compileOwnedCore(checked,options);
     assert.equal(accepted.status,'ok');
     assert.deepEqual(Buffer.from(accepted.core,'utf8'),stdout);
+
+    await sub.test('missing, duplicate or foreign definitions reject before bytecode',async()=>{
+      const wrongInventory={status:'tool-error',code:'r03-d-consumer',
+        message:'r03-core-output: generic function inventory differs from the checked HIR'};
+      const incomplete=remaining.filter((_,index)=>index!==omitted);
+      const unrelated=operation('unowned_instance','i1','tsfg_core.function_id = "sha256:'+'f'.repeat(64)+'"');
+      const nested=operation('unowned_instance','i1','note = "standalone"',
+        ' {tsfg_core.function_id = "'+nondefault+'"}');
+      packetStdout=Buffer.alloc(0);
+      for(const functions of [incomplete,[...incomplete,remaining[0]],
+        [...remaining,unrelated],[...incomplete,unrelated],[...incomplete,nested]]) {
+        stdout=modeled(boolRoot,...functions);
+        const first=calls.length;
+        const actual=await compileOwnedCore(checked,options);
+        const packet=await compileOwnedHir(checked,options);
+        assert.deepEqual(actual,wrongInventory);
+        assert.deepEqual(packet,wrongInventory);
+        assert.deepEqual(calls.slice(first),[['--canonicalize'],['--canonicalize']]);
+      }
+    });
 
     await sub.test('retained same-input Core is rejected before the next stage',{skip:!capture},async()=>{
       const retained=await fs.readFile(path.join(capture,'tsfg-owned-hir-cli-VGcGjr','stdout.bin'));
@@ -345,6 +371,20 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       assert.deepEqual(text,wrongRoot);
       assert.deepEqual(calls.slice(first),[['--optimize'],['--canonicalize']]);
       assert.deepEqual(bytecode,wrongRoot);
+
+      // Reuse every function of the retained producer output and change only
+      // the operation order to give the checked default root the first slot.
+      const retainedText=retained.toString('utf8');
+      const starts=[...retainedText.matchAll(/^  "func\.func"\(\) </gm)].map(match=>match.index);
+      assert.equal(starts.length,checked.functions.length);
+      const end=retainedText.lastIndexOf('\n',retainedText.trimEnd().length-1)+1;
+      const functions=starts.map((start,index)=>retainedText.slice(start,starts[index+1]??end));
+      const primary=functions.find(fn=>fn.split('\n').at(-2).includes(rootField));
+      assert.ok(primary);
+      stdout=Buffer.from(retainedText.slice(0,starts[0])+primary+functions.filter(fn=>fn!==primary).join('')+retainedText.slice(end));
+      const reordered=await compileOwnedCore(checked,options);
+      assert.equal(reordered.status,'ok');
+      assert.deepEqual(Buffer.from(reordered.core,'utf8'),stdout);
     });
     await sub.test('nested and later IDs cannot replace a unique own field',async()=>{
       for(const fields of [otherField,'nested = [{'+rootField+'}]',
