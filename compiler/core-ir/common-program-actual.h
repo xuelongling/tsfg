@@ -249,6 +249,7 @@ struct ActualConstructionKeyLess {
   bool operator()(const std::string &,const ActualConstructionKeyView &)const;
 };
 struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;ActualFrameWorld frames;};
+struct ActualEntryPrefix;
 using ActualOwnedDirectory=std::map<std::string,const Json *>;
 // Only field lookup borrows an operation JSON key; directory keys stay owned.
 using ActualFieldDirectory=std::map<std::string,const Json *,std::less<>>;
@@ -457,6 +458,8 @@ struct ActualCheck {
   std::string callActivation(const ActualContext &,const Operation &,size_t,const std::string &,bool &);
   ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,const std::string &activation={},bool repeated=true,const RegionHeap *versions=nullptr,const std::string &region={},const ActualFrameWorld *frames=nullptr,const std::string &newTarget={});
   bool execute(ActualContext &,bool,bool &);
+  bool execute(ActualContext &,bool,bool &,ActualEntryPrefix *);
+  bool prepareEntry(ActualContext &,bool,bool &,ActualState &);
   bool schedule(const std::string &);
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
     const std::function<bool(uint16_t,ActualState,const std::vector<ActualValue> &)> &,bool &);

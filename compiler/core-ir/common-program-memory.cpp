@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
 #include "common-program-borrows.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <iterator>
@@ -249,7 +250,13 @@ bool ActualCheck::schedule(const std::string &id){
   if(!need(pendingContexts.size()<4096,"actual worklist bound exceeded")||!step(2*(id.size()/64+1)))return false;
   queuedContexts.insert(id);pendingContexts.push_back(id);return true;
 }
+// An owned pre-call state with a single observed route from entry.
+struct ActualEntryPrefix {ActualState state;uint16_t block=0;const Operation *call=nullptr;};
+
 bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed){
+  return execute(context,conditional,changed,nullptr);
+}
+bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed,ActualEntryPrefix *prefix){
   const auto &fn=*context.function;
   struct Trace {
     const ActualContext &context;const Program &program;size_t before;bool conditional,enabled;
@@ -300,29 +307,26 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   // returning. Its unique static successor edge can never arrive again in
   // this execute's queue.
   ActualState entry;
-  if(!context.root){if(!step())return false;entry.heap=copyHeap(context.identity->heap);}
-  entry.regions=regionCopy(*this,context.entryRegions);
-  // Called activations copy the immutable identity World directly; a second
-  // context-owned seed cache would duplicate exactly the same full snapshot.
-  if(!context.root){if(!step())return false;entry.frames=copyFrames(context.identity->frames);}
-  if(context.root){
-    entry.heap.clear();context.rootArguments.clear();
-    for(const auto &[id,g]:globals){
-      const auto raw=string(field(*g,"sourceBinding"));auto value=declared(string(field(*g,"type")),entry.heap,"global-entry/"+id);
-      if(globalSeeds.count(raw)){value.unknown|=globalSeeds.at(raw).unknown;
-        for(const auto &tag:globalSeeds.at(raw).tags){auto alternative=declared(tag,entry.heap,"global-entry/"+id);merge(value,alternative);}}
-      entry.heap.emplace("global:"+id,std::move(value));
+  if(prefix&&!step(5))return false;
+  bool resume=prefix&&prefix->call;
+  // Root admission remains observable on each visit. Weak promotions or
+  // changed seeds force this visit to start at the current root.
+  if((context.root||!resume)&&!prepareEntry(context,conditional,changed,entry))return false;
+  if(resume){
+    resume=!weakChanged&&!seedChanged&&!changed;
+    if(resume){
+      entry=copyState(prefix->state);
+      if(!e.message.empty())return false;
     }
-    if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.rootArguments,context.constructionNewTarget,context.activation))return false;
-    // BorrowTrace reads the final solved entry before replay starts.
-    if(!conditional&&!borrowTrace)context.rootEntry=copyHeap(entry.heap);
   }
-  if(!step(3))return false;const auto &arguments=context.inputArguments();
-  for(size_t i=0;i<arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(arguments[i]));
+  bool record=prefix&&!prefix->call;
+  const uint16_t first=resume?prefix->block:0;
   if(borrowTrace&&!borrowTrace->begin(context,entry))return false;
-  std::map<uint16_t,ActualState> states;states.emplace(0,std::move(entry));std::vector<uint16_t> queue{0};std::set<uint16_t> queued{0};
+  std::map<uint16_t,ActualState> states;states.emplace(first,std::move(entry));std::vector<uint16_t> queue{first};std::set<uint16_t> queued{first};
   const Operation *observed=nullptr;size_t observedBlock=0;
+  size_t edges=0;
   const auto edge=[&](uint16_t to,ActualState next,const std::vector<ActualValue> &args){
+    if(record){if(!step(2))return false;++edges;}
     if(!step(args.size()+1)||!need(to<fn.blocks.size()&&args.size()==fn.blocks[to].parameters.size(),"actual edge arity differs"))return false;
     if(borrowTrace&&(!observed||!borrowTrace->edge(context,*observed,observedBlock,to)))return false;
     for(size_t i=0;i<args.size();++i)next.values.insert_or_assign(fn.blocks[to].parameters[i],copy(args[i]));
@@ -386,9 +390,36 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     }
     auto state=take?std::move(states.at(block)):copyState(states.at(block));
     if(conditional)for(auto reg:fn.blocks[block].parameters)if(!recordCapacity(registerCapacity[fn.id+"/"+std::to_string(reg)],state.values[reg]))return false;
-    for(const auto &op:fn.blocks[block].operations){
+    const auto &operations=fn.blocks[block].operations;
+    const auto start=resume&&index==0?prefix->call:operations.data();
+    for(auto cursor=start;cursor!=operations.data()+operations.size();++cursor){
+      const auto &op=*cursor;
       observed=&op;observedBlock=block;
+      if(record){
+        if(!step(19))return false;
+        edges=0;
+        const auto &name=op.name;
+        record=name=="invoke"||name=="fuel"||name=="receiver_allocate"||name=="receiver_bind"||
+          name=="initialize_begin"||name=="constant"||name=="value_copy";
+        if(record&&name=="value_copy"){
+          if(!step(10+4*llvm::bit_width(state.values.size())))return false;
+          const auto operand=op.operands.size()==1?state.values.find(op.operands[0]):state.values.end();
+          record=operand!=state.values.end()&&operand->second.objects.empty()&&operand->second.region.roots.empty();
+        }
+      }
       bool continues=true;if(!instruction(context,op,block,state,conditional,changed,edge,continues))return false;
+      if(record){
+        if(!step(6))return false;
+        if(op.name=="invoke"){
+          // With no emitted edge, the first direct invocation still owns its
+          // input. A future execution starts here in the original worklist.
+          if(!edges&&queued.empty()&&!continues&&!weakChanged&&!seedChanged&&!changed){
+            if(!step(5))return false;
+            *prefix={std::move(state),block,&op};
+          }
+          record=false;
+        }else if(!continues&&edges!=1)record=false;
+      }
       if(borrowTrace&&!borrowTrace->after(context,op,block,state,continues))return false;
       if(!continues)break;
     }
@@ -423,27 +454,33 @@ bool ActualCheck::solve(bool conditional){
     if(!context(id,args,heap,true))return false;
   }
   if(!seedReceiverRoots(conditional,changed))return false;
-  if(conditional){
-    // Every initial root is queued after rebuilding this mode's contexts.
-    // Shared entry seeds and weak promotion invalidate every conditional
-    // context; other return/heap/completion changes affect actual callers.
-    while(!pendingContexts.empty()){
-      if(!step())return false;auto id=std::move(pendingContexts.front());pendingContexts.pop_front();queuedContexts.erase(id);
-      auto &current=contexts.at(id);const bool trapped=current.requestTrap;changed=false;weakChanged=false;seedChanged=false;
-      if(!execute(current,true,changed))return false;
-      if(weakChanged||seedChanged){
-        for(const auto &[next,c]:contexts)if(!step()||!schedule(next))return false;
-      }else if(changed||current.requestTrap!=trapped){
-        for(const auto &caller:current.callers)if(!step(2)||!schedule(caller.second->id))return false;
-      }
-    }
-  }else while(!pendingContexts.empty()){
+  // Snapshot pointers refer only to the current solve's nodes. A stored
+  // state moves its already paid lifetime from the local worklist.
+  std::map<std::string_view,ActualEntryPrefix> prefixes;
+  while(!pendingContexts.empty()){
     if(!step())return false;auto id=std::move(pendingContexts.front());pendingContexts.pop_front();queuedContexts.erase(id);
     auto &current=contexts.at(id);const bool trapped=current.requestTrap;changed=false;weakChanged=false;
-    if(!execute(current,false,changed))return false;
-    if(weakChanged){
-      // Physical weak promotion is shared across otherwise separate contexts.
-      // Revisit all strong puts; callee summaries alone cannot identify them.
+    if(conditional)seedChanged=false;
+    auto saved=prefixes.end();
+    if(!step(3))return false;
+    if(current.function->role=="construction-body"&&current.region.empty()){
+      const auto comparison=2*((id.size()+63)/64)+3;
+      if(!step((4*llvm::bit_width(regions.acyclic.size())+2)*comparison))return false;
+      if(regions.acyclic.count(current.function->id)){
+        // The cap bounds tree height. Keep hits when the directory is full.
+        if(!step(32+32*comparison))return false;
+        const auto position=prefixes.lower_bound(current.id);
+        if(position!=prefixes.end()&&position->first==current.id)saved=position;
+        else if(prefixes.size()<128)saved=prefixes.try_emplace(position,current.id);
+      }
+    }
+    if(!execute(current,conditional,changed,saved==prefixes.end()?nullptr:&saved->second))return false;
+    // An unsuccessful recording never consumes a persistent slot.
+    if(saved!=prefixes.end()&&!saved->second.call){if(!step(18))return false;prefixes.erase(saved);}
+    if(weakChanged||(conditional&&seedChanged)){
+      // A cached entry may have observed old strong ownership or root seeds.
+      if(!step(prefixes.size()))return false;
+      prefixes.clear();
       for(const auto &[next,c]:contexts)if(!step()||!schedule(next))return false;
     }else if(changed||current.requestTrap!=trapped){
       for(const auto &caller:current.callers)if(!step(2)||!schedule(caller.second->id))return false;

@@ -185,4 +185,27 @@ ActualContext *conditionalContext(ActualCheck &check,const std::string &target,c
   const std::string &activation,bool repeated,const ActualFrameWorld &frames){
   return contextInput(check,target,args,heap,false,activation,repeated,nullptr,{},&frames,{});
 }
+bool ActualCheck::prepareEntry(ActualContext &context,bool conditional,bool &changed,ActualState &entry){
+  const auto &fn=*context.function;
+  if(!context.root){if(!step())return false;entry.heap=copyHeap(context.identity->heap);}
+  entry.regions=regionCopy(*this,context.entryRegions);
+  // Called activations copy the immutable identity World directly; a second
+  // context-owned seed cache would duplicate exactly the same full snapshot.
+  if(!context.root){if(!step())return false;entry.frames=copyFrames(context.identity->frames);}
+  if(context.root){
+    entry.heap.clear();context.rootArguments.clear();
+    for(const auto &[id,g]:globals){
+      const auto raw=string(field(*g,"sourceBinding"));auto value=declared(string(field(*g,"type")),entry.heap,"global-entry/"+id);
+      if(globalSeeds.count(raw)){value.unknown|=globalSeeds.at(raw).unknown;
+        for(const auto &tag:globalSeeds.at(raw).tags){auto alternative=declared(tag,entry.heap,"global-entry/"+id);merge(value,alternative);}}
+      entry.heap.emplace("global:"+id,std::move(value));
+    }
+    if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.rootArguments,context.constructionNewTarget,context.activation))return false;
+    // BorrowTrace reads the final solved entry before replay starts.
+    if(!conditional&&!borrowTrace)context.rootEntry=copyHeap(entry.heap);
+  }
+  if(!step(3))return false;const auto &arguments=context.inputArguments();
+  for(size_t i=0;i<arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(arguments[i]));
+  return e.message.empty();
+}
 } // namespace tsfg::commonProgram
