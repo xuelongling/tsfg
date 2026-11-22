@@ -621,6 +621,18 @@ export function createCompilerSession(options) {
   };
 }
 
+/** Decode JSON stdout from an admitted Runtime or static program. Binary roundtrip returns the original bytes. @param {Buffer} bytes @param {string} [command] */
+export function readRuntimeOutput(bytes, command) {
+  if (command === "--roundtrip") return bytes;
+  let json;
+  try {
+    json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new TypeError("r03-tool-runtime: invalid UTF-8 in Runtime output");
+  }
+  return JSON.parse(json);
+}
+
 /**
  * @param {NodeJS.ArrayBufferView | string} bytes
  * @param {{vm?: string, requests?: unknown, requestJson?: string, command?: string}} options
@@ -629,14 +641,13 @@ export async function runBytecode(bytes, { vm, requests = [{}], requestJson, com
   const executable = await verifiedConsumer(vm, "vm");
   const args = command === "--requests" || command === "--module-requests"
     ? [command, requestJson ?? JSON.stringify(requests)] : [command];
-  const result = consume(executable, args, bytes);
-  return command === "--roundtrip" ? result : JSON.parse(result.toString("utf8"));
+  return readRuntimeOutput(consume(executable, args, bytes), command);
 }
 
 /** The executable is a source-built static program, never a request loader. */
 export async function runStaticProgram({ executable, requests = [{}], persistent = false }) {
   const admitted = await verifiedConsumer(executable, "aot");
-  return JSON.parse(consume(admitted, [persistent ? "--module-requests" : "--requests", JSON.stringify(requests)], undefined).toString("utf8"));
+  return readRuntimeOutput(consume(admitted, [persistent ? "--module-requests" : "--requests", JSON.stringify(requests)], undefined));
 }
 
 /** Evaluate a serial batch against one persistent module instance. */
@@ -667,7 +678,7 @@ export async function runRequestSequence(bytecodes, { vm, requests = undefined }
   });
   const input = Buffer.concat([header, ...frames]);
   const executable = await verifiedConsumer(vm, "vm");
-  return JSON.parse(consume(executable, ["--request-sequence", JSON.stringify(requestFrames)], input).toString("utf8"));
+  return readRuntimeOutput(consume(executable, ["--request-sequence", JSON.stringify(requestFrames)], input));
 }
 
 export async function sourceInput(source, { sourcePath = "/src/main.ts", declarationVersion = "minimal-conversions-v5" } = {}) {
