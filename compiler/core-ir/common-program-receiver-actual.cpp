@@ -168,10 +168,23 @@ std::optional<SlotArchivePosition> constructionSlotPosition(ActualCheck &check,l
   constexpr size_t discriminatorSize=4;
   const auto digestPrefix=query.substr(constructionSlotPrefix.size(),discriminatorSize);
   const auto suffix=query.drop_front(constructionSlotPrefix.size()+discriminatorSize);
+  auto &archive=check.fieldSlotArchive;
+  if(!check.step(10+2*archive.size()+2*constructionSlotPrefix.size()))return {};
+  const auto first=archive.begin(),end=archive.end();
+  bool commonPrefix=false;
+  if(first->first.starts_with(constructionSlotPrefix)){
+    if(!check.step(archive.size()+3+2*constructionSlotPrefix.size()))return {};
+    // In full byte order the keys sharing a prefix form a single interval.
+    // Its two endpoints certify the prefix for the entire live archive.
+    commonPrefix=std::prev(end)->first.starts_with(constructionSlotPrefix);
+  }
   const auto compare=[&](llvm::StringRef text)->std::optional<int>{
-    if(!check.step(8+2*constructionSlotPrefix.size()))return {};
-    const auto prefixOrder=text.take_front(constructionSlotPrefix.size()).compare(constructionSlotPrefix);
-    if(prefixOrder)return prefixOrder;
+    if(!check.step(2))return {};
+    if(!commonPrefix){
+      if(!check.step(8+2*constructionSlotPrefix.size()))return {};
+      const auto prefixOrder=text.take_front(constructionSlotPrefix.size()).compare(constructionSlotPrefix);
+      if(prefixOrder)return prefixOrder;
+    }
     if(!check.step(14))return {};
     const auto digestOrder=text.substr(constructionSlotPrefix.size(),discriminatorSize).compare(digestPrefix);
     if(digestOrder)return digestOrder;
@@ -181,11 +194,8 @@ std::optional<SlotArchivePosition> constructionSlotPosition(ActualCheck &check,l
     if(!check.step(remainder.size()+suffix.size()+1))return {};
     return remainder.compare(suffix);
   };
-  auto &archive=check.fieldSlotArchive;
-  if(!check.step(8+2*archive.size()))return {};
-  const auto end=archive.end();
   auto previous=end;
-  for(auto row=archive.begin();row!=end;++row){
+  for(auto row=first;row!=end;++row){
     const auto order=compare(row->first);
     if(!order)return {};
     if(*order>=0)return SlotArchivePosition{row,previous,!*order};
