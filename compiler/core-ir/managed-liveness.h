@@ -31,6 +31,8 @@ struct CommonCallRootPoint {
   std::vector<uint16_t> callableEnvironments;
   // The carrier's active tag selects whether its payload holds a handle.
   std::vector<uint16_t> languagePayloads;
+  // Each listed local Cell has an initialized, single-handle payload.
+  std::vector<uint16_t> cellHandles{};
 };
 struct CommonCallRoots {
   std::string inputIdentity, functionId;
@@ -40,12 +42,13 @@ struct CommonCallRoots {
   size_t work = 0;
 };
 inline constexpr size_t commonCallRootsWorkLimit = 1000000;
-enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloadComponents };
+enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloadComponents, CellComponents };
 // Analyzes one function only after verifying the whole Common module. Register
 // ordinals and carriers are owned compiler data, with no physical addresses.
 // ClosureComponents also admits direct lexical environment handles and lists
 // the environment component of live callable SSA values separately.
 // LanguagePayloadComponents additionally describes pending language payloads.
+// CellComponents additionally describes initialized direct-handle local Cells.
 bool analyzeCommonCallRoots(mlir::ModuleOp, llvm::StringRef functionId,
     CommonCallRoots &, commonProgram::Error &, size_t workLimit = commonCallRootsWorkLimit,
     CommonCallRootMode mode = CommonCallRootMode::DirectHandles);

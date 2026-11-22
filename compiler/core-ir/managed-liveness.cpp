@@ -140,7 +140,8 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
   if(!spend(fn.blocks.size()*(words+1)+width+1))return false;
 
   const bool closureComponents=mode!=CommonCallRootMode::DirectHandles;
-  const bool languageComponents=mode==CommonCallRootMode::LanguagePayloadComponents;
+  const bool cellComponents=mode==CommonCallRootMode::CellComponents;
+  const bool languageComponents=cellComponents||mode==CommonCallRootMode::LanguagePayloadComponents;
   const auto payloadCarrier="payload:"+schema.str();
   std::set<llvm::StringRef> direct,callables,inlinePayloads;
   for(const auto &row:items(field(program.hir,"types"))){
@@ -167,9 +168,10 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(!spend(id.size()/8+1))return false;
     bindings.emplace(id,field(row,"carrier").getAsString().value());
   }
-  enum class RootKind { None, Handle, CallableEnvironment, LanguagePayload, Unsupported };
+  enum class RootKind { None, Handle, CallableEnvironment, LanguagePayload, CellHandle, Unsupported };
   std::vector<RootKind> kinds;
   kinds.reserve(width);
+  bool hasCellHandles=false;
   for(llvm::StringRef carrier:fn.carriers){
     if(!spend(carrier.size()/8+1))return false;
     const bool cell=carrier.starts_with("cell:");
@@ -184,6 +186,8 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(layout!=program.layouts.end()){
       const auto &storage=layout->second;
       if(storage.referenceCount==0)kind=RootKind::None;
+      if(cellComponents&&cell&&storage.referenceCount==1&&storage.byteSize==8&&storage.alignment==8&&direct.count(carrier))
+        kind=RootKind::CellHandle;
       if(!cell&&storage.referenceCount==1&&storage.alignment==8){
         // Verified env: carriers are owned lexical environment layouts.
         const bool environment=closureComponents&&carrier.starts_with("env:");
@@ -193,6 +197,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
       }
     }
     kinds.push_back(kind);
+    hasCellHandles|=kind==RootKind::CellHandle;
   }
 
   const auto forwards=[](const Operation &op){return op.name=="cf.br"||op.name=="cf.cond_br"||op.name=="route";};
@@ -248,6 +253,42 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
       return reject(error,"core-ir-common-call-roots-capability","unsupported Common control edge");
     for(const auto successor:end.successors)predecessors[successor].push_back(uint16_t(block));
   }
+  std::vector<llvm::BitVector> initialized;
+  llvm::BitVector localCells;
+  const auto updateCells=[&](const Operation &op,llvm::BitVector &cells){
+    if(op.name=="cell"&&localCells.test(op.result))cells.reset(op.result);
+    if(op.name=="store"&&localCells.test(op.operands[0]))cells.set(op.operands[0]);
+  };
+  if(hasCellHandles){
+    if(!spend(words+fn.blocks.size()*(words+2)+width))return false;
+    localCells.resize(width);
+    initialized.assign(fn.blocks.size(),llvm::BitVector(width));
+    for(const auto &block:fn.blocks)for(const auto &op:block.operations){
+      if(!spend(1))return false;
+      if(op.name=="cell"&&kinds[op.result]==RootKind::CellHandle)localCells.set(op.result);
+    }
+    std::vector<bool> reached(fn.blocks.size()),queued(fn.blocks.size());
+    std::deque<uint16_t> pending{0};
+    reached[0]=queued[0]=true;
+    while(!pending.empty()){
+      const auto block=pending.front();pending.pop_front();queued[block]=false;
+      if(!spend(words+1))return false;
+      auto cells=initialized[block];
+      for(const auto &op:fn.blocks[block].operations){
+        if(!spend(1))return false;
+        updateCells(op,cells);
+      }
+      for(auto successor:fn.blocks[block].operations.back().successors){
+        if(!spend((reached[successor]?3:1)*words+1))return false;
+        auto next=cells;
+        if(reached[successor])next&=initialized[successor];
+        if(reached[successor]&&next==initialized[successor])continue;
+        reached[successor]=true;
+        initialized[successor]=std::move(next);
+        if(!queued[successor]){queued[successor]=true;pending.push_back(successor);}
+      }
+    }
+  }
   const auto transfer=[&](uint16_t block,llvm::BitVector &live){
     const auto &end=fn.blocks[block].operations.back();
     const bool forwarded=forwards(end);
@@ -297,22 +338,38 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(!transfer(uint16_t(block),live))return false;
     std::vector<CommonCallRootPoint> points;
     const auto &operations=fn.blocks[block].operations;
+    std::vector<llvm::BitVector> callCells;
+    if(!initialized.empty()){
+      if(!spend(words+1))return false;
+      auto cells=initialized[block];
+      for(const auto &op:operations){
+        if(!spend(1))return false;
+        if(call(op)){
+          if(!spend(words+1))return false;
+          callCells.push_back(cells);
+        }
+        updateCells(op,cells);
+      }
+    }
     for(size_t i=operations.size();i>0;--i){
       const auto &op=operations[i-1];if(!before(op,live))return false;
       if(!call(op))continue;
       const auto &path=sources.at({uint16_t(block),uint16_t(i-1)});
       if(!spend(words+path.size()/8+op.name.size()/8+2))return false;
-      CommonCallRootPoint point{uint16_t(block),uint16_t(i-1),op.name,path,op.range.start,op.range.end,{},{},{}};
+      CommonCallRootPoint point{uint16_t(block),uint16_t(i-1),op.name,path,op.range.start,op.range.end,{},{},{},{}};
       for(int reg=live.find_first();reg>=0;reg=live.find_next(reg)){
         if(!spend(1))return false;
-        if(kinds[reg]==RootKind::Unsupported){
+        if(kinds[reg]==RootKind::Unsupported||(kinds[reg]==RootKind::CellHandle&&
+           (callCells.empty()||!callCells.back().test(reg)))){
           error.path=path;error.range=op.range;
           return reject(error,"core-ir-common-call-roots-capability","live carrier has no direct managed root component proof");
         }
         if(kinds[reg]==RootKind::Handle)point.registers.push_back(uint16_t(reg));
         if(kinds[reg]==RootKind::CallableEnvironment)point.callableEnvironments.push_back(uint16_t(reg));
         if(kinds[reg]==RootKind::LanguagePayload&&payloadRoots.test(reg))point.languagePayloads.push_back(uint16_t(reg));
+        if(kinds[reg]==RootKind::CellHandle)point.cellHandles.push_back(uint16_t(reg));
       }
+      if(!callCells.empty())callCells.pop_back();
       points.push_back(std::move(point));
     }
     for(auto &point:llvm::reverse(points))result.points.push_back(std::move(point));

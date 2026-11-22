@@ -39,9 +39,32 @@ bool pointsMatch(const tsfg::CommonCallRoots &result,llvm::ArrayRef<tsfg::Common
     if(point.block!=want.block||point.instruction!=want.instruction||point.operation!=want.operation||
        point.sourcePath!=want.sourcePath||point.start!=want.start||point.end!=want.end||
        point.registers!=want.registers||point.callableEnvironments!=want.callableEnvironments||
-       point.languagePayloads!=want.languagePayloads)return false;
+       point.languagePayloads!=want.languagePayloads||point.cellHandles!=want.cellHandles)return false;
   }
   return true;
+}
+
+bool initializedCell(mlir::ModuleOp module,llvm::StringRef id,llvm::StringRef carrier,uint32_t start,uint32_t end) {
+  tsfg::CommonCallRoots result;tsfg::commonProgram::Error error;
+  if(!tsfg::analyzeCommonCallRoots(module,id,result,error,tsfg::commonCallRootsWorkLimit,tsfg::CommonCallRootMode::CellComponents)){
+    diagnostic(error);return false;
+  }
+  const auto slot=llvm::find(result.carriers,carrier);
+  if(result.functionId!=id||slot==result.carriers.end())return false;
+  const auto ordinal=uint16_t(slot-result.carriers.begin());
+  for(const auto &point:result.points){
+    if(point.start!=start||point.end!=end)continue;
+    if(point.sourcePath!="/src/main.ts"||point.operation!="invoke"||point.cellHandles!=std::vector<uint16_t>{ordinal})return false;
+    for(auto reg:point.registers)if(reg==ordinal)return false;
+    llvm::outs()<<"initialized Cell "<<ordinal<<" is a call root at "<<start<<".."<<end<<'\n';
+    if(id==adaptedId){
+      const auto limit=result.work-1;
+      if(tsfg::analyzeCommonCallRoots(module,id,result,error,limit,tsfg::CommonCallRootMode::CellComponents)||
+         !empty(result)||error.code!="core-ir-common-call-roots-budget"){diagnostic(error);return false;}
+    }
+    return true;
+  }
+  return false;
 }
 
 bool ordered(const tsfg::CommonCallRoots &result) {
@@ -180,6 +203,7 @@ int main(int argc,char **argv) {
        error.code!="core-ir-common-call-roots-capability"||error.path!="/src/main.ts"||
        error.range.start!=906||error.range.end!=922){diagnostic(error);return 4;}
     llvm::outs()<<"complete adaptation module verified; live actual cell across mapFewer rejected at 906..922\n";
+    if(!initializedCell(*module,functionId,"cell:sha256:eca47627a0f7497c60d547e7c9accc0d73931f6f58a726b86d34dc77a9afc314",906,922))return 4;
     return 0;
   }
   if(functionId!=orderedId&&functionId!=minimalId)return 2;
@@ -202,6 +226,7 @@ int main(int argc,char **argv) {
        error.code!="core-ir-common-call-roots-capability"||error.path!="/src/main.ts"||
        error.range.start!=1499||error.range.end!=1508){diagnostic(error);return 4;}
     llvm::outs()<<"live managed cell rejected without root data\n";
+    if(!initializedCell(*module,peerEntryId,"cell:sha256:a43ad81157a64a68118b64b573405e4ba0e8925dde3adf338854993971361226",1499,1508))return 4;
   }
   llvm::outs()<<"unknown FunctionId and exhausted work budget rejected without root data\n";
   // Corrupt an unselected original function. Selection grants no exemption
