@@ -232,16 +232,7 @@ pub const Document = struct {
         var group = admission.admitted; // A one-system selection has no conflict pair.
         defer group.deinit();
         const system = group.systems[0];
-        // Source parameter positions also exist for systems with no loops.
-        const parameters = self.effects.source_parameters[self.effects.systemIndex(system.function_id).?];
-        var scalar_index: usize = 0;
-        for (parameters) |formal| {
-            if (formal.query != null) continue;
-            if (scalar_index == scalars.len or !std.mem.eql(u8, formal.logicalType, scalarType(scalars[scalar_index])))
-                return error.BindingMismatch;
-            scalar_index += 1;
-        }
-        if (scalar_index != scalars.len) return error.BindingMismatch;
+        try self.checkSystemScalars(system.function_id, scalars);
         if (code) |checked| {
             if (checked.entries.len != system.entries.len) return error.BindingMismatch;
             const llvm_hash = self.llvm_hash orelse return error.IdentityMismatch;
@@ -255,6 +246,19 @@ pub const Document = struct {
         for (system.entries, 0..) |*entry, index| {
             try group.withPlans(allocator, store, &.{.{ .loop = index, .scalars = snapshot }}, .{entry} ++ arguments, call);
         }
+    }
+
+    fn checkSystemScalars(self: *const Document, function_id: []const u8, scalars: []const ScalarValue) Error!void {
+        // Source parameter positions also exist for systems with no loops.
+        const parameters = self.effects.source_parameters[self.effects.systemIndex(function_id).?];
+        var scalar_index: usize = 0;
+        for (parameters) |formal| {
+            if (formal.query != null) continue;
+            if (scalar_index == scalars.len or !std.mem.eql(u8, formal.logicalType, scalarType(scalars[scalar_index])))
+                return error.BindingMismatch;
+            scalar_index += 1;
+        }
+        if (scalar_index != scalars.len) return error.BindingMismatch;
     }
 
     fn checkEntryCode(self: *const Document, entry: *const Entry, candidate: Plan.CodeIdentity) Error!void {
@@ -362,6 +366,7 @@ pub const ParallelGroup = struct {
     pub const System = struct { function_id: []const u8, entries: []const Entry, first_entry: usize };
     pub const BatchBinding = struct { loop: usize, batch: storage.Store.Batch, scalars: []const ScalarValue };
     pub const LoopBinding = struct { loop: usize, scalars: []const ScalarValue };
+    pub const SystemsCode = struct { entries: []const []const Plan.CodeIdentity, llvm_ir: []const u8 };
     const StageCode = struct { entries: []const ?Plan.CodeIdentity, llvm_ir: []const u8 };
     allocator: std.mem.Allocator,
     document: *const Document,
@@ -441,6 +446,48 @@ pub const ParallelGroup = struct {
     /// Code entries follow bindings in system order and share their null slots.
     pub fn withCheckedPlans(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?LoopBinding, code: []const ?Plan.CodeIdentity, llvm_ir: []const u8, arguments: anytype, comptime call: anytype) !void {
         return self.withStage(allocator, store, bindings, .{ .entries = code, .llvm_ir = llvm_ir }, arguments, call);
+    }
+
+    /// Hand off every original loop of the admitted systems in loop order.
+    /// Inputs and optional per-loop code identities follow admitted system
+    /// order. Check the entire request before acquiring any Store lease.
+    /// Each callback receives the pinned Plans and one Entry slot per system
+    /// even when its loop has no batches. Missing loops have null slots.
+    /// Return releases the stage; a callback error stops later stages.
+    pub fn withSystemStages(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, scalars: []const []const ScalarValue, code: ?SystemsCode, arguments: anytype, comptime call: anytype) !void {
+        if (scalars.len != self.systems.len) return error.BindingMismatch;
+        if (code) |checked| {
+            if (checked.entries.len != self.systems.len) return error.BindingMismatch;
+            const llvm_hash = self.document.llvm_hash orelse return error.IdentityMismatch;
+            try Plan.checkLlvmArtifact(llvm_hash, checked.llvm_ir);
+        }
+        var stage_count: usize = 0;
+        for (self.systems, scalars, 0..) |system, values, index| {
+            try self.document.checkSystemScalars(system.function_id, values);
+            if (code) |checked| {
+                const identities = checked.entries[index];
+                if (identities.len != system.entries.len) return error.BindingMismatch;
+                for (system.entries, identities) |*entry, identity| try self.document.checkEntryCode(entry, identity);
+            }
+            stage_count = @max(stage_count, system.entries.len);
+        }
+        if (stage_count == 0) return;
+
+        var temporary = std.heap.ArenaAllocator.init(allocator);
+        defer temporary.deinit();
+        const scratch = temporary.allocator();
+        const snapshots = try scratch.alloc([]const ScalarValue, scalars.len);
+        for (snapshots, scalars) |*snapshot, values| snapshot.* = try scratch.dupe(ScalarValue, values);
+        const selected = try scratch.alloc(?*const Entry, self.systems.len);
+        const bindings = try scratch.alloc(?LoopBinding, self.systems.len);
+        for (0..stage_count) |ordinal| {
+            for (self.systems, snapshots, selected, bindings) |system, values, *entry, *binding| {
+                const present = ordinal < system.entries.len;
+                entry.* = if (present) &system.entries[ordinal] else null;
+                binding.* = if (present) .{ .loop = ordinal, .scalars = values } else null;
+            }
+            try self.withPlans(allocator, store, bindings, .{@as([]const ?*const Entry, selected)} ++ arguments, call);
+        }
     }
 
     fn withStage(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?LoopBinding, code: ?StageCode, arguments: anytype, comptime call: anytype) !void {

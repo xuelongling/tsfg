@@ -721,6 +721,10 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
                 try std.testing.expectEqualStrings(identity.entry_symbol, selected.entrySymbol);
                 try read(plans, identity, &.{ 2, 1 });
             }
+            fn readStage(plans: []const T.Plan, selected: []const ?*const T.Entry, identity: T.Plan.CodeIdentity, calls: *usize) !void {
+                try std.testing.expectEqual(@as(usize, 1), selected.len);
+                try readSystem(plans, selected[0] orelse return error.MissingEntry, identity, calls);
+            }
         };
         var foreign = candidate.value;
         foreign.abi_type = "foreign";
@@ -737,6 +741,15 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
         var calls: usize = 0;
         try document.withSystemPlans(A, &store, entry.logicalFunctionId, &.{}, .{ .entries = &.{candidate.value}, .llvm_ir = ir }, .{ candidate.value, &calls }, Observe.readSystem);
         try std.testing.expectEqual(@as(usize, 1), calls);
+        const before_group = store.next_token;
+        const call_args = .{ candidate.value, &calls };
+        try std.testing.expectError(error.IdentityMismatch, stage.withSystemStages(A, &store, &.{&.{}},
+            .{ .entries = &.{&.{foreign}}, .llvm_ir = ir }, call_args, Observe.readStage));
+        try std.testing.expectError(error.IdentityMismatch, stage.withSystemStages(A, &store, &.{&.{}},
+            .{ .entries = &.{&.{candidate.value}}, .llvm_ir = changed }, call_args, Observe.readStage));
+        try std.testing.expectEqual(before_group, store.next_token);
+        try stage.withSystemStages(A, &store, &.{&.{}}, .{ .entries = &.{&.{candidate.value}}, .llvm_ir = ir }, call_args, Observe.readStage);
+        try std.testing.expectEqual(@as(usize, 2), calls);
     }
     const query = try document.query(A, &store, 0);
     var released = false;

@@ -222,6 +222,27 @@ test "serial Query admits a genuine Source system with zero loops without taking
     try std.testing.expectError(error.BindingMismatch, document.withSystemPlans(A, &store, id, &.{.{ .float32 = 17 }}, null, .{}, Observe.unexpected));
     try std.testing.expectEqual(next_token, store.next_token);
     try std.testing.expect((try held.bytes()).len > 0);
+
+    const velocity = namedSystem(fixture, "writeVelocity");
+    const admitted = try document.admitParallelGroup(A, &.{ id, velocity });
+    try std.testing.expect(admitted == .admitted);
+    var group = admitted.admitted;
+    defer group.deinit();
+    const Stage = struct {
+        fn inspect(plans: []const T.Plan, entries: []const ?*const T.Entry, expected: *const T.Entry, calls: *usize) !void {
+            try std.testing.expectEqual(@as(usize, 2), entries.len);
+            try std.testing.expect(entries[0] == null);
+            try std.testing.expectEqual(expected, entries[1].?);
+            try std.testing.expectEqual(@as(usize, 0), plans.len);
+            calls.* += 1;
+        }
+    };
+    var calls: usize = 0;
+    const args = .{ &group.systems[1].entries[0], &calls };
+    try std.testing.expectError(error.BindingMismatch, group.withSystemStages(A, &store, &.{ &.{}, &.{} }, null, args, Stage.inspect));
+    try std.testing.expectEqual(next_token, store.next_token);
+    try group.withSystemStages(A, &store, &.{ &.{}, &.{.{ .float32 = 17 }} }, null, args, Stage.inspect);
+    try std.testing.expectEqual(@as(usize, 1), calls);
 }
 
 test "serial Query hands off all batches in the genuine double-loop Source order" {
@@ -282,6 +303,11 @@ test "serial Query hands off all batches in the genuine double-loop Source order
             }
         }
 
+        fn stage(plans: []const T.Plan, entries: []const ?*const T.Entry, state: *@This()) !void {
+            try std.testing.expectEqual(@as(usize, 1), entries.len);
+            try loop(plans, entries[0] orelse return error.MissingEntry, state);
+        }
+
         fn unexpected(_: []const T.Plan, _: *const T.Entry) !void {
             return error.UnexpectedCallback;
         }
@@ -306,6 +332,23 @@ test "serial Query hands off all batches in the genuine double-loop Source order
     inputs[0] = .{ .float32 = 17 };
     state = .{ .document = &document, .input = &inputs[0], .entities = &entities };
     try document.withSystemPlans(A, &store, first.logicalFunctionId, &inputs, null, .{&state}, Observe.loop);
+    try std.testing.expectEqual(@as(usize, 2), state.next);
+    try std.testing.expectEqual(T.ScalarValue{ .float32 = 83 }, inputs[0]);
+    try Observe.expectReleased(&store, &entities, component);
+
+    const admitted = try document.admitParallelGroup(A, &.{first.logicalFunctionId});
+    try std.testing.expect(admitted == .admitted);
+    var group = admitted.admitted;
+    defer group.deinit();
+    inputs[0] = .{ .float32 = 17 };
+    state = .{ .document = &document, .input = &inputs[0], .entities = &entities, .fail_first = true };
+    try std.testing.expectError(error.TestFirstLoopFailed, group.withSystemStages(A, &store, &.{&inputs}, null, .{&state}, Observe.stage));
+    try std.testing.expectEqual(@as(usize, 1), state.next);
+    try Observe.expectReleased(&store, &entities, component);
+
+    inputs[0] = .{ .float32 = 17 };
+    state = .{ .document = &document, .input = &inputs[0], .entities = &entities };
+    try group.withSystemStages(A, &store, &.{&inputs}, null, .{&state}, Observe.stage);
     try std.testing.expectEqual(@as(usize, 2), state.next);
     try std.testing.expectEqual(T.ScalarValue{ .float32 = 83 }, inputs[0]);
     try Observe.expectReleased(&store, &entities, component);
