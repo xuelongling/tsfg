@@ -121,13 +121,12 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
       const auto members=allFields(info.newTarget);if(!step(members.size()+1))return false;std::vector<const ActualFieldSlot *> fieldSlots;fieldSlots.reserve(members.size());
       for(const auto *row:members){
         auto member=fields.cend();
-        if(!conditional){
+        // Both solves borrow the same immutable HIR rows. The exact pointer
+        // match in a small catalogue avoids searching by the full identifier.
+        if(!step(4))return false;
+        if(fields.size()<=64)for(auto candidate=fields.cbegin();candidate!=fields.cend();++candidate){
           if(!step(4))return false;
-          // The hierarchy and field catalogue borrow the same owned HIR rows.
-          if(fields.size()<=64)for(auto candidate=fields.cbegin();candidate!=fields.cend();++candidate){
-            if(!step(4))return false;
-            if(candidate->second==row){if(!step())return false;member=candidate;break;}
-          }
+          if(candidate->second==row){if(!step())return false;member=candidate;break;}
         }
         if(member==fields.cend()){
           if(!step(2))return false;const auto query=field(*row,"id").getAsString().value_or(llvm::StringRef{});
