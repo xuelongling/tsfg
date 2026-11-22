@@ -183,7 +183,7 @@ test('a returning branch does not carry its local Array binding into the normal 
   }
 });
 
-test('a while body that returns preserves the Array versions on the skipped path',async()=>{
+test('a while body that returns preserves the Array versions on the skipped path',async t=>{
   const [{hir},{hir:entryHir}]=await Promise.all([
     checkedFixture(manifest.find(row=>row.name==='dense-overwrite')),
     checkedFixture(arrayEntryFixture,'typed-array-entry/'),
@@ -197,22 +197,31 @@ test('a while body that returns preserves the Array versions on the skipped path
   const types=hir.types.some(row=>row.id===bool.id)?hir.types:[...hir.types,bool];
   const prefix=fn.id+'/body/';
   const write={...store,expression:{...store.expression,target:{...store.expression.target,index:returned.value.index}}};
-  function readAfter(body) {
+  function analyzeLoop(body) {
     const loop={kind:'while',range,condition,body};
     const model={...hir,types,functions:[{...fn,parameters:[flag],body:[local,loop,returned]}]};
     const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>false);
     const read=reaching.reads.find(row=>row.node===prefix+'2/value');
     assert.ok(read);
-    return read;
+    return {read,reaching};
   }
   const original=[prefix+'0/initializer/elements/0'];
   for(const exit of [returned,{kind:'block',range,body:[returned]},
     {kind:'if',range,condition,then:[returned],else:[returned]}]) {
-    const read=readAfter([write,exit]);
+    const {read}=analyzeLoop([write,exit]);
     assert.equal(read.status,'proven');
     assert.deepEqual(read.sources,original);
   }
-  const repeated=readAfter([write]);
+  await t.test('a dead loop tail leaves the skipped path and the earlier return operand intact',()=>{
+    const {read,reaching}=analyzeLoop([write,returned,write]);
+    assert.equal(read.status,'proven');
+    assert.deepEqual(read.sources,original);
+    const operand=reaching.reads.find(row=>row.node===prefix+'1/body/1/value');
+    assert.equal(operand?.status,'proven');
+    assert.deepEqual(operand.sources,[prefix+'1/body/0/expression/value']);
+    assert.deepEqual(operand.origin,{source:fn.sourcePath,...returned.value.range});
+  });
+  const {read:repeated}=analyzeLoop([write]);
   assert.equal(repeated.status,'pending');
   assert.deepEqual(repeated.sources,[]);
 });

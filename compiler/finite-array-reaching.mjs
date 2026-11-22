@@ -130,16 +130,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       out.set(owner,{length:a.length===b.length?a.length:null,slots});
     }return out;
   }
-  function endsInReturn(body) {
+  function returnsBeforeBackedge(body) {
     charge();
-    const last=body.at(-1);
-    switch(last?.kind) {
-      case 'return':
-      case 'constructorReturn':return true;
-      case 'block':return endsInReturn(last.body);
-      case 'if':return endsInReturn(last.then)&&endsInReturn(last.else??[]);
-      default:return false;
-    }
+    return body.some(row=>{
+      charge();
+      if(row.kind==='return'||row.kind==='constructorReturn')return true;
+      if(row.kind==='block')return returnsBeforeBackedge(row.body);
+      return row.kind==='if'&&returnsBeforeBackedge(row.then)&&returnsBeforeBackedge(row.else??[]);
+    });
   }
   function parameters(fn,incoming=[]) {
     const env=new Map();for(const parameter of fn.parameters) {
@@ -558,7 +556,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             if(expression(row.condition,condition,state,bindings,true).terminal)return null;
             continue;
           }
-          if(endsInReturn(row.body)) {
+          if(returnsBeforeBackedge(row.body)) {
             // The checked statements have no break or continue. The body may
             // contribute a function exit, but only the skipped edge reaches
             // the next statement and it keeps the condition's effects.
