@@ -145,8 +145,8 @@ export function finitePresenceShortCircuit(condition,charge) {
         }
         return operand.kind==='reference'||operand.kind==='constant';
       });
-    const callWithoutRebinding=value.kind==='call'&&semanticType===boolTypeId
-      &&finiteBindingWrites(value.receiver?[value.receiver,value.arguments]:value.arguments,charge).size===0;
+    const callWithoutRebinding=flag.kind==='call'&&semanticType===boolTypeId&&flagType===boolTypeId
+      &&finiteBindingWrites(flag.receiver?[flag.receiver,flag.arguments]:flag.arguments,charge).size===0;
     if(test||booleanBinding||scalarOrder||callWithoutRebinding) {
       node.test=test;node.booleanBinding=booleanBinding;node.expression=expression;node.path=path;leaves++;
       hasPresenceTest||=Boolean(test);

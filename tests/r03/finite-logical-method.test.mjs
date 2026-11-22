@@ -100,3 +100,35 @@ test('grouped call leaves keep their original operand paths in the shared branch
   },(left,right)=>left??right,()=>{}));
   assert.deepEqual(visits,[['binary','condition/operand/left'],['group','condition/operand/right']]);
 });
+
+for(const [name,requiredExit] of /** @type {const} */ ([['selected','yes'],['early','no']])) {
+  test(`${name} keeps the effect of a negated method on its original short-circuit path`,()=>{
+    const fn=hir.functions.find(row=>row.name===name);
+    const {condition}=fn.body[1];
+    const call=condition.right;
+    const negated={kind:'unary',operator:'!',type:call.type,operand:{kind:'group',type:call.type,operand:call}};
+    const visits=[];
+    const skippedExit=requiredExit==='yes'?'no':'yes';
+    const exits=finiteBranchEffects({...condition,right:negated},'condition',[],(leaf,path,state)=>{
+      visits.push(path);
+      if(leaf===condition.left)return {yes:['yes'],no:['no']};
+      assert.equal(leaf,negated);
+      assert.equal(leaf.operand.operand,call);
+      assert.deepEqual(state,[requiredExit]);
+      return {yes:['updated'],no:['updated']};
+    },(left,right)=>[...new Set([...left,...right])].sort(),()=>{});
+    assert.deepEqual(visits,['condition/left','condition/right']);
+    assert.deepEqual(exits?.[requiredExit],['updated']);
+    assert.deepEqual(exits?.[skippedExit],[skippedExit,'updated'].sort());
+  });
+}
+
+test('a negated method whose receiver rebinds a local uses ordinary condition analysis',()=>{
+  const fn=hir.functions.find(row=>row.name==='selected');
+  const {condition}=fn.body[1];
+  const call=condition.right;
+  const receiver={...call.receiver,kind:'assignment',target:{binding:'local'},value:call.receiver};
+  const right={kind:'unary',operator:'!',type:call.type,operand:{...call,receiver}};
+  assert.equal(finiteBranchEffects({...condition,right},'condition',[],()=>assert.fail('call is not eligible'),
+    ()=>assert.fail('call is not eligible'),()=>{}),undefined);
+});
