@@ -9,13 +9,13 @@ export function finiteFieldWriteVersion(path,value,sourcePath,target) {
     actualType:target.actualType,field:target.fieldId,origin:{source:sourcePath,...value.range}};
 }
 export function booleanOperand(value,charge) {
-  let inverted=false,negation;
+  let inverted=false,negation,depth=0;
   while(value.kind==='group'||value.kind==='unary'&&value.operator==='!'){
-    charge();
+    charge();depth++;
     if(value.kind==='unary'){inverted=!inverted;negation??=value;}
     value=value.operand;
   }
-  return {operand:value,inverted,negation};
+  return {operand:value,inverted,negation,depth};
 }
 export function booleanLiteral(value,charge) {
   const {operand,inverted,negation}=booleanOperand(value,charge);

@@ -110,20 +110,27 @@ export function finitePresenceTest(condition,charge) {
   const {operand,inverted}=booleanOperand(condition,charge);
   return presenceComparison(operand,inverted,charge);
 }
+function logicalOperator(value) {
+  return ['binary','shortCircuit'].includes(value.kind)&&['&&','||'].includes(value.operator);
+}
 export function finitePresenceShortCircuit(condition,charge) {
-  let rootPath='';
-  while(condition.kind==='group'){charge();condition=condition.operand;rootPath+='/operand';}
-  if(!['binary','shortCircuit'].includes(condition.kind)||!['&&','||'].includes(condition.operator))return null;
-  const root={},pending=[{expression:condition,node:root,path:rootPath}];let leaves=0,hasPresenceTest=false,hasCall=false;
+  const outer=booleanOperand(condition,charge);
+  if(!logicalOperator(outer.operand))return null;
+  const root={},pending=[{expression:condition,node:root,path:'',outer}];let leaves=0,hasPresenceTest=false,hasCall=false;
   while(pending.length) {
-    charge();const {expression,node,path}=pending.pop();
-    let value=expression,innerPath=path;
-    while(value.kind==='group'){charge();value=value.operand;innerPath+='/operand';}
+    charge();const {expression,node,path,outer}=pending.pop();
+    const {operand:flag,inverted,negation,depth}=outer??booleanOperand(expression,charge);
     node.firstLeaf=leaves;
-    // Classify through Boolean negation while keeping the original operand
-    // for lowering, including its operations and source locations.
-    const {operand:flag,inverted}=booleanOperand(value,charge);
+    if(logicalOperator(flag)) {
+      // An outer negation swaps the exits, never entry to the original RHS.
+      const innerPath=path+'/operand'.repeat(depth);
+      Object.assign(node,{condition:flag,when:flag.operator==='&&',inverted,negation,left:{},right:{}});
+      pending.push({expression:flag.right,node:node.right,path:innerPath+'/right',outer:undefined},
+        {expression:flag.left,node:node.left,path:innerPath+'/left',outer:undefined});
+      continue;
+    }
     const test=presenceComparison(flag,inverted,charge);
+    const value=negation??flag;
     const semanticType=value.semanticType??value.type;
     const flagType=flag.semanticType??flag.type;
     const booleanBinding=semanticType===boolTypeId&&flag.kind==='reference'&&
@@ -144,12 +151,7 @@ export function finitePresenceShortCircuit(condition,charge) {
       node.test=test;node.booleanBinding=booleanBinding;node.expression=expression;node.path=path;leaves++;
       hasPresenceTest||=Boolean(test);
       hasCall||=callWithoutRebinding;
-    }else {
-      if(!['binary','shortCircuit'].includes(value.kind)||!['&&','||'].includes(value.operator))return null;
-      Object.assign(node,{condition:value,when:value.operator==='&&',left:{},right:{}});
-      pending.push({expression:value.right,node:node.right,path:innerPath+'/right'},
-        {expression:value.left,node:node.left,path:innerPath+'/left'});
-    }
+    }else return null;
   }
   return hasPresenceTest?{tree:root,leaves,hasCall}:null;
 }
@@ -191,6 +193,7 @@ function shortCircuitEdges(tree,entry,visit,merge,charge,rightEntry=undefined) {
     }else {
       exits=node.when?{yes:exits.yes,no:merge(frame.left.no,exits.no)}
         :{yes:merge(frame.left.yes,exits.yes),no:exits.no};
+      if(node.inverted)exits={yes:exits.no,no:exits.yes};
     }
     pending.pop();
   }

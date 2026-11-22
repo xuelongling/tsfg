@@ -138,9 +138,11 @@ export function emitCoreSsaFunction(fn, context) {
         conditional(parts.emit(node), edge.yes, edge.no, edge.range);
       } else {
         const rhs = comparisons[node.right.firstLeaf];
-        pending.push({...edge, node:node.right},
-          {...edge, node:node.left, yes:node.when ? rhs : edge.yes,
-            no:node.when ? edge.no : rhs, range:node.condition.range});
+        const yes = node.inverted ? edge.no : edge.yes, no = node.inverted ? edge.yes : edge.no;
+        const range = node.negation?.range;
+        pending.push({node:node.right, yes, no, range:range ?? edge.range},
+          {node:node.left, yes:node.when ? rhs : yes,
+            no:node.when ? no : rhs, range:range ?? node.condition.range});
       }
     }
     return {yes,no};
