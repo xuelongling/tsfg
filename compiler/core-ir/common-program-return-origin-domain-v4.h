@@ -194,6 +194,7 @@ class Solver {
     std::size_t next=0;
   };
   std::map<const FixedFunction *,ClosedProof> closedRoutines_;
+  std::map<const FixedFunction *,bool> scalarLeaves_;
   std::optional<std::map<const V4::Call *,bool>> terminalWritableCalls_;
   struct CaptureRead {
     const CaptureAccess *access;
@@ -1595,6 +1596,93 @@ class Solver {
     return true;
   }
 
+  bool scalarLeafShape(const FixedFunction &record,bool &answer){
+    answer=false;
+    if(!m_.spend(14))return false;
+    const auto &protocol=record.protocol;
+    const auto &upper=*record.upper;
+    const auto &graph=*record.graph;
+    if(!protocol.complete||protocol.kind!=ProtocolKind::Ordinary||!protocol.signature||
+        protocol.construction||protocol.lexicalEnvironment||protocol.activationEnvironment||
+        !upper.captures.empty()||!upper.facets.empty()||
+        !upper.hostResources.reads.empty()||!upper.hostResources.writes.empty()||
+        graph.version!=5||!graph.calls.empty()||!graph.language.empty()||!graph.exits.language.empty()||
+        graph.controls.size()!=1||graph.controls.front().kind!=V4::ControlKind::Entry||
+        graph.exits.normal.size()!=1||graph.exits.normal.front().control!=0||
+        graph.normal.empty()||graph.heaps.empty()||graph.heaps.front().kind!=V4::HeapKind::Entry)return true;
+    for(const auto &parameter:upper.parameters){
+      if(!m_.spend(3))return false;
+      if(parameter.read||parameter.write||parameter.structural)return true;
+    }
+    for(const auto &type:protocol.signature->parameterTypes){
+      bool scalar;
+      if(!closedScalar(type,scalar))return false;
+      if(!scalar)return true;
+    }
+    using Kind=V4::ValueKind;
+    for(Ref i=0;i<graph.nodes.size();++i){
+      if(!m_.spend(6))return false;
+      const auto &node=graph.nodes[i];
+      bool scalar;
+      if(!node.type)return true;
+      if(!closedScalar(*node.type,scalar))return false;
+      if(!scalar)return true;
+      if(node.kind==Kind::Parameter||node.kind==Kind::Global||node.kind==Kind::Nonowning)continue;
+      if(node.kind==Kind::Literal&&node.category==V4::Category::Other)continue;
+      if(node.kind!=Kind::Copy||node.control!=0)return true;
+      for(auto base:node.bases){if(!m_.spend())return false;if(base>=i)return true;}
+    }
+    for(Ref i=1;i<graph.heaps.size();++i){
+      if(!m_.spend(6))return false;
+      const auto &heap=graph.heaps[i];
+      if(heap.kind!=V4::HeapKind::Copy||heap.previous>=i||heap.value>=graph.nodes.size()||
+          graph.nodes[heap.value].kind!=Kind::Copy||graph.nodes[heap.value].heap!=heap.previous)return true;
+    }
+    for(const auto &access:graph.accesses){
+      if(!m_.spend(3))return false;
+      if(access.flag==V4::AccessFlag::Structural||access.control!=0)return true;
+      for(auto value:access.values){
+        if(!m_.spend(3))return false;
+        if(value>=graph.nodes.size()||graph.nodes[value].kind!=Kind::Global)return true;
+      }
+    }
+    answer=true;
+    return true;
+  }
+
+  bool independentScalarLeaf(const V4::Call &call,const FixedFunction &record,
+      const std::vector<Set> &arguments,const FrameWorld &frames,bool &answer){
+    answer=false;
+    if(!m_.spend(6))return false;
+    if(call.callee||call.environment||call.receiver||!frames.live||!record.graph->calls.empty()||
+        !callbacks_.environments||!callbacks_.environments->empty())return true;
+    if(!numericLookup(scalarLeaves_.size()))return false;
+    auto proof=scalarLeaves_.find(&record);
+    if(proof==scalarLeaves_.end()){
+      bool eligible;
+      if(!scalarLeafShape(record,eligible)||!m_.spend(4)||!numericLookup(scalarLeaves_.size()))return false;
+      proof=scalarLeaves_.emplace(&record,eligible).first;
+    }
+    if(!proof->second)return true;
+    const auto &types=record.protocol.signature->parameterTypes;
+    if(!m_.spend()||arguments.size()!=types.size())return m_.good;
+    for(Ref index=0;index<arguments.size();++index){
+      const auto &values=arguments[index];
+      if(!m_.spend(values.size()+1))return false;
+      if(values.empty())return true;
+      Ref type;
+      if(!graphSymbol(types[index],type))return false;
+      for(const auto id:values){
+        const auto &value=locations_[id];
+        if(!m_.spend(6))return false;
+        if(value.type!=type||(value.kind!=LocationKind::Parameter&&value.kind!=LocationKind::Global&&
+            value.kind!=LocationKind::Nonowning&&(value.kind!=LocationKind::Literal||value.categories!=4)))return true;
+      }
+    }
+    answer=true;
+    return true;
+  }
+
   // The verified factory graph cannot inspect or mutate an ambient data root.
   // Call-site leaves and resolved values both need an ownerless scalar proof.
   bool closedFactoryCall(const V4::Graph &graph,const V4::Call &call,const FixedFunction &record,
@@ -1721,14 +1809,8 @@ class Solver {
                                previous.frameRevision==context.frames[call.heap].revision)))continue;
       }
       if(!m_.spend(call.arguments.size()))return false;std::vector<Set> arguments(call.arguments.size());for(Ref i=0;i<call.arguments.size();++i)if(!resolve(context,call.arguments[i],arguments[i]))return false;
-      Ref function,label,scope;Key identity;
-      if(!graphSymbol(call.functionId,function)||!graphSymbol(call.site,label)||!m_.spend(2))return false;
-      // A nullary helper has no argument to carry the private parent identity.
-      // Only its certified direct call gets the exact parent's context key.
-      if(context.scopedCall==index){
-        if(!key(identity,{context.function,label,index,context.index}))return false;
-      }else if(!key(identity,{context.function,label,index}))return false;
-      if(!internKey(scopeIds_,std::move(identity),scope))return false;
+      Ref function,scope=None;
+      if(!graphSymbol(call.functionId,function)||!m_.spend(2))return false;
       const auto *record=fixedFunction(function);if(!record)return false;Ref expected=None;if(record->protocol.lexicalEnvironment&&!graphSymbol(*record->protocol.lexicalEnvironment,expected))return false;
       Set receivers;if(call.receiver&&!resolve(context,*call.receiver,receivers))return false;
       if(record->protocol.construction){
@@ -1736,11 +1818,25 @@ class Solver {
         for(auto receiver:receivers)if(locations_[receiver].kind!=LocationKind::ReceiverFrame||locations_[receiver].label!=expected)return open("constructor-call-frame-owner-open");
         if(!m_.spend(arguments.size()+1))return false;arguments.insert(arguments.begin(),Set{});
       }
-      bool isolated;Ref scopedCall;
-      if(!closedFactoryCall(graph,call,*record,arguments,isolated,scopedCall))return false;
-      if(isolated){
-        Key closedScope;
-        if(!key(closedScope,{None,scope})||!internKey(scopeIds_,std::move(closedScope),scope))return false;
+      bool sharedLeaf;
+      if(!independentScalarLeaf(call,*record,arguments,context.frames[call.heap],sharedLeaf))return false;
+      bool isolated=sharedLeaf;Ref scopedCall=None;
+      if(!sharedLeaf&&!closedFactoryCall(graph,call,*record,arguments,isolated,scopedCall))return false;
+      // A scalar leaf has no site-owned identity. Every caller retains its own
+      // heap and frame, while the callee key contains its exact argument sets.
+      if(!sharedLeaf){
+        Ref label;
+        Key identity;
+        if(!graphSymbol(call.site,label))return false;
+        // A nullary helper has no argument to carry its private parent.
+        if(context.scopedCall==index){
+          if(!key(identity,{context.function,label,index,context.index}))return false;
+        }else if(!key(identity,{context.function,label,index}))return false;
+        if(!internKey(scopeIds_,std::move(identity),scope))return false;
+        if(isolated){
+          Key closedScope;
+          if(!key(closedScope,{None,scope})||!internKey(scopeIds_,std::move(closedScope),scope))return false;
+        }
       }
       const auto schedule=[&](const Set &environment){
         const auto &input=context.heaps[call.heap];

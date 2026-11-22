@@ -114,6 +114,148 @@ bool literalCopyCompletion(){
 }
 }
 namespace {
+bool fixedScalarLeaf(){
+  namespace V4=CommonReturnOriginV4;
+  namespace Domain=CommonReturnOriginDomainV4;
+  const std::string scalarType="i32",boxType="box",global="marker",leafId="mark";
+  const auto typed=[](V4::ValueKind kind,const std::string &type){
+    V4::Value value;value.kind=kind;value.type=type;
+    return value;
+  };
+  V4::Graph leaf;
+  leaf.heaps.emplace_back();leaf.controls.emplace_back();
+  leaf.nodes={typed(V4::ValueKind::Parameter,scalarType),
+    typed(V4::ValueKind::Global,scalarType),typed(V4::ValueKind::Literal,scalarType)};
+  leaf.nodes[1].id=global;
+  for(V4::Ref base:{2u,0u}){
+    auto value=typed(V4::ValueKind::Copy,scalarType);
+    value.bases={base};value.heap=leaf.heaps.size()-1;
+    value.site="mark/copy-"+std::to_string(base);
+    V4::Heap heap;
+    heap.kind=V4::HeapKind::Copy;
+    heap.previous=value.heap;heap.value=leaf.nodes.size();
+    leaf.nodes.push_back(std::move(value));
+    leaf.heaps.push_back(std::move(heap));
+  }
+  leaf.normal={4};leaf.exits.normal={{2,0}};
+  leaf.accesses={{{1},V4::AccessFlag::Read,0},{{1},V4::AccessFlag::Write,0}};
+
+  V4::FunctionRow signature;
+  signature.kind=V4::FunctionKind::Source;
+  signature.parameterTypes={scalarType};signature.returnType=scalarType;
+  signature.environmentMetadataComplete=true;
+  Domain::Protocol protocol;
+  protocol.kind=Domain::ProtocolKind::Ordinary;
+  protocol.complete=true;protocol.signature=&signature;
+  Domain::PublishedEffects permission;
+  permission.parameters.resize(1);
+  permission.globals.reads={global};permission.globals.writes={global};
+  Domain::FixedFunctions fixed;
+  fixed.emplace(leafId,Domain::FixedFunction{&leaf,&permission,protocol});
+
+  V4::Graph caller;
+  caller.heaps.emplace_back();caller.controls.emplace_back();
+  caller.nodes={typed(V4::ValueKind::Parameter,scalarType),
+    typed(V4::ValueKind::Parameter,scalarType),typed(V4::ValueKind::Local,boxType)};
+  caller.nodes[1].index=1;
+  V4::Ref normalControl=0;
+  const auto store=[&](std::string field,V4::Ref value){
+    V4::Heap heap;
+    heap.kind=V4::HeapKind::Store;
+    heap.previous=caller.heaps.size()-1;
+    heap.control=normalControl;
+    heap.bases={2};heap.values={value};
+    heap.selector=std::move(field);heap.view=boxType;
+    caller.heaps.push_back(std::move(heap));
+  };
+  for(unsigned field=0;field<16;++field)store("field:retained-"+std::to_string(field),1);
+  std::array<V4::Ref,3> normalValues{};
+  std::array<V4::Ref,3> languageControls{};
+  for(V4::Ref site=0;site<normalValues.size();++site){
+    V4::Call call;
+    call.functionId=leafId;
+    call.site="caller/mark-"+std::to_string(site);
+    call.arguments={{site==2?1u:0u}};
+    call.heap=caller.heaps.size()-1;
+    call.control=normalControl;
+    caller.calls.push_back(std::move(call));
+    normalControl=caller.controls.size();
+    V4::Control control{V4::ControlKind::Call,{},site};
+    caller.controls.push_back(control);
+    languageControls[site]=caller.controls.size();
+    control.completion=V4::Completion::Language;
+    caller.controls.push_back(control);
+    V4::Heap heap;
+    heap.kind=V4::HeapKind::Call;heap.call=site;
+    caller.heaps.push_back(heap);
+    auto value=typed(V4::ValueKind::Call,scalarType);
+    value.call=site;
+    normalValues[site]=caller.nodes.size();
+    caller.nodes.push_back(std::move(value));
+    if(site==0)store("field:added-between-calls",0);
+  }
+  const auto load=[&](std::string field){
+    auto value=typed(V4::ValueKind::Projection,scalarType);
+    value.bases={2};
+    value.heap=caller.heaps.size()-1;
+    value.control=normalControl;
+    value.selector=std::move(field);value.view=boxType;
+    const auto result=caller.nodes.size();
+    caller.nodes.push_back(std::move(value));
+    return result;
+  };
+  const auto first=load("field:retained-0"),last=load("field:retained-15");
+  const auto added=load("field:added-between-calls");
+  caller.normal={first,last,added};
+  caller.exits.normal={{caller.heaps.size()-1,normalControl}};
+
+  const Domain::ActualShape scalar{V4::TypeKind::Scalar,false,{}},box{V4::TypeKind::Reference,false,{}};
+  Domain::Callbacks callbacks;
+  callbacks.rootProtocol.kind=Domain::ProtocolKind::Ordinary;
+  callbacks.rootProtocol.complete=true;
+  callbacks.actualType=[&](llvm::StringRef type,const V4::Charge &paid)->const Domain::ActualShape *{
+    if(!paid(type.size()+1))return nullptr;
+    if(type==scalarType)return &scalar;
+    return type==boxType?&box:nullptr;
+  };
+  V4::Environments empty;
+  constexpr size_t cap=200000;
+  const auto solve=[&](const V4::Environments *environments,size_t &remaining){
+    callbacks.environments=environments;
+    return Domain::solve(caller,fixed,callbacks,[&](size_t count){
+      if(count>remaining)return false;
+      remaining-=count;
+      return true;
+    });
+  };
+  size_t sharedRemaining=cap,fallbackRemaining=cap;
+  const auto shared=solve(&empty,sharedRemaining),fallback=solve(nullptr,fallbackRemaining);
+  if(!expect(shared.status==Domain::Status::Solved&&fallback.status==Domain::Status::Solved,
+      "both scalar leaf and ordinary fixed call paths solve")){
+    llvm::errs()<<"shared="<<shared.reason<<" fallback="<<fallback.reason<<'\n';
+    return false;
+  }
+  const auto &summary=shared.summary,&ordinary=fallback.summary;
+  if(!expect(summary.owners==ordinary.owners&&summary.live==ordinary.live&&
+      summary.holdsEnvironment==ordinary.holdsEnvironment&&summary.populated==ordinary.populated&&
+      summary.heapReady==ordinary.heapReady&&summary.effects==ordinary.effects&&summary.facets==ordinary.facets&&
+      summary.calls==ordinary.calls&&summary.normal==ordinary.normal&&summary.language==ordinary.language,
+      "shared argument contexts and ordinary per-site contexts export identical observations"))return false;
+  const V4::SymbolSet left{"p:0"},right{"p:1"},marker{"g:"+global};
+  if(!expect(summary.owners[normalValues[0]]==left&&summary.owners[normalValues[1]]==left&&
+      summary.owners[normalValues[2]]==right&&summary.owners[first]==right&&summary.owners[last]==right&&
+      summary.owners[added]==left&&summary.effects[0]==marker&&summary.effects[1]==marker&&
+      summary.effects[2].empty()&&summary.calls==V4::SymbolSet{leafId},
+      "same arguments share the exact result; different arguments, caller stores and global access stay distinct"))return false;
+  if(!expect(summary.normal&&!summary.language&&summary.live[normalControl]&&
+      std::none_of(languageControls.begin(),languageControls.end(),[&](auto control){return summary.live[control];}),
+      "every call completes normally and all three language continuations stay dead"))return false;
+  if(!expect(sharedRemaining>fallbackRemaining+100,
+      "scalar contexts avoid repeated dense caller heap work under the same cap"))return false;
+  llvm::errs()<<"PASS fixed scalar leaf work="<<cap-sharedRemaining<<" ordinary work="<<cap-fallbackRemaining<<'\n';
+  return true;
+}
+
 bool directThrowPotential(){
   namespace V4=CommonReturnOriginV4;namespace Domain=CommonReturnOriginDomainV4;
   for(const std::string mode:{"direct","swallow","changed-payload","handler","finally","multiple-predecessors","cycle","missing-source","budget"}){
@@ -300,6 +442,7 @@ bool implicitColdRoot(const char *corePath,const char *packetPath){
 }
 }
 int main(int argc,char **argv){
+  if(argc==2&&llvm::StringRef(argv[1])=="--fixed-scalar-leaf")return fixedScalarLeaf()?0:1;
   if(argc==4&&llvm::StringRef(argv[1])=="--implicit-cold-root")return implicitColdRoot(argv[2],argv[3])?0:1;
   if(argc==2&&llvm::StringRef(argv[1])=="--direct-throw-potential")return directThrowPotential()?0:1;
   if(argc==2&&llvm::StringRef(argv[1])=="--literal-copy")return literalCopyCompletion()?0:1;
