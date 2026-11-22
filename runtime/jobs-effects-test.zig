@@ -306,6 +306,72 @@ fn groupPlanAllocationScenario(allocator: std.mem.Allocator, group: *const T.Par
     try std.testing.expect(plans[0] != null and plans[1] != null);
 }
 
+test "complete Query stage forwards every real Position and Velocity batch in request order" {
+    const oracle = try std.json.parseFromSlice(Oracle, A, @embedFile("jobs/testdata/query-effects-expected.json"), .{ .max_value_len = 8388608 });
+    defer oracle.deinit();
+    const case = oracle.value.cases[0];
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-multi.tmeta"), case.receipt);
+    defer document.deinit();
+    const admission = try document.admitParallelGroup(A, &.{ namedSystem(case, "writePositionY"), namedSystem(case, "writeVelocity") });
+    try std.testing.expect(admission == .admitted);
+    var group = admission.admitted;
+    defer group.deinit();
+    const position = &group.systems[0].entries[0];
+    const velocity = &group.systems[1].entries[0];
+    var store = try jobs.Store.init(A, &document.component_layout, 1);
+    defer store.deinit() catch unreachable;
+    const p = try store.addArchetype(&.{position.columns[0].componentType});
+    const v = try store.addArchetype(&.{velocity.columns[0].componentType});
+    const first = try store.create(p, &.{});
+    const second = try store.create(p, &.{});
+    const Observe = struct {
+        fn plans(rows: []const T.Plan, expected: *const [3]Expected, reject: bool) !void {
+            try std.testing.expectEqual(expected.len, rows.len);
+            for (rows, expected) |*plan, wanted| {
+                try std.testing.expectEqualStrings(wanted.entry.entrySymbol, plan.entry_symbol);
+                try std.testing.expectEqual(@as(usize, 1), plan.rows);
+                try std.testing.expectEqual(wanted.entity, try plan.batch.entity(0));
+                try std.testing.expectEqual(T.Plan.LLVMArgument{ .float32 = wanted.scalar }, try plan.llvmArgument(7));
+                try std.testing.expectError(error.BorrowConflict, plan.batch.store.borrowWrite(wanted.entity, wanted.entry.columns[0].componentType));
+            }
+            if (reject) return error.TestStageFailure;
+        }
+        fn unexpected(_: []const T.Plan) !void {
+            return error.UnexpectedCallback;
+        }
+        fn expectReleased(owner: *jobs.Store, expected: *const [3]Expected) !void {
+            for (expected) |wanted| {
+                const writable = try owner.borrowWrite(wanted.entity, wanted.entry.columns[0].componentType);
+                try writable.release();
+            }
+        }
+        fn allocationScenario(allocator: std.mem.Allocator, selected: *const T.ParallelGroup, owner: *jobs.Store,
+            bindings: *const [2]?T.ParallelGroup.LoopBinding, expected: *const [3]Expected) !void
+        {
+            const result = selected.withPlans(allocator, owner, bindings, .{ expected, false }, plans);
+            try expectReleased(owner, expected);
+            try result;
+        }
+        const Expected = struct { entry: *const T.Entry, entity: jobs.Entity, scalar: f32 };
+    };
+    const position_binding: T.ParallelGroup.LoopBinding = .{ .loop = 0, .scalars = &.{.{ .float32 = 17 }} };
+    // The second system has no rows yet, but it still needs typed arguments.
+    try std.testing.expectError(error.BindingMismatch, group.withPlans(A, &store, &.{
+        position_binding, .{ .loop = 0, .scalars = &.{.{ .float64 = 23 }} },
+    }, .{}, Observe.unexpected));
+    const third = try store.create(v, &.{});
+    const bindings = [_]?T.ParallelGroup.LoopBinding{ position_binding, .{ .loop = 0, .scalars = &.{.{ .float32 = 23 }} } };
+    const expected = [_]Observe.Expected{
+        .{ .entry = position, .entity = first, .scalar = 17 },
+        .{ .entry = position, .entity = second, .scalar = 17 },
+        .{ .entry = velocity, .entity = third, .scalar = 23 },
+    };
+    try std.testing.expectError(error.TestStageFailure, group.withPlans(A, &store, &bindings, .{ &expected, true }, Observe.plans));
+    try group.withPlans(A, &store, &bindings, .{ &expected, false }, Observe.plans);
+    try Observe.expectReleased(&store, &expected);
+    try std.testing.checkAllAllocationFailures(A, Observe.allocationScenario, .{ &group, &store, &bindings, &expected });
+}
+
 test "typed effects reject rehashed noncanonical edges and invalid members modes and identities" {
     const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-multi-receipt.json"), .{});
     defer receipt.deinit();

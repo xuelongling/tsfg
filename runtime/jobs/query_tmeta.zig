@@ -39,6 +39,16 @@ fn querySelection(allocator: std.mem.Allocator, entry: *const Entry) ![]storage.
     return selection;
 }
 
+fn checkScalarWidths(formals: []const Scalar, values: []const ScalarValue) Error!void {
+    for (formals, values) |formal, actual| {
+        const width = switch (actual) {
+            .float32 => "f32",
+            .float64 => "f64",
+        };
+        if (!std.mem.eql(u8, formal.type, width)) return error.BindingMismatch;
+    }
+}
+
 pub const Document = struct {
     arena: std.heap.ArenaAllocator,
     payload: Payload,
@@ -227,13 +237,7 @@ pub const Document = struct {
         if (batch.store != store) return error.WrongStore;
         const entry = try self.entryForStore(store, entry_index);
         if (scalars.len != entry.scalars.len or try batch.columnCount() != entry.columns.len) return error.BindingMismatch;
-        for (entry.scalars, scalars) |formal, actual| {
-            const width = switch (actual) {
-                .float32 => "f32",
-                .float64 => "f64",
-            };
-            if (!std.mem.eql(u8, formal.type, width)) return error.BindingMismatch;
-        }
+        try checkScalarWidths(entry.scalars, scalars);
         const rows = try batch.rowCount();
         if (rows > 65536) return error.BindingMismatch;
         for (entry.columns, 0..) |column, index| {
@@ -288,6 +292,7 @@ pub const Document = struct {
 pub const ParallelGroup = struct {
     pub const System = struct { function_id: []const u8, entries: []const Entry, first_entry: usize };
     pub const BatchBinding = struct { loop: usize, batch: storage.Store.Batch, scalars: []const ScalarValue };
+    pub const LoopBinding = struct { loop: usize, scalars: []const ScalarValue };
     allocator: std.mem.Allocator,
     document: *const Document,
     systems: []const System,
@@ -351,6 +356,51 @@ pub const ParallelGroup = struct {
             if (binding) |value| slot.* = try self.bind(allocator, store, value.batch, index, value.loop, value.scalars);
         }
         @memcpy(output, staged);
+    }
+
+    /// Borrow every batch for one selected loop per participating system.
+    /// The callback receives Plans in system order, then Store batch order.
+    /// Plans and their query leases stay alive through the synchronous call.
+    /// The callback must not release or retain the Plans, their query aliases,
+    /// or any borrowed column views.
+    pub fn withPlans(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?LoopBinding, arguments: anytype, comptime call: anytype) !void {
+        if (bindings.len != self.systems.len) return error.BindingMismatch;
+        var temporary = std.heap.ArenaAllocator.init(allocator);
+        defer temporary.deinit();
+        const scratch = temporary.allocator();
+        const loops = try scratch.alloc(?usize, bindings.len);
+        for (bindings, loops, 0..) |binding, *loop, index| {
+            loop.* = null;
+            if (binding) |selected| {
+                const entry_index = try self.entryIndex(index, selected.loop);
+                const formals = self.document.payload.entries[entry_index].scalars;
+                if (selected.scalars.len != formals.len) return error.BindingMismatch;
+                try checkScalarWidths(formals, selected.scalars);
+                loop.* = selected.loop;
+            }
+        }
+        const queries = try scratch.alloc(?storage.Store.Query, bindings.len);
+        @memset(queries, null);
+        try self.acquire(allocator, store, loops, queries);
+        defer for (queries) |maybe_lease| if (maybe_lease) |lease| lease.release() catch unreachable;
+
+        var count: usize = 0;
+        for (queries) |maybe_lease| if (maybe_lease) |lease| {
+            count += try lease.batchCount();
+        };
+        const plans = try scratch.alloc(Plan, count);
+        var bound: usize = 0;
+        defer for (plans[0..bound]) |*plan| plan.deinit();
+        for (bindings, queries, 0..) |binding, maybe_lease, index| {
+            if (maybe_lease) |lease| {
+                const selected = binding.?;
+                for (0..try lease.batchCount()) |batch_index| {
+                    plans[bound] = try self.bind(allocator, store, try lease.batch(batch_index), index, selected.loop, selected.scalars);
+                    bound += 1;
+                }
+            }
+        }
+        return @call(.auto, call, .{@as([]const Plan, plans)} ++ arguments);
     }
 };
 
