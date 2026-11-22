@@ -89,6 +89,8 @@ static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof,std::map
   p.returnOriginContracts.reset();p.returnOriginVerified.clear();p.returnOriginPending.clear();
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
+  BorrowControlLog control{check};
+  if(borrowProof)check.borrowControl=&control;
   Json events=nullptr;
   if(!check.run())return false;
   const bool noBorrows=!borrowProof&&verifiedBorrowDomainEmpty(check);

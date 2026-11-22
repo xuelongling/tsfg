@@ -14,7 +14,7 @@
 #include <type_traits>
 #include <variant>
 namespace tsfg::commonProgram {
-class BorrowTrace;
+class BorrowTrace;class BorrowControlLog;
 // Source/fixed verifier-only clients request no initializer certificate.
 // Actual consumers obtain that independent output in the same target-flow
 // run, rather than rerunning the solver or trusting a producer row.
@@ -375,7 +375,7 @@ struct ActualCheck {
   // Derived lookup only: immutable map nodes, never execution World values.
   std::vector<const ActualCursorDirectory::value_type *> receiverCursorIndex;
   bool receiverRouteOpen=false;
-  BorrowTrace *borrowTrace=nullptr;
+  BorrowTrace *borrowTrace=nullptr;BorrowControlLog *borrowControl=nullptr;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-actual",message);}
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent actual SSA work exceeded");}
   bool catalogs();bool graph();bool source();bool callGraph();bool solve(bool conditional);bool representation();bool effects();

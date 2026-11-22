@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
+#include "common-program-borrows.h"
 #include <type_traits>
 namespace tsfg::commonProgram {
 namespace {
@@ -179,7 +180,8 @@ ActualContext *contextInput(ActualCheck &check,const std::string &target,const I
 }
 ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,
   const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region,const ActualFrameWorld *frameWorld,const std::string &newTarget){
-  return contextInput(*this,target,args,heap,root,activation,repeated,versions,region,frameWorld,newTarget);
+  auto *result=contextInput(*this,target,args,heap,root,activation,repeated,versions,region,frameWorld,newTarget);
+  return result&&(!borrowControl||root||borrowControl->call(*result))?result:nullptr;
 }
 ActualContext *conditionalContext(ActualCheck &check,const std::string &target,const ActualOperands &args,const ActualHeap &heap,
   const std::string &activation,bool repeated,const ActualFrameWorld &frames){

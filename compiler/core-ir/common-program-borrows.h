@@ -6,7 +6,50 @@
 #include <tuple>
 #include <iterator>
 namespace tsfg::commonProgram {
+inline bool borrowInvocation(const Operation &op){
+  return op.name=="invoke"||op.name=="invoke_method"||op.name=="invoke_indirect";
+}
 class ReturnOwnership;class RegionHolding;
+// A prefix can also retain the already observed portion of a proof visit.
+struct ActualEntryPrefix {
+  ActualState state;
+  uint16_t block=0;
+  const Operation *call=nullptr;
+  size_t proofPrefix=0;
+};
+class BorrowControlLog {
+public:
+  explicit BorrowControlLog(ActualCheck &check):check(check){}
+  bool admit();
+  bool begin(const ActualContext &,size_t prefix);
+  bool operation(const Operation &,uint16_t,const ActualState &);
+  bool edge(uint16_t);
+  bool call(const ActualContext &);
+  bool finish(bool changed);
+  void after(bool continues);
+  size_t prefix() const {return operationIndex;}
+  bool ready() const;
+private:
+  friend class BorrowTrace;
+  enum class Kind {Operation,Edge,Call};
+  struct Event {
+    Kind kind;
+    uint16_t index=0;
+    const Operation *op=nullptr;
+    const ActualContext *callee=nullptr;
+    size_t revision=0;
+    bool continues=false,pending=false;
+  };
+  struct Visit {std::vector<Event> events;size_t revision=0,epoch=0;};
+  ActualCheck &check;
+  std::map<const ActualContext *,Visit> visits;
+  std::map<const Operation *,std::vector<std::string>> writes;
+  Visit *current=nullptr;
+  size_t epoch=1,operationIndex=0;
+  bool usable=true;
+  Visit *visit(const ActualContext &);
+  bool append(Event);
+};
 // Observe the independently solved actual interpreter, not a producer trace.
 // Only compact owner/Span events survive; heap reachability is not last use.
 class BorrowTrace {
@@ -18,8 +61,10 @@ public:
   bool after(const ActualContext &,const Operation &,size_t,const ActualState &,bool);
   bool edge(const ActualContext &,const Operation &,size_t,uint16_t);
   bool call(const ActualContext &,const Operation &,size_t,const ActualContext &);
+  bool replay(const BorrowControlLog &);
   bool solve(Json *events=nullptr);
 private:
+  bool begin(const ActualContext &,const ActualHeap &);
   struct Impl;std::unique_ptr<Impl> impl;
 };
 struct BorrowTrace::Impl {

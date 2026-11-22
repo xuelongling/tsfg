@@ -3,10 +3,10 @@
 #include "common-program-methods.h"
 #include "common-program-retention.h"
 #include "finite-borrow-flow.h"
+#include "llvm/ADT/bit.h"
 namespace tsfg::commonProgram {
 namespace {
 using Evidence=finite::PayloadEvidence;using Flow=finite::BorrowFlow;using Id=Flow::Id;
-bool invocation(const Operation &op){return op.name=="invoke"||op.name=="invoke_method"||op.name=="invoke_indirect";}
 }
 BorrowTrace::Impl::Impl(ActualCheck &check,bool project):c(check),flow(check.p.remaining),project(project){
     // Only universal-entry arguments/globals are external authority. A local
@@ -247,18 +247,19 @@ void BorrowTrace::Impl::returned(const ActualContext &context,Id at,const Actual
   }
 BorrowTrace::BorrowTrace(ActualCheck &c,bool project):impl(std::make_unique<Impl>(c,project)){}
 BorrowTrace::~BorrowTrace()=default;
-bool BorrowTrace::begin(const ActualContext &context,const ActualState &state){
+bool BorrowTrace::begin(const ActualContext &context,const ActualState &state){return begin(context,state.heap);}
+bool BorrowTrace::begin(const ActualContext &context,const ActualHeap &heap){
   auto &b=*impl;const auto at=b.entry(context);if(at==Flow::none)return false;
-  if(b.project)b.proofEntry(context,state.heap);
+  if(b.project)b.proofEntry(context,heap);
   auto &incoming=b.incomingOwners[context.id];
   if(!b.step(3))return false;const auto &arguments=context.inputArguments();
   for(const auto &value:arguments){
-    const auto owned=b.owningArrays(value,state.heap);if(!b.step(owned.size()))return false;incoming.insert(owned.begin(),owned.end());
-    for(const auto &[span,owner]:b.contained(value,state.heap,true,Impl::Scan::Escape)){if(!b.step(owner.alternatives.size()))return false;incoming.insert(owner.alternatives.begin(),owner.alternatives.end());}
+    const auto owned=b.owningArrays(value,heap);if(!b.step(owned.size()))return false;incoming.insert(owned.begin(),owned.end());
+    for(const auto &[span,owner]:b.contained(value,heap,true,Impl::Scan::Escape)){if(!b.step(owner.alternatives.size()))return false;incoming.insert(owner.alternatives.begin(),owner.alternatives.end());}
   }
   if(context.root){
-    for(const auto &value:arguments)for(const auto &[span,owner]:b.contained(value,state.heap,true,Impl::Scan::Escape))b.define(at,span,owner);
-    for(const auto &[slot,value]:state.heap){if(!b.step())return false;if(llvm::StringRef(slot).starts_with("global:"))for(const auto &[span,owner]:b.contained(value,state.heap,true,Impl::Scan::Escape))b.define(at,span,owner); }
+    for(const auto &value:arguments)for(const auto &[span,owner]:b.contained(value,heap,true,Impl::Scan::Escape))b.define(at,span,owner);
+    for(const auto &[slot,value]:heap){if(!b.step())return false;if(llvm::StringRef(slot).starts_with("global:"))for(const auto &[span,owner]:b.contained(value,heap,true,Impl::Scan::Escape))b.define(at,span,owner); }
   }
   return b.addEdge(at,b.point(context,0,0))&&b.c.e.message.empty();
 }
@@ -274,7 +275,7 @@ bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t
       if(!actual)b.lifetime=b.locations.at(at);
     }
   }
-  if(invocation(op))b.boundary(context,op,at,args,state);
+  if(borrowInvocation(op))b.boundary(context,op,at,args,state);
   if(op.name=="func.return"||op.name=="return_throw")for(const auto &arg:args){if(context.root)regionHardEscape(b.c,arg,state.heap);b.observe(at,arg,state.heap);b.returned(context,at,arg,state,op.name=="func.return");}
   if(op.name=="global_store"&&!args.empty())b.store(context,at,{},args[0],state.heap,true);
   if(op.name=="global_store"&&!args.empty())regionHardEscape(b.c,args[0],state.heap);
@@ -333,7 +334,7 @@ bool BorrowTrace::after(const ActualContext &context,const Operation &op,size_t 
   return b.c.e.message.empty();
 }
 bool BorrowTrace::edge(const ActualContext &context,const Operation &op,size_t block,uint16_t target){
-  auto &b=*impl;if(invocation(op)&&!(op.name=="invoke_indirect"&&field(field(op.properties,"targets"),"top").getAsBoolean()==true))return true;
+  auto &b=*impl;if(borrowInvocation(op)&&!(op.name=="invoke_indirect"&&field(field(op.properties,"targets"),"top").getAsBoolean()==true))return true;
   return b.addEdge(b.point(context,op,block),b.point(context,target,0));
 }
 bool BorrowTrace::call(const ActualContext &context,const Operation &op,size_t block,const ActualContext &callee){
@@ -450,42 +451,46 @@ bool BorrowTrace::solve(Json *events){
   if(result->status!=Flow::Status::Safe)return b.fail(result->status==Flow::Status::Conflict?"active ReadSpan may overlap a structural Array effect":"ReadSpan structural owner or alias authority is unproved",b.locations.at(result->point));
   return !events||b.projectEvents(*events);
 }
-bool verifiedBorrowDomainEmpty(ActualCheck &check){
-  if(!check.step(12)||!check.environments.empty()||!check.regions.nodes.empty()||!check.regions.scopes.empty()||
-      check.regions.acyclic.size()!=check.functions.size()||!check.cyclicFunctions.empty()||
-      !check.printedConstructors.empty()||!check.unresolvedCalls.empty())return false;
-  for(const auto &[id,type]:check.types){
-    if(!check.step(12))return false;
-    const auto kind=field(*type,"kind").getAsString();
-    if(!kind||*kind=="array"||*kind=="readSpan")return false;
-  }
-  const auto publicSourceTarget=[&](llvm::StringRef target,const auto &excluded){
-    for(const auto &[id,entry]:excluded){
-      if(!check.step(4+target.size()+id.size())||target==id)return false;
+bool BorrowTrace::replay(const BorrowControlLog &log){
+  using Kind=BorrowControlLog::Kind;
+  auto &b=*impl;
+  const ActualState controlState;
+  // This domain has no descriptor storage, captures or Region scopes.
+  // Keep the entry authority and the exact order of control observations.
+  for(const auto &[id,context]:b.c.contexts){
+    if(!b.step())return false;
+    if(!b.c.publicBorrowContexts.count(&context))continue;
+    if(!b.step(4+4*llvm::bit_width(log.visits.size())))return false;
+    if(!begin(context,context.root?context.rootEntry:context.identity->heap))return false;
+    const BorrowControlLog::Event *operation=nullptr;
+    for(const auto &event:log.visits.at(&context).events){
+      if(!b.step())return false;
+      if(event.kind==Kind::Operation){
+        if(operation&&!after(context,*operation->op,operation->index,controlState,operation->continues))return false;
+        operation=&event;
+        const auto at=b.point(context,*event.op,event.index);
+        if(at==Flow::none)return false;
+        if(borrowInvocation(*event.op)){
+          b.boundary(context,*event.op,at,{},controlState);
+          if(event.pending)b.boundaries[at].owner.pending=true;
+        }
+      }else if(event.kind==Kind::Edge){
+        if(!edge(context,*operation->op,operation->index,event.index))return false;
+      }else if(!call(context,*operation->op,operation->index,*event.callee))return false;
     }
-    return true;
-  };
-  // The checked call graph establishes a closed fixed table. Verify that
-  // public calls only enter Source functions. Private analysis-only roots
-  // never enter the public Borrow traversal on their own.
-  for(const auto &fn:check.p.functions){
-    if(!check.step())return false;
-    for(const auto &block:fn.blocks)for(const auto &op:block.operations){
-      if(!check.step(42))return false;
-      const llvm::StringRef name(op.name);
-      if(name.starts_with("array_")||name.starts_with("readspan")||name.starts_with("env_")||
-          name=="make_closure"||name=="host_call")return false;
-      if(!invocation(op))continue;
-      if(name!="invoke")return false;
-      const auto target=field(op.properties,"function_id").getAsString();
-      if(!check.step(4)||!target||!publicSourceTarget(*target,check.modules)||
-          !publicSourceTarget(*target,check.analysisFunctions))return false;
-    }
+    if(operation&&!after(context,*operation->op,operation->index,controlState,operation->continues))return false;
   }
-  return true;
+  return b.c.e.message.empty();
 }
 bool verifyCommonBorrows(ActualCheck &check,Json *events){
   if(!check.preparePublicBorrowContexts())return false;
+  const auto *control=check.borrowControl;
+  check.borrowControl=nullptr;
+  if(events&&control&&control->ready()){
+    BorrowTrace trace(check,true);
+    return trace.replay(*control)&&trace.solve(events);
+  }
+  if(!check.e.message.empty())return false;
   BorrowTrace trace(check,events!=nullptr);check.borrowTrace=&trace;bool changed=false,ok=true;const auto size=check.contexts.size();
   for(auto it=check.contexts.begin();it!=check.contexts.end();++it){if(!check.step()){ok=false;break;}
     if(check.publicBorrowContexts.count(&it->second)&&!check.execute(it->second,false,changed)){ok=false;break;}}

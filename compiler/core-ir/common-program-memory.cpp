@@ -6,51 +6,6 @@
 #include <cstdlib>
 #include <iterator>
 namespace tsfg::commonProgram {
-ActualHeap ActualCheck::reachable(const ActualRoots &values,const ActualHeap &heap){
-  ActualHeap out;std::vector<const ActualValue *> pending;std::set<std::string> visited;
-  if(!step())return out;const auto count=values.size();
-  if(!step(count+heap.size()))return out;for(size_t i=0;i<count;++i){if(!step(2))return {};pending.push_back(&values[i]);}
-  size_t knownFields=0;
-  if(scheduling||borrowTrace){
-    if(!step(2))return {};
-    if(!heap.fields_.empty()){
-      if(!step(2))return {};
-      knownFields=std::min<size_t>(4,heap.fields_.size());
-    }
-  }
-  for(const auto &[id,v]:heap)if(llvm::StringRef(id).starts_with("global:")){out.emplace(id,copy(v));pending.push_back(&v);}
-  for(size_t index=0;index<pending.size();++index){
-    // Pointees belong to the immutable inputs, so growing the work vector
-    // cannot invalidate the current value or any queued child.
-    const auto &current=*pending[index];
-    std::set<std::string> roots;if(!step(current.objects.size()+current.callables.size()))return {};
-    for(const auto &ref:current.objects)roots.insert(ref.text());for(const auto &[code,environment]:current.callables)if(!environment.empty())roots.insert(environment);
-    for(const auto &ref:roots){
-    if(!step()||!e.message.empty())return {};if(!visited.insert(ref).second)continue;
-    if(!step((ref.size()+1)/64+1))return {};const auto prefix=ref+"/";
-    if(!step(prefix.size()/64+1))return {};
-    for(auto it=heap.lower_bound(prefix);it!=heap.end();++it){if(!step())return {};const auto &[id,v]=*it;
-      if(!llvm::StringRef(id).starts_with(prefix))break;
-      auto inserted=out.emplace(id,copy(v));
-      if(inserted.second){
-        pending.push_back(&v);
-        // The selected source key's address identifies the already-checked
-        // association. Only its immutable spelling owner crosses the copy.
-        if(knownFields){
-          if(!e.message.empty()||!step(2))return {};
-          if(out.fields_.size()<knownFields)for(size_t index=0;index<knownFields;++index){
-            if(!step(4))return {};
-            const auto &known=heap.fields_[index];
-            if(known.key!=&id)continue;
-            if(!out.appendField(*this,inserted.first,known.identity))return {};
-            break;
-          }
-        }
-      }
-    }
-    }
-  }return out;
-}
 bool ActualCheck::defaultField(ActualHeap &heap,const ActualFieldSlot &slot,bool repeated){
   if(!step(4))return false;
   const auto &key=*slot.spelling;auto hint=heap.entries_.end();bool vacant=false,present=false;
@@ -250,9 +205,6 @@ bool ActualCheck::schedule(const std::string &id){
   if(!need(pendingContexts.size()<4096,"actual worklist bound exceeded")||!step(2*(id.size()/64+1)))return false;
   queuedContexts.insert(id);pendingContexts.push_back(id);return true;
 }
-// An owned pre-call state with a single observed route from entry.
-struct ActualEntryPrefix {ActualState state;uint16_t block=0;const Operation *call=nullptr;};
-
 bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed){
   return execute(context,conditional,changed,nullptr);
 }
@@ -321,6 +273,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed,
   }
   bool record=prefix&&!prefix->call;
   const uint16_t first=resume?prefix->block:0;
+  if(borrowControl&&!borrowControl->begin(context,resume?prefix->proofPrefix:0))return false;
   if(borrowTrace&&!borrowTrace->begin(context,entry))return false;
   std::map<uint16_t,ActualState> states;states.emplace(first,std::move(entry));std::vector<uint16_t> queue{first};std::set<uint16_t> queued{first};
   const Operation *observed=nullptr;size_t observedBlock=0;
@@ -328,6 +281,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed,
   const auto edge=[&](uint16_t to,ActualState next,const std::vector<ActualValue> &args){
     if(record){if(!step(2))return false;++edges;}
     if(!step(args.size()+1)||!need(to<fn.blocks.size()&&args.size()==fn.blocks[to].parameters.size(),"actual edge arity differs"))return false;
+    if(borrowControl&&!borrowControl->edge(to))return false;
     if(borrowTrace&&(!observed||!borrowTrace->edge(context,*observed,observedBlock,to)))return false;
     for(size_t i=0;i<args.size();++i)next.values.insert_or_assign(fn.blocks[to].parameters[i],copy(args[i]));
     if(!regionEdge(*this,context,uint16_t(observedBlock),to,next))return false;
@@ -407,7 +361,9 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed,
           record=operand!=state.values.end()&&operand->second.objects.empty()&&operand->second.region.roots.empty();
         }
       }
+      if(borrowControl&&!borrowControl->operation(op,block,state))return false;
       bool continues=true;if(!instruction(context,op,block,state,conditional,changed,edge,continues))return false;
+      if(borrowControl)borrowControl->after(continues);
       if(record){
         if(!step(6))return false;
         if(op.name=="invoke"){
@@ -415,7 +371,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed,
           // input. A future execution starts here in the original worklist.
           if(!edges&&queued.empty()&&!continues&&!weakChanged&&!seedChanged&&!changed){
             if(!step(5))return false;
-            *prefix={std::move(state),block,&op};
+            *prefix={std::move(state),block,&op,borrowControl?borrowControl->prefix():0};
           }
           record=false;
         }else if(!continues&&edges!=1)record=false;
@@ -475,6 +431,7 @@ bool ActualCheck::solve(bool conditional){
       }
     }
     if(!execute(current,conditional,changed,saved==prefixes.end()?nullptr:&saved->second))return false;
+    if(borrowControl&&!borrowControl->finish(changed||current.requestTrap!=trapped))return false;
     // An unsuccessful recording never consumes a persistent slot.
     if(saved!=prefixes.end()&&!saved->second.call){if(!step(18))return false;prefixes.erase(saved);}
     if(weakChanged||(conditional&&seedChanged)){
