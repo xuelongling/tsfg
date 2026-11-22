@@ -712,6 +712,15 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
                     try std.testing.expectError(error.BorrowConflict, active.batch.release());
                 }
             }
+            fn rejectSystem(_: []const T.Plan, _: *const T.Entry) !void {
+                return error.UnexpectedCallback;
+            }
+            fn readSystem(plans: []const T.Plan, selected: *const T.Entry, identity: T.Plan.CodeIdentity, calls: *usize) !void {
+                calls.* += 1;
+                try std.testing.expectEqual(@as(u32, 0), selected.loop);
+                try std.testing.expectEqualStrings(identity.entry_symbol, selected.entrySymbol);
+                try read(plans, identity, &.{ 2, 1 });
+            }
         };
         var foreign = candidate.value;
         foreign.abi_type = "foreign";
@@ -721,6 +730,13 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
         for (0..3) |_| _ = try store.create(archetype, &.{});
         try std.testing.expectError(error.IdentityMismatch, stage.withCheckedPlans(A, &store, &loops, &codes, changed, .{}, Observe.reject));
         try stage.withCheckedPlans(A, &store, &loops, &codes, ir, .{ candidate.value, @as([]const u64, &.{ 2, 1 }) }, Observe.read);
+        const next_token = store.next_token;
+        try std.testing.expectError(error.IdentityMismatch, document.withSystemPlans(A, &store, entry.logicalFunctionId, &.{}, .{ .entries = &.{foreign}, .llvm_ir = ir }, .{}, Observe.rejectSystem));
+        try std.testing.expectError(error.IdentityMismatch, document.withSystemPlans(A, &store, entry.logicalFunctionId, &.{}, .{ .entries = &.{candidate.value}, .llvm_ir = changed }, .{}, Observe.rejectSystem));
+        try std.testing.expectEqual(next_token, store.next_token);
+        var calls: usize = 0;
+        try document.withSystemPlans(A, &store, entry.logicalFunctionId, &.{}, .{ .entries = &.{candidate.value}, .llvm_ir = ir }, .{ candidate.value, &calls }, Observe.readSystem);
+        try std.testing.expectEqual(@as(usize, 1), calls);
     }
     const query = try document.query(A, &store, 0);
     var released = false;

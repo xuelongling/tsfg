@@ -39,17 +39,20 @@ fn querySelection(allocator: std.mem.Allocator, entry: *const Entry) ![]storage.
     return selection;
 }
 
+fn scalarType(value: ScalarValue) []const u8 {
+    return switch (value) {
+        .float32 => "f32",
+        .float64 => "f64",
+    };
+}
+
 fn checkScalarWidths(formals: []const Scalar, values: []const ScalarValue) Error!void {
-    for (formals, values) |formal, actual| {
-        const width = switch (actual) {
-            .float32 => "f32",
-            .float64 => "f64",
-        };
-        if (!std.mem.eql(u8, formal.type, width)) return error.BindingMismatch;
-    }
+    for (formals, values) |formal, actual|
+        if (!std.mem.eql(u8, formal.type, scalarType(actual))) return error.BindingMismatch;
 }
 
 pub const Document = struct {
+    pub const SystemCode = struct { entries: []const Plan.CodeIdentity, llvm_ir: []const u8 };
     arena: std.heap.ArenaAllocator,
     payload: Payload,
     payload_hash: []const u8,
@@ -217,6 +220,52 @@ pub const Document = struct {
             start = end;
         }
         return .{ .admitted = .{ .allocator = allocator, .document = self, .systems = selected } };
+    }
+
+    /// Hand off every loop of one checked Source system in its original order.
+    /// Check the whole code receipt before the first lease. With no code
+    /// receipt this entry only hands off metadata and data for inspection.
+    /// Each callback receives the selected entry even if it has zero batches.
+    /// Return or error releases the current loop before proceeding or stopping.
+    pub fn withSystemPlans(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, function_id: []const u8, scalars: []const ScalarValue, code: ?SystemCode, arguments: anytype, comptime call: anytype) !void {
+        const admission = try self.admitParallelGroup(allocator, &.{function_id});
+        var group = admission.admitted; // A one-system selection has no conflict pair.
+        defer group.deinit();
+        const system = group.systems[0];
+        // Source parameter positions also exist for systems with no loops.
+        const parameters = self.effects.source_parameters[self.effects.systemIndex(system.function_id).?];
+        var scalar_index: usize = 0;
+        for (parameters) |formal| {
+            if (formal.query != null) continue;
+            if (scalar_index == scalars.len or !std.mem.eql(u8, formal.logicalType, scalarType(scalars[scalar_index])))
+                return error.BindingMismatch;
+            scalar_index += 1;
+        }
+        if (scalar_index != scalars.len) return error.BindingMismatch;
+        if (code) |checked| {
+            if (checked.entries.len != system.entries.len) return error.BindingMismatch;
+            const llvm_hash = self.llvm_hash orelse return error.IdentityMismatch;
+            try Plan.checkLlvmArtifact(llvm_hash, checked.llvm_ir);
+            for (system.entries, checked.entries) |*entry, identity| try self.checkEntryCode(entry, identity);
+        }
+        if (system.entries.len == 0) return;
+        _ = try self.entryForStore(store, system.first_entry);
+        const snapshot = try allocator.dupe(ScalarValue, scalars);
+        defer allocator.free(snapshot);
+        for (system.entries, 0..) |*entry, index| {
+            try group.withPlans(allocator, store, &.{.{ .loop = index, .scalars = snapshot }}, .{entry} ++ arguments, call);
+        }
+    }
+
+    fn checkEntryCode(self: *const Document, entry: *const Entry, candidate: Plan.CodeIdentity) Error!void {
+        return candidate.verify(.{
+            .metadata_hash = self.payload_hash,
+            .batch_hash = self.payload.batchHash,
+            .entry_symbol = entry.entrySymbol,
+            .logical_function_id = entry.logicalFunctionId,
+            .signature_hash = entry.signatureHash,
+            .abi_type = entry.abiType,
+        });
     }
 
     fn entryForStore(self: *const Document, store: *const storage.Store, entry_index: usize) Error!*const Entry {
@@ -411,14 +460,7 @@ pub const ParallelGroup = struct {
                 try checkScalarWidths(formals, selected.scalars);
                 if (code) |checked| {
                     const candidate = checked.entries[index] orelse return error.BindingMismatch;
-                    try candidate.verify(.{
-                        .metadata_hash = self.document.payload_hash,
-                        .batch_hash = self.document.payload.batchHash,
-                        .entry_symbol = entry.entrySymbol,
-                        .logical_function_id = entry.logicalFunctionId,
-                        .signature_hash = entry.signatureHash,
-                        .abi_type = entry.abiType,
-                    });
+                    try self.document.checkEntryCode(entry, candidate);
                 }
                 loop.* = selected.loop;
             } else if (code) |checked| {

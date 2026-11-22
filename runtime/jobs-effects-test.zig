@@ -192,6 +192,125 @@ test "checked parallel Query group retains ordered loop entries and opens the se
     try std.testing.expectEqual(@as(usize, 1), plan.rows);
 }
 
+test "serial Query admits a genuine Source system with zero loops without taking a lease" {
+    const oracle = try std.json.parseFromSlice(Oracle, A, @embedFile("jobs/testdata/query-effects-expected.json"), .{ .max_value_len = 8388608 });
+    defer oracle.deinit();
+    const fixture = oracle.value.cases[0];
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-multi.tmeta"), fixture.receipt);
+    defer document.deinit();
+    const id = namedSystem(fixture, "readPosition");
+    const system = document.effects.system(id).?;
+    try std.testing.expectEqual(@as(usize, 0), system.loops.len);
+    try std.testing.expectEqual(@as(usize, 1), system.capabilities.len);
+    try std.testing.expectEqual(jobs.Access.read, system.capabilities[0].mode);
+    const component = system.capabilities[0].componentType;
+
+    var store = try jobs.Store.init(A, &document.component_layout, 2);
+    defer store.deinit() catch unreachable;
+    const archetype = try store.addArchetype(&.{component});
+    const entity = try store.create(archetype, &.{});
+    const held = try store.borrowWrite(entity, component);
+    defer held.release() catch unreachable;
+    const next_token = store.next_token;
+    const Observe = struct {
+        fn unexpected(_: []const T.Plan, _: *const T.Entry) !void {
+            return error.UnexpectedCallback;
+        }
+    };
+    try document.withSystemPlans(A, &store, id, &.{}, null, .{}, Observe.unexpected);
+    // The checked readPosition declaration has no ordinary scalar arguments.
+    try std.testing.expectError(error.BindingMismatch, document.withSystemPlans(A, &store, id, &.{.{ .float32 = 17 }}, null, .{}, Observe.unexpected));
+    try std.testing.expectEqual(next_token, store.next_token);
+    try std.testing.expect((try held.bytes()).len > 0);
+}
+
+test "serial Query hands off all batches in the genuine double-loop Source order" {
+    const receipt = try std.json.parseFromSlice(T.Expected, A, @embedFile("jobs/testdata/query-effects-double-loop-receipt.json"), .{});
+    defer receipt.deinit();
+    var document = try T.Document.load(A, @embedFile("jobs/testdata/query-effects-double-loop.tmeta"), receipt.value);
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 2), document.payload.entries.len);
+    const first = document.payload.entries[0];
+    const second = document.payload.entries[1];
+    const component = first.columns[0].componentType;
+    try std.testing.expectEqualStrings(first.logicalFunctionId, second.logicalFunctionId);
+    try std.testing.expectEqualStrings(component, second.columns[0].componentType);
+    try std.testing.expectEqual(jobs.Access.write, first.columns[0].access);
+    try std.testing.expectEqual(jobs.Access.write, second.columns[0].access);
+
+    var store = try jobs.Store.init(A, &document.component_layout, 2);
+    defer store.deinit() catch unreachable;
+    const archetype = try store.addArchetype(&.{component});
+    const Observe = struct {
+        document: *const T.Document,
+        input: *T.ScalarValue,
+        entities: []const jobs.Entity,
+        next: usize = 0,
+        fail_first: bool = false,
+
+        fn loop(plans: []const T.Plan, entry: *const T.Entry, state: *@This()) !void {
+            try std.testing.expect(state.next < state.document.payload.entries.len);
+            const expected = &state.document.payload.entries[state.next];
+            try std.testing.expectEqual(expected, entry);
+            try std.testing.expectEqual(state.next, entry.loop);
+            const first_loop = state.next == 0;
+            state.next += 1;
+            if (first_loop) state.input.* = .{ .float32 = 83 };
+            const counts: []const usize = if (state.entities.len == 0) &.{} else &.{ 2, 1 };
+            try std.testing.expectEqual(counts.len, plans.len);
+            var offset: usize = 0;
+            for (plans, counts) |*plan, rows| {
+                try std.testing.expectEqual(entry.loop, plan.loop);
+                try std.testing.expectEqualStrings(entry.entrySymbol, plan.entry_symbol);
+                try std.testing.expectEqual(rows, plan.rows);
+                try std.testing.expectEqual(T.Plan.LLVMArgument{ .float32 = 17 }, try plan.llvmArgument(7));
+                try std.testing.expectEqual(jobs.Access.write, (try plan.batch.column(0)).access);
+                try std.testing.expectError(error.BorrowConflict, plan.batch.release());
+                for (0..rows) |row| {
+                    try std.testing.expectEqual(state.entities[offset], try plan.batch.entity(row));
+                    offset += 1;
+                }
+            }
+            try std.testing.expectEqual(state.entities.len, offset);
+            if (first_loop and state.fail_first) return error.TestFirstLoopFailed;
+        }
+
+        fn expectReleased(owner: *jobs.Store, entities: []const jobs.Entity, write_column: []const u8) !void {
+            for (entities) |entity| {
+                const lease = try owner.borrowWrite(entity, write_column);
+                try lease.release();
+            }
+        }
+
+        fn unexpected(_: []const T.Plan, _: *const T.Entry) !void {
+            return error.UnexpectedCallback;
+        }
+    };
+
+    var inputs = [_]T.ScalarValue{.{ .float32 = 17 }};
+    var state: Observe = .{ .document = &document, .input = &inputs[0], .entities = &.{} };
+    try document.withSystemPlans(A, &store, first.logicalFunctionId, &inputs, null, .{&state}, Observe.loop);
+    try std.testing.expectEqual(@as(usize, 2), state.next);
+
+    var entities: [3]jobs.Entity = undefined;
+    for (&entities) |*entity| entity.* = try store.create(archetype, &.{});
+    inputs[0] = .{ .float32 = 17 };
+    const next_token = store.next_token;
+    try std.testing.expectError(error.BindingMismatch, document.withSystemPlans(A, &store, first.logicalFunctionId, &inputs, .{ .entries = &.{}, .llvm_ir = "" }, .{}, Observe.unexpected));
+    try std.testing.expectEqual(next_token, store.next_token);
+    state = .{ .document = &document, .input = &inputs[0], .entities = &entities, .fail_first = true };
+    try std.testing.expectError(error.TestFirstLoopFailed, document.withSystemPlans(A, &store, first.logicalFunctionId, &inputs, null, .{&state}, Observe.loop));
+    try std.testing.expectEqual(@as(usize, 1), state.next);
+    try Observe.expectReleased(&store, &entities, component);
+
+    inputs[0] = .{ .float32 = 17 };
+    state = .{ .document = &document, .input = &inputs[0], .entities = &entities };
+    try document.withSystemPlans(A, &store, first.logicalFunctionId, &inputs, null, .{&state}, Observe.loop);
+    try std.testing.expectEqual(@as(usize, 2), state.next);
+    try std.testing.expectEqual(T.ScalarValue{ .float32 = 83 }, inputs[0]);
+    try Observe.expectReleased(&store, &entities, component);
+}
+
 test "atomic Query group keeps real Position and Velocity leases unpublished on late conflict" {
     const oracle = try std.json.parseFromSlice(Oracle, A, @embedFile("jobs/testdata/query-effects-expected.json"), .{ .max_value_len = 8388608 });
     defer oracle.deinit();
