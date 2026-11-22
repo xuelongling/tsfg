@@ -147,6 +147,26 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       }
       return joined;
     };
+    const writeContents=(receiver,value)=>{
+      const update=(key,target)=>{
+        const prior=contents.get(key);
+        // A write to an untracked receiver says nothing about its other slots.
+        const incoming=prior?[prior.elements]:[target,unknownArrayOwner];
+        contents.set(key,{receiver:target,elements:mergeArrayOwners([...incoming,value])});
+      };
+      if(receiver?.kind==='allocation'){update(canonical(receiver),receiver);return;}
+      // All views of a selected receiver use the same per-owner content rows.
+      const targets=receiver?.kind==='aliases'?tools.leaves(receiver):[receiver],keys=new Set();
+      for(const target of targets){
+        charge();const key=canonical(target);keys.add(key);update(key,target);
+      }
+      if(targets.some(target=>{charge();return target?.kind==='parameter'||target?.kind==='unknown';})){
+        for(const [key,row]of contents){
+          charge();
+          if(!keys.has(key)&&tools.mayAlias(receiver,row.receiver))update(key,row.receiver);
+        }
+      }
+    };
     let callCount=0,conditionalDepth=0;
     // An effect outside the exact local length map may leave stale entries.
     // Keep the previous conservative branch behavior after any such effect.
@@ -252,10 +272,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(['arrayCompoundAssignment','arrayUpdate'].includes(value.kind))read(receiver);
         const rhs=value.value?expression(value.value,[...path,'value'],index):null;
         mutate(value,path,receiver??unknownArrayOwner,index,value.kind==='arrayResizeChecked');
-        if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type)){
-          const key=canonical(receiver);
-          contents.set(key,{receiver,elements:mergeArrayOwners([contents.get(key)?.elements,rhs])});
-        }
+        if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type))writeContents(receiver,rhs);
       }else if(hasConditionalArrayRhs(value)) {
         const left=expression(value.left,[...path,'left'],index),before=snapshot(bindings);
         const storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
@@ -281,7 +298,9 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(value.kind==='arrayReadChecked') {
           const receiver=children[0];read(receiver);
           if(type.isOwner(value.type)){
-            const known=contents.get(canonical(receiver))?.elements;
+            const known=receiver?.kind==='aliases'?mergeArrayOwners(tools.leaves(receiver).map(target=>{
+              charge();return contents.get(canonical(target))?.elements??mergeArrayOwners([target,unknownArrayOwner]);
+            })):contents.get(canonical(receiver))?.elements;
             // A read in a repeated condition or body can see writes from an
             // earlier iteration, even when this lexical arm has no write.
             owner=known&&!repeatedContents?known:mergeArrayOwners([known,receiver,unknownArrayOwner]);

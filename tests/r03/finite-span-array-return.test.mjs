@@ -125,13 +125,14 @@ test('unreachable lexical returns do not add a second Array owner to a caller',a
   assert.deepEqual(new Set(both.origin.owners),new Set([a,b]));
   assert.deepEqual(both.returns,[a,b]);
 });
-test('nested Array element owners follow the continuing control paths',async t=>{
-  const [nested,{facts:control}]=await Promise.all([
-    readFile(new URL('./testdata/typed-array-source514/9068b0b5e16dd0715dc9bc165c9d067a6594b1ce67d21d2477cbe5df560146de-package.json',import.meta.url)),
-    readChoiceFixture(),
-  ]);
+async function readNestedFixture(){
+  const nested=await readFile(new URL('./testdata/typed-array-source514/9068b0b5e16dd0715dc9bc165c9d067a6594b1ce67d21d2477cbe5df560146de-package.json',import.meta.url));
   assert.equal(sha256(nested).slice(7),'29e6c213c43c012abe71cba8869fc7339f73ce74327ebed4f2c5ad9297520f6f');
-  const hir=projectTypedArrayFacts(readTypedArrayFacts(nested)),[fn]=hir.functions;
+  return projectTypedArrayFacts(readTypedArrayFacts(nested));
+}
+test('nested Array element owners follow the continuing control paths',async t=>{
+  const [hir,{facts:control}]=await Promise.all([readNestedFixture(),readChoiceFixture()]);
+  const [fn]=hir.functions;
   const [seed,outer,load,write,,done]=fn.body;
   const [controlFn]=projectTypedArrayFacts(control).functions;
   const alternate=controlFn.body.find(row=>row.binding?.name==='y');
@@ -182,5 +183,67 @@ test('nested Array element owners follow the continuing control paths',async t=>
   await t.test('a writer that returns cannot change any later iteration',()=>{
     const shape=loop([branch([store,done],[load,write])]);
     assert.deepEqual(trace(shape,{inside:true}),new Set([a]));
+  });
+});
+test('nested writes through a selected receiver update all possible Array owners',async t=>{
+  const [hir,{facts}]=await Promise.all([readNestedFixture(),readChoiceFixture()]);
+  const [fn]=hir.functions,[control]=projectTypedArrayFacts(facts).functions;
+  const [first,outer,load,write,,done]=fn.body;
+  const [second,payload]=control.body;
+  const branch=control.body.find(row=>row.kind==='if');
+  const choice=control.body.find(row=>row.binding?.name==='chosen');
+  const {receiver,index,type}=load.initializer;
+  const refInner=binding=>({...outer.initializer.elements[0],binding});
+  const refOuter=binding=>({...receiver,binding});
+  // Reuse the retained nested Array projection and control shape at this
+  // analysis seam. The additional local receivers are independent allocations.
+  const duplicate=(name,value)=>({...outer,binding:{...outer.binding,id:sha256(name+'-binding')},
+    initializer:{...outer.initializer,allocationSite:sha256(name+'-allocation'),elements:[refInner(value.binding.id)]}});
+  const other=duplicate('other-outer',second),disjoint=duplicate('disjoint-outer',first);
+  const selected={...outer,binding:{...outer.binding,id:choice.binding.id,writable:true},initializer:refOuter(outer.binding.id)};
+  const store={...write,expression:{...write.expression,type,declaredType:type,value:refInner(payload.binding.id),
+    target:{...write.expression.target,type,declaredType:type,receiver:refOuter(selected.binding.id),index}}};
+  const owner=({initializer})=>({kind:'allocation',functionId:fn.id,allocationSite:initializer.allocationSite,callPath:[]});
+  const a=owner(first),b=owner(second),c=owner(payload);
+  const observed=(alternate,{formal=false,direct=false}={})=>{
+    const rebind=branch.then[0],targetType={type:receiver.type,declaredType:receiver.type};
+    const choose={...branch,then:[{...rebind,expression:{...rebind.expression,...targetType,
+      value:refOuter(alternate.binding.id),target:{...rebind.expression.target,...targetType}}}]};
+    const readIndex=direct?{...index,token:'1',decimal:'1'}:index;
+    const reads=[outer,other,selected,disjoint].flatMap(row=>[
+      {...load,initializer:{...load.initializer,index:row===disjoint?index:readIndex,receiver:refOuter(row.binding.id)}},write,
+    ]);
+    const parameters=[...control.parameters,...(direct?[outer.binding]:[]),...(formal||direct?[other.binding]:[])];
+    const storeIn=(target,value)=>({...store,expression:{...store.expression,value:refInner(value.binding.id),
+      target:{...store.expression.target,receiver:refOuter(target.binding.id)}}});
+    const writes=direct?[storeIn(outer,payload),storeIn(other,second)]:[store];
+    const body=[first,second,payload,...(direct?[]:[outer]),...(formal||direct?[]:[other]),selected,disjoint,choose,...writes,...reads,done];
+    const variant={...hir,functions:[{...fn,parameters,body}]};
+    const {ownerModel,ownerTools}=prepareArrayCalls(variant,initialArrayPublication(variant));
+    const stores=ownerModel.functions.get(fn.id).operations.filter(row=>row.kind==='store');
+    assert.equal(stores.length,writes.length+4);
+    return stores.map(row=>new Set(ownerTools.leaves(row.proof.owner)));
+  };
+  await t.test('both direct receivers and the merged receiver see skipped and written contents',()=>{
+    assert.deepEqual(observed(other),[new Set([owner(outer),owner(other)]),new Set([a,c]),new Set([b,c]),new Set([a,b,c]),new Set([a])]);
+  });
+  await t.test('selecting the same receiver leaves the disjoint rows unchanged',()=>{
+    assert.deepEqual(observed(outer),[new Set([owner(outer)]),new Set([a,c]),new Set([b]),new Set([a,c]),new Set([a])]);
+  });
+  await t.test('an untracked formal receiver retains its fallback if the other arm writes',()=>{
+    const incoming={kind:'parameter',functionId:fn.id,index:1},unknown={kind:'unknown'};
+    assert.deepEqual(observed(other,{formal:true}),[new Set([owner(outer),incoming]),new Set([a,c]),new Set([incoming,unknown,c]),
+      new Set([a,c,incoming,unknown]),new Set([a])]);
+  });
+  await t.test('first stores to both formals retain untouched element owners for a later selected read',()=>{
+    const earlier={kind:'parameter',functionId:fn.id,index:1},later={kind:'parameter',functionId:fn.id,index:2};
+    const results=observed(other,{direct:true});
+    assert.deepEqual(results[4],new Set([earlier,later,{kind:'unknown'},b,c]));
+  });
+  await t.test('a direct formal write updates the tracked other formal but leaves a local allocation disjoint',()=>{
+    const earlier={kind:'parameter',functionId:fn.id,index:1};
+    const results=observed(other,{direct:true});
+    assert.deepEqual(results[2],new Set([earlier,{kind:'unknown'},b,c]));
+    assert.deepEqual(results[5],new Set([a]));
   });
 });
