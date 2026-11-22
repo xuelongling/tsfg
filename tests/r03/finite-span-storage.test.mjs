@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {projectTypedArrayFacts} from '../../compiler/typed-array-project.mjs';
+import {initialArrayPublication,prepareArrayCalls} from '../../compiler/array-call-context.mjs';
 import {buildHir,buildInitialArrayPublication,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
@@ -18,13 +20,50 @@ for(const [name,sourceHash,packetHash,ownerName] of [
   ['loop body returns','64810e8c6571887d37de42e1dc82ed141a0aced1e10de6fe66eadea74431eab0','15fff017e9f8552fab201ce567798c3db5a3436bc4e7dd8ba4a7e80b1054bd1e','a'],
   ['loop body reaches condition','dc6953c3647367ddb700fb7d958fed71667872a6801da9dcb9a0990be77dca7f','771077d86accd97100a49b84f5631dffcc2f62ac3eb681543537240741c36a6b',null],
 ]){
-  test('actual ReadSpan joins continuing owners when '+name,async()=>{
+  test('actual ReadSpan joins continuing owners when '+name,async t=>{
     const bytes=await readFile(new URL('./testdata/typed-array-span-storage/'+sourceHash+'-package.json',import.meta.url));
     assert.equal(sha256(bytes),'sha256:'+packetHash);const facts=readTypedArrayFacts(bytes);
     const source=facts.payload.files.find(file=>file.path===facts.payload.rootFile);
     assert.equal(sha256(source.content),'sha256:'+sourceHash);
     const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
-    const publication=buildInitialArrayPublication(context),built=buildHir(facts,context,publication);
+    const publication=buildInitialArrayPublication(context);
+    if(name.startsWith('loop body')){
+      const projected=projectTypedArrayFacts(facts),fn=projected.functions[0];
+      const continuing=name==='loop body reaches condition';
+      const trace=(hir,fixed=publication)=>prepareArrayCalls(hir,fixed).ownerModel.functions.get(fn.id).operations;
+      await t.test('post-loop resize uses only reachable lengths',()=>{
+        const resize=trace(projected).find(row=>row.kind==='resize');
+        assert.deepEqual([resize.proof.exactLength,resize.proof.nonStructural],[continuing?null:1,false]);
+      });
+      if(!continuing)await t.test('owner analysis excludes a terminating body resize from the initial exit',()=>{
+        // An in-memory analysis variant reuses the real loop and resize
+        // operations. The original owned package above stays unchanged.
+        const loop=fn.body.find(row=>row.kind==='while');
+        const resize=fn.body.find(row=>row.expression?.kind==='arrayResizeChecked');
+        const sameLength={...resize,expression:{...resize.expression,
+          value:{...resize.expression.value,token:'1',decimal:'1'}}};
+        const effectsFor=replacement=>{
+          const body=fn.body.flatMap(row=>row===loop?replacement:[row===resize?sameLength:row]);
+          const variant={...projected,functions:[{...fn,body}]};
+          return trace(variant,initialArrayPublication(variant)).filter(row=>row.kind==='resize').map(row=>row.proof);
+        };
+        const [early,after]=effectsFor([{...loop,body:[resize,...loop.body]}]);
+        assert.deepEqual([early.newLength,early.nonStructural],[0,false]);
+        assert.deepEqual([after.exactLength,after.newLength,after.nonStructural],[1,1,true]);
+
+        const compareResize=left=>({...loop.condition,kind:'binary',operator:'===',left,right:resize.expression.value});
+        const [,afterCondition]=effectsFor([{...loop,condition:compareResize(resize.expression)}]);
+        assert.deepEqual([afterCondition.exactLength,afterCondition.newLength,afterCondition.nonStructural],[0,1,false]);
+
+        const {binding}=fn.body.find(row=>row.kind==='local'&&row.binding.name==='owner');
+        const target=resize.expression.target,receiver={...target.receiver,binding:binding.id};
+        const conditionalRebind={kind:'if',condition:loop.condition,range:loop.range,then:[loop.body[0]],else:[]};
+        const resizeAlias={...resize.expression,target:{...target,receiver}};
+        const [,afterAlias]=effectsFor([conditionalRebind,{...loop,condition:compareResize(resizeAlias)}]);
+        assert.deepEqual([afterAlias.exactLength,afterAlias.nonStructural],[null,false]);
+      });
+    }
+    const built=buildHir(facts,context,publication);
     if(ownerName===null){
       assert.equal(built.status,'error');
       const diagnostic=built.diagnostics[0];

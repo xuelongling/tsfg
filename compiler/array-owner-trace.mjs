@@ -331,7 +331,8 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             if(context&&truthValues.get(canonical([...at,'condition']))===false){stored.leaveLoop(loopEntry,stored.state());continue;}
             const entryTruth=truthValues.get(canonical([...at,'condition'])),beforeTruth=snapshot(truthBindings);
             // A loop proof must hold on its backedge, not only on the first iteration.
-            for(const key of lengths.keys()){charge();lengths.set(key,null);}
+            const conditionLengths=new Map(),conditionExactLengthJoin=exactLengthJoin;
+            for(const [key,length]of lengths){charge();conditionLengths.set(key,length);lengths.set(key,null);}
             for(const id of truthBindings.keys()){charge();truthBindings.set(id,null);}
             const before=snapshot(bindings),conditionExit=stored.state();conditionalDepth++;
             const bodyExit=body(row.body,[...at,'body'],reachableRow);conditionalDepth--;
@@ -339,12 +340,16 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             // Only a normally completed body can repeat its condition. The
             // shared scope also distinguishes views freshly made each turn.
             const repeats=backedgeTruth!==false,zero=!(context&&entryTruth===true);
+            const initialExit=reachableRow&&zero&&!bodyExit;
+            // Opaque effects can leave stale per-owner lengths. A specialized
+            // trace can also stop at an unresolved inner loop without returning.
+            const keepConditionLengths=initialExit&&entryTruth!==true&&conditionExactLengthJoin&&(!context||stored.terminated);
             if(incoming&&bodyExit&&repeats)model.loops.push(at);
             stored.leaveLoop(loopEntry,conditionExit,repeats,zero);
             // Entry true is not an invariant. A proved false backedge yields
             // an actual normal continuation; unresolved cycles do not.
             if(context&&entryTruth===true&&(repeats||!bodyExit))fallthrough=false;
-            if(reachableRow&&zero&&!bodyExit){
+            if(initialExit){
               // With no continuing body path, only the initial condition can exit.
               bindings.clear();
               for(const [id,owner]of before){charge();bindings.set(id,owner);}
@@ -353,7 +358,11 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             }
             if(!repeats)meetTruth([...(zero?[beforeTruth]:[]),...(bodyExit?[afterTruth]:[])]);
             else for(const id of truthBindings.keys()){charge();truthBindings.set(id,null);}
-            for(const key of lengths.keys()){charge();lengths.set(key,null);}
+            if(keepConditionLengths){
+              lengths.clear();
+              for(const [key,length]of conditionLengths){charge();lengths.set(key,length);}
+              exactLengthJoin=conditionExactLengthJoin;
+            }else for(const key of lengths.keys()){charge();lengths.set(key,null);}
           }else if(row.body){const nestedExit=body(row.body,[...at,'body'],reachableRow);fallthrough=incoming&&nestedExit;}
         }
       }

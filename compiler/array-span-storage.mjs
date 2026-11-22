@@ -46,7 +46,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
   function begin(fn,context=false,aliases={groups:[],nested:[]}){
     if(!enabled)return {model:undefined,record:(value,path,owner,call)=>owner,
       bind:(id,value)=>{},initialize:statement=>{},get:path=>null,returned:(value,path)=>{},finish:()=>{},
-      state:()=>null,restore:state=>{},join:states=>{},enterLoop:state=>{},leaveLoop:(entry,exit)=>{}};
+      state:()=>null,restore:state=>{},join:states=>{},enterLoop:state=>{},leaveLoop:(entry,exit)=>{},terminated:false};
     const values=new Map(),bindings=new Map(),captures=new Map(),reads=new Map(),returnReads=new Map(),returns=[],parameters=[],exits=[];
     const requirements=[],demands=[],dependencies=[],deferred=new Map(),callEvents=new Map(),projectedEvents=[],callLoops=[];
     let terminated=false;const mutations=[],bindingWrites=[],observations=[],slotExits=[],activeLoops=[];
@@ -447,6 +447,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       return {sources:[...sources.values()],pending,retainedSources};
     };
     return {model,record,initialize,bind,get,state,restore:restoreState,join,enterLoop,leaveLoop,
+        get terminated(){return terminated;},
       returned:(value,path)=>{
         if(terminated)return;
         charge();const copied=copy(value),roots=[copied];
