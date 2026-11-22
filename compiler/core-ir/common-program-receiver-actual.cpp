@@ -94,12 +94,12 @@ bool visitRetainedFrames(ActualCheck &c,const ActualFrameWorld &world,Retain &&r
       size_t height=0;
       for(auto remaining=count;remaining;remaining>>=1){if(!c.step())return false;height+=2;}
       height=std::min(height,count);size_t retained=0;
-      for(const auto &[spelling,slot]:c.fieldSlotArchive){
+      for(const auto &slot:c.fieldSlotArchive){
         // Visit/load the archive node, then a numeric owner/ordinal tree find.
         // Cover both directions of same-key debug predicates before lookup:
         // two owner reads/equality/branch, two ordinal reads and comparison.
         if(!c.step(2)||!c.step(3+height+2*(height+1)*7))return false;
-        const auto row=value.births.find(&slot);if(row==value.births.end())continue;
+        const auto row=value.births.find(slot.get());if(row==value.births.end())continue;
         if(!c.step(3)||!retain(row->second.real)||!c.e.message.empty())return false;
         if(++retained==count)break;
       }
@@ -161,47 +161,17 @@ std::optional<std::pair<size_t,bool>> cursorPosition(ActualCheck &check,const Ac
   }
   return std::pair{first,false};
 }
-using SlotArchiveIterator=decltype(ActualCheck::fieldSlotArchive)::iterator;
-struct SlotArchivePosition {SlotArchiveIterator found,previous;bool present=false;};
 constexpr llvm::StringLiteral constructionSlotPrefix="construction/receiver:sha256:";
-std::optional<SlotArchivePosition> constructionSlotPosition(ActualCheck &check,llvm::StringRef query){
-  constexpr size_t discriminatorSize=4;
-  const auto digestPrefix=query.substr(constructionSlotPrefix.size(),discriminatorSize);
-  const auto suffix=query.drop_front(constructionSlotPrefix.size()+discriminatorSize);
-  auto &archive=check.fieldSlotArchive;
-  if(!check.step(10+2*archive.size()+2*constructionSlotPrefix.size()))return {};
-  const auto first=archive.begin(),end=archive.end();
-  bool commonPrefix=false;
-  if(first->first.starts_with(constructionSlotPrefix)){
-    if(!check.step(archive.size()+3+2*constructionSlotPrefix.size()))return {};
-    // In full byte order the keys sharing a prefix form a single interval.
-    // Its two endpoints certify the prefix for the entire live archive.
-    commonPrefix=std::prev(end)->first.starts_with(constructionSlotPrefix);
-  }
-  const auto compare=[&](llvm::StringRef text)->std::optional<int>{
-    if(!check.step(2))return {};
-    if(!commonPrefix){
-      if(!check.step(8+2*constructionSlotPrefix.size()))return {};
-      const auto prefixOrder=text.take_front(constructionSlotPrefix.size()).compare(constructionSlotPrefix);
-      if(prefixOrder)return prefixOrder;
-    }
-    if(!check.step(14))return {};
-    const auto digestOrder=text.substr(constructionSlotPrefix.size(),discriminatorSize).compare(digestPrefix);
-    if(digestOrder)return digestOrder;
-    // The complete prefix and discriminator already match. Read all remaining
-    // bytes to resolve tied prefixes and complete spelling aliases.
-    const auto remainder=text.drop_front(constructionSlotPrefix.size()+discriminatorSize);
-    if(!check.step(remainder.size()+suffix.size()+1))return {};
-    return remainder.compare(suffix);
-  };
-  auto previous=end;
-  for(auto row=first;row!=end;++row){
-    const auto order=compare(row->first);
-    if(!order)return {};
-    if(*order>=0)return SlotArchivePosition{row,previous,!*order};
-    previous=row;
-  }
-  return SlotArchivePosition{end,previous,false};
+constexpr size_t constructionDiscriminatorEnd=constructionSlotPrefix.size()+4;
+std::optional<uint32_t> constructionSlotDiscriminator(ActualCheck &check,llvm::StringRef spelling){
+  if(!check.step(3))return {};
+  if(spelling.size()<constructionDiscriminatorEnd)return {};
+  if(!check.step(4+2*constructionSlotPrefix.size()))return {};
+  if(!spelling.starts_with(constructionSlotPrefix))return {};
+  if(!check.step(24))return {};
+  uint32_t result=0;
+  for(unsigned char byte:spelling.substr(constructionSlotPrefix.size(),4))result=(result<<8)|byte;
+  return result;
 }
 }
 ActualCursorId ActualCheck::ownedCursor(std::shared_ptr<const std::string> &&frame,size_t position){
@@ -265,76 +235,56 @@ const ActualFieldSlot *ActualCheck::fieldSlot(ActualObjectDirectory::const_itera
   }
   if(!step(reference->size()+member->size()+8))return nullptr;
   auto spelling=reference->text()+"/field/"+*member;
-  if(!step())return nullptr;const bool empty=fieldSlotArchive.empty();auto found=fieldSlotArchive.end();
-  bool previousKnown=false,present=false;auto previous=fieldSlotArchive.end();
-
-
   const llvm::StringRef query(spelling);
-  const auto archiveSize=fieldSlotArchive.size();
-  bool searched=false;
-  // The production cache strategy starts after verifier catalogue validation.
-  // It also enables this stateless, bounded search of owned construction slots.
-  if(cacheOperationMetadata){
-    if(!step(5))return nullptr;
-    if(archiveSize>=3&&archiveSize<=64&&query.size()>=128){
-      if(!step(6+2*constructionSlotPrefix.size()))return nullptr;
-      if(query.starts_with(constructionSlotPrefix)){
-        const auto position=constructionSlotPosition(*this,query);
-        if(!position)return nullptr;
-        found=position->found;previous=position->previous;present=position->present;
-        previousKnown=previous!=fieldSlotArchive.end();
-        searched=true;
-      }
-    }
-  }
-  if(!empty&&!searched){
-    if(!step(2))return nullptr;
-    // One complete order supplies both strict-head and equal-head results.
-    // A singleton also supplies its strict-tail proof, without a second read.
-    if(!step(3))return nullptr;const auto first=fieldSlotArchive.begin();
-    if(!step(query.size()+first->first.size()+1))return nullptr;const auto order=query.compare(first->first);
-    if(order<=0){if(!step(2))return nullptr;found=first;present=order==0;}
-    else {
-      if(!step())return nullptr;
-      if(fieldSlotArchive.size()==1){if(!step(2))return nullptr;previousKnown=true;previous=first;}
+  const auto discriminator=constructionSlotDiscriminator(*this,query);
+  if(!e.message.empty()||!step(5))return nullptr;
+
+  auto &archive=fieldSlotArchive;
+  size_t first=0,last=archive.size();
+  const ActualFieldSlot *slot=nullptr;
+  while(first<last){
+    if(!step(18))return nullptr;
+    const auto middle=first+(last-first)/2;
+    const auto &row=*archive[middle];
+    const llvm::StringRef candidate(*row.spelling);
+    int order;
+    if(discriminator&&row.constructionDiscriminator){
+      if(!step(8))return nullptr;
+      if(*discriminator!=*row.constructionDiscriminator)order=*discriminator<*row.constructionDiscriminator?-1:1;
       else {
-        // Preserve the strict-tail route before proving an interior interval.
-        if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(fieldSlotArchive.end());
-        if(!step(previous->first.size()+query.size()+1))return nullptr;previousKnown=previous->first<query;
-        if(!previousKnown){
-          // first < query is already proved; compare its complete successor.
-          if(!step(fieldSlotArchive.size()+2))return nullptr;const auto next=std::next(first);
-          if(!step(query.size()+next->first.size()+1))return nullptr;const auto nextOrder=query.compare(next->first);
-          if(!step())return nullptr;
-          if(nextOrder<=0){if(!step(4))return nullptr;found=next;previous=first;previousKnown=nextOrder<0;present=nextOrder==0;}
-          else {
-            if(!receiverText(spelling))return nullptr;found=fieldSlotArchive.lower_bound(query);
-            if(found!=fieldSlotArchive.end()){
-              if(!step(found->first.size()+query.size()+1))return nullptr;present=found->first==query;}
-          }
-        }
+        const auto left=query.drop_front(constructionDiscriminatorEnd);
+        const auto right=candidate.drop_front(constructionDiscriminatorEnd);
+        if(!step(9+left.size()+right.size()))return nullptr;
+        order=left.compare(right);
       }
+    }else {
+      if(!step(4+query.size()+candidate.size()))return nullptr;
+      order=query.compare(candidate);
     }
+    if(!order){slot=&row;break;}
+    if(order>0)first=middle+1;else last=middle;
   }
-  if(!present){
-    // A strict lower-bound miss supplies the insertion hint. Its two local
-    // neighbour checks still read strings; debug STL also checks each reverse
-    // predicate. Pay that bounded work before node growth, not another search.
-    if(found!=fieldSlotArchive.end()&&!step(2*(spelling.size()+found->first.size()+1)))return nullptr;
-    if(found!=fieldSlotArchive.begin()){
-      if(!previousKnown){if(!step(fieldSlotArchive.size()+1))return nullptr;previous=std::prev(found);}
-      if(!step(2*(previous->first.size()+spelling.size()+1)))return nullptr;
-    }
-    if(!step(4)||!step(8))return nullptr;
-    auto owned=std::make_shared<const std::string>(std::move(spelling));
-    const llvm::StringRef view(*owned);
-    found=fieldSlotArchive.emplace_hint(found,view,ActualFieldSlot{this,fieldSlotArchive.size(),std::move(owned)});
-  }
+
   if(fieldSlotAssociations.size()==fieldSlotAssociations.capacity()){
     if(!step(fieldSlotAssociations.size()*4+1))return nullptr;
     fieldSlotAssociations.reserve(fieldSlotAssociations.capacity()?fieldSlotAssociations.capacity()*2:1);
   }
-  if(!step(4))return nullptr;fieldSlotAssociations.push_back({reference,member,&found->second,&object->second});return &found->second;
+  if(!step(4))return nullptr;
+  if(!slot){
+    // All comparisons have completed. Inserting at the proved index moves
+    // pointers only. Reserve and shift are prepaid before publishing a slot.
+    const auto count=archive.size();
+    if(archive.capacity()==count){
+      if(!step(4*count+3))return nullptr;
+      archive.reserve(count?2*count:1);
+    }
+    if(!step(4*(count-first)+spelling.size()/64+24))return nullptr;
+    auto owned=std::make_shared<const std::string>(std::move(spelling));
+    auto entry=std::make_unique<ActualFieldSlot>(ActualFieldSlot{this,count,std::move(owned),discriminator});
+    slot=entry.get();
+    archive.insert(archive.begin()+first,std::move(entry));
+  }
+  fieldSlotAssociations.push_back({reference,member,slot,&object->second});return slot;
 }
 ActualFieldSlotMatch ActualCheck::existingFieldSlot(const ActualObjectId &reference,ActualFieldDirectory::const_iterator field){
   if(!step()||!need(field!=fields.end(),"physical field lookup member is not owned"))return {};

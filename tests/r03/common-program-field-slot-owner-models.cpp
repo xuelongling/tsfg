@@ -39,21 +39,22 @@ bool heapOwnership(){
     const auto full=heapPayload();f.program.remaining=64;
     if(!expect(f.check.putField(heap,*token,full,true)&&f.error.message.empty()&&sameHeapValue(heap.at(key),full),"registered fourteen-byte field accepts full payload within hit budget; full-text fallback cannot fit"))return false;
   }
-  for(const bool metered:{false,true})for(const bool low:{false,true}){
+  enum class CopyKind { Plain, Indexed, OverRowLimit };
+  for(const auto kind:{CopyKind::Plain,CopyKind::Indexed,CopyKind::OverRowLimit})for(const bool low:{false,true}){
     Symbols f;const auto token=f.get("object","F");ActualHeap source;if(!f.check.defaultField(source,*token,false))return false;
     const auto oldValue=heapPayload();source.insert_or_assign(key,oldValue);
-    auto copied=metered?f.check.copyHeap(source):ActualHeap(source);
+    if(kind==CopyKind::OverRowLimit)for(size_t i=0;i<16;++i)source.emplace("unrelated:"+std::to_string(i),ActualValue{});
+    auto copied=kind==CopyKind::Plain?ActualHeap(source):f.check.copyHeap(source);
     source.at(key).number=17;if(!expect(sameHeapValue(copied.at(key),oldValue),"heap clone owns independent complete mapped values"))return false;
     source.clear();auto replacement=heapPayload();replacement.number=29;
     if(low)f.program.remaining=64;
     const bool ok=f.check.putField(copied,*token,replacement,true);
-    if(low){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&sameHeapValue(copied.at(key),oldValue),"copy constructor and metered copyHeap discard source node index; miss keeps hard fallback budget error"))return false;}
-    else if(!expect(ok&&f.error.message.empty()&&sameHeapValue(copied.at(key),replacement),"clone fallback writes destination-owned node safely after source destruction"))return false;
+    if(low&&kind!=CopyKind::Indexed){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&sameHeapValue(copied.at(key),oldValue),"plain copy and metered copy beyond its row bound keep the unindexed short-key cutoff at64"))return false;}
+    else if(!expect(ok&&f.error.message.empty()&&sameHeapValue(copied.at(key),replacement),"bounded metered copy preserves the destination index at64, and full budget permits fallback after source clearance"))return false;
   }
   for(const bool assign:{false,true})for(const bool probeSource:{false,true}){
     Symbols f;const auto token=f.get("object","F"),other=f.get("second","F");ActualHeap source;
     if(!f.check.defaultField(source,*token,false))return false;source.at(key)=heapPayload();
-    // Both real owning move forms are used by ActualState edge delivery.
     ActualHeap moved(std::move(source));ActualHeap destination;
     if(assign){if(!f.check.defaultField(destination,*other,false))return false;destination=std::move(moved);}else destination=std::move(moved);
     auto replacement=heapPayload();replacement.number=53;f.program.remaining=64;
@@ -130,10 +131,10 @@ bool cachedPairs(){
   f.check.objects.insert_or_assign(ActualObjectId("object"),ActualObject{"S",true});
   if(!expect(match.object->type=="S"&&match.object->weak&&f.check.existingFieldSlot(ActualObjectId(copiedReference),f.check.fields.find("F")).object==match.object,
       "cached owned map node exposes current insert_or_assign type and weakness"))return false;
-  const auto priorCapacity=f.check.fieldSlotAssociations.capacity();
+  const auto priorCapacity=f.check.fieldSlotAssociations.capacity(),priorArchiveCapacity=f.check.fieldSlotArchive.capacity();
   for(size_t i=0;i<40;++i){const auto ref="grown-object-"+std::to_string(i);f.check.objects.emplace(ref,ActualObject{"T",false});if(!f.get(ref,"F"))return false;}
-  if(!expect(f.error.message.empty()&&f.check.fieldSlotAssociations.capacity()>priorCapacity&&match.slot==token&&*match.slot->spelling=="object/field/F"&&match.object->type=="S"&&match.object->weak,
-      "copy-returned match remains valid across association vector growth"))return false;
+  if(!expect(f.error.message.empty()&&f.check.fieldSlotAssociations.capacity()>priorCapacity&&f.check.fieldSlotArchive.capacity()>priorArchiveCapacity&&match.slot==token&&*match.slot->spelling=="object/field/F"&&match.object->type=="S"&&match.object->weak,
+      "copy-returned match and owned slot remain stable across both vector reallocations"))return false;
   // No old match/token is dereferenced after this actual owner reset.
   if(!expect(f.check.solve(false)&&f.error.message.empty()&&f.check.contexts.empty()&&f.check.fieldSlotAssociations.empty()&&f.check.fieldSlotArchive.empty()&&f.check.objects.empty(),"solve destroys old association universe before object nodes"))return false;
   f.check.objects.emplace("object",ActualObject{"T",false});const auto fresh=f.get("object","F");const auto freshMatch=f.check.existingFieldSlot(ActualObjectId("object"),f.check.fields.find("F"));
@@ -149,7 +150,7 @@ bool archiveTail(){
   const std::string small="sha256:"+std::string(64,'0'),firstId="sha256:"+std::string(64,'1');
   const std::string middle="sha256:"+std::string(64,'2'),lastId="sha256:"+std::string(64,'3');
   const auto firstKey=reference+"/field/"+firstId,lastKey=reference+"/field/"+lastId;
-  for(const unsigned mode:{0u,1u,2u,3u,4u,5u,6u,7u,8u,9u,10u}){
+  for(const unsigned mode:{0u,1u,2u,3u,4u,5u,6u,7u,8u,9u,10u,11u}){
     Symbols f;f.check.objects.emplace(reference,ActualObject{"T",false});
     for(const auto &id:{small,firstId,middle,lastId}){
       f.check.builtins.emplace("tail:"+id,Object{{"id",id},{"sourceBinding","tail-binding:"+id},{"type","T"}});
@@ -158,39 +159,45 @@ bool archiveTail(){
     const auto first=f.get(reference,firstId);
     if(!expect(first&&f.error.message.empty()&&reference.size()==165&&firstId.size()==71&&firstKey.size()==243&&
         first->owner==&f.check&&first->ordinal==0&&*first->spelling==firstKey,"fresh archive owns the complete 165-byte reference and 71-byte member spelling"))return false;
+    const auto &archive=f.check.fieldSlotArchive;
+    if(mode==11){
+      const std::string earlier="construction/receiver:sha256:"+std::string(64,'0')+"/sha256:"+std::string(64,'b');
+      f.check.objects.emplace(earlier,ActualObject{"T",false});f.program.remaining=600;
+      const auto head=f.get(earlier,small);
+      if(!expect(head&&f.error.message.empty()&&head->ordinal==1&&*head->spelling==earlier+"/field/"+small&&archive.size()==2&&archive[0].get()==head&&archive[1].get()==first,
+          "different construction digest prefixes establish full order and keep the existing slot within600"))return false;continue;}
     if(mode==0||mode==6){
-      // The first registration of this second key is the budgeted operation:
-      // no preceding lookup/registration can warm the association or archive.
-      f.program.remaining=mode==0?2000:800;const auto tail=f.get(reference,lastId);
+      f.program.remaining=mode==0?1000:800;const auto tail=f.get(reference,lastId);
       if(mode==6){if(!expect(!tail&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==1&&f.check.fieldSlotAssociations.size()==1,
           "strict-tail cutoff is a hard error before insertion, not a miss/fallback success"))return false;continue;}
       if(!expect(tail&&f.error.message.empty()&&tail!=first&&tail->owner==&f.check&&tail->ordinal==1&&*tail->spelling==lastKey&&
-          f.check.fieldSlotArchive.size()==2&&f.check.fieldSlotAssociations.size()==2,"first full-size strict-tail registration fits 2000; the old 2924-unit tree search cannot fit"))return false;
-      auto row=f.check.fieldSlotArchive.begin();if(!expect(row->first==firstKey&&&row->second==first,"literal first canonical row remains owned and unchanged"))return false;
-      ++row;if(!expect(row!=f.check.fieldSlotArchive.end()&&row->first==lastKey&&&row->second==tail&&++row==f.check.fieldSlotArchive.end(),"strict-tail insertion keeps exactly the literal full lexical sequence"))return false;continue;
+          archive.size()==2&&f.check.fieldSlotAssociations.size()==2,"first full-size strict-tail registration with the same digest prefix fits1000"))return false;
+      if(!expect(archive[0].get()==first&&*archive[0]->spelling==firstKey&&archive[1].get()==tail&&*archive[1]->spelling==lastKey,
+          "strict-tail insertion keeps the full lexical sequence and stable first slot"))return false;continue;
     }
     const auto last=mode>=9?nullptr:f.get(reference,lastId);if(!expect((last||mode>=9)&&f.error.message.empty(),"independent full-budget fixture owns exactly the intended endpoint rows"))return false;
     if(mode==1||mode==7||mode>=9){
       const auto compound=lastId+"/field/"+firstId,aliasReference=reference+"/field/"+lastId,aliasKey=lastKey+"/field/"+firstId;
       f.check.builtins.emplace("tail-alias",Object{{"id",compound},{"sourceBinding","tail-alias-binding"},{"type","T"}});
       f.check.fields.emplace(compound,&f.check.builtins.at("tail-alias"));f.check.objects.emplace(aliasReference,ActualObject{"T",false});
-      const auto alias=f.get(reference,compound);if(!expect(alias&&f.error.message.empty()&&*alias->spelling==aliasKey&&f.check.fieldSlotArchive.rbegin()->first==aliasKey,"independent component pair creates the complete lexical tail alias"))return false;
-      if(mode==7||mode>=9)f.program.remaining=mode==10?1300:3000;const auto same=f.get(aliasReference,firstId);
+      const auto alias=f.get(reference,compound);if(!expect(alias&&f.error.message.empty()&&*alias->spelling==aliasKey&&archive.back().get()==alias,"independent component pair creates the complete lexical tail alias"))return false;
+      if(mode==7||mode>=9)f.program.remaining=mode==10?800:mode==7?1100:1400;const auto same=f.get(aliasReference,firstId);
       if(mode==7||mode==10){if(!expect(!same&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==(mode==10?2u:3u)&&f.check.fieldSlotAssociations.size()==(mode==10?2u:3u),
           "full canonical alias cutoff is a hard error and cannot publish another row or association"))return false;continue;}
       if(!expect(same==alias&&same->owner==&f.check&&same->ordinal==(mode>=9?1u:2u)&&*same->spelling==aliasKey&&
           f.check.fieldSlotArchive.size()==(mode>=9?2u:3u)&&f.check.fieldSlotAssociations.size()==(mode>=9?3u:4u)&&&f.check.objects.at(ActualObjectId(reference))!=&f.check.objects.at(ActualObjectId(aliasReference)),"equal complete spelling reuses one symbol while retaining both distinct owned component pairs"))return false;
-      if(mode==9){auto row=f.check.fieldSlotArchive.begin();if(!expect(row->first==firstKey&&&row->second==first&&++row!=f.check.fieldSlotArchive.end()&&row->first==aliasKey&&&row->second==alias&&++row==f.check.fieldSlotArchive.end(),"fresh two-row successor alias preserves the literal full sequence and endpoint nodes"))return false;}continue;
+      if(mode==9&&!expect(archive[0].get()==first&&*archive[0]->spelling==firstKey&&archive[1].get()==alias&&*archive[1]->spelling==aliasKey,
+          "fresh two-row successor alias preserves the full sequence and endpoint slots"))return false;continue;
     }
     const bool before=mode==3||mode==5,limited=mode==4;const auto &id=before?small:middle;const auto key=reference+"/field/"+id;
-    if(limited||mode==5)f.program.remaining=2000;if(mode==8)f.program.remaining=4000;const auto inserted=f.get(reference,id);
+    if(limited)f.program.remaining=1000;if(mode==5||mode==8)f.program.remaining=1400;const auto inserted=f.get(reference,id);
     if(limited){if(!expect(!inserted&&f.error.code=="core-ir-common-budget"&&f.check.fieldSlotArchive.size()==2&&f.check.fieldSlotAssociations.size()==2&&
-          f.check.fieldSlotArchive.count(key)==0,"non-tail low-budget full-search fallback reports hard error and grants no new row or association"))return false;continue;}
+          archive[0].get()==first&&archive[1].get()==last,"interior search cutoff reports hard error and preserves both owned slots and associations"))return false;continue;}
     if(!expect(inserted&&f.error.message.empty()&&inserted->owner==&f.check&&inserted->ordinal==2&&*inserted->spelling==key&&
         f.check.fieldSlotArchive.size()==3&&f.check.fieldSlotAssociations.size()==3,"before-first and interior full-budget misses retain real canonical lookup and insertion"))return false;
     const std::vector<std::string> expected=before?std::vector<std::string>{key,firstKey,lastKey}:std::vector<std::string>{firstKey,key,lastKey};
-    auto row=f.check.fieldSlotArchive.begin();for(const auto &spelling:expected){if(!expect(row!=f.check.fieldSlotArchive.end()&&row->first==spelling&&row->second.owner==&f.check,"fallback rows follow the independently specified complete lexical sequence"))return false;++row;}
-    if(!expect(row==f.check.fieldSlotArchive.end()&&&f.check.fieldSlotArchive.at(firstKey)==first&&&f.check.fieldSlotArchive.at(lastKey)==last,"non-tail insertion preserves endpoint node identities and adds no phantom row"))return false;
+    for(size_t index=0;index<expected.size();++index)if(!expect(*archive[index]->spelling==expected[index]&&archive[index]->owner==&f.check,"binary search insertion preserves the complete lexical sequence"))return false;
+    if(!expect(archive[before?1:0].get()==first&&archive[2].get()==last,"non-tail insertion preserves the original slot identities"))return false;
   }
   llvm::errs()<<"PASS field-slot archive fresh full-size tail/equal/alias/interior/fallback/cutoff/adjacent subcases\n";return true;
 }
@@ -248,8 +255,7 @@ bool sameBirthWorld(const ActualFrameWorld &a,const ActualFrameWorld &b){
 }
 bool birthCoveredStores(){
   const std::string undefined="sha256:64128720a4ac06ed43e1e6705520af7acda9bd2132f79ba2e1c65fe3eb24272b";
-  // strong matched, no birth, HeapWeak overflow, receiver unknown/Top,
-  // clone without index, false-phase RegionStore, ordinary store, Bottom, alias.
+  // Matched birth, weak/unknown, unindexed copy, RegionStore, ordinary store, Bottom, alias.
   for(unsigned mode=0;mode<11;++mode){
     Symbols f;const bool alias=mode==9,ordinary=mode==7,uncertain=mode==3||mode==4;
     const std::string reference=alias?"object/field/F":"object",fieldId=alias?"G":"F",key=reference+"/field/"+fieldId;
@@ -273,7 +279,7 @@ bool birthCoveredStores(){
     if(!expect(f.check.defaultField(state.heap,*token,false)&&f.check.defaultField(state.heap,*other,false)&&f.error.message.empty(),"original default nodes registered"))return false;
     state.heap.insert_or_assign(key,oldValue);state.heap.insert_or_assign("second/field/G",oldValue);state.heap.emplace("global:untouched",heapPayload());
     if(mode==2){f.check.objects.at(ActualObjectId(reference)).weak=true;auto &full=state.heap.at(key);full.tags.clear();for(unsigned i=0;i<256;++i)full.tags.insert("old-tag:"+std::to_string(i));}
-    if(mode==5){auto clone=f.check.copyHeap(state.heap);if(!expect(f.error.message.empty(),"independent clone discards source index"))return false;state.heap=std::move(clone);}
+    if(mode==5)state.heap=ActualHeap(state.heap);
     if(mode==6){f.check.regions.nodes.emplace("root:receiver",RegionNode{"region",reference,"T"});f.check.regions.nodes.emplace("root:new",RegionNode{"region","new-data","T"});
       state.regions["root:receiver"].emplace("/field/"+fieldId,oldValue.region);}
     const auto bound=receiver;if(mode==3)receiver.unknown=true;if(mode==4)receiver.callableTop=true;
@@ -332,12 +338,16 @@ bool heapKeyIdentity(){
       f.check.fields.emplace(fieldId,&row->second);}
     const auto token=f.get(reference,fieldId);ActualHeap heap;
     if(!expect(token&&f.error.message.empty()&&key.size()==(longKey?243:14)&&*token->spelling==key,"factory owns the complete SSO14 or long243 canonical spelling"))return false;
-    const auto row=f.check.fieldSlotArchive.find(key);
-    if(!expect(row!=f.check.fieldSlotArchive.end()&&row->first==llvm::StringRef(key)&&row->first.data()==token->spelling->data(),
-        "archive view borrows its own immutable mapped string after construction, including SSO storage"))return false;
+    const auto &archive=f.check.fieldSlotArchive;
+    if(!expect(archive.size()==1&&archive.front().get()==token&&*archive.front()->spelling==key,
+        "archive owns the stable slot and its complete immutable spelling, including SSO storage"))return false;
     if(!expect(f.check.defaultField(heap,*token,false)&&f.error.message.empty(),"fresh real default creation registers the canonical identity"))return false;
     const auto original=heapPayload();heap.insert_or_assign(std::string(key),original);auto incoming=heapPayload();incoming.number=9007199254740995LL;incoming.region.number=73;
-    const auto expected=incoming;f.program.remaining=64;
+    const auto expected=incoming;
+    if(longKey){ActualHeap unindexed(heap);f.program.remaining=600;
+      if(!expect(f.check.putField(unindexed,*token,incoming,true)&&f.error.message.empty()&&sameHeapValue(unindexed.at(key),expected)&&sameHeapValue(heap.at(key),original),
+          "bounded long-key recovery updates only the unindexed clone within600"))return false;}
+    f.program.remaining=64;
     if(!expect(f.check.putField(heap,*token,incoming,true)&&f.error.message.empty()&&sameHeapValue(heap.at(key),expected),
         "first unwarmed registered SSO/long identity hit fits64 without a487 full-key comparison or payload loss"))return false;
     incoming.objects.clear();incoming.region.roots.clear();incoming.number.reset();
@@ -444,7 +454,7 @@ bool archiveHeadBytes(){
     const auto key=reference+"/field/F";std::shared_ptr<const std::string> retained;
     {Symbols f;f.check.objects.emplace(reference,ActualObject{"T",false});const auto last=f.get(reference,"G"),head=f.get(reference,"F");
       if(!expect(last&&head&&f.error.message.empty()&&head->ordinal==1&&*head->spelling==key&&
-          f.check.fieldSlotArchive.begin()->first==llvm::StringRef(key)&&&f.check.fieldSlotArchive.begin()->second==head,
+          f.check.fieldSlotArchive.front().get()==head&&f.check.fieldSlotArchive.back().get()==last,
           "strict head owns the complete empty/NUL/unsigned-byte canonical key and preserves registration ordinal"))return false;
       retained=head->spelling;}
     if(!expect(retained&&*retained==key,"head owner survives temporary query destruction and checker destruction, including SSO"))return false;
@@ -478,8 +488,6 @@ bool ownedSlots(){
   if(!expect(a.real.objects==replacement.objects&&b.real.objects==replacement.objects&&a.real.number==replacement.number&&b.real.number==replacement.number&&!a.pending&&!b.pending&&
     a.referenceText()=="original-reference"&&b.referenceText()=="ancestor-reference"&&unrelated.referenceText()=="unrelated-reference"&&unrelated.pending&&unrelated.real.objects==oldValue.objects,
     "canonical alias updates both journals, preserves independent references and leaves unrelated slot untouched"))return false;
-  // Destroy all local Worlds before asking the real empty-function solve to
-  // reset its context/symbol/object universe. Never inspect old tokens again.
   world.clear();if(!expect(f.check.solve(false)&&f.error.message.empty()&&f.check.contexts.empty()&&f.check.fieldSlotAssociations.empty()&&f.check.fieldSlotArchive.empty()&&f.check.objects.empty(),"solve clears contexts and symbol universe before recreating object directories"))return false;
   f.check.objects.emplace("object",ActualObject{"T",false});const auto fresh=f.get("object","F");
   if(!expect(fresh&&fresh->owner==&f.check&&*fresh->spelling=="object/field/F"&&f.check.fieldSlotArchive.size()==1&&f.check.fieldSlotAssociations.size()==1&&f.check.contexts.empty(),"reset universe creates its valid current canonical association without a pointer-freshness claim"))return false;

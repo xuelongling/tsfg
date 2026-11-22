@@ -338,14 +338,18 @@ bool returnFrameAdoption(){
     ActualValue control;control.frames={f.selected};f.input({control});f.context.normal=true;
     auto &op=f.function.blocks[0].operations[0];op.name="func.return";const auto before=f.state;bool changed=false,continues=true;size_t edges=0;
     if(!expect(f.selected.size()==80&&f.context.normalFrames.empty()&&f.state.frames.size()==1&&f.check.receiverFrames.size()==1,"fixed1000 actual return starts with one complete80B binding and stable completion flag"))return false;
+    const auto *selected=&f.state.frames.begin()->second;
     f.program.remaining=1000;const bool ok=f.check.instruction(f.context,op,0,f.state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues);
-    if(!expect(ok&&f.error.message.empty()&&!continues&&changed&&edges==0&&same(f.state,before)&&
-        sameMap(f.context.normalFrames,before.frames,[](const auto &a,const auto &b){return same(a,b);})&&f.context.normalHeap.empty()&&same(f.context.returned,ActualValue{}),
-        "fixed1000 actual func.return preserves the complete selected World without a second journal/key clone"))return false;
-    const auto kept=f.context.normalFrames;f.state.frames.find(f.selected)->second.bound.objects.clear();f.state.frames.find(f.selected)->second.bound.region.roots.clear();
-    if(!expect(sameMap(f.context.normalFrames,kept,[](const auto &a,const auto &b){return same(a,b);}),"low-budget adopted summary owns its binding independently from input World"))return false;
-    const auto changedInput=f.state;f.context.normalFrames.begin()->second.bound.cells.clear();
-    if(!expect(same(f.state,changedInput),"adopted summary mutation cannot change input state"))return false;
+    if(!expect(ok&&f.error.message.empty()&&!continues&&changed&&edges==0&&f.state.values.empty()&&f.state.heap.empty()&&f.state.regions.empty()&&
+        sameMap(f.context.normalFrames,before.frames,[](const auto &a,const auto &b){return same(a,b);})&&
+        &f.context.normalFrames.begin()->second==selected&&
+        f.context.normalHeap.empty()&&same(f.context.returned,ActualValue{})&&same(f.context.inputArguments()[0],control),
+        "fixed1000 actual func.return transfers the complete selected World node without cloning"))return false;
+    const auto kept=f.context.normalFrames;
+    f.state.frames.clear();f.check.receiverFrames.clear();f.context.identity.reset();
+    if(!expect(sameMap(f.context.normalFrames,kept,[](const auto &a,const auto &b){return same(a,b);}),"transferred summary survives release of the input World, Frame metadata and call arguments"))return false;
+    f.context.normalFrames.begin()->second.bound.cells.clear();
+    if(!expect(sameMap(before.frames,kept,[](const auto &a,const auto &b){return same(a,b);}),"adopted summary mutation preserves the independent input snapshot"))return false;
   }
   for(const bool normal:{true,false})for(const bool populated:{false,true}){Fixture f(false);
     auto returned=payload("returned");returned.truth=2;returned.number=17;returned.region.number=29;f.state.values.at(8)=returned;
@@ -388,6 +392,11 @@ bool returnFrameAdoption(){
 }
 namespace {
 bool retainedRootBorrowing(){
+  const auto sameDataPlanes=[](const ActualState &a,const ActualState &b){
+    const auto equal=[](const auto &x,const auto &y){return same(x,y);};
+    return sameMap(a.values,b.values,equal)&&sameMap(a.heap,b.heap,equal)&&
+      sameMap(a.regions,b.regions,[&](const auto &x,const auto &y){return sameMap(x,y,equal);});
+  };
   {Fixture f(false);ActualFrameWorld world;ActualValue tag;tag.tags={"tag-only"};ActualValue object;object.objects={ActualObjectId("object-only")};
     ActualValue callable;callable.callables={{"code","env"}};ActualValue unknown;unknown.unknown=true;ActualValue top;top.callableTop=true;
     ActualValue filtered;filtered.cells={"cell"};filtered.frames={"frame"};filtered.cursors={ActualCursorId("cursor")};filtered.truth=3;filtered.number=17;filtered.region.known=true;filtered.region.roots={"filtered-region"};
@@ -414,8 +423,12 @@ bool retainedRootBorrowing(){
     f.check.receiverFrames.erase(f.check.receiverFrames.find(f.parent));f.check.receiverFrames.erase(f.check.receiverFrames.find(f.unrelated));ActualValue control;control.frames={f.selected};f.input({control});f.context.normal=true;
     auto &op=f.function.blocks[0].operations[0];op.name="func.return";const auto before=f.state;bool changed=false,continues=true;size_t edges=0;
     if(!expect(f.selected.size()==80&&binding.bound.tags.size()==256&&binding.bound.cells.size()==256&&binding.bound.region.roots.size()==256,"independent fixed2000 fixture owns full bounded value planes before transfer"))return false;
+    const auto *selected=&f.state.frames.begin()->second;
     f.program.remaining=2000;if(!expect(f.check.instruction(f.context,op,0,f.state,true,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues)&&
-        f.error.message.empty()&&!continues&&changed&&edges==0&&same(f.state,before)&&sameMap(f.context.normalFrames,before.frames,[](const auto &a,const auto &b){return same(a,b);})&&f.context.normalHeap.empty(),
+        f.error.message.empty()&&!continues&&changed&&edges==0&&sameDataPlanes(f.state,before)&&
+        sameMap(f.context.normalFrames,before.frames,[](const auto &a,const auto &b){return same(a,b);})&&
+        &f.context.normalFrames.begin()->second==selected&&f.context.normalHeap.empty()&&
+        same(f.context.returned,ActualValue{})&&same(f.context.inputArguments()[0],control),
         "fixed2000 genuine return retains all selected value planes without cloning a temporary retained root"))return false;
   }
   for(const bool normal:{true,false})for(const bool populated:{false,true}){Fixture f(false);auto binding=f.state.frames.find(f.selected)->second;binding.bound=f.state.values.at(8);binding.bound.objects={ActualObjectId("bound")};binding.bound.region.roots={"bound-r"};binding.births.clear();
@@ -431,17 +444,22 @@ bool retainedRootBorrowing(){
     if(populated){ActualFrameBinding old;old.bound=payload("summary-only");old.bound.region.roots={"summary-only-r"};summary.emplace(ActualFrameId(f.unrelated),old);wanted.emplace(ActualFrameId(f.unrelated),old);}
     ActualHeap wantedHeap;wantedHeap.emplace("bound/field/value",payload("bound-child"));wantedHeap.emplace("birth/field/value",payload("birth-child"));wantedHeap.emplace("environment/field/capture",payload("env-child"));
     RegionHeap wantedRegions;wantedRegions["bound-r"].emplace("/child",child);wantedRegions.emplace("birth-r",std::map<std::string,RegionValue>{});wantedRegions["journal-r"].emplace("/self",loop);wantedRegions.emplace("child-r",std::map<std::string,RegionValue>{});
-    auto &op=f.function.blocks[0].operations[0];op.name=normal?"func.return":"return_throw";const auto before=f.state;bool changed=false,continues=true;size_t edges=0;f.program.remaining=500000;
-    if(!expect(f.check.instruction(f.context,op,0,f.state,false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues)&&f.error.message.empty()&&!continues&&changed&&edges==0&&same(f.state,before)&&
-        sameMap(summary,wanted,[](const auto &a,const auto &b){return same(a,b);}),"false-mode return completes exact normal/language current World with either adoption or cumulative union"))return false;
+    auto &op=f.function.blocks[0].operations[0];op.name=normal?"func.return":"return_throw";auto before=f.state;bool changed=false,continues=true;size_t edges=0;
+    const auto *selected=&f.state.frames.begin()->second;
+    f.program.remaining=500000;
+    if(!expect(f.check.instruction(f.context,op,0,f.state,false,changed,[&](uint16_t,ActualState,const std::vector<ActualValue>&){++edges;return false;},continues)&&f.error.message.empty()&&!continues&&changed&&edges==0&&sameDataPlanes(f.state,before)&&
+        sameMap(summary,wanted,[](const auto &a,const auto &b){return same(a,b);})&&
+        (populated||&summary.begin()->second==selected)&&same(f.context.inputArguments()[0],control),
+        "false-mode return completes exact normal/language current World with either adoption or cumulative union"))return false;
     auto &heap=normal?f.context.normalHeap:f.context.languageHeap;auto &regions=normal?f.context.normalRegions:f.context.languageRegions;
     if(!expect(sameMap(heap,wantedHeap,[](const auto &a,const auto &b){return same(a,b);})&&sameMap(regions,wantedRegions,[](const auto &a,const auto &b){return sameMap(a,b,[](const auto &x,const auto &y){return same(x,y);});}),
         "borrowed roots reach bound, callable environment, full birth and Region-only birth data including cyclic/empty Region nodes, excluding summary-only roots"))return false;
-    f.state.frames.find(f.selected)->second.bound.region.roots.clear();f.state.frames.find(f.selected)->second.births.clear();f.state.heap.clear();f.state.regions.clear();f.state.frames.clear();f.check.receiverFrames.clear();f.context.identity.reset();
+    before.frames.find(f.selected)->second.bound.region.roots.clear();before.frames.find(f.selected)->second.births.clear();
+    f.state.heap.clear();f.state.regions.clear();f.state.frames.clear();f.check.receiverFrames.clear();f.context.identity.reset();
     if(!expect(sameMap(summary,wanted,[](const auto &a,const auto &b){return same(a,b);})&&sameMap(heap,wantedHeap,[](const auto &a,const auto &b){return same(a,b);})&&
         sameMap(regions,wantedRegions,[](const auto &a,const auto &b){return sameMap(a,b,[](const auto &x,const auto &y){return same(x,y);});}),"final World, Heap and Region outputs own all data after borrowed sources expire"))return false;
-    const auto changedInput=f.state;heap.begin()->second.objects.clear();regions.at("bound-r").at("/child").roots.clear();summary.begin()->second.births.clear();
-    if(!expect(same(f.state,changedInput),"output mutation cannot reach the destroyed source root planes"))return false;
+    const auto changedInput=before;heap.begin()->second.objects.clear();regions.at("bound-r").at("/child").roots.clear();summary.begin()->second.births.clear();
+    if(!expect(same(before,changedInput),"output mutation preserves the independent input root planes"))return false;
   }
   llvm::errs()<<"PASS retained root full ordering/filter/births, fixed2000 return and false-mode owned Heap/Region projections\n";return true;
 }

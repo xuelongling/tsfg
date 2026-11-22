@@ -207,7 +207,12 @@ struct ActualBirth {
 // Analysis-only symbols. Immutable complete spellings can outlive their
 // archive through an owning Heap index. Tokens themselves still expire with
 // the archive and never replace physical IDs or prove a permission.
-struct ActualFieldSlot {const void *owner=nullptr;size_t ordinal=0;std::shared_ptr<const std::string> spelling;};
+struct ActualFieldSlot {
+  const void *owner=nullptr;
+  size_t ordinal=0;
+  std::shared_ptr<const std::string> spelling;
+  std::optional<uint32_t> constructionDiscriminator;
+};
 struct ActualFieldSlotLess {
   bool operator()(const ActualFieldSlot *a,const ActualFieldSlot *b)const{
     return a->owner==b->owner?a->ordinal<b->ordinal:std::less<const void *>{}(a->owner,b->owner);
@@ -340,11 +345,11 @@ struct ActualCheck {
   ActualObjectDirectory objects;
   // Monotone object/cursor directories share one solve epoch; end it before their borrowed nodes are cleared.
   std::shared_ptr<const ActualSymbolUniverse> symbolUniverse;
-  // Stable throughout a solve and its final Borrow replay. Destroy context
-  // Worlds before these symbols, and symbols before their directory keys.
-  // Every view borrows its mapped Slot's immutable spelling. That mapped
-  // owner is initialized once on insertion and is never reassigned.
-  std::map<llvm::StringRef,ActualFieldSlot> fieldSlotArchive;
+  // Own slots in complete spelling order through the solve and Borrow replay.
+  // Insertion moves pointers while slot addresses and ordinals stay fixed.
+  // Heap indexes may share the spelling. Context Worlds release slot pointers
+  // before the archive is cleared.
+  std::vector<std::unique_ptr<ActualFieldSlot>> fieldSlotArchive;
   std::vector<ActualFieldSlotAssociation> fieldSlotAssociations;
   std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds;
   std::map<std::string,CapacityValue> storageCapacity,registerCapacity,resultCapacity;
