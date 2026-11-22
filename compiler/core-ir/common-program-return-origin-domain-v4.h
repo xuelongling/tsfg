@@ -2097,9 +2097,19 @@ class Solver {
     bool undefined=heap.operands.empty(),other=false;
     for(auto operand:operands){if(!m_.spend())return false;const auto mask=locations_[operand].categories;undefined|=bool(mask&2);other|=bool(mask&4);
       if(mask&1){Ref selected;if(!selectCategory(operand,1,selected)||!insert(objects,selected,false))return false;}}
+    // The root's ReceiverInput enumerates mutually exclusive newTargets for
+    // one activation. Normal bind constrains each eligible entry alternative.
+    // Joining separately edited copies would restore the unbound state of
+    // other alternatives even though the input receiver was already bound.
+    if(!m_.spend(7))return false;
+    const bool bindEntryAlternatives=heap.action==V4::ReceiverAction::Bind&&heap.completion==V4::Completion::Normal&&
+      context.function==None&&frames.size()>1&&heap.frames.size()==1&&
+      context.graph->nodes[heap.frames.front()].kind==V4::ValueKind::ReceiverInput;
+    FrameWorld boundEntry;
+    const auto &previous=context.frames[heap.previous];
     if(!m_.spend(frames.size()))return false;for(auto frame:frames){
       if(!m_.spend())return false;const auto value=locations_[frame];if(value.kind!=LocationKind::ReceiverFrame)return open("receiver-action-frame-open");const auto *row=construction(value.label);if(!row)return false;
-      const auto &previous=context.frames[heap.previous];if(!numericLookup(previous.size()))return false;const auto found=previous.find(frame);Binding entry;
+      if(!numericLookup(previous.size()))return false;const auto found=previous.find(frame);Binding entry;
       const auto &binding=found==previous.end()?entry:found->second;bool normal=false,language=false;Set selected;
       if(heap.action==V4::ReceiverAction::Allocate){
         if(row->base)return open("derived-allocation-open");Ref owner,id;Key identity;Location allocated;allocated.kind=LocationKind::Local;allocated.type=value.type;allocated.categories=1;
@@ -2113,19 +2123,23 @@ class Solver {
         if(row->base&&other)language=true;
       }
       const bool live=heap.completion==V4::Completion::Normal?normal:language;if(!live)continue;
-      if(!m_.spend())return false;FrameWorld world;if(!mergeFrames(world,previous,false))return false;
+      if(!m_.spend(3))return false;FrameWorld alternative;auto &world=bindEntryAlternatives?boundEntry:alternative;
+      if(!world.live&&!mergeFrames(world,previous,false))return false;
       if(heap.completion==V4::Completion::Normal&&heap.action==V4::ReceiverAction::Bind){
         if(!numericLookup(world.size())||!m_.spend())return false;auto &bound=world[frame];bound.unbound=false;bound.values.clear();if(!add(bound.values,objects,false))return false;
       }
       if(!numericLookup(world.size()))return false;const auto bound=world.find(frame);
       if(bound!=world.end()&&!recordBoundReceiver(context,frame,bound->second.values))return false;
-      if(!mergePersistentHeap(output,context.heaps[heap.previous])||!mergeFrames(context.frames[index],world))return false;
+      if(!bindEntryAlternatives&&(!mergePersistentHeap(output,context.heaps[heap.previous])||!mergeFrames(context.frames[index],world)))return false;
       if(heap.completion==V4::Completion::Normal){if(!add(context.receiverValues[index],selected))return false;}
       else{Ref owner,error;Key identity;Location thrown;thrown.kind=LocationKind::ReceiverError;thrown.categories=1;
         if(!symbol("local:return-origin",owner)||!key(identity,{23,context.function,context.scope,index,frame}))return false;thrown.owner=owner;
         if(!location(std::move(identity),thrown,error)||!insert(context.receiverValues[index],error))return false;}
-      if(!ready(context.receiverLive,index,true))return false;
+      if(!bindEntryAlternatives&&!ready(context.receiverLive,index,true))return false;
     }
+    if(!m_.spend())return false;
+    if(boundEntry.live&&(!mergePersistentHeap(output,context.heaps[heap.previous])||!mergeFrames(context.frames[index],boundEntry)||
+        !ready(context.receiverLive,index,true)))return false;
     if(!m_.spend(4))return false;
     context.heapInputs[index]=input;
     return true;
