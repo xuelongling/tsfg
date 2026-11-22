@@ -3,13 +3,44 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
-import {buildHir,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,buildInitialArrayPublication,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
 const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-span-storage/source-expected.json',import.meta.url),'utf8'));
 const packetHashes={positive:'4f54e484e19e751647e15fd7932571538e00ca5d60f20c2bf456b13600170778',
   negative:'313fc367bdf150c97012e2c96052322808cca96418c2aba7ea8a2d0659c3af4a'};
+
+for(const [name,sourceHash,packetHash,ownerName] of [
+  ['then returns','3157dd0efbe9ead0858a3dda6019984267784ea258f9409875819f10719dd16d','cd29101ad0f62a526e83977c5a66bed520a9f7c7df2c6e4ffd9067b9897db1e9','a'],
+  ['else returns','fc0b625761f1febadf4a56d4de5bde31441a3067ec20a83de1de64f2b538ebf7','8a6bb7a6df84ad2d585607485851c1a5330ad032f5bb9b4eb59f7c06db9959ca','b'],
+  ['both arms continue','8b0ce389f7eed19ed6997bd864192f52b9e22981ac035711337a8472d0c08c89','2f6790379277145a4bd665a45f5a63a30b588e235b4dce2844d80f51a7c6e13f',null],
+]){
+  test('actual ReadSpan joins continuing owners when '+name,async()=>{
+    const bytes=await readFile(new URL('./testdata/typed-array-span-storage/'+sourceHash+'-package.json',import.meta.url));
+    assert.equal(sha256(bytes),'sha256:'+packetHash);const facts=readTypedArrayFacts(bytes);
+    const source=facts.payload.files.find(file=>file.path===facts.payload.rootFile);
+    assert.equal(sha256(source.content),'sha256:'+sourceHash);
+    const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+    const publication=buildInitialArrayPublication(context),built=buildHir(facts,context,publication);
+    if(ownerName===null){
+      assert.equal(built.status,'error');
+      const diagnostic=built.diagnostics[0];
+      assert.equal(diagnostic.code,'r03-d-readspan-structural-conflict');
+      assert.equal(source.content.slice(diagnostic.primary.start,diagnostic.primary.end),'b.length = 0');
+      return;
+    }
+    assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+    const hir=built.hir,fn=hir.functions.find(fn=>fn.name==='readAfterBranch');
+    const plan=hir.readSpanPlan.functions.find(row=>row.functionId===fn.id);
+    const read=plan.events.find(row=>row.kind==='view-read-complete');
+    const array=fn.body.find(row=>row.kind==='local'&&row.binding.name===ownerName);
+    assert.deepEqual(plan.views.find(row=>row.viewId===read.viewId).owner,
+      {kind:'allocation',functionId:fn.id,allocationSite:array.initializer.allocationSite,callPath:[]});
+    assert.match(lowerFormalHir(hir,context,publication),/tsfg_core\.domain\.array_resize/);
+  });
+}
+
 async function actual(kind){
   const row=expected.inputs[kind],bytes=await readFile(new URL('./testdata/typed-array-span-storage/'+row.sha256+'-package.json',import.meta.url));
   assert.equal(sha256(bytes).slice(7),packetHashes[kind]);const facts=readTypedArrayFacts(bytes);

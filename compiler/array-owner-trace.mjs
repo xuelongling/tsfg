@@ -313,7 +313,14 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             fallthrough=incoming&&(yesExit||noExit);
             stored.join([storageYes,stored.state()]);
             meetTruth([...(yesExit?[yesTruth]:[]),...(noExit?[snapshot(truthBindings)]:[])]);
-            for(const [id,owner]of yes)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
+            // Only continuing arms can supply an owner at a live join. The
+            // dead lexical tail retains the conservative trace of both arms.
+            if(!incoming||yesExit===noExit){
+              for(const [id,owner]of yes){charge();bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));}
+            }else if(yesExit){
+              bindings.clear();
+              for(const [id,owner]of yes){charge();bindings.set(id,owner);}
+            }
             if(exactLengthJoin&&!noExit&&yesLengths){
               lengths.clear();for(const [key,length]of yesLengths){charge();lengths.set(key,length);}
             }else for(const [key,length]of lengths){

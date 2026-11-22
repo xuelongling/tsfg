@@ -246,7 +246,12 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
       if(name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_resize") {
         const auto receiver=strip(previous->getOperand(0));
         if(!sameOwner(task,receiver)) {
-          if(fresh(receiver)&&fresh(task.owner)){if(!pass(previous,task.owner,task.index))return {};}
+          // Distinct verified allocation sites stay disjoint when branch
+          // arguments forward the same owned value on every reachable edge.
+          auto &scope=scopes[task.scope];
+          const auto left=forwardedOwner(scope,receiver),right=forwardedOwner(scope,task.owner);
+          if(!valid)return {};
+          if(left!=right&&fresh(left)&&fresh(right)){if(!pass(previous,task.owner,task.index))return {};}
           else if(!unknown(task.node))return {};continue;
         }
         const auto slot=index(previous->getOperand(1));
