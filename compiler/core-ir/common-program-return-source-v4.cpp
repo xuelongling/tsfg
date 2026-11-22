@@ -33,6 +33,7 @@ struct ReturnSource {
   State state;
   ReturnSourceCatalogCache catalog;
   std::map<std::string,const Json *> bindings;
+  std::optional<std::map<std::string,const Json *>> physicalBindings;
   using Slot=ReturnSourceCatalog::Slot;
   std::map<std::string,Refs> environmentRefs;
   std::map<std::string,bool> references;
@@ -57,6 +58,22 @@ struct ReturnSource {
   std::string encoded(const Json &value){if(!metadata(value))return {};return canonical(value);}
   bool lookup(size_t count,llvm::StringRef key){size_t depth=1;for(auto n=count;n;n>>=1){if(!step())return false;depth+=2;}
     for(size_t i=0;i<depth;++i)if(!text(key))return false;return true;}
+  bool scalarGlobalBinding(const Json &global){
+    if(!physicalBindings){
+      if(!step())return false;
+      auto &directory=physicalBindings.emplace();
+      for(const auto &row:items(field(p.representation,"bindings"))){
+        const auto id=field(row,"id").getAsString().value_or("");
+        if(!lookup(directory.size(),id)||!step())return false;
+        directory.emplace(id.str(),&row);
+      }
+    }
+    const auto id=string(field(global,"sourceBinding"));
+    if(!lookup(physicalBindings->size(),id))return false;
+    const auto found=physicalBindings->find(id);
+    if(!need(found!=physicalBindings->end(),"normalized global has no owned physical binding"))return false;
+    return field(*found->second,"carrier").getAsString()==tsfg::exception::i32Id;
+  }
   Refs copyRefs(const Refs &values){if(!step(values.size()+1))return {};return values;}
   void add(Refs &into,const Refs &values){if(!step(values.size()))return;for(auto id:values){if(!step())return;into.insert(id);}}
   Refs unite(const Refs &a,const Refs &b){auto out=copyRefs(a);add(out,b);return out;}
@@ -527,7 +544,16 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
   };
   const auto absent=std::numeric_limits<Ref>::max();if(!step(cfg.carriers.size()*3))return false;
   std::vector<Refs> registers(cfg.carriers.size());std::vector<Ref> joins(cfg.carriers.size(),absent);std::vector<bool> blockParameters(cfg.carriers.size(),false);
-  for(size_t block=1;block<cfg.blocks.size();++block)for(auto reg:cfg.blocks[block].parameters){if(!step())return false;blockParameters[reg]=true;}
+  if(!step(cfg.blocks.size()+cfg.carriers.size()))return false;
+  std::vector<bool> physicalContinuations(cfg.blocks.size(),false),sourceParameters(cfg.carriers.size(),false);
+  for(const auto &block:cfg.blocks){
+    if(!step())return false;
+    const auto &branch=block.operations.back();
+    if(branch.name=="numeric_use")physicalContinuations[branch.successors[0]]=true;
+  }
+  for(size_t block=1;block<cfg.blocks.size();++block)for(auto reg:cfg.blocks[block].parameters){
+    if(!step())return false;blockParameters[reg]=true;sourceParameters[reg]=!physicalContinuations[block];
+  }
   const auto phi=[&](uint16_t reg){
     if(joins[reg]!=absent)return true;const auto type=view(reg);const auto identity=encoded(Array{"cfg-register",functionId,int64_t(reg)});
     joins[reg]=node(Object{{"kind","join"},{"type",type?Json(*type):Json(nullptr)},{"inputs",refs(registers[reg])}},identity);
@@ -535,10 +561,44 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
   };
   const auto get=[&](uint16_t reg){if(!step()||(registers[reg].empty()&&!phi(reg)))return Refs{};return copyRefs(registers[reg]);};
   const auto define=[&](uint16_t reg,const Refs &values){
-    if(blockParameters[reg]||joins[reg]!=absent)return phi(reg)&&mergeInputs(nodes[joins[reg]],values);
+    if((blockParameters[reg]||joins[reg]!=absent)&&(!phi(reg)||!mergeInputs(nodes[joins[reg]],values)))return false;
+    if(blockParameters[reg])return true;
     registers[reg]=copyRefs(values);return good();
   };
   const bool constructor=string(field(fn,"kind"))=="construction-body";const auto owner=string(field(fn,"ownerType"));
+  // Allocate semantic register joins in Source order before binding parameters.
+  // Physical adapters can share a Source identity and need no new join.
+  if(!lookup(p.sourceRegisters.size(),functionId)||!step(cfg.carriers.size()))return false;
+  const auto sourceRegisters=p.sourceRegisters.find(functionId);
+  if(!need(sourceRegisters==p.sourceRegisters.end()||sourceRegisters->second.size()==cfg.carriers.size(),"normalized register origins are incomplete"))return false;
+  std::vector<uint16_t> semanticOrder(cfg.carriers.size(),noRegister);
+  for(size_t reg=0;reg<cfg.carriers.size();++reg){
+    if(!step())return false;
+    const auto origin=sourceRegisters==p.sourceRegisters.end()?reg:sourceRegisters->second[reg];
+    if(!need(origin<semanticOrder.size(),"normalized register origin is outside Source order"))return false;
+    if(semanticOrder[origin]==noRegister||sourceParameters[reg])semanticOrder[origin]=uint16_t(reg);
+  }
+  std::vector<std::string> cellBindings;
+  for(auto reg:semanticOrder){
+    if(!step())return false;if(reg==noRegister)continue;
+    const auto &view=views->second[reg];const auto key=llvm::StringRef(view);if(!text(key))return false;
+    if(key.starts_with("cell:")){
+      const auto id=key.drop_front(5).str();
+      if(!lookup(bindings.size(),id)||!step())return false;
+      if(!need(bindings.count(id)||id==string(field(fn,"receiverBinding")),"normalized cell lacks its owned binding view"))return false;
+      cellBindings.push_back(id);
+    }else if(sourceParameters[reg]&&!phi(reg))return false;
+  }
+  std::vector<State> entries;std::vector<Environment> environments;if(!step(cfg.blocks.size()*2))return false;entries.reserve(cfg.blocks.size());environments.resize(cfg.blocks.size());
+  for(size_t block=0;block<cfg.blocks.size();++block){
+    if(!step())return false;entries.push_back(block==0?State{}:State{append(heaps,Object{{"kind","join"},{"inputs",Array{}}}),append(controls,Object{{"kind","join"},{"inputs",Array{}}})});
+    for(const auto &id:cellBindings){
+      if(!text(id)||!step())return false;
+      const auto identity=encoded(Array{"cfg-binding",functionId,int64_t(block),id});
+      // Cell joins forward values rather than assigning a new logical type.
+      environments[block].emplace(id,Refs{node(Object{{"kind","join"},{"type",nullptr},{"inputs",Array{}}},identity)});
+    }
+  }
   const auto &entry=cfg.blocks[0].parameters;size_t argument=0,parameter=0;
   if(!lexical.empty()){
     auto incoming=environmentInput(lexical);if(!define(entry[argument++],incoming))return false;environmentRefs.emplace(lexical,std::move(incoming));facet("managedReference",nullptr,"lexicalEnvironment");
@@ -549,21 +609,6 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
   }
   for(const auto &binding:items(field(fn,"parameters"))){if(!step()||!define(entry[argument++],root("parameter",string(field(binding,"type")),{},parameter++)))return false;}
   if(!step(parameter))return false;direct.parameters.resize(parameter);
-  std::map<std::string,std::string> cellTypes;
-  for(const auto &carrier:cfg.carriers){if(!step()||!text(carrier))return false;const auto key=llvm::StringRef(carrier);if(!key.starts_with("cell:"))continue;const auto id=key.drop_front(5).str();
-    if(!lookup(bindings.size(),id)||!step())return false;const auto binding=bindings.find(id);
-    if(binding!=bindings.end())cellTypes.emplace(id,string(field(*binding->second,"type")));
-    else if(id==string(field(fn,"receiverBinding")))cellTypes.emplace(id,owner);else return open("normalized cell lacks its owned binding view");
-  }
-  std::vector<State> entries;std::vector<Environment> environments;if(!step(cfg.blocks.size()*2))return false;entries.reserve(cfg.blocks.size());environments.resize(cfg.blocks.size());
-  for(size_t block=0;block<cfg.blocks.size();++block){
-    if(!step())return false;entries.push_back(block==0?State{}:State{append(heaps,Object{{"kind","join"},{"inputs",Array{}}}),append(controls,Object{{"kind","join"},{"inputs",Array{}}})});
-    for(const auto &[id,type]:cellTypes){
-      if(!text(id)||!text(type)||!step())return false;
-      const auto identity=encoded(Array{"cfg-binding",functionId,int64_t(block),id});
-      environments[block].emplace(id,Refs{node(Object{{"kind","join"},{"type",type},{"inputs",Array{}}},identity)});
-    }
-  }
   const auto connect=[&](uint16_t target,const std::vector<Refs> &arguments,const State &from,const Environment &environment){
     if(!step(arguments.size()+1)||!need(target!=0&&arguments.size()==cfg.blocks[target].parameters.size(),"admitted CFG edge arguments differ"))return false;
     if(!mergeInputs(heaps[entries[target].heap],Refs{from.heap})||!mergeInputs(controls[entries[target].control],Refs{from.control}))return false;
@@ -626,11 +671,22 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
       }else if(name=="array_resize"){
         const auto base=value(0);mark(base,"write");mark(base,"structural");
       }else if(name=="global_store"){
-        return open("normalized global store payload has no return-origin projection");
+        const auto id=string(field(props,"global"));if(!lookup(catalog->globals.size(),id)||!need(catalog->globals.count(id),"normalized global has no owned declaration"))return false;
+        const auto &global=*catalog->globals.at(id);const auto i32=tsfg::exception::i32Id;
+        if(string(field(global,"type"))!=i32||field(global,"writable").getAsBoolean()!=true||
+          field(props,"initialize").getAsBoolean()!=false||
+          args.size()!=1||views->second[args[0]]!=i32||cfg.carriers[args[0]]!=i32)
+          return open("normalized global store payload has no return-origin projection");
+        if(!scalarGlobalBinding(global)){
+          if(!good())return false;
+          return open("normalized global store does not use a native scalar binding");
+        }
+        if(!lookup(direct.writes.size(),id)||!step())return false;
+        direct.writes.insert(id);access(root("global",i32.str(),id),"write");
       }else if(name=="global_load"){
         const auto id=string(field(props,"global"));if(!lookup(catalog->globals.size(),id)||!need(catalog->globals.count(id),"normalized global has no owned declaration"))return false;
         const auto type=string(field(*catalog->globals.at(id),"type"));auto selected=root("global",type,id);
-        if(!lookup(direct.reads.size(),id)||!step())return false;direct.reads.insert(id);mark(selected,"read");if(!save(selected))return false;
+        if(!lookup(direct.reads.size(),id)||!step())return false;direct.reads.insert(id);access(selected,"read");if(!save(selected))return false;
       }else if(name=="receiver_create"||name=="receiver_child"){
         const auto type=string(field(props,"owner"));if(!lookup(catalog->types.size(),type)||!need(catalog->types.count(type),"normalized receiver owner is outside owned types"))return false;
         const auto construction=string(field(field(*catalog->types.at(type),"construction"),"id"));if(!text(construction)||!step(9))return false;
@@ -656,7 +712,7 @@ bool ReturnSource::normalized(const Function &cfg,Json &raw){
         write(value(offset),"field:"+id,value(offset+1),fieldOwners.at(id),name=="initialize_field"||field(props,"initialize").getAsBoolean()==true);
       }else if(name=="field_load"){
         if(!resultType)return open("normalized field load has no result view");const auto id=string(field(props,"field"));if(!lookup(fieldOwners.size(),id)||!need(fieldOwners.count(id),"normalized field load has no owning declaration"))return false;
-        const auto base=value(0);mark(base,"read");if(!save(projection(base,"field:"+id,*resultType,fieldOwners.at(id))))return false;
+        const auto base=value(0);access(base,"read");if(!save(projection(base,"field:"+id,*resultType,fieldOwners.at(id))))return false;
       }else if(name=="env_alloc"){
         const auto layout=string(field(props,"layout")),location=registerSite(operation.result);std::optional<Refs> parent;if(!args.empty())parent=value(0);
         auto created=environmentCreate(layout,parent,location);if(!save(created)||!text(layout)||!step())return false;environmentRefs.insert_or_assign(layout,std::move(created));facet("allocation",nullptr,"activationEnvironment");facet("managedReference",nullptr,"activationEnvironment");

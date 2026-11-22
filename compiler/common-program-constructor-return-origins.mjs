@@ -5,7 +5,7 @@ import {commonCheck as check} from './common-program-common.mjs';
 import {i32TypeId} from './identity.mjs';
 
 const represented=new Set(['cell','catch_bind','store','load','value_copy','view','assert','pack','unpack','undefined',
-  'constant','floating','boolean','null','string','strict_equal','binary','unary','compare','global_load',
+  'constant','floating','boolean','null','string','strict_equal','binary','unary','compare','global_load','global_store',
   'receiver_create','receiver_child','receiver_allocate','receiver_get','receiver_bind','receiver_result',
   'initialize_begin','initialize_end','initialize_field','field_load','field_store','env_alloc','env_parent','env_load','env_init','env_store','make_closure',
   'invoke','cf.br','route','cf.cond_br','func.return','return_throw','fuel','enter_handler','finally_enter','unreachable']);
@@ -17,6 +17,13 @@ export function unavailableConstructorReturnOriginOperation(plan,spend) {
   for(const block of plan.graph.blocks){spend();for(const op of block.instructions){spend(Math.ceil(op.name.length/8)+2);
     if(!represented.has(op.name.replace('tsfg_program.','')))return op.name;
   }}return null;
+}
+
+export function nativeScalarGlobalStore(op,plan,model,carriers) {
+  const global=model.globals.get(op.properties.global),[value]=op.operands;
+  return op.properties.initialize===false&&op.operands.length===1&&
+    global?.type===i32TypeId&&global.writable&&carriers?.bindings.get(global.sourceBinding)===i32TypeId&&
+    plan.graph.registers.get(value)?.view===i32TypeId&&carriers.registers.get(plan.owner.id)?.get(value)===i32TypeId;
 }
 
 // Newly authored native scalar leaves can use the same explicit Graph access
@@ -53,13 +60,12 @@ export function nativeScalarGlobalLeaf(plan,{model,carriers},spend) {
       continue;
     }
     if(op.operands.some(register=>!scalar(register))||op.result!==null&&!scalar(op.result))return false;
-    if(name==='global_load'||name==='global_store'){
+    if(name==='global_store'){
+      if(!nativeScalarGlobalStore(op,plan,model,carriers))return false;
+      wroteGlobal=true;
+    }else if(name==='global_load'){
       const global=model.globals.get(op.properties.global);
       if(global?.type!==i32TypeId||carriers.bindings.get(global.sourceBinding)!==i32TypeId)return false;
-      if(name==='global_store'){
-        if(op.properties.initialize||!global.writable)return false;
-        wroteGlobal=true;
-      }
     }else if(name==='binary'){
       if(op.properties.operator!=='+'&&op.properties.operator!=='*')return false;
     }else if(name!=='fuel'&&name!=='constant'&&name!=='value_copy'&&name!=='view'&&name!=='func.return')return false;
@@ -67,7 +73,7 @@ export function nativeScalarGlobalLeaf(plan,{model,carriers},spend) {
   return wroteGlobal;
 }
 
-export function projectConstructorReturnOrigins({plan,model,scalarGlobalLeaf=false},catalogue,graph,spend) {
+export function projectConstructorReturnOrigins({plan,model,carriers=null},catalogue,graph,spend) {
   const fn=plan.owner,registers=new Map(),cells=new Map(),blocks=new Map(),cellTypes=new Map(),parameters=new Set(),normal=new Set(),language=new Set(),normalExits=[],languageExits=[],calls=[];
   for(const block of plan.graph.blocks)if(block!==plan.entry){spend(block.parameters.length);for(const parameter of block.parameters)parameters.add(parameter.name);}
   const graphType=id=>catalogue.types.has(id)?id:null;
@@ -103,8 +109,8 @@ export function projectConstructorReturnOrigins({plan,model,scalarGlobalLeaf=fal
       else if(['constant','floating','boolean','null','string','strict_equal','binary','unary','compare'].includes(name))value=graph.literal('other',graphType(op.view));
       else if(name==='global_load'){value=graph.root('global',op.view,op.properties.global);graph.access(value,'read');}
       else if(name==='global_store'){
-        check(scalarGlobalLeaf,'return-origin-construction-open','global payload transfer is not represented by the normalized graph');
-        graph.access(graph.root('global',model.globals.get(op.properties.global).type,op.properties.global),'write');
+        check(nativeScalarGlobalStore(op,plan,model,carriers),'return-origin-construction-open','global payload transfer is not represented by the normalized graph');
+        graph.access(graph.root('global',i32TypeId,op.properties.global),'write');
       }
       else if(name==='receiver_create')value=graph.receiverFrame(op.properties.construction,op.properties.new_target,null,fn.id+'/'+op.result);
       else if(name==='receiver_child')value=graph.receiverFrame(role(op.properties.owner).id,null,args[0],fn.id+'/'+op.result);

@@ -9,7 +9,7 @@ import {commonReturnOrigins,commonReturnOriginFormat} from './common-program-ret
 import {commonReturnOriginsInclusion} from './common-program-return-origin-inclusion.mjs';
 import {commonFacets} from './common-program-effects.mjs';
 import {commonLexicalScopes} from './common-program-lexical.mjs';
-import {nativeScalarGlobalLeaf,projectConstructorReturnOrigins,unavailableConstructorReturnOriginOperation} from './common-program-constructor-return-origins.mjs';
+import {nativeScalarGlobalLeaf,nativeScalarGlobalStore,projectConstructorReturnOrigins,unavailableConstructorReturnOriginOperation} from './common-program-constructor-return-origins.mjs';
 import {commonReceiverActivations} from './common-program-return-origin-receivers.mjs';
 import {commonHostResources} from './common-program-hosts.mjs';
 import {i32TypeId} from './identity.mjs';
@@ -63,10 +63,10 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     protocols.set(fn.id,{lexicalEnvironment:fn.lexicalEnvironment??null,activationEnvironment:fn.activationEnvironment??null,
       construction:owner?{id:owner.construction.id,owner:owner.id,base:owner.base??null,receiverIndex:0}:null});}
   for(const plan of physical?.corePlans??[]){spend();let receiver=false;for(const block of plan.graph.blocks)for(const op of block.instructions){spend();receiver ||= op.name.startsWith('tsfg_program.receiver_');}
-    if(receiver||!plan.owner.ownerType&&plan.owner.parameterInitialization)projectionPlans.set(plan.owner.id,{plan,scalarGlobalLeaf:false});
+    if(receiver||!plan.owner.ownerType&&plan.owner.parameterInitialization)projectionPlans.set(plan.owner.id,plan);
     // Fixed consumers keep their original independently derived body check.
     // Only explicit authoring can add the stronger physical leaf equations.
-    else if(fixedRecords===null&&nativeScalarGlobalLeaf(plan,physical,spend))projectionPlans.set(plan.owner.id,{plan,scalarGlobalLeaf:true});}
+    else if(fixedRecords===null&&nativeScalarGlobalLeaf(plan,physical,spend))projectionPlans.set(plan.owner.id,plan);}
   const catalogue={types:fixedCatalogue?.types??types,functions:fixedCatalogue?.functions??new Map(hir.functions.map(fn=>{spend();return [fn.id,{...protocols.get(fn.id),returnType:fn.returnType}];})),constructions:fixedCatalogue?.constructions??constructions,slots,environments};
   function reference(id,active=new Set()) {
     if(id===null||id==='void')return false;
@@ -97,7 +97,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     const mayAlias=(a,b)=>a.node.kind!=='local'||b.node.kind!=='local'||a.node.type===b.node.type;
     const graph=commonReturnOrigins(spend,{projectField,mayAlias,actualType,contracts,environments,constructions:catalogue.constructions,rootProtocol:protocol(fn)}),normalReturns=new Set(),normalExits=new Set(),languageExits=new Set(),marks=[];
     if(projectionPlans.has(fn.id)){
-      const {plan,scalarGlobalLeaf}=projectionPlans.get(fn.id),projected=projectConstructorReturnOrigins({plan,model:physical.model,scalarGlobalLeaf},catalogue,graph,spend),captureRows=new Map();
+      const plan=projectionPlans.get(fn.id),projected=projectConstructorReturnOrigins({plan,model:physical.model,carriers:physical.carriers},catalogue,graph,spend),captureRows=new Map();
       for(const capture of fn.captures??[]){spend();const slot=slots.get(capture.binding);captureRows.set(slot.key,{slot:slot.key,read:capture.read,write:capture.write,structural:false});}
       for(const [flag,roots]of projected.effects.accesses)for(const root of roots){spend();
         if(root.startsWith('p:'))result.parameters[Number(root.slice(2))][flag]=true;
@@ -454,8 +454,13 @@ export function commonReturnOriginAvailability(hir,callables,methods,spend,stora
       // CFG exists. Preserve that missing prerequisite as the causal reason.
       if(!missingInitialization&&((type.kind==='unknown'||type.kind==='union'&&!(projected&&scalarPresence))&&!construction||type.kind==='value'&&!storageProjection?.supportsValue(type.id)))reasons.set(fn.id,'storage-projection-open');
       if(!['scalar','void','null','undefined'].includes(type.kind)&&!(projected&&scalarPresence))scalar=false;}
-    if(normalizedPlan)for(const block of normalizedPlan.graph.blocks)for(const op of block.instructions){spend();if((construction||projected)&&op.name==='tsfg_program.global_store')reasons.set(fn.id,'global-payload-transfer-open');if(op.name==='tsfg_program.invoke'){
-      const target=op.properties.function_id;if(functions.has(target))calls.add(target);else reasons.set(fn.id,'private-construction-call-open');}}
+    if(normalizedPlan)for(const block of normalizedPlan.graph.blocks)for(const op of block.instructions){spend();
+      if((construction||projected)&&op.name==='tsfg_program.global_store'&&
+        (!construction||!nativeScalarGlobalStore(op,normalizedPlan,normalized.model,normalized.carriers)))reasons.set(fn.id,'global-payload-transfer-open');
+      if(op.name==='tsfg_program.invoke'){
+        const target=op.properties.function_id;if(functions.has(target))calls.add(target);else reasons.set(fn.id,'private-construction-call-open');
+      }
+    }
     if(construction&&!reasons.has(fn.id)&&unavailableConstructorReturnOriginOperation(normalizedPlan,spend)!==null)reasons.set(fn.id,'construction-transfer-open');
     if(projected&&!reasons.has(fn.id)&&unavailableConstructorReturnOriginOperation(normalizedPlan,spend)!==null)reasons.set(fn.id,'parameter-initialization-transfer-open');
     scalarLocal.set(fn.id,scalar);

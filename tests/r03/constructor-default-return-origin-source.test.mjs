@@ -25,7 +25,21 @@ test('original Source3 constructor defaults publish both completion heaps throug
     const graph=row(owner).returnOrigins;assert.ok(graph,owner.name+' requires its actual ordered receiver CFG');assert.equal(graph.format.version,5);
     assert.equal(directory.read(owner.id,graph).status,'typed');assert.ok(graph.exits.normal.length+graph.exits.language.length>0);
   }
-  for(const owner of [named('omitted'),named('derived'),named('throwsAfterEffects')])assert.equal(row(owner).returnOrigins,null,'a global payload store remains explicitly outside this graph transfer');
+  const total=hir.globals.find(global=>global.id==='sha256:07d1beb495bcf492eea7774d30e3ca4fc105cab6a8918030b75b3cb202aa1c52');
+  assert.ok(total);
+  for(const owner of ['omitted','actualUndefined','inherited','thisDefault','throwsAfterEffects','argumentsFirst','derived'].map(named)){
+    const graph=row(owner).returnOrigins;
+    assert.ok(graph,owner.name+' requires the normalized scalar global write');
+    assert.equal(directory.read(owner.id,graph).status,'typed');
+    assert.ok(graph.exits.normal.length);
+    assert.ok(row(owner).upper.globals.reads.includes(total.id));
+    assert.ok(row(owner).upper.globals.writes.includes(total.id));
+    for(const flag of ['read','write']){
+      assert.ok(graph.accesses.some(access=>access.flag===flag&&access.values.some(id=>{
+        const node=graph.nodes[id];return node.kind==='global'&&node.id===total.id&&node.type===total.type;
+      })));
+    }
+  }
   assert.equal(row(ctor('Broken')).upper.facets.mayThrow,true);
   const physical=physicalApi.commonProgramPhysical(hir),broken=ctor('Broken'),called=[...physical.values.actual.contexts.values()].filter(context=>context.plan.owner.id===broken.id&&!context.root);
   assert.ok(called.length);assert.ok(called.every(context=>context.language&&!context.normal),'the existing actual solver retains the real default throw');
