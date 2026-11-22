@@ -204,10 +204,13 @@ bool ActualCheck::receiverInstruction(ActualContext &context,const Operation &op
         if(!recordCapacity(target->second,result.selected))return false;
       }
     }
-    // No receiver-terminator observer retains a store-node borrow. Preserve
-    // source.values for ActualOperands; only the last edge may consume stores.
+    // Receiver completion has consumed its operands. Only the last edge can
+    // take the incoming state; the earlier edge still needs its own snapshot.
     const auto edgeState=[&](ActualFrameWorld &&frames,bool last){
-      if(last)return copyStateWithOwnedStores(state.values,std::move(state.heap),std::move(state.regions),std::move(frames));
+      if(last){
+        if(!step(4))return ActualState{};
+        return ActualState{std::move(state.values),std::move(state.heap),std::move(state.regions),std::move(frames)};
+      }
       auto heap=copyHeap(state.heap);if(!e.message.empty())return ActualState{};
       auto regions=regionCopy(*this,state.regions);if(!e.message.empty())return ActualState{};
       return copyStateWithOwnedStores(state.values,std::move(heap),std::move(regions),std::move(frames));
