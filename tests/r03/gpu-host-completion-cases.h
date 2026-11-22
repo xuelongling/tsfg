@@ -1,5 +1,32 @@
 // SPDX-License-Identifier: MIT
 // Private completion cases included inside the Host preflight test namespace.
+bool checkEmptySourceCompletion(const GpuPendingCall &call){
+  const auto &descriptors=call.descriptors();
+  if(!check(descriptors.size()==3&&descriptors[0].kind==GpuResourceKind::Global,
+      "empty completion uses the retained right proof"))return false;
+  const auto i32=tsfg::exception::i32Id.str();
+  const GpuHostValue arguments[]={{i32,11}};
+  const GpuHostGlobalValue globals[]={{descriptors[0].id,{i32,23}}};
+  auto checked=preflightGpuSourceCall(call,call.identity(),arguments,globals,{7,3});
+  const auto *proof=std::get_if<GpuHostProof>(&checked);
+  if(!check(proof,"empty completion fixture admits its input proof"))return false;
+  SourceLeaseObservation observed;
+  observed.returned=57;
+  auto lease=std::make_unique<ObservedSourceLease>(call.identity(),descriptors[0].id,"",observed);
+  auto device=GpuSoftwareCompletionTest::completedWithoutOutputs(*proof,std::move(lease));
+  const auto completed=device.finishSourceRequest(1);
+  if(!check(completed.writeBack==GpuSoftwareWriteBack::Committed&&observed.publications==0,
+      "empty Source completion commits without publishing"))return false;
+  const auto repeated=device.finishSourceRequest(1);
+  return check(completed.device.state==GpuSoftwareState::Completed&&completed.device.identity==call.identity()&&
+      completed.device.resources.empty()&&completed.device.outputsAvailable&&
+      completed.budget.fuelRemaining==6&&completed.budget.depthLimit==3&&
+      repeated.writeBack==GpuSoftwareWriteBack::AlreadyCommitted&&!completed.returnBits&&!repeated.returnBits&&
+      !completed.operationError&&!repeated.operationError&&observed.reservations==0&&observed.publications==0&&
+      observed.destructions==1&&observed.global==23&&observed.returned==57,
+      "empty Source completion retires the lease once and keeps the original values");
+}
+
 bool checkVoidSourceCompletion(const GpuPendingCall &call){
   const auto &descriptors=call.descriptors();
   if(!check(descriptors.size()==2&&descriptors[0].kind==GpuResourceKind::Global&&

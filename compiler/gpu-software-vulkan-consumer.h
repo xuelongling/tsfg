@@ -29,8 +29,8 @@ public:
   // They must be distinct and remain writable until the lease is released.
   // The descriptor views are borrowed for this call only.
   virtual bool reserveOutputs(llvm::ArrayRef<const GpuDescriptor *> outputs) noexcept=0;
-  // Publish together to this instance, including its return cell. False leaves
-  // every destination unchanged. The borrowed output rows expire on return.
+  // Publish the reserved nonempty outputs together, including a return cell
+  // when present. False leaves every destination unchanged. Rows expire on return.
   // The caller retains its call handle through the callback.
   virtual bool publish(llvm::ArrayRef<GpuSoftwareOutput> outputs) noexcept=0;
 };
@@ -95,6 +95,7 @@ public:
   GpuSoftwareWriteBack writeBack(uint64_t deviceGeneration,uint64_t submissionId,
                                 llvm::MutableArrayRef<GpuSoftwareOutput> destinations);
   // A bound call can publish only to its original lease, including after resume.
+  // Successful completion with no writable outputs needs no publication callback.
   // Source rejection retires the lease and remains the call's writeback result.
   GpuSoftwareWriteBack writeBackSource();
   // Submit a prepared Source request, wait once and publish available outputs.

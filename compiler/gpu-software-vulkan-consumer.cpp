@@ -439,7 +439,7 @@ GpuSoftwareWriteBack GpuSoftwareVulkanCall::writeBackSource() {
   if(!impl_->sourceLease)return GpuSoftwareWriteBack::BindingMismatch;
   if(impl_->publishingSource)return GpuSoftwareWriteBack::SourceRejected;
   impl_->publishingSource=true;
-  const bool published=impl_->sourceLease->publish(impl_->outputs);
+  const bool published=impl_->outputs.empty()||impl_->sourceLease->publish(impl_->outputs);
   impl_->publishingSource=false;
   impl_->outputsCommitted=published;
   impl_->sourcePublicationRejected=!published;

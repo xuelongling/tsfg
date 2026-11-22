@@ -44,6 +44,21 @@ struct GpuSoftwareCompletionTest {
     }
     return GpuSoftwareVulkanCall(std::move(state));
   }
+  static GpuSoftwareVulkanCall completedWithoutOutputs(const GpuHostProof &proof,
+      std::unique_ptr<GpuSoftwareSourceLease> source){
+    // The retained proof supplies identity and budget for this Host-only
+    // completion. No platform device or Source kernel is prepared.
+    auto state=std::make_unique<GpuSoftwareVulkanCall::Impl>(proof,8,9);
+    state->sourceBound=true;
+    state->sourceLease=std::move(source);
+    state->report.state=GpuSoftwareState::Completed;
+    state->report.stage="completed";
+    state->report.submitted=true;
+    state->report.completionKnown=true;
+    state->report.outputsAvailable=true;
+    state->report.resources.clear();
+    return GpuSoftwareVulkanCall(std::move(state));
+  }
   static bool ownsDevice(const GpuSoftwareVulkanCall &call){return call.impl_->lease;}
   static bool deviceReserved(){
     if(activeSoftwareCall.test_and_set(std::memory_order_acquire))return true;
@@ -308,7 +323,7 @@ int main(int argc,char **argv){
      &&mode!="--check-software-operation-rejection"&&mode!="--check-bound-source-instance"
 #endif
 #ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
-     &&mode!="--check-source-completion"&&mode!="--check-void-source-completion"
+     &&mode!="--check-source-completion"&&mode!="--check-void-source-completion"&&mode!="--check-empty-source-completion"
 #endif
      )return 2;
   const bool checkDerived=mode=="--check-derived-numeric-use";
@@ -366,6 +381,7 @@ int main(int argc,char **argv){
 #ifdef TSFG_GPU_SOFTWARE_COMPLETION_CHECK
   if(mode=="--check-source-completion")return checkSourceCompletion(call)?0:3;
   if(mode=="--check-void-source-completion")return checkVoidSourceCompletion(call)?0:3;
+  if(mode=="--check-empty-source-completion")return checkEmptySourceCompletion(call)?0:3;
 #endif
   std::vector<const GpuNumericUseStep *> uses;
   for(const auto &row:call.hostSteps())if(const auto *use=std::get_if<GpuNumericUseStep>(&row))
