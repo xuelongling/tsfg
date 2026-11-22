@@ -459,11 +459,18 @@ function produceOwnedCore(hir, options, selected = undefined) {
     }
     return produceCore(hir, { ...fixedOptions, factsContext, callPublicationContext }, selected?.lower, { factsContext });
   }
-  if (family === commonHirFormat.family && selected?.callPublicationContext !== undefined &&
-      selected.factsContext === undefined) {
-    // Check and own the Common input before admitting the static consumer.
-    const prepared = prepareCommonCore(hir, undefined, selected.callPublicationContext);
-    const fixedOptions = { core: options.core, optimize: options.optimize };
+  if (family === commonHirFormat.family) {
+    const core = options.core;
+    if (!core) return produceCore(hir, { core });
+    const fixedOptions = { core, optimize: options.optimize };
+    const { factsContext, callPublicationContext } = selected ?? options;
+    if (factsContext !== undefined && !isCommonProgramContext(factsContext)) {
+      // Preserve the selected lowering's diagnostic for incompatible contexts.
+      const lower = selected?.lower ?? lowerFormalHir;
+      const text = lower(hir, factsContext, callPublicationContext);
+      return produceCore(hir, fixedOptions, () => text, { factsContext });
+    }
+    const prepared = prepareCommonCore(hir, factsContext, callPublicationContext);
     return produceCore(prepared.hir, fixedOptions, () => prepared.text);
   }
   if (family !== genericHirFormat.family) return produceCore(hir, options, selected?.lower, selected);

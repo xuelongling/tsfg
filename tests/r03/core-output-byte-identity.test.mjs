@@ -491,6 +491,55 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       assert.deepEqual(calls.slice(first),[['--common-program','--canonicalize']]);
       assert.deepEqual(rejected,mismatch);
     });
+    const sourceBytes=commonCapture?await fs.readFile(new URL('./testdata/common-program-gpu-void-v3/package.json',import.meta.url)):factsBytes;
+    if(commonCapture)assert.equal(sha256(sourceBytes),'sha256:f6df2a10fcf109dc11881c28b0314200574f98036c995792e38bd9d76447406f');
+    const originalFacts=readCommonProgramFacts(sourceBytes);
+    const originalCore=commonProgramCore(common,publication,request).text;
+    for(const explicit of [false,true])for(const output of ['core','bytecode','static']){
+      await sub.test(`Common ${output} owns its request during tool admission (${explicit?'with facts':'persisted HIR'})`,async()=>{
+        const candidate=structuredClone(common),publish=structuredClone({publication,request});
+        const context=explicit?{family:'tsfg.common-program-context-candidate',version:originalFacts.version,
+          factsBytes:Buffer.from(sourceBytes),expectedPackageId:originalFacts.packageId}:undefined;
+        const selected={core:artifact,optimize:true,factsContext:context,callPublicationContext:publish};
+        const compile=output==='core'?compileOwnedCore:output==='bytecode'?compileOwnedHir:compileOwnedStaticProgram;
+        stdout=matching;
+        packetStdout=retainedPacket??Buffer.alloc(0);
+        const first=calls.length,pending=compile(candidate,selected);
+        candidate.inputIdentity='sha256:'+'0'.repeat(64);
+        publish.request.targets.length=0;
+        if(context)context.factsBytes.fill(0);
+        selected.optimize=false;
+        const result=await pending;
+        assert.deepEqual(calls.slice(first),output==='core'?[['--common-program','--optimize']]:
+          [['--common-program','--optimize'],['--common-program','--emit-bytecode']],JSON.stringify(result));
+        assert.equal(coreInput,originalCore);
+        if(output!=='core')assert.deepEqual(Buffer.from(dependentInput,'utf8'),matching);
+        if(output==='core'||output==='bytecode'&&retainedPacket){
+          assert.equal(result.status,'ok');
+          assert.deepEqual(result.hir,common);
+          assert.deepEqual(Buffer.from(result.core,'utf8'),matching);
+          if('bytecode' in result)assert.deepEqual(result.bytecode,retainedPacket);
+        }else assert.deepEqual(result,{status:'tool-error',code:'r03-d-consumer',message:retainedPacket?
+          'r04-producer-input-identity: packet target or input differs from the checked Core':
+          'r04-common-producer-identity: output differs from exact Common20 development envelope'});
+      });
+    }
+    await sub.test('Common bytecode keeps the original incompatible facts context during admission',async()=>{
+      stdout=matching;
+      packetStdout=retainedPacket??Buffer.alloc(0);
+      const compatible={family:'tsfg.common-program-context-candidate',version:originalFacts.version,
+        factsBytes:sourceBytes,expectedPackageId:originalFacts.packageId};
+      for(const replace of [true,false]){
+        const selected={core:artifact,factsContext:{},callPublicationContext:{publication,request}};
+        const first=calls.length,pending=compileOwnedHir(common,selected);
+        if(replace)selected.factsContext=compatible;
+        else Object.assign(selected.factsContext,compatible);
+        const result=await pending;
+        assert.equal(result.status,'tool-error');
+        assert.match(result.message,/^r03-d-call-effects:/);
+        assert.equal(calls.length,first);
+      }
+    });
     await sub.test('Common borrow proof checks the input before analysis',async()=>{
       const expected=commonProgramCore(common,publication,request,{borrowProof:true}).borrowProof;
       borrowStdout=Buffer.from(canonical(expected)+'\n');
