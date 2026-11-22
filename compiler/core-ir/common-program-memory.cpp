@@ -222,7 +222,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   const auto &single=cached->second;
   // A single-execution predecessor delivers all callee completions before
   // returning. Its unique static successor edge can never arrive again in
-  // this execute's queue. Keep join snapshots for every other block.
+  // this execute's queue.
   ActualState entry;
   if(!context.root){if(!step())return false;entry.heap=copyHeap(context.identity->heap);}
   entry.regions=regionCopy(*this,context.entryRegions);
@@ -238,8 +238,8 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
       entry.heap.emplace("global:"+id,std::move(value));
     }
     if(!receiverArguments(fn,entry.heap,entry.frames,conditional,changed,context.rootArguments,context.constructionNewTarget,context.activation))return false;
-    // Roots rebuild the local World; immutable identity owns their input.
-    context.rootEntry=copyHeap(entry.heap);
+    // BorrowTrace reads the final solved entry before replay starts.
+    if(!conditional&&!borrowTrace)context.rootEntry=copyHeap(entry.heap);
   }
   if(!step(3))return false;const auto &arguments=context.inputArguments();
   for(size_t i=0;i<arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(arguments[i]));
@@ -279,6 +279,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     if(old==states.end()){states.emplace(to,std::move(next));update=true;}else update=join(old->second,std::move(next));
     if(update&&queued.insert(to).second)queue.push_back(to);return e.message.empty();
   };
+  std::optional<bool> acyclic;
   for(size_t index=0;index<queue.size();++index){
     if(!step())return false;const auto block=queue[index];queued.erase(block);
     bool take=single[block];
@@ -295,6 +296,15 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
             if(!step(6))return false;
             if(!fn.blocks[to].operations.back().successors.empty()){take=false;break;}
           }
+        }
+        if(!take){
+          // An empty queue leaves only descendants of this block to visit.
+          // An acyclic CFG cannot send another input back to this block.
+          if(!acyclic.has_value()){
+            if(!step(fn.id.size()/64+2))return false;
+            acyclic=regions.acyclic.count(fn.id)!=0;
+          }
+          take=*acyclic;
         }
       }
     }
