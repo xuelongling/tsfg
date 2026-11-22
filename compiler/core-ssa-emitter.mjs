@@ -186,7 +186,7 @@ export function emitCoreSsaFunction(fn, context) {
       }
       for (const slot of locals) {
         context.budget?.step();
-        args.push(bindings.get(slot.ids[selectedThen ? 0 : 1]));
+        args.push(bindings.get(slot.inputs[selectedThen ? 0 : 1]));
       }
       branch(join, args, range);
     }
@@ -198,9 +198,10 @@ export function emitCoreSsaFunction(fn, context) {
     if (!current) return;
     const resumeThen = newBlock(), resumeElse = newBlock();
     conditional(join.parameters[0].name, resumeThen, resumeElse, range);
-    const scopes = [0,1].map(arm => locals.map((slot, index) => {
+    const scopes = [0,1].map(arm => locals.flatMap((slot, index) => {
       context.budget?.step();
-      return [slot.ids[arm], join.parameters[localsStart + index].name];
+      const id = slot.ids[arm];
+      return id === undefined ? [] : [[id, join.parameters[localsStart + index].name]];
     }));
     emitIfArms(resumeThen, resumeElse, continuation.thenBody, continuation.elseBody, range, undefined, scopes);
   }

@@ -182,10 +182,11 @@ test('branch-local super arguments run before one shared phase and their origina
 
 
 
-for(const [kind,file,digest,carrier] of [
+for(const [kind,file,digest,carrier,elseLiteral] of [
   ['scalar','super-prefix-live-local','dfc44eba7593f4c84c65c5ffbfa0da14d1d7a0aad661db5fa06ce10027a9efa4','i32'],
   ['Array','super-prefix-live-array','8b964015e0253fd14e68f51e706001b6e3562614d45f61470ecf57ef748ab234','i32'],
   ['f64 Array','super-prefix-live-f64','33778b1037ced59d9099d79239fbfff9a108c11f5cb890bbf040bcfe8a4a5c35','f64'],
+  ['asymmetric f64 Array','super-prefix-asymmetric-locals','a2745b1da88e70433605b56b682d1da1b27c45a440285265c2c84dbc2a69f9e8','f64','"403fc00000000000"'],
 ])test('a shared '+kind+' field initializer preserves each arm-local value',async()=>{
   const {hir,context,publicationContext}=await initializerProof(file,digest);
   const entry=hir.functions.find(row=>row.name==='entry');
@@ -228,10 +229,17 @@ for(const [kind,file,digest,carrier] of [
     }
     const values=edges[index][2].trim().split(', ');
     assert.ok(prefix.includes(values[0]+' = "tsfg_core.constant"() {value = '+[1,0][index]+' : i1'));
-    const slot=parameters.indexOf(origin(suffix,store[1]));
-    assert.ok(slot>0);
-    assert.equal(values[slot],call[1]);
     assert.ok(prefix.includes(origin(prefix,call[1])+' = "tsfg_core.constant"() {value = '+literals[index]));
+    const storeOrigin=origin(suffix,store[1]);
+    if(index===1&&elseLiteral!==undefined){
+      assert.equal(values.at(-1),call[1],'unused incoming slot reuses the evaluated local from this arm');
+      assert.ok(!parameters.includes(storeOrigin));
+      assert.ok(suffix.includes(storeOrigin+' = "tsfg_core.constant"() {value = '+elseLiteral));
+    }else{
+      const slot=parameters.indexOf(storeOrigin);
+      assert.ok(slot>0);
+      assert.equal(values[slot],call[1]);
+    }
   }
 });
 

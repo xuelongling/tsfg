@@ -125,7 +125,36 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       locals.push({id,type});
     }
     locals.sort((a,b)=>{budget.step();return a.type<b.type?-1:a.type>b.type?1:0;});
-    return {index,call:statements[index].expression,locals};
+    return {index,call:statements[index].expression,locals,prefixLocals};
+  }
+  function sharedSuperLocals(arms,fn) {
+    const groups=new Map(),locals=[];
+    for(const [arm,{locals:live}] of arms.entries())for(const {id,type} of live) {
+      budget.step();
+      if(!groups.has(type))groups.set(type,[[],[]]);
+      groups.get(type)[arm].push(id);
+    }
+    for(const [type,bindings] of groups) {
+      budget.step();
+      const count=Math.max(bindings[0].length,bindings[1].length);
+      const available=bindings.map((ids,arm)=>{
+        if(ids.length===count)return undefined;
+        if(ids.length)return ids[0];
+        for(const binding of arms[arm].prefixLocals.values()) {
+          budget.step();
+          if(!hasState(binding.presence)&&selected(fn.id+'/binding/'+binding.id).domainId===type)return binding.id;
+        }
+      });
+      for(let index=0;index<count;index++) {
+        budget.step();
+        const ids=bindings.map(arm=>arm[index]);
+        // An unneeded slot carries a value already evaluated on that edge.
+        const inputs=ids.map((id,arm)=>id??available[arm]);
+        if(inputs.some(id=>id===undefined))return null;
+        locals.push({type,ids,inputs});
+      }
+    }
+    return locals;
   }
   function sharedSuperPhase(fn) {
     if(fn.role!=='construction-body')return null;
@@ -135,9 +164,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       const left=superInArm(statement.then,fn),right=superInArm(statement.else,fn);
       if(!left||!right||left.call.construction!==right.call.construction||
         left.call.afterSuccess.construction!==right.call.afterSuccess.construction)continue;
-      if(left.locals.length!==right.locals.length||
-        left.locals.some((local,index)=>{budget.step();return local.type!==right.locals[index].type;}))continue;
-      const locals=left.locals.map((local,index)=>{budget.step();return {type:local.type,ids:[local.id,right.locals[index].id]};});
+      const locals=sharedSuperLocals([left,right],fn);
+      if(!locals)continue;
       const pending=[fn.body];let sites=0;
       while(pending.length) {
         budget.step();const value=pending.pop();
