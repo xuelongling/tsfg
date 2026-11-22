@@ -182,9 +182,10 @@ test('branch-local super arguments run before one shared phase and their origina
 
 
 
-for(const [kind,file,digest] of [
-  ['scalar','super-prefix-live-local','dfc44eba7593f4c84c65c5ffbfa0da14d1d7a0aad661db5fa06ce10027a9efa4'],
-  ['Array','super-prefix-live-array','8b964015e0253fd14e68f51e706001b6e3562614d45f61470ecf57ef748ab234'],
+for(const [kind,file,digest,carrier] of [
+  ['scalar','super-prefix-live-local','dfc44eba7593f4c84c65c5ffbfa0da14d1d7a0aad661db5fa06ce10027a9efa4','i32'],
+  ['Array','super-prefix-live-array','8b964015e0253fd14e68f51e706001b6e3562614d45f61470ecf57ef748ab234','i32'],
+  ['f64 Array','super-prefix-live-f64','33778b1037ced59d9099d79239fbfff9a108c11f5cb890bbf040bcfe8a4a5c35','f64'],
 ])test('a shared '+kind+' field initializer preserves each arm-local value',async()=>{
   const {hir,context,publicationContext}=await initializerProof(file,digest);
   const entry=hir.functions.find(row=>row.name==='entry');
@@ -199,12 +200,14 @@ for(const [kind,file,digest] of [
   const arms=[...blocks.values()].filter(block=>block.text.includes('"tsfg_core.domain.super"'));
   assert.equal(arms.length,2);
   const edges=arms.map(({text})=>text.match(/cf\.br \^(bb\d+)\(([^:\n]+) : /));
+  assert.ok(edges.every(Boolean),'both super arms carry their locals to the shared initializer');
   assert.equal(edges[0][1],edges[1][1]);
   const join=blocks.get(edges[0][1]);
   const parameters=join.parameters.split(', ').map(parameter=>parameter.split(': ')[0]);
+  assert.ok(join.parameters.endsWith(': '+carrier));
   assert.equal(body.split('"tsfg_core.domain.initialize_fields"').length,2);
   assert.ok(join.text.includes('"tsfg_core.domain.field_initialize"'));
-  assert.equal(body.split('"tsfg_core.domain.array_create"').length-1,kind==='Array'?1:0);
+  assert.equal(body.split('"tsfg_core.domain.array_create"').length-1,kind==='scalar'?0:1);
   const dispatch=join.text.match(/cf\.cond_br (%v\d+), \^(bb\d+), \^(bb\d+)/);
   assert.equal(dispatch[1],parameters[0]);
   const origin=(text,value)=>{
@@ -213,6 +216,7 @@ for(const [kind,file,digest] of [
     while(views.has(value))value=views.get(value);
     return value;
   };
+  const literals=carrier==='f64'?['"4026800000000000"','"4036800000000000"']:['11 : i32','22 : i32'];
   for(const [index,side] of ['then','else'].entries()){
     const prefix=arms[index].text,suffix=blocks.get(dispatch[index+2]).text;
     const call=prefix.match(/"tsfg_core\.domain\.super"\(%v\d+, (%v\d+)\)[^\n]+/);
@@ -227,7 +231,7 @@ for(const [kind,file,digest] of [
     const slot=parameters.indexOf(origin(suffix,store[1]));
     assert.ok(slot>0);
     assert.equal(values[slot],call[1]);
-    assert.ok(prefix.includes(origin(prefix,call[1])+' = "tsfg_core.constant"() {value = '+[11,22][index]+' : i32'));
+    assert.ok(prefix.includes(origin(prefix,call[1])+' = "tsfg_core.constant"() {value = '+literals[index]));
   }
 });
 

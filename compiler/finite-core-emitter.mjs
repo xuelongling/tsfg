@@ -118,9 +118,10 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     for(const id of live) {
       budget.step();
       const type=selected(fn.id+'/binding/'+id).domainId;
+      const carrier=domains.get(type).nativeType;
       // The verifier tracks exact bool predicates and u32 array indices.
       // Those proofs, and owner/presence proofs, need per-arm provenance.
-      if(hasState(prefixLocals.get(id).presence)||domains.get(type).nativeType!=='i32')return null;
+      if(hasState(prefixLocals.get(id).presence)||(carrier!=='i32'&&carrier!=='f64'))return null;
       locals.push({id,type});
     }
     locals.sort((a,b)=>{budget.step();return a.type<b.type?-1:a.type>b.type?1:0;});
