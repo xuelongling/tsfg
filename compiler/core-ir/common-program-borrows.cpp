@@ -450,6 +450,40 @@ bool BorrowTrace::solve(Json *events){
   if(result->status!=Flow::Status::Safe)return b.fail(result->status==Flow::Status::Conflict?"active ReadSpan may overlap a structural Array effect":"ReadSpan structural owner or alias authority is unproved",b.locations.at(result->point));
   return !events||b.projectEvents(*events);
 }
+bool verifiedBorrowDomainEmpty(ActualCheck &check){
+  if(!check.step(12)||!check.environments.empty()||!check.regions.nodes.empty()||!check.regions.scopes.empty()||
+      check.regions.acyclic.size()!=check.functions.size()||!check.cyclicFunctions.empty()||
+      !check.printedConstructors.empty()||!check.unresolvedCalls.empty())return false;
+  for(const auto &[id,type]:check.types){
+    if(!check.step(12))return false;
+    const auto kind=field(*type,"kind").getAsString();
+    if(!kind||*kind=="array"||*kind=="readSpan")return false;
+  }
+  const auto publicSourceTarget=[&](llvm::StringRef target,const auto &excluded){
+    for(const auto &[id,entry]:excluded){
+      if(!check.step(4+target.size()+id.size())||target==id)return false;
+    }
+    return true;
+  };
+  // The checked call graph establishes a closed fixed table. Verify that
+  // public calls only enter Source functions. Private analysis-only roots
+  // never enter the public Borrow traversal on their own.
+  for(const auto &fn:check.p.functions){
+    if(!check.step())return false;
+    for(const auto &block:fn.blocks)for(const auto &op:block.operations){
+      if(!check.step(42))return false;
+      const llvm::StringRef name(op.name);
+      if(name.starts_with("array_")||name.starts_with("readspan")||name.starts_with("env_")||
+          name=="make_closure"||name=="host_call")return false;
+      if(!invocation(op))continue;
+      if(name!="invoke")return false;
+      const auto target=field(op.properties,"function_id").getAsString();
+      if(!check.step(4)||!target||!publicSourceTarget(*target,check.modules)||
+          !publicSourceTarget(*target,check.analysisFunctions))return false;
+    }
+  }
+  return true;
+}
 bool verifyCommonBorrows(ActualCheck &check,Json *events){
   if(!check.preparePublicBorrowContexts())return false;
   BorrowTrace trace(check,events!=nullptr);check.borrowTrace=&trace;bool changed=false,ok=true;const auto size=check.contexts.size();

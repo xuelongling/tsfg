@@ -90,7 +90,9 @@ static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof,std::map
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
   Json events=nullptr;
-  if(!check.run()||!verifyCommonBorrows(check,borrowProof?&events:nullptr)||!verifyKernelProof(p,error))return false;
+  if(!check.run())return false;
+  const bool noBorrows=!borrowProof&&verifiedBorrowDomainEmpty(check);
+  if(!error.message.empty()||(!noBorrows&&!verifyCommonBorrows(check,borrowProof?&events:nullptr))||!verifyKernelProof(p,error))return false;
   std::map<std::string,std::string> storage;
   if(singletonStorage)for(const auto &[binding,capacity]:check.storageCapacity){
     if(!check.step())return false;

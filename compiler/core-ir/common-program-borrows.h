@@ -102,6 +102,9 @@ struct BorrowTrace::Impl {
   void boundary(const ActualContext &context,const Operation &op,Id at,ActualOperands args,const ActualState &state);
   bool orderCalls();
 };
+// Requires a complete Source-backed ActualCheck::run. A proof projection
+// still uses verifyCommonBorrows to record its calls and flows.
+bool verifiedBorrowDomainEmpty(ActualCheck &);
 bool verifyCommonBorrows(ActualCheck &,Json *events=nullptr);
 bool analyzeCommonBorrowProof(Program &,Error &,Json &);
 } // namespace tsfg::commonProgram

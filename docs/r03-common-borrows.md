@@ -18,6 +18,12 @@ solver. C++ reconstructs its own observations from the verified Common IR and
 uses the existing pure finite::BorrowFlow solver. Neither consumer trusts the
 other consumer's borrow decision or a serialized proof seed.
 
+For ordinary Source-backed validation, C++ can discharge an empty borrow
+domain after the actual fixed point. It checks the admitted type and operation
+inventory, the absence of regions and environments, and closed public direct
+calls. An explicit proof projection still records the actual call and control
+events.
+
 ## Owners, versions and structural effects
 
 A Span definition records the actual owner alternatives. Field, Array and cell
