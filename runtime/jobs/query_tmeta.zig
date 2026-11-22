@@ -236,6 +236,16 @@ pub const Document = struct {
     pub fn bind(self: *const Document, allocator: std.mem.Allocator, store: *storage.Store, batch: storage.Store.Batch, entry_index: usize, scalars: []const ScalarValue) !Plan {
         if (batch.store != store) return error.WrongStore;
         const entry = try self.entryForStore(store, entry_index);
+        const rows = try checkBatch(entry, batch, scalars);
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+        var result = try self.makePlan(arena.allocator(), batch, rows, entry_index, scalars, true);
+        // Transfer the final allocator state after all owned allocations.
+        result.arena = arena;
+        return result;
+    }
+
+    fn checkBatch(entry: *const Entry, batch: storage.Store.Batch, scalars: []const ScalarValue) !usize {
         if (scalars.len != entry.scalars.len or try batch.columnCount() != entry.columns.len) return error.BindingMismatch;
         try checkScalarWidths(entry.scalars, scalars);
         const rows = try batch.rowCount();
@@ -246,41 +256,51 @@ pub const Document = struct {
             const bytes = try batch.read(index);
             if (bytes.len != try std.math.mul(usize, rows, column.stride) or @intFromPtr(bytes.ptr) % column.alignment != 0) return error.BindingMismatch;
         }
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        errdefer arena.deinit();
-        const own = arena.allocator();
-        const loop_effects = try ownEffectValue(own, self.effects.system(entry.logicalFunctionId).?.loops[entry.loop]);
-        const tuples = try own.alloc(Plan.TupleBinding, entry.tupleOccurrences.len);
+        return rows;
+    }
+
+    fn makePlan(self: *const Document, allocator: std.mem.Allocator, batch: storage.Store.Batch, rows: usize, entry_index: usize, scalars: []const ScalarValue, comptime owning: bool) !Plan {
+        const entry = &self.payload.entries[entry_index];
+        const tuples = try allocator.alloc(Plan.TupleBinding, entry.tupleOccurrences.len);
         for (entry.tupleOccurrences, tuples) |tuple, *binding| binding.* = .{ .column = tuple.columnIndex, .access = tuple.mode };
-        const columns = try own.alloc(Plan.ColumnBinding, entry.columns.len);
-        for (entry.columns, columns) |column, *binding| binding.* = .{ .component = try own.dupe(u8, column.componentType), .stride = column.stride, .access = column.access };
-        // Transfer the final allocator state after all owned allocations, including new arena blocks.
-        var result: Plan = .{
-            .arena = undefined,
+        const columns = try allocator.alloc(Plan.ColumnBinding, entry.columns.len);
+        for (entry.columns, columns) |column, *binding| binding.* = .{
+            .component = if (owning) try allocator.dupe(u8, column.componentType) else column.componentType,
+            .stride = column.stride,
+            .access = column.access,
+        };
+        const scoped: Plan = .{
+            .arena = null,
             .batch = batch,
             .rows = rows,
             .columns = columns,
             .tuples = tuples,
-            .scalars = try own.dupe(ScalarValue, scalars),
-            .entry_symbol = try own.dupe(u8, entry.entrySymbol),
-            .logical_function_id = try own.dupe(u8, entry.logicalFunctionId),
-            .source_function_id = try own.dupe(u8, entry.sourceFunctionId),
-            .signature_hash = try own.dupe(u8, entry.signatureHash),
+            .scalars = try allocator.dupe(ScalarValue, scalars),
+            .entry_symbol = entry.entrySymbol,
+            .logical_function_id = entry.logicalFunctionId,
+            .source_function_id = entry.sourceFunctionId,
+            .signature_hash = entry.signatureHash,
             .entry_index = entry_index,
             .loop = entry.loop,
-            .source = .{ .path = try own.dupe(u8, entry.source.path), .start = entry.source.start, .end = entry.source.end },
-            .query_binding = try own.dupe(u8, entry.queryBinding),
-            .metadata_hash = try own.dupe(u8, self.payload_hash),
-            .batch_hash = try own.dupe(u8, self.payload.batchHash),
+            .source = entry.source,
+            .query_binding = entry.queryBinding,
+            .metadata_hash = self.payload_hash,
+            .batch_hash = self.payload.batchHash,
             .llvm_hash = self.llvm_hash,
-            .abi_type = try own.dupe(u8, entry.abiType),
-            .input_identity = try own.dupe(u8, self.payload.inputIdentity),
-            .package_id = try own.dupe(u8, self.payload.packageId),
-            .effects = try own.dupe(u8, self.payload.effects),
-            .effects_hash = try own.dupe(u8, self.payload.effectsHash),
-            .loop_effects = loop_effects,
+            .abi_type = entry.abiType,
+            .input_identity = self.payload.inputIdentity,
+            .package_id = self.payload.packageId,
+            .effects = self.payload.effects,
+            .effects_hash = self.payload.effectsHash,
+            .loop_effects = self.effects.system(entry.logicalFunctionId).?.loops[entry.loop],
         };
-        result.arena = arena;
+        if (!owning) return scoped;
+        var result = scoped;
+        inline for (.{ "entry_symbol", "logical_function_id", "source_function_id", "signature_hash",
+            "query_binding", "metadata_hash", "batch_hash", "abi_type", "input_identity", "package_id", "effects", "effects_hash" }) |field|
+            @field(result, field) = try allocator.dupe(u8, @field(scoped, field));
+        result.source.path = try allocator.dupe(u8, scoped.source.path);
+        result.loop_effects = try ownEffectValue(allocator, scoped.loop_effects);
         return result;
     }
 };
@@ -421,13 +441,24 @@ pub const ParallelGroup = struct {
         const plans = try scratch.alloc(Plan, count);
         const batches = try scratch.alloc(storage.Store.Batch, count);
         var bound: usize = 0;
-        defer for (plans[0..bound]) |*plan| plan.deinit();
         for (bindings, queries, 0..) |binding, maybe_lease, index| {
             if (maybe_lease) |lease| {
                 const selected = binding.?;
+                const entry_index = try self.entryIndex(index, selected.loop);
+                const entry = &self.document.payload.entries[entry_index];
+                const first = bound;
+                // One immutable plan view and scalar snapshot per selected
+                // loop. Each batch still supplies its own validated row count.
                 for (0..try lease.batchCount()) |batch_index| {
                     const batch = try lease.batch(batch_index);
-                    plans[bound] = try self.bind(allocator, store, batch, index, selected.loop, selected.scalars);
+                    const rows = try Document.checkBatch(entry, batch, selected.scalars);
+                    if (bound == first) {
+                        plans[bound] = try self.document.makePlan(scratch, batch, rows, entry_index, selected.scalars, false);
+                    } else {
+                        plans[bound] = plans[first];
+                        plans[bound].batch = batch;
+                        plans[bound].rows = rows;
+                    }
                     batches[bound] = batch;
                     bound += 1;
                 }
@@ -438,8 +469,9 @@ pub const ParallelGroup = struct {
 };
 
 /// The Store must outlive this plan, exactly as it must outlive its Query/Batch.
-/// A plan owns metadata/scalars; original component columns remain borrowed without copying.
-/// The selected typed loop effects live in the Plan arena.
+/// Standalone binding owns metadata and scalars. A synchronous stage borrows
+/// immutable metadata from its Document and shares stage-local scalar copies.
+/// Original component columns stay borrowed in both cases.
 pub const Plan = struct {
     const TupleBinding = struct { column: usize, access: storage.Access };
     const ColumnBinding = struct { component: []const u8, stride: usize, access: storage.Access };
@@ -466,7 +498,7 @@ pub const Plan = struct {
         }
     };
     pub const CheckedCall = struct { plan: *const Plan, code: CodeIdentity };
-    arena: std.heap.ArenaAllocator,
+    arena: ?std.heap.ArenaAllocator,
     batch: storage.Store.Batch,
     rows: usize,
     columns: []const ColumnBinding,
@@ -491,7 +523,7 @@ pub const Plan = struct {
     loop_effects: effects_module.Loop,
 
     pub fn deinit(self: *Plan) void {
-        self.arena.deinit();
+        if (self.arena) |*arena| arena.deinit();
         self.* = undefined;
     }
     /// Compare checked entry and batch identities supplied by a code owner.

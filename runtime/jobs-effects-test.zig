@@ -326,17 +326,24 @@ test "complete Query stage forwards every real Position and Velocity batch in re
     const second = try store.create(p, &.{});
     const Observe = struct {
         fn nested() !void {}
-        fn plans(rows: []const T.Plan, expected: *const [3]Expected, reject: bool) !void {
+        fn plans(rows: []const T.Plan, owned: *const T.Document, expected: *const [3]Expected, reject: bool) !void {
             try std.testing.expectEqual(expected.len, rows.len);
             for (rows, expected) |*plan, wanted| {
                 try std.testing.expectEqualStrings(wanted.entry.entrySymbol, plan.entry_symbol);
                 try std.testing.expectEqual(@as(usize, 1), plan.rows);
                 try std.testing.expectEqual(wanted.entity, try plan.batch.entity(0));
                 try std.testing.expectEqual(T.Plan.LLVMArgument{ .float32 = wanted.scalar }, try plan.llvmArgument(7));
+                const loop = owned.effects.system(wanted.entry.logicalFunctionId).?.loops[wanted.entry.loop];
+                try std.testing.expectEqualSlices(u8, owned.payload.effects, plan.effects);
+                try std.testing.expect(plan.effects.ptr == owned.payload.effects.ptr);
+                try std.testing.expect(loop.operations.len > 0 and plan.loop_effects.operations.ptr == loop.operations.ptr);
                 try std.testing.expectError(error.BorrowConflict, plan.batch.withActiveCall(.{}, nested));
                 try std.testing.expectError(error.BorrowConflict, plan.batch.release());
                 try std.testing.expectError(error.BorrowConflict, plan.batch.store.borrowWrite(wanted.entity, wanted.entry.columns[0].componentType));
             }
+            try std.testing.expect(rows[0].columns.ptr == rows[1].columns.ptr);
+            try std.testing.expect(rows[0].tuples.ptr == rows[1].tuples.ptr);
+            try std.testing.expect(rows[0].scalars.ptr == rows[1].scalars.ptr);
             if (reject) return error.TestStageFailure;
         }
         fn unexpected(_: []const T.Plan) !void {
@@ -351,7 +358,7 @@ test "complete Query stage forwards every real Position and Velocity batch in re
         fn allocationScenario(allocator: std.mem.Allocator, selected: *const T.ParallelGroup, owner: *jobs.Store,
             bindings: *const [2]?T.ParallelGroup.LoopBinding, expected: *const [3]Expected) !void
         {
-            const result = selected.withPlans(allocator, owner, bindings, .{ expected, false }, plans);
+            const result = selected.withPlans(allocator, owner, bindings, .{ selected.document, expected, false }, plans);
             try expectReleased(owner, expected);
             try result;
         }
@@ -369,8 +376,8 @@ test "complete Query stage forwards every real Position and Velocity batch in re
         .{ .entry = position, .entity = second, .scalar = 17 },
         .{ .entry = velocity, .entity = third, .scalar = 23 },
     };
-    try std.testing.expectError(error.TestStageFailure, group.withPlans(A, &store, &bindings, .{ &expected, true }, Observe.plans));
-    try group.withPlans(A, &store, &bindings, .{ &expected, false }, Observe.plans);
+    try std.testing.expectError(error.TestStageFailure, group.withPlans(A, &store, &bindings, .{ &document, &expected, true }, Observe.plans));
+    try group.withPlans(A, &store, &bindings, .{ &document, &expected, false }, Observe.plans);
     try Observe.expectReleased(&store, &expected);
     try std.testing.checkAllAllocationFailures(A, Observe.allocationScenario, .{ &group, &store, &bindings, &expected });
 }
