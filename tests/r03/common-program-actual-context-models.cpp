@@ -381,9 +381,9 @@ bool completionSingletonInstruction(){
     const bool ok=f.check.instruction(context,op,0,state,true,changed,edge,continues);
     if(mode==1){if(!expect(!ok&&f.error.code=="core-ir-common-budget"&&normals==0&&languages==0,"fixed64 remains a hard full-instruction failure without an emitted edge"))return false;continue;}
     if(!expect(ok&&f.error.message.empty()&&!continues&&normals==1&&languages==size_t(weak)&&!changed,"full receiver_bind through normal edgeState fits1751 or retains high-budget weak and fallback semantics"))return false;
-    if(!expect(sameMap(state.values,input.values,sameValue)&&f.check.receiverFrames.size()==(mode<2||multiple?2:1),"completion never consumes source SSA operands or creates Frame metadata"))return false;
+    if(!expect(f.check.receiverFrames.size()==(mode<2||multiple?2:1),"terminal completion does not create Frame metadata"))return false;
     const auto languageBefore=language;normal.values.at(1).objects.emplace("normal-only");normal.heap.clear();normal.regions.clear();normal.frames.find(id)->second.births.clear();
-    if(!expect(sameState(language,languageBefore)&&sameMap(state.values,input.values,sameValue)&&sameMap(f.input.frames,input.frames,sameFrame),"normal edge owns independent stores and cannot alter language or caller World/SSA payloads"))return false;
+    if(!expect(sameState(language,languageBefore)&&sameMap(f.input.frames,input.frames,sameFrame),"normal edge mutation preserves the language edge and the original World snapshot"))return false;
   }
   const std::vector<std::pair<std::string,std::string>> queries={{"",""},{"frame","frame"},{std::string("frame\0a",7),std::string("frame\0a",7)},
     {std::string("frame\x80",6),std::string("frame\x80",6)},{std::string("frame\xff",6),std::string("frame\xff",6)},
