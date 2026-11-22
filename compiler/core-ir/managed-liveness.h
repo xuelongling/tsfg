@@ -22,6 +22,15 @@ struct ManagedLiveness {
 // Output commits only on success; no metadata attributes are trusted or mutated.
 mlir::LogicalResult recomputeManagedLiveness(mlir::func::FuncOp, ManagedDomain, ManagedLiveness &);
 
+struct CommonFiniteUnionCallRoot {
+  uint16_t registerIndex;
+  // Zero-based actual alternatives in the verified domain order. This Common
+  // carrier has a two-byte tag and a single eight-byte payload at offset 8.
+  std::vector<uint16_t> handleTags;
+  bool operator==(const CommonFiniteUnionCallRoot &other) const {
+    return registerIndex==other.registerIndex&&handleTags==other.handleTags;
+  }
+};
 struct CommonCallRootPoint {
   uint16_t block, instruction;
   std::string operation, sourcePath;
@@ -37,6 +46,7 @@ struct CommonCallRootPoint {
   std::vector<uint16_t> cellCallableEnvironments{};
   // The Array owner of a live ReadSpan carrier.
   std::vector<uint16_t> readSpanOwners{};
+  std::vector<CommonFiniteUnionCallRoot> finiteUnionHandles{};
 };
 struct CommonCallRoots {
   std::string inputIdentity, functionId;
@@ -46,7 +56,7 @@ struct CommonCallRoots {
   size_t work = 0;
 };
 inline constexpr size_t commonCallRootsWorkLimit = 1000000;
-enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloadComponents, CellComponents, ReadSpanComponents };
+enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloadComponents, CellComponents, ReadSpanComponents, FiniteUnionComponents };
 // Analyzes one function only after verifying the whole Common module. Register
 // ordinals and carriers are owned compiler data, with no physical addresses.
 // ClosureComponents also admits direct lexical environment handles and lists
@@ -55,6 +65,8 @@ enum class CommonCallRootMode { DirectHandles, ClosureComponents, LanguagePayloa
 // CellComponents additionally describes initialized direct-handle and
 // callable environment components of local Cells.
 // ReadSpanComponents additionally describes the owner component of a direct ReadSpan.
+// FiniteUnionComponents additionally describes a single direct handle selected
+// by the active tag of a finite union with rootless alternatives.
 bool analyzeCommonCallRoots(mlir::ModuleOp, llvm::StringRef functionId,
     CommonCallRoots &, commonProgram::Error &, size_t workLimit = commonCallRootsWorkLimit,
     CommonCallRootMode mode = CommonCallRootMode::DirectHandles);

@@ -140,7 +140,8 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
   if(!spend(fn.blocks.size()*(words+1)+width+1))return false;
 
   const bool closureComponents=mode!=CommonCallRootMode::DirectHandles;
-  const bool readSpanComponents=mode==CommonCallRootMode::ReadSpanComponents;
+  const bool finiteUnionComponents=mode==CommonCallRootMode::FiniteUnionComponents;
+  const bool readSpanComponents=finiteUnionComponents||mode==CommonCallRootMode::ReadSpanComponents;
   const bool cellComponents=readSpanComponents||mode==CommonCallRootMode::CellComponents;
   const bool languageComponents=cellComponents||mode==CommonCallRootMode::LanguagePayloadComponents;
   const auto payloadCarrier="payload:"+schema.str();
@@ -153,16 +154,36 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(languageComponents&&(kind=="scalar"||kind=="null"||kind=="undefined"))inlinePayloads.insert(id);
     if(readSpanComponents&&kind=="readSpan")readSpans.insert(id);
   }
+  std::map<llvm::StringRef,std::vector<uint16_t>> unionHandleTags;
   for(const auto &row:items(field(program.representation,"domains"))){
     const auto id=field(row,"id").getAsString().value();
     if(!spend(id.size()/8+1))return false;
-    if(field(row,"representation").getAsString()!="reference")continue;
-    const auto &members=items(field(row,"actualTypes"));bool oneHandle=!members.empty();
-    for(const auto &member:members){
-      const auto type=member.getAsString().value();if(!spend(type.size()/8+1))return false;
-      oneHandle=direct.count(type)&&oneHandle;
+    const auto representation=field(row,"representation").getAsString();
+    const auto &members=items(field(row,"actualTypes"));
+    if(representation=="reference"){
+      bool oneHandle=!members.empty();
+      for(const auto &member:members){
+        const auto type=member.getAsString().value();if(!spend(type.size()/8+1))return false;
+        oneHandle=direct.count(type)&&oneHandle;
+      }
+      if(oneHandle)direct.insert(id);
     }
-    if(oneHandle)direct.insert(id);
+    if(!finiteUnionComponents||representation!="finite-union"||
+       field(row,"tagBytes").getAsInteger()!=2||field(row,"byteSize").getAsInteger()!=16||
+       field(row,"alignment").getAsInteger()!=8||field(row,"referenceCount").getAsInteger()!=1)continue;
+    std::vector<uint16_t> tags;
+    bool supported=true;
+    for(size_t index=0;index<members.size();++index){
+      const auto type=members[index].getAsString().value();
+      if(!spend(type.size()/8+1))return false;
+      const auto layout=program.layouts.find(type.str());
+      if(layout==program.layouts.end()){supported=false;break;}
+      if(layout->second.referenceCount==0)continue;
+      if(!direct.count(type)||layout->second.byteSize!=8||layout->second.alignment!=8||
+         layout->second.referenceCount!=1){supported=false;break;}
+      tags.push_back(uint16_t(index));
+    }
+    if(supported&&!tags.empty())unionHandleTags.emplace(id,std::move(tags));
   }
   std::map<llvm::StringRef,llvm::StringRef> bindings;
   for(const auto &row:items(field(program.representation,"bindings"))){
@@ -170,7 +191,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
     if(!spend(id.size()/8+1))return false;
     bindings.emplace(id,field(row,"carrier").getAsString().value());
   }
-  enum class RootKind { None, Handle, CallableEnvironment, LanguagePayload, CellHandle, CellCallableEnvironment, ReadSpanOwner, Unsupported };
+  enum class RootKind { None, Handle, CallableEnvironment, LanguagePayload, CellHandle, CellCallableEnvironment, ReadSpanOwner, FiniteUnionHandle, Unsupported };
   const auto cellRoot=[](RootKind kind){return kind==RootKind::CellHandle||kind==RootKind::CellCallableEnvironment;};
   std::vector<RootKind> kinds;
   kinds.reserve(width);
@@ -200,6 +221,7 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
         if(storage.byteSize==40&&callables.count(carrier))kind=RootKind::CallableEnvironment;
         if(languageComponents&&storage.byteSize==16&&carrier==payloadCarrier)kind=RootKind::LanguagePayload;
         if(storage.byteSize==16&&readSpans.count(carrier))kind=RootKind::ReadSpanOwner;
+        if(unionHandleTags.count(carrier))kind=RootKind::FiniteUnionHandle;
       }
     }
     kinds.push_back(kind);
@@ -376,6 +398,11 @@ bool analyzeCommonCallRoots(mlir::ModuleOp module,llvm::StringRef functionId,
         if(kinds[reg]==RootKind::CellHandle)point.cellHandles.push_back(uint16_t(reg));
         if(kinds[reg]==RootKind::CellCallableEnvironment)point.cellCallableEnvironments.push_back(uint16_t(reg));
         if(kinds[reg]==RootKind::ReadSpanOwner)point.readSpanOwners.push_back(uint16_t(reg));
+        if(kinds[reg]==RootKind::FiniteUnionHandle){
+          const auto &tags=unionHandleTags.at(fn.carriers[reg]);
+          if(!spend(tags.size()))return false;
+          point.finiteUnionHandles.push_back({uint16_t(reg),tags});
+        }
       }
       if(!callCells.empty())callCells.pop_back();
       points.push_back(std::move(point));
