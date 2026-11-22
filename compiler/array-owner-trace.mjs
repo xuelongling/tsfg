@@ -256,13 +256,13 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       return own(value,owner);
     };
     const returns=[];
-    const body=(rows,path=['body'])=>{
+    const body=(rows,path=['body'],reachable=true)=>{
       // Normal control flow is independent of whether aggregate provenance
       // is enabled. Still visit lexical facts after a terminated path.
       let fallthrough=true;
       for(const [index,row] of rows.entries()) {
         if(context&&!fallthrough)break;
-        charge();const at=[...path,index],incoming=fallthrough;
+        charge();const at=[...path,index],incoming=fallthrough,reachableRow=reachable&&incoming;
         if(row.kind==='initializeOwnFields') {
           const owner=constructions.get(row.construction),typeIndex=hir.types.indexOf(owner);
           for(const [ordinal,step]of owner.construction.initialization.entries())if(step.value)
@@ -298,18 +298,18 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           if(row.then||row.else) {
             const condition=context?truthValues.get(canonical([...at,'condition'])):null;
             if(typeof condition==='boolean'){
-              fallthrough=incoming&&body(condition?row.then??[]:row.else??[],[...at,condition?'then':'else']);continue;
+              fallthrough=incoming&&body(condition?row.then??[]:row.else??[],[...at,condition?'then':'else'],reachableRow);continue;
             }
             const before=snapshot(bindings),beforeLengths=snapshot(lengths);
             const priorTruth=snapshot(truthBindings);
             const storageBefore=stored.state();
-            conditionalDepth++;const yesExit=body(row.then??[],[...at,'then']),yes=snapshot(bindings);
+            conditionalDepth++;const yesExit=body(row.then??[],[...at,'then'],reachableRow),yes=snapshot(bindings);
             const yesLengths=exactLengthJoin&&yesExit?snapshot(lengths):null;
             const storageYes=stored.state();stored.restore(storageBefore);
             const yesTruth=snapshot(truthBindings);truthBindings.clear();for(const [id,value]of priorTruth){charge();truthBindings.set(id,value);}
             bindings.clear();for(const [id,owner]of before){charge();bindings.set(id,owner);}
             lengths.clear();for(const [key,length]of beforeLengths){charge();lengths.set(key,length);}
-            const noExit=body(row.else??[],[...at,'else']);conditionalDepth--;
+            const noExit=body(row.else??[],[...at,'else'],reachableRow);conditionalDepth--;
             fallthrough=incoming&&(yesExit||noExit);
             stored.join([storageYes,stored.state()]);
             meetTruth([...(yesExit?[yesTruth]:[]),...(noExit?[snapshot(truthBindings)]:[])]);
@@ -334,7 +334,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
             for(const id of truthBindings.keys()){charge();truthBindings.set(id,null);}
             const before=snapshot(bindings),conditionExit=stored.state();conditionalDepth++;
-            const bodyExit=body(row.body,[...at,'body']);conditionalDepth--;
+            const bodyExit=body(row.body,[...at,'body'],reachableRow);conditionalDepth--;
             const backedgeTruth=predicate(row.condition),afterTruth=snapshot(truthBindings);
             // Only a normally completed body can repeat its condition. The
             // shared scope also distinguishes views freshly made each turn.
@@ -344,11 +344,17 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             // Entry true is not an invariant. A proved false backedge yields
             // an actual normal continuation; unresolved cycles do not.
             if(context&&entryTruth===true&&(repeats||!bodyExit))fallthrough=false;
-            for(const [id,owner]of before)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
+            if(reachableRow&&zero&&!bodyExit){
+              // With no continuing body path, only the initial condition can exit.
+              bindings.clear();
+              for(const [id,owner]of before){charge();bindings.set(id,owner);}
+            }else{
+              for(const [id,owner]of before)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
+            }
             if(!repeats)meetTruth([...(zero?[beforeTruth]:[]),...(bodyExit?[afterTruth]:[])]);
             else for(const id of truthBindings.keys()){charge();truthBindings.set(id,null);}
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
-          }else if(row.body){const nestedExit=body(row.body,[...at,'body']);fallthrough=incoming&&nestedExit;}
+          }else if(row.body){const nestedExit=body(row.body,[...at,'body'],reachableRow);fallthrough=incoming&&nestedExit;}
         }
       }
       return fallthrough;

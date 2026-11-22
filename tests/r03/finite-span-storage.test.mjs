@@ -15,6 +15,8 @@ for(const [name,sourceHash,packetHash,ownerName] of [
   ['then returns','3157dd0efbe9ead0858a3dda6019984267784ea258f9409875819f10719dd16d','cd29101ad0f62a526e83977c5a66bed520a9f7c7df2c6e4ffd9067b9897db1e9','a'],
   ['else returns','fc0b625761f1febadf4a56d4de5bde31441a3067ec20a83de1de64f2b538ebf7','8a6bb7a6df84ad2d585607485851c1a5330ad032f5bb9b4eb59f7c06db9959ca','b'],
   ['both arms continue','8b0ce389f7eed19ed6997bd864192f52b9e22981ac035711337a8472d0c08c89','2f6790379277145a4bd665a45f5a63a30b588e235b4dce2844d80f51a7c6e13f',null],
+  ['loop body returns','64810e8c6571887d37de42e1dc82ed141a0aced1e10de6fe66eadea74431eab0','15fff017e9f8552fab201ce567798c3db5a3436bc4e7dd8ba4a7e80b1054bd1e','a'],
+  ['loop body reaches condition','dc6953c3647367ddb700fb7d958fed71667872a6801da9dcb9a0990be77dca7f','771077d86accd97100a49b84f5631dffcc2f62ac3eb681543537240741c36a6b',null],
 ]){
   test('actual ReadSpan joins continuing owners when '+name,async()=>{
     const bytes=await readFile(new URL('./testdata/typed-array-span-storage/'+sourceHash+'-package.json',import.meta.url));
