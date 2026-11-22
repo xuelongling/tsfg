@@ -92,10 +92,30 @@ export function commonEffects(hir,spend,physical=null) {
       if(origin.startsWith('p:'))result.parameters[Number(origin.slice(2))][flag]=true;
       if(origin.startsWith('c:'))capture(origin.slice(2),{[flag]:true},value&&{kind:'operation',operation:value.kind,range:value.range});}};
     const union=sets=>{const result=new Set();for(const values of sets)for(const value of values){spend();result.add(value);}return result;};
-    const mergeOrigins=(a,b)=>{for(const [id,values]of b){spend();a.set(id,union([a.get(id)??new Set(),values]));}};
-    function expression(value,environment=origins) {
+    const mergeOrigins=(environment,incoming)=>{
+      let changed=false;
+      for(const [id,values]of incoming){
+        spend();const prior=environment.get(id);
+        if(prior===values)continue;
+        const joined=prior?union([prior,values]):values;
+        if(!prior||joined.size!==prior.size){environment.set(id,joined);changed=true;}
+      }
+      return changed;
+    };
+    const replaceOrigins=(environment,continued)=>{
+      spend(environment.size+continued.size);environment.clear();
+      for(const [id,values]of continued)environment.set(id,values);
+    };
+    const rememberExit=(exits,kind,environment)=>{
+      if(!exits)return;
+      spend();const prior=exits.get(kind);
+      if(prior)mergeOrigins(prior,environment);
+      else exits.set(kind,collections.map(environment));
+    };
+    function expression(value,environment=origins,onThrow=null) {
       spend();let throwing=false,owner=new Set();
-      const visit=child=>{const result=expression(child,environment);throwing ||= result.throwing;return result.owner;};
+      const visit=child=>{const result=expression(child,environment,onThrow);throwing ||= result.throwing;return result.owner;};
+      const mayThrow=()=>{throwing=true;onThrow?.(environment);};
       const touch=()=>{if(reference(value.type))facet('managedReference','operation',value.kind,value.range);};touch();
       if(['bindingReference','bindingTarget','thisReference'].includes(value.kind))owner=value.kind==='thisReference'&&currentReceiver!==null?currentReceiver:environment.get(value.kind==='thisReference'?fn.receiverBinding:value.binding)??new Set();
       else if(['globalReference','globalTarget'].includes(value.kind)){
@@ -108,9 +128,12 @@ export function commonEffects(hir,spend,physical=null) {
         if(['fieldAccess','checkedElementAccess','arrayLength','readSpanLength'].includes(value.kind))mark(owner,'read',value);
       }else if(['bindingAssignment','elementAssignment','elementCompoundAssignment','lengthAssignment','fieldAssignment','bindingUpdate','elementUpdate','fieldUpdate'].includes(value.kind)) {
         const selected=visit(value.target);if(value.operator!=='=')mark(selected,'read',value);
+        const skipped=['&&=','||=','??='].includes(value.operator)?collections.map(environment):null;
         const assigned=value.value?visit(value.value):new Set();mark(selected,'write',value);
         if(value.kind==='lengthAssignment'||value.kind.startsWith('element'))mark(selected,'structural',value);
-        if(value.target.binding&&!value.target.global&&value.operator==='=')environment.set(value.target.binding,assigned);owner=assigned;
+        if(value.target.binding&&!value.target.global&&(value.operator==='='||skipped))environment.set(value.target.binding,assigned);
+        if(skipped)mergeOrigins(environment,skipped);
+        owner=skipped?union([selected,assigned]):assigned;
       }else if(value.kind==='new'||value.kind==='superConstruct') {
         const arguments_=value.arguments.map(visit),type=types.get(value.kind==='new'?value.type:value.callee);check(type,'type');
         if(type.kind==='reference'){facet('allocation','operation',value.kind,value.range);facet('managedReference','operation',value.kind,value.range);}
@@ -138,27 +161,27 @@ export function commonEffects(hir,spend,physical=null) {
             // Close this inline backedge while still consuming its fixed public
             // contract below; the current constructor body cannot narrow it.
             if(!current.base&&!activeConstructions.has(current.id)){
-              activeConstructions.add(current.id);throwing=initialize(current,supplied,environment)||throwing;activeConstructions.delete(current.id);
+              activeConstructions.add(current.id);throwing=initialize(current,supplied,environment,onThrow)||throwing;activeConstructions.delete(current.id);
             }
-            const called=consume(explicit,supplied,value);throwing ||= called.facets.mayThrow;return selectedFrom(supplied,called);
+            const called=consume(explicit,supplied,value);if(called.facets.mayThrow)mayThrow();return selectedFrom(supplied,called);
           }
           if(activeConstructions.has(current.id)){
             const target=constructors.get(current.id)?.id;check(target,'construction');
-            const called=consume(target,supplied,value);throwing ||= called.facets.mayThrow;return selectedFrom(supplied,called);
+            const called=consume(target,supplied,value);if(called.facets.mayThrow)mayThrow();return selectedFrom(supplied,called);
           }
           activeConstructions.add(current.id);const selected=current.base?construct(types.get(current.base)):supplied[0];
-          spend(arguments_.length+1);throwing=initialize(current,[selected,...arguments_],environment)||throwing;activeConstructions.delete(current.id);return selected;
+          spend(arguments_.length+1);throwing=initialize(current,[selected,...arguments_],environment,onThrow)||throwing;activeConstructions.delete(current.id);return selected;
         };
         owner=construct(type);
         if(value.kind==='superConstruct'){
           environment.set(fn.receiverBinding,owner);
           spend(fn.parameters.length+1);
-          throwing=initialize(types.get(fn.ownerType),[owner,...fn.parameters.map(parameter=>environment.get(parameter.id)??new Set())],environment)||throwing;
+          throwing=initialize(types.get(fn.ownerType),[owner,...fn.parameters.map(parameter=>environment.get(parameter.id)??new Set())],environment,onThrow)||throwing;
         }
       }else if(value.kind==='indirectCall'){
         visit(value.expression);const arguments_=value.arguments.map(visit),targets=callables.site(fn.id,value.range);
-        if(targets.top||!targets.functions.length){facet('unknownHost','operation',value.kind,value.range);throwing=true;}
-        for(const target of targets.functions){spend();const record=consume(target,arguments_,value);throwing ||= record.facets.mayThrow;}
+        if(targets.top||!targets.functions.length){facet('unknownHost','operation',value.kind,value.range);mayThrow();}
+        for(const target of targets.functions){spend();const record=consume(target,arguments_,value);if(record.facets.mayThrow)mayThrow();}
         if(reference(value.type)){for(const target of targets.functions){spend();owner.add('unknown:'+target);}if(targets.top||!targets.functions.length)owner.add('unknown:indirect');}
       }else if(value.kind==='hostCall'){
         value.arguments.forEach(visit);check(hosts.has(value.callee)&&hir.hostContext,'host-context');
@@ -169,8 +192,11 @@ export function commonEffects(hir,spend,physical=null) {
         if(value.callee==='intrinsic:readSpan')owner=arguments_[0];
         else {const callee=functions.get(value.callee),targets=callee?.kind==='method'?methods.dispatch(callee.id,value.receiver.type):[{target:value.callee}];
           const consumed=new Set();for(const {target}of targets){spend();if(consumed.has(target))continue;consumed.add(target);
-            const record=consume(target,arguments_,value);throwing ||= record.facets.mayThrow;}
+            const record=consume(target,arguments_,value);if(record.facets.mayThrow)mayThrow();}
           if(reference(value.type))owner=new Set(['unknown:'+value.callee]);}
+      }else if(value.kind==='binary'&&['&&','||','??'].includes(value.operator)){
+        const left=visit(value.left),skipped=collections.map(environment),right=visit(value.right);
+        mergeOrigins(environment,skipped);owner=union([left,right]);
       }else {
         for(const key of ['expression','left','right','receiver','index','value'])if(value[key])visit(value[key]);
         if(value.kind==='stringConcat'){facet('allocation','operation',value.kind,value.range);facet('managedReference','operation',value.kind,value.range);}
@@ -189,52 +215,96 @@ export function commonEffects(hir,spend,physical=null) {
       for(const p of upper.parameters)for(const flag of ['read','write','structural'])if(p[flag])mark(args[p.index]??new Set(),flag);
       return upper;
     }
-    function body(rows,environment=origins,escapingThrows=null) {
+    function body(rows,environment=origins,escapingThrows=null,exits=null) {
       let completions=new Set(['normal']);
+      const onThrow=exits?state=>rememberExit(exits,'throw',state):null;
       for(const row of rows) {
         spend();if(!completions.has('normal'))break;completions.delete('normal');let current=new Set(['normal']);const rowThrows=local?new Map():null;
-        const inspect=value=>expression(value,environment),possibleThrow=result=>{if(result.throwing)current.add('throw');return result.owner;};
+        const inspect=value=>expression(value,environment,onThrow),possibleThrow=result=>{if(result.throwing)current.add('throw');return result.owner;};
         if(['constDeclaration','letDeclaration','varDeclaration','initialize'].includes(row.kind)) {
           if(row.initializer){const assigned=possibleThrow(inspect(row.initializer));environment.set(row.binding,assigned);if(row.global)write.add(row.global);}
         }else if(row.kind==='expression')possibleThrow(inspect(row.value));
         else if(row.kind==='return') {
           if(row.value){const assigned=possibleThrow(inspect(row.value));if(reference(fn.returnType))facet('escape','operation',row.kind,row.range);if(types.get(fn.returnType)?.kind==='readSpan')
             check(!collections.array(assigned).some(owner=>owner.startsWith('local:')||owner.startsWith('unknown:')),'readspan-return-escape',undefined,{primary:{sourceId:fn.sourcePath,...row.range}});}
-          current.delete('normal');current.add('return');
+          current.delete('normal');current.add('return');rememberExit(exits,'return',environment);
         }else if(row.kind==='throw') {
           possibleThrow(inspect(row.value));facet('ehControl','operation',row.kind,row.range);current=new Set(['throw']);
+          onThrow?.(environment);
           if(rowThrows){const origin={kind:'operation',functionId:fn.id,source:{sourceId:operationSource,...row.range},operation:row.kind};rowThrows.set(canonical(origin),origin);}
-        }else if(row.kind==='block'){const child=collections.map(environment);current=body(row.body,child,rowThrows);if(current.has('normal'))mergeOrigins(environment,child);}
+        }else if(row.kind==='block'){
+          const child=collections.map(environment);current=body(row.body,child,rowThrows,exits);
+          if(current.has('normal'))replaceOrigins(environment,child);
+        }
         else if(row.kind==='if') {
           const condition=inspect(row.condition);const yes=collections.map(environment),no=collections.map(environment);
-          current=union([body(row.then,yes,rowThrows),body(row.else,no,rowThrows)]);mergeOrigins(environment,yes);mergeOrigins(environment,no);if(condition.throwing)current.add('throw');
+          const thenResult=body(row.then,yes,rowThrows,exits),elseResult=body(row.else,no,rowThrows,exits);
+          current=union([thenResult,elseResult]);
+          if(thenResult.has('normal')){
+            replaceOrigins(environment,yes);if(elseResult.has('normal'))mergeOrigins(environment,no);
+          }else if(elseResult.has('normal'))replaceOrigins(environment,no);
+          if(condition.throwing)current.add('throw');
         }else if(row.kind==='while') {
-          const condition=inspect(row.condition),loop=collections.map(environment),loopCompletions=body(row.body,loop,rowThrows);mergeOrigins(environment,loop);
-          current=union([new Set(['normal']),new Set([...loopCompletions].filter(c=>c!=='normal'))]);if(condition.throwing)current.add('throw');
+          const header=collections.map(environment);let replay=false;
+          while(true){
+            spend();const callsBefore=calls.length,hostsBefore=hostCalls.length;
+            const conditionExit=collections.map(header),condition=expression(row.condition,conditionExit,onThrow);
+            const loop=collections.map(conditionExit),completions=body(row.body,loop,rowThrows,exits);
+            for(const completion of completions){spend();current.add(completion);}
+            if(condition.throwing)current.add('throw');
+            // Repeated abstract laps refine owner effects at the same call sites.
+            if(replay){calls.length=callsBefore;hostCalls.length=hostsBefore;}
+            if(!completions.has('normal')||!mergeOrigins(header,loop)){
+              replaceOrigins(environment,conditionExit);
+              break;
+            }
+            replay=true;
+          }
         }else if(row.kind==='try') {
-          facet('ehControl','operation',row.kind,row.range);const attempted=collections.map(environment);current=body(row.tryBlock.body,attempted,rowThrows);mergeOrigins(environment,attempted);
+          facet('ehControl','operation',row.kind,row.range);
+          const attempted=collections.map(environment);let pending=new Map();
+          current=body(row.tryBlock.body,attempted,rowThrows,pending);
+          if(current.has('normal'))pending.set('normal',attempted);
           if(row.catchClause&&current.delete('throw')) {
-            const caught=collections.map(environment);if(row.catchClause.binding)caught.set(row.catchClause.binding.id,new Set(['unknown:catch']));
-            rowThrows?.clear();current=union([current,body(row.catchClause.block.body,caught,rowThrows)]);mergeOrigins(environment,caught);
+            const caught=pending.get('throw');pending.delete('throw');
+            if(row.catchClause.binding)caught.set(row.catchClause.binding.id,new Set(['unknown:catch']));
+            rowThrows?.clear();const handled=body(row.catchClause.block.body,caught,rowThrows,pending);
+            if(handled.has('normal'))rememberExit(pending,'normal',caught);
           }
           if(row.finallyBlock) {
-            const final=collections.map(environment),finalThrows=local?new Map():null,completed=body(row.finallyBlock.body,final,finalThrows);mergeOrigins(environment,final);
-            if(!completed.has('normal'))rowThrows?.clear();if(rowThrows)for(const [key,origin]of finalThrows)rowThrows.set(key,origin);
-            current=union([completed.has('normal')?current:new Set(),new Set([...completed].filter(c=>c!=='normal'))]);
+            // A normal finally resumes its incoming completion. Keep those
+            // environments separate so a return never becomes a loop backedge.
+            const finalized=new Map(),finalThrows=local?new Map():null;
+            let replay=false,retainsThrow=false;
+            for(const [incoming,entry] of pending){
+              spend();const callsBefore=calls.length,hostsBefore=hostCalls.length,final=collections.map(entry);
+              const completed=body(row.finallyBlock.body,final,finalThrows,finalized);
+              if(completed.has('normal')){
+                rememberExit(finalized,incoming,final);retainsThrow ||= incoming==='throw';
+              }
+              if(replay){calls.length=callsBefore;hostCalls.length=hostsBefore;}
+              replay=true;
+            }
+            if(!retainsThrow)rowThrows?.clear();if(rowThrows)for(const [key,origin]of finalThrows)rowThrows.set(key,origin);
+            pending=finalized;
           }
+          spend(pending.size);current=new Set(pending.keys());
+          if(current.has('normal'))replaceOrigins(environment,pending.get('normal'));
+          for(const [kind,state] of pending)if(kind!=='normal')rememberExit(exits,kind,state);
         }
         completions=union([completions,current]);
         if(escapingThrows&&current.has('throw'))for(const [key,origin]of rowThrows)escapingThrows.set(key,origin);
       }
       return completions;
     }
-    function initialize(current,supplied,environment){
+    function initialize(current,supplied,environment,onThrow=null){
       spend(current.fields.length+current.construction.parameters.length+environment.size);const fields=new Map(current.fields.map(field=>[field.id,field])),selected=new Map(environment);
       for(const [index,parameter]of current.construction.parameters.entries()){spend();selected.set(parameter.symbol,supplied[index+1]??new Set());}
-      const previousReceiver=currentReceiver,previousSource=operationSource;currentReceiver=supplied[0];let throwing=false;
+      const previousReceiver=currentReceiver,previousSource=operationSource,observeThrow=onThrow?()=>onThrow(environment):null;
+      currentReceiver=supplied[0];let throwing=false;
       for(const id of current.construction.initializationFields){spend();const field=fields.get(id);check(field,'identity');
         operationSource=field.origin.source;
-        if(field.initializer){const evaluated=expression(field.initializer,selected);throwing=evaluated.throwing||throwing;}
+        if(field.initializer){const evaluated=expression(field.initializer,selected,observeThrow);throwing=evaluated.throwing||throwing;}
         // Every own field is defined, including parameter properties and
         // default undefined. Initializer expression effects cannot account
         // for this separate write to a possibly pre-existing replacement.
