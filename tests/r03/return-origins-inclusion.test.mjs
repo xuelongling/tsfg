@@ -42,6 +42,15 @@ test('native data is Bottom for origins while native completion remains live',()
   const body=graph();body.nodes.push({kind:'nonowning',type:'i32'});body.normal=[0];assert.equal(prove(body,graph()),'covered');
   const upper=graph();upper.exits.normal=[];assert.equal(prove(body,upper),'open');
 });
+test('a literal category is matched through a distinct live upper equation',()=>{
+  const body=graph(),upper=graph();
+  body.nodes.push({kind:'literal',type:'i32',category:'other'});
+  upper.nodes.push({kind:'literal',type:'i32',category:'other'},{kind:'gate',type:'i32',inputs:[0],control:0});
+  body.normal=[0];upper.normal=[1];
+  assert.equal(prove(body,upper),'covered');
+  upper.nodes[0]={kind:'literal',type:'i32',category:'undefined'};
+  assert.equal(prove(body,upper),'open');
+});
 test('copy scopes have one consistent alpha match across all content edges',()=>{
   const upper=copies(false),copy=upper.nodes[2];if(copy.kind==='copy')copy.site='published-copy';
   assert.equal(prove(copies(false),upper),'covered');assert.equal(prove(copies(false),copies(true)),'open');

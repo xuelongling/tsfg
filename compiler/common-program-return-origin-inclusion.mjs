@@ -166,6 +166,7 @@ export function commonReturnOriginsInclusion(body,upper,contracts,spend) {
       if(task.kind==='node'){
         const a=body.nodes[task.left],b=upper.nodes[task.right];if(a.kind!==b.kind){failed=true;continue;}
         if(a.kind==='parameter'&&b.kind==='parameter'){if(a.index!==b.index)failed=true;continue;}
+        if(a.kind==='literal'&&b.kind==='literal'){if(a.category!==b.category)failed=true;continue;}
         if(a.kind==='global'&&b.kind==='global'){if(!symbolEqual(a.id,b.id))failed=true;continue;}
         if(a.kind==='environmentInput'&&b.kind==='environmentInput'){if(!symbolEqual(a.layout,b.layout))failed=true;continue;}
         if(a.kind==='unknown')continue;
