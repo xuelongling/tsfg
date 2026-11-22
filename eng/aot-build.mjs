@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {copyFile,lstat,mkdir,open,readFile,realpath,rename,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {verifiedConsumer} from '../compiler/pipeline.mjs';
-import {verifyProducedPacket} from '../compiler/producer-packet.mjs';
+import {readCoreInputIdentity,verifyAotProducedPacket} from '../compiler/producer-packet.mjs';
 import {prepareUnqualifiedCurrentCounter} from './host-counter.mjs';
 import {createCounterHostContract} from './host-semantic-contract.mjs';
 import {startVmBuildChild,VmBuildError} from './vm-build.mjs';
@@ -66,6 +66,8 @@ export async function executeAotTarget({options,runtime,tools,productRoot,worksp
       ||typeof normalize!=='function')throw new AotBuildError('AOT build requires the locked normal build context','aot-tool-integrity');
   const coreBytes=await stableBytes(await realpath(corePath),maxCoreBytes,'aot-input-integrity');
   if(!isUtf8(coreBytes))throw new AotBuildError('AOT Core input must be valid UTF-8','aot-input-integrity');
+  const inputIdentity=readCoreInputIdentity(coreBytes.toString('utf8'));
+  if(inputIdentity===undefined)throw new AotBuildError('AOT Core input must have a unique input identity','aot-input-integrity');
   const programCore=sha256(coreBytes),output=path.resolve(options.get('--out'));
   if(!/^E:[\\/]/i.test(output))throw new AotBuildError('AOT output must use absolute E storage','aot-output-integrity');
   for(const inputRoot of [productRoot,runtime.closurePath]) {
@@ -150,7 +152,7 @@ export async function executeAotTarget({options,runtime,tools,productRoot,worksp
 
   const wirePath=path.join(stage,'program.tbc'),object=path.join(stage,'program.obj');
   await run({executable:producer,args:['--emit-bytecode'],cwd:product,environment,label:'core-wire'},wirePath);
-  const wire=await stableBytes(wirePath,1048576);verifyProducedPacket(wire);
+  const wire=await stableBytes(wirePath,1048576);verifyAotProducedPacket(wire,inputIdentity);
   await run({executable:producer,args:['--emit-program-object'],cwd:product,environment,label:'core-program'},object);
   const programObject=await stableBytes(object,16777216);
   const compiledTableId=sha256(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'),wire]));

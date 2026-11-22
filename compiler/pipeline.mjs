@@ -31,7 +31,7 @@ import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
 import {verifyCoreIrInputs} from "../eng/core-ir-inputs.mjs";
 import {runtimeSources} from "../eng/vm-build.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
-import {verifyProducedPacket} from './producer-packet.mjs';
+import {readCoreInputIdentity,verifyAotProducedPacket,verifyProducedPacket} from './producer-packet.mjs';
 import {verifyCommonProducedPacket} from './common-program-packet.mjs';
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -106,9 +106,13 @@ export async function verifiedConsumer(executable, role) {
         throw new TypeError(`r03-tool-aot: changed ${name}`);
       return bytes;
     };
-    const wire = await artifact("program.tbc");
-    verifyProducedPacket(wire);
-    const programCore=sha256(await artifact("program.mlir"));
+    const core=await artifact("program.mlir");
+    const inputIdentity=readCoreInputIdentity(decodeCompilerText(core,"r03-tool-aot"));
+    if (inputIdentity===undefined)
+      throw new TypeError("r03-tool-aot: missing unique Core input identity");
+    const wire=await artifact("program.tbc");
+    verifyAotProducedPacket(wire,inputIdentity);
+    const programCore=sha256(core);
     if (manifest.program?.core !== programCore || manifest.buildIdentity.options.programCore !== programCore
         || manifest.program?.object !== sha256(await artifact("program.obj"))
         || manifest.program?.bytecode !== sha256(wire)

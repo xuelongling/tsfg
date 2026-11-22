@@ -2,12 +2,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {verifyProducedPacket} from '../../compiler/producer-packet.mjs';
-import {stringCases,expectedStringPacket} from './formal-string-gold.mjs';
+import {readCoreInputIdentity,verifyAotProducedPacket,verifyProducedPacket} from '../../compiler/producer-packet.mjs';
+import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
 
 test('normal producer accepts the complete current independent packet without changing its bytes',()=>{
   const packet=expectedStringPacket(stringCases()[0].hir),before=Buffer.from(packet);
   verifyProducedPacket(packet);assert.deepEqual(packet,before);
+});
+
+test('the Core input identity belongs to the module in both printed forms',()=>{
+  const [{hir},{hir:other}]=stringCases(),core=expectedStringCore(hir);
+  const headEnd=core.indexOf('} {\n');
+  const attributes=core.slice('module attributes {'.length,headEnd),body=core.slice(headEnd+4,-2);
+  const generic='"builtin.module"() ({\n'+body+'}) {'+attributes+'} : () -> ()\n';
+  const escaped=hir.inputIdentity.replace('sha256','sha\\3256');
+  const aliased='#loc = loc("facts.ts":1:1)\n#7 = "'+escaped+'"\n'+core.replace('"'+hir.inputIdentity+'"','#7');
+  for(const text of [core,generic,'// saved Core\n'+core,aliased]){
+    const input=readCoreInputIdentity(text);
+    assert.equal(input,hir.inputIdentity);
+    verifyAotProducedPacket(expectedStringPacket(hir),input);
+    assert.throws(()=>verifyAotProducedPacket(expectedStringPacket(other),input),/differs from the checked Core/);
+  }
+  const field='tsfg_core.input_identity = "'+hir.inputIdentity+'"';
+  assert.equal(readCoreInputIdentity(core.replace(field+', ','')),undefined);
+  assert.equal(readCoreInputIdentity(core.replace(field,field+', '+field)),undefined);
+  assert.equal(readCoreInputIdentity(generic.replace(field+', ','tsfg_core.note = "'+hir.inputIdentity+'", ')),undefined);
 });
 
 test('normal producer rejects old/mixed identity, extent and checksum before publication',()=>{

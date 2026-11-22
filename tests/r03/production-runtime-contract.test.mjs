@@ -92,9 +92,10 @@ test('AOT consumer admits the published executable role from its output inventor
   buildIdentity.digest=hash(jcs(body));
   const host=createCounterHostContract({buildIdentity,buildInputSet});
   files.set('host-semantic-contract.json',Buffer.from(host.contractText));
+  const tableIdentity=packet=>hash(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'),packet]));
   const manifest={buildIdentity,buildInputSet,executionBackend:'aot-v4',
     program:{core:hash(core),bytecode:hash(wire),object:hash(files.get('program.obj')),
-      compiledTableId:hash(Buffer.concat([Buffer.from('tsfg.aot-compiled-module.v4\0'),wire]))},
+      compiledTableId:tableIdentity(wire)},
     outputs:[...files].map(([name,bytes])=>({path:name,sha256:hash(bytes)}))};
   const reads=[],readFile=fs.readFile;
   t.mock.method(fs,'readFile',async (file,...args)=>{
@@ -109,6 +110,22 @@ test('AOT consumer admits the published executable role from its output inventor
 
   const executable=path.join(directory,'tsfg-aot.exe');
   assert.equal(await verifiedConsumer(executable,'aot'),executable);
+  await t.test('bytecode from another String input is rejected at receipt admission',async()=>{
+    const other=stringCases()[1].hir,otherWire=expectedStringPacket(other);
+    assert.notEqual(other.inputIdentity,hir.inputIdentity);
+    const wireRow=manifest.outputs.find(row=>row.path==='program.tbc');
+    assert.ok(wireRow);
+    files.set('program.tbc',otherWire);
+    wireRow.sha256=manifest.program.bytecode=hash(otherWire);
+    manifest.program.compiledTableId=tableIdentity(otherWire);
+    try{
+      await assert.rejects(verifiedConsumer(executable,'aot'),/r04-producer-input-identity/);
+    }finally{
+      files.set('program.tbc',wire);
+      wireRow.sha256=manifest.program.bytecode=hash(wire);
+      manifest.program.compiledTableId=tableIdentity(wire);
+    }
+  });
   for(const name of ['program.obj','program.tbc','program.mlir','tsfg-aot.pdb','host-semantic-contract.json'])
     await t.test(name,async()=>{
       reads.length=0;
