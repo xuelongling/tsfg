@@ -2,9 +2,9 @@
 // The versioned output boundary of the independent verified Core analysis.
 import {readGenericJson,copyGenericJsonBytes,genericPackageJsonPolicy} from './generic-json.mjs';
 import {canonical,own} from './identity.mjs';
-import {functionId,signatureId} from './module-callable-common.mjs';
+import {signatureId} from './module-callable-common.mjs';
 import {printSystemQueryFacts} from './system-query-facts.mjs';
-import {systemQueryTypeId} from './system-query-core.mjs';
+import {systemQuerySystemIdentity,systemQueryTypeId} from './system-query-core.mjs';
 import {queryViewBinding} from './system-query-expressions.mjs';
 
 /** @typedef {Readonly<{path:string,start:number,end:number}>} QueryEffectSource */
@@ -91,8 +91,8 @@ export function readSystemQueryEffects(bytes,facts,context){
     return [...map].sort(([a],[b])=>a<b?-1:1).map(([,row])=>row);
   };
   const originalSystems=new Map(facts.systems.map(system=>{
-    const signature={parameters:system.parameters.map(parameter=>parameter.query?systemQueryTypeId(parameter.query):parameter.type),returns:system.returnType};
-    return [functionId(system.declaration.sourcePath,canonical({path:[],kind:'function',name:system.declaration.name}),signature),{system,signature}];
+    const {id,signature}=systemQuerySystemIdentity(system);
+    return [id,{system,signature}];
   }));
   /** @param {unknown} value @param {QueryEffectSource} owner @returns {QueryScalarCall[]} */
   const readCalls=(value,owner)=>array(value).map(value=>{spend();const row=record(value,['functionId','sourceHelperId','signatureHash','source','calleeSource']);return {functionId:hash(row.functionId),sourceHelperId:hash(row.sourceHelperId),signatureHash:hash(row.signatureHash),source:source(row.source,owner),calleeSource:source(row.calleeSource,owner)};});

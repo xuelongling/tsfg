@@ -7,6 +7,13 @@ import {canonical,sha256,scalarTypeIds} from './identity.mjs';
 /** @param {import('./system-query-facts.mjs').SystemQuerySelection} query */
 export const systemQueryTypeId=query=>sha256('tsfg.query.type.v1\0'+canonical(query.items.map(item=>({componentType:item.componentType,mode:item.mode}))));
 
+/** @param {import('./system-query-facts.mjs').SystemQuerySystem} system */
+export function systemQuerySystemIdentity(system){
+  const signature={parameters:system.parameters.map(parameter=>parameter.query?systemQueryTypeId(parameter.query):parameter.type),returns:system.returnType};
+  const id=functionId(system.declaration.sourcePath,canonical({path:[],kind:'function',name:system.declaration.name}),signature);
+  return {id,signature};
+}
+
 /** @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} context */
 export function emitSystemQueryCore(facts,context){
   const original=printSystemQueryFacts(facts,context),packet=JSON.parse(original.toString('utf8'));
@@ -82,9 +89,9 @@ export function emitSystemQueryCore(facts,context){
   }
   for(const system of facts.systems){
     spend();if(system.sourceReturnType!=='void')fail(system,system.bodyRange,'system return must be void');
-    const parameters=system.parameters.map(parameter=>{const semantic=parameter.query?systemQueryTypeId(parameter.query):parameter.type,type=parameter.query?query(semantic):scalar.get(semantic);
+    const {signature,id}=systemQuerySystemIdentity(system);
+    const parameters=system.parameters.map((parameter,index)=>{const semantic=signature.parameters[index],type=parameter.query?query(semantic):scalar.get(semantic);
       if(!type)fail(system,parameter.binding.range,'ordinary system parameter has no selected scalar Core type');return {name:'%arg'+parameter.index,type,semantic,binding:parameter.binding.id,mode:null};});
-    const signature={parameters:parameters.map(row=>row.semantic),returns:system.returnType},id=functionId(system.declaration.sourcePath,canonical({path:[],kind:'function',name:system.declaration.name}),signature);
     line('  func.func @',quote('query_'+id.slice(7)),'(',parameters.map(row=>row.name+': '+row.type).join(', '),') attributes {tsfg_core.function_id = ',quote(id),', tsfg_core.signature_hash = ',quote(signatureId(signature)),', tsfg.query_source_function = ',quote(system.declaration.id),', tsfg_source.path = ',quote(system.declaration.sourcePath),', ',anchor(system.declaration.range),'} {');
     for(const loop of system.loops){
       spend();const parameter=parameters.find(row=>row.binding===loop.queryBinding),selection=system.parameters.find(row=>row.binding.id===loop.queryBinding).query,selectionId=systemQueryTypeId(selection),queryName='%query'+serial,chunkName='%chunk'+serial,countName='%count'+serial,rowName='%row'+serial++;

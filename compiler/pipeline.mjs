@@ -11,7 +11,7 @@ export { compilePackageHir };
 import { buildHir, lowerHir, lowerFormalHir, prepareCommonCore } from "./hir.mjs";
 import { canonical, own, sha256 } from "./identity.mjs";
 import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
-import {checkQueryBatchSource,checkQueryLlvmDialect,emitSystemQueryCore,escapeQueryCompilerBytes} from './system-query-core.mjs';
+import {checkQueryBatchSource,checkQueryLlvmDialect,emitSystemQueryCore,escapeQueryCompilerBytes,systemQuerySystemIdentity} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
@@ -185,24 +185,34 @@ function checkQueryLlvmPair(llvm,batch,target){
 }
 
 /** Match the checked entry and helper definitions emitted by the Query printer.
- * @param {string} llvm
- * @param {import('./system-query-tmeta.mjs').SystemQueryTmeta['payload']['entries']} entries
- * @param {import('./system-query-facts.mjs').SystemQueryFacts['scalarHelpers']} helpers
+ * @param {string} llvm @param {import('./system-query-facts.mjs').SystemQueryFacts} facts
  */
-function checkQueryLlvmEntries(llvm,entries,helpers){
+function checkQueryLlvmEntries(llvm,facts){
   const fail=()=>{throw new TypeError('r10-system-query-llvm: checked entry ABI differs');};
   // Each byte memref expands to two pointers and three indices. Its extra
   // index is a row stride for an entry and a row byte offset for a helper.
   const column=['ptr','ptr','i64','i64','i64','i64'];
-  const floating=/** @param {string} type */ type=>type==='f32'?'float':'double';
+  const floating=/** @param {string} type */ type=>{
+    if(type==='f32')return 'float';
+    if(type==='f64')return 'double';
+    return fail();
+  };
   /** @param {string} symbol @param {string} result @param {string[]} types */
   const definition=(symbol,result,types)=>{
     const parameters=types.map((type,index)=>`${type} %${index}`).join(', ');
     return `define ${result} @${symbol}(${parameters}) {`;
   };
-  const expected=new Set(entries.map(entry=>definition(entry.entrySymbol,'void',
-    ['i64',...entry.columns.flatMap(()=>column),...entry.scalars.map(scalar=>floating(scalar.type))])));
-  for(const helper of helpers)
+  const expected=new Set();
+  for(const system of facts.systems){
+    if(system.loops.length===0)continue;
+    const {id}=systemQuerySystemIdentity(system);
+    const scalars=system.parameters.filter(parameter=>!parameter.query).map(parameter=>floating(parameter.logicalType));
+    for(const [index,loop] of system.loops.entries()){
+      const components=[...new Set(loop.bindings.map(binding=>binding.componentType))];
+      expected.add(definition('batch_'+id.slice(7)+'_'+index,'void',['i64',...components.flatMap(()=>column),...scalars]));
+    }
+  }
+  for(const helper of facts.scalarHelpers)
     expected.add(definition('batch_helper_'+helper.id.slice(7),floating(helper.sourceReturnType),
       helper.parameters.flatMap(parameter=>parameter.view?column:[floating(parameter.logicalType)])));
   for(const [line] of llvm.matchAll(/^[ \t]*define\b[^\r\n]*/gmu))
@@ -230,7 +240,7 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   if(cpuLLVM&&llvmOutput==='ir')checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
   if(cpuLLVM&&llvmOutput==='dialect')checkQueryLlvmDialect(cpuLLVM,checkedBatch,facts.program.target);
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
-  if(cpuLLVM&&llvmOutput==='ir'&&tmeta)checkQueryLlvmEntries(cpuLLVM,tmeta.payload.entries,facts.scalarHelpers);
+  if(cpuLLVM&&llvmOutput==='ir')checkQueryLlvmEntries(cpuLLVM,facts);
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),
     batchHash:tmeta.payload.batchHash,
