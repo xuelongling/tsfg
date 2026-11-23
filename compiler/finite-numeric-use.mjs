@@ -6,8 +6,13 @@ const orderedComparison=new Set(['<','<=','>','>=']);
 const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^',...orderedComparison]);
 /** The accepted first numeric-use domain is exactly same-i32 plus undefined. */
 export function finiteNumericUse(value) {
-  const operands=value.kind==='binary'?[value.left,value.right]:value.kind==='unary'?[value.operand]:[];
-  const approved=value.kind==='binary'?numericBinary.has(value.operator):value.kind==='unary'&&['+','-','~'].includes(value.operator);
+  const field=value.kind==='fieldAssignment';
+  if(field&&typeof value.operator!=='string')return null;
+  const operator=field?value.operator.slice(0,-1):value.operator;
+  const operands=field?[value.target,value.value]:value.kind==='binary'?[value.left,value.right]:value.kind==='unary'?[value.operand]:[];
+  const approved=field?value.operator.endsWith('=')&&numericBinary.has(operator)&&!orderedComparison.has(operator)
+    &&(value.semanticType??value.type)===i32TypeId
+    :value.kind==='binary'?numericBinary.has(operator):value.kind==='unary'&&['+','-','~'].includes(operator);
   return approved&&operands.every(operand=>(operand.semanticType??operand.type)===i32TypeId)?operands:null;
 }
 

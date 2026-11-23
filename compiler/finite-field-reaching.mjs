@@ -51,7 +51,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   const lexicalWrites=new Map();
   // Core retains the original store instructions across these cuts. Their
   // lexical versions belong to the emitted inventory, outside ordered state.
-  const keepLexicalWrites=Boolean(terminalReads||plan.failedInitializers?.size||
+  const keepLexicalWrites=Boolean(terminalReads||plan.terminalNumericFields?.size||plan.failedInitializers?.size||
     plan.failedConstructions?.size||plan.failedSuperArguments?.size);
   const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepLexicalWrites);
   if(!keepLexicalWrites)for(const [id,version]of lexicalWrites){charge();writes.set(id,version);}
@@ -173,6 +173,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
             if(source?.function===callee.id&&index>=0)fieldChildren.set(token+'\0'+version,tokens[index]??null);}}
     }
     let trapSource=null,stopped=false;
+    const continues=()=>{const normal=!stopped;stopped=false;return normal;};
     function phaseExpression(value,path,state,env,trap) {
       if(!trap)return expression(value,path,state,env);
       const previous=trapSource,wasStopped=stopped;
@@ -191,7 +192,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           const init=owner.construction.initialization.find(row=>row.field===output.field&&row.value);
           const trap=failure?.node===output.valueNode?failure.trap:null;
           const token=phaseExpression(init.value,output.valueNode,state,env,trap);
-          if(trap)return null;
+          if(trap||stopped)return null;
           storedTokens.set(output.id,{function:fn.id,token,fresh:init.value.kind==='construct'});
         }
         if(event.kind==='parameterWrite'){charge();storedTokens.set(output.id,{function:fn.id,token:env.get(output.parameterBinding)??null,parameter:true,fresh:false});}
@@ -330,7 +331,10 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           if(!absent)return null;
           const memory=present?clone(state):state,locals=present?copyFieldReachingAliases(env,charge):env;
           expression(value.value,path+'/value',memory,locals);
-          if(stopped)return null;
+          if(stopped){
+            if(present)continues();
+            return null;
+          }
           access(value,store,memory,token,'store');
           if(present){
             const merged=join(state,memory);state.clear();for(const pair of merged){charge();state.set(...pair);}
@@ -339,6 +343,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           return null;
         }
         const rhs=value.kind==='fieldAssignment'?child('value'):null;
+        if(plan.terminalNumericFields?.has(path))stopped=true;
         if(stopped)return null;
         if(store!==path){access(value,store,state,token,'store');return null;}
         const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
@@ -367,7 +372,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         if(rightReached!==null){if(rightReached)child('right');return null;}
         const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge),
           result=evaluateRight(right,rightEnv);
-        if(stopped)return null;
+        if(!continues())return nullish?left:null;
         const merged=join(state,right);state.clear();for(const pair of merged){charge();state.set(...pair);}
         meetAliases(env,env,rightEnv);return nullish&&left&&left===result?left:null;
       }
@@ -443,6 +448,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           const token=expression(arg,path+'/arguments/'+index,state,env);
           if(stopped)return null;
           tokens.push(copiesValue(arg.type)?copyToken(token,path+'/arguments/'+index+'/copy',state):token);}
+        if(plan.terminalNumericConstructions?.has(value.construction)){stopped=true;return null;}
         completed(value.construction,path,state,[value.type],tokens,path);freshTokens.add(path);return path;
       }
       // Receiver and target/index evaluation precede RHS, matching owned HIR.
@@ -459,6 +465,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       return finiteBranchEffects(condition,path,{state,env},(leaf,at,entry)=>{
         const exit={state:clone(entry.state),env:copyFieldReachingAliases(entry.env,charge)};
         expression(leaf,at,exit.state,exit.env);
+        if(!continues())return {yes:null,no:null};
         return {yes:exit,no:exit};
       },(left,right)=>{
         if(!left||!right)return left??right;
@@ -472,6 +479,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         charge();const p=path+'/'+index;
         if(value.kind==='local') {
           const token=expression(value.initializer,p+'/initializer',state,env);
+          if(!continues())return null;
           env.set(value.binding.id,copiesValue(value.binding.type)?copyToken(token,p+'/copy',state):token);
         }
         else if(value.kind==='expression') {
@@ -479,7 +487,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           let phase=root,phasePath=expressionPath;
           while(['group','nonNull','assertType'].includes(phase.kind)){charge();phase=phase.operand;phasePath+='/operand';}
           if(phase.kind==='superConstruct'){
-            if(!initializeAfterSuper(phase,phasePath,state,env))return null;
+            if(!initializeAfterSuper(phase,phasePath,state,env)){continues();return null;}
             continue;
           }
           if(terminalReads&&(root.kind==='arrayCompoundAssignment'||root.kind==='arrayUpdate')&&terminalReads.has(expressionPath+'/old-value')) {
@@ -488,9 +496,11 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
             return null;
           }
           expression(root,expressionPath,state,env);
+          if(!continues())return null;
         }
         else if(value.kind==='return'||value.kind==='constructorReturn') {
           const token=value.value?expression(value.value,p+'/value',state,env):null;
+          if(!continues())return null;
           if(value.value&&copiesValue(value.value.type)) {
             returnValueRoots.push(originOf(copyOrigins,token));
             const fields=new Map();
@@ -508,6 +518,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           const branches=conditionEffects(value.condition,p+'/condition',state,env);
           if(!branches) {
             expression(value.condition,p+'/condition',state,env);
+            if(!continues())return null;
             const arm=literalIfArm(value,charge);
             if(arm) {
               state=statements(value[arm]??[],p+'/'+arm,state,env);
@@ -523,20 +534,29 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           meetAliases(env,leftEnv,rightEnv,!!left,!!right);
         }else if(value.kind==='while') {
           const truth=literalLoopCondition(value,charge);
-          if(truth===false){expression(value.condition,p+'/condition',state,env);continue;}
+          if(truth===false){
+            expression(value.condition,p+'/condition',state,env);
+            if(!continues())return null;
+            continue;
+          }
           // A loop-carried write or alias is not a proof for its first turn.
           state.clear();for(const id of env.keys()){charge();env.set(id,null);}
           const branches=conditionEffects(value.condition,p+'/condition',state,env);
           if(branches) {
+            if(!branches.yes&&!branches.no)return null;
             if(branches.yes)statements(value.body,p+'/body',branches.yes.state,branches.yes.env);
           }else {
             expression(value.condition,p+'/condition',state,env);
+            if(!continues())return null;
             statements(value.body,p+'/body',new Map(),copyFieldReachingAliases(env,charge));
           }
           state.clear();
           if(truth===true)return null;
         }else if(value.kind==='block')state=statements(value.body,p+'/body',state,env);
-        else if(value.kind==='initializeOwnFields')state=initialize(value,p,state,env);
+        else if(value.kind==='initializeOwnFields'){
+          state=initialize(value,p,state,env);
+          if(!continues())return null;
+        }
         else if(value.kind==='forwardBaseConstruction'){
           if(plan.failedConstructions?.has(value.construction))return null;
           completed(value.construction,env.get(value.receiverBinding),state);
@@ -589,7 +609,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const [,actualType,field]=location.split('\0');rows.push({actualType,field,versions:[...versions].sort()});
       }
       completions.set(fn.construction,rows.sort((a,b)=>(a.actualType+a.field)<(b.actualType+b.field)?-1:1));
-    }
+    }else if(receiver)completions.delete(fn.construction);
   }
   }while(ledger()!==previous);
   const writeOrder=(a,b)=>a.id<b.id?-1:1;

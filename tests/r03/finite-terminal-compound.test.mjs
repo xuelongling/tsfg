@@ -6,6 +6,7 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
+import {finiteNumericUse} from '../../compiler/finite-numeric-use.mjs';
 import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
@@ -70,6 +71,111 @@ test('finite numeric field compound reads the old field before computing its wri
   assert.match(store,/input_node = "[^"]+\/writeback\/value"/u);
   const tail=lines.find(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(fn.body.at(-1).value.range)));
   assert.ok(tail?.includes('/writeback/field-version/'));
+});
+
+test('finite field compound evaluates a checked RHS before consuming defined undefined',async()=>{
+  const packet=await retainedPacket(
+    'typed-array-source514/fe82bbf8cf08c1c8a188040c28045067f831ca768ad8273b59cf0a23a7050777-package.json',
+    '2b3001140d229dea794442b5d1fc77fd7e3dadfc2e90df2d35a7ae78ff25f9e7');
+  const payload=packet.payload,owner=payload.types.find(row=>row.name==='D'),fn=owner.constructor;
+  const statement=fn.body.at(-1),compound=statement.value,file=payload.files.find(row=>row.path===fn.sourcePath);
+  const start=compound.operatorRange.start,end=statement.range.end;
+  assert.equal(file.content.slice(start,end),'=a[i];');
+  // Use ASI at the closing brace to retain the surrounding constructor ranges.
+  file.content=file.content.slice(0,start)+'+=a[i]'+file.content.slice(end);
+  compound.operator='+=';compound.operatorRange.end++;compound.range.end++;
+  for(const node of [compound.value,compound.value.receiver,compound.value.index]){node.range.start++;node.range.end++;}
+  const {hir,context,publication}=buildDerivedPacket(packet,file);
+  const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached;
+  const read=plan.fieldReaching.reads.find(item=>item.node.endsWith('/old-value'));
+  const actual=id=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===id).domainId).actualTypes;
+  const path=read.node.slice(0,-'/old-value'.length);
+  assert.deepEqual(actual(read.node),[sha256('tsfg.type\0undefined')]);
+  assert.deepEqual(read.reaching[0].intrinsics,['undefined']);
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const old=lines.find(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(compound.target.range)));
+  const rhs=lines.find(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes(at(compound.value.range)));
+  const check=lines.find(line=>line.includes('"tsfg_core.domain.numeric_use"')&&line.includes(at(compound.range)));
+  const add=lines.find(line=>line.includes(' = "tsfg_core.add"(')&&line.includes(at(compound.range)));
+  const store=lines.find(line=>line.includes('"tsfg_core.domain.field_store"')&&line.includes(at(compound.range)));
+  assert.ok(old&&rhs&&check&&add&&store);
+  assert.ok(check.includes(`numeric_group = "${path}"`));
+  assert.match(check,/numeric_operator = "tsfg_core\.add", numeric_arity = 2 : i32, numeric_operand = 0 : i32/u);
+  const [,oldValue,receiver]=old.match(/(%v\d+) = "tsfg_core\.domain\.field_read"\((%v\d+)\)/u)??[];
+  const [,success]=check.match(/\[\^(bb\d+)\]/u)??[],rhsValue=rhs.trim().split(' = ')[0];
+  assert.ok(oldValue&&receiver&&success&&check.includes(`(${oldValue})`));
+  const marker=lines.find(line=>line.includes(`"tsfg_core.domain.view"(${rhsValue})`)&&line.includes(at(compound.value.range)));
+  assert.ok(marker);
+  const successor=lines.findIndex(line=>line.trim().startsWith('^'+success+'('));
+  assert.ok(lines.indexOf(old)<lines.indexOf(rhs)&&lines.indexOf(rhs)<lines.indexOf(marker)
+    &&lines.indexOf(marker)<lines.indexOf(check)&&successor===lines.indexOf(check)+1);
+  const [,checked]=lines[successor].match(/\((%v\d+): i32\)/u)??[];
+  assert.ok(checked&&lines[successor+1]===add&&add.includes(`(${checked}, ${marker.trim().split(' = ')[0]})`));
+  const result=add.trim().split(' = ')[0],view=lines[successor+2],stored=view.trim().split(' = ')[0];
+  assert.ok(view.includes(`"tsfg_core.domain.view"(${result})`)&&lines[successor+3]===store&&store.includes(`(${receiver}, ${stored})`));
+  assert.deepEqual(actual(path+'/writeback/value'),[]);
+  const constructor=hir.functions.find(row=>path.startsWith(row.id+'/'));
+  assert.ok(constructor&&constructor.role==='construction-body');
+  assert.ok(!plan.fieldReaching.completions.some(row=>row.construction===constructor.construction));
+  const entry=hir.functions.find(row=>row.name==='make');
+  assert.deepEqual(actual(entry.id+'/return'),[]);
+
+  // Model the same proven old field at a recurring loop header. A native
+  // literal RHS keeps this independent of the existing checked-Array probe.
+  const modeled=structuredClone(hir),frame=modeled.functions.find(row=>row.id===constructor.id),index=frame.body.length-1;
+  const expression=frame.body[index].expression,zero={kind:'constant',type:scalarTypeIds.i32,token:'0',decimal:'0',
+    range:expression.value.range};
+  frame.body[index]={kind:'while',range:expression.range,body:[],condition:{
+    kind:'binary',operator:'<',type:scalarTypeIds.bool,range:expression.range,left:{...expression,value:zero},right:zero}};
+  const conditionPath=frame.id+'/body/'+index+'/condition/left',oldNode=plan.nodes.find(row=>row.id===read.node);
+  const loopPlan={...plan,nodes:[...plan.nodes,{...oldNode,id:conditionPath+'/old-value'}]};
+  const reaching=buildFiniteArrayReaching(modeled,loopPlan,()=>{},()=>false);
+  assert.ok(reaching.terminalNumericFields.has(conditionPath));
+  assert.ok(reaching.terminalNumericConstructions.has(frame.construction));
+});
+
+test('finite initialized field compound checks both undefined operands in order',async()=>{
+  const packet=await retainedPacket(
+    'typed-array-entry/f4c560c1f293a59abf4c3d836bccef920b526ed7397aac56bbd02107c5a6e4fe-package.json',
+    'f617b2c9bc47b2d7bae438860428a9d8f0f4d160dc90437f0bc54d97a00fcb64');
+  const payload=packet.payload,fn=payload.functions.find(row=>row.name==='run'),field=fn.body[4],returned=fn.body[5];
+  const source=payload.files.find(row=>row.path===fn.sourcePath),compound=field.value,start=compound.operatorRange.start;
+  const end=returned.range.end;
+  assert.equal(source.content.slice(start,end),'=copied;return narrow.n;');
+  const plain=buildDerivedPacket(packet,source).hir.functions.find(row=>row.name==='run').body[4].expression;
+  const {operator,...olderPlain}=plain;
+  assert.equal(operator,'=');
+  assert.equal(finiteNumericUse(olderPlain),null);
+  source.content=source.content.slice(0,start)+'+=copied;return narrow.n'+source.content.slice(end);
+  compound.operator='+=';compound.operatorRange.end++;compound.range.end++;field.range.end++;returned.range.start++;
+  for(const row of [compound.value.range,returned.value.range,returned.value.receiver.range,returned.value.nameRange]){
+    row.start++;row.end++;
+  }
+  const {hir,context,publication}=buildDerivedPacket(packet,source),entry=hir.functions.find(row=>row.name==='run');
+  const path=entry.id+'/body/4/expression',plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached;
+  const actual=id=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===id).domainId).actualTypes;
+  const undefinedType=sha256('tsfg.type\0undefined');
+  assert.deepEqual(actual(path+'/old-value'),[undefinedType]);
+  assert.deepEqual(actual(path+'/value'),[undefinedType]);
+  assert.deepEqual(actual(path+'/writeback/value'),[]);
+  assert.deepEqual(actual(entry.id+'/return'),[]);
+  assert.ok(!plan.fieldReaching.reads.some(row=>row.node===entry.id+'/body/5/value'));
+
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const checks=lines.filter(line=>line.includes('"tsfg_core.domain.numeric_use"')&&line.includes(`numeric_group = "${path}"`));
+  assert.equal(checks.length,2);
+  for(const [operand,line] of checks.entries()){
+    assert.ok(line.includes(`numeric_operand = ${operand} : i32`)&&line.includes(at(compound.range)));
+  }
+  const state=checks.map(line=>{
+    const [,label]=line.match(/\[\^(bb\d+)\]/u)??[];
+    const block=lines.findIndex(candidate=>candidate.trim().startsWith('^'+label+'('));
+    assert.ok(block>=0);
+    const [,value]=lines[block].match(/\((%v\d+): i32\)/u)??[];
+    return {block,value};
+  });
+  assert.equal(lines[state[0].block+1],checks[1]);
+  assert.ok(lines[state[1].block+1].includes(`"tsfg_core.add"(${state[0].value}, ${state[1].value})`));
 });
 
 test('finite field nullish assignment writes the actual absent own constructor field',async()=>{

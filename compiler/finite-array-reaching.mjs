@@ -6,7 +6,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {finitePresence,isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
-import {finiteBranchEffects} from './finite-numeric-use.mjs';
+import {finiteBranchEffects,finiteNumericUse} from './finite-numeric-use.mjs';
 
 // The production state-copy seam also admits bounded component budget checks;
 // its version tokens are proof identities, never synthetic Source expressions.
@@ -47,14 +47,16 @@ export function propagateArrayWrites(effects,charge) {
 }
 
 export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) {
-  const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(row=>[row.id,row])),
+  const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),
+    types=new Map([...hir.types,...(plan.intrinsics??[])].map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
     effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set(),localSlots:!fn.ownerType}])),
     writes=new Map(),reads=new Map(),normalReadSources=new Map(),contextsByTarget=new Map(),checkedLoopConditions=new Set(),
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
-  const failedInitializers=new Map(),failedConstructions=new Set(),failedSuperArguments=new Map();
+  const failedInitializers=new Map(),failedConstructions=new Set(),failedSuperArguments=new Map(),
+    terminalNumericFields=new Set(),terminalNumericConstructions=new Set();
   const constructors=[],ordinary=[];
   let contextWrites=new Map(),terminalReads=null;
   function arrayCarrier(id) {
@@ -158,7 +160,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     return classified&&classified.present!==classified.absent?(value.operator==='==='?classified.absent:classified.present):undefined;
   }
   function analyze(fn,initial,env,applyCalls,recordReads=true,collectAll=false,firstCondition=null) {
-    const exits=[],mutated=new Set();let complete=true,invalidateAll=false;
+    const exits=[],mutated=new Set();let complete=true,invalidateAll=false,numericFailure=false;
     const initializerReads=new Set();let inInitializer=false;
     // One visit per source occurrence gives a local version one stored value.
     // The lexical pass uses Array identities to name stores through aliases.
@@ -459,6 +461,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         const right=clone(state),branchBindings=copyBindings(bindings),
           result=evaluateRight(right,branchBindings,false);
+        if(result.terminal)return resultValue(left);
         const merged=join(state,right);state.clear();for(const [id,row] of merged){charge();state.set(id,row);}
         meetBindings(bindings,bindings,branchBindings);
         return resultValue(nullish&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path});
@@ -499,8 +502,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           return {symbol:path};
         }
         const rhs=child('value');
+        if(rhs.terminal)return rhs;
+        if(!collectAll&&finiteNumericUse(value)&&(!presence(path+'/old-value','undefined').present||!presence(path+'/value','undefined').present)){
+          if(recordReads){charge();terminalNumericFields.add(path);}
+          numericFailure=true;
+          return {terminal:true,trap:path,numeric:true};
+        }
         // The successful assignment yields the RHS Array or view without writing an Array slot.
-        return rhs.terminal?rhs:{owner:rhs.owner,offset:rhs.offset,limit:rhs.limit,symbol:path};
+        return {owner:rhs.owner,offset:rhs.offset,limit:rhs.limit,symbol:path};
       }
       if(value.kind==='construct'||value.kind==='superConstruct') {
         const superCall=value.kind==='superConstruct';
@@ -510,6 +519,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             if(superCall&&recordReads){charge();failedSuperArguments.set(path,{index,trap:argument.trap});}
             return argument;
           }
+        }
+        if(!collectAll&&terminalNumericConstructions.has(value.construction)){
+          numericFailure=true;
+          return {terminal:true,trap:path,numeric:true};
         }
         invalidate(state);
         if(superCall){
@@ -521,9 +534,18 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       }
       // Unmodeled aliases never acquire an owner identity. Still traverse all
       // real evaluation children and conservatively discard mutating effects.
-      if(value.target)for(const name of ['receiver','index'])if(value.target[name])expression(value.target[name],path+'/target/'+name,state,bindings);
-      for(const name of ['receiver','operand','left','right','index','value'])if(value[name])child(name,false);
-      for(const [index,item] of (value.arguments??[]).entries())expression(item,path+'/arguments/'+index,state,bindings);
+      if(value.target)for(const name of ['receiver','index'])if(value.target[name]){
+        const result=expression(value.target[name],path+'/target/'+name,state,bindings);
+        if(result.numeric)return result;
+      }
+      for(const name of ['receiver','operand','left','right','index','value'])if(value[name]){
+        const result=child(name,false);
+        if(result.numeric)return result;
+      }
+      for(const [index,item] of (value.arguments??[]).entries()){
+        const result=expression(item,path+'/arguments/'+index,state,bindings);
+        if(result.numeric)return result;
+      }
       return {symbol:path};
     }
     // A representation-changing adaptation emits domain.view, which is not
@@ -545,9 +567,11 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     }
     function conditionEffects(value,path,state,bindings,terminalRoot) {
       if(collectAll)return;
-      return finiteBranchEffects(value,path,{state,bindings},(value,path,entry)=>{
+      let numericTerminal=false;
+      const branches=finiteBranchEffects(value,path,{state,bindings},(value,path,entry)=>{
         const state=clone(entry.state),bindings=copyBindings(entry.bindings);
         const result=expression(value,path,state,bindings,terminalRoot);
+        numericTerminal||=Boolean(result.numeric);
         if(result.terminal)return {yes:null,no:null};
         // The emitter preserves both outcomes in a call-bearing condition.
         const exit={state,bindings};
@@ -557,6 +581,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const bindings=new Map();meetBindings(bindings,left.bindings,right.bindings);
         return {state:join(left.state,right.state),bindings};
       },charge);
+      return branches&&{...branches,numericTerminal:numericTerminal&&!branches.yes&&!branches.no};
     }
     function initialize(statement,site,state,bindings) {
       inInitializer=true;
@@ -593,7 +618,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             if(condition.terminal)return null;
             const truth=collectAll?undefined:condition.truth??booleanLiteral(row.condition,charge)?.value;
             const entry={state,bindings};
-            branches={yes:truth===false?null:entry,no:truth===true?null:entry};
+            branches={yes:truth===false?null:entry,no:truth===true?null:entry,numericTerminal:false};
           }
           const {yes,no}=branches;
           const a=yes?copyBindings(yes.bindings):bindings,b=no?copyBindings(no.bindings):bindings;
@@ -637,16 +662,21 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           invalidate(state);for(const id of bindings.keys()){charge();bindings.set(id,{});}
           const branches=conditionEffects(row.condition,condition,state,bindings,false);
           if(branches) {
+            if(branches.numericTerminal)return null;
             if(branches.yes)statements(row.body,p+'/body',clone(branches.yes.state),copyBindings(branches.yes.bindings));
           }else {
-            expression(row.condition,condition,state,bindings);statements(row.body,p+'/body',clone(state),copyBindings(bindings));
+            if(expression(row.condition,condition,state,bindings).numeric)return null;
+            statements(row.body,p+'/body',clone(state),copyBindings(bindings));
           }
           invalidate(state);
           if(truth===true)return null;
         }else if(row.kind==='initializeOwnFields') {
           if(initialize(row,p,state,bindings))return null;
         }else if(row.kind==='forwardBaseConstruction'){
-          if(!collectAll&&failedConstructions.has(row.construction))return null;
+          if(!collectAll&&failedConstructions.has(row.construction)){
+            numericFailure||=terminalNumericConstructions.has(row.construction);
+            return null;
+          }
           invalidate(state);
         }
       }return state;
@@ -660,7 +690,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     // A nonproductive recursive/divergent path is not an initialized-state
     // witness. Unresolved contextual dependencies retain pending rather than an
     // unbounded HIR walk or a made-up normal return.
-    if(!result){invalidate(initial);return {state:initial,complete,productive:false,invalidateAll,mutated};}
+    if(!result){invalidate(initial);return {state:initial,complete,productive:false,invalidateAll,mutated,numericFailure};}
     return {state:result,complete,productive:true,invalidateAll,mutated};
   }
   // Canonical Source versions stay isolated from contextual return transfers.
@@ -684,6 +714,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   let before;
   do {
     charge();before=ledger();reads.clear();normalReadSources.clear();failedInitializers.clear();failedConstructions.clear();failedSuperArguments.clear();
+    terminalNumericFields.clear();terminalNumericConstructions.clear();
     contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of ordered) {
@@ -692,7 +723,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       if(exported.has(fn.id)||fn.ownerType||!incoming.length)incoming.push({state:new Map(),constants:new Map()});
       let state;for(const row of incoming){charge();state=state?join(state,row.state):clone(row.state);}
       const outcome=analyze(fn,state,parameters(fn,incoming),true);
-      if(fn.role==='construction-body'&&outcome.complete&&!outcome.productive){charge();failedConstructions.add(fn.construction);}
+      if(fn.role==='construction-body'&&outcome.complete&&!outcome.productive){
+        charge();failedConstructions.add(fn.construction);
+        if(outcome.numericFailure)terminalNumericConstructions.add(fn.construction);
+      }
     }
     for(const sites of contextsByTarget.values())for(const site of sites.keys()){
       charge();sites.set(site,contextWrites.get(site)??{possible:false,state:new Map(),constants:new Map(),truths:new Map()});
@@ -700,5 +734,6 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }while(before!==ledger());
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
-  return {reaching,terminalReads,normalReadSources,failedInitializers,failedConstructions,failedSuperArguments};
+  return {reaching,terminalReads,normalReadSources,failedInitializers,failedConstructions,failedSuperArguments,
+    terminalNumericFields,terminalNumericConstructions};
 }
