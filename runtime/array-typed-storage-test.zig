@@ -67,6 +67,7 @@ test "undefined null fields and padding are separate from missing and normalized
     var undefined_value = try heap.readTypedArray(array, sum, 1, .persistent);
     defer undefined_value.deinit(std.testing.allocator);
     try equal(@as(u16, 1), undefined_value.tag);
+    try expect((try heap.retainEdge(array, 1, .persistent)) == null);
     try std.testing.expectEqualSlices(u8, &zero, undefined_value.bytes);
     var null_value = try heap.readTypedArray(array, sum, 2, .persistent);
     defer null_value.deinit(std.testing.allocator);
@@ -120,17 +121,20 @@ test "moving collection drops truncated reference slots and preserves append" {
         const array = try heap.createTypedArray(sum, rows[0..original_length], .persistent);
         try heap.release(child);
         try heap.resizeTypedArray(array, sum, 1);
+        try expectError(error.InvalidField, heap.retainEdge(array, 1, .persistent));
 
         const before = tracking.allocated_bytes;
         try heap.collect();
         collection_bytes[case] = tracking.allocated_bytes - before;
         try equal(@as(usize, 2), try heap.objectCount());
+        try expectError(error.InvalidField, heap.retainEdge(array, 1, .persistent));
 
         const scope = try heap.beginScope();
         defer heap.endScope(scope) catch unreachable;
         var first = try heap.readTypedArray(array, sum, 0, .temporary);
         defer first.deinit(heap.allocator);
         const retained = first.references[0].?;
+        try expect(try heap.sameObject(retained, (try heap.retainEdge(array, 0, .temporary)).?));
         try equal(@as(u64, 41), (try heap.read(retained, 77)).scalar);
         try heap.storeTypedArray(array, sum, 1, .{ .tag = 3, .bytes = &zero, .references = &.{retained} });
         try heap.collect();
@@ -138,6 +142,7 @@ test "moving collection drops truncated reference slots and preserves append" {
         var appended = try heap.readTypedArray(array, sum, 1, .temporary);
         defer appended.deinit(heap.allocator);
         try expect(try heap.sameObject(retained, appended.references[0].?));
+        try expect(try heap.sameObject(retained, (try heap.retainEdge(array, 1, .temporary)).?));
     }
     try equal(collection_bytes[1], collection_bytes[0]);
 }

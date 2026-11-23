@@ -6,6 +6,14 @@ pub const Object = struct {
     payload: @import("managed-payload.zig").Payload,
     edges: []?*Object,
     index: usize,
+
+    // A shrunk Array can still own backing for slots beyond its current length.
+    pub fn logicalEdges(self: *const Object) []const ?*Object {
+        return switch (self.payload) {
+            .array => |array| self.edges[0 .. @as(usize, array.length) * array.layout.reference_count],
+            else => self.edges,
+        };
+    }
 };
 pub const Root = struct { object: ?*Object = null, generation: u64 = 1, scope: u64 = 0, retired: bool = false };
 pub const State = struct { objects: std.ArrayList(*Object) = .empty, roots: std.ArrayList(Root) = .empty,

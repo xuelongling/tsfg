@@ -464,10 +464,10 @@ pub const ManagedHeap = struct {
     }
 
     pub fn retainEdge(self: *ManagedHeap, handle: Handle, index: usize, lifetime: Lifetime) Error!?Handle {
-        const object = try self.resolve(handle);
-        if (index >= object.edges.len) return error.InvalidField;
+        const edges = (try self.resolve(handle)).logicalEdges();
+        if (index >= edges.len) return error.InvalidField;
         const scope = try self.scopeFor(lifetime);
-        const target = object.edges[index] orelse return null;
+        const target = edges[index] orelse return null;
         const slot = try self.availableRoot();
         return self.installRoot(slot, target, scope);
     }
