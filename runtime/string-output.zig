@@ -18,11 +18,11 @@ pub const Lease = struct {
     pub fn begin(self: *Lease, allocator: std.mem.Allocator, source: values.String, mode: Mode, maximum: usize) !Token {
         if (self.binding != 0 and self.binding != @intFromPtr(self)) return error.InvalidStringLease;
         if (self.active) return error.ActiveStringLease;
-        var kept = try values.String.retain(source.owner, source.handle);
-        errdefer kept.deinit();
         const heap = &source.owner.heap;
         const byte_length = try heap.stringByteLength(source.handle);
         if (byte_length > maximum) return error.OutputLimit;
+        var kept = try values.String.retain(source.owner, source.handle);
+        errdefer kept.deinit();
         // A surrogate's replacement has the same three-byte width. Valid pairs
         // retain four bytes, so canonical WTF-8 length is also the output bound.
         const bytes = try allocator.alloc(u8, byte_length);

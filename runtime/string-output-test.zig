@@ -76,11 +76,28 @@ test "lease and owned root publication are transactional at every allocation fai
     try std.testing.checkAllAllocationFailures(a, allocationScenario, .{});
 }
 
-test "output budget rejects before materializing bytes and leaves source valid" {
-    var source = try owned(a, &.{ 0xd83d, 0xde00 });
-    defer source.deinit();
+test "output budget rejects before reserving a root and leaves source valid" {
+    var failing = std.testing.FailingAllocator.init(a, .{});
+    const owner = try values.Owner.create(failing.allocator());
+    defer owner.release();
+    const root = try owner.heap.createString(&.{ 0xd83d, 0xde00 }, .persistent);
+    defer owner.heap.release(root) catch unreachable;
+    const source: values.String = .{ .owner = owner, .handle = root };
+    var aliases: std.ArrayList(values.Handle) = .empty;
+    defer aliases.deinit(a);
+    defer for (aliases.items) |alias| owner.heap.release(alias) catch unreachable;
+    const roots = try @import("managed-heap.zig").testing.rootStats(&owner.heap);
+    try aliases.ensureTotalCapacity(a, roots.capacity - roots.count);
+    for (roots.count..roots.capacity) |_| aliases.appendAssumeCapacity(try owner.heap.retain(root, .persistent));
+
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
     var lease: output.Lease = .{};
+    defer lease.end() catch unreachable;
     try std.testing.expectError(error.OutputLimit, lease.begin(a, source, .strict, 3));
+    try std.testing.expectError(error.OutputLimit, lease.begin(a, source, .lossy, 3));
+    try std.testing.expect(!failing.has_induced_failure);
+    try std.testing.expectError(error.OutOfMemory, lease.begin(a, source, .strict, 4));
     try std.testing.expectEqual(@as(usize, 2), try source.owner.heap.stringLength(source.handle));
 }
 
