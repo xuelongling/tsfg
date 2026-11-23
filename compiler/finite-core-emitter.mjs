@@ -20,6 +20,8 @@ import {hasState} from './presence.mjs';
 const sharedSuperLocalZero=new Map([
   ['i32','0 : i32'],['f32','"00000000"'],['f64','"0000000000000000"'],
 ]);
+const unitAttribute=type=>type==='i32'?'value = 1 : i32':type==='f32'?'value = "3f800000"'
+  :type==='f64'?'value = "3ff0000000000000"':'value = "1"';
 
 function pending(message,range) {throw Object.assign(new TypeError('r03-finite-core-capability: '+message),
   {code:'r03-finite-core-capability',ruleId:'r01-ts-baseline',phase:'lowering',...(range?{primary:range}:{})});}
@@ -504,8 +506,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             const old=op(api,'array_read',[receiver,index],oldType,`${opAttrs({semanticType:value.target.type,type:oldType})}, array_node = ${quote(value.domainNode+'/old-value')}`,value.target.range);
           const domain=domains.get(oldType);if(domain.representation!=='native')pending('operation-domain-check mapping',value.range);
           const rhs=value.kind==='arrayUpdate'?{name:api.operation('tsfg_core.constant',[],[],oldType,
-            domain.nativeType==='i32'?'value = 1 : i32':domain.nativeType==='f32'?'value = "3f800000"'
-              :domain.nativeType==='f64'?'value = "3ff0000000000000"':'value = "1"',value.range),type:oldType}:evaluated(value.value);
+            unitAttribute(domain.nativeType),value.range),type:oldType}:evaluated(value.value);
           const operator=value.kind==='arrayUpdate'?(value.operator==='++'?'+':'-'):value.operator.slice(0,-1);
           const next=api.operation('tsfg_core.'+scalarOperations[operator],[old,rhs.name],[oldType,rhs.type],value.type,'',value.range);
             op(api,'array_store',[receiver,index,{name:next,type:value.type}],null,`view_type = ${quote(value.target.receiver.semanticType)}, array_node = ${quote(value.domainNode)}, array_versions = ${quote(canonical([arrayWrites.get(value.domainNode+'/array-version')]))}`,value.range);
@@ -515,6 +516,15 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const target=selected(fn.id+'/binding/'+value.target.binding).domainId;
           const rhs=copy(api,{name:api.emit(wrap(value.value,target)),type:target},value.target.type,value.range);
           api.assign(value.target.binding,rhs.name);return rhs.name;
+        }
+        if(value.kind==='update') {
+          const binding=value.target.binding,type=selected(fn.id+'/binding/'+binding).domainId,domain=domains.get(type);
+          if(type!==value.type||domain.representation!=='native'||domain.nativeType==='bool')
+            pending('operation-domain-check mapping',value.range);
+          const old=api.lookup(binding),one=api.operation('tsfg_core.constant',[],[],type,unitAttribute(domain.nativeType),value.range);
+          const operation=value.operator==='++'?'tsfg_core.add':'tsfg_core.sub';
+          const next=api.operation(operation,[old,one],[type,type],type,'',value.range);
+          api.assign(binding,next);return value.prefix?next:old;
         }
         if(['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {
           let left=evaluated(value.left),alternatives=domains.get(left.type).actualTypes,

@@ -38,6 +38,24 @@ async function checkedFixture(fixture,folder='typed-array-consumer-v8/') {
   return {hir:built.hir,context,publication};
 }
 
+test('finite binding increment carries the updated u32 to the next loop iteration',async()=>{
+  const fixture=actualManifest.find(row=>row.sourceIdentity==='a5145075bdd5f8695585af845e46b41ae869891496d11b3bec1ee169aa72a01b');
+  const {hir,context,publication}=await checkedFixture(fixture,'typed-array-actual-v8/');
+  const [fn]=hir.functions,loop=fn.body[1],update=loop.body[1].expression;
+  assert.equal(update.kind,'update');assert.equal(update.type,scalarTypeIds.u32);
+  const core=lowerFormalHir(hir,context,publication),lines=core.split('\n');
+  const anchor=`tsfg_source.start = ${update.range.start} : i64, tsfg_source.end = ${update.range.end} : i64`;
+  const addition=lines.find(line=>line.includes('"tsfg_core.add"')&&line.includes(anchor));
+  assert.ok(addition);
+  const operands=addition.match(/(%v\d+) = "tsfg_core\.add"\((%v\d+), (%v\d+)\)/u);
+  assert.ok(operands);
+  const [,next,previous,one]=operands;
+  assert.ok(lines.some(line=>line.includes(`${one} = "tsfg_core.constant"() {value = "1", ${anchor}} : () -> !tsfg_core.integer<"u32">`)));
+  const header=lines.find(line=>line.startsWith('  ^')&&line.includes(previous+': !tsfg_core.integer<"u32">'));
+  assert.ok(header);
+  assert.ok(lines.some(line=>line.includes(`cf.br ${header.trim().split('(')[0]}(`)&&line.includes(next)));
+});
+
 test('a symbolic dense write leaves the former Array endpoint possibly initialized',async()=>{
   const [{hir},{hir:endpoint},{hir:overwrite}]=await Promise.all(
     ['dynamic-owner-aliases','length-equal-checked-read','dense-overwrite'].map(name=>checkedFixture(manifest.find(row=>row.name===name))));
