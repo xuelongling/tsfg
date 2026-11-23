@@ -253,7 +253,7 @@ struct Lowering {
           if(!construction(index,block,ordinal))return false;
           if(!op.successors.empty()&&!visit(op.successors[0]))return false;
         }else{
-          static const std::set<std::string> supported={"fuel","cell","store","load","value_copy","view","assert","carrier_cast","field_load","field_store","constant","floating","boolean","undefined","strict_equal","numeric_use","binary","unary","func.return","cf.br","cf.cond_br"};
+          static const std::set<std::string> supported={"fuel","cell","store","load","value_copy","view","assert","carrier_cast","field_load","field_store","constant","floating","boolean","undefined","strict_equal","numeric_use","binary","unary","func.return","cf.br","cf.cond_br","unreachable"};
           if(!need(supported.count(op.name),"operation in the selected closure has no fixed-value lowering"))return false;
           if(op.name=="cf.cond_br"&&!need(selected.blocks[op.successors[0]].parameters.empty()&&selected.blocks[op.successors[1]].parameters.empty(),"conditional fixed-value edges require their Source-normalized empty successors"))return false;
           for(auto successor:op.successors)if(!visit(successor))return false;
@@ -491,6 +491,8 @@ struct Lowering {
       callback(4,op.range,functionIndex);callback(3,op.range,functionIndex);
       if(function->resultCarrier=="void")out<<"    func.return\n";
       else{const auto returned=valueType(function->resultCarrier)?load(operand(0),function->resultCarrier):operand(0);out<<"    func.return "<<returned<<" : "<<type(function->resultCarrier)<<'\n';}
+    }else if(op.name=="unreachable"){
+      out<<"    llvm.unreachable\n";
     }
     return text.size()<=outputLimit||reject(error,"core-ir-value-llvm-budget","fixed-value IR byte limit exceeded");
   }
