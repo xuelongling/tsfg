@@ -341,8 +341,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         const rhs=value.value?child('value'):{symbol:path};
         if(rhs.terminal)return rhs;
-        if(oldStatus!=='missing'&&value.kind==='arrayCompoundAssignment'&&finiteNumericUse(value)){
-          const stop=terminalNumericUse(path);if(stop)return stop;
+        const checkedUpdate=plan.storageNumericUpdates?.has(path);
+        if(oldStatus!=='missing'&&(checkedUpdate||value.kind==='arrayCompoundAssignment'&&finiteNumericUse(value))){
+          const stop=terminalNumericUse(path,!checkedUpdate);if(stop)return stop;
         }
         if(value.kind==='arrayResizeChecked') {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
@@ -509,7 +510,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,root);
         if(receiver.terminal)return receiver;
-        if(value.kind==='fieldUpdate')return {symbol:path};
+        if(value.kind==='fieldUpdate')return (plan.storageNumericUpdates?.has(path)?terminalNumericUse(path,false):null)??{symbol:path};
         if(isFieldNullishAssignment(value)){
           const {present,absent}=collectAll?{present:true,absent:true}:presence(path+'/old-value');
           if(!absent)return {symbol:path};

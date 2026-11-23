@@ -422,6 +422,73 @@ test('finite i32 Array compounds evaluate receiver and index once before old rea
 
 const narrowArray='typed-array-entry/87d0326f6f0e3e1eb887a77b7eb207a938c3ca173f094f8cdb21f1820284a4ad-package.json',
   narrowArrayHash='042eee481c55e941ee47e8ebe284feff0d16621cf37f60c3615d3b247eb9d051';
+test('finite i32 field and Array updates check the captured old value before writeback',async()=>{
+  const rows=[
+    {role:'field',donor:'typed-array-entry/f4c560c1f293a59abf4c3d836bccef920b526ed7397aac56bbd02107c5a6e4fe-package.json',
+      hash:'f617b2c9bc47b2d7bae438860428a9d8f0f4d160dc90437f0bc54d97a00fcb64'},
+    {role:'array',donor:narrowArray,hash:narrowArrayHash},
+  ];
+  const modes=[{operator:'++',prefix:false,tail:true},{operator:'++',prefix:false},{operator:'++',prefix:true},
+    {operator:'--',prefix:false},{operator:'--',prefix:true}];
+  for(const {role,donor,hash} of rows)for(const {operator,prefix,tail} of modes){
+    const packet=await retainedPacket(donor,hash),payload=packet.payload,fn=payload.functions.find(row=>row.name==='run');
+    const statement=fn.body[4],returned=fn.body[5],previous=statement.value;
+    const file=payload.files.find(row=>row.path===fn.sourcePath),{start,end:targetEnd}=previous.target.range;
+    const end=tail?statement.range.end:returned.range.end;
+    const targetText=file.content.slice(start,targetEnd),lead=tail?'':'return ';
+    assert.equal(file.content.slice(targetEnd,statement.range.end),'=copied;');
+    const text=lead+(prefix?operator+targetText:targetText+operator)+';';
+    assert.ok(text.length<=end-start);
+    file.content=file.content.slice(0,start)+text.padEnd(end-start)+file.content.slice(end);
+    const offset=lead.length+(prefix?2:0),from=start+lead.length,operatorStart=prefix?from:targetEnd+offset;
+    const move=({start,end})=>({start:start+offset,end:end+offset});
+    const oldTarget=previous.target,target={...oldTarget,range:move(oldTarget.range),
+      receiver:{...oldTarget.receiver,range:move(oldTarget.receiver.range)}};
+    if(role==='field')target.nameRange=move(oldTarget.nameRange);
+    else target.index={...oldTarget.index,range:move(oldTarget.index.range)};
+    const update={kind:role==='field'?'fieldUpdate':'elementUpdate',type:previous.type,flowType:previous.flowType,
+      range:{start:from,end:start+text.length-1},target,operator,operatorRange:{start:operatorStart,end:operatorStart+2},prefix};
+    if(tail){statement.range.end=start+text.length;statement.value=update;}
+    else fn.body.splice(4,2,{...returned,range:{start,end:start+text.length},value:update});
+
+    const {hir,context,publication}=buildDerivedPacket(packet,file),entry=hir.functions.find(row=>row.name==='run');
+    const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached,site=entry.id+'/body/4/'+(tail?'expression':'value');
+    const actual=node=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===node).domainId).actualTypes;
+    assert.deepEqual(actual(site+'/old-value'),[sha256('tsfg.type\0undefined')]);
+    assert.deepEqual(actual(site+'/writeback/value'),[]);
+    assert.deepEqual(actual(site),[]);
+    assert.deepEqual(actual(entry.id+'/return'),[]);
+    if(tail){
+      const later=entry.id+'/body/5/value';
+      assert.deepEqual(actual(later),[]);
+      if(role==='field')assert.ok(!plan.fieldReaching.reads.some(row=>row.node===later));
+      else assert.deepEqual(plan.arrayReaching.reads.find(row=>row.node===later).sources,[]);
+    }
+
+    const lines=lowerFormalHir(hir,context,publication).split('\n');
+    const match=(op,range)=>lines.find(line=>line.includes('"tsfg_core.'+op+'"(')&&line.includes(at(range)));
+    const read=match('domain.'+role+'_read',update.target.range),unit=match('constant',update.range),
+      check=match('domain.numeric_use',update.range),arithmetic=match(operator==='++'?'add':'sub',update.range),
+      store=match('domain.'+role+'_store',update.range);
+    assert.ok(read&&unit&&check&&arithmetic&&store);
+    assert.match(unit,/value = 1 : i32,.* -> i32$/u);
+    const id=line=>line.trim().split(' = ')[0],operand=id(read);
+    assert.ok(check.includes(`(${operand})`)&&check.includes(`numeric_group = "${site}"`));
+    assert.match(check,/numeric_arity = 2 : i32, numeric_operand = 0 : i32/u);
+    assert.ok(lines.indexOf(read)<lines.indexOf(unit)&&lines.indexOf(unit)<lines.indexOf(check));
+    const [,label]=check.match(/\[\^(bb\d+)\]/u)??[];
+    const block=lines.findIndex(line=>line.trim().startsWith('^'+label+'('));
+    const [,checked]=lines[block].match(/\((%v\d+): i32\)/u)??[];
+    assert.ok(checked&&lines[block+1]===arithmetic&&arithmetic.includes(`(${checked}, ${id(unit)})`));
+    const [,location]=read.match(/"tsfg_core\.domain\.(?:field|array)_read"\(([^)]*)\)/u)??[];
+    const stored=role==='field'?id(lines[block+2]):id(arithmetic),storeOffset=role==='field'?3:2;
+    if(role==='field')assert.ok(lines[block+2].includes(`"tsfg_core.domain.view"(${id(arithmetic)})`));
+    assert.ok(location&&lines[block+storeOffset]===store&&store.includes(`(${location}, ${stored})`));
+    assert.ok(store.includes(role==='field'?site+'/writeback/field-version/':site+'/array-version'));
+    if(!tail)assert.ok(lines[block+storeOffset+1].includes(`"func.return"(${prefix?id(arithmetic):checked})`));
+  }
+});
+
 test('finite Array compound checks each defined undefined operand before the shared slot writeback',async()=>{
   const packet=await retainedPacket(narrowArray,narrowArrayHash),fn=packet.payload.functions[0];
   const source=packet.payload.files.find(row=>row.path===fn.sourcePath),statement=fn.body[4],compound=statement.value,returned=fn.body[5];

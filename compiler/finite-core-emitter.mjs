@@ -7,7 +7,7 @@ import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from './finite-a
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral,finiteFieldStorePath} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
-import {finiteBindingWrites,finiteLocalNumericUpdate,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
+import {finiteBindingWrites,finiteNumericUpdate,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
 import {isArrayNullishAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
@@ -357,7 +357,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     };
     function requiresNumericChecks(value,operandTypes) {
       const checked=operandTypes.some(type=>domains.get(type).representation!=='native');
-      if(checked&&(!(finiteNumericUse(value)||finiteLocalNumericUpdate(value))||operandTypes.some(type=>domains.get(type).actualTypes
+      if(checked&&(!(finiteNumericUse(value)||finiteNumericUpdate(value))||operandTypes.some(type=>domains.get(type).actualTypes
         .some(id=>id!==i32TypeId&&types.get(id).kind!=='undefined'))))
         pending('operation-domain-check mapping',value.range);
       return checked;
@@ -374,6 +374,10 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       const rhs={name:api.emit(value),type:value.type};
       if(checked)rhs.name=op(api,'view',[rhs],rhs.type,opAttrs(value),value.range);
       return rhs;
+    }
+    function numericUpdateUnit(api,value,oldType,checked) {
+      const type=checked?value.type:oldType,native=checked?'i32':domains.get(oldType).nativeType;
+      return {name:api.operation('tsfg_core.constant',[],[],type,unitAttribute(native),value.range),type};
     }
     function arrayMutationOperands(api,value) {
       const receiver={name:api.emit(value.target.receiver),type:value.target.receiver.type},
@@ -550,15 +554,15 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const {receiver,index,old}=arrayMutationOperands(api,value),oldType=old.type,
             update=value.kind==='arrayUpdate',rhsType=update?oldType:value.value.type;
           const operator=update?(value.operator==='++'?'+':value.operator==='--'?'-':''):value.operator.slice(0,-1),
-            native=domains.get(oldType).nativeType,checked=!update&&requiresNumericChecks(value,[oldType,rhsType]);
+            native=domains.get(oldType).nativeType,checked=requiresNumericChecks(value,update?[oldType]:[oldType,rhsType]);
           if(checked?domains.get(value.type).nativeType!=='i32':native==='bool'||value.type!==oldType||
             !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
             pending('operation-domain-check mapping',value.range);
-          const rhs=update?{name:api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range),type:oldType}
+          const rhs=update?numericUpdateUnit(api,value,oldType,checked)
             :numericCompoundRhs(api,value.value,checked);
-          const next=numericOperation(api,value,scalarOperations[operator],[old,rhs],checked);
+          const operands=[old,rhs],next=numericOperation(api,value,scalarOperations[operator],operands,checked);
           writeArraySlot(api,value,receiver,index,{name:next,type:value.type});
-          return update&&!value.prefix?old.name:next;
+          return update&&!value.prefix?operands[0].name:next;
         }
         const coalescingAssignment=isLocalNullishAssignment(value);
         if(value.kind==='assignment'&&!coalescingAssignment) {
@@ -594,9 +598,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             pending('operation-domain-check mapping',value.range);
           const old={name:api.lookup(binding),type};
           if(checked)old.name=op(api,'view',[old],type,opAttrs({semanticType:value.target.type,type}),value.target.range);
-          const unit=value.type,native=checked?'i32':domain.nativeType;
-          const one=api.operation('tsfg_core.constant',[],[],unit,unitAttribute(native),value.range);
-          const operands=[old,{name:one,type:unit}];
+          const operands=[old,numericUpdateUnit(api,value,type,checked)];
           const next=numericOperation(api,value,value.operator==='++'?'add':'sub',operands,checked);
           api.assign(binding,checked?op(api,'view',[{name:next,type:value.type}],type,
             opAttrs({semanticType:value.target.type,type}),value.range):next);
@@ -718,15 +720,16 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             const old=readOldField(api,value,receiver),oldType=old.type,
               operator=update?(value.operator==='++'?'+':value.operator==='--'?'-':''):value.operator.slice(0,-1),
               native=domains.get(oldType).nativeType,rhsType=update?oldType:value.value.type,
-              checked=!update&&requiresNumericChecks(value,[oldType,rhsType]);
+              checked=requiresNumericChecks(value,update?[oldType]:[oldType,rhsType]);
             if(checked?domains.get(value.type).nativeType!=='i32':native==='bool'||value.type!==oldType||
               !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
               pending('operation-domain-check mapping',value.range);
-            previous=old.name;
-            const operand=update?{name:api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range),type:oldType}
+            const operand=update?numericUpdateUnit(api,value,oldType,checked)
               :numericCompoundRhs(api,value.value,checked);
             ({semanticType,range}=value);
-            rhs={name:numericOperation(api,value,scalarOperations[operator],[old,operand],checked),type:value.type};
+            const operands=[old,operand];
+            rhs={name:numericOperation(api,value,scalarOperations[operator],operands,checked),type:value.type};
+            previous=operands[0].name;
           }
           writeField(api,value,receiver,rhs,semanticType,range);
           return update&&!value.prefix?previous:rhs.name;

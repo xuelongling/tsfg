@@ -16,8 +16,8 @@ export function finiteNumericUse(value) {
   return approved&&operands.every(operand=>(operand.semanticType??operand.type)===i32TypeId)?operands:null;
 }
 
-export function finiteLocalNumericUpdate(value) {
-  return value.kind==='update'&&['++','--'].includes(value.operator)&&value.target.type===i32TypeId&&
+export function finiteNumericUpdate(value) {
+  return ['update','fieldUpdate','arrayUpdate'].includes(value.kind)&&['++','--'].includes(value.operator)&&value.target.type===i32TypeId&&
     (value.semanticType??value.type)===i32TypeId;
 }
 
