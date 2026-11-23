@@ -49,7 +49,12 @@ SourcePlan::Reg SourcePlan::expression(const Json &e){
     const auto left=compound?load(target,sourceAnchor(field(e,"target"))):noRegister;
     if(op=="&&="||op=="||="||op=="??=")return shortCircuit(left,op.substr(0,op.size()-1),[&]{
       const auto value=expression(field(e,"value"));store(target,value,r);return value;},type,r);
-    const auto right=update?emit("constant",{},type,Object{{"token","1"},{"decimal","1"}},r):expression(field(e,"value"));
+    Reg right;
+    if(update){
+      const auto nominal=string(field(t,"kind"))=="scalar"?string(field(t,"name")):std::string{};
+      const char *bits=nominal=="f32"?"3f800000":nominal=="f64"?"3ff0000000000000":nullptr;
+      right=bits?emit("floating",{},type,Object{{"token","1"},{"bits",bits}},r):emit("constant",{},type,Object{{"token","1"},{"decimal","1"}},r);
+    }else right=expression(field(e,"value"));
     const auto result=compound?scalar("binary",update?(op=="++"?"+":"-"):op.substr(0,op.size()-1),{left,right},type,r):right;
     store(target,result,r);return update&&field(e,"prefix").getAsBoolean()==false?left:result;
   }

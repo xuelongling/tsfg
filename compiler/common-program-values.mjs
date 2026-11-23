@@ -131,7 +131,12 @@ export function commonProgramValues(model,graph,state,invoke,indirect,constructi
       const target=location(e.target),update=e.kind.endsWith('Update'),compound=e.operator!=='=';
       const left=compound?load(target,e.target.range):null;
       if(['&&=','||=','??='].includes(e.operator))return shortCircuit(left,e.operator.slice(0,-1),()=>write(target,expression(e.value),e.range),e.type,e.range);
-      const right=update?op('constant',[],e.type,{token:'1',decimal:'1'},e.range):expression(e.value);
+      let right;
+      if(update) {
+        const nominal=type.kind==='scalar'?type.name:null;
+        const bits=nominal==='f32'?'3f800000':nominal==='f64'?'3ff0000000000000':null;
+        right=bits?op('floating',[],e.type,{token:'1',bits},e.range):op('constant',[],e.type,{token:'1',decimal:'1'},e.range);
+      }else right=expression(e.value);
       const result=compound?scalar('binary',update?(e.operator==='++'?'+':'-'):e.operator.slice(0,-1),[left,right],e.type,e.range):right;
       write(target,result,e.range);return update&&!e.prefix?left:result;
     }
