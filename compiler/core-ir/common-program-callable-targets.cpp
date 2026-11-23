@@ -29,6 +29,12 @@ struct TargetFlow {
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent callable target work exceeded");}
   bool need(bool c,llvm::StringRef detail){return c||reject(e,"core-ir-common-callable",detail);}
   bool callable(const std::string &id){return commonCallableType(types,id,[&]{return step();})!=nullptr;}
+  bool numericNullish(const Json &value,const std::string &type){
+    if(field(value,"operator").getAsString()!="??=")return false;
+    const auto selected=types.find(type);
+    return selected!=types.end()&&field(*selected->second,"kind").getAsString()=="scalar"&&
+      field(*selected->second,"name").getAsString()!="bool";
+  }
   bool equal(const Targets &a,const Targets &b){return step(a.functions.size()+b.functions.size()+1)&&a.top==b.top&&a.functions==b.functions;}
   Targets copy(const Targets &v){if(!step(v.functions.size()+1))return {};return v;}
   Targets join(const Targets &a,const Targets &b){
@@ -229,11 +235,7 @@ struct TargetFlow {
     if(kind=="bindingAssignment"){
       const auto &target=field(value,"target");const auto targetKind=field(target,"kind").getAsString();
       const auto targetType=string(field(target,"type"));std::optional<State> skipped;
-      if(field(value,"operator").getAsString()=="??="&&targetKind=="bindingTarget"){
-        const auto selected=types.find(targetType);
-        if(selected!=types.end()&&field(*selected->second,"kind").getAsString()=="scalar"&&
-            field(*selected->second,"name").getAsString()!="bool")skipped=snapshot(state);
-      }
+      if((targetKind=="bindingTarget"||targetKind=="globalTarget")&&numericNullish(value,targetType))skipped=snapshot(state);
       auto result=expression(s,state,field(value,"value"));erase(targetType,string(field(field(value,"value"),"type")),result);
       if(targetKind=="globalTarget"){expose(string(field(field(value,"value"),"type")));exposeClosures(result);}
       else if(result){const auto key=field(target,"binding").getAsString().value_or("");if(!step(key.size()/64+2))return {};const auto binding=key.str();
@@ -253,7 +255,11 @@ struct TargetFlow {
     }
     if(kind=="fieldAssignment"){
       const Json *target=&field(value,"target");while(string(field(*target,"kind"))=="parentheses"){if(!step())return {};target=&field(*target,"expression");}
-      expression(s,state,field(*target,"receiver"));auto result=expression(s,state,field(value,"value"));erase(string(field(*target,"type")),string(field(field(value,"value"),"type")),result);write(string(field(*target,"property")),result);
+      expression(s,state,field(*target,"receiver"));
+      const auto targetType=string(field(*target,"type"));std::optional<State> skipped;
+      if(numericNullish(value,targetType))skipped=snapshot(state);
+      auto result=expression(s,state,field(value,"value"));erase(targetType,string(field(field(value,"value"),"type")),result);write(string(field(*target,"property")),result);
+      if(skipped)combine(state,*skipped);
       if(result)return result;
       return callable(type)?std::optional<Targets>(Targets{true,{}}):std::nullopt;
     }
@@ -264,6 +270,13 @@ struct TargetFlow {
       const Json *target=&field(value,"target");while(string(field(*target,"kind"))=="parentheses"){if(!step())return {};target=&field(*target,"expression");}
       expression(s,state,field(*target,"receiver"));expression(s,state,field(*target,"index"));auto result=expression(s,state,field(value,"value"));erase(string(field(*target,"type")),string(field(field(value,"value"),"type")),result);
       arrays.write(string(field(field(*target,"receiver"),"type")),result);return result?result:callable(type)?std::optional<Targets>(Targets{true,{}}):std::nullopt;
+    }
+    if(kind=="elementCompoundAssignment"&&numericNullish(value,string(field(field(value,"target"),"type")))){
+      const Json *target=&field(value,"target");while(string(field(*target,"kind"))=="parentheses"){if(!step())return {};target=&field(*target,"expression");}
+      expression(s,state,field(*target,"receiver"));expression(s,state,field(*target,"index"));
+      const auto skipped=snapshot(state);
+      expression(s,state,field(value,"value"));combine(state,skipped);
+      return {};
     }
     if(kind=="checkedElementAccess"){
       expression(s,state,field(value,"receiver"));expression(s,state,field(value,"index"));if(!callable(type)){expose(type);return {};}

@@ -21,6 +21,7 @@ export function commonTargets(hir,spend,records=null) {
   const methods=commonMethods(hir,spend);
   const domain=callableTargetDomain(functions,spend,message=>commonFailure('callable',message),(a,b)=>a<b?-1:a>b?1:0);
   const callable=id=>commonCallableType(id,types,spend)!==null,summaries=new Map(),sites=new Map(),observations=new Map();let changed=false;
+  const numericNullish=(value,type)=>value.operator==='??='&&type!==boolTypeId&&types.get(type)?.kind==='scalar';
   const mayCallable=(id,seen=new Set())=>{spend();if(seen.has(id))return false;seen.add(id);const type=types.get(id);
     return type?.kind==='function'||type?.kind==='union'&&type.members.some(member=>mayCallable(member,seen));};
   const merge=(map,key,value)=>{const before=map.get(key)??domain.bottom(),next=domain.join(before,value);if(!map.has(key)||!domain.equal(before,next)){map.set(key,next);changed=true;}};
@@ -160,7 +161,7 @@ export function commonTargets(hir,spend,records=null) {
     if(['parentheses','as','nonNull'].includes(value.kind)){const actual=expression(summary,state,value.expression);if(value.kind==='as'){erase(value.type,value.expression.type,actual);if(!verifiedView(value.expression.type,value.type,value.compatibilityRoots??[])){expose(value.expression.type);expose(value.type);exposeClosures(actual);}else linkArrays(value.expression.type,value.type);}return actual??(callable(value.type)?domain.top():null);}
     if(value.kind==='bindingAssignment') {
       const target=value.target;
-      const skipped=value.operator==='??='&&target.kind==='bindingTarget'&&target.type!==boolTypeId&&types.get(target.type)?.kind==='scalar'?clone(state):null;
+      const skipped=(target.kind==='bindingTarget'||target.kind==='globalTarget')&&numericNullish(value,target.type)?clone(state):null;
       const result=expression(summary,state,value.value);erase(target.type??bindingTypes.get(target.binding),value.value.type,result);
       if(value.target.kind==='globalTarget'){expose(value.value.type);exposeClosures(result);}else if(result){state.set(value.target.binding,domain.copy(result));const captured=capturedParameters.get(value.target.binding);
         if(captured){
@@ -173,12 +174,23 @@ export function commonTargets(hir,spend,records=null) {
     if(value.kind==='fieldAccess'){expression(summary,state,value.receiver);return callable(value.type)?domain.copy(fieldValues.get(slot(value.property))??domain.bottom()):null;}
     if(value.kind==='fieldAssignment'){
       let target=value.target;while(target.kind==='parentheses'){spend();target=target.expression;}
-      expression(summary,state,target.receiver);const result=expression(summary,state,value.value);erase(target.type,value.value.type,result);write(target.property,result);return result??(callable(value.type)?domain.top():null);
+      expression(summary,state,target.receiver);
+      const skipped=numericNullish(value,target.type)?clone(state):null;
+      const result=expression(summary,state,value.value);erase(target.type,value.value.type,result);write(target.property,result);
+      if(skipped)join(state,skipped);
+      return result??(callable(value.type)?domain.top():null);
     }
     if(value.kind==='arrayLiteral'){for(const child of value.elements){spend();const result=expression(summary,state,child);erase(types.get(value.type)?.elementType,child.type,result);arrayWrite(value.type,result);}return null;}
     if(value.kind==='elementAssignment'){
       let target=value.target;while(target.kind==='parentheses'){spend();target=target.expression;}
       expression(summary,state,target.receiver);expression(summary,state,target.index);const result=expression(summary,state,value.value);erase(target.type,value.value.type,result);arrayWrite(target.receiver.type,result);return result??(callable(value.type)?domain.top():null);
+    }
+    if(value.kind==='elementCompoundAssignment'&&numericNullish(value,value.target.type)){
+      let target=value.target;while(target.kind==='parentheses'){spend();target=target.expression;}
+      expression(summary,state,target.receiver);expression(summary,state,target.index);
+      const skipped=clone(state);
+      expression(summary,state,value.value);join(state,skipped);
+      return null;
     }
     if(value.kind==='checkedElementAccess'){expression(summary,state,value.receiver);expression(summary,state,value.index);if(!callable(value.type))expose(value.type);return callable(value.type)?domain.copy(arrayRead(value.receiver.type)):null;}
     if(value.kind==='globalReference')expose(value.type);

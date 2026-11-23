@@ -44,7 +44,7 @@ for(const [name,start,end]of [['wrong-owner-alternative-conflict',1760,1778],['d
 
 // Whole checked component variant of the original distinct Code+Env packet.
 // Only the last application body and its source-dependent identities change.
-function reassignmentProgram(mode){
+function reassignmentProgram(mode,family='local'){
   const donor=fs.readFileSync(new URL('./testdata/common-aggregate-callables/different-code-match-safe.json',import.meta.url));
   assert.equal(sha256(donor),'sha256:b2b2861cd5fa38e438a5d910d6f52340c53cf7f2e4f36c49c334e10b0e77ddcd');
   const packet=structuredClone(readCommonProgramFacts(donor)),p=packet.payload,root=p.rootFile;
@@ -53,10 +53,12 @@ function reassignmentProgram(mode){
   const first=p.functions.find(row=>row.name==='makeFirstReader'),second=p.functions.find(row=>row.name==='makeSecondReader');
   const callable=first.returnType,bodyStart=file.content.indexOf('{',fn.returnAnnotationRange.end)+1;
   const numeric=mode==='='||mode==='??=',call='(f = makeSecondReader())()',comparison=call+' === 0';
-  const unconditional=mode==='unconditional'||mode==='=',branch=mode==='if';
-  const effect=numeric?'gate '+mode+' '+call+';':unconditional?comparison+';':branch?'if (flag) { '+comparison+'; }':'flag '+mode+' ('+comparison+');';
+  const unconditional=mode==='unconditional'||mode==='=',branch=mode==='if',order=family==='element receiver';
+  const left=order?'(values = ['+call+'])[0]':{local:'gate',global:'leftTotal',field:'new Box().n',element:'values[0]'}[family];
+  const declaration=family==='local'?'let gate: i32 = 0;':order?'let values: i32[] = [0];':family==='element'?'const values: i32[] = [0];':null;
+  const effect=numeric?left+' '+mode+' '+(order?'f()':call)+';':unconditional?comparison+';':branch?'if (flag) { '+comparison+'; }':'flag '+mode+' ('+comparison+');';
   file.content=file.content.slice(0,bodyStart)+'\n  let f: () => i32 = makeFirstReader();\n  '+
-    (numeric?'let gate: i32 = 0;\n  ':'')+effect+'\n  return f();\n}\n';
+    (numeric&&declaration?declaration+'\n  ':'')+effect+'\n  return f();\n}\n';
   const span=(start,end)=>({start,end});
   const locate=(text,start=bodyStart)=>{const index=file.content.indexOf(text,start);assert.ok(index>=0,text);return span(index,index+text.length);};
   fn.declarationRange.end=file.content.length-1;
@@ -79,15 +81,51 @@ function reassignmentProgram(mode){
     {target:{kind:'bindingTarget',binding,type:callable,range:span(target.start,target.start+1)},
       operator:'=',operatorRange:locate('=',target.start),value:direct(second,secondInit)});
   const callee=grouped(assignment),called=indirect(callee,span(callee.range.start,callee.range.end+2));
-  let statement;
+  let statement,outerRhs=null;
   const body=[{kind:'letDeclaration',binding,range:declarationRange,initializer:direct(first,firstInit)}];
   if(numeric){
-    const gate=locate('gate',declarationRange.end),gateId=originId(root,gate),zero=locate('0',gate.end),range=span(gate.start,zero.end);
-    fn.bindings.push({...fn.bindings[0],id:gateId,name:'gate',nameRange:gate,annotationRange:locate('i32',gate.end),declarationRange:range,declaredType:'i32'});
-    body.push({kind:'letDeclaration',binding:gateId,range,initializer:expr('numericLiteral','i32',zero,{token:'0',decimal:'0'})});
-    const location=locate('gate',at.start);
-    statement={kind:'expression',range:at,value:expr('bindingAssignment','i32',span(location.start,called.range.end),{
-      target:{kind:'bindingTarget',binding:gateId,type:'i32',range:location},operator:mode,operatorRange:locate(mode,location.end),value:called})};
+    const location=locate(left,at.start),zero=(type,range)=>expr('numericLiteral',type,range,{token:'0',decimal:'0'});
+    const allocation=range=>sha256('tsfg.array-facts.allocation.v8\0'+canonical({sourcePath:root,declarationRange:range}));
+    let kind='bindingAssignment',target;
+    if(family==='local'){
+      const gate=locate('gate',declarationRange.end),gateId=originId(root,gate),initial=locate('0',gate.end),range=span(gate.start,initial.end);
+      fn.bindings.push({...fn.bindings[0],id:gateId,name:'gate',nameRange:gate,annotationRange:locate('i32',gate.end),declarationRange:range,declaredType:'i32'});
+      body.push({kind:'letDeclaration',binding:gateId,range,initializer:zero('i32',initial)});
+      target={kind:'bindingTarget',binding:gateId,type:'i32',range:location};
+    }else if(family==='global'){
+      const global=p.globals.find(row=>row.binding.name===left);
+      assert.equal(global.binding.writable,true);
+      target={kind:'bindingTarget',binding:global.binding.id,type:'i32',range:location};
+    }else if(family==='field'){
+      const old=p.functions.find(row=>row.name==='ordinary').body[0].initializer,range=locate('new Box()',location.start);
+      const member=p.types.find(row=>row.id===old.type).fields.find(row=>row.name==='n');
+      const receiver={...old,range,calleeRange:locate('Box',location.start),allocationSite:allocation(range)};
+      kind='fieldAssignment';
+      target={kind:'fieldTarget',type:'i32',range:location,property:member.id,nameRange:span(location.end-1,location.end),receiver};
+    }else{
+      const name='values',nameRange=locate(name,declarationRange.end),id=originId(root,nameRange),initial=locate('[0]',nameRange.end);
+      const annotationRange=locate('i32[]',nameRange.end),range=span(nameRange.start,initial.end),type='array<i32>';
+      fn.bindings.push({...fn.bindings[0],id,name,nameRange,writable:order,annotationRange,elementAnnotationRange:span(annotationRange.start,annotationRange.end-2),
+        declarationRange:range,declaredType:type});
+      body.push({kind:order?'letDeclaration':'constDeclaration',binding:id,range,initializer:expr('arrayLiteral',type,initial,{
+        allocationSite:allocation(initial),elements:[zero('i32',span(initial.start+1,initial.end-1))]})});
+      const nameUse=locate(name,location.start),index=zero('u32',span(location.end-2,location.end-1));
+      let receiver=expr('bindingReference',type,nameUse,{binding:id});
+      if(order){
+        const selected=span(called.range.start-1,called.range.end+1);
+        const write=expr('bindingAssignment',type,span(nameUse.start,selected.end),{
+          target:{kind:'bindingTarget',type,binding:id,range:nameUse},operator:'=',operatorRange:locate('=',nameUse.end),
+          value:expr('arrayLiteral',type,selected,{allocationSite:allocation(selected),elements:[called]})});
+        receiver=grouped(write);
+        const rhs=locate('f()',location.end);
+        outerRhs=indirect(expr('bindingReference',callable,span(rhs.start,rhs.start+1),{binding}),rhs);
+      }
+      kind=mode==='='?'elementAssignment':'elementCompoundAssignment';
+      target={kind:'elementTarget',type:'i32',range:location,receiver,index};
+    }
+    const value=outerRhs??called;
+    statement={kind:'expression',range:at,value:expr(kind,'i32',span(location.start,value.range.end),{
+      target,operator:mode,operatorRange:locate(mode,location.end),value})};
   }else{
     const test=binary(called,'===',expr('numericLiteral','i32',locate('0',called.range.end),{token:'0',decimal:'0'}));
     const condition=unconditional?null:expr('bindingReference','bool',locate('flag',at.start),{binding:fn.parameters[0].id});
@@ -96,19 +134,23 @@ function reassignmentProgram(mode){
   }
   const returned=locate('return f();',at.end),site=locate('f()',returned.start);
   fn.body=[...body,statement,{kind:'return',range:returned,value:indirect(expr('bindingReference',callable,span(site.start,site.start+1),{binding}),site)}];
-  return {hir:coldReframedHir(packet,fn,previousId,file),site,inner:called.range};
+  return {hir:coldReframedHir(packet,fn,previousId,file),site,inner:called.range,rhs:outerRhs?.range};
 }
 
-for(const mode of ['unconditional','if','&&','||','=','??='])test('retained-derived local callable reassignment through '+mode,()=>{
-  const {hir,site,inner}=reassignmentProgram(mode),fn=hir.functions.find(row=>row.name==='captureSpanOrdinary');
+function checkReassignment(mode,family){
+  const {hir,site,inner,rhs}=reassignmentProgram(mode,family),fn=hir.functions.find(row=>row.name==='captureSpanOrdinary');
   const reader=name=>hir.functions.find(row=>row.name===name).id;
   const targets=commonTargets(hir,commonMeter());
   assert.deepEqual(targets.site(fn.id,inner),{top:false,functions:[reader('readSecond')]});
-  const expected=mode==='unconditional'||mode==='='?[reader('readSecond')]:[reader('readFirst'),reader('readSecond')].sort();
+  const expected=mode==='unconditional'||mode==='='||rhs?[reader('readSecond')]:[reader('readFirst'),reader('readSecond')].sort();
   assert.doesNotThrow(()=>emitCommonProgramCore(hir,createCommonProgramPublication(hir),{
     targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()}));
   assert.deepEqual(targets.site(fn.id,site),{top:false,functions:expected});
-});
+  if(rhs)assert.deepEqual(targets.site(fn.id,rhs),{top:false,functions:expected});
+}
+for(const mode of ['unconditional','if','&&','||','=','??='])test('retained-derived local callable reassignment through '+mode,()=>checkReassignment(mode,'local'));
+for(const family of ['global','field','element','element receiver'])for(const mode of ['=','??='])
+  test('retained-derived '+family+' numeric target through '+mode,()=>checkReassignment(mode,family));
 
 function coldReframedHir(packet,fn,previousId,file){
   const p=packet.payload,root=p.rootFile;
