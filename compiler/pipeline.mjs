@@ -239,10 +239,12 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
   const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;
-  if(cpuLLVM&&llvmOutput==='ir')checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
+  if(cpuLLVM&&llvmOutput==='ir'){
+    checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
+    checkQueryLlvmEntries(cpuLLVM,facts);
+  }
   if(cpuLLVM&&llvmOutput==='dialect')checkQueryLlvmDialect(cpuLLVM,checkedBatch,facts.program.target);
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
-  if(cpuLLVM&&llvmOutput==='ir')checkQueryLlvmEntries(cpuLLVM,facts);
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),
     batchHash:tmeta.payload.batchHash,

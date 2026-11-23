@@ -512,14 +512,14 @@ test('Query LLVM pairing validates the retained batch and target',async t=>{
     const calls=[];
     const changed=Buffer.from(original.replace(definition,replacement));
     assert.throws(()=>run('i32-copy',calls,changed),/r10-system-query-llvm: checked entry ABI differs/);
-    assert.deepEqual(calls,['--cpu-batch','--llvm-ir','--tmeta']);
+    assert.deepEqual(calls,['--cpu-batch','--llvm-ir']);
   });
   await t.test('reject definitions absent from the checked Source and batch',()=>{
     for(const symbol of ['unrelated','batch_helper_'+'0'.repeat(64)]){
       const calls=[];
       const changed=Buffer.from(original.replace(definition,`define i32 @${symbol}() {\n  ret i32 0\n}\n\n`+definition));
       assert.throws(()=>run('i32-copy',calls,changed),/r10-system-query-llvm: checked entry ABI differs/);
-      assert.deepEqual(calls,['--cpu-batch','--llvm-ir','--tmeta']);
+      assert.deepEqual(calls,['--cpu-batch','--llvm-ir']);
     }
   });
 });
