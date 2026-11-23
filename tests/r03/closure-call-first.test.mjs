@@ -87,6 +87,16 @@ test("Snapshot materialization rejects malformed successful response rows", asyn
   assert.equal(accepted.status, "ok", JSON.stringify(accepted));
   assert.equal(accepted.snapshot.inputIdentity, prepared.inputIdentity);
 
+  await t.test("successful response requires an empty diagnostics array when present", () => {
+    const check = diagnostics => materializeFrontendResponse(prepared,
+      Buffer.from(JSON.stringify({ ...response, diagnostics })), transportOrigin);
+    for (const diagnostics of [undefined, null, []]) assert.deepEqual(check(diagnostics), accepted);
+    for (const diagnostics of [{ length: 0 }, false, 0, "", [null]]) {
+      assert.deepEqual(check(diagnostics), { status: "tool-error", inputIdentity: prepared.inputIdentity,
+        message: "invalid frontend response status" });
+    }
+  });
+
   for (const { name, edits } of [
     { name: "null function", edits: { functions: [null] } },
     { name: "null symbol", edits: { symbols: [null] } },

@@ -252,7 +252,8 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
     }
     return deepFreeze({ status: "error", inputIdentity, diagnostics: output.diagnostics });
   }
-  if (output.status !== "ok" || (output.diagnostics?.length ?? 0) !== 0) {
+  const { diagnostics } = output;
+  if (output.status !== "ok" || diagnostics != null && (!Array.isArray(diagnostics) || diagnostics.length !== 0)) {
     return { status: "tool-error", inputIdentity, message: "invalid frontend response status" };
   }
   const consumed = output.inputs;
