@@ -15,6 +15,7 @@ import { isSelectedNullableContext, check as nullableCheck } from './nullable-co
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { verifyClosureHir } from './closure-hir.mjs';
 import { referenceHirFormat, verifyReferenceHir } from './reference-hir.mjs';
+import { genericHirFormat, verifyGenericHir } from './generic-hir.mjs';
 import { scalarOperations, validScalarUnary, validScalarBinary } from './scalar-operators.mjs';
 export { scalarOperations } from './scalar-operators.mjs';
 import { verifyModuleHir } from './module-facts.mjs';
@@ -87,6 +88,7 @@ function verifyWholeHir(hir, selectedCalls = false) {
   if (hir?.format?.family === 'tsfg.nullable-hir-candidate') return verifyNullableHir(hir);
   if (hir?.format?.family === 'tsfg.closure-hir-candidate') return verifyClosureHir(hir);
   if (familyOf(hir) === referenceHirFormat.family) return verifyReferenceHir(hir);
+  if (familyOf(hir) === genericHirFormat.family) return verifyGenericHir(hir);
   const fail = () => { throw new TypeError("r03-hir-invalid: owned HIR identity, type, source or structure differs"); };
   const moduleMode=hir?.modules!==undefined;
   if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions","inputScope",...(moduleMode?['sources','modules','globals','hostImports','closure']:[])])

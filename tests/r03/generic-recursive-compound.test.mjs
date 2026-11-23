@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { decodeGenericPackage, encodeGenericPackage } from '../../compiler/generic-package.mjs';
 import { validateGenericInstanceResult } from '../../compiler/generic-instance.mjs';
 import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir, lowerGenericHir } from '../../compiler/generic-hir.mjs';
-import { readHir, printHir, lowerHir, lowerFormalHir, lowerOwnedHir } from '../../compiler/hir.mjs';
+import { readHir, printHir, verifyHir, lowerHir, lowerFormalHir, lowerOwnedHir } from '../../compiler/hir.mjs';
 import { canonical } from '../../compiler/identity.mjs';
 import { verifyProducedPacket } from '../../compiler/producer-packet.mjs';
 import { expectedStringPacket, stringCases } from './formal-string-gold.mjs';
@@ -55,6 +55,10 @@ for(const family of ['conditional','mapped']) test('owned HIR cold entry reprodu
  const bytes=await fixture(`generic-recursive-${family}-hir-v7.json`);
  const core=await fixture(`generic-recursive-${family}-core-v7.mlir`);
  const hir=readHir(bytes);
+ const callerOwned=structuredClone(hir),verified=verifyHir(callerOwned);
+ assert.deepEqual(verified,hir);
+ assert.notEqual(verified,callerOwned);
+ assert.ok(Object.isFrozen(verified.functions[0]));
  assert.equal(printHir(hir),bytes.toString('utf8'));
  const expected=expectedGenericCore(core.toString('utf8'),hir.closure.roots[0]);
  assert.equal(lowerOwnedHir(hir),expected);
@@ -64,15 +68,18 @@ for(const family of ['conditional','mapped']) test('owned HIR cold entry reprodu
  const wrongContext={code:'r03-d-call-effects',ruleId:'r01-call-contract',phase:'hir',
   message:'r03-d-call-effects: invalid module call publication context'};
  assert.throws(()=>readHir(bytes,undefined,publication),wrongContext);
+ assert.throws(()=>verifyHir(hir,undefined,publication),wrongContext);
  assert.throws(()=>printHir(hir,undefined,publication),wrongContext);
  assert.throws(()=>lowerOwnedHir(hir,undefined,publication),wrongContext);
  assert.throws(()=>lowerFormalHir(hir,undefined,publication),wrongContext);
  assert.throws(()=>readHir(Buffer.concat([bytes,Buffer.from('\n')])),/generic-hir-canonical/);
  const predecessor=structuredClone(hir);
  predecessor.format.version=6;
+ assert.throws(()=>verifyHir(predecessor),/generic-hir-identity/);
  assert.throws(()=>readHir(Buffer.from(canonical(predecessor)+'\n')),/generic-hir-identity/);
  const foreign=structuredClone(hir);
  foreign.functions[0].id='sha256:'+'0'.repeat(64);
+ assert.throws(()=>verifyHir(foreign),/generic-hir-identity/);
  assert.throws(()=>lowerOwnedHir(foreign),/generic-hir-identity/);
 });
 
