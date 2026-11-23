@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
+import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
 import {buildFiniteFieldPhases} from '../../compiler/finite-field-phases.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
@@ -387,5 +388,29 @@ test('a failed initializer preserves only the effects before its checked read',a
     assert.ok(plan.fieldReaching.callContexts.some(row=>row.target===before.id&&row.fields.length),'receiver reaches the earlier call');
     assert.ok(!plan.fieldReaching.callContexts.some(row=>row.target===after.id&&row.fields.length),'later call receives no state');
     assert.ok(!plan.fieldReaching.completions.some(row=>row.construction===phase.constructionId));
+  }
+});
+
+test('a missing old Array value stops a constructor initializer compound or update',async()=>{
+  const {hir,proofs}=await initializerProof('initializer-effect-prefix','49f2f016b5cab752215451826ba7497eeba97e7388800b447ac9f10da01e0084');
+  const owner=hir.types.find(row=>row.nominalKey?.declarationPath[0]==='Nested'),construction=owner.construction;
+  const [marker,first,tail]=construction.initialization,group=first.value.right,original=group.operand;
+  assert.equal(group.kind,'group');
+  assert.equal(original.left.kind,'arrayReadChecked');
+  assert.equal(original.right.kind,'call');
+  const target={...original.left,kind:'elementTarget'};
+  const root='construction/'+construction.id+'/initialization/',node=root+first.field,trap=node+'/right/operand/old-value';
+  // Component model using the original checked receiver, index and RHS call.
+  for(const operation of [
+    {kind:'arrayCompoundAssignment',operator:'+=',value:original.right}, {kind:'arrayUpdate',operator:'++',prefix:false},
+  ]){
+    const compound={...operation,type:original.type,target,range:original.range};
+    const value={...first.value,right:{...group,operand:compound}};
+    const initialization=[marker,{...first,value},tail];
+    const model={...hir,types:hir.types.map(row=>row===owner?{...row,construction:{...construction,initialization}}:row)};
+    const {reaching,failedInitializers}=buildFiniteArrayReaching(model,proofs.definition,()=>{},()=>false);
+    assert.deepEqual([...failedInitializers.values()],[{node,trap}]);
+    assert.equal(reaching.reads.find(row=>row.node===trap)?.status,'missing');
+    assert.equal(reaching.reads.find(row=>row.node===root+tail.field)?.status,'pending');
   }
 });

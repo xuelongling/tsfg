@@ -305,9 +305,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           oldLength=state.get(receiver.owner)?.length??null;
           // The lexical pass retains every original occurrence. Ordered
           // transfer stops only at a definite old-read trap on the current evaluation path.
-          if(!collectAll&&terminalRoot&&status==='missing'&&canTerminateArrayRead(directStatement&&!fn.ownerType)) {
-            if(recordReads){charge();(terminalReads??=new Set()).add(old);}
-            return {terminal:true,trap:old};
+          if(!collectAll&&status==='missing') {
+            const terminal=terminalRoot&&canTerminateArrayRead(directStatement&&!fn.ownerType);
+            if(terminal&&recordReads){charge();(terminalReads??=new Set()).add(old);}
+            if(constructionEvaluation||terminal)return {terminal:true,trap:old};
           }
         }
         const rhs=value.value?child('value'):{symbol:path};

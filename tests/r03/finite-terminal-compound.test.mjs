@@ -9,7 +9,7 @@ import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs
 import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
-function lowerDerivedFieldPacket(packet,source) {
+function lowerDerivedPacket(packet,source) {
   const payload=packet.payload;
   source.sha256=sha256(source.content).slice(7);
   const {sourceRoot,rootFile,declarations,config}=payload;
@@ -27,7 +27,7 @@ function lowerDerivedFieldPacket(packet,source) {
   return lowerFormalHir(built.hir,context,publication).split('\n');
 }
 
-async function fieldPacket(path,hash) {
+async function retainedPacket(path,hash) {
   const bytes=await readFile(new URL('./testdata/'+path,import.meta.url));
   assert.equal(sha256(bytes),'sha256:'+hash);
   return structuredClone(readTypedArrayFacts(bytes));
@@ -37,7 +37,7 @@ const fieldTail='typed-array-terminal-compound/field-write-tail-old-value-presen
   fieldTailHash='22e3d52a15925f440446bd49b7ff7b9381d904c8c449b7e17f6c89069701f2c7';
 
 test('finite numeric field compound reads the old field before computing its writeback',async()=>{
-  const packet=await fieldPacket(fieldTail,fieldTailHash),payload=packet.payload;
+  const packet=await retainedPacket(fieldTail,fieldTailHash),payload=packet.payload;
   const fn=payload.functions.find(row=>row.name==='fieldPresent'),field=fn.body[4].value;
   const source=payload.files.find(row=>row.path===fn.sourcePath),{start,end}=field.operatorRange;
   // Derive a compound from the captured store without moving any source spans.
@@ -45,7 +45,7 @@ test('finite numeric field compound reads the old field before computing its wri
   source.content=source.content.slice(0,start)+'+='+source.content.slice(end+1);
   field.operator='+=';
   field.operatorRange.end++;
-  const lines=lowerDerivedFieldPacket(packet,source);
+  const lines=lowerDerivedPacket(packet,source);
   const read=lines.find(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(field.target.range)));
   assert.ok(read,'compound must read the old field at its target span');
   const store=lines.find(line=>line.includes('"tsfg_core.domain.field_store"')&&line.includes(at(field.range)));
@@ -67,7 +67,7 @@ test('finite numeric field compound reads the old field before computing its wri
 
 test('finite numeric field prefix and postfix return the correct side of the writeback',async()=>{
   for(const prefix of [false,true])for(const [operator,arithmetic] of [['++','add'],['--','sub']]){
-    const packet=await fieldPacket(fieldTail,fieldTailHash),payload=packet.payload;
+    const packet=await retainedPacket(fieldTail,fieldTailHash),payload=packet.payload;
     const fn=payload.functions.find(row=>row.name==='fieldPresent'),returned=fn.body.at(-1),read=returned.value;
     const source=payload.files.find(row=>row.path===fn.sourcePath),{start,end}=read.range;
     assert.equal(source.content.slice(start,end+2),'box.n;\n');
@@ -80,7 +80,7 @@ test('finite numeric field prefix and postfix return the correct side of the wri
       operatorRange:{start:begin,end:begin+2},target:{kind:'fieldTarget',type:read.type,property:read.property,
         range:shift(read.range),nameRange:shift(read.nameRange),receiver:{...read.receiver,range:shift(read.receiver.range)}}};
 
-    const lines=lowerDerivedFieldPacket(packet,source);
+    const lines=lowerDerivedPacket(packet,source);
     const oldLine=lines.find(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(returned.value.target.range)));
     const unit=lines.find(line=>line.includes('"tsfg_core.constant"')&&line.includes(at(range)));
     const calculate=lines.find(line=>line.includes(`"tsfg_core.${arithmetic}"`)&&line.includes(at(range)));
@@ -104,7 +104,7 @@ test('finite numeric field prefix and postfix return the correct side of the wri
 
 test('finite integer field bitwise and shift compounds keep typed old-read and writeback operands',async()=>{
   for(const {operator,operation} of [{operator:'&=',operation:'and'},{operator:'<<=',operation:'shl'}]){
-    const packet=await fieldPacket('typed-array-reference-domain/super-live-f32-package.json',
+    const packet=await retainedPacket('typed-array-reference-domain/super-live-f32-package.json',
       'c2f9eb86e1b45b421c851ca8ad7ab9e39fbd190008c8bf5aec6c57821e7cb1df'),payload=packet.payload;
     const derived=payload.types.find(row=>row.name==='Derived'),ctor=derived.constructor;
     const field=ctor.body[0].else.at(-1).value,source=payload.files.find(row=>row.path===ctor.sourcePath);
@@ -113,7 +113,7 @@ test('finite integer field bitwise and shift compounds keep typed old-read and w
     source.content=source.content.slice(0,start)+operator.padEnd(end-start)+source.content.slice(end);
     field.operator=operator;field.operatorRange={start,end:start+operator.length};
 
-    const lines=lowerDerivedFieldPacket(packet,source);
+    const lines=lowerDerivedPacket(packet,source);
     const oldLine=lines.find(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(field.target.range)));
     const operationLine=lines.find(line=>line.includes(`"tsfg_core.${operation}"`)&&line.includes(at(field.range)));
     const store=lines.find(line=>line.includes('"tsfg_core.domain.field_store"')&&line.includes(at(field.range)));
@@ -131,7 +131,7 @@ test('finite integer field bitwise and shift compounds keep typed old-read and w
 });
 
 test('finite field update stops the following Array read when its receiver fails',async()=>{
-  const packet=await fieldPacket(
+  const packet=await retainedPacket(
     'typed-array-source514/a72e067ed8bbbeb893ed9c082a28a7f15b27cbca23bfb4640e60b66763806d95-package.json',
     '506b3a554cb9c67bb68f212506d4d3e336ace1a6149d66e9d406450d946d7c97');
   const factsBytes=Buffer.from(canonical(packet)+'\n'),facts=readTypedArrayFacts(factsBytes);
@@ -155,6 +155,80 @@ test('finite field update stops the following Array read when its receiver fails
   const at=path=>reaching.reads.find(row=>row.node===fn.id+path)?.status;
   assert.equal(at('/body/0/expression/target/receiver'),'missing');
   assert.equal(at('/body/1/expression'),'pending');
+});
+
+function replaceArrayCompoundOperator(source,compound,operator) {
+  const start=compound.target.range.end,end=compound.value.range.start;
+  assert.equal(source.content.slice(start,end),' += ');
+  source.content=source.content.slice(0,start)+operator.padEnd(end-start)+source.content.slice(end);
+  compound.operator=operator;compound.operatorRange={start,end:start+operator.length};
+}
+
+test('finite Array compounds reject unsupported scalar operators before publishing Core',async()=>{
+  for(const operator of ['&=','<<=','??=']){
+    const packet=await retainedPacket(fieldTail,fieldTailHash),payload=packet.payload;
+    const fn=payload.functions.find(row=>row.name==='fieldPresent'),compound=fn.body[3].value;
+    const source=payload.files.find(row=>row.path===fn.sourcePath);
+    replaceArrayCompoundOperator(source,compound,operator);
+    assert.throws(()=>lowerDerivedPacket(packet,source),error=>{
+      assert.ok(error instanceof Error&&'code' in error&&'primary' in error);
+      assert.equal(error.code,'r03-finite-core-capability');
+      assert.match(error.message,/operation-domain-check mapping/u);
+      assert.deepEqual(error.primary,compound.range);
+      return true;
+    });
+  }
+});
+
+test('finite i32 Array compounds evaluate receiver and index once before old read and RHS',async()=>{
+  for(const [operator,operation] of [['&=','and'],['<<=','shl']]){
+    const packet=await retainedPacket(
+      'typed-array-actual-v8/f2c9d4e124c4cc6331012390387c1e803adf0c4707ef653d9de4303066d75954-package.json',
+      '0176e257c9240e2f61d1d86728aad3bf248a31fc6d96ae2c4ac30063cb8cb6e3');
+    const payload=packet.payload,fn=payload.functions.find(row=>row.name==='update'),compound=fn.body[0].value;
+    const source=payload.files.find(row=>row.path===fn.sourcePath);
+    replaceArrayCompoundOperator(source,compound,operator);
+    const lines=lowerDerivedPacket(packet,source);
+    const operationAt=(kind,range)=>{
+      const matches=lines.filter(line=>line.includes('"'+kind+'"')&&line.includes(at(range)));
+      assert.equal(matches.length,1);
+      return matches[0];
+    };
+    const receiver=operationAt('func.call',compound.target.receiver.range);
+    const index=operationAt('func.call',compound.target.index.range);
+    const old=operationAt('tsfg_core.domain.array_read',compound.target.range);
+    const rhs=operationAt('func.call',compound.value.range);
+    const arithmetic=operationAt('tsfg_core.'+operation,compound.range);
+    const store=operationAt('tsfg_core.domain.array_store',compound.range);
+    const returned=operationAt('func.return',fn.body[0].range);
+    const result=line=>line.trim().split(' = ')[0];
+    assert.ok(old.includes(`(${result(receiver)}, ${result(index)})`));
+    assert.ok(arithmetic.includes(`(${result(old)}, ${result(rhs)})`));
+    assert.match(arithmetic,/\(i32, i32\) -> i32$/u);
+    assert.ok(store.includes(`(${result(receiver)}, ${result(index)}, ${result(arithmetic)})`));
+    assert.ok(returned.includes(`(${result(arithmetic)})`));
+    const positions=[receiver,index,old,rhs,arithmetic,store,returned].map(line=>lines.indexOf(line));
+    assert.ok(positions.every((position,i)=>i===0||position>positions[i-1]));
+  }
+});
+
+test('finite Array postfix returns the checked old i32 and stores the increment',async()=>{
+  const packet=await retainedPacket(
+    'typed-array-actual-v8/1a80de3941d5c05dc0e4889e97267da169263bbfe70344e312cd0e74e964180d-package.json',
+    '0e74c1456f6a7a922bf3d2d3525f2a69d834de08c8629d0bfb180ae01acad806');
+  const payload=packet.payload,fn=payload.functions[0],update=fn.body[0].value;
+  const lines=lowerDerivedPacket(packet,payload.files.find(row=>row.path===fn.sourcePath));
+  const read=lines.find(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes(at(update.target.range)));
+  const add=lines.find(line=>line.includes('"tsfg_core.add"')&&line.includes(at(update.range)));
+  const store=lines.find(line=>line.includes('"tsfg_core.domain.array_store"')&&line.includes(at(update.range)));
+  const returned=lines.find(line=>line.includes('"func.return"')&&line.includes(at(fn.body[0].range)));
+  assert.ok(read&&add&&store&&returned);
+  const [,old,slot]=read.match(/(%v\d+) = "tsfg_core\.domain\.array_read"\(([^)]*)\)/u)??[];
+  const [,updated]=add.match(/(%v\d+) = /u)??[];
+  assert.ok(old&&updated&&slot);
+  assert.ok(add.includes(`(${old}, `));
+  assert.ok(store.includes(`(${slot}, ${updated})`));
+  assert.ok(returned.includes(`(${old})`));
 });
 
 /** @type {{name:string,fixture:string,sha:string,fn:string,position:string,range?:[number,number],binary?:'left'|'right',productive?:boolean}[]} */

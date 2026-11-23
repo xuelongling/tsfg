@@ -502,15 +502,18 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         }
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
           const receiver=evaluated(value.target.receiver),index=evaluated(value.target.index);
-          const oldType=selected(value.domainNode+'/old-value').domainId;
-            const old=op(api,'array_read',[receiver,index],oldType,`${opAttrs({semanticType:value.target.type,type:oldType})}, array_node = ${quote(value.domainNode+'/old-value')}`,value.target.range);
-          const domain=domains.get(oldType);if(domain.representation!=='native')pending('operation-domain-check mapping',value.range);
-          const rhs=value.kind==='arrayUpdate'?{name:api.operation('tsfg_core.constant',[],[],oldType,
-            unitAttribute(domain.nativeType),value.range),type:oldType}:evaluated(value.value);
-          const operator=value.kind==='arrayUpdate'?(value.operator==='++'?'+':'-'):value.operator.slice(0,-1);
-          const next=api.operation('tsfg_core.'+scalarOperations[operator],[old,rhs.name],[oldType,rhs.type],value.type,'',value.range);
-            op(api,'array_store',[receiver,index,{name:next,type:value.type}],null,`view_type = ${quote(value.target.receiver.semanticType)}, array_node = ${quote(value.domainNode)}, array_versions = ${quote(canonical([arrayWrites.get(value.domainNode+'/array-version')]))}`,value.range);
-          return value.kind==='arrayUpdate'&&!value.prefix?old:next;
+          const oldNode=value.domainNode+'/old-value',oldType=selected(oldNode).domainId,
+            update=value.kind==='arrayUpdate',rhsType=update?oldType:value.value.type;
+          const operator=update?(value.operator==='++'?'+':value.operator==='--'?'-':''):value.operator.slice(0,-1),
+            native=domains.get(oldType).nativeType;
+          if(native==='bool'||value.type!==oldType||
+            !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
+            pending('operation-domain-check mapping',value.range);
+          const old=op(api,'array_read',[receiver,index],oldType,`${opAttrs({semanticType:value.target.type,type:oldType})}, array_node = ${quote(oldNode)}`,value.target.range);
+          const rhs=update?api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range):api.emit(value.value);
+          const next=api.operation('tsfg_core.'+scalarOperations[operator],[old,rhs],[oldType,rhsType],value.type,'',value.range);
+          op(api,'array_store',[receiver,index,{name:next,type:value.type}],null,`view_type = ${quote(value.target.receiver.semanticType)}, array_node = ${quote(value.domainNode)}, array_versions = ${quote(canonical([arrayWrites.get(value.domainNode+'/array-version')]))}`,value.range);
+          return update&&!value.prefix?old:next;
         }
         if(value.kind==='assignment') {
           const binding=value.target.binding,target=selected(fn.id+'/binding/'+binding).domainId;
