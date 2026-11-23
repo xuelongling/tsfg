@@ -70,7 +70,7 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
         const expected = bytecode.digestText(info.signature_hash);
         if (!std.mem.eql(u8, text, &expected)) { result_out.* = .{ .failed = .{ .code = "r05-request-signature", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     }
-    var valid = request.arguments.len <= 64 and request.arguments.len <= info.presence_masks.len;
+    var valid = request.arguments.len <= 64 and runtime.acceptsArgumentCount(info, request.arguments.len);
     const arguments: []runtime.TypedValue = if (valid) parsed.argument_storage[0..request.arguments.len] else &.{};
     // Preserve the original typed JSON and write only into owned typed slots.
     // String roots are reclaimed even after a later argument fails validation.
