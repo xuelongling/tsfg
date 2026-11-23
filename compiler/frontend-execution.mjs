@@ -24,6 +24,9 @@ export async function runLockedFrontend(input, { executable, mode = 'snapshot' }
   const ownedInput = input instanceof Uint8Array ? Uint8Array.from(input) : input;
   if (typeof executable !== 'string' || !executable)
     return { status: 'tool-error', message: 'frontend executable is required' };
+  // The pinned Source command accepts Snapshot stdin with no arguments.
+  if (packageIo && sourceLock.forkOid === '579ee5c0acbadc92f7534b35589df51dd204e53d')
+    return { status: 'tool-error', message: 'locked frontend source does not support generic package IO v1' };
   let binary;
   try { binary = await readFile(executable); }
   catch { return { status: 'tool-error', message: 'frontend executable is unavailable' }; }

@@ -232,6 +232,19 @@ test('compilePackageHir owns package and roots without inventing a Snapshot or C
   await assert.rejects(pipeline.compilePackageHir({ source: { content: 'fake Snapshot' } }, instantiate.request.roots), rejected);
 });
 
+test('registered Source compilation rejects package transport before executable access', async () => {
+  const unavailable = fileURLToPath(new URL('./fixtures/generic-package-io-source-v7.json/frontend.exe', import.meta.url));
+  const packageBytes = encodeGenericPackage(instantiate.request.package);
+  assert.deepEqual(await pipeline.compilePackageHir(packageBytes, instantiate.request.roots, { frontend: unavailable }), {
+    status: 'tool-error', requestId: instantiate.response.requestId,
+    message: 'locked frontend source does not support generic package IO v1',
+  });
+  assert.deepEqual(await runLockedFrontend('{}', { executable: unavailable }),
+    { status: 'tool-error', message: 'frontend executable is unavailable' });
+  assert.deepEqual(await runLockedFrontend('{}', { mode: 'generic-package-io-candidate-v1', executable: unavailable }),
+    { status: 'tool-error', message: 'package frontend requires raw request bytes' });
+});
+
 test('locked frontend accepts only named finite modes and keeps Snapshot default prerequisites', async () => {
   const missing = { status: 'tool-error', message: 'frontend executable is required' };
   assert.deepEqual(await runLockedFrontend('{}'), missing);
