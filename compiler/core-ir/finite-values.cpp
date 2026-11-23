@@ -184,7 +184,7 @@ bool numericArrayWriteback(ModuleProof &proof,mlir::Operation *read,mlir::Operat
   return version&&string(*version,"id")==group+"/array-version"&&string(*version,"node")==group&&
     string(*version,"kind")=="store";
 }
-enum class CompoundTarget {None,Local,Field,Array,LocalUpdate};
+enum class NumericTarget {None,Local,Field,Array};
 mlir::Operation *numericOperandView(mlir::Value value) {
   auto *view=value.getDefiningOp();
   if(!view||view->getName().getStringRef()!="tsfg_core.domain.view"||view->getNumOperands()!=1||
@@ -198,19 +198,41 @@ bool compoundWritebackView(mlir::Operation *view,mlir::Operation *consumer,mlir:
     view->getAttr("tsfg_source.start")==consumer->getAttr("tsfg_source.start")&&
     view->getAttr("tsfg_source.end")==consumer->getAttr("tsfg_source.end");
 }
-mlir::Operation *localNumericWriteback(mlir::Operation *read,mlir::Operation *consumer,mlir::Value oldValue) {
-  const auto result=consumer->getResult(0);
-  if(typeCode(result.getType())!=1)return nullptr;
-  if(result.getType()==oldValue.getType())return consumer;
-  auto *view=consumer->getNextNode();
-  return compoundWritebackView(view,consumer,result)&&view->getResult(0).getType()==oldValue.getType()&&
-    view->getAttr("domain")==read->getAttr("domain")&&view->getAttr("view_type")==read->getAttr("view_type")?view:nullptr;
+mlir::Operation *numericRead(ModuleProof &proof,mlir::func::FuncOp fn,mlir::Value oldValue,
+    const std::string &group,NumericTarget target) {
+  const bool local=target==NumericTarget::Local,array=target==NumericTarget::Array;
+  auto *read=local?numericOperandView(oldValue):oldValue.getDefiningOp();
+  if(!read||!anchor(proof,read,fn))return nullptr;
+  if(!local&&(read->getName().getStringRef()!=(array?"tsfg_core.domain.array_read":"tsfg_core.domain.field_read")||
+      read->getNumOperands()!=(array?2u:1u)||(array&&attr(read,"array_node")!=group+"/old-value")))return nullptr;
+  return read;
 }
-bool numericLocalUpdate(ModuleProof &proof,mlir::func::FuncOp fn,mlir::Operation *check,mlir::Operation *consumer,
-    mlir::Value oldValue,mlir::Value one,mlir::Operation *&postfixAfter) {
-  auto *read=numericOperandView(oldValue),*constant=one.getDefiningOp();
+mlir::Operation *numericWriteback(ModuleProof &proof,mlir::Operation *read,mlir::Operation *consumer,
+    mlir::Value oldValue,const std::string &group,NumericTarget target) {
+  auto result=consumer->getResult(0);
+  auto *store=consumer->getNextNode();
+  if(target==NumericTarget::Local) {
+    if(typeCode(result.getType())!=1)return nullptr;
+    if(result.getType()==oldValue.getType())return consumer;
+    return compoundWritebackView(store,consumer,result)&&store->getResult(0).getType()==oldValue.getType()&&
+      store->getAttr("domain")==read->getAttr("domain")&&store->getAttr("view_type")==read->getAttr("view_type")?store:nullptr;
+  }
+  if(target==NumericTarget::Field&&compoundWritebackView(store,consumer,result)) {
+    result=store->getResult(0);store=store->getNextNode();
+  }
+  if(!store||store->getAttr("tsfg_source.start")!=consumer->getAttr("tsfg_source.start")||
+      store->getAttr("tsfg_source.end")!=consumer->getAttr("tsfg_source.end"))return nullptr;
+  if(target==NumericTarget::Array)return numericArrayWriteback(proof,read,store,result,group)?store:nullptr;
+  return store->getName().getStringRef()=="tsfg_core.domain.field_store"&&store->getNumOperands()==2&&
+    store->getOperand(0)==read->getOperand(0)&&store->getOperand(1)==result&&
+    store->getAttr("receiver_view")==read->getAttr("receiver_view")&&
+    attr(store,"member")==attr(read,"member")&&attr(store,"memory_node")==group+"/writeback"?store:nullptr;
+}
+bool numericUpdate(ModuleProof &proof,mlir::func::FuncOp fn,mlir::Operation *check,mlir::Operation *consumer,
+    mlir::Value oldValue,mlir::Value one,const std::string &group,NumericTarget target,mlir::Operation *&postfixAfter) {
+  auto *read=numericRead(proof,fn,oldValue,group,target),*constant=one.getDefiningOp();
   const auto name=consumer->getName().getStringRef();
-  if(!read||!anchor(proof,read,fn)||(name!="tsfg_core.add"&&name!="tsfg_core.sub")||
+  if(!read||(name!="tsfg_core.add"&&name!="tsfg_core.sub")||
       consumer->getNumResults()!=1||!constant||constant->getName().getStringRef()!="tsfg_core.constant"||
       constant->getNumOperands()!=0||constant->getNumResults()!=1||typeCode(one.getType())!=1||
       constant->getAttr("tsfg_source.start")!=consumer->getAttr("tsfg_source.start")||
@@ -226,20 +248,17 @@ bool numericLocalUpdate(ModuleProof &proof,mlir::func::FuncOp fn,mlir::Operation
   if(oldStart>=oldEnd||(!prefix&&!postfix)||!sourceOperatorToken(proof,attr(fn,"tsfg_source.path"),
       prefix?start:oldEnd,prefix?oldStart:end,name=="tsfg_core.add"?"++":"--",
       prefix?TokenPlacement::Prefix:TokenPlacement::Postfix))return false;
-  auto *writeback=localNumericWriteback(read,consumer,oldValue);
+  auto *writeback=numericWriteback(proof,read,consumer,oldValue,group,target);
   if(!writeback)return false;
   if(postfix)postfixAfter=writeback;
   return true;
 }
 bool numericAssignment(ModuleProof &proof,mlir::func::FuncOp fn,mlir::DominanceInfo &dominance,
     mlir::Operation *consumer,mlir::Value oldValue,mlir::Value rightValue,const std::string &group,
-    const Object *rhs,CompoundTarget target) {
-  const bool local=target==CompoundTarget::Local,array=target==CompoundTarget::Array;
-  auto *read=local?numericOperandView(oldValue):oldValue.getDefiningOp();
-  if(!read||!anchor(proof,read,fn)||read->getAttr("tsfg_source.start")!=consumer->getAttr("tsfg_source.start")||
+    const Object *rhs,NumericTarget target) {
+  auto *read=numericRead(proof,fn,oldValue,group,target);
+  if(!read||read->getAttr("tsfg_source.start")!=consumer->getAttr("tsfg_source.start")||
       consumer->getNumResults()!=1||!rhs)return false;
-  if(!local&&(read->getName().getStringRef()!=(array?"tsfg_core.domain.array_read":"tsfg_core.domain.field_read")||
-      read->getNumOperands()!=(array?2u:1u)||(array&&attr(read,"array_node")!=group+"/old-value")))return false;
   const auto oldEnd=read->getAttrOfType<mlir::IntegerAttr>("tsfg_source.end").getInt();
   uint32_t begin=0,end=0;
   if(oldEnd<=read->getAttrOfType<mlir::IntegerAttr>("tsfg_source.start").getInt()||
@@ -260,17 +279,7 @@ bool numericAssignment(ModuleProof &proof,mlir::func::FuncOp fn,mlir::DominanceI
     if(start&&stop&&start.getInt()>=begin&&stop.getInt()<=end&&
         !dominance.properlyDominates(read,&operation))return false;
   }
-  auto result=consumer->getResult(0);auto *store=consumer->getNextNode();
-  if(local)return localNumericWriteback(read,consumer,oldValue);
-  if(!array&&compoundWritebackView(store,consumer,result)) {
-    result=store->getResult(0);store=store->getNextNode();
-  }
-  if(!store||store->getAttr("tsfg_source.start")!=consumer->getAttr("tsfg_source.start")||
-      store->getAttr("tsfg_source.end")!=consumer->getAttr("tsfg_source.end"))return false;
-  if(array)return numericArrayWriteback(proof,read,store,result,group);
-  return store->getName().getStringRef()=="tsfg_core.domain.field_store"&&store->getNumOperands()==2&&
-    store->getOperand(0)==read->getOperand(0)&&store->getOperand(1)==result&&
-    attr(store,"member")==attr(read,"member")&&attr(store,"memory_node")==group+"/writeback";
+  return numericWriteback(proof,read,consumer,oldValue,group,target);
 }
 bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
   const auto target=hash(std::string("tsfg.type\0i32",13)), absent=hash(std::string("tsfg.type\0undefined",19));
@@ -289,7 +298,8 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
   if(!(arity==1?unary:binary).count(name))return proof.reject("numeric use has no selected i32 numeric consumer");
   const auto start=op->getAttr("tsfg_source.start"),end=op->getAttr("tsfg_source.end");
   const auto *expressions=proof.plan.getAsObject()->getArray("expressions");
-  bool joined=false;CompoundTarget compound=CompoundTarget::None;
+  bool joined=false,update=false;
+  auto compound=NumericTarget::None;
   const auto function=attr(fn,"tsfg_core.function_id"),right=group+"/value";
   const Object *rhs=nullptr;bool repeatedRhs=false;
   if(expressions)for(const auto &entry:*expressions) {
@@ -302,13 +312,13 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
     const auto *range=row->getObject("range");
     const auto kind=string(*row,"kind");
     if(arity==2) {
-      if(kind=="assignment")compound=CompoundTarget::Local;
-      else if(kind=="fieldAssignment")compound=CompoundTarget::Field;
-      else if(kind=="arrayCompoundAssignment")compound=CompoundTarget::Array;
-      else if(kind=="update")compound=CompoundTarget::LocalUpdate;
+      if(kind=="assignment"||kind=="update")compound=NumericTarget::Local;
+      else if(kind=="fieldAssignment"||kind=="fieldUpdate")compound=NumericTarget::Field;
+      else if(kind=="arrayCompoundAssignment"||kind=="arrayUpdate")compound=NumericTarget::Array;
+      update=kind=="update"||kind=="fieldUpdate"||kind=="arrayUpdate";
     }
     joined=!joined&&string(*row,"functionId")==function&&
-      (kind==(arity==1?"unary":"binary")||compound!=CompoundTarget::None)&&range&&
+      (kind==(arity==1?"unary":"binary")||compound!=NumericTarget::None)&&range&&
       range->getInteger("start")==llvm::cast<mlir::IntegerAttr>(start).getInt()&&
       range->getInteger("end")==llvm::cast<mlir::IntegerAttr>(end).getInt();
     if(!joined)return proof.reject("numeric use expression/function/full-range join differs");
@@ -347,10 +357,12 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
   }
   if(members!=checked.size())return proof.reject("numeric expression has duplicate or disconnected consumption checks");
   mlir::Operation *postfixAfter=nullptr;
-  if(compound==CompoundTarget::LocalUpdate&&
-      (rhs||checked.size()!=1||!checked.count(0)||!numericLocalUpdate(proof,fn,first,cursor,oldInput,
-        cursor->getOperand(1),postfixAfter)))
-    return proof.reject("numeric local update requires its original token, native unit and same lexical carrier");
+  if(update&&(rhs||checked.size()!=1||!checked.count(0)||!numericUpdate(proof,fn,first,cursor,oldInput,
+      cursor->getOperand(1),group,compound,postfixAfter))) {
+    if(compound==NumericTarget::Local)
+      return proof.reject("numeric local update requires its original token, native unit and same lexical carrier");
+    return proof.reject("numeric storage update requires its original token, native unit and same writeback target");
+  }
   for(unsigned i=0;i<unsigned(arity);++i) {
     if(!proof.charge())return false;
     if(checked.count(i)) {
@@ -364,13 +376,13 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
     }else if(typeCode(cursor->getOperand(i).getType())!=1||!dominance.dominates(cursor->getOperand(i),first))
       return proof.reject("numeric operand evaluation must precede every consumption check");
   }
-  if(compound!=CompoundTarget::None&&compound!=CompoundTarget::LocalUpdate&&first==op&&
+  if(compound!=NumericTarget::None&&!update&&first==op&&
       (repeatedRhs||!numericAssignment(proof,fn,dominance,cursor,
       oldInput?oldInput:cursor->getOperand(0),rightInput?rightInput:cursor->getOperand(1),
       group,rhs?rhs->getObject("range"):nullptr,compound))) {
-    if(compound==CompoundTarget::Array)
+    if(compound==NumericTarget::Array)
       return proof.reject("numeric Array assignment requires its original token, ordered RHS and same slot writeback");
-    if(compound==CompoundTarget::Field)
+    if(compound==NumericTarget::Field)
       return proof.reject("numeric field assignment requires its original token, ordered RHS and same field writeback");
     return proof.reject("numeric local assignment requires its original token, ordered RHS and same lexical carrier");
   }
