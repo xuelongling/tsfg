@@ -31,7 +31,13 @@ pub fn present(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Ha
 pub fn read(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,
     target: views.Id, member: views.Id, lifetime: managed.Lifetime) Error!Value {
     const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
-    const id = switch (try module.resolveField(actual, target, member)) { .missing => return undefinedValue(heap.allocator), .actual => |id| id };
+    const id = switch (try module.resolveField(actual, target, member)) {
+        .missing => {
+            try heap.validateLifetime(lifetime);
+            return undefinedValue(heap.allocator);
+        },
+        .actual => |id| id,
+    };
     return readActualField(heap, receiver, actual, id, lifetime);
 }
 

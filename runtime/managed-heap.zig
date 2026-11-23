@@ -117,6 +117,10 @@ pub const ManagedHeap = struct {
         if (self.active_scope == 0) return error.ScopeRequired;
         return self.active_scope;
     }
+    pub fn validateLifetime(self: *ManagedHeap, lifetime: Lifetime) Error!void {
+        try self.check();
+        _ = try self.scopeFor(lifetime);
+    }
     fn owned(self: *ManagedHeap) *State {
         return @ptrCast(@alignCast(self.storage.?));
     }

@@ -86,6 +86,22 @@ test "actual Missing read is native undefined and Present(undefined) remains pre
     try std.testing.expect(!try module.present(&heap, maybe, s.target, s.member));
     try defineUndefined(module, &heap, maybe, s.target, s.member);
     try std.testing.expect(try module.present(&heap, maybe, s.target, s.member));
+    for ([_]managed.Handle{ present, absent }) |receiver| {
+        if (module.read(&heap, receiver, s.target, s.member, .temporary)) |value| {
+            var unexpected = value;
+            unexpected.deinit(allocator);
+            return error.MissingTemporaryScopeAccepted;
+        } else |err| try std.testing.expectEqual(error.ScopeRequired, err);
+    }
+    {
+        const scope = try heap.beginScope();
+        defer heap.endScope(scope) catch unreachable;
+        for ([_]managed.Handle{ present, absent }) |receiver| {
+            var result = try module.read(&heap, receiver, s.target, s.member, .temporary);
+            defer result.deinit(allocator);
+            try std.testing.expectEqual(.undefined_value, (try result.layout.selectVariant(result.value.tag)).kind);
+        }
+    }
     var empty = try module.read(&heap, absent, s.target, s.member, .persistent); defer empty.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 0), empty.layout.byte_size);
     try std.testing.expectEqual(@as(u16, 0), empty.layout.reference_count);
@@ -102,6 +118,7 @@ test "actual Missing read is native undefined and Present(undefined) remains pre
     try std.testing.expectEqual(.undefined_value, (try result.layout.selectVariant(result.value.tag)).kind);
     const unknown = [_]u8{99} ** 32;
     try std.testing.expectError(error.InvalidViewMember, module.read(&heap, absent, s.target, unknown, .persistent));
+    try std.testing.expectError(error.InvalidViewMember, module.read(&heap, absent, s.target, unknown, .temporary));
 }
 test "TSGVIEW2 rejects old-magic relabels truncation and malformed discriminants transactionally" {
     const raw = try bytes("views"); defer allocator.free(raw);
