@@ -15,7 +15,7 @@ pub const Error = arrays.Error || cells.Error || error{
     ArrayTooLarge,
     UninitializedGrowth,
 };
-const StringPayload = struct { bytes: []u8, utf16_length: usize };
+const StringPayload = struct { bytes: []const u8, utf16_length: usize };
 const ArrayPayload = struct { items: []f64, length: usize };
 
 pub const Payload = union(enum) {
@@ -128,8 +128,7 @@ pub const Payload = union(enum) {
     pub fn readStringCodeUnit(self: Payload, index: usize) Error!u16 {
         const value = try self.asString();
         if (index >= value.utf16_length) return error.IndexOutOfBounds;
-        const length = codec.canonicalLength(value.bytes) catch return error.InvalidString;
-        if (length != value.utf16_length) return error.InvalidString;
+        // Construction owns the canonical bytes and records their logical length.
         return codec.codeUnitAt(value.bytes, index) catch |err| switch (err) {
             error.InvalidCanonicalWtf8 => return error.InvalidString,
             error.IndexOutOfBounds => return error.IndexOutOfBounds,
