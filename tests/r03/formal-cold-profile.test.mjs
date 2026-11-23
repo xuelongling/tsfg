@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {registerHooks} from 'node:module';
 import test from 'node:test';
 import {validateFrontendSnapshot} from '../../compiler/frontend.mjs';
 import {buildHir,verifyHir,printHir,readHir} from '../../compiler/hir.mjs';
 import {admittedConversionScope,admittedInputScope} from '../../compiler/conversions.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
+import {prepareFrontendInput} from '../../compiler/frontend-response.mjs';
+import {moduleDefaultFacts} from './m18-module-facts.mjs';
 
 // Actual M10 full149 Snapshot bytes, rebuilt by the current public HIR0.13 builder.
 // Source Snapshot bytes, checker facts, signatures and Source bodies remain original.
@@ -62,4 +65,55 @@ test('formal HIR verify, read and print reject a module root absent from the fun
     assert.throws(()=>readHir(Buffer.from(canonical(hir)+'\n')),/r03-hir-invalid/);
     assert.throws(()=>printHir(hir),/r03-hir-invalid/);
   }
+});
+
+test('registered Source compilation rejects module scope before transport',async t=>{
+  const pipeline=new URL('../../compiler/pipeline.mjs?formal-profile-test',import.meta.url);
+  const frontend=new URL('../../compiler/frontend.mjs?formal-profile-test',import.meta.url);
+  const execution=new URL('../../compiler/frontend-execution.mjs?formal-profile-test',import.meta.url);
+  const {snapshot,hir}=baseline,request=snapshot.identityInput;
+  // Strip only adapter-owned fields to feed the original scalar facts to the spy.
+  const adapterFields=new Set(['ref','node','typeRef','returnTypeRef','inputIdentity']);
+  function facts(value){
+    if(Array.isArray(value))return value.map(facts);
+    if(!value||typeof value!=='object')return value;
+    return Object.fromEntries(Object.entries(value).flatMap(([key,child])=>adapterFields.has(key)?[]:
+      [[key,key==='symbol'&&child?.snapshotId?child.id:facts(child)]]));
+  }
+  const response=Buffer.from(JSON.stringify({status:'ok',inputs:snapshot.inputs.map(row=>row.path),
+    functions:facts(snapshot.functions),symbols:facts(snapshot.symbols),diagnostics:[]}));
+  const calls=[],spy=Symbol.for('tsfg.test.formal-profile-transport');
+  globalThis[spy]=input=>{
+    const submitted=JSON.parse(input);calls.push(submitted);
+    if(Object.hasOwn(submitted,'compilationClosure'))return {status:'tool-error',message:'unexpected registered transport call'};
+    return {status:'ok',stdout:response,frontendSource:snapshot.frontendSource};
+  };
+  const hook=registerHooks({
+    resolve(specifier,context,next){
+      if(context.parentURL===pipeline.href&&specifier==='./frontend.mjs')return {url:frontend.href,shortCircuit:true};
+      if(context.parentURL===frontend.href&&specifier==='./frontend-execution.mjs')return {url:execution.href,shortCircuit:true};
+      return next(specifier,context);
+    },
+    load(url,context,next){
+      if(url!==execution.href)return next(url,context);
+      return {format:'module',shortCircuit:true,source:
+        "export async function runLockedFrontend(input){return globalThis[Symbol.for('tsfg.test.formal-profile-transport')](input);}"};
+    },
+  });
+  t.after(()=>{hook.deregister();delete globalThis[spy];});
+  const {compileHir}=await import(pipeline.href);
+  assert.deepEqual(await compileHir(request,{frontend:'offline-spy'}),{status:'ok',hir});
+  assert.deepEqual(calls.splice(0),[request]);
+
+  const {input,prepared,snapshot:offline}=await moduleDefaultFacts({unrooted:true});
+  assert.equal(offline.modules.length,3);
+  const singleFileModule=moduleScopedPair(false).snapshot.identityInput;
+  for(const [scope,identity]of [[input,prepared.inputIdentity],[singleFileModule,sha256(canonical(singleFileModule))]]){
+    assert.deepEqual(await compileHir(scope,{frontend:'offline-spy'}),{
+      status:'tool-error',inputIdentity:identity,message:'frontend snapshot 0.10.0 requires the single-file function-only profile',
+    });
+  }
+  const malformed={...input,config:{...input.config,noEmit:false}};
+  assert.deepEqual(await compileHir(malformed,{frontend:'offline-spy'}),await prepareFrontendInput(malformed));
+  assert.deepEqual(calls,[]);
 });

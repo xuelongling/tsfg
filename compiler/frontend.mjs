@@ -12,13 +12,16 @@ import { verifyExceptionSnapshot } from "./exception-frontend.mjs";
 import { verifyClosureSnapshot } from "./closure-frontend.mjs";
 import { runLockedFrontend } from "./frontend-execution.mjs";
 import { validateModuleFacts, skipCallTrivia, hasCallArgumentList, identifierName, staticBindingName } from "./module-facts.mjs";
-import { prepareFrontendInput, materializeFrontendResponse, matchesSnapshotContract, digest, deepFreeze } from "./frontend-response.mjs";
+import { frontendContractVersion, prepareFrontendInput, materializeFrontendResponse, matchesSnapshotContract, digest, deepFreeze } from "./frontend-response.mjs";
 export { frontendContractVersion, importCapturedFrontendResponse } from "./frontend-response.mjs";
 
 /** @param {any} input @param {{ executable?: string }} [options] */
 export async function analyzeFrontend(input, { executable } = {}) {
   const prepared = await prepareFrontendInput(input);
   if (prepared.status !== "ready") return prepared;
+  if (frontendContractVersion === "0.10.0" && prepared.moduleInput)
+    return { status: "tool-error", inputIdentity: prepared.inputIdentity,
+      message: "frontend snapshot 0.10.0 requires the single-file function-only profile" };
   const execution = await runLockedFrontend(JSON.stringify(prepared.ownedInput), { executable });
   if (execution.status !== "ok") return { status: "tool-error", inputIdentity: prepared.inputIdentity, message: execution.message };
   return materializeFrontendResponse(prepared, execution.stdout, execution.frontendSource);
