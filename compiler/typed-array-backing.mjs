@@ -3,6 +3,7 @@
 // distinct. This consumes owner/elements equations, never source evaluation.
 import {verifyHir} from './module-hir.mjs';
 import {buildFiniteCoreDomains} from './finite-actual-domains.mjs';
+import {typedArrayRepresentation} from './typed-array-representation.mjs';
 import {writeTypedReferenceViews} from './typed-reference-views.mjs';
 import {canonical,sha256,own} from './identity.mjs';
 const require=(value,message)=>{if(!value)throw new TypeError('r03-array-backing: '+message);};
@@ -10,21 +11,36 @@ const require=(value,message)=>{if(!value)throw new TypeError('r03-array-backing
 export function buildTypedArrayBacking(input,context,options={}) {
   const hir=verifyHir(input,context,options.publicationContext),definition=buildFiniteCoreDomains(hir,context,options).definition,
     types=new Map(hir.types.map(type=>[type.id,type])),nodes=new Map(definition.carrierNodes.map(row=>[row.id,row])),
-    domains=new Map(definition.domains.map(row=>[row.id,row])),groups=new Map(),ownerViews=new Map();
+    domains=new Map(definition.domains.map(row=>[row.id,row])),groups=new Map(),ownerViews=new Map(),entryArrays=new Map();
   let work=100000;
+  const charge=(count=1)=>{work-=count;require(work>=0,'view work limit');};
   for(const node of definition.carrierNodes)if(['array','readSpan'].includes(types.get(node.viewType)?.kind))for(const owner of node.arrayOwners) {
-    require(work-->0,'view work limit');if(!ownerViews.has(owner))ownerViews.set(owner,new Set());ownerViews.get(owner).add(node.viewType);
+    charge();if(!ownerViews.has(owner))ownerViews.set(owner,new Set());ownerViews.get(owner).add(node.viewType);
   }
   for(const row of definition.carrierNodes) {
     if(!row.id.endsWith('/elements'))continue;
     const owner=row.id.slice(0,-9),entryOwnerMarker='/entry-owner/',entryOwner=owner.lastIndexOf(entryOwnerMarker);
-    const typeId=nodes.get(owner)?.viewType??(entryOwner<0?undefined:owner.slice(entryOwner+entryOwnerMarker.length)),type=types.get(typeId);
+    const ownerView=nodes.get(owner)?.viewType;
+    const typeId=ownerView??(entryOwner<0?undefined:owner.slice(entryOwner+entryOwnerMarker.length)),type=types.get(typeId);
     if(type?.kind!=='array')continue;
+    if(ownerView===undefined)entryArrays.set(owner,type);
     const domain=domains.get(row.domainId);require(domain&&!row.pending.length,'unproved element domain');
     let group=groups.get(typeId);
     if(!group){group={typeId,elementType:type.elementType,members:new Set(),views:new Set([typeId])};groups.set(typeId,group);}
     for(const member of domain.actualTypes)group.members.add(member);
     for(const view of ownerViews.get(owner)??[])group.views.add(view);
+  }
+  const representation=typedArrayRepresentation(types,charge);
+  const scalarPresence=id=>(types.get(id).members??[id]).every(member=>{
+    charge();return ['scalar','null','undefined'].includes(types.get(member).kind);
+  });
+  for(const {left,right}of definition.aliases) {
+    charge();
+    const a=entryArrays.get(left),b=entryArrays.get(right);
+    if(!a||!b||a.id===b.id||!scalarPresence(a.elementType)||!scalarPresence(b.elementType))continue;
+    // Possible sharing is symmetric. Each declared view needs its own slot relation.
+    for(const [from,to]of [[a,b],[b,a]])if(representation.logical(from.id,to.id,()=>false)!==null)
+      groups.get(from.id).views.add(to.id);
   }
   const arrays=[...groups.values()].map(row=>{
     const members=[...row.members].sort();require(members.length<=256&&row.views.size<=4096,'variant/view limit');

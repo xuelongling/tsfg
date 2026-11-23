@@ -88,3 +88,51 @@ test('an exported nested Array parameter publishes both caller backing rows',asy
     {typeId:nested,elementType:array,members:[array]},
   ].sort((left,right)=>left.typeId.localeCompare(right.typeId)));
 });
+
+test('exported Array parameters retain the directional view of a shared entry owner',async()=>{
+  const donor='87d0326f6f0e3e1eb887a77b7eb207a938c3ca173f094f8cdb21f1820284a4ad-package.json';
+  const retained=await readFile(new URL('./testdata/typed-array-entry/'+donor,import.meta.url));
+  const packet=structuredClone(readTypedArrayFacts(retained)),payload=packet.payload,root=payload.rootFile,fn=payload.functions[0];
+  const source='export function run(narrow: i32[], wide: (i32|undefined)[]): i32 { wide[0] = undefined; return narrow[0]; }\n';
+  const range=(start,end)=>({start,end});
+  const locate=(text,from=0)=>{const start=source.indexOf(text,from);assert.ok(start>=0,text);return range(start,start+text.length);};
+  const [narrow,wide]=['i32[]','(i32|undefined)[]'].map((text,index)=>{
+    const binding=fn.bindings[index],name=locate(binding.name),type=locate(text,name.end);
+    return {...binding,id:originId(root,name),kind:'parameter',writable:true,nameRange:name,annotationRange:type,
+      elementAnnotationRange:range(type.start,type.end-2),declarationRange:range(name.start,type.end)};
+  });
+  const element=(kind,binding,type,rangeValue)=>{
+    const receiverRange=range(rangeValue.start,rangeValue.start+binding.name.length);
+    return {kind,type,range:rangeValue,receiver:{kind:'bindingReference',binding:binding.id,type:binding.declaredType,
+      flowType:binding.declaredType,range:receiverRange},
+    index:{kind:'numericLiteral',type:'u32',flowType:'u32',token:'0',decimal:'0',range:range(rangeValue.end-2,rangeValue.end-1)}};
+  };
+  const store=locate('wide[0] = undefined'),target=locate('wide[0]'),rhs=locate('undefined',target.end),wideElement='union<i32,undefined>';
+  fn.declarationRange=range(0,source.length-1);fn.returnAnnotationRange=locate('i32',wide.annotationRange.end);
+  fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:root,declarationRange:fn.declarationRange}));
+  fn.parameters=[narrow,wide];fn.bindings=[];fn.body=[
+    {kind:'expression',range:range(store.start,store.end+1),value:{kind:'elementAssignment',type:wideElement,flowType:'undefined',
+      range:store,target:element('elementTarget',wide,wideElement,target),operator:'=',operatorRange:locate('=',target.end),
+      value:{kind:'undefinedLiteral',type:'undefined',flowType:'undefined',range:rhs}}},
+    {kind:'return',range:locate('return narrow[0];'),value:{...element('checkedElementAccess',narrow,'i32',locate('narrow[0]')),flowType:'i32'}},
+  ];
+  payload.exports[0].functionId=fn.id;
+  payload.entryCompatibilityRoots=[narrow,wide].sort((left,right)=>left.id<right.id?-1:1).map(binding=>({
+    functionId:fn.id,parameterBinding:binding.id,origin:{source:root,...binding.declarationRange},viewType:binding.declaredType,roots:[]}));
+  Object.assign(payload.files.find(row=>row.path===root),{content:source,byteLength:Buffer.byteLength(source),
+    utf16Length:source.length,sha256:sha256(source).slice(7)});
+  const request={family:'tsfg.array-facts-request-candidate',version:packet.version,input:{sourceRoot:payload.sourceRoot,rootFile:root,
+    files:payload.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:payload.declarations,config:payload.config}};
+  packet.requestId=sha256('tsfg.array-facts.request.v8\0'+canonical(request)+'\n');
+  packet.packageId=sha256('tsfg.array-facts.package.v8\0'+packet.schemaHash+'\0'+canonical(payload));
+  const bytes=Buffer.from(canonical(packet)+'\n'),facts=readTypedArrayFacts(bytes);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const narrowId=sha256('tsfg.type\0Array<i32>'),wideId=sha256('tsfg.type\0Array<Union<i32,undefined>>');
+  const members=[scalarTypeIds.i32,sha256('tsfg.type\0undefined')].sort();
+  const rows=buildTypedArrayBacking(built.hir,context).arrays;
+  assert.deepEqual(rows.map(({typeId,members,views})=>({typeId,members,views})),[
+    {typeId:narrowId,members,views:[narrowId,wideId].sort()},
+    {typeId:wideId,members,views:[wideId]},
+  ]);
+});
