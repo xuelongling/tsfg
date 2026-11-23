@@ -14,6 +14,8 @@ import {commonClosureHolding} from '../../compiler/common-program-borrow-observa
 import {commonIdentity} from '../../compiler/common-program-identities.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
+import {validateCommonHostDeclarations} from '../../compiler/common-program-hosts.mjs';
+import {signatureId as sourceSignatureId} from '../../compiler/typed-array-schema.mjs';
 const bytes=readFileSync(new URL('./testdata/common-counter-host/counter.json',import.meta.url)),facts=readCommonProgramFacts(bytes),
   context=JSON.parse(readFileSync(new URL('./testdata/common-counter-host/host-context.json',import.meta.url),'utf8')),
   inputContext={family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId},
@@ -31,6 +33,24 @@ test('official Counter retains complete Source, ambient Symbol and distinct sign
   assert.notEqual(host.signatureHash,source.signature.id);assert.notEqual(host.signatureHash,context.contract.binding.signatureHash);
   assert.equal(hir.hostContext.contract.digest,'sha256:bfefc59d18d2330c08038dcaa375d6bdb4fe2d03ea9c99898e3f3b141766320a');
   assert.deepEqual(verifyCommonProgramHir(hir),hir);
+});
+test('typed Counter declaration checker accepts its optional EOF semicolon',()=>{
+  const {payload}=facts,host=payload.hostImports[0],source=payload.files.find(row=>row.path===host.sourcePath),
+    types=new Map(payload.types.map(type=>[type.id,type]));
+  const check=(content,ambient=host)=>validateCommonHostDeclarations({declarations:payload.declarations,hostImports:[ambient]},
+    new Map([[source.path,{content}]]),types,commonMeter());
+  const end=host.declarationRange.end-1;
+  assert.equal(source.content[end],';');
+  const content=source.content.slice(0,end),declarationRange={...host.declarationRange,end};
+  // Only the local declaration checker sees the authored ASI control.
+  const ambient={...host,declarationRange,signature:{...host.signature,declarationRange,id:sourceSignatureId(host.sourcePath,declarationRange)}};
+  assert.doesNotThrow(()=>check(source.content));
+  assert.doesNotThrow(()=>check(content,ambient));
+  assert.doesNotThrow(()=>check(content+'\n// trailing comment\n',ambient));
+  assert.throws(()=>check(source.content,ambient),hasCode('r03-common-program-host'));
+  assert.throws(()=>check(source.content+';',host),hasCode('r03-common-program-host'));
+  assert.throws(()=>check(content+'\ndeclare function other(value:i32):i32',ambient),hasCode('r03-common-program-host'));
+  assert.throws(()=>check(content,{...ambient,signature:host.signature}),hasCode('r03-common-program-host'));
 });
 test('ordinary full Core requests no kernel permission while preserving actual Host operations',()=>{
   assert.deepEqual(core.proof.targets,[]);assert.deepEqual(core.proof.accesses,[]);assert.deepEqual(core.proof.pairs,[]);

@@ -26,11 +26,11 @@ bool verifyCommonHostDeclarations(SourceModel &m){
       string(field(*host,"returnType"))=="i32"&&m.types.count("i32")&&string(field(*m.types.at("i32"),"kind"))=="scalar","Counter ambient source/type/capability differs"))return false;
     SourceSyntax syntax{m,path};if(!syntax.read(string(field(*m.sources.at(path),"content"))))return false;
     size_t begin,end;
-    if(!syntax.span(field(*host,"declarationRange"),begin,end)||!m.need(begin==0&&end==syntax.tokens.size()&&end==11,"ambient declaration has extra or missing syntax"))return false;
+    if(!syntax.span(field(*host,"declarationRange"),begin,end)||!m.need(begin==0&&end==syntax.tokens.size()&&(end==10||end==11),"ambient declaration has extra or missing syntax"))return false;
     const auto &parameter=syntax.tokens[4];Json parameterRange=Object{{"start",int64_t(parameter.start)},{"end",int64_t(parameter.end)}};
     std::string parameterName;
     if(!syntax.name(field(*host,"nameRange"),name)||!syntax.cookedIdentifier(4,parameterName)||!syntax.sequence(field(*host,"declarationRange"),
-      {"declare","function",field(*host,"nameRange"),"(",parameterRange,":","i32",")",":","i32",";"}))return false;
+      {"declare","function",field(*host,"nameRange"),"(",parameterRange,":","i32",")",":","i32"},true))return false;
     const Json origin=Object{{"sourcePath",path},{"nameRange",field(*host,"nameRange")}};
     const Json signatureOrigin=Object{{"sourcePath",path},{"declarationRange",field(*host,"declarationRange")}};
     const auto signatureId=digest(std::string("tsfg.array-facts.signature.v8")+std::string(1,'\0')+canonical(signatureOrigin));

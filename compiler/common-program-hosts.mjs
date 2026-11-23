@@ -19,11 +19,12 @@ export function validateCommonHostDeclarations(payload,sources,types,spend) {
     check(host.capabilityId===31&&same(host.parameterTypes,['i32'])&&host.returnType==='i32'
       &&types.get('i32')?.kind==='scalar'&&types.get('i32').name==='i32','host','Counter requires the original nominal i32 signature');
     sourceRange(host.declarationRange,source.content);sourceRange(host.nameRange,source.content,host.declarationRange);
-    const g=commonSourceGrammar(source,spend),at=g.indices(host.declarationRange),tokens=g.tokens.slice(at.first,at.end);
-    spend(tokens.length);check(tokens.length===11&&identifierName(tokens[4].text),'host');
+    const g=commonSourceGrammar(source,spend),at=g.indices(host.declarationRange);
+    spend(at.end-at.first);
+    check(at.first===0&&at.end===g.tokens.length&&(at.end===10||at.end===11),'host');
+    const parameter=g.tokens[4].text;check(identifierName(parameter),'host');
     g.name(host.nameRange,host.name);
-    g.sequence(host.declarationRange,['declare','function',host.nameRange,'(',tokens[4].text,':','i32',')',':','i32',';']);
-    g.complete([host.declarationRange]);
+    g.sequence(host.declarationRange,['declare','function',host.nameRange,'(',parameter,':','i32',')',':','i32'],true);
     check(host.id===originId(host.sourcePath,host.nameRange)&&same(host.signature,{id:sourceSignatureId(host.sourcePath,host.declarationRange),
       sourcePath:host.sourcePath,declarationRange:host.declarationRange,parameters:['i32'],returnType:'i32'}),'host','original ambient declaration/signature differs');
   }
