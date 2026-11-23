@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { importCapturedFrontendResponse, validateFrontendSnapshot } from "../../compiler/frontend.mjs";
-import { buildHir, verifyHir, printHir, readHir } from "../../compiler/hir.mjs";
+import { buildHir, verifyHir, printHir, readHir, lowerFormalHir } from "../../compiler/hir.mjs";
 import { analyzeClosureTargets, verifyClosureTargets, printClosureTargets, readClosureTargets } from "../../compiler/closure-targets.mjs";
 
 const digest = bytes => "sha256:" + createHash("sha256").update(bytes).digest("hex");
@@ -337,6 +337,12 @@ test("external root callable remains TOP while factory activations share code an
   const inner = callAt(report, invoke, ["body", 0, "value"]);
   for (const id of [first.id, other.id]) assert.ok(inner.targets.functions.includes(id));
   assert.equal(report.calls.length, 6);
+  assert.equal(report.calls.find(site => site.targets.top), inner);
+  const primary = { sourceId: "/src/main.ts", start: 221, end: 226 };
+  assert.equal(hir.source.content.slice(primary.start, primary.end), " fn()");
+  assert.throws(() => lowerFormalHir(hir), {
+    code: "r03-d-capability", ruleId: "r01-call-contract", phase: "lowering", primary,
+  });
   rejectsReport(report, hir, changed => { summary(changed, entry).parameters[0].targets = finite([first.id]); });
   rejectsReport(report, hir, changed => { callAt(changed, entry, unknown.expressionPath).targets = finite([first.id]); });
   rejectsReport(report, hir, changed => { summary(changed, entry).unknownEffects = false; });

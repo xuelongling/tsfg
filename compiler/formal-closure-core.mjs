@@ -16,8 +16,12 @@ export function emitFormalClosureCore(input) {
   // compilation membership, not a choice of runtime entry or trusted targets.
   const roots=hir.functions.filter(fn=>fn.lexicalParent===null).map(fn=>fn.id);
   const targets=analyzeClosureTargets(hir,roots);
-  if(!targets.complete)throw Object.assign(new TypeError('r03-d-capability: formal closure call targets remain unknown'),
-    {code:'r03-d-capability',ruleId:'r01-call-contract',phase:'lowering'});
+  if(!targets.complete){
+    const unresolved=targets.calls.find(site=>site.targets.top);
+    throw Object.assign(new TypeError('r03-d-capability: formal closure call targets remain unknown'),
+      {code:'r03-d-capability',ruleId:'r01-call-contract',phase:'lowering'},
+      unresolved?{primary:Object.freeze({sourceId:hir.source.path,...unresolved.range})}:{});
+  }
   const model=closureCoreModel(program,sha256(printClosureEnvironments(program,hir)));
   const manifest={schema:sha256(canonical(descriptor)),version:descriptor.version,
     hir:canonical(hir)+'\n',hir_hash:sha256(canonical(hir)+'\n'),targets:canonical(targets)+'\n'};
