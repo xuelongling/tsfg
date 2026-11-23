@@ -177,9 +177,9 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     const mergeOrigins=(a,b)=>{for(const [id,values]of b){spend();a.set(id,union([a.get(id)??new Set(),values]));}};
     const replaceOrigins=(target,states)=>{for(const id of target.keys()){spend(states.length+1);target.set(id,union(states.map(state=>state.get(id)??new Set())));}};
     const normalOrigins=environment=>collections.map(environment,values=>graph.gate(values));
-    function expression(value,environment=origins) {
+    function expression(value,environment=origins,rebound=null) {
       spend();let throwing=false,owner=reference(value.type)?new Set():nonowning(value.type),thrown=new Set(),throwHeaps=new Set(),throwStates=[];
-      const visit=child=>{const result=expression(child,environment);throwing ||= result.throwing;join(thrown,result.thrown);join(throwHeaps,result.throwHeaps);appendStates(throwStates,result.throwStates);return result.owner;};
+      const visit=child=>{const result=expression(child,environment,rebound);throwing ||= result.throwing;join(thrown,result.thrown);join(throwHeaps,result.throwHeaps);appendStates(throwStates,result.throwStates);return result.owner;};
       const touch=()=>{if(reference(value.type))facet('managedReference','operation',value.kind,value.range);};touch();
       if(['bindingReference','bindingTarget','thisReference'].includes(value.kind)){
         const binding=value.kind==='thisReference'?fn.receiverBinding:value.binding,slot=slots.get(binding);
@@ -225,7 +225,10 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
         if(value.kind==='lengthAssignment'||value.kind.startsWith('element'))mark(selected,'structural',value);
         owner=logical?union([previous,assigned]):assigned;
         if(slot)graph.write(environmentFor(slot.layout),'capture:'+slot.key,stored,{view:'env:'+slot.layout});
-        if(target.binding&&!target.global)environment.set(target.binding,stored);
+        if(target.binding&&!target.global){
+          environment.set(target.binding,stored);
+          if(rebound){spend(Math.ceil(target.binding.length/8)+1);rebound.add(target.binding);}
+        }
         if(logical){const rightEnvironment=normalOrigins(environment);replaceOrigins(environment,[shortEnvironment,rightEnvironment]);graph.restore(graph.mergeStates([shortHeap,graph.checkpoint()]));}
       }else if(value.kind==='new'||value.kind==='superConstruct') {
         check(false,'return-origin-construction-open','construct must consume the receiver-frame result protocol and fixed dynamic-newTarget bounds');
@@ -312,11 +315,18 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
           for(const global of hir.globals){spend();bindingTypes.set(global.sourceBinding,global.type);}
           for(const capture of fn.captures??[]){spend();bindingTypes.set(capture.binding,slots.get(capture.binding).type);}
           for(const [binding,refs]of environment){spend();const type=bindingTypes.get(binding);if(type)environment.set(binding,graph.phi(type,refs,phiSite(binding)));}
-          graph.restore(header);const condition=inspect(row.condition),exitHeap=graph.checkpoint(),loop=collections.map(environment);
+          const rebound=new Set();
+          graph.restore(header);const condition=expression(row.condition,environment,rebound),exitHeap=graph.checkpoint(),loop=collections.map(environment);
           const loopCompletions=body(row.body,loop,rowThrows,rowValues,rowReturns,rowThrowHeaps,rowReturnHeaps,rowThrowStates,rowReturnStates);
           if(loopCompletions.has('normal')){
             graph.mergeStates([graph.checkpoint()],heapSite);
-            for(const [binding,refs]of loop){spend();const type=bindingTypes.get(binding);if(type)environment.set(binding,graph.phi(type,refs,phiSite(binding)));}
+            // Extending the header phi never replaces an actual condition
+            // assignment. Other bindings retain the existing phi reference.
+            for(const [binding,refs]of loop){
+              spend();const type=bindingTypes.get(binding);if(!type)continue;
+              const joined=graph.phi(type,refs,phiSite(binding));
+              if(!rebound.has(binding))environment.set(binding,joined);
+            }
           }
           graph.restore(exitHeap);current=collections.set(collections.array(loopCompletions).filter(c=>c!=='normal'));
           if(!(row.condition.kind==='booleanLiteral'&&row.condition.token==='true'))current.add('normal');

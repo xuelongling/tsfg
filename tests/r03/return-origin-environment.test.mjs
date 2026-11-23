@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {commonReturnOriginSource} from '../../compiler/common-program-return-origin-source.mjs';
 const commonEffects=(hir,spend,physical=null,storage=null,kinds=null,rows=null)=>commonReturnOriginSource(hir,spend,physical,storage,kinds,rows===null?null:new Map([...rows].map(([id,row])=>{const {returnOrigins,...upper}=row.upper;return [id,{...row,upper,returnOrigins}];})));
-import {commonMeter} from '../../compiler/common-program-common.mjs';
+import {canonical,commonMeter,sha256} from '../../compiler/common-program-common.mjs';
 import {solveReturnOriginContexts} from '../../compiler/common-program-return-origin-domain.mjs';
 import {commonReturnOrigins} from '../../compiler/common-program-return-origins.mjs';
 import {commonReturnOriginDirectories} from '../../compiler/common-program-return-origin-directories.mjs';
@@ -83,6 +83,39 @@ test('draft5 ordinary control: an environment-free parameter return keeps its ow
   const {body,spend}=extract({hir,caller,records});assert.equal(body.parameters[0].write,true);
   const owned=commonReturnOriginDirectories(hir,spend).read(Caller,body.returnOrigins);assert.ok(owned.status==='typed');
   assert.deepEqual(owned.graph.format,{family:'tsfg.return-origin-graph-candidate',version:5},'the owning reader must return draft5, not restamp it as draft3');
+});
+
+test('Source: the final loop condition retains its rebound owner',()=>{
+  const parameters=[...['a','b','c'].map(id=>({id,type:B})),{id:'flag',type:'bool'}];
+  const assign=(value,start)=>{
+    const at={start,end:start+5};
+    return {kind:'bindingAssignment',operator:'=',type:B,range:at,target:{kind:'bindingTarget',binding:'selected',type:B,range:at},value:ref(value,B,start+4)};
+  };
+  /** @param {ReturnType<typeof assign>|ReturnType<typeof ref>} receiver */
+  const derive=(receiver,shortCircuit=false)=>{
+    const comparison={kind:'binary',operator:'>',type:'bool',range:{start:23,end:39},
+      left:{kind:'fieldAccess',property:V,type:'i32',range:{start:23,end:33},receiver},
+      right:{kind:'numericLiteral',type:'i32',token:'0',decimal:'0',range:{start:38,end:39}}};
+    const condition=shortCircuit?{kind:'binary',operator:'&&',type:'bool',range:{start:17,end:39},left:ref('flag','bool',17),right:comparison}:comparison;
+    const rebound=assign('c',45),loop={kind:'while',condition,range:{start:16,end:55},body:[{kind:'expression',value:rebound,range:rebound.range}]};
+    const caller=fn(Caller,parameters,B,[
+      {kind:'letDeclaration',binding:'selected',initializer:ref('a',B,14),range:{start:5,end:15}},
+      loop,{kind:'return',value:ref('selected',B,66),range:{start:59,end:74}}
+    ]);
+    caller.bindings=[{id:'selected',type:B,writable:true}];
+    const hir=hirRows([caller]);hir.environments=[];
+    const input={hir,caller,records:new Map([[Caller,{upper:upper(emptyGraph(),parameters),callables:noTransfer()}]])};
+    const {body,spend}=extract(input),graph=body.returnOrigins;
+    const owners=[...solveReturnOriginContexts(graph,fixed(input),callbacks(input),spend).owners(graph.normal)].sort();
+    return {owners,graph};
+  };
+  assert.deepEqual(derive(assign('b',24)).owners,['p:1'],'the call returns b after the condition rebinds selected even if the loop ran');
+  assert.deepEqual(derive(ref('a',B,24)).owners,['p:0','p:2'],'without a condition rebind, the header still joins both incoming owners');
+  assert.deepEqual(derive(assign('b',24),true).owners,['p:0','p:1','p:2'],'short-circuit evaluation may keep the old binding or select b');
+  const unchanged=derive(ref('a',B,24),true);
+  assert.deepEqual(unchanged.owners,['p:0','p:2']);
+  // Exact canonical Graph5 from the baseline for this unchanged short-circuit condition.
+  assert.equal(sha256(canonical(unchanged.graph)),'sha256:89a893c93e61b2d5ae900a0c73b85787cc96e332bbac594651398d3c4a79c593');
 });
 
 test('Source: same FnId from two activations retains each saved Code environment',()=>{

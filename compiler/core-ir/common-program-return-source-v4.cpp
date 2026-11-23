@@ -235,7 +235,7 @@ struct ReturnSource {
   void inherit(Evaluation &into,const Evaluation &from){add(into.thrown,from.thrown);appendStates(into.throws,from.throws);appendEnvironments(into.throwEnvironments,from.throwEnvironments);}
   void inheritThrows(Body &into,const Evaluation &from){if(from.throws.empty())return;into.completions|=Thrown;add(into.thrown,from.thrown);appendStates(into.throws,from.throws);appendEnvironments(into.throwEnvironments,from.throwEnvironments);}
   void inherit(Body &into,const Body &from){add(into.returned,from.returned);add(into.thrown,from.thrown);appendStates(into.returns,from.returns);appendStates(into.throws,from.throws);appendEnvironments(into.returnEnvironments,from.returnEnvironments);appendEnvironments(into.throwEnvironments,from.throwEnvironments);}
-  Evaluation expression(const Json &,Environment &);
+  Evaluation expression(const Json &,Environment &,std::set<std::string> *rebound=nullptr);
   Body body(const Array &,Environment &);
   Evaluation call(const std::string &,const std::vector<Refs> &,const Json &,Environment &,const Refs *,const Refs *receiver=nullptr,const std::string *ownedSite=nullptr);
   bool initialize(ReturnSourceCatalogCache *);
@@ -293,12 +293,12 @@ ReturnSource::Evaluation ReturnSource::call(const std::string &id,const std::vec
   restore(normal);return result;
 }
 
-ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment &environment){
+ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment &environment,std::set<std::string> *rebound){
   Evaluation result;if(!step())return result;const auto kind=string(field(value,"kind")),type=string(field(value,"type"));
   if(!text(kind)||!text(type))return result;
   const bool managed=reference(type);if(!good())return result;
   result.owner=managed?Refs{}:nonowning(type);if(managed)facet("managedReference",&value);
-  const auto visit=[&](const Json &child){auto nested=expression(child,environment);inherit(result,nested);return std::move(nested.owner);};
+  const auto visit=[&](const Json &child){auto nested=expression(child,environment,rebound);inherit(result,nested);return std::move(nested.owner);};
   if(kind=="bindingReference"||kind=="bindingTarget"||kind=="thisReference"){
     const auto binding=kind=="thisReference"?string(field(fn,"receiverBinding")):string(field(value,"binding"));
     if(!lookup(catalog->slots.size(),binding))return result;auto slot=catalog->slots.find(binding);
@@ -360,7 +360,11 @@ ReturnSource::Evaluation ReturnSource::expression(const Json &value,Environment 
     if(kind=="lengthAssignment"||llvm::StringRef(kind).starts_with("element"))mark(selected,"structural",&value);
     result.owner=logical?unite(previous,assigned):copyRefs(assigned);
     if(captured){if(!text(slot->second.key)||!text(slot->second.layout)||!step(2))return result;write(environmentFor(slot->second.layout),"capture:"+slot->second.key,stored,"env:"+slot->second.layout);}
-    if(!binding.empty()&&string(field(*target,"global")).empty()){if(!lookup(environment.size(),binding)||!text(binding)||!step())return result;environment.insert_or_assign(binding,copyRefs(stored));}
+    if(!binding.empty()&&string(field(*target,"global")).empty()){
+      if(!lookup(environment.size(),binding)||!text(binding)||!step())return result;
+      environment.insert_or_assign(binding,copyRefs(stored));
+      if(rebound){if(!lookup(rebound->size(),binding)||!step())return result;rebound->insert(binding);}
+    }
     if(targetKind=="globalTarget"){const auto global=string(field(*target,"global"));if(!lookup(direct.writes.size(),global)||!step())return result;direct.writes.insert(global);}
     if(logical){std::vector<Environment> branches;if(!step(2))return result;branches.push_back(std::move(shortEnvironment));branches.push_back(normalEnvironment(environment));replaceEnvironment(environment,branches);restore(mergeStates({shortState,state}));}
   }else if(kind=="new"||kind=="superConstruct")open("receiver frame/result and dynamic-newTarget equations are not connected to Source return-origin production");
@@ -484,13 +488,17 @@ ReturnSource::Body ReturnSource::body(const Array &rows,Environment &environment
       for(const auto &[id,binding]:bindings)putType(id,string(field(*binding,"type")));
       for(const auto &[id,global]:catalog->globals)putType(string(field(*global,"sourceBinding")),string(field(*global,"type")));
       for(const auto &capture:items(field(fn,"captures"))){const auto binding=string(field(capture,"binding"));if(!lookup(catalog->slots.size(),binding)||!need(catalog->slots.count(binding),"loop capture lacks owned slot"))return result;putType(binding,catalog->slots.at(binding).type);}
-      const auto loopPhi=[&](Environment &target,const Environment &inputs){for(const auto &[binding,values]:inputs){
+      std::set<std::string> rebound;
+      const auto loopPhi=[&](const Environment &inputs){for(const auto &[binding,values]:inputs){
         if(!lookup(bindingTypes.size(),binding))return;auto type=bindingTypes.find(binding);if(type==bindingTypes.end())continue;
         if(!text(loopSite)||!text(binding)||!step())return;auto joined=phi(type->second,values,loopSite+"/"+binding);
-        if(!lookup(target.size(),binding)||!text(binding)||!step())return;target.insert_or_assign(binding,std::move(joined));}};
-      auto before=copyEnvironment(environment);loopPhi(environment,before);restore(header);
-      auto condition=expression(field(row,"condition"),environment);const auto exit=state;auto loop=copyEnvironment(environment);auto repeated=body(items(field(row,"body")),loop);
-      if(repeated.completions&Normal){mergeStates({state},heapSite);loopPhi(environment,loop);}
+        if(!rebound.empty()){if(!lookup(rebound.size(),binding))return;if(rebound.count(binding))continue;}
+        if(!lookup(environment.size(),binding)||!text(binding)||!step())return;
+        environment.insert_or_assign(binding,std::move(joined));}};
+      auto before=copyEnvironment(environment);loopPhi(before);restore(header);
+      auto condition=expression(field(row,"condition"),environment,&rebound);const auto exit=state;auto loop=copyEnvironment(environment);auto repeated=body(items(field(row,"body")),loop);
+      // Extend the header phis while preserving actual condition assignments.
+      if(repeated.completions&Normal){mergeStates({state},heapSite);loopPhi(loop);}
       restore(exit);current.completions=repeated.completions&~Normal;
       if(!(string(field(field(row,"condition"),"kind"))=="booleanLiteral"&&string(field(field(row,"condition"),"token"))=="true"))current.completions|=Normal;
       inherit(current,repeated);inheritThrows(current,condition);
