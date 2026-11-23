@@ -288,6 +288,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       const coalescingAssignment=isLocalNullishAssignment(value);
       if(value.kind==='assignment'&&!coalescingAssignment) {
         const token=child('value');
+        if(plan.terminalNumericUses?.has(path))stopped=true;
         if(stopped)return null;
         if(value.operator&&value.operator!=='='){env.delete(value.target.binding);return null;}
         const alias=copiesValue(value.target.type)?copyToken(token,path+'/copy',state):token;

@@ -564,13 +564,25 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         if(value.kind==='assignment'&&!coalescingAssignment) {
           const binding=value.target.binding,target=selected(fn.id+'/binding/'+binding).domainId;
           if(value.operator&&value.operator!=='=') {
-            const operator=value.operator.slice(0,-1),native=domains.get(target).nativeType,rhsType=value.value.type;
-            if(native==='bool'||value.type!==target||
+            const operator=value.operator.slice(0,-1),native=domains.get(target).nativeType,rhsType=value.value.type,
+              checked=requiresNumericChecks(value,[target,rhsType]);
+            if(checked?domains.get(value.type).nativeType!=='i32':native==='bool'||value.type!==target||
               !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
               pending('operation-domain-check mapping',value.range);
-            const old=api.lookup(binding),rhs=api.emit(value.value);
-            const next=api.operation('tsfg_core.'+scalarOperations[operator],[old,rhs],[target,rhsType],value.type,'',value.range);
-            api.assign(binding,next);return next;
+            const old={name:api.lookup(binding),type:target};
+            if(checked)old.name=op(api,'view',[old],target,opAttrs({semanticType:value.target.type,type:target}),value.target.range);
+            const rhs=numericCompoundRhs(api,value.value,checked);
+            const next=numericOperation(api,value,scalarOperations[operator],[old,rhs],checked);
+            api.assign(binding,value.type===target?next:op(api,'view',[{name:next,type:value.type}],target,
+              opAttrs({semanticType:value.target.type,type:target}),value.range));
+            return next;
+          }
+          if(value.type!==target&&value.value.type===value.type&&domains.get(value.type).nativeType==='i32'&&
+            value.target.type===i32TypeId) {
+            const rhs=evaluated(value.value);
+            api.assign(binding,op(api,'view',[rhs],target,
+              opAttrs({semanticType:value.value.semanticType,type:target}),value.value.range));
+            return rhs.name;
           }
           const rhs=copy(api,{name:api.emit(wrap(value.value,target)),type:target},value.target.type,value.range);
           api.assign(binding,rhs.name);return rhs.name;

@@ -6,7 +6,7 @@ const orderedComparison=new Set(['<','<=','>','>=']);
 const numericBinary=new Set(['+','-','*','/','%','<<','>>','>>>','&','|','^',...orderedComparison]);
 /** The accepted first numeric-use domain is exactly same-i32 plus undefined. */
 export function finiteNumericUse(value) {
-  const compound=value.kind==='fieldAssignment'||value.kind==='arrayCompoundAssignment';
+  const compound=['assignment','fieldAssignment','arrayCompoundAssignment'].includes(value.kind);
   if(compound&&typeof value.operator!=='string')return null;
   const operator=compound?value.operator.slice(0,-1):value.operator;
   const operands=compound?[value.target,value.value]:value.kind==='binary'?[value.left,value.right]:value.kind==='unary'?[value.operand]:[];

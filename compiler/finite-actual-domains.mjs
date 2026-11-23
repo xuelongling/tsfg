@@ -150,15 +150,19 @@ function buildPlans(input,context,options,definitions) {
   };
   function build(mode) {
     let allowCompoundTermination;
-    const solve=(field=null,array=null,terminalReads=null)=>
-      solveFiniteActualDomains(projection,charge,field,mode,array,terminalReads);
-    const initial=solve(),hir=projection.hir();
+    const localNumericInputs=new Set(),checkedLocalCandidates=new Set();
+    const solve=(field=null,array=null,terminalReads=null,collectLocalNumeric=false)=>
+      solveFiniteActualDomains(projection,charge,field,mode,array,terminalReads,localNumericInputs,
+        collectLocalNumeric?checkedLocalCandidates:null);
+    const initial=solve(null,null,null,true),hir=projection.hir();
     // Field short-circuit control also must not consume capacity-based Array
     // reads. This is the same conservative solver role as the ordered start.
     const controlInitial=solve(null,{reads:[]});
     let fieldReaching=buildFiniteFieldReaching(hir,{...controlInitial,carrierFields:initial.fields},charge);
     const carrierFieldReaching=fieldReaching.reads.some(row=>row.reaching.length)?fieldReaching:null;
-    let result=carrierFieldReaching?solve(carrierFieldReaching):initial;
+    if(carrierFieldReaching)checkedLocalCandidates.clear();
+    let result=carrierFieldReaching?solve(carrierFieldReaching,null,null,true):initial;
+    for(const path of checkedLocalCandidates)localNumericInputs.add(path);
     const canTerminateArrayRead=directStatement=>{
       allowCompoundTermination??=!result.fields.length&&!result.calls.length&&
         !fieldReaching.effects.some(row=>{charge();return row.writesFields;});
@@ -174,9 +178,9 @@ function buildPlans(input,context,options,definitions) {
     // its actual read sources are proved. Iterate the same solver, sharing the
     // original budget; representation maxima never become memory witnesses.
     for(;;) {
-      const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateArrayRead);
+      const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching,localNumericInputs},charge,canTerminateArrayRead);
       arrayReaching=array.reaching;terminalReads=array.terminalReads;
-      if(!arrayReaching.reads.length&&!array.terminalNumericUses.size)break;
+      if(!arrayReaching.reads.length&&!array.terminalNumericUses.size&&!array.localNumericSources.size)break;
       // Even skipped stores need lexical versions from the carrier. The
       // ordered field selections continue to govern successful reads.
       const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields,
@@ -207,10 +211,12 @@ function buildPlans(input,context,options,definitions) {
       failedSuperArguments.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
       const terminalNumericUses=[...array.terminalNumericUses].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
       const terminalNumericConstructions=[...array.terminalNumericConstructions].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
+      const localNumericSources=[...array.localNumericSources].sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
       const current=canonical([rows,fields,aliases,terminal,failedInitializers,failedConstructions,failedSuperArguments,
-        terminalNumericUses,terminalNumericConstructions]);
+        terminalNumericUses,terminalNumericConstructions,localNumericSources]);
       if(current===previous)break;previous=current;
-      ordered=solve(fieldReaching,{...arrayReaching,normalReadSources:array.normalReadSources},terminalReads);
+      ordered=solve(fieldReaching,{...arrayReaching,normalReadSources:array.normalReadSources,
+        localNumericSources:array.localNumericSources},terminalReads);
     }
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
@@ -227,7 +233,7 @@ function buildPlans(input,context,options,definitions) {
     ...(definition?{definition:{...definition,work:(options.work??100000)-remaining}}:{})});
 }
 
-function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReaching=null,terminalReads=null) {
+function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReaching,terminalReads,localNumericInputs,checkedLocalCandidates) {
   const refinements=new Map((fieldReaching?.reads??[]).map(row=>[row.node,row.reaching]));
   const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status!=='pending').map(row=>[row.node,row]));
   charge();const hir=projection.hir();
@@ -386,7 +392,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     aliases.push({left:left.owner,right:right.owner,authority:'complete-published-resource-boundary',
       elementTypes:[left.type,right.type]});
   }
-  const tasks=[];
+  const tasks=[],localOldCopies=[],localNumericCandidates=[];
   function expression(value,path,fn,guards=new Map(),incoming=flow.always,logical=undefined) {
     flow.entry(path,incoming);
     const proof=value.kind==='reference'?guards.get(value.binding):undefined;
@@ -476,8 +482,19 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       copy(old,id,{presentOnly:true});
       copy(selected.right,id,{gate:old});copy(selected.right,target,{gate:old});
     }else if(v.kind==='assignment') {
-      const value=child('value'),target=binding(fn,v.target.binding,v.target.type);
+      const target=binding(fn,v.target.binding,v.target.type);
+      let old;
+      if(localNumericInputs.has(id)) {
+        old=node(p+'/old-value',v.target.type).id;
+        const source=arrayReaching?.localNumericSources?.get(id)??target;
+        flow.entry(old,continuation);flow.finish(old,[]);
+        localOldCopies.push([source,old]);
+        continuation=flow.normal(old);dependencies.push(continuation);
+      }
+      const value=child('value');
       if(v.operator&&v.operator!=='=') {
+        if(checkedLocalCandidates&&finiteNumericUse(v))localNumericCandidates.push([id,target,value]);
+        if(old)for(const input of [old,value])requirements.push({node:input,type:i32TypeId,possible:true});
         for(const type of leaves(v.type))insert(id,'actual',type);
         copy(id,target);
       }else {copy(value,target);copy(value,id);}
@@ -610,6 +627,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     }else insert(id,'pending','unsupported-expression:'+v.kind+':'+id);
     flow.finish(id,dependencies,requirements);
   }
+  for(const [source,old] of localOldCopies){charge();copy(source,old);}
   flow.seal();
   // Actual fields are addressed by owned member identities. No name based
   // structural layout reconstruction is permitted at this seam.
@@ -697,6 +715,10 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       if(field)test.targets.set(actual,field);else insert(test.id,'pending','unresolved-actual-field:'+actual+':'+test.field);
     }
   }
+  // The first solve already charged each compound at registration. Its
+  // closed capacity bounds identify the cases requiring a checked snapshot.
+  for(const [id,target,value] of localNumericCandidates)if(nodes.get(target).actual.has(undefinedId)||
+    nodes.get(value).actual.has(undefinedId))checkedLocalCandidates.add(id);
   const domains=new Map();
   function domain(actual) {
     const alternatives=[...actual].sort(),id=domainId(alternatives);

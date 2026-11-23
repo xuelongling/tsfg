@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Ordered version constraints over checked owned HIR, not payload evaluation.
 // Unknown aliases/callees retain pending; capacity bounds remain independent.
-import {canonical,own} from './identity.mjs';
+import {canonical,i32TypeId,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finitePresence,isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
@@ -56,7 +56,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
   const failedInitializers=new Map(),failedConstructions=new Set(),failedSuperArguments=new Map(),
-    terminalNumericUses=new Set(),terminalNumericConstructions=new Set();
+    terminalNumericUses=new Set(),terminalNumericConstructions=new Set(),localNumericSources=new Map();
   const constructors=[],ordinary=[];
   let contextWrites=new Map(),terminalReads=null;
   function arrayCarrier(id) {
@@ -115,7 +115,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     for(const id of keys) {
       charge();const a=left.get(id),b=right.get(id),same=a&&b&&
         ['owner','constant','symbol','offset','limit','truth'].every(key=>a[key]===b[key]);
-      result.set(id,!leftLive?b:!rightLive?a:same?a:{});
+      const shared=same?(a.valueNode===b.valueNode?a:{...a,valueNode:undefined}):{};
+      result.set(id,!leftLive?b:!rightLive?a:shared);
     }
     // A branch that returned may be the sole owner of a lexical binding.
     target.clear();for(const [id,value] of result){charge();if(value!==undefined)target.set(id,value);}
@@ -362,12 +363,20 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       if(!coalescingAssignment&&(value.kind==='assignment'||value.kind==='update')) {
         const binding=value.target.binding;
         if(value.kind==='assignment') {
+          const oldSource=bindings.get(binding)?.valueNode;
+          if(!collectAll&&recordReads&&oldSource&&plan.localNumericInputs?.has(path)){
+            charge();localNumericSources.set(path,oldSource);
+          }
           const rhs=child('value');if(rhs.terminal)return rhs;
           if(!value.operator||value.operator==='=') {
-            bindings.set(binding,adapt(rhs,path+'/value',fn.id+'/binding/'+binding));return rhs;
+            bindings.set(binding,bindingValue(rhs,path+'/value',binding,value.target.type));return rhs;
+          }
+          if(plan.localNumericInputs?.has(path)){
+            const stop=terminalNumericUse(value,path);if(stop)return stop;
           }
         }
-        const result={symbol:path};
+        const result={symbol:path,...(plan.localNumericInputs?.size&&value.kind==='assignment'&&
+          value.target.type===i32TypeId?{valueNode:path}:{})};
         const previous=value.kind==='update'&&!value.prefix?(bindings.get(binding)??{symbol:path+'/old-value'}):result;
         bindings.set(binding,result);return previous;
       }
@@ -460,7 +469,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           {present:truth===undefined||truth===(value.operator==='||'),absent:truth===undefined||truth===(value.operator==='&&')};
         const evaluateRight=(memory,locals,mode)=>{
           const from=path+'/'+rightKey,result=expression(value[rightKey],from,memory,locals,mode);
-          if(binding!==null&&!result.terminal)locals.set(binding,adapt(result,from,fn.id+'/binding/'+binding));
+          if(binding!==null&&!result.terminal)locals.set(binding,bindingValue(result,from,binding,value.target.type));
           return result;
         };
         const resultValue=result=>{if(possibilities.absent&&!nullish)forgetAssignedTruth(value.right,bindings);
@@ -560,6 +569,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     function adapt(value,from,to) {
       charge();if(value.truth!==undefined&&carriers.get(from)!==carriers.get(to)){const {truth,...rest}=value;return rest;}return value;
     }
+    function bindingValue(value,from,binding,type) {
+      const adapted=adapt(value,from,fn.id+'/binding/'+binding);
+      return plan.localNumericInputs?.size&&type===i32TypeId?{...adapted,valueNode:value.valueNode??from}:adapted;
+    }
     function forgetTruth(bindings) {
       for(const [id,value] of bindings){charge();const {truth,...rest}=value;bindings.set(id,rest);}
     }
@@ -609,7 +622,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         if(row.kind==='local') {
           const value=expression(row.initializer,p+'/initializer',state,bindings,true);
           if(value.terminal)return null;
-          bindings.set(row.binding.id,adapt(value,p+'/initializer',fn.id+'/binding/'+row.binding.id));
+          bindings.set(row.binding.id,bindingValue(value,p+'/initializer',row.binding.id,row.binding.type));
         }else if(row.kind==='expression') {
           if(expression(row.expression,p+'/expression',state,bindings,true,true).terminal)return null;
         }
@@ -721,7 +734,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   let before;
   do {
     charge();before=ledger();reads.clear();normalReadSources.clear();failedInitializers.clear();failedConstructions.clear();failedSuperArguments.clear();
-    terminalNumericUses.clear();terminalNumericConstructions.clear();
+    terminalNumericUses.clear();terminalNumericConstructions.clear();localNumericSources.clear();
     contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of ordered) {
@@ -742,5 +755,5 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
   return {reaching,terminalReads,normalReadSources,failedInitializers,failedConstructions,failedSuperArguments,
-    terminalNumericUses,terminalNumericConstructions};
+    terminalNumericUses,terminalNumericConstructions,localNumericSources};
 }

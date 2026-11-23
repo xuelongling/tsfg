@@ -118,6 +118,84 @@ test('finite local nullish assignment writes and joins RHS locals only on actual
   assert.ok(lines.some(line=>line.includes('"tsfg_core.domain.view"('+expression+')')));
 });
 
+test('finite local numeric compound captures the old value before its RHS',()=>{
+  for(const mode of ['mixed','undefined','self']){
+    const packet=structuredClone(facts),payload=packet.payload,entry=payload.functions.find(row=>row.name==='binary');
+    const binding=entry.bindings.find(row=>row.name==='x'),[,declaration,branch,otherwise]=entry.body,returned=branch.then[0];
+    const file=payload.files.find(row=>row.path===entry.sourcePath),original=returned.value,start=original.range.start;
+    const keyword=binding.nameRange.start-'const '.length;
+    assert.equal(file.content.slice(keyword,keyword+5),'const');
+    assert.equal(file.content.slice(start,returned.range.end),'x+1;');
+    const self=mode==='self',end=self?otherwise.range.end:returned.range.end,replacement=self?'x+=(x=1)}return 7':'x+=1';
+    assert.equal(replacement.length,end-start);
+    file.content=file.content.slice(0,keyword)+'let  '+file.content.slice(keyword+5,start)+replacement+file.content.slice(end);
+    const at=(from,to)=>({start:start+from,end:start+to});
+    const typed=(kind,from,to)=>({kind,type:'i32',flowType:'i32',range:at(from,to)});
+    const assignment=(operator,from,value,to)=>({...typed('bindingAssignment',from,to),operator,
+      operatorRange:at(from+1,from+1+operator.length),
+      target:{kind:'bindingTarget',type:'i32',binding:binding.id,range:at(from,from+1)},value});
+    binding.writable=true;declaration.kind='letDeclaration';
+    if(self){
+      branch.range.end=start+9;returned.range.end=start+8;otherwise.range=at(9,17);otherwise.value.range=at(16,17);
+    }
+    const one={...original.right,range:self?at(6,7):at(3,4)};
+    const rhs=self?{...typed('parentheses',3,8),expression:assignment('=',4,one,7)}:one;
+    const compound=assignment('+=',0,rhs,self?8:4);
+    returned.value=compound;
+    if(mode!=='mixed'){
+      const init=declaration.initializer,from=init.range.start;
+      assert.equal(file.content.slice(from,init.range.end),'keep(a,0)');
+      file.content=file.content.slice(0,from)+'a[0]!'.padEnd(init.range.end-from)+file.content.slice(init.range.end);
+      const span=(left,right)=>({start:from+left,end:from+right}),[array,index]=init.arguments;
+      declaration.initializer={kind:'nonNull',type:'i32',flowType:'i32',range:span(0,5),operatorRange:span(4,5),
+        expression:{kind:'checkedElementAccess',type:'union<i32,undefined>',flowType:'union<i32,undefined>',range:span(0,4),
+          receiver:{...array,range:span(0,1)},index:{...index,range:span(2,3)}}};
+      declaration.range.end=from+5;binding.declarationRange.end=from+5;
+    }
+    file.sha256=sha256(file.content).slice(7);
+    const factsBytes=derivedPacketBytes(packet),derived=readTypedArrayFacts(factsBytes);
+    const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:derived.packageId};
+    const publication=buildInitialArrayPublication(context),built=buildHir(derived,context,publication);
+    assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+    const owner=built.hir.functions.find(row=>row.name==='binary'),site=owner.id+'/body/2/then/0/value';
+    const plan=buildFiniteCoreDomains(built.hir,context,{publicationContext:publication}).reached;
+    const actual=node=>plan.domains.find(domain=>domain.id===plan.nodes.find(row=>row.id===node).domainId).actualTypes;
+    const absent=sha256('tsfg.type\0undefined'),mixed=[absent,i32TypeId].sort();
+    assert.deepEqual(actual(site+'/old-value'),mode==='mixed'?mixed:[absent]);
+    assert.deepEqual(actual(site+'/value'),[i32TypeId]);
+    assert.deepEqual(actual(site),mode==='mixed'?[i32TypeId]:[]);
+    assert.deepEqual(actual(owner.id+'/return'),[i32TypeId]);
+    if(self)assert.deepEqual(actual(owner.id+'/binding/'+binding.id),mixed);
+
+    const lines=lowerFormalHir(built.hir,context,publication).split('\n');
+    const anchor=({start,end})=>`tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
+    const matches=(op,range)=>lines.filter(line=>line.includes('"tsfg_core.'+op+'"(')&&line.includes(anchor(range)));
+    const match=(op,range)=>matches(op,range)[0],rhsViews=matches('domain.view',rhs.range);
+    const old=match('domain.view',compound.target.range),literal=match('constant',one.range),marker=rhsViews.at(-1),
+      check=match('domain.numeric_use',compound.range),add=match('add',compound.range);
+    assert.ok(old&&literal&&marker&&check&&add,mode);
+    const originalOrder=[old,literal,marker,check,add].map(line=>lines.indexOf(line));
+    assert.ok(originalOrder.every((at,index)=>index===0||at>originalOrder[index-1]),mode);
+    const id=line=>line.trim().split(' = ')[0];
+    assert.ok(check.includes(`(${id(old)})`)&&check.includes(`numeric_group = "${site}"`));
+    assert.match(marker,/ : \(i32\) -> i32$/u);
+    if(self){
+      assert.equal(rhsViews.length,2);
+      assert.ok(rhsViews[0].includes(`(${id(literal)})`)&&marker.includes(`(${id(rhsViews[0])})`));
+      assert.ok(match('domain.view',one.range)?.includes(`(${id(literal)})`));
+    }else assert.ok(marker.includes(`(${id(literal)})`));
+    const [,label]=check.match(/\[\^(bb\d+)\]/u)??[];
+    const successor=lines.findIndex(line=>line.trim().startsWith('^'+label+'('));
+    const [,checked]=lines[successor].match(/\((%v\d+): i32\)/u)??[];
+    assert.equal(lines[successor+1],add);
+    assert.ok(checked&&add.includes(`(${checked}, ${id(marker)})`));
+    assert.ok(lines.some(line=>line.includes(`"tsfg_core.domain.view"(${id(add)})`)&&line.includes(anchor(compound.range))));
+    assert.ok(lines.some(line=>line.includes(`"func.return"(${id(add)})`)&&line.includes(anchor(returned.range))));
+    const otherValue=match('constant',otherwise.value.range),otherReturn=lines.find(line=>line.includes('"func.return"(')&&line.includes(anchor(otherwise.range)));
+    assert.ok(otherValue&&otherReturn?.includes(`(${id(otherValue)})`));
+  }
+});
+
 test('official initialized-undefined numeric facts preserve HIR and lower checked Core continuations',async()=>{
   assert.deepEqual(verifyHir(hir,context,publication),hir);
   assert.deepEqual(readHir(Buffer.from(printHir(hir,context,publication)),context,publication),hir);
