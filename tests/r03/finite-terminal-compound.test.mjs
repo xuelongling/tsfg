@@ -9,7 +9,7 @@ import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs
 import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
-function lowerDerivedPacket(packet,source) {
+function deriveFactsBytes(packet,source) {
   const payload=packet.payload;
   source.sha256=sha256(source.content).slice(7);
   const {sourceRoot,rootFile,declarations,config}=payload;
@@ -20,11 +20,18 @@ function lowerDerivedPacket(packet,source) {
     files:payload.files.map(({path,content,sha256})=>({path,content,sha256}))}};
   packet.requestId=sha256('tsfg.array-facts.request.v8\0'+canonical(request)+'\n');
   packet.packageId=sha256('tsfg.array-facts.package.v8\0'+packet.schemaHash+'\0'+canonical(payload));
-  const factsBytes=Buffer.from(canonical(packet)+'\n'),facts=readTypedArrayFacts(factsBytes);
+  return Buffer.from(canonical(packet)+'\n');
+}
+function buildDerivedPacket(packet,source) {
+  const factsBytes=deriveFactsBytes(packet,source),facts=readTypedArrayFacts(factsBytes);
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:facts.packageId};
   const publication=buildInitialArrayPublication(context),built=buildHir(facts,context,publication);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
-  return lowerFormalHir(built.hir,context,publication).split('\n');
+  return {hir:built.hir,context,publication};
+}
+function lowerDerivedPacket(packet,source) {
+  const {hir,context,publication}=buildDerivedPacket(packet,source);
+  return lowerFormalHir(hir,context,publication).split('\n');
 }
 
 async function retainedPacket(path,hash) {
@@ -165,7 +172,7 @@ function replaceArrayCompoundOperator(source,compound,operator) {
 }
 
 test('finite Array compounds reject unsupported scalar operators before publishing Core',async()=>{
-  for(const operator of ['&=','<<=','??=']){
+  for(const operator of ['&=','<<=','&&=']){
     const packet=await retainedPacket(fieldTail,fieldTailHash),payload=packet.payload;
     const fn=payload.functions.find(row=>row.name==='fieldPresent'),compound=fn.body[3].value;
     const source=payload.files.find(row=>row.path===fn.sourcePath);
@@ -210,6 +217,91 @@ test('finite i32 Array compounds evaluate receiver and index once before old rea
     const positions=[receiver,index,old,rhs,arithmetic,store,returned].map(line=>lines.indexOf(line));
     assert.ok(positions.every((position,i)=>i===0||position>positions[i-1]));
   }
+});
+
+const narrowArray='typed-array-entry/87d0326f6f0e3e1eb887a77b7eb207a938c3ca173f094f8cdb21f1820284a4ad-package.json',
+  narrowArrayHash='042eee481c55e941ee47e8ebe284feff0d16621cf37f60c3615d3b247eb9d051';
+function arrayCoalesceAt(file,assignment) {
+  const start=assignment.operatorRange.start,end=assignment.range.end;
+  file.content=file.content.slice(0,start)+'??=2'.padEnd(end-start)+file.content.slice(end);
+  Object.assign(assignment,{kind:'elementCompoundAssignment',operator:'??=',operatorRange:{start,end:start+3},
+    range:{start:assignment.range.start,end:start+4},
+    value:{kind:'numericLiteral',type:'i32',flowType:'i32',token:'2',decimal:'2',range:{start:start+3,end:start+4}}});
+}
+test('finite Array nullish assignment updates only the existing undefined slot version',async()=>{
+  for(const present of [false,true]){
+    const packet=await retainedPacket(narrowArray,narrowArrayHash),fn=packet.payload.functions[0];
+    const file=packet.payload.files.find(row=>row.path===fn.sourcePath);
+    const previous=fn.body[2].value,coalesce=fn.body[4].value;
+    assert.equal(file.content.slice(coalesce.operatorRange.start,coalesce.range.end),'=copied');
+    if(present){
+      const {start,end}=previous.value.range;
+      assert.equal(file.content.slice(start,end),'undefined');
+      file.content=file.content.slice(0,start)+'1'.padEnd(end-start)+file.content.slice(end);
+      previous.flowType='i32';previous.range.end=start+1;
+      previous.value={kind:'numericLiteral',type:'i32',flowType:'i32',token:'1',decimal:'1',range:{start,end:start+1}};
+    }
+    arrayCoalesceAt(file,coalesce);
+    const {hir,context,publication}=buildDerivedPacket(packet,file),id=hir.functions[0].id;
+    const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached;
+    const memory=id+'/body/4/expression',prior=id+'/body/2/expression/value';
+    const old=plan.arrayReaching.reads.find(row=>row.node===memory+'/old-value');
+    const tail=plan.arrayReaching.reads.find(row=>row.node===id+'/body/5/value');
+    assert.equal(old.status,'proven');
+    assert.deepEqual(old.sources,[prior]);
+    assert.deepEqual(tail.sources,[present?prior:memory+'/value']);
+    const actual=node=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===node).domainId).actualTypes;
+    assert.deepEqual(actual(old.node),[present?scalarTypeIds.i32:sha256('tsfg.type\0undefined')]);
+    assert.deepEqual(actual(tail.node),[scalarTypeIds.i32]);
+    const lines=lowerFormalHir(hir,context,publication).split('\n');
+    const oldReads=lines.filter(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes(at(coalesce.target.range)));
+    const stores=lines.filter(line=>line.includes('"tsfg_core.domain.array_store"')&&line.includes(at(coalesce.range)));
+    const rhs=lines.filter(line=>line.includes('"tsfg_core.constant"')&&line.includes(at(coalesce.value.range)));
+    assert.equal(oldReads.length,1);
+    assert.equal(stores.length,present?0:1);
+    assert.equal(rhs.length,present?0:1);
+    if(!present){
+      const [,slot]=oldReads[0].match(/"tsfg_core\.domain\.array_read"\(([^)]*)\)/u)??[];
+      const stored=rhs[0].trim().split(' = ')[0];
+      assert.ok(stores[0].includes(`(${slot}, ${stored})`));
+      assert.ok(lines.indexOf(oldReads[0])<lines.indexOf(rhs[0])&&lines.indexOf(rhs[0])<lines.indexOf(stores[0]));
+      assert.ok(stores[0].includes(memory+'/value'));
+    }
+  }
+});
+
+test('finite facts reject nullish assignment to a nonnumeric Array element role',async()=>{
+  const packet=await retainedPacket(narrowArray,narrowArrayHash),fn=packet.payload.functions[0],assignment=fn.body[2].value;
+  const file=packet.payload.files.find(row=>row.path===fn.sourcePath);
+  arrayCoalesceAt(file,assignment);
+  assignment.flowType=assignment.target.type;
+  assert.throws(()=>readTypedArrayFacts(deriveFactsBytes(packet,file)),error=>{
+    assert.ok(error instanceof Error&&'code' in error&&'primary' in error);
+    assert.equal(error.code,'r03-typed-array-type');
+    assert.deepEqual(error.primary,{sourceId:fn.sourcePath,...assignment.range});
+    return true;
+  });
+});
+
+test('a missing old Array slot stops nullish assignment before RHS',async()=>{
+  const packet=await retainedPacket('typed-array-terminal-compound/old-value-terminal-package.json',
+    '6a33970814041f757694f14cb3750e8553593de9cf4f77bef2aefa75c150aaca');
+  const payload=packet.payload,fn=payload.functions.find(row=>row.name==='compound'),compound=fn.body[2].value;
+  const file=payload.files.find(row=>row.path===fn.sourcePath);
+  replaceArrayCompoundOperator(file,compound,'??=');
+  const {hir,context,publication}=buildDerivedPacket(packet,file),owner=hir.functions.find(row=>row.name==='compound');
+  const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached;
+  const node=owner.id+'/body/2/expression';
+  const old=plan.arrayReaching.reads.find(row=>row.node===node+'/old-value');
+  assert.equal(old.status,'missing');
+  const actual=path=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===path).domainId).actualTypes;
+  assert.deepEqual(actual(node+'/value'),[]);
+  assert.deepEqual(actual(node),[]);
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const read=lines.findIndex(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes(at(compound.target.range)));
+  const rhs=lines.findIndex(line=>line.includes('"func.call"')&&line.includes(at(compound.value.range)));
+  assert.ok(read>=0);
+  assert.equal(rhs,-1);
 });
 
 test('finite Array postfix returns the checked old i32 and stores the increment',async()=>{

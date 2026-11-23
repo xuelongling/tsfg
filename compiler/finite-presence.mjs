@@ -4,6 +4,8 @@
 export const isFiniteAbsence=kind=>kind==='null'||kind==='undefined';
 export const isLocalNullishAssignment=value=>value.operator==='??='&&
   (value.kind==='assignment'||value.kind==='bindingAssignment');
+export const isArrayNullishAssignment=value=>value.operator==='??='&&
+  (value.kind==='arrayCompoundAssignment'||value.kind==='elementCompoundAssignment');
 export function finitePresence(plan,types,charge) {
   const nodes=new Map(),domains=new Map();
   for(const row of plan.nodes){charge();nodes.set(row.id,row);}

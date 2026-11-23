@@ -6,7 +6,7 @@ import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
-import {finitePresence,isLocalNullishAssignment} from './finite-presence.mjs';
+import {finitePresence,isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
 import {createFieldCallContexts,finiteFieldEffects,finiteFieldStorePath,finiteFieldWriteVersion,
   literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
@@ -331,16 +331,22 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
         access(value,store,state,token,'store',payload);return rhs;
       }
-      if(coalescingAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const binding=coalescingAssignment?value.target.binding:null,
-          left=binding===null?child('left'):(env.get(binding)??null),
-          nullish=coalescingAssignment||value.operator==='??',
-          possibilities=nullish?presence(path+(coalescingAssignment?'/old-value':'/left')):{present:true,absent:true};
+      const coalescingArray=isArrayNullishAssignment(value);
+      if(coalescingArray||coalescingAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
+        const binding=coalescingAssignment?value.target.binding:null,assignment=coalescingArray||coalescingAssignment;
+        let left=null;
+        if(coalescingArray) {
+          expression(value.target.receiver,path+'/target/receiver',state,env);
+          expression(value.target.index,path+'/target/index',state,env);
+          if(trapSource===path+'/old-value')stopped=true;
+        }else left=binding===null?child('left'):(env.get(binding)??null);
         if(stopped)return null;
+        const nullish=assignment||value.operator==='??',
+          possibilities=nullish?presence(path+(assignment?'/old-value':'/left')):{present:true,absent:true};
         const evaluateRight=(memory,locals)=>{
-          const key=binding===null?'right':'value',result=expression(value[key],path+'/'+key,memory,locals);
+          const key=assignment?'value':'right',result=expression(value[key],path+'/'+key,memory,locals);
           if(binding!==null&&!stopped)locals.delete(binding);
-          return binding===null?result:null;
+          return assignment?null:result;
         };
         if(!possibilities.absent)return left;
         if(!possibilities.present)return evaluateRight(state,env);

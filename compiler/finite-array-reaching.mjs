@@ -3,7 +3,7 @@
 // Unknown aliases/callees retain pending; capacity bounds remain independent.
 import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
-import {finitePresence,isLocalNullishAssignment} from './finite-presence.mjs';
+import {finitePresence,isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
@@ -300,6 +300,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings,root):null;
         if(index?.terminal)return index;
         let oldLength=null;
+        const writeBack=(memory,node)=>{
+          const length=memory.get(receiver.owner)?.length,overwrite=oldLength!==null&&length!=null&&length>=oldLength;
+          return store(value,path,node,memory,receiver,index,overwrite);
+        };
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
           const old=path+'/old-value',{status}=load({...value,range:value.target.range},old,state,receiver,index);
           oldLength=state.get(receiver.owner)?.length??null;
@@ -309,6 +313,19 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             const terminal=terminalRoot&&canTerminateArrayRead(directStatement&&!fn.ownerType);
             if(terminal&&recordReads){charge();(terminalReads??=new Set()).add(old);}
             if(constructionEvaluation||terminal)return {terminal:true,trap:old};
+          }
+          if(isArrayNullishAssignment(value)) {
+            if(!collectAll&&status==='missing')return {symbol:path};
+            const {present,absent}=collectAll?{present:true,absent:true}:presence(old);
+            if(!absent)return {symbol:path};
+            const memory=present?clone(state):state,locals=present?copyBindings(bindings):bindings;
+            const rhs=expression(value.value,path+'/value',memory,locals,present?false:root);
+            if(rhs.terminal)return present?{symbol:path}:rhs;
+            writeBack(memory,path+'/value');
+            if(!present)return rhs;
+            const merged=join(state,memory);state.clear();for(const [id,row]of merged){charge();state.set(id,row);}
+            meetBindings(bindings,bindings,locals);
+            return {symbol:path};
           }
         }
         const rhs=value.value?child('value'):{symbol:path};
@@ -324,8 +341,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           return rhs;
         }
         // The old-read check makes an append impossible if the RHS kept or grew the backing.
-        const length=state.get(receiver.owner)?.length,overwrite=oldLength!==null&&length!=null&&length>=oldLength;
-        const id=store(value,path,value.kind==='arrayStoreDenseChecked'?path+'/value':path,state,receiver,index,overwrite);
+        const id=writeBack(state,value.kind==='arrayStoreDenseChecked'?path+'/value':path);
         if(value.kind==='arrayStoreDenseChecked'){rememberSlotValue(id,value.value,rhs);return rhs;}
         return {symbol:path};
       }

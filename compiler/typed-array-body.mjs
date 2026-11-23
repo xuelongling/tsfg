@@ -7,7 +7,7 @@ import {check,hash,sourceRange,originId,signatureId,byteOrder} from './typed-arr
 import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
 import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
-import {isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 
 export function validateTypedArrayFunctions(payload,sources,types,profile=undefined) {
   const functions=new Map(),all=[...payload.functions];
@@ -40,9 +40,10 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
       sourceRange(value.range,source,parent);check(types.has(value.type),'type');
       if(!target)check(types.has(value.flowType),'type');
       if(profile)profile.validateExpression(value,types,source);
-      if(isLocalNullishAssignment(value)) {
+      const nullishTarget=isLocalNullishAssignment(value)?'bindingTarget':isArrayNullishAssignment(value)?'elementTarget':null;
+      if(nullishTarget) {
         const type=value.target?.type;
-        check(value.target?.kind==='bindingTarget'&&(integerNames.includes(type)||floatNames.includes(type))&&
+        check(value.target?.kind===nullishTarget&&(integerNames.includes(type)||floatNames.includes(type))&&
           value.type===type&&value.flowType===type,'type',{sourceId:fn.sourcePath,...value.range});
       }
       if(!target&&['scalar','string','null','undefined','void'].includes(types.get(value.type).kind))

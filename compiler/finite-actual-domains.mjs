@@ -10,7 +10,7 @@ import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
 import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
-import {isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {actualFieldResolver,fieldReceiverView} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
 
@@ -547,19 +547,31 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     }else if(v.kind==='arrayCompoundAssignment'||v.kind==='arrayUpdate') {
       const receiver=at(v.target.receiver,p+'/target/receiver');
       at(v.target.index,p+'/target/index');
-      const old=node(p+'/old-value',v.target.type).id;
+      const old=node(p+'/old-value',v.target.type).id,coalescing=isArrayNullishAssignment(v);
       reads.push({receiver,result:old});
-      if(arrayReaching&&terminalReads?.has(old)) {
-        flow.entry(old,continuation);flow.finish(old,[]);
-        continuation=flow.normal(old);dependencies.push(continuation);
+      let stored=id,whenAbsent=null;
+      if(coalescing) {
+        const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>{
+          if(key==='right')return operand(v.value,p+'/value',gate,pending);
+          flow.entry(old,gate);flow.finish(old,[]);return old;
+        },absent);
+        presenceCarriers.push(old);dependencies.push(...selected.dependencies);
+        copy(old,id,{presentOnly:true});copy(selected.right,id,{gate:old});
+        stored=selected.right;whenAbsent=old;
+      }else{
+        if(arrayReaching&&terminalReads?.has(old)) {
+          flow.entry(old,continuation);flow.finish(old,[]);
+          continuation=flow.normal(old);dependencies.push(continuation);
+        }
+        if(v.kind==='arrayCompoundAssignment')child('value');
+        for(const type of leaves(v.type))insert(id,'actual',type);
       }
-      if(v.kind==='arrayCompoundAssignment')child('value');
       if(representationOnly&&terminalReads.has(old)&&types.get(v.target.type)?.kind==='scalar'){
         // Keep the dead read's declared SSA carrier outside the value/owner
         // worklist. Its impossible writeback contributes no backing capacity.
         charge();representationOnly.set(old,v.target.type);
-      }else stores.push({receiver,value:id});
-      for(const type of leaves(v.type))insert(id,'actual',type);
+        if(coalescing){charge();representationOnly.set(id,v.type);}
+      }else stores.push({receiver,value:stored,whenAbsent});
     }else if(v.kind==='arrayResizeChecked') {
       at(v.target.receiver,p+'/target/receiver');
       child('value');
@@ -643,7 +655,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       }
     }
     for(const store of stores)if(store.receiver===current)for(const allocation of nodes.get(current).owners)
-      copy(store.value,owners.get(allocation));
+      copy(store.value,owners.get(allocation),store.whenAbsent?{gate:store.whenAbsent}:null);
     for(const read of fieldReads)if(read.receiver===current)for(const actual of nodes.get(current).actual) {
       const field=actualField(actual,read.field,read.viewType);
       if(field?.missing){read.targets.set(actual,field);insert(read.result,'actual',undefinedId);}
