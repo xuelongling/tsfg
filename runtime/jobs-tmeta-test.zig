@@ -731,7 +731,8 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
         try std.testing.expectError(error.IdentityMismatch, stage.withCheckedPlans(A, &store, &loops, &.{foreign}, ir, .{}, Observe.reject));
         try std.testing.expectError(error.BindingMismatch, stage.withCheckedPlans(A, &store, &loops, &.{null}, ir, .{}, Observe.reject));
         try stage.withCheckedPlans(A, &store, &loops, &codes, ir, .{ candidate.value, @as([]const u64, &.{}) }, Observe.read);
-        for (0..3) |_| _ = try store.create(archetype, &.{});
+        var entities: [3]jobs.Entity = undefined;
+        for (&entities) |*entity| entity.* = try store.create(archetype, &.{});
         try std.testing.expectError(error.IdentityMismatch, stage.withCheckedPlans(A, &store, &loops, &codes, changed, .{}, Observe.reject));
         try stage.withCheckedPlans(A, &store, &loops, &codes, ir, .{ candidate.value, @as([]const u64, &.{ 2, 1 }) }, Observe.read);
         const next_token = store.next_token;
@@ -750,6 +751,7 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
         try std.testing.expectEqual(before_group, store.next_token);
         try stage.withSystemStages(A, &store, &.{&.{}}, .{ .entries = &.{&.{candidate.value}}, .llvm_ir = ir }, call_args, Observe.readStage);
         try std.testing.expectEqual(@as(usize, 2), calls);
+        try exerciseParallelWorkers(&stage, &store, &entities, .{ .entries = &.{&.{candidate.value}}, .llvm_ir = ir });
     }
     const query = try document.query(A, &store, 0);
     var released = false;
@@ -843,6 +845,155 @@ test "paired Query dispatch checks the original LLVM bytes before reserving its 
     released = true;
     try std.testing.expectError(error.InvalidLease, plan.withCheckedBatch(candidate.value, ir, {}, Call.unexpected));
     try std.testing.expectError(error.InvalidLease, T.Plan.withCheckedBatches(A, &group, ir, {}, Call.unexpectedGroup));
+}
+
+fn exerciseParallelWorkers(stage: *const T.ParallelGroup, store: *jobs.Store, entities: []const jobs.Entity, code: T.ParallelGroup.SystemsCode) !void {
+    const entry = &stage.systems[0].entries[0];
+    const Observe = struct {
+        io: std.Io,
+        entry: *const T.Entry,
+        store: *jobs.Store,
+        entities: []const jobs.Entity,
+        injected: bool = false,
+        await_cancellation: bool = false,
+        wait_for_join: bool = false,
+        started: std.atomic.Value(usize) = .init(0),
+        completed: std.atomic.Value(usize) = .init(0),
+        concurrent: std.Io.Event = .unset,
+        hold: std.Io.Event = .unset,
+        threads: [2]std.Thread.Id = undefined,
+
+        fn batch(self: *@This(), work: T.ParallelGroup.DispatchBatch) !void {
+            try std.testing.expectEqual(self.entry, work.entry);
+            try std.testing.expect(work.ordinal < 2);
+            try std.testing.expectEqual(T.Plan.LLVMArgument{ .index = if (work.ordinal == 0) 2 else 1 }, work.arguments[0]);
+            self.threads[work.ordinal] = std.Thread.getCurrentId();
+            defer _ = self.completed.fetchAdd(1, .acq_rel);
+            if (self.started.fetchAdd(1, .acq_rel) == 1) self.concurrent.set(self.io);
+            try self.concurrent.waitTimeout(self.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+            if (self.await_cancellation) return self.hold.waitTimeout(self.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+            for (work.entry.columns, 0..) |column, index| {
+                const argument = work.arguments[1 + 6 * index];
+                switch (column.access) {
+                    .read => try std.testing.expect(argument == .read_pointer),
+                    .write => {
+                        try std.testing.expect(argument == .write_pointer);
+                        try std.testing.expectError(error.BorrowConflict, self.store.borrowWrite(self.entities[work.ordinal * 2], column.componentType));
+                        argument.write_pointer[0] = @intCast(20 + work.ordinal);
+                    },
+                }
+            }
+            if (self.injected and work.ordinal == 0) return error.BatchFailed;
+            if (self.wait_for_join) try self.hold.waitTimeout(self.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+        }
+
+        fn dispatch(self: *@This(), selected: *const T.ParallelGroup, identities: T.ParallelGroup.SystemsCode) !void {
+            return selected.dispatchSystemStages(A, self.store, &.{&.{}}, identities, self.io, 2, self, batch);
+        }
+    };
+    for ([_]struct { capacity: usize, injected: bool }{
+        .{ .capacity = 1, .injected = false },
+        .{ .capacity = 2, .injected = false },
+        .{ .capacity = 2, .injected = true },
+    }) |scenario| {
+        var workers = std.Io.Threaded.init(std.heap.page_allocator, .{ .concurrent_limit = .limited(scenario.capacity) });
+        defer workers.deinit();
+        var observe: Observe = .{ .io = workers.io(), .entry = entry, .store = store, .entities = entities, .injected = scenario.injected };
+        const next_token = store.next_token;
+        try std.testing.expectError(error.InvalidWorkerCount, stage.dispatchSystemStages(A, store, &.{&.{}}, code, observe.io, 0, &observe, Observe.batch));
+        try std.testing.expectEqual(next_token, store.next_token);
+        const outcome = observe.dispatch(stage, code);
+        if (scenario.capacity < 2) {
+            try std.testing.expectError(error.ConcurrencyUnavailable, outcome);
+            try std.testing.expectEqual(@as(usize, 0), observe.started.load(.acquire));
+        } else {
+            if (scenario.injected) try std.testing.expectError(error.BatchFailed, outcome) else try outcome;
+            try std.testing.expectEqual(@as(usize, 2), observe.completed.load(.acquire));
+            try std.testing.expect(observe.threads[0] != observe.threads[1]);
+        }
+        for (entry.columns) |column| if (column.access == .write) {
+            for (entities, 0..) |entity, row| {
+                const lease = try store.borrowWrite(entity, column.componentType);
+                defer lease.release() catch unreachable;
+                const bytes = try lease.bytes();
+                const expected: u8 = if (scenario.capacity < 2 or row == 1) 0 else @intCast(20 + row / 2);
+                try std.testing.expectEqual(expected, bytes[0]);
+                bytes[0] = 0;
+            }
+        };
+    }
+
+    const DispatchCancellation = struct {
+        threadlocal var pending: bool = false;
+        threadlocal var join_gate: ?*std.Io.Event = null;
+
+        fn concurrent(userdata: ?*anyopaque, group: *std.Io.Group, context: []const u8, alignment: std.mem.Alignment, start: *const fn (*const anyopaque) void) std.Io.ConcurrentError!void {
+            const backend: *std.Io.Threaded = @ptrCast(@alignCast(userdata));
+            try backend.io().vtable.groupConcurrent(userdata, group, context, alignment, start);
+            pending = true;
+        }
+
+        fn groupAwait(userdata: ?*anyopaque, group: *std.Io.Group, token: *anyopaque) std.Io.Cancelable!void {
+            const backend: *std.Io.Threaded = @ptrCast(@alignCast(userdata));
+            const io = backend.io();
+            join_gate.?.set(io);
+            try io.vtable.groupAwait(userdata, group, token);
+            pending = true;
+        }
+
+        fn checkCancel(userdata: ?*anyopaque) std.Io.Cancelable!void {
+            if (pending) return error.Canceled;
+            const backend: *std.Io.Threaded = @ptrCast(@alignCast(userdata));
+            return backend.io().checkCancel();
+        }
+    };
+    for ([_]bool{ true, false }) |during_startup| {
+        var workers = std.Io.Threaded.init(std.heap.page_allocator, .{ .concurrent_limit = .limited(2) });
+        defer workers.deinit();
+        var io = workers.io();
+        var vtable = io.vtable.*;
+        if (during_startup) {
+            vtable.groupConcurrent = DispatchCancellation.concurrent;
+        } else {
+            vtable.groupAwait = DispatchCancellation.groupAwait;
+        }
+        vtable.checkCancel = DispatchCancellation.checkCancel;
+        io.vtable = &vtable;
+        var observe: Observe = .{ .io = io, .entry = entry, .store = store, .entities = entities, .wait_for_join = !during_startup };
+        if (!during_startup) DispatchCancellation.join_gate = &observe.hold;
+        defer {
+            DispatchCancellation.pending = false;
+            DispatchCancellation.join_gate = null;
+        }
+        try std.testing.expectError(error.Canceled, observe.dispatch(stage, code));
+        const expected_jobs: usize = if (during_startup) 0 else 2;
+        try std.testing.expectEqual(expected_jobs, observe.started.load(.acquire));
+        try std.testing.expectEqual(expected_jobs, observe.completed.load(.acquire));
+        for (entry.columns) |column| if (column.access == .write) {
+            for (entities, 0..) |entity, row| {
+                const lease = try store.borrowWrite(entity, column.componentType);
+                defer lease.release() catch unreachable;
+                const bytes = try lease.bytes();
+                const expected: u8 = if (during_startup or row == 1) 0 else @intCast(20 + row / 2);
+                try std.testing.expectEqual(expected, bytes[0]);
+                bytes[0] = 0;
+            }
+        };
+    }
+
+    var workers = std.Io.Threaded.init(std.heap.page_allocator, .{ .concurrent_limit = .limited(3) });
+    defer workers.deinit();
+    const io = workers.io();
+    var observe: Observe = .{ .io = io, .entry = entry, .store = store, .entities = entities, .await_cancellation = true };
+    var running = try io.concurrent(Observe.dispatch, .{ &observe, stage, code });
+    defer running.cancel(io) catch {};
+    try observe.concurrent.waitTimeout(io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+    try std.testing.expectError(error.Canceled, running.cancel(io));
+    try std.testing.expectEqual(@as(usize, 2), observe.completed.load(.acquire));
+    for (entry.columns) |column| if (column.access == .write) {
+        const lease = try store.borrowWrite(entities[0], column.componentType);
+        try lease.release();
+    };
 }
 
 test "actual i32 compound metadata binds original columns and retains ordered read read write" {

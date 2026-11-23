@@ -367,6 +367,7 @@ pub const ParallelGroup = struct {
     pub const BatchBinding = struct { loop: usize, batch: storage.Store.Batch, scalars: []const ScalarValue };
     pub const LoopBinding = struct { loop: usize, scalars: []const ScalarValue };
     pub const SystemsCode = struct { entries: []const []const Plan.CodeIdentity, llvm_ir: []const u8 };
+    pub const DispatchBatch = struct { ordinal: usize, entry: *const Entry, arguments: []const Plan.LLVMArgument };
     const StageCode = struct { entries: []const ?Plan.CodeIdentity, llvm_ir: []const u8 };
     allocator: std.mem.Allocator,
     document: *const Document,
@@ -490,6 +491,73 @@ pub const ParallelGroup = struct {
         }
     }
 
+    /// Dispatch one checked stage at a time with the caller's worker pool.
+    /// The trusted callback shares thread-safe context across nonoverlapping
+    /// batches. Keep its executable lease alive until dispatch returns.
+    /// Workers borrow only ABI arguments and immutable entry data. Startup
+    /// failure runs no callbacks. On callback failure, stop claiming batches
+    /// and wait for active work before releasing the original Store leases.
+    pub fn dispatchSystemStages(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, scalars: []const []const ScalarValue, code: SystemsCode, pool: std.Io, worker_count: usize, context: anytype, comptime call: anytype) !void {
+        if (worker_count == 0) return error.InvalidWorkerCount;
+        try pool.checkCancel();
+        const Context = @TypeOf(context);
+        const Dispatch = struct {
+            io: std.Io,
+            context: Context,
+            batches: []const DispatchBatch,
+            failures: []?anyerror,
+            ready: std.Io.Event = .unset,
+            next: std.atomic.Value(usize) = .init(0),
+            stopped: std.atomic.Value(bool) = .init(false),
+
+            fn worker(state: *@This()) std.Io.Cancelable!void {
+                try state.ready.wait(state.io);
+                while (!state.stopped.load(.acquire)) {
+                    try state.io.checkCancel();
+                    const index = state.next.fetchAdd(1, .monotonic);
+                    if (index >= state.batches.len or state.stopped.load(.acquire)) return;
+                    call(state.context, state.batches[index]) catch |failure| {
+                        state.failures[index] = failure;
+                        state.stopped.store(true, .release);
+                        return;
+                    };
+                }
+            }
+
+            fn stage(plans: []const Plan, _: []const ?*const Entry, document: *const Document, target_allocator: std.mem.Allocator, io: std.Io, limit: usize, shared_context: Context) !void {
+                try io.checkCancel();
+                if (plans.len == 0) return;
+                var scratch = std.heap.ArenaAllocator.init(target_allocator);
+                defer scratch.deinit();
+                const own = scratch.allocator();
+                const batches = try own.alloc(DispatchBatch, plans.len);
+                for (plans, batches, 0..) |*plan, *batch, ordinal| {
+                    const args = try own.alloc(Plan.LLVMArgument, 1 + plan.columns.len * Plan.llvm_column_argument_count + plan.scalars.len);
+                    for (args, 0..) |*argument, index| argument.* = try plan.llvmArgument(index);
+                    batch.* = .{ .ordinal = ordinal, .entry = &document.payload.entries[plan.entry_index], .arguments = args };
+                }
+                const failures = try own.alloc(?anyerror, batches.len);
+                @memset(failures, null);
+                var dispatch: @This() = .{ .io = io, .context = shared_context, .batches = batches, .failures = failures };
+                var workers: std.Io.Group = .init;
+                errdefer {
+                    dispatch.stopped.store(true, .release);
+                    dispatch.ready.set(io);
+                    workers.cancel(io);
+                }
+                for (0..@min(limit, batches.len)) |_| try workers.concurrent(io, worker, .{&dispatch});
+                try io.checkCancel();
+                // Release the start gate only after the complete worker group
+                // is ready, so a failed submission cannot start a batch.
+                dispatch.ready.set(io);
+                try workers.await(io);
+                try io.checkCancel();
+                for (failures) |failure| if (failure) |err| return err;
+            }
+        };
+        return self.withSystemStages(allocator, store, scalars, code, .{ self.document, allocator, pool, worker_count, context }, Dispatch.stage);
+    }
+
     fn withStage(self: *const ParallelGroup, allocator: std.mem.Allocator, store: *storage.Store, bindings: []const ?LoopBinding, code: ?StageCode, arguments: anytype, comptime call: anytype) !void {
         if (bindings.len != self.systems.len) return error.BindingMismatch;
         if (code) |checked| if (checked.entries.len != bindings.len) return error.BindingMismatch;
@@ -562,6 +630,7 @@ pub const ParallelGroup = struct {
 /// immutable metadata from its Document and shares stage-local scalar copies.
 /// Original component columns stay borrowed in both cases.
 pub const Plan = struct {
+    const llvm_column_argument_count = 6;
     const TupleBinding = struct { column: usize, access: storage.Access };
     const ColumnBinding = struct { component: []const u8, stride: usize, access: storage.Access };
     pub const Argument = union(enum) { row_count: usize, column: ColumnBinding, stride: usize, scalar: ScalarValue };
@@ -670,7 +739,7 @@ pub const Plan = struct {
         if (index == 0) return .{ .index = self.rows };
         // A one-dimensional byte memref expands to two pointers, offset,
         // byte length and unit stride. The row stride follows the memref.
-        const column_arguments = self.columns.len * 6;
+        const column_arguments = self.columns.len * llvm_column_argument_count;
         const position = index - 1;
         if (position >= column_arguments) {
             const scalar = position - column_arguments;
@@ -680,9 +749,9 @@ pub const Plan = struct {
                 .float64 => |value| .{ .float64 = value },
             };
         }
-        const column_index = position / 6;
+        const column_index = position / llvm_column_argument_count;
         const column = self.columns[column_index];
-        return switch (position % 6) {
+        return switch (position % llvm_column_argument_count) {
             0, 1 => switch (column.access) {
                 .read => .{ .read_pointer = (try self.batch.read(column_index)).ptr },
                 .write => .{ .write_pointer = (try self.batch.write(column_index)).ptr },
