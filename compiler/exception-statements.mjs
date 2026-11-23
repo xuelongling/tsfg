@@ -159,8 +159,8 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     record(item, ['kind','range','condition'], ['body']);
     const body = item.body === undefined ? [] : array(item.body, wireLimits.arrayItems, 1);
     check(body.length === 1 && body[0].kind === 'block', 'capability', 'while requires its complete owned block');
-    // A condition is revisited after every normal body completion. No narrow
-    // occurrence proof may survive a write in that body, even on its first read.
+    // A later condition or body write is visible when the condition repeats.
+    // Verify the original occurrences against the repeated header's proofs.
     const written = new Set();
     const writes = value => {
       if (!value || typeof value !== 'object') return;
@@ -174,6 +174,7 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
         if (Array.isArray(child)) child.forEach(writes); else writes(child);
       }
     };
+    writes(item.condition);
     writes(body);
     const entry = exceptionScope(scope);
     exceptionDropWrittenProofs(entry, [{writes:written}]);
@@ -186,7 +187,7 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     // validates its existing facts, but its writes cannot affect this exit.
     const deadBody = exceptionBooleanLiteral(item.condition)?.boolean === false;
     const exit = exceptionBranchScope(deadBody ? scope : entry, condition.test, false, context.definitions);
-    mergeExceptionScopes(scope, [exit], deadBody ? [] : [repeated]);
+    mergeExceptionScopes(scope, [exit], deadBody ? [] : [entry, repeated]);
     g.raw(item.range, parent, first, next - 1); return next;
   }
   failure('capability', 'exception statement kind is not implemented: ' + item.kind);

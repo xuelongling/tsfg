@@ -197,15 +197,33 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     return source->span(parent,first,at-1,p);
   }
   if(kind=="while"){
-    const auto &condition=field(raw,"condition");
-    if(!p.require(string(field(h,"kind"))=="while","loop mapping")||!source->expect(at,"while",p)||!source->expect(at,"(",p)
-      ||!expression(condition,field(h,"condition"),scope,at)||!source->expect(at,")",p))return false;
-    const auto &body=items(field(raw,"body"));
+    const auto &condition=field(raw,"condition"),&bodyNode=field(raw,"body");
+    const auto &body=items(bodyNode);
     if(!p.require(body.size()==1&&string(field(body[0],"kind"))=="block","complete owned loop body"))return false;
-    SourceScope repeated;
-    if(!nested(items(field(body[0],"body")),field(h,"bodyRegion"),"loop",position,repeated))return false;
+    auto entry=scope;
+    std::vector<const Json *> pending{&condition,&bodyNode};
+    while(!pending.empty()){
+      if(!p.step())return false;
+      const auto &value=*pending.back();pending.pop_back();
+      const auto form=field(value,"kind").getAsString();
+      if(form=="assignment"||form=="write"){
+        const auto *target=&field(value,form=="assignment"?"target":"left");
+        while(field(*target,"kind").getAsString()=="group"){
+          if(!p.step())return false;target=&field(*target,"operand");
+        }
+        if(field(*target,"kind").getAsString()=="reference")entry.narrowed.erase(string(field(*target,"symbol")));
+      }
+      if(const auto *object=value.getAsObject())for(const auto &child:*object)pending.push_back(&child.second);
+      if(const auto *array=value.getAsArray())for(const auto &child:*array)pending.push_back(&child);
+    }
+    if(!p.require(string(field(h,"kind"))=="while","loop mapping")||!source->expect(at,"while",p)||!source->expect(at,"(",p)
+      ||!expression(condition,field(h,"condition"),entry,at)||!source->expect(at,")",p))return false;
+    auto repeated=entry;repeated.prefix.clear();repeated.role="loop";
+    repeated.path.push_back(Object{{"statement",int64_t(position)},{"slot","loop"}});
+    if(!region(items(field(body[0],"body")),field(h,"bodyRegion"),repeated,at))return false;
     const auto literal=booleanLiteral(condition,"boolean");
     if(literal!=false){
+      scope.narrowed=std::move(entry.narrowed);
       for(const auto &id:repeated.written)scope.narrowed.erase(id);
       scope.written.insert(repeated.written.begin(),repeated.written.end());
     }
