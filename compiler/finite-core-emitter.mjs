@@ -370,6 +370,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       }
       return api.operation('tsfg_core.'+name,values.map(row=>row.name),values.map(row=>row.type),value.type,'',value.range);
     }
+    function numericCompoundRhs(api,value,checked) {
+      const rhs={name:api.emit(value),type:value.type};
+      if(checked)rhs.name=op(api,'view',[rhs],rhs.type,opAttrs(value),value.range);
+      return rhs;
+    }
     function arrayMutationOperands(api,value) {
       const receiver={name:api.emit(value.target.receiver),type:value.target.receiver.type},
         index={name:api.emit(value.target.index),type:value.target.index.type};
@@ -545,12 +550,13 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const {receiver,index,old}=arrayMutationOperands(api,value),oldType=old.type,
             update=value.kind==='arrayUpdate',rhsType=update?oldType:value.value.type;
           const operator=update?(value.operator==='++'?'+':value.operator==='--'?'-':''):value.operator.slice(0,-1),
-            native=domains.get(oldType).nativeType;
-          if(native==='bool'||value.type!==oldType||
+            native=domains.get(oldType).nativeType,checked=!update&&requiresNumericChecks(value,[oldType,rhsType]);
+          if(checked?domains.get(value.type).nativeType!=='i32':native==='bool'||value.type!==oldType||
             !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
             pending('operation-domain-check mapping',value.range);
-          const rhs=update?api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range):api.emit(value.value);
-          const next=api.operation('tsfg_core.'+scalarOperations[operator],[old.name,rhs],[oldType,rhsType],value.type,'',value.range);
+          const rhs=update?{name:api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range),type:oldType}
+            :numericCompoundRhs(api,value.value,checked);
+          const next=numericOperation(api,value,scalarOperations[operator],[old,rhs],checked);
           writeArraySlot(api,value,receiver,index,{name:next,type:value.type});
           return update&&!value.prefix?old.name:next;
         }
@@ -699,11 +705,10 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
               !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
               pending('operation-domain-check mapping',value.range);
             previous=old.name;
-            let operand=update?api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range):api.emit(value.value);
-            if(checked)operand=op(api,'view',[{name:operand,type:rhsType}],rhsType,
-              opAttrs({semanticType:value.value.semanticType,type:rhsType}),value.value.range);
+            const operand=update?{name:api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range),type:oldType}
+              :numericCompoundRhs(api,value.value,checked);
             ({semanticType,range}=value);
-            rhs={name:numericOperation(api,value,scalarOperations[operator],[old,{name:operand,type:rhsType}],checked),type:value.type};
+            rhs={name:numericOperation(api,value,scalarOperations[operator],[old,operand],checked),type:value.type};
           }
           writeField(api,value,receiver,rhs,semanticType,range);
           return update&&!value.prefix?previous:rhs.name;

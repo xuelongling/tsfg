@@ -56,7 +56,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
   const failedInitializers=new Map(),failedConstructions=new Set(),failedSuperArguments=new Map(),
-    terminalNumericFields=new Set(),terminalNumericConstructions=new Set();
+    terminalNumericUses=new Set(),terminalNumericConstructions=new Set();
   const constructors=[],ordinary=[];
   let contextWrites=new Map(),terminalReads=null;
   function arrayCarrier(id) {
@@ -263,6 +263,13 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       memory.slots.set(slot,new Set([id]));
       return id;
     }
+    function terminalNumericUse(value,path) {
+      if(collectAll||!finiteNumericUse(value)||
+        presence(path+'/old-value','undefined').present&&presence(path+'/value','undefined').present)return null;
+      if(recordReads){charge();terminalNumericUses.add(path);}
+      numericFailure=true;
+      return {terminal:true,trap:path,numeric:true};
+    }
     /** @param {boolean|'initializer'|'superArgument'} [root] */
     function expression(value,path,state,bindings,root=false,directStatement=false) {
       if(!value)return {};charge();
@@ -301,13 +308,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         if(receiver.terminal)return receiver;
         const index=value.target.index?expression(value.target.index,path+'/target/index',state,bindings,root):null;
         if(index?.terminal)return index;
-        let oldLength=null;
+        let oldLength=null,oldStatus;
         const writeBack=(memory,node)=>{
           const length=memory.get(receiver.owner)?.length,overwrite=oldLength!==null&&length!=null&&length>=oldLength;
           return store(value,path,node,memory,receiver,index,overwrite);
         };
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
           const old=path+'/old-value',{status}=load({...value,range:value.target.range},old,state,receiver,index);
+          oldStatus=status;
           oldLength=state.get(receiver.owner)?.length??null;
           // The lexical pass retains every original occurrence. Ordered
           // transfer stops only at a definite old-read trap on the current evaluation path.
@@ -332,6 +340,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         const rhs=value.value?child('value'):{symbol:path};
         if(rhs.terminal)return rhs;
+        if(oldStatus!=='missing'&&value.kind==='arrayCompoundAssignment'){
+          const stop=terminalNumericUse(value,path);if(stop)return stop;
+        }
         if(value.kind==='arrayResizeChecked') {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
           const memory=state.get(receiver.owner);
@@ -503,11 +514,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         const rhs=child('value');
         if(rhs.terminal)return rhs;
-        if(!collectAll&&finiteNumericUse(value)&&(!presence(path+'/old-value','undefined').present||!presence(path+'/value','undefined').present)){
-          if(recordReads){charge();terminalNumericFields.add(path);}
-          numericFailure=true;
-          return {terminal:true,trap:path,numeric:true};
-        }
+        const stop=terminalNumericUse(value,path);if(stop)return stop;
         // The successful assignment yields the RHS Array or view without writing an Array slot.
         return {owner:rhs.owner,offset:rhs.offset,limit:rhs.limit,symbol:path};
       }
@@ -714,7 +721,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   let before;
   do {
     charge();before=ledger();reads.clear();normalReadSources.clear();failedInitializers.clear();failedConstructions.clear();failedSuperArguments.clear();
-    terminalNumericFields.clear();terminalNumericConstructions.clear();
+    terminalNumericUses.clear();terminalNumericConstructions.clear();
     contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of ordered) {
@@ -735,5 +742,5 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
   return {reaching,terminalReads,normalReadSources,failedInitializers,failedConstructions,failedSuperArguments,
-    terminalNumericFields,terminalNumericConstructions};
+    terminalNumericUses,terminalNumericConstructions};
 }

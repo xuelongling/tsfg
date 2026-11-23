@@ -51,7 +51,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   const lexicalWrites=new Map();
   // Core retains the original store instructions across these cuts. Their
   // lexical versions belong to the emitted inventory, outside ordered state.
-  const keepLexicalWrites=Boolean(terminalReads||plan.terminalNumericFields?.size||plan.failedInitializers?.size||
+  const keepLexicalWrites=Boolean(terminalReads||plan.terminalNumericUses?.size||plan.failedInitializers?.size||
     plan.failedConstructions?.size||plan.failedSuperArguments?.size);
   const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepLexicalWrites);
   if(!keepLexicalWrites)for(const [id,version]of lexicalWrites){charge();writes.set(id,version);}
@@ -343,7 +343,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
           return null;
         }
         const rhs=value.kind==='fieldAssignment'?child('value'):null;
-        if(plan.terminalNumericFields?.has(path))stopped=true;
+        if(plan.terminalNumericUses?.has(path))stopped=true;
         if(stopped)return null;
         if(store!==path){access(value,store,state,token,'store');return null;}
         const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
@@ -457,6 +457,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         expression(value.target[name],path+'/target/'+name,state,env);
       if(trapSource===path+'/old-value')stopped=true;
       for(const name of ['index','right','value'])if(value[name])child(name);
+      if(plan.terminalNumericUses?.has(path))stopped=true;
       for(const name of ['arguments','elements'])for(const [index,child] of (value[name]??[]).entries())
         expression(child,path+'/'+name+'/'+index,state,env);
       return null;

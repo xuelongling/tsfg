@@ -176,12 +176,12 @@ function buildPlans(input,context,options,definitions) {
     for(;;) {
       const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge,canTerminateArrayRead);
       arrayReaching=array.reaching;terminalReads=array.terminalReads;
-      if(!arrayReaching.reads.length&&!array.terminalNumericFields.size)break;
+      if(!arrayReaching.reads.length&&!array.terminalNumericUses.size)break;
       // Even skipped stores need lexical versions from the carrier. The
       // ordered field selections continue to govern successful reads.
       const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields,
         failedInitializers:array.failedInitializers,failedConstructions:array.failedConstructions,failedSuperArguments:array.failedSuperArguments,
-        terminalNumericFields:array.terminalNumericFields,terminalNumericConstructions:array.terminalNumericConstructions};
+        terminalNumericUses:array.terminalNumericUses,terminalNumericConstructions:array.terminalNumericConstructions};
       fieldReaching=buildFiniteFieldReaching(hir,fieldPlan,charge,allowCompoundTermination?null:terminalReads);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
         for(const id of read.versions){charge();versions.push(id);}
@@ -205,10 +205,10 @@ function buildPlans(input,context,options,definitions) {
       failedConstructions.sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
       const failedSuperArguments=[];for(const pair of array.failedSuperArguments??[]){charge();failedSuperArguments.push(pair);}
       failedSuperArguments.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
-      const terminalNumericFields=[...array.terminalNumericFields].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
+      const terminalNumericUses=[...array.terminalNumericUses].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
       const terminalNumericConstructions=[...array.terminalNumericConstructions].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
       const current=canonical([rows,fields,aliases,terminal,failedInitializers,failedConstructions,failedSuperArguments,
-        terminalNumericFields,terminalNumericConstructions]);
+        terminalNumericUses,terminalNumericConstructions]);
       if(current===previous)break;previous=current;
       ordered=solve(fieldReaching,{...arrayReaching,normalReadSources:array.normalReadSources},terminalReads);
     }
@@ -574,11 +574,13 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
         copy(old,id,{presentOnly:true});copy(selected.right,id,{gate:old});
         stored=selected.right;whenAbsent=old;
       }else{
-        if(arrayReaching&&terminalReads?.has(old)) {
+        const numeric=finiteNumericUse(v);
+        if(arrayReaching&&(numeric||terminalReads?.has(old))) {
           flow.entry(old,continuation);flow.finish(old,[]);
           continuation=flow.normal(old);dependencies.push(continuation);
         }
-        if(v.kind==='arrayCompoundAssignment')child('value');
+        const rhs=v.kind==='arrayCompoundAssignment'?child('value'):null;
+        if(numeric)for(const input of [old,rhs])requirements.push({node:input,type:i32TypeId,possible:true});
         for(const type of leaves(v.type))insert(id,'actual',type);
       }
       if(representationOnly&&terminalReads.has(old)&&types.get(v.target.type)?.kind==='scalar'){

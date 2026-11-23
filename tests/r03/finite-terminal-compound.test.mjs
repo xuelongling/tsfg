@@ -130,7 +130,7 @@ test('finite field compound evaluates a checked RHS before consuming defined und
   const conditionPath=frame.id+'/body/'+index+'/condition/left',oldNode=plan.nodes.find(row=>row.id===read.node);
   const loopPlan={...plan,nodes:[...plan.nodes,{...oldNode,id:conditionPath+'/old-value'}]};
   const reaching=buildFiniteArrayReaching(modeled,loopPlan,()=>{},()=>false);
-  assert.ok(reaching.terminalNumericFields.has(conditionPath));
+  assert.ok(reaching.terminalNumericUses.has(conditionPath));
   assert.ok(reaching.terminalNumericConstructions.has(frame.construction));
 });
 
@@ -422,6 +422,87 @@ test('finite i32 Array compounds evaluate receiver and index once before old rea
 
 const narrowArray='typed-array-entry/87d0326f6f0e3e1eb887a77b7eb207a938c3ca173f094f8cdb21f1820284a4ad-package.json',
   narrowArrayHash='042eee481c55e941ee47e8ebe284feff0d16621cf37f60c3615d3b247eb9d051';
+test('finite Array compound checks each defined undefined operand before the shared slot writeback',async()=>{
+  const packet=await retainedPacket(narrowArray,narrowArrayHash),fn=packet.payload.functions[0];
+  const source=packet.payload.files.find(row=>row.path===fn.sourcePath),statement=fn.body[4],compound=statement.value,returned=fn.body[5];
+  const start=compound.operatorRange.start,end=returned.range.end;
+  assert.equal(source.content.slice(start,end),'=copied;return narrow[0];');
+  source.content=source.content.slice(0,start)+'+=copied;return narrow[0]'+source.content.slice(end);
+  compound.kind='elementCompoundAssignment';compound.operator='+=';
+  compound.operatorRange.end++;compound.range.end++;statement.range.end++;returned.range.start++;
+  for(const range of [compound.value.range,returned.value.range,returned.value.receiver.range,returned.value.index.range]){
+    range.start++;range.end++;
+  }
+  const {hir,context,publication}=buildDerivedPacket(packet,source),id=hir.functions[0].id;
+  const memory=id+'/body/4/expression',plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached;
+  const actual=node=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===node).domainId).actualTypes;
+  const old=plan.arrayReaching.reads.find(row=>row.node===memory+'/old-value'),
+    later=plan.arrayReaching.reads.find(row=>row.node===id+'/body/5/value');
+  const undefinedType=sha256('tsfg.type\0undefined');
+  assert.equal(old.status,'proven');
+  assert.deepEqual(actual(old.node),[undefinedType]);
+  assert.deepEqual(actual(memory+'/value'),[undefinedType]);
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const matches=(op,range)=>lines.filter(line=>line.includes('"tsfg_core.'+op+'"(')&&line.includes(at(range)));
+  const [read]=matches('domain.array_read',compound.target.range),[marker]=matches('domain.view',compound.value.range);
+  const checks=matches('domain.numeric_use',compound.range);
+  const [add]=matches('add',compound.range),[store]=matches('domain.array_store',compound.range);
+  assert.ok(read&&marker&&add&&store);
+  assert.equal(checks.length,2);
+  const [,oldValue,slot]=read.match(/(%v\d+) = "tsfg_core\.domain\.array_read"\(([^)]*)\)/u)??[];
+  const markerValue=marker.trim().split(' = ')[0];
+  assert.ok(slot&&oldValue&&lines.indexOf(read)<lines.indexOf(marker)&&lines.indexOf(marker)<lines.indexOf(checks[0]));
+  const states=checks.map((line,index)=>{
+    assert.ok(line.includes(`numeric_group = "${memory}"`)&&line.includes(`numeric_operand = ${index} : i32`));
+    assert.ok(line.includes(`(${index===0?oldValue:markerValue})`));
+    const [,label]=line.match(/\[\^(bb\d+)\]/u)??[];
+    const block=lines.findIndex(candidate=>candidate.trim().startsWith('^'+label+'('));
+    assert.ok(block>=0);
+    const [,value]=lines[block].match(/\((%v\d+): i32\)/u)??[];
+    return {block,value};
+  });
+  assert.equal(lines[states[0].block+1],checks[1]);
+  assert.equal(lines[states[1].block+1],add);
+  assert.ok(add.includes(`(${states[0].value}, ${states[1].value})`));
+  assert.ok(store.includes(`(${slot}, ${add.trim().split(' = ')[0]})`)&&store.includes(memory+'/array-version'));
+  assert.deepEqual(actual(memory),[]);
+  assert.deepEqual(actual(id+'/return'),[]);
+  assert.equal(later.status,'pending');
+  assert.deepEqual(later.sources,[]);
+});
+
+test('finite undefined Array compound retains a same-slot RHS write before the numeric check',async()=>{
+  const packet=await retainedPacket(narrowArray,narrowArrayHash),fn=packet.payload.functions[0];
+  const file=packet.payload.files.find(row=>row.path===fn.sourcePath),[copied,statement,returned]=fn.body.slice(3);
+  const original=statement.value,read=returned.value,start=copied.range.start-'const '.length,end=returned.range.end;
+  const replacement='narrow[0]+=(narrow[0]=1);return narrow[0];';
+  assert.equal(file.content.slice(start,end),'const copied:i32=narrow[0];narrow[0]=copied;return narrow[0];');
+  file.content=file.content.slice(0,start)+replacement.padEnd(end-start)+file.content.slice(end);
+  const atOffset=(first,last)=>({start:start+first,end:start+last});
+  const slot=(template,offset)=>({...template,range:atOffset(offset,offset+9),
+    receiver:{...template.receiver,range:atOffset(offset,offset+6)},index:{...template.index,range:atOffset(offset+7,offset+8)}});
+  const inner={...original,range:atOffset(12,23),operatorRange:atOffset(21,22),target:slot(original.target,12),
+    value:{kind:'numericLiteral',type:'i32',flowType:'i32',token:'1',decimal:'1',range:atOffset(22,23)}};
+  const outer={...original,kind:'elementCompoundAssignment',operator:'+=',range:atOffset(0,24),operatorRange:atOffset(9,11),
+    target:slot(original.target,0),value:{kind:'parentheses',type:'i32',flowType:'i32',range:atOffset(11,24),expression:inner}};
+  fn.bindings=fn.bindings.filter(row=>row.id!==copied.binding);
+  fn.body.splice(3,3,{...statement,range:atOffset(0,25),value:outer},
+    {...returned,range:atOffset(25,replacement.length),value:slot(read,32)});
+  const {hir,context,publication}=buildDerivedPacket(packet,file),id=hir.functions[0].id;
+  const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached,site=id+'/body/3/expression';
+  const actual=node=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===node).domainId).actualTypes;
+  assert.deepEqual(actual(site+'/old-value'),[sha256('tsfg.type\0undefined')]);
+  assert.deepEqual(actual(site+'/value'),[scalarTypeIds.i32]);
+  assert.deepEqual(actual(site),[]);
+  assert.deepEqual(actual(id+'/return'),[]);
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const readLine=lines.findIndex(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes(at(outer.target.range)));
+  const rhsStore=lines.findIndex(line=>line.includes('"tsfg_core.domain.array_store"')&&line.includes(at(inner.range)));
+  const checked=lines.findIndex(line=>line.includes('"tsfg_core.domain.numeric_use"')&&line.includes(at(outer.range)));
+  const writeback=lines.findIndex(line=>line.includes('"tsfg_core.domain.array_store"')&&line.includes(at(outer.range)));
+  assert.ok(readLine>=0&&readLine<rhsStore&&rhsStore<checked&&checked<writeback);
+});
+
 function arrayCoalesceAt(file,assignment) {
   const start=assignment.operatorRange.start,end=assignment.range.end;
   file.content=file.content.slice(0,start)+'??=2'.padEnd(end-start)+file.content.slice(end);
