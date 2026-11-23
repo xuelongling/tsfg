@@ -186,8 +186,11 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     check(condition.type === 'bool', 'type'); next = g.expect(condition.next, ')');
     const repeated = exceptionBranchScope(entry, condition.test, true, context.definitions);
     next = verifyExceptionStatement(body[0], item.range, repeated, context, next, depth + 1);
-    const exit = exceptionBranchScope(entry, condition.test, false, context.definitions);
-    mergeExceptionScopes(scope, [exit], [repeated]);
+    // A direct false condition has no backedge. The body still owns and
+    // validates its existing facts, but its writes cannot affect this exit.
+    const deadBody = literalCondition(item.condition) === false;
+    const exit = exceptionBranchScope(deadBody ? scope : entry, condition.test, false, context.definitions);
+    mergeExceptionScopes(scope, [exit], deadBody ? [] : [repeated]);
     g.raw(item.range, parent, first, next - 1); return next;
   }
   failure('capability', 'exception statement kind is not implemented: ' + item.kind);

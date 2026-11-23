@@ -163,6 +163,71 @@ test('dynamic exception Core condition retains both continuations',async()=>{
   assert.doesNotMatch(core,/"tsfg_eh\.unreachable"\(/);
 });
 
+test('false exception loop preserves a narrowed binding and checks its dead assignment',async()=>{
+  const root=new URL('../fixtures/r03/m21-exception/controls/module-initialization/',import.meta.url);
+  const [request,response,origin]=await Promise.all(['request.json','response.json','origin.json'].map(file=>readFile(new URL(file,root))));
+  const retained=await importCapturedFrontendResponse(request,response,JSON.parse(origin.toString('utf8')));
+  assert.equal(retained.status,'ok');
+
+  // A synthetic extension of the retained narrowed return. Every existing
+  // reference keeps its symbol and its original text after moving the range.
+  async function insertLoop({dynamic=false,writes=true,malformed=false}={}){
+    const framed={snapshot:structuredClone(retained.snapshot)};
+    reframeColdSource(framed,(input,facts,exports)=>{
+      const path='/src/worker.ts',file=input.files.find(row=>row.path===path),fn=facts.functions.find(row=>row.sourcePath===path);
+      const guard=fn.body[0].exception.catchClause.block.body[0],branch=guard.thenBody[0],returned=branch.body[0];
+      assert.equal(returned.kind,'return');assert.equal(returned.expression.type,'bool');
+      const start=returned.range.start,conditionText=dynamic?'probe(value)':'false',assignment=writes?` caught = ${malformed?'ghost':'value'};`:'';
+      const inserted=` while (${conditionText}) {${assignment} }`;
+      const span=(a,b)=>({start:start+a,end:start+b}),conditionStart=inserted.indexOf('(')+1,conditionEnd=inserted.lastIndexOf(')');
+      const open=inserted.indexOf('{');
+      /** @param {unknown} value */
+      function shift(value){
+        if(!value||typeof value!=='object')return;
+        if('start' in value&&'end' in value&&typeof value.start==='number'&&typeof value.end==='number'){
+          if(value.start>=start)value.start+=inserted.length;
+          if(value.end>start)value.end+=inserted.length;
+        }else for(const child of Object.values(value))shift(child);
+      }
+      const range=span(conditionStart,conditionEnd);
+      const value=fn.body[0].exception.tryBlock.body[0].expression;
+      for(const rows of [[fn],facts.symbols,facts.modules,exports])for(const row of rows)if(row.sourcePath===path)shift(row);
+      file.content=file.content.slice(0,start)+inserted+file.content.slice(start);
+      const call=facts.functions.find(row=>row.sourcePath==='/src/app.ts').body[0].expression;
+      const condition=dynamic?{...call,range,arguments:[{...value,range:span(conditionStart+'probe('.length,conditionEnd-1)}]}
+        :{kind:'boolean',type:'bool',boolean:false,range};
+      const body=[];
+      if(writes){
+        const equals=inserted.indexOf('=',open),semicolon=inserted.indexOf(';',open);
+        body.push({kind:'assignment',range:span(open+1,semicolon+1),target:{...returned.expression,type:'unknown',range:span(open+1,open+8)},
+          value:{...value,range:span(equals+1,semicolon)}});
+      }
+      branch.body.unshift({kind:'while',condition,range:span(0,inserted.length),body:[{
+        kind:'block',range:span(conditionEnd+1,inserted.length),...(writes?{body}:{})}]});
+    });
+    const packet=framed.snapshot.capture;
+    return importCapturedFrontendResponse(Buffer.from(packet.request),Buffer.from(packet.response),framed.snapshot.sourceOrigin);
+  }
+  const accepted=await insertLoop();
+  assert.equal(accepted.status,'ok',JSON.stringify(accepted));
+  const built=buildHir(accepted.snapshot);
+  assert.equal(built.status,'ok',JSON.stringify(built));
+  const probe=built.hir.functions.find(row=>row.name==='probe');
+  const [loop,returned]=probe.body.body[0].catchClause.region.body[0].thenRegion.body;
+  assert.equal(loop.kind,'while');assert.equal(loop.condition.value,false);
+  assert.equal(loop.bodyRegion.body.length,1);
+  assert.equal(returned.value.type,hash('tsfg.type\0bool'));
+  assert.match(lowerFormalHir(built.hir),/cf\.cond_br /);
+  const unchanged=await insertLoop({dynamic:true,writes:false});
+  assert.equal(unchanged.status,'ok',JSON.stringify(unchanged));
+  const dynamic=await insertLoop({dynamic:true});
+  assert.equal(dynamic.status,'error');
+  assert.match(JSON.stringify(dynamic),/module occurrence has foreign ownership or lacks its path proof/);
+  const malformed=await insertLoop({malformed:true});
+  assert.equal(malformed.status,'error');
+  assert.match(JSON.stringify(malformed),/module reference name must retain its original spelling/);
+});
+
 function lineChange(core,name,ordinal,change){
   let count=0;const lines=core.split('\n');
   const index=lines.findIndex(line=>line.includes('"'+name+'"')&&++count===ordinal);
@@ -279,11 +344,12 @@ test('C++ identifier property data matches the exact language Unicode properties
 
 function reframeColdSource(hir,change){
   const snapshot=hir.snapshot,request=JSON.parse(snapshot.capture.request),response=JSON.parse(snapshot.capture.response);
-  change(request.input,response.payload.facts);
+  change(request.input,response.payload.facts,response.payload.exports);
   const input={...request.input,files:request.input.files.map(({path,content})=>({path,content})).sort((a,b)=>a.path<b.path?-1:1)};
   const inputIdentity=hash(canonical(input));snapshot.identityInput=input;snapshot.inputIdentity=inputIdentity;hir.inputIdentity=inputIdentity;
   const sources=input.files.filter(file=>!file.path.endsWith('.d.ts')).map(file=>({...file,hash:hash(file.content),length:file.content.length,positionUnit:'utf16'}));
   hir.sources=sources;snapshot.sources=structuredClone(sources);snapshot.facts=structuredClone(response.payload.facts);
+  snapshot.exports=structuredClone(response.payload.exports);
   response.payload.inputIdentity=inputIdentity;response.payload.files=input.files.map(file=>({path:file.path,digest:hash(file.content),
     byteLength:Buffer.byteLength(file.content),length:file.content.length,positionUnit:'utf16'}));
   snapshot.capture.request=canonical(request);response.requestId=hash('tsfg.exception-facts.request.v1\0'+snapshot.capture.request);

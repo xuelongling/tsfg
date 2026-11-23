@@ -197,15 +197,19 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     return source->span(parent,first,at-1,p);
   }
   if(kind=="while"){
+    const auto &condition=field(raw,"condition");
     if(!p.require(string(field(h,"kind"))=="while","loop mapping")||!source->expect(at,"while",p)||!source->expect(at,"(",p)
-      ||!expression(field(raw,"condition"),field(h,"condition"),scope,at)||!source->expect(at,")",p))return false;
+      ||!expression(condition,field(h,"condition"),scope,at)||!source->expect(at,")",p))return false;
     const auto &body=items(field(raw,"body"));
     if(!p.require(body.size()==1&&string(field(body[0],"kind"))=="block","complete owned loop body"))return false;
     SourceScope repeated;
     if(!nested(items(field(body[0],"body")),field(h,"bodyRegion"),"loop",position,repeated))return false;
-    for(const auto &id:repeated.written)scope.narrowed.erase(id);
-    scope.written.insert(repeated.written.begin(),repeated.written.end());
-    if(string(field(field(raw,"condition"),"kind"))=="boolean"&&field(field(raw,"condition"),"boolean").getAsBoolean()==true)scope.normal=false;
+    const auto literal=string(field(condition,"kind"))=="boolean"?field(condition,"boolean").getAsBoolean():std::nullopt;
+    if(literal!=false){
+      for(const auto &id:repeated.written)scope.narrowed.erase(id);
+      scope.written.insert(repeated.written.begin(),repeated.written.end());
+    }
+    if(literal==true)scope.normal=false;
     return source->span(parent,first,at-1,p);
   }
   return p.require(false,"unrepresented actual Source statement");
