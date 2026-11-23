@@ -452,8 +452,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,root);
         if(receiver.terminal)return receiver;
         const rhs=child('value');
-        // Replacing a nominal field does not write an independently tracked Array slot.
-        return rhs.terminal?rhs:{symbol:path};
+        // The successful assignment yields the RHS Array or view without writing an Array slot.
+        return rhs.terminal?rhs:{owner:rhs.owner,offset:rhs.offset,limit:rhs.limit,symbol:path};
       }
       if(value.kind==='construct'||value.kind==='superConstruct') {
         const superCall=value.kind==='superConstruct';

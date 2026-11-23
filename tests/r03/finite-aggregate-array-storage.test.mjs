@@ -197,6 +197,34 @@ const edges=[
   ['value-snapshot','e31423fa1b98e6ef87f55e582fcd6d7993052e7a63b8f35b21bfa93c478bc9c0',
     '79474a74f0bbdb30ae436af9430fcee9e3b4bf86a6808fb2865e0a703f30de37']
 ];
+test('a ReadSpan field assignment retains its RHS cell versions and checked bounds in a component model',async()=>{
+  const [name,packetHash,sourceHash]=edges[2];
+  const {built}=await actual('./testdata/typed-array-aggregate-storage/'+name+'-package.json',packetHash,sourceHash);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const {hir}=built,fn=hir.functions.find(row=>row.name==='run');
+  const [prefix,assignment,,returned]=fn.body.slice(-4);
+  const write=assignment.expression,span=write.value,one=span.arguments[2];
+  assert.equal(prefix.binding.name,'b');
+  assert.equal(write.kind,'fieldAssignment');
+  assert.equal(span.target,hir.intrinsics.readSpan.id);
+  assert.equal(returned.value.kind,'arrayReadChecked');
+  assert.equal(returned.value.index.decimal,'0');
+  assert.equal(one.decimal,'1');
+
+  // Model a two-cell backing and a one-cell view starting at the second cell.
+  // The retained Source package itself reads the original copied field.
+  const at=fn.body.length-4,owner=fn.id+'/body/'+at+'/initializer';
+  const backing={...prefix,initializer:{...prefix.initializer,elements:[prefix.initializer.elements[0],prefix.initializer.elements[0]]}};
+  const view={...span,arguments:[span.arguments[0],one,one]};
+  for(const receiver of [view,{...write,value:view}])for(const index of [returned.value.index,one]){
+    const tail={...returned,value:{...returned.value,receiver,index}};
+    const model={...hir,functions:hir.functions.map(row=>row===fn?{...row,body:[...fn.body.slice(0,at),backing,tail]}:row)};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>true);
+    const read=reaching.reads.find(row=>row.node===fn.id+'/body/'+(at+1)+'/value');
+    assert.deepEqual([read?.status,read?.owner,read?.versions],index===one?
+      ['missing',owner,[]]:['proven',owner,[owner+'/initial/1/array-version']],receiver.kind);
+  }
+});
 for(const [name,packetHash,sourceHash]of edges)test('official selected aggregate '+name+' keeps its storage boundary',async()=>{
   const {context,publication,built}=await actual('./testdata/typed-array-aggregate-storage/'+name+'-package.json',packetHash,sourceHash);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
