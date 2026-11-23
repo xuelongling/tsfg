@@ -24,6 +24,45 @@ test "parallel String roots retain aliases before overwriting destinations" {
     try std.testing.expect(try owner.heap.sameObject(roots.registers[0].?, roots.registers[2].?));
 }
 
+test "unchanged String branch roots fit a full table and mixed transfer rolls back" {
+    const owner = try values.Owner.create(a);
+    defer owner.release();
+    var roots = try Roots.init(a, owner, 3, 3);
+    defer roots.deinit(a);
+    for ([_]u16{ 0x41, 0x42, 0x43 }, 0..) |unit, register|
+        roots.install(@intCast(register), try owner.heap.createString(&.{unit}, .persistent));
+    const original = roots.registers[0..3].*;
+    const parameters = [_]@import("bytecode_model.zig").Parameter{
+        .{ .register = 0, .type_code = 14 }, .{ .register = 1, .type_code = 14 }, .{ .register = 2, .type_code = 14 },
+    };
+
+    var aliases: std.ArrayList(values.Handle) = .empty;
+    defer aliases.deinit(a);
+    defer for (aliases.items) |alias| owner.heap.release(alias) catch unreachable;
+    while (true) {
+        const stats = try heap_testing.rootStats(&owner.heap);
+        if (stats.count == stats.capacity) break;
+        try aliases.append(a, try owner.heap.retain(original[0].?, .persistent));
+    }
+    owner.budget.limit = owner.budget.used;
+    try roots.branch(&.{0}, parameters[0..1]);
+    try std.testing.expectEqual(original, roots.registers[0..3].*);
+
+    const vacant = aliases.pop() orelse return error.NoSpareRootSlot;
+    try owner.heap.release(vacant);
+    try std.testing.expectError(error.OutOfMemory, roots.branch(&.{ 1, 0, 2 }, &parameters));
+    try std.testing.expectEqual(original, roots.registers[0..3].*);
+    const reused = try owner.heap.retain(original[0].?, .persistent);
+    try std.testing.expectEqual(vacant.slot, reused.slot);
+    try owner.heap.release(reused);
+
+    owner.budget.limit = std.math.maxInt(usize);
+    try roots.branch(&.{ 1, 0, 2 }, &parameters);
+    try std.testing.expectEqual(@as(u16, 0x42), try owner.heap.readStringCodeUnit(roots.registers[0].?, 0));
+    try std.testing.expectEqual(@as(u16, 0x41), try owner.heap.readStringCodeUnit(roots.registers[1].?, 0));
+    try std.testing.expectEqual(original[2], roots.registers[2]);
+}
+
 test "returned String remains valid after activation and instance owners release" {
     const owner = try values.Owner.create(a);
     var roots = try Roots.init(a, owner, 1, 0);

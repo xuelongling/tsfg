@@ -30,8 +30,8 @@ pub const Roots = struct {
         const kept = try self.owner.heap.retain(source, .persistent);
         self.install(register, kept);
     }
-    // Reserve every edge source before overwriting any destination. Failure
-    // releases all temporary roots and leaves the original activation intact.
+    // Reserve each changed String destination before overwriting any register.
+    // Failure releases all staged roots and leaves the original activation intact.
     pub fn branch(self: *Roots, arguments: []const u16, parameters: anytype) !void {
         var prepared: usize = 0;
         errdefer for (self.transfer[0..prepared]) |*root| {
@@ -39,11 +39,12 @@ pub const Roots = struct {
             root.* = null;
         };
         for (arguments, parameters, 0..) |argument, parameter, i| {
-            if (parameter.type_code == 14) self.transfer[i] = try self.owner.heap.retain(self.registers[argument].?, .persistent);
+            if (parameter.type_code == 14 and argument != parameter.register)
+                self.transfer[i] = try self.owner.heap.retain(self.registers[argument].?, .persistent);
             prepared += 1;
         }
-        for (parameters, 0..) |parameter, i| if (parameter.type_code == 14) {
-            self.install(parameter.register, self.transfer[i].?);
+        for (parameters, 0..) |parameter, i| if (self.transfer[i]) |root| {
+            self.install(parameter.register, root);
             self.transfer[i] = null;
         };
     }
