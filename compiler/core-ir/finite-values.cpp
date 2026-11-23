@@ -114,6 +114,91 @@ bool refinement(ModuleProof &proof, mlir::Operation *op, mlir::func::FuncOp fn, 
   }
   return authorized || proof.reject("refinement has no matching dominating original presence edge");
 }
+bool compoundToken(ModuleProof &proof,llvm::StringRef path,uint32_t begin,uint32_t end,llvm::StringRef name) {
+  static const std::map<llvm::StringRef,llvm::StringRef> tokens={
+    {"tsfg_core.add","+="},{"tsfg_core.sub","-="},{"tsfg_core.mul","*="},
+    {"tsfg_core.div","/="},{"tsfg_core.rem","%="},{"tsfg_core.shl","<<="},
+    {"tsfg_core.shr",">>="},{"tsfg_core.ushr",">>>="},{"tsfg_core.and","&="},
+    {"tsfg_core.or","|="},{"tsfg_core.xor","^="}};
+  const auto selected=tokens.find(name);
+  if(selected==tokens.end()||begin>=end)return false;
+  for(const auto &source:*proof.sources.getAsArray()) {
+    if(!proof.charge())return false;
+    const auto &row=*source.getAsObject();if(string(row,"path")!=path)continue;
+    const auto text=*row.getString("content");
+    size_t at=0,first=llvm::StringRef::npos;uint32_t offset=0,point=0;
+    while(offset<end&&at<text.size()) {
+      if(offset==begin)first=at;
+      if(!proof.charge()||!arrays::ownerproof::jsondetail::nextUtf8(text,at,point))return false;
+      offset+=point>65535?2:1;
+    }
+    if(first==llvm::StringRef::npos||offset!=end)return false;
+    const auto gap=text.slice(first,at);
+    const auto line=[](uint32_t c){return c==10||c==13||c==0x2028||c==0x2029;};
+    const auto space=[&](uint32_t c){return line(c)||c==9||c==11||c==12||c==32||c==0xa0||c==0x1680||
+      (c>=0x2000&&c<=0x200a)||c==0x202f||c==0x205f||c==0x3000||c==0xfeff;};
+    at=0;bool matched=false;
+    while(at<gap.size()) {
+      if(!proof.charge())return false;
+      const auto rest=gap.drop_front(at);
+      if(rest.starts_with("/*")) {
+        const auto close=rest.find("*/",2);if(close==llvm::StringRef::npos)return false;
+        if(!proof.charge(close/64+1))return false;at+=close+2;
+      }else if(rest.starts_with("//")) {
+        at+=2;bool ended=false;
+        while(at<gap.size()) {
+          if(!proof.charge()||!arrays::ownerproof::jsondetail::nextUtf8(gap,at,point))return false;
+          if(line(point)){ended=true;break;}
+        }
+        if(!ended)return false;
+      }else if(!matched&&rest.starts_with(selected->second)) {
+        matched=true;at+=selected->second.size();
+      }else if(!arrays::ownerproof::jsondetail::nextUtf8(gap,at,point)||!space(point))return false;
+    }
+    return matched;
+  }
+  return false;
+}
+bool numericFieldAssignment(ModuleProof &proof,mlir::func::FuncOp fn,mlir::DominanceInfo &dominance,
+    mlir::Operation *consumer,mlir::Value oldValue,mlir::Value rightValue,llvm::StringRef group,const Object *rhs) {
+  auto *read=oldValue.getDefiningOp();
+  if(!read||read->getName().getStringRef()!="tsfg_core.domain.field_read"||read->getNumOperands()!=1||
+      !anchor(proof,read,fn)||read->getAttr("tsfg_source.start")!=consumer->getAttr("tsfg_source.start")||
+      consumer->getNumResults()!=1||!rhs)return false;
+  uint32_t begin=0,end=0;
+  if(!unsignedInteger(*rhs,"start",begin)||!unsignedInteger(*rhs,"end",end)||begin>=end||
+      end!=consumer->getAttrOfType<mlir::IntegerAttr>("tsfg_source.end").getInt()||
+      !compoundToken(proof,attr(fn,"tsfg_source.path"),read->getAttrOfType<mlir::IntegerAttr>("tsfg_source.end").getInt(),
+        begin,consumer->getName().getStringRef()))return false;
+  auto *right=rightValue.getDefiningOp();
+  if(!right||right->getName().getStringRef()!="tsfg_core.domain.view"||right->getNumOperands()!=1||
+      right->getNumResults()!=1||right->getOperand(0).getType()!=rightValue.getType()||!anchor(proof,right,fn)||
+      attr(right,"view_type")!=hash(std::string("tsfg.type\0i32",13))||
+      right->getAttrOfType<mlir::IntegerAttr>("tsfg_source.start").getInt()!=begin||
+      right->getAttrOfType<mlir::IntegerAttr>("tsfg_source.end").getInt()!=end||
+      !dominance.properlyDominates(read,right))return false;
+  // The explicit RHS value can refer to an earlier local definition. Actual
+  // operations at its Source occurrence must still follow the old field read.
+  for(auto &block:fn.getBody())for(auto &operation:block) {
+    if(!proof.charge())return false;
+    const auto start=operation.getAttrOfType<mlir::IntegerAttr>("tsfg_source.start"),
+      stop=operation.getAttrOfType<mlir::IntegerAttr>("tsfg_source.end");
+    if(start&&stop&&start.getInt()>=begin&&stop.getInt()<=end&&
+        !dominance.properlyDominates(read,&operation))return false;
+  }
+  auto result=consumer->getResult(0);auto *store=consumer->getNextNode();
+  if(store&&store->getName().getStringRef()=="tsfg_core.domain.view"&&store->getNumOperands()==1&&
+      store->getOperand(0)==result&&store->getNumResults()==1&&
+      store->getAttr("tsfg_source.start")==consumer->getAttr("tsfg_source.start")&&
+      store->getAttr("tsfg_source.end")==consumer->getAttr("tsfg_source.end")) {
+    result=store->getResult(0);store=store->getNextNode();
+  }
+  return store&&store->getName().getStringRef()=="tsfg_core.domain.field_store"&&store->getNumOperands()==2&&
+    store->getOperand(0)==read->getOperand(0)&&store->getOperand(1)==result&&
+    attr(store,"member")==attr(read,"member")&&attr(store,"memory_node")==group.str()+"/writeback"&&
+    store->getAttr("tsfg_source.start")==consumer->getAttr("tsfg_source.start")&&
+    store->getAttr("tsfg_source.end")==consumer->getAttr("tsfg_source.end");
+}
 bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
   const auto target=hash(std::string("tsfg.type\0i32",13)), absent=hash(std::string("tsfg.type\0undefined",19));
   const auto *input=domain(proof,op->getOperand(0).getType());
@@ -130,13 +215,20 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
   const auto arity=op->getAttrOfType<mlir::IntegerAttr>("numeric_arity").getInt();
   if(!(arity==1?unary:binary).count(name))return proof.reject("numeric use has no selected i32 numeric consumer");
   const auto start=op->getAttr("tsfg_source.start"),end=op->getAttr("tsfg_source.end");
-  const auto *expressions=proof.plan.getAsObject()->getArray("expressions");bool joined=false;
+  const auto *expressions=proof.plan.getAsObject()->getArray("expressions");bool joined=false,fieldAssignment=false;
+  const auto function=attr(fn,"tsfg_core.function_id"),right=group+"/value";
+  const Object *rhs=nullptr;bool repeatedRhs=false;
   if(expressions)for(const auto &entry:*expressions) {
     if(!proof.charge())return false;const auto *row=entry.getAsObject();
-    if(!row||string(*row,"id")!=group)continue;
+    if(!row)continue;const auto id=string(*row,"id");
+    if(id==right&&string(*row,"functionId")==function) {
+      repeatedRhs|=rhs!=nullptr;rhs=row;
+    }
+    if(id!=group)continue;
     const auto *range=row->getObject("range");
-    joined=!joined&&string(*row,"functionId")==attr(fn,"tsfg_core.function_id")&&
-      string(*row,"kind")== (arity==1?"unary":"binary")&&range&&
+    const auto kind=string(*row,"kind");fieldAssignment=arity==2&&kind=="fieldAssignment";
+    joined=!joined&&string(*row,"functionId")==function&&
+      (kind==(arity==1?"unary":"binary")||fieldAssignment)&&range&&
       range->getInteger("start")==llvm::cast<mlir::IntegerAttr>(start).getInt()&&
       range->getInteger("end")==llvm::cast<mlir::IntegerAttr>(end).getInt();
     if(!joined)return proof.reject("numeric use expression/function/full-range join differs");
@@ -149,7 +241,7 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
     first=prior;
   }
   mlir::DominanceInfo dominance(fn);std::map<unsigned,mlir::Value> checked;auto *cursor=first;
-  int64_t previous=-1;
+  int64_t previous=-1;mlir::Value oldInput,rightInput;
   while(cursor->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
     if(!proof.charge())return false;
     const auto index=cursor->getAttrOfType<mlir::IntegerAttr>("numeric_operand").getInt();
@@ -161,6 +253,8 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
     auto *next=cursor->getSuccessor(0);
     if(next->empty()||next->getSinglePredecessor()!=cursor->getBlock())
       return proof.reject("numeric success carrier cannot have another incoming edge");
+    if(index==0)oldInput=cursor->getOperand(0);
+    if(index==1)rightInput=cursor->getOperand(0);
     checked.emplace(unsigned(index),next->getArgument(0));previous=index;cursor=&next->front();
   }
   if(cursor->getName().getStringRef()!=name||cursor->getNumOperands()!=unsigned(arity)||
@@ -181,6 +275,10 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
     }else if(typeCode(cursor->getOperand(i).getType())!=1||!dominance.dominates(cursor->getOperand(i),first))
       return proof.reject("numeric operand evaluation must precede every consumption check");
   }
+  if(fieldAssignment&&first==op&&(repeatedRhs||!numericFieldAssignment(proof,fn,dominance,cursor,
+      oldInput?oldInput:cursor->getOperand(0),rightInput?rightInput:cursor->getOperand(1),
+      group,rhs?rhs->getObject("range"):nullptr)))
+    return proof.reject("numeric field assignment requires its original token, ordered RHS and same field writeback");
   // These joins prove the numeric IR group and complete producer anchor. The
   // Core source catalogue is not an independent TypeScript AST checker.
   return true;
