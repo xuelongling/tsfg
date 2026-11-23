@@ -116,6 +116,63 @@ test('grouped exception typeof while narrows the boolean exit edge',async()=>{
   assert.match(lowerFormalHir(built.hir),/"tsfg_eh\.type_test"[\s\S]*cf\.cond_br/u);
 });
 
+test('exception try only joins normally completing binding proofs',async()=>{
+  const derive=catchThrows=>derivedException('m21-exception/corpus/01',(payload,file)=>{
+    const body=payload.facts.functions[0].body[0].exception.catchClause.block.body;
+    const [guard,rethrow]=body,[block]=guard.thenBody,[returned]=block.body;
+    const start=guard.range.start-1,end=rethrow.range.end;
+    const conditionSource=file.content.slice(guard.condition.range.start,guard.condition.range.end);
+    const throwSource=file.content.slice(rethrow.range.start,rethrow.range.end);
+    const returnSource=file.content.slice(returned.range.start,returned.range.end);
+    const attempt=' try { if ('+conditionSource.replace('===','!==')+') {'+throwSource+' } }';
+    const handler=catchThrows?' catch {'+throwSource+' }':' catch { }';
+    const replacement=attempt+handler+returnSource;
+    file.content=file.content.slice(0,start)+replacement+file.content.slice(end);
+    shiftSourceSpans(payload,file.path,end,replacement.length-(end-start));
+
+    const range=(first,last)=>({start:start+first,end:start+last});
+    const move=(old,offset)=>({start:old.start+offset,end:old.end+offset});
+    const throwAt=at=>{
+      const offset=start+at-rethrow.range.start;
+      return {...rethrow,range:move(rethrow.range,offset),
+        expression:{...rethrow.expression,range:move(rethrow.expression.range,offset)}};
+    };
+    const original=guard.condition,conditionOffset=start+attempt.indexOf('typeof')-original.range.start;
+    const condition={...original,operator:'!==',range:move(original.range,conditionOffset),
+      operand:{...original.operand,range:move(original.operand.range,conditionOffset)},
+      typeTest:{...original.typeTest,typeofRange:move(original.typeTest.typeofRange,conditionOffset),
+        tagRange:move(original.typeTest.tagRange,conditionOffset)}};
+    const abrupt=attempt.indexOf(throwSource),blockEnd=abrupt+throwSource.length+2,catchEnd=attempt.length+handler.length;
+    const returnOffset=start+catchEnd-returned.range.start,expression=returned.expression;
+    const nextReturn={...returned,range:range(catchEnd,replacement.length),
+      expression:{...expression,range:move(expression.range,returnOffset),
+        left:{...expression.left,range:move(expression.left.range,returnOffset),
+          receiver:{...expression.left.receiver,range:move(expression.left.receiver.range,returnOffset)}},
+        right:{...expression.right,range:move(expression.right.range,returnOffset)}}};
+    body.splice(0,2,{kind:'try',range:range(0,catchEnd),exception:{
+      tryBlock:{range:range(4,attempt.length),body:[
+        {kind:'if',range:range(attempt.indexOf('if'),blockEnd),condition,thenBody:[
+          {kind:'block',range:range(abrupt-2,blockEnd),body:[throwAt(abrupt)]}]}]},
+      catchClause:{range:range(attempt.length,catchEnd),block:{range:range(attempt.length+6,catchEnd),
+        body:catchThrows?[throwAt(attempt.length+8)]:[]}}}},nextReturn);
+  });
+  const imported=await derive(true);
+  assert.equal(imported.status,'ok',JSON.stringify(imported));
+  const built=buildHir(imported.snapshot);
+  assert.equal(built.status,'ok',JSON.stringify(built));
+  const [attempt,after]=built.hir.functions[0].body.body[0].catchClause.region.body;
+  const guard=attempt.tryRegion.body[0];
+  assert.equal(guard.condition.operator,'!==');
+  assert.equal(attempt.catchClause.region.body[0].kind,'throw');
+  assert.equal(guard.condition.operand.binding,after.value.right.binding);
+  assert.equal(after.value.right.type,hash('tsfg.type\0bool'));
+  assert.match(lowerFormalHir(built.hir),/"tsfg_eh\.type_test"[\s\S]*cf\.cond_br/u);
+
+  const normalCatch=await derive(false);
+  assert.equal(normalCatch.status,'error');
+  assert.match(normalCatch.diagnostics[0].message,/same-symbol path proof/u);
+});
+
 test('exception typeof while rejects either claimed type in a contradictory body',async()=>{
   const derive=claimed=>derivedException('m21-exception/corpus/01',(payload,file)=>{
     const guard=payload.facts.functions[0].body[0].exception.catchClause.block.body[0];

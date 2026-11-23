@@ -20,6 +20,25 @@ static bool branchTypeProof(Program &p,const Json &condition,SourceScope &onTrue
   if(field(*operand,"type").getAsString()=="bool")negative.never.insert(id);
   return true;
 }
+static bool joinNormalTypeProofs(Program &p,SourceScope &scope,SourceScope &left,SourceScope &right){
+  scope.narrowed.clear();scope.never.clear();
+  if(left.normal&&right.normal){
+    for(const auto &id:left.narrowed){
+      if(!p.step())return false;
+      if(right.narrowed.count(id)||right.never.count(id))scope.narrowed.insert(id);
+    }
+    for(const auto &id:left.never){
+      if(!p.step())return false;
+      if(right.narrowed.count(id))scope.narrowed.insert(id);
+      if(right.never.count(id))scope.never.insert(id);
+    }
+  }else if(left.normal||right.normal){
+    auto &survivor=left.normal?left:right;
+    scope.narrowed=std::move(survivor.narrowed);scope.never=std::move(survivor.never);
+  }
+  scope.normal&=left.normal||right.normal;
+  return true;
+}
 bool SourceProof::annotation(size_t &at,const Json &raw,llvm::StringRef key){
   const auto name=string(field(raw,key));
   if(name=="function"){
@@ -175,23 +194,7 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     else scope.written.insert(left.written.begin(),left.written.end());
     if(literal==true)right.normal=false;
     else scope.written.insert(right.written.begin(),right.written.end());
-    scope.narrowed.clear();scope.never.clear();
-    if(left.normal&&right.normal){
-      for(const auto &id:left.narrowed){
-        if(!p.step())return false;
-        if(right.narrowed.count(id)||right.never.count(id))scope.narrowed.insert(id);
-      }
-      for(const auto &id:left.never){
-        if(!p.step())return false;
-        if(right.narrowed.count(id))scope.narrowed.insert(id);
-        if(right.never.count(id))scope.never.insert(id);
-      }
-    }else if(left.normal||right.normal){
-      auto &survivor=left.normal?left:right;
-      scope.narrowed=std::move(survivor.narrowed);scope.never=std::move(survivor.never);
-    }
-    scope.normal&=left.normal||right.normal;
-    return source->span(parent,first,at-1,p,false);
+    return joinNormalTypeProofs(p,scope,left,right)&&source->span(parent,first,at-1,p,false);
   }
   if(kind=="try"){
     if(!p.require(string(field(h,"kind"))=="try","try mapping")||!source->expect(at,"try",p))return false;
@@ -214,15 +217,17 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
         :p.rawBindings.at(string(field(binding,"id")))==string(field(catchHir,"binding")),"catch actual binding relation"))return false;
     }else if(!p.require(bool(catchHir.getAsNull()),"invented catch handler"))return false;
     auto written=std::move(tried.written);written.insert(caught.written.begin(),caught.written.end());
-    const bool normal=tried.normal||caught.normal;const auto &finalRaw=field(fact,"finallyBlock");
+    const auto &finalRaw=field(fact,"finallyBlock");
     if(!finalRaw.getAsNull()){
       if(!source->expect(at,"finally",p))return false;finalized=scope;finalized.written.clear();
       for(const auto &id:written)finalized.forgetTypeProof(id);
       finalized.prefix.clear();finalized.role="finally";finalized.path.push_back(Object{{"statement",int64_t(position)},{"slot","finally"}});
       if(!region(items(field(finalRaw,"body")),field(h,"finallyRegion"),finalized,at))return false;
-      written.insert(finalized.written.begin(),finalized.written.end());scope.normal&=normal&&finalized.normal;
-    }else{if(!p.require(bool(field(h,"finallyRegion").getAsNull()),"invented finally handler"))return false;scope.normal&=normal;}
-    for(const auto &id:written)scope.forgetTypeProof(id);
+      written.insert(finalized.written.begin(),finalized.written.end());
+      for(const auto &id:written)scope.forgetTypeProof(id);
+      scope.normal&=(tried.normal||caught.normal)&&finalized.normal;
+    }else if(!p.require(bool(field(h,"finallyRegion").getAsNull()),"invented finally handler")
+             ||!joinNormalTypeProofs(p,scope,tried,caught))return false;
     scope.written.insert(written.begin(),written.end());
     return source->span(parent,first,at-1,p);
   }
