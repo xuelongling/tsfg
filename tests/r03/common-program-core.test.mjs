@@ -7,6 +7,9 @@ import {buildHir,printHir,readHir,lowerHir,verifyHir} from '../../compiler/hir.m
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
+import {validateCommonBodies} from '../../compiler/common-program-body.mjs';
+import {commonMeter} from '../../compiler/common-program-common.mjs';
+import {commonSourceGrammar} from '../../compiler/common-program-source.mjs';
 import {i32TypeId,boolTypeId,sha256} from '../../compiler/identity.mjs';
 const programs=new Map(),undefinedId=sha256('tsfg.type\0undefined');
 for(const name of ['positive','reachable-managed','reference-value','mixed','actual-storage']){
@@ -25,6 +28,39 @@ for(const name of ['positive','mixed'])test('public complete Program lowering pr
   assert.equal(physical.carriers.layout(fn(hir,'add').parameters[0].type).byteSize,4);
   assert.equal(physical.carriers.layout(fn(hir,'add').parameters[0].type).referenceCount,0);
   assert.throws(()=>lowerHir(hir,context));assert.deepEqual(verifyHir(hir),hir);
+});
+test('module body checker requires dependency-sensitive initializers in Source order',()=>{
+  const {facts:{payload}}=programs.get('mixed'),modules=new Map(payload.modules.map(module=>[module.sourcePath,module])),
+    sources=new Map(payload.files.map(source=>[source.path,source])),types=new Map(payload.types.map(type=>[type.id,type]));
+  const sourceId='/src/state.ts',module=modules.get(sourceId),source=sources.get(sourceId);
+  assert.equal(module.initialization.length,2);
+  const [first,second]=module.initialization;
+  assert.match(source.content.slice(first.range.start,first.range.end),/^leftTotal\b/);
+  assert.match(source.content.slice(second.range.start,second.range.end),/^rightTotal\b.*= leftTotal \+ 1$/);
+  const visibility=new Map();
+  for(const row of modules.values()){
+    const scope=new Map([
+      ...payload.functions.filter(fn=>fn.sourcePath===row.sourcePath&&!fn.ownerType&&fn.lexicalParent===null).map(fn=>[fn.name,fn.id]),
+      ...payload.globals.filter(global=>global.sourcePath===row.sourcePath).map(global=>[global.binding.name,global.binding.id])
+    ]);
+    for(const edge of row.imports)for(const alias of edge.bindings){
+      if(alias.localBinding===null)continue;
+      scope.set(alias.name,alias.target);
+      if(alias.kind==='namespace')for(const exported of modules.get(edge.sourcePath).exports)scope.set(alias.name+'.'+exported.name,exported.target);
+    }
+    visibility.set(row.sourcePath,scope);
+  }
+  const checkRows=initialization=>{
+    const spend=commonMeter(),grammars=new Map(payload.modules.map(row=>[row.sourcePath,commonSourceGrammar(sources.get(row.sourcePath),spend)]));
+    // Change only the typed row view supplied directly to the checker.
+    const selected=payload.modules.map(row=>row===module?{...module,initialization}:row);
+    return validateCommonBodies({...payload,modules:selected},sources,types,grammars,visibility,spend);
+  };
+  assert.doesNotThrow(()=>checkRows(module.initialization));
+  assert.throws(()=>checkRows([second,first]),{
+    code:'r03-common-program-source',message:'r03-common-program-source: module initializer statements differ from Source order',
+    primary:{sourceId,...first.range}
+  });
 });
 test('whole reference-bearing value has real entry capacity despite a U default initializer',()=>{
   const {hir,physical}=programs.get('reference-value'),type=physical.model.types.get(fn(hir,'add').parameters[0].type),field=type.fields.find(f=>physical.model.types.get(f.type).kind==='union');

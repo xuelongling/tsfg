@@ -319,8 +319,11 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
   for(const module of payload.modules) {
     const g=grammars.get(module.sourcePath),scope=visibility.get(module.sourcePath);
     const owner={id:module.sourcePath,sourcePath:module.sourcePath,declarationRange:{start:0,end:g.text.length},returnType:'void',parameters:[],bindings:[],body:[]};
-    const verifier=functionBody(owner,null,[],scope);
-    for(const row of module.initialization){const at=g.indices(row.range);const declaration=row.kind==='initialize';
+    const verifier=functionBody(owner,null,[],scope);let previousEnd=0;
+    for(const row of module.initialization){
+      spend();const at=g.indices(row.range);
+      check(at.first>=previousEnd,'source','module initializer statements differ from Source order',{primary:{sourceId:module.sourcePath,...row.range}});
+      previousEnd=at.end;const declaration=row.kind==='initialize';
       verifier.rows([row],declaration?at.first-1:at.first,at.end+(g.tokens[at.end]?.text===';'?1:0),owner.declarationRange,scope);}
   }
   validateCommonEntryRoots(payload,functions,relations,spend);

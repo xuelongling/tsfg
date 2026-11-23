@@ -333,8 +333,11 @@ bool SourceBodies::function(const Json &fn){
 bool SourceBodies::module(const Json &m){
   const auto path=string(field(m,"sourcePath"));source=&syntax.at(path);if(!setScope(visible.at(path)))return false;initialized.clear();declared.clear();
   const Json fake=Object{{"sourcePath",path},{"returnType","void"},{"parameters",Array{}},{"bindings",Array{}}};current=&fake;
+  size_t previousEnd=0;
   for(const auto &r:items(field(m,"initialization"))){
-    size_t a,b;if(!source->span(field(r,"range"),a,b))return false;
+    size_t a,b;if(!model.spend()||!source->span(field(r,"range"),a,b)||
+      !model.need(a>=previousEnd,"module initializer statements differ from Source order"))return false;
+    previousEnd=b;
     if(string(field(r,"kind"))=="initialize"){
       if(!model.need(a>0&&(source->tokens[a-1].text=="let"||source->tokens[a-1].text=="const"),"original global declaration prefix differs"))return false;--a;
     }
