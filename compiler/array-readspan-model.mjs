@@ -201,10 +201,9 @@ function mutuallyExclusive(left,right) {
   return false;
 }
 const prefix=(path,base)=>base.every((key,index)=>path[index]===key);
-function loopBackedge(event,last,view,state) {
-  const loops=state.loops.filter(loop=>prefix(event.expressionPath,loop));
+function loopBackedge(event,last,view,state,loops) {
   const origin=view.origin.kind==='parameter'?null:state.events[view.origin.createEvent].expressionPath;
-  return loops.some(loop=>prefix(last.expressionPath,loop)&&(!origin||!prefix(origin,loop)));
+  return loops.some(loop=>prefix(event.expressionPath,loop)&&prefix(last.expressionPath,loop)&&(!origin||!prefix(origin,loop)));
 }
 function conflict(fn,state,event,view,last,owner,sourceKind,fixed={}) {
   const at=(kind,range,sourceId=fn.sourcePath)=>({kind,sourceId,...range});
@@ -227,8 +226,13 @@ function conflict(fn,state,event,view,last,owner,sourceKind,fixed={}) {
 export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
   let work=registrationAndUseWork;const plan=hir.readSpanPlan,callables=finiteCallables(hir);
   for(const [index,state]of plan.functions.entries()) {
-    const fn=callables[index];
+    const fn=callables[index],{terminalScopes}=prepared.ownerModel.functions.get(fn.id);
     const compare=(event,owner,sourceKind,fixed={})=>{
+      let terminal,loops;
+      const sharesContinuation=use=>{
+        if(!terminal)return true;
+        if((work+=terminal.length)>1024)limit();return prefix(use.expressionPath,terminal);
+      };
       for(const view of state.views) {
         if(view.lastUseEvent===null)continue;
         if(view.origin.kind!=='parameter'&&!(view.origin.createEvent<event.sequence))continue;
@@ -240,16 +244,27 @@ export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
           // this very activation. Nested uppers are projected at their entry.
           if(inside)continue;
         }
+        if(!loops){
+          // Child scopes are recorded before enclosing ones. An enclosing
+          // iteration cannot repeat a return-only arm, but a nested loop can.
+          terminal=terminalScopes.find(scope=>{
+            if((work+=scope.length)>1024)limit();return prefix(event.expressionPath,scope);
+          });
+          loops=terminal?state.loops.filter(loop=>{
+            if((work+=terminal.length)>1024)limit();return prefix(loop,terminal);
+          }):state.loops;
+        }
         let last=state.events[view.lastUseEvent];
-        const backedge=loopBackedge(event,last,view,state);
-        if(event.sequence>=last.sequence&&!backedge)continue;
-        if(!backedge&&mutuallyExclusive(event.expressionPath,last.expressionPath)){
+        const continued=sharesContinuation(last),backedge=continued&&loopBackedge(event,last,view,state,loops);
+        if(continued&&event.sequence>=last.sequence&&!backedge)continue;
+        if(!continued||!backedge&&mutuallyExclusive(event.expressionPath,last.expressionPath)){
           // A later occurrence in a different branch cannot hide this
           // branch's last use. Keep the complete serialized use order.
           last=null;
           for(let i=view.useEvents.length-2;i>=0;i--){
             if(++work>1024)limit();const use=state.events[view.useEvents[i]];
-            if(loopBackedge(event,use,view,state)||event.sequence<use.sequence&&!mutuallyExclusive(event.expressionPath,use.expressionPath)){
+            if(sharesContinuation(use)&&(loopBackedge(event,use,view,state,loops)||
+                event.sequence<use.sequence&&!mutuallyExclusive(event.expressionPath,use.expressionPath))){
               last=use;break;
             }
           }

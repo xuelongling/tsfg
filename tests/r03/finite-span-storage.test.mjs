@@ -6,7 +6,7 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {projectTypedArrayFacts} from '../../compiler/typed-array-project.mjs';
 import {initialArrayPublication,prepareArrayCalls} from '../../compiler/array-call-context.mjs';
 import {buildHir,buildInitialArrayPublication,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
-import {sha256} from '../../compiler/identity.mjs';
+import {canonical,sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
 const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-span-storage/source-expected.json',import.meta.url),'utf8'));
@@ -274,6 +274,93 @@ const loopReturnPackets={
   'span-loop-return-positive':'ca0c0243c0f1ecbd483568697f50495c5ed78c0c26fd26564d72b937ea14329a',
   'span-loop-fallthrough-conflict':'b6152ab91e1b3530a70e5fab6795f925110dda303f95b9b84f0e9ad26eadc69a'
 };
+test('a terminating loop resize conflicts only with a Span use on its own path',async t=>{
+  const original=await readFile(new URL('./testdata/typed-array-span-storage/653c7cd0c53fdca77d41cad957328cc5d8796eb6af57ad736540c8f99203e8fa-package.json',import.meta.url));
+  assert.equal(sha256(original),'sha256:'+loopReturnPackets['span-loop-return-positive']);
+  const checkVariant=(edit,conflict)=>{
+    const packet=structuredClone(readTypedArrayFacts(original)),payload=packet.payload;
+    const {sourceRoot,rootFile,declarations,config}=payload;
+    const file=payload.files.find(row=>row.path===rootFile),fn=payload.functions[0];
+    const oldLength=file.content.length,use=edit(file,fn.body[2],fn.body[3]);
+    fn.declarationRange.end+=file.content.length-oldLength;
+    file.byteLength=Buffer.byteLength(file.content);file.utf16Length=file.content.length;
+    file.sha256=sha256(file.content).slice(7);
+    fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:fn.sourcePath,declarationRange:fn.declarationRange}));
+    payload.exports[0].functionId=fn.id;
+    const request={family:'tsfg.array-facts-request-candidate',version:8,input:{sourceRoot,rootFile,declarations,config,
+      files:payload.files.map(({path,content,sha256})=>({path,content,sha256}))}};
+    packet.requestId=sha256('tsfg.array-facts.request.v8\0'+canonical(request)+'\n');
+    packet.packageId=sha256('tsfg.array-facts.package.v8\0'+packet.schemaHash+'\0'+canonical(payload));
+    const factsBytes=Buffer.from(canonical(packet)+'\n'),facts=readTypedArrayFacts(factsBytes);
+    const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:facts.packageId};
+    const publication=staticPublication(facts),built=buildHir(facts,context,publication);
+    if(conflict){
+      assert.equal(built.status,'error');
+      const [diagnostic]=built.diagnostics;
+      assert.equal(diagnostic.code,'r03-d-readspan-structural-conflict');
+      assert.equal(file.content.slice(diagnostic.primary.start,diagnostic.primary.end),'a.length=0');
+      assert.ok(diagnostic.related.some(row=>row.kind==='borrow-last-use'&&row.start===use.start&&row.end===use.end));
+    }else{
+      assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+      const printed=printHir(built.hir,context,publication);
+      assert.deepEqual(readHir(Buffer.from(printed),context,publication),built.hir);
+      assert.ok(lowerFormalHir(built.hir,context,publication).includes('"tsfg_core.domain.array_resize"'));
+    }
+  };
+  const shifted=(row,delta)=>{
+    const result=structuredClone(row);
+    const walk=value=>{
+      if(!value||typeof value!=='object')return;
+      if(Number.isSafeInteger(value.start)&&Number.isSafeInteger(value.end)){value.start+=delta;value.end+=delta;}
+      else for(const child of Object.values(value))walk(child);
+    };
+    walk(result);return result;
+  };
+  for(const inBody of [false,true])await t.test(inBody?'same-path return uses the live Span':'post-loop return can only take the initial exit',()=>{
+    checkVariant((file,loop,tail)=>{
+      // Move the retained checked read into the selected return's new range.
+      const returned=inBody?loop.body[1]:tail,{start,end}=returned.value.range,read=loop.condition.left;
+      const replacement=file.content.slice(read.range.start,read.range.end),delta=replacement.length-(end-start);
+      assert.equal(file.content.slice(start,end),'0');assert.equal(replacement,'s[0]');
+      file.content=file.content.slice(0,start)+replacement+file.content.slice(end);
+      returned.value=shifted(read,start-read.range.start);returned.range.end+=delta;
+      if(inBody){
+        loop.range.end+=delta;
+        for(const range of [tail.range,tail.value.range]){range.start+=delta;range.end+=delta;}
+      }
+      return returned.value.range;
+    },inBody);
+  });
+  for(const repeats of [false,true])await t.test(repeats?'loop inside the terminal arm keeps its own backedge':'outer loop cannot repeat a terminating arm',()=>{
+    checkVariant((file,loop,tail)=>{
+      const [resize,returned]=loop.body,originalSource=file.content;
+      let content=originalSource.slice(0,resize.range.start);
+      const append=row=>{
+        const anchored=shifted(row,content.length-row.range.start);
+        content+=originalSource.slice(row.range.start,row.range.end);return anchored;
+      };
+      const branchStart=content.length;content+='if(';
+      const condition=append(loop.condition);content+='){';
+      const nestedStart=content.length;
+      if(repeats)content+='while(';
+      const observed=append(repeats?loop.condition:loop.condition.left);
+      content+=repeats?'){':';';
+      const effect=append(resize);
+      if(repeats)content+='}';
+      const range={start:nestedStart,end:content.length};
+      const body=repeats?[{kind:'while',range,condition:observed,body:[effect]}]:
+        [{kind:'expression',range:{start:nestedStart,end:observed.range.end+1},value:observed},effect];
+      body.push(append(returned));content+='}';
+      loop.body=[{kind:'if',range:{start:branchStart,end:content.length},condition,then:body,else:[]}];
+      content+='}';
+      const delta=content.length-loop.range.end;
+      file.content=content+originalSource.slice(loop.range.end);
+      loop.range.end+=delta;
+      for(const range of [tail.range,tail.value.range]){range.start+=delta;range.end+=delta;}
+      return repeats?observed.left.range:observed.range;
+    },repeats);
+  });
+});
 for(const [name,hash]of Object.entries(loopReturnPackets))test('actual '+name+' derives backedges without aggregate storage',async()=>{
   const oracle=JSON.parse(await readFile(new URL('./testdata/typed-array-span-storage/loop-return-expected.json',import.meta.url),'utf8'));
   const row=oracle.cases.find(row=>row.name===name);

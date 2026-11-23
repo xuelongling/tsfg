@@ -190,7 +190,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(typeof left==='boolean'&&typeof right==='boolean')return value.operator==='==='?left===right:left!==right;
       }return null;
     };
-    const stored=storage.begin(fn,!!context,context?.aliases),model={bindings,operations,loops:[],storage:stored.model};
+    const stored=storage.begin(fn,!!context,context?.aliases),model={bindings,operations,loops:[],terminalScopes:[],storage:stored.model};
     function conditionalEffect(executes,run) {
       const before=snapshot(bindings),storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
       const skippedContents=executes===null?snapshot(contents):null;
@@ -476,6 +476,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           }else if(row.body){const nestedExit=body(row.body,[...at,'body'],reachableRow);fallthrough=incoming&&nestedExit;}
         }
       }
+      if(!context&&reachable&&!fallthrough&&path.length>1){charge();model.terminalScopes.push(path);}
       return fallthrough;
     };
     const fallsThrough=body(fn.body);const summary=stored.finish(model.loops,fallsThrough);
