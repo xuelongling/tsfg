@@ -19,6 +19,9 @@ export const frontendContractVersion = frontendContract.semver;
 
 export const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+/** @param {string} left @param {string} right */
+const compareUtf8 = (left, right) => Buffer.from(left).compare(Buffer.from(right));
+
 function hasLoneSurrogate(value) {
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
@@ -121,7 +124,7 @@ export async function prepareFrontendInput(input, captured = false) {
   const identityInput = ownedInput && typeof ownedInput === "object" && !Array.isArray(ownedInput)
     ? { ...ownedInput, files: Array.isArray(ownedInput.files)
       ? ownedInput.files.map(file => ({ path: file?.path, content: file?.content }))
-        .sort((a, b) => Buffer.from(String(a.path)).compare(Buffer.from(String(b.path))))
+        .sort((a, b) => compareUtf8(String(a.path), String(b.path)))
       : ownedInput.files }
     : ownedInput ?? null;
   let inputIdentity;
@@ -228,11 +231,12 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
   const consumedPaths = new Set(Array.isArray(consumed) ? consumed : []);
   const requestedModules = moduleInput ? files.filter(file => !file.path.endsWith(".d.ts")).map(file => file.path) : [];
   const invalidInputClosure = { status: "tool-error", inputIdentity, message: "frontend input closure differs from recorded content" };
+  // The Go frontend orders consumed paths by their UTF-8 bytes.
   if (!Array.isArray(consumed) || consumedPaths.size !== consumed.length
-      || canonical(consumed) !== canonical([...consumed].sort())
+      || consumed.some(name => !seen.has(name))
+      || canonical(consumed) !== canonical([...consumed].sort(compareUtf8))
       || !consumedPaths.has(rootFile) || declarationPaths.some(name => !consumedPaths.has(name))
-      || requestedModules.some(name => !consumedPaths.has(name))
-      || consumed.some(name => !seen.has(name))) {
+      || requestedModules.some(name => !consumedPaths.has(name))) {
     return invalidInputClosure;
   }
   if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || !output.symbols.every(responseRecord)

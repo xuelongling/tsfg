@@ -54,6 +54,29 @@ test('module Snapshot materialization requires unselected implementation files',
   });
 });
 
+test('module Snapshot preserves consumed file paths in Go UTF-8 order',async()=>{
+  const {input,facts,origin}=await moduleDefaultFacts();
+  const paths=['/src/\uE000.ts','/src/\u{10000}.ts'];
+  const files=[...input.files,...paths.toReversed().map(path=>({path,content:'export {};'}))];
+  const prepared=await prepareFrontendInput({...input,files});
+  assert.equal(prepared.status,'ready');
+  const inputs=[...facts.inputs,...paths];
+  const modules=[...facts.modules,...paths.map(sourcePath=>({
+    sourcePath,external:true,imports:[],exports:[],globals:[],initialization:[],
+  }))];
+  const response={...facts,inputs,modules};
+  const result=materializeFrontendResponse(prepared,JSON.stringify(response),origin);
+  assert.equal(result.status,'ok',JSON.stringify(result));
+  assert.deepEqual(result.snapshot.inputs.map(file=>file.path),inputs);
+  assert.deepEqual(result.snapshot.sources.map(file=>file.path),inputs);
+  validateModuleFacts(result.snapshot);
+
+  const utf16Order=[...facts.inputs,...paths.toReversed()];
+  assert.deepEqual(materializeFrontendResponse(prepared,JSON.stringify({...response,inputs:utf16Order}),origin),{
+    status:'tool-error',inputIdentity:prepared.inputIdentity,message:'frontend input closure differs from recorded content',
+  });
+});
+
 test('cold module HIR binds an imported alias to its original dependency export',async()=>{
   const hir=await original(),unused=hir.functions.find(fn=>fn.sourcePath==='/src/unused.ts'&&fn.name==='unused');
   const app=hir.modules.find(module=>module.sourcePath==='/src/app.ts');
