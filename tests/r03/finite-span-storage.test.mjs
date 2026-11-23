@@ -309,6 +309,7 @@ async function retainedLoopBorrow() {
       assert.ok(events.some(row=>row.kind==='array-resize-effect'));
       assert.ok(events.some(row=>row.kind==='view-read-complete'&&row.range.start===use.start&&row.range.end===use.end));
       assert.ok(lowerFormalHir(built.hir,context,publication).includes('"tsfg_core.domain.array_resize"'));
+      return events;
     }
   };
   const shifted=(row,delta)=>{
@@ -369,20 +370,27 @@ test('a terminating loop resize conflicts only with a Span use on its own path',
     },repeats);
   });
 });
-test('ReadSpan ignores only literal dead structural effects and uses',async t=>{
+test('ReadSpan excludes proven dead structural effects and uses',async t=>{
   const {checkVariant,shifted}=await retainedLoopBorrow();
-  for(const {prefix,dead,loopBody} of [
-    {prefix:'if(false){',dead:true,loopBody:false},
-    {prefix:'if(true){}else{',dead:true,loopBody:false},
-    {prefix:'while(false){',dead:true,loopBody:true},
-    {prefix:'if(true){',dead:false,loopBody:false},
+  for(const {prefix,dead,loopBody,operator} of [
+    {prefix:'if(false){',dead:true,loopBody:false,operator:null},
+    {prefix:'if(true){}else{',dead:true,loopBody:false,operator:null},
+    {prefix:'while(false){',dead:true,loopBody:true,operator:null},
+    {prefix:'if(true){',dead:false,loopBody:false,operator:null},
+    {prefix:'if(s[0]===1||true){}else{',dead:true,loopBody:false,operator:'||'},
+    {prefix:'if(s[0]===1&&false){',dead:true,loopBody:false,operator:'&&'},
+    {prefix:'if(s[0]===1||false){}else{',dead:false,loopBody:false,operator:'||'},
+    {prefix:'if(s[0]===1&&true){',dead:false,loopBody:false,operator:'&&'},
   ])await t.test(prefix,()=>{
-    checkVariant((file,loop,tail)=>{
+    const events=checkVariant((file,loop,tail)=>{
       const original=file.content,[resize]=loop.body,read=loop.condition.left;
       const start=loop.range.start,from=start+prefix.length,to=from+resize.range.end-resize.range.start+1;
       const effect=shifted(resize,from-resize.range.start);
       const token=prefix.includes('false')?'false':'true',at=start+prefix.indexOf(token);
-      const condition={kind:'booleanLiteral',type:'bool',flowType:'bool',token,range:{start:at,end:at+token.length}};
+      const literal={kind:'booleanLiteral',type:'bool',flowType:'bool',token,range:{start:at,end:at+token.length}};
+      const left=operator?shifted(loop.condition,start+'if('.length-loop.condition.range.start):null;
+      const condition=left?{kind:'binary',type:'bool',flowType:'bool',operator,left,right:literal,
+        operatorRange:{start:left.range.end,end:at},range:{start:left.range.start,end:literal.range.end}}:literal;
       Object.assign(loop,{condition,range:{start,end:to}});
       if(loopBody)loop.body=[effect];
       else{
@@ -395,6 +403,7 @@ test('ReadSpan ignores only literal dead structural effects and uses',async t=>{
       tail.range={start:to,end:tail.value.range.end+1};
       return tail.value.range;
     },!dead);
+    if(operator&&dead)assert.ok(events.some(row=>row.kind==='view-read-complete'&&row.expressionPath[2]==='condition'));
   });
   for(const withAlias of [false,true])await t.test(withAlias?'an earlier live alias read still rejects resizing':
     'a dead final Span use does not extend a borrow past its resize',()=>{

@@ -247,11 +247,24 @@ struct ActualFlow {
         const auto index=argument.getArgNumber();
         if(index>=operands.size()||typeCode(operands[index].getType())!=2)
           return proof.reject("conditional Boolean join operand");
-        auto *constant=operands[index].getDefiningOp();
-        if(!constant||constant->getName().getStringRef()!="tsfg_core.constant"){unknown=true;return true;}
-        uint64_t bits=0;
-        if(!constantBits(constant,bits))return proof.reject("conditional Boolean join literal authority");
-        const bool value=bits!=0;
+        const auto operand=operands[index];auto *constant=operand.getDefiningOp();
+        bool value;
+        if(constant&&constant->getName().getStringRef()=="tsfg_core.constant"){
+          uint64_t bits=0;
+          if(!constantBits(constant,bits))return proof.reject("conditional Boolean join literal authority");
+          value=bits!=0;
+        }else{
+          // The empty shortcut block carries the exact predicate selected by
+          // its only incoming edge, with no alternate path to this operand.
+          if(!proof.charge())return false;
+          auto *source=terminator==&predecessor->front()&&llvm::isa<mlir::cf::BranchOp>(terminator)
+            ?predecessor->getSinglePredecessor():nullptr;
+          auto guard=source?llvm::dyn_cast<mlir::cf::CondBranchOp>(source->getTerminator()):mlir::cf::CondBranchOp{};
+          if(!guard||guard.getCondition()!=operand||guard.getTrueDest()==guard.getFalseDest()){
+            unknown=true;return true;
+          }
+          value=guard.getTrueDest()==predecessor;
+        }
         if(selected&&*selected!=value)unknown=true;else selected=value;
         return true;
       };
@@ -294,8 +307,7 @@ struct ActualFlow {
             predicate.input=flow.evidence(value(condition->getOperand(1-i)));
             if(!predicate.input)return proof.reject("conditional predicate has no solved IR origin");break;
           }
-        }else if(memorySources&&typeCode(branch.getCondition().getType())==2&&
-            string(*proof.callable.at(id),"role")=="construction-body") {
+        }else if(memorySources&&typeCode(branch.getCondition().getType())==2) {
           if(!joinedBooleanLiteral(llvm::dyn_cast<mlir::BlockArgument>(branch.getCondition()),predicate.literal))return false;
         }
       }

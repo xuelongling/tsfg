@@ -13,6 +13,16 @@ export const parameterArrayOwner=(fn,index)=>({kind:'parameter',functionId:fn.id
 function boundedOwnerCharge() {
   let work=0;return ()=>{if(++work>16384)throw Object.assign(new TypeError('Array owner work limit'),{code:'r03-d-array-call-effects-limit'});};
 }
+// A fixed normal result excludes a statement arm, while evaluation of the
+// condition and its lexical operations still follow the usual expression path.
+function normalBooleanResult(value,charge) {
+  charge();
+  if(value.kind==='boolean')return value.value;
+  if(value.kind!=='binary'||(value.operator!=='&&'&&value.operator!=='||'))return null;
+  charge();
+  const short=value.operator==='||';
+  return value.right.kind==='boolean'&&value.right.value===short?short:null;
+}
 // Helpers share the caller's inclusive meter. Preflight precedes expansion,
 // canonical serialization, path copying and comparisons; failures escape intact.
 export function createArrayOwnerTools(charge=boundedOwnerCharge()) {
@@ -357,9 +367,9 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       for(const [index,row] of rows.entries()) {
         if(context&&!fallthrough)break;
         charge();const at=[...path,index],incoming=fallthrough,reachableRow=reachable&&incoming;
-        if(!context&&reachableRow&&row.condition?.kind==='boolean'){
-          const dead=row.kind==='if'?(row.condition.value?'else':'then'):
-            row.kind==='while'&&!row.condition.value?'body':null;
+        if(!context&&reachableRow&&(row.kind==='if'||row.kind==='while'&&row.condition.kind==='boolean')){
+          const result=normalBooleanResult(row.condition,charge);
+          const dead=result===null?null:row.kind==='if'?(result?'else':'then'):!result?'body':null;
           if(dead&&row[dead]?.length){charge();model.infeasibleScopes.push([...at,dead]);}
         }
         if(row.kind==='initializeOwnFields') {
