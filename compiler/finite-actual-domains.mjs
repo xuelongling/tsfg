@@ -5,6 +5,7 @@ import {verifyHir} from './module-hir.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {buildFiniteFieldReaching} from './finite-field-reaching.mjs';
+import {finiteFieldStorePath} from './finite-field-effects.mjs';
 import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
@@ -508,9 +509,21 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     }else if(v.kind==='fieldAccess')fieldReads.push({id,receiver:child('receiver'),field:v.property,result:id,
       viewType:fieldReceiverView(types,fieldOwners,v.receiver.type,v.property),targets:new Map()});
     else if(v.kind==='fieldAssignment') {
-      const receiver=at(v.target.receiver,p+'/target/receiver'),value=child('value');
-      fieldStores.push({id,receiver,field:v.target.property,value,
-        viewType:fieldReceiverView(types,fieldOwners,v.target.receiver.type,v.target.property),targets:new Map()});copy(value,id);
+      const receiver=at(v.target.receiver,p+'/target/receiver'),store=finiteFieldStorePath(id,v),
+        field=v.target.property,viewType=fieldReceiverView(types,fieldOwners,v.target.receiver.type,field);
+      let value;
+      if(store===id)value=child('value');
+      else {
+        const old=node(p+'/old-value',v.target.type).id;
+        fieldReads.push({id:old,receiver,field,result:old,viewType,targets:new Map()});
+        flow.entry(old,continuation);flow.finish(old,[]);
+        continuation=flow.normal(old);dependencies.push(continuation);
+        child('value');
+        value=node(store+'/value',v.type).id;
+        flow.entry(value,continuation);flow.finish(value,[]);
+        for(const type of leaves(v.type))insert(value,'actual',type);
+      }
+      fieldStores.push({id:store,receiver,field,value,viewType,targets:new Map()});copy(value,id);
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
       const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),absent);
       presenceCarriers.push(selected.left);dependencies.push(...selected.dependencies);

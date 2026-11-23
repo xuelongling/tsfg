@@ -4,6 +4,10 @@
 // caller's value as a universal constructor-entry fact.
 import {callComponentsInDependencyOrder} from './array-call-graph.mjs';
 
+export function finiteFieldStorePath(path,value) {
+  return value.operator&&value.operator!=='='?path+'/writeback':path;
+}
+
 export function finiteFieldWriteVersion(path,value,sourcePath,target) {
   return {id:path+'/field-version/'+target.actualType+'/'+target.fieldId,node:path+'/value',
     actualType:target.actualType,field:target.fieldId,origin:{source:sourcePath,...value.range}};
@@ -100,13 +104,13 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
         continue;
       }
       if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
-        effect.writes=true;const selected=fields.get(path);
+        effect.writes=true;const store=value.kind==='fieldAssignment'?finiteFieldStorePath(path,value):path,selected=fields.get(store);
         if(!selected?.targets.length)effect.unknown=true;
         for(const row of selected?.targets??[]) {
           charge();if(row.fieldId){
             effect.fields.add(row.fieldId);
             if((keepAllWrites||!mayExecute)&&value.kind==='fieldAssignment'){
-              charge();const version=finiteFieldWriteVersion(path,value,fn.sourcePath,row);
+              charge();const version=finiteFieldWriteVersion(store,value,fn.sourcePath,row);
               lexicalWrites.set(version.id,version);
             }
           }else effect.unknown=true;

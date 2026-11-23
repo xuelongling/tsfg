@@ -8,7 +8,7 @@ import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
-import {createFieldCallContexts,finiteFieldEffects,finiteFieldWriteVersion,
+import {createFieldCallContexts,finiteFieldEffects,finiteFieldStorePath,finiteFieldWriteVersion,
   literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
 
 // These are the production proof-state snapshots, not Source-value copies.
@@ -320,11 +320,14 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         return copiesValue(value.type)?copyToken(payload,path+'/copy',state):payload;
       }
       if(value.kind==='fieldAssignment') {
-        const token=expression(value.target.receiver,path+'/target/receiver',state,env);
+        const token=expression(value.target.receiver,path+'/target/receiver',state,env),store=finiteFieldStorePath(path,value);
+        if(stopped)return null;
+        if(store!==path)access(value,path+'/old-value',state,token,'read');
         const rhs=child('value');
         if(stopped)return null;
+        if(store!==path){access(value,store,state,token,'store');return null;}
         const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
-        access(value,path,state,token,'store',payload);return rhs;
+        access(value,store,state,token,'store',payload);return rhs;
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
         const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};

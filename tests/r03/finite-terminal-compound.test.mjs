@@ -9,6 +9,51 @@ import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs
 import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
+test('finite numeric field compound reads the old field before computing its writeback',async()=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-terminal-compound/field-write-tail-old-value-present-package.json',import.meta.url));
+  assert.equal(sha256(bytes),'sha256:22e3d52a15925f440446bd49b7ff7b9381d904c8c449b7e17f6c89069701f2c7');
+  const packet=structuredClone(readTypedArrayFacts(bytes)),payload=packet.payload;
+  const fn=payload.functions.find(row=>row.name==='fieldPresent'),field=fn.body[4].value;
+  const source=payload.files.find(row=>row.path===fn.sourcePath),{start,end}=field.operatorRange;
+  // Derive a compound from the captured store without moving any source spans.
+  assert.equal(source.content.slice(start,end+1),'= ');
+  source.content=source.content.slice(0,start)+'+='+source.content.slice(end+1);
+  source.sha256=sha256(source.content).slice(7);
+  field.operator='+=';
+  field.operatorRange.end++;
+  const {sourceRoot,rootFile,declarations,config}=payload;
+  const files=payload.files.map(({path,sha256})=>({path,sha256}));
+  for(const type of payload.types)if(type.nominalKey)type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({
+    files,nominalKey:type.nominalKey}));
+  const request={family:'tsfg.array-facts-request-candidate',version:8,input:{sourceRoot,rootFile,declarations,config,
+    files:payload.files.map(({path,content,sha256})=>({path,content,sha256}))}};
+  packet.requestId=sha256('tsfg.array-facts.request.v8\0'+canonical(request)+'\n');
+  packet.packageId=sha256('tsfg.array-facts.package.v8\0'+packet.schemaHash+'\0'+canonical(payload));
+  const factsBytes=Buffer.from(canonical(packet)+'\n'),facts=readTypedArrayFacts(factsBytes);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:facts.packageId};
+  const publication=buildInitialArrayPublication(context),built=buildHir(facts,context,publication);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const core=lowerFormalHir(built.hir,context,publication),lines=core.split('\n');
+  const at=range=>`tsfg_source.start = ${range.start} : i64, tsfg_source.end = ${range.end} : i64`;
+  const read=lines.find(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(field.target.range)));
+  assert.ok(read,'compound must read the old field at its target span');
+  const store=lines.find(line=>line.includes('"tsfg_core.domain.field_store"')&&line.includes(at(field.range)));
+  const add=lines.find(line=>line.includes('"tsfg_core.add"')&&line.includes(at(field.range)));
+  const rhs=lines.find(line=>line.includes('"tsfg_core.constant"')&&line.includes(at(field.value.range)));
+  assert.ok(store&&add&&rhs);
+  assert.ok(lines.indexOf(read)<lines.indexOf(rhs)&&lines.indexOf(rhs)<lines.indexOf(add)&&lines.indexOf(add)<lines.indexOf(store));
+  const [,old,receiver]=read.match(/(%v\d+) = "tsfg_core\.domain\.field_read"\((%v\d+)\)/u)??[];
+  const [,next]=add.match(/(%v\d+) = /u)??[],[,right]=rhs.match(/(%v\d+) = /u)??[];
+  assert.ok(old&&receiver&&next&&right);
+  assert.ok(add.includes(`(${old}, ${right})`));
+  const writeView=lines.find(line=>line.includes(`"tsfg_core.domain.view"(${next})`));
+  const [,stored]=writeView?.match(/(%v\d+) = /u)??[];
+  assert.ok(stored&&store.includes(`(${receiver}, ${stored})`));
+  assert.match(store,/input_node = "[^"]+\/writeback\/value"/u);
+  const tail=lines.find(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(fn.body.at(-1).value.range)));
+  assert.ok(tail?.includes('/writeback/field-version/'));
+});
+
 /** @type {{name:string,fixture:string,sha:string,fn:string,position:string,range?:[number,number],binary?:'left'|'right',productive?:boolean}[]} */
 const cases=[
   {name:'a terminal compound old read blocks the RHS sink write and the target writeback',
