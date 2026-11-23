@@ -345,6 +345,11 @@ pub const ManagedHeap = struct {
         const scope = try self.scopeFor(lifetime);
         const bytes = try self.allocator.dupe(u8, source);
         errdefer self.allocator.free(bytes);
+        return self.rootedValueWithBytes(layout, tag, bytes, edges, scope);
+    }
+
+    // The caller owns the bytes until every result root has been published.
+    fn rootedValueWithBytes(self: *ManagedHeap, layout: ArrayLayout, tag: u16, bytes: []u8, edges: []?*Object, scope: u64) Error!ArrayValue {
         const references = try self.allocator.alloc(?Handle, layout.reference_count);
         errdefer self.allocator.free(references);
         // Reserve all active roots before publishing any.
@@ -438,8 +443,10 @@ pub const ManagedHeap = struct {
 
     pub fn readTypedValue(self: *ManagedHeap, handle: Handle, expected: CellLayout, layout: ArrayLayout, lifetime: Lifetime) Error!ArrayValue {
         const object = try self.resolve(handle); const value = try cells.cell(object, expected);
-        const bytes = try value.pack(self.allocator, layout); defer self.allocator.free(bytes);
-        return self.rootedValue(layout, 0, bytes, object.edges, lifetime);
+        const bytes = try value.pack(self.allocator, layout);
+        errdefer self.allocator.free(bytes);
+        const scope = try self.scopeFor(lifetime);
+        return self.rootedValueWithBytes(layout, 0, bytes, object.edges, scope);
     }
 
     pub fn sameObject(self: *ManagedHeap, left: Handle, right: Handle) Error!bool {

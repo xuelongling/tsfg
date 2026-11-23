@@ -170,6 +170,43 @@ test "viewed inline value copies keep the actual nonnullable value domain" {
     var wrong = actual; wrong.runtime_key[31] ^= 1;
     try std.testing.expectError(error.InvalidViewModule, module.view(wrong, view.target));
 }
+test "reading a packed scalar value succeeds with one owned byte buffer" {
+    var module = try load("value");
+    defer module.deinit();
+    const actual = (try module.layouts.find(module.views[0].actual)).cell.?;
+    const entry = try module.layouts.find(actual.fields[0].layout.type_id);
+    const layout = entry.cell.?;
+    try std.testing.expectEqual(@as(u16, 0), entry.layout.reference_count);
+    const expected = try allocator.alloc(u8, entry.layout.byte_size);
+    defer allocator.free(expected);
+    @memset(expected, 0);
+    const offset = entry.layout.variants[0].children[0].offset;
+    expected[offset] = 91;
+
+    // Measure canonical packing alone so the test does not depend on the
+    // number of allocations used to validate a layout.
+    var control = try @import("managed-cell.zig").Cell.init(allocator, layout);
+    defer control.deinit(allocator);
+    try control.unpack(allocator, entry.layout, .{ .bytes = expected, .references = &.{} });
+    var measured = std.testing.FailingAllocator.init(allocator, .{});
+    const control_bytes = try control.pack(measured.allocator(), entry.layout);
+    defer measured.allocator().free(control_bytes);
+    try std.testing.expectEqualSlices(u8, expected, control_bytes);
+
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var heap = managed.ManagedHeap.init(failing.allocator());
+    defer heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.layouts);
+    const cell = try heap.createTypedCell(layout, .persistent);
+    try scalar(&heap, cell, layout, 0, 91);
+    failing.fail_index = failing.alloc_index + measured.alloc_index;
+    var result = try heap.readTypedValue(cell, layout, entry.layout, .persistent);
+    defer result.deinit(failing.allocator());
+    try std.testing.expectEqualSlices(u8, expected, result.bytes);
+    try std.testing.expectEqual(@as(usize, 0), result.references.len);
+    failing.fail_index = failing.alloc_index + measured.alloc_index;
+    try std.testing.expectError(error.ScopeRequired, heap.readTypedValue(cell, layout, entry.layout, .temporary));
+}
 test "view decoding and projected reads release every failed allocation before publication" {
     const raw = try bytes("offset"); defer allocator.free(raw);
     var decode_failures: usize = 0;
