@@ -17,7 +17,7 @@ import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
 import {isCommonProgramContext} from './common-program-hir.mjs';
 import {commonHirFormat} from './common-program-common.mjs';
-import {isSelectedNullableContext} from './nullable-common.mjs';
+import {hirFormat as nullableHirFormat,isSelectedNullableContext} from './nullable-common.mjs';
 import {isTypedArrayContext} from './typed-array-hir.mjs';
 import {typedArrayHirFormat,typedArrayHirV9Format,typedArrayHirV10Format,typedArrayHirV11Format} from './typed-array-project.mjs';
 import {isOptionalPropertyContext,optionalPropertyHirFormat} from './optional-property-hir.mjs';
@@ -393,6 +393,7 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const generic = family === genericHirFormat.family;
   const ordinary = family === undefined || family === 'tsfg.module-callable-hir-candidate';
   const exception = family === 'tsfg.exception-hir-candidate';
+  const nullable = family === nullableHirFormat.family;
   const closure = family === 'tsfg.closure-hir-candidate';
   const optional = family === optionalPropertyHirFormat.family;
   const reference = factsContext === undefined && family === referenceHirFormat.family;
@@ -403,7 +404,7 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
-  if(common||ordinary||generic||exception||closure||optional||reference){
+  if(common||ordinary||generic||exception||nullable||closure||optional||reference){
     const moduleClose=requireCheckedCoreInput(core,coreInput);
     if(generic)requireCheckedGenericFunctions(core,moduleClose,packetDefaultRoot,hir.closure.functions);
   }

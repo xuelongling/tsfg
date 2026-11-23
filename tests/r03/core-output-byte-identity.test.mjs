@@ -8,7 +8,7 @@ import test from 'node:test';
 import {compileCommonBorrowProof,compileOwnedCore,compileOwnedHir,compileOwnedStaticProgram} from '../../compiler/pipeline.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {importCapturedFrontendResponse} from '../../compiler/frontend.mjs';
-import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,lowerFormalHir,readHir} from '../../compiler/hir.mjs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
@@ -656,6 +656,35 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     ];
     assert.deepEqual(rejected,[mismatch,mismatch]);
     assert.deepEqual(calls.slice(first),[['--optimize'],['--canonicalize']]);
+  });
+  await t.test('Nullable Core transport binds each returned module to its selected input',async sub=>{
+    const [hirBytes,coreBytes]=await Promise.all(['nullable-presence-hir-first.json','nullable-presence-core-first.json']
+      .map(name=>fs.readFile(new URL(name,import.meta.url))));
+    assert.equal(sha256(hirBytes),'sha256:4b70ae12a6e499e2b08007a84bfb1c09f161053fad71ac8ddd61d6e5bdf28bd3');
+    assert.equal(sha256(coreBytes),'sha256:36d4c3e469536da1bca2ff44b1fdf8273077e653539163344d185114d04ceb37');
+    const {cases}=JSON.parse(hirBytes.toString('utf8')),{cases:goldens}=JSON.parse(coreBytes.toString('utf8'));
+    const pairs=cases.slice(0,2).map((row,index)=>{
+      const golden=goldens[index];assert.equal(row.name,golden.name);
+      const checked=readHir(Buffer.from(row.hirJcsNoLf+'\n'),row.context);
+      assert.ok(golden.expectedCore.includes(`tsfg_core.input_identity = "${checked.inputIdentity}"`));
+      return {checked,context:row.context,text:golden.expectedCore,output:framedCore(golden.expectedCore)};
+    });
+    assert.notEqual(pairs[0].checked.inputIdentity,pairs[1].checked.inputIdentity);
+    sub.after(()=>{stdout=valid;});
+    for(const [index,optimize] of [false,true].entries()){
+      const {checked,context,text,output}=pairs[index],options={core:artifact,factsContext:context,optimize};
+      const first=calls.length;
+      stdout=output;
+      const accepted=await compileOwnedCore(checked,options);
+      assert.equal(accepted.status,'ok');
+      assert.deepEqual(Buffer.from(accepted.core,'utf8'),output);
+      assert.equal(sha256(coreInput),sha256(text));
+      stdout=pairs[1-index].output;
+      assert.deepEqual(await compileOwnedCore(checked,options),mismatch);
+      assert.equal(sha256(coreInput),sha256(text));
+      const command=optimize?'--optimize':'--canonicalize';
+      assert.deepEqual(calls.slice(first),[[command],[command]]);
+    }
   });
   assert.equal(valid.toString('utf8'),malformed.toString('utf8'));
   stdout=malformed;
