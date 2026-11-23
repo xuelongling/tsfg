@@ -200,7 +200,8 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     const read=owner=>{if(owner)insert(base.reads,owner);};
     const mutate=(value,path,owner,index,resize)=>{
       const key=canonical(owner),previous=lengths.get(key)??null;
-      const operand=resize?value.value:value.target.index;
+      let operand=resize?value.value:value.target.index;
+      while(operand?.kind==='group'){charge();operand=operand.operand;}
       const n=operand?.kind==='constant'?Number(operand.decimal):null;
       const fresh=owner?.kind==='allocation'&&owner.functionId===fn.id&&owner.callPath.length===0;
       if(!fresh)exactLengthJoin=false;

@@ -11,6 +11,7 @@ import {deriveReadSpanPlan,consumeReadSpanPlan} from '../../compiler/array-reads
 import {buildHir,verifyHir,printHir,readHir,analyzeArrayCalls,verifyArrayCalls,
   verifyArrayCallParallelGroup,printArrayParallelProof,readArrayParallelProof} from '../../compiler/hir.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
+import actual from './testdata/typed-array-actual-v8/manifest.json' with {type:'json'};
 import manifest from './testdata/typed-array-consumer-v8/manifest.json' with {type:'json'};
 import semanticEdges from './testdata/typed-array-consumer-v8/semantic-edges.json' with {type:'json'};
 const none={read:false,write:false,structural:false};
@@ -176,6 +177,40 @@ for(const row of manifest)test('fresh Source v8 ordinary consumer: '+row.name,as
     else {
       assert.equal(row.name,'serial-overwrite');assert.equal(store.nonStructural,true);
       assert.ok(state.views[0].lastUseEvent>store.sequence);
+      await t.test('grouped constants preserve only nonstructural writes during a ReadSpan borrow',async t=>{
+        const donor=actual.find(item=>item.sourceIdentity==='582c7ccd2f02c22f54dbaf59bc14b8398de0a4bbc23fd2c1b2ff4fc8d67d676a');
+        const donorBytes=await readFile(new URL('./testdata/typed-array-actual-v8/'+donor.file,import.meta.url));
+        assert.equal(createHash('sha256').update(donorBytes).digest('hex'),donor.sha256);
+        const [,resizeTemplate,read]=projectTypedArrayFacts(readTypedArrayFacts(donorBytes)).functions[0].body;
+        const group=read.value.index;
+        assert.equal(group.kind,'group');
+        const fn=hir.functions[0],[array,view,write,returned]=fn.body;
+        const zero=write.expression.target.index,one=group.operand,receiver=write.expression.target.receiver;
+        assert.equal(group.type,zero.type);
+        assert.equal(zero.decimal,'0');
+        assert.equal(one.decimal,'1');
+        // Combine retained shapes only at the length proof seam.
+        const resize=resizeTemplate.expression;
+        const store=index=>({...write,expression:{...write.expression,target:{...write.expression.target,index}}});
+        const resizeTo=value=>({...resizeTemplate,expression:{...resize,target:{...resize.target,receiver},value}});
+        for(const [name,statement,kind,key,number,nonStructural] of [
+          ['overwrite',store({...group,operand:zero}),'array-store-effect','index',0,true],
+          ['append',store(group),'array-store-effect','index',1,false],
+          ['same-length resize',resizeTo(group),'array-resize-effect','newLength',1,true],
+          ['shrink',resizeTo({...group,operand:zero}),'array-resize-effect','newLength',0,false],
+        ])await t.test(name,()=>{
+          const projected={...hir,functions:[{...fn,body:[array,view,statement,returned]}]};
+          const prepared=prepareArrayCalls(projected,initialArrayPublication(projected));
+          const {plan,work}=deriveReadSpanPlan(projected,prepared);
+          const borrowed=plan.functions[0],event=borrowed.events.find(event=>event.kind===kind);
+          assert.ok(event.sequence>borrowed.views[0].origin.createEvent&&event.sequence<borrowed.views[0].lastUseEvent);
+          assert.deepEqual(event.expressionPath,['body',2,'expression']);
+          assert.deepEqual(event.range,statement.expression.range);
+          assert.deepEqual([event.exactLength,event[key],event.nonStructural],[1,number,nonStructural]);
+          const consume=()=>consumeReadSpanPlan({...projected,readSpanPlan:plan},prepared,work);
+          if(nonStructural)consume();else assert.throws(consume,{code:'r03-d-readspan-structural-conflict'});
+        });
+      });
       await t.test('equal normal branch lengths preserve an in-range write during a ReadSpan borrow',async()=>{
         const control=semanticEdges.find(item=>item.name==='view-short-rebind'),
           controlBytes=await readFile(new URL('./testdata/typed-array-consumer-v8/'+control.file,import.meta.url));
