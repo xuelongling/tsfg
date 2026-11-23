@@ -17,7 +17,8 @@ pub const Cell = struct { declared: cells.Layout, backing: cells.Layout, fields:
 // target type or a bool for the original static member authority.
 pub const Value = opaque {};
 const Captured = struct {
-    heap: *managed.ManagedHeap, input_identity: Id, actual_type: Id, actual_field: ?Id,
+    heap: *managed.ManagedHeap, heap_owner: u64, allocator: std.mem.Allocator,
+    input_identity: Id, actual_type: Id, actual_field: ?Id,
     source_view: Id, source_member: Id, payload: access.Value,
 };
 fn same(a: Id, b: Id) bool { return std.mem.eql(u8, &a, &b); }
@@ -81,22 +82,25 @@ pub const Module = struct {
     pub fn capture(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, member: Id) managed.Error!*Value {
         const actual_layout = try heap.copyTypedCellLayout(receiver); defer actual_layout.deinit(heap.allocator);
         const actual_field: ?Id = switch (try self.resolveField(actual_layout, target, member)) { .actual => |id| id, .missing => null };
-        const result = try heap.allocator.create(Captured); errdefer heap.allocator.destroy(result);
-        result.* = .{ .heap = heap, .input_identity = self.authority.input_identity, .actual_type = actual_layout.type_id,
+        const allocator = heap.allocator;
+        const result = try allocator.create(Captured); errdefer allocator.destroy(result);
+        result.* = .{ .heap = heap, .heap_owner = receiver.owner, .allocator = allocator,
+            .input_identity = self.authority.input_identity, .actual_type = actual_layout.type_id,
             .actual_field = actual_field, .source_view = target, .source_member = member,
             .payload = if (actual_field) |id| try access.readActualField(heap, receiver, actual_layout, id, .persistent)
-                else try access.undefinedValue(heap.allocator) };
+                else try access.undefinedValue(allocator) };
         return @ptrCast(result);
     }
     pub fn release(self: Module, value: *Value) managed.Error!void {
         const captured: *Captured = @ptrCast(@alignCast(value));
         if (!same(captured.input_identity, self.authority.input_identity)) return error.InvalidViewModule;
-        defer { captured.payload.deinit(captured.heap.allocator); captured.heap.allocator.destroy(captured); }
+        defer { captured.payload.deinit(captured.allocator); captured.allocator.destroy(captured); }
         for (captured.payload.value.references) |reference| if (reference) |handle| try captured.heap.release(handle);
     }
     pub fn copy(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, member: Id, value: *const Value) managed.Error!void {
         const captured: *const Captured = @ptrCast(@alignCast(value));
-        if (captured.heap != heap or !same(captured.input_identity, self.authority.input_identity)) return error.InvalidViewModule;
+        if (captured.heap != heap or captured.heap_owner != receiver.owner or
+            !same(captured.input_identity, self.authority.input_identity)) return error.InvalidViewModule;
         const source = try self.cell(captured.actual_type);
         const actual_field: ?Id = switch (try self.authority.resolveField(source.declared, captured.source_view, captured.source_member)) { .actual => |id| id, .missing => null };
         if (!std.meta.eql(actual_field, captured.actual_field)) return error.InvalidViewModule;

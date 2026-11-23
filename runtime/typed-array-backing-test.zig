@@ -38,6 +38,34 @@ test "real Source narrow Array preserves actual U, static copy permission and or
     try std.testing.expectEqualSlices(u8, &row.type_id, &(try heap.typedArrayIdentity(object)));
     try std.testing.expectError(error.TypeMismatch, heap.readTypedArray(object, (try module.authority.layouts.find(row.element_type)).layout, 0, .temporary));
 }
+test "Source Array capture rejects its former heap address" {
+    const raw = try bytes();
+    defer allocator.free(raw);
+    var module = try backing.load(allocator, raw);
+    defer module.deinit();
+    const row = module.arrays[0];
+    var heap = managed.ManagedHeap.init(allocator);
+    defer if (!heap.closed) heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.authority.layouts);
+    const source = try module.create(&heap, row.type_id, &.{.{
+        .type_id = row.element_type, .input = .{ .bytes = &.{ 7, 0, 0, 0 }, .references = &.{} },
+    }}, .persistent);
+    const captured = try module.capture(&heap, source, row.type_id, 0);
+    defer module.release(captured) catch unreachable;
+    const previous_owner = heap.owner;
+    try heap.deinit();
+    heap = managed.ManagedHeap.init(allocator);
+    try heap.installTypedLayouts(module.authority.layouts);
+    const target = try module.create(&heap, row.type_id, &.{.{
+        .type_id = row.element_type, .input = .{ .bytes = &.{ 9, 0, 0, 0 }, .references = &.{} },
+    }}, .persistent);
+    try std.testing.expect(previous_owner != heap.owner);
+    try std.testing.expectError(error.InvalidViewModule, module.copy(&heap, target, row.type_id, 0, captured));
+    var result = try module.read(&heap, target, row.type_id, 0, .persistent);
+    defer result.deinit(allocator);
+    const child = (try result.layout.selectVariant(result.value.tag)).children[0];
+    try std.testing.expectEqual(@as(i32, 9), std.mem.readInt(i32, result.value.bytes[child.offset..][0..4], .little));
+}
 test "backed Array retains dense append, shrink and Q12 checked bounds across collection" {
     const raw = try bytes(); defer allocator.free(raw);
     var module = try backing.load(allocator, raw); defer module.deinit(); const row = module.arrays[0];

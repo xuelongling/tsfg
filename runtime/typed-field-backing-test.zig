@@ -152,6 +152,36 @@ test "Source wider field write and original narrow alias retain actual absence a
     try std.testing.expectEqual(@as(usize, 0), try heap.objectCount());
 }
 
+test "Source field capture rejects its former heap address" {
+    const raw = try bytes();
+    defer allocator.free(raw);
+    var module = try backing.load(allocator, raw);
+    defer module.deinit();
+    const view = module.authority.views[0];
+    const pair = view.fields[0];
+    const field = (try module.cell(view.actual)).fields[0];
+    var heap = managed.ManagedHeap.init(allocator);
+    defer if (!heap.closed) heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.authority.layouts);
+    const source = try module.create(&heap, view.actual, .persistent);
+    try module.write(&heap, source, view.actual, pair.source, field.semantic_type,
+        .{ .bytes = &.{ 7, 0, 0, 0 }, .references = &.{} });
+    const captured = try module.capture(&heap, source, view.actual, pair.source);
+    defer module.release(captured) catch unreachable;
+    const previous_owner = heap.owner;
+    try heap.deinit();
+    heap = managed.ManagedHeap.init(allocator);
+    try heap.installTypedLayouts(module.authority.layouts);
+    const target = try module.create(&heap, view.actual, .persistent);
+    try module.write(&heap, target, view.actual, pair.source, field.semantic_type,
+        .{ .bytes = &.{ 9, 0, 0, 0 }, .references = &.{} });
+    try std.testing.expect(previous_owner != heap.owner);
+    try std.testing.expectError(error.InvalidViewModule, module.copy(&heap, target, view.actual, pair.source, captured));
+    var result = try module.read(&heap, target, view.actual, pair.source, .persistent);
+    defer result.deinit(allocator);
+    const child = (try result.layout.selectVariant(result.value.tag)).children[0];
+    try std.testing.expectEqual(@as(i32, 9), std.mem.readInt(i32, result.value.bytes[child.offset..][0..4], .little));
+}
 test "backing reader rejects corrupt domain identity and owns all allocation failures" {
     const raw = try bytes(); defer allocator.free(raw);
     const corrupt = try allocator.dupe(u8, raw); defer allocator.free(corrupt);

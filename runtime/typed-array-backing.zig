@@ -13,7 +13,10 @@ pub const Array = struct { type_id: Id, element_type: Id, domain: finite.Domain,
 pub const Literal = codec.Active;
 pub const Value = opaque {};
 const CheckedArray = struct { row: Array, length: u32 };
-const Captured = struct { heap: *managed.ManagedHeap, input_identity: Id, actual_type: Id, source_view: Id, payload: access.Value };
+const Captured = struct {
+    heap: *managed.ManagedHeap, heap_owner: u64, allocator: std.mem.Allocator,
+    input_identity: Id, actual_type: Id, source_view: Id, payload: access.Value,
+};
 fn same(a: Id, b: Id) bool { return std.mem.eql(u8, &a, &b); }
 pub const Module = struct {
     arena: std.heap.ArenaAllocator, authority: views.Module, arrays: []Array,
@@ -79,20 +82,23 @@ pub const Module = struct {
     }
     pub fn capture(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, index: u32) managed.Error!*Value {
         const row = try self.readable(heap, receiver, target, index);
-        const result = try heap.allocator.create(Captured); errdefer heap.allocator.destroy(result);
-        result.* = .{ .heap = heap, .input_identity = self.authority.input_identity, .actual_type = row.type_id, .source_view = target,
+        const allocator = heap.allocator;
+        const result = try allocator.create(Captured); errdefer allocator.destroy(result);
+        result.* = .{ .heap = heap, .heap_owner = receiver.owner, .allocator = allocator,
+            .input_identity = self.authority.input_identity, .actual_type = row.type_id, .source_view = target,
             .payload = try readValue(heap, receiver, row, index, .persistent) };
         return @ptrCast(result);
     }
     pub fn release(self: Module, value: *Value) managed.Error!void {
         const captured: *Captured = @ptrCast(@alignCast(value));
         if (!same(captured.input_identity, self.authority.input_identity)) return error.InvalidViewModule;
-        defer { captured.payload.deinit(captured.heap.allocator); captured.heap.allocator.destroy(captured); }
+        defer { captured.payload.deinit(captured.allocator); captured.allocator.destroy(captured); }
         for (captured.payload.value.references) |reference| if (reference) |handle| try captured.heap.release(handle);
     }
     pub fn copy(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, index: u32, value: *const Value) managed.Error!void {
         const captured: *const Captured = @ptrCast(@alignCast(value));
-        if (captured.heap != heap or !same(captured.input_identity, self.authority.input_identity)) return error.InvalidViewModule;
+        if (captured.heap != heap or captured.heap_owner != receiver.owner or
+            !same(captured.input_identity, self.authority.input_identity)) return error.InvalidViewModule;
         const source = try self.array(captured.actual_type); const destination = try self.checked(heap, receiver, target, true);
         var found = false; for (source.views) |id| { if (same(id, captured.source_view)) found = true; }
         if (!found or !captured.payload.layout.same(source.domain.layout)) return error.InvalidViewModule;
