@@ -462,7 +462,13 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       const receiver=at(v.target.receiver,p+'/target/receiver');
       at(v.target.index,p+'/target/index');const value=child('value');
       stores.push({receiver,value});copy(value,id);
-    }else if(v.kind==='assignment') {const value=child('value');copy(value,binding(fn,v.target.binding,v.target.type));copy(value,id);}
+    }else if(v.kind==='assignment') {
+      const value=child('value'),target=binding(fn,v.target.binding,v.target.type);
+      if(v.operator&&v.operator!=='=') {
+        for(const type of leaves(v.type))insert(id,'actual',type);
+        copy(id,target);
+      }else {copy(value,target);copy(value,id);}
+    }
     else if(v.kind==='call') {
       const target=functions.get(v.target),receiver=v.receiver?child('receiver'):null;
       const arguments_=children('arguments');

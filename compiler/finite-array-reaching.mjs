@@ -328,9 +328,17 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         if(value.kind==='arrayStoreDenseChecked'){rememberSlotValue(id,value.value,rhs);return rhs;}
         return {symbol:path};
       }
-      if(value.kind==='assignment') {
-        const rhs=child('value');if(rhs.terminal)return rhs;
-        bindings.set(value.target.binding,adapt(rhs,path+'/value',fn.id+'/binding/'+value.target.binding));return rhs;
+      if(value.kind==='assignment'||value.kind==='update') {
+        const binding=value.target.binding;
+        if(value.kind==='assignment') {
+          const rhs=child('value');if(rhs.terminal)return rhs;
+          if(!value.operator||value.operator==='=') {
+            bindings.set(binding,adapt(rhs,path+'/value',fn.id+'/binding/'+binding));return rhs;
+          }
+        }
+        const result={symbol:path};
+        const previous=value.kind==='update'&&!value.prefix?(bindings.get(binding)??{symbol:path+'/old-value'}):result;
+        bindings.set(binding,result);return previous;
       }
       if(value.kind==='arrayLength'||value.kind==='readSpanLength') {
         const receiver=child('receiver');if(receiver.terminal)return receiver;
@@ -478,7 +486,6 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       if(value.target)for(const name of ['receiver','index'])if(value.target[name])expression(value.target[name],path+'/target/'+name,state,bindings);
       for(const name of ['receiver','operand','left','right','index','value'])if(value[name])child(name,false);
       for(const [index,item] of (value.arguments??[]).entries())expression(item,path+'/arguments/'+index,state,bindings);
-      if(value.kind==='update')invalidate(state);
       return {symbol:path};
     }
     // A representation-changing adaptation emits domain.view, which is not

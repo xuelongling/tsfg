@@ -287,6 +287,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       if(value.kind==='assignment') {
         const token=child('value');
         if(stopped)return null;
+        if(value.operator&&value.operator!=='='){env.delete(value.target.binding);return null;}
         const alias=copiesValue(value.target.type)?copyToken(token,path+'/copy',state):token;
         env.set(value.target.binding,alias);return alias;
       }

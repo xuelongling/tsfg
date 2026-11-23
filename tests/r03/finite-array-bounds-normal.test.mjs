@@ -56,6 +56,116 @@ test('finite binding increment carries the updated u32 to the next loop iteratio
   assert.ok(lines.some(line=>line.includes(`cf.br ${header.trim().split('(')[0]}(`)&&line.includes(next)));
 });
 
+async function derivedFill(change) {
+  const fixture=actualManifest.find(row=>row.sourceIdentity==='a5145075bdd5f8695585af845e46b41ae869891496d11b3bec1ee169aa72a01b');
+  const bytes=await readFile(new URL('./testdata/typed-array-actual-v8/'+fixture.file,import.meta.url));
+  assert.equal(sha256(bytes),'sha256:'+fixture.sha256);
+  const packet=structuredClone(readTypedArrayFacts(bytes)),payload=packet.payload,fn=payload.functions[0];
+  const source=payload.files.find(row=>row.path===fn.sourcePath);
+  change(fn,source);
+  const previous=fn.id;
+  fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:fn.sourcePath,declarationRange:fn.declarationRange}));
+  for(const row of [...payload.exports,...payload.entryCompatibilityRoots])if(row.functionId===previous)row.functionId=fn.id;
+  source.sha256=sha256(source.content).slice(7);
+  source.byteLength=Buffer.byteLength(source.content,'utf8');
+  source.utf16Length=source.content.length;
+  const {sourceRoot,rootFile,declarations,config}=payload;
+  const request={family:'tsfg.array-facts-request-candidate',version:8,input:{sourceRoot,rootFile,declarations,config,
+    files:payload.files.map(({path,content,sha256})=>({path,content,sha256}))}};
+  packet.requestId=sha256('tsfg.array-facts.request.v8\0'+canonical(request)+'\n');
+  packet.packageId=sha256('tsfg.array-facts.package.v8\0'+packet.schemaHash+'\0'+canonical(payload));
+  const factsBytes=Buffer.from(canonical(packet)+'\n'),facts=readTypedArrayFacts(factsBytes);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:facts.packageId};
+  const publication=buildInitialArrayPublication(context),built=buildHir(facts,context,publication);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  return {hir:built.hir,context,publication};
+}
+
+test('finite binding compounds carry the computed u32 on the loop backedge',async()=>{
+  for(const [operator,operation] of [['+=','add'],['&=','and']]){
+    // Preserve every surrounding Source span by consuming the trailing space.
+    const {hir,context,publication}=await derivedFill((fn,source)=>{
+      const statement=fn.body[1].body[1],{target,type,flowType,operatorRange}=statement.value;
+      assert.equal(source.content.slice(75,80),'i++; ');
+      source.content=source.content.slice(0,75)+'i'+operator+'1;'+source.content.slice(80);
+      statement.range.end=80;
+      statement.value={kind:'bindingAssignment',type,flowType,target,operator,operatorRange,range:{start:75,end:79},
+        value:{kind:'numericLiteral',type,flowType,token:'1',decimal:'1',range:{start:78,end:79}}};
+    });
+    const lines=lowerFormalHir(hir,context,publication).split('\n');
+    const arithmetic=lines.find(line=>line.includes(`"tsfg_core.${operation}"`)&&
+      line.includes('tsfg_source.start = 75 : i64, tsfg_source.end = 79 : i64'));
+    assert.ok(arithmetic,'compound emits the original numeric operation');
+    const [,next,previous,one]=arithmetic.match(/(%v\d+) = "[^"]+"\((%v\d+), (%v\d+)\)/u)??[];
+    assert.ok(next&&previous&&one);
+    assert.ok(lines.some(line=>line.includes(`${one} = "tsfg_core.constant"() {value = "1", tsfg_source.start = 78 : i64, tsfg_source.end = 79 : i64}`)));
+    const header=lines.find(line=>line.startsWith('  ^')&&line.includes(previous+': !tsfg_core.integer<"u32">'));
+    assert.ok(header);
+    assert.ok(lines.some(line=>line.includes(`cf.br ${header.trim().split('(')[0]}(`)&&line.includes(next)));
+  }
+});
+
+test('finite binding compound captures the old local before an RHS assignment',async()=>{
+  const {hir,context,publication}=await derivedFill((fn,source)=>{
+    const statement=fn.body.at(-1),read=statement.value,{start,end}=read.index.range;
+    const updated=fn.body[1].body[1].value.target,{type}=updated;
+    assert.equal(source.content.slice(start,end),'0');
+    const replaced='i+=(i=1)',delta=replaced.length-(end-start);
+    source.content=source.content.slice(0,start)+replaced+source.content.slice(end);
+    fn.declarationRange.end+=delta;statement.range.end+=delta;read.range.end+=delta;
+    const span=(from,to)=>({start:start+from,end:start+to});
+    const assignment=(operator,from,operatorEnd,to,value)=>({
+      kind:'bindingAssignment',type,flowType:type,operator,operatorRange:span(from+1,operatorEnd),range:span(from,to),
+      target:{...updated,range:span(from,from+1)},value,
+    });
+    const inner=assignment('=',4,6,7,{kind:'numericLiteral',type,flowType:type,token:'1',decimal:'1',range:span(6,7)});
+    read.index=assignment('+=',0,3,8,{kind:'parentheses',type,flowType:type,range:span(3,8),expression:inner});
+  });
+  const index=hir.functions[0].body.at(-1).value.index,{start,end}=index.range;
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const arithmetic=lines.find(line=>line.includes('"tsfg_core.add"')&&
+    line.includes(`tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`));
+  assert.ok(arithmetic);
+  const [,next,previous,rhs]=arithmetic.match(/(%v\d+) = "tsfg_core\.add"\((%v\d+), (%v\d+)\)/u)??[];
+  assert.ok(next&&previous&&rhs);
+  const view=lines.find(line=>line.includes(`${rhs} = "tsfg_core.domain.view"(`));
+  const [,one]=view?.match(/"tsfg_core\.domain\.view"\((%v\d+)\)/u)??[];
+  assert.ok(one&&lines.some(line=>line.includes(`${one} = "tsfg_core.constant"() {value = "1",`)&&
+    line.includes(`tsfg_source.start = ${start+6} : i64, tsfg_source.end = ${start+7} : i64`)));
+  assert.notEqual(previous,one);
+  assert.ok(lines.some(line=>line.startsWith('  ^')&&line.includes(previous+': !tsfg_core.integer<"u32">')));
+  assert.ok(lines.some(line=>line.includes('"tsfg_core.domain.array_read"')&&line.includes(`, ${next})`)));
+});
+
+test('finite numeric local writes clear stale Array index constants',async()=>{
+  const fixture=actualManifest.find(row=>row.sourceIdentity==='a5145075bdd5f8695585af845e46b41ae869891496d11b3bec1ee169aa72a01b');
+  const {hir}=await checkedFixture(fixture,'typed-array-actual-v8/');
+  const [fn]=hir.functions,[local,loop,returned]=fn.body,[store,update]=loop.body;
+  const {index}=store.expression.target,element=store.expression.value;
+  const assignment={...update.expression,kind:'assignment',operator:'+=',
+    value:{kind:'constant',type:index.type,decimal:'1',range:index.range}};
+  // The modeled local writes use the retained binding and checked Array read.
+  // A fresh known Array exposes a stale constant separately from backing writes.
+  for(const [writes,elements] of [
+    [[update],[element]],
+    [[{...update,expression:assignment},{...update,expression:assignment}],[element,element]],
+  ]){
+    const receiver={kind:'arrayCreate',type:returned.value.receiver.type,elements,range:returned.value.receiver.range};
+    const body=[local,...writes,{...returned,value:{...returned.value,receiver,index}}];
+    const model={...hir,functions:[{...fn,body}]};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>false);
+    const read=reaching.reads.find(item=>item.node===fn.id+'/body/'+(body.length-1)+'/value');
+    assert.equal(read.status,'pending');
+    assert.deepEqual(read.versions,[]);
+  }
+  const receiver={kind:'arrayCreate',type:returned.value.receiver.type,elements:[element],range:returned.value.receiver.range};
+  const postfix={...returned,value:{...returned.value,receiver,index:update.expression}};
+  const {reaching}=buildFiniteArrayReaching({...hir,functions:[{...fn,body:[local,postfix]}]},
+    {nodes:[],domains:[],calls:[]},()=>{},()=>false);
+  const old=reaching.reads.find(item=>item.node===fn.id+'/body/1/value');
+  assert.deepEqual([old.status,old.index],['proven','c:0']);
+});
+
 test('a symbolic dense write leaves the former Array endpoint possibly initialized',async()=>{
   const [{hir},{hir:endpoint},{hir:overwrite}]=await Promise.all(
     ['dynamic-owner-aliases','length-equal-checked-read','dense-overwrite'].map(name=>checkedFixture(manifest.find(row=>row.name===name))));

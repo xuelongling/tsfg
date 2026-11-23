@@ -513,9 +513,18 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           return value.kind==='arrayUpdate'&&!value.prefix?old:next;
         }
         if(value.kind==='assignment') {
-          const target=selected(fn.id+'/binding/'+value.target.binding).domainId;
+          const binding=value.target.binding,target=selected(fn.id+'/binding/'+binding).domainId;
+          if(value.operator&&value.operator!=='=') {
+            const operator=value.operator.slice(0,-1),native=domains.get(target).nativeType,rhsType=value.value.type;
+            if(native==='bool'||value.type!==target||
+              !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
+              pending('operation-domain-check mapping',value.range);
+            const old=api.lookup(binding),rhs=api.emit(value.value);
+            const next=api.operation('tsfg_core.'+scalarOperations[operator],[old,rhs],[target,rhsType],value.type,'',value.range);
+            api.assign(binding,next);return next;
+          }
           const rhs=copy(api,{name:api.emit(wrap(value.value,target)),type:target},value.target.type,value.range);
-          api.assign(value.target.binding,rhs.name);return rhs.name;
+          api.assign(binding,rhs.name);return rhs.name;
         }
         if(value.kind==='update') {
           const binding=value.target.binding,type=selected(fn.id+'/binding/'+binding).domainId,domain=domains.get(type);
