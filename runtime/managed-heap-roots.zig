@@ -4,6 +4,21 @@
 const std = @import("std");
 const model = @import("managed-heap-model.zig");
 const handles = @import("managed-handles.zig");
+
+pub fn reserve(allocator: std.mem.Allocator, state: *model.State, count: usize) std.mem.Allocator.Error!void {
+    const table = &state.roots;
+    const unused = table.capacity - table.items.len;
+    if (count <= unused) return;
+    var needed = count;
+    for (table.items) |root| {
+        if (root.object == null and !root.retired) {
+            needed -= 1;
+            if (needed <= unused) return;
+        }
+    }
+    try table.ensureUnusedCapacity(allocator, needed);
+}
+
 pub fn available(allocator: std.mem.Allocator, state: *model.State) std.mem.Allocator.Error!usize {
     for (state.roots.items, 0..) |root, index| if (root.object == null and !root.retired) return index;
     try state.roots.ensureUnusedCapacity(allocator, 1);

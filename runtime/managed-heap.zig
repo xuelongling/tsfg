@@ -347,8 +347,10 @@ pub const ManagedHeap = struct {
         errdefer self.allocator.free(bytes);
         const references = try self.allocator.alloc(?Handle, layout.reference_count);
         errdefer self.allocator.free(references);
-        // Reserve every possible root before publishing even the first one.
-        try self.owned().roots.ensureUnusedCapacity(self.allocator, references.len);
+        // Reserve all active roots before publishing any.
+        var root_count: usize = 0;
+        for (edges) |target| root_count += @intFromBool(target != null);
+        try roots.reserve(self.allocator, self.owned(), root_count);
         for (references, edges) |*out, target| {
             out.* = if (target) |child| self.installRoot(try self.availableRoot(), child, scope) else null;
         }

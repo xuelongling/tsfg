@@ -94,3 +94,41 @@ fn failures(operation: Operation) !void {
 test "typed Array allocation failures are transactional across both planes and roots" {
     inline for (std.meta.tags(Operation)) |operation| try failures(operation);
 }
+
+test "typed Array reads grow roots only for active references with no reusable slot" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var heap = Heap.init(failing.allocator());
+    defer heap.deinit() catch unreachable;
+    const child = try heap.create(77, 42, 0, .persistent);
+    const array = try heap.createTypedArray(layout, &.{
+        .{ .bytes = &initial, .references = &.{child} },
+        .{ .tag = 1, .bytes = &initial, .references = &.{null} },
+    }, .persistent);
+    const spare = try heap.retain(array, .persistent);
+    const scope = try heap.beginScope();
+    defer heap.endScope(scope) catch unreachable;
+    while (true) {
+        const stats = try managed.testing.rootStats(&heap);
+        if (stats.count == stats.capacity) break;
+        _ = try heap.retain(array, .temporary);
+    }
+    const before = try managed.testing.rootStats(&heap);
+    failing.fail_index = failing.alloc_index + 2;
+    failing.resize_fail_index = failing.resize_index;
+    var absent = try heap.readTypedArray(array, layout, 1, .temporary);
+    defer absent.deinit(heap.allocator);
+    try equal(@as(u16, 1), absent.tag);
+    try equal(@as(?managed.Handle, null), absent.references[0]);
+    try equal(before, try managed.testing.rootStats(&heap));
+
+    failing.fail_index = failing.alloc_index + 2;
+    try std.testing.expectError(error.OutOfMemory, heap.readTypedArray(array, layout, 0, .temporary));
+    try equal(before, try managed.testing.rootStats(&heap));
+    try heap.release(spare);
+    failing.fail_index = failing.alloc_index + 2;
+    var live = try heap.readTypedArray(array, layout, 0, .temporary);
+    defer live.deinit(heap.allocator);
+    try equal(spare.slot, live.references[0].?.slot);
+    try expect(try heap.sameObject(child, live.references[0].?));
+    try equal(before, try managed.testing.rootStats(&heap));
+}
