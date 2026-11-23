@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {createCoreSsaGraph} from './core-ssa-graph.mjs';
+import {exceptionBooleanLiteral} from './exception-common.mjs';
 import {formalExceptionValues} from './formal-exception-values.mjs';
 import {exceptionCoreFailure} from './formal-exception-model.mjs';
 // A completion is control, never a scalar sentinel. A finally clone receives
@@ -85,7 +86,7 @@ export function formalExceptionFunction(model,owner){
   }
   function conditional(statement,active){
     const condition=values.expression(statement.condition),left=graph.newBlock(),right=graph.newBlock(),joined=graph.newBlock();
-    const literal=statement.condition.kind==='boolean'?statement.condition.value:undefined;
+    const literal=exceptionBooleanLiteral(statement.condition)?.value;
     const cells=copyCells(state.cells);graph.conditional(state.current,condition.name,left,right,statement.range);
     const finish=()=>graph.branch(state.current,joined,[],statement.range);
     const lowerArm=(block,arm,reachable)=>{
@@ -132,7 +133,7 @@ export function formalExceptionFunction(model,owner){
     state.current=body;state.cells=copyCells(cells);
     region(statement.bodyRegion,active,()=>graph.branch(state.current,header,[],statement.range));
     state.current=after;state.cells=cells;
-    if(statement.condition.kind==='boolean'&&statement.condition.value===true)
+    if(exceptionBooleanLiteral(statement.condition)?.value===true)
       terminator('tsfg_eh.unreachable',[],[],{},statement.range);
   }
   for(const [index,capture] of captures.entries())state.cells.set(capture.binding,{...entry.parameters[signature.parameters.length+index]});

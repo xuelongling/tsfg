@@ -93,7 +93,7 @@ void FunctionProof::conditional(const Json &s,const Handlers &active){
   auto finish=[&]{auto *target=branch(field(s,"range"));
     program.require(target&&(!join||join==target)&&target->getNumArguments()==0,"branch merge changes continuation or value");join=target;};
   const auto &sourceCondition=field(s,"condition");
-  const auto literal=string(field(sourceCondition,"kind"))=="boolean"?field(sourceCondition,"value").getAsBoolean():std::nullopt;
+  const auto literal=booleanLiteral(sourceCondition,"value");
   auto arm=[&](mlir::Block *block,const Json &node,bool reachable){
     at(block);cells=inherited;
     if(!reachable){
@@ -154,7 +154,7 @@ void FunctionProof::loop(const Json &s,const Handlers &active){
   at(body);region(field(s,"bodyRegion"),active,[&]{program.require(branch(field(s,"range"))==header,"normal body completion must return to its own condition");});
   cells=inherited;at(after);
   const auto &sourceCondition=field(s,"condition");
-  if(string(field(sourceCondition,"kind"))=="boolean"&&field(sourceCondition,"value").getAsBoolean()==true){
+  if(booleanLiteral(sourceCondition,"value")==true){
     auto *dead=take("tsfg_eh.unreachable",field(s,"range"),{},0,0);
     program.require(dead&&dead->getNumSuccessors()==0&&!next,"constant-true false edge has no normal continuation");
   }

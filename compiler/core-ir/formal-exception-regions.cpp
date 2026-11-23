@@ -153,7 +153,7 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     if(!field(h,"elseRegion").getAsNull()){
       if(!source->expect(at,"else",p)||!branch(items(field(raw,"elseBody")),field(h,"elseRegion"),right,"else"))return false;
     }else if(!p.require(items(field(raw,"elseBody")).empty(),"omitted else body"))return false;
-    const auto literal=string(field(test,"kind"))=="boolean"?field(test,"boolean").getAsBoolean():std::nullopt;
+    const auto literal=booleanLiteral(test,"boolean");
     if(literal==false)left.normal=false;
     else scope.written.insert(left.written.begin(),left.written.end());
     if(literal==true)right.normal=false;
@@ -204,7 +204,7 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     if(!p.require(body.size()==1&&string(field(body[0],"kind"))=="block","complete owned loop body"))return false;
     SourceScope repeated;
     if(!nested(items(field(body[0],"body")),field(h,"bodyRegion"),"loop",position,repeated))return false;
-    const auto literal=string(field(condition,"kind"))=="boolean"?field(condition,"boolean").getAsBoolean():std::nullopt;
+    const auto literal=booleanLiteral(condition,"boolean");
     if(literal!=false){
       for(const auto &id:repeated.written)scope.narrowed.erase(id);
       scope.written.insert(repeated.written.begin(),repeated.written.end());

@@ -6,6 +6,7 @@
 #include "mlir/IR/TypeSupport.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 namespace mlir { class DialectRegistry; }
@@ -19,6 +20,11 @@ using exception::string;
 using exception::equal;
 using exception::canonical;
 using exception::digest;
+inline std::optional<bool> booleanLiteral(const Json &expression,llvm::StringRef valueField){
+  const auto *condition=&expression;
+  while(field(*condition,"kind").getAsString()=="group")condition=&field(*condition,"operand");
+  return field(*condition,"kind").getAsString()=="boolean"?field(*condition,valueField).getAsBoolean():std::nullopt;
+}
 struct IdentityStorage : mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;
   explicit IdentityStorage(KeyTy key):key(key){}

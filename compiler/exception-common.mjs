@@ -17,6 +17,10 @@ export function failure(category, message = 'owned exception facts differ') {
 export const check = (condition, category = 'schema', message = undefined) => { if (!condition) failure(category, message); };
 check(schemaHash === 'sha256:5221b50822965c633418462b28a9b58bfbc41b01e0fa4b6d31c50ab83805424d', 'schema', 'descriptor identity differs');
 export const same = (a, b) => canonical(a) === canonical(b);
+export function exceptionBooleanLiteral(condition) {
+  while (condition.kind === 'group') condition = condition.operand;
+  return condition.kind === 'boolean' ? condition : undefined;
+}
 export function record(value, required, optional = []) {
   check(value && typeof value === 'object' && !Array.isArray(value));
   check(required.every(key => Object.hasOwn(value, key))

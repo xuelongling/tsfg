@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: MIT
-import { check, failure, record, array, range, same, wireLimits } from './exception-common.mjs';
+import { check, failure, record, array, range, same, wireLimits, exceptionBooleanLiteral } from './exception-common.mjs';
 import { verifyExceptionExpression } from './exception-expressions.mjs';
 import { exceptionAggregateAnnotation } from './exception-aggregate-facts.mjs';
 import { exceptionCallableAnnotation } from './exception-callable.mjs';
 import { exceptionValueType, exceptionAnnotation, exceptionAssignmentType } from './exception-types.mjs';
 import { exceptionScope, declareExceptionBinding, reserveExceptionBindings, exceptionWrite, exceptionBranchScope,
   exceptionDropWrittenProofs, mergeExceptionScopes } from './exception-scope.mjs';
-
-function literalCondition(condition) {
-  return condition.kind === 'boolean' ? condition.boolean : undefined;
-}
 
 function terminator(context, next) {
   const g = context.grammar;
@@ -124,7 +120,7 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     if (elseBody.length) next = verifyExceptionStatement(elseBody[0], item.range, right, context, g.expect(next, 'else'), depth + 1);
     // Source's if anchor trims leading trivia; its ordinary block anchor does not.
     g.span(item.range, parent, first, next - 1);
-    const literal = literalCondition(item.condition), normal = [], reachable = [];
+    const literal = exceptionBooleanLiteral(item.condition)?.boolean, normal = [], reachable = [];
     if (literal !== false) {
       reachable.push(left);
       if (exceptionStatementsCanComplete(thenBody)) normal.push(left);
@@ -186,9 +182,9 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     check(condition.type === 'bool', 'type'); next = g.expect(condition.next, ')');
     const repeated = exceptionBranchScope(entry, condition.test, true, context.definitions);
     next = verifyExceptionStatement(body[0], item.range, repeated, context, next, depth + 1);
-    // A direct false condition has no backedge. The body still owns and
+    // A literal false condition has no backedge. The body still owns and
     // validates its existing facts, but its writes cannot affect this exit.
-    const deadBody = literalCondition(item.condition) === false;
+    const deadBody = exceptionBooleanLiteral(item.condition)?.boolean === false;
     const exit = exceptionBranchScope(deadBody ? scope : entry, condition.test, false, context.definitions);
     mergeExceptionScopes(scope, [exit], deadBody ? [] : [repeated]);
     g.raw(item.range, parent, first, next - 1); return next;
@@ -205,11 +201,11 @@ export function exceptionStatementsCanComplete(body) {
     if (item.kind === 'throw' || item.kind === 'return') current = false;
     if (item.kind === 'block') current = exceptionStatementsCanComplete(item.body ?? []);
     if (item.kind === 'if') {
-      const literal = literalCondition(item.condition);
+      const literal = exceptionBooleanLiteral(item.condition)?.boolean;
       current = literal !== false && exceptionStatementsCanComplete(item.thenBody ?? [])
         || literal !== true && exceptionStatementsCanComplete(item.elseBody ?? []);
     }
-    if (item.kind === 'while') current = item.condition.kind !== 'boolean' || item.condition.boolean !== true;
+    if (item.kind === 'while') current = exceptionBooleanLiteral(item.condition)?.boolean !== true;
     if (item.kind === 'try') {
       const fact = item.exception;
       current = exceptionStatementsCanComplete(fact.tryBlock.body)
