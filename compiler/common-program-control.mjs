@@ -8,6 +8,19 @@ import {commonCollections} from './common-program-budget.mjs';
 import {sha256,boolTypeId} from './identity.mjs';
 import {commonLexicalScopes} from './common-program-lexical.mjs';
 
+// This proof only selects normal statement edges. The original expression
+// still builds its full short-circuit graph and can finish abruptly.
+function normalBooleanOutcome(condition,spend) {
+  spend();
+  if(condition.kind==='booleanLiteral')return condition.token==='true';
+  const operator=condition.operator;
+  if(condition.kind!=='binary'||(operator!=='&&'&&operator!=='||'))return undefined;
+  const short=operator==='||',left=normalBooleanOutcome(condition.left,spend);
+  if(left===short)return short;
+  const right=normalBooleanOutcome(condition.right,spend);
+  return left===undefined&&right!==short?undefined:right;
+}
+
 export function planCommonFunction(model,owner) {
   const collections=commonCollections(model.spend),declarations=commonLexicalScopes(owner,model.spend);
   const constructor=owner.kind==='construction-body';
@@ -100,7 +113,8 @@ export function planCommonFunction(model,owner) {
   function conditional(statement,active,path) {
     const condition=values.expression(statement.condition),yes=graph.newBlock(),no=graph.newBlock(),joined=graph.newBlock(),cells=collections.map(state.cells);
     graph.conditional(state.current,condition,yes,no,statement.condition.range);
-    if(statement.condition.kind==='booleanLiteral')literalBranches.set(state.current.name,statement.condition.token==='true'?yes.name:no.name);
+    const normal=normalBooleanOutcome(statement.condition,model.spend);
+    if(normal!==undefined)literalBranches.set(state.current.name,normal?yes.name:no.name);
     const finish=()=>graph.branch(state.current,joined,[],statement.range);
     state.current=yes;state.cells=collections.map(cells);region(statement.then,active,finish,[...path,'then']);
     state.current=no;state.cells=collections.map(cells);region(statement.else,active,finish,[...path,'else']);state.cells=cells;

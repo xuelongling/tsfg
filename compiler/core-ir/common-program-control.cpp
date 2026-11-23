@@ -2,7 +2,25 @@
 #include "common-program-plan.h"
 #include "common-program-methods.h"
 #include <memory>
+#include <optional>
 namespace tsfg::commonProgram {
+namespace {
+// This proof selects only normal statement edges after the original expression
+// has emitted its short-circuit control and independent abrupt continuations.
+std::optional<bool> normalBooleanOutcome(ActualCheck &check,const Json &condition){
+  if(!check.step())return std::nullopt;
+  const auto kind=string(field(condition,"kind"));
+  if(kind=="booleanLiteral")return string(field(condition,"token"))=="true";
+  const auto op=string(field(condition,"operator"));
+  if(kind!="binary"||(op!="&&"&&op!="||"))return std::nullopt;
+  const bool shortValue=op=="||";
+  const auto left=normalBooleanOutcome(check,field(condition,"left"));
+  if(left==shortValue)return shortValue;
+  const auto right=normalBooleanOutcome(check,field(condition,"right"));
+  return !left&&right!=shortValue?std::nullopt:right;
+}
+} // namespace
+
 SourcePlan::Reg SourcePlan::constructionAction(llvm::StringRef name,std::vector<Reg> args,const std::string &type,Json properties,SourceAnchor range,
     const std::function<void(Reg,SourceAnchor)> &onThrow){
   const auto normal=block({type}),exceptional=block({"payload:"+schema.str()});
@@ -125,7 +143,8 @@ void SourcePlan::conditional(const Json &s,const Completion &active,const std::s
   const auto &term=field(s,"condition");const auto condition=expression(term);const auto yes=block(),no=block(),joined=block();
   if(!check.step(cells.size()*4+1))return;const auto saved=cells;
   emit("cf.cond_br",{condition},"",Object{},sourceAnchor(term),{uint16_t(yes),uint16_t(no)});
-  if(string(field(term,"kind"))=="booleanLiteral")literalBranches.emplace(current,Reg(string(field(term,"token"))=="true"?yes:no));
+  const auto normal=normalBooleanOutcome(check,term);if(!ok())return;
+  if(normal)literalBranches.emplace(current,Reg(*normal?yes:no));
   const auto finish=[this,joined,r=sourceAnchor(s)]{branch(joined,{},r);};
   current=yes;cells=saved;region(items(field(s,"then")),active,finish,path+"/then");
   current=no;cells=saved;region(items(field(s,"else")),active,finish,path+"/else");cells=saved;

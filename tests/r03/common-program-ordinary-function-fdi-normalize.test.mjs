@@ -65,6 +65,25 @@ test('literal fallthrough check includes deferred language edges into catch',()=
   assert.throws(()=>planned([],null,[{...detached,tryBlock}]),/unproved successful function fallthrough/);
 });
 
+test('short-circuit truth closes fallthrough and retains the left call',()=>{
+  const target={id:'truth-target',kind:'source',parameters:[],returnType:boolTypeId,signatureHash:sha256('truth-target')};
+  const left={kind:'call',callee:target.id,type:boolTypeId,range:at(20,25),arguments:[],
+    signature:{parameters:[],returnType:boolTypeId}};
+  const returned={kind:'return',value:literal('7',at(43)),range:at(36,45)};
+  const guarded=(operator,token,selected)=>({kind:'if',range:at(16,51),condition:{kind:'binary',operator,
+    type:boolTypeId,range:at(20,34),left,right:{kind:'booleanLiteral',token,type:boolTypeId,range:at(28,34)}},
+    then:selected?[returned]:[],else:selected?[]:[returned]});
+  for(const statement of [guarded('||','true',true),guarded('&&','false',false)]){
+    const ops=instructions(planned([],null,[statement],[target]).plan);
+    assert.equal(ops.filter(op=>op.name==='cf.cond_br').length,2);
+    assert.equal(ops.filter(op=>op.name==='tsfg_program.invoke'&&op.properties.function_id===target.id).length,1);
+    assert.equal(ops.filter(op=>op.name==='tsfg_program.return_throw').length,1);
+    assert.equal(ops.filter(op=>op.name==='tsfg_program.unreachable').length,1);
+  }
+  assert.throws(()=>planned([],null,[guarded('||','false',true)],[target]),/unproved successful function fallthrough/);
+  assert.throws(()=>planned([],null,[guarded('&&','true',false)],[target]),/unproved successful function fallthrough/);
+});
+
 // A partial literal payload for the body validator's own interface, with real
 // token ranges and Source origin IDs. This is never packaged or certified.
 function checkedBody(parameters,arguments_,minimum=undefined,signatureMinimum=minimum,asValue=false) {
