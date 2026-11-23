@@ -1,6 +1,6 @@
 import { familyOf } from './module-callable-common.mjs';
 import {verifyCommonProgramHir,buildCommonProgramHir,isCommonProgramContext} from './common-program-hir.mjs';
-import {analyzeCommonProgram} from './common-program-analysis.mjs';
+import {verifyCommonKernelGroup} from './common-program-analysis.mjs';
 import {commonCheck,commonRecord,commonBudget,commonSame} from './common-program-common.mjs';
 import { verifyModuleCallableHir } from './module-callable-hir.mjs';
 import { verifyModuleCallablePublication } from './module-callable-publication.mjs';
@@ -39,7 +39,11 @@ export function verifyHir(hir, factsContext = undefined, callPublicationContext 
   if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate')){
     const checked=verifyCommonProgramHir(hir);
     if(factsContext!==undefined)commonCheck(isCommonProgramContext(factsContext)&&commonSame(checked,buildCommonProgramHir(checked.snapshot,factsContext)),'context');
-    if(callPublicationContext!==undefined){commonBudget(callPublicationContext);commonRecord(callPublicationContext,['publication','request']);analyzeCommonProgram(checked,callPublicationContext.publication);}
+    if(callPublicationContext!==undefined){
+      commonBudget(callPublicationContext);
+      commonRecord(callPublicationContext,['publication','request']);
+      verifyCommonKernelGroup(checked,callPublicationContext.publication,callPublicationContext.request);
+    }
     return checked;
   }
   if(isOptionalPropertyContext(factsContext))return verifyOptionalPropertyHir(hir,factsContext,callPublicationContext);

@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
 import {commonIdentity} from '../../compiler/common-program-identities.mjs';
+import {printHir,readHir,verifyHir} from '../../compiler/hir.mjs';
 import {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup,
   verifyCommonKernelProof,printCommonKernelProof,readCommonKernelProof} from '../../compiler/common-program-analysis.mjs';
 const programs=new Map();
@@ -77,4 +78,29 @@ test('missing fixed row, wrong stable identity and supplied proof mutation fail 
   const proof=structuredClone(verifyCommonKernelGroup(hir,publication,request));proof.accesses[0].writes=[];
   assert.throws(()=>verifyCommonKernelProof(proof,hir,publication,request),/** @param {any} error */ error=>error.code==='r03-common-program-kernel-proof');
   assert.deepEqual(verifyCommonKernelGroup(hir,publication,request).targets,request.targets);
+});
+
+test('Common HIR round trip preserves bytes with an explicit valid fixed kernel request',()=>{
+  const {hir,publication,request}=programs.get('positive'),text=printHir(hir),bytes=Buffer.from(text);
+  assert.deepEqual(readHir(bytes),hir);
+  for(const selected of [request,{targets:[]}]){
+    const context={publication,request:selected};
+    assert.deepEqual(verifyHir(hir,undefined,context),hir);
+    assert.equal(printHir(hir,undefined,context),text);
+    assert.deepEqual(readHir(bytes,undefined,context),hir);
+  }
+});
+
+test('Common HIR round trip rejects a single kernel or another program’s kernel request',()=>{
+  const {hir,publication,request}=programs.get('positive'),bytes=Buffer.from(printHir(hir));
+  const foreign=programs.get('mixed').request;
+  for(const [invalid,code] of [
+    [{targets:request.targets.slice(0,1)},'r03-common-program-kernel'],
+    [foreign,'r03-common-program-kernel-identity'],
+  ]){
+    const context={publication,request:invalid};
+    assert.throws(()=>verifyHir(hir,undefined,context),{code});
+    assert.throws(()=>printHir(hir,undefined,context),{code});
+    assert.throws(()=>readHir(bytes,undefined,context),{code});
+  }
 });
