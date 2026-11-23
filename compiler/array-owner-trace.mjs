@@ -6,6 +6,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {typedReferenceAuthority} from './typed-reference-authority.mjs';
 import {createSpanStorage} from './array-span-storage.mjs';
 import {createSpanContexts} from './array-span-contexts.mjs';
+import {isLocalNullishAssignment} from './finite-presence.mjs';
 
 export const unknownArrayOwner=Object.freeze({kind:'unknown'});
 export const parameterArrayOwner=(fn,index)=>({kind:'parameter',functionId:fn.id,index});
@@ -284,13 +285,14 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           writeContents(receiver,rhs);
         }
       }else if(hasConditionalArrayRhs(value)) {
-        const left=expression(value.left,[...path,'left'],index),before=snapshot(bindings);
+        const coalescingAssignment=isLocalNullishAssignment(value),rightKey=coalescingAssignment?'value':'right',
+          left=coalescingAssignment?null:expression(value.left,[...path,'left'],index),before=snapshot(bindings);
         const storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
-        const leftTruth=truthValues.get(canonical([...path,'left'])),op=value.operator;
+        const leftTruth=coalescingAssignment?undefined:truthValues.get(canonical([...path,'left'])),op=value.operator;
         const executes=context&&typeof leftTruth==='boolean'?(op==='&&'?leftTruth:op==='||'?!leftTruth:op==='??'?false:null):null;
         const skippedContents=executes===null?snapshot(contents):null;
         let right=null;
-        if(executes!==false){conditionalDepth++;right=expression(value.right,[...path,'right'],index);conditionalDepth--;}
+        if(executes!==false){conditionalDepth++;right=expression(value[rightKey],[...path,rightKey],index);conditionalDepth--;}
         if(executes===null){
           stored.join([storageBefore,stored.state()]);
           contents=joinContents(skippedContents,contents);
@@ -298,7 +300,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           meetTruth([priorTruth,snapshot(truthBindings)]);
           for(const key of lengths.keys()){charge();lengths.set(key,null);}
         }
-        owner=mergeArrayOwners([left,right]);
+        owner=coalescingAssignment?null:mergeArrayOwners([left,right]);
       }else if(value.kind==='assignment') {
         owner=expression(value.value,[...path,'value'],index);bindings.set(value.target.binding,owner);
         operations.push({kind:'binding',path:[...path,'value'],binding:value.target.binding,type:value.target.type,

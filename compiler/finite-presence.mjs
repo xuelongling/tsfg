@@ -2,6 +2,8 @@
 // Presence is an actual-payload fact, never Boolean truthiness or a declared
 // type filter. Unknown evidence keeps both continuations possible.
 export const isFiniteAbsence=kind=>kind==='null'||kind==='undefined';
+export const isLocalNullishAssignment=value=>value.operator==='??='&&
+  (value.kind==='assignment'||value.kind==='bindingAssignment');
 export function finitePresence(plan,types,charge) {
   const nodes=new Map(),domains=new Map();
   for(const row of plan.nodes){charge();nodes.set(row.id,row);}

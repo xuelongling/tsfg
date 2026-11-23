@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Cold typed occurrences and original anchors, never a second evaluator/checker.
 import {canonical,integerNames,integerRange} from './identity.mjs';
-import {floatBits} from './float.mjs';
+import {floatBits,floatNames} from './float.mjs';
 import {identifierName,skipCallTrivia} from './module-facts.mjs';
 import {check,hash,sourceRange,originId,signatureId,byteOrder} from './typed-array-schema.mjs';
 import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
 import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
+import {isLocalNullishAssignment} from './finite-presence.mjs';
 
 export function validateTypedArrayFunctions(payload,sources,types,profile=undefined) {
   const functions=new Map(),all=[...payload.functions];
@@ -39,6 +40,11 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
       sourceRange(value.range,source,parent);check(types.has(value.type),'type');
       if(!target)check(types.has(value.flowType),'type');
       if(profile)profile.validateExpression(value,types,source);
+      if(isLocalNullishAssignment(value)) {
+        const type=value.target?.type;
+        check(value.target?.kind==='bindingTarget'&&(integerNames.includes(type)||floatNames.includes(type))&&
+          value.type===type&&value.flowType===type,'type',{sourceId:fn.sourcePath,...value.range});
+      }
       if(!target&&['scalar','string','null','undefined','void'].includes(types.get(value.type).kind))
         check(value.flowType===value.type,'flow');
       if(!target)relation.expression(value,expected,{source:fn.sourcePath,...value.range});

@@ -10,7 +10,7 @@ import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
 import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
-import {isFiniteAbsence} from './finite-presence.mjs';
+import {isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {actualFieldResolver,fieldReceiverView} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
 
@@ -462,6 +462,15 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       const receiver=at(v.target.receiver,p+'/target/receiver');
       at(v.target.index,p+'/target/index');const value=child('value');
       stores.push({receiver,value});copy(value,id);
+    }else if(isLocalNullishAssignment(v)) {
+      const target=binding(fn,v.target.binding,v.target.type),old=node(p+'/old-value',v.target.type).id;
+      const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>{
+        if(key==='right')return operand(v.value,p+'/value',gate,pending);
+        flow.entry(old,gate);flow.finish(old,[]);copy(target,old);return old;
+      },absent);
+      presenceCarriers.push(old);dependencies.push(...selected.dependencies);
+      copy(old,id,{presentOnly:true});
+      copy(selected.right,id,{gate:old});copy(selected.right,target,{gate:old});
     }else if(v.kind==='assignment') {
       const value=child('value'),target=binding(fn,v.target.binding,v.target.type);
       if(v.operator&&v.operator!=='=') {

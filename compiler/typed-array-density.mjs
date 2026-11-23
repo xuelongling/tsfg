@@ -2,6 +2,7 @@
 // Only statically definite density violations are rejected. Unknown accesses retain checks.
 import {check} from './typed-array-schema.mjs';
 import {hasConditionalArrayRhs} from './array-analysis-types.mjs';
+import {isLocalNullishAssignment} from './finite-presence.mjs';
 
 export function validateTypedArrayDensity(payload) {
   for(const fn of [...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])]) {
@@ -16,11 +17,13 @@ export function validateTypedArrayDensity(payload) {
         for(const child of value.elements)expression(child);
         lengths.set(value.allocationSite,value.elements.length);return value.allocationSite;
       }
-      if(value.kind==='bindingAssignment') {
+      const coalescingAssignment=isLocalNullishAssignment(value);
+      if(value.kind==='bindingAssignment'&&!coalescingAssignment) {
         const owner=expression(value.value);bindings.set(value.target.binding,owner);return owner;
       }
       if(hasConditionalArrayRhs(value)) {
-        expression(value.left);const before=new Map(bindings);expression(value.right);
+        if(!coalescingAssignment)expression(value.left);
+        const before=new Map(bindings);expression(coalescingAssignment?value.value:value.right);
         for(const [id,owner]of before)if(bindings.get(id)!==owner)bindings.set(id,null);
         forget();return null;
       }

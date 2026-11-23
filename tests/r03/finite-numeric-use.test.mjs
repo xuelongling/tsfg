@@ -4,10 +4,11 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
-import {buildHir,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,buildInitialArrayPublication,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {finiteNormalFlow,finiteNormalLogical} from '../../compiler/finite-numeric-use.mjs';
-import {sha256,i32TypeId,boolTypeId} from '../../compiler/identity.mjs';
+import {canonical,sha256,i32TypeId,boolTypeId} from '../../compiler/identity.mjs';
+import {originId} from '../../compiler/typed-array-schema.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 
 // Official Source private-v8 packet: preserve pure assertions, initialized
@@ -23,6 +24,99 @@ const publication=staticPublication(facts,{keep:{parameters:{0:{...none,read:tru
 const built=buildHir(facts,context,publication);
 assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
 const hir=built.hir;
+
+function derivedPacketBytes(packet) {
+  const payload=packet.payload,{sourceRoot,rootFile,declarations,config}=payload;
+  const request={family:'tsfg.array-facts-request-candidate',version:8,input:{sourceRoot,rootFile,declarations,config,
+    files:payload.files.map(({path,content,sha256})=>({path,content,sha256}))}};
+  packet.requestId=sha256('tsfg.array-facts.request.v8\0'+canonical(request)+'\n');
+  packet.packageId=sha256('tsfg.array-facts.package.v8\0'+packet.schemaHash+'\0'+canonical(payload));
+  return Buffer.from(canonical(packet)+'\n');
+}
+
+test('owned finite facts reject a nonnumeric local nullish assignment target',async()=>{
+  const raw=await readFile(new URL('./testdata/typed-array-span-storage/3157dd0efbe9ead0858a3dda6019984267784ea258f9409875819f10719dd16d-package.json',import.meta.url));
+  assert.equal(sha256(raw),'sha256:cd29101ad0f62a526e83977c5a66bed520a9f7c7df2c6e4ffd9067b9897db1e9');
+  const packet=structuredClone(readTypedArrayFacts(raw)),payload=packet.payload;
+  const fn=payload.functions.find(row=>row.name==='readAfterBranch'),assignment=fn.body[3].then[0].value;
+  const file=payload.files.find(row=>row.path===fn.sourcePath),start=assignment.target.range.end,end=assignment.value.range.start;
+  assert.equal(file.content.slice(start,end),' = ');
+  file.content=file.content.slice(0,start)+'??='+file.content.slice(end);
+  file.sha256=sha256(file.content).slice(7);
+  assignment.operator='??=';assignment.operatorRange={start,end};
+  assert.throws(()=>readTypedArrayFacts(derivedPacketBytes(packet)),error=>{
+    assert.ok(error instanceof Error&&'code' in error&&'primary' in error);
+    assert.equal(error.code,'r03-typed-array-type');
+    assert.deepEqual(error.primary,{sourceId:fn.sourcePath,...assignment.range});
+    return true;
+  });
+});
+
+test('finite local nullish assignment writes and joins RHS locals only on actual absence',()=>{
+  const packet=structuredClone(facts),payload=packet.payload,keep=payload.functions.find(fn=>fn.name==='keep');
+  const [x,y]=keep.bindings,[local,previous,returned]=keep.body;
+  const file=payload.files.find(row=>row.path===keep.sourcePath);
+  const keyword=x.nameRange.start-'const '.length,start=y.nameRange.start-'const '.length,end=returned.range.end;
+  // Derive the writable and side-effecting shapes within the retained Source
+  // width. Original call sites still supply both i32 and actual undefined.
+  const replacement='let y:i32=0;return (x??=(y=1))+y;';
+  assert.equal(file.content.slice(keyword,keyword+5),'const');
+  assert.ok(replacement.length<=end-start);
+  file.content=file.content.slice(0,keyword)+'let  '+file.content.slice(keyword+5,start)+
+    replacement.padEnd(end-start)+file.content.slice(end);
+  file.sha256=sha256(file.content).slice(7);
+  const span=(from,to)=>({start:start+from,end:start+to});
+  const typed=(kind,from,to)=>({kind,type:'i32',flowType:'i32',range:span(from,to)});
+  const literal=(digit,offset)=>({...typed('numericLiteral',offset,offset+1),token:digit,decimal:digit});
+  const assign=(binding,operator,from,value,to)=>({...typed('bindingAssignment',from,to),operator,
+    operatorRange:span(from+1,from+1+operator.length),
+    target:{kind:'bindingTarget',type:'i32',binding,range:span(from,from+1)},value});
+  x.writable=true;local.kind='letDeclaration';
+  Object.assign(y,{name:'y',nameRange:span(4,5),annotationRange:span(6,9),declarationRange:span(4,11),writable:true});
+  y.id=originId(keep.sourcePath,y.nameRange);
+  Object.assign(previous,{kind:'letDeclaration',binding:y.id,range:span(4,12),initializer:literal('0',10)});
+  const inner=assign(y.id,'=',25,literal('1',27),28);
+  const coalesce=assign(x.id,'??=',20,{...typed('parentheses',24,29),expression:inner},29);
+  returned.range=span(12,33);
+  returned.value={...typed('binary',19,32),operator:'+',operatorRange:span(30,31),
+    left:{...typed('parentheses',19,30),expression:coalesce},
+    right:{...typed('bindingReference',31,32),binding:y.id}};
+
+  const factsBytes=derivedPacketBytes(packet),derived=readTypedArrayFacts(factsBytes);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:derived.packageId};
+  const publication=buildInitialArrayPublication(context),built=buildHir(derived,context,publication);
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const owner=built.hir.functions.find(fn=>fn.name==='keep');
+  const plan=buildFiniteCoreDomains(built.hir,context,{publicationContext:publication}).reached;
+  const actual=path=>plan.domains.find(domain=>domain.id===plan.nodes.find(node=>node.id===owner.id+path).domainId).actualTypes;
+  assert.deepEqual(actual('/body/0/initializer'),[sha256('tsfg.type\0undefined'),i32TypeId].sort());
+  assert.deepEqual(actual('/return'),[i32TypeId]);
+  const core=lowerFormalHir(built.hir,context,publication),entry=core.indexOf('func.func @"f'+owner.id.slice(7)+'"');
+  assert.ok(entry>=0);
+  const body=core.slice(entry).split('\n  }')[0],lines=body.split('\n');
+  const comparisons=lines.filter(line=>line.includes('"tsfg_core.domain.presence_equal"'));
+  assert.equal(comparisons.length,1);
+  assert.match(comparisons[0],/operator = "!=="/u);
+  const zero=lines.find(line=>line.includes('"tsfg_core.constant"() {value = 0 : i32'));
+  const rhs=lines.filter(line=>line.includes('"tsfg_core.constant"() {value = 1 : i32'));
+  assert.ok(zero);assert.equal(rhs.length,1);
+  const conditional=lines.find(line=>line.includes('cf.cond_br'));
+  const [,yes,no]=conditional?.match(/\^(bb\d+), \^(bb\d+)/u)??[];
+  assert.ok(yes&&no);
+  const noStart=lines.findIndex(line=>line.trimStart().startsWith('^'+no+':'));
+  assert.ok(lines.indexOf(rhs[0])>noStart);
+  const join=lines.find(line=>line.startsWith('  ^')&&[...line.matchAll(/%v\d+: /gu)].length===3);
+  assert.ok(join);
+  const name=join.trim().split('(')[0],edges=lines.filter(line=>line.includes('cf.br '+name+'('));
+  const id=line=>line.trim().split(' = ')[0];
+  assert.equal(edges.length,2);
+  assert.ok(edges.some(line=>line.includes(', '+id(zero)+' :')));
+  assert.ok(edges.some(line=>line.includes(', '+id(rhs[0])+' :')));
+  const [expression,,updatedY]=[...join.matchAll(/(%v\d+): /gu)].map(match=>match[1]);
+  const added=lines.find(line=>line.includes('"tsfg_core.add"'));
+  assert.ok(added?.includes(', '+updatedY+')'));
+  assert.ok(lines.some(line=>line.includes('"tsfg_core.domain.view"('+expression+')')));
+});
 
 test('official initialized-undefined numeric facts preserve HIR and lower checked Core continuations',async()=>{
   assert.deepEqual(verifyHir(hir,context,publication),hir);

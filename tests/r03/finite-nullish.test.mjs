@@ -110,6 +110,41 @@ test('only a definitely selected nullish fallback can stop the following Array r
   assert.deepEqual([...required.terminalReads??[]],[fallback+'/old-value']);
 });
 
+test('local nullish assignment keeps only feasible Array and field write versions',async()=>{
+  for(const memory of ['array','field']){
+    const row=expected.cases.find(item=>item.name===`nullish-${memory}-i32`);
+    const {hir,context}=await actual(row),plan=buildFiniteCoreDomains(hir,context).definition;
+    const run=hir.functions.find(fn=>fn.name==='run'),[initial,conditional,returned]=run.body;
+    const original=conditional.expression,base=run.id+'/body/1/expression',suffix=run.id+'/body/2/value';
+    assert.equal(original.left.kind,'reference');
+    // Component model of the local target and the existing RHS memory effect.
+    const expression={kind:'assignment',operator:'??=',type:scalarTypeIds.i32,range:original.range,
+      target:{kind:'bindingTarget',type:scalarTypeIds.i32,binding:original.left.binding,range:original.left.range},value:original.right};
+    const model={...hir,functions:hir.functions.map(fn=>fn===run?{...fn,body:[initial,{...conditional,expression},returned]}:fn)};
+    const sources=proof=>{
+      const read=proof.reads.find(item=>item.node===suffix);
+      return memory==='array'?read.sources:read.reaching.flatMap(item=>item.sources);
+    };
+    const baseline=sources(memory==='array'?plan.arrayReaching:plan.fieldReaching);
+    const before=baseline.filter(id=>!id.startsWith(base+'/right'));
+    const after=baseline.filter(id=>id.startsWith(base+'/right')).map(id=>id.replace(base+'/right',base+'/value'));
+    assert.ok(before.length&&after.length);
+    const remap=row=>row.id.startsWith(base+'/right')?{...row,id:row.id.replace(base+'/right',base+'/value')}:row;
+    const absent=hir.types.find(type=>type.kind==='undefined').id;
+    const singleton=type=>plan.domains.find(row=>row.actualTypes.length===1&&row.actualTypes[0]===type).id;
+    for(const [kind,type,wanted] of [
+      ['present',scalarTypeIds.i32,before],['absent',absent,after],['mixed',null,[...before,...after]],
+    ]){
+      const nodes=plan.nodes.map(item=>item.id===base+'/left'?{...item,id:base+'/old-value',
+        domainId:type===null?item.domainId:singleton(type)}:remap(item));
+      const modelPlan={...plan,nodes,fields:plan.fields.map(remap),carrierFields:plan.carrierFields.map(remap)};
+      const proof=memory==='array'?buildFiniteArrayReaching(model,modelPlan,()=>{},()=>true).reaching
+        :buildFiniteFieldReaching(model,modelPlan,()=>{});
+      assert.deepEqual([...sources(proof)].sort(),[...wanted].sort(),memory+' '+kind);
+    }
+  }
+});
+
 function groupedBoolean(operand) {
   const outer={kind:'group',type:scalarTypeIds.bool,range:operand.range};
   return {...outer,operand:{...outer,operand}};

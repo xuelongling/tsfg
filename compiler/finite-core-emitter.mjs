@@ -8,7 +8,7 @@ import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral,finiteFieldStorePath} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
 import {finiteBindingWrites,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
-import {isFiniteAbsence} from './finite-presence.mjs';
+import {isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
@@ -515,7 +515,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           op(api,'array_store',[receiver,index,{name:next,type:value.type}],null,`view_type = ${quote(value.target.receiver.semanticType)}, array_node = ${quote(value.domainNode)}, array_versions = ${quote(canonical([arrayWrites.get(value.domainNode+'/array-version')]))}`,value.range);
           return update&&!value.prefix?old:next;
         }
-        if(value.kind==='assignment') {
+        const coalescingAssignment=isLocalNullishAssignment(value);
+        if(value.kind==='assignment'&&!coalescingAssignment) {
           const binding=value.target.binding,target=selected(fn.id+'/binding/'+binding).domainId;
           if(value.operator&&value.operator!=='=') {
             const operator=value.operator.slice(0,-1),native=domains.get(target).nativeType,rhsType=value.value.type;
@@ -538,8 +539,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const next=api.operation(operation,[old,one],[type,type],type,'',value.range);
           api.assign(binding,next);return value.prefix?next:old;
         }
-        if(['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {
-          let left=evaluated(value.left),alternatives=domains.get(left.type).actualTypes,
+        if(coalescingAssignment||['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {
+          const binding=coalescingAssignment?value.target.binding:null,
+            bindingType=binding===null?null:selected(fn.id+'/binding/'+binding).domainId;
+          let left=binding===null?evaluated(value.left):{name:api.lookup(binding),type:bindingType},
+            alternatives=domains.get(left.type).actualTypes,
             previous=null;
           const anchor=value.operatorRange??value.range,
             absent=alternatives.filter(id=>{budget.step();return isFiniteAbsence(types.get(id).kind);}),
@@ -547,13 +551,19 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             domainFor=ids=>presenceDomain(ids,anchor),
             widen=payload=>payload.type===value.type?payload.name:api.operation('tsfg_core.domain.view',
               [payload.name],[payload.type],value.type,opAttrs(value),value.range),
+            right=()=>{
+              const rhs=evaluated(binding===null?value.right:value.value);
+              if(binding!==null)api.assign(binding,rhs.type===bindingType?rhs.name:op(api,'view',[rhs],bindingType,
+                opAttrs({semanticType:value.target.type,type:bindingType}),value.value.range));
+              return widen(rhs);
+            },
             filter=()=>{if(previous===null)return;alternatives=alternatives.filter(id=>{budget.step();return id!==previous;});
               const target=domainFor(alternatives),proof={type:previous,equal:false,range:anchor};
               left={name:api.operation('tsfg_core.domain.refine',[left.name],[left.type],target,
                 `view_type = ${quote(value.semanticType)}, domain = ${quote(target)}, presence_proof = ${quote(canonical(proof))}`,anchor),type:target};
               previous=null;};
           if(!absent.length)return widen(left);
-          if(!present.length)return widen(evaluated(value.right));
+          if(!present.length)return right();
           const predicates=absent.map(type=>()=>{
             filter();previous=type;const literalType=domainFor([type]),
               literal=api.operation('tsfg_core.domain.literal',[],[],literalType,
@@ -562,7 +572,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
               'operator = "!=="',anchor);
           });
           return api.branchValue(predicates,value.type,value.range,
-            ()=>{filter();return widen(left);},()=>widen(evaluated(value.right)));
+            ()=>{filter();return widen(left);},right);
         }
         if(value.kind==='binary'||value.kind==='unary') {
           const operands=value.kind==='binary'?[value.left,value.right]:[value.operand];

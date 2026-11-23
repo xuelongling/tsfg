@@ -2,8 +2,9 @@
 // Container classification uses the owned catalogue, never a distinguished T.
 import {finiteCallables} from './finite-callables.mjs';
 import {typedReferenceAuthority} from './typed-reference-authority.mjs';
+import {isLocalNullishAssignment} from './finite-presence.mjs';
 export const hasConditionalArrayRhs=value=>value.kind==='shortCircuit'
-  ||value.kind==='binary'&&['&&','||','??'].includes(value.operator);
+  ||value.kind==='binary'&&['&&','||','??'].includes(value.operator)||isLocalNullishAssignment(value);
 export function arrayConstructionTarget(hir,id) {
   const type=hir.types.find(type=>type.construction?.id===id);
   return type?.constructor??type?.construction?.id;

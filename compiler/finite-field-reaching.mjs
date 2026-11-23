@@ -6,7 +6,7 @@ import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
-import {finitePresence} from './finite-presence.mjs';
+import {finitePresence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
 import {createFieldCallContexts,finiteFieldEffects,finiteFieldStorePath,finiteFieldWriteVersion,
   literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
@@ -284,7 +284,8 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       const child=key=>expression(value[key],path+'/'+key,state,env);
       if(value.kind==='reference')return env.get(value.binding)??null;
       if(['group','nonNull','assertType'].includes(value.kind))return child('operand');
-      if(value.kind==='assignment') {
+      const coalescingAssignment=isLocalNullishAssignment(value);
+      if(value.kind==='assignment'&&!coalescingAssignment) {
         const token=child('value');
         if(stopped)return null;
         if(value.operator&&value.operator!=='='){env.delete(value.target.binding);return null;}
@@ -330,18 +331,26 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
         access(value,store,state,token,'store',payload);return rhs;
       }
-      if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
+      if(coalescingAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
+        const binding=coalescingAssignment?value.target.binding:null,
+          left=binding===null?child('left'):(env.get(binding)??null),
+          nullish=coalescingAssignment||value.operator==='??',
+          possibilities=nullish?presence(path+(coalescingAssignment?'/old-value':'/left')):{present:true,absent:true};
         if(stopped)return null;
+        const evaluateRight=(memory,locals)=>{
+          const key=binding===null?'right':'value',result=expression(value[key],path+'/'+key,memory,locals);
+          if(binding!==null&&!stopped)locals.delete(binding);
+          return binding===null?result:null;
+        };
         if(!possibilities.absent)return left;
-        if(!possibilities.present)return child('right');
+        if(!possibilities.present)return evaluateRight(state,env);
         const rightReached=literalBooleanRhs(value,charge);
         if(rightReached!==null){if(rightReached)child('right');return null;}
         const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge),
-          result=expression(value.right,path+'/right',right,rightEnv);
+          result=evaluateRight(right,rightEnv);
         if(stopped)return null;
         const merged=join(state,right);state.clear();for(const pair of merged){charge();state.set(...pair);}
-        meetAliases(env,env,rightEnv);return value.operator==='??'&&left&&left===result?left:null;
+        meetAliases(env,env,rightEnv);return nullish&&left&&left===result?left:null;
       }
       if(value.kind==='superConstruct') {
         initializeAfterSuper(value,path,state,env);return null;

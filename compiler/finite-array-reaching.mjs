@@ -3,7 +3,7 @@
 // Unknown aliases/callees retain pending; capacity bounds remain independent.
 import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
-import {finitePresence} from './finite-presence.mjs';
+import {finitePresence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
@@ -329,7 +329,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         if(value.kind==='arrayStoreDenseChecked'){rememberSlotValue(id,value.value,rhs);return rhs;}
         return {symbol:path};
       }
-      if(value.kind==='assignment'||value.kind==='update') {
+      const coalescingAssignment=isLocalNullishAssignment(value);
+      if(!coalescingAssignment&&(value.kind==='assignment'||value.kind==='update')) {
         const binding=value.target.binding;
         if(value.kind==='assignment') {
           const rhs=child('value');if(rhs.terminal)return rhs;
@@ -419,23 +420,32 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         return ordinal!==null&&ordinal!==undefined&&consistent?actual[ordinal]??{}:{symbol:path};
       }
-      if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const left=child('left');if(left.terminal)return left;
-        const literal=value.operator==='??'?null:booleanLiteral(value.left,charge),truth=literal?.value??left.truth;
-        const possibilities=collectAll?{present:true,absent:true}:value.operator==='??'?presence(path+'/left'):
+      if(coalescingAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
+        const binding=coalescingAssignment?value.target.binding:null,
+          leftNode=path+(coalescingAssignment?'/old-value':'/left'),rightKey=coalescingAssignment?'value':'right',
+          left=binding===null?child('left'):(bindings.get(binding)??{symbol:leftNode});
+        if(left.terminal)return left;
+        const nullish=coalescingAssignment||value.operator==='??',
+          literal=nullish?null:booleanLiteral(value.left,charge),truth=literal?.value??left.truth;
+        const possibilities=collectAll?{present:true,absent:true}:nullish?presence(leftNode):
           {present:truth===undefined||truth===(value.operator==='||'),absent:truth===undefined||truth===(value.operator==='&&')};
-        const resultValue=result=>{if(possibilities.absent&&value.operator!=='??')forgetAssignedTruth(value.right,bindings);
-          return value.operator==='??'?adapt(result,result.symbol,path):{symbol:path};};
+        const evaluateRight=(memory,locals,mode)=>{
+          const from=path+'/'+rightKey,result=expression(value[rightKey],from,memory,locals,mode);
+          if(binding!==null&&!result.terminal)locals.set(binding,adapt(result,from,fn.id+'/binding/'+binding));
+          return result;
+        };
+        const resultValue=result=>{if(possibilities.absent&&!nullish)forgetAssignedTruth(value.right,bindings);
+          return nullish?adapt(result,result.symbol,path):{symbol:path};};
         if(!possibilities.absent)return resultValue(left);
         if(!possibilities.present) {
-          const result=child('right',value.operator==='??'||literal!==null?root:false);
+          const result=evaluateRight(state,bindings,nullish||literal!==null?root:false);
           return result.terminal?result:resultValue(result);
         }
         const right=clone(state),branchBindings=copyBindings(bindings),
-          result=expression(value.right,path+'/right',right,branchBindings);
+          result=evaluateRight(right,branchBindings,false);
         const merged=join(state,right);state.clear();for(const [id,row] of merged){charge();state.set(id,row);}
         meetBindings(bindings,bindings,branchBindings);
-        return resultValue(value.operator==='??'&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path});
+        return resultValue(nullish&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path});
       }
       if(value.kind==='binary'||value.kind==='stringConcat') {
         // Strict binary operations require normal completion in operand order.
