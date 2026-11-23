@@ -14,7 +14,7 @@ import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
 import {checkQueryBatchSource,checkQueryLlvmDialect,emitSystemQueryCore,escapeQueryCompilerBytes,systemQuerySystemIdentity} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
-import {commonProgramCore} from './common-program-core.mjs';
+import {commonProgramCore,requireCommonCoreSelection} from './common-program-core.mjs';
 import {isCommonProgramContext} from './common-program-hir.mjs';
 import {commonHirFormat} from './common-program-common.mjs';
 import {hirFormat as nullableHirFormat,isSelectedNullableContext} from './nullable-common.mjs';
@@ -279,7 +279,8 @@ export async function compileCommonBorrowProof(hir,publication,request,options){
   const fixed=own({publication,request});
   const executable=await verifiedConsumer(options.core,'core');
   const core=decodeCompilerText(consume(executable,['--common-program','--canonicalize'],product.text),'r03-core-output');
-  requireCheckedCoreInput(core,product.hir.inputIdentity);
+  const moduleClose=requireCheckedCoreInput(core,product.hir.inputIdentity);
+  requireCommonCoreSelection(product.text,core.slice(moduleClose).trimEnd());
   const proof=readCommonBorrowProof(consume(executable,['--common-program','--borrow-proof'],core),product.hir,fixed.publication,fixed.request);
   return {status:'ok',hir:product.hir,core,proof};
 }
@@ -425,6 +426,7 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
   if(common||ordinary||generic||exception||nullable||closure||optional||reference){
     const moduleClose=requireCheckedCoreInput(core,coreInput);
+    if(common)requireCommonCoreSelection(lowered,core.slice(moduleClose).trimEnd());
     if(generic)requireCheckedGenericFunctions(core,moduleClose,packetDefaultRoot,hir.closure.functions);
   }
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };

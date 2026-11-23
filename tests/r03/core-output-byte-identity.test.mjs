@@ -13,6 +13,7 @@ import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
+import {commonIdentity} from '../../compiler/common-program-identities.mjs';
 import {readGenericHir} from '../../compiler/generic-hir.mjs';
 import {decodeReferenceFacts} from '../../compiler/reference-facts.mjs';
 import {buildReferenceHir} from '../../compiler/reference-hir.mjs';
@@ -21,6 +22,7 @@ import {expectedGenericCore} from './generic-core-package-capture.mjs';
 import {readClosureSourceCase} from './closure-core-consumer-cases.mjs';
 import {expectedExceptionModule} from './formal-exception-module-oracle.mjs';
 import {expectedStringCore,expectedStringPacket,stringCases} from './formal-string-gold.mjs';
+import {decodeMlirString} from './string-core-structural-oracle.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 
 const artifact=path.join(import.meta.dirname,'core-transport-only','core.exe');
@@ -503,6 +505,48 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       family:'tsfg.common-program-context-candidate',version:facts.version,factsBytes,expectedPackageId:facts.packageId,
     }};
     sub.after(()=>{stdout=valid;packetStdout=undefined;borrowStdout=undefined;});
+    await sub.test('Common output keeps the selected Published and request for the same HIR',async()=>{
+      const fixture=new URL('../fixtures/r03/common-fixed-publication/self-held-safe.publication-v6.json',import.meta.url);
+      const source=new URL('../fixtures/r03/common-self-held-storage/self-held-external-store-safe-package.json',import.meta.url);
+      const [publishedBytes,heldBytes]=await Promise.all([fs.readFile(fixture),fs.readFile(source)]);
+      assert.equal(sha256(publishedBytes),'sha256:6b95c791e7b80c11c91ed91af54a864714f8447cf52dabf3276c30ddba15c931');
+      assert.equal(sha256(heldBytes),'sha256:d0440c17dd8e5f02e3e9e456cfe116bce415fd163a6d0ab750f3934616842989');
+      const held=projectCommonProgram(readCommonProgramFacts(heldBytes)),fixed=JSON.parse(publishedBytes.toString());
+      const empty={targets:[]};
+      const broader=structuredClone(fixed);
+      for(const row of broader.contracts){
+        row.upper.facets.lock=true;
+        const {digest,...body}=row;row.digest=commonIdentity('published-contract',body);
+      }
+      broader.expectedDigest=commonIdentity('publication',{scopeDigest:broader.scopeDigest,contracts:broader.contracts});
+      assert.notEqual(broader.expectedDigest,fixed.expectedDigest);
+      const expected={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked Common publication or request differs'};
+      const badPublication=framedCore(commonProgramCore(held,broader,empty).text);
+      const selected={core:artifact,callPublicationContext:{publication:fixed,request:empty}};
+      stdout=badPublication;
+      assert.deepEqual(await compileOwnedCore(held,selected),expected);
+      const generic=framedCore(commonProgramCore(held,fixed,empty).text).toString('utf8');
+      const hex=generic.replace(/(, (?:publication|request) = )("(?:[^"\\]|\\.)*")/gu,(_,key,token)=>
+        key+'"'+Buffer.from(decodeMlirString(token)).toString('latin1').replace(/["\\\x7f-\xff]/gu,byte=>
+          '\\'+byte.charCodeAt(0).toString(16).padStart(2,'0'))+'"');
+      assert.notEqual(hex,generic);
+      stdout=Buffer.from(hex);
+      const accepted=await compileOwnedCore(held,selected);
+      assert.equal(accepted.status,'ok');assert.equal(accepted.core,hex);
+      for(const field of ['tsfg_program.program','publication','request']){
+        const altered=hex.replace(', '+field+' = ', ', X'+field+' = ');
+        assert.notEqual(altered,hex);
+        stdout=Buffer.from(altered);
+        assert.deepEqual(await compileOwnedCore(held,selected),expected);
+      }
+      assert.ok(request.targets.length>1);
+      stdout=framedCore(commonProgramCore(common,publication,empty).text);
+      packetStdout=Buffer.alloc(0);
+      const first=calls.length;
+      assert.deepEqual(await compileOwnedHir(common,{...options,optimize:true}),expected);
+      await assert.rejects(compileCommonBorrowProof(common,publication,request,{core:artifact}),new RegExp(expected.message));
+      assert.deepEqual(calls.slice(first),[['--common-program','--optimize'],['--common-program','--canonicalize']]);
+    });
     await sub.test('Common Core text rejects the foreign module',async()=>{
       stdout=matching;
       const accepted=await compileOwnedCore(common,options);
