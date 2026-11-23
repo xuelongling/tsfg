@@ -73,8 +73,7 @@ pub fn write(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Hand
 }
 pub fn method(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,
     target: views.Id, member: views.Id, lifetime: managed.Lifetime) Error!Callable {
-    const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
-    const selected = try module.method(actual, target, member);
-    return .{ .function_id = selected.id, .signature = selected.signature, .actual_type = actual.type_id,
-        .runtime_key = actual.runtime_key, .receiver = try heap.retain(receiver, lifetime) };
+    const selected = try heap.resolveTypedMethod(module, receiver, target, member);
+    return .{ .function_id = selected.method.id, .signature = selected.method.signature, .actual_type = selected.actual_type,
+        .runtime_key = selected.runtime_key, .receiver = try heap.retain(receiver, lifetime) };
 }

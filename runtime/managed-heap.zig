@@ -414,15 +414,27 @@ pub const ManagedHeap = struct {
         return value.initialized[try value.layout.fieldIndex(id)];
     }
 
-    pub fn copyTypedCellLayout(self: *ManagedHeap, handle: Handle) Error!CellLayout {
+    fn typedCellLayout(self: *ManagedHeap, handle: Handle) Error!CellLayout {
         const object = try self.resolve(handle);
         if (object.payload != .cell) return error.TypeMismatch;
-        return object.payload.cell.layout.clone(self.allocator);
+        return object.payload.cell.layout;
+    }
+    pub fn copyTypedCellLayout(self: *ManagedHeap, handle: Handle) Error!CellLayout {
+        return (try self.typedCellLayout(handle)).clone(self.allocator);
     }
     pub fn typedCellIdentity(self: *ManagedHeap, handle: Handle) Error![32]u8 {
-        const object = try self.resolve(handle);
-        if (object.payload != .cell) return error.TypeMismatch;
-        return object.payload.cell.layout.type_id;
+        return (try self.typedCellLayout(handle)).type_id;
+    }
+    pub fn resolveTypedMethod(self: *ManagedHeap, module: anytype, receiver: Handle,
+        target: [32]u8, member: [32]u8) Error!struct {
+        method: @import("typed-reference-views.zig").Method, actual_type: [32]u8, runtime_key: [32]u8,
+    } {
+        comptime {
+            if (@TypeOf(module) != @import("typed-reference-views.zig").Module and
+                @TypeOf(module) != @import("typed-field-backing.zig").Module) @compileError("verified member module required");
+        }
+        const actual = try self.typedCellLayout(receiver);
+        return .{ .method = try module.method(actual, target, member), .actual_type = actual.type_id, .runtime_key = actual.runtime_key };
     }
 
     pub fn installTypedLayouts(self: *ManagedHeap, module: @import("typed-layout-canonical.zig").Module) Error!void {
