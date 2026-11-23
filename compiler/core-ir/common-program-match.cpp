@@ -3,6 +3,34 @@
 namespace tsfg::commonProgram {
 namespace {
 bool sameAnchor(SourceAnchor a,SourceAnchor b){return a.start==b.start&&a.end==b.end;}
+bool literalReturn(ActualCheck &c,const Block &block){
+  if(block.operations.empty()||block.operations.size()>3)return false;
+  const auto &ret=block.operations.back();
+  if(ret.name!="func.return"||ret.result!=noRegister||!ret.successors.empty())return false;
+  if(block.operations.size()==1)return ret.operands.empty();
+  const auto &value=block.operations.front();
+  if((value.name!="constant"&&value.name!="floating"&&value.name!="boolean")||
+     !value.operands.empty()||!value.successors.empty()||value.result==noRegister||
+     ret.operands.size()!=1)return false;
+  if(block.operations.size()==2)return ret.operands.front()==value.result;
+  const auto &copy=block.operations[1];
+  if(copy.name!="value_copy"||copy.result==noRegister||!copy.successors.empty()||
+     copy.operands.size()!=1||copy.operands.front()!=value.result||ret.operands.front()!=copy.result)return false;
+  return c.step(2+(copy.view.size()+2*value.view.size())/64)&&copy.view==value.view&&
+    field(copy.properties,"type").getAsString()==llvm::StringRef(value.view);
+}
+std::optional<bool> literalCondition(ActualCheck &c,const Function &function,const Operation &branch,const Operation &literal){
+  if(branch.result!=noRegister||branch.operands.size()!=1||branch.successors.size()!=2||
+     branch.successors[0]==branch.successors[1]||literal.name!="boolean"||
+     !literal.operands.empty()||!literal.successors.empty()||literal.result==noRegister||
+     branch.operands.front()!=literal.result||!sameAnchor(branch.range,literal.range))
+    return std::nullopt;
+  const auto value=field(literal.properties,"value").getAsBoolean();
+  if(!value)return std::nullopt;
+  const auto &onTrue=function.blocks[branch.successors[0]],&onFalse=function.blocks[branch.successors[1]];
+  if(!onTrue.parameters.empty()||!onFalse.parameters.empty()||!literalReturn(c,*value?onFalse:onTrue))return std::nullopt;
+  return value;
+}
 }
 bool sourceNumeric(const Function &f,const Operation &op){
   if(op.name!="binary"&&op.name!="unary")return false;
@@ -53,8 +81,11 @@ bool matchSourceCorrespondence(ActualCheck &c,const Function &expected,
     for(size_t n=0;n<a.size();++n)if(!bind(a[n],b[n]))return false;
   }
   if(!c.step(actual.blocks.size()))return false;std::vector<uint16_t> sourceBlocks(actual.blocks.size(),noRegister);
+  std::vector<std::pair<uint16_t,bool>> literalFolds;
   for(const auto &[from,to]:blocks){
     size_t block=to,index=0;seenActual.insert(to);
+    const std::string *lastPath=nullptr;
+    const Operation *lastRaw=nullptr;
     const auto resolve=[&](uint16_t r){auto found=values.find(r);return found==values.end()?noRegister:found->second;};
     for(size_t expectedIndex=0;expectedIndex<expected.blocks[from].operations.size();++expectedIndex){
       const auto &op=expected.blocks[from].operations[expectedIndex];size_t checked=0;
@@ -89,7 +120,28 @@ bool matchSourceCorrespondence(ActualCheck &c,const Function &expected,
         }break;
       }
       const auto &raw=actual.blocks[block].operations[index++];
+      const auto *previousPath=std::exchange(lastPath,&sourcePath->second);
+      const auto *previousRaw=std::exchange(lastRaw,&raw);
       if(!c.need(checked==(sourceNumeric(expected,op)?op.operands.size():0),"numeric request checks are missing"))return false;
+      std::optional<bool> condition;
+      if(op.name=="cf.cond_br"&&(raw.name=="cf.br"||c.literalBranchFolds)&&index>=2&&
+         previousRaw==&actual.blocks[block].operations[index-2]&&previousRaw->name=="boolean"){
+        if(!c.step(2+(previousPath->size()+sourcePath->second.size())/64))return false;
+        if(*previousPath==sourcePath->second){
+          condition=literalCondition(c,expected,op,expected.blocks[from].operations[expectedIndex-1]);
+          if(!c.e.message.empty())return false;
+        }
+      }
+      if(condition&&raw.name=="cf.br"&&raw.view==op.view&&sameAnchor(raw.range,op.range)&&
+         same(raw.properties,op.properties)&&raw.result==noRegister&&raw.operands.empty()&&raw.successors.size()==1){
+        size_t comparisons=1;for(auto count=blocks.size();count;count>>=1){if(!c.step())return false;comparisons+=2;}
+        if(!c.step(comparisons))return false;
+        const auto target=blocks.find(op.successors[*condition?0:1]);
+        if(target!=blocks.end()&&target->second==raw.successors.front()){
+          if(!record(block,index-1,sourcePath->second))return false;
+          continue;
+        }
+      }
       if(!c.need(raw.name==op.name&&raw.view==op.view&&sameAnchor(raw.range,op.range)&&same(raw.properties,op.properties)&&
         raw.operands.size()==op.operands.size()&&raw.successors.size()==op.successors.size()&&
         (raw.result==noRegister)==(op.result==noRegister),"actual instruction differs from complete Source lowering")){
@@ -99,6 +151,10 @@ bool matchSourceCorrespondence(ActualCheck &c,const Function &expected,
       for(size_t n=0;n<op.successors.size();++n)if(!c.step()||!c.need(blocks.count(op.successors[n])&&blocks.at(op.successors[n])==raw.successors[n],"actual CFG changed Source completion routing"))return false;
       if(op.result!=noRegister&&!bind(raw.result,op.result))return false;
       if(!record(block,index-1,sourcePath->second))return false;
+      if(condition&&c.literalBranchFolds){
+        if(!c.step(2))return false;
+        literalFolds.emplace_back(uint16_t(block),*condition);
+      }
     }
     if(!c.need(index==actual.blocks[block].operations.size(),"foreign instruction after Source completion"))return false;
   }
@@ -112,6 +168,11 @@ bool matchSourceCorrespondence(ActualCheck &c,const Function &expected,
     if(!c.step((comparisons+1)*(actual.id.size()/64+1)))return false;
   }
   c.p.sourceRegisters.insert_or_assign(actual.id,std::move(sourceRegisters));c.p.sourceBlocks.insert_or_assign(actual.id,std::move(sourceBlocks));
+  if(!literalFolds.empty()){
+    size_t comparisons=1;for(auto count=c.literalBranchFolds->size();count;count>>=1){if(!c.step())return false;comparisons+=2;}
+    if(!c.step((comparisons+1)*(actual.id.size()/64+1)))return false;
+    c.literalBranchFolds->emplace(actual.id,std::move(literalFolds));
+  }
   return true;
 }
 bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &actual){

@@ -5,6 +5,8 @@
 #include "bytecode-common.h"
 #include "bytecode-common-packet.h"
 #include "component-layout.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/Program.h"
@@ -33,6 +35,27 @@ int finish(Output &output){
   if(llvm::sys::ChangeStdoutToBinary())return 2;
   llvm::outs()<<output.value();llvm::outs().flush();
   if(llvm::outs().has_error()){llvm::outs().clear_error();return 2;}return 0;
+}
+int optimizeCore(mlir::ModuleOp module){
+  LiteralBranchFolds folds;
+  if(mlir::failed(verify(module,&folds)))return 3;
+  if(folds.empty())return printCoreModule(module);
+  for(auto function:module.getOps<mlir::func::FuncOp>()){
+    const auto id=function->getAttrOfType<mlir::StringAttr>("tsfg_program.function_id");
+    const auto sites=folds.find(id.getValue().str());
+    if(sites==folds.end())continue;
+    std::vector<mlir::Block *> blocks;
+    for(auto &block:function.getBody())blocks.push_back(&block);
+    for(const auto &[block,takeTrue]:sites->second){
+      auto branch=llvm::cast<mlir::cf::CondBranchOp>(blocks[block]->getTerminator());
+      auto *destination=takeTrue?branch.getTrueDest():branch.getFalseDest();
+      auto jump=mlir::OpBuilder(branch).create<mlir::cf::BranchOp>(branch.getLoc(),destination,mlir::ValueRange{});
+      jump->setDiscardableAttrs(branch->getDiscardableAttrDictionary());
+      branch.erase();
+    }
+  }
+  if(mlir::failed(mlir::verify(module))||mlir::failed(verify(module)))return 3;
+  return printCoreModule(module);
 }
 }
 int printCoreModule(mlir::ModuleOp module){
@@ -92,6 +115,7 @@ int runGpuBindingInput(llvm::StringRef bytes,mlir::MLIRContext &context){
 }
 int runCoreModule(mlir::ModuleOp module, llvm::StringRef command) {
   if (mlir::failed(mlir::verify(module))) return 3;
+  if (command == "--optimize") return optimizeCore(module);
   if (command != "--component-layouts" && command != "--borrow-proof" && command != "--emit-bytecode" && mlir::failed(verify(module))) return 3;
   if (command == "--emit-bytecode") {
     wire::Program program; wire::Error error; bytecode::Bytes packet;

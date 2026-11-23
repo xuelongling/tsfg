@@ -311,6 +311,7 @@ public:
 // representation row or asserted proof fills these maps.
 struct ActualCheck {
   Program &p;Error &e;
+  LiteralBranchFolds *literalBranchFolds=nullptr;
   std::map<std::string,Json> builtins;
   ActualOwnedDirectory types,domains,sourceFunctions,modules,globals,bindings,physicalBindings,physicalFunctions;
   ActualFieldDirectory fields;

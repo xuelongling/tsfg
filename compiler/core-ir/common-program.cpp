@@ -79,7 +79,8 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
   Program p;if(!metadata(module,p,error)||!readFunctions(module,p,error))return false;
   out=std::move(p);return true;
 }
-static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof,std::map<std::string,std::string> *singletonStorage){
+static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof,std::map<std::string,std::string> *singletonStorage,
+                              LiteralBranchFolds *folds=nullptr){
   if(!p.charge(p.sourcePlans.size()))return reject(error,"core-ir-common-budget","logical witness release exceeded");
   for(const auto &[id,plan]:p.sourcePlans)if(!returnOriginMetadataCost(p,plan,error))return false;p.sourcePlans.clear();
   if(!p.charge(p.constructorReturnCFGs.size()))return reject(error,"core-ir-common-budget","constructor CFG witness release exceeded");p.constructorReturnCFGs.clear();
@@ -89,6 +90,7 @@ static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof,std::map
   p.returnOriginContracts.reset();p.returnOriginVerified.clear();p.returnOriginPending.clear();
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
+  check.literalBranchFolds=folds;
   BorrowControlLog control{check};
   if(borrowProof)check.borrowControl=&control;
   Json events=nullptr;
@@ -120,9 +122,9 @@ static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof,std::map
 bool verifyProgram(Program &p,Error &error){return verifyProgramImpl(p,error,nullptr,nullptr);}
 bool verifyProgram(Program &p,Error &error,std::map<std::string,std::string> &storage){return verifyProgramImpl(p,error,nullptr,&storage);}
 bool analyzeCommonBorrowProof(Program &p,Error &error,Json &proof){return verifyProgramImpl(p,error,&proof,nullptr);}
-mlir::LogicalResult verify(mlir::ModuleOp module){
+mlir::LogicalResult verify(mlir::ModuleOp module,LiteralBranchFolds *folds){
   Program p;Error error;
-  if(readCore(module,p,error)&&verifyProgram(p,error))return mlir::success();
+  if(readCore(module,p,error)&&verifyProgramImpl(p,error,nullptr,nullptr,folds))return mlir::success();
   auto diagnostic=module.emitError();diagnostic<<"["<<error.code<<"] "<<error.message;
   if(!error.path.empty())diagnostic<<" ("<<error.path<<":"<<error.range.start<<":"<<error.range.end<<")";
   return mlir::failure();

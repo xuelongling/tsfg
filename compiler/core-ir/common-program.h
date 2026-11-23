@@ -234,5 +234,6 @@ bool verifyProgram(Program &,Error &);
 bool verifyProgram(Program &,Error &,std::map<std::string,std::string> &singletonStorage);
 bool uses(mlir::ModuleOp);
 void registerDialect(mlir::DialectRegistry &);
-mlir::LogicalResult verify(mlir::ModuleOp);
+using LiteralBranchFolds = std::map<std::string,std::vector<std::pair<uint16_t,bool>>>;
+mlir::LogicalResult verify(mlir::ModuleOp,LiteralBranchFolds *folds=nullptr);
 } // namespace tsfg::commonProgram

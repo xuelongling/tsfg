@@ -42,6 +42,42 @@ for(const name of ['callable-readonly','callable-reassignment','callable-ancesto
   const program=complete(read('common-callable-parameters/'+name+'.json'),null,null),
     canonical=invoke(name+'-canonical',program.text),optimized=invoke(name+'-optimize',program.text,'optimize');assert.deepEqual(canonical.stdout,optimized.stdout);
 });
+test('C++ folds an original literal Common branch and retains the discarded return',{skip:!enabled},()=>{
+  const donor=readFileSync(new URL('./common-borrow-unreachable-resize.json',import.meta.url));
+  const packet=structuredClone(readCommonProgramFacts(donor)),p=packet.payload;
+  const fn=p.functions.find(row=>row.name==='borrowOrdinary'),statement=fn.body.find(row=>row.kind==='if');
+  const file=p.files.find(row=>row.path===fn.sourcePath),{start,end}=statement.then[0].range;
+  assert.equal(statement.condition.token,'false');
+  assert.equal(file.content.slice(start,end),'a.length = 0;');
+  file.content=file.content.slice(0,start)+'return 0;'.padEnd(end-start)+file.content.slice(end);
+  file.sha256=sha256(file.content).slice(7);
+  statement.then=[{kind:'return',range:{start,end:start+9},value:{kind:'numericLiteral',type:'i32',flowType:'i32',
+    token:'0',decimal:'0',range:{start:start+7,end:start+8}}}];
+  const files=p.files.map(({path,sha256})=>({path,sha256}));
+  for(const type of p.types)if(type.nominalKey)type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({files,nominalKey:type.nominalKey}));
+  const roots=rows=>rows.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
+  const request={family:'tsfg.program-facts-request-candidate',version:3,schemaHash:packet.schemaHash,input:{
+    sourceRoot:p.sourceRoot,rootFile:p.rootFile,files:p.files.map(({path,content,sha256})=>({path,content,sha256})),
+    declarations:p.declarations,config:p.config,target:p.target,
+    compilationClosure:{roots:roots(p.closure.roots),requiredRoots:roots(p.closure.requiredRoots)},hostImports:p.hostImports}};
+  packet.requestId=sha256('tsfg.program-facts.request.v3\0'+canonical(request)+'\n');
+  packet.packageId=sha256('tsfg.program-facts.package.v3\0'+packet.schemaHash+'\0'+canonical(p));
+  const input=complete(Buffer.from(canonical(packet)+'\n')).text;
+  const original=invoke('literal-return-canonical',input).stdout.toString();
+  const optimized=invoke('literal-return-optimize',input,'optimize').stdout.toString();
+  const conditionStart=statement.condition.range.start;
+  const atCondition=(text,op)=>text.split('\n').find(line=>line.includes('"'+op+'"(')&&line.includes('tsfg_source.start = '+conditionStart+' : i64'));
+  const branch=atCondition(original,'cf.cond_br'),folded=atCondition(optimized,'cf.br');
+  assert.ok(branch&&folded);
+  const [,wrong,selected]=branch.match(/\[\^([^,\s]+), \^([^\]\s]+)\]/u)??[];
+  assert.ok(wrong&&selected&&folded.includes('[^'+selected+']'));
+  const withoutPredecessors=text=>text.replace(/^(\s*\^bb[^\n]*?:)\s*\/\/[^\n]*$/gmu,'$1');
+  assert.equal(withoutPredecessors(optimized.replace(folded,branch)),withoutPredecessors(original));
+  assert.deepEqual(invoke('literal-return-repeat',optimized,'optimize').stdout,Buffer.from(optimized));
+  invoke('literal-return-wrong-edge',optimized.replace(folded,folded.replace('[^'+selected+']','[^'+wrong+']')),'canonicalize',3);
+  const effectful=complete(donor).text;
+  assert.deepEqual(invoke('literal-resize-optimize',effectful,'optimize').stdout,invoke('literal-resize-canonical',effectful).stdout);
+});
 test('C++ independently rejects a corrupt Host ABI and arbitrary safety claim',{skip:!enabled},()=>{
   for(const [label,input]of [['host-abi',changedContext(ctx=>{ctx.contract.abi.guest.returns='u32';})],['host-safe',changedContext(ctx=>{ctx.contract.safe=true;})]]){
     const result=invoke(label,input,'canonicalize',3);assert.equal(result.stdout.length,0);assert.match(result.stderr.toString(),/core-ir-common-host/);
