@@ -72,6 +72,7 @@ test('fixed Common Core preparation owns the HIR used by its text', async()=>{
     callPublicationContext:{publication,request},
     get optimize(){Object.assign(next.format,{version:0});return false;},
   });
+  assert.deepEqual(next.format,hir.format);
   assert.deepEqual(result,{
     status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required',
   });

@@ -478,8 +478,8 @@ function produceOwnedCore(hir, options, selected = undefined) {
   }
   if (family === commonHirFormat.family) {
     const core = options.core;
-    if (!core) return produceCore(hir, { core });
-    const fixedOptions = { core, optimize: options.optimize };
+    if (!core && selected?.callPublicationContext === undefined) return produceCore(hir, { core });
+    const fixedOptions = { core, optimize: core ? options.optimize : undefined };
     const { factsContext, callPublicationContext } = selected ?? options;
     if (factsContext !== undefined && !isCommonProgramContext(factsContext)) {
       // Preserve the selected lowering's diagnostic for incompatible contexts.
