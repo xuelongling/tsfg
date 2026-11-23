@@ -73,20 +73,28 @@ test "Source field value copy uses static i32 provenance while retaining active 
     var module = try backing.load(allocator, raw); defer module.deinit();
     const view = module.authority.views[0]; const pair = view.fields[0]; const row = try module.cell(view.actual);
     const absent = row.fields[0].domain.members[0];
-    var heap = managed.ManagedHeap.init(allocator); defer heap.deinit() catch unreachable;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    const heap_allocator = failing.allocator();
+    var heap = managed.ManagedHeap.init(heap_allocator); defer heap.deinit() catch unreachable;
     try heap.installTypedLayouts(module.authority.layouts);
     const scope = try heap.beginScope(); defer heap.endScope(scope) catch unreachable;
     const object = try module.create(&heap, view.actual, .temporary);
     try module.write(&heap, object, view.target, pair.target, absent, .{ .bytes = &.{}, .references = &.{} });
-    var captured = try module.read(&heap, object, view.actual, pair.source, .temporary); defer captured.deinit(allocator);
+    const before_read = failing.alloc_index;
+    var captured = try module.read(&heap, object, view.actual, pair.source, .persistent); defer captured.deinit(heap_allocator);
+    const read_allocations = failing.alloc_index - before_read;
+    try std.testing.expectEqual(@as(usize, 0), captured.value.references.len);
     try std.testing.expectEqual(.undefined_value, (try captured.layout.selectVariant(captured.value.tag)).kind);
+    // Capturing the same field also needs one allocation for its owning record.
+    failing.fail_index = failing.alloc_index + read_allocations + 1;
     const copied = try module.capture(&heap, object, view.actual, pair.source); defer module.release(copied) catch unreachable;
+    failing.fail_index = std.math.maxInt(usize);
     const wide_value = try module.capture(&heap, object, view.target, pair.target); defer module.release(wide_value) catch unreachable;
     try std.testing.expectError(error.TypeMismatch, module.copy(&heap, object, view.actual, pair.source, wide_value));
     try std.testing.expectError(error.TypeMismatch, module.write(&heap, object, view.actual, pair.source, absent,
         .{ .bytes = &.{}, .references = &.{} }));
     try module.copy(&heap, object, view.actual, pair.source, copied);
-    var result = try module.read(&heap, object, view.actual, pair.source, .temporary); defer result.deinit(allocator);
+    var result = try module.read(&heap, object, view.actual, pair.source, .temporary); defer result.deinit(heap_allocator);
     try std.testing.expectEqual(.undefined_value, (try result.layout.selectVariant(result.value.tag)).kind);
 }
 

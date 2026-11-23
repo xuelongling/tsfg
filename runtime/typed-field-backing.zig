@@ -84,7 +84,8 @@ pub const Module = struct {
         const result = try heap.allocator.create(Captured); errdefer heap.allocator.destroy(result);
         result.* = .{ .heap = heap, .input_identity = self.authority.input_identity, .actual_type = actual_layout.type_id,
             .actual_field = actual_field, .source_view = target, .source_member = member,
-            .payload = try access.read(heap, self, receiver, target, member, .persistent) };
+            .payload = if (actual_field) |id| try access.readActualField(heap, receiver, actual_layout, id, .persistent)
+                else try access.undefinedValue(heap.allocator) };
         return @ptrCast(result);
     }
     pub fn release(self: Module, value: *Value) managed.Error!void {
