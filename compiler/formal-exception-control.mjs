@@ -85,11 +85,16 @@ export function formalExceptionFunction(model,owner){
   }
   function conditional(statement,active){
     const condition=values.expression(statement.condition),left=graph.newBlock(),right=graph.newBlock(),joined=graph.newBlock();
+    const literal=statement.condition.kind==='boolean'?statement.condition.value:undefined;
     const cells=copyCells(state.cells);graph.conditional(state.current,condition.name,left,right,statement.range);
     const finish=()=>graph.branch(state.current,joined,[],statement.range);
-    state.current=left;state.cells=copyCells(cells);region(statement.thenRegion,active,finish);
-    state.current=right;state.cells=copyCells(cells);
-    if(statement.elseRegion)region(statement.elseRegion,active,finish);else finish();
+    const lowerArm=(block,arm,reachable)=>{
+      state.current=block;state.cells=copyCells(cells);
+      if(!reachable)terminator('tsfg_eh.unreachable',[],[],{},statement.range);
+      else if(arm)region(arm,active,finish);else finish();
+    };
+    lowerArm(left,statement.thenRegion,literal!==false);
+    lowerArm(right,statement.elseRegion,literal!==true);
     state.cells=cells;
     if(joined.incoming)state.current=joined;
     else graph.discardBlock(joined);

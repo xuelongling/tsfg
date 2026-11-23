@@ -7,6 +7,10 @@ import { exceptionValueType, exceptionAnnotation, exceptionAssignmentType } from
 import { exceptionScope, declareExceptionBinding, reserveExceptionBindings, exceptionWrite, exceptionBranchScope,
   exceptionDropWrittenProofs, mergeExceptionScopes } from './exception-scope.mjs';
 
+function literalCondition(condition) {
+  return condition.kind === 'boolean' ? condition.boolean : undefined;
+}
+
 function terminator(context, next) {
   const g = context.grammar;
   if (g.spelling(next) === ';') return next + 1;
@@ -120,10 +124,16 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     if (elseBody.length) next = verifyExceptionStatement(elseBody[0], item.range, right, context, g.expect(next, 'else'), depth + 1);
     // Source's if anchor trims leading trivia; its ordinary block anchor does not.
     g.span(item.range, parent, first, next - 1);
-    const normal = [];
-    if (exceptionStatementsCanComplete(thenBody)) normal.push(left);
-    if (exceptionStatementsCanComplete(elseBody)) normal.push(right);
-    mergeExceptionScopes(scope, normal, [left, right]); return next;
+    const literal = literalCondition(item.condition), normal = [], reachable = [];
+    if (literal !== false) {
+      reachable.push(left);
+      if (exceptionStatementsCanComplete(thenBody)) normal.push(left);
+    }
+    if (literal !== true) {
+      reachable.push(right);
+      if (exceptionStatementsCanComplete(elseBody)) normal.push(right);
+    }
+    mergeExceptionScopes(scope, normal, reachable); return next;
   }
   if (item.kind === 'try') {
     record(item, ['kind','range','exception']); record(item.exception, ['tryBlock'], ['catchClause','finallyBlock']);
@@ -191,7 +201,11 @@ export function exceptionStatementsCanComplete(body) {
     let current = true;
     if (item.kind === 'throw' || item.kind === 'return') current = false;
     if (item.kind === 'block') current = exceptionStatementsCanComplete(item.body ?? []);
-    if (item.kind === 'if') current = exceptionStatementsCanComplete(item.thenBody ?? []) || exceptionStatementsCanComplete(item.elseBody ?? []);
+    if (item.kind === 'if') {
+      const literal = literalCondition(item.condition);
+      current = literal !== false && exceptionStatementsCanComplete(item.thenBody ?? [])
+        || literal !== true && exceptionStatementsCanComplete(item.elseBody ?? []);
+    }
     if (item.kind === 'while') current = item.condition.kind !== 'boolean' || item.condition.boolean !== true;
     if (item.kind === 'try') {
       const fact = item.exception;

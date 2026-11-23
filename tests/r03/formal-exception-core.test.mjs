@@ -89,6 +89,74 @@ for(const name of ['standalone-block','try-finally-without-catch','catch-without
     const second=await invokeCore(first.stdout);accepted(second);assert.deepEqual(second.stdout,first.stdout);
   });
 
+test('literal if retains both Source arms and excludes impossible Core continuation',async()=>{
+  const root=new URL('../fixtures/r03/exception-region-presence/false-with-present-else/',import.meta.url);
+  const [request,response,origin]=await Promise.all(['request.json','response.json','origin.json'].map(file=>readFile(new URL(file,root))));
+  const retained=await importCapturedFrontendResponse(request,response,JSON.parse(origin.toString('utf8')));
+  assert.equal(retained.status,'ok');
+
+  function checkCore(snapshot,literal,deadSize){
+    const built=buildHir(snapshot);assert.equal(built.status,'ok',JSON.stringify(built));
+    const source=built.hir.functions[0].body.body[0];
+    assert.equal(source.condition.value,literal);
+    const [dead,live]=literal?[source.elseRegion,source.thenRegion]:[source.thenRegion,source.elseRegion];
+    assert.equal(dead.body.length,deadSize);
+    assert.equal(live.body[0].kind,'throw');
+    const core=lowerFormalHir(built.hir);
+    assert.equal((core.match(/"tsfg_eh.raise"\(/g)||[]).length,1);
+    const branch=/cf\.cond_br [^,]+, \^(\w+), \^(\w+)/.exec(core);
+    assert.ok(branch);
+    const deadBlock=branch[literal?2:1];
+    assert.ok(core.includes('\n  ^'+deadBlock+':\n    "tsfg_eh.unreachable"('));
+  }
+
+  // Derive synthetic packets without changing the retained capture on disk.
+  for(const literal of [false,true]){
+    const framed={snapshot:structuredClone(retained.snapshot)};
+    reframeColdSource(framed,(input,facts)=>{
+      const file=input.files.find(file=>file.path==='/src/main.ts');
+      const statement=facts.functions[0].body[0];
+      const dead=(literal?statement.elseBody:statement.thenBody)[0];
+      const {start,end}=dead.body[0].range;
+      assert.equal(file.content.slice(start,end).trim(),'throw value;');
+      file.content=file.content.slice(0,start)+' '.repeat(end-start)+file.content.slice(end);
+      delete dead.body;
+      if(literal){
+        const condition=statement.condition,range=condition.range;
+        assert.equal(file.content.slice(range.start,range.end),'false');
+        file.content=file.content.slice(0,range.start)+'true '+file.content.slice(range.end);
+        condition.boolean=true;
+        range.end--;
+      }
+    });
+    const packet=framed.snapshot.capture;
+    const synthetic=await importCapturedFrontendResponse(Buffer.from(packet.request),Buffer.from(packet.response),framed.snapshot.sourceOrigin);
+    assert.equal(synthetic.status,'ok',JSON.stringify(synthetic));
+    checkCore(synthetic.snapshot,literal,0);
+  }
+  checkCore(retained.snapshot,false,1);
+
+  const malformed={snapshot:structuredClone(retained.snapshot)};
+  reframeColdSource(malformed,input=>{
+    const file=input.files.find(file=>file.path==='/src/main.ts');
+    file.content=file.content.replace('throw value;','throw ghost;');
+  });
+  const packet=malformed.snapshot.capture;
+  const rejectedDeadArm=await importCapturedFrontendResponse(Buffer.from(packet.request),Buffer.from(packet.response),malformed.snapshot.sourceOrigin);
+  assert.equal(rejectedDeadArm.status,'error');
+});
+
+test('dynamic exception Core condition retains both continuations',async()=>{
+  const root=new URL('../fixtures/r03/m21-exception/corpus/07/',import.meta.url);
+  const [request,response,origin]=await Promise.all(['request.json','response.json','origin.json'].map(file=>readFile(new URL(file,root))));
+  const imported=await importCapturedFrontendResponse(request,response,JSON.parse(origin.toString('utf8')));
+  assert.equal(imported.status,'ok');
+  const built=buildHir(imported.snapshot);assert.equal(built.status,'ok');
+  const core=lowerFormalHir(built.hir);
+  assert.match(core,/cf\.cond_br /);
+  assert.doesNotMatch(core,/"tsfg_eh\.unreachable"\(/);
+});
+
 function lineChange(core,name,ordinal,change){
   let count=0;const lines=core.split('\n');
   const index=lines.findIndex(line=>line.includes('"'+name+'"')&&++count===ordinal);

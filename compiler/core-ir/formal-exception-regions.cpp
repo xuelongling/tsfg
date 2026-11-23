@@ -153,7 +153,11 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     if(!field(h,"elseRegion").getAsNull()){
       if(!source->expect(at,"else",p)||!branch(items(field(raw,"elseBody")),field(h,"elseRegion"),right,"else"))return false;
     }else if(!p.require(items(field(raw,"elseBody")).empty(),"omitted else body"))return false;
-    scope.written.insert(left.written.begin(),left.written.end());scope.written.insert(right.written.begin(),right.written.end());
+    const auto literal=string(field(test,"kind"))=="boolean"?field(test,"boolean").getAsBoolean():std::nullopt;
+    if(literal==false)left.normal=false;
+    else scope.written.insert(left.written.begin(),left.written.end());
+    if(literal==true)right.normal=false;
+    else scope.written.insert(right.written.begin(),right.written.end());
     std::set<std::string> narrowed;
     if(left.normal&&right.normal)std::set_intersection(left.narrowed.begin(),left.narrowed.end(),right.narrowed.begin(),right.narrowed.end(),std::inserter(narrowed,narrowed.end()));
     else if(left.normal)narrowed=left.narrowed;else if(right.normal)narrowed=right.narrowed;

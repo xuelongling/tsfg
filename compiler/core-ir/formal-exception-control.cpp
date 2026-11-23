@@ -92,8 +92,17 @@ void FunctionProof::conditional(const Json &s,const Handlers &active){
   auto *left=op->getSuccessor(0),*right=op->getSuccessor(1),*join=static_cast<mlir::Block *>(nullptr);const auto inherited=cells;
   auto finish=[&]{auto *target=branch(field(s,"range"));
     program.require(target&&(!join||join==target)&&target->getNumArguments()==0,"branch merge changes continuation or value");join=target;};
-  at(left);region(field(s,"thenRegion"),active,finish);cells=inherited;
-  at(right);if(field(s,"elseRegion").getAsNull())finish();else region(field(s,"elseRegion"),active,finish);
+  const auto &sourceCondition=field(s,"condition");
+  const auto literal=string(field(sourceCondition,"kind"))=="boolean"?field(sourceCondition,"value").getAsBoolean():std::nullopt;
+  auto arm=[&](mlir::Block *block,const Json &node,bool reachable){
+    at(block);cells=inherited;
+    if(!reachable){
+      auto *dead=take("tsfg_eh.unreachable",field(s,"range"),{},0,0);
+      program.require(dead&&dead->getNumSuccessors()==0&&!next,"literal condition dead edge has no continuation");
+    }else if(node.getAsNull())finish();else region(node,active,finish);
+  };
+  arm(left,field(s,"thenRegion"),literal!=false);
+  arm(right,field(s,"elseRegion"),literal!=true);
   cells=inherited;if(join)at(join);else next=nullptr;
 }
 void FunctionProof::attempt(const Json &s,const Handlers &active){
