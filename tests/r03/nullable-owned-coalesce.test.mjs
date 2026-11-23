@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { importCapturedFrontendResponse, validateFrontendSnapshot } from '../../compiler/frontend.mjs';
-import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
+import { buildHir, verifyHir, printHir, readHir, lowerHir, lowerFormalHir } from '../../compiler/hir.mjs';
 
 // Actual Go30428 v3 captures and independently fixed Core text. A missing v3
 // boundary is mechanical API/version RED; only the later ?? refusal is semantic.
@@ -193,5 +193,8 @@ test('actual v3 nullable baseline then coalesce preserve cold HIR and lazy typed
   assert.equal(actual.golden.toString('utf8').split('\n').length - 1, 25);
   coalesceFacts(actual.packet);
   const result = await coldCore(actual); typedCoalesce(result.hir); lazyCore(result.core);
+  assert.equal(lowerFormalHir(result.hir), result.core);
+  const diagnostic = {code:'r03-d-call-effects',ruleId:'r01-call-contract',phase:'hir'};
+  for (const lower of [lowerHir,lowerFormalHir]) assert.throws(() => lower(result.hir, undefined, {}), diagnostic);
   assert.deepEqual(actual.bytes.map(hash), actual.before);
 });

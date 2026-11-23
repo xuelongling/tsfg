@@ -34,6 +34,7 @@ test('complete official returned closure enters ordinary formal Core without a p
   assert.equal(typeof core,'string');assert.equal([...core.matchAll(/^  func\.func /gm)].length,4);
   assert.match(core,/tsfg_core\.closure_program = /);
   assert.doesNotMatch(core,/tsfg_core\.closure = |tsfg\.core-closure-candidate/);
+  assert.throws(()=>lowerFormalHir(hir,undefined,{}),{code:'r03-d-call-effects',ruleId:'r01-call-contract',phase:'hir'});
   assert.equal(printHir(hir),before);
 });
 

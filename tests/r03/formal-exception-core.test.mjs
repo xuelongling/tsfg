@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {importCapturedFrontendResponse,validateFrontendSnapshot} from '../../compiler/frontend.mjs';
-import {buildHir,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
+import {buildHir,verifyHir,printHir,readHir,lowerHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {expectedHir,hash,canonical} from './formal-exception-source-oracle.mjs';
 import {expectedExceptionControl} from './formal-exception-control-oracle.mjs';
 import {expectedExceptionModule} from './formal-exception-module-oracle.mjs';
@@ -23,6 +23,12 @@ async function firstProgram(){
   const hir=readHir(Buffer.from(printHir(verifyHir(built.hir))));
   assert.deepEqual(hir,expectedHir(origin));return hir;
 }
+
+for(const lower of [lowerHir,lowerFormalHir])test(lower.name+' rejects publication context for the retained exception HIR',async()=>{
+  const hir=await firstProgram();
+  assert.match(lower(hir),/tsfg_core\.exception_program/);
+  assert.throws(()=>lower(hir,undefined,{}),{code:'r03-d-call-effects',ruleId:'r01-call-contract',phase:'hir'});
+});
 
 test('complete captured payload corpus uses its actual target and full function tables',
   {skip:!process.env.TSFG_CORE_IR_EXE},async t=>{
