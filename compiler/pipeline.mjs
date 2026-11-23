@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isProxy } from "node:util/types";
+import { isDataView, isProxy } from "node:util/types";
 import { analyzeFrontend } from "./frontend.mjs";
 import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { genericHirFormat, lowerGenericHir, prepareGenericCore } from "./generic-hir.mjs";
@@ -675,6 +675,15 @@ export function readRuntimeOutput(bytes, command) {
   return JSON.parse(json);
 }
 
+const requestTypedArraySlots = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(Uint8Array.prototype));
+const requestDataViewSlots = Object.getOwnPropertyDescriptors(DataView.prototype);
+
+/** Read the view's actual range without consulting caller properties. @param {NodeJS.ArrayBufferView} bytes */
+function requestByteView(bytes) {
+  const slots = isDataView(bytes) ? requestDataViewSlots : requestTypedArraySlots;
+  return new Uint8Array(slots.buffer.get.call(bytes), slots.byteOffset.get.call(bytes), slots.byteLength.get.call(bytes));
+}
+
 /**
  * @param {NodeJS.ArrayBufferView | string} bytes
  * @param {{vm?: string, requests?: unknown, requestJson?: string, command?: string}} options
@@ -682,7 +691,7 @@ export function readRuntimeOutput(bytes, command) {
 export async function runBytecode(bytes, { vm, requests = [{}], requestJson, command = "--requests" }) {
   // Own the selected input range before asynchronous admission. Typed views
   // carry bytes, regardless of their element width.
-  const input = typeof bytes === "string" ? bytes : Buffer.from(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  const input = typeof bytes === "string" ? bytes : Buffer.from(requestByteView(bytes));
   const args = command === "--requests" || command === "--module-requests"
     ? [command, requestJson ?? JSON.stringify(requests)] : [command];
   const executable = await verifiedConsumer(vm, "vm");
@@ -703,24 +712,29 @@ export function runModuleRequests(bytes, {vm,requests=[{}]}) {
 
 /** Run a serial batch of framed bytecode requests on one Runtime host. */
 export async function runRequestSequence(bytecodes, { vm, requests = undefined }) {
-  if (!Array.isArray(bytecodes) || bytecodes.length < 1 || bytecodes.length > 128)
+  const moduleCount = Array.isArray(bytecodes) ? bytecodes.length : 0;
+  if (moduleCount < 1 || moduleCount > 128)
     throw new TypeError("r05-request-sequence: expected 1..128 matching modules and requests");
-  const requestFrames = requests === undefined ? bytecodes.map(() => ({})) : requests;
-  if (!Array.isArray(requestFrames) || requestFrames.length !== bytecodes.length)
+  const requestFrames = requests === undefined ? Array.from({ length: moduleCount }, () => ({})) : requests;
+  if (!Array.isArray(requestFrames) || requestFrames.length !== moduleCount)
     throw new TypeError("r05-request-sequence: expected 1..128 matching modules and requests");
+  const views = [];
   let totalBytes = 12;
-  for (const bytes of bytecodes) {
+  for (let index = 0; index < moduleCount; index++) {
+    const bytes = bytecodes[index];
     if (!Buffer.isBuffer(bytes)) throw new TypeError("r05-request-sequence: expected bytecode buffers");
-    totalBytes += 4 + bytes.length;
+    const view = requestByteView(bytes);
+    totalBytes += 4 + view.byteLength;
     if (totalBytes > 1048576) throw new TypeError("r05-request-sequence: frame exceeds size limit");
+    views.push(view);
   }
   const header = Buffer.alloc(12);
   header.write("TSFGREQ1", "ascii");
-  header.writeUInt32LE(bytecodes.length, 8);
-  const frames = bytecodes.flatMap(bytes => {
+  header.writeUInt32LE(moduleCount, 8);
+  const frames = views.flatMap(view => {
     const length = Buffer.alloc(4);
-    length.writeUInt32LE(bytes.length);
-    return [length, bytes];
+    length.writeUInt32LE(view.byteLength);
+    return [length, view];
   });
   const input = Buffer.concat([header, ...frames]);
   const args = ["--request-sequence", JSON.stringify(requestFrames)];

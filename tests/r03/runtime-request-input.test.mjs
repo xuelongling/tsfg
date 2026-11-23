@@ -160,6 +160,27 @@ test("request transports own their input while Runtime admission is pending", as
     assert.equal(transport.input.length, concat.length);
   });
 
+  await t.test("ordinary and persistent requests use the view's native byte range", async () => {
+    for (const [makeView, invoke] of [
+      [buffer => new DataView(buffer, 4, concat.length), runModuleRequests],
+      [buffer => new Uint16Array(buffer, 4, concat.length / 2), runBytecode],
+      [buffer => Buffer.from(buffer, 4, concat.length), runBytecode],
+    ]) {
+      const buffer = new ArrayBuffer(concat.length + 8);
+      const region = new Uint8Array(buffer, 4, concat.length);
+      region.set(concat);
+      const view = makeView(buffer);
+      Object.defineProperties(view, {
+        buffer: { value: new ArrayBuffer(concat.length) },
+        byteOffset: { value: 0 },
+        byteLength: { value: concat.length },
+      });
+      await paused(() => invoke(view, { vm: vm.executable, requests: [{}] }), () => region.fill(0));
+      assert.equal(sha256(transport.input), sha256(concat));
+      assert.equal(transport.input.length, concat.length);
+    }
+  });
+
   await t.test("static AOT keeps the original request JSON for both instance modes", async () => {
     for (const persistent of [false, true]) {
       const requests = [{ semanticFuel: 7, stringOutput: "strict" }];
@@ -186,6 +207,33 @@ test("request transports own their input while Runtime admission is pending", as
     assert.deepEqual(transport.args, ["--request-sequence", expected]);
     const { input } = transport;
     assert.equal(input.subarray(0, 8).toString("ascii"), "TSFGREQ1");
+    assert.equal(input.readUInt32LE(8), 2);
+    assert.equal(input.readUInt32LE(12), lossless.length);
+    assert.deepEqual(input.subarray(16, 16 + lossless.length), lossless);
+    assert.equal(input.readUInt32LE(16 + lossless.length), concat.length);
+    assert.deepEqual(input.subarray(20 + lossless.length), concat);
+  });
+
+  await t.test("frame lengths use the Buffer's native byte range", async () => {
+    const bytes = Buffer.alloc(concat.length + 8, 0xff);
+    const view = bytes.subarray(4, 4 + concat.length);
+    concat.copy(view);
+    Object.defineProperty(view, "length", { value: 0 });
+    await paused(() => runRequestSequence([view], { vm: vm.executable }), () => bytes.fill(0));
+    assert.equal(transport.input.readUInt32LE(12), concat.length);
+    assert.equal(sha256(transport.input.subarray(16)), sha256(concat));
+  });
+
+  await t.test("sequence modules pair with requests in array index order", async () => {
+    const packets = [lossless, concat];
+    packets[Symbol.iterator] = function* () {
+      yield packets[1];
+      yield packets[0];
+    };
+    const requests = [{ semanticFuel: 11 }, { semanticFuel: 17 }];
+    await paused(() => runRequestSequence(packets, { vm: vm.executable, requests }));
+    const { input, args } = transport;
+    assert.deepEqual(args, ["--request-sequence", JSON.stringify(requests)]);
     assert.equal(input.readUInt32LE(8), 2);
     assert.equal(input.readUInt32LE(12), lossless.length);
     assert.deepEqual(input.subarray(16, 16 + lossless.length), lossless);
