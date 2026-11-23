@@ -56,6 +56,12 @@ function sourceDiagnostic(error) {
     'start' in primary&&typeof primary.start==='number'&&'end' in primary&&typeof primary.end==='number';
 }
 const fails=(value,code)=>assert.throws(()=>plan(value),error=>diagnostic(error)&&error.code==='r03-common-program-gpu-'+code&&error.ruleId==='r01-gpu');
+const unverified=hir.functions.find(row=>row.name==='add');
+const rejectedSelections=[
+  {kernels:[right.id,unverified.id],source:{sourceId:'/src/main.ts',start:175,end:246}},
+  {kernels:[right.id,'sha256:'+'f'.repeat(64)],source:expected.kernels[0].source},
+];
+const malformedSelections=[[unverified.id,right.id],[right.id,right.id],[right.id,'not-a-function-id']];
 
 test('logical GPU binding keeps whole-Program proof and fixed Source anchors',()=>{
   assert.deepEqual(plan(request),expected);assert.equal(hir.functions.length,4);assert.equal(group.targets.length,2);
@@ -142,25 +148,16 @@ test('logical GPU target and declared kernel selection are explicit',()=>{
   fails(changed(value=>{value.kernels=[hir.functions.find(row=>row.name==='ordinary').id];}),'kernel');
 });
 test('logical GPU group rejects the first unverified kernel at its own Source range',()=>{
-  const unverified=hir.functions.find(row=>row.name==='add');
-  assert.ok(unverified);
   assert.ok(right.id<unverified.id&&!group.targets.includes(unverified.id));
-  const invalid=changed(value=>{value.kernels=[right.id,unverified.id];});
-  assert.throws(()=>plan(invalid),error=>{
-    assert.ok(sourceDiagnostic(error));
-    assert.equal(error.code,'r03-common-program-gpu-kernel');
-    assert.equal(error.ruleId,'r01-gpu');
-    assert.deepEqual(error.primary,{sourceId:'/src/main.ts',start:175,end:246});
-    return true;
-  });
-
-  const unknown=changed(value=>{value.kernels=[right.id,'sha256:'+'f'.repeat(64)];});
-  assert.throws(()=>plan(unknown),error=>{
-    assert.ok(sourceDiagnostic(error));
-    assert.equal(error.code,'r03-common-program-gpu-kernel');
-    assert.deepEqual(error.primary,expected.kernels[0].source);
-    return true;
-  });
+  for(const kernels of malformedSelections)fails({...request,kernels},'request');
+  for(const {kernels,source} of rejectedSelections)
+    assert.throws(()=>plan({...request,kernels}),error=>{
+      assert.ok(sourceDiagnostic(error));
+      assert.equal(error.code,'r03-common-program-gpu-kernel');
+      assert.equal(error.ruleId,'r01-gpu');
+      assert.deepEqual(error.primary,source);
+      return true;
+    });
 });
 test('logical GPU resources exactly cover fixed globals and scalar parameters',()=>{
   assert.throws(()=>plan(changed(value=>{value.bindings.splice(1,1);})),error=>
@@ -268,7 +265,7 @@ test('genuine Source3 extra void return resource identifies its owner function',
     error.primary.sourceId===voidOwner.sourceId&&error.primary.start===voidOwner.start&&error.primary.end===voidOwner.end);
 });
 
-test('logical GPU full group anchors an extra void return at its selected owner',()=>{
+function fullVoidGpuFixture(){
   const right=voidDeclarations.find(row=>row.original.name==='right');assert.ok(right);
   assert.deepEqual(voidGroup.targets,[right.fn.id,voidSink.fn.id]);
   const at=range=>({sourceId:'/src/main.ts',...range});
@@ -285,9 +282,17 @@ test('logical GPU full group anchors an extra void return at its selected owner'
   const request={...voidRequest,kernels:voidGroup.targets,bindings:bindings.map(({type,source,...binding})=>binding)};
   const expected={...voidExpected,kernels:[{functionId:right.fn.id,source:rightOwner},...voidExpected.kernels],
     bindings,requestDigest:digest(request)};
+  const extra={...request,bindings:[...request.bindings,{...voidExtraReturn.bindings[2],binding:5}]};
+  const malformed= {...request,bindings:[...request.bindings,
+    {...voidRequest.bindings[1],id:'not-a-parameter-id',binding:5}]};
+  return {request,expected,extra,malformed};
+}
+test('logical GPU full group anchors an extra void return at its selected owner',()=>{
+  const {request,expected,extra,malformed}=fullVoidGpuFixture();
   assert.deepEqual(createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,request),expected);
   assert.deepEqual(readCommonGpuBindingPlan(Buffer.from(canonical(expected)+'\n'),voidHir,voidPublication,voidGroup,request),expected);
-  const extra={...request,bindings:[...request.bindings,{...voidExtraReturn.bindings[2],binding:5}]};
+  assert.throws(()=>createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,malformed),error=>
+    diagnostic(error)&&error.code==='r03-common-program-gpu-resource'&&!sourceDiagnostic(error));
   assert.throws(()=>createCommonGpuBindingPlan(voidHir,voidPublication,voidGroup,extra),error=>
     sourceDiagnostic(error)&&error.code==='r03-common-program-gpu-resource'&&error.ruleId==='r01-gpu'&&
     error.primary.sourceId===voidOwner.sourceId&&error.primary.start===voidOwner.start&&error.primary.end===voidOwner.end);
@@ -386,6 +391,20 @@ test('independent C++ logical GPU consumer matches the fixed oracle and cold rej
       run(request,expected,'\n',1)];
     negative.forEach(result=>{assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.equal(result.status,3,result.stderr);
       assert.equal(result.stdout,'');assert.match(result.stderr,/\[core-ir-common-gpu-/);});
+    for(const {kernels,source} of rejectedSelections){
+      const rejected=run({...request,kernels},null);
+      assert.equal(rejected.error,undefined);assert.equal(rejected.signal,null);assert.equal(rejected.status,3,rejected.stderr);
+      assert.equal(rejected.stdout,'');
+      assert.match(rejected.stderr,/^\[core-ir-common-gpu-kernel\]/);
+      assert.ok(rejected.stderr.trimEnd().endsWith(`(${source.sourceId}:${source.start}:${source.end})`),rejected.stderr);
+    }
+    for(const kernels of malformedSelections){
+      const rejected=run({...request,kernels},null);
+      assert.equal(rejected.error,undefined);assert.equal(rejected.signal,null);assert.equal(rejected.status,3,rejected.stderr);
+      assert.equal(rejected.stdout,'');
+      assert.match(rejected.stderr,/^\[core-ir-common-gpu-kernel\]/);
+      assert.doesNotMatch(rejected.stderr,/\(\/src\/main\.ts:/);
+    }
     [run(request,expected,''),run(request,expected,'\n\n')].forEach(result=>{
       assert.equal(result.error,undefined);assert.equal(result.status,3);assert.equal(result.stdout,'');assert.match(result.stderr,/canonical/);
     });
@@ -401,11 +420,23 @@ test('independent C++ genuine Source3 void plan rejects an extra return at its o
       assert.equal(accepted.error,undefined);assert.equal(accepted.signal,null);assert.equal(accepted.status,0,accepted.stderr);
       assert.equal(accepted.stdout,canonical(voidExpected)+'\n');assert.equal(accepted.stderr,'');
     });
-    const rejected=run(voidExtraReturn,null);
-    assert.equal(rejected.error,undefined);assert.equal(rejected.signal,null);assert.equal(rejected.status,3,rejected.stderr);
-    assert.equal(rejected.stdout,'');
-    assert.match(rejected.stderr,/^\[core-ir-common-gpu-identity\] [^\r\n]+ \(\/src\/main\.ts:89:155\)\r?\n$/,
-      'extra void return must identify its owner, never the previous valid parameter at110..116');
+    const full=fullVoidGpuFixture();
+    const accepted=run(full.request,full.expected);
+    assert.equal(accepted.error,undefined);assert.equal(accepted.signal,null);assert.equal(accepted.status,0,accepted.stderr);
+    assert.equal(accepted.stdout,canonical(full.expected)+'\n');assert.equal(accepted.stderr,'');
+    for(const invalid of [voidExtraReturn,full.extra]){
+      const rejected=run(invalid,null);
+      assert.equal(rejected.error,undefined);assert.equal(rejected.signal,null);assert.equal(rejected.status,3,rejected.stderr);
+      assert.equal(rejected.stdout,'');
+      assert.match(rejected.stderr,/^\[core-ir-common-gpu-identity\] [^\r\n]+ \(\/src\/main\.ts:89:155\)\r?\n$/,
+        'extra void return must identify its owner in both single and multiple selected kernels');
+    }
+    const malformed=run(full.malformed,null);
+    assert.equal(malformed.error,undefined);assert.equal(malformed.signal,null);assert.equal(malformed.status,3,malformed.stderr);
+    assert.equal(malformed.stdout,'');
+    const {sourceId,start,end}=full.expected.kernels[0].source;
+    assert.match(malformed.stderr,/^\[core-ir-common-gpu-identity\]/);
+    assert.ok(malformed.stderr.trimEnd().endsWith(`(${sourceId}:${start}:${end})`),malformed.stderr);
   });
 
 test('independent C++ reconstructs the genuine bare-addition return contract before GPU binding',

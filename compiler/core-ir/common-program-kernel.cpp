@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-source.h"
 #include "common-program-borrows.h"
+#include "bytecode_encoding.h"
 #include <algorithm>
 #include <tuple>
 namespace tsfg::commonProgram {
@@ -144,12 +145,30 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
   using Key=std::tuple<std::string,std::string,std::string>;
   std::map<Key,Resource> required;Array selected;std::set<std::string> group;
   for(const auto &id:items(field(p.request,"targets"))){if(!spend())return false;group.insert(string(id));}
-  std::string previous;
+  const auto canonicalId=[](llvm::StringRef id){bytecode::Hash bytes;return bytecode::decodeHash(id,bytes);};
+  llvm::StringRef previous;
   for(const auto &value:kernels){
-    if(!spend())return false;const auto id=string(value);const auto found=functions.find(id);
-    if(!value.getAsString()||!group.count(id)||found==functions.end()||(!previous.empty()&&previous>=id))
+    if(!spend())return false;
+    const auto id=value.getAsString();
+    if(!id||!canonicalId(*id)||(!previous.empty()&&previous>=*id))
       return fail("kernel","GPU kernels must be an ordered unique subset of the verified kernel group");
-    const auto &fn=*found->second;const auto path=string(field(fn,"sourcePath"));locate(fn,path);
+    previous=*id;
+  }
+  const auto first=functions.find(string(kernels.front()));
+  const auto fallback=group.empty()?functions.begin():functions.find(*group.begin());
+  const auto primary=first==functions.end()?fallback:first;
+  std::map<std::string,const Json *> selectedFunctions;
+  for(const auto &value:kernels){
+    const auto id=string(value);const auto found=functions.find(id);
+    if(!group.count(id)||found==functions.end()){
+      const auto owner=found==functions.end()?primary:found;
+      if(owner!=functions.end())locate(*owner->second,string(field(*owner->second,"sourcePath")));
+      return fail("kernel","GPU kernels must be an ordered unique subset of the verified kernel group");
+    }
+    selectedFunctions.emplace(id,found->second);
+  }
+  for(const auto &[id,declaration]:selectedFunctions){
+    const auto &fn=*declaration;const auto path=string(field(fn,"sourcePath"));locate(fn,path);
     const auto result=string(field(fn,"returnType"));const bool empty=types.count(result)&&string(field(*types.at(result),"kind"))=="void";
     if(!field(fn,"ownerType").getAsNull()||(!empty&&!i32(result)))return fail("capability","unsupported GPU receiver or return type");
     if(!empty)required.emplace(Key{"return",id,id},Resource{false,true,source(fn,path)});
@@ -168,15 +187,14 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
       auto &resource=required[Key{"global","",global}];resource.source=source(row,globalPath);
       if(access.second)resource.write=true;else resource.read=true;
     }
-    locate(fn,path);selected.push_back(Object{{"functionId",id},{"source",source(fn,path)}});previous=id;
+    locate(fn,path);selected.push_back(Object{{"functionId",id},{"source",source(fn,path)}});
     if(required.size()>4096)return fail("budget","logical GPU resource count exceeded");
   }
   Array admitted;std::set<Key> seen;std::pair<int64_t,int64_t> previousSlot{-1,-1};
-  const auto &primary=*functions.at(string(kernels.front()));
+  const auto &firstSelected=*selectedFunctions.begin()->second;
   for(const auto &binding:bindings){
-    // Each row owns its diagnostic context; an unknown resource falls back
-    // to the selected Source function rather than the preceding descriptor.
-    locate(primary,string(field(primary,"sourcePath")));
+    // Each row owns its diagnostic context, even when it names no known resource.
+    locate(firstSelected,string(field(firstSelected,"sourcePath")));
     if(!spend())return false;
     if(!exact(binding,{"kind","id","kernel","set","binding","access"}))return fail("binding","logical descriptor fields differ");
     const auto kind=string(field(binding,"kind")),id=string(field(binding,"id")),kernel=string(field(binding,"kernel"));
@@ -190,7 +208,8 @@ bool createGpuBindingPlan(Program &p,const Json &request,Json &out,Error &e){
     if(found!=required.end()){
       const auto &anchor=found->second.source;e.path=string(field(anchor,"sourceId"));
       e.range={uint32_t(field(anchor,"start").getAsInteger().value_or(0)),uint32_t(field(anchor,"end").getAsInteger().value_or(0))};
-    }
+    }else if(const auto owner=selectedFunctions.find(kernel);owner!=selectedFunctions.end()&&canonicalId(id))
+      locate(*owner->second,string(field(*owner->second,"sourcePath")));
     if(found==required.end()||!seen.insert(key).second)return fail("identity","logical resource is foreign, extra or repeated");
     const auto &resource=found->second;
     const auto expected=resource.read?(resource.write?"read-write":"read"):"write";
