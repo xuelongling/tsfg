@@ -495,7 +495,8 @@ function produceOwnedCore(hir, options, selected = undefined) {
   if (factsContext !== undefined || callPublicationContext !== undefined)
     return produceCore(hir, options, selected?.lower ?? (value => lowerFormalHir(value, factsContext, callPublicationContext)), { factsContext });
   const prepared = prepareGenericCore(hir);
-  return produceCore(prepared.hir, { core: options.core, optimize: options.optimize }, prepared.emit);
+  const core = options.core;
+  return produceCore(prepared.hir, { core, optimize: core ? options.optimize : undefined }, prepared.emit);
 }
 
 /** Produce verified Core text from complete persisted owned HIR. */

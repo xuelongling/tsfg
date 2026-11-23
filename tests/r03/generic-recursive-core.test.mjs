@@ -23,6 +23,19 @@ test('ordinary owned HIR preserves option reads on a missing Core',async()=>{
  }
 });
 
+test('generic owned HIR preserves validation and option reads on a missing Core',async t=>{
+ const fixture=new URL('./fixtures/generic-recursive-conditional-hir-v7.json',import.meta.url);
+ const hir=readHir(await readFile(fixture));
+ const invalid={...hir,inputIdentity:'sha256:'+'0'.repeat(64)};
+ for(const compile of [compileOwnedCore,compileOwnedHir])await t.test(compile.name,async()=>{
+  const options={get optimize(){throw new Error('unexpected optimize read');}};
+  assert.deepEqual(await compile(invalid,options),
+   {status:'tool-error',code:'r03-d-consumer',message:'generic-hir-identity: invalid concrete candidate HIR'});
+  assert.deepEqual(await compile(hir,options),
+   {status:'tool-error',code:'r03-d-consumer',message:'r03-tool-core: formal executable is required'});
+ });
+});
+
 // Data-only compiled consumer. Never executes the recursively described program.
 for(const family of ['conditional','mapped'])test('verified static Core canonical/optimized '+family+' recursive package keeps the complete function/callee table',async()=>{
  const executable=process.env.TSFG_CORE_IR_EXE;
