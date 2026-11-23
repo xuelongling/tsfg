@@ -114,14 +114,10 @@ bool refinement(ModuleProof &proof, mlir::Operation *op, mlir::func::FuncOp fn, 
   }
   return authorized || proof.reject("refinement has no matching dominating original presence edge");
 }
-bool compoundToken(ModuleProof &proof,llvm::StringRef path,uint32_t begin,uint32_t end,llvm::StringRef name) {
-  static const std::map<llvm::StringRef,llvm::StringRef> tokens={
-    {"tsfg_core.add","+="},{"tsfg_core.sub","-="},{"tsfg_core.mul","*="},
-    {"tsfg_core.div","/="},{"tsfg_core.rem","%="},{"tsfg_core.shl","<<="},
-    {"tsfg_core.shr",">>="},{"tsfg_core.ushr",">>>="},{"tsfg_core.and","&="},
-    {"tsfg_core.or","|="},{"tsfg_core.xor","^="}};
-  const auto selected=tokens.find(name);
-  if(selected==tokens.end()||begin>=end)return false;
+enum class TokenPlacement {Infix,Prefix,Postfix};
+bool sourceOperatorToken(ModuleProof &proof,llvm::StringRef path,uint32_t begin,uint32_t end,
+    llvm::StringRef token,TokenPlacement placement) {
+  if(begin>=end)return false;
   for(const auto &source:*proof.sources.getAsArray()) {
     if(!proof.charge())return false;
     const auto &row=*source.getAsObject();if(string(row,"path")!=path)continue;
@@ -134,6 +130,8 @@ bool compoundToken(ModuleProof &proof,llvm::StringRef path,uint32_t begin,uint32
     }
     if(first==llvm::StringRef::npos||offset!=end)return false;
     const auto gap=text.slice(first,at);
+    const bool postfix=placement==TokenPlacement::Postfix;
+    if((placement==TokenPlacement::Prefix&&!gap.starts_with(token))||(postfix&&!gap.ends_with(token)))return false;
     const auto line=[](uint32_t c){return c==10||c==13||c==0x2028||c==0x2029;};
     const auto space=[&](uint32_t c){return line(c)||c==9||c==11||c==12||c==32||c==0xa0||c==0x1680||
       (c>=0x2000&&c<=0x200a)||c==0x202f||c==0x205f||c==0x3000||c==0xfeff;};
@@ -143,21 +141,35 @@ bool compoundToken(ModuleProof &proof,llvm::StringRef path,uint32_t begin,uint32
       const auto rest=gap.drop_front(at);
       if(rest.starts_with("/*")) {
         const auto close=rest.find("*/",2);if(close==llvm::StringRef::npos)return false;
-        if(!proof.charge(close/64+1))return false;at+=close+2;
+        if(!proof.charge(close/64+1))return false;
+        const auto comment=rest.take_front(close);
+        if(postfix&&(comment.contains('\n')||comment.contains('\r')||
+          comment.contains("\xE2\x80\xA8")||comment.contains("\xE2\x80\xA9")))return false;
+        at+=close+2;
       }else if(rest.starts_with("//")) {
+        if(postfix)return false;
         at+=2;bool ended=false;
         while(at<gap.size()) {
           if(!proof.charge()||!arrays::ownerproof::jsondetail::nextUtf8(gap,at,point))return false;
           if(line(point)){ended=true;break;}
         }
         if(!ended)return false;
-      }else if(!matched&&rest.starts_with(selected->second)) {
-        matched=true;at+=selected->second.size();
-      }else if(!arrays::ownerproof::jsondetail::nextUtf8(gap,at,point)||!space(point))return false;
+      }else if(!matched&&rest.starts_with(token)) {
+        matched=true;at+=token.size();
+      }else if(!arrays::ownerproof::jsondetail::nextUtf8(gap,at,point)||!space(point)||(postfix&&line(point)))return false;
     }
     return matched;
   }
   return false;
+}
+bool compoundToken(ModuleProof &proof,llvm::StringRef path,uint32_t begin,uint32_t end,llvm::StringRef name) {
+  static const std::map<llvm::StringRef,llvm::StringRef> tokens={
+    {"tsfg_core.add","+="},{"tsfg_core.sub","-="},{"tsfg_core.mul","*="},
+    {"tsfg_core.div","/="},{"tsfg_core.rem","%="},{"tsfg_core.shl","<<="},
+    {"tsfg_core.shr",">>="},{"tsfg_core.ushr",">>>="},{"tsfg_core.and","&="},
+    {"tsfg_core.or","|="},{"tsfg_core.xor","^="}};
+  const auto selected=tokens.find(name);
+  return selected!=tokens.end()&&sourceOperatorToken(proof,path,begin,end,selected->second,TokenPlacement::Infix);
 }
 bool numericArrayWriteback(ModuleProof &proof,mlir::Operation *read,mlir::Operation *store,
     mlir::Value result,const std::string &group) {
@@ -172,7 +184,7 @@ bool numericArrayWriteback(ModuleProof &proof,mlir::Operation *read,mlir::Operat
   return version&&string(*version,"id")==group+"/array-version"&&string(*version,"node")==group&&
     string(*version,"kind")=="store";
 }
-enum class CompoundTarget {None,Local,Field,Array};
+enum class CompoundTarget {None,Local,Field,Array,LocalUpdate};
 mlir::Operation *numericOperandView(mlir::Value value) {
   auto *view=value.getDefiningOp();
   if(!view||view->getName().getStringRef()!="tsfg_core.domain.view"||view->getNumOperands()!=1||
@@ -185,6 +197,39 @@ bool compoundWritebackView(mlir::Operation *view,mlir::Operation *consumer,mlir:
     view->getOperand(0)==result&&view->getNumResults()==1&&
     view->getAttr("tsfg_source.start")==consumer->getAttr("tsfg_source.start")&&
     view->getAttr("tsfg_source.end")==consumer->getAttr("tsfg_source.end");
+}
+mlir::Operation *localNumericWriteback(mlir::Operation *read,mlir::Operation *consumer,mlir::Value oldValue) {
+  const auto result=consumer->getResult(0);
+  if(typeCode(result.getType())!=1)return nullptr;
+  if(result.getType()==oldValue.getType())return consumer;
+  auto *view=consumer->getNextNode();
+  return compoundWritebackView(view,consumer,result)&&view->getResult(0).getType()==oldValue.getType()&&
+    view->getAttr("domain")==read->getAttr("domain")&&view->getAttr("view_type")==read->getAttr("view_type")?view:nullptr;
+}
+bool numericLocalUpdate(ModuleProof &proof,mlir::func::FuncOp fn,mlir::Operation *check,mlir::Operation *consumer,
+    mlir::Value oldValue,mlir::Value one,mlir::Operation *&postfixAfter) {
+  auto *read=numericOperandView(oldValue),*constant=one.getDefiningOp();
+  const auto name=consumer->getName().getStringRef();
+  if(!read||!anchor(proof,read,fn)||(name!="tsfg_core.add"&&name!="tsfg_core.sub")||
+      consumer->getNumResults()!=1||!constant||constant->getName().getStringRef()!="tsfg_core.constant"||
+      constant->getNumOperands()!=0||constant->getNumResults()!=1||typeCode(one.getType())!=1||
+      constant->getAttr("tsfg_source.start")!=consumer->getAttr("tsfg_source.start")||
+      constant->getAttr("tsfg_source.end")!=consumer->getAttr("tsfg_source.end")||
+      read->getNextNode()!=constant||constant->getNextNode()!=check)return false;
+  uint64_t unit=0;
+  if(!constantBits(constant,unit)||unit!=1)return false;
+  const auto start=consumer->getAttrOfType<mlir::IntegerAttr>("tsfg_source.start").getInt(),
+    end=consumer->getAttrOfType<mlir::IntegerAttr>("tsfg_source.end").getInt(),
+    oldStart=read->getAttrOfType<mlir::IntegerAttr>("tsfg_source.start").getInt(),
+    oldEnd=read->getAttrOfType<mlir::IntegerAttr>("tsfg_source.end").getInt();
+  const bool prefix=start<oldStart&&oldEnd==end,postfix=start==oldStart&&oldEnd<end;
+  if(oldStart>=oldEnd||(!prefix&&!postfix)||!sourceOperatorToken(proof,attr(fn,"tsfg_source.path"),
+      prefix?start:oldEnd,prefix?oldStart:end,name=="tsfg_core.add"?"++":"--",
+      prefix?TokenPlacement::Prefix:TokenPlacement::Postfix))return false;
+  auto *writeback=localNumericWriteback(read,consumer,oldValue);
+  if(!writeback)return false;
+  if(postfix)postfixAfter=writeback;
+  return true;
 }
 bool numericAssignment(ModuleProof &proof,mlir::func::FuncOp fn,mlir::DominanceInfo &dominance,
     mlir::Operation *consumer,mlir::Value oldValue,mlir::Value rightValue,const std::string &group,
@@ -216,13 +261,7 @@ bool numericAssignment(ModuleProof &proof,mlir::func::FuncOp fn,mlir::DominanceI
         !dominance.properlyDominates(read,&operation))return false;
   }
   auto result=consumer->getResult(0);auto *store=consumer->getNextNode();
-  if(local) {
-    // Local assignment updates SSA on the successful edge. Keep the existing
-    // carrier when writing the result back into a wider lexical domain.
-    return typeCode(result.getType())==1&&(result.getType()==oldValue.getType()||
-      (compoundWritebackView(store,consumer,result)&&store->getResult(0).getType()==oldValue.getType()&&
-        store->getAttr("domain")==read->getAttr("domain")&&store->getAttr("view_type")==read->getAttr("view_type")));
-  }
+  if(local)return localNumericWriteback(read,consumer,oldValue);
   if(!array&&compoundWritebackView(store,consumer,result)) {
     result=store->getResult(0);store=store->getNextNode();
   }
@@ -266,6 +305,7 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
       if(kind=="assignment")compound=CompoundTarget::Local;
       else if(kind=="fieldAssignment")compound=CompoundTarget::Field;
       else if(kind=="arrayCompoundAssignment")compound=CompoundTarget::Array;
+      else if(kind=="update")compound=CompoundTarget::LocalUpdate;
     }
     joined=!joined&&string(*row,"functionId")==function&&
       (kind==(arity==1?"unary":"binary")||compound!=CompoundTarget::None)&&range&&
@@ -306,16 +346,26 @@ bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
     if(candidate.getName().getStringRef()=="tsfg_core.domain.numeric_use"&&attr(&candidate,"numeric_group")==group)++members;
   }
   if(members!=checked.size())return proof.reject("numeric expression has duplicate or disconnected consumption checks");
+  mlir::Operation *postfixAfter=nullptr;
+  if(compound==CompoundTarget::LocalUpdate&&
+      (rhs||checked.size()!=1||!checked.count(0)||!numericLocalUpdate(proof,fn,first,cursor,oldInput,
+        cursor->getOperand(1),postfixAfter)))
+    return proof.reject("numeric local update requires its original token, native unit and same lexical carrier");
   for(unsigned i=0;i<unsigned(arity);++i) {
     if(!proof.charge())return false;
     if(checked.count(i)) {
       if(cursor->getOperand(i)!=checked.at(i))return proof.reject("numeric consumer changed its checked operand");
-      for(auto &use:checked.at(i).getUses())if(!proof.charge()||use.getOwner()!=cursor||use.getOperandNumber()!=i)
-        return proof.reject("numeric checked payload cannot escape to transfer, return or another operation");
+      for(auto &use:checked.at(i).getUses()) {
+        if(!proof.charge())return false;
+        if(use.getOwner()==cursor&&use.getOperandNumber()==i)continue;
+        if(!postfixAfter||!dominance.properlyDominates(postfixAfter,use.getOwner()))
+          return proof.reject("numeric checked payload cannot escape its consumer or verified postfix result");
+      }
     }else if(typeCode(cursor->getOperand(i).getType())!=1||!dominance.dominates(cursor->getOperand(i),first))
       return proof.reject("numeric operand evaluation must precede every consumption check");
   }
-  if(compound!=CompoundTarget::None&&first==op&&(repeatedRhs||!numericAssignment(proof,fn,dominance,cursor,
+  if(compound!=CompoundTarget::None&&compound!=CompoundTarget::LocalUpdate&&first==op&&
+      (repeatedRhs||!numericAssignment(proof,fn,dominance,cursor,
       oldInput?oldInput:cursor->getOperand(0),rightInput?rightInput:cursor->getOperand(1),
       group,rhs?rhs->getObject("range"):nullptr,compound))) {
     if(compound==CompoundTarget::Array)
