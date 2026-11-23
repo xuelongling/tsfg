@@ -118,6 +118,17 @@ test('finite local nullish assignment writes and joins RHS locals only on actual
   assert.ok(lines.some(line=>line.includes('"tsfg_core.domain.view"('+expression+')')));
 });
 
+function localInitializedUndefined(file,binding,declaration) {
+  const init=declaration.initializer,from=init.range.start;
+  assert.equal(file.content.slice(from,init.range.end),'keep(a,0)');
+  file.content=file.content.slice(0,from)+'a[0]!'.padEnd(init.range.end-from)+file.content.slice(init.range.end);
+  const span=(left,right)=>({start:from+left,end:from+right}),[array,index]=init.arguments;
+  declaration.initializer={kind:'nonNull',type:'i32',flowType:'i32',range:span(0,5),operatorRange:span(4,5),
+    expression:{kind:'checkedElementAccess',type:'union<i32,undefined>',flowType:'union<i32,undefined>',range:span(0,4),
+      receiver:{...array,range:span(0,1)},index:{...index,range:span(2,3)}}};
+  declaration.range.end=from+5;binding.declarationRange.end=from+5;
+}
+
 test('finite local numeric compound captures the old value before its RHS',()=>{
   for(const mode of ['mixed','undefined','self']){
     const packet=structuredClone(facts),payload=packet.payload,entry=payload.functions.find(row=>row.name==='binary');
@@ -142,16 +153,7 @@ test('finite local numeric compound captures the old value before its RHS',()=>{
     const rhs=self?{...typed('parentheses',3,8),expression:assignment('=',4,one,7)}:one;
     const compound=assignment('+=',0,rhs,self?8:4);
     returned.value=compound;
-    if(mode!=='mixed'){
-      const init=declaration.initializer,from=init.range.start;
-      assert.equal(file.content.slice(from,init.range.end),'keep(a,0)');
-      file.content=file.content.slice(0,from)+'a[0]!'.padEnd(init.range.end-from)+file.content.slice(init.range.end);
-      const span=(left,right)=>({start:from+left,end:from+right}),[array,index]=init.arguments;
-      declaration.initializer={kind:'nonNull',type:'i32',flowType:'i32',range:span(0,5),operatorRange:span(4,5),
-        expression:{kind:'checkedElementAccess',type:'union<i32,undefined>',flowType:'union<i32,undefined>',range:span(0,4),
-          receiver:{...array,range:span(0,1)},index:{...index,range:span(2,3)}}};
-      declaration.range.end=from+5;binding.declarationRange.end=from+5;
-    }
+    if(mode!=='mixed')localInitializedUndefined(file,binding,declaration);
     file.sha256=sha256(file.content).slice(7);
     const factsBytes=derivedPacketBytes(packet),derived=readTypedArrayFacts(factsBytes);
     const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:derived.packageId};
@@ -193,6 +195,89 @@ test('finite local numeric compound captures the old value before its RHS',()=>{
     assert.ok(lines.some(line=>line.includes(`"func.return"(${id(add)})`)&&line.includes(anchor(returned.range))));
     const otherValue=match('constant',otherwise.value.range),otherReturn=lines.find(line=>line.includes('"func.return"(')&&line.includes(anchor(otherwise.range)));
     assert.ok(otherValue&&otherReturn?.includes(`(${id(otherValue)})`));
+  }
+});
+
+test('finite local i32 updates check old values and preserve postfix and prefix payloads',()=>{
+  const absent=sha256('tsfg.type\0undefined'),mixed=[absent,i32TypeId].sort();
+  const modes=[{prefix:false,operator:'++'},{prefix:true,operator:'++'},{prefix:false,operator:'--'},
+    {prefix:true,operator:'--'},{prefix:false,operator:'++',sequence:true},{prefix:false,operator:'++',terminal:true}];
+  for(const {prefix,operator,sequence,terminal} of modes)for(const undefinedOnly of terminal?[true]:[false,true]){
+    const packet=structuredClone(facts),payload=packet.payload,fn=payload.functions.find(row=>row.name==='binary');
+    const binding=fn.bindings.find(row=>row.name==='x'),[,declaration,branch,otherwise]=fn.body,returned=branch.then[0];
+    const file=payload.files.find(row=>row.path===fn.sourcePath),keyword=binding.nameRange.start-'const '.length;
+    const replaceBranch=sequence||terminal;
+    const start=replaceBranch?branch.range.start:returned.value.range.start,end=replaceBranch?otherwise.range.end:returned.range.end;
+    const spelling=prefix?operator+'x':'x'+operator;
+    const text=sequence?'if(use){x++;return x+=1}return 7':terminal?'return '+spelling+';':spelling+';';
+    assert.equal(file.content.slice(keyword,keyword+5),'const');
+    assert.equal(file.content.slice(start,end),replaceBranch?'if(use){return x+1;}\n  return 7;':'x+1;');
+    assert.ok(text.length<=end-start);
+    file.content=file.content.slice(0,keyword)+'let  '+file.content.slice(keyword+5,start)+text.padEnd(end-start)+file.content.slice(end);
+    binding.writable=true;declaration.kind='letDeclaration';
+    const at=(left,right)=>({start:start+left,end:start+right});
+    const updateStart=sequence?8:terminal?7:0,target=updateStart+(prefix?2:0),op=updateStart+(prefix?0:1);
+    const update={kind:'bindingUpdate',type:'i32',flowType:'i32',range:at(updateStart,updateStart+3),operator,prefix,
+      target:{kind:'bindingTarget',type:'i32',binding:binding.id,range:at(target,target+1)},operatorRange:at(op,op+2)};
+    if(terminal){
+      returned.range=at(0,text.length);returned.value=update;
+      fn.body.splice(2,2,returned);
+    }else if(sequence){
+      branch.range.end=start+24;
+      const rhs={...returned.value.right,range:at(22,23)};
+      const compound={kind:'bindingAssignment',type:'i32',flowType:'i32',range:at(19,23),operator:'+=',
+        operatorRange:at(20,22),target:{...update.target,range:at(19,20)},value:rhs};
+      branch.then=[{kind:'expression',range:at(8,12),value:update},{...returned,range:at(12,23),value:compound}];
+      otherwise.range=at(24,32);otherwise.value.range=at(31,32);
+    }else returned.value=update;
+    if(undefinedOnly)localInitializedUndefined(file,binding,declaration);
+    file.sha256=sha256(file.content).slice(7);
+    const factsBytes=derivedPacketBytes(packet),derived=readTypedArrayFacts(factsBytes);
+    const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes,expectedPackageId:derived.packageId};
+    const publication=buildInitialArrayPublication(context),built=buildHir(derived,context,publication);
+    assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+    const owner=built.hir.functions.find(row=>row.name==='binary'),site=owner.id+
+      (terminal?'/body/2/value':'/body/2/then/0/'+(sequence?'expression':'value'));
+    const {reached:plan,definition}=buildFiniteCoreDomains(built.hir,context,{publicationContext:publication});
+    const actual=node=>plan.domains.find(domain=>domain.id===plan.nodes.find(row=>row.id===node).domainId).actualTypes;
+    const normal=undefinedOnly?[]:[i32TypeId];
+    assert.deepEqual(actual(site+'/old-value'),undefinedOnly?[absent]:mixed);
+    assert.deepEqual(actual(site+'/writeback/value'),normal);
+    assert.deepEqual(actual(site),normal);
+    assert.deepEqual(actual(owner.id+'/return'),terminal?[]:[i32TypeId]);
+    const bindingNode=owner.id+'/binding/'+binding.id;
+    assert.deepEqual(actual(bindingNode),undefinedOnly?[absent]:mixed);
+    const storage=definition.carrierNodes.find(row=>row.id===bindingNode);
+    assert.deepEqual(definition.domains.find(domain=>domain.id===storage.domainId).actualTypes,mixed);
+    if(sequence){
+      const next=owner.id+'/body/2/then/1/value';
+      assert.deepEqual(actual(next+'/old-value'),normal);
+      assert.deepEqual(actual(next),normal);
+    }
+
+    const lines=lowerFormalHir(built.hir,context,publication).split('\n');
+    const anchor=({start,end})=>`tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
+    const match=(op,range)=>lines.find(line=>line.includes('"tsfg_core.'+op+'"(')&&line.includes(anchor(range)));
+    const old=match('domain.view',update.target.range),unit=match('constant',update.range),
+      check=match('domain.numeric_use',update.range),arithmetic=match(operator==='++'?'add':'sub',update.range);
+    assert.ok(old&&unit&&check&&arithmetic);
+    assert.match(unit,/value = 1 : i32,.* -> i32$/u);
+    assert.ok(lines.indexOf(old)<lines.indexOf(unit)&&lines.indexOf(unit)<lines.indexOf(check));
+    const id=line=>line.trim().split(' = ')[0];
+    assert.ok(check.includes(`(${id(old)})`)&&check.includes(`numeric_group = "${site}"`));
+    assert.match(check,/numeric_arity = 2 : i32, numeric_operand = 0 : i32/u);
+    const [,label]=check.match(/\[\^(bb\d+)\]/u)??[];
+    const success=lines.findIndex(line=>line.trim().startsWith('^'+label+'('));
+    const [,oldNumber]=lines[success].match(/\((%v\d+): i32\)/u)??[];
+    assert.ok(oldNumber&&lines[success+1]===arithmetic&&arithmetic.includes(`(${oldNumber}, ${id(unit)})`));
+    const store=lines[success+2];
+    assert.ok(store.includes(`"tsfg_core.domain.view"(${id(arithmetic)})`)&&store.includes(anchor(update.range))&&
+      store.includes(`domain = "${storage.domainId}"`));
+    if(!sequence)assert.ok(lines[success+3].includes(`"func.return"(${prefix?id(arithmetic):oldNumber})`));
+    if(!terminal){
+      const seven=match('constant',otherwise.value.range);
+      assert.ok(seven&&lines.some(line=>line.includes(`"func.return"(${id(seven)})`)&&line.includes(anchor(otherwise.range))));
+    }
   }
 });
 

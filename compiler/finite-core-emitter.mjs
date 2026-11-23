@@ -7,7 +7,7 @@ import {addFiniteTerminalReturnCarriers,buildFiniteCoreDomains} from './finite-a
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral,finiteFieldStorePath} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
-import {finiteBindingWrites,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
+import {finiteBindingWrites,finiteLocalNumericUpdate,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
 import {isArrayNullishAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
@@ -357,7 +357,7 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
     };
     function requiresNumericChecks(value,operandTypes) {
       const checked=operandTypes.some(type=>domains.get(type).representation!=='native');
-      if(checked&&(!finiteNumericUse(value)||operandTypes.some(type=>domains.get(type).actualTypes
+      if(checked&&(!(finiteNumericUse(value)||finiteLocalNumericUpdate(value))||operandTypes.some(type=>domains.get(type).actualTypes
         .some(id=>id!==i32TypeId&&types.get(id).kind!=='undefined'))))
         pending('operation-domain-check mapping',value.range);
       return checked;
@@ -588,13 +588,19 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           api.assign(binding,rhs.name);return rhs.name;
         }
         if(value.kind==='update') {
-          const binding=value.target.binding,type=selected(fn.id+'/binding/'+binding).domainId,domain=domains.get(type);
-          if(type!==value.type||domain.representation!=='native'||domain.nativeType==='bool')
+          const binding=value.target.binding,type=selected(fn.id+'/binding/'+binding).domainId,domain=domains.get(type),
+            checked=requiresNumericChecks(value,[type]);
+          if(checked?domains.get(value.type).nativeType!=='i32':type!==value.type||domain.nativeType==='bool')
             pending('operation-domain-check mapping',value.range);
-          const old=api.lookup(binding),one=api.operation('tsfg_core.constant',[],[],type,unitAttribute(domain.nativeType),value.range);
-          const operation=value.operator==='++'?'tsfg_core.add':'tsfg_core.sub';
-          const next=api.operation(operation,[old,one],[type,type],type,'',value.range);
-          api.assign(binding,next);return value.prefix?next:old;
+          const old={name:api.lookup(binding),type};
+          if(checked)old.name=op(api,'view',[old],type,opAttrs({semanticType:value.target.type,type}),value.target.range);
+          const unit=value.type,native=checked?'i32':domain.nativeType;
+          const one=api.operation('tsfg_core.constant',[],[],unit,unitAttribute(native),value.range);
+          const operands=[old,{name:one,type:unit}];
+          const next=numericOperation(api,value,value.operator==='++'?'add':'sub',operands,checked);
+          api.assign(binding,checked?op(api,'view',[{name:next,type:value.type}],type,
+            opAttrs({semanticType:value.target.type,type}),value.range):next);
+          return value.prefix?next:operands[0].name;
         }
         const coalescingField=isFieldNullishAssignment(value);
         if(coalescingField||coalescingArray||coalescingAssignment||['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {

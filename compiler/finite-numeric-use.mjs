@@ -16,6 +16,11 @@ export function finiteNumericUse(value) {
   return approved&&operands.every(operand=>(operand.semanticType??operand.type)===i32TypeId)?operands:null;
 }
 
+export function finiteLocalNumericUpdate(value) {
+  return value.kind==='update'&&['++','--'].includes(value.operator)&&value.target.type===i32TypeId&&
+    (value.semanticType??value.type)===i32TypeId;
+}
+
 /** Register both lexical operands and require completion of the selected path. */
 export function finiteNormalLogical(value,flow,incoming,emit,charge) {
   const left=flow.normal(emit('left',incoming,true));

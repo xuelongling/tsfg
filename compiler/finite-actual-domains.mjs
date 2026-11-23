@@ -9,7 +9,7 @@ import {finiteFieldStorePath} from './finite-field-effects.mjs';
 import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
-import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
+import {finiteLocalNumericUpdate,finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
 import {isArrayNullishAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {actualFieldResolver,fieldReceiverView} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
@@ -150,7 +150,7 @@ function buildPlans(input,context,options,definitions) {
   };
   function build(mode) {
     let allowCompoundTermination;
-    const localNumericInputs=new Set(),checkedLocalCandidates=new Set();
+    const localNumericInputs=new Set(),checkedLocalCandidates=new Map();
     const solve=(field=null,array=null,terminalReads=null,collectLocalNumeric=false)=>
       solveFiniteActualDomains(projection,charge,field,mode,array,terminalReads,localNumericInputs,
         collectLocalNumeric?checkedLocalCandidates:null);
@@ -162,7 +162,10 @@ function buildPlans(input,context,options,definitions) {
     const carrierFieldReaching=fieldReaching.reads.some(row=>row.reaching.length)?fieldReaching:null;
     if(carrierFieldReaching)checkedLocalCandidates.clear();
     let result=carrierFieldReaching?solve(carrierFieldReaching,null,null,true):initial;
-    for(const path of checkedLocalCandidates)localNumericInputs.add(path);
+    let extendLocalCapacity=false;
+    for(const [path,extend] of checkedLocalCandidates){
+      localNumericInputs.add(path);extendLocalCapacity||=extend;
+    }
     const canTerminateArrayRead=directStatement=>{
       allowCompoundTermination??=!result.fields.length&&!result.calls.length&&
         !fieldReaching.effects.some(row=>{charge();return row.writesFields;});
@@ -220,7 +223,7 @@ function buildPlans(input,context,options,definitions) {
     }
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
-    if(terminalReads)result=solve(carrierFieldReaching,null,terminalReads);
+    if(terminalReads||extendLocalCapacity)result=solve(carrierFieldReaching,null,terminalReads);
     const domains=new Map([...result.domains,...ordered.domains].map(row=>[row.id,row]));
     const calls=ordered.calls.map(call=>({...call,targets:call.targets.map(target=>({...target,
       abi:result.abi.find(row=>row.functionId===target.functionId).id}))}));
@@ -461,6 +464,13 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
     const child=key=>at(v[key],p+'/'+key);
     const children=key=>(v[key]??[]).map((value,index)=>at(value,p+'/'+key+'/'+index));
     const invoke=action=>flow.when(flow.all([flow.incoming(id),...dependencies]),action);
+    const checkedLocalOld=target=>{
+      const old=node(p+'/old-value',v.target.type).id;
+      flow.entry(old,continuation);flow.finish(old,[]);
+      localOldCopies.push([arrayReaching?.localNumericSources?.get(id)??target,old]);
+      continuation=flow.normal(old);dependencies.push(continuation);
+      return old;
+    };
     if(['constant','floating','boolean','undefined','null','stringLiteral'].includes(v.kind))insert(id,'actual',v.type);
     else if(v.kind==='reference')copy(binding(fn,v.binding,v.type),id,guards.get(v.binding));
     else if(['group','nonNull','assertType'].includes(v.kind))copy(child('operand'),id);
@@ -483,21 +493,21 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       copy(selected.right,id,{gate:old});copy(selected.right,target,{gate:old});
     }else if(v.kind==='assignment') {
       const target=binding(fn,v.target.binding,v.target.type);
-      let old;
-      if(localNumericInputs.has(id)) {
-        old=node(p+'/old-value',v.target.type).id;
-        const source=arrayReaching?.localNumericSources?.get(id)??target;
-        flow.entry(old,continuation);flow.finish(old,[]);
-        localOldCopies.push([source,old]);
-        continuation=flow.normal(old);dependencies.push(continuation);
-      }
+      const old=localNumericInputs.has(id)?checkedLocalOld(target):null;
       const value=child('value');
       if(v.operator&&v.operator!=='=') {
-        if(checkedLocalCandidates&&finiteNumericUse(v))localNumericCandidates.push([id,target,value]);
+        if(checkedLocalCandidates&&finiteNumericUse(v))localNumericCandidates.push({id,target,value,update:false});
         if(old)for(const input of [old,value])requirements.push({node:input,type:i32TypeId,possible:true});
         for(const type of leaves(v.type))insert(id,'actual',type);
         copy(id,target);
       }else {copy(value,target);copy(value,id);}
+    }else if(v.kind==='update'&&localNumericInputs.has(id)) {
+      const target=binding(fn,v.target.binding,v.target.type),old=checkedLocalOld(target);
+      const next=node(p+'/writeback/value',v.type).id;
+      requirements.push({node:old,type:i32TypeId,possible:true});
+      flow.entry(next,continuation);flow.finish(next,[],requirements);
+      insert(next,'actual',i32TypeId);copy(next,target);
+      if(v.prefix)copy(next,id);else copy(old,id,{equal:true,type:i32TypeId});
     }
     else if(v.kind==='call') {
       const target=functions.get(v.target),receiver=v.receiver?child('receiver'):null;
@@ -612,6 +622,10 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       for(const type of leaves(v.type))insert(id,'actual',type);
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength',
       'update','stringConcat','stringLength','stringSlice','stringIndex'].includes(v.kind)) {
+      if(checkedLocalCandidates&&finiteLocalNumericUpdate(v)){
+        const target=fn.id+'/binding/'+v.target.binding;
+        localNumericCandidates.push({id,target,value:target,update:true});
+      }
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))
@@ -717,8 +731,11 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
   }
   // The first solve already charged each compound at registration. Its
   // closed capacity bounds identify the cases requiring a checked snapshot.
-  for(const [id,target,value] of localNumericCandidates)if(nodes.get(target).actual.has(undefinedId)||
-    nodes.get(value).actual.has(undefinedId))checkedLocalCandidates.add(id);
+  for(const {id,target,value,update} of localNumericCandidates){
+    const old=nodes.get(target).actual;
+    if(old.has(undefinedId)||nodes.get(value).actual.has(undefinedId))
+      checkedLocalCandidates.set(id,update&&!old.has(i32TypeId));
+  }
   const domains=new Map();
   function domain(actual) {
     const alternatives=[...actual].sort(),id=domainId(alternatives);

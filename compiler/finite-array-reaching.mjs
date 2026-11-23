@@ -264,9 +264,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       memory.slots.set(slot,new Set([id]));
       return id;
     }
-    function terminalNumericUse(value,path) {
-      if(collectAll||!finiteNumericUse(value)||
-        presence(path+'/old-value','undefined').present&&presence(path+'/value','undefined').present)return null;
+    function terminalNumericUse(path,hasRhs=true) {
+      if(collectAll||presence(path+'/old-value','undefined').present&&
+        (!hasRhs||presence(path+'/value','undefined').present))return null;
       if(recordReads){charge();terminalNumericUses.add(path);}
       numericFailure=true;
       return {terminal:true,trap:path,numeric:true};
@@ -341,8 +341,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         const rhs=value.value?child('value'):{symbol:path};
         if(rhs.terminal)return rhs;
-        if(oldStatus!=='missing'&&value.kind==='arrayCompoundAssignment'){
-          const stop=terminalNumericUse(value,path);if(stop)return stop;
+        if(oldStatus!=='missing'&&value.kind==='arrayCompoundAssignment'&&finiteNumericUse(value)){
+          const stop=terminalNumericUse(path);if(stop)return stop;
         }
         if(value.kind==='arrayResizeChecked') {
           if(receiver?.owner){charge();mutated.add(receiver.owner);}
@@ -361,24 +361,24 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       }
       const coalescingAssignment=isLocalNullishAssignment(value);
       if(!coalescingAssignment&&(value.kind==='assignment'||value.kind==='update')) {
-        const binding=value.target.binding;
-        if(value.kind==='assignment') {
-          const oldSource=bindings.get(binding)?.valueNode;
-          if(!collectAll&&recordReads&&oldSource&&plan.localNumericInputs?.has(path)){
-            charge();localNumericSources.set(path,oldSource);
-          }
+        const binding=value.target.binding,old=bindings.get(binding),checked=plan.localNumericInputs?.has(path),
+          update=value.kind==='update';
+        if(!collectAll&&recordReads&&checked&&old?.valueNode){
+          charge();localNumericSources.set(path,old.valueNode);
+        }
+        if(!update) {
           const rhs=child('value');if(rhs.terminal)return rhs;
           if(!value.operator||value.operator==='=') {
             bindings.set(binding,bindingValue(rhs,path+'/value',binding,value.target.type));return rhs;
           }
-          if(plan.localNumericInputs?.has(path)){
-            const stop=terminalNumericUse(value,path);if(stop)return stop;
-          }
         }
-        const result={symbol:path,...(plan.localNumericInputs?.size&&value.kind==='assignment'&&
+        if(checked){const stop=terminalNumericUse(path,!update);if(stop)return stop;}
+        const result={symbol:path,...(checked&&update?{valueNode:path+'/writeback/value'}:plan.localNumericInputs?.size&&!update&&
           value.target.type===i32TypeId?{valueNode:path}:{})};
-        const previous=value.kind==='update'&&!value.prefix?(bindings.get(binding)??{symbol:path+'/old-value'}):result;
-        bindings.set(binding,result);return previous;
+        bindings.set(binding,result);
+        if(!update||value.prefix)return result;
+        const previous=old??{symbol:path+'/old-value'};
+        return checked?{...previous,valueNode:path}:previous;
       }
       if(value.kind==='arrayLength'||value.kind==='readSpanLength') {
         const receiver=child('receiver');if(receiver.terminal)return receiver;
@@ -523,7 +523,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         const rhs=child('value');
         if(rhs.terminal)return rhs;
-        const stop=terminalNumericUse(value,path);if(stop)return stop;
+        if(finiteNumericUse(value)){const stop=terminalNumericUse(path);if(stop)return stop;}
         // The successful assignment yields the RHS Array or view without writing an Array slot.
         return {owner:rhs.owner,offset:rhs.offset,limit:rhs.limit,symbol:path};
       }
