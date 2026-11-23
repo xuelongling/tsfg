@@ -508,22 +508,23 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       presenceTests.push({id,receiver,field:v.property,viewType:fieldReceiverView(types,fieldOwners,v.right.type,v.property),targets:new Map()});
     }else if(v.kind==='fieldAccess')fieldReads.push({id,receiver:child('receiver'),field:v.property,result:id,
       viewType:fieldReceiverView(types,fieldOwners,v.receiver.type,v.property),targets:new Map()});
-    else if(v.kind==='fieldAssignment') {
+    else if(v.kind==='fieldAssignment'||v.kind==='fieldUpdate') {
       const receiver=at(v.target.receiver,p+'/target/receiver'),store=finiteFieldStorePath(id,v),
         field=v.target.property,viewType=fieldReceiverView(types,fieldOwners,v.target.receiver.type,field);
-      let value;
-      if(store===id)value=child('value');
+      let value,result;
+      if(store===id)value=result=child('value');
       else {
         const old=node(p+'/old-value',v.target.type).id;
         fieldReads.push({id:old,receiver,field,result:old,viewType,targets:new Map()});
         flow.entry(old,continuation);flow.finish(old,[]);
         continuation=flow.normal(old);dependencies.push(continuation);
-        child('value');
+        if(v.kind==='fieldAssignment')child('value');
         value=node(store+'/value',v.type).id;
         flow.entry(value,continuation);flow.finish(value,[]);
         for(const type of leaves(v.type))insert(value,'actual',type);
+        result=v.kind==='fieldUpdate'&&!v.prefix?old:value;
       }
-      fieldStores.push({id:store,receiver,field,value,viewType,targets:new Map()});copy(value,id);
+      fieldStores.push({id:store,receiver,field,value,viewType,targets:new Map()});copy(result,id);
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
       const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),absent);
       presenceCarriers.push(selected.left);dependencies.push(...selected.dependencies);
@@ -549,7 +550,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       child('value');
       for(const type of leaves(v.type))insert(id,'actual',type);
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength',
-      'update','fieldUpdate','stringConcat','stringLength','stringSlice','stringIndex'].includes(v.kind)) {
+      'update','stringConcat','stringLength','stringSlice','stringIndex'].includes(v.kind)) {
       // Carrier capacity stays declared. Ordered numeric success requires each
       // operand's real i32 alternative, independently from its static view.
       if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))

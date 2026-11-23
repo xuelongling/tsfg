@@ -448,9 +448,10 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         return {symbol:path};
       }
-      if(value.kind==='fieldAssignment') {
+      if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,root);
         if(receiver.terminal)return receiver;
+        if(value.kind==='fieldUpdate')return {symbol:path};
         const rhs=child('value');
         // The successful assignment yields the RHS Array or view without writing an Array slot.
         return rhs.terminal?rhs:{owner:rhs.owner,offset:rhs.offset,limit:rhs.limit,symbol:path};

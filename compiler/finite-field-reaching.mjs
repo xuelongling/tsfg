@@ -319,11 +319,11 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const payload=access(value,path,state,token,'read');
         return copiesValue(value.type)?copyToken(payload,path+'/copy',state):payload;
       }
-      if(value.kind==='fieldAssignment') {
+      if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env),store=finiteFieldStorePath(path,value);
         if(stopped)return null;
         if(store!==path)access(value,path+'/old-value',state,token,'read');
-        const rhs=child('value');
+        const rhs=value.kind==='fieldAssignment'?child('value'):null;
         if(stopped)return null;
         if(store!==path){access(value,store,state,token,'store');return null;}
         const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
@@ -424,7 +424,6 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       for(const name of ['index','right','value'])if(value[name])child(name);
       for(const name of ['arguments','elements'])for(const [index,child] of (value[name]??[]).entries())
         expression(child,path+'/'+name+'/'+index,state,env);
-      if(!stopped&&value.kind==='fieldUpdate')state.clear();
       return null;
     }
     function conditionEffects(condition,path,state,env) {

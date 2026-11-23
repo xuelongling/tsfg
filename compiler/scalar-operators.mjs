@@ -24,7 +24,7 @@ export function validScalarUnary(operator, result, operand, operandKind) {
       && (integer(result) || floating(result) && ['+', '-'].includes(operator)));
 }
 
-export function validScalarBinary(kind, operator, result, left, right, leftExpression, rightExpression) {
+export function validScalarBinaryTypes(kind, operator, result, left, right) {
   const short = kind === 'shortCircuit';
   if (!(short ? ['&&', '||'].includes(operator) : kind === 'binary' && Object.hasOwn(scalarOperations, operator))
       || !scalar(left) || !scalar(right) || !scalar(result)) return false;
@@ -33,6 +33,11 @@ export function validScalarBinary(kind, operator, result, left, right, leftExpre
       || result !== (short || comparisons.has(operator) ? 'bool' : left)
       || (short ? left !== 'bool' : !['===', '!=='].includes(operator) && !integer(left)
         && !(floating(left) && (comparisons.has(operator) || ['+', '-', '*', '/', '%'].includes(operator))))) return false;
+  return true;
+}
+
+export function validScalarBinary(kind, operator, result, left, right, leftExpression, rightExpression) {
+  if (!validScalarBinaryTypes(kind, operator, result, left, right)) return false;
   if (binary(leftExpression) && (!Object.hasOwn(precedence, leftExpression.operator)
       || precedence[leftExpression.operator] < precedence[operator])) return false;
   if (binary(rightExpression) && (!Object.hasOwn(precedence, rightExpression.operator)

@@ -5,7 +5,7 @@
 import {callComponentsInDependencyOrder} from './array-call-graph.mjs';
 
 export function finiteFieldStorePath(path,value) {
-  return value.operator&&value.operator!=='='?path+'/writeback':path;
+  return value.kind==='fieldUpdate'||value.operator&&value.operator!=='='?path+'/writeback':path;
 }
 
 export function finiteFieldWriteVersion(path,value,sourcePath,target) {
@@ -104,12 +104,12 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
         continue;
       }
       if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
-        effect.writes=true;const store=value.kind==='fieldAssignment'?finiteFieldStorePath(path,value):path,selected=fields.get(store);
+        effect.writes=true;const store=finiteFieldStorePath(path,value),selected=fields.get(store);
         if(!selected?.targets.length)effect.unknown=true;
         for(const row of selected?.targets??[]) {
           charge();if(row.fieldId){
             effect.fields.add(row.fieldId);
-            if((keepAllWrites||!mayExecute)&&value.kind==='fieldAssignment'){
+            if(keepAllWrites||!mayExecute){
               charge();const version=finiteFieldWriteVersion(store,value,fn.sourcePath,row);
               lexicalWrites.set(version.id,version);
             }
