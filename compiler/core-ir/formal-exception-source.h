@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "formal-exception.h"
+#include <array>
 #include <vector>
 namespace tsfg::formalException {
 std::string hirIdentity(llvm::StringRef,const Json &);
@@ -15,15 +16,36 @@ struct SourceText {
   bool name(size_t &,llvm::StringRef,const Json &,Program &,bool trimmed=false)const;
   llvm::StringRef spelling(size_t)const;
 };
+enum class TypeState { Declared, Boolean, Never };
+using TypeTransfer=std::array<TypeState,3>;
+struct TypeProof {
+  inline static constexpr TypeTransfer identity{TypeState::Declared,TypeState::Boolean,TypeState::Never};
+  TypeState state=TypeState::Declared;
+  TypeTransfer transfer=identity;
+};
 struct SourceScope {
   std::map<std::string,std::string> visible,names;
   std::map<std::string,unsigned> ordinals;
-  std::set<std::string> initialized,narrowed,never,written;
+  std::set<std::string> initialized,written;
+  std::map<std::string,TypeProof> typeProofs;
   std::vector<std::pair<const Json *,std::string>> prefix;
   Array path;
   std::string scope,role;
-  bool normal=true;
-  void forgetTypeProof(const std::string &id){narrowed.erase(id);never.erase(id);}
+  bool normal=true,recordTypeTransfers=false;
+  TypeProof typeProof(const std::string &id)const{
+    const auto found=typeProofs.find(id);
+    return found==typeProofs.end()?TypeProof{}:found->second;
+  }
+  void transferTypeProof(const std::string &id,const TypeTransfer &transfer){
+    auto proof=typeProof(id);
+    proof.state=transfer[static_cast<size_t>(proof.state)];
+    if(recordTypeTransfers)for(auto &output:proof.transfer)output=transfer[static_cast<size_t>(output)];
+    if(proof.state==TypeState::Declared&&proof.transfer==TypeProof::identity)typeProofs.erase(id);
+    else typeProofs.insert_or_assign(id,proof);
+  }
+  void forgetTypeProof(const std::string &id){
+    transferTypeProof(id,{TypeState::Declared,TypeState::Declared,TypeState::Declared});
+  }
 };
 class SourceProof {
   Program &p;

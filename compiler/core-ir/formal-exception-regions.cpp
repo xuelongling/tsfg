@@ -2,7 +2,8 @@
 #include "formal-exception-source.h"
 #include <utility>
 namespace tsfg::formalException {
-static bool branchTypeProof(Program &p,const Json &condition,SourceScope &onTrue,SourceScope &onFalse){
+static bool branchTypeProof(Program &p,const Json &condition,const std::map<std::string,const Json *> &symbols,
+    SourceScope &onTrue,SourceScope &onFalse){
   const auto *test=&condition;
   while(field(*test,"kind").getAsString()=="group"){
     if(!p.step())return false;test=&field(*test,"operand");
@@ -14,29 +15,43 @@ static bool branchTypeProof(Program &p,const Json &condition,SourceScope &onTrue
   }
   const auto id=string(field(*operand,"symbol"));
   const bool equality=field(*test,"operator").getAsString()=="===";
-  (equality?onTrue:onFalse).narrowed.insert(id);
-  auto &negative=equality?onFalse:onTrue;
-  negative.narrowed.erase(id);
-  if(field(*operand,"type").getAsString()=="bool")negative.never.insert(id);
+  const auto excluded=field(*symbols.at(id),"type").getAsString()=="bool"?TypeState::Never:TypeState::Declared;
+  (equality?onTrue:onFalse).transferTypeProof(id,{TypeState::Boolean,TypeState::Boolean,TypeState::Never});
+  (equality?onFalse:onTrue).transferTypeProof(id,{excluded,TypeState::Never,TypeState::Never});
   return true;
 }
-static bool joinNormalTypeProofs(Program &p,SourceScope &scope,SourceScope &left,SourceScope &right){
-  scope.narrowed.clear();scope.never.clear();
-  if(left.normal&&right.normal){
-    for(const auto &id:left.narrowed){
-      if(!p.step())return false;
-      if(right.narrowed.count(id)||right.never.count(id))scope.narrowed.insert(id);
-    }
-    for(const auto &id:left.never){
-      if(!p.step())return false;
-      if(right.narrowed.count(id))scope.narrowed.insert(id);
-      if(right.never.count(id))scope.never.insert(id);
-    }
-  }else if(left.normal||right.normal){
-    auto &survivor=left.normal?left:right;
-    scope.narrowed=std::move(survivor.narrowed);scope.never=std::move(survivor.never);
+static TypeState joinTypeState(TypeState left,TypeState right){
+  if(left==TypeState::Never)return right;
+  if(right==TypeState::Never)return left;
+  return left==right?left:TypeState::Declared;
+}
+static bool joinNormalTypeProofs(Program &p,SourceScope &scope,const SourceScope &left,const SourceScope *right=nullptr){
+  const auto *first=left.normal?&left:nullptr;
+  const auto *second=right&&right->normal?right:nullptr;
+  scope.normal&=first||second;
+  scope.typeProofs.clear();
+  if(!first){first=second;second=nullptr;}
+  if(!first)return true;
+  auto merge=[&](const std::string &id,const TypeProof &a,const TypeProof &b){
+    if(!p.step())return false;
+    const auto owned=scope.visible.find(id);
+    if(owned==scope.visible.end())return true;
+    const auto name=scope.names.find(string(field(*p.bindings.at(owned->second),"name")));
+    if(name==scope.names.end()||name->second!=id)return true;
+    TypeProof proof;
+    proof.state=joinTypeState(a.state,b.state);
+    if(scope.recordTypeTransfers)for(size_t i=0;i<proof.transfer.size();++i)
+      proof.transfer[i]=joinTypeState(a.transfer[i],b.transfer[i]);
+    if(proof.state!=TypeState::Declared||proof.transfer!=TypeProof::identity)
+      scope.typeProofs.emplace(id,proof);
+    return true;
+  };
+  for(const auto &[id,proof]:first->typeProofs)
+    if(!merge(id,proof,second?second->typeProof(id):proof))return false;
+  if(second)for(const auto &[id,proof]:second->typeProofs){
+    if(!p.step())return false;
+    if(!first->typeProofs.count(id)&&!merge(id,TypeProof{},proof))return false;
   }
-  scope.normal&=left.normal||right.normal;
   return true;
 }
 bool SourceProof::annotation(size_t &at,const Json &raw,llvm::StringRef key){
@@ -133,7 +148,7 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
   if(!p.require(equal(field(raw,"range"),field(h,"range")),"statement original anchor"))return false;
   const auto &parent=field(h,"range");
   auto nested=[&](const Array &body,const Json &node,llvm::StringRef role,size_t position,SourceScope &child){
-    child=scope;child.written.clear();child.prefix.clear();
+    child=scope;child.written.clear();child.prefix.clear();child.normal=true;
     child.path.push_back(Object{{"statement",int64_t(position)},{"slot",role.str()}});child.role=role.str();
     return region(body,node,child,at);
   };
@@ -163,8 +178,8 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
   if(kind=="block"){
     if(!p.require(string(field(h,"kind"))=="block","ordinary block mapping"))return false;SourceScope child;
     if(!nested(items(field(raw,"body")),field(h,"region"),"block",position,child))return false;
-    scope.narrowed=std::move(child.narrowed);scope.never=std::move(child.never);
-    scope.written.insert(child.written.begin(),child.written.end());scope.normal&=child.normal;return true;
+    scope.written.insert(child.written.begin(),child.written.end());
+    return joinNormalTypeProofs(p,scope,child);
   }
   if(kind=="functionDeclaration"){
     const auto symbol=string(field(field(raw,"symbol"),"id"));const auto target=p.rawFunctions.find(symbol);
@@ -178,8 +193,8 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     if(!p.require(string(field(h,"kind"))=="if","conditional mapping")||!source->expect(at,"if",p)||!source->expect(at,"(",p)
       ||!expression(field(raw,"condition"),field(h,"condition"),scope,at)||!source->expect(at,")",p))return false;
     SourceScope left=scope,right=scope;const auto &test=field(raw,"condition");
-    left.written.clear();right.written.clear();
-    if(!branchTypeProof(p,test,left,right))return false;
+    left.written.clear();right.written.clear();left.normal=right.normal=true;
+    if(!branchTypeProof(p,test,symbols,left,right))return false;
     auto branch=[&](const Array &input,const Json &node,SourceScope &child,llvm::StringRef role){
       if(!p.require(input.size()==1&&string(field(input[0],"kind"))=="block","complete braced branch"))return false;
       auto inherited=child;child.path.push_back(Object{{"statement",int64_t(position)},{"slot",role.str()}});child.role=role.str();child.prefix.clear();
@@ -194,7 +209,7 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     else scope.written.insert(left.written.begin(),left.written.end());
     if(literal==true)right.normal=false;
     else scope.written.insert(right.written.begin(),right.written.end());
-    return joinNormalTypeProofs(p,scope,left,right)&&source->span(parent,first,at-1,p,false);
+    return joinNormalTypeProofs(p,scope,left,&right)&&source->span(parent,first,at-1,p,false);
   }
   if(kind=="try"){
     if(!p.require(string(field(h,"kind"))=="try","try mapping")||!source->expect(at,"try",p))return false;
@@ -203,8 +218,8 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     caught.normal=false;const auto &catchRaw=field(fact,"catchClause"),&catchHir=field(h,"catchClause");
     if(!catchRaw.getAsNull()){
       if(!p.require(!catchHir.getAsNull(),"omitted handler")||!source->expect(at,"catch",p))return false;
-      const auto &binding=field(catchRaw,"binding");caught=scope;caught.written.clear();caught.prefix.clear();caught.role="catch";
-      for(const auto &id:tried.written)caught.forgetTypeProof(id);
+      const auto &binding=field(catchRaw,"binding");caught=scope;caught.written.clear();caught.prefix.clear();caught.role="catch";caught.normal=true;
+      for(const auto &id:tried.written){if(!p.step())return false;caught.forgetTypeProof(id);}
       if(!binding.getAsNull()){
         if(!p.require(string(field(binding,"type"))=="unknown"&&field(binding,"writable").getAsBoolean()==true,"writable unknown catch declaration")
           ||!source->expect(at,"(",p)||!source->name(at,string(field(binding,"name")),field(binding,"range"),p))return false;
@@ -219,23 +234,40 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     auto written=std::move(tried.written);written.insert(caught.written.begin(),caught.written.end());
     const auto &finalRaw=field(fact,"finallyBlock");
     if(!finalRaw.getAsNull()){
-      if(!source->expect(at,"finally",p))return false;finalized=scope;finalized.written.clear();
-      for(const auto &id:written)finalized.forgetTypeProof(id);
+      if(!source->expect(at,"finally",p))return false;
+      finalized=scope;finalized.written.clear();finalized.normal=true;
+      // Compute only what the finalizer does after the conservative entry check.
+      for(auto it=finalized.typeProofs.begin();it!=finalized.typeProofs.end();){
+        if(!p.step())return false;
+        if(it->second.state==TypeState::Declared)it=finalized.typeProofs.erase(it);
+        else{it->second.transfer=TypeProof::identity;++it;}
+      }
+      finalized.recordTypeTransfers=false;
+      for(const auto &id:written){if(!p.step())return false;finalized.forgetTypeProof(id);}
+      finalized.recordTypeTransfers=true;
       finalized.prefix.clear();finalized.role="finally";finalized.path.push_back(Object{{"statement",int64_t(position)},{"slot","finally"}});
       if(!region(items(field(finalRaw,"body")),field(h,"finallyRegion"),finalized,at))return false;
       written.insert(finalized.written.begin(),finalized.written.end());
-      for(const auto &id:written)scope.forgetTypeProof(id);
-      scope.normal&=(tried.normal||caught.normal)&&finalized.normal;
-    }else if(!p.require(bool(field(h,"finallyRegion").getAsNull()),"invented finally handler")
-             ||!joinNormalTypeProofs(p,scope,tried,caught))return false;
+      auto resume=[&](SourceScope &path){
+        path.normal&=finalized.normal;
+        if(!path.normal)return true;
+        for(const auto &id:finalized.written){if(!p.step())return false;path.forgetTypeProof(id);}
+        for(const auto &[id,proof]:finalized.typeProofs){
+          if(!p.step())return false;
+          if(proof.transfer!=TypeProof::identity)path.transferTypeProof(id,proof.transfer);
+        }
+        return true;
+      };
+      if(!resume(tried)||!resume(caught))return false;
+    }else if(!p.require(bool(field(h,"finallyRegion").getAsNull()),"invented finally handler"))return false;
     scope.written.insert(written.begin(),written.end());
-    return source->span(parent,first,at-1,p);
+    return joinNormalTypeProofs(p,scope,tried,&caught)&&source->span(parent,first,at-1,p);
   }
   if(kind=="while"){
     const auto &condition=field(raw,"condition"),&bodyNode=field(raw,"body");
     const auto &body=items(bodyNode);
     if(!p.require(body.size()==1&&string(field(body[0],"kind"))=="block","complete owned loop body"))return false;
-    auto entry=scope;entry.written.clear();
+    auto entry=scope;entry.written.clear();entry.normal=true;
     std::vector<const Json *> pending{&condition,&bodyNode};
     while(!pending.empty()){
       if(!p.step())return false;
@@ -254,13 +286,13 @@ bool SourceProof::statement(const Json &raw,const Json &h,SourceScope &scope,siz
     if(!p.require(string(field(h,"kind"))=="while","loop mapping")||!source->expect(at,"while",p)||!source->expect(at,"(",p)
       ||!expression(condition,field(h,"condition"),entry,at)||!source->expect(at,")",p))return false;
     auto repeated=entry;
-    if(!branchTypeProof(p,condition,repeated,entry))return false;
+    if(!branchTypeProof(p,condition,symbols,repeated,entry))return false;
     repeated.prefix.clear();repeated.role="loop";
     repeated.path.push_back(Object{{"statement",int64_t(position)},{"slot","loop"}});
     if(!region(items(field(body[0],"body")),field(h,"bodyRegion"),repeated,at))return false;
     const auto literal=booleanLiteral(condition,"boolean");
     if(literal!=false){
-      scope.narrowed=std::move(entry.narrowed);scope.never=std::move(entry.never);
+      if(!joinNormalTypeProofs(p,scope,entry))return false;
       scope.written.insert(repeated.written.begin(),repeated.written.end());
     }
     if(literal==true)scope.normal=false;
@@ -300,7 +332,7 @@ bool SourceProof::function(const Json &raw,const Json &h,const SourceScope &oute
   const auto &rawParameters=items(field(raw,"parameters"));
   SourceScope scope=outer;scope.scope.clear();scope.path.clear();scope.role="function";scope.prefix.clear();scope.normal=true;
   // A lexical declaration retains captures and their declaration types, not the enclosing path's occurrence facts.
-  scope.narrowed.clear();scope.never.clear();scope.written.clear();
+  scope.typeProofs.clear();scope.recordTypeTransfers=false;scope.written.clear();
   for(size_t i=0;i<rawParameters.size();++i){const auto &a=rawParameters[i];if(i&&!source->expect(at,",",p))return false;
     if(!source->name(at,string(field(a,"name")),field(a,"range"),p)||!source->expect(at,":",p)||!annotation(at,a))return false;
     scope.prefix.emplace_back(&a,"parameter");

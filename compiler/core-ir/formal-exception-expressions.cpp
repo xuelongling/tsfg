@@ -19,8 +19,9 @@ bool SourceProof::expression(const Json &raw,const Json &h,SourceScope &scope,si
     const auto nearest=original==symbols.end()?scope.names.end():scope.names.find(string(field(*original->second,"name")));
     if(!p.require(visible!=scope.visible.end()&&original!=symbols.end()&&nearest!=scope.names.end()&&nearest->second==id&&scope.initialized.count(id)
       &&string(field(h,"binding"))==visible->second&&string(field(h,"kind"))==(write?"bindingTarget":"bindingRead"),"reference scope, TDZ or original binding"))return false;
-    if(!p.require(write||!scope.never.count(id),"never occurrence has no private consumer tracer"))return false;
-    const auto expected=scope.narrowed.count(id)&&!write?type(Object{{"type","bool"}}):type(*original->second);
+    const auto proof=scope.typeProof(id).state;
+    if(!p.require(write||proof!=TypeState::Never,"never occurrence has no private consumer tracer"))return false;
+    const auto expected=proof==TypeState::Boolean&&!write?type(Object{{"type","bool"}}):type(*original->second);
     if(!p.require(hType==expected&&(!write||field(*original->second,"writable").getAsBoolean()==true)
       &&(write||equal(field(raw,"presenceFlow"),field(h,"presenceFlow"))),"same-binding narrowing, permission or presence"))return false;
     const auto semantic=p.types.find(hType);const bool aggregate=semantic!=p.types.end()&&string(field(*semantic->second,"kind"))=="aggregate";

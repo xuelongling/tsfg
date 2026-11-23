@@ -173,6 +173,86 @@ test('exception try only joins normally completing binding proofs',async()=>{
   assert.match(normalCatch.diagnostics[0].message,/same-symbol path proof/u);
 });
 
+test('exception finally replays verified transfers on normal paths',async()=>{
+  const derive=(mode,readType)=>derivedException('m21-exception/corpus/01',(payload,file)=>{
+    const body=payload.facts.functions[0].body[0].exception.catchClause.block.body;
+    const [original,rethrow]=body,[normalReturn]=original.thenBody[0].body;
+    const start=original.range.start-1,end=rethrow.range.end;
+    const read=rethrow.expression,comparison=normalReturn.expression;
+    let text='';
+    const add=value=>{const position=start+text.length;text+=value;return position;};
+    const position=()=>start+text.length;
+    const token=(start,end=position())=>({start,end});
+    const moved=(node,offset)=>({...node,range:token(node.range.start+offset,node.range.end+offset)});
+    const block=statements=>{
+      const first=add(' {'),body=statements();
+      add(' }');
+      return {range:token(first),body};
+    };
+    const throwing=type=>{
+      const first=add(' throw'),at=add(' caught'),expression={...read,type,range:token(at)};
+      add(';');
+      return {kind:'throw',range:token(first),expression};
+    };
+    const guard=(operator='!==',positiveRead='unknown',keyword='if')=>{
+      add(' ');const first=add(keyword+' (');
+      const template=original.condition,spelling=file.content.slice(template.range.start,template.range.end);
+      const offset=add(spelling.replace('===',operator))-template.range.start;
+      const condition={...moved(template,offset),operator,operand:moved(template.operand,offset),typeTest:{
+        ...template.typeTest,typeofRange:moved({range:template.typeTest.typeofRange},offset).range,
+        tagRange:moved({range:template.typeTest.tagRange},offset).range}};
+      add(')');
+      const guarded={kind:'block',...block(()=>[throwing(positiveRead)])};
+      return keyword==='if'?{kind:keyword,range:token(first),condition,thenBody:[guarded]}
+        :{kind:keyword,range:token(first-1),condition,body:[guarded]};
+    };
+    const attempt=(run,cleanup)=>{
+      const first=add(' try'),tryBlock=block(run);
+      add(' finally');
+      const finallyBlock=block(cleanup);
+      return {kind:'try',range:token(first),exception:{tryBlock,finallyBlock}};
+    };
+    const write=()=>{
+      const first=add(' caught'),target={...read,range:token(first)};
+      add(' = ');const at=add('box.flag'),offset=at-comparison.left.range.start;
+      const value={...moved(comparison.left,offset),receiver:moved(comparison.left.receiver,offset)};
+      add(';');
+      return {kind:'assignment',range:token(first),target,value};
+    };
+    const checkedDuring=mode!=='guard'&&mode!=='nested'&&mode!=='loop';
+    const cleanup=mode==='guard'?()=>[guard()]:mode==='nested'?()=>[attempt(()=>[],()=>[guard()])]
+      :mode==='loop'?()=>[guard('!==','unknown','while')]:mode==='write'?()=>[write()]
+      :mode==='exclude'?()=>[guard('===','bool')]:mode==='abrupt'?()=>[throwing('unknown')]:()=>[];
+    const tried=attempt(checkedDuring?()=>[guard()]:()=>[],cleanup);
+    let continuation;
+    if(readType==='compare'){
+      const source=file.content.slice(normalReturn.range.start,normalReturn.range.end),offset=add(source)-normalReturn.range.start;
+      continuation={...moved(normalReturn,offset),expression:{...moved(comparison,offset),
+        left:{...moved(comparison.left,offset),receiver:moved(comparison.left.receiver,offset)},right:moved(comparison.right,offset)}};
+    }else continuation=throwing(readType);
+    file.content=file.content.slice(0,start)+text+file.content.slice(end);
+    shiftSourceSpans(payload,file.path,end,text.length-(end-start));
+    body.splice(0,2,tried,continuation);
+  });
+  for(const mode of ['identity','guard','nested','loop','write','abrupt']){
+    const conflicts=mode==='write'||mode==='abrupt';
+    const imported=await derive(mode,conflicts?'unknown':'compare');
+    assert.equal(imported.status,'ok',mode+': '+JSON.stringify(imported));
+    const built=buildHir(imported.snapshot);
+    assert.equal(built.status,'ok',mode+': '+JSON.stringify(built));
+    const [tried,after]=built.hir.functions[0].body.body[0].catchClause.region.body;
+    assert.equal(tried.finallyRegion.role,'finally');
+    assert.equal(after.kind,conflicts?'throw':'return');
+    if(!conflicts)assert.equal(after.value.right.type,hash('tsfg.type\0bool'));
+    assert.match(lowerFormalHir(built.hir),/"tsfg_eh\.type_test"[\s\S]*cf\.cond_br/u);
+  }
+  for(const mode of ['write','abrupt','exclude']){
+    const rejected=await derive(mode,'compare');
+    assert.equal(rejected.status,'error',mode);
+    assert.match(rejected.diagnostics[0].message,mode==='exclude'?/never occurrence/u:/same-symbol path proof/u);
+  }
+});
+
 test('exception typeof while rejects either claimed type in a contradictory body',async()=>{
   const derive=claimed=>derivedException('m21-exception/corpus/01',(payload,file)=>{
     const guard=payload.facts.functions[0].body[0].exception.catchClause.block.body[0];
