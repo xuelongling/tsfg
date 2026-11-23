@@ -27,10 +27,11 @@ test('Common Array effects follow the local owner after a parenthesized assignme
     if (expected.assignment) assert.deepEqual(fn.body[1].value.range, expected.assignment);
     const row = report.functions.find(item => item.functionId === fn.id);
     const reads = [expected.selectedOwner === 0, expected.selectedOwner === 1];
-    assert.deepEqual(row.derived.parameters.map(parameter => parameter.read), reads, name + ' Derived read owners');
-    assert.deepEqual(row.effective.parameters.map(parameter => parameter.read), reads, name + ' effective read owners');
-    assert.deepEqual(publication.contracts.find(item => item.functionId === fn.id).upper.parameters.map(parameter => parameter.read),
-      reads, name + ' Published read owners');
+    const parameters = reads.map((read, index) => ({index, read, write: false, structural: false}));
+    assert.deepEqual(row.derived.parameters, parameters, name + ' Derived parameter effects');
+    assert.deepEqual(row.effective.parameters, parameters, name + ' Effective parameter effects');
+    assert.deepEqual(publication.contracts.find(item => item.functionId === fn.id).upper.parameters,
+      parameters, name + ' Published parameter effects');
   }
 });
 

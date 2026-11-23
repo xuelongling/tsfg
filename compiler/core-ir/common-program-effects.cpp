@@ -133,7 +133,9 @@ struct Derive {
       if(kind=="fieldAccess"||kind=="checkedElementAccess"||kind=="arrayLength"||kind=="readSpanLength")mark(result.owners,0,&v);
     }else if(llvm::StringRef(kind).ends_with("Assignment")||llvm::StringRef(kind).ends_with("Update")){
       const auto &target=field(v,"target");auto owners=visit(target);const auto op=string(field(v,"operator"));if(op!="=")mark(owners,0,&v);
-      Origins assigned;if(v.getAsObject()->get("value"))assigned=visit(field(v,"value"));mark(owners,1,&v);
+      Origins assigned;if(v.getAsObject()->get("value"))assigned=visit(field(v,"value"));
+      // Capture metadata records binding writes independently of payload writes.
+      if(op!="="||string(field(target,"kind"))!="bindingTarget")mark(owners,1,&v);
       if(kind=="lengthAssignment"||llvm::StringRef(kind).starts_with("element"))mark(owners,2,&v);
       if(op=="="&&target.getAsObject()->get("binding")&&!target.getAsObject()->get("global"))env[string(field(target,"binding"))]=ownerCopy(assigned);
       result.owners=std::move(assigned);

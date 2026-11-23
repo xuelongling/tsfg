@@ -129,7 +129,10 @@ export function commonEffects(hir,spend,physical=null) {
       }else if(['bindingAssignment','elementAssignment','elementCompoundAssignment','lengthAssignment','fieldAssignment','bindingUpdate','elementUpdate','fieldUpdate'].includes(value.kind)) {
         const selected=visit(value.target);if(value.operator!=='=')mark(selected,'read',value);
         const skipped=['&&=','||=','??='].includes(value.operator)?collections.map(environment):null;
-        const assigned=value.value?visit(value.value):new Set();mark(selected,'write',value);
+        const assigned=value.value?visit(value.value):new Set();
+        // Binding writes are tracked by capture metadata. Replacing a
+        // binding does not mutate the payload of its previous value.
+        if(value.operator!=='='||value.target.kind!=='bindingTarget')mark(selected,'write',value);
         if(value.kind==='lengthAssignment'||value.kind.startsWith('element'))mark(selected,'structural',value);
         if(value.target.binding&&!value.target.global&&(value.operator==='='||skipped))environment.set(value.target.binding,assigned);
         if(skipped)mergeOrigins(environment,skipped);
