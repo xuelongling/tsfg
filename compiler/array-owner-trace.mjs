@@ -190,7 +190,8 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(typeof left==='boolean'&&typeof right==='boolean')return value.operator==='==='?left===right:left!==right;
       }return null;
     };
-    const stored=storage.begin(fn,!!context,context?.aliases),model={bindings,operations,loops:[],terminalScopes:[],storage:stored.model};
+    const stored=storage.begin(fn,!!context,context?.aliases),
+      model={bindings,operations,loops:[],terminalScopes:[],infeasibleScopes:[],storage:stored.model};
     function conditionalEffect(executes,run) {
       const before=snapshot(bindings),storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
       const skippedContents=executes===null?snapshot(contents):null;
@@ -356,6 +357,11 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       for(const [index,row] of rows.entries()) {
         if(context&&!fallthrough)break;
         charge();const at=[...path,index],incoming=fallthrough,reachableRow=reachable&&incoming;
+        if(!context&&reachableRow&&row.condition?.kind==='boolean'){
+          const dead=row.kind==='if'?(row.condition.value?'else':'then'):
+            row.kind==='while'&&!row.condition.value?'body':null;
+          if(dead&&row[dead]?.length){charge();model.infeasibleScopes.push([...at,dead]);}
+        }
         if(row.kind==='initializeOwnFields') {
           const owner=constructions.get(row.construction),typeIndex=hir.types.indexOf(owner);
           for(const [ordinal,step]of owner.construction.initialization.entries())if(step.value)

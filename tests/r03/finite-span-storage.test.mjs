@@ -7,6 +7,7 @@ import {projectTypedArrayFacts} from '../../compiler/typed-array-project.mjs';
 import {initialArrayPublication,prepareArrayCalls} from '../../compiler/array-call-context.mjs';
 import {buildHir,buildInitialArrayPublication,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
+import {originId} from '../../compiler/typed-array-schema.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
 const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-span-storage/source-expected.json',import.meta.url),'utf8'));
@@ -274,14 +275,14 @@ const loopReturnPackets={
   'span-loop-return-positive':'ca0c0243c0f1ecbd483568697f50495c5ed78c0c26fd26564d72b937ea14329a',
   'span-loop-fallthrough-conflict':'b6152ab91e1b3530a70e5fab6795f925110dda303f95b9b84f0e9ad26eadc69a'
 };
-test('a terminating loop resize conflicts only with a Span use on its own path',async t=>{
+async function retainedLoopBorrow() {
   const original=await readFile(new URL('./testdata/typed-array-span-storage/653c7cd0c53fdca77d41cad957328cc5d8796eb6af57ad736540c8f99203e8fa-package.json',import.meta.url));
   assert.equal(sha256(original),'sha256:'+loopReturnPackets['span-loop-return-positive']);
   const checkVariant=(edit,conflict)=>{
     const packet=structuredClone(readTypedArrayFacts(original)),payload=packet.payload;
     const {sourceRoot,rootFile,declarations,config}=payload;
     const file=payload.files.find(row=>row.path===rootFile),fn=payload.functions[0];
-    const oldLength=file.content.length,use=edit(file,fn.body[2],fn.body[3]);
+    const oldLength=file.content.length,use=edit(file,fn.body[2],fn.body[3],fn);
     fn.declarationRange.end+=file.content.length-oldLength;
     file.byteLength=Buffer.byteLength(file.content);file.utf16Length=file.content.length;
     file.sha256=sha256(file.content).slice(7);
@@ -304,6 +305,9 @@ test('a terminating loop resize conflicts only with a Span use on its own path',
       assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
       const printed=printHir(built.hir,context,publication);
       assert.deepEqual(readHir(Buffer.from(printed),context,publication),built.hir);
+      const events=built.hir.readSpanPlan.functions[0].events;
+      assert.ok(events.some(row=>row.kind==='array-resize-effect'));
+      assert.ok(events.some(row=>row.kind==='view-read-complete'&&row.range.start===use.start&&row.range.end===use.end));
       assert.ok(lowerFormalHir(built.hir,context,publication).includes('"tsfg_core.domain.array_resize"'));
     }
   };
@@ -316,6 +320,10 @@ test('a terminating loop resize conflicts only with a Span use on its own path',
     };
     walk(result);return result;
   };
+  return {checkVariant,shifted};
+}
+test('a terminating loop resize conflicts only with a Span use on its own path',async t=>{
+  const {checkVariant,shifted}=await retainedLoopBorrow();
   for(const inBody of [false,true])await t.test(inBody?'same-path return uses the live Span':'post-loop return can only take the initial exit',()=>{
     checkVariant((file,loop,tail)=>{
       // Move the retained checked read into the selected return's new range.
@@ -359,6 +367,67 @@ test('a terminating loop resize conflicts only with a Span use on its own path',
       for(const range of [tail.range,tail.value.range]){range.start+=delta;range.end+=delta;}
       return repeats?observed.left.range:observed.range;
     },repeats);
+  });
+});
+test('ReadSpan ignores only literal dead structural effects and uses',async t=>{
+  const {checkVariant,shifted}=await retainedLoopBorrow();
+  for(const {prefix,dead,loopBody} of [
+    {prefix:'if(false){',dead:true,loopBody:false},
+    {prefix:'if(true){}else{',dead:true,loopBody:false},
+    {prefix:'while(false){',dead:true,loopBody:true},
+    {prefix:'if(true){',dead:false,loopBody:false},
+  ])await t.test(prefix,()=>{
+    checkVariant((file,loop,tail)=>{
+      const original=file.content,[resize]=loop.body,read=loop.condition.left;
+      const start=loop.range.start,from=start+prefix.length,to=from+resize.range.end-resize.range.start+1;
+      const effect=shifted(resize,from-resize.range.start);
+      const token=prefix.includes('false')?'false':'true',at=start+prefix.indexOf(token);
+      const condition={kind:'booleanLiteral',type:'bool',flowType:'bool',token,range:{start:at,end:at+token.length}};
+      Object.assign(loop,{condition,range:{start,end:to}});
+      if(loopBody)loop.body=[effect];
+      else{
+        loop.kind='if';delete loop.body;
+        loop.then=prefix.includes('else')?[]:[effect];loop.else=prefix.includes('else')?[effect]:[];
+      }
+      const text=original.slice(read.range.start,read.range.end);
+      file.content=original.slice(0,start)+prefix+original.slice(resize.range.start,resize.range.end)+'}return '+text+';}\n';
+      tail.value=shifted(read,to+'return '.length-read.range.start);
+      tail.range={start:to,end:tail.value.range.end+1};
+      return tail.value.range;
+    },!dead);
+  });
+  for(const withAlias of [false,true])await t.test(withAlias?'an earlier live alias read still rejects resizing':
+    'a dead final Span use does not extend a borrow past its resize',()=>{
+    checkVariant((file,loop,tail,fn)=>{
+      const original=file.content,[resize]=loop.body,read=loop.condition.left;
+      const start=loop.range.start,aliasText=withAlias?'const v=s;':'',aliasReadText=withAlias?'v[0];':'';
+      const effect=shifted(resize,start+aliasText.length-resize.range.start);
+      const statement=original.slice(resize.range.start,resize.range.end),head='if(false){return ';
+      const branchStart=effect.range.end+aliasReadText.length,readAt=branchStart+head.length;
+      const value=shifted(read,readAt-read.range.start),end=value.range.end+2;
+      const guardStart=branchStart+'if('.length,condition={kind:'booleanLiteral',type:'bool',flowType:'bool',
+        token:'false',range:{start:guardStart,end:guardStart+'false'.length}};
+      const oldTail=original.slice(tail.range.start);
+      file.content=original.slice(0,start)+aliasText+statement+aliasReadText+head+
+        original.slice(read.range.start,read.range.end)+';}'+oldTail;
+      const returned=shifted(tail,end-tail.range.start);
+      Object.assign(loop,effect);delete loop.body;delete loop.condition;
+      Object.assign(tail,{kind:'if',range:{start:branchStart,end},condition,
+        then:[{kind:'return',range:{start:readAt-'return '.length,end:value.range.end+1},value}],else:[]});
+      delete tail.value;
+      fn.body.push(returned);
+      if(!withAlias)return value.range;
+      const nameRange={start:start+'const '.length,end:start+'const v'.length},
+        declarationRange={start:nameRange.start,end:start+'const v=s'.length};
+      const binding=originId(fn.sourcePath,nameRange),receiver=read.receiver;
+      const initializer=shifted(receiver,declarationRange.end-1-receiver.range.start);
+      fn.bindings.push({id:binding,name:'v',kind:'local',writable:false,declaredType:receiver.type,nameRange,declarationRange,
+        annotationRange:null,elementAnnotationRange:null});
+      const live=shifted(read,effect.range.end-read.range.start);live.receiver.binding=binding;
+      fn.body.splice(2,0,{kind:'constDeclaration',binding,range:declarationRange,initializer});
+      fn.body.splice(4,0,{kind:'expression',range:{start:live.range.start,end:branchStart},value:live});
+      return live.range;
+    },withAlias);
   });
 });
 for(const [name,hash]of Object.entries(loopReturnPackets))test('actual '+name+' derives backedges without aggregate storage',async()=>{

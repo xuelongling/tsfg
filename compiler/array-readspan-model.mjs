@@ -226,7 +226,13 @@ function conflict(fn,state,event,view,last,owner,sourceKind,fixed={}) {
 export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
   let work=registrationAndUseWork;const plan=hir.readSpanPlan,callables=finiteCallables(hir);
   for(const [index,state]of plan.functions.entries()) {
-    const fn=callables[index],{terminalScopes}=prepared.ownerModel.functions.get(fn.id);
+    const fn=callables[index],{terminalScopes,infeasibleScopes}=prepared.ownerModel.functions.get(fn.id);
+    const reachable=[];
+    // Keep lexical events in the owned plan, but exclude literal dead scopes
+    // from the conflict between a reachable effect and a live family.
+    const reaches=event=>infeasibleScopes.length===0||(reachable[event.sequence]??=infeasibleScopes.every(scope=>{
+      if((work+=scope.length)>1024)limit();return !prefix(event.expressionPath,scope);
+    }));
     const compare=(event,owner,sourceKind,fixed={})=>{
       let terminal,loops;
       const sharesContinuation=use=>{
@@ -244,6 +250,8 @@ export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
           // this very activation. Nested uppers are projected at their entry.
           if(inside)continue;
         }
+        if(!reaches(event))return;
+        if(view.origin.kind!=='parameter'&&!reaches(state.events[view.origin.createEvent]))continue;
         if(!loops){
           // Child scopes are recorded before enclosing ones. An enclosing
           // iteration cannot repeat a return-only arm, but a nested loop can.
@@ -255,7 +263,7 @@ export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
           }):state.loops;
         }
         let last=state.events[view.lastUseEvent];
-        const continued=sharesContinuation(last),backedge=continued&&loopBackedge(event,last,view,state,loops);
+        const continued=reaches(last)&&sharesContinuation(last),backedge=continued&&loopBackedge(event,last,view,state,loops);
         if(continued&&event.sequence>=last.sequence&&!backedge)continue;
         if(!continued||!backedge&&mutuallyExclusive(event.expressionPath,last.expressionPath)){
           // A later occurrence in a different branch cannot hide this
@@ -263,7 +271,7 @@ export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
           last=null;
           for(let i=view.useEvents.length-2;i>=0;i--){
             if(++work>1024)limit();const use=state.events[view.useEvents[i]];
-            if(sharesContinuation(use)&&(loopBackedge(event,use,view,state,loops)||
+            if(reaches(use)&&sharesContinuation(use)&&(loopBackedge(event,use,view,state,loops)||
                 event.sequence<use.sequence&&!mutuallyExclusive(event.expressionPath,use.expressionPath))){
               last=use;break;
             }
