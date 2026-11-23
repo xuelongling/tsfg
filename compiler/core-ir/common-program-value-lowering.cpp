@@ -262,8 +262,8 @@ struct Lowering {
     };
     if(!visit(0))return false;active.erase(index);reachable.emplace(index,std::move(order));return true;
   }
-  bool emissionCFG(size_t index){
-    const auto &selected=program.functions[index];std::vector<uint16_t> order;std::set<uint16_t> seen;
+  bool emissionCFG(size_t index,std::vector<uint16_t> &order,const std::map<uint16_t,bool> &literals={}){
+    const auto &selected=program.functions[index];std::set<uint16_t> seen;
     std::function<bool(uint16_t)> visit=[&](uint16_t block){
       if(!seen.insert(block).second)return true;if(!step())return false;order.push_back(block);
       for(const auto &op:selected.blocks[block].operations){
@@ -273,11 +273,55 @@ struct Lowering {
         }else if(op.name=="receiver_bind"||op.name=="receiver_result"){
           if(!visit(op.successors[0]))return false;
         }else if(op.name!="numeric_use"||!undefinedOnly(selected.carriers[op.operands[0]])){
+          if(op.name=="cf.cond_br"&&!literals.empty()){
+            const auto literal=literals.find(op.operands[0]);
+            if(literal!=literals.end()){
+              if(!visit(op.successors[literal->second?0:1]))return false;
+              continue;
+            }
+          }
           for(auto successor:op.successors)if(!visit(successor))return false;
         }
       }return true;
     };
-    if(!visit(0))return false;emittedBlocks.emplace(index,std::move(order));return true;
+    return visit(0);
+  }
+
+  bool findDeadBottomReturns(size_t index,std::set<uint16_t> &dead){
+    if(bottomTypes.empty())return true;
+    const auto &selected=program.functions[index];
+    const auto &blocks=emittedBlocks.at(index);
+    for(auto block:blocks){
+      if(!step())return false;
+      const auto &body=selected.blocks[block];
+      // A return block has no outgoing SSA users. Its label and incoming
+      // edges can remain even when its physical body has no inhabited values.
+      if(!body.parameters.empty()||body.operations.back().name!="func.return")continue;
+      for(const auto &op:body.operations){
+        if(!step())return false;
+        if(op.result!=noRegister&&bottomType(selected.carriers[op.result])){
+          dead.insert(block);
+          break;
+        }
+      }
+    }
+    if(dead.empty())return true;
+    std::map<uint16_t,bool> literals;
+    for(auto block:blocks)for(const auto &op:selected.blocks[block].operations){
+      if(!step())return false;
+      if(op.name=="boolean")literals.emplace(op.result,field(op.properties,"value").getAsBoolean()==true);
+    }
+    if(literals.empty()){
+      dead.clear();
+      return true;
+    }
+    std::vector<uint16_t> live;
+    if(!emissionCFG(index,live,literals))return false;
+    for(auto block:live){
+      if(!step())return false;
+      dead.erase(block);
+    }
+    return true;
   }
   std::string constant(uint64_t value,llvm::StringRef native="i32"){
     const auto name=tmp();out<<"    "<<name<<" = arith.constant "<<value<<" : "<<native<<'\n';return name;
@@ -498,8 +542,9 @@ struct Lowering {
   }
   bool emit(size_t index){
     function=&program.functions[index];functionIndex=index;values.clear();const auto &selected=*function;sourcePath=selected.path;sourceRange=selected.range;
-    const bool payload=hasReturnPayload(selected.resultCarrier);const auto returned=payload?type(selected.resultCarrier):"()";if(returned.empty())return false;std::set<uint16_t> retained;
-    for(auto block:emittedBlocks.at(index)){for(auto reg:selected.blocks[block].parameters)retained.insert(reg);for(const auto &op:selected.blocks[block].operations)if(op.result!=noRegister&&!constructionToken(op))retained.insert(op.result);}
+    const bool payload=hasReturnPayload(selected.resultCarrier);const auto returned=payload?type(selected.resultCarrier):"()";if(returned.empty())return false;std::set<uint16_t> retained,dead;
+    if(!findDeadBottomReturns(index,dead))return false;
+    for(auto block:emittedBlocks.at(index)){if(dead.count(block))continue;for(auto reg:selected.blocks[block].parameters)retained.insert(reg);for(const auto &op:selected.blocks[block].operations)if(op.result!=noRegister&&!constructionToken(op))retained.insert(op.result);}
     for(auto reg:retained){if(registerType(selected.carriers[reg]).empty())return false;values.emplace(reg,"%r"+std::to_string(reg));}
     out<<"  func.func private @value_"<<selected.id.substr(7)<<"(%state: !llvm.ptr, %event: !llvm.ptr";for(auto reg:selected.blocks[0].parameters)out<<", %arg"<<reg<<": "<<type(selected.carriers[reg]);out<<") -> "<<returned<<" {\n";
     const auto frame=constant(index,"i64"),shadow=constant(0);out<<"    llvm.call_intrinsic \"llvm.experimental.stackmap\"("<<frame<<", "<<shadow<<") : (i64, i32) -> ()\n";
@@ -508,6 +553,7 @@ struct Lowering {
     }out<<"    cf.br ^b0\n";
     for(auto block:emittedBlocks.at(index)){
       out<<"  ^b"<<block;if(block&&!selected.blocks[block].parameters.empty()){out<<'(';bool first=true;for(auto reg:selected.blocks[block].parameters){if(!first)out<<", ";first=false;out<<values.at(reg)<<": "<<registerType(selected.carriers[reg]);}out<<')';}out<<":\n";
+      if(dead.count(block)){out<<"    llvm.unreachable\n";continue;}
       for(size_t ordinal=0;ordinal<selected.blocks[block].operations.size();++ordinal){locate(index,block,ordinal);if(!operation(selected.blocks[block].operations[ordinal]))return false;}
     }
     out<<"  ^failed:\n";callback(3,selected.range,index);if(!payload)out<<"    func.return\n";else{const auto failed=zero(selected.resultCarrier);out<<"    func.return "<<failed<<" : "<<returned<<'\n';}out<<"  }\n";return true;
@@ -525,7 +571,7 @@ struct Lowering {
         if(string(members[0])==undefined&&scalarCode(string(members[1]))==1)presence.emplace(id,Presence{true,1});
       }
     }
-    if(!closure(index))return false;for(const auto &[fn,blocks]:reachable)if(!emissionCFG(fn))return false;std::vector<std::string> roots;
+    if(!closure(index))return false;for(const auto &[fn,blocks]:reachable)if(!emissionCFG(fn,emittedBlocks[fn]))return false;std::vector<std::string> roots;
     for(const auto &[fn,blocks]:reachable)for(auto block:blocks){const auto &selected=program.functions[fn];if(valueType(selected.resultCarrier))roots.push_back(selected.resultCarrier);for(auto reg:selected.blocks[block].parameters)if(valueType(selected.carriers[reg]))roots.push_back(selected.carriers[reg]);for(const auto &op:selected.blocks[block].operations){if(valueType(op.view))roots.push_back(op.view);if(op.result!=noRegister&&valueType(selected.carriers[op.result]))roots.push_back(selected.carriers[op.result]);}}
     std::sort(roots.begin(),roots.end());roots.erase(std::unique(roots.begin(),roots.end()),roots.end());
     if(!need(!roots.empty(),"selected closure has no fixed-value carrier")||!fixedValueLayoutCatalog(program,roots,layouts,error))return false;
