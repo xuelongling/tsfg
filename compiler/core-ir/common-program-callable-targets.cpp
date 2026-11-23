@@ -227,8 +227,15 @@ struct TargetFlow {
       if(!result&&callable(type))return Targets{true,{}};return result;
     }
     if(kind=="bindingAssignment"){
-      auto result=expression(s,state,field(value,"value"));const auto &target=field(value,"target");erase(string(field(target,"type")),string(field(field(value,"value"),"type")),result);
-      if(string(field(target,"kind"))=="globalTarget"){expose(string(field(field(value,"value"),"type")));exposeClosures(result);}
+      const auto &target=field(value,"target");const auto targetKind=field(target,"kind").getAsString();
+      const auto targetType=string(field(target,"type"));std::optional<State> skipped;
+      if(field(value,"operator").getAsString()=="??="&&targetKind=="bindingTarget"){
+        const auto selected=types.find(targetType);
+        if(selected!=types.end()&&field(*selected->second,"kind").getAsString()=="scalar"&&
+            field(*selected->second,"name").getAsString()!="bool")skipped=snapshot(state);
+      }
+      auto result=expression(s,state,field(value,"value"));erase(targetType,string(field(field(value,"value"),"type")),result);
+      if(targetKind=="globalTarget"){expose(string(field(field(value,"value"),"type")));exposeClosures(result);}
       else if(result){const auto key=field(target,"binding").getAsString().value_or("");if(!step(key.size()/64+2))return {};const auto binding=key.str();
         state[binding]=copy(*result);auto owner=capturedParameters.find(binding);
         if(owner!=capturedParameters.end()){
@@ -237,7 +244,9 @@ struct TargetFlow {
           observe(summary,owner->second.second,*result);
         }
         else if(capturedLocals.count(binding))merge(capturedLocals.at(binding),*result);
-      }return result;
+      }
+      if(skipped)combine(state,*skipped);
+      return result;
     }
     if(kind=="fieldAccess"){
       expression(s,state,field(value,"receiver"));return callable(type)?std::optional<Targets>(copy(fieldValues[slot(string(field(value,"property")))])):std::nullopt;
@@ -292,10 +301,15 @@ struct TargetFlow {
     if(kind=="binary"){
       const auto op=field(value,"operator").getAsString();
       const auto result=types.find(type);
-      if((op=="&&"||op=="||")&&result!=types.end()&&field(*result->second,"kind").getAsString()=="scalar"&&
-          field(*result->second,"name").getAsString()=="bool"){
-        expression(s,state,field(value,"left"));const auto skipped=snapshot(state);
-        expression(s,state,field(value,"right"));combine(state,skipped);return {};
+      if(op=="??"||((op=="&&"||op=="||")&&result!=types.end()&&field(*result->second,"kind").getAsString()=="scalar"&&
+          field(*result->second,"name").getAsString()=="bool")){
+        auto left=expression(s,state,field(value,"left"));const auto skipped=snapshot(state);
+        auto right=expression(s,state,field(value,"right"));combine(state,skipped);
+        if(!callable(type))return {};
+        if(left&&right)return join(*left,*right);
+        if(left)return left;
+        if(right)return right;
+        return Targets{};
       }
     }
     for(auto key:{"expression","left","right","receiver","index","value","target"})if(!field(value,key).getAsNull())expression(s,state,field(value,key));

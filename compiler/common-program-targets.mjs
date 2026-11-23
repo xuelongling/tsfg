@@ -158,13 +158,17 @@ export function commonTargets(hir,spend,records=null) {
       return domain.copy(captured?summaries.get(captured.owner).initializedParameters.get(captured.index)??domain.bottom():capturedLocals.get(value.binding)??state.get(value.binding)??domain.bottom());
     }
     if(['parentheses','as','nonNull'].includes(value.kind)){const actual=expression(summary,state,value.expression);if(value.kind==='as'){erase(value.type,value.expression.type,actual);if(!verifiedView(value.expression.type,value.type,value.compatibilityRoots??[])){expose(value.expression.type);expose(value.type);exposeClosures(actual);}else linkArrays(value.expression.type,value.type);}return actual??(callable(value.type)?domain.top():null);}
-    if(value.kind==='bindingAssignment') {const result=expression(summary,state,value.value);erase(value.target.type??bindingTypes.get(value.target.binding),value.value.type,result);
+    if(value.kind==='bindingAssignment') {
+      const target=value.target;
+      const skipped=value.operator==='??='&&target.kind==='bindingTarget'&&target.type!==boolTypeId&&types.get(target.type)?.kind==='scalar'?clone(state):null;
+      const result=expression(summary,state,value.value);erase(target.type??bindingTypes.get(target.binding),value.value.type,result);
       if(value.target.kind==='globalTarget'){expose(value.value.type);exposeClosures(result);}else if(result){state.set(value.target.binding,domain.copy(result));const captured=capturedParameters.get(value.target.binding);
         if(captured){
           merge(summaries.get(captured.owner).initializedParameters,captured.index,result);
           if(records)observe(captured.owner,captured.index,result);else merge(summaries.get(captured.owner).parameters,captured.index,result);
         }
         else if(capturedLocals.has(value.target.binding))merge(capturedLocals,value.target.binding,result);}
+      if(skipped)join(state,skipped);
       return result;}
     if(value.kind==='fieldAccess'){expression(summary,state,value.receiver);return callable(value.type)?domain.copy(fieldValues.get(slot(value.property))??domain.bottom()):null;}
     if(value.kind==='fieldAssignment'){
@@ -191,13 +195,15 @@ export function commonTargets(hir,spend,records=null) {
       }
       if(saved.top){unknownCall(value,args,saved);if(result)result=domain.top();}return result;
     }
-    if(value.kind==='binary'&&value.type===boolTypeId&&(value.operator==='&&'||value.operator==='||')){
-      expression(summary,state,value.left);
+    if(value.kind==='binary'&&(value.operator==='??'||value.type===boolTypeId&&(value.operator==='&&'||value.operator==='||'))){
+      const left=expression(summary,state,value.left);
       // Match the two normalized CFG edges after the left operand completes.
       const skipped=clone(state);
-      expression(summary,state,value.right);
+      const right=expression(summary,state,value.right);
       join(state,skipped);
-      return null;
+      // An absent operand contributes no Code identity to the coalesced value.
+      if(!callable(value.type))return null;
+      return left&&right?domain.join(left,right):left??right??domain.bottom();
     }
     for(const key of ['expression','left','right','receiver','index','value','target'])if(value[key])expression(summary,state,value[key]);
     for(const child of value.elements??[]){expression(summary,state,child);erase(types.get(value.type)?.elementType,child.type);}

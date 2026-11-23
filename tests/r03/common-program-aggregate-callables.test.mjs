@@ -52,9 +52,11 @@ function reassignmentProgram(mode){
   const previousId=fn.id,signature=fn.body[1].value.signature;
   const first=p.functions.find(row=>row.name==='makeFirstReader'),second=p.functions.find(row=>row.name==='makeSecondReader');
   const callable=first.returnType,bodyStart=file.content.indexOf('{',fn.returnAnnotationRange.end)+1;
-  const comparison='(f = makeSecondReader())() === 0',unconditional=mode==='unconditional',branch=mode==='if';
-  const effect=unconditional?comparison+';':branch?'if (flag) { '+comparison+'; }':'flag '+mode+' ('+comparison+');';
-  file.content=file.content.slice(0,bodyStart)+'\n  let f: () => i32 = makeFirstReader();\n  '+effect+'\n  return f();\n}\n';
+  const numeric=mode==='='||mode==='??=',call='(f = makeSecondReader())()',comparison=call+' === 0';
+  const unconditional=mode==='unconditional'||mode==='=',branch=mode==='if';
+  const effect=numeric?'gate '+mode+' '+call+';':unconditional?comparison+';':branch?'if (flag) { '+comparison+'; }':'flag '+mode+' ('+comparison+');';
+  file.content=file.content.slice(0,bodyStart)+'\n  let f: () => i32 = makeFirstReader();\n  '+
+    (numeric?'let gate: i32 = 0;\n  ':'')+effect+'\n  return f();\n}\n';
   const span=(start,end)=>({start,end});
   const locate=(text,start=bodyStart)=>{const index=file.content.indexOf(text,start);assert.ok(index>=0,text);return span(index,index+text.length);};
   fn.declarationRange.end=file.content.length-1;
@@ -77,16 +79,39 @@ function reassignmentProgram(mode){
     {target:{kind:'bindingTarget',binding,type:callable,range:span(target.start,target.start+1)},
       operator:'=',operatorRange:locate('=',target.start),value:direct(second,secondInit)});
   const callee=grouped(assignment),called=indirect(callee,span(callee.range.start,callee.range.end+2));
-  const test=binary(called,'===',expr('numericLiteral','i32',locate('0',called.range.end),{token:'0',decimal:'0'}));
-  const condition=unconditional?null:expr('bindingReference','bool',locate('flag',at.start),{binding:fn.parameters[0].id});
+  let statement;
+  const body=[{kind:'letDeclaration',binding,range:declarationRange,initializer:direct(first,firstInit)}];
+  if(numeric){
+    const gate=locate('gate',declarationRange.end),gateId=originId(root,gate),zero=locate('0',gate.end),range=span(gate.start,zero.end);
+    fn.bindings.push({...fn.bindings[0],id:gateId,name:'gate',nameRange:gate,annotationRange:locate('i32',gate.end),declarationRange:range,declaredType:'i32'});
+    body.push({kind:'letDeclaration',binding:gateId,range,initializer:expr('numericLiteral','i32',zero,{token:'0',decimal:'0'})});
+    const location=locate('gate',at.start);
+    statement={kind:'expression',range:at,value:expr('bindingAssignment','i32',span(location.start,called.range.end),{
+      target:{kind:'bindingTarget',binding:gateId,type:'i32',range:location},operator:mode,operatorRange:locate(mode,location.end),value:called})};
+  }else{
+    const test=binary(called,'===',expr('numericLiteral','i32',locate('0',called.range.end),{token:'0',decimal:'0'}));
+    const condition=unconditional?null:expr('bindingReference','bool',locate('flag',at.start),{binding:fn.parameters[0].id});
+    statement=branch?{kind:'if',range:at,condition,then:[{kind:'expression',range:locate(comparison+';',at.start),value:test}],else:[]}:
+      {kind:'expression',range:at,value:unconditional?test:binary(condition,mode,grouped(test))};
+  }
   const returned=locate('return f();',at.end),site=locate('f()',returned.start);
-  const statement=branch?{kind:'if',range:at,condition,then:[{kind:'expression',range:locate(comparison+';',at.start),value:test}],else:[]}:
-    {kind:'expression',range:at,value:unconditional?test:binary(condition,mode,grouped(test))};
-  fn.body=[
-    {kind:'letDeclaration',binding,range:declarationRange,initializer:direct(first,firstInit)},
-    statement,
-    {kind:'return',range:returned,value:indirect(expr('bindingReference',callable,span(site.start,site.start+1),{binding}),site)},
-  ];
+  fn.body=[...body,statement,{kind:'return',range:returned,value:indirect(expr('bindingReference',callable,span(site.start,site.start+1),{binding}),site)}];
+  return {hir:coldReframedHir(packet,fn,previousId,file),site,inner:called.range};
+}
+
+for(const mode of ['unconditional','if','&&','||','=','??='])test('retained-derived local callable reassignment through '+mode,()=>{
+  const {hir,site,inner}=reassignmentProgram(mode),fn=hir.functions.find(row=>row.name==='captureSpanOrdinary');
+  const reader=name=>hir.functions.find(row=>row.name===name).id;
+  const targets=commonTargets(hir,commonMeter());
+  assert.deepEqual(targets.site(fn.id,inner),{top:false,functions:[reader('readSecond')]});
+  const expected=mode==='unconditional'||mode==='='?[reader('readSecond')]:[reader('readFirst'),reader('readSecond')].sort();
+  assert.doesNotThrow(()=>emitCommonProgramCore(hir,createCommonProgramPublication(hir),{
+    targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()}));
+  assert.deepEqual(targets.site(fn.id,site),{top:false,functions:expected});
+});
+
+function coldReframedHir(packet,fn,previousId,file){
+  const p=packet.payload,root=p.rootFile;
   file.sha256=sha256(file.content).slice(7);file.byteLength=Buffer.byteLength(file.content);file.utf16Length=file.content.length;
   const files=p.files.map(({path,sha256})=>({path,sha256}));
   for(const type of p.types)if(type.nominalKey)type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({files,nominalKey:type.nominalKey}));
@@ -108,16 +133,93 @@ function reassignmentProgram(mode){
   packet.requestId=sha256('tsfg.program-facts.request.v2\0'+canonical(request)+'\n');
   packet.packageId=sha256('tsfg.program-facts.package.v2\0'+packet.schemaHash+'\0'+canonical(p));
   const owned=projectCommonProgram(readCommonProgramFacts(Buffer.from(canonical(packet)+'\n')));
-  return {hir:readCommonProgramHir(Buffer.from(printCommonProgramHir(owned))),site,inner:called.range};
+  return readCommonProgramHir(Buffer.from(printCommonProgramHir(owned)));
 }
 
-for(const mode of ['unconditional','if','&&','||'])test('retained-derived local callable reassignment through '+mode,()=>{
-  const {hir,site,inner}=reassignmentProgram(mode),fn=hir.functions.find(row=>row.name==='captureSpanOrdinary');
-  const reader=name=>hir.functions.find(row=>row.name===name).id;
-  const targets=commonTargets(hir,commonMeter());
-  assert.deepEqual(targets.site(fn.id,inner),{top:false,functions:[reader('readSecond')]});
-  const expected=mode==='unconditional'?[reader('readSecond')]:[reader('readFirst'),reader('readSecond')].sort();
-  assert.deepEqual(targets.site(fn.id,site),{top:false,functions:expected});
-  assert.doesNotThrow(()=>emitCommonProgramCore(hir,createCommonProgramPublication(hir),{
-    targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()}));
+// The full retained Program supplies the nullable callable type and both
+// original code identities. Alter only its last application body.
+function nullishProgram(mode){
+  const donor=fs.readFileSync(new URL('./testdata/common-nullable-capture/function-undefined-local-let.json',import.meta.url));
+  assert.equal(sha256(donor),'sha256:6b696f8fdbfceb0241ba8e5ed641b7e848512ff164c92a5e99c2e3bff19594bc');
+  const packet=structuredClone(readCommonProgramFacts(donor)),p=packet.payload,root=p.rootFile;
+  const file=p.files.find(row=>row.path===root),fn=p.functions.find(row=>row.name==='loopRead');
+  const previousId=fn.id,signature=p.functions.find(row=>row.name==='captureSpanOrdinary').body[1].value.signature;
+  const factory=p.functions.find(row=>row.name==='makeOwnedReader'),leaf=p.functions.find(row=>row.name==='nullableLeaf');
+  const callable=factory.returnType,optional='union<'+callable+',undefined>',bodyStart=file.content.indexOf('{',fn.returnAnnotationRange.end)+1;
+  const hasWrite=mode!=='result',branch=mode==='explicit-branch';
+  const declaration='let gate: (() => i32) | undefined = undefined;';
+  const initialize='if (n === 0) { gate = makeOwnedReader(3); }';
+  const local='let f: () => i32 = makeOwnedReader(1);';
+  const selection='const selected: () => i32 = gate ?? '+(hasWrite?'(f = nullableLeaf)':'nullableLeaf')+';';
+  const explicit='if (gate === undefined) { f = nullableLeaf; }';
+  const returned='return '+(mode==='result'?'selected()':branch?'f()':'f() + selected()')+';';
+  const rows=hasWrite?[declaration,initialize,local,branch?explicit:selection,returned]:[declaration,initialize,selection,returned];
+  file.content=file.content.slice(0,bodyStart)+'\n  '+rows.join('\n  ')+'\n}\n';
+  const span=(start,end)=>({start,end});
+  const find=(text,start=bodyStart)=>{const at=file.content.indexOf(text,start);if(at<0)assert.fail(text);return span(at,at+text.length);};
+  fn.declarationRange.end=file.content.length-1;
+  fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:root,declarationRange:fn.declarationRange}));
+  fn.parameters[0].lexicalOwner=fn.id;
+  fn.bindings=[];
+  fn.body=[];
+  const expr=(kind,type,range,extra={})=>({kind,type,flowType:type,range,...extra});
+  const binding=(kind,name,type,annotation,initializer,at)=>{
+    const token=find(name,at.start),nameRange=span(token.start,token.end);
+    const id=originId(root,nameRange),range=span(nameRange.start,initializer.range.end);
+    const annotationRange=find(annotation,nameRange.end);
+    fn.bindings.push({id,name,lexicalOwner:fn.id,kind:'local',declaredType:type,writable:kind==='letDeclaration',
+      annotationRange,elementAnnotationRange:null,nameRange,declarationRange:range});
+    return {kind,binding:id,range,initializer};
+  };
+  const literal=(token,start,type='i32')=>expr(type==='undefined'?'undefinedLiteral':'numericLiteral',type,find(token,start),
+    type==='undefined'?{}:{token,decimal:token});
+  const direct=(callee,at,argument)=>expr('call',callable,at,{callee:callee.id,calleeRange:span(at.start,at.start+callee.name.length),arguments:[argument],
+    signature:{id:signatureId(root,callee.declarationRange),sourcePath:root,declarationRange:callee.declarationRange,parameters:['i32'],returnType:callable}});
+  const use=(type,range,binding)=>expr('bindingReference',type,range,{binding});
+  const binary=(left,operator,right,type)=>expr('binary',type,span(left.range.start,right.range.end),{left,operator,operatorRange:find(operator,left.range.end),right});
+  const assign=(binding,type,loc,value)=>expr('bindingAssignment',type,span(loc.start,value.range.end),
+    {flowType:value.flowType,target:{kind:'bindingTarget',binding,type,range:loc},operator:'=',operatorRange:find('=',loc.end),value});
+  const indirect=(name,binding,start)=>{
+    const range=find(name+'()',start),calleeRange=span(range.start,range.end-2);
+    return expr('indirectCall','i32',range,{expression:use(callable,calleeRange,binding),signature,arguments:[],calleeRange});
+  };
+  const gateRow=find(declaration),gate=binding('letDeclaration','gate',optional,'(() => i32) | undefined',
+    literal('undefined',find(' = ',gateRow.start).end,'undefined'),gateRow);
+  const init=find(initialize),factoryRange=find('makeOwnedReader(3)',init.start);
+  const gateWrite=assign(gate.binding,optional,find('gate',init.start),direct(factory,factoryRange,literal('3',factoryRange.start)));
+  const condition=binary(use('i32',find('n',init.start),fn.parameters[0].id),'===',literal('0',init.start),'bool');
+  fn.body.push(gate,{kind:'if',range:init,condition,then:[{kind:'expression',range:span(gateWrite.range.start,gateWrite.range.end+1),value:gateWrite}],else:[]});
+  let f;
+  if(hasWrite){
+    const at=find(local),call=find('makeOwnedReader(1)',at.start);
+    f=binding('letDeclaration','f',callable,'() => i32',direct(factory,call,literal('1',call.start)),at);
+    fn.body.push(f);
+  }
+  const at=find(branch?explicit:selection),gateRead=use(optional,find('gate',at.start),gate.binding);
+  const leafReference=expr('functionReference',callable,find('nullableLeaf',at.start),{functionId:leaf.id});
+  const right=hasWrite?assign(f.binding,callable,find('f',find('f =',at.start).start),leafReference):leafReference;
+  let selected;
+  if(branch){
+    const absent=literal('undefined',gateRead.range.end,'undefined');
+    fn.body.push({kind:'if',range:at,condition:binary(gateRead,'===',absent,'bool'),
+      then:[{kind:'expression',range:span(right.range.start,right.range.end+1),value:right}],else:[]});
+  }else{
+    const rhs=hasWrite?expr('parentheses',callable,span(right.range.start-1,right.range.end+1),{expression:right}):right;
+    selected=binding('constDeclaration','selected',callable,'() => i32',binary(gateRead,'??',rhs,callable),at);
+    fn.body.push(selected);
+  }
+  const returnRange=find(returned,at.end),calls=[];
+  if(hasWrite)calls.push(indirect('f',f.binding,returnRange.start));
+  if(!branch)calls.push(indirect('selected',selected.binding,returnRange.start));
+  fn.body.push({kind:'return',range:returnRange,value:calls.length===1?calls[0]:binary(calls[0],'+',calls[1],'i32')});
+  return {hir:coldReframedHir(packet,fn,previousId,file),sites:calls.map(call=>call.range)};
+}
+
+for(const mode of ['result','result-and-skip','explicit-branch'])test('retained-derived nullable callable coalescing '+mode,()=>{
+  const {hir,sites}=nullishProgram(mode),fn=hir.functions.find(row=>row.name==='loopRead');
+  const selected=commonTargets(hir,commonMeter());
+  const functions=['readOwned','nullableLeaf'].map(name=>hir.functions.find(row=>row.name===name).id).sort();
+  const targets=hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort();
+  assert.doesNotThrow(()=>emitCommonProgramCore(hir,createCommonProgramPublication(hir),{targets}));
+  for(const site of sites)assert.deepEqual(selected.site(fn.id,site),{top:false,functions});
 });
