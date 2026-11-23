@@ -127,6 +127,8 @@ try {
   const runtimeOption = ["--vm", "--requests"].find(option => options.has(option));
   if (emit !== "run" && runtimeOption)
     throw new TypeError(`r03-cli-options: ${runtimeOption} requires --emit run`);
+  if (emit === "hir" && options.has("--core"))
+    throw new TypeError("r03-cli-options: --core is invalid with --emit hir");
   const inputPath = options.get("--input");
   const input = inputKind === "hir" ? readHir(await (fixedCommonCore ? readCommonInputFile(inputPath)
     : readStableInputFile(inputPath, checkHirWireFileSize, 'HIR')))

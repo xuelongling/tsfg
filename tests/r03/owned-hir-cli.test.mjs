@@ -80,14 +80,18 @@ test('owned HIR CLI cold roundtrip preserves the complete actual Source result w
   assert.deepEqual(child.stdout,bytes);
 });
 
-for(const [option,value] of [['--requests','{'],['--vm','unused.exe']]){
+for(const [option,value,diagnostic] of [
+  ['--requests','{','--requests requires --emit run'],
+  ['--vm','unused.exe','--vm requires --emit run'],
+  ['--core','unused.exe','--core is invalid with --emit hir'],
+]){
   test('owned HIR CLI rejects '+option+' on inspection before input access',async()=>{
     const args=['--input-kind','hir','--emit','hir',option,value];
     const results=await Promise.all([runCli(hir,args),runCli(undefined,args)]);
     for(const child of results){
       assert.equal(child.status,2);
       assert.equal(child.stdout.length,0);
-      assert.equal(child.stderr.toString('utf8'),'r03-cli-options: '+option+' requires --emit run\n');
+      assert.equal(child.stderr.toString('utf8'),'r03-cli-options: '+diagnostic+'\n');
     }
   });
 }

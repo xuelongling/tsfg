@@ -102,8 +102,7 @@ for (const { name, emit, requests } of [
   { name: "run-valid-json", emit: "run", requests: "[{}]" },
   { name: "default-run-default-requests", emit: undefined, requests: undefined },
   { name: "run-null-shape", emit: "run", requests: "null" },
-  { name: "run-null-item-shape", emit: "run", requests: "[null]" },
-  ...["hir", "core", "bytecode"].map(emit => ({ name: `${emit}-ignores-requests`, emit, requests: "[{" }))
+  { name: "run-null-item-shape", emit: "run", requests: "[null]" }
 ]) {
   test(`${name} preserves the missing-frontend result`, async () => {
     const child = await runCli(name, { emit, requests });
@@ -112,6 +111,15 @@ for (const { name, emit, requests } of [
     const diagnostic = JSON.parse(child.stdout.toString("utf8"));
     assert.equal(diagnostic.status, "tool-error");
     assert.equal(diagnostic.message, "frontend executable is required");
+  });
+}
+
+for (const emit of ["hir", "core", "bytecode", "program-object"]) {
+  test(`${emit} rejects requests before reading Source input`, async () => {
+    const child = await runCli(`${emit}-rejects-requests`, { emit, requests: "[{", inputArgument: "missing-source.json" });
+    assert.equal(child.status, 2);
+    assert.equal(child.stdout.length, 0);
+    assert.equal(child.stderr.toString("utf8"), "r03-cli-options: --requests requires --emit run\n");
   });
 }
 
