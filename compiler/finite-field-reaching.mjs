@@ -6,7 +6,7 @@ import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
-import {finitePresence,isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {finitePresence,isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
 import {createFieldCallContexts,finiteFieldEffects,finiteFieldStorePath,finiteFieldWriteVersion,
   literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
@@ -325,6 +325,19 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env),store=finiteFieldStorePath(path,value);
         if(stopped)return null;
         if(store!==path)access(value,path+'/old-value',state,token,'read');
+        if(isFieldNullishAssignment(value)){
+          const {present,absent}=presence(path+'/old-value');
+          if(!absent)return null;
+          const memory=present?clone(state):state,locals=present?copyFieldReachingAliases(env,charge):env;
+          expression(value.value,path+'/value',memory,locals);
+          if(stopped)return null;
+          access(value,store,memory,token,'store');
+          if(present){
+            const merged=join(state,memory);state.clear();for(const pair of merged){charge();state.set(...pair);}
+            meetAliases(env,env,locals);
+          }
+          return null;
+        }
         const rhs=value.kind==='fieldAssignment'?child('value'):null;
         if(stopped)return null;
         if(store!==path){access(value,store,state,token,'store');return null;}

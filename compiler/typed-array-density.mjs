@@ -2,7 +2,7 @@
 // Only statically definite density violations are rejected. Unknown accesses retain checks.
 import {check} from './typed-array-schema.mjs';
 import {hasConditionalArrayRhs} from './array-analysis-types.mjs';
-import {isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 
 export function validateTypedArrayDensity(payload) {
   for(const fn of [...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])]) {
@@ -29,6 +29,9 @@ export function validateTypedArrayDensity(payload) {
       if(hasConditionalArrayRhs(value)) {
         if(!coalescingAssignment)expression(value.left);
         optionalRhs(coalescingAssignment?value.value:value.right);return null;
+      }
+      if(isFieldNullishAssignment(value)){
+        expression(value.target.receiver);optionalRhs(value.value);return null;
       }
       if(['elementAssignment','lengthAssignment','elementCompoundAssignment','elementUpdate'].includes(value.kind)) {
         const owner=expression(value.target.receiver);expression(value.target.index);

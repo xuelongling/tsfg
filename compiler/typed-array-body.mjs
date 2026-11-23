@@ -7,7 +7,7 @@ import {check,hash,sourceRange,originId,signatureId,byteOrder} from './typed-arr
 import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
 import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
-import {isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 
 export function validateTypedArrayFunctions(payload,sources,types,profile=undefined) {
   const functions=new Map(),all=[...payload.functions];
@@ -36,11 +36,12 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
     let declared=new Set(fn.parameters.map(row=>row.id));
     const seenDeclarations=new Set(declared);
     const spelling=range=>source.slice(range.start,range.end);
-    function expression(value,parent=fn.declarationRange,target=false,expected=undefined) {
+    function expression(value,parent=fn.declarationRange,target=false,expected=undefined,nullishField=false) {
       sourceRange(value.range,source,parent);check(types.has(value.type),'type');
       if(!target)check(types.has(value.flowType),'type');
       if(profile)profile.validateExpression(value,types,source);
-      const nullishTarget=isLocalNullishAssignment(value)?'bindingTarget':isArrayNullishAssignment(value)?'elementTarget':null;
+      const nullishTarget=isLocalNullishAssignment(value)?'bindingTarget':isArrayNullishAssignment(value)?'elementTarget':
+        isFieldNullishAssignment(value)?'fieldTarget':null;
       if(nullishTarget) {
         const type=value.target?.type;
         check(value.target?.kind===nullishTarget&&(integerNames.includes(type)||floatNames.includes(type))&&
@@ -56,9 +57,15 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
       }
       if(value.kind==='thisReference')check(fn.ownerType===value.type&&spelling(value.range)==='this','binding');
       if(['fieldAccess','fieldTarget'].includes(value.kind)) {
-        let owner=types.get(value.receiver.flowType);
-        while(owner&&!owner.fields?.some(field=>field.id===value.property&&field.type===value.type))owner=types.get(owner.base);
+        let owner=types.get(value.receiver.flowType),field;
+        while(owner) {
+          field=owner.fields?.find(row=>row.id===value.property&&row.type===value.type);
+          if(field)break;
+          owner=types.get(owner.base);
+        }
         check(owner&&['value','reference'].includes(owner.kind),'field');
+        if(nullishField&&field.readonly)check(fn.ownerType===owner.id&&owner.constructor?.id===fn.id&&
+          value.receiver.kind==='thisReference'&&value.receiver.type===owner.id,'field',{sourceId:fn.sourcePath,...value.range});
       }
       if(value.kind==='stringLength'||value.kind==='stringSlice') {
         const slice=value.kind==='stringSlice',member=slice?payload.stringSlice:payload.stringLength;
@@ -120,7 +127,7 @@ export function validateTypedArrayFunctions(payload,sources,types,profile=undefi
       if(value.calleeRange)sourceRange(value.calleeRange,source,value.range);
       if(value.nameRange)sourceRange(value.nameRange,source,value.range);
       if(value.allocationSite)check(value.allocationSite===originIdForAllocation(fn.sourcePath,value.range),'identity');
-      if(value.target)expression(value.target,value.range,true);
+      if(value.target)expression(value.target,value.range,true,undefined,nullishTarget==='fieldTarget');
       for(const key of ['receiver','index','expression','value','left','right'])if(value[key]) {
         const slot=key==='value'&&value.target?value.target.type
           :key==='receiver'&&value.kind==='call'?functions.get(value.callee)?.ownerType

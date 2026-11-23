@@ -10,7 +10,7 @@ import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
 import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
-import {isArrayNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {actualFieldResolver,fieldReceiverView} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
 
@@ -531,13 +531,22 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       else {
         const old=node(p+'/old-value',v.target.type).id;
         fieldReads.push({id:old,receiver,field,result:old,viewType,targets:new Map()});
-        flow.entry(old,continuation);flow.finish(old,[]);
-        continuation=flow.normal(old);dependencies.push(continuation);
-        if(v.kind==='fieldAssignment')child('value');
         value=node(store+'/value',v.type).id;
-        flow.entry(value,continuation);flow.finish(value,[]);
-        for(const type of leaves(v.type))insert(value,'actual',type);
-        result=v.kind==='fieldUpdate'&&!v.prefix?old:value;
+        if(isFieldNullishAssignment(v)){
+          const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>{
+            if(key==='right')return operand(v.value,p+'/value',gate,pending);
+            flow.entry(old,gate);flow.finish(old,[]);return old;
+          },absent);
+          presenceCarriers.push(old);dependencies.push(...selected.dependencies);
+          copy(old,id,{presentOnly:true});copy(selected.right,value,{gate:old});result=value;
+        }else{
+          flow.entry(old,continuation);flow.finish(old,[]);
+          continuation=flow.normal(old);dependencies.push(continuation);
+          if(v.kind==='fieldAssignment')child('value');
+          flow.entry(value,continuation);flow.finish(value,[]);
+          for(const type of leaves(v.type))insert(value,'actual',type);
+          result=v.kind==='fieldUpdate'&&!v.prefix?old:value;
+        }
       }
       fieldStores.push({id:store,receiver,field,value,viewType,targets:new Map()});copy(result,id);
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {

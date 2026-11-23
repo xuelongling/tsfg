@@ -72,6 +72,96 @@ test('finite numeric field compound reads the old field before computing its wri
   assert.ok(tail?.includes('/writeback/field-version/'));
 });
 
+test('finite field nullish assignment writes the actual absent own constructor field',async()=>{
+  const packet=await retainedPacket(
+    'typed-array-source514/fe82bbf8cf08c1c8a188040c28045067f831ca768ad8273b59cf0a23a7050777-package.json',
+    '2b3001140d229dea794442b5d1fc77fd7e3dadfc2e90df2d35a7ae78ff25f9e7');
+  const payload=packet.payload,owner=payload.types.find(row=>row.name==='D'),fn=owner.constructor;
+  const coalesce=fn.body.at(-1).value,file=payload.files.find(row=>row.path===fn.sourcePath);
+  const start=coalesce.operatorRange.start,end=coalesce.range.end;
+  assert.equal(file.content.slice(start,end),'=a[i]');
+  file.content=file.content.slice(0,start)+'??= 0'+file.content.slice(end);
+  coalesce.operator='??=';coalesce.operatorRange={start,end:start+3};
+  coalesce.value={kind:'numericLiteral',type:'i32',flowType:'i32',token:'0',decimal:'0',range:{start:end-1,end}};
+  const {hir,context,publication}=buildDerivedPacket(packet,file);
+  const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached;
+  const read=plan.fieldReaching.reads.find(item=>item.node.endsWith('/old-value')),path=read.node.slice(0,-'/old-value'.length);
+  const row=plan.nodes.find(item=>item.id===read.node),domain=plan.domains.find(item=>item.id===row.domainId);
+  assert.deepEqual(domain.actualTypes,[sha256('tsfg.type\0undefined')]);
+  assert.deepEqual(row.pending,[]);
+  const [oldVersion]=read.reaching;
+  assert.deepEqual(oldVersion.intrinsics,['undefined']);
+  assert.match(oldVersion.versions[0],/\/version\/0$/u);
+  const version=plan.fieldReaching.writes.find(item=>item.node===path+'/writeback/value');
+  assert.equal(version.field,oldVersion.field);
+
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const old=lines.filter(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(coalesce.target.range)));
+  const stores=lines.filter(line=>line.includes('"tsfg_core.domain.field_store"')&&line.includes(at(coalesce.range)));
+  const rhs=lines.filter(line=>line.includes('"tsfg_core.constant"')&&line.includes(at(coalesce.value.range)));
+  assert.deepEqual([old.length,stores.length,rhs.length],[1,1,1]);
+  const [,receiver]=old[0].match(/"tsfg_core\.domain\.field_read"\((%v\d+)\)/u)??[];
+  const rhsId=rhs[0].trim().split(' = ')[0];
+  const view=lines.find(line=>line.includes(`"tsfg_core.domain.view"(${rhsId})`)),stored=view?.trim().split(' = ')[0];
+  assert.ok(receiver&&stored&&stores[0].includes(`(${receiver}, ${stored})`));
+  assert.ok(stores[0].includes(version.id));
+  assert.ok(old[0].includes(oldVersion.versions[0]));
+  assert.ok(lines.indexOf(old[0])<lines.indexOf(rhs[0])&&lines.indexOf(rhs[0])<lines.indexOf(stores[0]));
+});
+
+test('finite field nullish assignment returns the present old payload without evaluating RHS',async()=>{
+  const packet=await retainedPacket(fieldTail,fieldTailHash),payload=packet.payload;
+  const fn=payload.functions.find(row=>row.name==='fieldPresent'),field=fn.body[4].value,returned=fn.body[5];
+  const file=payload.files.find(row=>row.path===fn.sourcePath),start=field.range.start,end=returned.range.end;
+  const replacement='return box.n??=8.0;';
+  assert.equal(file.content.slice(start,end),'box.n = 8.0;\n  return box.n;');
+  file.content=file.content.slice(0,start)+replacement.padEnd(end-start)+file.content.slice(end);
+  const span=(from,to)=>({start:start+from,end:start+to});
+  field.range=span(7,18);field.operator='??=';field.operatorRange=span(12,15);
+  field.target.range=span(7,12);field.target.receiver.range=span(7,10);field.target.nameRange=span(11,12);
+  field.value.range=span(15,18);
+  fn.body.splice(4,2,{...returned,range:span(0,replacement.length),value:field});
+  const {hir,context,publication}=buildDerivedPacket(packet,file);
+  const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached;
+  const owner=hir.functions.find(row=>row.name==='fieldPresent'),path=owner.id+'/body/4/value';
+  const old=plan.fieldReaching.reads.find(row=>row.node===path+'/old-value');
+  const actual=node=>plan.domains.find(row=>row.id===plan.nodes.find(item=>item.id===node).domainId).actualTypes;
+  assert.deepEqual(actual(old.node),[scalarTypeIds.f64]);
+  assert.deepEqual(actual(path+'/value'),[]);
+  assert.deepEqual(actual(owner.id+'/return'),[scalarTypeIds.f64]);
+  const lines=lowerFormalHir(hir,context,publication).split('\n');
+  const read=lines.filter(line=>line.includes('"tsfg_core.domain.field_read"')&&line.includes(at(field.target.range)));
+  assert.equal(read.length,1);
+  const value=read[0].trim().split(' = ')[0];
+  assert.ok(lines.some(line=>line.includes(`"func.return"(${value})`)&&line.includes(at(fn.body[4].range))));
+  assert.ok(!lines.some(line=>line.includes('"tsfg_core.domain.field_store"')&&line.includes(at(field.range))));
+  assert.ok(!lines.some(line=>line.includes('"tsfg_core.constant"')&&line.includes(at(field.value.range))));
+});
+
+test('owned field nullish assignment rejects readonly write outside its own constructor',async()=>{
+  const packet=await retainedPacket(
+    'typed-array-reference-domain/e4f00044a7053cd8d9cb87fc6f2bef2102f35e459ff1f0971289ce9974522f6a-package.json',
+    'e56cebf4ab207153f5a53d1acd738337a64a93c1fe85148f9ce78733d013e18b');
+  const payload=packet.payload,fn=payload.functions.find(row=>row.name==='f'),file=payload.files.find(row=>row.path===fn.sourcePath);
+  const [,prior,returned]=fn.body,read=returned.value,start=prior.range.start,end=returned.range.end;
+  const replacement='return a.n??=7;';
+  assert.equal(file.content.slice(start,end),'b.n=7;return a.n;');
+  file.content=file.content.slice(0,start)+replacement.padEnd(end-start)+file.content.slice(end);
+  const span=(from,to)=>({start:start+from,end:start+to});
+  const target={kind:'fieldTarget',type:read.type,property:read.property,range:span(7,10),nameRange:span(9,10),
+    receiver:{...read.receiver,range:span(7,8)}};
+  const value={kind:'fieldAssignment',type:'i32',flowType:'i32',operator:'??=',range:span(7,14),
+    operatorRange:span(10,13),target,
+    value:{kind:'numericLiteral',type:'i32',flowType:'i32',token:'7',decimal:'7',range:span(13,14)}};
+  fn.body.splice(1,2,{...returned,value,range:span(0,replacement.length)});
+  assert.throws(()=>readTypedArrayFacts(deriveFactsBytes(packet,file)),error=>{
+    assert.ok(error instanceof Error&&'code' in error&&'primary' in error);
+    assert.equal(error.code,'r03-typed-array-field');
+    assert.deepEqual(error.primary,{sourceId:fn.sourcePath,...target.range});
+    return true;
+  });
+});
+
 test('finite numeric field prefix and postfix return the correct side of the writeback',async()=>{
   for(const prefix of [false,true])for(const [operator,arithmetic] of [['++','add'],['--','sub']]){
     const packet=await retainedPacket(fieldTail,fieldTailHash),payload=packet.payload;
@@ -157,11 +247,16 @@ test('finite field update stops the following Array read when its receiver fails
   const update={kind:'fieldUpdate',type:field.type,operator:'++',prefix:false,range:receiver.range,
     target:{kind:'fieldTarget',type:field.type,property:field.id,receiver,range:receiver.range}};
   const stmt=expression=>({kind:'expression',expression,range:expression.range});
-  const model={...hir,functions:hir.functions.map(row=>row===fn?{...row,body:[stmt(update),stmt(receiver),returned]}:row)};
-  const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>true);
-  const at=path=>reaching.reads.find(row=>row.node===fn.id+path)?.status;
-  assert.equal(at('/body/0/expression/target/receiver'),'missing');
-  assert.equal(at('/body/1/expression'),'pending');
+  const fallback={kind:'fieldAccess',type:field.type,property:field.id,receiver,range:receiver.range};
+  const coalesce={kind:'fieldAssignment',type:field.type,operator:'??=',target:update.target,range:receiver.range,value:fallback};
+  for(const expression of [update,coalesce]){
+    const model={...hir,functions:hir.functions.map(row=>row===fn?{...row,body:[stmt(expression),stmt(receiver),returned]}:row)};
+    const {reaching}=buildFiniteArrayReaching(model,{nodes:[],domains:[],calls:[]},()=>{},()=>true);
+    const at=path=>reaching.reads.find(row=>row.node===fn.id+path)?.status;
+    assert.equal(at('/body/0/expression/target/receiver'),'missing');
+    assert.equal(at('/body/1/expression'),'pending');
+    if(expression===coalesce)assert.equal(at('/body/0/expression/value/receiver'),'pending');
+  }
 });
 
 function replaceArrayCompoundOperator(source,compound,operator) {

@@ -3,7 +3,7 @@
 // Unknown aliases/callees retain pending; capacity bounds remain independent.
 import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
-import {finitePresence,isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {finitePresence,isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
@@ -487,6 +487,17 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,root);
         if(receiver.terminal)return receiver;
         if(value.kind==='fieldUpdate')return {symbol:path};
+        if(isFieldNullishAssignment(value)){
+          const {present,absent}=collectAll?{present:true,absent:true}:presence(path+'/old-value');
+          if(!absent)return {symbol:path};
+          if(!present)return child('value');
+          const memory=clone(state),locals=copyBindings(bindings);
+          const rhs=expression(value.value,path+'/value',memory,locals);
+          if(rhs.terminal)return {symbol:path};
+          const merged=join(state,memory);state.clear();for(const [id,row]of merged){charge();state.set(id,row);}
+          meetBindings(bindings,bindings,locals);
+          return {symbol:path};
+        }
         const rhs=child('value');
         // The successful assignment yields the RHS Array or view without writing an Array slot.
         return rhs.terminal?rhs:{owner:rhs.owner,offset:rhs.offset,limit:rhs.limit,symbol:path};

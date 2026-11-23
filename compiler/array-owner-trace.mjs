@@ -6,7 +6,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {typedReferenceAuthority} from './typed-reference-authority.mjs';
 import {createSpanStorage} from './array-span-storage.mjs';
 import {createSpanContexts} from './array-span-contexts.mjs';
-import {isArrayNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 
 export const unknownArrayOwner=Object.freeze({kind:'unknown'});
 export const parameterArrayOwner=(fn,index)=>({kind:'parameter',functionId:fn.id,index});
@@ -309,6 +309,9 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         const executes=context&&typeof leftTruth==='boolean'?(op==='&&'?leftTruth:op==='||'?!leftTruth:op==='??'?false:null):null;
         const right=conditionalEffect(executes,()=>expression(value[rightKey],[...path,rightKey],index));
         owner=coalescingAssignment?null:mergeArrayOwners([left,right]);
+      }else if(isFieldNullishAssignment(value)) {
+        expression(value.target.receiver,[...path,'target','receiver'],index);
+        conditionalEffect(null,()=>expression(value.value,[...path,'value'],index));
       }else if(value.kind==='assignment') {
         owner=expression(value.value,[...path,'value'],index);bindings.set(value.target.binding,owner);
         operations.push({kind:'binding',path:[...path,'value'],binding:value.target.binding,type:value.target.type,

@@ -8,7 +8,7 @@ import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral,finiteFieldStorePath} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
 import {finiteBindingWrites,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
-import {isArrayNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
@@ -376,6 +376,19 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         +(reaching&&(reaching.reaching.length||selection.targets.some(row=>row.missing))?`, field_reaching = ${quote(canonical(reaching))}`:'')
         +(selection.kind==='store'?`, memory_node = ${quote(value.domainNode)}, input_node = ${quote(value.domainNode+'/value')}, field_versions = ${quote(canonical(versions))}`:'');
     }
+    function readOldField(api,value,receiver) {
+      const domainNode=value.domainNode+'/old-value',type=selected(domainNode).domainId,
+        old={type,semanticType:value.target.type,domainNode,range:value.target.range};
+      return {name:op(api,'field_read',[receiver],type,opAttrs(old)+', '+fieldDispatch(old),old.range),type};
+    }
+    function writeField(api,value,receiver,rhs,semanticType,range) {
+      const member=members.fields.get(value.target.property),declared=member.propertyPresence?.declaredType??member.type;
+      if(!members.compatible(semanticType,declared))pending('explicit field assignment violates declared type',value.range);
+      const source={name:op(api,'view',[rhs],rhs.type,opAttrs({semanticType,type:rhs.type}),range),type:rhs.type};
+      const store=finiteFieldStorePath(value.domainNode,value);
+      op(api,'field_store',[receiver,source],null,`view_type = ${quote(value.target.receiver.semanticType)}, `+
+        fieldDispatch({...value,domainNode:store}),value.range);
+    }
     function initializeFields(statement,api) {
       const parameter=fn.parameters[0],receiver={name:api.lookup(parameter.id),type:parameter.type};
       const owner=types.get(statement.ownerType),phase=fieldPhases.find(row=>row.constructionId===statement.construction);
@@ -550,11 +563,14 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           const next=api.operation(operation,[old,one],[type,type],type,'',value.range);
           api.assign(binding,next);return value.prefix?next:old;
         }
-        if(coalescingArray||coalescingAssignment||['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {
+        const coalescingField=isFieldNullishAssignment(value);
+        if(coalescingField||coalescingArray||coalescingAssignment||['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {
           const binding=coalescingAssignment?value.target.binding:null,
             bindingType=binding===null?null:selected(fn.id+'/binding/'+binding).domainId,
-            array=coalescingArray?arrayMutationOperands(api,value):null;
-          let left=array?.old??(binding===null?evaluated(value.left):{name:api.lookup(binding),type:bindingType}),
+            array=coalescingArray?arrayMutationOperands(api,value):null,
+            field=coalescingField?evaluated(value.target.receiver):null;
+          let left=field?readOldField(api,value,field):array?.old??
+            (binding===null?evaluated(value.left):{name:api.lookup(binding),type:bindingType}),
             alternatives=domains.get(left.type).actualTypes,
             previous=null;
           const anchor=value.operatorRange??value.range,
@@ -564,10 +580,11 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             widen=payload=>payload.type===value.type?payload.name:api.operation('tsfg_core.domain.view',
               [payload.name],[payload.type],value.type,opAttrs(value),value.range),
             right=()=>{
-              const rhs=evaluated(binding===null&&!array?value.right:value.value);
+              const rhs=evaluated(binding===null&&!array&&!field?value.right:value.value);
               if(binding!==null)api.assign(binding,rhs.type===bindingType?rhs.name:op(api,'view',[rhs],bindingType,
                 opAttrs({semanticType:value.target.type,type:bindingType}),value.value.range));
               if(array)writeArraySlot(api,value,array.receiver,array.index,rhs);
+              if(field)writeField(api,value,field,rhs,value.value.semanticType,value.value.range);
               return widen(rhs);
             },
             filter=()=>{if(previous===null)return;alternatives=alternatives.filter(id=>{budget.step();return id!==previous;});
@@ -666,23 +683,18 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
             ({semanticType,range}=value.value);
             rhs=copy(api,evaluated(value.value),semanticType,range);
           }else{
-            const oldNode=value.domainNode+'/old-value',oldType=selected(oldNode).domainId,
+            const old=readOldField(api,value,receiver),oldType=old.type,
               operator=update?(value.operator==='++'?'+':value.operator==='--'?'-':''):value.operator.slice(0,-1),
               native=domains.get(oldType).nativeType,rhsType=update?oldType:value.value.type;
             if(native==='bool'||value.type!==oldType||
               !validScalarBinaryTypes('binary',operator,native,native,domains.get(rhsType).nativeType))
               pending('operation-domain-check mapping',value.range);
-            const old={type:oldType,semanticType:value.target.type,domainNode:oldNode,range:value.target.range};
-            previous=op(api,'field_read',[receiver],oldType,opAttrs(old)+', '+fieldDispatch(old),old.range);
+            previous=old.name;
             const operand=update?api.operation('tsfg_core.constant',[],[],oldType,unitAttribute(native),value.range):api.emit(value.value);
             ({semanticType,range}=value);
             rhs={name:api.operation('tsfg_core.'+scalarOperations[operator],[previous,operand],[oldType,rhsType],value.type,'',range),type:value.type};
           }
-          const field=members.fields.get(value.target.property),declared=field.propertyPresence?.declaredType??field.type;
-          if(!members.compatible(semanticType,declared))pending('explicit field assignment violates declared type',value.range);
-          const source={name:op(api,'view',[rhs],rhs.type,opAttrs({semanticType,type:rhs.type}),range),type:rhs.type};
-          op(api,'field_store',[receiver,source],null,`view_type = ${quote(value.target.receiver.semanticType)}, `+
-            fieldDispatch({...value,domainNode:store}),value.range);
+          writeField(api,value,receiver,rhs,semanticType,range);
           return update&&!value.prefix?previous:rhs.name;
         }
         if(value.kind==='shortCircuit')return undefined; // shared SSA control.

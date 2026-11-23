@@ -3,6 +3,7 @@
 // existing field needs absence of a write to that FieldId, never noalias or a
 // caller's value as a universal constructor-entry fact.
 import {callComponentsInDependencyOrder} from './array-call-graph.mjs';
+import {isFieldNullishAssignment} from './finite-presence.mjs';
 
 export function finiteFieldStorePath(path,value) {
   return value.kind==='fieldUpdate'||value.operator&&value.operator!=='='?path+'/writeback':path;
@@ -109,7 +110,7 @@ export function finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrite
         for(const row of selected?.targets??[]) {
           charge();if(row.fieldId){
             effect.fields.add(row.fieldId);
-            if(keepAllWrites||!mayExecute){
+            if(keepAllWrites||!mayExecute||isFieldNullishAssignment(value)){
               charge();const version=finiteFieldWriteVersion(store,value,fn.sourcePath,row);
               lexicalWrites.set(version.id,version);
             }
