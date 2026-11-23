@@ -61,9 +61,12 @@ test "copying collector rewrites actual roots and shared cyclic object edges" {
     try expectError(error.InvalidField, heap.setEdge(a, 2, b));
 }
 
-test "edges retain objects after handles release and unreachable cycles are reclaimed" {
-    var heap = Heap.init(std.testing.allocator);
+test "edges retain live objects and rootless cycles are reclaimed without allocation" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var heap = Heap.init(failing.allocator());
     defer heap.deinit() catch unreachable;
+    const scope = try heap.beginScope();
+    defer heap.endScope(scope) catch unreachable;
     const a = try heap.create(1, 0, 1, .persistent);
     const b = try heap.create(1, 0, 1, .persistent);
     const garbage = try heap.create(2, 0, 0, .persistent);
@@ -77,8 +80,17 @@ test "edges retain objects after handles release and unreachable cycles are recl
     try equal(@as(u64, 1), (try heap.read(edge, 1)).type_id);
     try heap.release(edge);
     try heap.release(a);
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
     try heap.collect();
+    try expect(!failing.has_induced_failure);
     try equal(@as(usize, 0), try heap.objectCount());
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
+    const next = try heap.create(1, 42, 0, .temporary);
+    try equal(@as(u64, 42), (try heap.read(next, 1)).scalar);
+    try expectError(error.InvalidHandle, heap.read(a, 1));
+    try expectError(error.InvalidHandle, heap.read(b, 1));
 }
 
 fn failedRequest(heap: *Heap, persistent: Handle, temporary_out: *Handle) !void {

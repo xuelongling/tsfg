@@ -33,6 +33,15 @@ fn copyObject(allocator: Allocator, old: *Object, forwarded: []?*Object, copies:
 // roots/edges are committed; failed collection leaves the original graph intact.
 pub fn collect(allocator: Allocator, state: *model.State) Error!void {
     if (state.objects.items.len == 0) return;
+    const first_live = for (state.roots.items, 0..) |root, index| {
+        if (root.object != null) break index;
+    } else {
+        // With no live roots, the whole graph can be reclaimed without copying.
+        for (state.objects.items) |object| destroy(allocator, object);
+        state.objects.deinit(allocator);
+        state.objects = .empty;
+        return;
+    };
     const forwarded = try allocator.alloc(?*Object, state.objects.items.len);
     defer allocator.free(forwarded);
     @memset(forwarded, null);
@@ -42,7 +51,7 @@ pub fn collect(allocator: Allocator, state: *model.State) Error!void {
         copies.deinit(allocator);
     }
     try copies.ensureTotalCapacity(allocator, state.objects.items.len);
-    for (state.roots.items) |root| if (root.object) |object| {
+    for (state.roots.items[first_live..]) |root| if (root.object) |object| {
         _ = try copyObject(allocator, object, forwarded, &copies);
     };
     var cursor: usize = 0;
@@ -51,7 +60,7 @@ pub fn collect(allocator: Allocator, state: *model.State) Error!void {
             edge.* = try copyObject(allocator, old, forwarded, &copies);
         };
     }
-    for (state.roots.items) |*root| if (root.object) |old| {
+    for (state.roots.items[first_live..]) |*root| if (root.object) |old| {
         root.object = forwarded[old.index].?;
     };
     for (state.objects.items) |object| destroy(allocator, object);

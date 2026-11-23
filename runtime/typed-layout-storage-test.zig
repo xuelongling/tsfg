@@ -34,6 +34,7 @@ fn compareLayout(actual: element.Layout, expected: std.json.Value) !void {
                     try std.testing.expectEqualSlices(u8, &try id(a, "typeId"), &type_id);
                 },
                 .object => return error.UnexpectedLegacyDomain,
+                .cell_domain => return error.UnexpectedBackingDomain,
             }
         }
         const children = member(want, "children").array.items; try equal(children.len, got.children.len);
