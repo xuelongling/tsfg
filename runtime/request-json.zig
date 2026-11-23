@@ -5,6 +5,7 @@ const bytecode = @import("bytecode.zig");
 const contract = @import("contract.zig");
 const host_bindings = @import("host-bindings.zig");
 const host_counter = @import("host_counter.zig");
+const string_arguments = @import("string-arguments.zig");
 
 pub const Request = struct {
     kind: []const u8 = "function",
@@ -72,9 +73,10 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
     }
     var valid = request.arguments.len <= 64 and runtime.acceptsArgumentCount(info, request.arguments.len);
     const arguments: []runtime.TypedValue = if (valid) parsed.argument_storage[0..request.arguments.len] else &.{};
-    // Preserve the original typed JSON and write only into owned typed slots.
-    // String roots are reclaimed even after a later argument fails validation.
+    // Check the whole typed tuple before acquiring request-budgeted String roots.
+    // Keep argument_count at the materialized prefix for failure cleanup.
     var physical: usize = 0;
+    var first_string: ?usize = null;
     if (valid) for (request.arguments, 0..) |original, index| {
         const argument = &original;
         if (argument.* != .object or argument.object.count() != 2) {
@@ -96,6 +98,7 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
         const code = info.parameter_types[physical];
         const presence = info.presence_masks[index];
         physical += if (presence & 3 != 0) @as(usize, 2) else 1;
+        const is_string = code == 14 and std.mem.eql(u8, type_value.string, "string");
         if (std.mem.eql(u8, type_value.string, "undefined") and value.* == .null) arguments[index] = .{ .undefined_value = {} } else if (std.mem.eql(u8, type_value.string, "null") and value.* == .null) arguments[index] = .{ .null_value = {} } else if (std.mem.eql(u8, type_value.string, "bool") and code == 2 and value.* == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.integerType(code) and value.* == .string) {
             var bits: u64 = undefined;
             var buffer: [32]u8 = undefined;
@@ -120,21 +123,28 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
             if (!valid) break;
             const bits = std.fmt.parseInt(u64, value.string, 16) catch { valid = false; break; };
             arguments[index] = runtime.typedValue(bits, code);
-        } else if (code == 14 and std.mem.eql(u8, type_value.string, "string") and value.* == .array) {
-            arguments[index] = .{ .string = @import("string-arguments.zig").read(allocator, &parsed.argument_owner, value.*, request.memoryBytes) catch |err| {
+        } else if (is_string and string_arguments.accepts(value.*)) {
+            if (first_string == null) first_string = index;
+        } else {
+            valid = false;
+            break;
+        }
+        if (!runtime.acceptsPresence(presence, if (is_string) 0 else arguments[index].presenceState())) {
+            valid = false;
+            break;
+        }
+        if (first_string == null) parsed.argument_count += 1;
+    };
+    if (valid) if (first_string) |start| for (request.arguments[start..], start..) |argument, index| {
+        if (std.mem.eql(u8, argument.object.getPtr("type").?.string, "string")) {
+            const value = argument.object.getPtr("value").?.*;
+            arguments[index] = .{ .string = string_arguments.readValidated(allocator, &parsed.argument_owner, value.array.items, request.memoryBytes) catch |err| {
                 if (err == error.OutOfMemory or err == error.IdentityExhausted) {
                     result_out.* = .{ .failed = .{ .code = "r05-execution-abort", .category = "execution-abort", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
                     return false;
                 }
                 valid = false; break;
             } };
-        } else {
-            valid = false;
-            break;
-        }
-        if (!runtime.acceptsPresence(presence, arguments[index].presenceState())) {
-            valid = false;
-            break;
         }
         parsed.argument_count += 1;
     };
