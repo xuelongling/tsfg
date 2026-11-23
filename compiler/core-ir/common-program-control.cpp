@@ -122,9 +122,10 @@ void SourcePlan::region(const Array &rows,const Completion &active,const std::fu
   if(ok()&&!ended())onNormal();cells=std::move(inherited);handlers=previous;
 }
 void SourcePlan::conditional(const Json &s,const Completion &active,const std::string &path){
-  const auto condition=expression(field(s,"condition"));const auto yes=block(),no=block(),joined=block();
+  const auto &term=field(s,"condition");const auto condition=expression(term);const auto yes=block(),no=block(),joined=block();
   if(!check.step(cells.size()*4+1))return;const auto saved=cells;
-  emit("cf.cond_br",{condition},"",Object{},sourceAnchor(field(s,"condition")),{uint16_t(yes),uint16_t(no)});
+  emit("cf.cond_br",{condition},"",Object{},sourceAnchor(term),{uint16_t(yes),uint16_t(no)});
+  if(string(field(term,"kind"))=="booleanLiteral")literalBranches.emplace(current,Reg(string(field(term,"token"))=="true"?yes:no));
   const auto finish=[this,joined,r=sourceAnchor(s)]{branch(joined,{},r);};
   current=yes;cells=saved;region(items(field(s,"then")),active,finish,path+"/then");
   current=no;cells=saved;region(items(field(s,"else")),active,finish,path+"/else");cells=saved;
@@ -186,14 +187,37 @@ bool SourcePlan::run(){
   Completion outer{[this,constructor](Reg value,SourceAnchor r){const auto result=constructor?constructorResult(value,r):value;emit("func.return",result==noRegister?std::vector<Reg>{}:std::vector<Reg>{result},"",Object{},r);},
     [this](Reg value,SourceAnchor r){emit("return_throw",{value},"",Object{},r);}};handlers=outer;
   if(string(field(owner,"kind"))!="module-initializer"&&!field(owner,"analysisOnly").getAsBoolean().value_or(false))emit("fuel",{},"",Object{{"event",1}},sourceAnchor(owner));
-  region(items(field(owner,"body")),outer,[this,outer]{
-    if(string(field(owner,"kind"))=="construction-body")outer.returned(noRegister,sourceAnchor(owner));
-    else{
-      const auto type=string(field(owner,"returnType"));if(!check.need(type=="void"||check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="void","Source unproved successful fallthrough"))return;
-      outer.returned(noRegister,sourceAnchor(owner));
-    }
+  std::optional<size_t> fallthrough;
+  region(items(field(owner,"body")),outer,[this,outer,constructor,&fallthrough]{
+    const auto type=string(field(owner,"returnType"));
+    if(constructor||type=="void"||check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="void")outer.returned(noRegister,sourceAnchor(owner));
+    else fallthrough=current;
   },"body",initial);
   for(size_t i=0;i<deferred.size()&&ok();++i){if(!check.step())break;auto task=std::move(deferred[i]);task();}
+  if(fallthrough&&ok()){
+    // Keep both Source-owned arms. Check this otherwise invalid continuation
+    // only after the deferred exceptional routes have been emitted.
+    if(!check.need(!literalBranches.empty(),"Source unproved successful fallthrough"))return false;
+    const auto reachesEnd=[&](bool selectLiterals){
+      if(!check.step(function.blocks.size()))return false;
+      std::vector<bool> seen(function.blocks.size());std::vector<Reg> pending{0};seen[0]=true;
+      const auto enqueue=[&](Reg to){if(!seen[to]){seen[to]=true;pending.push_back(to);}};
+      while(!pending.empty()){
+        if(!check.step())return false;
+        const auto from=pending.back();pending.pop_back();if(from==*fallthrough)return true;
+        const auto selected=selectLiterals?literalBranches.find(from):literalBranches.end();
+        if(selected!=literalBranches.end()){if(!check.step())return false;enqueue(selected->second);}
+        else if(const auto &ops=function.blocks[from].operations;!ops.empty()){
+          if(!check.step(ops.back().successors.size()))return false;
+          for(auto to:ops.back().successors)enqueue(to);
+        }
+      }
+      return false;
+    };
+    const bool literalDead=reachesEnd(false)&&!reachesEnd(true);
+    if(!ok()||!check.need(literalDead,"Source unproved successful fallthrough"))return false;
+    current=*fallthrough;emit("unreachable",{},"",Object{},sourceAnchor(owner));
+  }
   return ok();
 }
 } // namespace tsfg::commonProgram

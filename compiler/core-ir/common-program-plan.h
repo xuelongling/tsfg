@@ -20,6 +20,7 @@ struct SourcePlan {
   std::set<std::string> activeImplicit;
   bool projected=false;
   std::vector<size_t> incoming;std::map<std::string,Reg> cells;
+  std::map<size_t,Reg> literalBranches;
   std::vector<std::function<void()>> deferred;
   Completion handlers;size_t current=0,clones=0;
   Reg currentReceiver=noRegister,receiverFrame=noRegister,lexicalEnvironment=noRegister,activationEnvironment=noRegister;

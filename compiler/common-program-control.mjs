@@ -15,7 +15,7 @@ export function planCommonFunction(model,owner) {
   const graph=createCommonGraph(model,owner),params=[...(owner.ownerType?[constructor?{id:'receiver:'+owner.id,type:'receiver:'+owner.ownerType,hidden:true,frame:true}:{id:owner.receiverBinding,type:owner.ownerType}]:[]),...owner.parameters.map((p,index)=>initialization?{...p,type:initialization.steps[index].argumentType}:p)];
   if(owner.lexicalEnvironment)params.unshift({id:'lexical:'+owner.id,type:'env:'+owner.lexicalEnvironment,hidden:true});
   check(params.length<=model.limits.parameters,'limit');const entry=graph.newBlock(params.map(p=>p.type));
-  const state={current:entry,cells:new Map(),environments:new Map(),receiver:null},tasks=[];let clones=0;
+  const state={current:entry,cells:new Map(),environments:new Map(),receiver:null,fallthrough:null},tasks=[],literalBranches=new Map();let clones=0;
   const terminator=(name,args,targets,properties,range)=>graph.terminal(state.current,name,args,targets,properties,range);
   const route=(target,args,completion,handler,range)=>terminator('route',args,[target],{completion,handler},range);
   const outer={returned:(value,range)=>{
@@ -100,6 +100,7 @@ export function planCommonFunction(model,owner) {
   function conditional(statement,active,path) {
     const condition=values.expression(statement.condition),yes=graph.newBlock(),no=graph.newBlock(),joined=graph.newBlock(),cells=collections.map(state.cells);
     graph.conditional(state.current,condition,yes,no,statement.condition.range);
+    if(statement.condition.kind==='booleanLiteral')literalBranches.set(state.current.name,statement.condition.token==='true'?yes.name:no.name);
     const finish=()=>graph.branch(state.current,joined,[],statement.range);
     state.current=yes;state.cells=collections.map(cells);region(statement.then,active,finish,[...path,'then']);
     state.current=no;state.cells=collections.map(cells);region(statement.else,active,finish,[...path,'else']);state.cells=cells;
@@ -159,9 +160,29 @@ export function planCommonFunction(model,owner) {
     if(owner.lexicalEnvironment)initial.push(['lexical:'+owner.id,{...entry.parameters[0]}]);
   }
   region(owner.body,outer,()=>{
-    if(constructor)outer.returned(null,owner.range);
-    else {check(owner.returnType==='void'||model.types.get(owner.returnType)?.kind==='void','capability','unproved successful function fallthrough');outer.returned(null,owner.range);}
+    if(constructor||isVoid(owner.returnType))outer.returned(null,owner.range);
+    else state.fallthrough=state.current;
   },['body'],initial);
   while(tasks.length){model.spend();tasks.shift()();}
+  const {fallthrough}=state;
+  if(fallthrough){
+    // Keep both owned arms in the graph. Only the otherwise invalid fallthrough
+    // needs an independent reachability check after exceptional routes exist.
+    check(literalBranches.size>0,'capability','unproved successful function fallthrough');
+    model.spend(graph.blocks.length);
+    const blocks=new Map(graph.blocks.map(block=>[block.name,block]));
+    const reachesEnd=selectLiterals=>{
+      const seen=new Set([entry.name]),pending=[entry.name];
+      while(pending.length){
+        model.spend();const from=pending.pop();if(from===fallthrough.name)return true;
+        const selected=selectLiterals&&literalBranches.get(from),successors=selected?[selected]:blocks.get(from).instructions.at(-1)?.successors??[];
+        model.spend(successors.length);
+        for(const next of successors)if(!seen.has(next)){seen.add(next);pending.push(next);}
+      }
+      return false;
+    };
+    check(reachesEnd(false)&&!reachesEnd(true),'capability','unproved successful function fallthrough');
+    graph.terminal(fallthrough,'unreachable',[],[],{},owner.range);
+  }
   return {owner,graph,entry,parameters:params,returnType:owner.returnType};
 }

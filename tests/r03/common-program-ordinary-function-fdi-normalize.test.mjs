@@ -32,6 +32,39 @@ function planned(parameters,steps,body,extra=[]) {
 }
 const instructions=plan=>plan.graph.blocks.flatMap(block=>block.instructions);
 
+test('literal condition closes only the dead nonvoid fallthrough',()=>{
+  const returned={kind:'return',value:literal('7',at(110)),range:at(103,112)};
+  const conditional=(token,then,otherwise=[])=>({kind:'if',condition:{kind:'booleanLiteral',token,type:boolTypeId,range:at(90,95)},
+    then,else:otherwise,range:at(86,160)});
+  const whenTrue=conditional('true',[returned]),whenFalse=conditional('false',[],[returned]);
+  for(const statement of [whenTrue,whenFalse,conditional('true',[whenFalse])]){
+    const {plan}=planned([],null,[statement]),ops=instructions(plan);
+    assert.equal(ops.filter(op=>op.name==='func.return').length,1);
+    assert.equal(ops.filter(op=>op.name==='tsfg_program.unreachable').length,1);
+    assert.equal(ops.filter(op=>op.name==='cf.br').length,statement===whenTrue||statement===whenFalse?1:3);
+  }
+  const dynamic={...whenTrue,condition:reference('flag',boolTypeId,at(90,94))};
+  for(const [parameters,statement] of [[[],conditional('false',[returned])],[[parameter('flag',boolTypeId)],dynamic]])
+    assert.throws(()=>planned(parameters,null,[statement]),/unproved successful function fallthrough/);
+  const accepted=instructions(planned([],null,[whenTrue,returned]).plan);
+  assert.equal(accepted.filter(op=>op.name==='func.return').length,2);
+  assert.equal(accepted.some(op=>op.name==='tsfg_program.unreachable'),false);
+});
+
+test('literal fallthrough check includes deferred language edges into catch',()=>{
+  const target={id:'fallthrough-target',kind:'source',parameters:[],returnType:i32TypeId,signatureHash:sha256('fallthrough-target')};
+  const call={kind:'call',callee:target.id,type:i32TypeId,range:at(15,20),arguments:[],signature:{parameters:[],returnType:i32TypeId}};
+  const attempt=token=>({kind:'try',range:at(10,100),tryBlock:{range:at(13,24),body:[{kind:'return',value:call,range:at(14,22)}]},
+    catchClause:{binding:null,block:{range:at(30,100),body:[{kind:'if',condition:{kind:'booleanLiteral',token,type:boolTypeId,range:at(35,40)},
+      then:[{kind:'return',value:literal('7',at(50)),range:at(43,52)}],else:[],range:at(32,57)}]}}});
+  assert.throws(()=>planned([],null,[attempt('false')],[target]),/unproved successful function fallthrough/);
+  const ops=instructions(planned([],null,[attempt('true')],[target]).plan);
+  assert.ok(ops.some(op=>op.name==='tsfg_program.route'&&op.properties.completion==='throw'));
+  assert.ok(ops.some(op=>op.name==='tsfg_program.unreachable'));
+  const detached=attempt('true'),tryBlock={...detached.tryBlock,body:[{...detached.tryBlock.body[0],value:literal('6',at(17))}]};
+  assert.throws(()=>planned([],null,[{...detached,tryBlock}]),/unproved successful function fallthrough/);
+});
+
 // A partial literal payload for the body validator's own interface, with real
 // token ranges and Source origin IDs. This is never packaged or certified.
 function checkedBody(parameters,arguments_,minimum=undefined,signatureMinimum=minimum,asValue=false) {
